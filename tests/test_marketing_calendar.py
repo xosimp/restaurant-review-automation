@@ -69,6 +69,9 @@ def test_force_is_the_owner_asking_for_a_different_week(rid, monkeypatch):
     calls = []
     _fake_generation(monkeypatch, IDEAS, calls)
     marketing.get_content_calendar_ideas(restaurant_id=rid)
+    # Past the window where a force yields to work that just finished (see
+    # test_a_forced_redraw_moments_later_returns_what_was_just_built).
+    _age_calendar(rid, marketing.RECENT_CALENDAR_SECONDS + 60)
 
     other = [{"day": "Friday", "platform": "Email", "angle": "Wine dinner", "type": "weekly_email"}]
     _fake_generation(monkeypatch, other, calls)
@@ -100,3 +103,58 @@ def test_nothing_is_cached_when_the_model_returns_junk(rid, monkeypatch):
 
 def test_reading_a_calendar_that_was_never_generated_returns_nothing(rid):
     assert marketing.get_cached_calendar(rid) is None
+
+
+# ── A retry must not throw away work that already finished ─────────────────
+# Generating takes several seconds. If the client gives up waiting and the
+# person presses the button again, the first call has usually completed and
+# cached a perfectly good week — regenerating discards it, pays for a second
+# model call, and answers the same question differently.
+
+def test_a_forced_redraw_moments_later_returns_what_was_just_built(rid, monkeypatch):
+    calls = []
+    _fake_generation(monkeypatch, IDEAS, calls)
+    first = marketing.get_content_calendar_ideas(restaurant_id=rid, force=True)
+
+    other = [{"day": "Friday", "platform": "Email", "angle": "Something else", "type": "weekly_email"}]
+    _fake_generation(monkeypatch, other, calls)
+    retry = marketing.get_content_calendar_ideas(restaurant_id=rid, force=True)
+
+    assert len(calls) == 1, "the retry paid for a second generation"
+    assert retry == first
+
+
+def test_a_forced_redraw_later_on_really_does_redraw(rid, monkeypatch):
+    """"Generate a new week" a minute later still has to mean it."""
+    calls = []
+    _fake_generation(monkeypatch, IDEAS, calls)
+    marketing.get_content_calendar_ideas(restaurant_id=rid, force=True)
+    _age_calendar(rid, marketing.RECENT_CALENDAR_SECONDS + 60)
+
+    other = [{"day": "Friday", "platform": "Email", "angle": "Wine dinner", "type": "weekly_email"}]
+    _fake_generation(monkeypatch, other, calls)
+    fresh = marketing.get_content_calendar_ideas(restaurant_id=rid, force=True)
+
+    assert len(calls) == 2
+    assert fresh[0]["angle"] == "Wine dinner"
+
+
+def test_an_aged_calendar_is_not_mistaken_for_a_fresh_one(rid, monkeypatch):
+    calls = []
+    _fake_generation(monkeypatch, IDEAS, calls)
+    marketing.get_content_calendar_ideas(restaurant_id=rid, force=True)
+
+    assert marketing.get_cached_calendar(rid, max_age_seconds=60) is not None
+    _age_calendar(rid, 300)
+    assert marketing.get_cached_calendar(rid, max_age_seconds=60) is None
+    # …but it is still this week's calendar for an ordinary read.
+    assert marketing.get_cached_calendar(rid) is not None
+
+
+def _age_calendar(rid, seconds):
+    conn = models.get_conn()
+    conn.execute(
+        "UPDATE content_calendar_cache SET generated_at=datetime('now', ?) WHERE restaurant_id=?",
+        (f"-{int(seconds)} seconds", rid))
+    conn.commit()
+    conn.close()

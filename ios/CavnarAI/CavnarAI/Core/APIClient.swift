@@ -109,14 +109,25 @@ actor APIClient {
         // .task fires two of these silent loads back to back) feel like it
         // had a distinct "double error" haptic that Home/Modules never
         // triggered.
-        hapticOnError: Bool = true
+        hapticOnError: Bool = true,
+        // Some endpoints run a model and genuinely take ten or twenty
+        // seconds. The session-wide 20s is right for ordinary reads (a phone
+        // in a walk-in cooler should fail fast) and wrong for those, where it
+        // cancelled work the server then finished anyway.
+        timeout: TimeInterval? = nil,
+        // One silent retry for an attempt that died in transit. Safe by
+        // default only for GET; a POST that publishes or sends must never be
+        // repeated on a guess, so those opt in explicitly.
+        retryTransient: Bool? = nil
     ) async throws -> Response {
-        let request = try buildRequest(path: path, method: method.rawValue, body: body, query: query)
+        var request = try buildRequest(path: path, method: method.rawValue, body: body, query: query)
+        if let timeout { request.timeoutInterval = timeout }
+        let mayRetry = retryTransient ?? (method == .get)
 
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await session.data(for: request)
+            (data, response) = try await Self.perform(request, on: session, mayRetry: mayRetry)
         } catch {
             // A request cancelled because its view went away (a `.task`
             // torn down by tapping Back, or by leaving a module screen
@@ -131,7 +142,8 @@ actor APIClient {
             if Task.isCancelled || error is CancellationError || (error as? URLError)?.code == .cancelled {
                 throw CancellationError()
             }
-            let classified = Self.classify(error)
+            let offline = await MainActor.run { !NetworkMonitor.shared.isOnline }
+            let classified = Self.classify(error, deviceIsOffline: offline)
             if hapticOnError { await Haptic.error() }
             throw classified
         }
@@ -257,10 +269,29 @@ actor APIClient {
                 } catch is CancellationError {
                     continuation.finish(throwing: CancellationError())
                 } catch {
-                    continuation.finish(throwing: Self.classify(error))
+                    continuation.finish(throwing: Self.classify(error, deviceIsOffline: false))
                 }
             }
             continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    /// One attempt, then — for a transient failure on a request that is safe
+    /// to repeat — one more after a short pause.
+    ///
+    /// The pause matters: the common cause is a connection URLSession had
+    /// pooled and the server had already closed, and retrying instantly can
+    /// pick the same dead socket out of the pool again.
+    private static func perform(
+        _ request: URLRequest, on session: URLSession, mayRetry: Bool
+    ) async throws -> (Data, URLResponse) {
+        do {
+            return try await session.data(for: request)
+        } catch {
+            guard mayRetry, isTransient(error), !Task.isCancelled else { throw error }
+            try? await Task.sleep(for: .milliseconds(400))
+            try Task.checkCancellation()
+            return try await session.data(for: request)
         }
     }
 
@@ -287,15 +318,52 @@ actor APIClient {
     /// Turns a URLError into a message the user can actually act on — "move
     /// nearer the router" and "the server is down" are different problems and
     /// used to read identically.
-    private static func classify(_ error: Error) -> APIError {
+    /// URLError codes that mean "this attempt died in transit", not "this
+    /// request was answered and refused". They are worth one silent retry
+    /// because the overwhelmingly common cause is a keep-alive socket the
+    /// server had already closed — URLSession reuses it, the write fails
+    /// instantly, and the request never reached anyone. That is the "failed,
+    /// tapped again, worked" shape.
+    private static let transientCodes: Set<URLError.Code> = [
+        .networkConnectionLost,      // -1005, the stale-socket case
+        .notConnectedToInternet,     // -1009, spurious when the path is up
+        .cannotConnectToHost,
+        .cannotFindHost,
+        .dnsLookupFailed,
+    ]
+
+    private static func isTransient(_ error: Error) -> Bool {
+        guard let urlError = error as? URLError else { return false }
+        return transientCodes.contains(urlError.code)
+    }
+
+    /// `deviceIsOffline` comes from NetworkMonitor — the app's actual source
+    /// of connectivity truth — not from the error code.
+    ///
+    /// -1009 was being reported as "You're offline" on faith. URLSession
+    /// raises it whenever its path evaluation is unsatisfied at that instant,
+    /// which happens routinely on the first request after launch or a
+    /// Wi-Fi/cell handoff, on a device that is plainly online. Telling
+    /// someone standing on their own Wi-Fi that they are offline is worse
+    /// than saying nothing, and it sent them looking at their router instead
+    /// of tapping the button again.
+    private static func classify(_ error: Error, deviceIsOffline: Bool) -> APIError {
         guard let urlError = error as? URLError else {
             return APIError(message: "Couldn't reach the server — check your connection and try again.")
         }
         switch urlError.code {
         case .notConnectedToInternet, .dataNotAllowed, .internationalRoamingOff:
+            guard deviceIsOffline else {
+                // Online, but that attempt could not get out. Retryable.
+                return APIError(kind: .timedOut,
+                                message: "That didn't get through. Tap to try again.")
+            }
             return APIError(kind: .offline,
                             message: "You're offline — this'll go through once you're back on Wi-Fi or cell.")
-        case .timedOut, .networkConnectionLost, .cannotConnectToHost, .cannotFindHost:
+        case .timedOut:
+            return APIError(kind: .timedOut,
+                            message: "The server took too long to answer. Tap to retry.")
+        case .networkConnectionLost, .cannotConnectToHost, .cannotFindHost:
             return APIError(kind: .timedOut,
                             message: "The connection dropped mid-request. Tap to retry.")
         default:

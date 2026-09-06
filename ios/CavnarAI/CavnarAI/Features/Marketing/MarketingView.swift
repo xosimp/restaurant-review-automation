@@ -201,7 +201,10 @@ struct MarketingView: View {
             }
 
             if viewModel.isGenerating {
-                CavnarComposingLines(widths: [1.0, 0.86, 0.94, 0.7, 0.5], lineHeight: 9, spacing: 11)
+                // Skeleton lines say "content is streaming in", and nothing
+                // streams here — the whole draft lands at once. The orb is
+                // the app's own vocabulary for a model working.
+                CavnarWorkingOrb(state: .composing, label: "Writing your \(viewModel.selectedTypeLabel.lowercased())…")
                     .padding(.vertical, 6)
                     .transition(.opacity)
             }
@@ -439,18 +442,23 @@ struct MarketingView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            Button {
-                Task { await viewModel.generateCalendar() }
-            } label: {
-                if viewModel.isGeneratingCalendar {
-                    CavnarShimmerText(text: "Building your week…")
-                } else {
+            if viewModel.isGeneratingCalendar {
+                // Planning a week of ideas is the model deciding what to do,
+                // which is what `solving` depicts. It also takes real time —
+                // several seconds — so this needs actual motion, not a
+                // shimmering label sitting inside a disabled button.
+                CavnarWorkingOrb(state: .solving, label: "Planning your week…")
+                    .padding(.vertical, 4)
+                    .transition(.opacity)
+            } else {
+                Button {
+                    Task { await viewModel.generateCalendar() }
+                } label: {
                     Text(viewModel.calendar.isEmpty ? "Generate week" : "Generate a new week")
                         .frame(maxWidth: .infinity)
                 }
+                .buttonStyle(CavnarSecondaryButtonStyle())
             }
-            .buttonStyle(CavnarSecondaryButtonStyle())
-            .disabled(viewModel.isGeneratingCalendar)
 
             if let error = viewModel.calendarError {
                 Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
@@ -460,6 +468,7 @@ struct MarketingView: View {
                 calendarCard(idea)
             }
         }
+        .animation(.easeOut(duration: 0.3), value: viewModel.isGeneratingCalendar)
     }
 
     private func calendarCard(_ idea: ContentCalendarIdea) -> some View {

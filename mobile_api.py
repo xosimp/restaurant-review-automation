@@ -2242,17 +2242,35 @@ def mobile_marketing(current_user):
 def mobile_generate_calendar(current_user):
     """The "Generate week" action the app never had — the web tab's own
     button, which is the only place a calendar draw should be paid for."""
-    from marketing import get_content_calendar_ideas
+    import ops
+    from marketing import (get_content_calendar_ideas, get_cached_calendar,
+                           RECENT_CALENDAR_SECONDS)
     from ai_utils import ai_rate_limited
     rid = current_user["restaurant_id"]
+
+    # Answer a retry before the rate limiter sees it. The limiter counts
+    # attempts, not generations, so tapping again after the client gave up
+    # waiting burned a token for work that had already been done — three
+    # impatient taps locked the button for five minutes having generated once.
+    just_made = get_cached_calendar(rid, max_age_seconds=RECENT_CALENDAR_SECONDS)
+    if just_made:
+        return jsonify(ok=True, calendar=just_made), 200
+
     if ai_rate_limited(f"calendar:{rid}", max_calls=4, window_secs=300):
         return jsonify(ok=False, error="Too many calendar regenerations — try again in a few minutes."), 429
     try:
         ideas = get_content_calendar_ideas(restaurant_id=rid, force=True)
-    except Exception:
+    except Exception as e:
+        ops.capture(e, job="content_calendar", context=f"restaurant_id={rid}")
         ideas = []
     if not ideas:
-        return jsonify(ok=False, error="Couldn't build a calendar right now — try again in a moment."), 200
+        # Falling back to whatever this restaurant already has beats handing
+        # back an error and an empty screen.
+        existing = get_cached_calendar(rid)
+        if existing:
+            return jsonify(ok=True, calendar=existing, stale=True), 200
+        return jsonify(ok=False,
+                       error="Couldn't build a calendar right now — try again in a moment."), 200
     return jsonify(ok=True, calendar=ideas), 200
 
 

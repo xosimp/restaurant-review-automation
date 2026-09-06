@@ -3497,3 +3497,63 @@ def test_the_join_link_still_advises_a_restaurant_with_no_pos(client, db_path):
     hint = client.get("/mobile/api/guest-join-link", headers=_auth_headers(token)).get_json()["receipt_hint"]
 
     assert hint and "table tent" in hint
+
+
+def test_a_failed_calendar_draw_falls_back_to_the_one_they_already_have(client, db_path, monkeypatch):
+    """An error and an empty screen is the worst of both — if this restaurant
+    already has a week, show it rather than nothing."""
+    import json as _json
+    rid = _restaurant(db_path, module_marketing=1)
+    token = _login(client, db_path, rid)
+    ideas = [{"day": "Monday", "platform": "Instagram & FB", "angle": "Truffle pasta",
+              "type": "instagram_post"}]
+    monkeypatch.setattr("marketing.create_with_retry", lambda *a, **kw: ideas)
+    monkeypatch.setattr("marketing.extract_text", lambda m: _json.dumps(m))
+    client.post("/mobile/api/marketing/calendar", headers=_auth_headers(token))
+
+    # Now the model falls over, and enough time has passed that the recent
+    # draw no longer short-circuits the force.
+    conn = get_conn(db_path)
+    conn.execute("UPDATE content_calendar_cache SET generated_at=datetime('now','-600 seconds')")
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr("marketing.create_with_retry",
+                        lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("model down")))
+
+    data = client.post("/mobile/api/marketing/calendar", headers=_auth_headers(token)).get_json()
+
+    assert data["ok"] is True
+    assert data["stale"] is True
+    assert data["calendar"][0]["angle"] == "Truffle pasta"
+
+
+def test_a_failed_calendar_draw_with_nothing_to_fall_back_on_says_so(client, db_path, monkeypatch):
+    rid = _restaurant(db_path, module_marketing=1)
+    token = _login(client, db_path, rid)
+    monkeypatch.setattr("marketing.create_with_retry",
+                        lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("model down")))
+
+    data = client.post("/mobile/api/marketing/calendar", headers=_auth_headers(token)).get_json()
+
+    assert data["ok"] is False
+    assert "try again" in data["error"]
+
+
+def test_tapping_generate_again_does_not_burn_a_rate_limit_token(client, db_path, monkeypatch):
+    """The limiter counts attempts, not generations. Tapping again after the
+    client gave up waiting locked the button for five minutes having actually
+    generated once."""
+    import json as _json
+    rid = _restaurant(db_path, module_marketing=1)
+    token = _login(client, db_path, rid)
+    calls = []
+    ideas = [{"day": "Monday", "platform": "Instagram & FB", "angle": "Truffle", "type": "instagram_post"}]
+    monkeypatch.setattr("marketing.create_with_retry", lambda *a, **kw: calls.append(1) or ideas)
+    monkeypatch.setattr("marketing.extract_text", lambda m: _json.dumps(m))
+
+    responses = [client.post("/mobile/api/marketing/calendar", headers=_auth_headers(token))
+                 for _ in range(6)]
+
+    assert all(r.status_code == 200 for r in responses), "an impatient retry got rate limited"
+    assert all(r.get_json()["ok"] for r in responses)
+    assert len(calls) == 1, "a retry paid for another generation"

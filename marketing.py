@@ -429,6 +429,12 @@ def mark_calendar_idea_used(restaurant_id: int, content_type: str, topic: str):
     log_content(restaurant_id, f"calendar_{content_type}", topic)
 
 
+# A forced regeneration inside this window returns what was just built
+# instead. Long enough to cover a client giving up and the person tapping
+# again; short enough that "generate a new week" a minute later still means it.
+RECENT_CALENDAR_SECONDS = 120
+
+
 def _week_start(restaurant_id):
     """The Sunday that starts this restaurant's current week, in its own
     local time — the cache key, and the same boundary the generator has
@@ -439,8 +445,16 @@ def _week_start(restaurant_id):
     return now - _td(days=(now.weekday() + 1) % 7)
 
 
-def get_cached_calendar(restaurant_id: int):
-    """This week's calendar if one has already been generated, else None."""
+def get_cached_calendar(restaurant_id: int, max_age_seconds: int = None):
+    """This week's calendar if one has already been generated, else None.
+
+    `max_age_seconds` narrows that to "generated very recently", which is how
+    a retry avoids throwing away work that already finished. Generating takes
+    several seconds; if the client gave up waiting and the person pressed the
+    button again, the first call had usually completed and cached a perfectly
+    good week — regenerating would discard it, pay for a second model call,
+    and hand back a different answer to the same question.
+    """
     if not restaurant_id:
         return None
     try:
@@ -448,12 +462,25 @@ def get_cached_calendar(restaurant_id: int):
         conn = get_conn()
         try:
             row = conn.execute(
-                "SELECT ideas_json FROM content_calendar_cache WHERE restaurant_id=? AND week_start=?",
+                "SELECT ideas_json, generated_at FROM content_calendar_cache "
+                "WHERE restaurant_id=? AND week_start=?",
                 (restaurant_id, _week_start(restaurant_id).strftime("%Y-%m-%d")),
             ).fetchone()
         finally:
             conn.close()
-        return json.loads(row["ideas_json"]) if row and row["ideas_json"] else None
+        if not row or not row["ideas_json"]:
+            return None
+        if max_age_seconds is not None:
+            from datetime import datetime as _dt
+            try:
+                # generated_at is SQLite's datetime('now') — UTC.
+                age = (_dt.utcnow() - _dt.strptime(str(row["generated_at"])[:19],
+                                                   "%Y-%m-%d %H:%M:%S")).total_seconds()
+            except Exception:
+                return None
+            if age > max_age_seconds:
+                return None
+        return json.loads(row["ideas_json"])
     except Exception:
         return None
 
@@ -492,6 +519,14 @@ def get_content_calendar_ideas(restaurant_id: int = None, force: bool = False) -
         cached = get_cached_calendar(restaurant_id)
         if cached:
             return cached
+    else:
+        # Even a forced draw yields to one that just finished. See
+        # get_cached_calendar — this is the "client timed out, person pressed
+        # the button again" path, and regenerating there discards completed
+        # work and answers the same question differently.
+        just_made = get_cached_calendar(restaurant_id, max_age_seconds=RECENT_CALENDAR_SECONDS)
+        if just_made:
+            return just_made
     p = get_profile_for_restaurant(restaurant_id)
     from datetime import datetime as _dt, timedelta as _td
     from time_utils import restaurant_now_by_id as _rnbi

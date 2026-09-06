@@ -106,7 +106,13 @@ final class SessionStore {
     func login(username: String, password: String) async throws -> LoginOutcome {
         let rememberedDevice = Keychain.get(Keychain.Key.deviceRememberToken)
         let body = LoginRequestBody(username: username, password: password, deviceToken: rememberedDevice)
-        let response: LoginResponse = try await client.send("/mobile/api/login", method: .post, body: body)
+        // Retryable: signing in either authenticates or it doesn't, so
+        // repeating an attempt that never reached the server is safe — and
+        // this is the request most likely to be the first after launch, when
+        // the network path is still coming up and URLSession reports -1009
+        // on a device that is plainly online.
+        let response: LoginResponse = try await client.send(
+            "/mobile/api/login", method: .post, body: body, retryTransient: true)
         if response.requiresTwoFactor, let pendingToken = response.pendingToken {
             return .twoFactorRequired(pendingToken: pendingToken, maskedEmail: response.maskedEmail ?? "")
         }

@@ -1663,12 +1663,19 @@ def content_calendar(current_user):
     read returns this week's cached calendar (see get_content_calendar_ideas).
     The web tab has always driven this from an explicit press, so it forces —
     what changed is that the result is now kept."""
-    from marketing import get_content_calendar_ideas
+    from marketing import (get_content_calendar_ideas, get_cached_calendar,
+                           RECENT_CALENDAR_SECONDS)
     from ai_utils import ai_rate_limited
     rid = current_user["restaurant_id"]
     force = request.args.get("force") not in (None, "", "0", "false")
-    if force and ai_rate_limited(f"calendar:{rid}", max_calls=4, window_secs=300):
-        return jsonify(ideas=[], error="Too many calendar regenerations — try again in a few minutes."), 429
+    if force:
+        # A retry after a slow first attempt is answered before the limiter
+        # sees it — it counts attempts, not generations.
+        just_made = get_cached_calendar(rid, max_age_seconds=RECENT_CALENDAR_SECONDS)
+        if just_made:
+            return jsonify(ideas=just_made)
+        if ai_rate_limited(f"calendar:{rid}", max_calls=4, window_secs=300):
+            return jsonify(ideas=[], error="Too many calendar regenerations — try again in a few minutes."), 429
     return jsonify(ideas=get_content_calendar_ideas(restaurant_id=rid, force=force))
 
 def _do_regenerate_draft(review_id, restaurant_id):

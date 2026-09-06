@@ -168,6 +168,13 @@ final class MarketingViewModel {
     ]
     var contentTypes: [MarketingContentType] = MarketingViewModel.fallbackContentTypes
 
+    /// How long to wait on a model. Generating a post or a week of calendar
+    /// ideas takes several seconds and occasionally much longer; the
+    /// session-wide 20s is tuned for ordinary reads and was cutting these off
+    /// mid-flight, which surfaced as "the connection dropped" for work that
+    /// was in fact completing.
+    static let generationTimeout: TimeInterval = 90
+
     private let client: APIClient
 
     init(client: APIClient = .shared) {
@@ -265,7 +272,11 @@ final class MarketingViewModel {
         do {
             let response: GenerateResponse = try await client.send(
                 "/mobile/api/marketing/generate-content", method: .post,
-                body: GenerateBody(type: selectedType, topic: requestedTopic, fromCalendar: fromCalendar)
+                body: GenerateBody(type: selectedType, topic: requestedTopic, fromCalendar: fromCalendar),
+                // Writing a post is a Sonnet call — comfortably past the 20s
+                // the session uses for ordinary reads, which was cancelling
+                // work the server went on to finish anyway.
+                timeout: MarketingViewModel.generationTimeout
             )
             if response.ok, let content = response.content {
                 draft = content
@@ -311,7 +322,9 @@ final class MarketingViewModel {
         defer { isGeneratingCalendar = false }
         do {
             let response: CalendarResponse = try await client.send(
-                "/mobile/api/marketing/calendar", method: .post
+                "/mobile/api/marketing/calendar", method: .post,
+                // A week of ideas is the longest call this app makes.
+                timeout: MarketingViewModel.generationTimeout
             )
             if response.ok, let ideas = response.calendar, !ideas.isEmpty {
                 calendar = ideas

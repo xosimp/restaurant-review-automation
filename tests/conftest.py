@@ -11,6 +11,19 @@ import pytest
 from models import init_db, ensure_columns, create_restaurant, save_reviews, Restaurant, Review
 
 
+@pytest.fixture(autouse=True)
+def _reset_ai_rate_limiter():
+    """ai_utils._ai_call_log is a process-global sliding window keyed by
+    restaurant_id, and every test gets a fresh database whose ids start at 1 —
+    so one test's calls counted against the next test's budget and a route
+    would 429 only when the whole file ran, never in isolation. Cleared
+    between tests so a rate limit is something a test asks for on purpose."""
+    import ai_utils
+    ai_utils._ai_call_log.clear()
+    yield
+    ai_utils._ai_call_log.clear()
+
+
 @pytest.fixture
 def db_path(tmp_path):
     path = str(tmp_path / "test_reviews.db")
