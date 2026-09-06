@@ -60,13 +60,18 @@ struct SquareConnectSheet: View {
                     // PreferenceKey width-matching bug, same fix.
                     VStack(spacing: 10) {
                         Button {
+                            // Resign focus BEFORE anything that tears this
+                            // sheet down. See closeAfterKeyboard() below —
+                            // and it also gets the keyboard out of the way
+                            // so the handshake animation is actually visible.
+                            focusedField = nil
                             Task {
                                 withAnimation(.easeOut(duration: 0.25)) { handshake = .connecting }
                                 await viewModel.connectSquare(accessToken: accessToken, locationId: locationId)
                                 if viewModel.connectSquareSucceeded {
                                     handshake = .connected
                                     try? await Task.sleep(for: .seconds(1.2))
-                                    dismiss()
+                                    closeAfterKeyboard()
                                 } else {
                                     handshake = .failed
                                 }
@@ -85,7 +90,7 @@ struct SquareConnectSheet: View {
                         .disabled(!canSubmit)
 
                         Button {
-                            dismiss()
+                            closeAfterKeyboard()
                         } label: {
                             Text("Cancel").frame(maxWidth: .infinity)
                         }
@@ -100,6 +105,25 @@ struct SquareConnectSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { cavnarTitleToolbar("Connect Square") }
             .keyboardNavToolbar($focusedField)
+        }
+    }
+
+    /// Drop the keyboard, let it actually go, THEN dismiss.
+    ///
+    /// Dismissing while a field is still first responder is the crash this
+    /// exists to prevent: the FocusState binding here is handed to both the
+    /// CavnarFloatingFields and to `.keyboardNavToolbar`, whose toolbar is
+    /// `.keyboard`-placement — hosted by UIKit's input-accessory system,
+    /// NOT by this sheet's own view hierarchy. So it can outlive the
+    /// sheet's teardown by a beat and re-read a FocusState whose storage is
+    /// already gone, which surfaces as EXC_BAD_ACCESS inside swift_release
+    /// while this very body is being evaluated. Resigning first means the
+    /// accessory is torn down before the sheet is.
+    private func closeAfterKeyboard() {
+        focusedField = nil
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(60))
+            dismiss()
         }
     }
 

@@ -953,12 +953,13 @@ extension View {
                 // proposed. On a sheet whose content doesn't itself claim
                 // the full width (Menu margins), that resolved narrower
                 // than the sheet and the wash visibly stopped short of both
-                // edges. Both this and the stack below now claim the full
-                // width outright so the wash is full-bleed everywhere.
+                // edges. Scoped to the gradient only: the ZStack itself
+                // needs no frame (Color.cavnarPaper already fills it), and
+                // forcing an infinite one there was an unnecessary change
+                // to a modifier ~15 screens depend on.
                 .frame(maxWidth: .infinity)
                 .frame(height: 340)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .ignoresSafeArea()
         )
     }

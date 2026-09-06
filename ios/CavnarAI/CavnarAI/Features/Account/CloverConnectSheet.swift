@@ -52,13 +52,17 @@ struct CloverConnectSheet: View {
 
                     VStack(spacing: 10) {
                         Button {
+                            // Resign focus before anything can tear this sheet
+                            // down (see closeAfterKeyboard below), and so the
+                            // handshake animation isn't behind the keyboard.
+                            focusedField = nil
                             Task {
                                 withAnimation(.easeOut(duration: 0.25)) { handshake = .connecting }
                                 await viewModel.connectClover(merchantId: merchantId, apiToken: apiToken)
                                 if viewModel.connectCloverSucceeded {
                                     handshake = .connected
                                     try? await Task.sleep(for: .seconds(1.2))
-                                    dismiss()
+                                    closeAfterKeyboard()
                                 } else {
                                     handshake = .failed
                                 }
@@ -77,7 +81,7 @@ struct CloverConnectSheet: View {
                         .disabled(!canSubmit)
 
                         Button {
-                            dismiss()
+                            closeAfterKeyboard()
                         } label: {
                             Text("Cancel").frame(maxWidth: .infinity)
                         }
@@ -92,6 +96,20 @@ struct CloverConnectSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { cavnarTitleToolbar("Connect Clover") }
             .keyboardNavToolbar($focusedField)
+        }
+    }
+
+    /// Drop the keyboard, let it actually go, THEN dismiss. See
+    /// SquareConnectSheet.closeAfterKeyboard() for the full reasoning:
+    /// dismissing while a field is still first responder can leave the
+    /// `.keyboard`-placement toolbar (hosted by UIKit's input-accessory
+    /// system, outside this sheet's hierarchy) reading a FocusState whose
+    /// storage is already gone.
+    private func closeAfterKeyboard() {
+        focusedField = nil
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(60))
+            dismiss()
         }
     }
 
