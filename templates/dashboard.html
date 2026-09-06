@@ -1363,6 +1363,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
           <div style="font-size:12px;font-weight:600;color:var(--ink)">{{rstats.awaiting_approval}} review{{'' if rstats.awaiting_approval==1 else 's'}} awaiting approval</div>
           <div style="font-size:11px;color:var(--ink3)">AI responses drafted — publish in one click</div>
         </div>
+        <button onclick="event.stopPropagation();publishAllReplies(this)" class="btn-primary" style="font-size:11px;padding:5px 11px;white-space:nowrap">Publish {{ [rstats.awaiting_approval, 25] | min }} {{ 'reply' if rstats.awaiting_approval == 1 else 'replies' }}</button>
         <svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="flex-shrink:0"><path d="M6.5 5.5l3 2.5-3 2.5" stroke="var(--ember)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </div>
       {% endif %}
@@ -1443,6 +1444,23 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 </div><!-- /section grid -->
 </div><!-- /section bg wrapper -->
 
+<!-- iOS parity: this week's receipts + value over time (filled by loadHomeExtras) -->
+<div id="home-extras" style="display:none;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px">
+  <div style="background:var(--paper2);border:1px solid var(--paper3);border-radius:var(--r);padding:20px 22px">
+    <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);margin-bottom:4px">This week</div>
+    <div style="font-family:'Space Grotesk',sans-serif;font-size:17px;font-weight:500;color:var(--ink);margin-bottom:12px">What Cavnar AI did for you</div>
+    <div id="home-receipts" style="display:flex;flex-direction:column;gap:8px;font-size:12px;color:var(--ink2)"></div>
+  </div>
+  <div style="background:var(--paper2);border:1px solid var(--paper3);border-radius:var(--r);padding:20px 22px">
+    <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);margin-bottom:4px">Value delivered</div>
+    <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px">
+      <div style="font-family:'Space Grotesk',sans-serif;font-size:17px;font-weight:500;color:var(--ink)">Over time</div>
+      <div id="home-value-total" style="font-family:'Space Grotesk',sans-serif;font-size:22px;font-weight:600;color:var(--green)"></div>
+    </div>
+    <svg id="home-value-chart" viewBox="0 0 320 90" preserveAspectRatio="none" style="width:100%;height:90px;display:block"></svg>
+    <div id="home-value-range" style="font-size:11px;color:var(--ink3);margin-top:6px"></div>
+  </div>
+</div>
 </div><!-- /centering wrapper -->
 </div><!-- /panel-home -->
 
@@ -1730,6 +1748,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
           {% if r.response_status=='posted' %}
             <div style="display:flex;align-items:center;gap:6px">
               <span style="font-size:11px;color:#1a56cc;font-weight:600;background:#e8f0fe;border:1px solid #c5d8f8;padding:3px 8px;border-radius:4px">✓ Live on {{r.platform|title}}</span>
+              {% if r.platform=='google' %}<button class="btn btn-skip" style="font-size:11px" onclick="retractR({{r.id}},this)">Retract</button>{% endif %}
             </div>
           {% elif r.response_status=='approved' %}
             <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
@@ -1829,6 +1848,10 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
         &bull; Enter the code to complete sign in<br>
         &bull; Check &ldquo;Remember device&rdquo; to skip for 30 days
       </div>
+      <div style="display:flex;gap:14px;margin-bottom:14px;font-size:12px;color:var(--ink2)">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="radio" name="twofa-method" value="email" checked> Email me the code</label>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="radio" name="twofa-method" value="sms"> Text me the code</label>
+      </div>
       <button onclick="twoFAStep2(this)" id="twofa-send-btn" class="btn-primary" style="width:100%;padding:11px;transition:opacity .15s">Send me a test code<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
     </div>
     <!-- Step 2: Verify -->
@@ -1851,6 +1874,12 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     <div id="twofa-step3" style="display:none;text-align:center">
       <div style="font-size:40px;margin-bottom:16px">&#x2705;</div>
       <div style="font-size:18px;font-weight:700;color:var(--ink);margin-bottom:8px">2FA is now active</div>
+      <div id="twofa-backup-codes" style="display:none;margin:12px 0 4px">
+        <div style="font-size:12px;font-weight:600;color:var(--ink);margin-bottom:4px">Save these backup codes</div>
+        <div style="font-size:11px;color:var(--ink3);margin-bottom:8px">Each works once if you ever can't get a code. They won't be shown again.</div>
+        <div id="twofa-backup-list" style="padding:10px 12px;background:#f7f4ef;border:1px dashed var(--ember);border-radius:8px;font-family:'Space Grotesk',sans-serif;font-size:12px;line-height:1.9;letter-spacing:.04em;color:var(--ink)"></div>
+        <button onclick="copyBackupCodes(this)" class="btn-secondary" style="font-size:11px;padding:4px 10px;margin-top:8px">Copy codes</button>
+      </div>
       <p style="font-size:13px;color:var(--ink3);margin-bottom:24px;line-height:1.6">Your account is protected. You&rsquo;ll receive a verification code by email each time you sign in from a new device.</p>
       <button onclick="document.getElementById('twofa-modal').style.display='none';location.reload();" class="btn-primary" style="padding:10px 28px">Done</button>
     </div>
@@ -1995,6 +2024,10 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
           <button onclick="publishScheduleNow()" id="ps-send-btn" class="btn-primary" style="background:#2d6a4f;font-size:12px;padding:7px 16px">Send now</button>
           <span id="ps-result" style="font-size:12px;margin-left:10px"></span>
         </div>
+        <div id="ps-seen" style="display:none;margin-top:12px;border-top:1px solid rgba(255,255,255,.08);padding-top:10px">
+          <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ember2);margin-bottom:6px">Who's seen it</div>
+          <div id="ps-seen-list" style="font-size:12px;color:rgba(255,255,255,.75)"></div>
+        </div>
       </div>
 
       <!-- AI summary bullets -->
@@ -2076,6 +2109,16 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
         </div>
       </div>
     </div>
+  </div>
+
+  <!-- iOS parity: schedule history -->
+  <div class="card" style="padding:16px 20px;margin-bottom:14px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3)">Schedule history</div>
+      <span id="sched-history-count" style="font-size:11px;color:var(--ink3)"></span>
+    </div>
+    <div id="sched-history-list" style="font-size:12px;color:var(--ink3)">Loading&hellip;</div>
+    <div id="sched-history-detail" style="display:none;margin-top:12px;border-top:1px solid var(--paper3);padding-top:12px"></div>
   </div>
 
   <!-- AI insight -->
@@ -3312,7 +3355,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
         <div style="font-size:14px;font-weight:700;color:var(--ink)">Brand voice</div>
         <button onclick="closeBrandVoice()" style="background:none;border:none;cursor:pointer;color:var(--ink3);font-size:18px;line-height:1;padding:0">&times;</button>
       </div>
-      <p style="font-size:11.5px;color:var(--ink3);line-height:1.6;margin:0 0 16px">Every caption, email and text is written from these three fields. Changes apply to the next thing you generate.</p>
+      <p style="font-size:11.5px;color:var(--ink3);line-height:1.6;margin:0 0 16px">Every caption, email, text and review reply is written from these fields. Changes apply to the next thing you generate.</p>
 
       <div class="slabel" style="margin-bottom:4px">How you sound</div>
       <textarea id="bv-voice" rows="2" class="topic-input" style="width:100%;box-sizing:border-box;resize:vertical" placeholder="e.g. genuine and warm, a little witty, never corporate — speaks like a person, not a brand"></textarea>
@@ -3323,6 +3366,14 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       <div class="slabel" style="margin:14px 0 4px">Menu &amp; current specials</div>
       <textarea id="bv-menu" rows="4" class="topic-input" style="width:100%;box-sizing:border-box;resize:vertical" placeholder="Signature dishes and what's running now — the AI only names dishes you list here, never invented ones"></textarea>
 
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px">
+        <div><div class="slabel" style="margin-bottom:4px">Reply tone</div>
+          <select id="bv-tone" class="topic-input" style="width:100%;box-sizing:border-box">
+            <option value="">Your brand voice only</option><option value="warm">Warm</option><option value="professional">Professional</option><option value="playful">Playful</option><option value="concise">Concise</option>
+          </select></div>
+        <div><div class="slabel" style="margin-bottom:4px">Sign-off name</div>
+          <input type="text" id="bv-signoff" class="topic-input" style="width:100%;box-sizing:border-box" placeholder="e.g. Maria &amp; the team"></div>
+      </div>
       <div style="display:flex;align-items:center;gap:10px;margin-top:18px">
         <button class="btn-primary" id="bv-save-btn" onclick="saveBrandVoice()" style="padding:8px 16px;font-size:12px">Save</button>
         <button class="btn-secondary" onclick="closeBrandVoice()" style="padding:8px 16px;font-size:12px">Cancel</button>
@@ -3438,12 +3489,31 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     </div><!-- /z-index wrap -->
   </div><!-- /aiv-body -->
   </div>
+  <div id="aiv-history" style="display:none" class="card">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3)">Visibility over time</div>
+      <span id="aiv-history-count" style="font-size:11px;color:var(--ink3)"></span>
+    </div>
+    <svg id="aiv-history-chart" viewBox="0 0 320 70" preserveAspectRatio="none" style="width:100%;height:70px;display:block;margin-bottom:8px"></svg>
+    <div id="aiv-history-list" style="font-size:11px;color:var(--ink3);display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:4px 12px"></div>
+  </div>
   </div><!-- /intel-tab-visibility -->
 
   <div id="intel-tab-competitors">
 
   <div style="text-align:center;padding:8px 0 24px">
     <div class="name-underlined-slow" style="font-family:'Clash Display',sans-serif;font-size:36px;color:var(--ink)">What your neighbors are doing</div>
+  </div>
+
+  <!-- iOS parity: add a competitor -->
+  <div class="card" style="padding:14px 16px;margin-bottom:16px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:8px">
+      <div><div style="font-size:12px;font-weight:600;color:var(--ink)">Track a specific competitor</div><div style="font-size:11px;color:var(--ink3)">Search Google for a place near you — it joins the next refresh permanently.</div></div>
+    </div>
+    <div style="position:relative">
+      <input id="intel-search" placeholder="Search by name, e.g. the wine bar on Main" oninput="intelSearchInput()" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;background:var(--paper);color:var(--ink)">
+      <div id="intel-search-results" style="display:none;margin-top:6px;border:1px solid var(--paper3);border-radius:8px;background:var(--paper2);overflow:hidden"></div>
+    </div>
   </div>
 
   {% if not competitor_data %}
@@ -3495,6 +3565,14 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     <div class="card" style="padding:18px 20px;margin-bottom:16px" id="intel-insight-card">
       {{ competitor_data.insight | format_intel_body }}
     </div>
+    {% if recs %}
+    <div class="card" style="padding:16px 20px;margin-bottom:16px">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ember);margin-bottom:10px">How to improve</div>
+      <ol style="margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px;font-size:12.5px;line-height:1.55;color:var(--ink2)">
+        {% for rec in recs %}<li>{{rec}}</li>{% endfor %}
+      </ol>
+    </div>
+    {% endif %}
 
     <!-- Rating bar chart -->
     {% if mod_reviews and rstats.avg_rating %}
@@ -3546,7 +3624,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       {% for c in competitor_data.competitors %}
       <div class="card scroll-reveal" data-reveal-delay="{{loop.index0 * 0.1}}s" style="padding:14px 16px;margin-bottom:0">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
-          <div style="font-weight:600;font-size:13px;color:var(--ink)">{{c.name}}</div>
+          <div style="font-weight:600;font-size:13px;color:var(--ink);display:flex;align-items:center;gap:8px">{{c.name}}{% if c.custom %}<span style="font-size:10px;font-weight:700;color:var(--ember);background:rgba(200,75,47,.1);padding:2px 7px;border-radius:10px">Added by you</span><button onclick="intelRemove('{{c.place_id}}',this)" style="background:none;border:none;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;font-size:11px;color:var(--ink3);padding:0;text-decoration:underline">Remove</button>{% endif %}</div>
           <div style="display:flex;align-items:center;gap:8px">
             {% if mod_reviews and rstats.avg_rating %}
             {% set diff = (rstats.avg_rating - c.rating) | round(1) %}
@@ -3649,7 +3727,8 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   <div class="acct-card" style="padding:18px 22px;margin-bottom:14px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
       <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3)">Your Restaurant Profile</div>
-      <a href="mailto:will@cavnar.ai?subject=Profile update for {{restaurant.name}}" style="font-size:11px;color:var(--ember);text-decoration:none;font-weight:600">Request an update<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
+      <button onclick="toggleProfileEdit()" id="profile-edit-btn" class="btn-primary" style="font-size:11px;padding:5px 12px">Edit profile</button>
+      <a href="mailto:will@cavnar.ai?subject=Profile update for {{restaurant.name}}" style="display:none" id="profile-request-link">Request an update<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:0" class="profile-grid">
 
@@ -3706,6 +3785,33 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
           <div style="font-size:12px;font-weight:500;color:var(--ink);line-height:1.5">{{restaurant.menu_notes}}</div>
         </div>
         {% endif %}
+      </div>
+    </div>
+
+    <div id="profile-edit" style="display:none;border-top:1px solid var(--paper3);margin-top:14px;padding-top:14px">
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px" class="profile-grid">
+        <div><div style="font-size:11px;color:var(--ink3);margin-bottom:3px">Owner / GM name</div><input id="pe-owner-name" value="{{restaurant.owner_name or ''}}" style="width:100%;box-sizing:border-box;padding:7px 9px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;background:var(--paper);color:var(--ink);outline:none"></div>
+        <div><div style="font-size:11px;color:var(--ink3);margin-bottom:3px">Phone</div><input id="pe-phone" value="{{restaurant.owner_phone or ''}}" style="width:100%;box-sizing:border-box;padding:7px 9px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;background:var(--paper);color:var(--ink);outline:none"></div>
+        <div><div style="font-size:11px;color:var(--ink3);margin-bottom:3px">Timezone</div><select id="pe-tz" style="width:100%;box-sizing:border-box;padding:7px 9px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;background:var(--paper);color:var(--ink);outline:none">
+          {% for tz, tzl in [('America/New_York','Eastern'),('America/Chicago','Central'),('America/Denver','Mountain'),('America/Phoenix','Arizona'),('America/Los_Angeles','Pacific'),('America/Anchorage','Alaska'),('Pacific/Honolulu','Hawaii')] %}
+          <option value="{{tz}}" {% if (restaurant.timezone or 'America/Chicago') == tz %}selected{% endif %}>{{tzl}}</option>{% endfor %}</select></div>
+        <div><div style="font-size:11px;color:var(--ink3);margin-bottom:3px">Reply tone</div><select id="pe-tone" style="width:100%;box-sizing:border-box;padding:7px 9px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;background:var(--paper);color:var(--ink);outline:none">
+          {% for t, tl in [('','Your brand voice only'),('warm','Warm'),('professional','Professional'),('playful','Playful'),('concise','Concise')] %}
+          <option value="{{t}}" {% if (restaurant.tone_preset or '') == t %}selected{% endif %}>{{tl}}</option>{% endfor %}</select></div>
+        <div><div style="font-size:11px;color:var(--ink3);margin-bottom:3px">Reply language</div><select id="pe-lang" style="width:100%;box-sizing:border-box;padding:7px 9px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;background:var(--paper);color:var(--ink);outline:none">
+          {% for l, ll in [('','English'),('es','Spanish'),('fr','French'),('it','Italian'),('pt','Portuguese'),('de','German')] %}
+          <option value="{{l}}" {% if (restaurant.response_language or '') == l %}selected{% endif %}>{{ll}}</option>{% endfor %}</select></div>
+        <div><div style="font-size:11px;color:var(--ink3);margin-bottom:3px">Sign-off name</div><input id="pe-signoff" value="{{restaurant.sign_off_name or ''}}" placeholder="e.g. Maria &amp; the team" style="width:100%;box-sizing:border-box;padding:7px 9px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;background:var(--paper);color:var(--ink);outline:none"></div>
+      </div>
+      <div style="margin-top:12px"><div style="font-size:11px;color:var(--ink3);margin-bottom:3px">How you sound</div><textarea id="pe-voice" rows="2" style="width:100%;box-sizing:border-box;padding:7px 9px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;background:var(--paper);color:var(--ink);outline:none" placeholder="e.g. genuine and warm, a little witty, never corporate">{{restaurant.voice_notes or ''}}</textarea></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:10px">
+        <div><div style="font-size:11px;color:var(--ink3);margin-bottom:3px">Words to never use</div><input id="pe-never" value="{{restaurant.never_say or ''}}" placeholder="e.g. culinary journey, indulge" style="width:100%;box-sizing:border-box;padding:7px 9px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;background:var(--paper);color:var(--ink);outline:none"></div>
+        <div><div style="font-size:11px;color:var(--ink3);margin-bottom:3px">Menu &amp; current specials</div><textarea id="pe-menu" rows="2" style="width:100%;box-sizing:border-box;padding:7px 9px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;background:var(--paper);color:var(--ink);outline:none" placeholder="Signature dishes and what's running now">{{restaurant.menu_notes or ''}}</textarea></div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;margin-top:14px;flex-wrap:wrap">
+        <button class="btn-primary" id="pe-save" onclick="saveProfile()" style="padding:7px 16px;font-size:12px">Save changes</button>
+        <button class="btn-secondary" onclick="toggleProfileEdit()" style="padding:7px 16px;font-size:12px">Cancel</button>
+        <span style="font-size:11px;color:var(--ink3)">Restaurant name, location, atmosphere and "known for" are set by Will &mdash; <a href="mailto:will@cavnar.ai?subject=Profile update for {{restaurant.name}}" style="color:var(--ember)">request an update</a>.</span>
       </div>
     </div>
   </div>
@@ -3786,7 +3892,49 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
         <!-- Change password link — inside security section -->
         <div style="padding-top:10px;margin-top:2px">
           <button onclick="document.getElementById('pw-modal').style.display='flex'" style="background:none;border:none;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;font-size:12px;font-weight:600;color:var(--ember);padding:0;display:flex;align-items:center;gap:4px">Change password<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        <!-- iOS parity: checkup, backup codes, trusted devices, recovery email, sign-in history, activity -->
+        <div style="border-top:1px solid var(--paper3);margin-top:12px;padding-top:12px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+            <div style="font-size:12px;font-weight:600;color:var(--ink)">Security checkup</div>
+            <div style="font-family:'Space Grotesk',sans-serif;font-size:13px;font-weight:600;color:var(--ember)"><span id="sec-score">&hellip;</span><span style="color:var(--ink3);font-weight:400"> / 100</span></div>
+          </div>
+          <div style="height:4px;background:var(--paper3);border-radius:2px;overflow:hidden;margin-bottom:8px"><div id="sec-bar" style="height:100%;width:0;background:var(--ember);border-radius:2px;transition:width .4s"></div></div>
+          <div id="sec-items" style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;font-size:11px;color:var(--ink3)"></div>
         </div>
+        {% if restaurant.two_fa_enabled %}
+        <div style="border-top:1px solid var(--paper3);margin-top:12px;padding-top:12px">
+          <div style="display:flex;align-items:center;justify-content:space-between">
+            <div><div style="font-size:12px;font-weight:600;color:var(--ink)">Backup codes</div><div style="font-size:11px;color:var(--ink3)"><span id="bc-remaining">&hellip;</span> unused &middot; one-time codes if you lose access to your email or phone</div></div>
+            <button onclick="regenBackupCodes(this)" class="btn-secondary" style="font-size:11px;padding:4px 10px">Regenerate</button>
+          </div>
+          <div id="bc-codes" style="display:none;margin-top:8px;padding:10px 12px;background:var(--paper);border:1px dashed var(--ember);border-radius:8px;font-family:'Space Grotesk',sans-serif;font-size:12px;line-height:1.9;letter-spacing:.04em"></div>
+        </div>
+        <div style="border-top:1px solid var(--paper3);margin-top:12px;padding-top:12px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+            <div><div style="font-size:12px;font-weight:600;color:var(--ink)">Trusted devices</div><div style="font-size:11px;color:var(--ink3)">Skip the code on these for 30 days</div></div>
+            <button onclick="forgetAllTrusted(this)" class="btn-secondary" style="font-size:11px;padding:4px 10px">Forget all</button>
+          </div>
+          <div id="trusted-list" style="font-size:11px;color:var(--ink3)">Loading&hellip;</div>
+        </div>
+        {% endif %}
+        <div style="border-top:1px solid var(--paper3);margin-top:12px;padding-top:12px">
+          <div style="font-size:12px;font-weight:600;color:var(--ink)">Recovery email</div>
+          <div style="font-size:11px;color:var(--ink3)" id="rec-status">Loading&hellip;</div>
+          <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
+            <input id="rec-email" type="email" placeholder="A second address you can always reach"  style="flex:1;min-width:180px;padding:7px 9px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;background:var(--paper);color:var(--ink)">
+            <button onclick="recSend(this)" class="btn-secondary" style="font-size:11px;padding:4px 10px">Send code</button>
+          </div>
+          <div id="rec-verify" style="display:none;gap:6px;margin-top:8px">
+            <input id="rec-code" inputmode="numeric" maxlength="6" placeholder="6-digit code" style="width:120px;padding:7px 9px;border:1px solid var(--paper3);border-radius:7px;font-family:'Space Grotesk',sans-serif;font-size:12px;background:var(--paper);color:var(--ink)">
+            <button onclick="recVerify(this)" class="btn-primary" style="font-size:11px;padding:4px 10px">Verify</button>
+          </div>
+        </div>
+        <div style="border-top:1px solid var(--paper3);margin-top:12px;padding-top:10px;display:flex;gap:16px;flex-wrap:wrap">
+          <button style="background:none;border:none;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;font-size:11px;font-weight:600;color:var(--ember);padding:0" onclick="toggleSec('login-history')">Sign-in history &#9662;</button>
+          <button style="background:none;border:none;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;font-size:11px;font-weight:600;color:var(--ember);padding:0" onclick="toggleSec('activity-log')">Account activity &#9662;</button>
+        </div>
+        <div id="login-history" style="display:none;margin-top:8px;font-size:11px;color:var(--ink3)"></div>
+        <div id="activity-log" style="display:none;margin-top:8px;font-size:11px;color:var(--ink3)"></div>
       </div>
 
       <!-- Change password modal -->
@@ -4011,6 +4159,39 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     </div>
   </div>
 
+  <!-- iOS parity: team, export, report a bug -->
+  <div class="acct-card account-two-col" style="padding:18px 22px;margin-bottom:14px;display:grid;grid-template-columns:1fr 1fr;gap:0">
+    <div style="padding-right:24px;border-right:1px solid var(--paper3)">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Team</div>
+      <div style="font-size:11px;color:var(--ink3)" style="font-size:12px;color:var(--ink3);margin-bottom:10px;line-height:1.5">Who has access to this restaurant. Each teammate gets their own login; the account owner can remove access any time.</div>
+      <div id="team-list" style="font-size:11px;color:var(--ink3)">Loading&hellip;</div>
+      {% if current_user.role != 'member' %}
+      <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">
+        <input id="team-name" placeholder="Name" style="flex:1;min-width:110px;padding:7px 9px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;background:var(--paper);color:var(--ink)">
+        <input id="team-email" type="email" placeholder="Email" style="flex:1.4;min-width:150px;padding:7px 9px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;background:var(--paper);color:var(--ink)">
+        <button onclick="inviteTeam(this)" class="btn-primary" style="font-size:11px;padding:5px 12px">Add teammate</button>
+      </div>
+      <div style="font-size:11px;color:var(--ink3)" style="font-size:11px;color:var(--ink3);margin-top:6px">They get a temporary password by email.</div>
+      {% endif %}
+    </div>
+    <div style="padding-left:24px">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Export my data</div>
+      <div style="font-size:12px;color:var(--ink3);margin-bottom:10px;line-height:1.5">Emailed to you as CSV attachments.</div>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;font-size:12px;color:var(--ink2);margin-bottom:10px">
+        <label style="display:flex;gap:5px;align-items:center;cursor:pointer"><input type="checkbox" class="exp-scope" value="reviews" checked> Reviews</label>
+        {% if mod_labor %}<label style="display:flex;gap:5px;align-items:center;cursor:pointer"><input type="checkbox" class="exp-scope" value="labor"> Labor</label>{% endif %}
+        {% if mod_inventory %}<label style="display:flex;gap:5px;align-items:center;cursor:pointer"><input type="checkbox" class="exp-scope" value="food_cost"> Food cost</label>{% endif %}
+        <label style="display:flex;gap:5px;align-items:center;cursor:pointer"><input type="checkbox" class="exp-scope" value="settings"> Settings</label>
+      </div>
+      <button onclick="exportData(this)" class="btn-primary" style="font-size:11px;padding:5px 12px">Email me my data</button>
+      <div style="border-top:1px solid var(--paper3);margin-top:16px;padding-top:14px">
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Report a bug</div>
+        <textarea id="bug-msg" rows="2" placeholder="What happened, and where?" style="width:100%;box-sizing:border-box;padding:7px 9px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;background:var(--paper);color:var(--ink);resize:vertical"></textarea>
+        <button onclick="reportBug(this)" class="btn-secondary" style="font-size:11px;padding:5px 12px;margin-top:8px">Send report</button>
+      </div>
+    </div>
+  </div>
+
   <!-- SECTION 3: Community strip -->
   <div class="acct-card account-two-col" style="padding:18px 22px;margin-bottom:14px;display:grid;grid-template-columns:1fr 1fr;gap:0">
     <!-- Referral -->
@@ -4126,12 +4307,12 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       <div class="faq-group">
         <div style="font-size:11px;font-weight:700;color:var(--ink3);margin:14px 0 6px" class="faq-group-title">Security</div>
         <div class="faq-item"><button type="button" class="faq-q" onclick="toggleFaq(this)">What does two-factor authentication protect?<span class="faq-arrow">▾</span></button><div class="faq-a">2FA adds a one-time code (by email or text) on top of your password at sign-in. Once it's on, you'll also get a set of one-time backup codes &mdash; save them somewhere safe in case you ever lose access to your email or phone.</div></div>
-        <div class="faq-item"><button type="button" class="faq-q" onclick="toggleFaq(this)">Can more than one person log in for my restaurant?<span class="faq-arrow">▾</span></button><div class="faq-a">Yes &mdash; the account owner can add teammates from the Cavnar AI iOS app's Account &rarr; Manage team. Each teammate gets their own real login, and the owner can remove access at any time.</div></div>
+        <div class="faq-item"><button type="button" class="faq-q" onclick="toggleFaq(this)">Can more than one person log in for my restaurant?<span class="faq-arrow">▾</span></button><div class="faq-a">Yes &mdash; the account owner can add teammates from the Team card above (or in the iOS app under Account &rarr; Manage team). Each teammate gets their own real login, and the owner can remove access at any time.</div></div>
       </div>
       <div class="faq-group">
         <div style="font-size:11px;font-weight:700;color:var(--ink3);margin:14px 0 6px" class="faq-group-title">Billing &amp; account</div>
         <div class="faq-item"><button type="button" class="faq-q" onclick="toggleFaq(this)">How do I change my plan or payment method?<span class="faq-arrow">▾</span></button><div class="faq-a">Use the Billing card above. If you don't have an active plan yet, or need something changed on your contract, contact Will directly.</div></div>
-        <div class="faq-item"><button type="button" class="faq-q" onclick="toggleFaq(this)">Can I export my review data?<span class="faq-arrow">▾</span></button><div class="faq-a">Yes &mdash; from the Cavnar AI iOS app, Account &rarr; Export my data emails you a CSV of your reviews (date, rating, text, and response status).</div></div>
+        <div class="faq-item"><button type="button" class="faq-q" onclick="toggleFaq(this)">Can I export my review data?<span class="faq-arrow">▾</span></button><div class="faq-a">Yes &mdash; use Export my data above (or in the iOS app under Account &rarr; Export my data). It emails you CSVs of your reviews, labor and food cost history, plus a JSON of your settings.</div></div>
         <div class="faq-item"><button type="button" class="faq-q" onclick="toggleFaq(this)">How do I cancel my account?<span class="faq-arrow">▾</span></button><div class="faq-a">Getting started with Cavnar AI includes signing a service agreement, so cancellation isn't self-serve &mdash; use the "Request cancellation" link below. 30 days' written notice is required; your account stays active through the end of your current billing period plus 30 days.</div></div>
       </div>
       <div class="faq-group">
@@ -4275,8 +4456,13 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       <canvas id="ask-cavnar-header-orb" width="22" height="22" aria-hidden="true" style="width:22px;height:22px;display:block"></canvas>
       <span style="font-family:'Clash Display',sans-serif;font-size:14px;color:#f0ebe0">Ask Cavnar AI</span>
     </div>
-    <button aria-label="Close" onclick="toggleAskCavnar()" style="background:none;border:none;cursor:pointer;color:#f0ebe0;font-size:15px;line-height:1;padding:0">&#x2715;</button>
+    <div style="display:flex;align-items:center;gap:10px">
+      <button onclick="askToggleHistory()" title="Chat history" style="background:none;border:1px solid rgba(240,235,224,.25);border-radius:6px;cursor:pointer;color:#f0ebe0;font-size:11px;padding:3px 8px;font-family:'Apfel Grotezk',sans-serif">History</button>
+      <button onclick="askNewChat()" title="New chat" style="background:none;border:1px solid rgba(240,235,224,.25);border-radius:6px;cursor:pointer;color:#f0ebe0;font-size:11px;padding:3px 8px;font-family:'Apfel Grotezk',sans-serif">New</button>
+      <button aria-label="Close" onclick="toggleAskCavnar()" style="background:none;border:none;cursor:pointer;color:#f0ebe0;font-size:15px;line-height:1;padding:0">&#x2715;</button>
+    </div>
   </div>
+  <div id="ask-cavnar-history" style="display:none;max-height:200px;overflow-y:auto;border-bottom:1px solid var(--paper3);background:var(--paper2)"></div>
   <div id="ask-cavnar-messages" style="flex:1;overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column;gap:10px;min-height:180px">
     <div style="font-size:12px;color:var(--ink3);line-height:1.6">Ask me anything — your reviews, labor, food cost, and marketing numbers, or general advice on running the place. I'll pull in your real data whenever it's relevant.</div>
   </div>
@@ -4449,6 +4635,7 @@ window.sendAskCavnar = function() {
     if (d.ok) {
       _askCavnarHistory.push({role: 'user', content: question});
       _askCavnarHistory.push({role: 'assistant', content: answer});
+      if (window.askRefreshConversations) askRefreshConversations(true);
       // Anything that leaves the building comes back as a proposal, never
       // as something already done — render the confirm card.
       (d.proposals || []).forEach(_appendAskCavnarProposal);
@@ -4461,7 +4648,7 @@ window.sendAskCavnar = function() {
   fetch('/api/ask-cavnar/stream', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({question: question})
+    body: JSON.stringify({question: question, conversation_id: window._askConversationId || null})
   }).then(function(resp) {
     if (!resp.ok || !resp.body) throw new Error('stream unavailable');
     var reader = resp.body.getReader();
@@ -6451,6 +6638,8 @@ function openBrandVoice(){
     document.getElementById('bv-voice').value=d.voice_notes||'';
     document.getElementById('bv-never').value=d.never_say||'';
     document.getElementById('bv-menu').value=d.menu_notes||'';
+    document.getElementById('bv-tone').value=d.tone_preset||'';
+    document.getElementById('bv-signoff').value=d.sign_off_name||'';
   }).catch(function(){});
 }
 function closeBrandVoice(){
@@ -6464,7 +6653,9 @@ function saveBrandVoice(){
   fetch('/api/brand-voice',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
     voice_notes:document.getElementById('bv-voice').value,
     never_say:document.getElementById('bv-never').value,
-    menu_notes:document.getElementById('bv-menu').value
+    menu_notes:document.getElementById('bv-menu').value,
+    tone_preset:document.getElementById('bv-tone').value,
+    sign_off_name:document.getElementById('bv-signoff').value
   })}).then(function(r){return r.json();}).then(function(d){
     if(btn){btn.disabled=false;btn.style.opacity='';}
     if(d.ok){toast('Brand voice saved','success');closeBrandVoice();}
@@ -7802,66 +7993,64 @@ function loadLaborTrend(force){
   }).catch(function(){_perfTrendData=[];renderPerfChart();});
 }
 function exportReviews(){window.location='/api/export-reviews';}
+function _twoFAMethod(){var r=document.querySelector('input[name="twofa-method"]:checked');return r?r.value:'email';}
 function toggle2FA(enable){
-  if(enable){
-    document.getElementById('twofa-modal').style.display='flex';
-    return;
-  }
-  // Disable — simple confirm
+  if(enable){document.getElementById('twofa-modal').style.display='flex';return;}
   if(!confirm('Disable two-factor authentication? Your account will only require your password to sign in.'))return;
-  fetch('/api/toggle-2fa',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({enabled:false})})
+  fetch('/api/account/2fa/disable',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
     .then(function(r){return r.json();}).then(function(d){
       if(d.ok){toast('2FA disabled','success');setTimeout(function(){location.reload();},800);}
       else toast(d.error||'Failed to disable 2FA','error');
     });
 }
 function twoFAStep2(btn){
-  if(btn){btn.textContent='Sending…';btn.disabled=true;}
-  // Send test code
-  fetch('/api/send-2fa-test',{method:'POST'})
+  var method=_twoFAMethod();
+  if(btn){btn.textContent='Sending\u2026';btn.disabled=true;}
+  fetch('/api/account/2fa/send-test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({method:method})})
     .then(function(r){return r.json();}).then(function(d){
-      if(!d.ok){if(btn){btn.innerHTML='Send me a test code<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';btn.disabled=false;}toast(d.error||'Could not send code — check your account email','error');return;}
+      if(!d.ok){if(btn){btn.textContent='Send me a code';btn.disabled=false;}toast(d.error||'Could not send the code','error');return;}
       document.getElementById('twofa-step1').style.display='none';
       document.getElementById('twofa-step2').style.display='block';
-      document.getElementById('twofa-masked-email').textContent=d.masked||'your email';
-      // Wire up digit inputs
+      document.getElementById('twofa-masked-email').textContent=d.masked||(method==='sms'?'your phone':'your email');
       var digits=document.querySelectorAll('.twofa-setup-digit');
       digits.forEach(function(inp,i){
         inp.value='';
-        inp.addEventListener('input',function(){
-          if(inp.value.length===1&&i<5)digits[i+1].focus();
-        });
-        inp.addEventListener('keydown',function(e){
-          if(e.key==='Backspace'&&!inp.value&&i>0)digits[i-1].focus();
-        });
+        inp.addEventListener('input',function(){if(inp.value.length===1&&i<5)digits[i+1].focus();});
+        inp.addEventListener('keydown',function(e){if(e.key==='Backspace'&&!inp.value&&i>0)digits[i-1].focus();});
       });
       digits[0].focus();
-    });
+    }).catch(function(){if(btn){btn.textContent='Send me a code';btn.disabled=false;}toast('Could not send the code','error');});
 }
 function twoFAVerify(){
   var digits=document.querySelectorAll('.twofa-setup-digit');
-  var code='';
-  digits.forEach(function(d){code+=d.value;});
-  if(code.length<6){document.getElementById('twofa-setup-error').textContent='Enter all 6 digits';document.getElementById('twofa-setup-error').style.display='block';return;}
+  var code='';digits.forEach(function(d){code+=d.value;});
+  var err=document.getElementById('twofa-setup-error');
+  if(code.length<6){err.textContent='Enter all 6 digits';err.style.display='block';return;}
   var btn=document.querySelector('#twofa-step2 .btn-primary');
-  if(btn){btn.textContent='Verifying…';btn.disabled=true;}
-  fetch('/api/verify-2fa-setup',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({code:code})})
+  if(btn){btn.textContent='Verifying\u2026';btn.disabled=true;}
+  fetch('/api/account/2fa/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:code,method:_twoFAMethod()})})
     .then(function(r){return r.json();}).then(function(d){
       if(d.ok){
         document.getElementById('twofa-step2').style.display='none';
         document.getElementById('twofa-step3').style.display='block';
+        if(d.backup_codes&&d.backup_codes.length){
+          document.getElementById('twofa-backup-list').textContent=d.backup_codes.join('   ');
+          document.getElementById('twofa-backup-codes').style.display='block';
+          window._twoFACodes=d.backup_codes;
+        }
       } else {
         if(btn){btn.textContent='Verify & enable 2FA';btn.disabled=false;}
-        document.getElementById('twofa-setup-error').textContent=d.error||'Incorrect code — try again';
-        document.getElementById('twofa-setup-error').style.display='block';
+        err.textContent=d.error||'Incorrect code \u2014 try again';err.style.display='block';
       }
     }).catch(function(){
       if(btn){btn.textContent='Verify & enable 2FA';btn.disabled=false;}
-      document.getElementById('twofa-setup-error').textContent='Something went wrong — try again';
-      document.getElementById('twofa-setup-error').style.display='block';
+      err.textContent='Something went wrong \u2014 try again';err.style.display='block';
     });
+}
+function copyBackupCodes(btn){
+  var codes=(window._twoFACodes||[]).join('\n');
+  if(!codes)return;
+  navigator.clipboard.writeText(codes).then(function(){btn.textContent='Copied \u2713';});
 }
 function sendReferral(){
   var name = document.getElementById('referral-name').value.trim();
@@ -9724,5 +9913,311 @@ document.addEventListener('click', function(e) {
     </div>
   </div>
 </div>
+<script>
+window._cuRole='{{ current_user.role if current_user and current_user.role else "client" }}';
+// ── iOS parity ─────────────────────────────────────────────────────────────
+// Everything the phone had first, on the web: profile editing, security
+// (checkup, backup codes, trusted devices, recovery email, sign-in history,
+// activity), team, data export, bug reports, Home's receipts + value chart +
+// one-tap publish, Ask Cavnar conversation history, competitor add/remove,
+// visibility history, schedule history and who's-seen-it. ES5 only.
+(function(){
+  function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+  function jget(url,cb){fetch(url).then(function(r){return r.json();}).then(cb).catch(function(){cb({ok:false});});}
+  function jsend(url,body,cb,method){fetch(url,{method:method||'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})}).then(function(r){return r.json();}).then(cb).catch(function(){cb({ok:false,error:'Network error'});});}
+  function busy(btn,label){if(!btn)return function(){};var was=btn.textContent;btn.disabled=true;btn.textContent=label||'Working…';return function(){btn.disabled=false;btn.textContent=was;};}
+  function ago(iso){if(!iso)return '';var t=Date.parse(String(iso).replace(' ','T'));if(isNaN(t))return iso;var m=Math.round((Date.now()-t)/60000);if(m<1)return 'just now';if(m<60)return m+'m ago';var h=Math.round(m/60);if(h<24)return h+'h ago';var d=Math.round(h/24);if(d<30)return d+'d ago';return new Date(t).toLocaleDateString();}
+  function fmtDate(iso){if(!iso)return '';var t=Date.parse(String(iso).replace(' ','T'));return isNaN(t)?iso:new Date(t).toLocaleDateString(undefined,{month:'short',day:'numeric'});}
+  function has(id){return !!document.getElementById(id);}
+
+  // ── Profile ──
+  window.toggleProfileEdit=function(){var f=document.getElementById('profile-edit');if(!f)return;var open=f.style.display==='none';f.style.display=open?'block':'none';var b=document.getElementById('profile-edit-btn');if(b)b.textContent=open?'Close':'Edit profile';};
+  window.saveProfile=function(){
+    var done=busy(document.getElementById('pe-save'),'Saving…');
+    var v=function(id){var el=document.getElementById(id);return el?el.value:'';};
+    jsend('/api/account/profile',{owner_name:v('pe-owner-name'),owner_phone:v('pe-phone'),timezone:v('pe-tz'),tone_preset:v('pe-tone'),response_language:v('pe-lang'),sign_off_name:v('pe-signoff'),voice_notes:v('pe-voice'),never_say:v('pe-never'),menu_notes:v('pe-menu')},function(d){
+      done();
+      if(d.ok){toast('Profile saved','success');setTimeout(function(){location.reload();},700);}
+      else toast(d.error||'Could not save','error');
+    });
+  };
+
+  // ── Security ──
+  function renderCheckup(d){
+    var items=[
+      ['Two-factor authentication',d.two_fa_enabled,30,d.two_fa_enabled?('On · '+(d.two_fa_method==='sms'?'text':'email')):'Off — turn it on above'],
+      ['Password strength',d.password_strength==='strong',15,d.password_strength||'unknown'],
+      ['Backup codes on hand',d.two_fa_enabled&&d.backup_codes_remaining>0,15,d.two_fa_enabled?(d.backup_codes_remaining+' unused'):'Needs 2FA'],
+      ['Sign-in notifications',d.login_notify,10,d.login_notify?'On':'Off'],
+      ['Recovery email',!!d.recovery_email,15,d.recovery_email||'Not set'],
+      ['No stale devices',(d.trusted_devices||0)<=3,15,(d.trusted_devices||0)+' trusted, '+(d.active_sessions||1)+' signed in']
+    ];
+    var score=0,html='';
+    items.forEach(function(it){if(it[1])score+=it[2];html+='<div style="display:flex;gap:6px;align-items:baseline"><span style="color:'+(it[1]?'var(--green)':'var(--ember)')+';font-weight:700">'+(it[1]?'✓':'•')+'</span><span style="color:var(--ink)">'+esc(it[0])+'</span><span>· '+esc(it[3])+'</span></div>';});
+    var sc=document.getElementById('sec-score');if(sc)sc.textContent=score;
+    var bar=document.getElementById('sec-bar');if(bar)bar.style.width=score+'%';
+    var el=document.getElementById('sec-items');if(el)el.innerHTML=html;
+    var rs=document.getElementById('rec-status');
+    if(rs){rs.innerHTML=d.recovery_email?('<span style="color:var(--green)">✓</span> '+esc(d.recovery_email)+' <button onclick="recRemove(this)" style="background:none;border:none;cursor:pointer;color:var(--ink3);font-size:11px;text-decoration:underline;padding:0 0 0 6px;font-family:inherit">Remove</button>'):'Not set — a second address that can always get you back in.';}
+  }
+  window.loadSecurityExtras=function(){
+    if(!has('sec-items'))return;
+    jget('/api/account/security-summary',function(d){if(d.ok)renderCheckup(d);});
+    if(has('bc-remaining'))jget('/api/account/2fa/backup-codes',function(d){var el=document.getElementById('bc-remaining');if(el)el.textContent=d.ok?d.remaining:'?';});
+    if(has('trusted-list'))jget('/api/account/2fa/trusted-devices',function(d){
+      var el=document.getElementById('trusted-list');if(!el)return;
+      if(!d.ok||!d.devices||!d.devices.length){el.textContent='No trusted devices yet — tick "Remember device" at sign-in to add one.';return;}
+      el.innerHTML=d.devices.map(function(x){return '<div style="display:flex;justify-content:space-between;gap:8px;padding:4px 0;border-top:1px solid var(--paper3)"><span style="color:var(--ink)">'+esc(x.label||'Device')+'</span><span>'+(x.last_used_at?'used '+ago(x.last_used_at):'added '+ago(x.created_at))+' <button onclick="revokeTrusted('+x.id+',this)" style="background:none;border:none;cursor:pointer;color:var(--ember);font-size:11px;padding:0 0 0 6px;font-family:inherit">Forget</button></span></div>';}).join('');
+    });
+    if(has('login-history'))jget('/api/account/login-history',function(d){
+      var el=document.getElementById('login-history');if(!el)return;
+      if(!d.ok||!d.history||!d.history.length){el.textContent='No sign-ins recorded yet.';return;}
+      el.innerHTML=d.history.slice(0,15).map(function(h){return '<div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;border-top:1px solid var(--paper3)"><span style="color:var(--ink)">'+esc(h.label||h.device_type||'Sign-in')+'</span><span>'+esc(h.ip_address||'')+' · '+ago(h.created_at)+'</span></div>';}).join('');
+    });
+    if(has('activity-log'))jget('/api/account/activity',function(d){
+      var el=document.getElementById('activity-log');if(!el)return;
+      if(!d.ok||!d.events||!d.events.length){el.textContent='Nothing yet — password, email, 2FA and team changes show up here.';return;}
+      el.innerHTML=d.events.slice(0,20).map(function(e){return '<div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;border-top:1px solid var(--paper3)"><span style="color:var(--ink)">'+esc(e.label||e.type)+(e.detail?' <span style="color:var(--ink3)">· '+esc(e.detail)+'</span>':'')+'</span><span>'+esc(e.actor||'')+' · '+ago(e.created_at)+'</span></div>';}).join('');
+    });
+  };
+  window.toggleSec=function(id){var el=document.getElementById(id);if(el)el.style.display=el.style.display==='none'?'block':'none';};
+  window.regenBackupCodes=function(btn){
+    if(!confirm('Regenerate backup codes? Every code you saved before stops working.'))return;
+    var done=busy(btn,'Generating…');
+    jsend('/api/account/2fa/backup-codes',{},function(d){done();if(!d.ok){toast(d.error||'Could not regenerate','error');return;}
+      var box=document.getElementById('bc-codes');if(box){box.textContent=(d.backup_codes||[]).join('   ');box.style.display='block';}
+      var el=document.getElementById('bc-remaining');if(el)el.textContent=(d.backup_codes||[]).length;
+      toast('New backup codes — save them now, they won’t be shown again','success');});
+  };
+  window.revokeTrusted=function(id,btn){var done=busy(btn,'…');jsend('/api/account/2fa/trusted-devices/'+id+'/revoke',{},function(d){done();if(d.ok){toast('Device forgotten','success');loadSecurityExtras();}else toast(d.error||'Could not remove','error');});};
+  window.forgetAllTrusted=function(btn){if(!confirm('Forget every trusted device? They’ll all be asked for a code next time.'))return;var done=busy(btn,'…');jsend('/api/account/2fa/trusted-devices/revoke-all',{},function(d){done();if(d.ok){toast('All devices forgotten','success');loadSecurityExtras();}else toast(d.error||'Could not remove','error');});};
+  window.recSend=function(btn){var email=(document.getElementById('rec-email')||{}).value||'';if(!email){toast('Enter an email address','error');return;}var done=busy(btn,'Sending…');jsend('/api/account/recovery-email',{email:email},function(d){done();if(d.ok){var v=document.getElementById('rec-verify');if(v)v.style.display='flex';toast('Code sent to '+email,'success');}else toast(d.error||'Could not send','error');});};
+  window.recVerify=function(btn){var code=(document.getElementById('rec-code')||{}).value||'';var done=busy(btn,'…');jsend('/api/account/recovery-email/verify',{code:code},function(d){done();if(d.ok){toast('Recovery email saved','success');var v=document.getElementById('rec-verify');if(v)v.style.display='none';document.getElementById('rec-email').value='';loadSecurityExtras();}else toast(d.error||'That code isn’t right','error');});};
+  window.recRemove=function(btn){if(!confirm('Remove your recovery email?'))return;jsend('/api/account/recovery-email/remove',{},function(d){if(d.ok){toast('Recovery email removed','success');loadSecurityExtras();}else toast(d.error||'Could not remove','error');});};
+
+  // ── Team / export / bug ──
+  window.loadTeam=function(){
+    var el=document.getElementById('team-list');if(!el)return;
+    jget('/api/account/team',function(d){
+      if(!d.ok){el.textContent='Could not load your team.';return;}
+      el.innerHTML=(d.members||[]).map(function(m){
+        var role=m.role==='member'?'Teammate':(m.role==='owner'?'Owner':'Account owner');
+        var right=m.is_you?'<span style="color:var(--ink3)">you</span>':((window._cuRole!=='member')?'<button onclick="revokeTeam('+m.id+',this)" style="background:none;border:none;cursor:pointer;color:var(--ember);font-size:11px;padding:0;font-family:inherit">Remove</button>':'');
+        return '<div style="display:flex;justify-content:space-between;gap:8px;padding:5px 0;border-top:1px solid var(--paper3)"><span><span style="color:var(--ink);font-weight:600">'+esc(m.username)+'</span> <span style="color:var(--ink3)">· '+esc(m.email||'')+' · '+role+(m.last_login?' · last in '+ago(m.last_login):' · never signed in')+'</span></span>'+right+'</div>';
+      }).join('')||'Just you so far.';
+    });
+  };
+  window.inviteTeam=function(btn){
+    var name=(document.getElementById('team-name')||{}).value||'',email=(document.getElementById('team-email')||{}).value||'';
+    if(!name||email.indexOf('@')<0){toast('Enter a name and a valid email','error');return;}
+    var done=busy(btn,'Adding…');
+    jsend('/api/account/team/invite',{name:name,email:email},function(d){done();if(d.ok){toast('Added — they’ve been emailed a temporary password','success');document.getElementById('team-name').value='';document.getElementById('team-email').value='';loadTeam();}else toast(d.error||'Could not add them','error');});
+  };
+  window.revokeTeam=function(id,btn){if(!confirm('Remove this teammate’s access? They’ll be signed out everywhere.'))return;var done=busy(btn,'…');jsend('/api/account/team/'+id+'/revoke',{},function(d){done();if(d.ok){toast('Access removed','success');loadTeam();}else toast(d.error||'Could not remove','error');});};
+  window.exportData=function(btn){
+    var scopes=[].slice.call(document.querySelectorAll('.exp-scope:checked')).map(function(c){return c.value;});
+    if(!scopes.length){toast('Pick at least one thing to export','error');return;}
+    var done=busy(btn,'Sending…');
+    jsend('/api/account/export-data',{scopes:scopes},function(d){done();if(d.ok)toast('On its way to '+(d.email||'your email'),'success');else toast(d.error||'Could not export','error');});
+  };
+  window.reportBug=function(btn){
+    var msg=(document.getElementById('bug-msg')||{}).value||'';
+    if(msg.trim().length<5){toast('Tell us a little more about what happened','error');return;}
+    var done=busy(btn,'Sending…');
+    jsend('/api/account/report-bug',{message:msg,screen:'web:'+(location.search||'dashboard')},function(d){done();if(d.ok){toast('Thanks — Will has it','success');document.getElementById('bug-msg').value='';}else toast(d.error||'Could not send','error');});
+  };
+
+  // ── Home ──
+  window.publishAllReplies=function(btn){
+    var done=busy(btn,'Publishing…');
+    jsend('/api/reviews/approve-all',{limit:25},function(d){done();
+      if(!d.ok){toast(d.error||'Could not publish','error');return;}
+      var n=d.approved||0;toast(n+' '+(n===1?'reply':'replies')+' approved'+(d.posted?' · '+d.posted+' posting to Google':''),'success');
+      setTimeout(function(){location.reload();},900);});
+  };
+  window.loadHomeExtras=function(){
+    var wrap=document.getElementById('home-extras');if(!wrap)return;
+    jget('/api/home',function(d){
+      if(!d.ok)return;
+      var rec=d.weekly_receipts||[],hist=d.value_history||[];
+      var show=false;
+      var rl=document.getElementById('home-receipts');
+      if(rl){
+        if(rec.length){show=true;rl.innerHTML=rec.map(function(r){return '<div style="display:flex;gap:10px;align-items:baseline;padding:6px 0;border-top:1px solid var(--paper3)"><span style="font-family:\'Space Grotesk\',sans-serif;font-weight:600;color:var(--ink);white-space:nowrap">'+esc(r.emphasis)+'</span><span>'+esc(r.text)+'</span></div>';}).join('');}
+        else rl.innerHTML='<div style="color:var(--ink3)">Nothing logged yet this week — replies, schedules and posts land here as they happen.</div>';
+      }
+      var svg=document.getElementById('home-value-chart');
+      if(svg&&hist.length>1){
+        show=true;
+        var vals=hist.map(function(p){return +p.value||0;}),max=Math.max.apply(null,vals)||1,min=Math.min.apply(null,vals);
+        var W=320,H=90,pad=6,rng=(max-min)||1;
+        var pts=vals.map(function(v,i){return [pad+i*(W-2*pad)/(vals.length-1),H-pad-((v-min)/rng)*(H-2*pad)];});
+        var line=pts.map(function(p,i){return (i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1);}).join(' ');
+        var area=line+' L'+pts[pts.length-1][0].toFixed(1)+' '+(H-pad)+' L'+pts[0][0].toFixed(1)+' '+(H-pad)+' Z';
+        svg.innerHTML='<defs><linearGradient id="hvg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2d6a4f" stop-opacity=".35"/><stop offset="1" stop-color="#2d6a4f" stop-opacity="0"/></linearGradient></defs><path d="'+area+'" fill="url(#hvg)"/><path d="'+line+'" fill="none" stroke="#2d6a4f" stroke-width="2" stroke-linejoin="round"/><circle cx="'+pts[pts.length-1][0].toFixed(1)+'" cy="'+pts[pts.length-1][1].toFixed(1)+'" r="3.5" fill="#2d6a4f"/>';
+        var tot=document.getElementById('home-value-total');if(tot)tot.textContent='$'+Math.round(d.total_value_delivered||vals[vals.length-1]).toLocaleString();
+        var rg=document.getElementById('home-value-range');if(rg)rg.textContent=fmtDate(hist[0].date)+' – '+fmtDate(hist[hist.length-1].date)+' · '+hist.length+' days tracked';
+      } else if(svg){
+        var tot2=document.getElementById('home-value-total');if(tot2)tot2.textContent='$'+Math.round(d.total_value_delivered||0).toLocaleString();
+        var rg2=document.getElementById('home-value-range');if(rg2)rg2.textContent='The trend line starts after the second day of tracking.';
+        if(rec.length)show=true;
+      }
+      if(show)wrap.style.display='grid';
+    });
+  };
+
+  // ── Ask Cavnar history ──
+  window._askConversationId=window._askConversationId||null;
+  function askMsgHtml(m){var me=m.role==='user';return '<div style="align-self:'+(me?'flex-end':'flex-start')+';max-width:86%;padding:8px 11px;border-radius:12px;font-size:12px;line-height:1.55;white-space:pre-wrap;background:'+(me?'var(--ember)':'var(--paper2)')+';color:'+(me?'#fff':'var(--ink)')+';border:1px solid '+(me?'var(--ember)':'var(--paper3)')+'">'+esc(m.content)+'</div>';}
+  window.askRefreshConversations=function(quiet){
+    var box=document.getElementById('ask-cavnar-history');if(!box)return;
+    if(!quiet&&box.style.display==='none')return;
+    jget('/api/ask-cavnar/conversations',function(d){
+      if(!d.ok)return;
+      var list=d.conversations||[];
+      if(!list.length){box.innerHTML='<div style="padding:10px 14px;font-size:12px;color:var(--ink3)">No chats yet.</div>';return;}
+      box.innerHTML=list.map(function(c){var on=c.id===window._askConversationId;return '<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--paper3);background:'+(on?'rgba(200,75,47,.08)':'transparent')+'"><button onclick="askOpenConversation('+c.id+')" style="flex:1;text-align:left;background:none;border:none;cursor:pointer;font-family:inherit;font-size:12px;color:var(--ink);padding:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(c.title||'Untitled chat')+'<span style="display:block;font-size:10px;color:var(--ink3)">'+ago(c.updated_at||c.created_at)+(c.message_count?' · '+c.message_count+' messages':'')+'</span></button><button onclick="askDeleteConversation('+c.id+')" title="Delete" style="background:none;border:none;cursor:pointer;color:var(--ink3);font-size:13px;padding:0">✕</button></div>';}).join('');
+    });
+  };
+  window.askToggleHistory=function(){var box=document.getElementById('ask-cavnar-history');if(!box)return;var open=box.style.display==='none';box.style.display=open?'block':'none';if(open)askRefreshConversations(true);};
+  window.askOpenConversation=function(id){
+    jget('/api/ask-cavnar/conversations/'+id,function(d){
+      if(!d.ok){toast(d.error||'Could not open that chat','error');return;}
+      window._askConversationId=id;
+      var msgs=d.messages||[];
+      _askCavnarHistory=msgs.filter(function(m){return m.role==='user'||m.role==='assistant';}).map(function(m){return {role:m.role,content:m.content};});
+      var box=document.getElementById('ask-cavnar-messages');
+      if(box){box.innerHTML=msgs.length?msgs.map(askMsgHtml).join(''):'<div style="font-size:12px;color:var(--ink3)">Empty chat — ask away.</div>';box.scrollTop=box.scrollHeight;}
+      var h=document.getElementById('ask-cavnar-history');if(h)h.style.display='none';
+    });
+  };
+  window.askNewChat=function(){
+    jsend('/api/ask-cavnar/conversations',{},function(d){
+      if(!d.ok){toast(d.error||'Could not start a chat','error');return;}
+      window._askConversationId=d.conversation_id;_askCavnarHistory=[];
+      var box=document.getElementById('ask-cavnar-messages');if(box)box.innerHTML='<div style="font-size:12px;color:var(--ink3);line-height:1.6">New chat. Ask me anything — your reviews, labor, food cost, and marketing numbers, or general advice on running the place.</div>';
+      var h=document.getElementById('ask-cavnar-history');if(h)h.style.display='none';
+      var inp=document.getElementById('ask-cavnar-input');if(inp)inp.focus();
+    });
+  };
+  window.askDeleteConversation=function(id){
+    if(!confirm('Delete this chat?'))return;
+    jsend('/api/ask-cavnar/conversations/'+id,{},function(d){if(!d.ok){toast(d.error||'Could not delete','error');return;}if(window._askConversationId===id){window._askConversationId=null;_askCavnarHistory=[];}askRefreshConversations(true);},'DELETE');
+  };
+
+  // ── Intel ──
+  var _intelTimer=null;
+  window.intelSearchInput=function(){
+    clearTimeout(_intelTimer);
+    var q=(document.getElementById('intel-search')||{}).value||'',box=document.getElementById('intel-search-results');
+    if(q.trim().length<2){if(box)box.style.display='none';return;}
+    _intelTimer=setTimeout(function(){
+      jget('/api/intel/search-places?q='+encodeURIComponent(q.trim()),function(d){
+        if(!box)return;box.style.display='block';
+        if(!d.ok){box.innerHTML='<div style="padding:9px 12px;font-size:12px;color:var(--ember)">'+esc(d.error||'Search failed')+'</div>';return;}
+        var res=d.results||[];
+        if(!res.length){box.innerHTML='<div style="padding:9px 12px;font-size:12px;color:var(--ink3)">No matches — try the name as it appears on Google.</div>';return;}
+        box.innerHTML=res.slice(0,6).map(function(r){return '<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-top:1px solid var(--paper3)"><div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:600;color:var(--ink)">'+esc(r.name)+'</div><div style="font-size:11px;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(r.address||'')+(r.rating?' · '+r.rating+'★ ('+(r.review_count||0)+')':'')+'</div></div><button onclick="intelAdd(\''+esc(r.place_id)+'\',this)" class="btn-primary" style="font-size:11px;padding:4px 10px;white-space:nowrap">Track</button></div>';}).join('');
+      });
+    },350);
+  };
+  function intelRefreshThenReload(){
+    fetch('/api/refresh-competitor-intel',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
+      if(!d.ok){toast(d.error||'Saved — refresh failed','error');return;}
+      var tries=0;(function poll(){tries++;if(tries>40){toast('Still working — check back in a minute','error');return;}
+        fetch('/api/competitor-intel-status/'+d.job_id).then(function(r){return r.json();}).then(function(s){
+          if(s.status==='pending'){setTimeout(poll,2000);return;}
+          if(s.ok){toast('Competitors updated','success');setTimeout(function(){window.location.href=window.location.pathname+'?tab=competitor';},600);}
+          else toast(s.error||'Refresh failed','error');
+        }).catch(function(){setTimeout(poll,2000);});})();
+    });
+  }
+  window.intelAdd=function(placeId,btn){
+    var done=busy(btn,'Adding…');
+    jsend('/api/intel/add-competitor',{place_id:placeId},function(d){
+      if(!d.ok){done();toast(d.error||'Could not add','error');return;}
+      if(btn)btn.textContent='Added — refreshing…';
+      toast('Tracking them — pulling their reviews now (about 30 seconds)','success');
+      intelRefreshThenReload();
+    });
+  };
+  window.intelRemove=function(placeId,btn){
+    if(!confirm('Stop tracking this competitor?'))return;
+    var done=busy(btn,'…');
+    jsend('/api/intel/remove-competitor',{place_id:placeId},function(d){done();if(d.ok){toast('Removed','success');setTimeout(function(){window.location.href=window.location.pathname+'?tab=competitor';},500);}else toast(d.error||'Could not remove','error');});
+  };
+  window.loadAivHistory=function(){
+    var card=document.getElementById('aiv-history');if(!card)return;
+    jget('/api/ai-visibility/history',function(d){
+      var runs=(d.ok&&d.runs)||[];if(runs.length<1)return;
+      card.style.display='block';
+      var cnt=document.getElementById('aiv-history-count');if(cnt)cnt.textContent=runs.length+' check'+(runs.length===1?'':'s');
+      var list=document.getElementById('aiv-history-list');
+      if(list)list.innerHTML=runs.slice(0,8).map(function(r){return '<div><span style="font-family:\'Space Grotesk\',sans-serif;color:var(--ink);font-weight:600">'+Math.round(r.ai_score||0)+'%</span> AI · <span style="font-family:\'Space Grotesk\',sans-serif">'+Math.round(r.gbp_score||0)+'</span> GBP · '+fmtDate(r.created_at)+'</div>';}).join('');
+      var svg=document.getElementById('aiv-history-chart');
+      var seq=runs.slice().reverse();
+      if(svg&&seq.length>1){
+        var W=320,H=70,pad=6;
+        var pts=seq.map(function(r,i){return [pad+i*(W-2*pad)/(seq.length-1),H-pad-(Math.max(0,Math.min(100,+r.ai_score||0))/100)*(H-2*pad)];});
+        var line=pts.map(function(p,i){return (i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1);}).join(' ');
+        svg.innerHTML='<path d="'+line+'" fill="none" stroke="var(--ember)" stroke-width="2" stroke-linejoin="round"/>'+pts.map(function(p){return '<circle cx="'+p[0].toFixed(1)+'" cy="'+p[1].toFixed(1)+'" r="3" fill="var(--ember)"/>';}).join('');
+      } else if(svg){svg.style.display='none';}
+    });
+  };
+
+  // ── Labor ──
+  window.loadShareStatus=function(){
+    var wrap=document.getElementById('ps-seen'),list=document.getElementById('ps-seen-list');if(!wrap||!list)return;
+    jget('/api/labor/schedule-share-status',function(d){
+      var st=(d.ok&&d.status)||[];
+      if(!st.length){wrap.style.display='none';return;}
+      wrap.style.display='block';
+      list.innerHTML=st.map(function(x){var seen=!!x.viewed_at;return '<div style="display:flex;justify-content:space-between;gap:8px;padding:4px 0;border-top:1px solid rgba(255,255,255,.06)"><span>'+esc(x.employee_name)+'</span><span style="color:'+(seen?'#6fcf97':'rgba(255,255,255,.4)')+'">'+(seen?'Opened '+ago(x.viewed_at)+(x.view_count>1?' · '+x.view_count+'×':''):'Not opened yet')+'</span></div>';}).join('');
+    });
+  };
+  window.loadScheduleHistory=function(){
+    var el=document.getElementById('sched-history-list');if(!el)return;
+    jget('/api/labor/schedule-history',function(d){
+      var h=(d.ok&&d.history)||[];
+      var cnt=document.getElementById('sched-history-count');if(cnt)cnt.textContent=h.length?h.length+' generated':'';
+      if(!h.length){el.textContent='No schedules generated yet — the first one you generate is kept here.';return;}
+      el.innerHTML=h.slice(0,12).map(function(r){var hs=+r.hours_scheduled||0,hb=+r.hours_budget||0;var note=hb&&hs?(hs<hb?Math.round(hb-hs)+' hrs under budget':(hs>hb?Math.round(hs-hb)+' hrs over budget':'on budget')):(hs?Math.round(hs)+' hrs scheduled':'');return '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 0;border-top:1px solid var(--paper3)"><div><div style="color:var(--ink);font-weight:600">Week of '+esc(r.week_start||'')+(r.week_end?' – '+esc(r.week_end):'')+'</div><div style="font-size:11px;color:var(--ink3)">Generated '+ago(r.generated_at)+(note?' · '+note:'')+'</div></div><div style="display:flex;gap:10px;white-space:nowrap"><button onclick="viewScheduleHistory('+r.id+',this)" style="background:none;border:none;cursor:pointer;color:var(--ember);font-size:11px;font-weight:600;padding:0;font-family:inherit">View</button><button onclick="deleteScheduleHistory('+r.id+',this)" style="background:none;border:none;cursor:pointer;color:var(--ink3);font-size:11px;padding:0;font-family:inherit">Delete</button></div></div>';}).join('');
+    });
+  };
+  window.viewScheduleHistory=function(id,btn){
+    var box=document.getElementById('sched-history-detail');if(!box)return;
+    var done=busy(btn,'…');
+    jget('/api/labor/schedule-history/'+id,function(d){
+      done();if(!d.ok){toast(d.error||'Could not load','error');return;}
+      var rows=d.preview_rows||[];
+      var csv=d.schedule_csv||'';
+      var html='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px"><div style="font-size:12px;font-weight:600;color:var(--ink)">Week of '+esc(d.week_start||'')+' · '+rows.length+' shifts</div><div style="display:flex;gap:10px"><button onclick="downloadHistoryCsv('+id+')" class="btn-secondary" style="font-size:11px;padding:4px 10px">Download CSV</button><button onclick="document.getElementById(\'sched-history-detail\').style.display=\'none\'" class="btn-secondary" style="font-size:11px;padding:4px 10px">Close</button></div></div>';
+      html+='<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11px"><tr style="color:var(--ink3);text-transform:uppercase;font-size:10px;letter-spacing:.06em"><th style="text-align:left;padding:4px 6px">Day</th><th style="text-align:left;padding:4px 6px">Employee</th><th style="text-align:left;padding:4px 6px">Role</th><th style="text-align:left;padding:4px 6px">Shift</th><th style="text-align:right;padding:4px 6px">Hrs</th></tr>';
+      html+=rows.map(function(r){return '<tr style="border-top:1px solid var(--paper3)"><td style="padding:4px 6px;color:var(--ink)">'+esc(r.day||r.date||'')+'</td><td style="padding:4px 6px;color:var(--ink)">'+esc(r.employee||'')+'</td><td style="padding:4px 6px;color:var(--ink3)">'+esc(r.role||'')+'</td><td style="padding:4px 6px;color:var(--ink3);white-space:nowrap">'+esc(r.shift_start||'')+'–'+esc(r.shift_end||'')+'</td><td style="padding:4px 6px;text-align:right;font-family:\'Space Grotesk\',sans-serif">'+esc(r.scheduled_hours||'')+'</td></tr>';}).join('')+'</table></div>';
+      box.innerHTML=html;box.style.display='block';window._schedHistCsv=window._schedHistCsv||{};window._schedHistCsv[id]={csv:csv,week:d.week_start||''};
+      box.scrollIntoView({behavior:'smooth',block:'nearest'});
+    });
+  };
+  window.downloadHistoryCsv=function(id){var e=(window._schedHistCsv||{})[id];if(!e||!e.csv){toast('No CSV stored for this week','error');return;}var blob=new Blob([e.csv],{type:'text/csv'});var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='schedule-'+(e.week||id)+'.csv';document.body.appendChild(a);a.click();document.body.removeChild(a);};
+  window.deleteScheduleHistory=function(id,btn){if(!confirm('Delete this schedule from history?'))return;var done=busy(btn,'…');jsend('/api/labor/schedule-history/'+id,{},function(d){done();if(d.ok){toast('Deleted','success');loadScheduleHistory();var box=document.getElementById('sched-history-detail');if(box)box.style.display='none';}else toast(d.error||'Could not delete','error');},'DELETE');};
+
+  // ── Reviews ──
+  window.retractR=function(id,btn){
+    if(!confirm('Retract this reply from Google? The review goes back to your inbox with the draft ready to edit.'))return;
+    var done=busy(btn,'Retracting…');
+    fetch('/retract/'+id,{method:'POST'}).then(function(r){return r.json();}).then(function(d){done();if(d.ok){toast('Reply retracted','success');setTimeout(function(){location.reload();},700);}else toast(d.error||'Could not retract','error');}).catch(function(){done();toast('Network error','error');});
+  };
+
+  // ── Hooks ──
+  var _origPublish=window.publishScheduleNow;
+  if(_origPublish){window.publishScheduleNow=function(){_origPublish.apply(this,arguments);setTimeout(loadShareStatus,2500);setTimeout(loadShareStatus,15000);};}
+  var _origOpenPublish=window.openPublishSchedule;
+  if(_origOpenPublish){window.openPublishSchedule=function(){_origOpenPublish.apply(this,arguments);loadShareStatus();};}
+  document.addEventListener('DOMContentLoaded',function(){
+    loadSecurityExtras();loadTeam();loadHomeExtras();loadScheduleHistory();loadAivHistory();
+  });
+})();
+
+</script>
 </body>
 </html>

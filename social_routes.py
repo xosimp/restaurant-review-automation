@@ -102,7 +102,14 @@ def instagram_callback():
             "</script><p>No Instagram business account found.</p></body></html>"
         )
 
-    rid = int(state) if state and state.isdigit() else None
+    # Web popups send a bare restaurant id; the iOS app sends a signed
+    # mobile state (gmb.sign_mobile_state) and finishes on a deep link.
+    mobile = bool(state and ":" in state)
+    if mobile:
+        from gmb import verify_mobile_state
+        rid = verify_mobile_state(state)
+    else:
+        rid = int(state) if state and state.isdigit() else None
     if rid:
         from datetime import datetime, timedelta
         expires = (datetime.now() + timedelta(days=60)).strftime("%Y-%m-%d")
@@ -123,6 +130,8 @@ def instagram_callback():
         _update_r(rid, update_data)
         print(f"Instagram+Facebook connected for restaurant {rid}, expires {expires}")
 
+    if mobile:
+        return redirect("cavnarai://ig-callback?status=" + ("connected" if rid else "error"))
     return (
         "<html><body><script>"
         "window.opener&&window.opener.postMessage({ig:'connected'},'*');"

@@ -693,6 +693,40 @@ def _home_weekly_receipts(rid, active_keys, inv):
     return receipts[:3]
 
 
+def _setup_checklist(restaurant, rstats, labor, active_keys):
+    """The web Home's getting-started card, for the phone: real completion
+    state per step, empty once everything is done or the owner dismissed
+    it (same restaurant.onboarding_dismissed flag the web card uses)."""
+    if getattr(restaurant, "onboarding_dismissed", 0):
+        return []
+    steps = [
+        {"key": "reviews", "label": "Connect your Google reviews",
+         "sub": "Live reviews flow in automatically once connected",
+         "done": bool(restaurant.gmb_refresh_token or getattr(restaurant, "reviews_live", 0)),
+         "module": "account"},
+        {"key": "voice", "label": "Set your brand voice",
+         "sub": "Teaches the AI how you talk to guests",
+         "done": bool(restaurant.voice_notes), "module": "account"},
+        {"key": "respond", "label": "Approve your first review response",
+         "sub": "Review the AI draft, tweak it, hit approve",
+         "done": (rstats.get("responded", 0) or 0) > 0, "module": "reviews"},
+    ]
+    if "labor" in active_keys:
+        steps.append({"key": "labor", "label": "Generate your first schedule",
+                      "sub": "Unlocks labor cost analysis and AI scheduling",
+                      "done": bool((labor or {}).get("is_live")), "module": "labor"})
+    if "marketing" in active_keys:
+        try:
+            from marketing import get_recent_content
+            done = bool(get_recent_content(restaurant.id, limit=1))
+        except Exception:
+            done = False
+        steps.append({"key": "marketing", "label": "Generate your first post",
+                      "sub": "One tap — the AI writes it in your voice",
+                      "done": done, "module": "marketing"})
+    return [] if all(st["done"] for st in steps) else steps
+
+
 def _do_mobile_home(current_user):
     from models import get_review_stats, get_active_modules
     rid = current_user["restaurant_id"]
@@ -832,6 +866,7 @@ def _do_mobile_home(current_user):
     return {
         "ok": True,
         "username": current_user.get("username"),
+        "setup_checklist": _setup_checklist(restaurant, rstats, labor, active_keys),
         "restaurant_name": restaurant.name,
         "location_name": restaurant.location_name or None,
         "brand_color": restaurant.brand_color or None,
@@ -4180,3 +4215,50 @@ def mobile_ai_visibility_history(current_user):
         return jsonify(ok=True, runs=get_ai_visibility_history(current_user["restaurant_id"], limit=10))
     except Exception as e:
         return jsonify(ok=False, runs=[], error=str(e)), 500
+
+
+
+# ── Web parity: the phone halves of what the dashboard had first ──────────
+
+@mobile_bp.route("/reviews/<int:review_id>/mark-posted", methods=["POST"])
+@mobile_login_required
+def mobile_mark_posted(review_id, current_user):
+    """A reply the owner pasted onto Yelp/Facebook themselves — same
+    handler the web's "Mark as posted" button hits."""
+    import admin_routes as _admin
+    return _admin.mark_posted.__wrapped__(review_id, current_user=current_user)
+
+
+@mobile_bp.route("/account/referral", methods=["POST"])
+@mobile_login_required
+def mobile_send_referral(current_user):
+    import admin_routes as _admin
+    return _admin.send_referral.__wrapped__(current_user=current_user)
+
+
+@mobile_bp.route("/account/dismiss-onboarding", methods=["POST"])
+@mobile_login_required
+def mobile_dismiss_onboarding(current_user):
+    return _capi.dismiss_onboarding.__wrapped__(current_user=current_user)
+
+
+@mobile_bp.route("/connections/instagram/authorize")
+@mobile_login_required
+def mobile_instagram_authorize(current_user):
+    """Same Meta OAuth dialog the web's popup opens, with a signed mobile
+    state (see gmb.sign_mobile_state) so the callback can finish via the
+    cavnarai://ig-callback deep link instead of window.opener."""
+    import urllib.parse
+    from gmb import sign_mobile_state
+    from meta_api import oauth_dialog_url
+    app_id = os.getenv("META_APP_ID", "")
+    if not app_id:
+        return jsonify(ok=False, error="Instagram isn't configured on this server yet — contact will@cavnar.ai."), 503
+    redirect_uri = os.getenv("META_REDIRECT_URI", "https://dashboard.cavnar.ai/instagram/callback")
+    scope = "instagram_basic,instagram_content_publish,instagram_manage_insights,pages_read_engagement,pages_manage_posts,pages_show_list,business_management,read_insights"
+    params = urllib.parse.urlencode({
+        "client_id": app_id, "redirect_uri": redirect_uri, "scope": scope,
+        "auth_type": "rerequest", "response_type": "code",
+        "state": sign_mobile_state(current_user["restaurant_id"]),
+    })
+    return jsonify(ok=True, url=oauth_dialog_url(params))

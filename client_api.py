@@ -4945,6 +4945,11 @@ def _do_brand_voice(rid, data, current_user=None):
         "voice_notes": _clean((data or {}).get("voice_notes"), 1000),
         "never_say": _clean((data or {}).get("never_say"), 1000),
         "menu_notes": _clean((data or {}).get("menu_notes"), 2000),
+        # The phone's profile sheet has these two as well; one brand voice,
+        # same fields on both.
+        "sign_off_name": _clean((data or {}).get("sign_off_name"), 80),
+        "tone_preset": ((data or {}).get("tone_preset") or "").strip().lower()
+            if ((data or {}).get("tone_preset") or "").strip().lower() in ("warm", "professional", "playful", "concise") else None,
     })
     log_account_event(rid, "brand_voice_changed", current_user)
     return {"ok": True}, 200
@@ -5006,7 +5011,9 @@ def brand_voice(current_user):
         return jsonify(ok=True,
                        voice_notes=getattr(r, "voice_notes", "") or "",
                        never_say=getattr(r, "never_say", "") or "",
-                       menu_notes=getattr(r, "menu_notes", "") or "")
+                       menu_notes=getattr(r, "menu_notes", "") or "",
+                       sign_off_name=getattr(r, "sign_off_name", "") or "",
+                       tone_preset=getattr(r, "tone_preset", "") or "")
     payload, status = _do_brand_voice(rid, request.get_json(silent=True) or {}, current_user)
     return jsonify(**payload), status
 
@@ -5336,3 +5343,208 @@ def schedule_share_status_api(current_user):
         return jsonify(ok=True, status=[])
     return jsonify(ok=True, schedule_id=schedule_id,
                    status=get_schedule_share_status(rid, schedule_id))
+
+
+
+# ── iOS parity: the web halves of everything the phone had first ──────────
+# One pattern for all of them: the mobile handler is the implementation
+# (request.get_json / jsonify work the same under a cookie session), and the
+# web route is its @login_required twin calling the undecorated function via
+# functools.wraps' __wrapped__. mobile_api imports this module, so the import
+# is deferred to call time.
+
+def _m(name):
+    import mobile_api as _mob
+    fn = getattr(_mob, name)
+    return getattr(fn, "__wrapped__", fn)
+
+
+@client_bp.route("/api/home")
+@login_required
+def home_summary_api(current_user):
+    """Home's receipts, value history and needs-attention deck — the same
+    payload the phone renders, for the parts of web Home that were static."""
+    import mobile_api as _mob
+    payload, status = _mob._do_mobile_home(current_user)
+    return jsonify(**payload), status
+
+
+@client_bp.route("/api/account/profile", methods=["POST"])
+@login_required
+def account_profile_update(current_user):
+    return _m("mobile_update_profile")(current_user)
+
+
+@client_bp.route("/api/account/team")
+@login_required
+def account_team(current_user):
+    return _m("mobile_get_team")(current_user)
+
+
+@client_bp.route("/api/account/team/invite", methods=["POST"])
+@login_required
+def account_team_invite(current_user):
+    return _m("mobile_invite_team_member")(current_user)
+
+
+@client_bp.route("/api/account/team/<int:user_id>/revoke", methods=["POST"])
+@login_required
+def account_team_revoke(current_user, user_id):
+    return _m("mobile_revoke_team_member")(current_user, user_id)
+
+
+@client_bp.route("/api/account/export-data", methods=["POST"])
+@login_required
+def account_export_data(current_user):
+    return _m("mobile_export_data")(current_user)
+
+
+@client_bp.route("/api/account/login-history")
+@login_required
+def account_login_history(current_user):
+    return _m("mobile_login_history")(current_user)
+
+
+@client_bp.route("/api/account/activity")
+@login_required
+def account_activity(current_user):
+    return _m("mobile_account_activity")(current_user)
+
+
+@client_bp.route("/api/account/recovery-email", methods=["POST"])
+@login_required
+def account_recovery_email(current_user):
+    return _m("mobile_set_recovery_email")(current_user)
+
+
+@client_bp.route("/api/account/recovery-email/verify", methods=["POST"])
+@login_required
+def account_recovery_email_verify(current_user):
+    return _m("mobile_verify_recovery_email")(current_user)
+
+
+@client_bp.route("/api/account/recovery-email/remove", methods=["POST"])
+@login_required
+def account_recovery_email_remove(current_user):
+    return _m("mobile_remove_recovery_email")(current_user)
+
+
+@client_bp.route("/api/account/report-bug", methods=["POST"])
+@login_required
+def account_report_bug(current_user):
+    return _m("mobile_report_bug")(current_user)
+
+
+@client_bp.route("/api/account/2fa/send-test", methods=["POST"])
+@login_required
+def account_2fa_send_test(current_user):
+    return _m("mobile_send_2fa_test")(current_user)
+
+
+@client_bp.route("/api/account/2fa/verify", methods=["POST"])
+@login_required
+def account_2fa_verify(current_user):
+    return _m("mobile_verify_2fa_setup")(current_user)
+
+
+@client_bp.route("/api/account/2fa/disable", methods=["POST"])
+@login_required
+def account_2fa_disable(current_user):
+    return _m("mobile_disable_2fa")(current_user)
+
+
+@client_bp.route("/api/account/2fa/backup-codes")
+@login_required
+def account_backup_codes(current_user):
+    return _m("mobile_backup_codes_status")(current_user)
+
+
+@client_bp.route("/api/account/2fa/backup-codes", methods=["POST"])
+@login_required
+def account_backup_codes_regenerate(current_user):
+    return _m("mobile_regenerate_backup_codes")(current_user)
+
+
+@client_bp.route("/api/account/2fa/trusted-devices")
+@login_required
+def account_trusted_devices(current_user):
+    return _m("mobile_trusted_devices")(current_user)
+
+
+@client_bp.route("/api/account/2fa/trusted-devices/<int:device_id>/revoke", methods=["POST"])
+@login_required
+def account_trusted_device_revoke(current_user, device_id):
+    return _m("mobile_revoke_trusted_device")(current_user, device_id)
+
+
+@client_bp.route("/api/account/2fa/trusted-devices/revoke-all", methods=["POST"])
+@login_required
+def account_trusted_devices_revoke_all(current_user):
+    return _m("mobile_revoke_all_trusted_devices")(current_user)
+
+
+@client_bp.route("/api/account/security-summary")
+@login_required
+def account_security_summary(current_user):
+    """The numbers behind the Security checkup — same inputs the phone
+    scores (see AccountSecurityCheckupView)."""
+    from models import count_unused_backup_codes
+    from auth import get_trusted_devices, get_sessions_for_user
+    rid = current_user["restaurant_id"]
+    r = get_restaurant(rid)
+    try:
+        sessions = len(get_sessions_for_user(current_user["id"]))
+    except Exception:
+        sessions = 1
+    return jsonify(ok=True,
+                   two_fa_enabled=bool(r and r.two_fa_enabled),
+                   two_fa_method=(getattr(r, "two_fa_method", None) or "email") if r else "email",
+                   backup_codes_remaining=count_unused_backup_codes(rid),
+                   trusted_devices=len(get_trusted_devices(rid)),
+                   login_notify=bool(r and getattr(r, "login_notify", 0)),
+                   recovery_email=current_user.get("recovery_email"),
+                   password_strength=current_user.get("password_strength"),
+                   password_changed_at=current_user.get("password_changed_at"),
+                   active_sessions=sessions)
+
+
+@client_bp.route("/api/intel/search-places")
+@login_required
+def intel_search_places(current_user):
+    return _m("mobile_search_places")(current_user)
+
+
+@client_bp.route("/api/intel/add-competitor", methods=["POST"])
+@login_required
+def intel_add_competitor(current_user):
+    return _m("mobile_add_competitor")(current_user)
+
+
+@client_bp.route("/api/intel/remove-competitor", methods=["POST"])
+@login_required
+def intel_remove_competitor(current_user):
+    return _m("mobile_remove_competitor")(current_user)
+
+
+@client_bp.route("/api/ai-visibility/history")
+@login_required
+def ai_visibility_history(current_user):
+    return _m("mobile_ai_visibility_history")(current_user)
+
+
+@client_bp.route("/api/labor/schedule-history")
+@login_required
+def labor_schedule_history(current_user):
+    return _m("mobile_schedule_history")(current_user)
+
+
+@client_bp.route("/api/labor/schedule-history/<int:history_id>")
+@login_required
+def labor_schedule_history_detail(current_user, history_id):
+    return _m("mobile_schedule_history_detail")(history_id, current_user)
+
+
+@client_bp.route("/api/labor/schedule-history/<int:history_id>", methods=["DELETE"])
+@login_required
+def labor_schedule_history_delete(current_user, history_id):
+    return _m("mobile_schedule_history_delete")(history_id, current_user)
