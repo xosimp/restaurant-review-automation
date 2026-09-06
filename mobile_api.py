@@ -3456,8 +3456,50 @@ def mobile_update_digest_day(current_user):
     return jsonify(ok=True)
 
 
+def _billing_preview(restaurant_id):
+    """Sample billing for a restaurant listed in BILLING_PREVIEW_IDS.
+
+    Billing is read live from Stripe, so a restaurant with no
+    stripe_customer_id has nothing to show and the Billing screen sits
+    empty — which makes that whole screen impossible to look at before a
+    client is actually paying. This env-gated hook fills it with obviously
+    labelled sample figures so the layout can be reviewed.
+
+    Opt-in and off by default: unset the variable (as it is on Railway)
+    and this never runs, so a real client can never be shown invented
+    billing. The label says "Sample" for the same reason.
+    """
+    import os as _os
+    raw = _os.getenv("BILLING_PREVIEW_IDS", "")
+    ids = {p.strip() for p in raw.split(",") if p.strip()}
+    if not ids or str(restaurant_id) not in ids:
+        return None
+    from datetime import timedelta as _td
+    nxt = (datetime.now() + _td(days=18)).strftime("%-m/%-d/%Y")
+    return {
+        "ok": True,
+        "status": "active",
+        "next_date": nxt,
+        "amount": "1,200.00",
+        "payment_method": "Visa ending 4242",
+        "portal_url": None,
+        "message": "Sample billing — preview only, not a real subscription",
+        "invoices": [
+            {"date": (datetime.now() - _td(days=12)).strftime("%-m/%-d/%Y"), "amount": "1,200.00",
+             "status": "paid", "url": None},
+            {"date": (datetime.now() - _td(days=42)).strftime("%-m/%-d/%Y"), "amount": "1,200.00",
+             "status": "paid", "url": None},
+            {"date": (datetime.now() - _td(days=72)).strftime("%-m/%-d/%Y"), "amount": "2,000.00",
+             "status": "paid", "url": None},
+        ],
+    }
+
+
 def _do_mobile_billing(restaurant_id):
     import os as _os
+    preview = _billing_preview(restaurant_id)
+    if preview:
+        return preview, 200
     restaurant = get_restaurant(restaurant_id)
     if not restaurant or not getattr(restaurant, "stripe_customer_id", None):
         return {"ok": False, "reason": "no_customer"}, 200

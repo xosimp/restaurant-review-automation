@@ -115,9 +115,25 @@ def test_opening_the_link_records_that_it_was_seen(client, db_path):
 
 
 def test_an_unknown_token_404s_without_confirming_anything(client, db_path):
+    """404, on a real branded page, that says nothing about whether the
+    token ever existed.
+
+    This used to assert on the literal string "isn't valid", which was a
+    bare unstyled sentence returned straight from the route — the one link
+    in any Cavnar AI email that could land a member of staff on something
+    that looked broken. It renders the same page as an expired link now,
+    since from the reader's side it is the same situation. The privacy
+    property is what the test is really for, so that is what it checks.
+    """
     resp = client.get("/s/definitely-not-a-real-token")
+    body = resp.get_data(as_text=True)
     assert resp.status_code == 404
-    assert "isn't valid" in resp.get_data(as_text=True)
+    # A real page, not a bare string.
+    assert "<html" in body.lower()
+    assert "ask your manager" in body.lower()
+    # And it must not reveal whether that token was ever real.
+    for leak in ("expired", "revoked", "no longer exists", "was deleted"):
+        assert leak not in body.lower(), f"unknown-token page leaks existence via {leak!r}"
 
 
 def test_someone_with_no_shifts_gets_a_clear_page_not_an_error(client, db_path):

@@ -411,8 +411,11 @@ def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = No
     if _rest and getattr(_rest, "location_name", None):
         location_label = f" — {_rest.location_name}"
 
-    # Theme — per-client toggle set in dashboard account settings, defaults to dark
-    is_dark = not (_rest and getattr(_rest, "email_theme", "dark") == "light")
+    # Theme — per-client toggle in account settings. Defaults to LIGHT now:
+    # every other email Cavnar AI sends is a light card on #f7f4ef, and this
+    # one defaulting to dark made the weekly digest look like it came from a
+    # different product. Dark is still available for anyone who sets it.
+    is_dark = bool(_rest and getattr(_rest, "email_theme", "light") == "dark")
     if is_dark:
         T = {
             "page_bg": "#0e0a06", "outer_bg": "#15100b", "outer_border": "rgba(200,75,47,.3)",

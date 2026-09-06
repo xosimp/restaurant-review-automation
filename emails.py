@@ -329,6 +329,125 @@ def _record(restaurant_id, email_type, to_email, subject, result: SendResult, lo
         log.warning("email_log write failed for %r: %s", subject, e)
 
 
+_MODULE_DISPLAY_NAMES = {
+    "reviews": "Review Intelligence",
+    "labor": "Labor Optimizer",
+    "inventory": "Food Cost Control",
+    "marketing": "Marketing Autopilot",
+}
+
+
+def _module_display_names(modules) -> list:
+    """Accept either the display names the scheduler passes ("Review
+    Intelligence") or the short module keys used everywhere else in the
+    codebase ("reviews"), and return display names.
+
+    These templates branch on `"Review Intelligence" in modules`, so a
+    caller handing over keys silently matched nothing and rendered an
+    email with its whole middle section missing. Normalising here means
+    the templates can only be wrong about a module the restaurant genuinely
+    does not have.
+    """
+    out = []
+    for m in (modules or []):
+        name = _MODULE_DISPLAY_NAMES.get(str(m).strip().lower(), str(m).strip())
+        if name and name not in out:
+            out.append(name)
+    return out
+
+
+def _clock(value) -> str:
+    """"16:00" -> "4:00 PM". Staff schedules were going out in 24-hour time,
+    which nobody on a floor in the US reads. Anything that isn't a plain
+    HH:MM is passed through untouched rather than mangled."""
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    try:
+        hh, mm = raw.split(":")[:2]
+        h, m = int(hh), int(mm)
+        if not (0 <= h <= 23 and 0 <= m <= 59):
+            return raw
+    except (ValueError, TypeError):
+        return raw
+    suffix = "AM" if h < 12 else "PM"
+    h12 = h % 12 or 12
+    return f"{h12}:{m:02d} {suffix}"
+
+
+def restaurant_usage(restaurant_id) -> dict:
+    """What this restaurant has ACTUALLY done, per module they own.
+
+    The lifecycle emails used to talk about usage without ever looking:
+    day 30 computed "you're not currently using X" as
+    `all_four_modules - modules_they_bought`, so it named modules the
+    client had never purchased and told them they weren't using them. And
+    day 7's "one thing to do this week" was a fixed string about uploading
+    a CSV, which is advice most clients can't act on — they're connected to
+    a POS from onboarding, so there is no CSV to upload.
+
+    Every value here is read from this restaurant's own rows, so an email
+    can say something true or say nothing.
+    """
+    usage = {
+        "owns": {}, "used": {},
+        "pending_reviews": 0, "approved_reviews": 0,
+        "pos": None, "has_schedule": False, "ingredient_count": 0,
+    }
+    if not restaurant_id:
+        return usage
+    try:
+        from models import get_conn, get_restaurant
+        r = get_restaurant(restaurant_id)
+        if not r:
+            return usage
+        usage["owns"] = {
+            "reviews": bool(r.module_reviews), "labor": bool(r.module_labor),
+            "inventory": bool(r.module_inventory), "marketing": bool(r.module_marketing),
+        }
+        for label, token in (("Toast", getattr(r, "toast_access_token", None)),
+                             ("Square", getattr(r, "square_access_token", None)),
+                             ("Clover", getattr(r, "clover_api_token", None))):
+            if token:
+                usage["pos"] = label
+                break
+
+        conn = get_conn()
+        try:
+            def scalar(sql, args):
+                row = conn.execute(sql, args).fetchone()
+                return (row[0] if row else 0) or 0
+
+            usage["approved_reviews"] = scalar(
+                "SELECT COUNT(*) FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL "
+                "AND response_status IN ('approved','posted')", (restaurant_id,))
+            usage["pending_reviews"] = scalar(
+                "SELECT COUNT(*) FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL "
+                "AND response_status='drafted' AND draft_response IS NOT NULL "
+                "AND TRIM(draft_response) != ''", (restaurant_id,))
+            usage["has_schedule"] = scalar(
+                "SELECT COUNT(*) FROM schedule_history WHERE restaurant_id=?", (restaurant_id,)) > 0
+            usage["ingredient_count"] = scalar(
+                "SELECT COUNT(*) FROM ingredients WHERE restaurant_id=?", (restaurant_id,))
+            has_shifts = scalar(
+                "SELECT COUNT(*) FROM client_data WHERE restaurant_id=? AND shifts_csv IS NOT NULL "
+                "AND TRIM(shifts_csv) != ''", (restaurant_id,)) > 0
+            marketing_used = scalar(
+                "SELECT COUNT(*) FROM marketing_content_log WHERE restaurant_id=?", (restaurant_id,)) > 0
+        finally:
+            conn.close()
+
+        usage["used"] = {
+            "reviews": usage["approved_reviews"] > 0,
+            "labor": usage["has_schedule"] or has_shifts or usage["pos"] is not None,
+            "inventory": usage["ingredient_count"] > 0,
+            "marketing": marketing_used,
+        }
+    except Exception as e:
+        log.warning("restaurant_usage failed for %s: %s", restaurant_id, e)
+    return usage
+
+
 def _html_document(fragment: str, bg: str = "#f7f4ef") -> str:
     """Wraps an email's inner markup in a real HTML document (doctype, head,
     body). Every template in this file used to hand Resend a bare <div>
@@ -342,17 +461,31 @@ def _html_document(fragment: str, bg: str = "#f7f4ef") -> str:
     normally do. The color-scheme meta tags stop Gmail/Apple Mail's dark
     mode from re-theming (or inverting) an email that was deliberately
     designed as a light card, which is the same failure mode from a
-    different angle."""
+    different angle.
+
+    A background on <body> alone was NOT enough, which is why several of
+    these still showed as "only half the screen": a body with no height
+    only grows as tall as its content, so the client's own default colour
+    still filled everything below it. Height has to be claimed explicitly
+    all the way down (html -> body -> a 100%-height presentation table),
+    which is the long-standing bulletproof-email answer to this and the
+    only one Gmail, Outlook and Apple Mail all honour."""
     return f"""<!doctype html>
-<html>
+<html style="height:100%;margin:0;padding:0;background:{bg}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="color-scheme" content="light">
 <meta name="supported-color-schemes" content="light">
 </head>
-<body style="margin:0;padding:0;background:{bg};">
+<body style="margin:0;padding:0;height:100%;width:100%;background:{bg}">
+<table role="presentation" width="100%" height="100%" cellpadding="0" cellspacing="0" border="0" style="background:{bg};height:100%;width:100%;margin:0;padding:0;border-collapse:collapse">
+  <tr>
+    <td valign="top" style="background:{bg};padding:0">
 {fragment}
+    </td>
+  </tr>
+</table>
 </body>
 </html>"""
 
@@ -523,7 +656,7 @@ def send_payment_email(to_email, restaurant_name, tier=None,
   <p style="font-size:14px;color:#3a3530;line-height:1.6;margin-bottom:20px">
     Pick your plan below — {setup_price} setup is the same either way.
     Monthly at {retainer_price}, or save ${module_count*600:,} by going annual.
-    30-day free trial on both — no charge until day 31.
+    Setup is billed once. The retainer starts today and you can cancel with 30 days' notice.
   </p>
   <div style="background:#f7f4ef;border-radius:8px;padding:20px 22px;margin-bottom:24px;border-left:3px solid #c84b2f">
     <p style="font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:#7a736a;margin:0 0 6px">{label}</p>
@@ -644,7 +777,7 @@ def send_staff_schedule_email(to_email, employee_name, restaurant_name, week_lab
         rows = "".join(
             f'''<tr>
       <td style="padding:9px 12px;border-bottom:1px solid #e0dbd0;font-size:14px;white-space:nowrap"><strong>{s.get("day") or s.get("date","")}</strong></td>
-      <td style="padding:9px 12px;border-bottom:1px solid #e0dbd0;font-size:14px;white-space:nowrap">{s.get("start","")} – {s.get("end","")}</td>
+      <td style="padding:9px 12px;border-bottom:1px solid #e0dbd0;font-size:14px;color:#1a1714;white-space:nowrap">{_clock(s.get("start") or s.get("shift_start"))} – {_clock(s.get("end") or s.get("shift_end"))}</td>
       <td style="padding:9px 12px;border-bottom:1px solid #e0dbd0;font-size:13px;color:#7a736a">{s.get("role","")}</td>
     </tr>'''
             for s in shifts
@@ -695,8 +828,8 @@ def send_supplier_order_email(to_email, supplier_name, restaurant_name, po_numbe
     supplier replies to the restaurant, not to Cavnar."""
     rows = "".join(
         f'''<tr>
-      <td style="padding:8px 12px;border-bottom:1px solid #e0dbd0;font-size:14px">{i.get("item","")}</td>
-      <td style="padding:8px 12px;border-bottom:1px solid #e0dbd0;font-size:14px;text-align:right;white-space:nowrap"><strong>{i.get("qty",0)}</strong> {i.get("unit","")}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e0dbd0;font-size:14px;color:#1a1714">{i.get("item") or i.get("name") or ""}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e0dbd0;font-size:14px;color:#1a1714;text-align:right;white-space:nowrap"><strong>{i.get("qty",0)}</strong> {i.get("unit","")}</td>
     </tr>'''
         for i in (items or [])
     )
@@ -814,11 +947,9 @@ def create_stripe_checkout(module_count: int, owner_email: str,
     if billing_period == "annual":
         retainer_amount   = module_count * 3000 * 100  # annual in cents
         retainer_interval = "year"
-        trial_days        = 30
     else:
         retainer_amount   = module_count * 300 * 100   # monthly in cents
         retainer_interval = "month"
-        trial_days        = 30
 
     try:
         # Ensure products exist (create once, reuse by name)
@@ -861,7 +992,11 @@ def create_stripe_checkout(module_count: int, owner_email: str,
             ],
             mode="subscription",
             subscription_data={
-                "trial_period_days": trial_days,
+                # NO trial_period_days. This used to hand every client a
+                # genuine 30-day free trial in Stripe — not just email copy,
+                # an actual billing term: the retainer did not charge until
+                # day 31. Cavnar AI does not offer a free trial, so the
+                # subscription now starts when they pay.
                 "metadata": {
                     "restaurant": restaurant_name,
                     "modules": str(module_count),
@@ -871,7 +1006,7 @@ def create_stripe_checkout(module_count: int, owner_email: str,
             success_url="https://dashboard.cavnar.ai?payment=success",
             cancel_url="https://dashboard.cavnar.ai?payment=cancelled",
             custom_text={
-                "submit": {"message": f"Pay ${module_count*500} setup today. ${module_count*300}/mo starts in 30 days."}
+                "submit": {"message": f"${module_count*500} setup plus your first {'year' if billing_period == 'annual' else 'month'} today."}
             },
             metadata={"restaurant": restaurant_name, "modules": str(module_count)},
         )
@@ -893,7 +1028,7 @@ def send_onboarding_day2(to_email: str, restaurant_name: str, owner_name: str = 
         return
     try:
         first = owner_name.split()[0] if owner_name else "there"
-        modules = modules or ["Review Intelligence"]
+        modules = _module_display_names(modules) or ["Review Intelligence"]
         modules_text = " and ".join(modules) if len(modules) <= 2 else ", ".join(modules[:-1]) + f", and {modules[-1]}"
 
         # Build the callout block based on their primary module
@@ -946,6 +1081,14 @@ def send_onboarding_day2(to_email: str, restaurant_name: str, owner_name: str = 
         else:
             callout = ""
 
+        # The lead-in only exists if something follows it. It used to be
+        # unconditional, so any module list that matched none of the four
+        # branches above rendered "Here's the most important thing to know
+        # about ...:" and then simply stopped — a colon promising a payload
+        # that was never there.
+        lead_in = (f"\n    Here's the most important thing to know about {modules_text}:"
+                   if callout else "")
+
         deliver(email_type="send_onboarding_day2", restaurant_id=restaurant_id, payload={
             "from": f"Will Cavnar <{_from_email()}>",
             "to": [to_email],
@@ -959,8 +1102,7 @@ def send_onboarding_day2(to_email: str, restaurant_name: str, owner_name: str = 
   </div>
   <p style="font-size:15px;line-height:1.7;margin-bottom:16px">Hi {first} —</p>
   <p style="font-size:14px;color:#3a3530;line-height:1.7;margin-bottom:16px">
-    Your dashboard for <strong>{restaurant_name}</strong> has been live for a day now.
-    Here's the most important thing to know about {modules_text}:
+    Your dashboard for <strong>{restaurant_name}</strong> has been live for a day now.{lead_in}
   </p>
   {callout}
   <p style="font-size:14px;color:#3a3530;line-height:1.7;margin-bottom:20px">
@@ -988,30 +1130,69 @@ def send_onboarding_day7(to_email: str, restaurant_name: str, owner_name: str = 
                           has_labor: bool = False, has_inventory: bool = False,
                           approved_count: int = 0, pending_count: int = 0,
                           restaurant_id: int = None):
-    """Day 7 — First week check-in with real activity data + prompt to upload CSV."""
+    """Day 7 — first-week check-in, with ONE next step chosen from what
+    this restaurant has actually done so far (see restaurant_usage)."""
     if not _resend_key():
         return
     try:
         first = owner_name.split()[0] if owner_name else "there"
 
-        # Build upload prompt only if they have labor or inventory modules
+        # ONE next step, chosen from what this restaurant has actually done.
+        #
+        # This used to be a fixed "upload your shift schedule CSV / inventory
+        # count CSV" block shown to everyone with those modules. Most clients
+        # are connected to a POS during onboarding, so there is no CSV to
+        # upload and the advice was something they either couldn't act on or
+        # had already done — which is exactly what makes an email read as
+        # generated rather than written. Now it looks first and only asks for
+        # something genuinely outstanding; if nothing is, it says nothing.
+        usage = restaurant_usage(restaurant_id)
+        owns, used = usage.get("owns") or {}, usage.get("used") or {}
+        pos = usage.get("pos")
+
+        action_title, action_body = None, None
+        if owns.get("reviews", has_labor is not None) and usage.get("pending_reviews", 0) > 0:
+            n = usage["pending_reviews"]
+            action_title = "One thing to do this week"
+            action_body = (
+                f"You have <strong>{n} repl{'y' if n == 1 else 'ies'}</strong> drafted and waiting for your OK. "
+                "Open Reviews, read them, and approve the ones you're happy with — it's the whole job, "
+                "and it takes about five minutes."
+            )
+        elif has_labor and owns.get("labor") and not usage.get("has_schedule"):
+            action_title = "One thing to do this week"
+            action_body = (
+                (f"Your {pos} data is already flowing in. " if pos else "")
+                + "Open Labor and generate next week's schedule — it builds from your own sales and shift "
+                  "history, and you can move anything you don't like before it goes out."
+            ) if pos else (
+                "Open Labor and connect your POS (Toast, Square or Clover) so the schedule can build from "
+                "your own sales history. It's under Account &rarr; Connections and takes a minute."
+            )
+        elif has_inventory and owns.get("inventory") and usage.get("ingredient_count", 0) == 0:
+            action_title = "One thing to do this week"
+            action_body = (
+                "Open Food Cost and add the fifteen or twenty items you actually buy most weeks. "
+                "That's enough for it to start flagging waste and telling you what to reorder — "
+                "you don't need to count the whole walk-in."
+            )
+        elif owns.get("marketing") and not used.get("marketing"):
+            action_title = "One thing to do this week"
+            action_body = (
+                "Open Marketing and generate one post. It writes in your restaurant's voice from what's "
+                "already on your profile, so the first one takes about thirty seconds to approve."
+            )
+
         upload_block = ""
-        if has_labor or has_inventory:
-            items = []
-            if has_labor:    items.append("shift schedule CSV (export from your POS or scheduling app)")
-            if has_inventory: items.append("inventory count CSV")
-            items_html = "".join(f"<li style='margin-bottom:6px'>{i}</li>" for i in items)
+        if action_title:
             upload_block = f"""
   <div style="background:#f7f4ef;border-radius:8px;padding:18px 22px;margin-bottom:20px;border-left:3px solid #c84b2f">
-    <p style="font-size:13px;font-weight:600;color:#0e0c0a;margin:0 0 8px;text-transform:uppercase;letter-spacing:.04em">One thing to do this week</p>
-    <p style="font-size:14px;color:#3a3530;line-height:1.7;margin:0 0 10px">
-      To see your real numbers, upload your data directly in the dashboard — takes about a minute:
+    <p style="font-size:13px;font-weight:600;color:#0e0c0a;margin:0 0 8px;text-transform:uppercase;letter-spacing:.04em">{action_title}</p>
+    <p style="font-size:14px;color:#3a3530;line-height:1.7;margin:0">
+      {action_body}
     </p>
-    <ul style="font-size:13px;color:#3a3530;line-height:1.7;padding-left:18px;margin:0">
-      {items_html}
-    </ul>
     <p style="font-size:13px;color:#7a736a;margin:10px 0 0">
-      Head to your <a href="https://dashboard.cavnar.ai" style="color:#c84b2f;text-decoration:none">dashboard</a>, open the Labor or Inventory tab, and you'll see an upload button at the top. Or just reply here and I'll help you through it.
+      It's all in the <a href="https://dashboard.cavnar.ai" style="color:#c84b2f;text-decoration:none">dashboard</a> — or reply here and I'll do it with you.
     </p>
   </div>"""
 
@@ -1233,18 +1414,39 @@ def send_onboarding_day30(to_email: str, restaurant_name: str, owner_name: str =
         return
     try:
         first = owner_name.split()[0] if owner_name else "there"
-        modules = modules or []
+        modules = _module_display_names(modules)
 
-        # Suggest unused modules if they don't have all 4
-        all_modules = ["Review Intelligence", "Labor Optimizer", "Food Cost Control", "Marketing Autopilot"]
-        unused = [m for m in all_modules if m not in modules]
+        # Two genuinely different things, which this used to conflate into
+        # one false sentence. It computed "you're not currently using X" as
+        # every module MINUS the ones they bought — so it named modules the
+        # client had never purchased and told them they weren't using them.
+        #
+        #   idle    = modules they OWN and have no activity in. That is the
+        #             only thing "not using" can honestly mean, and it's
+        #             worth a nudge.
+        #   missing = modules they don't have. A real upsell, phrased as one.
+        usage = restaurant_usage(restaurant_id)
+        owns, used = usage.get("owns") or {}, usage.get("used") or {}
+        idle = [_MODULE_DISPLAY_NAMES[k] for k in ("reviews", "labor", "inventory", "marketing")
+                if owns.get(k) and not used.get(k)]
+        missing = [_MODULE_DISPLAY_NAMES[k] for k in ("reviews", "labor", "inventory", "marketing")
+                   if owns and not owns.get(k)]
+
+        def _join(items):
+            return " and ".join(items) if len(items) <= 2 else ", ".join(items[:-1]) + f", and {items[-1]}"
+
         upsell_block = ""
-        if unused:
-            unused_text = " and ".join(unused) if len(unused) <= 2 else ", ".join(unused[:-1]) + f", and {unused[-1]}"
-            upsell_block = f"""
+        if idle:
+            upsell_block += f"""
   <p style="font-size:14px;color:#3a3530;line-height:1.7;margin-bottom:20px">
-    One thing worth knowing: you're not currently using <strong>{unused_text}</strong>.
-    If you ever want to expand what the dashboard covers, just reply here and I'll walk you through what's included.
+    One thing I noticed: you haven't used <strong>{_join(idle)}</strong> yet — it's set up and
+    included in what you're already paying for. Reply here and I'll get you going in ten minutes.
+  </p>"""
+        if missing:
+            upsell_block += f"""
+  <p style="font-size:14px;color:#3a3530;line-height:1.7;margin-bottom:20px">
+    If you ever want the dashboard to cover more, <strong>{_join(missing)}</strong> {"is" if len(missing) == 1 else "are"}
+    what you don't have yet. Just reply and I'll walk you through what's included.
   </p>"""
 
         # Pull real 30-day activity for personalization
@@ -1414,7 +1616,7 @@ def send_payment_failed_client_email(to_email: str, restaurant_name: str, amount
         <p style="color:#3a3530;font-size:15px;margin:0 0 16px">{greeting}</p>
         <p style="color:#3a3530;font-size:15px;margin:0 0 20px">Your payment of <strong>${amount:.2f}</strong> for <strong>{restaurant_name}</strong> didn't go through — your card was declined.</p>
         <a href="https://dashboard.cavnar.ai" style="display:inline-block;background:#c84b2f;color:white;padding:12px 24px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600">Update payment method &#8594;</a>
-        <p style="color:#7a736a;font-size:13px;margin:20px 0 0;line-height:1.6">Log in and open Account &rarr; Plan &amp; Payment to update your card. If it isn't resolved in a few days, reach out and I'll help sort it out — <a href="mailto:will@cavnar.ai" style="color:#c84b2f">will@cavnar.ai</a>.</p>
+        <p style="color:#7a736a;font-size:13px;margin:20px 0 0;line-height:1.6">Open the Cavnar AI app and go to <strong>Account &rarr; Billing</strong> — the Manage billing button there opens the secure Stripe page where you can update your card. If it isn't resolved in a few days, reach out and I'll sort it out with you — <a href="mailto:will@cavnar.ai" style="color:#c84b2f">will@cavnar.ai</a>.</p>
       </div>
       <p style="color:#7a736a;font-size:11px;text-align:center;margin-top:20px"><img src="https://dashboard.cavnar.ai/static/brand/seal-dark-email.png" width="14" height="14" alt="" style="vertical-align:middle;margin-right:5px;border:0">Cavnar AI &mdash; Restaurant Intelligence Platform</p>
     </div>

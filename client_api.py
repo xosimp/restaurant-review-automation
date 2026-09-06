@@ -4383,7 +4383,12 @@ def staff_schedule_page(token):
 
     share = get_schedule_share(token)
     if not share:
-        return "This schedule link isn't valid. Ask your manager for a new one.", 404
+        # A branded page, not the bare string this used to return — the one
+        # link in any Cavnar AI email that could land a member of staff on
+        # something that looked broken. Its OWN template, not the expired
+        # one: saying "expired" would confirm the token had once been real,
+        # which is precisely what this branch is careful not to reveal.
+        return render_template("staff_schedule_invalid.html"), 404
     if share.get("expired"):
         # 410 Gone, not 404: the link was real, it has simply aged out. Says
         # so plainly so someone who no longer works here isn't left guessing,
