@@ -174,9 +174,18 @@ enum CavnarMarkdown {
                 .lineSpacing(lineSpacing)
                 .fixedSize(horizontal: false, vertical: true)
         case .bullet:
-            HStack(alignment: .firstTextBaseline, spacing: 9) {
-                Circle().fill(Color.cavnarEmber2).frame(width: 5, height: 5)
-                    .alignmentGuide(.firstTextBaseline) { d in d[VerticalAlignment.center] + size * 0.36 }
+            // Plain .top alignment plus a padding nudge, NOT a custom
+            // .alignmentGuide. A guide closure is evaluated through
+            // ViewDimensions.subscript(AlignmentKey) — the exact frame the
+            // app trapped in when a sibling change let a dimension go
+            // non-finite. Nothing here needs that machinery: a 5pt dot
+            // beside a known text size only has to sit on the first line's
+            // optical centre, which is a constant offset.
+            HStack(alignment: .top, spacing: 9) {
+                Circle()
+                    .fill(Color.cavnarEmber2)
+                    .frame(width: 5, height: 5)
+                    .padding(.top, size * 0.42)
                 text(for: block.tokens, size: size, weight: 400, color: color)
                     .lineSpacing(lineSpacing)
                     .fixedSize(horizontal: false, vertical: true)

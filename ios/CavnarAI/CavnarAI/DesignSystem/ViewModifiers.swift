@@ -948,16 +948,19 @@ extension View {
                     colors: [Color.cavnarEmber.opacity(0.38), Color.cavnarEmber.opacity(0)],
                     startPoint: .top, endPoint: .bottom
                 )
-                // maxWidth: .infinity explicitly — the gradient only had a
-                // height, leaving its width to whatever the ZStack was
-                // proposed. On a sheet whose content doesn't itself claim
-                // the full width (Menu margins), that resolved narrower
-                // than the sheet and the wash visibly stopped short of both
-                // edges. Scoped to the gradient only: the ZStack itself
-                // needs no frame (Color.cavnarPaper already fills it), and
-                // forcing an infinite one there was an unnecessary change
-                // to a modifier ~15 screens depend on.
-                .frame(maxWidth: .infinity)
+                // Deliberately NO width constraint here. An attempt to
+                // force one (maxWidth: .infinity, here and on the ZStack)
+                // is what crashed the app: inside a .background() this
+                // resolves as a secondary layer, and during a sheet's
+                // presentation transition — before the sheet's own size has
+                // settled — an .infinity max let a dimension resolve
+                // non-finite. UIKit logged "Invalid frame dimension
+                // (negative or non-finite)" and SwiftUI then trapped in
+                // ViewDimensions.subscript resolving this layer's
+                // alignment (EXC_BREAKPOINT, with _FrameLayout and
+                // _SafeAreaIgnoringLayout right there in the stack).
+                // Color.cavnarPaper above already makes the stack fill, and
+                // the gradient takes that width on its own.
                 .frame(height: 340)
             }
             .ignoresSafeArea()
