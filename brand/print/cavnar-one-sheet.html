@@ -25,16 +25,16 @@ html,body{width:8.5in;height:11in;background:#fff;color:var(--ink);font-family:v
 .k{font-family:var(--sans);font-weight:700;font-size:7.5pt;letter-spacing:.14em;text-transform:uppercase;color:var(--accent)}
 
 /* header */
-.hd{display:flex;justify-content:space-between;align-items:flex-end;padding-bottom:8pt;border-bottom:1.25pt solid var(--ink)}
-.hd svg{height:0.33in;width:auto;display:block}
+.hd{display:flex;justify-content:space-between;align-items:flex-end;padding-bottom:7pt;border-bottom:1.25pt solid var(--ink)}
+.hd svg{height:0.31in;width:auto;display:block}
 .hd .r{text-align:right;font-size:8.5pt;color:var(--ink3);line-height:1.35}
 .hd .r b{display:block;color:var(--ink);font-weight:700;letter-spacing:.1em;text-transform:uppercase;font-size:7.5pt}
 
 /* hero */
-.hero{display:grid;grid-template-columns:1.25fr .9fr;gap:.4in;align-items:end;padding:10pt 0 8pt}
-h1{font-family:var(--disp);font-weight:600;font-size:23pt;line-height:1.06;letter-spacing:-.012em;text-wrap:balance}
+.hero{display:grid;grid-template-columns:1.25fr .9fr;gap:.4in;align-items:end;padding:7pt 0 5pt}
+h1{font-family:var(--disp);font-weight:600;font-size:21pt;line-height:1.06;letter-spacing:-.012em;text-wrap:balance}
 h1 em{font-style:normal;color:var(--accent)}
-.lede{font-size:9.75pt;line-height:1.48;color:var(--ink2);max-width:3.1in}
+.lede{font-size:9.75pt;line-height:1.42;color:var(--ink2);max-width:3.1in}
 .lede b{color:var(--ink);font-weight:700}
 
 /* outcomes strip */
@@ -44,18 +44,18 @@ h1 em{font-style:normal;color:var(--accent)}
 .strip b{display:block;font-family:var(--disp);font-weight:600;font-size:11pt;color:var(--ink);margin-bottom:2pt;letter-spacing:-.005em}
 
 /* modules */
-.sec{padding-top:8pt}
-.sec-h{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:6pt}
-.sec-h h2{font-family:var(--disp);font-weight:600;font-size:14pt;letter-spacing:-.01em}
-.sec-h span{font-size:8.25pt;color:var(--ink3)}
+.sec{padding-top:7pt}
+.sec-h{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:5pt}
+.sec-h h2{font-family:var(--disp);font-weight:600;font-size:14pt;letter-spacing:-.01em;white-space:nowrap}
+.sec-h span{font-size:8.25pt;color:var(--ink3);text-align:right;padding-left:14pt}
 .sec-h span b{color:var(--ink);font-weight:700;letter-spacing:.08em;text-transform:uppercase;font-size:7.25pt;margin:0 4pt 0 10pt}
-.mods{display:grid;grid-template-columns:1fr 1fr;gap:7pt 22pt}
-.mod{border-top:1.25pt solid var(--ink);padding-top:5pt;display:grid;grid-template-columns:22pt 1fr;gap:0 6pt}
-.mod i{font-family:var(--num);font-style:normal;font-weight:700;font-size:8.5pt;color:var(--accent);padding-top:3pt}
-.mod b{font-family:var(--disp);font-weight:600;font-size:12pt;display:block;margin-bottom:1pt;letter-spacing:-.005em}
-.mod p{font-size:8.75pt;line-height:1.4;color:var(--ink2)}
-.alerts{margin-top:7pt;display:grid;grid-template-columns:auto 1fr;gap:12pt;align-items:center;background:var(--cream);border-left:3pt solid var(--accent);padding:6pt 12pt}
-.alerts b{font-family:var(--disp);font-weight:600;font-size:12pt;white-space:nowrap}
+.mods{display:grid;grid-template-columns:1fr 1fr;gap:5pt 22pt}
+.mod{border-top:1.25pt solid var(--ink);padding-top:5pt;display:grid;grid-template-columns:1fr;gap:0}
+.mod i{display:block;font-family:var(--sans);font-style:normal;font-weight:700;font-size:7.25pt;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);margin-bottom:2pt}
+.mod b{font-family:var(--disp);font-weight:600;font-size:11.5pt;display:block;margin-bottom:1pt;letter-spacing:-.005em}
+.mod p{font-size:8.75pt;line-height:1.36;color:var(--ink2)}
+.alerts{margin-top:5pt;display:grid;grid-template-columns:auto 1fr;gap:12pt;align-items:center;background:var(--cream);border-left:3pt solid var(--accent);padding:5pt 12pt}
+.alerts b{font-family:var(--disp);font-weight:600;font-size:11.5pt;white-space:nowrap}
 .alerts p{font-size:8.75pt;color:var(--ink2);line-height:1.42}
 .soon{margin-top:5pt;font-size:8.25pt;color:var(--ink3)}
 .soon b{color:var(--ink);font-weight:700;letter-spacing:.08em;text-transform:uppercase;font-size:7.5pt;margin-right:6pt}
@@ -76,15 +76,30 @@ h1 em{font-style:normal;color:var(--accent)}
 .multi{grid-column:1/-1;font-size:8.5pt;color:var(--ink3);margin-top:-16pt}
 .multi b{color:var(--ink);font-weight:700}
 
+/* comparison */
+.vs{margin-top:7pt;display:grid;grid-template-columns:1.85in 1fr;gap:0 .3in;align-items:center;padding:6pt 0 5pt;border-top:.75pt solid var(--line);border-bottom:.75pt solid var(--line)}
+.vs-l h2{font-family:var(--disp);font-weight:600;font-size:15pt;line-height:1.12;letter-spacing:-.01em;margin:3pt 0 5pt}
+.vs-l p{font-size:8.75pt;color:var(--ink2);line-height:1.42}
+.vs-t{width:100%;border-collapse:collapse}
+.vs-t th{font-size:7.25pt;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);text-align:left;padding:0 8pt 4pt;border-bottom:1.25pt solid var(--ink)}
+.vs-t th:first-child{padding-left:0}
+.vs-t td{font-size:8.25pt;line-height:1.28;padding:3pt 7pt;border-bottom:.75pt solid var(--line);color:var(--ink3);text-align:left;white-space:normal;vertical-align:top}
+.vs-t td:first-child{padding-left:0;color:var(--ink);font-weight:700;width:1.5in}
+.vs-t td:nth-child(2){width:1.35in}
+.vs-t .us{color:var(--ink);background:var(--cream);font-weight:400}
+.vs-t th.us{color:var(--accent)}
+.vs-t tr:last-child td{border-bottom:0}
+.vs .multi{grid-column:1/-1;margin-top:4pt}
+
 /* pricing */
-.price{margin-top:7pt;display:grid;grid-template-columns:2.1in 1fr;gap:0 .35in;align-items:start}
+.price{margin-top:6pt;display:grid;grid-template-columns:2.1in 1fr;gap:0 .35in;align-items:start}
 .price h2{font-family:var(--disp);font-weight:600;font-size:14pt;letter-spacing:-.01em;margin-bottom:5pt}
 .price .why{font-size:8.75pt;color:var(--ink2);line-height:1.42}
-.price .fine{grid-column:1/-1;margin-top:6pt;font-size:8pt;color:var(--ink3);line-height:1.45}
+.price .fine{grid-column:1/-1;margin-top:5pt;font-size:8pt;color:var(--ink3);line-height:1.45}
 table{width:100%;border-collapse:collapse}
 th{font-size:7.5pt;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);text-align:right;padding:0 0 5pt;border-bottom:1.25pt solid var(--ink)}
 th:first-child{text-align:left}
-td{padding:3.5pt 0;border-bottom:.75pt solid var(--line);text-align:right;font-size:9.5pt;white-space:nowrap}
+td{padding:3pt 0;border-bottom:.75pt solid var(--line);text-align:right;font-size:9.5pt;white-space:nowrap}
 td:first-child{text-align:left;font-weight:700;color:var(--ink)}
 td .num{font-weight:600}
 td small{font-family:var(--sans);font-weight:400;font-size:7.75pt;color:var(--ink3);margin-left:3pt}
@@ -94,12 +109,12 @@ tr.full td:last-child{padding-right:6pt}
 tr.full td .num{color:var(--accent);font-weight:700}
 
 /* cta */
-.cta{margin-top:8pt;background:var(--accent);color:#fff;border-radius:6pt;padding:10pt 15pt;display:grid;grid-template-columns:1fr auto;gap:.3in;align-items:center}
+.cta{margin-top:7pt;background:var(--accent);color:#fff;border-radius:6pt;padding:9pt 15pt;display:grid;grid-template-columns:1fr auto;gap:.3in;align-items:center}
 .cta h2{font-family:var(--disp);font-weight:600;font-size:16pt;line-height:1.1;letter-spacing:-.01em;text-wrap:balance;max-width:4.4in}
-.cta p{margin-top:5pt;font-size:9pt;line-height:1.45;color:rgba(255,255,255,.88);max-width:4.3in}
-.contact{margin-top:8pt;display:flex;flex-wrap:wrap;gap:4pt 14pt;font-size:9pt;font-weight:700}
+.cta p{margin-top:4pt;font-size:9pt;line-height:1.45;color:rgba(255,255,255,.88);max-width:4.3in}
+.contact{margin-top:7pt;display:flex;flex-wrap:wrap;gap:4pt 14pt;font-size:9pt;font-weight:700}
 .contact span{opacity:.75;font-weight:400;margin-right:4pt}
-.qr{background:#fff;border-radius:5pt;padding:7pt;width:1.0in;height:1.0in;display:flex;align-items:center;justify-content:center}
+.qr{background:#fff;border-radius:5pt;padding:4pt;width:0.95in;height:0.95in;display:flex;align-items:center;justify-content:center}
 .qr svg{width:100%;height:100%;display:block}
 .qr-cap{text-align:center;font-size:7pt;font-weight:700;letter-spacing:.1em;text-transform:uppercase;margin-top:4pt;color:#fff}
 </style></head><body><div class="page">
@@ -122,39 +137,35 @@ tr.full td .num{color:var(--accent);font-weight:700}
 </div>
 
 <div class="hero">
-  <h1>Know what's happening in your restaurant <em>before</em> it costs you money.</h1>
-  <p class="lede">Cavnar AI reads your sales, labor, reviews and marketing every day and tells you <b>what changed, why it matters, and what to do next</b> — no reports to dig through.</p>
-</div>
-
-<div class="strip">
-  <div><b>Catch it early</b>Problems surface as they start, not when the P&amp;L lands.</div>
-  <div><b>Know the why</b>Every number comes with what's driving it, in plain English.</div>
-  <div><b>Skip the digging</b>A weekly digest plus instant alerts for what needs you now.</div>
+  <h1>Your POS shows you the numbers. Cavnar AI <em>does something</em> about them.</h1>
+  <p class="lede">It reads your Toast, Google, Yelp and Instagram every day, works out what changed and why — then <b>does the work</b>: the schedule, the review replies, the marketing, the alert to your phone.</p>
 </div>
 
 <div class="sec">
-  <div class="sec-h"><h2>What it looks at</h2><span>Start with one module, add the rest when you're ready.<b>Coming soon</b>Bar &amp; Alcohol · Waitlist &amp; Reservations</span></div>
+  <div class="sec-h"><h2>What the AI actually does</h2><span>Start with one, add more anytime.<b>Coming soon</b>Bar &amp; Alcohol · Waitlist &amp; Reservations</span></div>
   <div class="mods">
-    <div class="mod"><i>01</i><div><b>Labor</b><p>Labor cost against sales by shift, overtime creeping in — and next week's full-staff schedule generated in one click.</p></div></div>
-    <div class="mod"><i>02</i><div><b>Food Cost</b><p>Cost pressure by item, menu margins slipping, waste and over-ordering caught before they compound.</p></div></div>
-    <div class="mod"><i>03</i><div><b>Reviews</b><p>Guest sentiment across Google and Yelp, recurring complaints, what guests praise, and AI-drafted replies.</p></div></div>
-    <div class="mod"><i>04</i><div><b>Marketing</b><p>Posts, texts and emails written from what's actually selling — scheduled, sent, and measured against sales.</p></div></div>
+    <div class="mod"><i>Labor</i><div><b>Writes next week's schedule</b><p>A full-staff schedule built from your sales patterns and labor targets, in one click — and it flags overtime before it lands on payroll.</p></div></div>
+    <div class="mod"><i>Food Cost</i><div><b>Catches margin before it slips</b><p>Cost by item, dishes quietly losing money, over-ordering and waste — each one flagged with the reason and what to change.</p></div></div>
+    <div class="mod"><i>Reviews</i><div><b>Answers every review in your voice</b><p>Google and Yelp replies drafted for you — approve and it posts. An urgent one-star review hits your phone the moment it lands.</p></div></div>
+    <div class="mod"><i>Marketing</i><div><b>Runs your marketing from what's selling</b><p>Posts, texts and emails written from your own menu and numbers — scheduled, sent, and measured against sales.</p></div></div>
   </div>
-  <div class="alerts"><b>AI alerts &amp; recommendations</b><p>Customizable alerts straight to your phone — an urgent one-star review, a labor spike, a cost creeping up — with what to do about it. Nothing waits for you to log in.</p></div>
+  <div class="alerts"><b>Ask Cavnar anything</b><p>"Why was Saturday slow?" "Which dish is losing money?" "Who's close to overtime?" Answered from your data in seconds — plus customizable alerts to your phone for anything you can't miss.</p></div>
 </div>
 
-<div class="diff">
-  <div>
+<div class="vs">
+  <div class="vs-l">
     <div class="k">Why it's different</div>
-    <h2>Not another dashboard.</h2>
-    <p>Traditional restaurant software tells you what happened. Cavnar AI carries it the rest of the way.</p>
+    <h2>Not a POS. Not another dashboard.</h2>
+    <p>Toast, MarginEdge and the rest record what happened and hand you a report. Cavnar AI reads the report — and acts on it. It works alongside your POS; it doesn't replace it.</p>
   </div>
-  <div class="chain">
-    <div class="step"><i>1</i><b>What happened</b>The number, and how far it moved.</div>
-    <div class="step"><i>2</i><b>Why it matters</b>What's driving it, in your own data.</div>
-    <div class="step"><i>3</i><b>What needs attention</b>Ranked, so you know where to look first.</div>
-    <div class="step"><i>4</i><b>What to do next</b>One you can act on today.</div>
-  </div>
+  <table class="vs-t">
+    <tr><th></th><th>Reports today</th><th class="us">Cavnar AI</th></tr>
+    <tr><td>Who reads the numbers</td><td>You, when there's time</td><td class="us">Cavnar AI, every morning</td></tr>
+    <tr><td>Why a number moved</td><td>You work it out</td><td class="us">Explained, in plain English</td></tr>
+    <tr><td>What to do about it</td><td>—</td><td class="us">A recommendation, ranked by cost</td></tr>
+    <tr><td>The schedule, the replies, the posts</td><td>You write them</td><td class="us">Drafted for you — you approve</td></tr>
+    <tr><td>When something goes wrong</td><td>You find out at month-end</td><td class="us">An alert on your phone, same day</td></tr>
+  </table>
   <div class="multi"><b>Running more than one location?</b> Each location gets its own intelligence, with the group rolled up in one view.</div>
 </div>
 
