@@ -3,10 +3,21 @@ import SwiftUI
 /// Needs Attention as a stacked deck led by the one thing to tap. The top
 /// card carries a real call to action ("Publish 3 replies") and an optional
 /// second link ("Read them first"); the next two items sit behind it as
-/// smaller, dimmer ghosts. Swipe the top card either way (or tap a dot) to
-/// bring the next one forward. Replaces the old equal-cards carousel —
-/// same needs_attention data, but the screen now says what to do, not
-/// just what's wrong.
+/// smaller, dimmer ghosts. Swipe the top card away to the left (or tap a
+/// dot) to bring the next one forward. Replaces the old equal-cards
+/// carousel — same needs_attention data, but the screen now says what to
+/// do, not just what's wrong.
+///
+/// The deck only deals ONE way, like a real one. `stack` peeks forward
+/// (index, index+1, index+2), so the next card is always already on
+/// screen as a ghost with a real position to grow from — which is what
+/// makes that direction smooth. Backwards has no such card: index-1 is
+/// not in the tree at all, so it can only ever appear from nowhere, and
+/// three separate attempts to disguise that (a fly-off mirror, a manual
+/// enter-offset, an insertion transition) all read as a double render on
+/// device. Nothing is lost by dropping it: the deck wraps, so swiping
+/// forward reaches every card, and the dots below jump straight to any
+/// one of them. A rightward drag rubber-bands instead (see `swipe`).
 struct HomeActionDeck: View {
     let items: [NeedsAttentionItem]
     var busy: Bool = false
@@ -21,16 +32,9 @@ struct HomeActionDeck: View {
     /// instant `advance()` updates `index` mid-transition. See advance()'s
     /// comment for the flash this used to cause when the two were conflated.
     @State private var draggingID: String?
-    /// Which way the deck last moved — drives which transition an inserted
-    /// card gets (see `cardTransition`).
-    @State private var lastDirection = 1
 
     static let cardHeight: CGFloat = 150
     private static let ghostStep: CGFloat = 14
-    /// How far off the leading edge a "previous" card starts before it
-    /// slides into the front position — wide enough to be genuinely off
-    /// screen on every device, so its insertion fade happens unseen.
-    private static let slideIn: CGFloat = 460
 
     private struct Entry: Identifiable {
         let depth: Int
@@ -43,24 +47,6 @@ struct HomeActionDeck: View {
     private var stack: [Entry] {
         guard count > 0 else { return [] }
         return (0..<min(3, count)).map { Entry(depth: $0, item: items[(index + $0) % count]) }
-    }
-
-    /// Going BACK, the incoming card was never on screen at all (`stack`
-    /// only ever peeks forward), so it has to travel in from the leading
-    /// edge rather than appear in place. Going forward, an inserted card is
-    /// a new GHOST at the back of the deck, which should just fade up where
-    /// it stands.
-    ///
-    /// A transition, NOT a hand-rolled offset animated away a frame later:
-    /// a freshly-inserted view has no previous frame to interpolate from,
-    /// so "set an offset, then animate it to zero" animates nothing unless
-    /// a real frame lands in between — a race against Task.sleep, and
-    /// exactly why two earlier attempts at this changed nothing on device.
-    /// Insertion transitions are built for this and need no timing at all.
-    private var cardTransition: AnyTransition {
-        lastDirection < 0
-            ? .asymmetric(insertion: .offset(x: -Self.slideIn), removal: .opacity)
-            : .opacity
     }
 
     var body: some View {
@@ -84,7 +70,7 @@ struct HomeActionDeck: View {
                     .opacity(entry.depth == 0 ? 1 : (entry.depth == 1 ? 0.72 : 0.42))
                     .saturation(entry.depth == 0 ? 1 : 0.75)
                     .allowsHitTesting(entry.depth == 0 && !flying)
-                    .transition(cardTransition)
+                    .transition(.opacity)
                 }
             }
             .frame(maxWidth: .infinity)
@@ -116,94 +102,54 @@ struct HomeActionDeck: View {
                 // Only follow a mostly-horizontal drag — a vertical one is
                 // the page scrolling, and belongs to the ScrollView.
                 if abs(value.translation.width) > abs(value.translation.height) {
-                    dragX = value.translation.width
+                    let w = value.translation.width
+                    // Leftward tracks the finger exactly. Rightward is
+                    // heavily damped and always springs back — the deck
+                    // only deals one way (see the type comment), and this
+                    // is the same rubber-band a scroll view gives at its
+                    // edge: it answers the gesture instead of ignoring it,
+                    // while making clear there's nothing that way.
+                    dragX = w < 0 ? w : w * 0.28
                 }
             }
             .onEnded { value in
                 guard !flying else { return }
                 let w = value.translation.width
-                if abs(w) > 60, abs(w) > abs(value.translation.height) * 1.2 {
-                    advance(w < 0 ? 1 : -1)
+                if w < -60, abs(w) > abs(value.translation.height) * 1.2 {
+                    advance()
                 } else {
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { dragX = 0 }
                 }
             }
     }
 
-    /// The top card flies off in the swipe's direction, then the deck
-    /// re-stacks around the next item. `direction` 1 = next, -1 = previous.
+    /// The top card flies off to the left, then the deck re-stacks around
+    /// the next item.
     ///
-    /// The card that was flying off used to be identified by depth (`entry
-    /// .depth == 0`), which is a POSITION, not the card itself — the
-    /// instant `index` advances below, the card that had been showing at
-    /// depth 1 (offset x: 0 the whole time) becomes depth 0 too, and reads
-    /// dragX for that one frame before it's separately reset. Getting that
-    /// reset and the index change into perfectly the same commit relied on
-    /// two back-to-back but separate transactions (one with animations
-    /// disabled, one animated) landing as a single render — timing that
-    /// wasn't guaranteed, and the miss is exactly the flash-then-snap that
-    /// was reported. Tracking `draggingID` — the ACTUAL card being
-    /// dragged — instead of a depth means the incoming card never reads
-    /// dragX at all, in any frame, so there's nothing left to race.
-    ///
-    /// That fix made "next" (swipe left) smooth but left "previous" (swipe
-    /// right) choppy for two further, separate reasons, both now handled:
-    ///
-    /// 1. `stack` only ever peeks FORWARD (index, index+1, index+2). Going
-    ///    next, the incoming card was already on screen as a ghost with a
-    ///    well-defined state to grow from. Going previous, the incoming
-    ///    card (index-1) isn't in the tree at all until `index` changes, so
-    ///    it popped in. It now arrives on an insertion transition (see
-    ///    `cardTransition`) rather than a hand-rolled offset — which is the
-    ///    part two earlier attempts got wrong, since a freshly-inserted
-    ///    view has no previous frame to animate an offset FROM.
-    /// 2. Going back, the outgoing card does NOT leave the deck — it lands
-    ///    at depth 1, still on screen. Flinging it to +520 like the forward
-    ///    case stranded it off-screen at a dragX nothing ever reset, and it
-    ///    snapped back on the next touch: the reported "double render". It
-    ///    now settles back to centre as it demotes instead.
-    private func advance(_ direction: Int) {
+    /// The card flying off used to be identified by depth (`entry.depth ==
+    /// 0`), which is a POSITION, not the card itself — the instant `index`
+    /// advances below, the card that had been at depth 1 becomes depth 0
+    /// too and reads dragX for that one frame before it's separately
+    /// reset. Getting that reset and the index change into the same commit
+    /// relied on two back-to-back transactions landing as a single render,
+    /// which isn't guaranteed, and the miss was a visible flash. Tracking
+    /// `draggingID` — the ACTUAL card being dragged — means the incoming
+    /// card never reads dragX at all, in any frame, so there's nothing
+    /// left to race.
+    private func advance() {
         guard count > 1, !flying else { return }
         flying = true
         if draggingID == nil { draggingID = stack.first?.id }
         Haptic.selection()
-
-        guard direction < 0 else {
-            // NEXT — unchanged, and confirmed good on device. The front
-            // card flies off in the swipe's direction and genuinely LEAVES
-            // the deck (for 4+ items its id is no longer in `stack`), so it
-            // fades out where it is while the ghost behind grows forward.
-            lastDirection = 1
-            withAnimation(.easeIn(duration: 0.22)) { dragX = -520 }
-            Task { @MainActor in
-                try? await Task.sleep(for: .milliseconds(220))
-                withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) {
-                    index = (index + 1) % count
-                }
-                flying = false
-            }
-            return
-        }
-
-        // PREVIOUS — deliberately NOT a mirror of the above, because the
-        // situation isn't mirrored. Going back, the card leaving the front
-        // does NOT leave the deck: with `stack` peeking forward, index-1
-        // becomes the new front and the old front lands at depth 1, still
-        // on screen. Flinging it to +520 therefore stranded it off-screen
-        // at a dragX nothing ever reset, and it snapped back into place on
-        // the next touch — that's the "brings the card behind it to the
-        // front almost like a double render" that was reported. So instead
-        // it settles back to centre as it demotes, and the incoming card
-        // slides in over the top.
-        // `cardTransition` reads this, so it has to be set before the
-        // transaction that performs the insertion.
-        lastDirection = -1
-        withAnimation(.spring(response: 0.44, dampingFraction: 0.84)) {
-            dragX = 0
-            index = (index - 1 + count) % count
-        }
+        // The front card genuinely LEAVES the deck (for 4+ items its id is
+        // no longer in `stack`), so it fades out where it is while the
+        // ghost behind it grows forward into place.
+        withAnimation(.easeIn(duration: 0.22)) { dragX = -520 }
         Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(440))
+            try? await Task.sleep(for: .milliseconds(220))
+            withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) {
+                index = (index + 1) % count
+            }
             flying = false
         }
     }
@@ -225,10 +171,6 @@ struct HomeActionDeck: View {
                         // same card the dots just jumped to.
                         draggingID = nil
                         dragX = 0
-                        // A dot can jump any distance in either direction, so
-                        // a directional slide would read as wrong half the
-                        // time — cross-fade instead.
-                        lastDirection = 1
                         withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) { index = i }
                     }
             }
