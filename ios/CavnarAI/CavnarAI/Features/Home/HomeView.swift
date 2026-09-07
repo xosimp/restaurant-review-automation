@@ -687,47 +687,48 @@ struct HomeSetupChecklist: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("Dismiss")
             }
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Color.cavnarPaper3)
-                    Capsule().fill(Color.cavnarEmber)
-                        .frame(width: geo.size.width * CGFloat(done) / CGFloat(max(steps.count, 1)))
-                }
-            }
-            .frame(height: 4)
+            // A ProgressView, not a GeometryReader: measured on the
+            // simulator (DebugFrameWatchdog), a GeometryReader in Home's
+            // scroll content plus five Buttons cost a 400ms stall on the
+            // first scroll — every tick re-laid this card out and stood up
+            // gesture containers for each row.
+            ProgressView(value: Double(done), total: Double(max(steps.count, 1)))
+                .progressViewStyle(.linear)
+                .tint(Color.cavnarEmber)
+                .frame(height: 4)
 
             VStack(spacing: 8) {
                 ForEach(steps) { step in
-                    Button {
-                        Haptic.light()
-                        onStep(step)
-                    } label: {
-                        HStack(spacing: 12) {
-                            Image(systemName: step.done ? "checkmark.circle.fill" : "circle")
-                                .font(.system(size: 18, weight: .semibold))
-                                .foregroundStyle(step.done ? Color.cavnarGreen : Color.cavnarEmber)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(step.label)
-                                    .font(.cavnarBody(15.5, weight: 600))
-                                    .foregroundStyle(step.done ? Color.cavnarInk3 : Color.cavnarInk)
-                                    .strikethrough(step.done, color: Color.cavnarInk3)
-                                if let sub = step.sub, !step.done {
-                                    Text(sub).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
-                                }
-                            }
-                            Spacer()
-                            if !step.done, let module = step.module, module != "account" {
-                                Image(systemName: "chevron.right").foregroundStyle(Color.cavnarInk3)
+                    let tappable = !step.done && step.module != nil && step.module != "account"
+                    HStack(spacing: 12) {
+                        Image(systemName: step.done ? "checkmark.circle.fill" : "circle")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(step.done ? Color.cavnarGreen : Color.cavnarEmber)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(step.label)
+                                .font(.cavnarBody(15.5, weight: 600))
+                                .foregroundStyle(step.done ? Color.cavnarInk3 : Color.cavnarInk)
+                                .strikethrough(step.done, color: Color.cavnarInk3)
+                            if let sub = step.sub, !step.done {
+                                Text(sub).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
                             }
                         }
-                        .padding(12)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.cavnarPaper2)
-                        .overlay(RoundedRectangle(cornerRadius: CavnarRadius.control).strokeBorder(Color.cavnarEmber.opacity(step.done ? 0 : 0.3), lineWidth: 1))
-                        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+                        Spacer()
+                        if tappable {
+                            Image(systemName: "chevron.right").foregroundStyle(Color.cavnarInk3)
+                        }
                     }
-                    .buttonStyle(.plain)
-                    .disabled(step.done)
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.cavnarPaper2)
+                    .overlay(RoundedRectangle(cornerRadius: CavnarRadius.control).strokeBorder(Color.cavnarEmber.opacity(step.done ? 0 : 0.3), lineWidth: 1))
+                    .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        guard tappable else { return }
+                        Haptic.light()
+                        onStep(step)
+                    }
                 }
             }
         }

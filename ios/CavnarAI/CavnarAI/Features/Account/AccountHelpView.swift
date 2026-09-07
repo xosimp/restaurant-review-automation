@@ -18,13 +18,6 @@ private struct FAQGroup: Identifiable {
 /// features, not placeholder copy.
 struct AccountHelpView: View {
     @State private var expanded: Set<UUID> = []
-    @State private var refName = ""
-    @State private var refEmail = ""
-    @State private var refNote = ""
-    @State private var refSending = false
-    @State private var refSent = false
-    @State private var refError: String?
-    private let viewModel = AccountViewModel()
 
     private static let groups: [FAQGroup] = [
         FAQGroup(title: "Getting started", items: [
@@ -74,7 +67,6 @@ struct AccountHelpView: View {
                     }
 
                     consultantCard
-                    referralCard
 
                     ForEach(Self.groups) { group in
                         VStack(alignment: .leading, spacing: 8) {
@@ -136,9 +128,17 @@ struct AccountHelpView: View {
             AccountKicker(text: "Your consultant")
             VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 12) {
-                    Image("WillPortrait")
-                        .resizable().scaledToFill()
-                        .frame(width: 48, height: 48)
+                    // A tall portrait: fill the width, then show the band
+                    // that has the face in it (roughly the top half of the
+                    // photo), not the centre crop, which was all shirt.
+                    Color.clear
+                        .frame(width: 52, height: 52)
+                        .overlay(alignment: .top) {
+                            Image("WillPortrait")
+                                .resizable().scaledToFill()
+                                .frame(width: 52)
+                                .offset(y: -4)
+                        }
                         .clipShape(Circle())
                         .overlay(Circle().strokeBorder(Color.cavnarEmber.opacity(0.5), lineWidth: 1))
                     VStack(alignment: .leading, spacing: 2) {
@@ -161,49 +161,6 @@ struct AccountHelpView: View {
                         }
                         .buttonStyle(CavnarPrimaryButtonStyle())
                     }
-                }
-            }
-            .cavnarCard()
-        }
-    }
-
-    /// The web's referral card: one free month if they sign up.
-    private var referralCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            AccountKicker(text: "Know another restaurant owner?")
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Send them an intro — you get one free month if they sign up.")
-                    .font(.cavnarBody(15)).foregroundStyle(Color.cavnarInk3)
-                    .fixedSize(horizontal: false, vertical: true)
-                if refSent {
-                    HStack(spacing: 8) {
-                        Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.cavnarGreen)
-                        Text("Referral sent — thank you.").font(.cavnarBody(15, weight: 600)).foregroundStyle(Color.cavnarInk)
-                    }
-                } else {
-                    TextField("Restaurant or owner name", text: $refName).cavnarTextFieldStyle()
-                    TextField("Their email", text: $refEmail).cavnarTextFieldStyle()
-                        .keyboardType(.emailAddress).textInputAutocapitalization(.never).autocorrectionDisabled()
-                    TextField("A note from you (optional)", text: $refNote, axis: .vertical).cavnarTextFieldStyle()
-                    if let refError {
-                        Text(refError).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
-                    }
-                    Button {
-                        Task {
-                            refSending = true
-                            refError = nil
-                            let err = await viewModel.sendReferral(name: refName, email: refEmail, note: refNote)
-                            refSending = false
-                            if let err { refError = err; Haptic.error() } else { refSent = true; Haptic.success() }
-                        }
-                    } label: {
-                        Group {
-                            if refSending { CavnarShimmerText(text: "Sending…") } else { Text("Send referral") }
-                        }
-                        .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: refSending || refName.isEmpty || !refEmail.contains("@")))
-                    .disabled(refSending || refName.isEmpty || !refEmail.contains("@"))
                 }
             }
             .cavnarCard()

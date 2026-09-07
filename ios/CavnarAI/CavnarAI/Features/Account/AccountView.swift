@@ -71,6 +71,7 @@ struct AccountView: View {
                 case "emailhistory": showingEmailHistory = true
                 case "close-account": showingCloseAccount = true
                 case "help": showingHelp = true
+                case "referral": showingReferral = true
                 default: break
                 }
                 #endif
@@ -174,6 +175,7 @@ struct AccountView: View {
     @State private var showingCloseAccount = false
     @State private var showingHelp = false
     @State private var showingReportBug = false
+    @State private var showingReferral = false
     @State private var prefs = AppPreferences.shared
     @State private var changelogBadge = ChangelogBadgeViewModel()
     // Reflects the actual system state (UIApplication.shared.alternateIconName),
@@ -372,6 +374,12 @@ struct AccountView: View {
                 }
                 Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1).padding(.leading, 47)
                 settingsRow {
+                    row("Refer a restaurant", systemImage: "gift")
+                } action: {
+                    showingReferral = true
+                }
+                Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1).padding(.leading, 47)
+                settingsRow {
                     row("Report a bug", systemImage: "ladybug")
                 } action: {
                     showingReportBug = true
@@ -388,6 +396,9 @@ struct AccountView: View {
             }
             .sheet(isPresented: $showingReportBug) {
                 AccountReportBugSheet(viewModel: viewModel)
+            }
+            .sheet(isPresented: $showingReferral) {
+                AccountReferralView(viewModel: viewModel)
             }
         }
     }
