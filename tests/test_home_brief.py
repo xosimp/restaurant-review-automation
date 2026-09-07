@@ -54,10 +54,10 @@ def test_new_account_gets_welcome_and_checklist_not_fake_numbers(db_path):
     p, st = home_brief.build_home_brief(_user(rid), fresh=True)
     assert st == 200 and p["ok"]
     assert p["empty_state"] and p["empty_state"]["kind"] == "new_account"
-    assert p["setup_checklist"] and not all(s["done"] for s in p["setup_checklist"])
-    # the checklist is in the payload (iOS/parity) but Home no longer renders it
+    # onboarding is retired on web and iOS: the checklist is always empty
+    assert p["setup_checklist"] == []
     html = open("templates/dashboard.html").read()
-    assert "renderChecklist(d);" not in html
+    assert "renderChecklist(d);" not in html and "onboarding-card" not in html.split("<script>")[0]
     # labor + food cost fall back to sample files — shown as sample, no alerts from them
     snap = {s["key"]: s for s in p["snapshot"]}
     assert snap["labor"]["sample"] is True and snap["labor"]["value"] == "—"

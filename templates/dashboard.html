@@ -1085,6 +1085,8 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 .hb-refresh{background:none;border:none;color:var(--ink3);font-family:inherit;font-size:12px;cursor:pointer;padding:0;display:inline-flex;gap:5px;align-items:center}
 .hb-refresh:hover{color:var(--ember)}
 .hb-top{display:flex;justify-content:space-between;gap:28px;align-items:flex-start;flex-wrap:wrap}
+.hb-top>div:first-child{flex:1 1 460px}
+.hb-top .hb-pulse{flex:0 1 auto}
 /* pulse chips (iOS HomePulseStrip) */
 .hb-pulse{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;padding-top:6px}
 .hb-chip{display:inline-flex;align-items:center;gap:8px;padding:8px 13px 8px 11px;border-radius:999px;border:1px solid rgba(232,149,106,.32);background:linear-gradient(180deg,rgba(255,255,255,.07),rgba(255,255,255,.02));box-shadow:0 0 18px rgba(200,75,47,.16);cursor:pointer;font-family:inherit;color:var(--ink);white-space:nowrap;transition:transform .12s ease,box-shadow .12s ease}
@@ -1203,7 +1205,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-skel:after{content:'';position:absolute;inset:0;transform:translateX(-100%);background:linear-gradient(90deg,transparent,var(--hb-tint2),transparent);animation:hbSkel 1.4s ease-in-out infinite}
 @keyframes hbSkel{to{transform:translateX(100%)}}
 .hb-fade{animation:hbIn .32s ease both}
-@keyframes hbIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+@keyframes hbIn{from{opacity:0}to{opacity:1}}
 .hb-err{padding:14px 0;color:var(--hb-bad);font-size:13px;display:flex;justify-content:space-between;gap:12px;align-items:center;border-top:1px solid var(--hb-line);border-bottom:1px solid var(--hb-line)}
 @media (prefers-reduced-motion:reduce){.hb-draw,.hb-fill,.hb-glow,.hb-dot,.hb-hot,.hb-bar,.hb-skel:after,.hb-fade,.hb-chip .dot b{animation:none!important;stroke-dashoffset:0;opacity:1;transform:none}}
 .hb-xl{display:flex;margin-top:2px}
@@ -1314,21 +1316,44 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     // Reserve the final width first so the digits never reflow the row
     // mid-count (that reflow was the visible stutter), then ease over 2.2s
     // with a quartic curve so the last hundred dollars settle gently.
-    el.textContent=final;el.style.display='inline-block';el.style.minWidth=el.getBoundingClientRect().width+'px';el.style.textAlign='left';el.style.willChange='contents';
-    el.textContent=prefix+'0';
+    el.textContent=final;el.style.display='inline-block';el.style.minWidth=el.getBoundingClientRect().width+'px';el.style.textAlign='left';
+    var node=document.createTextNode(prefix+'0');el.textContent='';el.appendChild(node);
+    // Updating the text node's value is a characterData change — no
+    // childList mutation, so neither MutationObserver on the page wakes up
+    // 60 times a second while this runs. Start after fonts and first paint
+    // so the numeral face never swaps mid-count.
     var start=null,dur=2200,last=-1;
-    function step(ts){if(!start)start=ts;var p=Math.min((ts-start)/dur,1),e=1-Math.pow(1-p,4),v=Math.round(target*e);if(v!==last){last=v;el.textContent=prefix+v.toLocaleString();}if(p<1)requestAnimationFrame(step);else{el.textContent=final;el.style.willChange='';}}
-    requestAnimationFrame(step);
+    function step(ts){if(!start)start=ts;var p=Math.min((ts-start)/dur,1),e=1-Math.pow(1-p,4),v=Math.round(target*e);if(v!==last){last=v;node.nodeValue=prefix+v.toLocaleString();}if(p<1)requestAnimationFrame(step);else{node.nodeValue=final;}}
+    var go=function(){requestAnimationFrame(function(){requestAnimationFrame(step);});};
+    if(document.fonts&&document.fonts.ready)document.fonts.ready.then(go,go);else go();
   }
   // Loading state = the Cavnar orb (same component the iOS app uses).
   function isDark(){return document.documentElement.getAttribute('data-theme')==='dark';}
   window.cavnarLoading=function(label,size,state,height){size=size||28;return '<div class="hb-load"'+(height?' style="height:'+height+'px"':'')+'><canvas class="hb-orb" data-orb-state="'+esc(state||'working')+'" width="'+size+'" height="'+size+'" style="width:'+size+'px;height:'+size+'px"></canvas>'+(label?'<span>'+esc(label)+'</span>':'')+'</div>';};
+  var _orbs=[];
   window.cavnarMountOrbs=function(root){
     if(!window.CavnarOrb)return;
+    // Orbs that left the DOM (their loading state finished) stop drawing —
+    // an orphaned canvas would otherwise keep its rAF loop on the main
+    // thread for the life of the page.
+    for(var k=_orbs.length-1;k>=0;k--){if(!_orbs[k].isConnected){try{CavnarOrb.destroy(_orbs[k]._orb);}catch(e){}_orbs.splice(k,1);}}
     var cs=(root||document).querySelectorAll('canvas.hb-orb:not([data-mounted])');
-    for(var i=0;i<cs.length;i++){var c=cs[i];c.setAttribute('data-mounted','1');try{var h=CavnarOrb.mount(c,c.getAttribute('data-orb-state')||'working',{size:parseInt(c.getAttribute('width'),10)||28,dark:isDark()});c._orb=h;}catch(e){}}
+    for(var i=0;i<cs.length;i++){var c=cs[i];
+      // Only canvases that are actually visible; a hidden tab's orb mounts when the tab opens.
+      if(!c.getClientRects().length)continue;
+      c.setAttribute('data-mounted','1');try{var h=CavnarOrb.mount(c,c.getAttribute('data-orb-state')||'working',{size:parseInt(c.getAttribute('width'),10)||28,dark:isDark()});c._orb=h;_orbs.push(c);}catch(e){}}
   };
-  if(window.MutationObserver){new MutationObserver(function(){cavnarMountOrbs(document);}).observe(document.documentElement,{childList:true,subtree:true});}
+  if(window.MutationObserver){
+    var _orbPending=false;
+    new MutationObserver(function(muts){
+      // Only react to added elements (text changes from the count-up never
+      // reach here), and coalesce to one pass per frame.
+      var relevant=false;
+      for(var m=0;m<muts.length&&!relevant;m++){var ad=muts[m].addedNodes;for(var n=0;n<ad.length;n++){if(ad[n].nodeType===1){relevant=true;break;}}}
+      if(!relevant||_orbPending)return;_orbPending=true;
+      requestAnimationFrame(function(){_orbPending=false;cavnarMountOrbs(document);});
+    }).observe(document.documentElement,{childList:true,subtree:true});
+  }
   document.addEventListener('DOMContentLoaded',function(){
     // Every legacy skeleton block becomes an orb.
     var legacy=document.querySelectorAll('.insight-loading .cm-compose');
@@ -1493,8 +1518,8 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
   function render(d){
     _hbData=d;renderTop(d);
     var body=document.getElementById('hb-body');if(!body)return;
-    var h=renderLocations(d)+renderWelcome(d);
-    if(!d.empty_state)h+='<section class="hb-hero" id="hb-hero" aria-label="Value delivered"></section>';
+    var h=renderLocations(d);
+    h+='<section class="hb-hero" id="hb-hero" aria-label="Value delivered"></section>';
     h+=renderSignals(d);
     h+=renderActions(d);
     body.innerHTML='<div class="hb-fade">'+h+'</div>';
@@ -1695,19 +1720,6 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     </div>
   </div>
 
-  {% if onboarding_steps %}
-  {% set ob_done = onboarding_steps | selectattr('done') | list | length %}
-  <div id="onboarding-card" class="rv2-setup">
-    <button class="x" onclick="dismissOnboarding()" aria-label="Dismiss getting started checklist">&#x2715;</button>
-    <div class="hb-kicker">Setup · <span class="hb-num">{{ ob_done }}/{{ onboarding_steps | length }}</span></div>
-    <div class="rv2-prog"><i style="width:{{ (ob_done * 100 / (onboarding_steps | length)) | round }}%"></i></div>
-    <div class="rv2-steps">
-      {% for s in onboarding_steps %}
-      <button class="rv2-step{{ ' done' if s.done }}" {% if not s.done %}onclick="_obJump('{{ s.tab }}')"{% endif %}><span class="ck">{{ '✓' if s.done }}</span><span><div class="l">{{ s.label }}</div>{% if not s.done and s.sub %}<div class="s">{{ s.sub }}</div>{% endif %}</span></button>
-      {% endfor %}
-    </div>
-  </div>
-  {% endif %}
 
   <div id="new-reviews-banner" style="display:none" onclick="window.location.reload()"><span id="new-reviews-text"></span><span class="hb-link">Refresh →</span></div>
 
@@ -5344,13 +5356,22 @@ function setPageBg(n){
   // One background for every page: the ember glow at the top running down
   // into obsidian (#0c0c0c — the iOS dark Paper). Taller than before so the
   // glow reaches the first section instead of stopping at the header.
-  var bg = d
-    ? 'radial-gradient(ellipse 120% 75% at 50% 0%,rgba(200,75,47,.48) 0%,rgba(200,75,47,.22) 35%,rgba(200,75,47,.06) 62%,transparent 80%),linear-gradient(180deg,#0c0c0c 0%,#0c0c0c 100%)'
-    : 'radial-gradient(ellipse 120% 70% at 50% 0%,rgba(200,75,47,.30) 0%,rgba(200,75,47,.12) 40%,rgba(200,75,47,.03) 65%,transparent 80%),linear-gradient(180deg,#f7f4ef 0%,#faf7f2 100%)';
-  document.body.style.background = bg;
+  // The glow is sized in pixels from the top (not as a % of the page), so a
+  // long page like the review inbox gets the same top glow as Home instead
+  // of an orange wash stretched over thousands of pixels.
+  var glow = d
+    ? 'radial-gradient(ellipse 120% 100% at 50% 0%,rgba(200,75,47,.50) 0%,rgba(200,75,47,.24) 32%,rgba(200,75,47,.07) 62%,transparent 82%)'
+    : 'radial-gradient(ellipse 120% 100% at 50% 0%,rgba(200,75,47,.30) 0%,rgba(200,75,47,.12) 38%,rgba(200,75,47,.03) 65%,transparent 82%)';
+  var st = document.body.style;
+  st.backgroundColor = d ? '#0c0c0c' : '#f8f5f0';
+  st.backgroundImage = glow;
+  st.backgroundRepeat = 'no-repeat';
+  st.backgroundSize = '100% 780px';
+  st.backgroundPosition = 'center top';
 }
 function switchTab(n,btn){
   setPageBg(n);
+  if(window.cavnarMountOrbs)setTimeout(function(){cavnarMountOrbs(document);},0);
   document.querySelectorAll('.panel').forEach(function(p){p.classList.remove('active');});
   document.querySelectorAll('.tab').forEach(function(t){t.classList.remove('active');t.setAttribute('aria-selected','false');});
   var _swPanel = document.getElementById('panel-'+n);

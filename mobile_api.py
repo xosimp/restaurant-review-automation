@@ -694,9 +694,9 @@ def _home_weekly_receipts(rid, active_keys, inv):
 
 
 def _setup_checklist(restaurant, rstats, labor, active_keys):
-    """The web Home's getting-started card, for the phone: real completion
-    state per step, empty once everything is done or the owner dismissed
-    it (same restaurant.onboarding_dismissed flag the web card uses)."""
+    """Retired (Sep 2026): onboarding checklists are gone from web and iOS.
+    Kept as an always-empty list so older app builds still decode Home."""
+    return []
     if getattr(restaurant, "onboarding_dismissed", 0):
         return []
     steps = [

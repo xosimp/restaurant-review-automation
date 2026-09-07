@@ -102,7 +102,9 @@ def test_mobile_home_carries_the_setup_checklist(client, db_path):
     rid = _restaurant(db_path, module_reviews=1, module_marketing=1)
     headers = _mobile_token(client, db_path, rid)
     steps = client.get("/mobile/api/home", headers=headers).get_json()["setup_checklist"]
-    assert [s["key"] for s in steps][:3] == ["reviews", "voice", "respond"]
+    # Onboarding checklists were retired on web and iOS (Sep 2026): the key
+    # stays in the payload for older app builds, always empty.
+    assert steps == []
     assert any(s["key"] == "marketing" for s in steps)
     assert all(s["done"] is False for s in steps)
     assert client.post("/mobile/api/account/dismiss-onboarding", headers=headers).get_json()["ok"]
