@@ -1297,6 +1297,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     function step(ts){if(!start)start=ts;var p=Math.min((ts-start)/dur,1),e=1-Math.pow(1-p,3);el.textContent=prefix+Math.round(target*e).toLocaleString();if(p<1)requestAnimationFrame(step);}
     requestAnimationFrame(step);
   }
+  window.CavnarCharts={glowLine:glowLine,bars:bars,stacked:stacked,smooth:smooth,esc:esc,num:num,mdy:mdy};
   // ── navigation + actions ──────────────────────────────────────────────────
   window.hbOpen=function(module){
     if(module==='alerts'){if(typeof toggleNotifPanel==='function')toggleNotifPanel();return;}
@@ -1505,356 +1506,270 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 </div><!-- /panel-home -->
 
 <!-- REVIEWS -->
-<div class="panel" id="panel-reviews" style="max-width:100%;padding:0;min-height:100%">
-<div style="max-width:1080px;margin:0 auto;padding:24px 28px 0">
+<div class="panel" id="panel-reviews" style="max-width:100%;padding:0;min-height:100%;position:relative">
+<style>
+/* ── Reviews (rv2-*) — same language as Home: one hero chart, chart tiles,
+   rows with a stripe, no boxes, no gray. Shares the hb-* rules from Home. */
+#panel-reviews{--hb-line:rgba(14,12,10,.12);--hb-line2:rgba(14,12,10,.07);--hb-tint:rgba(200,75,47,.06);--hb-tint2:rgba(200,75,47,.12);--hb-good:var(--green);--hb-warn:var(--amber);--hb-bad:var(--red);--hb-field:rgba(255,255,255,.55)}
+[data-theme="dark"] #panel-reviews{--hb-line:rgba(240,235,224,.14);--hb-line2:rgba(240,235,224,.07);--hb-tint:rgba(224,100,68,.09);--hb-tint2:rgba(224,100,68,.16);--hb-field:rgba(255,255,255,.05)}
+#panel-reviews .hb-chip .v{display:inline-flex;align-items:baseline;gap:2px}
+#panel-reviews .hb-chip .v span{font-family:'Space Grotesk',sans-serif}
+/* onboarding */
+.rv2-setup{margin-top:22px;padding-top:18px;border-top:1px solid var(--hb-line);position:relative}
+.rv2-setup .x{position:absolute;top:14px;right:0;background:none;border:none;color:var(--ink3);cursor:pointer;font-size:15px;padding:4px}
+.rv2-steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:0;margin-top:10px}
+.rv2-step{display:flex;gap:10px;align-items:flex-start;padding:10px 16px 10px 0;margin-right:16px;border:none;border-right:1px solid var(--hb-line2);background:none;cursor:pointer;font-family:inherit;text-align:left;color:var(--ink);min-width:0}
+.rv2-step:last-child{border-right:none}
+.rv2-step .ck{width:18px;height:18px;border-radius:50%;border:1.5px solid var(--hb-line);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:11px}
+.rv2-step.done .ck{background:var(--hb-good);border-color:var(--hb-good);color:#fff}
+.rv2-step.done .l{text-decoration:line-through;color:var(--ink3)}
+.rv2-step .l{font-size:13px;font-weight:600}.rv2-step .s{font-size:11.5px;color:var(--ink3);margin-top:2px;line-height:1.4}
+.rv2-prog{height:3px;border-radius:2px;background:var(--hb-line2);overflow:hidden;margin-top:10px}.rv2-prog i{display:block;height:100%;background:var(--ember)}
+/* banner */
+#new-reviews-banner{margin-top:18px;padding:10px 0;border-top:1px solid var(--ember);border-bottom:1px solid var(--ember);font-size:13px;color:var(--ink);cursor:pointer;align-items:center;justify-content:space-between}
+/* hero */
+.rv2-hero{margin-top:30px}
+.rv2-hero .hd{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap}
+.rv2-hero .big{font-family:'Space Grotesk',sans-serif;font-size:clamp(40px,4.6vw,58px);font-weight:600;letter-spacing:-.03em;line-height:1;color:var(--ink);display:flex;align-items:baseline;gap:10px}
+.rv2-hero .big small{font-family:'Apfel Grotezk',sans-serif;font-size:13px;font-weight:400;letter-spacing:0;color:var(--ink3)}
+.rv2-hero .delta{font-size:13px;font-weight:600;color:var(--ink2);margin-top:6px}
+.rv2-hero .delta.good{color:var(--hb-good)}.rv2-hero .delta.bad{color:var(--hb-bad)}
+.rv2-hero .delta span{color:var(--ink3);font-weight:400}
+.rv2-hero svg{display:block;width:100%;height:170px;margin-top:6px;overflow:visible}
+.rv2-hero .ax{display:flex;justify-content:space-between;font-size:11px;color:var(--ink3);margin-top:4px}
+.rv2-ai{margin-top:16px;padding:14px 18px;border-radius:10px;background:var(--hb-tint);font-size:14px;line-height:1.65;color:var(--ink2)}
+.rv2-ai .tag{font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);margin-bottom:6px}
+#panel-reviews #review-insight{font-size:14px;line-height:1.65;color:var(--ink2);white-space:pre-wrap}
+/* signals */
+.rv2-sig{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0;margin-top:34px;padding-top:24px;border-top:1px solid var(--hb-line)}
+.rv2-sg{padding:0 26px 0 0;margin-right:26px;border-right:1px solid var(--hb-line2);min-width:0}
+.rv2-sg:last-child{border-right:none;margin-right:0;padding-right:0}
+.rv2-sg .k{font-size:10.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);display:flex;justify-content:space-between;align-items:center;gap:8px}
+.rv2-sg .k i{font-style:normal;color:var(--ember);font-weight:700;letter-spacing:.06em;font-size:10px}
+.rv2-sg .v{font-family:'Space Grotesk',sans-serif;font-size:30px;font-weight:600;letter-spacing:-.025em;line-height:1;color:var(--ink);margin:8px 0 2px;display:flex;align-items:baseline;gap:8px}
+.rv2-sg .v small{font-family:'Apfel Grotezk',sans-serif;font-size:12px;font-weight:400;letter-spacing:0;color:var(--ink3)}
+.rv2-sg svg{display:block;width:100%;height:86px;margin-top:10px;overflow:visible}
+.rv2-sg .cap{font-size:11.5px;color:var(--ink3);margin-top:6px;display:flex;justify-content:space-between;gap:10px}
+.rv2-days{display:flex;gap:2px}
+.rv2-days button{background:none;border:none;border-radius:999px;padding:3px 9px;font-family:'Space Grotesk',sans-serif;font-size:11px;font-weight:600;color:var(--ink3);cursor:pointer;letter-spacing:0;text-transform:none}
+.rv2-days button.on{background:var(--hb-tint2);color:var(--ember)}
+.rv2-perf{display:flex;flex-direction:column;gap:8px;margin-top:12px}
+.rv2-perf .row{display:grid;grid-template-columns:110px 1fr 54px;gap:10px;align-items:center;font-size:12px;color:var(--ink2)}
+.rv2-perf .bar{height:10px;border-radius:5px;background:var(--hb-line2);overflow:hidden}
+.rv2-perf .bar i{display:block;height:100%;border-radius:5px;background:linear-gradient(90deg,var(--ember),#e8956a);box-shadow:0 0 10px rgba(200,75,47,.4);transform-origin:left;animation:rv2Grow .7s cubic-bezier(.4,0,.2,1) both}
+.rv2-perf .bar i.g{background:linear-gradient(90deg,#2d6a4f,#4ead7a);box-shadow:0 0 10px rgba(45,106,79,.4)}
+.rv2-perf .bar i.a{background:linear-gradient(90deg,#b7791f,#d4a030);box-shadow:0 0 10px rgba(183,121,31,.4)}
+.rv2-perf .n{font-family:'Space Grotesk',sans-serif;font-weight:600;color:var(--ink);text-align:right}
+.rv2-perf .n span{color:var(--ink3);font-weight:400}
+@keyframes rv2Grow{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+.rv2-topics{display:flex;flex-direction:column;margin-top:10px}
+.rv2-topic{display:grid;grid-template-columns:1fr 120px 34px;gap:10px;align-items:center;padding:6px 0;border-top:1px solid var(--hb-line2);background:none;border-left:none;border-right:none;border-bottom:none;font-family:inherit;text-align:left;cursor:pointer;color:var(--ink);font-size:12.5px;border-radius:4px}
+.rv2-topic:first-child{border-top:none}
+.rv2-topic:hover{background:var(--hb-tint)}
+.rv2-topic .bar{height:6px;border-radius:3px;overflow:hidden;display:flex;background:var(--hb-line2)}
+.rv2-topic .bar i{display:block;height:100%}
+.rv2-topic .bar .p{background:#2d6a4f}.rv2-topic .bar .ng{background:#e05555}
+.rv2-topic .n{font-family:'Space Grotesk',sans-serif;font-weight:600;text-align:right}
+.rv2-topic .t{font-size:10px;margin-left:6px}
+.rv2-topic .t.up{color:var(--hb-bad)}.rv2-topic .t.down{color:var(--hb-good)}
+/* inbox */
+.rv2-inbox{margin-top:34px;padding-top:22px;border-top:1px solid var(--hb-line)}
+#panel-reviews .toolbar{display:flex;align-items:center;gap:8px;margin:12px 0 4px;flex-wrap:wrap;background:transparent}
+#panel-reviews .search-wrap{position:relative;max-width:300px;flex:1}
+#panel-reviews .search-ico{position:absolute;left:11px;top:50%;transform:translateY(-50%);width:14px;height:14px;color:var(--ink3);pointer-events:none}
+#panel-reviews .search-input{width:100%;height:36px;padding:0 12px 0 32px;border:1px solid var(--hb-line)!important;border-radius:8px;font-family:inherit;font-size:13px;background:var(--hb-field)!important;color:var(--ink)!important;outline:none}
+#panel-reviews .search-input:focus{border-color:var(--ember)!important;box-shadow:0 0 0 3px rgba(200,75,47,.14)}
+#panel-reviews .filter-pills{display:flex;gap:4px;flex-wrap:wrap}
+#panel-reviews .fpill{padding:6px 12px;border-radius:999px;border:1px solid var(--hb-line)!important;font-size:12px;cursor:pointer;background:transparent!important;color:var(--ink2)!important;font-family:inherit}
+#panel-reviews .fpill:hover{background:var(--hb-tint)!important}
+#panel-reviews .fpill.active{background:var(--ember)!important;color:#fff!important;border-color:var(--ember)!important}
+#panel-reviews .fpill.active-red{background:var(--hb-bad)!important;color:#fff!important;border-color:var(--hb-bad)!important}
+#panel-reviews .count-lbl{margin-left:auto;font-size:12px;color:var(--ink3);font-family:'Space Grotesk',sans-serif}
+.rv2-list{display:flex;flex-direction:column;margin-top:8px}
+.rv2-row{position:relative;display:grid;grid-template-columns:1fr;padding:18px 12px 18px 18px;border-top:1px solid var(--hb-line2);transition:background .12s ease}
+.rv2-row:first-child{border-top:none}
+.rv2-row:hover{background:var(--hb-tint)}
+.rv2-row:before{content:'';position:absolute;left:0;top:16px;bottom:16px;width:3px;border-radius:2px;background:transparent}
+.rv2-row.urgent:before{background:var(--hb-bad);box-shadow:0 0 10px rgba(224,85,85,.5)}
+.rv2-row.approved:before{background:var(--hb-good)}
+.rv2-row.posted:before{background:#6aabff}
+.rv2-row.posted{opacity:.82}
+.rv2-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.rv2-av{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:'Clash Display',sans-serif;font-size:15px;color:#fff;background:linear-gradient(160deg,var(--ember),#e8956a);box-shadow:0 0 14px rgba(200,75,47,.3);flex-shrink:0}
+.rv2-who{display:flex;align-items:center;gap:9px;flex-wrap:wrap;flex:1;min-width:0}
+.rv2-who b{font-size:14px;color:var(--ink);font-weight:600}
+.rv2-stars{color:var(--ember);letter-spacing:1px;font-size:12px}
+.rv2-stars span{opacity:.28}
+.rv2-plat{font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)}
+.rv2-date{font-size:11.5px;color:var(--ink3)}
+#panel-reviews .schip{font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)}
+#panel-reviews .schip.positive{color:var(--hb-good)}#panel-reviews .schip.negative{color:var(--hb-bad)}#panel-reviews .schip.neutral{color:var(--hb-warn)}
+.rv2-urg{font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--hb-bad);padding:3px 8px;border-radius:999px;background:var(--red-bg)}
+.rv2-x{background:none;border:none;color:var(--ink3);font-size:15px;cursor:pointer;padding:2px 6px;line-height:1;opacity:0;transition:opacity .12s;border-radius:4px}
+.rv2-row:hover .rv2-x{opacity:.7}.rv2-x:hover{opacity:1!important;color:var(--hb-bad);background:var(--hb-tint)}
+#panel-reviews .rtext{font-size:14px;color:var(--ink);line-height:1.6;margin:10px 0 0 46px;border-left:none!important;padding-left:0}
+#panel-reviews .cats{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 0 46px}
+#panel-reviews .cat{font-size:10.5px;padding:3px 9px;border-radius:999px;background:var(--hb-tint)!important;color:var(--ink2)!important;text-transform:capitalize}
+#panel-reviews .draft-box{margin:12px 0 0 46px;padding:12px 16px;border-radius:10px;background:var(--hb-tint)!important;border:none!important}
+#panel-reviews .draft-lbl{font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember)!important;margin-bottom:6px}
+#panel-reviews .draft-txt{font-size:13.5px;color:var(--ink)!important;line-height:1.6;font-style:normal}
+#panel-reviews .draft-actions{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center}
+#panel-reviews .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:32px;padding:0 13px;border-radius:7px;border:1px solid var(--hb-line);background:transparent;color:var(--ink);font-family:'Apfel Grotezk',sans-serif;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;transition:background .12s ease,transform .12s ease}
+#panel-reviews .btn:hover{background:var(--hb-tint);transform:translateY(-1px)}
+#panel-reviews .btn-approve{background:var(--ember)!important;border-color:var(--ember)!important;color:#fff!important;box-shadow:0 0 16px rgba(200,75,47,.28)}
+#panel-reviews .btn-approve:hover{background:#a83d25!important}
+#panel-reviews .btn-skip{background:transparent!important;color:var(--ink2)!important;border-color:var(--hb-line)!important}
+#panel-reviews .btn-skip:hover{background:var(--hb-tint)!important}
+#panel-reviews .btn-approved{background:var(--green-bg)!important;color:var(--hb-good)!important;border-color:transparent!important;cursor:default;transform:none!important}
+#panel-reviews .response-editor textarea{width:100%;padding:10px 12px;border:1px solid var(--hb-line);border-radius:8px;font-family:'Apfel Grotezk',sans-serif;font-size:13px;color:var(--ink);background:var(--hb-field);resize:vertical;min-height:90px;outline:none}
+#panel-reviews .response-editor textarea:focus{border-color:var(--ember);box-shadow:0 0 0 3px rgba(200,75,47,.14)}
+.rv2-status{font-size:11px;font-weight:600;padding:3px 9px;border-radius:999px}
+.rv2-status.live{background:var(--blue-bg);color:var(--blue)}.rv2-status.ok{background:var(--green-bg);color:var(--hb-good)}
+.rv2-empty{padding:40px 0;text-align:center;color:var(--ink3);font-size:13px}
+.rv2-empty b{display:block;color:var(--ink);font-size:15px;margin-bottom:4px;font-weight:600}
+@media (max-width:1000px){.rv2-sig{grid-template-columns:1fr}.rv2-sg{border-right:none;margin-right:0;padding:0 0 18px;border-bottom:1px solid var(--hb-line2);margin-bottom:18px}.rv2-sg:last-child{border-bottom:none;margin-bottom:0}}
+@media (max-width:680px){ #panel-reviews .rtext,#panel-reviews .cats,#panel-reviews .draft-box{margin-left:0}.rv2-hero svg{height:130px}}
+</style>
+
+<div class="hb-wrap">
+  {% set _rating = restaurant.gbp_rating or rstats.avg_rating %}
+  {% set _urgent = rstats.urgent or 0 %}{% set _await = rstats.awaiting_approval or 0 %}
+  {% if _urgent > 0 %}{% set _head = _urgent ~ ' need' ~ ('s' if _urgent == 1 else '') ~ ' a reply now' %}{% set _tone = 'bad' %}
+  {% elif _await > 0 %}{% set _head = _await ~ (' reply' if _await == 1 else ' replies') ~ ' ready to publish' %}{% set _tone = 'warn' %}
+  {% elif rstats.total %}{% set _head = 'Inbox is clear' %}{% set _tone = 'good' %}
+  {% else %}{% set _head = 'Waiting for your first review' %}{% set _tone = 'neutral' %}{% endif %}
+  <div class="hb-top">
+    <div style="min-width:0;flex:1">
+      <div class="hb-kicker">Reviews · {{ now_mdy }} · {{ restaurant.name }}</div>
+      <h1 class="hb-h1">Reviews. <span class="hb-head {{ _tone }}">{{ _head }}</span></h1>
+      <div class="hb-sub"><span><span id="stat-received-mo-n" class="hb-num">{{ rstats.received_this_month }}</span> new this month</span><span class="sep">·</span><span><span id="stat-positive-n" class="hb-num">{{ rstats.positive_pct }}%</span> positive</span><span class="sep">·</span><span>avg reply <span id="stat-resp-time-n" class="hb-num">{% if rstats.avg_response_hours and rstats.avg_response_hours <= 720 %}{% if rstats.avg_response_hours < 24 %}{{rstats.avg_response_hours}}h{% elif rstats.avg_response_hours < 168 %}{{(rstats.avg_response_hours / 24)|int}}d{% else %}{{(rstats.avg_response_hours / 168)|int}}w{% endif %}{% else %}—{% endif %}</span></span><span class="sep">·</span><span>{{ 'Live from Google' if restaurant.reviews_live else ('Google connected' if restaurant.gmb_refresh_token else 'Imported reviews') }}</span>{% if savings_breakdown and savings_breakdown.reviews > 0 %}<span class="sep">·</span><span><span class="hb-num" id="review-savings-amt">${{ savings_breakdown.reviews|format_num }}</span> saved on <span id="review-savings-count" class="hb-num">{{ rstats.responded }}</span> replies</span>{% endif %}</div>
+      <span id="stat-this-month-n" hidden>{{ rstats.this_month }}</span><span id="stat-rr-detail" hidden></span><span id="review-savings-rate" hidden></span><strong id="rr-sent-mo-inline" hidden></strong><strong id="rr-sent-total-inline" hidden></strong>
+    </div>
+    <div class="hb-pulse">
+      {% set _rglow = 'stat-glow-green' if _rating >= 4.0 else ('stat-glow-amber' if _rating >= 3.0 else 'stat-glow-red') %}
+      <span class="hb-chip {{ 'good' if _rating >= 4.0 else ('warn' if _rating >= 3.0 else 'bad') }}" id="stat-rating"><span class="dot"><b></b><i></i></span><span class="v"><span id="stat-rating-n" class="{{ _rglow }}">{{ _rating }}</span>★</span><span class="l">{{ 'Google rating' if restaurant.gbp_rating else 'rating' }}</span></span>
+      {% set _rrglow = 'stat-glow-green' if rstats.response_rate >= 70 else ('stat-glow-amber' if rstats.response_rate >= 40 else 'stat-glow-red') %}
+      <span class="hb-chip {{ 'good' if rstats.response_rate >= 70 else ('warn' if rstats.response_rate >= 40 else 'bad') }}" id="stat-rr"><span class="dot"><b></b><i></i></span><span class="v"><span id="stat-rr-n" class="{{ _rrglow }}">{{ rstats.response_rate|int }}</span><span id="stat-rr-pct">%</span></span><span class="l">answered</span></span>
+      <span class="hb-chip {{ 'bad' if _await > 2 else ('warn' if _await > 0 else 'good') }}" id="stat-pending"><span class="dot"><b></b><i></i></span><span class="v"><span id="stat-pending-n" class="{{ 'stat-glow-red' if _await > 2 else ('stat-glow-amber' if _await > 0 else '') }}">{{ _await }}</span><span id="stat-pending-arrow" hidden>↓</span></span><span class="l">to approve</span></span>
+      <span class="hb-chip {{ 'bad' if _urgent > 0 else 'good' }}" id="stat-urgent"><span class="dot"><b></b><i></i></span><span class="v"><span id="stat-urgent-n" class="{{ 'stat-glow-red' if _urgent > 0 else '' }}">{{ _urgent }}</span></span><span class="l">urgent</span></span>
+    </div>
+  </div>
 
   {% if onboarding_steps %}
   {% set ob_done = onboarding_steps | selectattr('done') | list | length %}
-  <!-- Getting-started checklist — renders until every step is done or dismissed -->
-  <div id="onboarding-card" class="dark-hero-card" style="border:1px solid rgba(200,75,47,.45);border-radius:12px;padding:20px 22px;margin-bottom:18px;position:relative;overflow:hidden">
-    <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:var(--ember)"></div>
-    <button onclick="dismissOnboarding()" aria-label="Dismiss getting started checklist" style="position:absolute;top:10px;right:12px;background:none;border:none;font-size:16px;cursor:pointer;color:rgba(240,235,224,.4);line-height:1;padding:4px">&#x2715;</button>
-    <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:4px;padding-left:6px">
-      <div style="font-family:'Clash Display',sans-serif;font-size:19px;color:#f0ebe0">Let&#8217;s get {{ restaurant.name }} set up</div>
-      <div style="font-family:'Space Grotesk',sans-serif;font-size:13px;font-weight:600;color:var(--ember)">{{ ob_done }}/{{ onboarding_steps | length }}</div>
-    </div>
-    <div style="font-size:12px;color:rgba(240,235,224,.55);margin-bottom:14px;padding-left:6px">A few minutes each — every step makes the AI noticeably smarter about your restaurant.</div>
-    <div style="height:4px;background:rgba(240,235,224,.12);border-radius:2px;margin:0 6px 16px;overflow:hidden">
-      <div style="height:100%;width:{{ (ob_done * 100 / (onboarding_steps | length)) | round }}%;background:var(--ember);border-radius:2px;transition:width .4s ease"></div>
-    </div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:8px;padding-left:6px">
+  <div id="onboarding-card" class="rv2-setup">
+    <button class="x" onclick="dismissOnboarding()" aria-label="Dismiss getting started checklist">&#x2715;</button>
+    <div class="hb-kicker">Setup · <span class="hb-num">{{ ob_done }}/{{ onboarding_steps | length }}</span></div>
+    <div class="rv2-prog"><i style="width:{{ (ob_done * 100 / (onboarding_steps | length)) | round }}%"></i></div>
+    <div class="rv2-steps">
       {% for s in onboarding_steps %}
-      {% if s.done %}
-      <div style="display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-radius:8px;background:rgba(78,173,122,.08);border:1px solid rgba(78,173,122,.25)">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true" style="flex-shrink:0;margin-top:1px"><circle cx="8" cy="8" r="7" fill="#4ead7a" fill-opacity=".9"/><path d="M5 8.2l2 2 4-4.2" stroke="#0e0a06" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        <div>
-          <div style="font-size:12.5px;font-weight:600;color:rgba(240,235,224,.5);text-decoration:line-through">{{ s.label }}</div>
-        </div>
-      </div>
-      {% else %}
-      <div role="button" tabindex="0" onclick="_obJump('{{ s.tab }}')" onkeydown="if(event.key==='Enter')_obJump('{{ s.tab }}')" style="display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-radius:8px;background:rgba(240,235,224,.04);border:1px solid rgba(200,75,47,.3);cursor:pointer;transition:background .15s">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true" style="flex-shrink:0;margin-top:1px"><circle cx="8" cy="8" r="6.5" stroke="var(--ember)" stroke-width="1.6"/></svg>
-        <div>
-          <div style="font-size:12.5px;font-weight:600;color:#f0ebe0">{{ s.label }}</div>
-          <div style="font-size:11px;color:rgba(240,235,224,.5);margin-top:2px;line-height:1.5">{{ s.sub }}</div>
-        </div>
-      </div>
-      {% endif %}
+      <button class="rv2-step{{ ' done' if s.done }}" {% if not s.done %}onclick="_obJump('{{ s.tab }}')"{% endif %}><span class="ck">{{ '✓' if s.done }}</span><span><div class="l">{{ s.label }}</div>{% if not s.done and s.sub %}<div class="s">{{ s.sub }}</div>{% endif %}</span></button>
       {% endfor %}
     </div>
   </div>
   {% endif %}
 
-  <!-- New reviews notification banner -->
-  <div id="new-reviews-banner" class="dark-hero-card" style="display:none;color:var(--ink);padding:10px 16px;border-radius:6px;margin-bottom:12px;font-size:13px;cursor:pointer;align-items:center;justify-content:space-between" onclick="window.location.reload()">
-    <span id="new-reviews-text"></span>
-    <span style="font-size:11px;color:#c84b2f;font-weight:600">Click to refresh<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
-  </div>
+  <div id="new-reviews-banner" style="display:none" onclick="window.location.reload()"><span id="new-reviews-text"></span><span class="hb-link">Refresh →</span></div>
 
-  <!-- Reviews sub-tab toggle (segmented pill, top-right) -->
-  <div style="display:flex;justify-content:flex-end;margin-bottom:20px">
-    <div style="display:inline-flex;border:1px solid var(--paper3);border-radius:8px;overflow:hidden;background:var(--paper2)">
-      <button id="rv-tab-inbox"     onclick="switchReviewsTab('inbox')"     class="rv-tab-active" style="border:none;padding:6px 18px;font-size:12px;font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;transition:background .15s,color .15s">Inbox</button>
-      <button id="rv-tab-analytics" onclick="switchReviewsTab('analytics')" style="border:none;padding:6px 18px;font-size:12px;font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;background:transparent;color:var(--ink3);transition:background .15s,color .15s">Analytics</button>
-    </div>
-  </div>
-</div><!-- /content-wrapper-top -->
+  <div id="rv-inbox-header"></div>
+  <div id="rv-panel-analytics">
+    <section class="rv2-hero" aria-label="Rating trend">
+      <div class="hd"><div><div class="hb-kicker">Rating · last 8 weeks</div><div class="big"><span id="rv-hero-n" class="hb-num">{{ _rating }}</span><small>★ {{ 'on Google' if restaurant.gbp_rating else 'across ' ~ rstats.total ~ ' reviews' }}</small></div><div class="delta" id="rv-hero-delta"></div></div><div id="trend-summary" style="font-size:12px;color:var(--ink3)"></div></div>
+      <div id="rv-hero-chart"><div class="hb-skel" style="height:170px;margin-top:6px"></div></div>
+      <div id="trend-avg-rating" hidden></div>
+    </section>
+    <div class="rv2-ai"><div class="tag">Cavnar's read on your reviews</div><div class="insight-text insight-loading" id="review-insight"><div class="cm-compose" data-w=".88,.72,.6"><div class="cm-l" style="height:11px;margin-bottom:9px"></div><div class="cm-l" style="height:11px;margin-bottom:9px"></div><div class="cm-l" style="height:11px"></div><div class="cm-caret" style="height:16px"></div></div></div></div>
 
-  <!-- ══ INBOX HEADER ══ -->
-  <div id="rv-inbox-header">
-
-  <!-- ═══ PRIMARY STATS: editorial floating numbers ═══ -->
-  <div style="max-width:1080px;margin:0 auto;padding:0 28px">
-  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">
-    {% set _rating = restaurant.gbp_rating or rstats.avg_rating %}
-    {% set _rglow = 'stat-glow-green' if _rating >= 4.0 else ('stat-glow-amber' if _rating >= 3.0 else 'stat-glow-red') %}
-    <div id="stat-rating" class="rv-stat-cell">
-      <div id="stat-rating-n" class="{{_rglow}}" style="font-family:'Space Grotesk',sans-serif;font-size:clamp(40px,4.5vw,62px);font-weight:500;line-height:1;letter-spacing:-.02em">{{_rating}}</div>
-      <div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">{% if restaurant.gbp_rating %}Google rating{% else %}Avg rating{% endif %}</div>
-      {% if restaurant.gbp_rating %}<div style="font-size:10px;color:var(--ink3);margin-top:4px">Dashboard avg: {{rstats.avg_rating}}</div>{% endif %}
-    </div>
-    {% set _rrglow = 'stat-glow-green' if rstats.response_rate >= 70 else ('stat-glow-amber' if rstats.response_rate >= 40 else 'stat-glow-red') %}
-    <div id="stat-rr" class="rv-stat-cell">
-      <div id="stat-rr-n" class="{{_rrglow}}" style="font-family:'Space Grotesk',sans-serif;font-size:clamp(40px,4.5vw,62px);font-weight:500;line-height:1;letter-spacing:-.02em">{{rstats.response_rate}}<span id="stat-rr-pct" style="font-size:.5em;letter-spacing:0;margin-left:1px">%</span></div>
-      <div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">Response rate</div>
-      <div id="stat-rr-detail" style="font-size:10px;color:var(--ink3);margin-top:4px">{{rstats.get('responded', rstats.posted)}} of {{rstats.total}} reviews</div>
-    </div>
-    <div id="stat-received-mo" class="rv-stat-cell">
-      <div id="stat-received-mo-n" class="rv-stat-n rv-stat-n-lg" style="font-family:'Space Grotesk',sans-serif;font-size:clamp(40px,4.5vw,62px);font-weight:500;line-height:1;letter-spacing:-.02em">{{rstats.received_this_month}}</div>
-      <div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">New this month</div>
-    </div>
-    {% set _apglow = 'stat-glow-red' if rstats.awaiting_approval > 2 else ('stat-glow-amber' if rstats.awaiting_approval > 0 else '') %}
-    <div id="stat-pending" class="rv-stat-cell">
-      <div id="stat-pending-n" class="{{_apglow}}" style="font-family:'Space Grotesk',sans-serif;font-size:clamp(40px,4.5vw,62px);font-weight:500;line-height:1;letter-spacing:-.02em;{% if not _apglow %}color:var(--ink3){% endif %}">{{rstats.awaiting_approval}}<span id="stat-pending-arrow" style="display:none;font-size:13px;color:#2d6a4f;margin-left:4px">↓</span></div>
-      <div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">To approve</div>
+    <div class="rv2-sig">
+      <div class="rv2-sg"><div class="k"><span>Reviews · per week</span></div><div class="v"><span id="rv-sent-n" class="hb-num">—</span><small>this week</small></div><div id="sentiment-trend-bars" style="color:var(--ink3)"><div class="hb-skel" style="height:86px;margin-top:10px"></div></div><div class="cap"><span><span style="color:#2d6a4f">■</span> positive &nbsp; <span style="color:#e05555">■</span> negative</span><span id="sentiment-trend-labels"></span></div></div>
+      <div class="rv2-sg" id="perf-card"><div class="k"><span>How replies got approved</span><span class="rv2-days" id="perf-days-btns"><button class="hm-days-btn" data-days="30" onclick="loadResponsePerf(30)">30d</button><button class="hm-days-btn on" data-days="90" onclick="loadResponsePerf(90)">90d</button><button class="hm-days-btn" data-days="180" onclick="loadResponsePerf(180)">6mo</button></span></div><div class="v"><span id="rv-perf-n" class="hb-num">—</span><small>approved</small></div><div id="perf-body"><div class="hb-skel" style="height:86px;margin-top:10px"></div></div><div class="cap"><span id="rv-perf-cap">as-is · edited · regenerated</span></div></div>
+      <div class="rv2-sg" id="topic-heatmap-card"><div class="k"><span>What guests talk about</span><span class="rv2-days" id="topic-days-btns"><button class="hm-days-btn" data-days="30" onclick="loadTopicHeatmap(30)">30d</button><button class="hm-days-btn on" data-days="90" onclick="loadTopicHeatmap(90)">90d</button><button class="hm-days-btn" data-days="180" onclick="loadTopicHeatmap(180)">6mo</button></span></div><div id="heatmap-grid" class="rv2-topics"><div class="hb-skel" style="height:110px;margin-top:10px"></div></div><div class="cap"><span>click a topic to filter the inbox</span><span><span style="color:#2d6a4f">■</span> pos &nbsp; <span style="color:#e05555">■</span> neg</span></div></div>
     </div>
   </div>
 
-  <!-- SECONDARY STATS: compact row with dividers -->
-  <div style="display:flex;justify-content:center;align-items:center;padding:28px 0 36px;flex-wrap:wrap">
-    <div style="text-align:center;min-width:72px;padding:0 36px">
-      {% set _pglow = 'stat-glow-green' if rstats.positive_pct >= 70 else ('stat-glow-amber' if rstats.positive_pct >= 50 else 'stat-glow-red') %}
-      <div id="stat-positive-n" class="{{_pglow}}" style="font-family:'Space Grotesk',sans-serif;font-size:clamp(26px,2.8vw,38px);font-weight:500;letter-spacing:-.01em;line-height:1">{{rstats.positive_pct}}%</div>
-      <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:5px">Positive</div>
-    </div>
-    <div style="width:1px;height:56px;background:rgba(247,244,239,.22);flex-shrink:0"></div>
-    <div id="stat-urgent" style="text-align:center;min-width:72px;padding:0 36px">
-      <div id="stat-urgent-n" class="{{'stat-glow-red' if rstats.urgent > 0 else ''}}" style="font-family:'Space Grotesk',sans-serif;font-size:clamp(26px,2.8vw,38px);font-weight:500;letter-spacing:-.01em;line-height:1;{% if not rstats.urgent %}color:var(--ink3);{% endif %}">{{rstats.urgent}}</div>
-      <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:5px">Urgent</div>
-    </div>
-    <div style="width:1px;height:56px;background:rgba(247,244,239,.22);flex-shrink:0"></div>
-    <div style="text-align:center;min-width:72px;padding:0 36px">
-      <div id="stat-this-month-n" style="font-family:'Space Grotesk',sans-serif;font-size:clamp(26px,2.8vw,38px);font-weight:500;letter-spacing:-.01em;color:var(--ink);line-height:1">{{rstats.this_month}}</div>
-      <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:5px">Responded/mo</div>
-    </div>
-    <div style="width:1px;height:56px;background:rgba(247,244,239,.22);flex-shrink:0"></div>
-    <div style="text-align:center;min-width:72px;padding:0 36px">
-      <div id="stat-resp-time-n" style="font-family:'Space Grotesk',sans-serif;font-size:clamp(26px,2.8vw,38px);font-weight:500;letter-spacing:-.01em;color:var(--ink);line-height:1">{% if rstats.avg_response_hours and rstats.avg_response_hours <= 720 %}{% if rstats.avg_response_hours < 24 %}{{rstats.avg_response_hours}}h{% elif rstats.avg_response_hours < 168 %}{{(rstats.avg_response_hours / 24)|int}}d{% else %}{{(rstats.avg_response_hours / 168)|int}}w{% endif %}{% else %}—{% endif %}</div>
-      <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:5px">Avg response time</div>
-    </div>
-    <div style="width:1px;height:56px;background:rgba(247,244,239,.22);flex-shrink:0"></div>
-    <div style="text-align:center;min-width:72px;padding:0 36px">
-      {% set _srcglow = 'stat-glow-green' if (restaurant.reviews_live or restaurant.gmb_refresh_token) else '' %}
-      <div class="{{_srcglow}}" style="font-family:'Space Grotesk',sans-serif;font-size:clamp(26px,2.8vw,38px);font-weight:500;letter-spacing:-.01em;line-height:1;{% if not _srcglow %}color:var(--ink3){% endif %}">{{'Live' if restaurant.reviews_live else ('Connected' if restaurant.gmb_refresh_token else 'Demo')}}</div>
-      <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:5px">Source</div>
-    </div>
-  </div>
-  </div><!-- /stats max-width -->
-
-  <!-- Padded content below stats -->
-  <div style="max-width:1080px;margin:0 auto;padding:0 28px">
-
-  <!-- Request a review trigger -->
-  <!-- hidden els so loadReviewRequestStats() still has targets -->
-  <strong id="rr-sent-mo-inline" style="display:none"></strong>
-  <strong id="rr-sent-total-inline" style="display:none"></strong>
-
-  <div id="review-savings-bar" style="display:{% if savings_breakdown and savings_breakdown.reviews > 0 %}flex{% else %}none{% endif %};background:linear-gradient(to right,#0d2b1a,#0f3020);border:1px solid #1a3d24;border-radius:8px;padding:10px 16px;margin-bottom:14px;align-items:center;justify-content:space-between">
-    <div style="font-size:12px;color:#a3d9b8;line-height:1.5">
-      <strong style="color:#6fcf97" id="review-savings-amt">${{savings_breakdown.reviews|format_num if savings_breakdown else '0'}}</strong> saved in review management —
-      <span id="review-savings-count">{{rstats.responded}}</span> responses at ~$5 each vs. outsourcing to a reputation service
-      <span class="calc-tip"><svg class="tip-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="5.5" r="1" fill="currentColor"/><rect x="7.1" y="7.5" width="1.8" height="4.5" rx="0.9" fill="currentColor"/></svg><span class="tip-text">Podium & Birdeye charge $299–$399/mo for review response management — $5/response is the conservative mid-range equivalent.</span></span>
-    </div>
-    <div style="font-size:11px;color:#6fcf97;font-weight:700;white-space:nowrap;margin-left:12px" id="review-savings-rate">{{rstats.response_rate}}% rate</div>
-  </div>
-
-  <div class="dark-insight-card" style="border-radius:10px;padding:16px 20px;margin-bottom:20px;position:relative;overflow:hidden">
-    <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:var(--ember)"></div>
-    <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember);margin-bottom:10px;padding-left:4px">Cavnar AI Review Intelligence</div>
-    <div class="insight-text insight-loading" id="review-insight" style="font-size:13px;line-height:1.7;padding-left:4px"><div class="cm-compose" data-w=".88,.72,.6"><div class="cm-l" style="height:11px;margin-bottom:9px"></div><div class="cm-l" style="height:11px;margin-bottom:9px"></div><div class="cm-l" style="height:11px"></div><div class="cm-caret" style="height:16px"></div></div></div>
-  </div>
-
-  </div><!-- /padded-content -->
-  </div><!-- /rv-inbox-header -->
-
-<div style="max-width:1080px;margin:0 auto;padding:0 28px 28px">
-  <!-- ══ ANALYTICS ══ -->
-  <div id="rv-panel-analytics" style="display:none">
-  <!-- Response performance card -->
-  <div class="card" id="perf-card" style="padding:14px 16px;margin-bottom:14px">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-      <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink)">Response performance</div>
-      <div style="display:flex;gap:4px" id="perf-days-btns">
-        <button onclick="loadResponsePerf(30)"  class="hm-days-btn" data-days="30"  style="font-size:10px;padding:3px 8px;border-radius:4px;border:1px solid var(--paper3);background:var(--paper2);color:var(--ink3);cursor:pointer;font-family:'DM Sans',sans-serif">30d</button>
-        <button onclick="loadResponsePerf(90)"  class="hm-days-btn" data-days="90"  style="font-size:10px;padding:3px 8px;border-radius:4px;border:1px solid var(--ember);background:var(--ember);color:white;cursor:pointer;font-family:'DM Sans',sans-serif">90d</button>
-        <button onclick="loadResponsePerf(180)" class="hm-days-btn" data-days="180" style="font-size:10px;padding:3px 8px;border-radius:4px;border:1px solid var(--paper3);background:var(--paper2);color:var(--ink3);cursor:pointer;font-family:'DM Sans',sans-serif">6mo</button>
+  <div id="rv-inbox-reviews" class="rv2-inbox">
+    <div class="hb-sh" style="margin-top:0"><div><div class="k">Inbox</div><h2>Every review, with a reply ready<small><span class="count-lbl" style="margin-left:0">{{ reviews|length }} review{{ 's' if reviews|length != 1 }}</span></small></h2></div><div style="display:flex;gap:8px"><button class="hb-btn" onclick="document.getElementById('rr-modal').style.display='flex'">+ Request a review</button><button class="hb-btn" onclick="exportReviews()">Export CSV</button></div></div>
+    <div class="toolbar">
+      <div class="search-wrap"><svg class="search-ico" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><input class="search-input" id="rsearch" aria-label="Search reviews" placeholder="Search name, keyword, rating, platform…" value="{{ rsearch }}" oninput="debouncedFilter()" onkeydown="if(event.key==='Escape'){this.value='';filterReviews();}"></div>
+      <div class="filter-pills">
+        <button class="fpill {{ 'active' if rfilter=='all' }}" onclick="setRF('all',this)">All</button>
+        <button class="fpill {{ 'active-red' if rfilter=='urgent' }}" onclick="setRF('urgent',this)">Urgent</button>
+        <button class="fpill {{ 'active' if rfilter=='pending' }}" onclick="setRF('pending',this)">To approve</button>
+        <button class="fpill {{ 'active' if rfilter=='negative' }}" onclick="setRF('negative',this)">Negative</button>
+        <button class="fpill {{ 'active' if rfilter=='positive' }}" onclick="setRF('positive',this)">Positive</button>
       </div>
     </div>
-    <div id="perf-body">
-      <div class="skeleton" style="height:48px;border-radius:6px"></div>
-    </div>
-  </div>
-
-  {% set rrate = rstats.response_rate %}
-  {% set rrate_label = 'Excellent' if rrate >= 70 else ('Strong' if rrate >= 40 else ('On Track' if rrate >= 15 else 'Below Average')) %}
-  {% set rrate_color = '#2d6a4f' if rrate >= 70 else ('#6fcf97' if rrate >= 40 else ('#ef9f27' if rrate >= 15 else '#c0392b')) %}
-  <div class="card" id="rate-card" style="padding:14px 16px;margin-bottom:14px;{% if rrate < 15 %}border-left:3px solid #c0392b;background:linear-gradient(to right,#f5d5d5,var(--paper));{% elif rrate >= 70 %}border-left:3px solid #2d6a4f;background:linear-gradient(to right,#d5ede0,var(--paper));{% endif %}">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-      <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink)">Response rate vs industry benchmark</div>
-      <div style="display:flex;align-items:center;gap:8px">
-        <span class="review-rate-pct" style="font-family:'Space Grotesk',sans-serif;font-size:13px;font-weight:700;color:{{rrate_color}}">{{rrate}}%</span>
-        <span class="review-rate-label" style="background:{{rrate_color}};color:white;font-size:10px;font-weight:700;padding:2px 8px;border-radius:20px;letter-spacing:.5px">{{rrate_label}}</span>
+    {% if reviews %}
+    <div class="rv2-list">
+    {% for r in reviews %}
+    <div class="rv2-row scroll-reveal {{ 'urgent' if r.urgency=='high' }} {{ 'posted' if r.response_status=='posted' }} {{ 'approved' if r.response_status=='approved' }}" id="rc-{{ r.id }}" data-reveal-delay="{{ [loop.index0 * 0.05, 0.3]|min }}s" data-platform="{{ r.platform }}" data-yelp-id="{{ restaurant.yelp_business_id or '' }}" data-cats="{{ (r.categories|join(' '))|lower if r.categories else '' }}" data-author="{{ r.author|lower if r.author else '' }}" data-rating="{{ r.rating }}">
+      <div class="rv2-head">
+        <div class="rv2-av">{{ r.author[0].upper() if r.author else '?' }}</div>
+        <div class="rv2-who"><b>{{ r.author|e if r.author else 'Anonymous' }}</b><span class="rv2-stars">{% for i in range(5) %}{% if i < r.rating %}★{% else %}<span>★</span>{% endif %}{% endfor %}</span><span class="rv2-plat">{{ r.platform }}</span>{% if r.review_date %}<span class="rv2-date hb-num">{{ r.review_date|format_date }}</span>{% endif %}<span class="schip {{ r.sentiment or 'neutral' }}">{{ r.sentiment or 'neutral' }}</span>{% if r.urgency=='high' %}<span class="rv2-urg">Needs a reply now</span>{% endif %}</div>
+        <button class="rv2-x" aria-label="Remove review" title="Remove review" onclick="deleteReview({{ r.id }},this)">✕</button>
       </div>
-    </div>
-    <div style="position:relative;height:10px;background:var(--paper3);border-radius:5px;overflow:hidden">
-      <div class="review-rate-bar" style="position:absolute;left:0;top:0;height:100%;width:{% if rrate > 0 %}{{[rrate, 100]|min}}%{% else %}2px{% endif %};background:{{rrate_color}};border-radius:5px;transition:width .4s"></div>
-      <div style="position:absolute;left:15%;top:-2px;height:14px;width:2px;background:#ef9f27;opacity:.7" title="15% — typical independent"></div>
-      <div style="position:absolute;left:40%;top:-2px;height:14px;width:2px;background:#6fcf97;opacity:.7" title="40% — strong"></div>
-      <div style="position:absolute;left:70%;top:-2px;height:14px;width:2px;background:#2d6a4f;opacity:.7" title="70% — excellent"></div>
-    </div>
-    <div style="display:flex;justify-content:space-between;margin-top:5px;font-size:10px;color:var(--ink3)">
-      <span>0%</span>
-      <span style="color:#7a4f00;font-weight:600;background:rgba(255,255,255,.7);padding:0 3px;border-radius:3px;font-size:10px">▲ 15% avg</span>
-      <span style="color:#1a5c35;font-weight:600;background:rgba(255,255,255,.7);padding:0 3px;border-radius:3px;font-size:10px">▲ 40% strong</span>
-      <span style="color:#0d3320;font-weight:600;background:rgba(255,255,255,.7);padding:0 3px;border-radius:3px;font-size:10px">▲ 70% excellent</span>
-      <span>100%</span>
-    </div>
-    <div class="review-rate-count" style="margin-top:6px;font-size:11px;color:var(--ink);background:rgba(255,255,255,.6);border-radius:4px;padding:3px 6px;display:inline-block">{{rstats.get("responded", rstats.posted)}} of {{rstats.total}} reviews responded to — restaurants that respond see <strong style="color:var(--ink)">35% higher return rates</strong> on average. This 3.1% sales lift can mean an additional <strong style="color:var(--ink)">{% if savings_breakdown and savings_breakdown.sales_lift_yr > 0 %}${{(savings_breakdown.sales_lift_yr // 1000)|int}}k/yr{% else %}$125k/yr{% endif %}</strong> for your restaurant. <span class="calc-tip calc-tip-light calc-tip-up" style="display:inline-flex;vertical-align:middle;margin-top:0"><svg class="tip-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="5.5" r="1" fill="currentColor"/><rect x="7.1" y="7.5" width="1.8" height="4.5" rx="0.9" fill="currentColor"/></svg><span class="tip-text">Sources: Harvard Business School study on restaurant review responses (35% return rate lift); Cornell Center for Hospitality Research — 3.1% revenue increase per unit response rate improvement at casual dining.</span></span></div>
-  </div>
-
-  <div class="card" style="padding:16px 18px;margin-bottom:14px" id="topic-heatmap-card">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-      <div style="display:flex;align-items:center;gap:8px">
-        <div style="width:3px;height:14px;background:var(--ember);border-radius:2px"></div>
-        <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink3)">Topic sentiment</div>
-      </div>
-      <div style="display:flex;gap:4px;background:var(--paper1);border:1px solid var(--paper3);border-radius:6px;padding:3px">
-        <button class="hm-days-btn" data-days="30"  onclick="loadTopicHeatmap(30)"  style="border:none;background:transparent;color:var(--ink3);font-size:11px;padding:3px 8px;border-radius:4px;cursor:pointer;font-family:'DM Sans',sans-serif;font-weight:500">30d</button>
-        <button class="hm-days-btn" data-days="90"  onclick="loadTopicHeatmap(90)"  style="border:none;background:var(--ember);color:white;font-size:11px;padding:3px 8px;border-radius:4px;cursor:pointer;font-family:'DM Sans',sans-serif;font-weight:500">90d</button>
-        <button class="hm-days-btn" data-days="180" onclick="loadTopicHeatmap(180)" style="border:none;background:transparent;color:var(--ink3);font-size:11px;padding:3px 8px;border-radius:4px;cursor:pointer;font-family:'DM Sans',sans-serif;font-weight:500">6mo</button>
-      </div>
-    </div>
-    <div id="heatmap-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
-      <div style="color:var(--ink3);font-size:12px;padding:8px;grid-column:1/-1">Loading…</div>
-    </div>
-    <div style="display:flex;gap:14px;margin-top:12px;padding-top:10px;border-top:1px solid var(--paper3)">
-      <span style="display:flex;align-items:center;gap:5px;font-size:10px;color:var(--ink3)"><span style="display:inline-block;width:10px;height:4px;background:#2d6a4f;border-radius:2px"></span>Positive</span>
-      <span style="display:flex;align-items:center;gap:5px;font-size:10px;color:var(--ink3)"><span style="display:inline-block;width:10px;height:4px;background:#9ca3af;border-radius:2px"></span>Neutral</span>
-      <span style="display:flex;align-items:center;gap:5px;font-size:10px;color:var(--ink3)"><span style="display:inline-block;width:10px;height:4px;background:#dc2626;border-radius:2px"></span>Negative</span>
-      <span style="margin-left:auto;font-size:10px;color:var(--ink3)">Click any topic to filter reviews</span>
-    </div>
-  </div>
-
-  <div class="card" style="padding:14px 16px;margin-bottom:14px;background:linear-gradient(to bottom,#fafaf8,white)">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-      <div style="display:flex;align-items:center;gap:8px"><div style="width:3px;height:14px;background:var(--ember);border-radius:2px"></div><div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink3)">Sentiment trend — last 8 weeks</div></div>
-      <div id="trend-summary" style="font-size:11px;color:var(--ink3)"></div>
-    </div>
-    <div style="position:relative">
-      <div style="display:flex;align-items:flex-end;gap:6px;height:90px;margin-bottom:0;padding:0 2px" id="sentiment-trend-bars">
-        <div style="color:var(--ink3);font-size:12px;font-style:italic">Loading…</div>
-      </div>
-      <div style="height:1px;background:var(--paper3);margin:4px 0 2px"></div>
-    </div>
-    <div style="display:flex;gap:6px;font-size:10px;color:var(--ink3)" id="sentiment-trend-labels"></div>
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-top:10px">
-      <div style="display:flex;gap:14px;font-size:11px;color:var(--ink3)">
-        <span><span style="display:inline-block;width:10px;height:10px;background:#2d6a4f;border-radius:2px;margin-right:4px"></span>Positive</span>
-        <span><span style="display:inline-block;width:10px;height:10px;background:#c0392b;border-radius:2px;margin-right:4px"></span>Negative</span>
-        <span><span style="display:inline-block;width:10px;height:10px;background:#e8c87a;border-radius:2px;margin-right:4px"></span>Neutral</span>
-      </div>
-      <div id="trend-avg-rating" style="font-size:11px;color:var(--ink3)"></div>
-    </div>
-  </div>
-  </div><!-- /rv-panel-analytics -->
-
-  <!-- ══ INBOX REVIEWS ══ -->
-  <div id="rv-inbox-reviews">
-  <div class="toolbar">
-    <div class="search-wrap">
-      <svg class="search-ico" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-      <input class="search-input" id="rsearch" aria-label="Search reviews" placeholder="Search by name, keyword, rating, platform…" value="{{rsearch}}" oninput="debouncedFilter()" onkeydown="if(event.key==='Escape'){this.value='';filterReviews();}">
-    </div>
-    <div class="filter-pills">
-      <button class="fpill {{'active' if rfilter=='all'}}" onclick="setRF('all',this)">All</button>
-      <button class="fpill {{'active-red' if rfilter=='urgent'}}" onclick="setRF('urgent',this)">Urgent</button>
-      <button class="fpill {{'active' if rfilter=='pending'}}" onclick="setRF('pending',this)">To approve</button>
-      <button class="fpill {{'active' if rfilter=='negative'}}" onclick="setRF('negative',this)">Negative</button>
-      <button class="fpill {{'active' if rfilter=='positive'}}" onclick="setRF('positive',this)">Positive</button>
-    </div>
-    <span class="count-lbl">{{reviews|length}} review{{'s' if reviews|length!=1}}</span>
-    <div style="display:flex;gap:8px;margin-left:auto">
-      <button onclick="document.getElementById('rr-modal').style.display='flex'" class="btn-primary" style="padding:6px 14px;font-size:12px">+ Request a review</button>
-      <button class="btn-primary" style="padding:6px 14px;font-size:12px" onclick="exportReviews()">Export CSV<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M5.5 6.5l2.5 3 2.5-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-    </div>
-  </div>
-  {% if reviews %}
-  {% set colors=['#c84b2f','#2d6a4f','#b7791f','#1a56cc','#6b4fa0','#1e7a8c'] %}
-  {% for r in reviews %}
-  {% set col=colors[loop.index0%colors|length] %}
-  <div class="card scroll-reveal {{'urgent' if r.urgency=='high'}} {{'posted' if r.response_status=='posted'}} {{'approved' if r.response_status=='approved'}}" id="rc-{{r.id}}" data-reveal-delay="{{[loop.index0 * 0.07, 0.42]|min}}s" data-platform="{{r.platform}}" data-yelp-id="{{restaurant.yelp_business_id or ''}}" data-cats="{{(r.categories|join(' '))|lower if r.categories else ''}}" data-author="{{r.author|lower if r.author else ''}}" data-rating="{{r.rating}}">
-    {% if r.urgency=='high' %}<div class="ubanner">⚠ Needs immediate attention</div>{% endif %}
-    <div class="card-hd">
-      <div class="avatar" style="background:{{col}}">{{r.author[0].upper() if r.author else "?"}}</div>
-      <div class="card-meta">
-        <div class="card-author">{{r.author|e}}</div>
-        <div class="card-sub">
-          <span class="stars">{% for i in range(5) %}{{('★' if i<r.rating else '☆')}}{% endfor %}</span>
-          <span class="pbadge {{'pg' if r.platform=='google' else 'py'}}">{{r.platform}}</span>
-          {% if r.review_date %}<span>{{r.review_date|format_date}}</span>{% endif %}
-        </div>
-      </div>
-      <span style="font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:{{'#4ead7a' if r.sentiment=='positive' else ('#e05555' if r.sentiment=='negative' else '#d4a030')}}">{{r.sentiment or 'neutral'}}</span>
-      <button aria-label="Close" onclick="deleteReview({{r.id}},this)" title="Remove review" style="background:none;border:none;color:var(--ink3);font-size:15px;cursor:pointer;padding:2px 6px;line-height:1;opacity:.5;transition:opacity .15s" onmouseover="this.style.opacity='1';this.style.color='#c0392b'" onmouseout="this.style.opacity='.5';this.style.color='var(--ink3)'">✕</button>
-    </div>
-    <div class="card-body">
-      <div class="rtext">{{r.text|e}}</div>
-      {% if r.categories %}<div class="cats">{% for c in r.categories %}<span class="cat">{{c.replace('_',' ')}}</span>{% endfor %}</div>{% endif %}
+      <div class="rtext">{{ r.text|e }}</div>
+      {% if r.categories %}<div class="cats">{% for c in r.categories %}<span class="cat">{{ c.replace('_',' ') }}</span>{% endfor %}</div>{% endif %}
       {% if r.draft_response %}
-      <div class="draft-box" id="draft-box-{{r.id}}">
-        <div class="draft-lbl">Suggested response</div>
-        <div class="draft-txt" id="draft-txt-{{r.id}}">{{r.draft_response|e}}</div>
-        <div class="draft-actions" id="draft-actions-{{r.id}}">
+      <div class="draft-box" id="draft-box-{{ r.id }}">
+        <div class="draft-lbl">Cavnar's reply</div>
+        <div class="draft-txt" id="draft-txt-{{ r.id }}">{{ r.draft_response|e }}</div>
+        <div class="draft-actions" id="draft-actions-{{ r.id }}">
           {% if r.response_status=='posted' %}
-            <div style="display:flex;align-items:center;gap:6px">
-              <span style="font-size:11px;color:#1a56cc;font-weight:600;background:#e8f0fe;border:1px solid #c5d8f8;padding:3px 8px;border-radius:4px">✓ Live on {{r.platform|title}}</span>
-              {% if r.platform=='google' %}<button class="btn btn-skip" style="font-size:11px" onclick="retractR({{r.id}},this)">Retract</button>{% endif %}
-            </div>
+            <span class="rv2-status live">✓ Live on {{ r.platform|title }}</span>
+            {% if r.platform=='google' %}<button class="btn btn-skip" onclick="retractR({{ r.id }},this)">Retract</button>{% endif %}
           {% elif r.response_status=='approved' %}
-            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-              <span style="font-size:11px;color:var(--green);font-weight:600;background:#f0fdf4;border:1px solid #b7dfca;padding:3px 8px;border-radius:4px">✓ Approved</span>
-              <span style="font-size:11px;color:var(--ink3)">{% if r.platform=='google' %}Auto-posting to Google or click below{% else %}Copy and post to {{r.platform|title}} manually{% endif %}</span>
-            </div>
-            <div style="display:flex;gap:6px;margin-top:6px">
-              <button class="btn btn-skip" onclick="skipR({{r.id}})">Edit</button>
-              {% if r.platform != 'google' %}
-              <button class="btn" style="background:#e8f0fe;color:#1a56cc;border:1px solid #c5d8f8;font-size:11px" onclick="markPosted({{r.id}},this)">✓ Mark as posted</button>
-              {% endif %}
-            </div>
+            <span class="rv2-status ok">✓ Approved</span>
+            <span style="font-size:11.5px;color:var(--ink3)">{% if r.platform=='google' %}Posting to Google{% else %}Copy and post to {{ r.platform|title }}{% endif %}</span>
+            <button class="btn btn-skip" onclick="skipR({{ r.id }})">Edit</button>
+            {% if r.platform != 'google' %}<button class="btn" onclick="markPosted({{ r.id }},this)">Mark as posted</button>{% endif %}
           {% elif r.response_status=='skipped' %}
-            <button class="btn btn-approve" onclick="approveR({{r.id}})">✓ Approve</button>
-            <button class="btn btn-skip" onclick="openEditor({{r.id}})">Edit response</button>
-            <button class="btn btn-skip" onclick="regenDraft({{r.id}})">↻ Regenerate</button>
+            <button class="btn btn-approve" onclick="approveR({{ r.id }})">✓ Approve</button>
+            <button class="btn btn-skip" onclick="openEditor({{ r.id }})">Edit</button>
+            <button class="btn btn-skip" onclick="regenDraft({{ r.id }})">↻ Regenerate</button>
           {% else %}
-            <button class="btn btn-approve" onclick="approveR({{r.id}})">✓ Approve</button>
-            <button class="btn btn-skip" onclick="skipR({{r.id}})">Skip</button>
+            <button class="btn btn-approve" onclick="approveR({{ r.id }})">✓ Approve</button>
+            <button class="btn btn-skip" onclick="skipR({{ r.id }})">Skip</button>
           {% endif %}
         </div>
-        <!-- Response editor (hidden by default) -->
-        <div class="response-editor" id="editor-{{r.id}}" style="display:none;margin-top:10px">
-          <textarea id="editor-text-{{r.id}}" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;color:var(--ink);background:white;resize:vertical;min-height:90px;outline:none" placeholder="Write your own response…">{{r.draft_response|e}}</textarea>
-          <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;align-items:center">
-            <button class="btn btn-approve" onclick="saveDraft({{r.id}})">Save & approve</button>
-            <button class="btn btn-skip" onclick="regenDraft({{r.id}})">↻ Regenerate AI draft</button>
-            <button class="btn btn-skip" data-tmpl-btn="1" onclick="toggleTmplPicker({{r.id}},this)">📋 Templates ▾</button>
-            <button class="btn btn-skip" onclick="closeEditor({{r.id}})">Cancel</button>
-            <span onclick="saveAsTemplate({{r.id}})" style="font-size:11px;color:var(--ink3);cursor:pointer;text-decoration:underline;margin-left:2px">Save as template</span>
+        <div class="response-editor" id="editor-{{ r.id }}" style="display:none;margin-top:10px">
+          <textarea id="editor-text-{{ r.id }}" placeholder="Write your own response…">{{ r.draft_response|e }}</textarea>
+          <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center">
+            <button class="btn btn-approve" onclick="saveDraft({{ r.id }})">Save &amp; approve</button>
+            <button class="btn btn-skip" onclick="regenDraft({{ r.id }})">↻ Regenerate</button>
+            <button class="btn btn-skip" data-tmpl-btn="1" onclick="toggleTmplPicker({{ r.id }},this)">Templates ▾</button>
+            <button class="btn btn-skip" onclick="closeEditor({{ r.id }})">Cancel</button>
+            <button class="hb-link" onclick="saveAsTemplate({{ r.id }})">Save as template</button>
           </div>
         </div>
       </div>
       {% elif r.response_status != 'posted' %}
-      <!-- No draft yet — show write/generate buttons -->
-      <div class="draft-box" id="draft-box-{{r.id}}" style="background:var(--paper)">
-        <div class="draft-lbl" style="color:var(--ink3)">No response drafted yet</div>
-        <div class="draft-actions" style="margin-top:8px">
-          <button class="btn btn-approve" onclick="regenDraft({{r.id}})">Generate AI response</button>
-          <button class="btn btn-skip" onclick="openEditor({{r.id}})">Write my own</button>
-          <button class="btn btn-skip" data-tmpl-btn="1" onclick="toggleTmplPicker({{r.id}},this)">📋 Templates ▾</button>
+      <div class="draft-box" id="draft-box-{{ r.id }}">
+        <div class="draft-lbl">No reply drafted yet</div>
+        <div class="draft-actions" id="draft-actions-{{ r.id }}" style="margin-top:6px">
+          <button class="btn btn-approve" onclick="regenDraft({{ r.id }})">Draft a reply</button>
+          <button class="btn btn-skip" onclick="openEditor({{ r.id }})">Write my own</button>
+          <button class="btn btn-skip" data-tmpl-btn="1" onclick="toggleTmplPicker({{ r.id }},this)">Templates ▾</button>
         </div>
-        <div class="response-editor" id="editor-{{r.id}}" style="display:none;margin-top:10px">
-          <textarea id="editor-text-{{r.id}}" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;color:var(--ink);background:white;resize:vertical;min-height:90px;outline:none" placeholder="Write your response here…"></textarea>
-          <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;align-items:center">
-            <button class="btn btn-approve" onclick="saveDraft({{r.id}})">Save & approve</button>
-            <button class="btn btn-skip" data-tmpl-btn="1" onclick="toggleTmplPicker({{r.id}},this)">📋 Templates ▾</button>
-            <button class="btn btn-skip" onclick="closeEditor({{r.id}})">Cancel</button>
-            <span onclick="saveAsTemplate({{r.id}})" style="font-size:11px;color:var(--ink3);cursor:pointer;text-decoration:underline;margin-left:2px">Save as template</span>
+        <div class="response-editor" id="editor-{{ r.id }}" style="display:none;margin-top:10px">
+          <textarea id="editor-text-{{ r.id }}" placeholder="Write your response here…"></textarea>
+          <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center">
+            <button class="btn btn-approve" onclick="saveDraft({{ r.id }})">Save &amp; approve</button>
+            <button class="btn btn-skip" data-tmpl-btn="1" onclick="toggleTmplPicker({{ r.id }},this)">Templates ▾</button>
+            <button class="btn btn-skip" onclick="closeEditor({{ r.id }})">Cancel</button>
+            <button class="hb-link" onclick="saveAsTemplate({{ r.id }})">Save as template</button>
           </div>
         </div>
       </div>
       {% endif %}
     </div>
+    {% endfor %}
+    </div>
+    {% else %}
+    <div class="rv2-empty"><b>No reviews match this filter</b>Try clearing the filters or the search term.<div style="margin-top:12px"><button class="hb-btn" onclick="clearFilters()">Clear filters</button></div></div>
+    {% endif %}
   </div>
-  {% endfor %}
-  {% else %}
-  <div class="empty-state">
-    <svg viewBox="0 0 24 24" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><path d="M11 8v6M8 11h6" opacity=".4"/></svg>
-    <div class="empty-state-title">No reviews match this filter</div>
-    <div class="empty-state-sub">Try clearing the filters or search term to see all reviews.</div>
-    <button onclick="clearFilters()" class="btn-secondary" style="font-size:11px;padding:6px 14px">Clear filters</button>
-  </div>
-  {% endif %}
-  </div><!-- /rv-inbox-reviews -->
-</div><!-- /outer-content-wrapper -->
+</div>
 </div><!-- /panel-reviews -->
 
 <!-- Review request modal -->
@@ -5115,125 +5030,49 @@ function gmbDisconnect(){
 }
 
 var _hmDays = 90;
+var _perfLoaded = false;
 var _hmLoaded = false;
 
-function loadTopicHeatmap(days) {
-  if (days) _hmDays = days;
-  var _dark = document.documentElement.getAttribute('data-theme') === 'dark';
-  var _ebtn = _dark ? '#923020' : 'var(--ember)';
-  var btns = document.getElementsByClassName('hm-days-btn');
-  for (var i = 0; i < btns.length; i++) {
-    var active = parseInt(btns[i].getAttribute('data-days')) === _hmDays;
-    btns[i].style.background = active ? _ebtn : 'transparent';
-    btns[i].style.color      = active ? 'white' : 'var(--ink3)';
-  }
-  var grid = document.getElementById('heatmap-grid');
-  if (!grid) return;
-  grid.innerHTML = '<div style="color:var(--ink3);font-size:12px;padding:8px;grid-column:1/-1">Loading…</div>';
-  fetch('/api/topic-heatmap?days=' + _hmDays)
-    .then(function(r) { return r.json(); })
-    .then(function(d) {
-      if (!d.ok || !d.data) { grid.innerHTML = emptyStateHtml('No topics yet', 'Topics appear as reviews get analyzed'); return; }
-      var html = '';
-      for (var i = 0; i < d.data.length; i++) {
-        var item = d.data[i];
-        var empty = item.count === 0;
-        var bg, border, numColor;
-        var _dark = document.documentElement.getAttribute('data-theme') === 'dark';
-        if (empty) {
-          bg = _dark ? 'var(--surface)' : 'var(--paper2)'; border = 'var(--paper3)'; numColor = 'var(--ink3)';
-        } else if (item.pct_negative >= 50) {
-          bg = _dark ? '#2a1010' : '#fef2f2'; border = _dark ? '#5a2828' : '#fca5a5'; numColor = _dark ? '#e07055' : '#b91c1c';
-        } else if (item.pct_negative >= 30) {
-          bg = _dark ? '#251d08' : '#fffbeb'; border = _dark ? '#5a4200' : '#fcd34d'; numColor = _dark ? '#d4a030' : '#92400e';
-        } else {
-          bg = _dark ? '#0c2318' : '#f0fdf4'; border = _dark ? '#1e4a30' : '#86efac'; numColor = _dark ? '#4ead7a' : '#15803d';
-        }
-        var trendSym = item.trend === 'up' ? ' ↑' : (item.trend === 'down' ? ' ↓' : '');
-        var trendCol = item.trend === 'up' ? '#dc2626' : (item.trend === 'down' ? '#2d6a4f' : 'var(--ink3)');
-        var posW = item.pct_positive;
-        var negW = item.pct_negative;
-        var neuW = 100 - posW - negW;
-        var clickAttr = empty ? '' : 'onclick="filterByTopic(\'' + item.category + '\')"';
-        var hoverIn  = empty ? '' : 'onmouseover="var dk=document.documentElement.getAttribute(\'data-theme\')===\'dark\';this.style.boxShadow=dk?\'0 0 0 1px var(--paper3),0 8px 24px rgba(0,0,0,.6)\':\' 0 6px 20px rgba(14,12,10,.18)\';this.style.transform=\'translateY(-2px)\'"';
-        var hoverOut = 'onmouseout="this.style.boxShadow=\'\';this.style.transform=\'\'"';
-        html += '<div ' + clickAttr + ' ' + hoverIn + ' ' + hoverOut + ' style="background:' + bg + ';border:1px solid ' + border + ';border-radius:10px;padding:12px 13px;cursor:' + (empty ? 'default' : 'pointer') + ';transition:box-shadow .15s">';
-        html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">';
-        html += '<div style="font-size:11px;font-weight:600;color:var(--ink2);line-height:1.3">' + item.label + '</div>';
-        html += '<span style="font-size:10px;font-weight:700;color:' + trendCol + '">' + trendSym + '</span>';
-        html += '</div>';
-        html += '<div style="font-family:\'Space Grotesk\',sans-serif;font-size:24px;font-weight:700;color:' + numColor + ';line-height:1;margin-bottom:8px">' + (empty ? '—' : item.count) + '</div>';
-        if (!empty) {
-          html += '<div style="height:4px;border-radius:2px;overflow:hidden;display:flex;background:' + (_dark ? 'var(--paper3)' : '#e5e7eb') + '">';
-          html += '<div style="width:' + posW + '%;background:#2d6a4f;height:100%"></div>';
-          html += '<div style="width:' + neuW + '%;background:#9ca3af;height:100%"></div>';
-          html += '<div style="width:' + negW + '%;background:#dc2626;height:100%"></div>';
-          html += '</div>';
-          html += '<div style="display:flex;justify-content:space-between;margin-top:3px">';
-          html += '<span style="font-size:9px;color:#2d6a4f;font-weight:600">' + posW + '%</span>';
-          html += '<span style="font-size:9px;color:#dc2626;font-weight:600">' + negW + '%</span>';
-          html += '</div>';
-        } else {
-          html += '<div style="font-size:10px;color:var(--ink3);margin-top:4px">No data</div>';
-        }
-        html += '</div>';
-      }
-      grid.innerHTML = html;
-      _hmLoaded = true;
-    }).catch(function() {
-      grid.innerHTML = emptyStateHtml('Could not load topics', 'Refresh the page to try again');
-    });
+function loadTopicHeatmap(days){
+  if(days)_hmDays=days;
+  var btns=document.querySelectorAll('#topic-days-btns .hm-days-btn');
+  for(var i=0;i<btns.length;i++){btns[i].classList.toggle('on',parseInt(btns[i].getAttribute('data-days'),10)===_hmDays);}
+  var grid=document.getElementById('heatmap-grid');
+  if(!grid)return;
+  var C=window.CavnarCharts;var esc=C?C.esc:function(v){return String(v==null?'':v);};
+  grid.innerHTML='<div class="hb-skel" style="height:110px;margin-top:10px"></div>';
+  fetch('/api/topic-heatmap?days='+_hmDays).then(function(r){return r.json();}).then(function(d){
+    if(!d.ok||!d.data){grid.innerHTML='<div class="hb-empty">Topics appear as reviews get analysed.</div>';return;}
+    var items=d.data.filter(function(x){return (x.count||0)>0;}).sort(function(a,b){return (b.count||0)-(a.count||0);}).slice(0,6);
+    if(!items.length){grid.innerHTML='<div class="hb-empty" style="height:110px;display:flex;align-items:center">No topics in this window.</div>';return;}
+    var h='';
+    for(var j=0;j<items.length;j++){var it=items[j];var pos=it.pct_positive||0,neg=it.pct_negative||0,mid=Math.max(0,100-pos-neg);
+      var tr=it.trend==='up'?'<span class="t up">↑</span>':(it.trend==='down'?'<span class="t down">↓</span>':'');
+      h+='<button type="button" class="rv2-topic" onclick="filterByTopic(\''+esc(it.category)+'\')"><span>'+esc(it.label)+tr+'</span><span class="bar"><i class="p" style="width:'+pos+'%"></i><i style="width:'+mid+'%"></i><i class="ng" style="width:'+neg+'%"></i></span><span class="n hb-num">'+(it.count||0)+'</span></button>';}
+    grid.innerHTML=h;
+  }).catch(function(){grid.innerHTML='<div class="hb-empty">Unavailable.</div>';});
 }
-
-var _perfLoaded = false;
 function loadResponsePerf(days){
-  days = days || 90;
-  _perfLoaded = true;
-  var _dark = document.documentElement.getAttribute('data-theme') === 'dark';
-  var _ebtn = _dark ? '#923020' : 'var(--ember)';
-  document.querySelectorAll('#perf-days-btns .hm-days-btn').forEach(function(b){
-    var active = String(b.getAttribute('data-days')) === String(days);
-    b.style.background  = active ? _ebtn         : 'var(--paper2)';
-    b.style.color       = active ? 'white'        : 'var(--ink3)';
-    b.style.borderColor = active ? _ebtn          : 'var(--paper3)';
-  });
-  var body = document.getElementById('perf-body');
-  if(body) body.innerHTML = '<div class="skeleton" style="height:48px;border-radius:6px"></div>';
-  fetch('/api/response-performance?days=' + days)
-    .then(function(r){ return r.json(); })
-    .then(function(d){
-      if(!d.ok || !body) return;
-      var data = d.data;
-      var total = data.total || 0;
-      if(total === 0){
-        body.innerHTML = '<div style="font-size:12px;color:var(--ink3);font-style:italic;text-align:center;padding:12px 0">No approved responses yet in this window.</div>';
-        return;
-      }
-      var items = [
-        {key:'approved_as_is', label:'Approved as-is', color:'#2d6a4f', icon:'✓'},
-        {key:'edited',         label:'Edited before approving', color:'#4a9eca', icon:'✎'},
-        {key:'regenerated',    label:'Regenerated', color:'#ef9f27', icon:'↺'},
-      ];
-      var html = '<div style="display:flex;flex-direction:column;gap:6px">';
-      items.forEach(function(item){
-        var n   = data[item.key] || 0;
-        var pct = total > 0 ? Math.round(n / total * 100) : 0;
-        html += '<div style="display:flex;align-items:center;gap:10px">';
-        html += '<div style="width:90px;font-size:11px;color:var(--ink3);text-align:right;flex-shrink:0">' + item.label + '</div>';
-        html += '<div style="flex:1;height:18px;background:var(--paper3);border-radius:4px;overflow:hidden">';
-        html += '<div style="height:100%;width:' + pct + '%;background:' + item.color + ';border-radius:4px;transition:width .4s;min-width:' + (n>0?'4px':'0') + '"></div>';
-        html += '</div>';
-        html += '<div style="width:52px;font-size:11px;font-weight:600;color:var(--ink);flex-shrink:0">' + n + ' <span style="color:var(--ink3);font-weight:400">(' + pct + '%)</span></div>';
-        html += '</div>';
-      });
-      html += '<div style="font-size:10px;color:var(--ink3);margin-top:4px">' + total + ' approved response' + (total===1?'':'s') + ' in last ' + days + ' days</div>';
-      html += '</div>';
-      body.innerHTML = html;
-    }).catch(function(){
-      if(body) body.innerHTML = '<div style="font-size:12px;color:var(--ink3)">Unavailable.</div>';
-    });
+  days=days||90;
+  _perfLoaded=true;
+  var btns=document.querySelectorAll('#perf-days-btns .hm-days-btn');
+  for(var i=0;i<btns.length;i++){btns[i].classList.toggle('on',String(btns[i].getAttribute('data-days'))===String(days));}
+  var body=document.getElementById('perf-body');
+  if(!body)return;
+  body.innerHTML='<div class="hb-skel" style="height:86px;margin-top:10px"></div>';
+  fetch('/api/response-performance?days='+days).then(function(r){return r.json();}).then(function(d){
+    if(!d.ok){body.innerHTML='<div class="hb-empty">Unavailable.</div>';return;}
+    var data=d.data||{},total=data.total||0;
+    var n=document.getElementById('rv-perf-n');if(n)n.textContent=total;
+    var cap=document.getElementById('rv-perf-cap');if(cap)cap.textContent=total?('of '+total+' approved in the last '+days+' days'):('last '+days+' days');
+    if(!total){body.innerHTML='<div class="hb-empty" style="height:86px;display:flex;align-items:center">No approved replies in the last '+days+' days.</div>';return;}
+    var items=[{key:'approved_as_is',label:'Approved as-is',cls:'g'},{key:'edited',label:'Edited first',cls:''},{key:'regenerated',label:'Regenerated',cls:'a'}];
+    var h='<div class="rv2-perf">';
+    for(var j=0;j<items.length;j++){var it=items[j],v=data[it.key]||0,p=Math.round(v/total*100);
+      h+='<div class="row"><span>'+it.label+'</span><span class="bar"><i class="'+it.cls+'" style="width:'+Math.max(p,v?3:0)+'%;animation-delay:'+(j*90)+'ms"></i></span><span class="n hb-num">'+v+' <span>'+p+'%</span></span></div>';}
+    body.innerHTML=h+'</div>';
+  }).catch(function(){body.innerHTML='<div class="hb-empty">Unavailable.</div>';});
 }
-
 window.switchFcTab = function(tab) {
   var isTracker = tab === 'tracker';
   document.getElementById('fc-panel-tracker').style.display   = isTracker ? '' : 'none';
@@ -5274,6 +5113,7 @@ window.switchLaborTab = function(tab) {
 
 window.switchReviewsTab = function(tab) {
   var isInbox = tab === 'inbox';
+  if(!document.getElementById('rv-tab-inbox')){ if(!isInbox){ loadTopicHeatmap(); loadSentimentTrend(); if(!_perfLoaded) loadResponsePerf(); } return; }
   document.getElementById('rv-inbox-header').style.display  = isInbox ? '' : 'none';
   document.getElementById('rv-inbox-reviews').style.display = isInbox ? '' : 'none';
   document.getElementById('rv-panel-analytics').style.display = isInbox ? 'none' : '';
@@ -5325,63 +5165,30 @@ window.switchMktTab = function(tab) {
 function loadSentimentTrend(){
   if(sentimentTrendLoaded)return;
   sentimentTrendLoaded=true;
-  var container=document.getElementById('sentiment-trend-bars');
-  var labels=document.getElementById('sentiment-trend-labels');
-  if(!container)return;
+  var C=window.CavnarCharts;
+  var hero=document.getElementById('rv-hero-chart'),bars=document.getElementById('sentiment-trend-bars');
+  if(!hero&&!bars)return;
   fetch('/api/sentiment-trend').then(function(r){return r.json();}).then(function(data){
-    if(!data.weeks||!data.weeks.length){
-      container.innerHTML='<div style="color:var(--ink3);font-size:12px;font-style:italic">No trend data yet — reviews will appear here as they come in.</div>';
+    var weeks=(data.weeks||[]).filter(function(w){return (w.total||0)>0;});
+    if(!weeks.length){
+      if(hero)hero.innerHTML='<div class="hb-empty" style="height:170px;display:flex;align-items:center">The trend appears after a few weeks of reviews.</div>';
+      if(bars)bars.innerHTML='<div class="hb-empty" style="height:86px;display:flex;align-items:center">No reviews yet.</div>';
       return;
     }
-    var maxTotal=0;
-    for(var i=0;i<data.weeks.length;i++){if(data.weeks[i].total>maxTotal)maxTotal=data.weeks[i].total;}
-    maxTotal=Math.max(maxTotal,1);
-    // Compute trend direction for summary
-    var firstW=data.weeks[0]; var lastW=data.weeks[data.weeks.length-1];
-    var firstPct=firstW.total>0?Math.round(firstW.positive/firstW.total*100):0;
-    var lastPct=lastW.total>0?Math.round(lastW.positive/lastW.total*100):0;
-    var trendSummary=document.getElementById('trend-summary');
-    if(trendSummary){
-      if(lastPct>firstPct+10) trendSummary.innerHTML='<span style="color:#2d6a4f;font-weight:700">↑ Trending positive</span>';
-      else if(lastPct<firstPct-10) trendSummary.innerHTML='<span style="color:var(--red);font-weight:700">↓ Trending negative</span>';
-      else trendSummary.innerHTML='<span style="color:var(--ink3)">→ Holding steady</span>';
-    }
-    // Avg rating across all weeks
-    var totalRatings=0; var ratingCount=0;
-    for(var i=0;i<data.weeks.length;i++){
-      if(data.weeks[i].avg_rating && data.weeks[i].total>0){
-        totalRatings+=data.weeks[i].avg_rating*data.weeks[i].total;
-        ratingCount+=data.weeks[i].total;
-      }
-    }
-    var avgRatingEl=document.getElementById('trend-avg-rating');
-    if(avgRatingEl && ratingCount>0){
-      var avg=Math.round(totalRatings/ratingCount*10)/10;
-      var starCol=avg>=4.5?'#2d6a4f':avg>=3.5?'#ef9f27':'#c0392b';
-      avgRatingEl.innerHTML='Avg: <strong style="color:'+starCol+'">'+avg+'★</strong>';
-    }
-    var html=''; var lblHtml='';
-    for(var i=0;i<data.weeks.length;i++){
-      var w=data.weeks[i];
-      var totalH=Math.max(8,Math.round((w.total/maxTotal)*80));
-      var posH=w.total>0?Math.round((w.positive/w.total)*totalH):0;
-      var negH=w.total>0?Math.round((w.negative/w.total)*totalH):0;
-      var neuH=totalH-posH-negH;
-      var isLast=(i===data.weeks.length-1);
-      var posPct=w.total>0?Math.round(w.positive/w.total*100):0;
-      var tooltip=w.label+': '+w.total+' reviews ('+w.positive+' pos '+w.negative+' neg)';
-      html+='<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:0;cursor:default" title="'+tooltip+'">';
-      html+='<span style="font-size:9px;font-weight:600;color:'+(posPct>=75?'#2d6a4f':posPct<=30?'#c0392b':'var(--ink3)')+';margin-bottom:2px">'+posPct+'%</span>';
-      if(negH>0) html+='<div style="width:82%;height:'+negH+'px;background:#c0392b;border-radius:'+(posH===0&&neuH===0?'4px 4px':'0')+' 0 0;opacity:'+(isLast?'1':'0.85')+'"></div>';
-      if(neuH>0) html+='<div style="width:82%;height:'+neuH+'px;background:#e8c87a;opacity:'+(isLast?'1':'0.85')+'"></div>';
-      if(posH>0) html+='<div style="width:82%;height:'+posH+'px;background:linear-gradient(to top,#1a5c35,#2d6a4f);border-radius:0 0 4px 4px;opacity:'+(isLast?'1':'0.85')+'"></div>';
-      html+='</div>';
-      lblHtml+='<span style="flex:1;text-align:center;font-size:10px;color:'+(isLast?'var(--ink)':'var(--ink3)')+';font-weight:'+(isLast?'600':'400')+'">'+w.label+'</span>';
-    }
-    container.innerHTML=html;
-    if(labels)labels.innerHTML=lblHtml;
+    var yr=new Date().getFullYear();
+    function lab(w,short){var k=w.week_key||'';var y=k.slice(0,4)||yr;var m=(w.label||'').split('/');if(m.length!==2)return w.label||'';return (+m[0])+'/'+(+m[1])+(short?'':'/'+String(y).slice(-2));}
+    var avgs=weeks.map(function(w){return w.avg_rating||0;});
+    if(hero&&C){hero.innerHTML=C.glowLine(avgs,1000,170,'#e8956a',{pad:10,floor:Math.min.apply(null,avgs)-0.3,ceil:5})+'<div class="ax hb-num"><span>'+lab(weeks[0])+'</span><span>'+lab(weeks[weeks.length-1])+'</span></div>';}
+    var d=document.getElementById('rv-hero-delta');
+    if(d&&avgs.length>1){var dl=avgs[avgs.length-1]-avgs[0];d.className='delta '+(dl>0.05?'good':dl<-0.05?'bad':'');d.innerHTML='<span class="hb-num">'+(dl>=0?'+':'−')+Math.abs(dl).toFixed(1)+'★</span> <span>this week vs '+weeks.length+' weeks ago</span>';}
+    var ts=document.getElementById('trend-summary');
+    if(ts){var f=weeks[0],l=weeks[weeks.length-1];var fp=f.total?f.positive/f.total:0,lp=l.total?l.positive/l.total:0;ts.innerHTML=lp>fp+0.1?'<span style="color:var(--green);font-weight:600">↑ Trending positive</span>':(lp<fp-0.1?'<span style="color:var(--red);font-weight:600">↓ Trending negative</span>':'→ Holding steady');}
+    if(bars&&C){bars.innerHTML=C.stacked(weeks.slice(-8).map(function(w){return {label:lab(w,true),pos:w.positive||0,neg:w.negative||0,total:w.total||0};}),320,86);}
+    var n=document.getElementById('rv-sent-n');if(n)n.textContent=weeks[weeks.length-1].total;
+    var lbls=document.getElementById('sentiment-trend-labels');if(lbls)lbls.textContent=weeks.length+' weeks';
   }).catch(function(){
-    if(container)container.innerHTML=emptyStateHtml('Trend unavailable', 'Check back shortly — this refreshes automatically');
+    if(hero)hero.innerHTML='<div class="hb-empty">Trend unavailable right now.</div>';
+    if(bars)bars.innerHTML='<div class="hb-empty">Unavailable.</div>';
   });
 }
 function processInsightHtml(html){
@@ -5524,7 +5331,7 @@ function switchTab(n,btn){
     for(var _li=0;_li<_lnums.length;_li++){(function(el){if(el.dataset.animated)return;el.dataset.animated='1';var raw=el.textContent.replace(/[$,]/g,'').trim();var num=parseInt(raw,10);if(!isNaN(num)&&num>0)countUpMoney(el,num,900);}(_lnums[_li]));}
   }
   if(n==='home'&&typeof hbRefresh==='function'){hbRefresh();}
-  if(n==='reviews'&&!reviewInsightLoaded){loadReviewInsight();loadSentimentTrend();loadTopicHeatmap();}
+  if(n==='reviews'&&!reviewInsightLoaded){loadReviewInsight();loadSentimentTrend();loadTopicHeatmap();if(!_perfLoaded)loadResponsePerf();}
   if(n==='labor'&&!laborLoaded){loadLaborInsight();}
   if(n==='inventory'){
     // countUp animations and insight load triggered by switchFcTab when analytics tab is shown
