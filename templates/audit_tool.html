@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>Restaurant Audit — Cavnar AI</title>
+<link rel="icon" href="/favicon.png">
+<link rel="stylesheet" href="/static/fonts/cavnar-fonts.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{--paper:#0c0c0c;--paper2:#141312;--paper3:#242220;--paper4:#2f2c29;--ink:#f0ebe0;--ink2:#d9d0c1;--ink3:#a79d8e;--ink4:#77706a;
+--ember:#c84b2f;--ember2:#e8956a;--ember-bg:rgba(200,75,47,.14);--green:#4ead7a;--amber:#d4a030;--red:#e3333f;--blue:#6aabff;
+--disp:'Clash Display',sans-serif;--sans:'Apfel Grotezk',-apple-system,sans-serif;--num:'Space Grotesk',monospace;--rail:236px;--side:300px;--hdr:64px}
+*{box-sizing:border-box}
+html{background:var(--paper)}
+body{margin:0;color:var(--ink);font-family:var(--sans);font-size:14px;line-height:1.5;background-color:var(--paper);
+background-image:radial-gradient(ellipse 70% 55% at 50% -12%,rgba(200,75,47,.30),rgba(200,75,47,.07) 45%,rgba(12,12,12,0) 75%);background-size:100% 780px;background-repeat:no-repeat;background-position:center top}
+a{color:var(--ember2);text-decoration:none}
+button{font-family:inherit;cursor:pointer}
+.num{font-family:var(--num);font-variant-numeric:tabular-nums}
+/* header */
+.hdr{position:sticky;top:0;z-index:30;height:var(--hdr);display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:22px;padding:0 22px;background:rgba(12,12,12,.82);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-bottom:1px solid rgba(255,255,255,.06)}
+.brand{display:flex;align-items:center;gap:10px}.brand img{height:18px;width:auto;display:block}
+.brand .tag{font-family:var(--num);font-weight:700;font-size:9.5px;letter-spacing:.16em;color:var(--ember2);border:1px solid rgba(232,149,106,.4);border-radius:4px;padding:1px 5px}
+.ctx{display:flex;align-items:center;gap:22px;min-width:0}
+.ctx .name{font-family:var(--disp);font-size:20px;font-weight:500;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ctx .meta{display:flex;gap:16px;color:var(--ink3);font-size:12.5px;white-space:nowrap}
+.ctx .meta b{color:var(--ink2);font-weight:600}
+.ctx .prog{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink3)}
+.ctx .prog .bar{width:110px;height:4px;background:var(--paper3);border-radius:2px;overflow:hidden}.ctx .prog .bar i{display:block;height:100%;background:linear-gradient(90deg,var(--ember),var(--ember2));transition:width .4s}
+.hacts{display:flex;align-items:center;gap:8px}
+.save{font-size:12px;color:var(--ink4);display:flex;align-items:center;gap:6px;margin-right:6px;white-space:nowrap}
+.save i{width:7px;height:7px;border-radius:50%;background:var(--ink4);display:inline-block}
+.save.saving i{background:var(--amber);animation:pulse 1s infinite}.save.saved i{background:var(--green)}.save.error i{background:var(--red)}.save.dirty i{background:var(--amber)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.btn{display:inline-flex;align-items:center;gap:7px;background:var(--paper2);color:var(--ink);border:1px solid var(--paper3);border-radius:8px;padding:8px 13px;font-size:12.5px;font-weight:600;white-space:nowrap}
+.btn:hover{border-color:var(--ink4)}.btn.primary{background:var(--ember);border-color:var(--ember);color:#fff}.btn.primary:hover{background:#b0402a}
+.btn.ghost{background:transparent}.btn.s{padding:5px 9px;font-size:12px}.btn.danger{color:var(--red);border-color:rgba(227,51,63,.35)}
+.btn.big{font-family:var(--disp);font-size:18px;font-weight:500;padding:16px 26px;border-radius:12px;box-shadow:0 10px 40px rgba(200,75,47,.35)}
+.menu{position:relative}.menu .dd{display:none;position:absolute;right:0;top:calc(100% + 6px);background:var(--paper2);border:1px solid var(--paper3);border-radius:10px;min-width:220px;padding:6px;z-index:40;box-shadow:0 16px 40px rgba(0,0,0,.5)}
+.menu.on .dd{display:block}.dd button,.dd a{display:block;width:100%;text-align:left;background:none;border:none;color:var(--ink2);padding:9px 10px;border-radius:6px;font-size:13px}
+.dd button:hover,.dd a:hover{background:var(--paper3);color:var(--ink)}.dd .sep{height:1px;background:var(--paper3);margin:5px 0}.dd .lab{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink4);padding:6px 10px 2px;font-weight:700}
+/* shell */
+.shell{display:grid;grid-template-columns:var(--rail) 1fr var(--side);min-height:calc(100vh - var(--hdr))}
+.shell.noside{grid-template-columns:var(--rail) 1fr}
+.rail{position:sticky;top:var(--hdr);height:calc(100vh - var(--hdr));overflow-y:auto;padding:18px 12px 30px;border-right:1px solid rgba(255,255,255,.05)}
+.rail .sec{font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink4);padding:14px 10px 6px}
+.rail a{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;color:var(--ink2);font-size:13.5px;font-weight:600;margin-bottom:2px;cursor:pointer}
+.rail a:hover{background:var(--paper3);color:var(--ink)}.rail a.on{background:var(--ember-bg);color:var(--ember2)}
+.rail .ring{width:18px;height:18px;flex:none;border-radius:50%;background:conic-gradient(var(--ember2) calc(var(--p)*1%),var(--paper3) 0);display:grid;place-items:center}
+.rail .ring::after{content:'';width:11px;height:11px;border-radius:50%;background:var(--paper)}
+.rail a.on .ring::after{background:#1b1310}
+.rail .ring.done{background:var(--green)}.rail .ring.done::after{content:'';width:6px;height:9px;border:solid #0c0c0c;border-width:0 2px 2px 0;transform:rotate(45deg) translate(-1px,-1px);border-radius:0;background:transparent}
+.rail .n{margin-left:auto;font-family:var(--num);font-size:11px;color:var(--ink4)}
+.rail a.internal{color:var(--amber)}.rail a.internal.on{background:rgba(212,160,48,.12)}
+.main{padding:34px 44px 120px;min-width:0;max-width:980px}
+.side{position:sticky;top:var(--hdr);height:calc(100vh - var(--hdr));overflow-y:auto;padding:20px 18px 40px;border-left:1px solid rgba(255,255,255,.05);background:rgba(20,19,18,.6)}
+.side h3{font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--amber);margin:0 0 14px;display:flex;align-items:center;justify-content:space-between}
+.side .kv{display:flex;flex-direction:column;gap:14px}
+.side .kv .k{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink4);font-weight:700}
+.side .kv .v{font-family:var(--num);font-size:20px;font-weight:600;color:var(--ink);line-height:1.15}
+.side .kv .v.ember{color:var(--ember2)}.side .kv .v small{font-size:11px;color:var(--ink4);font-weight:500;font-family:var(--sans)}
+.side .kv .t{font-size:13px;color:var(--ink2)}
+.side ul{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px}
+.side ul li{font-size:12.5px;color:var(--ink2);padding-left:14px;position:relative;line-height:1.4}
+.side ul li::before{content:'';position:absolute;left:0;top:8px;width:6px;height:6px;border-radius:50%;background:var(--amber)}
+.side textarea{width:100%;min-height:110px;background:var(--paper);border:1px solid rgba(212,160,48,.35);color:var(--ink);border-radius:8px;padding:10px;font-family:inherit;font-size:13px;resize:vertical}
+/* section */
+.sh{margin-bottom:26px}
+.sh .k{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ember2);font-weight:700;margin-bottom:6px;display:flex;gap:10px;align-items:center}
+.sh h1{font-family:var(--disp);font-weight:500;font-size:34px;letter-spacing:-.01em;margin:0 0 6px;text-wrap:balance}
+.sh p{color:var(--ink3);margin:0;font-size:15px;max-width:66ch}
+.upc{font-family:var(--num);font-size:10px;letter-spacing:.1em;padding:2px 7px;border-radius:4px;background:rgba(106,171,255,.14);color:var(--blue);font-weight:700}
+.qs{display:grid;grid-template-columns:1fr 1fr;gap:18px 26px}
+.q{display:flex;flex-direction:column;gap:7px;min-width:0}
+.q.wide{grid-column:1/-1}.q.hidden{display:none}
+.q label{font-size:13.5px;font-weight:600;color:var(--ink2);display:flex;align-items:flex-start;gap:8px;line-height:1.35}
+.q label .req{color:var(--ember2)}
+.q .say{font-size:12.5px;color:var(--ink3);font-style:italic;margin-top:-3px}
+.q .say::before{content:'“'}.q .say::after{content:'”'}
+.ctl{display:flex;align-items:center;gap:8px}
+.in{position:relative;flex:1;min-width:0}
+.in input,.in select,.in textarea{width:100%;font-family:inherit;font-size:15px;background:var(--paper2);color:var(--ink);border:1px solid var(--paper3);border-radius:9px;padding:10px 12px;outline:none;min-height:44px;transition:border-color .12s}
+.in input:focus,.in select:focus,.in textarea:focus{border-color:var(--ember);box-shadow:0 0 0 3px rgba(200,75,47,.15)}
+.in input::placeholder,.in textarea::placeholder{color:var(--ink4)}
+.in.cur input,.in.pct input,.in.dec input,.in.int input{font-family:var(--num);font-size:16px;padding-left:28px}
+.in.pct input,.in.dec input,.in.int input{padding-left:12px;padding-right:30px}
+.in .pre,.in .suf{position:absolute;top:50%;transform:translateY(-50%);color:var(--ink4);font-family:var(--num);font-size:14px;pointer-events:none}
+.in .pre{left:11px}.in .suf{right:11px}
+.in textarea{min-height:88px;resize:vertical;line-height:1.5}.q.big textarea{min-height:220px}
+.in input.bad{border-color:var(--red)}.q .err{font-size:12px;color:var(--red)}
+.q.unk .in input,.q.unk .in select,.q.unk .in textarea,.q.unk .seg{opacity:.35;pointer-events:none}
+.unkb{flex:none;width:34px;height:34px;border-radius:8px;border:1px solid var(--paper3);background:transparent;color:var(--ink4);font-family:var(--num);font-weight:700;font-size:13px}
+.unkb:hover{border-color:var(--ink4);color:var(--ink2)}.unkb.on{background:var(--paper3);color:var(--ink);border-color:var(--ink4)}
+.seg{display:flex;gap:6px;flex-wrap:wrap;flex:1}
+.seg button{background:var(--paper2);border:1px solid var(--paper3);color:var(--ink2);border-radius:9px;padding:9px 14px;font-size:13.5px;font-weight:600;min-height:44px;transition:all .12s}
+.seg button:hover{border-color:var(--ink4)}.seg button:focus-visible{outline:2px solid var(--ember);outline-offset:1px}
+.seg button.on{background:var(--ember);border-color:var(--ember);color:#fff}
+.seg.yn button{min-width:78px}.seg.rating button{min-width:44px;padding:9px 0;font-family:var(--num)}
+.seg.rating button.on{background:var(--paper3);border-color:var(--ember2);color:var(--ember2)}
+.seg.rating button.lit{background:var(--paper3);color:var(--ink)}
+.derived{font-size:12px;color:var(--ink4);font-family:var(--num)}.derived b{color:var(--ink3);font-family:var(--sans);font-weight:600}
+.pill{display:inline-block;font-family:var(--num);font-size:10px;letter-spacing:.08em;text-transform:uppercase;padding:2px 7px;border-radius:4px;font-weight:700}
+.pill.owner{background:rgba(78,173,122,.16);color:var(--green)}.pill.calculated{background:rgba(106,171,255,.14);color:var(--blue)}.pill.estimated{background:rgba(212,160,48,.16);color:var(--amber)}
+/* tools table */
+.tools{grid-column:1/-1;display:flex;flex-direction:column;gap:6px}
+.tools .tr{display:grid;grid-template-columns:120px 1.3fr 120px 90px 1.4fr 60px 70px 90px;gap:8px;align-items:center}
+.tools .th{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink4);font-weight:700;padding:0 4px}
+.tools .cat{font-size:13px;font-weight:600;color:var(--ink2)}
+.tools input,.tools select{width:100%;font-family:inherit;font-size:13.5px;background:var(--paper2);color:var(--ink);border:1px solid var(--paper3);border-radius:8px;padding:8px 10px;min-height:38px;outline:none}
+.tools input:focus,.tools select:focus{border-color:var(--ember)}
+.tools input.money{font-family:var(--num)}
+.tools .chk{display:flex;justify-content:center}.tools input[type=checkbox]{width:18px;height:18px;min-height:0;accent-color:var(--ember)}
+.tools .tot{font-family:var(--num);font-size:14px;color:var(--ember2);font-weight:600;padding:8px 4px}
+/* notes */
+.notes{margin-top:36px;display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.note{display:flex;flex-direction:column;gap:8px}
+.note .k{font-size:11px;letter-spacing:.12em;text-transform:uppercase;font-weight:700;color:var(--ink3);display:flex;justify-content:space-between;align-items:center}
+.note.internal .k{color:var(--amber)}
+.note textarea{width:100%;min-height:120px;font-family:inherit;font-size:14px;background:var(--paper2);color:var(--ink);border:1px solid var(--paper3);border-radius:9px;padding:10px 12px;resize:vertical;outline:none;line-height:1.5}
+.note textarea:focus{border-color:var(--ember)}.note.internal textarea{border-color:rgba(212,160,48,.35);background:rgba(212,160,48,.04)}
+.note .k label{font-weight:500;text-transform:none;letter-spacing:0;font-size:12px;color:var(--ink3);display:flex;gap:6px;align-items:center}
+.stepnav{display:flex;justify-content:space-between;margin-top:36px;padding-top:22px;border-top:1px solid rgba(255,255,255,.06)}
+/* computed views */
+.cards{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.card{background:var(--paper2);border-radius:14px;padding:18px 20px;display:flex;flex-direction:column;gap:8px;border:1px solid transparent}
+.card.wide{grid-column:1/-1}.card.ins{opacity:.7}.card.none{border-color:rgba(78,173,122,.25)}
+.card .t{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+.card .t h3{font-family:var(--disp);font-weight:500;font-size:20px;margin:0}
+.card .rng{font-family:var(--num);font-size:22px;font-weight:600;color:var(--ember2);line-height:1.1}
+.card .rng small{display:block;font-size:11px;color:var(--ink4);font-weight:500;font-family:var(--sans)}
+.card .st{font-size:13.5px;color:var(--ink2)}.card .op{font-size:13px;color:var(--ink3)}
+.conf{font-family:var(--num);font-size:10px;letter-spacing:.1em;font-weight:700;padding:2px 7px;border-radius:4px;text-transform:uppercase}
+.conf.high{background:rgba(78,173,122,.16);color:var(--green)}.conf.moderate{background:rgba(212,160,48,.16);color:var(--amber)}.conf.low{background:rgba(227,51,63,.14);color:var(--red)}
+.score{font-family:var(--num);font-weight:700;font-size:13px;padding:2px 8px;border-radius:6px;background:var(--paper3);color:var(--ink2)}
+.score.g{color:var(--green)}.score.a{color:var(--amber)}.score.r{color:var(--red)}
+details.how{margin-top:6px}details.how summary{cursor:pointer;font-size:12.5px;color:var(--ember2);font-weight:600;list-style:none}
+details.how summary::before{content:'+ '}details.how[open] summary::before{content:'− '}
+details.how .body{margin-top:10px;font-size:12.5px;color:var(--ink2);display:grid;grid-template-columns:130px 1fr;gap:6px 12px;background:var(--paper);border-radius:10px;padding:12px}
+details.how .body .k{color:var(--ink4);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;font-weight:700;padding-top:2px}
+details.how .body ul{margin:0;padding-left:16px}
+.miss{margin-top:22px;background:rgba(212,160,48,.07);border:1px solid rgba(212,160,48,.25);border-radius:12px;padding:14px 16px}
+.miss h4{margin:0 0 8px;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--amber)}
+.miss li{font-size:13px;color:var(--ink2);margin-bottom:4px}
+.tot{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-bottom:22px}
+.tot .b{background:linear-gradient(160deg,rgba(200,75,47,.22),rgba(200,75,47,.05));border-radius:14px;padding:18px 20px}
+.tot .b .k{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);font-weight:700}
+.tot .b .v{font-family:var(--num);font-size:28px;font-weight:600;color:var(--ink);margin-top:4px;line-height:1.1}
+.tot .b .v.e{color:var(--ember2)}.tot .b .sub{font-size:12px;color:var(--ink4);margin-top:6px}
+.health{display:flex;align-items:center;gap:26px;margin-bottom:26px}
+.ring{width:132px;height:132px;flex:none;position:relative}
+.ring svg{width:100%;height:100%;transform:rotate(-90deg)}
+.ring .c{position:absolute;inset:0;display:grid;place-items:center;font-family:var(--num);font-size:38px;font-weight:600}
+.ring .c small{display:block;font-size:11px;color:var(--ink4);text-align:center;font-weight:500}
+.health h2{font-family:var(--disp);font-weight:500;font-size:26px;margin:0 0 4px}
+.health p{margin:0;color:var(--ink2);max-width:60ch}
+.list{display:flex;flex-direction:column;gap:12px;margin-bottom:26px}
+.item{background:var(--paper2);border-radius:12px;padding:14px 18px;display:grid;grid-template-columns:34px 1fr auto;gap:14px;align-items:start}
+.item .n{font-family:var(--num);font-size:22px;font-weight:600;color:var(--ember2)}
+.item h4{margin:0 0 3px;font-family:var(--disp);font-size:18px;font-weight:500}
+.item p{margin:0;font-size:13px;color:var(--ink2)}.item .ev{font-size:12px;color:var(--ink4);margin-top:4px}
+.item .rg{font-family:var(--num);font-weight:600;color:var(--ember2);white-space:nowrap}
+.mods{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.mod{background:var(--paper2);border-radius:12px;padding:14px 16px}.mod h4{margin:0 0 4px;font-family:var(--disp);font-size:17px;font-weight:500;display:flex;gap:8px;align-items:center}
+.mod p{margin:0;font-size:13px;color:var(--ink2)}
+.plan{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 14px}
+.warn{font-size:12.5px;color:var(--amber);background:rgba(212,160,48,.08);border-radius:8px;padding:8px 10px}
+h2.sub{font-family:var(--disp);font-weight:500;font-size:22px;margin:30px 0 12px}
+/* drawer */
+.drawer{position:fixed;top:0;right:0;bottom:0;width:min(760px,92vw);background:var(--paper2);z-index:60;transform:translateX(102%);transition:transform .25s;box-shadow:-20px 0 60px rgba(0,0,0,.5);display:flex;flex-direction:column}
+.drawer.on{transform:none}.drawer .dh{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--paper3)}
+.drawer .dh b{font-family:var(--disp);font-weight:500;font-size:17px}.drawer iframe{flex:1;border:none;width:100%;background:var(--paper)}
+.scrim{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:55;display:none}.scrim.on{display:block}
+.banner{margin:0 0 20px;background:rgba(106,171,255,.1);border:1px solid rgba(106,171,255,.3);border-radius:12px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:13.5px}
+.toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--paper3);color:var(--ink);padding:10px 16px;border-radius:10px;font-size:13px;opacity:0;transition:all .2s;pointer-events:none;z-index:70}
+.toast.on{opacity:1;transform:translateX(-50%) translateY(0)}.toast.bad{background:var(--red);color:#fff}
+.kbd{font-family:var(--num);font-size:10.5px;border:1px solid var(--paper4);border-radius:4px;padding:0 5px;color:var(--ink4)}
+@media(max-width:1180px){.shell{grid-template-columns:var(--rail) 1fr}.side{display:none}.shell.sideon .side{display:block;position:fixed;right:0;top:var(--hdr);width:var(--side);z-index:20;background:var(--paper2)}}
+@media(max-width:900px){.shell{grid-template-columns:1fr}.rail{position:static;height:auto;display:flex;flex-wrap:wrap;gap:4px;border:none}.rail .sec{width:100%}.main{padding:20px}.qs{grid-template-columns:1fr}.ctx .meta{display:none}.hdr{grid-template-columns:auto 1fr auto;gap:10px}.tools .tr{grid-template-columns:1fr 1fr}}
+@media print{.hdr,.rail,.side,.drawer,.scrim,.stepnav{display:none!important}.shell{display:block}body{background:#fff;color:#000}}
+</style>
+</head>
+<body>
+<header class="hdr">
+  <div class="brand"><a href="/admin/audits" title="All audits"><img src="/static/brand/lockup-light.svg" alt="Cavnar AI"></a><span class="tag">AUDIT</span></div>
+  <div class="ctx">
+    <div class="name" id="h-name">…</div>
+    <div class="meta" id="h-meta"></div>
+    <div class="prog"><span class="bar"><i id="h-progbar" style="width:0"></i></span><span class="num" id="h-prog">0%</span></div>
+  </div>
+  <div class="hacts">
+    <span class="save" id="save"><i></i><span id="save-t">Loaded</span></span>
+    <button class="btn" onclick="openSheet()">Cheat sheet</button>
+    <button class="btn ghost" id="sidebtn" onclick="toggleSide()" title="Internal panel (i)">Internal panel</button>
+    <div class="menu" id="menu"><button class="btn" onclick="document.getElementById('menu').classList.toggle('on')">More ▾</button>
+      <div class="dd">
+        <div class="lab">Status</div><div id="dd-status"></div>
+        <div class="sep"></div>
+        <a id="dd-report" href="#" target="_blank">Open report</a>
+        <button onclick="duplicateAudit()">Duplicate audit</button>
+        <button onclick="archiveAudit()">Archive audit</button>
+        <div class="sep"></div>
+        <a href="/admin/audits">All audits</a>
+      </div></div>
+  </div>
+</header>
+
+<div class="shell" id="shell">
+  <nav class="rail" id="rail"></nav>
+  <main class="main" id="main"><div style="color:var(--ink3)">Loading audit…</div></main>
+  <aside class="side" id="side">
+    <h3>Internal · quick summary <button class="btn s ghost" onclick="toggleSide()" style="color:var(--ink4)">hide</button></h3>
+    <div class="kv" id="side-kv"></div>
+    <h3 style="margin-top:22px">Ask next</h3>
+    <ul id="side-missing"></ul>
+    <h3 style="margin-top:22px">Internal notes</h3>
+    <textarea id="side-notes" placeholder="Only you see this. Never in the report."></textarea>
+  </aside>
+</div>
+
+<div class="scrim" id="scrim" onclick="closeSheet()"></div>
+<div class="drawer" id="drawer">
+  <div class="dh"><b>Meeting cheat sheet</b><div style="display:flex;gap:8px"><a class="btn s" id="sheet-open" href="#" target="_blank">Open full page</a><button class="btn s" onclick="closeSheet()">Close <span class="kbd">esc</span></button></div></div>
+  <iframe id="sheet" title="Cheat sheet"></iframe>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const AUDIT_ID = {{ audit_id }};
+const $ = id => document.getElementById(id);
+const esc = s => String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function csrf(){ const m = document.cookie.match(/(?:^|; )csrf_js=([^;]+)/); return m ? decodeURIComponent(m[1]) : ''; }
+async function api(path, opts){ opts = opts||{}; opts.headers = Object.assign({'X-CSRF': csrf()}, opts.headers||{}); const r = await fetch(path, opts); let j; try{ j = await r.json(); }catch(e){ j={ok:false,error:'HTTP '+r.status, status:r.status}; } j._status = r.status; if(r.status===401){ location.href='/login?next=/admin/audits/'+AUDIT_ID; } return j; }
+const post = (p,b,m) => api(p,{method:m||'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});
+let _tt; function toast(m,bad){ const t=$('toast'); t.textContent=m; t.className='toast on'+(bad?' bad':''); clearTimeout(_tt); _tt=setTimeout(()=>t.className='toast',2800); }
+const money = n => '$'+Math.round(n||0).toLocaleString();
+const fmtn = (n, d) => (+n).toLocaleString(undefined,{maximumFractionDigits:d==null?2:d});
+const mdy = s => { if(!s) return '—'; const m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? (+m[2])+'/'+(+m[3])+'/'+m[1].slice(2) : s; };
+
+// ── state ──────────────────────────────────────────────────────────────────
+let SCHEMA, AUDIT, RESULTS, SECTION = 'profile';
+let dirty = {answers:false, notes:false, sales:false}, pending = new Set(), saving = false, retryMs = 1500, lastSaved = null, saveTimer = null, _retryTimer = null;
+const LS = 'cavnar-audit-' + AUDIT_ID;
+
+function unknownSet(){ AUDIT.answers._unknown = AUDIT.answers._unknown || []; return AUDIT.answers._unknown; }
+function isUnknown(id){ return (AUDIT.answers._unknown||[]).includes(id); }
+function q(id){ return SCHEMA._q[id]; }
+function visible(qq){ const c = qq.show_if; if(!c) return true; for(const k in c){ const v = AUDIT.answers[k]; const w = c[k]; if(w==='*'){ if(v==null||v===''||(Array.isArray(v)&&!v.length)) return false; } else if(Array.isArray(w)){ if(!w.includes(v)) return false; } else if(v!==w) return false; } return true; }
+
+// ── load ───────────────────────────────────────────────────────────────────
+async function load(){
+  const [s, d] = await Promise.all([api('/admin/api/audits/schema'), api('/admin/api/audits/'+AUDIT_ID)]);
+  if(!s.ok || !d.ok){ $('main').innerHTML = '<div class="warn">'+esc((d.error||s.error)||'Could not load this audit')+'</div>'; return; }
+  SCHEMA = s.schema; SCHEMA._q = {}; SCHEMA.sections.forEach(sec => sec.questions.forEach(qq => { SCHEMA._q[qq.id] = Object.assign({}, qq, {section:sec.key}); }));
+  AUDIT = d.audit; RESULTS = d.results; AUDIT.share = d.share;
+  AUDIT.answers = AUDIT.answers||{}; AUDIT.notes = AUDIT.notes||{}; AUDIT.sales = AUDIT.sales||{};
+  recoverLocal();
+  const h = location.hash.replace('#',''); if(h) SECTION = h;
+  renderRail(); renderHeader(); renderSide(); render(); renderStatusMenu();
+  $('dd-report').href = '/admin/audits/'+AUDIT_ID+'/report';
+  $('sheet-open').href = '/admin/audits/'+AUDIT_ID+'/cheatsheet';
+  $('side-notes').value = (AUDIT.notes._global && AUDIT.notes._global.internal) || '';
+  setSave('saved', 'Saved ' + ago(AUDIT.updated_at));
+  setInterval(()=>{ if(lastSaved && !dirtyAny() && !saving) setSave('saved', 'Saved ' + ago(lastSaved)); }, 15000);
+}
+function ago(ts){ if(!ts) return ''; const d = new Date(String(ts).replace(' ','T') + (String(ts).endsWith('Z')?'':'Z')); const s = Math.max(0, (Date.now()-d)/1000); if(s<8) return 'just now'; if(s<60) return Math.round(s)+'s ago'; if(s<3600) return Math.round(s/60)+' min ago'; if(s<86400) return Math.round(s/3600)+' hr ago'; return mdy(ts); }
+
+// ── local backup + recovery ────────────────────────────────────────────────
+function backupLocal(){ try{ localStorage.setItem(LS, JSON.stringify({answers:AUDIT.answers, notes:AUDIT.notes, sales:AUDIT.sales, version:AUDIT.version, at:Date.now()})); }catch(e){} }
+function clearLocal(){ try{ localStorage.removeItem(LS); }catch(e){} }
+function recoverLocal(){
+  let b = null; try{ b = JSON.parse(localStorage.getItem(LS)||'null'); }catch(e){}
+  if(!b || !b.at) return;
+  const serverAt = new Date(String(AUDIT.updated_at).replace(' ','T')+'Z').getTime();
+  const differs = JSON.stringify(b.answers)!==JSON.stringify(AUDIT.answers) || JSON.stringify(b.notes)!==JSON.stringify(AUDIT.notes) || JSON.stringify(b.sales)!==JSON.stringify(AUDIT.sales);
+  if(!differs || b.at < serverAt){ clearLocal(); return; }
+  window._recover = b;
+}
+function applyRecovery(){ const b = window._recover; if(!b) return; AUDIT.answers = b.answers||AUDIT.answers; AUDIT.notes = b.notes||AUDIT.notes; AUDIT.sales = b.sales||AUDIT.sales; dirty = {answers:true, notes:true, sales:true}; window._recover = null; render(); renderRail(); scheduleSave(0); toast('Unsaved changes restored'); }
+function discardRecovery(){ window._recover = null; clearLocal(); render(); }
+
+// ── autosave ───────────────────────────────────────────────────────────────
+function dirtyAny(){ return dirty.answers || dirty.notes || dirty.sales; }
+function setSave(cls, text){ const el = $('save'); el.className = 'save ' + cls; $('save-t').textContent = text; }
+function markDirty(kind, key){ dirty[kind] = true; if(key) pending.add(kind+':'+key); backupLocal(); setSave('dirty', 'Unsaved'); scheduleSave(); }
+function scheduleSave(ms){ clearTimeout(saveTimer); saveTimer = setTimeout(save, ms==null?700:ms); }
+async function save(){
+  if(saving){ scheduleSave(400); return; }
+  if(!dirtyAny()) return;
+  saving = true; setSave('saving', 'Saving…');
+  const body = {version: AUDIT.version};
+  const sent = {answers:dirty.answers, notes:dirty.notes, sales:dirty.sales};
+  if(sent.answers) body.answers = AUDIT.answers; if(sent.notes) body.notes = AUDIT.notes; if(sent.sales) body.sales = AUDIT.sales;
+  const sentPending = new Set(pending);
+  let d;
+  try{ d = await post('/admin/api/audits/'+AUDIT_ID, body, 'PATCH'); }catch(e){ d = {ok:false, network:true}; }
+  saving = false;
+  if(d.ok){
+    AUDIT.version = d.version; AUDIT.updated_at = d.updated_at; AUDIT.status = d.status || AUDIT.status; RESULTS = d.results; lastSaved = d.updated_at; retryMs = 1500;
+    for(const k in sent) if(sent[k]) dirty[k] = false;
+    sentPending.forEach(k => pending.delete(k));
+    if(dirtyAny()){ scheduleSave(300); } else { clearLocal(); setSave('saved', 'Saved just now'); }
+    renderRail(); renderHeader(); renderSide(); renderStatusMenu(); refreshDerived(); if(['summary','recommendation','results'].includes(SECTION)) render();
+  } else if(d.conflict){
+    // Someone else moved the row. Take their copy, re-apply what we changed since, save again.
+    const mine = {answers:AUDIT.answers, notes:AUDIT.notes, sales:AUDIT.sales};
+    AUDIT.answers = d.audit.answers||{}; AUDIT.notes = d.audit.notes||{}; AUDIT.sales = d.audit.sales||{}; AUDIT.version = d.audit.version;
+    pending.forEach(k => { const [kind, key] = k.split(/:(.*)/); if(kind==='answers') AUDIT.answers[key] = mine.answers[key]; else if(kind==='notes') AUDIT.notes[key] = mine.notes[key]; else if(kind==='sales') AUDIT.sales[key] = mine.sales[key]; });
+    dirty = {answers:true, notes:true, sales:true}; toast('This audit changed elsewhere — merged your edits'); render(); scheduleSave(200);
+  } else if(d._status===404){
+    setSave('error', 'Audit was deleted'); toast('This audit no longer exists', true);
+  } else {
+    setSave('error', 'Offline — retrying (kept locally)'); backupLocal();
+    clearTimeout(_retryTimer); _retryTimer = setTimeout(save, retryMs); retryMs = Math.min(retryMs*2, 30000);
+  }
+}
+window.addEventListener('online', ()=>{ if(dirtyAny()) save(); });
+window.addEventListener('pagehide', ()=>{ if(!dirtyAny()) return; backupLocal(); try{ const body = {version:AUDIT.version, answers:AUDIT.answers, notes:AUDIT.notes, sales:AUDIT.sales, csrf_token:csrf()}; navigator.sendBeacon('/admin/api/audits/'+AUDIT_ID, new Blob([JSON.stringify(body)], {type:'application/json'})); }catch(e){} });
+window.addEventListener('beforeunload', e => { if(dirtyAny() && !saving){ e.preventDefault(); e.returnValue=''; } });
+
+// ── answers ────────────────────────────────────────────────────────────────
+function setAnswer(id, val){
+  if(val==='' || val==null) delete AUDIT.answers[id]; else AUDIT.answers[id] = val;
+  if(isUnknown(id) && val!=null && val!==''){ AUDIT.answers._unknown = unknownSet().filter(x=>x!==id); const w = document.querySelector('.q[data-q="'+id+'"]'); if(w){ w.classList.remove('unk'); w.querySelector('.unkb') && w.querySelector('.unkb').classList.remove('on'); } }
+  markDirty('answers', id); refreshVisibility(); refreshDerived();
+}
+function toggleUnknown(id){ const u = unknownSet(); const on = !u.includes(id); AUDIT.answers._unknown = on ? u.concat([id]) : u.filter(x=>x!==id); if(on) delete AUDIT.answers[id]; markDirty('answers', id); const w = document.querySelector('.q[data-q="'+id+'"]'); if(w){ w.classList.toggle('unk', on); w.querySelector('.unkb').classList.toggle('on', on); if(on){ w.querySelectorAll('input,textarea,select').forEach(i=>i.value=''); w.querySelectorAll('.seg button').forEach(b=>b.classList.remove('on','lit')); } } refreshVisibility(); }
+function refreshVisibility(){ document.querySelectorAll('.q[data-q]').forEach(w => { const qq = q(w.dataset.q); if(qq) w.classList.toggle('hidden', !visible(qq)); }); }
+function parseNum(s){ if(s==null) return ''; s = String(s).replace(/[$,%\s]/g,''); if(s==='' || s==='-' ) return ''; const n = Number(s); return isNaN(n) ? null : n; }
+function validate(qq, n){ if(n==null) return 'Not a number — ignored'; if(n<0 && !qq.allow_negative) return 'Negative — not used in calculations'; if(qq.type==='percent' && n > (qq.max==null?100:qq.max)) return 'Over '+(qq.max==null?100:qq.max)+'% — not used in calculations'; if(qq.max!=null && n>qq.max) return 'Above '+qq.max+' — not used'; if(qq.min!=null && n<qq.min) return 'Below '+qq.min+' — not used'; return ''; }
+
+// ── render: rail / header / side ───────────────────────────────────────────
+function renderRail(){
+  const comp = (RESULTS && RESULTS.completion && RESULTS.completion.sections) || {};
+  let h = '<div class="sec">Audit</div>';
+  SCHEMA.sections.forEach((s,i) => { const c = comp[s.key]||{pct:0,total:0}; const done = c.total>0 && c.pct>=100; h += `<a class="${SECTION===s.key?'on':''}" data-go="${s.key}"><span class="ring ${done?'done':''}" style="--p:${c.pct||0}"></span>${esc(s.short)}${c.total?`<span class="n">${c.done}/${c.total}</span>`:''}</a>`; });
+  h += '<div class="sec">Results</div>';
+  SCHEMA.computed.forEach(s => { h += `<a class="${SECTION===s.key?'on':''}" data-go="${s.key}"><span class="ring" style="--p:0;background:var(--paper3)"></span>${esc(s.short)}</a>`; });
+  h += '<div class="sec">Internal only</div>';
+  h += `<a class="internal ${SECTION==='sales'?'on':''}" data-go="sales"><span class="ring" style="--p:0;background:rgba(212,160,48,.4)"></span>Sales observations</a>`;
+  $('rail').innerHTML = h;
+  $('rail').querySelectorAll('a[data-go]').forEach(a => a.onclick = () => go(a.dataset.go));
+}
+function go(key){ SECTION = key; history.replaceState(null,'','#'+key); renderRail(); render(); $('main').scrollIntoView({block:'start'}); window.scrollTo({top:0}); }
+function renderHeader(){
+  const a = AUDIT.answers; const name = a.restaurant_name || AUDIT.restaurant_name || 'Untitled audit';
+  $('h-name').textContent = name; document.title = name + ' — Audit — Cavnar AI';
+  const loc = [a.city, a.state].filter(Boolean).join(', ');
+  $('h-meta').innerHTML = [a.owner_name?`<span><b>${esc(a.owner_name)}</b></span>`:'', loc?`<span>${esc(loc)}</span>`:'', a.restaurant_type?`<span>${esc(a.restaurant_type)}${a.service_model?' · '+esc(a.service_model):''}</span>`:'', a.locations?`<span>${esc(a.locations)} location${+a.locations===1?'':'s'}</span>`:'', `<span class="num">${mdy(AUDIT.audit_date)}</span>`].filter(Boolean).join('');
+  const pct = RESULTS && RESULTS.completion ? RESULTS.completion.pct : 0; $('h-prog').textContent = pct + '%'; $('h-progbar').style.width = pct + '%';
+}
+function renderSide(){
+  if(!RESULTS) return; const r = RESULTS; const fin = r.financials||{}; const tot = r.totals.annual;
+  const rev = fin.annual_revenue ? `${money(fin.annual_revenue.value)} <small>${fin.annual_revenue.source}</small>` : '<span style="color:var(--ink4);font-size:14px">not yet</span>';
+  let top = null; for(const k in r.categories){ const c = r.categories[k]; if(c.status==='ok' && (!top || c.likely > top.likely)) top = c; }
+  const fit = (r.recommended_modules||[])[0];
+  $('side-kv').innerHTML = `
+    <div><div class="k">Audit completion</div><div class="v">${r.completion.pct}%<small> · ${r.completion.done}/${r.completion.total}</small></div></div>
+    <div><div class="k">Known annual revenue</div><div class="v">${rev}</div></div>
+    <div><div class="k">Identified annual opportunity</div><div class="v ember">${tot.high?money(tot.low)+' – '+money(tot.high):'—'}<small>${tot.high?' · '+(r.totals.confidence||'').toLowerCase()+' confidence':' not enough data yet'}</small></div></div>
+    <div><div class="k">Highest opportunity area</div><div class="t">${top?esc(top.label)+' · '+money(top.low)+'–'+money(top.high):'—'}</div></div>
+    <div><div class="k">Strongest Cavnar AI fit</div><div class="t">${fit?esc(fit.label):'—'}</div></div>
+    ${r.health.score!=null?`<div><div class="k">Health score (internal preview)</div><div class="v">${r.health.score}<small> / 100 · ${esc(r.health.label)}</small></div></div>`:''}`;
+  $('side-missing').innerHTML = (r.missing||[]).slice(0,6).map(m=>`<li>${esc(m)}</li>`).join('') || '<li style="color:var(--ink4)">Nothing pressing — keep going.</li>';
+}
+function renderStatusMenu(){ $('dd-status').innerHTML = SCHEMA.statuses.map(s => `<button onclick="setStatus('${esc(s)}')">${s===AUDIT.status?'● ':'&nbsp;&nbsp; '}${esc(s)}</button>`).join(''); }
+async function setStatus(s){ $('menu').classList.remove('on'); if(s==='Archived' && !confirm('Archive this audit? It disappears from the list and any share link is revoked.')) return; const d = await post('/admin/api/audits/'+AUDIT_ID+'/status', {status:s}); if(d.ok){ AUDIT.status = s; if(d.version) AUDIT.version = d.version; renderStatusMenu(); toast('Status: '+s); if(s==='Archived') location.href='/admin/audits'; } else toast(d.error||'Failed', true); }
+async function duplicateAudit(){ $('menu').classList.remove('on'); const d = await post('/admin/api/audits/'+AUDIT_ID+'/duplicate'); if(d.ok) location.href = '/admin/audits/'+d.id; else toast(d.error||'Failed', true); }
+function archiveAudit(){ setStatus('Archived'); }
+function toggleSide(){ const sh = $('shell'); if(window.innerWidth<=1180){ sh.classList.toggle('sideon'); } else { sh.classList.toggle('noside'); } }
+
+// ── render: main ───────────────────────────────────────────────────────────
+function render(){
+  const m = $('main');
+  const rec = window._recover ? `<div class="banner"><span>Unsaved changes from ${ago(new Date(window._recover.at).toISOString())} were found on this device.</span><span style="display:flex;gap:8px"><button class="btn primary s" onclick="applyRecovery()">Restore</button><button class="btn s" onclick="discardRecovery()">Discard</button></span></div>` : '';
+  if(SECTION==='summary') return m.innerHTML = rec + renderSummary();
+  if(SECTION==='recommendation') return m.innerHTML = rec + renderRecommendation();
+  if(SECTION==='results') return m.innerHTML = rec + renderResults();
+  if(SECTION==='sales') return m.innerHTML = rec + renderSales();
+  const sec = SCHEMA.sections.find(s=>s.key===SECTION) || SCHEMA.sections[0]; SECTION = sec.key;
+  const idx = SCHEMA.sections.indexOf(sec);
+  let h = rec + `<div class="sh"><div class="k">Section ${idx+1} of ${SCHEMA.sections.length}${sec.upcoming_module?'<span class="upc">upcoming module</span>':''}</div><h1>${esc(sec.label)}</h1><p>${esc(sec.intro||'')}</p></div><div class="qs">`;
+  sec.questions.forEach(qq => { h += renderQ(qq); });
+  h += '</div>' + renderNotes(sec.key);
+  const prev = SCHEMA.sections[idx-1], next = SCHEMA.sections[idx+1];
+  h += `<div class="stepnav"><span>${prev?`<button class="btn" onclick="go('${prev.key}')">← ${esc(prev.short)}</button>`:''}</span><span>${next?`<button class="btn primary" onclick="go('${next.key}')">${esc(next.short)} →</button>`:`<button class="btn primary" onclick="go('summary')">Opportunity summary →</button>`}</span></div>`;
+  m.innerHTML = h;
+  wire(m); refreshVisibility(); refreshDerived();
+}
+function renderQ(qq){
+  const v = AUDIT.answers[qq.id]; const unk = isUnknown(qq.id);
+  const wide = ['textarea','tools'].includes(qq.type) || qq.big;
+  const say = qq.say ? `<div class="say">${esc(qq.say)}</div>` : '';
+  const unkb = ['currency','percent','integer','decimal','yesno','choice','rating','date'].includes(qq.type) ? `<button class="unkb ${unk?'on':''}" data-unk="${qq.id}" title="Owner doesn't know / not provided" tabindex="-1">?</button>` : '';
+  let ctl = '';
+  if(qq.type==='currency') ctl = `<div class="in cur"><span class="pre">$</span><input data-num="${qq.id}" inputmode="decimal" autocomplete="off" value="${v!=null&&v!==''?esc(fmtn(v)):''}" placeholder="0"></div>`;
+  else if(qq.type==='percent') ctl = `<div class="in pct"><input data-num="${qq.id}" inputmode="decimal" autocomplete="off" value="${esc(v==null?'':v)}" placeholder="0"><span class="suf">%</span></div>`;
+  else if(qq.type==='integer' || qq.type==='decimal') ctl = `<div class="in ${qq.type==='integer'?'int':'dec'}"><input data-num="${qq.id}" inputmode="${qq.type==='integer'?'numeric':'decimal'}" autocomplete="off" value="${esc(v==null?'':v)}" placeholder="${qq.placeholder||''}"></div>`;
+  else if(qq.type==='yesno') ctl = `<div class="seg yn" data-seg="${qq.id}"><button data-val="yes" class="${v==='yes'?'on':''}">Yes</button><button data-val="no" class="${v==='no'?'on':''}">No</button></div>`;
+  else if(qq.type==='rating') ctl = `<div class="seg rating" data-seg="${qq.id}">${[1,2,3,4,5].map(n=>`<button data-val="${n}" class="${v==String(n)?'on':(v&&n<+v?'lit':'')}">${n}</button>`).join('')}</div>`;
+  else if(qq.type==='choice'){ if(qq.options.length<=6 && !qq.allow_other) ctl = `<div class="seg" data-seg="${qq.id}">${qq.options.map(o=>`<button data-val="${esc(o)}" class="${v===o?'on':''}">${esc(o)}</button>`).join('')}</div>`; else ctl = `<div class="in"><select data-sel="${qq.id}"><option value="">—</option>${qq.options.map(o=>`<option ${v===o?'selected':''}>${esc(o)}</option>`).join('')}${qq.allow_other&&v&&!qq.options.includes(v)?`<option selected>${esc(v)}</option>`:''}</select></div>`; }
+  else if(qq.type==='textarea') ctl = `<div class="in"><textarea data-txt="${qq.id}" placeholder="${esc(qq.placeholder||'')}">${esc(v||'')}</textarea></div>`;
+  else if(qq.type==='date') ctl = `<div class="in"><input type="date" data-txt="${qq.id}" value="${esc(v||'')}"></div>`;
+  else if(qq.type==='tools') return renderTools(qq);
+  else ctl = `<div class="in"><input data-txt="${qq.id}" autocomplete="off" value="${esc(v||'')}" placeholder="${esc(qq.placeholder||'')}"></div>`;
+  const derived = qq.derive ? `<div class="derived" data-derive="${qq.id}"></div>` : '';
+  return `<div class="q ${wide?'wide':''} ${qq.big?'big':''} ${unk?'unk':''}" data-q="${qq.id}"><label>${esc(qq.label)}${qq.required?'<span class="req">*</span>':''}</label>${say}<div class="ctl">${ctl}${unkb}</div><div class="err" data-err="${qq.id}"></div>${derived}</div>`;
+}
+function renderTools(qq){
+  const rows = Array.isArray(AUDIT.answers.tech_tools) ? AUDIT.answers.tech_tools : [];
+  const byCat = {}; rows.forEach(r => { byCat[r.category] = r; });
+  let h = `<div class="tools" data-q="tech_tools"><div class="tr"><span class="th">Category</span><span class="th">Product</span><span class="th">$/month</span><span class="th">Useful 1–5</span><span class="th">Pain points</span><span class="th">Overlap</span><span class="th">Would drop</span><span class="th">Integrates 1–5</span></div>`;
+  qq.rows.forEach(cat => { const r = byCat[cat]||{}; const never = ['POS','Payroll','Accounting'].includes(cat);
+    h += `<div class="tr" data-tool="${esc(cat)}"><span class="cat">${esc(cat)}</span><input data-tf="name" value="${esc(r.name||'')}" placeholder="—"><input data-tf="cost" class="money" inputmode="decimal" value="${r.cost!=null&&r.cost!==''?esc(fmtn(r.cost)):''}" placeholder="0"><select data-tf="useful"><option value="">—</option>${[1,2,3,4,5].map(n=>`<option ${String(r.useful)===String(n)?'selected':''}>${n}</option>`).join('')}</select><input data-tf="pain" value="${esc(r.pain||'')}" placeholder="What annoys them"><span class="chk"><input type="checkbox" data-tf="duplicate" ${r.duplicate==='yes'?'checked':''}></span><span class="chk"><input type="checkbox" data-tf="replace" ${r.replace==='yes'?'checked':''} ${never?'title="Cavnar AI does not replace this — never counted as savings"':''}></span><select data-tf="integration"><option value="">—</option>${[1,2,3,4,5].map(n=>`<option ${String(r.integration)===String(n)?'selected':''}>${n}</option>`).join('')}</select></div>`; });
+  const tot = rows.reduce((s,r)=>s+(parseNum(r.cost)||0),0);
+  h += `<div class="tr"><span></span><span class="tot" style="color:var(--ink3)">Total software</span><span class="tot" id="tools-tot">${money(tot)}/mo · ${money(tot*12)}/yr</span></div></div>`;
+  return h;
+}
+function renderNotes(key){
+  const n = AUDIT.notes[key]||{};
+  return `<div class="notes"><div class="note"><div class="k"><span>Audit notes</span><label><input type="checkbox" data-noteflag="${key}" ${n.audit_in_report?'checked':''}> include in report</label></div><textarea data-note="${key}" data-kind="audit" placeholder="Facts worth keeping. Can appear in the report if ticked.">${esc(n.audit||'')}</textarea></div><div class="note internal"><div class="k"><span>Internal sales notes · never exported</span></div><textarea data-note="${key}" data-kind="internal" placeholder="Read of the room, objections, angles. Only you see this.">${esc(n.internal||'')}</textarea></div></div>`;
+}
+function renderSales(){
+  let h = `<div class="sh"><div class="k" style="color:var(--amber)">Internal only · never in any report or export</div><h1>Sales observations</h1><p>Your read on the deal. This stays on the admin side no matter what gets generated or shared.</p></div><div class="qs">`;
+  SCHEMA.sales.forEach(f => { const v = AUDIT.sales[f.id]; let ctl='';
+    if(f.type==='rating') ctl = `<div class="seg rating" data-sseg="${f.id}">${[1,2,3,4,5].map(n=>`<button data-val="${n}" class="${String(v)===String(n)?'on':(v&&n<+v?'lit':'')}">${n}</button>`).join('')}</div>`;
+    else if(f.type==='choice') ctl = `<div class="seg" data-sseg="${f.id}">${f.options.map(o=>`<button data-val="${esc(o)}" class="${v===o?'on':''}">${esc(o)}</button>`).join('')}</div>`;
+    else if(f.type==='textarea') ctl = `<div class="in"><textarea data-stxt="${f.id}">${esc(v||'')}</textarea></div>`;
+    else if(f.type==='percent') ctl = `<div class="in pct"><input data-stxt="${f.id}" inputmode="numeric" value="${esc(v||'')}"><span class="suf">%</span></div>`;
+    else if(f.type==='date') ctl = `<div class="in"><input type="date" data-stxt="${f.id}" value="${esc(v||'')}"></div>`;
+    else ctl = `<div class="in"><input data-stxt="${f.id}" value="${esc(v||'')}"></div>`;
+    h += `<div class="q ${f.type==='textarea'?'wide':''}"><label>${esc(f.label)}</label><div class="ctl">${ctl}</div></div>`; });
+  h += '</div>'; return h;
+}
+
+// ── wiring ─────────────────────────────────────────────────────────────────
+function wire(root){
+  root.querySelectorAll('input[data-num]').forEach(inp => {
+    const id = inp.dataset.num, qq = q(id);
+    inp.addEventListener('input', () => { const n = parseNum(inp.value); const err = inp.value.trim()==='' ? '' : validate(qq, n); const e = root.querySelector('[data-err="'+id+'"]'); if(e) e.textContent = err; inp.classList.toggle('bad', !!err); setAnswer(id, inp.value.trim()==='' ? '' : (n==null ? inp.value : String(n))); });
+    inp.addEventListener('blur', () => { if(qq.type==='currency'){ const n = parseNum(inp.value); if(n!=null && n!=='') inp.value = fmtn(n); } });
+    inp.addEventListener('keydown', e => { if(e.key==='Enter'){ e.preventDefault(); focusNext(inp); } });
+  });
+  root.querySelectorAll('[data-txt]').forEach(inp => { inp.addEventListener('input', () => setAnswer(inp.dataset.txt, inp.value)); if(inp.tagName==='INPUT') inp.addEventListener('keydown', e => { if(e.key==='Enter'){ e.preventDefault(); focusNext(inp); } }); });
+  root.querySelectorAll('select[data-sel]').forEach(s => s.addEventListener('change', () => setAnswer(s.dataset.sel, s.value)));
+  root.querySelectorAll('.seg[data-seg]').forEach(seg => { const id = seg.dataset.seg; seg.querySelectorAll('button').forEach(b => { b.addEventListener('click', () => { const on = b.classList.contains('on'); seg.querySelectorAll('button').forEach(x=>x.classList.remove('on','lit')); if(!on){ b.classList.add('on'); if(seg.classList.contains('rating')) seg.querySelectorAll('button').forEach(x=>{ if(+x.dataset.val < +b.dataset.val) x.classList.add('lit'); }); } setAnswer(id, on ? '' : b.dataset.val); });
+    b.addEventListener('keydown', e => { if(seg.classList.contains('yn') && (e.key==='y'||e.key==='n')){ e.preventDefault(); seg.querySelector('[data-val="'+(e.key==='y'?'yes':'no')+'"]').click(); } if(e.key==='ArrowRight'||e.key==='ArrowLeft'){ e.preventDefault(); const sib = e.key==='ArrowRight' ? b.nextElementSibling : b.previousElementSibling; if(sib) sib.focus(); } }); }); });
+  root.querySelectorAll('button[data-unk]').forEach(b => b.addEventListener('click', () => toggleUnknown(b.dataset.unk)));
+  root.querySelectorAll('textarea[data-note]').forEach(t => t.addEventListener('input', () => { const k = t.dataset.note; AUDIT.notes[k] = AUDIT.notes[k]||{}; AUDIT.notes[k][t.dataset.kind] = t.value; markDirty('notes', k); }));
+  root.querySelectorAll('input[data-noteflag]').forEach(c => c.addEventListener('change', () => { const k = c.dataset.noteflag; AUDIT.notes[k] = AUDIT.notes[k]||{}; AUDIT.notes[k].audit_in_report = c.checked; markDirty('notes', k); }));
+  root.querySelectorAll('.tools [data-tool]').forEach(tr => tr.querySelectorAll('[data-tf]').forEach(inp => { inp.addEventListener(inp.type==='checkbox'||inp.tagName==='SELECT'?'change':'input', () => { const rows = Array.isArray(AUDIT.answers.tech_tools) ? AUDIT.answers.tech_tools : []; let r = rows.find(x=>x.category===tr.dataset.tool); if(!r){ r = {category: tr.dataset.tool}; rows.push(r); } const f = inp.dataset.tf; r[f] = inp.type==='checkbox' ? (inp.checked?'yes':'no') : (f==='cost' ? (parseNum(inp.value)==null||inp.value.trim()===''?'':String(parseNum(inp.value))) : inp.value); AUDIT.answers.tech_tools = rows; markDirty('answers', 'tech_tools'); const tot = rows.reduce((s,x)=>s+(parseNum(x.cost)||0),0); const el = $('tools-tot'); if(el) el.textContent = money(tot)+'/mo · '+money(tot*12)+'/yr'; }); if(inp.dataset.tf==='cost') inp.addEventListener('blur', ()=>{ const n = parseNum(inp.value); if(n!=null && inp.value.trim()!=='') inp.value = fmtn(n); }); }));
+  root.querySelectorAll('.seg[data-sseg]').forEach(seg => { const id = seg.dataset.sseg; seg.querySelectorAll('button').forEach(b => b.addEventListener('click', () => { const on = b.classList.contains('on'); seg.querySelectorAll('button').forEach(x=>x.classList.remove('on','lit')); if(!on){ b.classList.add('on'); if(seg.classList.contains('rating')) seg.querySelectorAll('button').forEach(x=>{ if(+x.dataset.val < +b.dataset.val) x.classList.add('lit'); }); } if(on) delete AUDIT.sales[id]; else AUDIT.sales[id] = b.dataset.val; markDirty('sales', id); })); });
+  root.querySelectorAll('[data-stxt]').forEach(inp => inp.addEventListener('input', () => { if(inp.value==='') delete AUDIT.sales[inp.dataset.stxt]; else AUDIT.sales[inp.dataset.stxt] = inp.value; markDirty('sales', inp.dataset.stxt); }));
+}
+function focusNext(el){ const f = Array.from(document.querySelectorAll('.main input:not([type=checkbox]),.main select,.main textarea,.main .seg button:first-child')).filter(x => x.offsetParent!==null); const i = f.indexOf(el); const n = f[i+1]; if(n){ n.focus(); if(n.select) n.select(); } }
+function refreshDerived(){
+  if(!RESULTS) return; const fin = RESULTS.financials||{};
+  const map = {fin_monthly_revenue:'monthly_revenue', fin_weekly_revenue:'weekly_revenue', fin_net_margin:'net_margin', fin_prime_cost_pct:'prime_cost_pct'};
+  document.querySelectorAll('[data-derive]').forEach(el => { const id = el.dataset.derive; const f = fin[map[id]]; if(!f || f.source==='owner'){ el.innerHTML = ''; return; } const val = /pct|margin/.test(map[id]) ? fmtn(f.value,1)+'%' : money(f.value); el.innerHTML = `<span class="pill ${f.source}">${f.source}</span> ${val} <b>${esc(f.note||'')}</b>`; });
+}
+
+// ── computed views ─────────────────────────────────────────────────────────
+const confPill = c => c ? `<span class="conf ${c}">${c}</span>` : '';
+const scorePill = s => s==null ? `<span class="score">not assessed</span>` : `<span class="score ${s>=75?'g':(s>=60?'a':'r')}">${s}</span>`;
+function howBlock(c){ if(!c.calc) return ''; const k = c.calc; return `<details class="how"><summary>How this was calculated</summary><div class="body">
+  <span class="k">Current</span><span>${esc(k.current_metric||'—')}</span><span class="k">Target</span><span>${esc(k.benchmark||'—')}${k.benchmark_source?`<div style="color:var(--ink4);margin-top:2px">${esc(k.benchmark_source)}</div>`:''}</span>
+  <span class="k">Base</span><span>${esc(k.base||'—')}</span><span class="k">Formula</span><span class="num" style="font-size:12px">${esc(k.formula||'—')}</span>
+  <span class="k">Method</span><span>${esc(k.method||'—')}</span><span class="k">Overlap</span><span>${esc(k.overlap||'—')}</span>
+  <span class="k">Assumptions</span><ul>${(k.assumptions||[]).map(x=>`<li>${esc(x)}</li>`).join('')}</ul>
+  <span class="k">Low · likely · high</span><span class="num">${money(c.low)} · ${money(c.likely)} · ${money(c.high)} per year</span></div></details>`; }
+function renderSummary(){
+  const r = RESULTS; const tot = r.totals.annual, mo = r.totals.monthly;
+  let h = `<div class="sh"><div class="k">Internal preview · live</div><h1>Opportunity summary</h1><p>Updates as you type. Ranges only — nothing here is counted without enough data, and overlapping categories never sum.</p></div>
+  <div class="tot"><div class="b"><div class="k">Annual opportunity</div><div class="v e">${tot.high?money(tot.low)+' – '+money(tot.high):'—'}</div><div class="sub">likely ${money(tot.likely)} · ${r.totals.counted} of 8 areas sized</div></div>
+  <div class="b"><div class="k">Monthly opportunity</div><div class="v">${mo.high?money(mo.low)+' – '+money(mo.high):'—'}</div><div class="sub">annual ÷ 12</div></div>
+  <div class="b"><div class="k">Confidence</div><div class="v">${r.totals.confidence||'—'}</div><div class="sub">${r.health.score!=null?'health score '+r.health.score+' · '+esc(r.health.label):'health not yet assessed'}</div></div></div><div class="cards">`;
+  const order = ['labor','food','bar','reviews','marketing','waitlist','operations','technology'];
+  order.forEach(k => { const c = r.categories[k]; const s = r.scores[k].score;
+    const cls = c.status==='insufficient'?'ins':(c.status==='none'?'none':'');
+    const rng = c.status==='ok' && c.high ? `<div class="rng">${money(c.low)} – ${money(c.high)}<small>per year · likely ${money(c.likely)}</small></div>` : `<div class="rng" style="font-size:14px;color:var(--ink4);font-weight:500">${c.status==='none'?'No opportunity counted':'Insufficient data to calculate reliably'}</div>`;
+    h += `<div class="card ${cls}"><div class="t"><h3>${esc(c.label)}${c.module&&!c.module.live?' <span class="upc">upcoming</span>':''}</h3><span style="display:flex;gap:6px;align-items:center">${scorePill(s)}${confPill(c.confidence)}</span></div>${rng}<div class="st">${esc(c.current_state)}</div><div class="op">${esc(c.opportunity)}</div>${howBlock(c)}${(c.missing||[]).length?`<div class="op" style="color:var(--amber)">Ask: ${esc(c.missing[0])}</div>`:''}</div>`; });
+  h += '</div>';
+  if(r.missing.length) h += `<div class="miss"><h4>Missing information that would improve confidence</h4><ul style="margin:0;padding-left:18px">${r.missing.map(m=>`<li>${esc(m)}</li>`).join('')}</ul></div>`;
+  h += `<div class="stepnav"><button class="btn" onclick="go('priorities')">← Priorities</button><button class="btn primary" onclick="go('recommendation')">Cavnar AI recommendation →</button></div>`;
+  return h;
+}
+function renderRecommendation(){
+  const r = RESULTS; const p = r.plan; const ov = AUDIT.pricing_override || 'auto';
+  let h = `<div class="sh"><div class="k">Internal preview</div><h1>Cavnar AI recommendation</h1><p>Findings mapped to what the product actually does today. Upcoming modules are marked and never implied to be available.</p></div>`;
+  h += `<h2 class="sub">Recommended focus</h2><div class="mods">`;
+  (r.recommended_modules||[]).forEach((m,i) => { h += `<div class="mod"><h4><span class="num" style="color:var(--ember2)">${i+1}</span>${esc(m.label)}</h4><p>${esc(m.does)}</p></div>`; });
+  (r.upcoming_modules||[]).forEach(m => { h += `<div class="mod" style="opacity:.75"><h4>${esc(m.label)} <span class="upc">upcoming</span></h4><p>${esc(m.does)}</p></div>`; });
+  if(!(r.recommended_modules||[]).length) h += `<div class="mod wide"><p>No module stands out yet — enter labor, food, review or marketing data first.</p></div>`;
+  h += `</div><h2 class="sub">Investment</h2><div class="plan">${[['auto','Auto ('+(p.plan==='full'?'Full System':'Starter')+')'],['starter:1','1 module'],['starter:2','2 modules'],['full','Full System']].map(([v,l])=>`<button class="btn ${ov===v?'primary':''}" onclick="setPlan('${v}')">${l}</button>`).join('')}</div>
+  <div class="tot"><div class="b"><div class="k">${esc(p.label)}</div><div class="v">${money(p.annual)}<small style="font-size:12px;color:var(--ink4)"> / yr</small></div><div class="sub">${esc(p.note)}</div></div>
+  <div class="b"><div class="k">First year incl. setup</div><div class="v">${money(p.first_year)}</div><div class="sub">setup ${money(p.setup)} + annual ${money(p.annual)}</div></div>
+  <div class="b"><div class="k">Opportunity ÷ annual investment</div><div class="v e">${r.roi?r.roi.low_x+'× – '+r.roi.high_x+'×':'—'}</div><div class="sub">${r.roi?'first year incl. setup '+r.roi.first_year_low_x+'× – '+r.roi.first_year_high_x+'×':'size an opportunity first'}</div></div></div>`;
+  if(p.verify) h += `<div class="warn">${esc(p.verify)}</div>`;
+  h += `<div class="stepnav"><button class="btn" onclick="go('summary')">← Summary</button><button class="btn primary" onclick="go('results')">Final audit results →</button></div>`;
+  return h;
+}
+async function setPlan(v){ const d = await post('/admin/api/audits/'+AUDIT_ID, {pricing_override:v, version:AUDIT.version}, 'PATCH'); if(d.ok){ AUDIT.pricing_override = v; AUDIT.version = d.version; RESULTS = d.results; render(); renderSide(); } else if(d.conflict){ AUDIT.version = d.audit.version; setPlan(v); } else toast(d.error||'Failed', true); }
+function ringSvg(score){ const r=56, c=2*Math.PI*r; const s = score==null?0:score; const col = s>=75?'var(--green)':(s>=60?'var(--amber)':'var(--red)'); return `<div class="ring"><svg viewBox="0 0 132 132"><circle cx="66" cy="66" r="${r}" fill="none" stroke="var(--paper3)" stroke-width="10"/><circle cx="66" cy="66" r="${r}" fill="none" stroke="${col}" stroke-width="10" stroke-linecap="round" stroke-dasharray="${c}" stroke-dashoffset="${c*(1-s/100)}"/></svg><div class="c">${score==null?'—':score}<small>/ 100</small></div></div>`; }
+function renderResults(){
+  const r = RESULTS; const hs = r.health;
+  let h = `<div class="sh"><div class="k">Internal preview</div><h1>Final audit results</h1><p>What the owner will see. Generate the final audit to freeze these numbers into the report and open it for the reveal.</p></div>`;
+  h += `<div class="health">${ringSvg(hs.score)}<div><h2>Restaurant Health Score${hs.preliminary&&hs.score!=null?' <span class="upc" style="background:rgba(212,160,48,.16);color:var(--amber)">preliminary · '+hs.assessed+' areas</span>':''}</h2><p>${esc(hs.interpretation||'Answer a few more scored questions in at least two areas to assess health.')}</p>${hs.strongest.length?`<p style="margin-top:6px"><b>Strongest:</b> ${esc(hs.strongest.join(', '))}</p>`:''}${hs.weakest.length?`<p><b>Weakest:</b> ${esc(hs.weakest.join(', '))}</p>`:''}${hs.immediate.length?`<p style="color:var(--red)"><b>Immediate attention:</b> ${esc(hs.immediate.join(', '))}</p>`:''}</div></div>`;
+  h += `<h2 class="sub">Top problems</h2><div class="list">${r.problems.length?r.problems.map((p,i)=>`<div class="item"><span class="n">${i+1}</span><div><h4>${esc(p.title)}</h4><p>${esc(p.current_state||'')} ${esc(p.why)}</p>${p.evidence.length?`<div class="ev">Evidence: ${esc(p.evidence.join(' · '))}</div>`:''}</div><span class="rg">${esc(p.impact)}</span></div>`).join(''):'<div class="item"><span class="n">–</span><p>No problems supported by data yet.</p></div>'}</div>`;
+  h += `<h2 class="sub">Top opportunities</h2><div class="list">${r.opportunities.length?r.opportunities.map((o,i)=>`<div class="item"><span class="n">${i+1}</span><div><h4>${esc(o.title)}</h4><p>${esc(o.opportunity)}</p><div class="ev">${esc(o.module)} · ${esc(o.feasibility)} · ${esc(o.confidence||'')} confidence</div></div><span class="rg">${esc(o.range||'')}</span></div>`).join(''):'<div class="item"><span class="n">–</span><p>No sized opportunities yet.</p></div>'}</div>`;
+  h += `<h2 class="sub">Doing well</h2><div class="list">${r.wins.length?r.wins.map(w=>`<div class="item" style="grid-template-columns:1fr"><p style="color:var(--green)">${esc(w)}</p></div>`).join(''):'<div class="item" style="grid-template-columns:1fr"><p>Nothing confirmed as strong yet.</p></div>'}</div>`;
+  const share = AUDIT.share ? `<div class="banner" style="margin-top:18px"><span>Share link is live · ${AUDIT.share.views} view${AUDIT.share.views===1?'':'s'} · <span class="num" id="share-url">${esc(location.origin+'/audit/r/'+AUDIT.share.token)}</span></span><span style="display:flex;gap:8px"><button class="btn s" onclick="copyShare()">Copy</button><button class="btn s danger" onclick="revokeShare()">Revoke</button></span></div>` : '';
+  h += `<div style="text-align:center;margin:44px 0 20px"><button class="btn primary big" onclick="generate()">Generate Final Cavnar AI Audit</button><div style="color:var(--ink4);font-size:12.5px;margin-top:10px">${AUDIT.report_generated_at?'Last generated '+ago(AUDIT.report_generated_at)+' · regenerating replaces the snapshot':'Freezes the numbers and opens the customer-facing report'}</div>
+  <div style="display:flex;gap:8px;justify-content:center;margin-top:14px">${AUDIT.report_generated_at?`<a class="btn" href="/admin/audits/${AUDIT_ID}/report" target="_blank">Open report</a><button class="btn" onclick="createShare()">${AUDIT.share?'New share link':'Create share link'}</button>`:''}</div>${share}</div>`;
+  return h;
+}
+async function generate(){ if(dirtyAny()){ await save(); } const d = await post('/admin/api/audits/'+AUDIT_ID+'/generate'); if(!d.ok) return toast(d.error||'Failed', true); RESULTS = d.results; AUDIT.report_generated_at = new Date().toISOString(); if(AUDIT.status==='Draft'||AUDIT.status==='In Progress') AUDIT.status='Completed'; renderStatusMenu(); render(); window.open(d.report_url, '_blank'); }
+async function createShare(){ const d = await post('/admin/api/audits/'+AUDIT_ID+'/share'); if(!d.ok) return toast(d.error||'Failed', true); AUDIT.share = {token:d.token, views:0}; render(); try{ await navigator.clipboard.writeText(d.url); toast('Share link copied'); }catch(e){ toast('Share link created'); } }
+async function revokeShare(){ if(!confirm('Revoke the share link? Anyone with it loses access immediately.')) return; const d = await api('/admin/api/audits/'+AUDIT_ID+'/share', {method:'DELETE'}); if(d.ok){ AUDIT.share = null; render(); toast('Share link revoked'); } }
+async function copyShare(){ try{ await navigator.clipboard.writeText($('share-url').textContent); toast('Copied'); }catch(e){ toast('Select and copy the link', true); } }
+
+// ── cheat sheet drawer ─────────────────────────────────────────────────────
+function openSheet(){ const f = $('sheet'); if(!f.src) f.src = '/admin/audits/'+AUDIT_ID+'/cheatsheet?embed=1'; $('drawer').classList.add('on'); $('scrim').classList.add('on'); }
+function closeSheet(){ $('drawer').classList.remove('on'); $('scrim').classList.remove('on'); }
+
+// ── keys ───────────────────────────────────────────────────────────────────
+document.addEventListener('keydown', e => {
+  const typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
+  if(e.key==='Escape'){ closeSheet(); $('menu').classList.remove('on'); return; }
+  if(typing) return;
+  const keys = SCHEMA ? SCHEMA.sections.map(s=>s.key).concat(SCHEMA.computed.map(s=>s.key)).concat(['sales']) : [];
+  if(e.key===']' || e.key==='['){ const i = keys.indexOf(SECTION); const n = keys[i + (e.key===']'?1:-1)]; if(n) go(n); }
+  if(e.key==='i') toggleSide();
+  if(e.key==='c') openSheet();
+});
+document.addEventListener('click', e => { if(!e.target.closest('#menu')) $('menu').classList.remove('on'); });
+$('side-notes').addEventListener('input', () => { AUDIT.notes._global = AUDIT.notes._global||{}; AUDIT.notes._global.internal = $('side-notes').value; markDirty('notes','_global'); });
+load();
+</script>
+</body>
+</html>

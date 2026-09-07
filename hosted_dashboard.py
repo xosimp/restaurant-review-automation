@@ -206,6 +206,11 @@ for _bp in (admin_bp, client_bp, social_bp, toast_bp, square_bp, clover_bp):
     csrf_protect(_bp)
 
 app.register_blueprint(admin_bp)
+from sales_audit_routes import audit_bp
+if not getattr(audit_bp, "_csrf_wired", False):
+    csrf_protect(audit_bp)
+    audit_bp._csrf_wired = True
+app.register_blueprint(audit_bp)
 app.register_blueprint(webhook_bp)
 app.register_blueprint(social_bp)
 app.register_blueprint(auth_bp)
@@ -797,6 +802,9 @@ try:
     _igm()
     _ipush()
     _i2fabc()
+    from sales_audits import init_sales_audits as _isa2, ensure_first_audit as _efa
+    _isa2()
+    _efa()
     print("DB init OK")
 except Exception as _e:
     print(f"DB init error: {_e}")

@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>{% if r %}{{ r.restaurant_name }} — Cavnar AI Restaurant Audit{% else %}Cavnar AI Restaurant Audit{% endif %}</title>
+<link rel="icon" href="/favicon.png">
+<link rel="stylesheet" href="/static/fonts/cavnar-fonts.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{--paper:#f7f4ef;--paper2:#efebe3;--paper3:#e0dbd0;--ink:#0e0c0a;--ink2:#3a3530;--ink3:#7a736a;--ink4:#a39b90;--ember:#c84b2f;--ember2:#e8956a;--ember-bg:#fdf0eb;
+--green:#2d7a4f;--green-bg:#e6f2ea;--amber:#a86f0f;--amber-bg:#fbf1dc;--red:#b83a3a;--red-bg:#fbe7e7;
+--disp:'Clash Display',sans-serif;--sans:'Apfel Grotezk',-apple-system,sans-serif;--num:'Space Grotesk',monospace}
+*{box-sizing:border-box}
+html{background:#e9e4da}
+body{margin:0;color:var(--ink);font-family:var(--sans);font-size:14.5px;line-height:1.55;background:#e9e4da}
+.num{font-family:var(--num);font-variant-numeric:tabular-nums}
+.adminbar{position:sticky;top:0;z-index:10;background:#0c0c0c;color:#f0ebe0;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 22px;font-size:13px}
+.adminbar a,.adminbar button{color:#f0ebe0;background:#242220;border:1px solid #2f2c29;border-radius:7px;padding:7px 12px;font-size:12.5px;font-weight:600;text-decoration:none;font-family:inherit;cursor:pointer}
+.adminbar a.p,.adminbar button.p{background:#c84b2f;border-color:#c84b2f;color:#fff}
+.adminbar .l{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.adminbar .note{color:#a79d8e}
+.page{max-width:900px;margin:28px auto 60px;background:var(--paper);box-shadow:0 30px 80px rgba(20,14,10,.18);border-radius:6px;overflow:hidden}
+.cover{position:relative;padding:54px 64px 46px;background:#0c0c0c;color:#f0ebe0;overflow:hidden}
+.cover::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse 70% 70% at 80% 0%,rgba(200,75,47,.55),rgba(200,75,47,0) 70%)}
+.cover>*{position:relative}
+.cover img{height:22px;width:auto;display:block;margin-bottom:46px}
+.cover .k{font-family:var(--num);font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:#e8956a;font-weight:700;margin-bottom:10px}
+.cover h1{font-family:var(--disp);font-weight:500;font-size:44px;line-height:1.05;letter-spacing:-.015em;margin:0 0 22px;text-wrap:balance;color:#f0ebe0}
+.cover .meta{display:flex;gap:34px;flex-wrap:wrap;color:#a79d8e;font-size:13px}
+.cover .meta b{display:block;color:#f0ebe0;font-size:15px;font-weight:600;margin-top:2px}
+section{padding:40px 64px;border-top:1px solid var(--paper3)}
+section.tight{padding-top:30px;padding-bottom:30px}
+h2{font-family:var(--disp);font-weight:500;font-size:26px;letter-spacing:-.01em;margin:0 0 18px;text-wrap:balance}
+h2 .k{display:block;font-family:var(--num);font-size:10.5px;letter-spacing:.18em;text-transform:uppercase;color:var(--ember);font-weight:700;margin-bottom:6px}
+p{margin:0 0 12px;max-width:68ch}
+.lede{font-size:16px;color:var(--ink2)}
+.health{display:grid;grid-template-columns:170px 1fr;gap:30px;align-items:center}
+.ring{width:170px;height:170px;position:relative}
+.ring svg{width:100%;height:100%;transform:rotate(-90deg)}
+.ring .c{position:absolute;inset:0;display:grid;place-items:center;text-align:center;font-family:var(--num);font-size:50px;font-weight:600;line-height:1}
+.ring .c small{display:block;font-size:11px;color:var(--ink3);font-weight:500;letter-spacing:.1em;text-transform:uppercase;margin-top:6px}
+.hl{font-family:var(--disp);font-size:22px;font-weight:500;margin:0 0 8px}
+.tags{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.tag{font-size:12px;font-weight:600;padding:4px 10px;border-radius:20px;background:var(--paper2);color:var(--ink2)}
+.tag.g{background:var(--green-bg);color:var(--green)}.tag.r{background:var(--red-bg);color:var(--red)}.tag.a{background:var(--amber-bg);color:var(--amber)}
+.wins{columns:2;column-gap:28px;padding-left:18px;margin:0}.wins li{break-inside:avoid;margin-bottom:8px;color:var(--ink2)}
+.items{display:flex;flex-direction:column;gap:14px}
+.item{display:grid;grid-template-columns:38px 1fr auto;gap:16px;align-items:start;padding:16px 18px;border-radius:10px;background:var(--paper2)}
+.item .n{font-family:var(--num);font-size:26px;font-weight:600;color:var(--ember);line-height:1}
+.item h4{font-family:var(--disp);font-weight:500;font-size:19px;margin:0 0 4px}
+.item p{margin:0;font-size:13.5px;color:var(--ink2)}.item .ev{font-size:12px;color:var(--ink3);margin-top:6px}
+.item .rg{font-family:var(--num);font-weight:600;color:var(--ember);white-space:nowrap;text-align:right;font-size:14px}
+.item .rg small{display:block;font-weight:500;color:var(--ink3);font-size:11px}
+table{width:100%;border-collapse:collapse;font-size:13.5px}
+th{text-align:left;font-family:var(--num);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);font-weight:700;padding:0 10px 10px 0;border-bottom:1px solid var(--paper3)}
+td{padding:11px 10px 11px 0;border-bottom:1px solid var(--paper3);vertical-align:top;color:var(--ink2)}
+td.r,th.r{text-align:right;padding-right:0}
+td .name{font-weight:600;color:var(--ink)}
+.bar{display:flex;align-items:center;gap:10px}.bar i{display:block;height:6px;border-radius:3px;background:var(--paper3);width:120px;overflow:hidden;position:relative}
+.bar i b{position:absolute;left:0;top:0;bottom:0;background:var(--ember);border-radius:3px}
+.bar i b.g{background:var(--green)}.bar i b.a{background:#d4a030}.bar i b.r{background:var(--red)}
+.lab{font-size:12px;color:var(--ink3)}
+.big2{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin:6px 0 26px}
+.big2 .b{padding:22px 24px;border-radius:12px;background:#0c0c0c;color:#f0ebe0;position:relative;overflow:hidden}
+.big2 .b::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse 80% 90% at 100% 0%,rgba(200,75,47,.5),rgba(200,75,47,0) 70%)}
+.big2 .b>*{position:relative}
+.big2 .k{font-family:var(--num);font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:#e8956a;font-weight:700}
+.big2 .v{font-family:var(--num);font-size:34px;font-weight:600;margin-top:6px;line-height:1.05;color:#f0ebe0}
+.big2 .s{font-size:12.5px;color:#a79d8e;margin-top:8px}
+.conf{display:inline-block;font-family:var(--num);font-size:10.5px;letter-spacing:.1em;font-weight:700;padding:3px 8px;border-radius:4px;text-transform:uppercase}
+.conf.high,.conf.HIGH{background:var(--green-bg);color:var(--green)}.conf.moderate,.conf.MODERATE{background:var(--amber-bg);color:var(--amber)}.conf.low,.conf.LOW{background:var(--red-bg);color:var(--red)}
+.up{display:inline-block;font-family:var(--num);font-size:10px;letter-spacing:.1em;padding:2px 7px;border-radius:4px;background:#e8eef8;color:#2c56a8;font-weight:700;text-transform:uppercase;margin-left:6px;vertical-align:middle}
+.mods{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.mod{padding:16px 18px;border-radius:10px;border:1px solid var(--paper3)}
+.mod h4{font-family:var(--disp);font-weight:500;font-size:18px;margin:0 0 6px}.mod p{margin:0;font-size:13.5px;color:var(--ink2)}
+.mod .for{font-size:12px;color:var(--ember);font-weight:600;margin-bottom:4px}
+.inv{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-bottom:16px}
+.inv .b{padding:16px 18px;border-radius:10px;background:var(--paper2)}
+.inv .k{font-family:var(--num);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);font-weight:700}
+.inv .v{font-family:var(--num);font-size:26px;font-weight:600;margin-top:4px}.inv .v.e{color:var(--ember)}.inv .s{font-size:12px;color:var(--ink3);margin-top:4px}
+.prio{counter-reset:p;padding:0;margin:0;list-style:none;display:flex;flex-direction:column;gap:10px}
+.prio li{display:grid;grid-template-columns:30px 1fr;gap:12px;align-items:baseline}
+.prio li::before{counter-increment:p;content:counter(p);font-family:var(--num);font-weight:600;color:var(--ember);font-size:20px}
+.prio b{font-family:var(--disp);font-weight:500;font-size:17px}
+.small{font-size:12.5px;color:var(--ink3)}
+.close{font-size:16.5px;line-height:1.6;color:var(--ink2);border-left:3px solid var(--ember);padding-left:18px;max-width:66ch}
+details{margin-top:8px}details summary{cursor:pointer;color:var(--ember);font-size:12.5px;font-weight:600;list-style:none}
+details summary::before{content:'+ '}details[open] summary::before{content:'− '}
+details .b{font-size:12.5px;color:var(--ink2);margin-top:8px;padding:10px 12px;background:var(--paper2);border-radius:8px}
+details .b ul{margin:6px 0 0;padding-left:16px}
+.foot{padding:26px 64px;background:#0c0c0c;color:#a79d8e;font-size:12px;display:flex;justify-content:space-between;align-items:center;gap:12px}
+.foot img{height:16px;width:auto}
+.nf{max-width:560px;margin:80px auto;background:var(--paper);padding:40px;border-radius:8px;text-align:center}
+@media(max-width:720px){.cover,section,.foot{padding-left:22px;padding-right:22px}.health{grid-template-columns:1fr}.big2,.mods,.inv{grid-template-columns:1fr}.wins{columns:1}.item{grid-template-columns:30px 1fr}.item .rg{grid-column:2;text-align:left}}
+@media print{
+  @page{margin:14mm 12mm}
+  html,body{background:#fff}
+  .adminbar{display:none!important}
+  .page{max-width:none;margin:0;box-shadow:none;border-radius:0}
+  .cover,.big2 .b,.foot{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  section{padding:22px 0;break-inside:avoid}
+  .cover{padding:34px 0 28px}
+  .items .item,.mod,.inv .b{break-inside:avoid}
+  details{display:none}
+  h2{font-size:22px}
+}
+</style>
+</head>
+<body>
+{% if not r %}
+<div class="nf"><h2 style="margin-top:0">This audit link isn't available</h2><p class="small">The link may have been revoked, or the audit hasn't been generated yet. Contact will@cavnar.ai for a fresh copy.</p></div>
+{% else %}
+{% if is_admin %}
+<div class="adminbar">
+  <div class="l"><a href="/admin/audits/{{ r.id }}">← Back to audit</a><span class="note">Customer-facing view · no internal notes, no sales observations, no calculation debug</span></div>
+  <div class="l">{% if share_url %}<span class="note num" style="font-size:12px">{{ share_url }}</span>{% endif %}<button class="p" onclick="window.print()">Print / Export PDF</button></div>
+</div>
+{% endif %}
+{% set tot = r.totals or {} %}{% set ann = tot.annual or {} %}{% set mon = tot.monthly or {} %}{% set h = r.health or {} %}
+<div class="page">
+  <div class="cover">
+    <img src="/static/brand/lockup-light.svg" alt="Cavnar AI">
+    <div class="k">Cavnar AI Restaurant Audit</div>
+    <h1>{{ r.restaurant_name or 'Restaurant' }}</h1>
+    <div class="meta">
+      <div>Prepared for<b>{{ r.owner_name or '—' }}</b></div>
+      <div>Concept<b>{{ r.restaurant_type or '—' }}{% if r.service_model %} · {{ r.service_model }}{% endif %}</b></div>
+      {% if r.city or r.state %}<div>Location<b>{{ [r.city, r.state] | select | join(', ') }}{% if r.locations and r.locations > 1 %} · {{ r.locations }} locations{% endif %}</b></div>{% endif %}
+      <div>Audit date<b class="num">{{ r.audit_date | mdy }}</b></div>
+    </div>
+  </div>
+
+  <section>
+    <h2><span class="k">Restaurant Health Score</span>Operational intelligence, in one number</h2>
+    <div class="health">
+      {% set s = h.score %}{% set circ = 2 * 3.14159 * 72 %}
+      <div class="ring"><svg viewBox="0 0 170 170"><circle cx="85" cy="85" r="72" fill="none" stroke="#e0dbd0" stroke-width="12"/>{% if s is not none %}<circle cx="85" cy="85" r="72" fill="none" stroke="{% if s >= 75 %}#2d7a4f{% elif s >= 60 %}#d4a030{% else %}#c84b2f{% endif %}" stroke-width="12" stroke-linecap="round" stroke-dasharray="{{ circ }}" stroke-dashoffset="{{ circ * (1 - s / 100) }}"/>{% endif %}</svg>
+        <div class="c">{{ s if s is not none else '—' }}<small>{{ h.label or 'not assessed' }}</small></div></div>
+      <div>
+        <div class="hl">{% if s is not none %}{{ s }} / 100 · {{ h.label }}{% else %}Not enough information to score yet{% endif %}</div>
+        <p>{{ h.interpretation or 'The audit needs a few more answers in at least three areas before a health score is meaningful. Nothing has been assumed.' }}</p>
+        <div class="tags">
+          {% for n in h.strongest or [] %}<span class="tag g">Strong · {{ n }}</span>{% endfor %}
+          {% for n in h.weakest or [] %}<span class="tag a">Opportunity · {{ n }}</span>{% endfor %}
+          {% for n in h.immediate or [] %}<span class="tag r">Immediate · {{ n }}</span>{% endfor %}
+        </div>
+        {% if h.preliminary and s is not none %}<p class="small" style="margin-top:10px">Preliminary — based on {{ h.assessed }} assessed area{{ '' if h.assessed == 1 else 's' }}. Areas without enough information are not scored and do not lower the result.</p>{% endif %}
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="k">Executive summary</span>Where {{ r.restaurant_name }} stands</h2>
+    <p class="lede">
+      {% if ann.high %}Across the areas we could size with the information shared, the audit identifies an estimated <b class="num">{{ ann.low | money }} – {{ ann.high | money }}</b> of annual opportunity ({{ mon.low | money }} – {{ mon.high | money }} a month), with {{ (tot.confidence or 'moderate') | lower }} confidence.{% else %}The audit did not have enough numbers to size a financial opportunity, so none has been assumed. The findings below are based on how the operation is run today.{% endif %}
+      {% if h.strongest %} The strongest areas are {{ h.strongest | join(', ') }}.{% endif %}
+      {% if h.weakest %} The biggest opportunities sit in {{ h.weakest | join(', ') }}.{% endif %}
+    </p>
+    <p>Every figure is a range built from your own numbers against your own targets where you gave them, otherwise published operating benchmarks. Only the gap above target is counted, and only a conservative share of it. Where information was missing, the report says so rather than estimating.</p>
+  </section>
+
+  <section>
+    <h2><span class="k">What you're doing well</span>Worth protecting</h2>
+    {% if r.wins %}<ul class="wins">{% for w in r.wins %}<li>{{ w }}</li>{% endfor %}</ul>{% else %}<p class="small">Nothing was confirmed as a strength in this session — that reflects the questions covered, not the operation.</p>{% endif %}
+  </section>
+
+  <section>
+    <h2><span class="k">Top 3 problems</span>What is costing the most today</h2>
+    <div class="items">
+      {% for p in r.problems or [] %}<div class="item"><span class="n">{{ loop.index }}</span><div><h4>{{ p.title }}</h4><p>{{ p.current_state }} {{ p.why }}</p>{% if p.evidence %}<div class="ev">Evidence: {{ p.evidence | join(' · ') }}</div>{% endif %}</div><span class="rg">{{ p.impact }}</span></div>
+      {% else %}<p class="small">No problems were supported by the data collected.</p>{% endfor %}
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="k">Top 3 opportunities</span>Ranked by value, confidence and feasibility</h2>
+    <div class="items">
+      {% for o in r.opportunities or [] %}<div class="item"><span class="n">{{ loop.index }}</span><div><h4>{{ o.title }}{% if o.feasibility != 'Available today' %}<span class="up">upcoming</span>{% endif %}</h4><p>{{ o.opportunity }}</p><div class="ev">{{ o.module }} · {{ o.feasibility }}{% if o.confidence %} · <span class="conf {{ o.confidence }}">{{ o.confidence }} confidence</span>{% endif %}</div></div><span class="rg">{{ o.range }}<small>per year</small></span></div>
+      {% else %}<p class="small">No opportunity could be sized reliably with the information provided.</p>{% endfor %}
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="k">Category scorecard</span>How each area was assessed</h2>
+    <table>
+      <thead><tr><th>Area</th><th>Score</th><th>Assessment</th><th>Current state</th></tr></thead>
+      <tbody>
+      {% for k in ['labor','food','bar','reviews','marketing','waitlist','operations','technology'] %}{% set c = r.categories[k] %}{% set sc = r.scores[k] %}
+        <tr><td><span class="name">{{ c.label }}</span>{% if c.module and not c.module.live %}<span class="up">upcoming</span>{% endif %}</td>
+          <td>{% if sc.score is not none %}<div class="bar"><i><b class="{% if sc.score >= 75 %}g{% elif sc.score >= 60 %}a{% else %}r{% endif %}" style="width:{{ sc.score }}%"></b></i><span class="num">{{ sc.score }}</span></div>{% else %}<span class="lab">Not assessed</span>{% endif %}</td>
+          <td>{{ sc.label }}</td><td>{{ c.current_state }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <p class="small" style="margin-top:12px">90–100 Excellent · 75–89 Strong · 60–74 Opportunity · 40–59 Significant Opportunity · 0–39 Critical Opportunity. Areas without enough answers are not scored.</p>
+  </section>
+
+  <section>
+    <h2><span class="k">Estimated financial opportunity</span>Conservative ranges, never a single number</h2>
+    <div class="big2">
+      <div class="b"><div class="k">Estimated monthly opportunity</div><div class="v">{% if mon.high %}{{ mon.low | money }} – {{ mon.high | money }}{% else %}Insufficient data{% endif %}</div><div class="s">{% if mon.high %}likely around {{ mon.likely | money }} a month{% else %}not enough numbers were shared to size this reliably{% endif %}</div></div>
+      <div class="b"><div class="k">Estimated annual opportunity</div><div class="v">{% if ann.high %}{{ ann.low | money }} – {{ ann.high | money }}{% else %}Insufficient data{% endif %}</div><div class="s">{% if tot.confidence %}<span class="conf {{ tot.confidence }}">{{ tot.confidence }} confidence</span> · {{ tot.counted }} of 8 areas sized{% else %}no area could be sized{% endif %}</div></div>
+    </div>
+    <table>
+      <thead><tr><th>Area</th><th>Current state</th><th>Opportunity</th><th class="r">Estimated annual value</th></tr></thead>
+      <tbody>
+      {% for k in ['labor','food','bar','reviews','marketing','waitlist','operations','technology'] %}{% set c = r.categories[k] %}
+        <tr><td><span class="name">{{ c.label }}</span>{% if c.confidence and c.status == 'ok' %}<br><span class="conf {{ c.confidence }}">{{ c.confidence }}</span>{% endif %}</td>
+          <td>{{ c.current_state }}</td><td>{{ c.opportunity }}{% if c.how and c.status == 'ok' %}<details><summary>How this was estimated</summary><div class="b">{{ c.how.current_metric }} · {{ c.how.benchmark }} · base {{ c.how.base }}{% if c.how.assumptions %}<ul>{% for a in c.how.assumptions %}<li>{{ a }}</li>{% endfor %}</ul>{% endif %}</div></details>{% endif %}</td>
+          <td class="r num">{% if c.status == 'ok' and c.high %}{{ c.low | money }} – {{ c.high | money }}{% elif c.status == 'none' %}<span class="lab">Performing well</span>{% else %}<span class="lab">Insufficient data</span>{% endif %}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% if r.owner_hours_week %}<p class="small" style="margin-top:12px">Separately, about {{ r.owner_hours_week | int }} hours a week of owner time currently goes to reports and data — around {{ (r.owner_hours_week * 52) | int }} hours a year. Shown as time, not dollars.</p>{% endif %}
+    <p class="small" style="margin-top:10px">Overlapping categories are never added together: overtime sits inside labor, waste inside food cost, variance inside pour cost, and comps only under operations. Reviews and guest-flow figures are revenue opportunities rather than cost savings.</p>
+    {% if r.audit_notes %}<h3 style="font-family:var(--disp);font-weight:500;font-size:18px;margin:22px 0 8px">Notes from the audit</h3>{% for k, n in r.audit_notes.items() %}<p class="small" style="color:var(--ink2)">{{ n }}</p>{% endfor %}{% endif %}
+  </section>
+
+  <section>
+    <h2><span class="k">Recommended priorities</span>In order</h2>
+    <ol class="prio">
+      {% for o in r.opportunities or [] %}<li><span><b>{{ o.title }}</b> — {{ o.opportunity }}{% if o.feasibility != 'Available today' %} <span class="up">upcoming module</span>{% endif %}</span></li>{% endfor %}
+      {% for f in r.findings or [] if f.title.endswith('Visibility Gap') %}<li><span><b>{{ f.title | replace(' — Visibility Gap','') }}</b> — {{ f.body }}</span></li>{% endfor %}
+      {% if not r.opportunities %}<li><span>Share the numbers that were missing from this session so the priorities can be sized.</span></li>{% endif %}
+    </ol>
+  </section>
+
+  <section>
+    <h2><span class="k">How Cavnar AI can help</span>Findings mapped to what runs today</h2>
+    <div class="mods">
+      {% for m in r.recommended_modules or [] %}<div class="mod"><div class="for">Recommended</div><h4>{{ m.label }}</h4><p>{{ m.does }}</p></div>{% endfor %}
+      {% for m in r.upcoming_modules or [] %}<div class="mod" style="opacity:.8"><div class="for">Upcoming</div><h4>{{ m.label }}<span class="up">not yet available</span></h4><p>{{ m.does }}</p></div>{% endfor %}
+      {% if not r.recommended_modules %}<div class="mod"><h4>Cavnar AI platform</h4><p>A daily brief across labor, food cost, reviews and marketing, a weekly AI digest, alerts, and Ask Cavnar for plain-English questions about your own numbers.</p></div>{% endif %}
+    </div>
+    <p class="small" style="margin-top:14px">Cavnar AI is designed to help identify, monitor and act on opportunities like these. Nothing it drafts — review replies, schedules, posts — goes out without your approval.</p>
+  </section>
+
+  <section>
+    <h2><span class="k">Cavnar AI investment</span>Value relative to investment</h2>
+    {% set p = r.plan or {} %}
+    <div class="inv">
+      <div class="b"><div class="k">{{ p.label }}</div><div class="v">{{ p.annual | money }}<span class="small"> / yr</span></div><div class="s">{{ p.note }}</div></div>
+      <div class="b"><div class="k">First year, including setup</div><div class="v">{{ p.first_year | money }}</div><div class="s">one-time setup {{ p.setup | money }}</div></div>
+      <div class="b"><div class="k">Identified opportunity ÷ annual investment</div><div class="v e">{% if r.roi %}{{ r.roi.low_x }}× – {{ r.roi.high_x }}×{% else %}—{% endif %}</div><div class="s">{% if r.roi %}{{ ann.low | money }} – {{ ann.high | money }} identified against {{ p.annual | money }} a year{% else %}an opportunity must be sized first{% endif %}</div></div>
+    </div>
+    <p>Cavnar AI is designed to help identify, monitor and act on opportunities like these. It does not capture them on its own, and no share of the identified opportunity is promised.</p>
+  </section>
+
+  <section class="tight">
+    <h2><span class="k">Assumptions and disclaimer</span></h2>
+    <p class="small">{{ r.disclaimer }}</p>
+    <p class="small">Benchmarks: National Restaurant Association 2025 Restaurant Operations Data Abstract (labor and food cost); bar-industry consensus ranges for pour cost and inventory variance; Harvard Business School research on rating and revenue for independent restaurants. Where the owner supplied a target, that target replaced the benchmark. Owner-provided, calculated and estimated values are distinguished in the audit workspace.</p>
+  </section>
+
+  <section>
+    <h2><span class="k">Next step</span></h2>
+    <div class="close">
+      {% if ann.high %}The numbers above are yours, not ours — we only pointed at the gaps. The next step is a short working session to connect {{ r.restaurant_name }}'s systems, set your own targets in Cavnar AI, and watch the first two weeks of real data against them. If the picture holds, the decision makes itself.{% else %}The next step is simple: share the handful of numbers that were missing today — revenue, labor, food and beverage cost — and we'll re-run the audit with real figures. From there, a short working session to connect {{ r.restaurant_name }}'s systems and set your own targets.{% endif %}
+    </div>
+    <p class="small" style="margin-top:18px">Will Cavnar · will@cavnar.ai · cavnar.ai</p>
+  </section>
+
+  <div class="foot"><img src="/static/brand/lockup-light.svg" alt="Cavnar AI"><span>Prepared {{ (r.report_generated_at or r.audit_date) | mdy }} · Confidential, prepared for {{ r.owner_name or r.restaurant_name }}</span></div>
+</div>
+{% endif %}
+</body>
+</html>

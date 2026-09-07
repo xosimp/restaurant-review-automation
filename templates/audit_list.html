@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>Restaurant Audits — Cavnar AI</title>
+<link rel="icon" href="/favicon.png">
+<link rel="stylesheet" href="/static/fonts/cavnar-fonts.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{--paper:#0c0c0c;--paper2:#141312;--paper3:#242220;--paper4:#2f2c29;--ink:#f0ebe0;--ink2:#d9d0c1;--ink3:#a79d8e;--ink4:#77706a;
+--ember:#c84b2f;--ember2:#e8956a;--ember-bg:rgba(200,75,47,.14);--green:#4ead7a;--amber:#d4a030;--red:#e3333f;--blue:#6aabff;
+--disp:'Clash Display',sans-serif;--sans:'Apfel Grotezk',-apple-system,sans-serif;--num:'Space Grotesk',monospace}
+*{box-sizing:border-box}
+html{background:var(--paper)}
+body{margin:0;min-height:100vh;color:var(--ink);font-family:var(--sans);font-size:14px;line-height:1.5;background-color:var(--paper);
+background-image:radial-gradient(ellipse 70% 55% at 50% -12%,rgba(200,75,47,.32),rgba(200,75,47,.08) 45%,rgba(12,12,12,0) 75%);background-size:100% 780px;background-repeat:no-repeat;background-position:center top}
+a{color:var(--ember2);text-decoration:none}
+button{font-family:inherit;cursor:pointer}
+.wrap{max-width:1180px;margin:0 auto;padding:28px 32px 80px}
+.top{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:34px}
+.brand{display:flex;align-items:center;gap:12px}
+.brand img{height:22px;width:auto;display:block}
+.brand .tag{font-family:var(--num);font-weight:700;font-size:10px;letter-spacing:.16em;color:var(--ember2);border:1px solid rgba(232,149,106,.4);border-radius:4px;padding:2px 6px}
+.top .links a{color:var(--ink3);font-size:13px;margin-left:18px}
+.top .links a:hover{color:var(--ink)}
+h1{font-family:var(--disp);font-weight:500;font-size:38px;letter-spacing:-.01em;margin:0 0 6px;text-wrap:balance}
+.lede{color:var(--ink3);font-size:15px;margin:0 0 28px;max-width:60ch}
+.bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:18px}
+input,select{font-family:inherit;font-size:14px;background:var(--paper2);color:var(--ink);border:1px solid var(--paper3);border-radius:8px;padding:10px 12px;outline:none;min-height:40px}
+input:focus,select:focus{border-color:var(--ember)}
+input::placeholder{color:var(--ink4)}
+.q{flex:1;min-width:220px}
+.btn{display:inline-flex;align-items:center;gap:8px;background:var(--paper2);color:var(--ink);border:1px solid var(--paper3);border-radius:8px;padding:9px 14px;font-size:13px;font-weight:600;min-height:40px}
+.btn:hover{border-color:var(--ink4)}
+.btn.primary{background:var(--ember);border-color:var(--ember);color:#fff}
+.btn.primary:hover{background:#b0402a}
+.btn.s{padding:6px 10px;min-height:0;font-size:12px}
+.btn.danger{color:var(--red);border-color:rgba(227,51,63,.35)}
+.new{background:var(--paper2);border:1px solid var(--paper3);border-radius:14px;padding:18px 20px;margin-bottom:26px;display:none}
+.new.on{display:block}
+.new h2{font-family:var(--disp);font-weight:500;font-size:20px;margin:0 0 12px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}
+.grid label{display:flex;flex-direction:column;gap:5px;font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3);font-weight:700}
+.grid input,.grid select{width:100%}
+.rows{display:flex;flex-direction:column;gap:10px}
+.row{display:grid;grid-template-columns:1.5fr 1fr .8fr .8fr .9fr auto;gap:14px;align-items:center;padding:16px 18px;border-radius:12px;background:var(--paper2);border:1px solid transparent;transition:border-color .15s,transform .15s}
+.row:hover{border-color:var(--paper4);transform:translateY(-1px)}
+.row .name{font-family:var(--disp);font-size:19px;font-weight:500;color:var(--ink);line-height:1.15}
+.row .sub{color:var(--ink3);font-size:12.5px;margin-top:3px}
+.k{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink4);font-weight:700;display:block;margin-bottom:2px}
+.num{font-family:var(--num);font-variant-numeric:tabular-nums}
+.st{display:inline-block;font-family:var(--num);font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:3px 9px;border-radius:20px;background:var(--paper3);color:var(--ink2)}
+.st.Draft{background:var(--paper3)}.st.In{background:rgba(106,171,255,.16);color:var(--blue)}.st.Completed{background:rgba(78,173,122,.16);color:var(--green)}
+.st.Follow{background:rgba(212,160,48,.16);color:var(--amber)}.st.Closed{background:var(--ember-bg);color:var(--ember2)}.st.Archived{color:var(--ink4)}
+.opp{font-family:var(--num);font-weight:600;font-size:15px;color:var(--ember2)}
+.opp small{display:block;font-size:11px;color:var(--ink4);font-weight:500}
+.prog{height:4px;background:var(--paper3);border-radius:2px;overflow:hidden;margin-top:6px}
+.prog i{display:block;height:100%;background:linear-gradient(90deg,var(--ember),var(--ember2))}
+.acts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.empty{padding:60px 20px;text-align:center;color:var(--ink3)}
+.toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--paper3);color:var(--ink);padding:10px 16px;border-radius:10px;font-size:13px;opacity:0;transition:all .2s;pointer-events:none;z-index:50}
+.toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+.toast.bad{background:var(--red);color:#fff}
+@media(max-width:820px){.row{grid-template-columns:1fr 1fr}.acts{justify-content:flex-start}.wrap{padding:18px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div class="brand"><img src="/static/brand/lockup-light.svg" alt="Cavnar AI"><span class="tag">AUDITS</span></div>
+    <div class="links"><a href="/admin">Admin console</a><a href="/">Dashboard</a><a href="/logout">Sign out</a></div>
+  </div>
+  <h1>Restaurant audits</h1>
+  <p class="lede">Every in-person audit lives here. Open one to resume where you left off — everything autosaves — or start a fresh one for the next owner you sit down with.</p>
+
+  <div class="bar">
+    <input class="q" id="q" placeholder="Search restaurant, owner, city, date or status…" autocomplete="off">
+    <select id="fstatus"><option value="">All statuses</option></select>
+    <label style="display:flex;align-items:center;gap:6px;color:var(--ink3);font-size:13px"><input type="checkbox" id="farch" style="min-height:0"> archived</label>
+    <button class="btn primary" id="newbtn" onclick="toggleNew()">+ New audit</button>
+  </div>
+
+  <div class="new" id="new">
+    <h2>New restaurant audit</h2>
+    <div class="grid">
+      <label>Restaurant <input id="n-name" placeholder="Restaurant name"></label>
+      <label>Owner <input id="n-owner" placeholder="Owner name"></label>
+      <label>Type <select id="n-type"><option value="">—</option></select></label>
+      <label>Service <select id="n-service"><option value="">—</option></select></label>
+      <label>Locations <input id="n-loc" type="number" min="1" value="1"></label>
+      <label>Audit date <input id="n-date" type="date"></label>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:14px"><button class="btn primary" onclick="createAudit()">Create and open</button><button class="btn" onclick="toggleNew()">Cancel</button></div>
+  </div>
+
+  <div class="rows" id="rows"><div class="empty">Loading…</div></div>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function csrf(){ const m = document.cookie.match(/(?:^|; )csrf_js=([^;]+)/); return m ? decodeURIComponent(m[1]) : ''; }
+async function api(path, opts){ opts = opts||{}; opts.headers = Object.assign({'X-CSRF': csrf()}, opts.headers||{}); const r = await fetch(path, opts); let j; try{ j = await r.json(); }catch(e){ j={ok:false,error:'HTTP '+r.status}; } if(r.status===401){ location.href='/login?next=/admin/audits'; } return j; }
+const post = (p,b) => api(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});
+let _tt; function toast(m,bad){ const t=$('toast'); t.textContent=m; t.className='toast on'+(bad?' bad':''); clearTimeout(_tt); _tt=setTimeout(()=>t.className='toast',2800); }
+const money = n => '$'+Math.round(n).toLocaleString();
+const mdy = s => { if(!s) return '—'; const m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? (+m[2])+'/'+(+m[3])+'/'+m[1].slice(2) : s; };
+let SCHEMA = null;
+
+function toggleNew(){ $('new').classList.toggle('on'); if($('new').classList.contains('on')) $('n-name').focus(); }
+
+async function loadSchema(){
+  const d = await api('/admin/api/audits/schema'); if(!d.ok) return; SCHEMA = d.schema;
+  const prof = SCHEMA.sections[0].questions; const t = prof.find(q=>q.id==='restaurant_type'); const s = prof.find(q=>q.id==='service_model');
+  $('n-type').innerHTML = '<option value="">—</option>' + t.options.map(o=>`<option>${esc(o)}</option>`).join('');
+  $('n-service').innerHTML = '<option value="">—</option>' + s.options.map(o=>`<option>${esc(o)}</option>`).join('');
+  $('fstatus').innerHTML = '<option value="">All statuses</option>' + SCHEMA.statuses.map(o=>`<option>${esc(o)}</option>`).join('');
+  $('n-date').value = new Date().toISOString().slice(0,10);
+}
+
+async function createAudit(){
+  const name = $('n-name').value.trim(); if(!name){ $('n-name').focus(); return toast('Give the audit a restaurant name', true); }
+  const d = await post('/admin/api/audits', {restaurant_name:name, owner_name:$('n-owner').value.trim(), restaurant_type:$('n-type').value, service_model:$('n-service').value, locations:+$('n-loc').value||1, audit_date:$('n-date').value});
+  if(!d.ok) return toast(d.error||'Could not create', true);
+  location.href = '/admin/audits/'+d.id;
+}
+
+async function load(){
+  const p = new URLSearchParams(); if($('q').value.trim()) p.set('q',$('q').value.trim()); if($('fstatus').value) p.set('status',$('fstatus').value); if($('farch').checked) p.set('archived','1');
+  const d = await api('/admin/api/audits?'+p.toString()); if(!d.ok) return $('rows').innerHTML = `<div class="empty">${esc(d.error||'Failed to load')}</div>`;
+  if(!d.audits.length) return $('rows').innerHTML = '<div class="empty">No audits yet. Start one above.</div>';
+  $('rows').innerHTML = d.audits.map(a => {
+    const stc = (a.status||'Draft').split(' ')[0].replace('/','');
+    const opp = a.opportunity && a.opportunity.high ? `<div class="opp">${money(a.opportunity.low)} – ${money(a.opportunity.high)}<small>identified / yr</small></div>` : `<div class="opp" style="color:var(--ink4);font-weight:500;font-size:13px">not sized yet</div>`;
+    const arch = a.status==='Archived' || a.archived_at;
+    return `<div class="row">
+      <div><div class="name"><a href="/admin/audits/${a.id}" style="color:inherit">${esc(a.restaurant_name||'Untitled audit')}</a></div><div class="sub">${esc(a.owner_name||'—')}${a.city?' · '+esc(a.city):''}${a.restaurant_type?' · '+esc(a.restaurant_type):''}</div></div>
+      <div><span class="k">Audit date</span><span class="num">${mdy(a.audit_date)}</span><div class="sub">updated ${mdy(a.updated_at)}</div></div>
+      <div><span class="k">Status</span><span class="st ${stc}">${esc(a.status)}</span></div>
+      <div><span class="k">Progress</span><span class="num">${a.completion!=null?a.completion+'%':'—'}</span><div class="prog"><i style="width:${a.completion||0}%"></i></div></div>
+      <div>${opp}</div>
+      <div class="acts">
+        <a class="btn s" href="/admin/audits/${a.id}">${a.status==='Completed'||a.status==='Closed / Converted'?'Open':'Resume'}</a>
+        ${a.health!=null?`<a class="btn s" href="/admin/audits/${a.id}/report" target="_blank">Report</a>`:''}
+        <button class="btn s" onclick="dup(${a.id})">Duplicate</button>
+        ${arch?`<button class="btn s danger" onclick="del(${a.id},'${esc(a.restaurant_name)}')">Delete</button>`:`<button class="btn s" onclick="archive(${a.id})">Archive</button>`}
+      </div></div>`;
+  }).join('');
+}
+async function dup(id){ const d = await post('/admin/api/audits/'+id+'/duplicate'); if(d.ok){ toast('Duplicated'); load(); } else toast(d.error||'Failed', true); }
+async function archive(id){ const d = await post('/admin/api/audits/'+id+'/status', {status:'Archived'}); if(d.ok){ toast('Archived'); load(); } else toast(d.error||'Failed', true); }
+async function del(id, name){ if(!confirm('Permanently delete the archived audit for '+name+'? This cannot be undone.')) return; const d = await api('/admin/api/audits/'+id, {method:'DELETE'}); if(d.ok){ toast('Deleted'); load(); } else toast(d.error||'Failed', true); }
+let _qt; $('q').addEventListener('input', ()=>{ clearTimeout(_qt); _qt=setTimeout(load, 180); });
+$('fstatus').addEventListener('change', load); $('farch').addEventListener('change', load);
+document.addEventListener('keydown', e=>{ if(e.key==='Enter' && $('new').classList.contains('on') && /INPUT|SELECT/.test(document.activeElement.tagName) && document.activeElement.id.startsWith('n-')) createAudit(); });
+loadSchema().then(load);
+</script>
+</body>
+</html>
