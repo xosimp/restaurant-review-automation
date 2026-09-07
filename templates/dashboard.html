@@ -3176,307 +3176,270 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 </div>
 
 <!-- COMPETITOR INTEL -->
-<div class="panel" id="panel-competitor" style="margin:0 auto">
-<div style="max-width:1080px;margin:0 auto;padding:24px 28px">
+<div class="panel" id="panel-competitor" style="max-width:100%;padding:0;min-height:100vh;position:relative">
+<style>
+/* ── Intel (in2-*) — Home/Reviews/Labor/Food Cost language. Competitors and
+   AI Visibility are one page: rating comparison hero, Cavnar's competitive
+   read, the iOS Visibility Orbit + GBP grid + query results as tiles, the
+   roadmap and nearby competitors as accent rows. */
+#panel-competitor{--hb-line:rgba(14,12,10,.12);--hb-line2:rgba(14,12,10,.07);--hb-tint:rgba(200,75,47,.06);--hb-tint2:rgba(200,75,47,.12);--hb-good:var(--green);--hb-warn:var(--amber);--hb-bad:var(--red);--hb-field:rgba(255,255,255,.55)}
+[data-theme="dark"] #panel-competitor{--hb-line:rgba(240,235,224,.14);--hb-line2:rgba(240,235,224,.07);--hb-tint:rgba(224,100,68,.09);--hb-tint2:rgba(224,100,68,.16);--hb-field:rgba(255,255,255,.05)}
+#panel-competitor .hb-chip .v{display:inline-flex;align-items:baseline;gap:2px}
+.in2-lede{font-family:'Clash Display',sans-serif;font-weight:500;font-size:clamp(19px,2vw,24px);line-height:1.35;letter-spacing:-.005em;color:var(--ink);margin:14px 0 4px;max-width:70ch;text-wrap:balance}
+.in2-lede em{font-style:normal;color:var(--ember)}
+.in2-bars{display:flex;flex-direction:column;gap:12px;margin-top:16px}
+.in2-bar{display:grid;grid-template-columns:170px minmax(0,1fr) 62px;gap:12px;align-items:center}
+.in2-bar .n{font-size:13px;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.in2-bar.you .n{color:var(--ink);font-weight:700}
+.in2-bar .tr{height:11px;border-radius:6px;background:var(--hb-line2);overflow:hidden;position:relative}
+.in2-bar .tr i{display:block;height:100%;border-radius:6px;background:linear-gradient(90deg,rgba(167,157,142,.55),rgba(167,157,142,.85));transform-origin:left;transform:scaleX(0);transition:transform 1.3s cubic-bezier(.3,0,.15,1)}
+.in2-bar.you .tr i{background:linear-gradient(90deg,#c84b2f,#e8956a);box-shadow:0 0 14px rgba(200,75,47,.55)}
+.in2-bar .tr.on i{transform:scaleX(1)}
+.in2-bar .v{font-family:'Space Grotesk',sans-serif;font-size:14px;font-weight:700;color:var(--ink2);text-align:right;white-space:nowrap}
+.in2-bar.you .v{color:var(--ember)}
+.in2-bar .v small{font-size:10px;font-weight:700;margin-left:2px}
+.in2-read .sec{margin-top:14px}
+.in2-read .sec:first-child{margin-top:0}
+.in2-read .st{font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;margin-bottom:8px}
+.in2-read .st.good{color:var(--hb-good)}.in2-read .st.bad{color:var(--hb-bad)}.in2-read .st.ember{color:var(--ember)}
+.in2-read .b{display:flex;gap:9px;align-items:flex-start;margin-bottom:6px;font-size:13.5px;line-height:1.6;color:var(--ink2)}
+.in2-read .b i{font-style:normal;font-weight:700;flex-shrink:0;font-size:13px}
+.in2-read .b i.good{color:var(--hb-good)}.in2-read .b i.bad{color:var(--hb-bad)}
+.in2-read .rec{display:flex;gap:11px;align-items:flex-start;margin-bottom:8px;font-size:13.5px;line-height:1.6;color:var(--ink)}
+.in2-read .rec b{flex-shrink:0;width:22px;height:22px;border-radius:50%;background:var(--ember);color:#fff;font-family:'Space Grotesk',sans-serif;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;margin-top:2px}
+.in2-pre{margin-top:34px;padding:22px 24px;border-radius:14px;background:var(--hb-tint);display:flex;gap:26px;align-items:center;flex-wrap:wrap}
+.in2-pre .t{flex:1;min-width:260px}
+.in2-pre h2{font-family:'Clash Display',sans-serif;font-weight:500;font-size:24px;letter-spacing:-.01em;color:var(--ink);margin:0 0 8px;text-wrap:balance}
+.in2-pre p{font-size:13.5px;line-height:1.6;color:var(--ink2);margin:0;max-width:64ch}
+.in2-pre .meta{font-size:11.5px;color:var(--ink3);margin-top:8px}
+.in2-orbit{position:relative;height:150px;margin-top:6px}
+.in2-orbit svg{display:block;width:100%;height:150px;overflow:visible}
+.in2-orbit text{font-family:'Space Grotesk',sans-serif}
+.in2-gbp{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:0 14px;margin-top:8px}
+.in2-gbp .it{display:flex;gap:8px;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--hb-line2);min-width:0}
+.in2-gbp .it .ic{width:16px;height:16px;border-radius:50%;flex-shrink:0;margin-top:2px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;background:var(--hb-line2);color:var(--ink3)}
+.in2-gbp .it.done .ic{background:rgba(78,173,122,.18);color:var(--hb-good)}
+.in2-gbp .it .l{font-size:12.5px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.in2-gbp .it .l small{font-family:'Space Grotesk',sans-serif;font-weight:700;color:var(--ink3);margin-left:5px;font-size:10.5px}
+.in2-gbp .it .a{font-size:11.5px;color:var(--ember);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.in2-gbp .it .a.lock{color:var(--ink3)}
+.in2-gbp .it.done{opacity:.55}
+.in2-q{display:flex;flex-direction:column;gap:10px;margin-top:8px}
+.in2-q .q{padding:10px 0 10px 12px;border-top:1px solid var(--hb-line2);position:relative}
+.in2-q .q:first-child{border-top:none;padding-top:2px}
+.in2-q .q::before{content:'';position:absolute;left:0;top:12px;bottom:10px;width:2.5px;border-radius:2px;background:var(--hb-bad)}
+.in2-q .q.hit::before{background:var(--hb-good)}
+.in2-q .q .h{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;font-size:12.5px;font-weight:600;color:var(--ink);line-height:1.4}
+.in2-q .q .h .tag{flex-shrink:0;font-family:'Space Grotesk',sans-serif;font-size:9.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:2px 7px;border-radius:999px;background:rgba(227,51,63,.14);color:var(--hb-bad)}
+.in2-q .q.hit .h .tag{background:rgba(78,173,122,.16);color:var(--hb-good)}
+.in2-q .q .a{font-size:11.5px;color:var(--ink3);line-height:1.5;margin-top:4px}
+.in2-sec{margin-top:34px;padding-top:22px;border-top:1px solid var(--hb-line)}
+.in2-sec .hd{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:8px}
+.in2-sec .hd h2{font-family:'Clash Display',sans-serif;font-weight:500;font-size:22px;letter-spacing:-.01em;color:var(--ink);margin:4px 0 0}
+.in2-sec .hd .sub{font-size:12.5px;color:var(--ink3);margin-top:3px}
+.in2-sec .hd .r{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.in2-road .row{display:flex;gap:14px;align-items:flex-start;padding:13px 0 13px 14px;border-top:1px solid var(--hb-line2);position:relative}
+.in2-road .row:first-child{border-top:none}
+.in2-road .row::before{content:'';position:absolute;left:0;top:14px;bottom:14px;width:2.5px;border-radius:2px;background:var(--rc,var(--ember))}
+.in2-road .row.done{opacity:.5}
+.in2-road .row .ic{width:30px;height:30px;border-radius:8px;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:var(--hb-tint2);color:var(--rc,var(--ember))}
+.in2-road .row .t{flex:1;min-width:0}
+.in2-road .row .t .tt{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.in2-road .row .t b{font-size:14.5px;font-weight:600;color:var(--ink)}
+.in2-road .row .t .im{font-family:'Space Grotesk',sans-serif;font-size:9.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--rc,var(--ember))}
+.in2-road .row .t .im.done{color:var(--hb-good)}
+.in2-road .row .t .d{font-size:12px;color:var(--ink3);margin-top:2px}
+.in2-road .row .t .why{font-size:13px;color:var(--ink2);line-height:1.6;margin-top:8px;display:none}
+.in2-road .row .t .why.on{display:block}
+.in2-road .row .t .ac{display:flex;gap:12px;align-items:center;margin-top:9px;flex-wrap:wrap}
+.in2-road .row .t .wl{background:none;border:none;padding:0;font-family:'Apfel Grotezk',sans-serif;font-size:11.5px;color:var(--ink3);text-decoration:underline;text-underline-offset:2px;cursor:pointer}
+.in2-road .row .t .wl:hover{color:var(--ember)}
+.in2-note{margin-top:14px;padding:12px 16px;border-radius:10px;background:var(--hb-tint);font-size:12.5px;line-height:1.6;color:var(--ink2)}
+.in2-note b{color:var(--ember)}
+.in2-search{margin-top:10px;position:relative;max-width:520px}
+.in2-search input{width:100%;box-sizing:border-box;padding:9px 12px;border:1px solid var(--hb-line);border-radius:8px;font-family:'Apfel Grotezk',sans-serif;font-size:13px;background:var(--hb-field);color:var(--ink);outline:none}
+.in2-search input:focus{border-color:var(--ember)}
+.in2-search .res{display:none;margin-top:6px;border:1px solid var(--hb-line);border-radius:10px;background:var(--paper);overflow:hidden;box-shadow:0 10px 30px rgba(0,0,0,.25)}
+.in2-search .res .it{display:flex;align-items:center;gap:10px;padding:9px 12px;border-top:1px solid var(--hb-line2)}
+.in2-search .res .it:first-child{border-top:none}
+.in2-search .res .it .n{font-size:12.5px;font-weight:600;color:var(--ink)}
+.in2-search .res .it .m{font-size:11px;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.in2-comp .row{display:flex;gap:14px;align-items:flex-start;padding:14px 0 14px 14px;border-top:1px solid var(--hb-line2);position:relative}
+.in2-comp .row:first-child{border-top:none}
+.in2-comp .row::before{content:'';position:absolute;left:0;top:16px;bottom:16px;width:2.5px;border-radius:2px;background:var(--hb-line)}
+.in2-comp .row.ahead::before{background:var(--hb-good)}.in2-comp .row.behind::before{background:var(--hb-bad)}
+.in2-comp .row .t{flex:1;min-width:0}
+.in2-comp .row .t .tt{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.in2-comp .row .t b{font-size:15px;font-weight:600;color:var(--ink)}
+.in2-comp .row .t .cu{font-family:'Space Grotesk',sans-serif;font-size:9.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ember);background:var(--hb-tint2);padding:2px 7px;border-radius:999px}
+.in2-comp .row .t .rm{background:none;border:none;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;font-size:11px;color:var(--ink3);padding:0;text-decoration:underline;text-underline-offset:2px}
+.in2-comp .row .t .rm:hover{color:var(--ember)}
+.in2-comp .row .t .m{font-size:12px;color:var(--ink3);margin-top:2px}
+.in2-comp .row .t .rv{font-size:12px;color:var(--ink3);padding:7px 0 0;line-height:1.55}
+.in2-comp .row .t .rv i{font-style:normal;margin-right:5px}
+.in2-comp .row .t .rv i.g{color:var(--hb-good)}.in2-comp .row .t .rv i.b{color:var(--hb-bad)}
+.in2-comp .row .t .more{margin-top:6px;background:transparent;border:none;font-size:11.5px;color:var(--ember);cursor:pointer;padding:0;font-family:'Apfel Grotezk',sans-serif}
+.in2-comp .row .rt{text-align:right;flex-shrink:0}
+.in2-comp .row .rt .r{font-family:'Space Grotesk',sans-serif;font-size:16px;font-weight:700;color:var(--ink)}
+.in2-comp .row .rt .r small{font-size:10px;margin-left:2px}
+.in2-comp .row .rt .c{font-size:11px;color:var(--ink3);margin-top:2px}
+.in2-comp .row .rt .df{display:inline-block;margin-top:5px;font-family:'Space Grotesk',sans-serif;font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:999px;background:var(--hb-line2);color:var(--ink3)}
+.in2-comp .row.ahead .rt .df{background:rgba(78,173,122,.16);color:var(--hb-good)}.in2-comp .row.behind .rt .df{background:rgba(227,51,63,.14);color:var(--hb-bad)}
+.in2-upd{display:flex;align-items:center;gap:8px;margin-top:12px;font-size:12px;color:var(--ink3);flex-wrap:wrap}
+.in2-stale{font-family:'Space Grotesk',sans-serif;font-size:9.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;background:rgba(212,160,48,.16);color:var(--hb-warn);padding:2px 8px;border-radius:999px}
+.in2-empty{margin-top:30px;padding:40px 24px;border-radius:14px;background:var(--hb-tint);text-align:center}
+.in2-empty h2{font-family:'Clash Display',sans-serif;font-weight:500;font-size:26px;color:var(--ink);margin:14px 0 6px}
+.in2-empty p{font-size:13.5px;color:var(--ink3);margin:0 auto 16px;max-width:52ch}
+#panel-competitor .cm-radar{margin:0 auto}
+@media(max-width:900px){.in2-bar{grid-template-columns:110px minmax(0,1fr) 50px}.in2-gbp{grid-template-columns:1fr}}
+</style>
 
-  <style>
-    @keyframes aiv-pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
-    .aiv-pulse { animation: aiv-pulse 2s ease-in-out infinite; }
-    @keyframes aiv-glow { 0%,100%{opacity:.5;transform:scale(1)} 50%{opacity:.9;transform:scale(1.04)} }
-    @keyframes aiv-scan { 0%{left:-30%} 100%{left:130%} }
-    @keyframes aiv-fade-up { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
-    .aiv-reveal { animation: aiv-fade-up .45s ease both; }
-    #aiv-card { position:relative; }
-    #aiv-glow { position:absolute; top:-20px; right:-20px; width:220px; height:160px; background:radial-gradient(ellipse at center,rgba(200,75,47,.16) 0%,transparent 65%); pointer-events:none; animation: aiv-glow 4s ease-in-out infinite; z-index:0; }
-    #aiv-scan-track { position:relative; height:3px; border-radius:2px; background:rgba(200,75,47,.12); overflow:hidden; margin-top:18px; }
-    #aiv-scan-bar { position:absolute; top:0; height:100%; width:30%; background:linear-gradient(90deg,transparent,var(--ember),transparent); animation: aiv-scan 1.4s linear infinite; }
-  </style>
-
-  <!-- Intel sub-tab toggle (segmented pill, top-right) -->
-  <div style="display:flex;justify-content:flex-end;margin-bottom:20px">
-    <div style="display:inline-flex;border:1px solid var(--paper3);border-radius:8px;overflow:hidden;background:var(--paper2)">
-      <button id="intel-tab-competitors-btn" onclick="switchIntelTab('competitors')" class="rv-tab-active" style="border:none;padding:6px 18px;font-size:12px;font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;transition:background .15s,color .15s">Competitors</button>
-      <button id="intel-tab-visibility-btn" onclick="switchIntelTab('visibility')" style="border:none;padding:6px 18px;font-size:12px;font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;background:transparent;color:var(--ink3);transition:background .15s,color .15s">AI Visibility</button>
+<div class="hb-wrap">
+  {% set _cd = competitor_data %}
+  {% set _parts = _cd.insight|intel_parts if _cd else None %}
+  {% set recs = _cd.insight|extract_recs if _cd else [] %}
+  {% set comp_count = _cd.competitors|length if _cd else 0 %}
+  {% set ns = namespace(rating_sum=0) %}
+  {% if _cd %}{% for c in _cd.competitors %}{% set ns.rating_sum = ns.rating_sum + c.rating %}{% endfor %}{% endif %}
+  {% set avg_comp_rating = (ns.rating_sum / comp_count)|round(1) if comp_count > 0 else 0 %}
+  {% set own = rstats.avg_rating if (mod_reviews and rstats.avg_rating) else None %}
+  {% set own_vs_avg = (own - avg_comp_rating)|round(1) if (own is not none and comp_count > 0) else None %}
+  {% if not _cd %}{% set _head = 'Meet the neighbors' %}{% set _tone = 'neutral' %}
+  {% elif own_vs_avg is none %}{% set _head = comp_count ~ ' neighbors tracked' %}{% set _tone = 'neutral' %}
+  {% elif own_vs_avg >= 0.3 %}{% set _head = 'You lead the block' %}{% set _tone = 'good' %}
+  {% elif own_vs_avg >= -0.1 %}{% set _head = 'Neck and neck' %}{% set _tone = 'warn' %}
+  {% else %}{% set _head = 'Behind the block' %}{% set _tone = 'bad' %}{% endif %}
+  {% set _upd = competitor_updated_at[:10] if competitor_updated_at else None %}
+  <div class="hb-top">
+    <div style="min-width:0;flex:1">
+      <div class="hb-kicker">Intel · {{ now_mdy }} · {{ restaurant.name }}</div>
+      <h1 class="hb-h1">Intel. <span class="hb-head {{ _tone }}">{{ _head }}</span></h1>
+      <div class="hb-sub">{% if _cd %}<span><span class="hb-num">{{ comp_count }}</span> competitor{{ '' if comp_count == 1 else 's' }} tracked</span><span class="sep">·</span><span>market average <span class="hb-num">{{ avg_comp_rating }}★</span></span>{% if own is not none %}<span class="sep">·</span><span>you're at <span class="hb-num">{{ own }}★</span>{% if own_vs_avg is not none and own_vs_avg != 0 %} (<span class="hb-num">{{ '+' if own_vs_avg > 0 }}{{ own_vs_avg }}</span>){% endif %}</span>{% endif %}{% if _upd %}<span class="sep">·</span><span id="intel-updated-label">updated <span class="hb-num">{{ _upd|format_date }}</span></span><span id="intel-stale-badge" class="in2-stale" style="display:none">consider refreshing</span>{% endif %}{% else %}<span>Ratings, review volume and reputation for the restaurants around you, plus whether AI search knows you exist.</span>{% endif %}</div>
+      <div class="hb-sub" style="margin-top:4px"><span>{% if _cd and recs %}<span class="hb-num">{{ recs|length }}</span> action{{ '' if recs|length == 1 else 's' }} in Cavnar's read below. AI visibility runs on demand — about ten seconds.{% elif _cd %}AI visibility runs on demand — about ten seconds.{% else %}The first pull takes about thirty seconds.{% endif %}</span></div>
+      <div class="lb2-actions">
+        {% if _cd %}<button onclick="refreshCompetitorIntel(this)" class="btn-primary">Refresh competitors</button>{% else %}<button onclick="refreshCompetitorIntel(this)" class="btn-primary">Fetch competitor data</button>{% endif %}
+        <button class="hb-btn" onclick="in2Jump('in2-neighbors');var s=document.getElementById('intel-search');if(s)s.focus()">Track a competitor</button>
+        <button class="hb-btn" onclick="in2Jump('in2-aiv');runAIVisibility(document.getElementById('aiv-run-btn'))">Check AI visibility</button>
+      </div>
+    </div>
+    <div class="hb-pulse">
+      <span class="hb-chip {{ 'good' if comp_count else 'sample' }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num">{{ comp_count }}</span></span><span class="l">tracked</span></span>
+      <span class="hb-chip {{ 'good' if comp_count else 'sample' }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num">{{ avg_comp_rating if comp_count else '—' }}{% if comp_count %}<small>★</small>{% endif %}</span></span><span class="l">market avg</span></span>
+      {% if own is not none %}<span class="hb-chip {{ 'good' if (own_vs_avg is none or own_vs_avg >= 0) else 'bad' }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num">{{ own }}<small>★</small></span></span><span class="l">your rating</span></span>{% endif %}
+      <span class="hb-chip sample" id="in2-chip-ai"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num" id="in2-chip-ai-n">—</span></span><span class="l">AI visibility</span></span>
+      <span class="hb-chip sample" id="in2-chip-gbp"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num" id="in2-chip-gbp-n">—</span></span><span class="l">GBP complete</span></span>
     </div>
   </div>
 
-  <!-- AI Visibility Checker -->
-  <div id="intel-tab-visibility" style="display:none">
-  <div class="card" style="padding:18px 20px;margin-bottom:20px;border:1px solid rgba(200,75,47,.3)" id="aiv-card">
-    <div id="aiv-glow"></div>
-    <div style="position:relative;z-index:1">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-      <div style="display:flex;align-items:center;gap:10px;cursor:pointer;user-select:none" onclick="toggleAivCard()">
-        <div>
-          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ember);margin-bottom:4px">AI Search Presence</div>
-          <div style="font-weight:700;font-size:15px;color:var(--ink)">AI Visibility Score</div>
-        </div>
-        <span id="aiv-collapse-arrow" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:rgba(200,75,47,.1);border:1px solid rgba(200,75,47,.25);color:var(--ember);margin-top:10px;transition:transform .25s;flex-shrink:0"><svg width="11" height="11" viewBox="0 0 16 16" fill="none"><path d="M5 6l3 3 3-3" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+  {% if _cd %}
+  <section class="lb2-hero" aria-label="Rating comparison">
+    <div class="hd">
+      <div><div class="hb-kicker">Rating comparison · you vs. nearby</div>
+        {% if own is not none %}<div class="big"><span class="hb-num">{{ own }}</span><small>★ your Google rating · market avg {{ avg_comp_rating }}★</small></div>
+        <div class="delta {{ 'good' if own_vs_avg > 0 else ('bad' if own_vs_avg < 0 else '') }}">{% if own_vs_avg > 0 %}▲ {{ own_vs_avg }} above the block{% elif own_vs_avg < 0 %}▼ {{ own_vs_avg|abs }} below the block{% else %}Tied with the block{% endif %} <span>· {{ comp_count }} restaurants nearby</span></div>
+        {% else %}<div class="big"><span class="hb-num">{{ avg_comp_rating }}</span><small>★ market average · connect Reviews to see yours alongside</small></div>{% endif %}
       </div>
-      <button onclick="runAIVisibility(this)" id="aiv-run-btn" class="btn-primary" style="padding:7px 16px">Check Visibility</button>
+      <div style="text-align:right"><div class="hb-kicker">Cavnar's opening read</div></div>
     </div>
-    <div id="aiv-body" style="max-height:none;opacity:1;overflow:visible">
-
-    <div id="aiv-idle" style="background:rgba(200,75,47,.05);border:1px solid rgba(200,75,47,.18);border-radius:8px;padding:16px;text-align:center">
-      <div style="font-size:13px;color:var(--ink)">See how often your restaurant appears when someone asks an AI for local dining recommendations.</div>
-      <div style="font-size:11px;color:var(--ink3);margin-top:6px">Powered by Perplexity AI live search &middot; Takes ~10 seconds</div>
+    {% if _parts and _parts.intro %}<div class="in2-lede">{{ _parts.intro }}</div>{% endif %}
+    <div class="in2-bars" id="in2-bars">
+      {% if own is not none %}<div class="in2-bar you"><span class="n">{{ restaurant.name }}</span><span class="tr"><i style="width:{{ ((own / 5) * 100)|int }}%;transition-delay:0ms"></i></span><span class="v hb-num">{{ own }}<small>★</small></span></div>{% endif %}
+      {% for c in _cd.competitors %}
+      <div class="in2-bar"><span class="n" title="{{ c.name }}">{{ c.name }}</span><span class="tr"><i style="width:{{ ((c.rating / 5) * 100)|int }}%;transition-delay:{{ (loop.index * 90) }}ms"></i></span><span class="v hb-num">{{ c.rating }}<small>★</small></span></div>
+      {% endfor %}
     </div>
-
-    <div id="aiv-loading" style="display:none;text-align:center;padding:28px 0">
-      <div class="aiv-pulse" style="font-size:13px;font-weight:600;color:var(--ember)" id="aiv-loading-text">Querying AI assistants...</div>
-      <div class="aiv-pulse" style="font-size:11px;color:var(--ink3);margin-top:5px;animation-delay:0.3s">Running 3 local search queries</div>
-      <div id="aiv-radar" style="margin-top:14px"></div>
-    </div>
-
-    <div id="aiv-results" style="display:none">
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
-        <div style="background:rgba(200,75,47,.05);border:1px solid rgba(200,75,47,.18);border-radius:8px;padding:14px;text-align:center">
-          <div id="aiv-score-num" style="font-family:'Space Grotesk',sans-serif;font-size:32px;font-weight:800;color:var(--ember);letter-spacing:-1px;line-height:1">—</div>
-          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-top:5px">AI Appearance Rate</div>
-          <div id="aiv-score-label" style="font-size:11px;color:var(--ink3);margin-top:3px"></div>
-        </div>
-        <div id="aiv-gbp-box" style="background:var(--paper2);border:1px solid var(--paper3);border-radius:8px;padding:14px;text-align:center;cursor:pointer" onclick="toggleGbpChecklist()">
-          <div id="aiv-gbp-num" style="font-family:'Space Grotesk',sans-serif;font-size:32px;font-weight:800;color:var(--ink3);letter-spacing:-1px;line-height:1">—</div>
-          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-top:5px">GBP Completeness</div>
-          <div id="aiv-gbp-label" style="font-size:11px;color:var(--ink3);margin-top:3px"></div>
-          <div id="aiv-gbp-toggle-txt" style="font-size:10px;color:var(--ink3);margin-top:5px;font-weight:600">tap to see breakdown<svg width="10" height="10" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:3px"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".15"/><path d="M5.5 6.5l2.5 3 2.5-3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
-        </div>
-      </div>
-
-      <!-- GBP Checklist Breakdown -->
-      <div id="aiv-gbp-checklist" style="display:none;margin-bottom:16px;background:var(--paper2);border:1px solid var(--paper3);border-radius:8px;overflow:hidden">
-        <div style="padding:10px 14px;background:var(--paper);border-bottom:1px solid var(--paper3);display:flex;align-items:center;justify-content:space-between">
-          <div style="font-size:11px;font-weight:700;color:var(--ink)">GBP Completeness Breakdown</div>
-          <div style="font-size:10px;color:var(--ink3)">Each item = 10 pts toward your score</div>
-        </div>
-        <div id="aiv-gbp-items" style="padding:8px 0"></div>
-      </div>
-
-      <div id="aiv-disclaimer" style="display:none;background:rgba(239,159,39,.1);border:1px solid rgba(239,159,39,.3);border-radius:8px;padding:10px 14px;font-size:12px;color:#92400e;line-height:1.5;margin-bottom:12px"></div>
-
-      <div style="margin-bottom:16px">
-        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:8px">AI Query Results</div>
-        <div id="aiv-queries" style="display:flex;flex-direction:column;gap:8px"></div>
-      </div>
-
-      <!-- Action Plan -->
-      <div id="aiv-action-plan" style="margin-top:4px">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
-          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3)">Your AI Visibility Roadmap</div>
-          <div style="flex:1;height:1px;background:var(--paper3)"></div>
-          <div id="aiv-roadmap-pts" style="font-size:10px;font-weight:700;color:var(--ember)"></div>
-        </div>
-        <div id="aiv-roadmap-cards" style="display:flex;flex-direction:column;gap:10px"></div>
-        <div id="aiv-roadmap-footer" style="margin-top:14px;background:rgba(200,75,47,.06);border:1px solid rgba(200,75,47,.22);border-radius:10px;padding:14px 16px;display:none">
-          <div style="font-size:12px;font-weight:700;color:var(--ember);margin-bottom:4px">What happens when you improve this?</div>
-          <div style="font-size:12px;color:var(--ink2);line-height:1.6">AI search tools like Perplexity, ChatGPT, and Google AI pull from the same sources — Google reviews, Yelp, food blogs, and online directories. Every review you get, every response you post, and every complete profile field makes you more likely to appear when someone asks AI where to eat. Most independent restaurants aren't there yet. <strong>The ones that are get there through consistency.</strong></div>
-        </div>
-      </div>
-
-      <!-- Legacy checklist hidden but kept for data -->
-      <div id="aiv-checklist" style="display:none"></div>
-    </div>
-    </div><!-- /z-index wrap -->
-  </div><!-- /aiv-body -->
-  </div>
-  <div id="aiv-history" style="display:none" class="card">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3)">Visibility over time</div>
-      <span id="aiv-history-count" style="font-size:11px;color:var(--ink3)"></span>
-    </div>
-    <svg id="aiv-history-chart" viewBox="0 0 320 70" preserveAspectRatio="none" style="width:100%;height:70px;display:block;margin-bottom:8px"></svg>
-    <div id="aiv-history-list" style="font-size:11px;color:var(--ink3);display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:4px 12px"></div>
-  </div>
-  </div><!-- /intel-tab-visibility -->
-
-  <div id="intel-tab-competitors">
-
-  <div style="text-align:center;padding:8px 0 24px">
-    <div class="name-underlined-slow" style="font-family:'Clash Display',sans-serif;font-size:36px;color:var(--ink)">What your neighbors are doing</div>
-  </div>
-
-  <!-- iOS parity: add a competitor -->
-  <div class="card" style="padding:14px 16px;margin-bottom:16px">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:8px">
-      <div><div style="font-size:12px;font-weight:600;color:var(--ink)">Track a specific competitor</div><div style="font-size:11px;color:var(--ink3)">Search Google for a place near you — it joins the next refresh permanently.</div></div>
-    </div>
-    <div style="position:relative">
-      <input id="intel-search" placeholder="Search by name, e.g. the wine bar on Main" oninput="intelSearchInput()" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;background:var(--paper);color:var(--ink)">
-      <div id="intel-search-results" style="display:none;margin-top:6px;border:1px solid var(--paper3);border-radius:8px;background:var(--paper2);overflow:hidden"></div>
+  </section>
+  <div class="lb2-ai"><div class="tag">Cavnar's competitive analysis</div>
+    <div class="in2-read" id="intel-insight-card">
+      {% if _parts %}{% for name, bullets in _parts.sections %}{% if bullets %}
+      <div class="sec"><div class="st {{ 'good' if 'WELL' in name|upper else 'bad' }}">{{ name }}</div>{% for b in bullets %}<div class="b"><i class="{{ 'good' if 'WELL' in name|upper else 'bad' }}">{{ '✓' if 'WELL' in name|upper else '✗' }}</i><span>{{ b }}</span></div>{% endfor %}</div>
+      {% endif %}{% endfor %}{% endif %}
+      {% if recs %}<div class="sec"><div class="st ember">How to improve</div>{% for rec in recs %}<div class="rec"><b>{{ loop.index }}</b><span>{{ rec }}</span></div>{% endfor %}</div>{% endif %}
+      {% if not _parts or (not _parts.sections and not recs) %}<div style="font-size:13.5px;color:var(--ink2)">{{ _cd.insight }}</div>{% endif %}
     </div>
   </div>
-
-  {% if not competitor_data %}
-    <div class="card empty-state" style="padding:52px 24px">
-      <!-- "Cold Hearth" — gray seal, cold coal; hovering the CTA warms it -->
-      <svg class="cm-hearth" viewBox="0 0 120 120" aria-hidden="true"><path class="cm-hring" d="M99.5,45 V44.5 A24,24 0 0 0 75.5,20.5 H44.5 A24,24 0 0 0 20.5,44.5 V75.5 A24,24 0 0 0 44.5,99.5 H75.5 A24,24 0 0 0 99.5,75.5 V75" stroke-width="19"/><circle class="cm-hglow" cx="99.5" cy="60" r="22"/><circle class="cm-hdot" cx="99.5" cy="60" r="10"/></svg>
-      <div class="empty-state-title">No competitor data yet</div>
-      <div class="empty-state-sub">See how your ratings, review volume, and reputation stack up against nearby restaurants. Takes about 30 seconds.</div>
-      <button onclick="refreshCompetitorIntel(this)" class="btn-primary" style="padding:8px 20px">Fetch competitor data</button>
-    </div>
+  {% else %}
+  <div class="in2-empty">
+    <svg class="cm-hearth" viewBox="0 0 120 120" aria-hidden="true" style="width:72px;height:72px"><path class="cm-hring" d="M99.5,45 V44.5 A24,24 0 0 0 75.5,20.5 H44.5 A24,24 0 0 0 20.5,44.5 V75.5 A24,24 0 0 0 44.5,99.5 H75.5 A24,24 0 0 0 99.5,75.5 V75" stroke-width="19"/><circle class="cm-hglow" cx="99.5" cy="60" r="22"/><circle class="cm-hdot" cx="99.5" cy="60" r="10"/></svg>
+    <h2>No competitor data yet</h2>
+    <p>See how your ratings, review volume and reputation stack up against the restaurants around you. Takes about thirty seconds.</p>
+    <button onclick="refreshCompetitorIntel(this)" class="btn-primary" style="padding:9px 22px">Fetch competitor data</button>
+  </div>
   {% endif %}
 
-  {% if competitor_data %}
-    {% set recs = competitor_data.insight | extract_recs %}
-    {% set comp_count = competitor_data.competitors | length %}
-    {% set ns = namespace(rating_sum=0) %}
-    {% for c in competitor_data.competitors %}{% set ns.rating_sum = ns.rating_sum + c.rating %}{% endfor %}
-    {% set avg_comp_rating = (ns.rating_sum / comp_count) | round(1) if comp_count > 0 else 0 %}
+  <!-- ── AI visibility ── -->
+  <div id="in2-aiv">
+    <div id="aiv-card"><div id="aiv-body">
+    <div class="in2-pre" id="aiv-idle">
+      <div class="t"><div class="hb-kicker">AI search presence</div><h2>Is {{ restaurant.name }} visible to AI search?</h2>
+        <p>More guests are asking AI where to eat before they ever open Maps. This runs real queries through Perplexity's live web search — the same public web, reviews and Google Business Profile data ChatGPT and Google AI read — and shows whether you came up.</p>
+        <div class="meta">Three local queries · about ten seconds · Perplexity live search<span id="in2-last-run"></span></div></div>
+      <button onclick="runAIVisibility(this)" id="aiv-run-btn" class="btn-primary" style="padding:10px 22px;white-space:nowrap">Check AI visibility</button>
+    </div>
+    <div class="in2-pre" id="aiv-loading" style="display:none;justify-content:center;text-align:center;flex-direction:column;gap:6px">
+      <div id="aiv-radar"></div>
+      <div id="aiv-loading-text" style="font-size:13.5px;font-weight:600;color:var(--ember)">Querying AI assistants…</div>
+      <div style="font-size:11.5px;color:var(--ink3)">Running three local search queries</div>
+    </div>
+    <div id="aiv-results" style="display:none">
+      <div class="lb2-sig">
+        <div class="lb2-sg"><div class="k"><span>Visibility orbit</span><i id="aiv-score-label"></i></div><div class="v"><span id="aiv-score-num" class="hb-num">—</span><small id="in2-orbit-cap">of AI searches mention you</small></div>
+          <div class="in2-orbit" id="in2-orbit"></div>
+          <div class="cap"><span id="aiv-history-count">first check</span><span>Perplexity live search</span></div></div>
+        <div class="lb2-sg"><div class="k"><span>GBP completeness</span><i id="aiv-gbp-label"></i></div><div class="v"><span id="aiv-gbp-num" class="hb-num">—</span><small id="in2-gbp-cap">of the profile fields AI reads</small></div>
+          <div class="in2-gbp" id="aiv-gbp-items"></div>
+          <div class="cap"><span>each item is worth points toward your score</span></div></div>
+        <div class="lb2-sg"><div class="k"><span>AI query results</span><i id="in2-q-flag"></i></div><div class="v"><span id="in2-q-n" class="hb-num">—</span><small>queries mentioned you</small></div>
+          <div class="in2-q" id="aiv-queries"></div>
+          <div class="cap"><span>what Perplexity answered when asked about eating near you</span></div></div>
+      </div>
+      <div id="aiv-disclaimer" class="in2-note" style="display:none"></div>
+      <div class="in2-sec" id="aiv-action-plan">
+        <div class="hd"><div><div class="hb-kicker">Your AI visibility roadmap</div><h2>What gets you into AI answers</h2><div class="sub">Ranked for this restaurant — the gaps you still have come first.</div></div><div class="r"><span class="hb-kicker" id="aiv-roadmap-pts"></span></div></div>
+        <div class="in2-road" id="aiv-roadmap-cards"></div>
+        <div class="in2-note" id="aiv-roadmap-footer" style="display:none"><b>What happens when you improve this?</b> AI search tools like Perplexity, ChatGPT and Google AI pull from the same sources — Google reviews, Yelp, food blogs and online directories. Every review you get, every response you post and every complete profile field makes you more likely to appear when someone asks AI where to eat. Most independent restaurants aren't there yet. The ones that are get there through consistency.</div>
+      </div>
+      <div id="aiv-checklist" style="display:none"></div>
+    </div>
+    </div></div>
+    <div style="display:none"><span id="aiv-collapse-arrow"></span><span id="aiv-gbp-box"></span><span id="aiv-gbp-toggle-txt"></span><span id="aiv-gbp-checklist"></span><span id="aiv-history"></span><span id="aiv-history-list"></span><svg id="aiv-history-chart"></svg><span id="intel-tab-competitors-btn"></span><span id="intel-tab-visibility-btn"></span><span id="intel-tab-competitors"></span><span id="intel-tab-visibility"></span></div>
+  </div>
 
-    <!-- Summary stat row -->
-    <div class="intel-stat-row" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:16px">
-      <div class="rv-stat-cell" style="padding:18px 16px">
-        <div class="rv-stat-n" style="font-family:'Space Grotesk',sans-serif;font-size:clamp(26px,2.8vw,34px);font-weight:500;letter-spacing:-.02em;line-height:1">{{comp_count}}</div>
-        <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink2);margin-top:10px">Competitors tracked</div>
-      </div>
-      <div class="rv-stat-cell" style="padding:18px 16px">
-        <div class="rv-stat-n" style="font-family:'Space Grotesk',sans-serif;font-size:clamp(26px,2.8vw,34px);font-weight:500;letter-spacing:-.02em;line-height:1">{{avg_comp_rating}}<span style="font-size:.5em;padding-left:.2em">★</span></div>
-        <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink2);margin-top:10px">Avg competitor rating</div>
-      </div>
-      {% if mod_reviews and rstats.avg_rating %}
-      {% set own_vs_avg = (rstats.avg_rating - avg_comp_rating) | round(1) %}
-      {% set yrglow = 'stat-glow-green' if rstats.avg_rating >= 4.0 else ('stat-glow-amber' if rstats.avg_rating >= 3.0 else 'stat-glow-red') %}
-      <div class="rv-stat-cell" style="padding:18px 16px">
-        <div class="{{yrglow}}" style="font-family:'Space Grotesk',sans-serif;font-size:clamp(26px,2.8vw,34px);font-weight:500;letter-spacing:-.02em;line-height:1">{{rstats.avg_rating}}<span style="font-size:.5em;padding-left:.2em">★</span></div>
-        <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink2);margin-top:10px">Your rating</div>
-        {% if own_vs_avg != 0 %}
-        <div style="font-size:11px;color:{{'#3ecf6e' if own_vs_avg > 0 else '#e02828'}};margin-top:3px">{% if own_vs_avg > 0 %}▲{{own_vs_avg}} above avg{% else %}▼{{own_vs_avg|abs}} below avg{% endif %}</div>
-        {% endif %}
-      </div>
-      {% else %}
-      <div class="rv-stat-cell" style="padding:18px 16px">
-        <div class="rv-stat-n" style="font-family:'Space Grotesk',sans-serif;font-size:clamp(26px,2.8vw,34px);font-weight:500;letter-spacing:-.02em;line-height:1">{{recs | length}}</div>
-        <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink2);margin-top:10px">Action items</div>
-      </div>
-      {% endif %}
-    </div>
-
-    <!-- Intel body: intro + well/poorly only -->
-    <div class="card" style="padding:18px 20px;margin-bottom:16px" id="intel-insight-card">
-      {{ competitor_data.insight | format_intel_body }}
-    </div>
-    {% if recs %}
-    <div class="card" style="padding:16px 20px;margin-bottom:16px">
-      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ember);margin-bottom:10px">How to improve</div>
-      <ol style="margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px;font-size:12.5px;line-height:1.55;color:var(--ink2)">
-        {% for rec in recs %}<li>{{rec}}</li>{% endfor %}
-      </ol>
-    </div>
-    {% endif %}
-
-    <!-- Rating bar chart -->
-    {% if mod_reviews and rstats.avg_rating %}
-    {% set your_bar_color = 'var(--ember)' %}
-    <div class="card" style="padding:14px 16px;margin-bottom:16px">
-      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:12px">Rating comparison</div>
-      <div style="display:flex;flex-direction:column;gap:8px">
-        <div style="display:flex;align-items:center;gap:10px">
-          <div style="width:130px;font-size:12px;font-weight:700;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0">{{restaurant.name}}</div>
-          <div style="flex:1;background:var(--paper3);border-radius:3px;height:10px;overflow:hidden">
-            <div class="anim-bar" data-w="{{((rstats.avg_rating / 5) * 100)|int}}" style="height:100%;width:0%;background:{{your_bar_color}};border-radius:3px"></div>
-          </div>
-          <div style="width:36px;font-family:'Space Grotesk',sans-serif;font-size:12px;font-weight:700;color:{{your_bar_color}};text-align:right;flex-shrink:0">{{rstats.avg_rating}}</div>
-        </div>
-        {% for c in competitor_data.competitors %}
-        <div style="display:flex;align-items:center;gap:10px">
-          <div style="width:130px;font-size:12px;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0">{{c.name}}</div>
-          <div style="flex:1;background:var(--paper3);border-radius:3px;height:10px;overflow:hidden">
-            <div class="anim-bar" data-w="{{((c.rating / 5) * 100)|int}}" style="height:100%;width:0%;background:rgba(200,75,47,.45);border-radius:3px"></div>
-          </div>
-          <div style="width:36px;font-family:'Space Grotesk',sans-serif;font-size:12px;color:var(--ink2);text-align:right;flex-shrink:0">{{c.rating}}</div>
-        </div>
-        {% endfor %}
-      </div>
-    </div>
-    {% endif %}
-
-    <!-- Recommendations — most prominent, first -->
-    {% if recs %}
-    <div class="card" style="padding:18px 20px;margin-bottom:16px">
-      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ember);margin-bottom:14px">Action items for this week</div>
-      <div style="display:flex;flex-direction:column">
-        {% for rec in recs %}
-        <div class="aiv-reveal" style="display:flex;gap:12px;align-items:flex-start;padding:10px 0;{% if not loop.last %}border-bottom:1px solid var(--paper3);{% endif %}animation-delay:{{loop.index0 * 0.06}}s">
-          <span style="flex-shrink:0;width:22px;height:22px;border-radius:50%;background:var(--ember);color:white;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;margin-top:1px">{{loop.index}}</span>
-          <span style="font-size:13px;color:var(--ink);line-height:1.6;font-weight:500">{{rec}}</span>
-        </div>
-        {% endfor %}
-      </div>
-    </div>
-    {% endif %}
-
-    <!-- Competitor cards -->
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3)">Nearby competitors</div>
-      <button onclick="refreshCompetitorIntel(this)" class="btn-primary" style="padding:5px 12px">Refresh</button>
-    </div>
-    <div style="display:flex;flex-direction:column;gap:10px" id="comp-cards-static">
-      {% for c in competitor_data.competitors %}
-      <div class="card scroll-reveal" data-reveal-delay="{{loop.index0 * 0.1}}s" style="padding:14px 16px;margin-bottom:0">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
-          <div style="font-weight:600;font-size:13px;color:var(--ink);display:flex;align-items:center;gap:8px">{{c.name}}{% if c.custom %}<span style="font-size:10px;font-weight:700;color:var(--ember);background:rgba(200,75,47,.1);padding:2px 7px;border-radius:10px">Added by you</span><button onclick="intelRemove('{{c.place_id}}',this)" style="background:none;border:none;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;font-size:11px;color:var(--ink3);padding:0;text-decoration:underline">Remove</button>{% endif %}</div>
-          <div style="display:flex;align-items:center;gap:8px">
-            {% if mod_reviews and rstats.avg_rating %}
-            {% set diff = (rstats.avg_rating - c.rating) | round(1) %}
-            <span style="font-size:10px;font-weight:700;padding:2px 6px;border-radius:10px;background:{{'rgba(22,163,74,.14)' if diff > 0 else ('rgba(249,115,22,.14)' if diff < 0 else 'var(--paper3)')}};color:{{'#16a34a' if diff > 0 else ('#f97316' if diff < 0 else 'var(--ink3)')}}">
-              {% if diff > 0 %}▲{{diff}} ahead{% elif diff < 0 %}▼{{diff|abs}} behind{% else %}tied{% endif %}
-            </span>
-            {% endif %}
-            <div style="font-family:'Space Grotesk',sans-serif;font-size:12px;color:#f59e0b">{{c.rating}}★ <span style="font-family:'Apfel Grotezk',sans-serif;color:var(--ink3)">{{c.review_count}} reviews</span></div>
-          </div>
-        </div>
-        <div style="font-size:11px;color:var(--ink3);margin-bottom:8px">{{c.vicinity}}</div>
-        {% for r in c.reviews[:2] %}
-        <div style="font-size:11px;color:var(--ink3);padding:6px 0;border-top:1px solid var(--paper3);line-height:1.5">
-          <span style="color:{{'#16a34a' if r.rating >= 4 else '#dc2626'}}">★</span>
-          {{r.text[:120]}}{{'...' if r.text|length > 120 else ''}}
-        </div>
-        {% endfor %}
-        {% if c.reviews|length > 2 %}
-        <div id="extra-reviews-{{loop.index}}" style="display:none">
-          {% for r in c.reviews[2:] %}
-          <div style="font-size:11px;color:var(--ink3);padding:6px 0;border-top:1px solid var(--paper3);line-height:1.5">
-            <span style="color:{{'#16a34a' if r.rating >= 4 else '#dc2626'}}">★</span>
-            {{r.text[:120]}}{{'...' if r.text|length > 120 else ''}}
-          </div>
-          {% endfor %}
-        </div>
-        <button onclick="toggleExtraReviews({{loop.index}}, this)" style="margin-top:6px;background:transparent;border:none;font-size:11px;color:var(--ember);cursor:pointer;padding:0;font-family:'Apfel Grotezk',sans-serif">Show {{c.reviews|length - 2}} more review{{'s' if c.reviews|length - 2 > 1 else ''}}</button>
-        {% endif %}
+  <!-- ── Nearby competitors ── -->
+  <div class="in2-sec" id="in2-neighbors">
+    <div class="hd"><div><div class="hb-kicker">Nearby competitors</div><h2>Who you're up against</h2><div class="sub">Google ratings and the reviews behind them. Track a specific place and it joins every refresh.</div></div>
+      {% if _cd %}<div class="r"><button onclick="refreshCompetitorIntel(this)" class="hb-btn">Refresh</button></div>{% endif %}</div>
+    <div class="in2-search"><input id="intel-search" placeholder="Track a competitor — search by name, e.g. the wine bar on Main" oninput="intelSearchInput()" autocomplete="off"><div id="intel-search-results" class="res"></div></div>
+    {% if _cd %}
+    <div class="in2-comp" id="comp-cards-static">
+      {% for c in _cd.competitors %}
+      {% set diff = (own - c.rating)|round(1) if own is not none else None %}
+      <div class="row {{ 'ahead' if (diff is not none and diff > 0) else ('behind' if (diff is not none and diff < 0) else '') }}">
+        <div class="t"><div class="tt"><b>{{ c.name }}</b>{% if c.custom %}<span class="cu">Added by you</span><button class="rm" onclick="intelRemove('{{ c.place_id }}',this)">Remove</button>{% endif %}</div>
+          <div class="m">{{ c.vicinity }}</div>
+          {% for r in c.reviews[:1] %}<div class="rv"><i class="{{ 'g' if r.rating >= 4 else 'b' }}">★</i>{{ r.text[:160] }}{{ '…' if r.text|length > 160 else '' }}</div>{% endfor %}
+          {% if c.reviews|length > 1 %}<div id="extra-reviews-{{ loop.index }}" style="display:none">{% for r in c.reviews[1:] %}<div class="rv"><i class="{{ 'g' if r.rating >= 4 else 'b' }}">★</i>{{ r.text[:160] }}{{ '…' if r.text|length > 160 else '' }}</div>{% endfor %}</div>
+          <button class="more" onclick="toggleExtraReviews({{ loop.index }}, this)">Show {{ c.reviews|length - 1 }} more review{{ 's' if c.reviews|length - 1 > 1 else '' }}</button>{% endif %}</div>
+        <div class="rt"><div class="r hb-num">{{ c.rating }}<small>★</small></div><div class="c"><span class="hb-num">{{ c.review_count }}</span> reviews</div>{% if diff is not none %}<span class="df">{% if diff > 0 %}▲ {{ diff }} ahead{% elif diff < 0 %}▼ {{ diff|abs }} behind{% else %}tied{% endif %}</span>{% endif %}</div>
       </div>
       {% endfor %}
     </div>
-
-    <!-- Last updated + stale badge -->
-    {% if competitor_updated_at %}
-    {% set d = competitor_updated_at[:10].split('-') %}
-    <div style="display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap">
-      <div style="font-size:11px;color:var(--ink3)" id="intel-updated-label">Last updated: {{d[1]|int}}/{{d[2]|int}}/{{d[0][2:]}}</div>
-      <div id="intel-stale-badge" style="display:none;font-size:10px;font-weight:700;background:rgba(239,159,39,.18);color:#92400e;padding:2px 7px;border-radius:10px">Consider refreshing</div>
-    </div>
+    {% if _upd %}
+    <div class="in2-upd"><span>Last updated <span class="hb-num">{{ _upd|format_date }}</span></span><span id="in2-days-old"></span></div>
     <script>
     (function(){
-      var updated = "{{competitor_updated_at[:10]}}";
-      var parts = updated.split('-');
-      var updatedMs = new Date(parseInt(parts[0]), parseInt(parts[1])-1, parseInt(parts[2])).getTime();
-      var daysOld = Math.floor((Date.now() - updatedMs) / 86400000);
-      if(daysOld >= 7){
-        var badge = document.getElementById('intel-stale-badge');
-        var label = document.getElementById('intel-updated-label');
-        if(badge) badge.style.display = 'inline-block';
-        if(label) label.textContent = 'Last updated: {{d[1]|int}}/{{d[2]|int}}/{{d[0][2:]}} (' + daysOld + ' days ago)';
-      }
+      var parts="{{ _upd }}".split('-');
+      var daysOld=Math.floor((Date.now()-new Date(parseInt(parts[0]),parseInt(parts[1])-1,parseInt(parts[2])).getTime())/86400000);
+      if(daysOld>=7){var b=document.getElementById('intel-stale-badge');if(b)b.style.display='inline-block';var d=document.getElementById('in2-days-old');if(d)d.textContent='· '+daysOld+' days ago';}
     })();
     </script>
     {% endif %}
-
-  {% endif %}
-  <div id="comp-refresh-result" style="margin-top:12px;font-size:12px;display:none"></div>
-
-  </div><!-- /intel-tab-competitors -->
-
-</div><!-- /centered wrap -->
-</div>
+    {% endif %}
+    <div id="comp-refresh-result" style="margin-top:12px;font-size:12px;display:none"></div>
+  </div>
+  <script>function in2Jump(id){var el=document.getElementById(id);if(el)el.scrollIntoView({behavior:'smooth',block:'start'});}</script>
+</div><!-- /hb-wrap -->
+</div><!-- /panel-competitor -->
 
 
 <!-- ACCOUNT -->
@@ -4919,17 +4882,16 @@ window.switchReviewsTab = function(tab) {
 };
 
 window.switchIntelTab = function(tab) {
-  var isComp = tab === 'competitors';
-  var compEl = document.getElementById('intel-tab-competitors');
-  var visEl = document.getElementById('intel-tab-visibility');
-  if (compEl) compEl.style.display = isComp ? '' : 'none';
-  if (visEl) visEl.style.display = isComp ? 'none' : '';
-  var tc = document.getElementById('intel-tab-competitors-btn');
-  var tv = document.getElementById('intel-tab-visibility-btn');
-  if (tc) { tc.classList.toggle('rv-tab-active', isComp); tc.style.background = isComp ? '' : 'transparent'; tc.style.color = isComp ? '' : 'var(--ink3)'; }
-  if (tv) { tv.classList.toggle('rv-tab-active', !isComp); tv.style.background = isComp ? 'transparent' : ''; tv.style.color = isComp ? 'var(--ink3)' : ''; }
+  // Competitors and AI Visibility are one page now; this lights it up.
   setPageBg('competitor');
-  if (isComp) { animateBars('panel-competitor'); animateStatNums('panel-competitor'); }
+  var bars=document.querySelectorAll('#in2-bars .tr:not(.on)');
+  if(bars.length){requestAnimationFrame(function(){requestAnimationFrame(function(){for(var i=0;i<bars.length;i++)bars[i].classList.add('on');});});}
+  animateStatNums('panel-competitor');
+  if(window.loadAivHistory)loadAivHistory();
+  // The 4-hour session cache is read here too — the tab can open before the
+  // window 'load' handler that normally hydrates _aivData has run.
+  if(!_aivData){try{var _c=sessionStorage.getItem('aiv_cache'),_ca=parseInt(sessionStorage.getItem('aiv_cache_at')||'0',10);if(_c&&_ca&&(Date.now()-_ca)<4*60*60*1000)_aivData=JSON.parse(_c);}catch(e){}}
+  if(_aivData&&document.getElementById('aiv-results')&&document.getElementById('aiv-results').style.display==='none'){renderAIVisibility(_aivData);}
 };
 
 // Three panels now, not two — the queue is its own place because "what is
@@ -5133,6 +5095,7 @@ function switchTab(n,btn){
   if(n==='reviews'&&!reviewInsightLoaded){loadReviewInsight();loadSentimentTrend();loadTopicHeatmap();if(!_perfLoaded)loadResponsePerf();}
   if(n==='labor'&&!laborLoaded){loadLaborInsight();}
   if(n==='inventory'){switchFcTab('analytics');}
+  if(n==='competitor'){switchIntelTab('competitors');}
   if(n==='labor'){renderBars();if(_perfTab==='trend')loadLaborTrend(false);else renderLaborHero();if(typeof renderRoleDonut==='function'&&!window._donutDone){window._donutDone=true;renderRoleDonut();}if(window.loadScheduleHistory&&!window._schedHistDone){window._schedHistDone=true;loadScheduleHistory();}}
   if(n==='account'){loadBillingInfo();loadSessions();loadAlertsSummary();loadAccountSettings();loadEmailHistory();if(window._acctExtras)window._acctExtras();}
   if(n==='marketing'){var _mi=document.getElementById('mkt-insight');if(_mi&&(_mi.classList.contains('insight-loading')||_mi.textContent.trim()==='Loading marketing brief…'||!mktLoaded)){loadMktInsight();}loadRecentTopics();startMetricsPoller();if(!window._calLoaded){window._calLoaded=true;loadCalCached();}}else{stopMetricsPoller();}
@@ -5176,6 +5139,7 @@ document.addEventListener('DOMContentLoaded', function(){
   // Initialize filter so count label is accurate — only when the inbox is on screen
   if(document.getElementById('panel-reviews')&&document.getElementById('panel-reviews').classList.contains('active'))filterReviews();
   if(document.getElementById('panel-inventory')&&document.getElementById('panel-inventory').classList.contains('active')&&typeof switchFcTab==='function')switchFcTab('analytics');
+  if(document.getElementById('panel-competitor')&&document.getElementById('panel-competitor').classList.contains('active')&&typeof switchIntelTab==='function')switchIntelTab('competitors');
 
   // Init aiv-body max-height so collapse transition works immediately
   var _aivBody = document.getElementById('aiv-body');
@@ -7846,290 +7810,121 @@ function renderAIVisibility(d) {
   document.getElementById('aiv-results').style.display = 'block';
   var btn = document.getElementById('aiv-run-btn');
   if (btn) { btn.textContent = 'Re-run'; btn.disabled = false; }
+  var esc=function(x){return String(x==null?'':x).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');};
+  var ai = Math.round(d.ai_score||0), gbp = Math.round(d.gbp_score||0);
   var scoreEl = document.getElementById('aiv-score-num');
   var scoreLbl = document.getElementById('aiv-score-label');
-  if (scoreEl) countUp(scoreEl, d.ai_score, 1000, '', '%', 0);
-  if (scoreLbl) {
-    if (d.ai_score >= 67) scoreLbl.textContent = 'Strong AI presence';
-    else if (d.ai_score >= 34) scoreLbl.textContent = 'Moderate presence';
-    else scoreLbl.textContent = 'Not yet indexed by AI search';
-  }
+  if (scoreEl) countUp(scoreEl, ai, 1400, '', '%', 0);
+  if (scoreLbl) scoreLbl.textContent = ai >= 67 ? 'strong presence' : (ai >= 34 ? 'moderate presence' : 'not yet indexed');
+  var tone = function(v,hi,mid){return v>=hi?'good':(v>=mid?'warn':'bad');};
+  var chipAi=document.getElementById('in2-chip-ai'), chipAiN=document.getElementById('in2-chip-ai-n');
+  if(chipAi){chipAi.className='hb-chip '+tone(ai,67,34);}if(chipAiN)chipAiN.textContent=ai+'%';
+  var chipG=document.getElementById('in2-chip-gbp'), chipGN=document.getElementById('in2-chip-gbp-n');
+  if(chipG){chipG.className='hb-chip '+tone(gbp,70,40);}if(chipGN)chipGN.textContent=gbp+'%';
   var aivNote = document.getElementById('aiv-disclaimer');
   if (aivNote) {
-    if (d.ai_score === 0) {
-      aivNote.textContent = 'Most independent restaurants aren\'t indexed by AI search yet — this is normal and expected. More reviews, a complete GBP profile, and online mentions are what get you there. That\'s exactly what this platform drives.';
-      aivNote.style.display = 'block';
-    } else {
-      aivNote.style.display = 'none';
-    }
+    if (ai === 0) { aivNote.innerHTML = '<b>Not yet appearing in AI search</b> — normal for independent restaurants this early. More reviews, a complete Google Business Profile and online mentions are what get you there. That is exactly what this platform drives.'; aivNote.style.display = 'block'; }
+    else aivNote.style.display = 'none';
   }
   var gbpEl = document.getElementById('aiv-gbp-num');
   var gbpLbl = document.getElementById('aiv-gbp-label');
-  var gbpBox = document.getElementById('aiv-gbp-box');
-  if (gbpEl) {
-    var gbpColor = d.gbp_score >= 70 ? '#16a34a' : (d.gbp_score >= 40 ? '#f59e0b' : '#dc2626');
-    countUp(gbpEl, d.gbp_score, 1000, '', '%', 0);
-    gbpEl.style.color = gbpColor;
-    if (gbpBox) {
-      var _dm = document.documentElement.getAttribute('data-theme') === 'dark';
-      if (d.gbp_score >= 70) { gbpBox.style.background = _dm ? '#0c2318' : '#f0fdf4'; gbpBox.style.borderColor = _dm ? '#2d6a4f' : '#bbf7d0'; }
-      else if (d.gbp_score >= 40) { gbpBox.style.background = _dm ? '#251d08' : '#fffbeb'; gbpBox.style.borderColor = _dm ? '#d4a030' : '#fde68a'; }
-      else { gbpBox.style.background = _dm ? '#2a1010' : '#fef2f2'; gbpBox.style.borderColor = _dm ? '#c0392b' : '#fecaca'; }
-    }
-  }
-  if (gbpLbl) {
-    if (d.gbp_score >= 80) gbpLbl.textContent = 'Excellent';
-    else if (d.gbp_score >= 60) gbpLbl.textContent = 'Good — a few gaps';
-    else if (d.gbp_score >= 40) gbpLbl.textContent = 'Needs work';
-    else gbpLbl.textContent = 'Critical gaps';
-  }
-  // Cache AI visibility data so page reloads restore it
+  if (gbpEl) { countUp(gbpEl, gbp, 1400, '', '%', 0); gbpEl.style.color = gbp >= 70 ? 'var(--hb-good)' : (gbp >= 40 ? 'var(--hb-warn)' : 'var(--hb-bad)'); }
+  if (gbpLbl) gbpLbl.textContent = gbp >= 80 ? 'excellent' : (gbp >= 60 ? 'a few gaps' : (gbp >= 40 ? 'needs work' : 'critical gaps'));
   try { sessionStorage.setItem('aiv_cache', JSON.stringify(d)); sessionStorage.setItem('aiv_cache_at', String(Date.now())); } catch(e) {}
 
-  // Render GBP checklist breakdown
+  // GBP checklist grid — the iOS two-column grid.
   var gbpItemsEl = document.getElementById('aiv-gbp-items');
   if (gbpItemsEl && d.checklist) {
-    var chtml = '';
+    var chtml = '', doneN = 0;
     for (var ci = 0; ci < d.checklist.length; ci++) {
-      var item = d.checklist[ci];
-      var icon = item.done
-        ? '<span style="width:18px;height:18px;border-radius:50%;background:rgba(22,163,74,.16);color:#3ecf6e;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0">&#10003;</span>'
-        : (item.needs_gmb
-          ? '<span style="width:18px;height:18px;border-radius:50%;background:var(--paper3);color:var(--ink3);font-size:11px;display:flex;align-items:center;justify-content:center;flex-shrink:0">&#128274;</span>'
-          : '<span style="width:18px;height:18px;border-radius:50%;background:rgba(220,38,38,.16);color:#ff6b5e;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0">&#8999;</span>');
-      var ptsTag = item.done
-        ? '<span style="font-size:9px;font-weight:700;color:#3ecf6e;background:rgba(22,163,74,.16);padding:1px 6px;border-radius:8px;flex-shrink:0">+' + item.pts + ' pts</span>'
-        : (item.needs_gmb
-          ? '<span style="font-size:9px;font-weight:700;color:var(--ink3);background:var(--paper3);padding:1px 6px;border-radius:8px;flex-shrink:0">+' + item.pts + ' pts</span>'
-          : '<span style="font-size:9px;font-weight:700;color:var(--ember);background:rgba(200,75,47,.14);padding:1px 6px;border-radius:8px;flex-shrink:0">+' + item.pts + ' pts</span>');
-      var lockTag = item.needs_gmb && !item.done ? '<span style="font-size:9px;color:var(--ink3);font-style:italic;margin-left:4px">needs GBP connect</span>' : '';
-      chtml += '<div style="display:flex;align-items:flex-start;gap:10px;padding:8px 14px;border-bottom:1px solid var(--paper3)">';
-      chtml += icon;
-      chtml += '<div style="flex:1;min-width:0">';
-      chtml += '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">';
-      chtml += '<span style="font-size:12px;font-weight:' + (item.done ? '500' : '600') + ';color:' + (item.done ? 'var(--ink3)' : 'var(--ink)') + '">' + item.label + '</span>';
-      chtml += ptsTag + lockTag;
-      chtml += '</div>';
-      if (!item.done && item.action && !item.needs_gmb) {
-        chtml += '<div style="font-size:11px;color:var(--ember);margin-top:2px">' + item.action + '</div>';
-      } else if (!item.done && item.needs_gmb) {
-        chtml += '<div style="font-size:11px;color:var(--ink3);margin-top:2px">' + item.action + '</div>';
-      }
-      chtml += '</div>';
-      chtml += '</div>';
+      var item = d.checklist[ci]; if (item.done) doneN++;
+      var ic = item.done ? '&#10003;' : (item.needs_gmb ? '&#128274;' : '&#9675;');
+      chtml += '<div class="it' + (item.done ? ' done' : '') + '"><span class="ic">' + ic + '</span><div style="min-width:0"><div class="l" title="' + esc(item.label) + '">' + esc(item.label) + '<small>+' + item.pts + '</small></div>';
+      if (!item.done && item.action) chtml += '<div class="a' + (item.needs_gmb ? ' lock' : '') + '" title="' + esc(item.action) + '">' + esc(item.action) + (item.needs_gmb ? ' (needs GBP)' : '') + '</div>';
+      chtml += '</div></div>';
     }
     gbpItemsEl.innerHTML = chtml;
+    var gc = document.getElementById('in2-gbp-cap'); if (gc) gc.textContent = doneN + ' of ' + d.checklist.length + ' profile items done';
   }
+  // Query results
   var qEl = document.getElementById('aiv-queries');
   if (qEl && d.queries) {
-    var qhtml = '';
+    var qhtml = '', hits = 0;
+    var _aiPatterns = [
+      /^If you (?:mean|are (?:looking|referring|asking))[^,\.]{0,80}[,\.]\s*/i,
+      /^Based on (?:the |my )?(?:search results?|available (?:information|sources?|data)|results)[,\.]\s*/i,
+      /^According to (?:the |my )?(?:search results?|available (?:information|sources?|data)|sources?)[,\.]\s*/i,
+      /^From (?:the |my )?(?:search results?|available (?:information|sources?|data)|results)[,\.]\s*/i,
+      /^The (?:search )?results? (?:show|indicate|suggest|reveal)[s]?\s/i,
+      /^(?:Looking at|Reviewing) (?:the )?(?:search )?results?[,\.]\s*/i,
+      /^I (?:found|can see|notice|see) that\s+/i,
+      /^While .{5,80} is (?:a suburb|located|situated|part of)[^\.]+\.\s*/i,
+      /^Note that\s+/i
+    ];
     for (var i = 0; i < d.queries.length; i++) {
-      var q = d.queries[i];
-      var badge = q.appeared
-        ? '<span style="background:#dcfce7;color:#16a34a;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;flex-shrink:0;white-space:nowrap">&#10003; Appeared</span>'
-        : '<span style="background:#fee2e2;color:#dc2626;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;flex-shrink:0;white-space:nowrap">Not mentioned</span>';
-      var cleanAnswer = q.answer.replace(/\*\*([^*]+)\*\*/g, '$1').replace(/\*([^*]+)\*/g, '$1').replace(/\[\d+\]/g, '');
-      var _aiPatterns = [
-        /^If you (?:mean|are (?:looking|referring|asking))[^,\.]{0,80}[,\.]\s*/i,
-        /^Based on (?:the |my )?(?:search results?|available (?:information|sources?|data)|results)[,\.]\s*/i,
-        /^According to (?:the |my )?(?:search results?|available (?:information|sources?|data)|sources?)[,\.]\s*/i,
-        /^From (?:the |my )?(?:search results?|available (?:information|sources?|data)|results)[,\.]\s*/i,
-        /^The (?:search )?results? (?:show|indicate|suggest|reveal)[s]?\s/i,
-        /^(?:Looking at|Reviewing) (?:the )?(?:search )?results?[,\.]\s*/i,
-        /^I (?:found|can see|notice|see) that\s+/i,
-        /^While .{5,80} is (?:a suburb|located|situated|part of)[^\.]+\.\s*/i,
-        /^Note that\s+/i,
-      ];
-      for (var _pi = 0; _pi < _aiPatterns.length; _pi++) {
-        cleanAnswer = cleanAnswer.replace(_aiPatterns[_pi], '');
-      }
-      if (cleanAnswer.length > 0) { cleanAnswer = cleanAnswer.charAt(0).toUpperCase() + cleanAnswer.slice(1); }
-      var snippet = cleanAnswer.substring(0, 220) + (cleanAnswer.length > 220 ? '...' : '');
-      qhtml += '<div class="aiv-reveal" style="background:var(--surface);border:1px solid var(--paper3);border-radius:8px;padding:10px 12px;animation-delay:' + (i*70) + 'ms">';
-      qhtml += '<div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:6px">';
-      qhtml += '<span style="font-size:12px;font-weight:600;color:var(--ink);flex:1">&ldquo;' + q.query + '&rdquo;</span>' + badge;
-      qhtml += '</div>';
-      qhtml += '<div style="font-size:11px;color:var(--ink3);line-height:1.55">' + snippet + '</div>';
-      qhtml += '</div>';
+      var q = d.queries[i]; if (q.appeared) hits++;
+      var clean = (q.answer || '').replace(/\*\*([^*]+)\*\*/g, '$1').replace(/\*([^*]+)\*/g, '$1').replace(/\[\d+\]/g, '');
+      for (var _pi = 0; _pi < _aiPatterns.length; _pi++) clean = clean.replace(_aiPatterns[_pi], '');
+      if (clean.length) clean = clean.charAt(0).toUpperCase() + clean.slice(1);
+      var snippet = clean.substring(0, 200) + (clean.length > 200 ? '…' : '');
+      qhtml += '<div class="q' + (q.appeared ? ' hit' : '') + '"><div class="h"><span>&ldquo;' + esc(q.query) + '&rdquo;</span><span class="tag">' + (q.appeared ? 'Appeared' : 'Not mentioned') + '</span></div><div class="a">' + esc(snippet) + '</div></div>';
     }
     qEl.innerHTML = qhtml;
+    var qn = document.getElementById('in2-q-n'); if (qn) qn.textContent = hits + ' / ' + d.queries.length;
+    var qf = document.getElementById('in2-q-flag'); if (qf) qf.textContent = hits ? 'you came up' : 'not mentioned';
+    var oc = document.getElementById('in2-orbit-cap'); if (oc) oc.textContent = 'of AI searches mention you · ' + hits + ' of ' + d.queries.length + ' queries';
   }
-  var cEl = document.getElementById('aiv-checklist');
-  if (cEl && d.checklist) { cEl.innerHTML = ''; }
+  var cEl = document.getElementById('aiv-checklist'); if (cEl) cEl.innerHTML = '';
 
-  // Build roadmap cards
+  // Roadmap — ranked for this restaurant: gaps first, then by impact.
   var roadmapEl = document.getElementById('aiv-roadmap-cards');
   var footerEl = document.getElementById('aiv-roadmap-footer');
   var ptsEl = document.getElementById('aiv-roadmap-pts');
   if (!roadmapEl) return;
-
-  // Matched against client_api.py's own checklist copy directly (same fix
-  // already shipped on iOS, ported here for parity): plain 'review' also
-  // matched the done=true RESPONSE-rate label ("Excellent review response
-  // rate"), so a restaurant with a great response rate but under 50
-  // reviews could false-positive the reviews card as done. Plain 'respond'
-  // never matched at all — the only done=true label for that category is
-  // "Excellent review response rate", which contains "response" not
-  // "respond" (they diverge at the 7th letter), so that card could never
-  // auto-complete regardless of actual response rate. 'google review' /
-  // 'response rate' are the precise, verified-unique phrases for each.
-  var gbpDone = d.gbp_score >= 80;
-  var reviewsDone = false;
-  var responseDone = false;
-  var missingGbpCount = 0;
+  var gbpDone = gbp >= 80, reviewsDone = false, responseDone = false, missingGbpCount = 0;
   if (d.checklist) {
-    for (var ci = 0; ci < d.checklist.length; ci++) {
-      var lbl = (d.checklist[ci].label || '').toLowerCase();
-      if (lbl.indexOf('google review') > -1 && d.checklist[ci].done) reviewsDone = true;
-      if (lbl.indexOf('response rate') > -1 && d.checklist[ci].done) responseDone = true;
-      if (!d.checklist[ci].done) missingGbpCount++;
+    for (var cj = 0; cj < d.checklist.length; cj++) {
+      var lbl = (d.checklist[cj].label || '').toLowerCase();
+      if (lbl.indexOf('google review') > -1 && d.checklist[cj].done) reviewsDone = true;
+      if (lbl.indexOf('response rate') > -1 && d.checklist[cj].done) responseDone = true;
+      if (!d.checklist[cj].done) missingGbpCount++;
     }
   }
-  var socialPosts = d.social_posts_30d || 0;
-  var socialDone = socialPosts >= 8;
-  var reviewTotal = d.review_total || 0;
-  var respRate = Math.round(d.resp_rate || 0);
-
-  // detail/why below used to be 4 fully static strings identical for every
-  // restaurant (one of them — reviews' own why — even hardcoded a
-  // different restaurant's name and review count, "Mio Modo has 270+
-  // reviews", into every single restaurant's card). Built from this
-  // restaurant's own real numbers now, same fields/thresholds/phrasing as
-  // the iOS app's roadmap so the two platforms actually agree.
-  var reviewsDetail = reviewsDone
-    ? (reviewTotal + ' reviews — past the 50-review AI threshold')
-    : (reviewTotal + ' of 50 reviews — ' + Math.max(50 - reviewTotal, 0) + ' more to go');
-  var reviewsWhy = 'You have ' + reviewTotal + ' review' + (reviewTotal === 1 ? '' : 's') + ' right now. AI search tools rank restaurants by review volume and recency — the more you have, the more AI systems trust you.';
-
-  var responseDetail = responseDone
-    ? (respRate + '% response rate — excellent')
-    : (respRate + '% response rate — ' + Math.max(75 - respRate, 0) + '% more gets you to 75%');
-  var responseWhy = 'You\'re currently responding to ' + respRate + '% of your reviews. Response rate signals to Google that your listing is actively managed — active listings rank higher in local search and are more likely to be cited by AI tools that pull from Google data.';
-
-  var gbpDetail = missingGbpCount > 0
-    ? (d.gbp_score + '% complete — ' + missingGbpCount + ' item' + (missingGbpCount === 1 ? '' : 's') + ' left')
-    : (d.gbp_score + '% complete');
-  var gbpWhy = 'Your Google Business Profile is ' + d.gbp_score + '% complete. Perplexity, ChatGPT, and Google AI all pull directly from GBP data — hours, photos, menu, description. A complete profile is the single fastest way to become indexable by AI search.';
-
-  var socialDetail = socialDone
-    ? (socialPosts + ' posts this month — great pace')
-    : (socialPosts === 0 ? 'No marketing pieces logged this month yet' : (socialPosts + ' post' + (socialPosts === 1 ? '' : 's') + ' this month — aim for 8+'));
-  var socialWhy = 'You\'ve logged ' + socialPosts + ' marketing piece' + (socialPosts === 1 ? '' : 's') + ' this month. Food blogs and social content get indexed by search engines, which AI tools then pull from — regular posts with your restaurant name, neighborhood, and cuisine type build the online footprint AI needs to find you.';
-
+  var socialPosts = d.social_posts_30d || 0, socialDone = socialPosts >= 8;
+  var reviewTotal = d.review_total || 0, respRate = Math.round(d.resp_rate || 0);
   var cards = [
-    {
-      svg: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M8 1.5l1.65 3.35 3.7.54-2.68 2.6.63 3.68L8 9.77l-3.3 1.9.63-3.68L2.65 5.39l3.7-.54L8 1.5z" fill="currentColor"/></svg>',
-      color: '#d97706',
-      bg: '#fefce8',
-      title: 'Get more Google reviews',
-      why: reviewsWhy,
-      action: 'Send a review request',
-      actionFn: 'switchTab(\'reviews\', document.getElementById(\'tab-reviews\')); setTimeout(function(){ var c=document.getElementById(\'rr-card\'); if(c){ c.scrollIntoView({behavior:\'smooth\',block:\'start\'}); } var e=document.getElementById(\'rr-email\'); if(e) e.focus(); }, 150);',
-      impact: 'Highest impact',
-      done: reviewsDone,
-      detail: reviewsDetail
-    },
-    {
-      svg: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M2 3.5A1.5 1.5 0 013.5 2h9A1.5 1.5 0 0114 3.5V10a1.5 1.5 0 01-1.5 1.5H6.2l-3.2 2V3.5z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>',
-      color: '#2d6a4f',
-      bg: '#eaf4ee',
-      title: 'Respond to every review',
-      why: responseWhy,
-      action: 'Go to review queue',
-      actionFn: 'document.getElementById(\'tab-reviews\') && document.getElementById(\'tab-reviews\').click()',
-      impact: 'High impact',
-      done: responseDone,
-      detail: responseDetail
-    },
-    {
-      svg: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="6.5" r="2" stroke="currentColor" stroke-width="1.4"/><path d="M8 2C5.79 2 4 3.79 4 6c0 3.5 4 9 4 9s4-5.5 4-9c0-2.21-1.79-4-4-4z" stroke="currentColor" stroke-width="1.4"/></svg>',
-      color: '#8a5a3a',
-      bg: '#f5ece3',
-      title: 'Complete your Google Business Profile',
-      why: gbpWhy,
-      action: 'Open GBP settings',
-      actionFn: 'switchTab(\'competitor\', document.getElementById(\'tab-competitor\'))',
-      impact: 'Fast win',
-      done: gbpDone,
-      detail: gbpDetail
-    },
-    {
-      svg: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M2.5 6h2.8l5.2-3v10L5.3 10H2.5A1 1 0 011.5 9V7a1 1 0 011-1z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M5.3 10v3.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
-      color: '#c84b2f',
-      bg: '#fff5f2',
-      title: 'Post consistently on social',
-      why: socialWhy,
-      action: 'Go to marketing',
-      actionFn: 'document.getElementById(\'tab-marketing\') && document.getElementById(\'tab-marketing\').click()',
-      impact: 'Long-term',
-      done: socialDone,
-      detail: socialDetail
-    }
+    { svg: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M8 1.5l1.65 3.35 3.7.54-2.68 2.6.63 3.68L8 9.77l-3.3 1.9.63-3.68L2.65 5.39l3.7-.54L8 1.5z" fill="currentColor"/></svg>', color: 'var(--hb-warn)', title: 'Get more Google reviews',
+      why: 'You have ' + reviewTotal + ' review' + (reviewTotal === 1 ? '' : 's') + ' right now. AI search tools rank restaurants by review volume and recency — the more you have, the more AI systems trust you.',
+      action: 'Send a review request', actionFn: "switchTab('reviews', document.getElementById('tab-reviews')); setTimeout(function(){ var c=document.getElementById('rr-card'); if(c){ c.scrollIntoView({behavior:'smooth',block:'start'}); } var e=document.getElementById('rr-email'); if(e) e.focus(); }, 150);",
+      impact: 'Highest impact', done: reviewsDone, detail: reviewsDone ? (reviewTotal + ' reviews — past the 50-review AI threshold') : (reviewTotal + ' of 50 reviews — ' + Math.max(50 - reviewTotal, 0) + ' more to go') },
+    { svg: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M2 3.5A1.5 1.5 0 013.5 2h9A1.5 1.5 0 0114 3.5V10a1.5 1.5 0 01-1.5 1.5H6.2l-3.2 2V3.5z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>', color: 'var(--hb-good)', title: 'Respond to every review',
+      why: "You're currently responding to " + respRate + '% of your reviews. Response rate signals to Google that your listing is actively managed — active listings rank higher in local search and are more likely to be cited by AI tools that pull from Google data.',
+      action: 'Go to review queue', actionFn: "document.getElementById('tab-reviews') && document.getElementById('tab-reviews').click()",
+      impact: 'High impact', done: responseDone, detail: responseDone ? (respRate + '% response rate — excellent') : (respRate + '% response rate — ' + Math.max(75 - respRate, 0) + '% more gets you to 75%') },
+    { svg: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="6.5" r="2" stroke="currentColor" stroke-width="1.4"/><path d="M8 2C5.79 2 4 3.79 4 6c0 3.5 4 9 4 9s4-5.5 4-9c0-2.21-1.79-4-4-4z" stroke="currentColor" stroke-width="1.4"/></svg>', color: '#b7791f', title: 'Complete your Google Business Profile',
+      why: 'Your Google Business Profile is ' + gbp + '% complete. Perplexity, ChatGPT and Google AI all pull directly from GBP data — hours, photos, menu, description. A complete profile is the single fastest way to become indexable by AI search.',
+      action: 'Open GBP settings', actionFn: "switchTab('account', document.getElementById('tab-account'))",
+      impact: 'Fast win', done: gbpDone, detail: missingGbpCount > 0 ? (gbp + '% complete — ' + missingGbpCount + ' item' + (missingGbpCount === 1 ? '' : 's') + ' left') : (gbp + '% complete') },
+    { svg: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M2.5 6h2.8l5.2-3v10L5.3 10H2.5A1 1 0 011.5 9V7a1 1 0 011-1z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M5.3 10v3.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>', color: 'var(--ember)', title: 'Post consistently on social',
+      why: "You've logged " + socialPosts + ' marketing piece' + (socialPosts === 1 ? '' : 's') + ' this month. Food blogs and social content get indexed by search engines, which AI tools then pull from — regular posts with your restaurant name, neighborhood and cuisine type build the online footprint AI needs to find you.',
+      action: 'Go to marketing', actionFn: "document.getElementById('tab-marketing') && document.getElementById('tab-marketing').click()",
+      impact: 'Long-term', done: socialDone, detail: socialDone ? (socialPosts + ' posts this month — great pace') : (socialPosts === 0 ? 'No marketing pieces logged this month yet' : (socialPosts + ' post' + (socialPosts === 1 ? '' : 's') + ' this month — aim for 8+')) }
   ];
-
-  // Was always rendered in this same fixed order for every restaurant —
-  // same "ranked for your restaurant" gap the iOS app had, fixed the same
-  // way: not-done cards first, then by impact tier, so a restaurant's own
-  // real gaps surface at the top instead of a static list order.
   var _impactRank = { 'Highest impact': 0, 'High impact': 1, 'Fast win': 2 };
-  function _rankOf(c) { return _impactRank.hasOwnProperty(c.impact) ? _impactRank[c.impact] : 3; }
-  cards.sort(function(a, b) {
-    if (a.done !== b.done) return a.done ? 1 : -1;
-    return _rankOf(a) - _rankOf(b);
-  });
-
-  // Inject CSS for animations once
-  if (!document.getElementById('aiv-anim-style')) {
-    var styleEl = document.createElement('style');
-    styleEl.id = 'aiv-anim-style';
-    styleEl.textContent = '@keyframes aivSlideIn{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}' +
-      '.aiv-card{animation:aivSlideIn .35s ease both}' +
-      '.aiv-expand-btn{transition:color .15s;cursor:pointer}' +
-      '.aiv-bar-fill{transition:width 1.2s cubic-bezier(.4,0,.2,1)}';
-    document.head.appendChild(styleEl);
-  }
-
-  var totalPtsLeft = 0;
-  for (var pi = 0; pi < cards.length; pi++) { if (!cards[pi].done) totalPtsLeft++; }
-  if (ptsEl) ptsEl.textContent = totalPtsLeft > 0 ? totalPtsLeft + ' action' + (totalPtsLeft > 1 ? 's' : '') + ' to grow your score' : 'All steps complete';
-
+  cards.sort(function(a, b) { if (a.done !== b.done) return a.done ? 1 : -1; var ra = _impactRank.hasOwnProperty(a.impact) ? _impactRank[a.impact] : 3, rb = _impactRank.hasOwnProperty(b.impact) ? _impactRank[b.impact] : 3; return ra - rb; });
+  var left = 0; for (var pi = 0; pi < cards.length; pi++) if (!cards[pi].done) left++;
+  if (ptsEl) ptsEl.textContent = left > 0 ? left + ' action' + (left > 1 ? 's' : '') + ' to grow your score' : 'All steps complete';
   var html = '';
   for (var k = 0; k < cards.length; k++) {
     var c = cards[k];
-    var delay = (k * 80) + 'ms';
-    var doneStyle = c.done ? 'opacity:.5;' : '';
-    var doneBadge = c.done
-      ? '<span style="font-size:10px;font-weight:600;color:#16a34a;letter-spacing:.04em">&#10003; Done</span>'
-      : '<span style="font-size:10px;font-weight:600;color:' + c.color + ';letter-spacing:.04em;text-transform:uppercase">' + c.impact + '</span>';
-
-    html += '<div class="aiv-card" style="' + doneStyle + 'animation-delay:' + delay + ';background:' + c.bg + ';border:1px solid var(--paper3);border-left:3px solid ' + c.color + ';border-radius:8px;padding:13px 16px">';
-    html += '<div style="display:flex;align-items:flex-start;gap:11px">';
-    html += '<div style="width:28px;height:28px;border-radius:7px;background:' + c.color + '12;display:flex;align-items:center;justify-content:center;color:' + c.color + ';flex-shrink:0;margin-top:1px">' + c.svg + '</div>';
-    html += '<div style="flex:1;min-width:0">';
-    html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:2px">';
-    html += '<span style="font-size:13px;font-weight:600;color:var(--ink)">' + c.title + '</span>';
-    html += doneBadge;
-    html += '</div>';
-    html += '<div style="font-size:11px;color:var(--ink3);margin-bottom:10px">' + c.detail + '</div>';
-    html += '<div class="aiv-why-text" id="aiv-why-' + k + '" style="font-size:12px;color:var(--ink2);line-height:1.65;margin-bottom:10px;display:none">' + c.why + '</div>';
-    html += '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">';
-    if (!c.done) {
-      html += '<button class="aiv-card-btn" onclick="' + c.actionFn + '" style="background:' + c.color + ';color:white;border:none;padding:6px 13px;border-radius:6px;font-family:\'DM Sans\',sans-serif;font-size:11px;font-weight:600;letter-spacing:.02em">' + c.action + '<svg width="11" height="11" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>';
-    } else {
-      html += '<div></div>';
-    }
-    html += '<span class="aiv-expand-btn" onclick="toggleAivWhy(' + k + ',this)" onmouseover="this.style.color=\'' + c.color + '\'" onmouseout="this.style.color=\'\'" style="font-size:11px;color:var(--ink3);text-decoration:underline;text-underline-offset:2px;user-select:none;letter-spacing:.01em">Why this matters</span>';
-    html += '</div>';
-    html += '</div>';
-    html += '</div>';
-    html += '</div>';
+    html += '<div class="row' + (c.done ? ' done' : '') + '" style="--rc:' + c.color + '"><div class="ic">' + c.svg + '</div><div class="t"><div class="tt"><b>' + c.title + '</b>' + (c.done ? '<span class="im done">&#10003; done</span>' : '<span class="im">' + c.impact + '</span>') + '</div><div class="d">' + c.detail + '</div><div class="why" id="aiv-why-' + k + '">' + c.why + '</div><div class="ac">' + (c.done ? '' : '<button class="hb-btn p" style="height:28px;padding:0 12px;font-size:11.5px" onclick="' + c.actionFn.replace(/"/g, '&quot;') + '">' + c.action + '</button>') + '<button class="wl" onclick="toggleAivWhy(' + k + ',this)">Why this matters</button></div></div></div>';
   }
   roadmapEl.innerHTML = html;
   if (footerEl) footerEl.style.display = 'block';
-  var _aivBodyEl = document.getElementById('aiv-body');
-  if (_aivBodyEl && _aivBodyEl.style.maxHeight !== '0px') {
-    setTimeout(function() { _aivBodyEl.style.maxHeight = _aivBodyEl.scrollHeight + 'px'; }, 50);
-  }
+  if (window.renderVisibilityOrbit) renderVisibilityOrbit(ai, window._aivRuns || []);
+  // The run just landed in history server-side; pull it so the trend line
+  // and "since last run" delta include this check, not just the last one.
+  if (window.loadAivHistory) setTimeout(loadAivHistory, 500);
 }
 
 function toggleAivCard() {
@@ -8190,13 +7985,8 @@ function toggleGbpChecklist() {
 function toggleAivWhy(idx, btn) {
   var el = document.getElementById('aiv-why-' + idx);
   if (!el) return;
-  if (el.style.display === 'none') {
-    el.style.display = 'block';
-    btn.textContent = 'Hide';
-  } else {
-    el.style.display = 'none';
-    btn.textContent = 'Why this matters';
-  }
+  var on = el.classList.toggle('on');
+  btn.textContent = on ? 'Hide' : 'Why this matters';
 }
 function checkTabParam(){
   var params=new URLSearchParams(window.location.search);
@@ -9706,10 +9496,10 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     _intelTimer=setTimeout(function(){
       jget('/api/intel/search-places?q='+encodeURIComponent(q.trim()),function(d){
         if(!box)return;box.style.display='block';
-        if(!d.ok){box.innerHTML='<div style="padding:9px 12px;font-size:12px;color:var(--ember)">'+esc(d.error||'Search failed')+'</div>';return;}
+        if(!d.ok){box.innerHTML='<div class="it"><div class="m" style="color:var(--ember)">'+esc(d.error||'Search failed')+'</div></div>';return;}
         var res=d.results||[];
-        if(!res.length){box.innerHTML='<div style="padding:9px 12px;font-size:12px;color:var(--ink3)">No matches — try the name as it appears on Google.</div>';return;}
-        box.innerHTML=res.slice(0,6).map(function(r){return '<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-top:1px solid var(--paper3)"><div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:600;color:var(--ink)">'+esc(r.name)+'</div><div style="font-size:11px;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(r.address||'')+(r.rating?' · '+r.rating+'★ ('+(r.review_count||0)+')':'')+'</div></div><button onclick="intelAdd(\''+esc(r.place_id)+'\',this)" class="btn-primary" style="font-size:11px;padding:4px 10px;white-space:nowrap">Track</button></div>';}).join('');
+        if(!res.length){box.innerHTML='<div class="it"><div class="m">No matches — try the name as it appears on Google.</div></div>';return;}
+        box.innerHTML=res.slice(0,6).map(function(r){return '<div class="it"><div style="flex:1;min-width:0"><div class="n">'+esc(r.name)+'</div><div class="m">'+esc(r.address||'')+(r.rating?' · '+r.rating+'★ ('+(r.review_count||0)+')':'')+'</div></div><button onclick="intelAdd(\''+esc(r.place_id)+'\',this)" class="hb-btn p" style="height:28px;padding:0 12px;font-size:11.5px;white-space:nowrap">Track</button></div>';}).join('');
       });
     },350);
   };
@@ -9738,23 +9528,48 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     var done=busy(btn,'…');
     jsend('/api/intel/remove-competitor',{place_id:placeId},function(d){done();if(d.ok){toast('Removed','success');setTimeout(function(){window.location.href=window.location.pathname+'?tab=competitor';},500);}else toast(d.error||'Could not remove','error');});
   };
+  window._aivRuns=[];
   window.loadAivHistory=function(){
-    var card=document.getElementById('aiv-history');if(!card)return;
     jget('/api/ai-visibility/history',function(d){
-      var runs=(d.ok&&d.runs)||[];if(runs.length<1)return;
-      card.style.display='block';
-      var cnt=document.getElementById('aiv-history-count');if(cnt)cnt.textContent=runs.length+' check'+(runs.length===1?'':'s');
-      var list=document.getElementById('aiv-history-list');
-      if(list)list.innerHTML=runs.slice(0,8).map(function(r){return '<div><span style="font-family:\'Space Grotesk\',sans-serif;color:var(--ink);font-weight:600">'+Math.round(r.ai_score||0)+'%</span> AI · <span style="font-family:\'Space Grotesk\',sans-serif">'+Math.round(r.gbp_score||0)+'</span> GBP · '+fmtDate(r.created_at)+'</div>';}).join('');
-      var svg=document.getElementById('aiv-history-chart');
-      var seq=runs.slice().reverse();
-      if(svg&&seq.length>1){
-        var W=320,H=70,pad=6;
-        var pts=seq.map(function(r,i){return [pad+i*(W-2*pad)/(seq.length-1),H-pad-(Math.max(0,Math.min(100,+r.ai_score||0))/100)*(H-2*pad)];});
-        var line=pts.map(function(p,i){return (i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1);}).join(' ');
-        svg.innerHTML='<path d="'+line+'" fill="none" stroke="var(--ember)" stroke-width="2" stroke-linejoin="round"/>'+pts.map(function(p){return '<circle cx="'+p[0].toFixed(1)+'" cy="'+p[1].toFixed(1)+'" r="3" fill="var(--ember)"/>';}).join('');
-      } else if(svg){svg.style.display='none';}
+      var runs=((d.ok&&d.runs)||[]).slice().reverse();  // oldest → newest
+      window._aivRuns=runs;
+      var cnt=document.getElementById('aiv-history-count');if(cnt)cnt.textContent=runs.length>1?'last '+runs.length+' runs':(runs.length===1?'one check so far':'first check');
+      var lr=document.getElementById('in2-last-run');if(lr&&runs.length){var L=runs[runs.length-1];lr.innerHTML=' · last check <span class="hb-num">'+Math.round(L.ai_score||0)+'%</span> on <span class="hb-num">'+(window.CavnarCharts?CavnarCharts.mdy(String(L.created_at||'').slice(0,10)):fmtDate(L.created_at))+'</span> · '+runs.length+' run'+(runs.length===1?'':'s')+' so far';}
+      var score=_aivData?Math.round(_aivData.ai_score||0):(runs.length?Math.round(runs[runs.length-1].ai_score||0):null);
+      if(score!==null&&document.getElementById('aiv-results')&&document.getElementById('aiv-results').style.display!=='none')renderVisibilityOrbit(score,runs);
     });
+  };
+  // Visibility Orbit — today's score as a ring with an orbiting hot dot, and
+  // every past run as a thin glow line to the right (ported from iOS).
+  window.renderVisibilityOrbit=function(score,runs){
+    var el=document.getElementById('in2-orbit');if(!el)return;
+    var W=320,H=150,cx=64,cy=75,R=46,circ=2*Math.PI*R,frac=Math.max(0,Math.min(1,(score||0)/100));
+    var s='<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet" aria-hidden="true"><defs><linearGradient id="in2og" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#e8956a"/><stop offset="1" stop-color="#c84b2f"/></linearGradient><filter id="in2of" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="4"/></filter><linearGradient id="in2lg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#c84b2f" stop-opacity=".3"/><stop offset="1" stop-color="#c84b2f" stop-opacity="0"/></linearGradient></defs>';
+    s+='<circle cx="'+cx+'" cy="'+cy+'" r="'+R+'" fill="none" stroke="currentColor" stroke-opacity=".08" stroke-width="10"/>';
+    if(frac>0){
+      s+='<circle class="in2-arc" cx="'+cx+'" cy="'+cy+'" r="'+R+'" fill="none" stroke="#c84b2f" stroke-opacity=".55" stroke-width="16" stroke-linecap="round" filter="url(#in2of)" transform="rotate(-90 '+cx+' '+cy+')" stroke-dasharray="'+circ+'" stroke-dashoffset="'+circ+'" data-off="'+(circ*(1-frac))+'" style="transition:stroke-dashoffset 1.6s cubic-bezier(.3,0,.15,1)"/>';
+      s+='<circle class="in2-arc" cx="'+cx+'" cy="'+cy+'" r="'+R+'" fill="none" stroke="url(#in2og)" stroke-width="10" stroke-linecap="round" transform="rotate(-90 '+cx+' '+cy+')" stroke-dasharray="'+circ+'" stroke-dashoffset="'+circ+'" data-off="'+(circ*(1-frac))+'" style="transition:stroke-dashoffset 1.6s cubic-bezier(.3,0,.15,1)"/>';
+    }
+    var ang=-Math.PI/2+2*Math.PI*frac,dx=cx+R*Math.cos(ang),dy=cy+R*Math.sin(ang);
+    s+='<circle class="hb-hot" cx="'+dx.toFixed(1)+'" cy="'+dy.toFixed(1)+'" r="12" fill="#e8956a" fill-opacity=".3" style="transform-box:fill-box;transform-origin:center;opacity:0;transition:opacity .5s 1.5s" data-tip="1"/><circle cx="'+dx.toFixed(1)+'" cy="'+dy.toFixed(1)+'" r="5" fill="#f2b183" stroke="#fff" stroke-opacity=".85" stroke-width="1.5" style="opacity:0;transition:opacity .5s 1.5s" data-tip="1"/>';
+    s+='<text x="'+cx+'" y="'+(cy+4)+'" text-anchor="middle" font-size="24" font-weight="700" fill="currentColor" id="in2-orbit-n">'+Math.round(score||0)+'</text><text x="'+cx+'" y="'+(cy+19)+'" text-anchor="middle" font-size="9" font-weight="700" letter-spacing="1" fill="currentColor" fill-opacity=".55">AI VISIBILITY</text>';
+    var L=cx+R+34,Rr=W-8,T=34,B=H-30;
+    if(!runs||runs.length<2){
+      s+='<text x="'+L+'" y="'+(cy-8)+'" font-size="10" font-weight="700" letter-spacing="1" fill="currentColor" fill-opacity=".6">FIRST CHECK</text><text x="'+L+'" y="'+(cy+10)+'" font-size="11" fill="currentColor" fill-opacity=".75">Run another check to start the trend line.</text>';
+    }else{
+      var n=runs.length,vals=runs.map(function(r){return +r.ai_score||0;}),lo=Math.max(0,Math.min.apply(null,vals)-10),hi=Math.min(100,Math.max.apply(null,vals)+10),rng=Math.max(1,hi-lo);
+      var pts=[];for(var i=0;i<n;i++)pts.push([L+(Rr-L)*i/(n-1),B-(B-T)*((vals[i]-lo)/rng)]);
+      var d=window.CavnarCharts?CavnarCharts.smooth(pts):pts.map(function(p,i){return (i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1);}).join(' ');
+      var last=pts[n-1];
+      s+='<text x="'+L+'" y="'+(T-12)+'" font-size="10" font-weight="700" letter-spacing="1" fill="currentColor" fill-opacity=".6">LAST '+n+' RUNS</text>';
+      s+='<path d="'+d+' L'+Rr+' '+B+' L'+L+' '+B+' Z" fill="url(#in2lg)"/>';
+      s+='<path d="'+d+'" fill="none" stroke="#c84b2f" stroke-opacity=".5" stroke-width="6" filter="url(#in2of)" stroke-linecap="round"/><path class="hb-draw" d="'+d+'" fill="none" stroke="#e8956a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>';
+      for(var q=0;q<n;q++)s+='<circle cx="'+pts[q][0].toFixed(1)+'" cy="'+pts[q][1].toFixed(1)+'" r="'+(q===n-1?4:2.5)+'" fill="'+(q===n-1?'#f2b183':'#e8956a')+'"/>';
+      var delta=vals[n-1]-vals[n-2];
+      s+='<text x="'+Rr+'" y="'+(H-8)+'" text-anchor="end" font-size="11" font-weight="700" fill="'+(delta>=0?'#4ead7a':'#e05555')+'">'+(delta===0?'No change since last run':(delta>0?'+'+delta:delta)+' since last run')+'</text>';
+    }
+    el.innerHTML=s+'</svg>';
+    requestAnimationFrame(function(){requestAnimationFrame(function(){var arcs=el.querySelectorAll('.in2-arc');for(var i=0;i<arcs.length;i++)arcs[i].style.strokeDashoffset=arcs[i].getAttribute('data-off');var tips=el.querySelectorAll('[data-tip]');for(var t=0;t<tips.length;t++)tips[t].style.opacity='1';});});
   };
 
   // ── Labor ──

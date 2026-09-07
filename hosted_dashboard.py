@@ -71,6 +71,8 @@ from competitor_intel_format import (
 
 app.template_filter("format_intel")(_format_intel)
 app.template_filter("extract_recs")(_extract_recs)
+from competitor_intel_format import parse_competitor_intel as _parse_intel
+app.template_filter("intel_parts")(lambda text: _parse_intel(text) if text else {"intro": "", "sections": [], "recommendations": []})
 app.template_filter("format_intel_body")(_format_intel_body)
 
 
