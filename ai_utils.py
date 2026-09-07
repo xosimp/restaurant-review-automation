@@ -50,6 +50,7 @@ def create_with_retry(client, retries=2, backoff=1.5, restaurant_id=None, action
             if attempt > retries:
                 # Retry budget exhausted — this is the "AI is down" signal the
                 # operator digest exists for, so record it before re-raising.
+                _log_failure_safe(e, kwargs.get("model", "unknown"), restaurant_id, action)
                 try:
                     import ops
                     ops.capture(e, job="ai_call",
@@ -58,6 +59,12 @@ def create_with_retry(client, retries=2, backoff=1.5, restaurant_id=None, action
                     pass
                 raise
             time.sleep(backoff ** attempt)
+        except Exception as e:
+            # Not retryable (bad request, auth, a malformed response) — still
+            # a failed AI call the admin console should see next to the
+            # successes, in the same table.
+            _log_failure_safe(e, kwargs.get("model", "unknown"), restaurant_id, action)
+            raise
 
 
 # ── AI cost/usage tracking ──────────────────────────────────────────────────
@@ -75,9 +82,24 @@ CREATE TABLE IF NOT EXISTS ai_usage (
     input_tokens INTEGER,
     output_tokens INTEGER,
     cost_usd REAL,
-    created_at TEXT DEFAULT (datetime('now'))
+    created_at TEXT DEFAULT (datetime('now')),
+    status TEXT DEFAULT 'ok',
+    error TEXT
 )
 """
+
+
+def _ensure_usage_columns(conn):
+    """status/error arrived after the table existed on Railway — add them in
+    place so old rows keep their (implicit) 'ok'."""
+    try:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(ai_usage)").fetchall()}
+        if "status" not in cols:
+            conn.execute("ALTER TABLE ai_usage ADD COLUMN status TEXT DEFAULT 'ok'")
+        if "error" not in cols:
+            conn.execute("ALTER TABLE ai_usage ADD COLUMN error TEXT")
+    except Exception:
+        pass
 
 # $ per million tokens (input, output). Anthropic pricing as of this writing —
 # update here if it changes; unknown models fall back to Sonnet-tier pricing
@@ -108,14 +130,24 @@ def _log_usage_safe(message, model, restaurant_id, action):
         pass
 
 
-def log_ai_usage(restaurant_id, action, model, input_tokens, output_tokens, db_path=None):
+def _log_failure_safe(exc, model, restaurant_id, action):
+    try:
+        log_ai_usage(restaurant_id, action or "unspecified", model, 0, 0,
+                     status="error", error=f"{type(exc).__name__}: {str(exc)[:400]}")
+    except Exception:
+        pass
+
+
+def log_ai_usage(restaurant_id, action, model, input_tokens, output_tokens, db_path=None,
+                 status="ok", error=None):
     from models import get_conn, DB_PATH
     conn = get_conn(db_path or DB_PATH)
     conn.execute(_USAGE_TABLE_SQL)
-    cost = _estimate_cost(model, input_tokens, output_tokens)
+    _ensure_usage_columns(conn)
+    cost = _estimate_cost(model, input_tokens, output_tokens) if status == "ok" else 0.0
     conn.execute(
-        "INSERT INTO ai_usage (restaurant_id, action, model, input_tokens, output_tokens, cost_usd) VALUES (?,?,?,?,?,?)",
-        (restaurant_id, action, model, input_tokens, output_tokens, cost),
+        "INSERT INTO ai_usage (restaurant_id, action, model, input_tokens, output_tokens, cost_usd, status, error) VALUES (?,?,?,?,?,?,?,?)",
+        (restaurant_id, action, model, input_tokens, output_tokens, cost, status, error),
     )
     conn.commit()
     conn.close()

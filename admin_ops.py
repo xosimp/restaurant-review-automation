@@ -106,6 +106,15 @@ def _one(conn, sql, args=()):
 def _load_everything():
     """One connection, one pass: every per-restaurant signal the pages need."""
     conn = get_conn()
+    try:
+        import admin_events as _ae
+        _ae._ensure(conn)
+        import ai_utils as _ai
+        conn.execute(_ai._USAGE_TABLE_SQL)
+        _ai._ensure_usage_columns(conn)
+        conn.commit()
+    except Exception:
+        pass
     now = datetime.now()
     day = _iso(now - timedelta(days=1))
     week = _iso(now - timedelta(days=7))
@@ -133,8 +142,10 @@ def _load_everything():
                                MAX(fetched_at) AS last_review_at
                         FROM reviews WHERE deleted_at IS NULL GROUP BY restaurant_id""")
     ai_month = per_rid("""SELECT restaurant_id, COUNT(*) AS calls, ROUND(SUM(cost_usd),4) AS cost,
-                                 SUM(input_tokens)+SUM(output_tokens) AS tokens, MAX(created_at) AS last_at
+                                 SUM(input_tokens)+SUM(output_tokens) AS tokens, MAX(created_at) AS last_at,
+                                 SUM(CASE WHEN COALESCE(status,'ok')='error' THEN 1 ELSE 0 END) AS failed
                           FROM ai_usage WHERE created_at >= ? GROUP BY restaurant_id""", (month,))
+    ai_failed_week = per_rid("SELECT restaurant_id, COUNT(*) AS n, MAX(created_at) AS last_at, MAX(error) AS sample FROM ai_usage WHERE created_at >= ? AND COALESCE(status,'ok')='error' GROUP BY restaurant_id", (week,))
     ai_today = per_rid("SELECT restaurant_id, COUNT(*) AS calls, ROUND(SUM(cost_usd),4) AS cost FROM ai_usage WHERE created_at >= ? GROUP BY restaurant_id", (today,))
     ai_prev = per_rid("SELECT restaurant_id, COUNT(*) AS calls FROM ai_usage WHERE created_at >= ? AND created_at < ? GROUP BY restaurant_id",
                       (_iso(now - timedelta(days=14)), week))
@@ -169,7 +180,7 @@ def _load_everything():
     conn.close()
 
     return dict(now=now, rests=rests, users=by_rid, reviews=reviews, ai_month=ai_month, ai_today=ai_today,
-                ai_prev=ai_prev, ai_week=ai_week, emails=emails, pushes=pushes, tokens=tokens, alerts=alerts,
+                ai_prev=ai_prev, ai_week=ai_week, ai_failed_week=ai_failed_week, emails=emails, pushes=pushes, tokens=tokens, alerts=alerts,
                 webhooks=webhooks, client_data=client_data, ingredients=ingredients, marketing=marketing,
                 sched_posts=sched_posts, schedules=schedules, logins=logins, sessions=sessions, guests=guests,
                 job_failures=job_failures, resolved=resolved)
@@ -344,10 +355,12 @@ def location_record(r, d):
         "ai": {"calls_30d": ai.get("calls") or 0, "cost_30d": float(ai.get("cost") or 0), "tokens_30d": ai.get("tokens") or 0,
                "calls_today": (d["ai_today"].get(rid) or {}).get("calls") or 0,
                "calls_7d": (d["ai_week"].get(rid) or {}).get("calls") or 0,
-               "calls_prev_7d": (d["ai_prev"].get(rid) or {}).get("calls") or 0, "last_at": ai.get("last_at")},
+               "calls_prev_7d": (d["ai_prev"].get(rid) or {}).get("calls") or 0, "last_at": ai.get("last_at"),
+               "failed_30d": ai.get("failed") or 0, "failed_7d": (d["ai_failed_week"].get(rid) or {}).get("n") or 0},
         "email": {"sent_7d": em.get("sent_7d") or 0, "failed_7d": em.get("failed_7d") or 0, "last_failed_at": em.get("last_failed_at"), "last_sent_at": em.get("last_sent_at")},
         "push": {"sent_7d": pu.get("sent_7d") or 0, "failed_7d": pu.get("failed_7d") or 0, "devices": tk.get("devices") or 0, "disabled": tk.get("disabled") or 0},
         "alerts_7d": al.get("fired_7d") or 0,
+        "alert_cap": r.get("alert_max_per_day") or 0,
         "scheduled_posts": {"failed": sp.get("failed") or 0, "pending": sp.get("pending") or 0},
         "guests": (d["guests"].get(rid) or {}).get("n") or 0,
         "sessions": (d["sessions"].get(rid) or {}).get("n") or 0,
@@ -426,6 +439,10 @@ def _issues_for(r, d, owner, integrations, modules, onboarding, last_active):
         add("ai_spike", f"AI usage {wk // max(prev, 1)}× last week's ({wk} calls)", "warning", ai.get("last_at"), "Open AI ops")
     if float(ai.get("cost") or 0) > 25:
         add("ai_cost", f"${float(ai['cost']):.2f} AI spend in 30 days", "warning", ai.get("last_at"), "Open AI ops")
+    af = d["ai_failed_week"].get(rid) or {}
+    if (af.get("n") or 0) >= 3:
+        add("ai_failures", f"{af['n']} AI calls failed this week", "critical" if af["n"] >= 10 else "warning", af.get("last_at"), "Open AI ops",
+            detail=(af.get("sample") or "")[:160])
     return out
 
 
@@ -491,7 +508,7 @@ def overview():
     push_today = _one(conn, "SELECT SUM(CASE WHEN ok=1 THEN 1 ELSE 0 END) AS sent, SUM(CASE WHEN ok=0 THEN 1 ELSE 0 END) AS failed FROM push_deliveries WHERE created_at >= ?", (today,)) or {}
     alerts_today = _one(conn, "SELECT COUNT(*) AS n FROM alert_log WHERE fired_at >= ?", (today,)) or {}
     jobs_failed_24h = _one(conn, "SELECT COUNT(*) AS n, COUNT(DISTINCT job) AS jobs FROM job_failures WHERE created_at >= ?", (day,)) or {}
-    ai_failed_24h = _one(conn, "SELECT COUNT(*) AS n FROM job_failures WHERE created_at >= ? AND (job LIKE '%insight%' OR job LIKE '%draft%' OR job LIKE '%ai%' OR job LIKE '%claude%' OR job LIKE '%perplexity%' OR job LIKE '%calendar%' OR job LIKE '%schedule%')", (day,)) or {}
+    ai_failed_24h = _one(conn, "SELECT COUNT(*) AS n FROM ai_usage WHERE created_at >= ? AND COALESCE(status,'ok')='error'", (day,)) or {}
     conn.close()
     from status_manager import scheduler_heartbeat_age_minutes
     try:
@@ -558,7 +575,9 @@ def client_detail(rid):
     conn = get_conn()
     month = _iso(d["now"] - timedelta(days=30))
     ai_by_action = _rows(conn, "SELECT action, model, COUNT(*) AS calls, ROUND(SUM(cost_usd),4) AS cost, SUM(input_tokens)+SUM(output_tokens) AS tokens, MAX(created_at) AS last_at FROM ai_usage WHERE restaurant_id=? AND created_at >= ? GROUP BY action, model ORDER BY cost DESC", (rid, month))
-    ai_recent = _rows(conn, "SELECT action, model, input_tokens, output_tokens, cost_usd, created_at FROM ai_usage WHERE restaurant_id=? ORDER BY id DESC LIMIT 40", (rid,))
+    ai_recent = _rows(conn, "SELECT action, model, input_tokens, output_tokens, cost_usd, created_at, COALESCE(status,'ok') AS status, error FROM ai_usage WHERE restaurant_id=? ORDER BY id DESC LIMIT 40", (rid,))
+    ai_failed = _rows(conn, "SELECT action, model, error, created_at FROM ai_usage WHERE restaurant_id=? AND COALESCE(status,'ok')='error' ORDER BY id DESC LIMIT 20", (rid,))
+    events = _rows(conn, "SELECT id, source, event_type, amount, summary, created_at FROM admin_events WHERE restaurant_id=? ORDER BY id DESC LIMIT 40", (rid,))
     ai_daily = _rows(conn, "SELECT substr(created_at,1,10) AS day, COUNT(*) AS calls, ROUND(SUM(cost_usd),4) AS cost FROM ai_usage WHERE restaurant_id=? AND created_at >= ? GROUP BY day ORDER BY day", (rid, month))
     emails = _rows(conn, "SELECT email_type, to_email, subject, sent_at, status, error FROM email_log WHERE restaurant_id=? ORDER BY id DESC LIMIT 60", (rid,))
     pushes = _rows(conn, "SELECT alert_type, status, ok, attempts, error, created_at FROM push_deliveries WHERE restaurant_id=? ORDER BY id DESC LIMIT 40", (rid,))
@@ -580,6 +599,7 @@ def client_detail(rid):
               + [{"kind": "push", "label": p["alert_type"], "error": p["error"], "at": p["created_at"]} for p in pushes if not p["ok"]]
               + [{"kind": "post", "label": f"{p['platform']} · {p['topic'] or p['content_type']}", "error": p["error"], "at": p["scheduled_for"]} for p in posts if p["status"] == "failed"]
               + [{"kind": "job", "label": j["job"], "error": j["error"], "at": j["created_at"]} for j in jobs]
+              + [{"kind": "ai", "label": f"{a['action']} · {a['model']}", "error": a["error"], "at": a["created_at"]} for a in ai_failed]
               + [{"kind": "webhook", "label": h["event_type"], "error": h["error"], "at": h["created_at"]} for h in hooks if not h["ok"]])
     errors.sort(key=lambda e: e.get("at") or "", reverse=True)
     return {"ok": True, "client": rec, "siblings": [s for s in siblings if s["id"] != rid],
@@ -587,8 +607,8 @@ def client_detail(rid):
                         "voice_notes": r.voice_notes, "pos_system": r.pos_system, "google_place_id": r.google_place_id,
                         "yelp_business_id": r.yelp_business_id, "labor_target_pct": r.labor_target_pct,
                         "food_cost_target": r.food_cost_target, "digest_day": r.digest_day, "internal_notes": r.internal_notes},
-            "ai": {"by_action": ai_by_action, "recent": ai_recent, "daily": ai_daily},
-            "emails": emails, "pushes": pushes, "devices": devices, "alerts": alerts,
+            "ai": {"by_action": ai_by_action, "recent": ai_recent, "daily": ai_daily, "failed": ai_failed},
+            "events": events, "emails": emails, "pushes": pushes, "devices": devices, "alerts": alerts,
             "activity": [{"type": a["event_type"], "data": a["event_data"], "at": a["created_at"]} for a in acts],
             "logins": logins, "sessions": sessions, "jobs": jobs, "job_runs": runs, "scheduled_posts": posts,
             "webhook_deliveries": hooks, "schedules": schedules, "staff_notes": notes, "errors": errors[:60]}
@@ -628,8 +648,10 @@ def ai_ops(days=30):
     by_client = _rows(conn, "SELECT a.restaurant_id, r.name, r.location_group, COUNT(*) AS calls, ROUND(SUM(a.cost_usd),4) AS cost FROM ai_usage a LEFT JOIN restaurants r ON r.id=a.restaurant_id WHERE a.created_at >= ? GROUP BY a.restaurant_id ORDER BY cost DESC", (since,))
     daily = _rows(conn, "SELECT substr(created_at,1,10) AS day, COUNT(*) AS calls, ROUND(SUM(cost_usd),4) AS cost FROM ai_usage WHERE created_at >= ? GROUP BY day ORDER BY day", (since,))
     by_provider = _rows(conn, "SELECT CASE WHEN model LIKE '%perplexity%' OR model LIKE 'sonar%' OR action LIKE '%visibility%' THEN 'Perplexity' ELSE 'Claude' END AS provider, COUNT(*) AS calls, ROUND(SUM(cost_usd),4) AS cost FROM ai_usage WHERE created_at >= ? GROUP BY provider", (since,))
-    failures = _rows(conn, "SELECT job, COUNT(*) AS n, MAX(created_at) AS last_at, MAX(error) AS sample FROM job_failures WHERE created_at >= ? AND (job LIKE '%insight%' OR job LIKE '%draft%' OR job LIKE '%ai%' OR job LIKE '%claude%' OR job LIKE '%perplexity%' OR job LIKE '%calendar%' OR job LIKE '%schedule%' OR job LIKE '%content%' OR job LIKE '%campaign%' OR job LIKE '%visibility%') GROUP BY job ORDER BY n DESC", (since,))
-    recent = _rows(conn, "SELECT a.id, a.restaurant_id, r.name, a.action, a.model, a.input_tokens, a.output_tokens, a.cost_usd, a.created_at FROM ai_usage a LEFT JOIN restaurants r ON r.id=a.restaurant_id ORDER BY a.id DESC LIMIT 80")
+    failures = _rows(conn, "SELECT action AS job, model, COUNT(*) AS n, MAX(created_at) AS last_at, MAX(error) AS sample FROM ai_usage WHERE created_at >= ? AND COALESCE(status,'ok')='error' GROUP BY action, model ORDER BY n DESC", (since,))
+    failed_total = _one(conn, "SELECT COUNT(*) AS n, SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) AS n_24h FROM ai_usage WHERE created_at >= ? AND COALESCE(status,'ok')='error'", (_iso(now - timedelta(days=1)), since)) or {}
+    recent = _rows(conn, "SELECT a.id, a.restaurant_id, r.name, a.action, a.model, a.input_tokens, a.output_tokens, a.cost_usd, a.created_at, COALESCE(a.status,'ok') AS status, a.error FROM ai_usage a LEFT JOIN restaurants r ON r.id=a.restaurant_id ORDER BY a.id DESC LIMIT 80")
+    recent_failed = _rows(conn, "SELECT a.id, a.restaurant_id, r.name, a.action, a.model, a.created_at, a.error FROM ai_usage a LEFT JOIN restaurants r ON r.id=a.restaurant_id WHERE COALESCE(a.status,'ok')='error' ORDER BY a.id DESC LIMIT 40")
     # Anomalies: a client whose last 7 days is >4x its previous 7, or any
     # action that ran >200 times in a day for one restaurant (a loop).
     week = _iso(now - timedelta(days=7)); prev = _iso(now - timedelta(days=14))
@@ -642,7 +664,8 @@ def ai_ops(days=30):
                  for rid, n in wk.items() if n >= 40 and pv.get(rid, 0) and n > 4 * pv.get(rid, 0)]
     anomalies += [{"kind": "loop", "restaurant_id": l["restaurant_id"], "restaurant": l["name"], "detail": f"{l['action']} ran {l['n']}× on {l['day']}"} for l in loops]
     return {"ok": True, "days": days, "totals": {**totals, "today": t_today, "month": t_month}, "by_action": by_action,
-            "by_client": by_client, "daily": daily, "by_provider": by_provider, "failures": failures, "recent": recent, "anomalies": anomalies}
+            "by_client": by_client, "daily": daily, "by_provider": by_provider, "failures": failures, "recent": recent, "anomalies": anomalies,
+            "failed": {"n": failed_total.get("n") or 0, "n_24h": failed_total.get("n_24h") or 0}, "recent_failed": recent_failed}
 
 
 def emails(limit=200):
@@ -665,11 +688,12 @@ def notifications(limit=200):
     devices = _rows(conn, "SELECT d.id, d.restaurant_id, r.name AS restaurant, u.username, d.environment, d.created_at, d.last_success_at, d.consecutive_failures, d.disabled_reason FROM device_tokens d LEFT JOIN restaurants r ON r.id=d.restaurant_id LEFT JOIN users u ON u.id=d.user_id ORDER BY d.id DESC")
     alerts = _rows(conn, "SELECT a.id, a.restaurant_id, r.name AS restaurant, a.alert_type, a.review_id, a.fired_at FROM alert_log a LEFT JOIN restaurants r ON r.id=a.restaurant_id ORDER BY a.id DESC LIMIT ?", (limit,))
     by_type = _rows(conn, "SELECT alert_type, COUNT(*) AS n FROM alert_log WHERE fired_at >= ? GROUP BY alert_type ORDER BY n DESC", (week,))
-    storms = _rows(conn, "SELECT a.restaurant_id, r.name AS restaurant, COUNT(*) AS n FROM alert_log a LEFT JOIN restaurants r ON r.id=a.restaurant_id WHERE a.fired_at >= ? GROUP BY a.restaurant_id HAVING n >= 10 ORDER BY n DESC", (today,))
+    storms = _rows(conn, "SELECT a.restaurant_id, r.name AS restaurant, COALESCE(r.alert_max_per_day,0) AS cap, COUNT(*) AS n FROM alert_log a LEFT JOIN restaurants r ON r.id=a.restaurant_id WHERE a.fired_at >= ? GROUP BY a.restaurant_id HAVING n >= 10 ORDER BY n DESC", (today,))
+    caps = _rows(conn, "SELECT id AS restaurant_id, name AS restaurant, alert_max_per_day AS cap FROM restaurants WHERE COALESCE(alert_max_per_day,0) > 0 ORDER BY name")
     scheduled = _rows(conn, "SELECT p.id, p.restaurant_id, r.name AS restaurant, p.platform, p.content_type, p.topic, p.scheduled_for, p.status, p.error, p.attempts FROM marketing_scheduled_posts p LEFT JOIN restaurants r ON r.id=p.restaurant_id ORDER BY p.scheduled_for DESC LIMIT 60")
     today_push = _one(conn, "SELECT SUM(CASE WHEN ok=1 THEN 1 ELSE 0 END) AS sent, SUM(CASE WHEN ok=0 THEN 1 ELSE 0 END) AS failed FROM push_deliveries WHERE created_at >= ?", (today,)) or {}
     conn.close()
-    return {"ok": True, "pushes": pushes, "devices": devices, "alerts": alerts, "by_type": by_type, "storms": storms, "scheduled_posts": scheduled, "today_push": today_push}
+    return {"ok": True, "pushes": pushes, "devices": devices, "alerts": alerts, "by_type": by_type, "storms": storms, "caps": caps, "scheduled_posts": scheduled, "today_push": today_push}
 
 
 def billing():
@@ -702,8 +726,89 @@ def billing():
                      "modules": b["modules"], "monthly": b["monthly"], "contract_status": b["contract_status"], "envelope_id": b["envelope_id"],
                      "created_at": r["created_at"], "is_demo": r["is_demo"], "is_admin_home": r["is_admin_home"], "live": live.get(r["id"])})
     rows.sort(key=lambda x: ({"past_due": 0, "churned": 1, "canceled": 1, "trial": 2, "active": 3, "internal": 4, "paused": 1}.get(x["status"], 2), x["restaurant"].lower()))
-    return {"ok": True, "rows": rows, "stripe_live": bool(key), "stripe_error": live.get("_error"),
+    try:
+        import admin_events
+        events = admin_events.recent(limit=120)
+    except Exception:
+        events = []
+    return {"ok": True, "rows": rows, "events": events, "stripe_live": bool(key), "stripe_error": live.get("_error"),
             "mrr": sum(x["monthly"] for x in rows if not x["is_demo"] and not x.get("is_admin_home"))}
+
+
+# The scheduler's jobs, by the name ops.run_job records them under, so the
+# console can show the same rows the scheduler writes and run one on demand.
+RUNNABLE_JOBS = {
+    "review_fetch":            {"cadence": "8am / 12pm / 4pm / 8pm CT", "what": "Fetch new reviews and draft replies", "target": ("scheduler", "run_daily_fetch")},
+    "weekly_digests":          {"cadence": "9am on each client's digest day", "what": "Email weekly digests", "target": ("scheduler", "run_weekly_digests"), "sends": True},
+    "pos_sync":                {"cadence": "3am nightly", "what": "Pull yesterday's Toast sales and labor", "target": ("scheduler", "run_toast_sync")},
+    "inventory_depletion":     {"cadence": "5am nightly", "what": "Deplete inventory from POS sales", "target": ("scheduler", "run_daily_depletion_sync")},
+    "marketing_metrics_sync":  {"cadence": "4am nightly", "what": "Refresh Instagram / Facebook post metrics", "target": ("scheduler", "run_marketing_metrics_sync")},
+    "refresh_tokens":          {"cadence": "7am daily", "what": "Renew expiring OAuth tokens", "target": ("scheduler", "refresh_expiring_tokens")},
+    "onboarding_emails":       {"cadence": "10am daily", "what": "Send day-2 / day-7 / day-30 onboarding emails", "target": ("scheduler", "run_onboarding_sequence"), "sends": True},
+    "stale_inventory":         {"cadence": "Mon 10am", "what": "Nudge clients whose counts are stale", "target": ("scheduler", "check_stale_inventory"), "sends": True},
+    "inactive_clients":        {"cadence": "Mon 11am", "what": "Flag clients who haven't signed in", "target": ("scheduler", "check_inactive_clients"), "sends": True},
+    "toast_optin_invites":     {"cadence": "daily, for yesterday", "what": "Text opt-in invites to yesterday's Toast guests", "target": ("guest_marketing", "run_toast_optin_invites"), "sends": True},
+    "review_request_followups":{"cadence": "hourly", "what": "Text post-visit review requests", "target": ("guest_marketing", "run_review_request_followups"), "sends": True},
+    "ops_failure_digest":      {"cadence": "8am daily", "what": "Email Will the failure digest", "target": ("ops", "send_failure_digest"), "sends": True},
+    "backup_db":               {"cadence": "2am nightly", "what": "Back the SQLite database up", "target": ("scheduler", "backup_db")},
+}
+
+
+def run_job_now(name, actor):
+    """Run one scheduled job right now, on a background thread, recorded in
+    job_runs exactly like a scheduled run — context says who asked."""
+    import importlib, threading
+    spec = RUNNABLE_JOBS.get(name)
+    if not spec:
+        return {"ok": False, "error": "Unknown job"}
+    conn = get_conn()
+    running = _one(conn, "SELECT id, started_at FROM job_runs WHERE job=? AND finished_at IS NULL AND started_at >= ? ORDER BY id DESC LIMIT 1",
+                   (name, _iso(datetime.now() - timedelta(minutes=30))))
+    conn.close()
+    if running:
+        return {"ok": False, "error": f"{name} is already running (started {running['started_at']})"}
+    mod, fn_name = spec["target"]
+    try:
+        fn = getattr(importlib.import_module(mod), fn_name)
+    except Exception as e:
+        return {"ok": False, "error": f"Could not load {mod}.{fn_name}: {e}"}
+    import ops
+    if name == "toast_optin_invites":
+        from datetime import date as _d
+        target = lambda: fn(business_date=_d.today() - timedelta(days=1))
+    else:
+        target = fn
+    ctx = f"manual by {actor}"
+
+    def _go():
+        try:
+            ops.run_job(name, target, context=ctx)
+        except Exception:
+            pass  # run_job already recorded the failure
+    threading.Thread(target=_go, name=f"admin-run-{name}", daemon=True).start()
+    return {"ok": True, "job": name, "context": ctx}
+
+
+def set_alert_cap(rid, max_per_day, actor):
+    """The storm brake: at most N alerts a day for one restaurant, 0 = off.
+    Enforced in notify._check_dnd; this only sets the number."""
+    try:
+        n = int(max_per_day)
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "max_per_day must be a number"}
+    if n < 0 or n > 500:
+        return {"ok": False, "error": "max_per_day must be between 0 and 500"}
+    from models import update_restaurant
+    if not get_restaurant(rid):
+        return {"ok": False, "error": "Not found"}
+    update_restaurant(rid, {"alert_max_per_day": n})
+    try:
+        import admin_events
+        admin_events.record("admin", "alert_cap.set", restaurant_id=rid, amount=n,
+                            summary=f"Alert cap set to {n or 'off'} by {actor}")
+    except Exception:
+        pass
+    return {"ok": True, "restaurant_id": rid, "max_per_day": n}
 
 
 def jobs():
@@ -735,13 +840,8 @@ def jobs():
             inflight.append({"kind": "schedule", "id": jid, "status": j.get("status") if isinstance(j, dict) else str(j)[:40]})
     except Exception:
         pass
-    schedule = [
-        {"job": "review_fetch", "cadence": "every 4h (8am/12pm/4pm/8pm CT)"}, {"job": "weekly_digests", "cadence": "9am on each client's digest day"},
-        {"job": "toast_sync", "cadence": "nightly"}, {"job": "depletion_sync", "cadence": "nightly"}, {"job": "marketing_metrics_sync", "cadence": "nightly"},
-        {"job": "onboarding_sequence", "cadence": "daily"}, {"job": "stale_inventory_check", "cadence": "daily"}, {"job": "inactive_client_check", "cadence": "daily"},
-        {"job": "toast_optin_invites", "cadence": "daily"}, {"job": "review_request_followups", "cadence": "hourly"},
-        {"job": "scheduled_posts", "cadence": f"every {os.getenv('SCHEDULER_TICK_SECONDS', '300')}s"}, {"job": "health_checks", "cadence": "every tick"},
-    ]
+    schedule = [{"job": k, "cadence": v["cadence"], "runnable": True, "sends": v.get("sends", False), "what": v["what"]} for k, v in RUNNABLE_JOBS.items()]
+    schedule.append({"job": "scheduled_posts", "cadence": f"every {os.getenv('SCHEDULER_TICK_SECONDS', '300')}s", "runnable": False, "sends": True, "what": "Publishes due marketing posts"})
     return {"ok": True, "heartbeat_minutes": hb, "failures": failures, "grouped": grouped, "runs": runs, "last_ok": last_ok,
             "stuck": stuck, "scheduled_posts": posts, "inflight": inflight, "schedule": schedule}
 
@@ -804,6 +904,10 @@ def activity(limit=60, d=None):
         ev.append({"at": p["created_at"], "restaurant_id": p["restaurant_id"], "restaurant": p["name"], "kind": "push", "label": f"Push failed · {p['alert_type']}", "tone": "bad", "detail": p["error"]})
     for j in _rows(conn, "SELECT job, error, created_at FROM job_failures WHERE created_at >= ? ORDER BY id DESC LIMIT 40", (since,)):
         ev.append({"at": j["created_at"], "restaurant_id": None, "restaurant": "Platform", "kind": "job", "label": f"Job failed · {j['job']}", "tone": "bad", "detail": (j["error"] or "")[:140]})
+    for e in _rows(conn, "SELECT e.restaurant_id, r.name, e.source, e.event_type, e.summary, e.created_at FROM admin_events e LEFT JOIN restaurants r ON r.id=e.restaurant_id WHERE e.created_at >= ? ORDER BY e.id DESC LIMIT 40", (since,)):
+        bad = any(x in e["event_type"] for x in ("failed", "deleted", "canceled", "past_due"))
+        ev.append({"at": e["created_at"], "restaurant_id": e["restaurant_id"], "restaurant": e["name"] or "Unmatched customer", "kind": e["source"],
+                   "label": f"{e['source'].capitalize()} · {e['summary'] or e['event_type']}", "tone": "bad" if bad else ("good" if e["event_type"] in ("invoice.paid", "contract.signed") else "neutral")})
     for a in _rows(conn, "SELECT a.restaurant_id, r.name, a.alert_type, a.fired_at FROM alert_log a LEFT JOIN restaurants r ON r.id=a.restaurant_id WHERE a.fired_at >= ? AND a.alert_type IN ('1star','health','labor_over') ORDER BY a.id DESC LIMIT 30", (since,)):
         ev.append({"at": a["fired_at"], "restaurant_id": a["restaurant_id"], "restaurant": a["name"], "kind": "alert", "label": f"Alert fired · {a['alert_type']}", "tone": "warn"})
     conn.close()

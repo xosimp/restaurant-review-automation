@@ -105,7 +105,7 @@ def _record_run_end(run_id, started, ok, error=None):
         pass
 
 
-def run_job(name, fn, *args, **kwargs):
+def run_job(name, fn, *args, context="", **kwargs):
     """Run a scheduled job with failure capture. Returns the job's result,
     or None if it raised. Every run — not only the failures — lands in
     job_runs (start, end, duration, ok), which is what the admin console's
@@ -113,7 +113,7 @@ def run_job(name, fn, *args, **kwargs):
     the scheduler's heartbeat."""
     import time as _time
     started = _time.time()
-    run_id = _record_run_start(name)
+    run_id = _record_run_start(name, context)
     try:
         result = fn(*args, **kwargs)
         _record_run_end(run_id, started, True)

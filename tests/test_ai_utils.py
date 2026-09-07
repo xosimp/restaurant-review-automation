@@ -56,14 +56,21 @@ def test_retry_gives_up_after_budget(monkeypatch):
     import ops
     captured = []
     monkeypatch.setattr(ops, "capture", lambda e, **kw: captured.append(kw))
+    logged = []
+    monkeypatch.setattr("ai_utils.log_ai_usage", lambda *a, **k: logged.append((a, k)))
     client = FakeClient(failures=99, exc=_conn_error())
     with pytest.raises(anthropic.APIConnectionError):
-        create_with_retry(client, retries=2, model="m", max_tokens=10)
+        create_with_retry(client, retries=2, model="m", max_tokens=10, restaurant_id=5, action="draft")
     assert client.calls == 3  # 1 try + 2 retries, no more
     assert captured and captured[0]["job"] == "ai_call"  # exhaustion was reported
+    # ...and the failure sits in ai_usage next to the successes, with no cost
+    assert len(logged) == 1 and logged[0][0][:5] == (5, "draft", "m", 0, 0)
+    assert logged[0][1]["status"] == "error" and "APIConnectionError" in logged[0][1]["error"]
 
 
-def test_non_retryable_error_raises_immediately():
+def test_non_retryable_error_raises_immediately(monkeypatch):
+    logged = []
+    monkeypatch.setattr("ai_utils.log_ai_usage", lambda *a, **k: logged.append((a, k)))
     req = httpx.Request("POST", "https://api.anthropic.com")
     resp = httpx.Response(400, request=req)
     exc = anthropic.BadRequestError("bad", response=resp, body=None)
@@ -71,6 +78,7 @@ def test_non_retryable_error_raises_immediately():
     with pytest.raises(anthropic.BadRequestError):
         create_with_retry(client, retries=2, model="m", max_tokens=10)
     assert client.calls == 1  # a caller mistake is never retried
+    assert len(logged) == 1 and logged[0][1]["status"] == "error"  # but it is still recorded
 
 
 def test_rate_limiter_sliding_window():

@@ -140,6 +140,9 @@ def health():
         scheduler_state = "unknown"
 
     payload = {"status": "ok", "db": "ok", "scheduler": scheduler_state}
+    sha = os.getenv("RAILWAY_GIT_COMMIT_SHA") or os.getenv("GIT_COMMIT") or ""
+    if sha:
+        payload["build"] = sha[:12]
     if age is not None:
         payload["scheduler_heartbeat_age_minutes"] = round(age, 1)
     return jsonify(**payload), 200

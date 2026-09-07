@@ -2078,6 +2078,31 @@ def admin_api_jobs(current_user):
     return jsonify(**admin_ops.jobs())
 
 
+@admin_bp.route("/admin/api/jobs/<job>/run", methods=["POST"])
+@admin_required
+def admin_api_job_run(job, current_user):
+    import admin_ops
+    out = admin_ops.run_job_now(job, current_user.get("username") or "admin")
+    return jsonify(**out), (200 if out.get("ok") else (404 if out.get("error") == "Unknown job" else 409))
+
+
+@admin_bp.route("/admin/api/client/<int:restaurant_id>/alert-cap", methods=["POST"])
+@admin_required
+def admin_api_alert_cap(restaurant_id, current_user):
+    import admin_ops
+    data = request.get_json(silent=True) or {}
+    out = admin_ops.set_alert_cap(restaurant_id, data.get("max_per_day", 0), current_user.get("username") or "admin")
+    return jsonify(**out), (200 if out.get("ok") else (404 if out.get("error") == "Not found" else 400))
+
+
+@admin_bp.route("/admin/api/events")
+@admin_required
+def admin_api_events(current_user):
+    import admin_events
+    rid = request.args.get("restaurant_id", type=int)
+    return jsonify(ok=True, events=admin_events.recent(limit=min(request.args.get("limit", 100, type=int), 500), restaurant_id=rid))
+
+
 @admin_bp.route("/admin/api/issues")
 @admin_required
 def admin_api_issues(current_user):

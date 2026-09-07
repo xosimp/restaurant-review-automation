@@ -44,6 +44,14 @@ def stripe_webhook():
         print(f"Webhook error: {e}")
         return jsonify(error=str(e)), 400
 
+    # Every verified event is kept — the admin console's Billing page reads
+    # this as payment history (see admin_events.py).
+    try:
+        import admin_events as _ae
+        _ae.record_stripe(event)
+    except Exception:
+        pass
+
     def send_alert(subject, body):
         """Send alert email to Will."""
         if not _resend_key():
@@ -313,6 +321,12 @@ def docusign_webhook():
             conn.commit()
             conn.close()
             print(f"Contract signed: {envelope_id}")
+            try:
+                import admin_events as _ae
+                _ae.record("docusign", "contract.signed", restaurant_id=(row["id"] if row else None),
+                           email=(row["owner_email"] if row else None), summary="Contract signed", envelope_id=envelope_id)
+            except Exception:
+                pass
 
             if not row:
                 print(f"WARNING: No restaurant found for envelope {envelope_id} - emails not sent")
