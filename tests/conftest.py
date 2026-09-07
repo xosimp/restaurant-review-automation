@@ -51,6 +51,26 @@ def _no_real_email_or_sms(monkeypatch):
         return wrapped
     monkeypatch.setattr(requests, "post", guard(real_post))
     monkeypatch.setattr(requests, "request", guard(real_request))
+    # requests.Session.request is what the Resend SDK (and any Session user)
+    # goes through — the module-level functions above never see it.
+    real_session_request = requests.Session.request
+
+    def session_guard(self, method, url, *a, **k):
+        if any(b in str(url) for b in blocked):
+            raise RuntimeError("test tried to reach %s — stub it" % url)
+        return real_session_request(self, method, url, *a, **k)
+    monkeypatch.setattr(requests.Session, "request", session_guard)
+    # The Resend SDK's own entry points, in case a call site bypasses
+    # emails.deliver (admin_routes and webhook_routes still use the SDK).
+    try:
+        import resend
+
+        def sdk_blocked(*a, **k):
+            raise RuntimeError("test tried to send through the Resend SDK — stub it")
+        monkeypatch.setattr(resend.Emails, "send", staticmethod(sdk_blocked), raising=False)
+        monkeypatch.setattr(resend, "api_key", "", raising=False)
+    except Exception:
+        pass
     yield
 
 

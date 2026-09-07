@@ -214,6 +214,18 @@ def deliver(payload: dict = None, restaurant_id=None, email_type=None, log_send:
         _record(restaurant_id, email_type, to_email, subject, result, log_send)
         return result
 
+    # Flood guard for code-style transactional mail. A retry loop, a stuck
+    # client, or a script hammering login could otherwise mail one address
+    # dozens of times an hour and burn the account's daily quota — which
+    # is exactly what the test suite did once. Marketing and digests are
+    # naturally bounded; only the types that are triggered per request
+    # are capped here, per recipient, on a rolling window.
+    if not _flood_guard_ok(email_type, to_email):
+        result = SendResult(False, error="flood guard: too many %s emails to %s in the last hour" % (email_type, to_email), attempts=0)
+        _record(restaurant_id, email_type, to_email, subject, result, log_send)
+        log.warning(result.error)
+        return result
+
     # Marketing mail carries a working opt-out; CAN-SPAM requires one and
     # until now none of these four had any. Applied centrally so a new
     # marketing template can't be added without it.
@@ -322,6 +334,53 @@ def _add_unsubscribe(payload: dict, restaurant_id: int) -> dict:
         "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
     }
     return out
+
+
+# email_type -> (max sends, window seconds) per recipient. Anything not listed
+# is uncapped. Windows are rolling and read from email_log, so the guard
+# also holds across worker restarts.
+FLOOD_LIMITS = {
+    "send_2fa_code": (8, 3600),
+    "send_login_notification": (8, 3600),
+    "send_password_reset_email": (6, 3600),
+    "send_password_reset_code_email": (6, 3600),
+    "send_recovery_email_code": (6, 3600),
+    "send_email_changed_email": (6, 3600),
+    "send_password_changed_email": (6, 3600),
+    "send_team_invite_email": (10, 3600),
+    "digest_preview": (6, 3600),
+}
+
+
+def _flood_guard_ok(email_type, to_email):
+    """True when this send is under the per-recipient cap for its type.
+    Fails open: a logging-table hiccup must never block a real 2FA code."""
+    lim = FLOOD_LIMITS.get(email_type or "")
+    if not lim or not to_email:
+        return True
+    max_n, window = lim
+    try:
+        from models import get_conn
+        # email_log.sent_at is written in America/Chicago local time (see
+        # models.log_email), so the window start must be computed the same way.
+        from datetime import datetime, timedelta
+        try:
+            import zoneinfo
+            now_local = datetime.now(zoneinfo.ZoneInfo("America/Chicago")).replace(tzinfo=None)
+        except Exception:
+            now_local = datetime.now()
+        since = (now_local - timedelta(seconds=window)).strftime("%Y-%m-%d %H:%M:%S")
+        conn = get_conn()
+        try:
+            n = conn.execute(
+                "SELECT COUNT(*) FROM email_log WHERE email_type=? AND lower(to_email)=lower(?) "
+                "AND status='sent' AND sent_at >= ?",
+                (email_type, to_email, since)).fetchone()[0]
+        finally:
+            conn.close()
+        return n < max_n
+    except Exception:
+        return True
 
 
 def _record(restaurant_id, email_type, to_email, subject, result: SendResult, log_send: bool):
