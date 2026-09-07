@@ -55,6 +55,9 @@ def test_new_account_gets_welcome_and_checklist_not_fake_numbers(db_path):
     assert st == 200 and p["ok"]
     assert p["empty_state"] and p["empty_state"]["kind"] == "new_account"
     assert p["setup_checklist"] and not all(s["done"] for s in p["setup_checklist"])
+    # the checklist is in the payload (iOS/parity) but Home no longer renders it
+    html = open("templates/dashboard.html").read()
+    assert "renderChecklist(d);" not in html
     # labor + food cost fall back to sample files — shown as sample, no alerts from them
     snap = {s["key"]: s for s in p["snapshot"]}
     assert snap["labor"]["sample"] is True and snap["labor"]["value"] == "—"
