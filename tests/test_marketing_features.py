@@ -10,6 +10,22 @@ from datetime import datetime, timedelta
 
 import pytest
 
+from time_utils import restaurant_now
+
+
+def _now() -> datetime:
+    """Every restaurant this file creates is timezone="America/Chicago" and
+    marketing_publish.py's due-ness check (_local_now) compares against that
+    restaurant's own local time via ZoneInfo — never the test runner's system
+    clock. Plain _now() happened to agree with that on a developer
+    Mac already set to America/Chicago, which is exactly how this masked
+    itself for months: every one of these tests passed locally and failed on
+    GitHub's UTC runner, since "5 hours from now" meant two different moments
+    depending on which timezone _now() actually read. Root-caused
+    Sep 7 2026 chasing the same CI-failure-email investigation that fixed
+    value_delivered.py and notify.py."""
+    return restaurant_now("America/Chicago", naive=True)
+
 import guest_email
 import guest_marketing
 import marketing_drafts
@@ -100,7 +116,7 @@ def test_one_restaurant_cannot_address_anothers_photo_by_id(db_path, rid):
 # ── Scheduling ─────────────────────────────────────────────────────────────
 
 def _in_hours(h):
-    return (datetime.now() + timedelta(hours=h)).strftime("%Y-%m-%dT%H:%M:%S")
+    return (_now() + timedelta(hours=h)).strftime("%Y-%m-%dT%H:%M:%S")
 
 
 def test_a_post_can_be_queued_for_later(rid, db_path):
@@ -153,7 +169,7 @@ def test_a_post_that_missed_its_slot_by_hours_is_failed_not_published(rid, db_pa
     _connect_all(db_path, rid)
     created = marketing_publish.schedule_post(rid, "facebook", "Brunch", _in_hours(1), db_path=db_path)
     conn = get_conn(db_path)
-    stale = (datetime.now() - timedelta(hours=marketing_publish.LATE_TOLERANCE_HOURS + 2))
+    stale = (_now() - timedelta(hours=marketing_publish.LATE_TOLERANCE_HOURS + 2))
     conn.execute("UPDATE marketing_scheduled_posts SET scheduled_for=? WHERE id=?",
                  (stale.strftime("%Y-%m-%dT%H:%M:%S"), created["id"]))
     conn.commit(); conn.close()
@@ -312,7 +328,7 @@ def test_an_unknown_token_resolves_to_nothing(db_path):
 # ── Segments ───────────────────────────────────────────────────────────────
 
 def _guest(db_path, rid, phone, *, consent=1, unsubscribed=0, visits=0, days_ago=None):
-    now = datetime.now()
+    now = _now()
     last_visit = (now - timedelta(days=days_ago)).strftime("%Y-%m-%dT%H:%M:%S") if days_ago is not None else None
     conn = get_conn(db_path)
     conn.execute(
@@ -364,7 +380,7 @@ def test_an_unknown_segment_falls_back_to_everyone_rather_than_nobody(rid, db_pa
 @pytest.fixture
 def _inside_hours(monkeypatch):
     monkeypatch.setattr(guest_marketing, "_sms_local_now",
-                        lambda r: datetime.now().replace(hour=12, minute=0))
+                        lambda r: _now().replace(hour=12, minute=0))
 
 
 def test_nobody_gets_two_campaigns_inside_three_days(rid, db_path, monkeypatch, _inside_hours):
@@ -461,7 +477,7 @@ def test_a_newsletter_with_no_subscribers_says_so_instead_of_sending_nothing(rid
 # ── Attribution ────────────────────────────────────────────────────────────
 
 def _post(db_path, rid, days_ago, topic="Post"):
-    at = (datetime.now() - timedelta(days=days_ago)).strftime("%Y-%m-%d %H:%M:%S")
+    at = (_now() - timedelta(days=days_ago)).strftime("%Y-%m-%d %H:%M:%S")
     conn = get_conn(db_path)
     cur = conn.execute(
         "INSERT INTO marketing_content_log (restaurant_id, content_type, topic, post_id, "
@@ -480,7 +496,7 @@ def test_attribution_says_nothing_when_there_is_no_pos_data(rid, db_path, monkey
 
 
 def test_attribution_says_nothing_without_enough_comparable_history(rid, db_path, monkeypatch):
-    today = datetime.now()
+    today = _now()
     monkeypatch.setattr(marketing_signals, "daily_sales",
                         lambda r: {today.strftime("%Y-%m-%d"): 5000.0})
     post_id = _post(db_path, rid, days_ago=0)
@@ -489,7 +505,7 @@ def test_attribution_says_nothing_without_enough_comparable_history(rid, db_path
 
 def test_attribution_compares_a_post_against_the_same_weekday_before_it(rid, db_path, monkeypatch):
     """Comparing a Friday post to a Tuesday would just measure the weekend."""
-    posted = datetime.now() - timedelta(days=1)
+    posted = _now() - timedelta(days=1)
     sales = {}
     for week in range(1, marketing_signals.BASELINE_WEEKS + 1):
         for i in range(2):
@@ -514,7 +530,7 @@ def test_performance_is_reported_for_a_window_and_against_the_one_before(rid, db
     a metric."""
     conn = get_conn(db_path)
     for days_ago, reach, likes in ((3, 1000, 100), (40, 500, 25)):
-        at = (datetime.now() - timedelta(days=days_ago)).strftime("%Y-%m-%d %H:%M:%S")
+        at = (_now() - timedelta(days=days_ago)).strftime("%Y-%m-%d %H:%M:%S")
         conn.execute(
             "INSERT INTO marketing_content_log (restaurant_id, topic, post_id, post_platform, "
             "reach, likes, posted_at, created_at) VALUES (?,?,?,?,?,?,?,?)",
@@ -624,7 +640,7 @@ def test_a_post_that_missed_its_slot_also_tells_the_owner(rid, db_path, monkeypa
     _connect_all(db_path, rid)
     created = marketing_publish.schedule_post(rid, "facebook", "Brunch", _in_hours(1), db_path=db_path)
     conn = get_conn(db_path)
-    stale = datetime.now() - timedelta(hours=marketing_publish.LATE_TOLERANCE_HOURS + 2)
+    stale = _now() - timedelta(hours=marketing_publish.LATE_TOLERANCE_HOURS + 2)
     conn.execute("UPDATE marketing_scheduled_posts SET scheduled_for=? WHERE id=?",
                  (stale.strftime("%Y-%m-%dT%H:%M:%S"), created["id"]))
     conn.commit(); conn.close()
