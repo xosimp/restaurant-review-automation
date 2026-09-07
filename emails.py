@@ -777,20 +777,19 @@ def send_payment_email(to_email, restaurant_name, tier=None,
     if module_count == 0:
         return  # Trial — no payment needed
 
-    setup_price    = f"${module_count * 500:,}"
-    retainer_price = f"${module_count * 300:,}/mo"
-    label = (
-        "1 Module" if module_count == 1 else
-        "Full System — 4 Modules" if module_count == 4 else
-        f"{module_count} Modules"
-    )
+    from pricing import plan_for, annual_saving, money as _pm
+    plan = plan_for(module_count)
+    setup_price    = _pm(plan["setup"])
+    retainer_price = f"{_pm(plan['monthly'])}/mo"
+    label = plan["label"]
+    saving = annual_saving(module_count)
 
     # Generate dynamic Stripe checkout links — both monthly and annual
     checkout_monthly = create_stripe_checkout(module_count, to_email, restaurant_name, "monthly")
     checkout_annual  = create_stripe_checkout(module_count, to_email, restaurant_name, "annual")
 
-    annual_price    = f"${module_count * 3000:,}/yr"
-    annual_monthly  = f"${module_count * 250:,}/mo"
+    annual_price    = f"{_pm(plan['annual'])}/yr"
+    annual_monthly  = f"{_pm(round(plan['annual'] / 12.0))}/mo"
 
     try:
         if checkout_monthly and checkout_annual:
@@ -806,7 +805,7 @@ def send_payment_email(to_email, restaurant_name, tier=None,
     <div style="position:absolute;top:-10px;left:50%;transform:translateX(-50%);background:#2d6a4f;color:white;font-size:10px;font-weight:600;padding:3px 10px;border-radius:20px;white-space:nowrap">2 MONTHS FREE</div>
     <div style="font-size:10px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:#7a736a;margin-bottom:4px">Annual</div>
     <div style="font-size:20px;font-weight:600;color:#0e0c0a;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;margin-bottom:2px">{annual_price}</div>
-    <div style="font-size:11px;color:#2d6a4f;font-weight:500;margin-bottom:12px">{annual_monthly}/mo — save ${module_count*600:,}</div>
+    <div style="font-size:11px;color:#2d6a4f;font-weight:500;margin-bottom:12px">{annual_monthly} equivalent — save ${saving:,}</div>
     <a href="{checkout_annual}" style="display:block;text-align:center;background:#2d6a4f;color:white;padding:10px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600">Choose annual →</a>
   </div>
 </div>"""
@@ -833,7 +832,7 @@ def send_payment_email(to_email, restaurant_name, tier=None,
   </p>
   <p style="font-size:14px;color:#3a3530;line-height:1.6;margin-bottom:20px">
     Pick your plan below — {setup_price} setup is the same either way.
-    Monthly at {retainer_price}, or save ${module_count*600:,} by going annual.
+    Monthly at {retainer_price}, or save ${saving:,} by going annual.
     Setup is billed once. The retainer starts today and you can cancel with 30 days' notice.
   </p>
   <div style="background:#f7f4ef;border-radius:8px;padding:20px 22px;margin-bottom:24px;border-left:3px solid #c84b2f">
@@ -1106,9 +1105,10 @@ def create_stripe_checkout(module_count: int, owner_email: str,
     """
     Dynamically create a Stripe checkout session for any module count.
     Returns the checkout URL or None on failure.
-    Pricing:
-      Monthly: $500/module setup (one-time) + $300/mo/module retainer (30-day trial).
-      Annual:  $500/module setup (one-time) + $3,000/yr/module retainer (30-day trial).
+    Pricing comes from pricing.py (mirrors pricing.html): Starter $750 setup +
+    $349/mo or $3,490/yr per module; Full System $3,000 setup + $1,199/mo or
+    $11,990/yr. Prices are created fresh on every checkout, so changing
+    pricing.py is the whole update — nothing to edit in the Stripe dashboard.
     """
     import stripe as _stripe
     stripe_key = os.getenv("STRIPE_SECRET_KEY", "")
@@ -1119,14 +1119,14 @@ def create_stripe_checkout(module_count: int, owner_email: str,
         return None
 
     _stripe.api_key = stripe_key
-    setup_amount = module_count * 500 * 100   # in cents (same for both plans)
-    # Annual = $3,000/module/yr (equivalent to $250/mo — 2 months free)
-    # Monthly = $300/module/mo
+    from pricing import plan_for
+    plan = plan_for(module_count)
+    setup_amount = plan["setup"] * 100   # cents, same for both billing periods
     if billing_period == "annual":
-        retainer_amount   = module_count * 3000 * 100  # annual in cents
+        retainer_amount   = plan["annual"] * 100
         retainer_interval = "year"
     else:
-        retainer_amount   = module_count * 300 * 100   # monthly in cents
+        retainer_amount   = plan["monthly"] * 100
         retainer_interval = "month"
 
     try:

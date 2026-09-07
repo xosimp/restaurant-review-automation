@@ -89,12 +89,13 @@ MODULES = {
                    "does": "Pulls POS, review and marketing data into one dashboard so fewer tools need checking. Does not replace your POS, payroll or accounting."},
 }
 
-# Live pricing — pricing.html is the source of truth; mirror it here.
+# Live pricing — pricing.py is the single source (it mirrors pricing.html).
+from pricing import STARTER as _STARTER, FULL as _FULL
 PRICING = {
-    "starter": {"label": "Starter Module", "setup": 750, "annual": 3490, "monthly_equiv": 349,
-                "note": "One module. $750 one-time setup, $3,490/yr billed annually ($349/mo equivalent)."},
-    "full":    {"label": "Full System", "setup": 3000, "annual": 11990, "monthly_equiv": 1199,
-                "note": "All four live modules. $3,000 one-time setup, $11,990/yr billed annually ($1,199/mo equivalent)."},
+    "starter": {"label": "Starter Module", "setup": _STARTER["setup"], "annual": _STARTER["annual"], "monthly_equiv": _STARTER["monthly"],
+                "note": "One module. $%s one-time setup, $%s/yr billed annually ($%s/mo equivalent)." % ("{:,}".format(_STARTER["setup"]), "{:,}".format(_STARTER["annual"]), _STARTER["monthly"])},
+    "full":    {"label": "Full System", "setup": _FULL["setup"], "annual": _FULL["annual"], "monthly_equiv": _FULL["monthly"],
+                "note": "All four live modules. $%s one-time setup, $%s/yr billed annually ($%s/mo equivalent)." % ("{:,}".format(_FULL["setup"]), "{:,}".format(_FULL["annual"]), "{:,}".format(_FULL["monthly"]))},
 }
 
 

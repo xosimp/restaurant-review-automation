@@ -78,8 +78,10 @@ def send_contract(
         }.items() if not v]
         raise ValueError(f"Missing DocuSign env vars: {missing}")
 
-    setup_fee    = f"${module_count * 500:,}"
-    monthly_fee  = f"${module_count * 300:,}/mo"
+    from pricing import plan_for, money
+    plan = plan_for(module_count)
+    setup_fee    = money(plan["setup"])
+    monthly_fee  = f"{money(plan['monthly'])}/mo"   # the template's Amount cell is narrow; the annual option is in the payment email
 
     access_token = get_access_token()
 
@@ -102,7 +104,12 @@ def send_contract(
         ),
         "templateRoles": [
             {
-                "roleName":  "Will Cavnar",
+                # The template's second signer role is named "Admin" (verified
+                # against the live template, Sep 2026). A roleName that doesn't
+                # match a template role is silently dropped by DocuSign, which
+                # left this envelope relying on the template's pre-filled
+                # values — fine while they're Will's, but say the real name.
+                "roleName":  "Admin",
                 "name":      "Will Cavnar",
                 "email":     "will@cavnar.ai",
             },
