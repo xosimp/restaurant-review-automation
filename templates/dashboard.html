@@ -1272,11 +1272,13 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     var line=smooth(pts),last=pts[pts.length-1],first=pts[0];
     var anim=reduced()?'':' class="hb-draw"';
     var s='<svg viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none" aria-hidden="true">'+glowDefs(id,col);
+    if(opts.target!=null){var ty=h-pad-((opts.target-min)/rng)*(h-2*pad-8)-4;s+='<line x1="0" y1="'+ty.toFixed(1)+'" x2="'+w+'" y2="'+ty.toFixed(1)+'" stroke="'+col+'" stroke-opacity=".45" stroke-dasharray="4 5"/><text x="'+(w-4)+'" y="'+(ty-5).toFixed(1)+'" text-anchor="end" font-size="10" font-family="Space Grotesk, sans-serif" fill="'+col+'" fill-opacity=".8">'+(opts.targetLabel||('target '+opts.target+'%'))+'</text>';}
     s+='<path class="hb-fill" d="'+line+' L'+last[0].toFixed(1)+' '+h+' L'+first[0].toFixed(1)+' '+h+' Z" fill="url(#'+id+'g)"/>';
     s+='<path class="hb-glow" d="'+line+'" fill="none" stroke="'+col+'" stroke-opacity=".55" stroke-width="6" filter="url(#'+id+'f)" stroke-linecap="round"/>';
     s+='<path'+anim+' d="'+line+'" fill="none" stroke="'+col+'" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>';
     s+='<circle class="hb-hot" cx="'+last[0].toFixed(1)+'" cy="'+last[1].toFixed(1)+'" r="14" fill="url(#'+id+'h)" style="transform-box:fill-box;transform-origin:center"/>';
     s+='<circle class="hb-dot" cx="'+last[0].toFixed(1)+'" cy="'+last[1].toFixed(1)+'" r="4" fill="'+col+'" stroke="#fff" stroke-opacity=".9" stroke-width="1.5"/>';
+    if(opts.target!=null){for(var q=0;q<pts.length;q++){if(vals[q]>opts.target){s+='<circle class="hb-dot" cx="'+pts[q][0].toFixed(1)+'" cy="'+pts[q][1].toFixed(1)+'" r="9" fill="#e05555" fill-opacity=".22" style="animation-delay:'+(1.2+q*0.08).toFixed(2)+'s"/><circle class="hb-dot" cx="'+pts[q][0].toFixed(1)+'" cy="'+pts[q][1].toFixed(1)+'" r="3.2" fill="#e05555" style="animation-delay:'+(1.2+q*0.08).toFixed(2)+'s"/>';}}}
     return s+'</svg>';
   }
   // Bars with an optional target rule; bars over target glow red. Text uses currentColor (the tile sets it).
@@ -1936,28 +1938,201 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 <div id="congrats-modal"><div id="congrats-inner"><div class="c-ember"></div><div class="c-sub">🎉 100% Response Rate Achieved</div><h2>You're in the top tier.</h2><p>Every single review on your dashboard now has a response. That's rare — and it matters more than most owners realize.</p><div class="c-stat"><strong>35% higher return rates</strong> — guests who see responses come back more often</div><div class="c-stat"><strong>5–9% revenue lift</strong> per star gained — Harvard Business School research on independent restaurants</div><div class="c-stat"><strong>$125k+/yr</strong> in additional revenue possible from a 3.1% sales lift at a casual dining unit</div><p style="margin-top:12px;font-size:12px;color:#a09080">This won't appear again. Keep responding to new reviews to maintain your edge.</p><button id="congrats-close" onclick="document.getElementById('congrats-modal').classList.remove('show')">Got it — keep it up ✓</button></div></div>
 
 <!-- LABOR -->
-<div class="panel {{'active' if not mod_reviews and mod_labor}}" id="panel-labor" style="max-width:100%;padding:0;min-height:100%">
-<div style="max-width:1080px;margin:0 auto;padding:24px 28px">
-  <!-- Labor header: tab toggle + CSV right -->
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:8px">
-    <div></div>
-    <div style="display:flex;align-items:center;gap:10px">
-      {% if not restaurant.toast_restaurant_guid %}
-      <label class="btn-primary" style="display:inline-flex;align-items:center;gap:6px">
-        {% if labor.is_live %}Update CSV{% else %}📂 Upload shifts CSV{% endif %}
-        <input type="file" accept=".csv" style="display:none" id="shifts-inline-input" onchange="clientUpload('shifts', this)">
-      </label>
-      {% endif %}
-      <div style="display:inline-flex;box-shadow:0 0 0 1px var(--paper3);border-radius:8px;overflow:hidden;background:var(--paper2)">
-        <button id="lb-tab-schedule"  onclick="switchLaborTab('schedule')"  class="rv-tab-active" style="border:none;height:34px;padding:0 16px;font-size:11px;font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;transition:background .15s,color .15s">Schedule</button>
-        <button id="lb-tab-analytics" onclick="switchLaborTab('analytics')" style="border:none;height:34px;padding:0 16px;font-size:11px;font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;background:transparent;color:var(--ink3);transition:background .15s,color .15s">Analytics</button>
+<div class="panel {{'active' if not mod_reviews and mod_labor}}" id="panel-labor" style="max-width:100%;padding:0;min-height:100%;position:relative">
+<style>
+/* ── Labor (lb2-*) — Home/Reviews language: hero ribbon, three chart tiles,
+   schedule tools as rows. The three staffing tables keep their own look. */
+#panel-labor{--hb-line:rgba(14,12,10,.12);--hb-line2:rgba(14,12,10,.07);--hb-tint:rgba(200,75,47,.06);--hb-tint2:rgba(200,75,47,.12);--hb-good:var(--green);--hb-warn:var(--amber);--hb-bad:var(--red);--hb-field:rgba(255,255,255,.55)}
+[data-theme="dark"] #panel-labor{--hb-line:rgba(240,235,224,.14);--hb-line2:rgba(240,235,224,.07);--hb-tint:rgba(224,100,68,.09);--hb-tint2:rgba(224,100,68,.16);--hb-field:rgba(255,255,255,.05)}
+#panel-labor .hb-chip .v{display:inline-flex;align-items:baseline;gap:2px}
+.lb2-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;align-items:center}
+.lb2-actions .btn-primary{height:36px;padding:0 16px;border-radius:8px;font-size:12.5px;box-shadow:0 0 16px rgba(200,75,47,.28)}
+.lb2-actions label.btn-primary{background:transparent;color:var(--ink);border:1px solid var(--hb-line);box-shadow:none}
+.lb2-actions label.btn-primary:hover{background:var(--hb-tint)}
+.lb2-hero{margin-top:30px}
+.lb2-hero .hd{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap}
+.lb2-hero .big{font-family:'Space Grotesk',sans-serif;font-size:clamp(40px,4.6vw,58px);font-weight:600;letter-spacing:-.03em;line-height:1;color:var(--ink);display:flex;align-items:baseline;gap:10px}
+.lb2-hero .big small{font-family:'Apfel Grotezk',sans-serif;font-size:13px;font-weight:400;letter-spacing:0;color:var(--ink3)}
+.lb2-hero .delta{font-size:13px;font-weight:600;color:var(--ink2);margin-top:6px}
+.lb2-hero .delta.good{color:var(--hb-good)}.lb2-hero .delta.bad{color:var(--hb-bad)}
+.lb2-hero .delta span{color:var(--ink3);font-weight:400}
+.lb2-hero svg{display:block;width:100%;height:190px;margin-top:6px;overflow:visible}
+.lb2-hero .ax{display:flex;justify-content:space-between;font-size:11px;color:var(--ink3);margin-top:4px}
+.lb2-ai{margin-top:16px;padding:14px 18px;border-radius:10px;background:var(--hb-tint);font-size:14px;line-height:1.65;color:var(--ink2)}
+.lb2-ai .tag{font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);margin-bottom:6px}
+#panel-labor #labor-insight{font-size:14px;line-height:1.65;color:var(--ink2);white-space:pre-wrap;padding-left:0}
+.lb2-sig{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0;margin-top:34px;padding-top:24px;border-top:1px solid var(--hb-line)}
+.lb2-sg{padding:0 26px 0 0;margin-right:26px;border-right:1px solid var(--hb-line2);min-width:0}
+.lb2-sg:last-child{border-right:none;margin-right:0;padding-right:0}
+.lb2-sg .k{font-size:10.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);display:flex;justify-content:space-between;align-items:center;gap:8px}
+.lb2-sg .k i{font-style:normal;color:var(--ember);font-weight:700;letter-spacing:.06em;font-size:10px}
+.lb2-sg .v{font-family:'Space Grotesk',sans-serif;font-size:30px;font-weight:600;letter-spacing:-.025em;line-height:1;color:var(--ink);margin:8px 0 2px;display:flex;align-items:baseline;gap:8px}
+.lb2-sg .v small{font-family:'Apfel Grotezk',sans-serif;font-size:12px;font-weight:400;letter-spacing:0;color:var(--ink3)}
+.lb2-sg .cap{font-size:11.5px;color:var(--ink3);margin-top:6px;display:flex;justify-content:space-between;gap:10px}
+.lb2-radar{display:block;width:100%;height:210px;margin-top:6px;overflow:visible}
+.lb2-donut{display:flex;align-items:center;gap:18px;margin-top:6px}
+.lb2-donut .ring{position:relative;flex-shrink:0;width:150px;height:150px}
+.lb2-donut .ring svg{width:150px;height:150px}
+.lb2-donut .tot{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;pointer-events:none}
+.lb2-donut .tot div:first-child{font-family:'Space Grotesk',sans-serif;font-size:18px;font-weight:700;color:var(--ink);line-height:1}
+.lb2-donut .tot div:last-child{font-size:9px;font-weight:700;letter-spacing:.08em;color:var(--ink3);margin-top:3px;text-transform:uppercase}
+#role-donut-legend{flex:1;min-width:0;font-size:12px}
+.lb2-bench{margin-top:14px}
+.lb2-bench .scale{position:relative;height:18px;font-size:10px;color:var(--ink3);font-family:'Space Grotesk',sans-serif}
+.lb2-bench .scale span{position:absolute;transform:translateX(-50%);white-space:nowrap}
+.lb2-bench .bar{position:relative;height:10px;border-radius:5px;background:var(--hb-line2);overflow:visible}
+.lb2-bench .bar .fill{position:absolute;left:0;top:0;height:100%;border-radius:5px;background:linear-gradient(90deg,var(--ember),#e8956a);box-shadow:0 0 12px rgba(200,75,47,.45);transform-origin:left;animation:rv2Grow 1.2s cubic-bezier(.3,0,.15,1) both}
+.lb2-bench .bar .fill.good{background:linear-gradient(90deg,#2d6a4f,#4ead7a);box-shadow:0 0 12px rgba(45,106,79,.45)}
+.lb2-bench .bar .fill.bad{background:linear-gradient(90deg,#c0392b,#e05555);box-shadow:0 0 12px rgba(224,85,85,.45)}
+.lb2-bench .bar .tick{position:absolute;top:-4px;width:2px;height:18px;border-radius:1px}
+.lb2-bench .bar .tick.t{background:var(--hb-good)}.lb2-bench .bar .tick.h{background:var(--hb-bad)}
+.lb2-money{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:14px}
+.lb2-money .l{font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:.08em}
+.lb2-money .x{font-family:'Space Grotesk',sans-serif;font-size:16px;font-weight:600;color:var(--ink);margin-top:2px}
+.lb2-money .x.good{color:var(--hb-good)}.lb2-money .x.bad{color:var(--hb-bad)}
+.lb2-range{display:flex;gap:2px}
+.lb2-range button{background:none;border:none;border-radius:999px;padding:5px 11px;font-family:'Space Grotesk',sans-serif;font-size:12px;font-weight:600;color:var(--ink3);cursor:pointer}
+.lb2-range button.on{background:var(--hb-tint2);color:var(--ember)}
+/* schedule tools */
+.lb2-sched{margin-top:34px;padding-top:22px;border-top:1px solid var(--hb-line)}
+.lb2-preview{border-radius:12px;background:var(--hb-tint);overflow:hidden;margin-top:14px}
+.lb2-preview [style*="rgba(255,255,255,.88)"]{color:var(--ink)!important}
+.lb2-preview [style*="color:#c0b8b0"],.lb2-preview [style*="rgba(255,255,255,.75)"],.lb2-preview [style*="rgba(255,255,255,.4)"]{color:var(--ink2)!important}
+.lb2-preview [style*="border-bottom:1px solid rgba(255,255,255,.08)"]{border-bottom-color:var(--hb-line2)!important}
+.lb2-preview table th{color:var(--ink3)!important}
+.lb2-preview table td{color:var(--ink2)}
+.lb2-events{list-style:none;margin:12px 0 0;padding:0}
+.lb2-events li{display:flex;gap:12px;align-items:flex-start;padding:10px 0;border-top:1px solid var(--hb-line2);font-size:13px;color:var(--ink2);line-height:1.5}
+.lb2-events li:first-child{border-top:none;padding-top:0}
+.lb2-events b{color:var(--ink);font-weight:600}
+.lb2-events .d{width:8px;height:8px;border-radius:50%;background:var(--ember);box-shadow:0 0 8px var(--ember);margin-top:7px;flex-shrink:0}
+.lb2-avail{margin-top:10px;padding:14px 16px;border-radius:10px;background:var(--hb-tint)}
+.lb2-avail input[type=text]{background:var(--hb-field)!important;border-color:var(--hb-line)!important;color:var(--ink)!important}
+.lb2-hist{display:flex;flex-direction:column;margin-top:8px}
+.lb2-hist .row{display:flex;align-items:center;gap:14px;padding:11px 0;border-top:1px solid var(--hb-line2);font-size:13px;color:var(--ink2)}
+.lb2-hist .row:first-child{border-top:none}
+.lb2-hist .row b{color:var(--ink);font-weight:600;font-family:'Space Grotesk',sans-serif}
+.lb2-hist .row .m{flex:1;min-width:0}
+.lb2-hist .row .n{font-size:12px;color:var(--ink3)}
+.lb2-hist .row .n.good{color:var(--hb-good)}.lb2-hist .row .n.bad{color:var(--hb-bad)}
+.lb2-hist .row .a{display:flex;gap:6px}
+#sched-history-detail{margin-top:14px;padding:14px 16px;border-radius:10px;background:var(--hb-tint)}
+#panel-labor .two-col{margin-top:34px;padding-top:22px;border-top:1px solid var(--hb-line);display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:24px}
+@media (max-width:1000px){.lb2-sig{grid-template-columns:1fr}.lb2-sg{border-right:none;margin-right:0;padding:0 0 18px;border-bottom:1px solid var(--hb-line2);margin-bottom:18px}.lb2-sg:last-child{border-bottom:none;margin-bottom:0}#panel-labor .two-col{grid-template-columns:1fr}}
+@media (max-width:680px){.lb2-hero svg{height:140px}.lb2-money{grid-template-columns:1fr 1fr}}
+</style>
+
+<div class="hb-wrap">
+  {% set _lt = labor_target|default(30.0) %}
+  {% set _lp = labor.overall_labor_pct or 0 %}
+  {% set _over = (_lp - _lt)|round(1) %}
+  {% set _days = labor.date_range.days if labor.date_range else 0 %}
+  {% set _ot = labor.overtime_risk|selectattr('status','equalto','overtime')|list|length if labor.overtime_risk else 0 %}
+  {% if not labor.is_live %}{% set _head = 'Add your shifts to light this up' %}{% set _tone = 'neutral' %}
+  {% elif _over > 3 %}{% set _head = _over ~ ' pts over target' %}{% set _tone = 'bad' %}
+  {% elif _over > 0 %}{% set _head = 'Slightly over target' %}{% set _tone = 'warn' %}
+  {% else %}{% set _head = 'On target' %}{% set _tone = 'good' %}{% endif %}
+  <div class="hb-top">
+    <div style="min-width:0;flex:1">
+      <div class="hb-kicker">Labor · {{ now_mdy }} · {{ restaurant.name }}</div>
+      <h1 class="hb-h1">Labor. <span class="hb-head {{ _tone }}">{{ _head }}</span></h1>
+      <div class="hb-sub"><span><span class="hb-num">${{ labor.total_sales|int|format_num }}</span> sales</span><span class="sep">·</span><span><span class="hb-num">${{ labor.total_labor_cost|int|format_num }}</span> labor</span><span class="sep">·</span><span><span class="hb-num" id="labor-period">{{ _days }}-day window</span></span><span class="sep">·</span><span>target <span class="hb-num">{{ _lt|int }}%</span></span>{% if not labor.is_live %}<span class="sep">·</span><span>sample data</span>{% endif %}</div>
+      <div id="gap-dollar" class="hb-sub" style="margin-top:4px">{% if _lp > _lt %}Labor is at {{ _lp }}% against a {{ _lt|int }}% target — working out the monthly gap…{% else %}Labor is on target at {{ _lp }}%.{% endif %}</div>
+      <div class="lb2-actions">
+        <button onclick="generateSchedule(this)" id="gen-sched-btn" class="btn-primary">Generate optimized schedule</button>
+        {% if not restaurant.toast_restaurant_guid %}
+        <label class="btn-primary" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer">{% if labor.is_live %}Update shifts CSV{% else %}Upload shifts CSV{% endif %}<input type="file" accept=".csv" style="display:none" id="shifts-inline-input" onchange="clientUpload('shifts', this)"></label>
+        {% endif %}
+        <button class="hb-btn" onclick="toggleAvailPanel()" id="avail-toggle-btn">Manage availability ↓</button>
       </div>
+      <span id="labor-gap-banner" hidden></span>
+    </div>
+    <div class="hb-pulse">
+      <span class="hb-chip {{ 'bad' if _over > 3 else ('warn' if _over > 0 else 'good') }}"><span class="dot"><b></b><i></i></span><span class="v"><span id="gap-current-pct" class="hb-num">{{ _lp }}%</span></span><span class="l">labor</span></span>
+      <span class="hb-chip good"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num">{{ _lt|int }}%</span></span><span class="l">target</span></span>
+      <span class="hb-chip {{ 'warn' if labor.overstaffed_days|length else 'good' }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num">{{ labor.overstaffed_days|length }}</span></span><span class="l">overstaffed days</span></span>
+      <span class="hb-chip {{ 'bad' if _ot else 'good' }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num">{{ _ot }}</span></span><span class="l">in overtime</span></span>
+      <span class="hb-chip {{ 'bad' if _lp > _lt else 'good' }}"><span class="dot"><b></b><i></i></span><span class="v"><span id="gap-amount" class="hb-num">—</span></span><span class="l">monthly gap</span></span>
     </div>
   </div>
 
-  <!-- ══ SCHEDULE TAB ══ -->
   <div id="lb-panel-schedule">
+  <section class="lb2-hero" aria-label="Labor ribbon">
+    <div class="hd"><div><div class="hb-kicker" id="lb2-hero-kicker">Labor ribbon · daily labor %</div><div class="big"><span id="lb2-hero-n" class="hb-num">{{ _lp }}</span><small>% of sales · {{ 'last ' ~ _days ~ ' days' if _days else 'this period' }}</small></div><div class="delta" id="lb2-hero-delta">{% if labor.trend_delta is not none and labor.trend_delta != 0 %}<span class="hb-num">{{ '+' if labor.trend_delta > 0 }}{{ labor.trend_delta|round(1) }} pts</span> <span>vs the previous period</span>{% endif %}</div></div><div class="lb2-range" id="lb2-hero-range"><button class="on" onclick="switchPerfTab('daily')" id="perf-tab-dow">Daily</button><button onclick="switchPerfTab('trend')" id="perf-tab-trend">8 weeks</button></div></div>
+    <div id="lb2-hero-chart"><div class="hb-load" style="height:190px;justify-content:center"><canvas class="hb-orb" data-orb-state="working" width="44" height="44"></canvas></div></div>
+    <span id="perf-period-label" hidden></span>
+  </section>
+  <div class="lb2-ai"><div class="tag">Cavnar's read on your labor</div><div class="insight-text insight-loading" id="labor-insight"><div class="hb-load"><canvas class="hb-orb" data-orb-state="composing" width="28" height="28"></canvas><span>Reading your shifts…</span></div></div></div>
 
+  <div class="lb2-sig" id="lb-panel-analytics">
+    <div class="lb2-sg"><div class="k"><span>Week radar · by weekday</span><i id="lb2-radar-flag"></i></div><div class="v"><span id="lb2-radar-n" class="hb-num">—</span><small id="lb2-radar-cap">heaviest day</small></div><div id="lb2-radar"><div class="hb-load" style="height:210px;justify-content:center"><canvas class="hb-orb" data-orb-state="working" width="28" height="28"></canvas></div></div><div class="cap"><span>labor % per weekday · dashed ring = target</span></div></div>
+    <div class="lb2-sg"><div class="k"><span>Cost by role</span></div><div class="v"><span class="hb-num">{{ labor.role_summary|length if labor.role_summary else 0 }}</span><small>roles · {{ labor.date_range.start|format_date if labor.date_range and labor.date_range.start }} – {{ labor.date_range.end|format_date if labor.date_range and labor.date_range.end }}</small></div>
+      {% if labor.role_summary %}<div class="lb2-donut"><div class="ring"><svg id="role-donut-svg" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg"></svg><div class="tot"><div id="role-donut-total"></div><div>total</div></div></div><div id="role-donut-legend"></div></div>{% else %}<div class="hb-empty" style="height:150px;display:flex;align-items:center">Role breakdown appears once shifts carry a role.</div>{% endif %}
+      <div class="cap"><span>share of labor cost · hours · headcount</span></div></div>
+    <div class="lb2-sg"><div class="k"><span>Vs industry</span><i>{% if _lp <= _lt - 3 %}excellent{% elif _lp <= _lt %}on target{% elif _lp <= _lt + 3 %}slightly over{% elif _lp <= _lt + 8 %}above target{% else %}needs attention{% endif %}</i></div><div class="v"><span class="hb-num">{{ _lp }}</span><small>% vs 33–36% full-service average</small></div>
+      <div class="lb2-bench"><div class="scale"><span style="left:0;transform:none">0%</span><span style="left:{{ [(_lt/50*100), 96]|min|int }}%;color:var(--hb-good)">{{ _lt|int }}% target</span><span style="left:70%;color:var(--hb-bad)">35%</span><span style="right:0;left:auto;transform:none">50%</span></div><div class="bar"><div class="fill {{ 'good' if _lp <= _lt else ('bad' if _lp > _lt + 8 else '') }}" style="width:{{ [(_lp/50*100), 100]|min|int }}%"></div><div class="tick t" style="left:{{ [(_lt/50*100), 100]|min|int }}%"></div><div class="tick h" style="left:70%"></div></div></div>
+      <div class="lb2-money">
+        {% if savings_breakdown.labor_monthly > 0 %}<div><div class="l">If optimised / mo</div><div class="x good">${{ savings_breakdown.labor_monthly|format_num }}</div></div><div><div class="l">Per year</div><div class="x good">${{ savings_breakdown.labor_annual|format_num }}</div></div>
+        {% else %}<div><div class="l">Vs 32% avg / mo</div><div class="x good">${{ savings_breakdown.labor_vs_industry_monthly|format_num }}</div></div><div><div class="l">Per year</div><div class="x good">${{ savings_breakdown.labor_vs_industry_annual|format_num }}</div></div>{% endif %}
+        <div><div class="l">Overtime premium</div><div class="x {{ 'bad' if savings_breakdown.labor_overtime > 0 }}">{% if savings_breakdown.labor_overtime > 0 %}${{ savings_breakdown.labor_overtime|format_num }}{% else %}—{% endif %}</div></div>
+      </div>
+      <div class="cap"><span>weekly overspend × 4.33 · overtime at 0.5× on hours over 40</span></div></div>
+  </div>
+  <script>
+  var _roleColors=['#c84b2f','#e8956a','#2d6a4f','#b7791f','#6aabff','#9e6bd6','#4dd0e1'];
+  var _roleData=[
+    {% for role, data in labor.role_summary_sorted %}
+    {"name":"{{role|e}}","pct":{{data.labor_pct}},"hours":"{{data.hours|default('0')}}","hc":{{data.headcount|default(0)}},"cost":{{data.labor_cost|int|default(0)}}},
+    {% endfor %}
+  ];
+  function _fmtK(n){if(n>=1000000)return '$'+(n/1000000).toFixed(1)+'M';if(n>=1000)return '$'+(n/1000).toFixed(0)+'k';return '$'+Math.round(n);}
+  function _fmtComma(n){return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g,',');}
+  function _fmtHours(h){return String(h).replace(/\.0$/,'');}
+  function renderRoleDonut(){
+    var svgEl=document.getElementById('role-donut-svg');
+    var legend=document.getElementById('role-donut-legend');
+    var totalEl=document.getElementById('role-donut-total');
+    if(!svgEl||!_roleData||!_roleData.length)return;
+    var r=72,cx=100,cy=100,sw=22;
+    var circ=2*Math.PI*r;
+    var gap=4;
+    var total=0;
+    for(var i=0;i<_roleData.length;i++)total+=_roleData[i].cost;
+    var circles='<circle cx="'+cx+'" cy="'+cy+'" r="'+r+'" fill="none" stroke="var(--hb-line2)" stroke-width="'+sw+'"/>';
+    var cumOffset=0;
+    for(var i=0;i<_roleData.length;i++){
+      var d=_roleData[i];
+      var col=_roleColors[i%_roleColors.length];
+      var segLen=total>0?(d.cost/total)*circ-gap:0;
+      if(segLen<0)segLen=0;
+      // "Donut Sweep" — each segment starts at zero length and sweeps in, one
+      // after another (inline style so the stroke-dasharray change transitions).
+      circles+='<circle class="cm-seg" data-da="'+segLen+' '+(circ-segLen)+'" cx="'+cx+'" cy="'+cy+'" r="'+r+'" fill="none" stroke="'+col+'" stroke-width="'+sw+'" stroke-dashoffset="'+(-cumOffset)+'" transform="rotate(-90 '+cx+' '+cy+')" style="filter:drop-shadow(0 0 7px '+col+'99);stroke-dasharray:0 '+circ+';transition:stroke-dasharray .9s cubic-bezier(.4,0,.2,1) '+(0.2+i*0.3).toFixed(2)+'s"></circle>';
+      cumOffset+=segLen+gap;
+    }
+    svgEl.innerHTML=circles;
+    requestAnimationFrame(function(){requestAnimationFrame(function(){var segs=svgEl.querySelectorAll('.cm-seg');for(var s=0;s<segs.length;s++){segs[s].style.strokeDasharray=segs[s].getAttribute('data-da');}});});
+    if(totalEl)totalEl.textContent=_fmtK(total);
+    var lhtml='';
+    for(var i=0;i<_roleData.length;i++){
+      var d=_roleData[i];
+      var col=_roleColors[i%_roleColors.length];
+      var isLast=i===_roleData.length-1;
+      lhtml+='<div style="display:flex;align-items:center;gap:10px;padding:7px 0;'+(isLast?'':'border-bottom:1px solid var(--hb-line2)')+'">';
+      lhtml+='<span style="width:9px;height:9px;border-radius:50%;background:'+col+';flex-shrink:0;box-shadow:0 0 7px '+col+'99"></span>';
+      lhtml+='<span style="font-size:12px;font-weight:600;color:var(--ink);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+d.name+'</span>';
+      lhtml+='<span style="font-family:Space Grotesk,sans-serif;font-size:12px;font-weight:700;color:'+col+';width:38px;text-align:right">'+d.pct+'%</span>';
+      lhtml+='<span style="font-size:11px;color:var(--ink3);width:38px;text-align:right">'+_fmtHours(d.hours)+'h</span>';
+      lhtml+='<span style="font-size:11px;color:var(--ink3);width:22px;text-align:right">'+d.hc+'</span>';
+      lhtml+='<span style="font-family:Space Grotesk,sans-serif;font-size:11px;color:var(--ink2);width:56px;text-align:right">$'+_fmtComma(d.cost)+'</span>';
+      lhtml+='</div>';
+    }
+    if(legend)legend.innerHTML=lhtml;
+  }
+  </script>
+
+  <div class="lb2-sched">
+    <div class="hb-sh" style="margin-top:0"><div><div class="k">Schedule</div><h2>Next week, built by Cavnar<small>optimised to your {{ _lt|int }}% target and every staff constraint</small></h2></div></div>
   <!-- Schedule download tooltip -->
   <div id="schedule-tooltip" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;z-index:999;background:rgba(14,12,10,0.6);align-items:center;justify-content:center">
     <div style="background:var(--ink);border-radius:12px;padding:28px 32px;max-width:420px;width:90%;position:relative;border:1px solid #3d3530">
@@ -1977,79 +2152,9 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     </div>
   </div>
 
-  <!-- Hero metric — dollar gap -->
-  <div id="labor-gap-banner" class="dark-hero-card" style="border:1px solid rgba(200,75,47,.55);border-radius:var(--r);padding:20px 24px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;position:relative;overflow:hidden;box-shadow:0 0 0 1px rgba(200,75,47,.18),0 8px 32px rgba(200,75,47,.28),0 1px 0 rgba(255,255,255,.06) inset">
-    <div style="position:absolute;top:-40px;right:-60px;width:280px;height:200px;background:radial-gradient(ellipse at center,rgba(200,75,47,.18) 0%,transparent 70%);pointer-events:none;z-index:0"></div>
-    <div style="position:relative;z-index:1">
-      <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px">
-        <div style="font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)">Monthly labor cost vs target</div>
-        {% if labor.date_range and labor.date_range.start %}
-        <div style="font-size:10px;color:var(--ink3)" id="labor-period">
-          Data period loading…
-        </div>
-        {% endif %}
-      </div>
-      <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap">
-        <div>
-          <span id="gap-current-pct" style="font-family:'Space Grotesk',sans-serif;font-size:48px;font-weight:700;color:var(--paper);line-height:1;letter-spacing:-1px">{{labor.overall_labor_pct}}%</span>
-          <span style="font-size:13px;color:var(--ink3);margin-left:6px">current</span>
-          {% if labor.trend_delta is not none and labor.trend_delta != 0 %}
-          <span style="font-family:'Space Grotesk',sans-serif;font-size:11px;font-weight:700;padding:2px 7px;border-radius:12px;margin-left:8px;{% if labor.trend_delta > 0 %}background:rgba(192,57,43,0.25);color:#ff9b8a{% else %}background:rgba(45,106,79,0.25);color:#6fcf97{% endif %}">
-            {% if labor.trend_delta > 0 %}↑{% else %}↓{% endif %} {{labor.trend_delta|abs|round(1)}}% vs last period
-          </span>
-          {% endif %}
-        </div>
-        <div style="color:var(--ink3)"><svg width="20" height="20" viewBox="0 0 16 16" fill="none" style="vertical-align:middle"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".12"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
-        <div>
-          <span style="font-family:'Space Grotesk',sans-serif;font-size:32px;font-weight:700;color:#6fcf97;line-height:1;letter-spacing:-1px">{{labor_target|default(30.0)}}%</span>
-          <span style="font-size:13px;color:var(--ink3);margin-left:4px">target</span>
-        </div>
-      </div>
-      <div id="gap-dollar" style="font-family:'Apfel Grotezk',sans-serif;font-size:13px;color:var(--ember2);margin-top:6px;font-weight:500">{% if labor.overall_labor_pct > labor.labor_target|default(30.0) %}Your labor is at {{labor.overall_labor_pct}}% vs {{labor.labor_target|default(30.0)}}% target — loading gap calculation…{% else %}Your labor is on target at {{labor.overall_labor_pct}}% — great work.{% endif %}</div>
-      <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
-        <span style="font-size:11px;color:var(--ink3);background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:20px;padding:3px 10px">Revenue (2 wks) &nbsp;<strong style="font-family:'Space Grotesk',sans-serif;color:var(--paper)">${{labor.total_sales|int|format_num}}</strong></span>
-        <span style="font-size:11px;color:var(--ink3);background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:20px;padding:3px 10px">Labor cost (2 wks) &nbsp;<strong style="font-family:'Space Grotesk',sans-serif;color:{% if labor.overall_labor_pct > (labor.labor_target|default(30.0)) + 5 %}#ff9b8a{% elif labor.overall_labor_pct > (labor.labor_target|default(30.0)) %}#ef9f27{% else %}#6fcf97{% endif %}">${{labor.total_labor_cost|int|format_num}}</strong></span>
-      </div>
-    </div><!-- /left col -->
-    <div style="text-align:right;position:relative;z-index:1">
-      <div id="gap-amount" style="font-family:'Space Grotesk',sans-serif;font-size:36px;font-weight:700;color:var(--ember2);line-height:1;letter-spacing:-1px">—</div>
-      <div style="font-size:11px;color:var(--ink3);margin-top:4px">estimated monthly overspend</div>
-
-      <button onclick="generateSchedule(this)" id="gen-sched-btn" class="btn-primary" style="margin-top:12px;padding:9px 18px">
-        Generate optimized schedule<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M5.5 6.5l2.5 3 2.5-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      </button>
-
-    </div>
-  </div>
-
-  <!-- Upcoming event scheduling forecast -->
-  {% if labor_upcoming %}
-  <div class="labor-forecast-card" style="background:linear-gradient(135deg,#1a1410,#1e1814);border:1px solid #3d2e1e;border-radius:8px;padding:14px 18px;margin-bottom:14px;display:flex;align-items:flex-start;gap:14px">
-    <div style="margin-top:1px;flex-shrink:0"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--ember)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="3" x2="8" y2="7"/><line x1="16" y1="3" x2="16" y2="7"/></svg></div>
-    <div style="flex:1">
-      <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ember);margin-bottom:6px">Scheduling Forecast</div>
-      {% for event in labor_upcoming %}
-      <div style="font-size:13px;color:var(--paper);font-weight:600;margin-bottom:2px">
-        {{event.name}}
-        <span style="font-size:11px;font-weight:400;color:var(--ink3)">— {{event.date_str}}
-          {% if event.days_away == 0 %}(today)
-          {% elif event.days_away == 1 %}(tomorrow)
-          {% else %}({{event.days_away}} days away){% endif %}
-        </span>
-      </div>
-      <div style="font-size:11px;color:#c0b8b0;line-height:1.5;margin-bottom:{% if not loop.last %}10px{% else %}0{% endif %}">
-        {% if event.days_away <= 3 %}Expect elevated covers this weekend — confirm you have full kitchen and floor coverage.
-        {% elif event.days_away <= 7 %}Check this week's schedule now. Add 1–2 servers on the holiday itself if you're typically at capacity.
-        {% else %}Flag for next schedule build. Historically your highest-volume Sundays follow this holiday pattern.{% endif %}
-      </div>
-      {% endfor %}
-    </div>
-  </div>
-  {% endif %}
-
   <!-- Schedule preview panel — shown after generate is clicked -->
   <div id="schedule-preview-panel" style="display:none;margin-bottom:14px">
-    <div class="dark-hero-card" style="border-radius:10px;overflow:hidden;border:1px solid rgba(200,75,47,.3);box-shadow:0 0 0 1px rgba(200,75,47,.07),0 8px 28px rgba(0,0,0,.45)">
+    <div class="lb2-preview">
       <div style="padding:16px 20px;border-bottom:1px solid rgba(255,255,255,.08);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
         <div>
           <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember);margin-bottom:4px">AI-Optimized Schedule</div>
@@ -2118,6 +2223,15 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     </div>
   </div>
 
+
+    {% if labor_upcoming %}
+    <div class="hb-kicker" style="margin-top:18px">Scheduling forecast</div>
+    <ul class="lb2-events">
+      {% for event in labor_upcoming %}
+      <li><span class="d"></span><span><b>{{ event.name }}</b> — <span class="hb-num">{{ event.date_str }}</span> {% if event.days_away == 0 %}(today){% elif event.days_away == 1 %}(tomorrow){% else %}(<span class="hb-num">{{ event.days_away }}</span> days away){% endif %}<br>{% if event.days_away <= 3 %}Expect elevated covers — confirm full kitchen and floor coverage.{% elif event.days_away <= 7 %}Check this week's schedule now; add 1–2 servers on the day if you're usually at capacity.{% else %}Flag for the next schedule build — your busiest Sundays follow this pattern.{% endif %}</span></li>
+      {% endfor %}
+    </ul>
+    {% endif %}
   <!-- Employee Availability Manager -->
   <div style="margin-bottom:14px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
@@ -2125,7 +2239,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       <button onclick="toggleAvailPanel()" style="font-size:11px;color:var(--ember);background:none;border:none;cursor:pointer;font-weight:600;padding:0" id="avail-toggle-btn">Manage ↓</button>
     </div>
     <div id="avail-panel" style="display:none">
-      <div class="card" style="padding:16px">
+      <div class="lb2-avail">
         <div style="font-size:12px;color:var(--ink3);margin-bottom:12px">Set which days each employee is available. The AI will never schedule someone on their unavailable days — this has the same priority as staff constraints.</div>
         <!-- Add new entry -->
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;align-items:flex-end">
@@ -2157,21 +2271,10 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     </div>
   </div>
 
-  <!-- iOS parity: schedule history -->
-  <div class="card" style="padding:16px 20px;margin-bottom:14px">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3)">Schedule history</div>
-      <span id="sched-history-count" style="font-size:11px;color:var(--ink3)"></span>
-    </div>
-    <div id="sched-history-list" style="font-size:12px;color:var(--ink3)">Loading&hellip;</div>
-    <div id="sched-history-detail" style="display:none;margin-top:12px;border-top:1px solid var(--paper3);padding-top:12px"></div>
-  </div>
 
-  <!-- AI insight -->
-  <div class="dark-insight-card" style="border-radius:10px;padding:16px 20px;margin-bottom:14px;position:relative;overflow:hidden">
-    <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:var(--ember)"></div>
-    <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember);margin-bottom:10px;padding-left:4px">Cavnar AI Labor Consultant</div>
-    <div class="insight-text insight-loading" id="labor-insight" style="font-size:13px;line-height:1.7;padding-left:4px"><div class="cm-compose" data-w=".88,.72,.6"><div class="cm-l" style="height:11px;margin-bottom:9px"></div><div class="cm-l" style="height:11px;margin-bottom:9px"></div><div class="cm-l" style="height:11px"></div><div class="cm-caret" style="height:16px"></div></div></div>
+    <div class="hb-sh"><div><div class="k">History</div><h2>Schedules you've built<small><span id="sched-history-count"></span></small></h2></div></div>
+    <div id="sched-history-list" class="lb2-hist"><div class="hb-empty">Loading…</div></div>
+    <div id="sched-history-detail" style="display:none"></div>
   </div>
 
   <!-- Two col: overstaffed table + overtime alerts -->
@@ -2284,211 +2387,9 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     </div>
   </div>
 
+
   </div><!-- /lb-panel-schedule -->
-
-  <!-- ══ ANALYTICS TAB ══ -->
-  <div id="lb-panel-analytics" style="display:none">
-
-  <!-- Labor savings summary — show whenever live labor data exists, regardless of banner value -->
-  {% if labor and labor.is_live and (savings_breakdown.labor_vs_industry_monthly > 0 or savings_breakdown.labor_monthly > 0 or savings_breakdown.labor_overtime > 0 or labor.overstaffed_days|length > 0) %}
-  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:14px">
-    <div class="rv-stat-cell" style="padding:20px 16px">
-      {% if savings_breakdown.labor_monthly > 0 %}
-        <div class="stat-glow-green labor-num" style="font-size:clamp(22px,2.6vw,34px);font-weight:700;line-height:1;letter-spacing:-.02em">${{savings_breakdown.labor_monthly|format_num}}</div>
-        <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:8px">Monthly savings</div>
-        <div style="font-size:10px;color:var(--ink3);margin-top:3px">if schedule optimized</div>
-        <span class="calc-tip calc-tip-up"><svg class="tip-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="5.5" r="1" fill="currentColor"/><rect x="7.1" y="7.5" width="1.8" height="4.5" rx="0.9" fill="currentColor"/></svg><span class="tip-text">Weekly overspend × 4.33 weeks, based on your actual sales and labor % vs target.</span></span>
-      {% else %}
-        <div class="stat-glow-green labor-num" style="font-size:clamp(22px,2.6vw,34px);font-weight:700;line-height:1;letter-spacing:-.02em">${{savings_breakdown.labor_vs_industry_monthly|format_num}}</div>
-        <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:8px">Saving vs. industry avg</div>
-        <div style="font-size:10px;color:var(--ink3);margin-top:3px">per month vs. 32% avg</div>
-        <span class="calc-tip calc-tip-up"><svg class="tip-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="5.5" r="1" fill="currentColor"/><rect x="7.1" y="7.5" width="1.8" height="4.5" rx="0.9" fill="currentColor"/></svg><span class="tip-text">Your labor % is below the 32% full-service restaurant industry average. This is the monthly dollar difference.</span></span>
-      {% endif %}
-    </div>
-    <div class="rv-stat-cell" style="padding:20px 16px">
-      {% if savings_breakdown.labor_annual > 0 %}
-        <div class="stat-glow-green labor-num" style="font-size:clamp(22px,2.6vw,34px);font-weight:700;line-height:1;letter-spacing:-.02em">${{savings_breakdown.labor_annual|format_num}}</div>
-        <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:8px">Annual savings</div>
-        <div style="font-size:10px;color:var(--ink3);margin-top:3px">extrapolated yearly</div>
-        <span class="calc-tip calc-tip-up"><svg class="tip-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="5.5" r="1" fill="currentColor"/><rect x="7.1" y="7.5" width="1.8" height="4.5" rx="0.9" fill="currentColor"/></svg><span class="tip-text">Monthly savings potential × 12 months.</span></span>
-      {% else %}
-        <div class="stat-glow-green labor-num" style="font-size:clamp(22px,2.6vw,34px);font-weight:700;line-height:1;letter-spacing:-.02em">${{savings_breakdown.labor_vs_industry_annual|format_num}}</div>
-        <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:8px">Annual advantage</div>
-        <div style="font-size:10px;color:var(--ink3);margin-top:3px">vs. 32% industry avg/yr</div>
-        <span class="calc-tip calc-tip-up"><svg class="tip-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="5.5" r="1" fill="currentColor"/><rect x="7.1" y="7.5" width="1.8" height="4.5" rx="0.9" fill="currentColor"/></svg><span class="tip-text">Monthly industry-average savings × 12 months. You're staying below the 32% full-service benchmark.</span></span>
-      {% endif %}
-    </div>
-    {% if savings_breakdown.labor_overtime > 0 %}
-    <div class="rv-stat-cell" style="padding:20px 16px">
-      <div class="stat-glow-red labor-num" style="font-size:clamp(22px,2.6vw,34px);font-weight:700;line-height:1;letter-spacing:-.02em">${{savings_breakdown.labor_overtime|format_num}}</div>
-      <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:8px">Overtime premium</div>
-      <div style="font-size:10px;color:var(--ink3);margin-top:3px">0.5× rate on hours over 40</div>
-      <span class="calc-tip calc-tip-up"><svg class="tip-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="5.5" r="1" fill="currentColor"/><rect x="7.1" y="7.5" width="1.8" height="4.5" rx="0.9" fill="currentColor"/></svg><span class="tip-text">Hours over 40 × hourly rate × 0.5 — standard FLSA overtime premium.</span></span>
-    </div>
-    {% endif %}
-    <div class="rv-stat-cell" style="padding:20px 16px">
-      <div class="{% if labor.overstaffed_days|length > 0 %}stat-glow-amber{% endif %}" style="font-family:'Space Grotesk',sans-serif;font-size:clamp(22px,2.6vw,34px);font-weight:700;line-height:1;letter-spacing:-.02em{% if labor.overstaffed_days|length == 0 %};color:var(--ink3){% endif %}">{{labor.overstaffed_days|length}}</div>
-      <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:8px">Overstaffed days</div>
-      <div style="font-size:10px;color:var(--ink3);margin-top:3px">vs {{labor.understaffed_days|length}} understaffed</div>
-    </div>
-  </div>
-  {% endif %}
-
-  <!-- Labor % vs industry benchmark bar -->
-  {% set lp = labor.overall_labor_pct %}
-  {% set lt = labor_target|default(30.0) %}
-  {% set lb_label = 'Excellent' if lp <= lt - 3 else ('On Target' if lp <= lt else ('Slightly Over' if lp <= lt + 3 else ('Above Target' if lp <= lt + 8 else 'Needs Attention'))) %}
-  {% set lb_color = '#2d6a4f' if lp <= 25 else ('#6fcf97' if lp <= lt else ('#ef9f27' if lp <= lt + 3 else ('#e07040' if lp <= lt + 8 else '#c0392b'))) %}
-  <div class="card" id="labor-bench-card" style="padding:14px 16px;margin-bottom:14px;border-left:3px solid {{lb_color}};{% if lp > lt + 8 %}background:linear-gradient(to right,#f5d5d5,white);{% elif lp > lt + 3 %}background:linear-gradient(to right,#fdf5e0,white);{% elif lp > lt %}background:linear-gradient(to right,#fff8e6,white);{% elif lp <= 25 %}background:linear-gradient(to right,#d5ede0,white);{% else %}background:linear-gradient(to right,#e8f4ee,white);{% endif %}">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-      <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink)">Labor % vs industry benchmark</div>
-      <div style="display:flex;align-items:center;gap:8px">
-        <span style="font-family:'Space Grotesk',sans-serif;font-size:13px;font-weight:700;color:{{lb_color}}">{{lp}}%</span>
-        <span style="background:{{lb_color}};color:white;font-size:10px;font-weight:700;padding:2px 8px;border-radius:20px;letter-spacing:.5px">{{lb_label}}</span>
-      </div>
-    </div>
-    {% set bar_fill = [lp/50*100, 100]|min|int %}
-    {% set target_pos = [lt/50*100, 97]|min|int %}
-    <div style="position:relative;height:18px;font-size:10px;margin-bottom:4px">
-      <span style="position:absolute;left:0;color:var(--ink3)">0%</span>
-      <span style="position:absolute;left:{{target_pos}}%;transform:translateX(-50%);color:#2d6a4f;font-weight:700;white-space:nowrap">{{lt}}% target ↓</span>
-      <span style="position:absolute;left:70%;transform:translateX(-50%);color:var(--red);font-weight:700;white-space:nowrap">35% high ↓</span>
-      <span style="position:absolute;right:0;color:var(--ink3)">50%+</span>
-    </div>
-    <div style="position:relative;height:10px;background:var(--paper3);border-radius:5px;overflow:hidden">
-      <div style="position:absolute;left:0;top:0;height:100%;width:{{bar_fill}}%;background:{{lb_color}};border-radius:5px;transition:width .4s"></div>
-      <div style="position:absolute;left:{{target_pos}}%;top:-3px;height:16px;width:3px;background:#2d6a4f;border-radius:1px;z-index:2"></div>
-      <div style="position:absolute;left:70%;top:-3px;height:16px;width:3px;background:#c0392b;border-radius:1px;z-index:2"></div>
-    </div>
-    <div style="margin-top:4px;font-size:11px;color:var(--ink3)">
-      Industry range: <strong>33–36%</strong> for full-service restaurants
-    </div>
-  </div>
-
-  <!-- Role cost breakdown — donut ring chart -->
-  {% if labor.role_summary %}
-  <div class="dark-hero-card" style="border:1px solid rgba(200,75,47,.45);border-radius:12px;padding:20px 24px;margin-bottom:14px;position:relative;overflow:hidden;box-shadow:0 0 0 1px rgba(200,75,47,.1),0 8px 32px rgba(200,75,47,.18)">
-    <div style="position:absolute;top:-40px;right:-60px;width:280px;height:200px;background:radial-gradient(ellipse at center,rgba(200,75,47,.12) 0%,transparent 70%);pointer-events:none;z-index:0"></div>
-    <div style="margin-bottom:16px;position:relative;z-index:1">
-      <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember);margin-bottom:3px">Labor Cost by Role</div>
-      {% if labor.date_range and labor.date_range.start %}<div style="font-size:11px;color:rgba(255,255,255,.35)">{{labor.date_range.start[5:7]|int}}/{{labor.date_range.start[8:10]|int}}/{{labor.date_range.start[2:4]}} – {{labor.date_range.end[5:7]|int}}/{{labor.date_range.end[8:10]|int}}/{{labor.date_range.end[2:4]}}</div>{% endif %}
-    </div>
-    <div style="display:flex;align-items:center;gap:28px;position:relative;z-index:1;flex-wrap:wrap">
-      <div style="position:relative;flex-shrink:0;width:180px;height:180px">
-        <svg id="role-donut-svg" viewBox="0 0 200 200" width="180" height="180" xmlns="http://www.w3.org/2000/svg"></svg>
-        <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;pointer-events:none">
-          <div id="role-donut-total" style="font-family:'Space Grotesk',sans-serif;font-size:20px;font-weight:700;color:white;line-height:1"></div>
-          <div style="font-size:9px;font-weight:700;letter-spacing:.08em;color:rgba(255,255,255,.3);margin-top:4px;text-transform:uppercase">Total</div>
-        </div>
-      </div>
-      <div id="role-donut-legend" style="flex:1;min-width:200px"></div>
-    </div>
-  </div>
-  <script>
-  var _roleColors=['#c84b2f','#6fcf97','#ef9f27','#60adf5','#b39df3','#f472b6','#4dd0e1'];
-  var _roleData=[
-    {% for role, data in labor.role_summary_sorted %}
-    {"name":"{{role|e}}","pct":{{data.labor_pct}},"hours":"{{data.hours|default('0')}}","hc":{{data.headcount|default(0)}},"cost":{{data.labor_cost|int|default(0)}}},
-    {% endfor %}
-  ];
-  function _fmtK(n){if(n>=1000000)return '$'+(n/1000000).toFixed(1)+'M';if(n>=1000)return '$'+(n/1000).toFixed(0)+'k';return '$'+Math.round(n);}
-  function _fmtComma(n){return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g,',');}
-  function _fmtHours(h){return String(h).replace(/\.0$/,'');}
-  function renderRoleDonut(){
-    var svgEl=document.getElementById('role-donut-svg');
-    var legend=document.getElementById('role-donut-legend');
-    var totalEl=document.getElementById('role-donut-total');
-    if(!svgEl||!_roleData||!_roleData.length)return;
-    var r=72,cx=100,cy=100,sw=22;
-    var circ=2*Math.PI*r;
-    var gap=4;
-    var total=0;
-    for(var i=0;i<_roleData.length;i++)total+=_roleData[i].cost;
-    var circles='<circle cx="'+cx+'" cy="'+cy+'" r="'+r+'" fill="none" stroke="rgba(255,255,255,.05)" stroke-width="'+sw+'"/>';
-    var cumOffset=0;
-    for(var i=0;i<_roleData.length;i++){
-      var d=_roleData[i];
-      var col=_roleColors[i%_roleColors.length];
-      var segLen=total>0?(d.cost/total)*circ-gap:0;
-      if(segLen<0)segLen=0;
-      // "Donut Sweep" — each segment starts at zero length and sweeps in, one
-      // after another (inline style so the stroke-dasharray change transitions).
-      circles+='<circle class="cm-seg" data-da="'+segLen+' '+(circ-segLen)+'" cx="'+cx+'" cy="'+cy+'" r="'+r+'" fill="none" stroke="'+col+'" stroke-width="'+sw+'" stroke-dashoffset="'+(-cumOffset)+'" transform="rotate(-90 '+cx+' '+cy+')" style="filter:drop-shadow(0 0 7px '+col+'99);stroke-dasharray:0 '+circ+';transition:stroke-dasharray .9s cubic-bezier(.4,0,.2,1) '+(0.2+i*0.3).toFixed(2)+'s"></circle>';
-      cumOffset+=segLen+gap;
-    }
-    svgEl.innerHTML=circles;
-    requestAnimationFrame(function(){requestAnimationFrame(function(){var segs=svgEl.querySelectorAll('.cm-seg');for(var s=0;s<segs.length;s++){segs[s].style.strokeDasharray=segs[s].getAttribute('data-da');}});});
-    if(totalEl)totalEl.textContent=_fmtK(total);
-    var lhtml='';
-    for(var i=0;i<_roleData.length;i++){
-      var d=_roleData[i];
-      var col=_roleColors[i%_roleColors.length];
-      var isLast=i===_roleData.length-1;
-      lhtml+='<div style="display:flex;align-items:center;gap:10px;padding:7px 0;'+(isLast?'':'border-bottom:1px solid rgba(255,255,255,.05)')+'">';
-      lhtml+='<span style="width:9px;height:9px;border-radius:50%;background:'+col+';flex-shrink:0;box-shadow:0 0 7px '+col+'99"></span>';
-      lhtml+='<span style="font-size:12px;font-weight:600;color:rgba(255,255,255,.8);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+d.name+'</span>';
-      lhtml+='<span style="font-family:Space Grotesk,sans-serif;font-size:12px;font-weight:700;color:'+col+';width:38px;text-align:right">'+d.pct+'%</span>';
-      lhtml+='<span style="font-size:11px;color:rgba(255,255,255,.3);width:38px;text-align:right">'+_fmtHours(d.hours)+'h</span>';
-      lhtml+='<span style="font-size:11px;color:rgba(255,255,255,.3);width:22px;text-align:right">'+d.hc+'</span>';
-      lhtml+='<span style="font-family:Space Grotesk,sans-serif;font-size:11px;color:rgba(255,255,255,.5);width:56px;text-align:right">$'+_fmtComma(d.cost)+'</span>';
-      lhtml+='</div>';
-    }
-    if(legend)legend.innerHTML=lhtml;
-  }
-  </script>
-  {% endif %}
-
-  <!-- Labor performance chart — redesigned -->
-  <div class="dark-hero-card" style="border:1px solid rgba(200,75,47,.45);border-radius:12px;padding:20px 24px;margin-top:16px;position:relative;overflow:hidden;box-shadow:0 0 0 1px rgba(200,75,47,.1),0 8px 32px rgba(200,75,47,.18)">
-    <div style="position:absolute;top:-60px;right:-80px;width:320px;height:260px;background:radial-gradient(ellipse at center,rgba(200,75,47,.14) 0%,transparent 70%);pointer-events:none;z-index:0"></div>
-
-    <!-- Header -->
-    <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px;position:relative;z-index:1;flex-wrap:wrap;gap:10px">
-      <div>
-        <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember);margin-bottom:3px">Labor % Performance</div>
-        <div id="perf-period-label" style="font-size:11px;color:rgba(255,255,255,.35)">{% if labor.date_range and labor.date_range.start %}{{labor.date_range.start[5:7]|int}}/{{labor.date_range.start[8:10]|int}}/{{labor.date_range.start[2:4]}} – {{labor.date_range.end[5:7]|int}}/{{labor.date_range.end[8:10]|int}}/{{labor.date_range.end[2:4]}}{% else %}Loading…{% endif %}</div>
-      </div>
-      <div style="display:inline-flex;box-shadow:0 0 0 1px rgba(200,75,47,.4);border-radius:8px;overflow:hidden;background:rgba(200,75,47,.1)">
-        <button id="perf-tab-trend" onclick="switchPerfTab('trend')" style="border:none;height:32px;padding:0 16px;font-size:11px;font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;background:var(--ember);color:white;transition:background .15s,color .15s">8-Week Trend</button>
-        <button id="perf-tab-dow"   onclick="switchPerfTab('dow')"   style="border:none;height:32px;padding:0 16px;font-size:11px;font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;background:transparent;color:rgba(255,255,255,.45);transition:background .15s,color .15s">By Day</button>
-      </div>
-    </div>
-
-    <!-- Chart area -->
-    <div style="display:flex;gap:10px;position:relative;z-index:1">
-      <!-- Y-axis -->
-      <div id="perf-y-axis" style="display:flex;flex-direction:column;justify-content:space-between;align-items:flex-end;width:30px;font-size:9px;color:rgba(255,255,255,.28);font-family:'Space Grotesk',sans-serif;padding-bottom:2px;flex-shrink:0"></div>
-      <!-- Chart + target line wrapper -->
-      <div style="flex:1;position:relative">
-        <div id="perf-gridlines" style="position:absolute;inset:0 0 0 0;pointer-events:none;z-index:0"></div>
-        <div id="perf-target-line" style="position:absolute;left:0;right:0;height:2px;background:repeating-linear-gradient(90deg,rgba(200,75,47,.9) 0px,rgba(200,75,47,.9) 8px,transparent 8px,transparent 14px);z-index:3;pointer-events:none">
-          <span style="position:absolute;right:0;bottom:4px;font-size:10px;font-family:'Space Grotesk',sans-serif;font-weight:700;color:#e8956a;background:rgba(18,12,8,.85);padding:1px 6px;border-radius:4px;white-space:nowrap;letter-spacing:.3px">{{labor_target|default(30.0)}}% target</span>
-        </div>
-        <div id="perf-bars" style="height:200px;display:flex;align-items:flex-end;gap:5px;position:relative;z-index:1">
-          <div style="color:rgba(255,255,255,.3);font-size:12px;font-style:italic;align-self:center;padding:16px">Loading…</div>
-        </div>
-        <div id="perf-labels" style="display:flex;gap:5px;margin-top:6px;font-size:9px;color:rgba(255,255,255,.35);font-family:'Apfel Grotezk',sans-serif"></div>
-      </div>
-    </div>
-
-    <!-- Legend -->
-    <div style="margin-top:16px;padding-top:12px;border-top:1px solid rgba(255,255,255,.06);display:flex;gap:16px;flex-wrap:wrap;font-size:10px;color:rgba(255,255,255,.38);position:relative;z-index:1;align-items:center">
-      <span style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border-radius:3px;background:#c0392b;display:inline-block;box-shadow:0 0 6px rgba(192,57,43,.6)"></span>Over {{labor_target|default(30.0)|int}}%</span>
-      <span style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border-radius:3px;background:#ef9f27;display:inline-block;box-shadow:0 0 6px rgba(239,159,39,.6)"></span>{{(labor_target|default(30.0)-3)|int}}–{{labor_target|default(30.0)|int}}%</span>
-      <span style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border-radius:3px;background:#6fcf97;display:inline-block;box-shadow:0 0 6px rgba(111,207,151,.6)"></span>Under {{(labor_target|default(30.0)-3)|int}}%</span>
-      <span style="margin-left:auto;color:rgba(200,75,47,.6);display:flex;align-items:center;gap:5px"><span style="display:inline-block;width:20px;height:1px;background:rgba(200,75,47,.7);vertical-align:middle"></span>Target line</span>
-    </div>
-  </div>
-
-  <!-- Hidden containers kept for compat with existing renderBars() -->
-  <div id="day-bars" style="display:none"></div>
-  <div id="dow-target-line" style="display:none"></div>
-  <div id="labor-trend-bars" style="display:none"></div>
-  <div id="labor-trend-labels" style="display:none"></div>
-
-  </div><!-- /lb-panel-analytics -->
-
-</div><!-- /inner-labor-content -->
+</div>
 </div><!-- /panel-labor -->
 
 <!-- FOOD COST -->
@@ -5146,6 +5047,7 @@ window.switchFcTab = function(tab) {
 
 window.switchLaborTab = function(tab) {
   var isSched = tab === 'schedule';
+  if(!document.getElementById('lb-tab-schedule')){ if(typeof renderRoleDonut==='function')renderRoleDonut(); renderLaborHero(); return; }
   document.getElementById('lb-panel-schedule').style.display  = isSched ? '' : 'none';
   document.getElementById('lb-panel-analytics').style.display = isSched ? 'none' : '';
   var ts = document.getElementById('lb-tab-schedule');
@@ -5397,7 +5299,7 @@ function switchTab(n,btn){
   if(n==='inventory'){
     // countUp animations and insight load triggered by switchFcTab when analytics tab is shown
   }
-  if(n==='labor'){renderBars();loadLaborTrend(false);}
+  if(n==='labor'){renderBars();if(_perfTab==='trend')loadLaborTrend(false);else renderLaborHero();if(typeof renderRoleDonut==='function'&&!window._donutDone){window._donutDone=true;renderRoleDonut();}if(window.loadScheduleHistory&&!window._schedHistDone){window._schedHistDone=true;loadScheduleHistory();}}
   if(n==='account'){loadBillingInfo();loadSessions();loadAlertsSummary();loadAccountSettings();loadEmailHistory();if(window._acctExtras)window._acctExtras();}
   if(n==='marketing'){var _mi=document.getElementById('mkt-insight');if(_mi&&(_mi.classList.contains('insight-loading')||_mi.textContent.trim()==='Loading marketing brief…'||!mktLoaded)){loadMktInsight();}loadRecentTopics();startMetricsPoller();if(!window._calLoaded){window._calLoaded=true;loadCalCached();}}else{stopMetricsPoller();}
   // Calendar is generated on demand only — no auto-generate to avoid wasteful API calls on reconnect/reload
@@ -6095,6 +5997,8 @@ function skipR(id){
   }).catch(function(){ toast('Network error — try again','error'); });
 }
 var dowData={{labor.dow_summary|tojson}};
+var laborByDay={{labor.by_day|tojson if labor.by_day else '{}'}};
+var laborTargetPct={{labor_target|default(30.0)}};
 var laborDateRange={{labor.date_range|tojson if labor.date_range else 'null'}};
 var _laborTarget={{labor_target|default(30.0)}};
 (function(){
@@ -6106,7 +6010,7 @@ var _laborTarget={{labor_target|default(30.0)}};
   }
   elPeriod.textContent='Data: '+fmt(laborDateRange.start)+' — '+fmt(laborDateRange.end)+' ('+laborDateRange.days+' days)';
 })();
-var _perfTab='trend';
+var _perfTab='daily';
 var _perfTrendData=null;
 var _perfDowData=null;
 var _perfDowPeriod='{% if labor.date_range and labor.date_range.start %}{{labor.date_range.start[5:7]|int}}/{{labor.date_range.start[8:10]|int}}/{{labor.date_range.start[2:4]}} – {{labor.date_range.end[5:7]|int}}/{{labor.date_range.end[8:10]|int}}/{{labor.date_range.end[2:4]}}{% endif %}';
@@ -6115,17 +6019,11 @@ var _perfTrendPeriod='';
 function _perfActiveColor(){return _dark()?'#923020':'var(--ember)';}
 
 function switchPerfTab(tab){
-  _perfTab=tab;
-  var t=document.getElementById('perf-tab-trend');
-  var d=document.getElementById('perf-tab-dow');
-  var ac=_perfActiveColor();
-  if(t){t.style.background=tab==='trend'?ac:'transparent';t.style.color=tab==='trend'?'white':'rgba(255,255,255,.45)';}
-  if(d){d.style.background=tab==='dow'?ac:'transparent';d.style.color=tab==='dow'?'white':'rgba(255,255,255,.45)';}
-  var pEl=document.getElementById('perf-period-label');
-  if(pEl)pEl.textContent=tab==='trend'?_perfTrendPeriod:_perfDowPeriod;
-  renderPerfChart();
+  _perfTab=tab==='trend'?'trend':'daily';
+  var t=document.getElementById('perf-tab-trend'),d=document.getElementById('perf-tab-dow');
+  if(t)t.classList.toggle('on',_perfTab==='trend');if(d)d.classList.toggle('on',_perfTab!=='trend');
+  if(_perfTab==='trend'&&!_laborTrendLoaded)loadLaborTrend(true);else renderLaborHero();
 }
-
 function renderPerfChart(){
   var barsEl=document.getElementById('perf-bars');
   var labelsEl=document.getElementById('perf-labels');
@@ -6172,17 +6070,31 @@ function renderPerfChart(){
   if(labelsEl)labelsEl.innerHTML=labHtml;
 }
 
-function renderBars(){
-  var days=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
-  var shortLabels=['M','T','W','Th','F','Sa','Su'];
-  var items=[];
-  for(var i=0;i<days.length;i++){
-    var pct=dowData[days[i]]||0;
-    if(pct>0)items.push({pct:pct,label:shortLabels[i]});
-    else items.push({pct:0,label:shortLabels[i]});
-  }
-  _perfDowData=items;
-  if(_perfTab==='dow')renderPerfChart();
+function renderBars(){renderWeekRadar();}
+function renderWeekRadar(){
+  var el=document.getElementById('lb2-radar');if(!el)return;
+  var days=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'],short=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  var target=+window.laborTargetPct||30,vals=[],present=0;
+  for(var i=0;i<7;i++){var v=(window.dowData||{})[days[i]];if(v>0)present++;vals.push(v>0?v:null);}
+  if(present<3){el.innerHTML='<div class="hb-empty" style="height:210px;display:flex;align-items:center">The week radar needs a few days of shifts.</div>';return;}
+  var W=320,H=210,cx=W/2,cy=H/2+6,R=76;
+  var mx=target,mn=target;for(var i=0;i<7;i++){if(vals[i]!=null){mx=Math.max(mx,vals[i]);mn=Math.min(mn,vals[i]);}}
+  var lo=Math.floor(mn-6),hi=Math.ceil(mx+4),rng=(hi-lo)||1;
+  function rad(v){return R*Math.max(0,Math.min(1,(v-lo)/rng));}
+  function pt(i,r){var a=-Math.PI/2+i*Math.PI*2/7;return [cx+Math.cos(a)*r,cy+Math.sin(a)*r];}
+  var s='<svg class="lb2-radar" viewBox="0 0 '+W+' '+H+'" aria-hidden="true"><defs><radialGradient id="lbRadG"><stop offset="0" stop-color="#e8956a" stop-opacity=".45"/><stop offset="1" stop-color="#e8956a" stop-opacity=".08"/></radialGradient><filter id="lbRadF" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="2.5"/></filter></defs>';
+  for(var g=1;g<=3;g++){var rr=R*g/3;var ring='';for(var i=0;i<7;i++){var p=pt(i,rr);ring+=(i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1)+' ';}s+='<path d="'+ring+'Z" fill="none" stroke="currentColor" stroke-opacity=".12"/>';}
+  for(var i=0;i<7;i++){var e=pt(i,R);s+='<line x1="'+cx+'" y1="'+cy+'" x2="'+e[0].toFixed(1)+'" y2="'+e[1].toFixed(1)+'" stroke="currentColor" stroke-opacity=".12"/>';}
+  var tr=rad(target),tring='';for(var i=0;i<7;i++){var p=pt(i,tr);tring+=(i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1)+' ';}
+  s+='<path d="'+tring+'Z" fill="none" stroke="#e8956a" stroke-opacity=".7" stroke-dasharray="4 4"/>';
+  var poly='';var worst=-1,worstV=-1;
+  for(var i=0;i<7;i++){var v=vals[i]==null?target:vals[i];var p=pt(i,rad(v));poly+=(i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1)+' ';if(vals[i]!=null&&vals[i]>worstV){worstV=vals[i];worst=i;}}
+  s+='<path class="hb-fill" d="'+poly+'Z" fill="url(#lbRadG)"/><path class="hb-glow" d="'+poly+'Z" fill="none" stroke="#e8956a" stroke-opacity=".6" stroke-width="5" filter="url(#lbRadF)"/><path class="hb-draw" d="'+poly+'Z" fill="none" stroke="#e8956a" stroke-width="2"/>';
+  for(var i=0;i<7;i++){if(vals[i]==null)continue;var p=pt(i,rad(vals[i]));var over=vals[i]>target;s+='<circle class="hb-dot" cx="'+p[0].toFixed(1)+'" cy="'+p[1].toFixed(1)+'" r="'+(over?4.5:3.2)+'" fill="'+(over?'#e05555':'#e8956a')+'" stroke="#fff" stroke-opacity=".9" stroke-width="1.2" style="animation-delay:'+(1.2+i*0.12).toFixed(2)+'s"/>';
+    var lp=pt(i,R+16);s+='<text x="'+lp[0].toFixed(1)+'" y="'+(lp[1]+4).toFixed(1)+'" text-anchor="middle" font-size="10.5" font-family="Space Grotesk, sans-serif" fill="'+(over?'#e05555':'currentColor')+'" fill-opacity="'+(over?'1':'.75')+'">'+short[i]+' '+vals[i]+'%</text>';}
+  el.innerHTML=s+'</svg>';el.style.color='var(--ink3)';
+  var n=document.getElementById('lb2-radar-n'),cap=document.getElementById('lb2-radar-cap'),flag=document.getElementById('lb2-radar-flag');
+  if(worst>=0){if(n)n.textContent=worstV+'%';if(cap)cap.textContent=short[worst]+' runs heaviest';if(flag)flag.textContent=worstV>target?'over target':'within target';}
 }
 var _gbpReload=!!sessionStorage.getItem('_gbpReload');if(_gbpReload)sessionStorage.removeItem('_gbpReload');
 var laborLoaded=false,invLoaded=false,reviewInsightLoaded=false,sentimentTrendLoaded=false,mktLoaded=false,homeInsightLoaded=false,mktPerfLoaded=false;
@@ -7876,19 +7788,30 @@ function loadBillingInfo() {
 
 var _laborTrendLoaded=false;
 function loadLaborTrend(force){
-  if(_laborTrendLoaded&&!force){return;}
+  if(_laborTrendLoaded&&!force){renderLaborHero();return;}
   _laborTrendLoaded=true;
   fetch('/api/labor-trend',{cache:'no-store'}).then(function(r){return r.json();}).then(function(data){
-    if(!data.weeks||!data.weeks.length){_perfTrendData=[];renderPerfChart();return;}
-    _perfTrendData=data.weeks.map(function(w){return{pct:w.pct,label:w.label};});
-    var first=data.weeks[0].label;
-    var last=data.weeks[data.weeks.length-1].label;
-    _perfTrendPeriod=first===last?first:first+' – '+last;
-    var pEl=document.getElementById('perf-period-label');
-    if(pEl&&_perfTab==='trend')pEl.textContent=_perfTrendPeriod;
-    if(_perfTab==='trend')renderPerfChart();
-  }).catch(function(){_perfTrendData=[];renderPerfChart();});
+    _perfTrendData=(data.weeks||[]).map(function(w){return {pct:+w.pct||0,label:w.label};});
+    var pEl=document.getElementById('perf-period-label');if(pEl&&_perfTrendData.length)pEl.textContent=_perfTrendData[0].label+' – '+_perfTrendData[_perfTrendData.length-1].label;
+    renderLaborHero();
+  }).catch(function(){_perfTrendData=[];renderLaborHero();});
 }
+function _laborDaily(){
+  var bd=window.laborByDay||{},keys=Object.keys(bd).sort(),out=[];
+  for(var i=0;i<keys.length;i++){var d=bd[keys[i]]||{},sv=+d.sales||0,c=+d.labor_cost||0;if(sv>0&&keys[i])out.push({label:keys[i],pct:Math.round(c/sv*1000)/10});}
+  return out;
+}
+function renderLaborHero(){
+  var el=document.getElementById('lb2-hero-chart');if(!el||!window.CavnarCharts)return;
+  var C=window.CavnarCharts,target=+window.laborTargetPct||30;
+  var trend=_perfTab==='trend',pts=trend?_perfTrendData:_laborDaily();
+  var kick=document.getElementById('lb2-hero-kicker');if(kick)kick.textContent=trend?'Labor % · last 8 weeks':'Labor ribbon · daily labor %';
+  if(pts.length<2){el.innerHTML='<div class="hb-empty" style="height:190px;display:flex;align-items:center">'+(trend?'The weekly trend appears after a couple of periods.':'Daily labor % appears once shifts and sales are in.')+'</div>';return;}
+  var vals=pts.map(function(p){return p.pct;});
+  var lo=Math.min(Math.min.apply(null,vals),target)-3,hi=Math.max(Math.max.apply(null,vals),target)+3;
+  el.innerHTML=C.glowLine(vals,1000,190,'#e8956a',{pad:10,floor:lo,ceil:hi,target:target})+'<div class="ax hb-num"><span>'+(trend?C.esc(pts[0].label):C.mdy(pts[0].label))+'</span><span>'+(trend?C.esc(pts[pts.length-1].label):C.mdy(pts[pts.length-1].label))+'</span></div>';
+}
+function renderPerfChart(){renderLaborHero();}
 function exportReviews(){window.location='/api/export-reviews';}
 function _twoFAMethod(){var r=document.querySelector('input[name="twofa-method"]:checked');return r?r.value:'email';}
 function toggle2FA(enable){
@@ -10048,7 +9971,8 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       var h=(d.ok&&d.history)||[];
       var cnt=document.getElementById('sched-history-count');if(cnt)cnt.textContent=h.length?h.length+' generated':'';
       if(!h.length){el.textContent='No schedules generated yet — the first one you generate is kept here.';return;}
-      el.innerHTML=h.slice(0,12).map(function(r){var hs=+r.hours_scheduled||0,hb=+r.hours_budget||0;var note=hb&&hs?(hs<hb?Math.round(hb-hs)+' hrs under budget':(hs>hb?Math.round(hs-hb)+' hrs over budget':'on budget')):(hs?Math.round(hs)+' hrs scheduled':'');return '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 0;border-top:1px solid var(--paper3)"><div><div style="color:var(--ink);font-weight:600">Week of '+esc(r.week_start||'')+(r.week_end?' – '+esc(r.week_end):'')+'</div><div style="font-size:11px;color:var(--ink3)">Generated '+ago(r.generated_at)+(note?' · '+note:'')+'</div></div><div style="display:flex;gap:10px;white-space:nowrap"><button onclick="viewScheduleHistory('+r.id+',this)" style="background:none;border:none;cursor:pointer;color:var(--ember);font-size:11px;font-weight:600;padding:0;font-family:inherit">View</button><button onclick="deleteScheduleHistory('+r.id+',this)" style="background:none;border:none;cursor:pointer;color:var(--ink3);font-size:11px;padding:0;font-family:inherit">Delete</button></div></div>';}).join('');
+      el.innerHTML=h.slice(0,12).map(function(r){var hs=+r.hours_scheduled||0,hb=+r.hours_budget||0;var note=hb&&hs?(hs<hb?Math.round(hb-hs)+' hrs under budget':(hs>hb?Math.round(hs-hb)+' hrs over budget':'on budget')):'';var tone=hb&&hs?(hs<=hb?'good':'bad'):'';var M=window.CavnarCharts?CavnarCharts.mdy:function(x){return x;};
+        return '<div class="row"><b>'+esc(M(r.week_start||''))+'</b><span class="m">'+(r.week_end?'through <span class="hb-num">'+esc(M(r.week_end))+'</span> · ':'')+'<span class="hb-num">'+Math.round(hs)+'</span> hrs scheduled'+(note?' · <span class="n '+tone+'">'+note+'</span>':'')+'</span><span class="n hb-num">'+ago(r.generated_at)+'</span><span class="a"><button class="hb-btn" onclick="viewScheduleHistory('+r.id+',this)">View</button><button class="hb-btn" onclick="downloadHistoryCsv('+r.id+')">CSV</button><button class="hb-x" style="opacity:1" title="Delete" onclick="deleteScheduleHistory('+r.id+',this)">✕</button></span></div>';}).join('');
     });
   };
   window.viewScheduleHistory=function(id,btn){
