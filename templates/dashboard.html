@@ -1151,10 +1151,13 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-sugg{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
 .hb-sugg button{background:none;border:1px solid var(--hb-line);border-radius:999px;padding:5px 11px;font-family:inherit;font-size:11.5px;color:var(--ink2);cursor:pointer}
 .hb-sugg button:hover{border-color:var(--ember);color:var(--ember)}
-.hb-askout{margin-top:12px;font-size:13px;line-height:1.6}
-.hb-askout .q{font-weight:600;color:var(--ink);margin-bottom:4px}
-.hb-askout .a{color:var(--ink2);white-space:pre-wrap;padding-left:12px;border-left:2px solid var(--ember)}
-.hb-think{color:var(--ink3)}
+.hb-askout{margin-top:12px;display:flex;flex-direction:column;gap:8px;max-height:360px;overflow-y:auto;padding-right:4px}
+.hb-msg{font-size:13px;line-height:1.55;white-space:pre-wrap;max-width:92%;padding:8px 12px;border-radius:12px}
+.hb-msg.me{align-self:flex-end;background:var(--ember);color:#fff;border-bottom-right-radius:3px}
+.hb-msg.ai{align-self:flex-start;color:var(--ink);background:var(--hb-tint);border-bottom-left-radius:3px}
+.hb-msg.hb-think{color:var(--ink3);display:flex;align-items:center;gap:8px}
+.hb-tdot{width:8px;height:8px;border-radius:50%;background:var(--ember);box-shadow:0 0 8px var(--ember);animation:hbBreath 1.4s ease-in-out infinite;display:inline-block}
+.hb-askfoot{margin-top:8px;font-size:12px}
 /* locations */
 .hb-locs{display:flex;gap:6px;flex-wrap:wrap;margin:16px 0 0}
 .hb-loc{display:inline-flex;align-items:center;gap:8px;padding:7px 12px;border-radius:999px;border:1px solid var(--hb-line);background:transparent;cursor:pointer;font-family:inherit;font-size:12.5px;color:var(--ink);transition:background .12s ease}
@@ -1301,34 +1304,53 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     if(btn&&typeof switchTab==='function'){switchTab(module==='intel'?'competitor':module,btn);window.scrollTo(0,0);}
     else if(typeof toast==='function'){toast((MODLABEL[module]||'That module')+' isn\'t active on this account','warning');}
   };
-  // Ask from Home: open the floating Ask panel and send there. If the panel
-  // isn't available for any reason, answer inline under the Home input so a
-  // click never does nothing.
+  // Ask from Home: the conversation renders right here under the input —
+  // question, live progress from the stream, then the answer. It never
+  // depends on the floating panel. Falls back to the plain JSON endpoint.
+  var _hbAskHistory=[],_hbAskBusy=false;
+  function askOut(){var o=document.getElementById('hb-ask-out');if(o)o.hidden=false;return o;}
+  function askBubble(text,me){var d=document.createElement('div');d.className='hb-msg '+(me?'me':'ai');d.textContent=text;return d;}
   function askInline(q){
-    var out=document.getElementById('hb-ask-out');if(!out)return;
-    out.hidden=false;out.innerHTML='<div class="q">'+esc(q)+'</div><div class="a"><span class="hb-think">Thinking…</span></div>';
-    fetch('/api/ask-cavnar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q,history:[]})}).then(function(r){return r.json();}).then(function(d){
-      out.innerHTML='<div class="q">'+esc(q)+'</div><div class="a">'+esc(d&&d.ok?(d.answer||''):((d&&d.error)||'Something went wrong — try again.'))+'</div>';
-    }).catch(function(){out.innerHTML='<div class="q">'+esc(q)+'</div><div class="a">Couldn\'t reach Cavnar — check your connection.</div>';});
-  }
-  window.hbAsk=function(q){
-    q=(q||'').trim();
-    var inp=document.getElementById('ask-cavnar-input'),panel=document.getElementById('ask-cavnar-panel');
+    var out=askOut();if(!out||_hbAskBusy)return;_hbAskBusy=true;
+    var inp=document.getElementById('hb-ask-in'),btn=document.querySelector('[data-ask-submit]');
+    if(inp)inp.disabled=true;if(btn)btn.disabled=true;
+    out.appendChild(askBubble(q,true));
+    var think=document.createElement('div');think.className='hb-msg ai hb-think';think.innerHTML='<span class="hb-tdot"></span> Thinking…';out.appendChild(think);
+    out.scrollTop=out.scrollHeight;
+    var historyToSend=_hbAskHistory.slice();
+    function finish(d){
+      _hbAskBusy=false;if(inp){inp.disabled=false;inp.focus();}if(btn)btn.disabled=false;
+      var answer=(d&&d.ok)?(d.answer||''):((d&&d.error)||'Something went wrong — try again.');
+      think.parentNode&&think.parentNode.removeChild(think);
+      out.appendChild(askBubble(answer,false));out.scrollTop=out.scrollHeight;
+      if(d&&d.ok){_hbAskHistory.push({role:'user',content:q});_hbAskHistory.push({role:'assistant',content:answer});}
+    }
+    function viaJson(){
+      fetch('/api/ask-cavnar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q,history:historyToSend})}).then(function(r){return r.json();}).then(finish).catch(function(){finish({ok:false,error:'Couldn\'t reach Cavnar — check your connection.'});});
+    }
     try{
-      if(panel&&inp&&typeof sendAskCavnar==='function'){
-        if(panel.style.display!=='flex'){if(typeof toggleAskCavnar==='function')toggleAskCavnar();if(panel.style.display!=='flex')panel.style.display='flex';}
-        inp.value=q;inp.focus();
-        if(q)sendAskCavnar();
-        return;
-      }
-    }catch(e){if(window.console)console.error('Ask Cavnar panel failed, answering inline',e);}
-    if(q)askInline(q);
-  };
+      fetch('/api/ask-cavnar/stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q,conversation_id:null})}).then(function(resp){
+        if(!resp.ok||!resp.body||!window.TextDecoder)throw new Error('stream unavailable');
+        var reader=resp.body.getReader(),dec=new TextDecoder(),buf='',done=false;
+        function pump(){return reader.read().then(function(res){
+          if(res.done){if(!done){done=true;viaJson();}return;}
+          buf+=dec.decode(res.value,{stream:true});var chunks=buf.split('\n\n');buf=chunks.pop();
+          for(var i=0;i<chunks.length;i++){var line=chunks[i].replace(/^data: /,'').trim();if(!line)continue;var evt;try{evt=JSON.parse(line);}catch(e){continue;}
+            if(evt.type==='progress'){think.innerHTML='<span class="hb-tdot"></span> '+esc(evt.label||'Working…');}
+            else if(evt.type==='answer'){done=true;finish({ok:true,answer:evt.answer});}
+            else if(evt.type==='error'){done=true;finish({ok:false,error:evt.error});}}
+          if(!done)return pump();});}
+        return pump();
+      }).catch(function(){viaJson();});
+    }catch(e){viaJson();}
+  }
+  window.hbAsk=function(q){q=(q||'').trim();if(!q)return;askInline(q);};
   window.hbAskSubmit=function(){var i=document.getElementById('hb-ask-in');if(!i)return;var q=i.value.trim();if(!q){i.focus();return;}i.value='';hbAsk(q);};
+  window.hbAskFull=function(){var panel=document.getElementById('ask-cavnar-panel');if(panel&&panel.style.display!=='flex'&&typeof toggleAskCavnar==='function')toggleAskCavnar();};
   document.addEventListener('click',function(e){
-    var t=e.target&&e.target.closest?e.target.closest('[data-ask],[data-ask-submit]'):null;if(!t)return;
+    var t=e.target&&e.target.closest?e.target.closest('[data-ask],[data-ask-submit],[data-ask-full]'):null;if(!t)return;
     e.preventDefault();
-    if(t.hasAttribute('data-ask-submit'))hbAskSubmit();else hbAsk(t.getAttribute('data-ask'));
+    if(t.hasAttribute('data-ask-submit'))hbAskSubmit();else if(t.hasAttribute('data-ask-full'))hbAskFull();else hbAsk(t.getAttribute('data-ask'));
   });
   document.addEventListener('keydown',function(e){if(e.key==='Enter'&&e.target&&e.target.id==='hb-ask-in'){e.preventDefault();hbAskSubmit();}});
   window.hbAct=function(kind,module,btn){if(kind==='publish_replies'){if(typeof publishAllReplies==='function')publishAllReplies(btn);return;}if(kind==='ask'){hbAsk('');return;}if(kind==='alerts'){hbOpen('alerts');return;}hbOpen(module);};
@@ -1415,7 +1437,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     for(var j=0;j<Math.min(recs.length,3);j++){var r=recs[j];h+='<div class="hb-row"><span class="no hb-num">0'+(j+1)+'</span><span class="t" title="'+esc(r.why||'')+'">'+num(r.title)+'</span><span class="m hb-num">'+esc((r.evidence||'').split(' · ')[0].slice(0,42))+'</span><button class="hb-link" onclick="hbOpen(\''+esc(r.module)+'\')">'+esc(MODLABEL[r.module]||r.action_label)+' →</button><button class="hb-x" title="Hide for two weeks" aria-label="Hide" onclick="hbDismiss(\''+esc(r.key).replace(/'/g,'\\\'')+'\')">✕</button></div>';}
     h+='</div><div><h3><span>Ask Cavnar AI</span></h3><div class="hb-ask"><input id="hb-ask-in" type="text" placeholder="Why did labor go up this week?" aria-label="Ask Cavnar AI"><button type="button" class="hb-btn p" data-ask-submit="1">Ask</button></div>';
     if(sg.length){h+='<div class="hb-sugg">';for(var s=0;s<Math.min(sg.length,3);s++){h+='<button type="button" data-ask="'+esc(sg[s])+'">'+esc(sg[s])+'</button>';}h+='</div>';}
-    h+='<div id="hb-ask-out" class="hb-askout" hidden></div>';
+    h+='<div id="hb-ask-out" class="hb-askout" hidden aria-live="polite"></div><div class="hb-askfoot"><button type="button" class="hb-link" data-ask-full="1">Open the full chat →</button></div>';
     var qa=(d.quick_actions||[]).filter(function(q){return q.kind!=='ask'&&q.kind!=='publish_replies'&&q.key!=='urgent';});
     if(qa.length){h+='<h3 style="margin-top:26px"><span>Shortcuts</span></h3><div class="hb-sugg" style="margin-top:0">';for(var q=0;q<Math.min(qa.length,4);q++){h+='<button onclick="hbAct(\''+esc(qa[q].kind)+'\',\''+esc(qa[q].module||'')+'\',this)">'+esc(qa[q].label)+'</button>';}h+='</div>';}
     return h+'</div></div>';
