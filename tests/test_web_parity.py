@@ -22,7 +22,7 @@ from models import create_restaurant, get_conn, get_restaurant, Restaurant
 def _redirect_db(monkeypatch, db_path):
     real_get_conn = models.get_conn
     redirect = lambda *a, **k: real_get_conn(db_path)
-    for mod in (models, admin_routes, auth, auth_routes, client_api, mobile_api, notify, value_delivered):
+    for mod in (models, admin_routes, auth, auth_routes, client_api, mobile_api):
         monkeypatch.setattr(mod, "get_conn", redirect)
     init_auth(db_path=db_path)
     from models import init_two_fa_backup_codes

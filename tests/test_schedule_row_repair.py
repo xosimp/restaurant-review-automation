@@ -44,6 +44,15 @@ def _fake_build_schedule_result(csv_text):
 def _run(monkeypatch, csv_text, close_times=None, role_close_buffers=None):
     monkeypatch.setattr(client_api, "_build_schedule_result", _fake_build_schedule_result(csv_text))
     monkeypatch.setattr(models, "get_staff_notes", lambda restaurant_id: [])
+    # The top-up/extend-to-close repair passes also read staff_availability
+    # for real (models.get_staff_availability) — unstubbed, this test never
+    # redirects the database at all (no db_path fixture in this file), so it
+    # silently read whatever local reviews.db happened to be sitting in the
+    # working directory and crashed with "no such table: staff_availability"
+    # the moment there wasn't one (confirmed on a clean checkout / CI, Sep 7
+    # 2026). These tests are about the repair-pass logic, not availability
+    # data, so isolate it the same way get_staff_notes already is above.
+    monkeypatch.setattr(models, "get_staff_availability", lambda restaurant_id: [])
     # Unconfigured (the default, matching a restaurant that never set
     # close_times_json) means no enforcement at all — every existing test
     # above relies on that opt-in behavior to stay unaffected by the

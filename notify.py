@@ -6,7 +6,19 @@ by urgent_via_sms and urgent_via_email per restaurant.
 import os
 import html as _html
 import requests
-from models import get_conn, DB_PATH
+import models
+from models import DB_PATH
+
+# get_conn is looked up on the models module at call time
+# (models.get_conn(...)), never imported by name — see
+# value_delivered.py's header comment for why: a bound
+# `from models import get_conn` here would silently escape every
+# test's `monkeypatch.setattr(models, "get_conn", ...)` redirection,
+# which is exactly what was happening — every push_notification test
+# was quietly reading and writing the developer's own local
+# reviews.db instead of the test's isolated fixture database, and
+# crashed with "no such table: alert_log" on a clean checkout with
+# no such file (confirmed live on GitHub Actions, Sep 7 2026).
 
 
 def _html_doc(fragment, bg="#f7f4ef"):
@@ -109,7 +121,7 @@ def alert_recipients(owner_email: str, restaurant_id: int = None, db_path: str =
     it, else by owner_email, so no existing call site had to change."""
     out = [owner_email] if owner_email else []
     try:
-        conn = get_conn(db_path)
+        conn = models.get_conn(db_path)
         if restaurant_id:
             row = conn.execute("SELECT alert_extra_emails FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
         else:
@@ -209,7 +221,7 @@ def get_alert_contacts(restaurant_id: int, sms_consent_only: bool = False, db_pa
     SMS — only contacts whose number's owner personally checked the consent
     box get texted. Management/display UI wants sms_consent_only=False (the
     owner should see and be able to remove any contact, consented or not)."""
-    conn = get_conn(db_path)
+    conn = models.get_conn(db_path)
     query = "SELECT id, name, phone, sms_consent FROM alert_contacts WHERE restaurant_id=?"
     if sms_consent_only:
         query += " AND sms_consent=1"
@@ -230,7 +242,7 @@ def add_alert_contact(restaurant_id: int, name: str, phone: str,
     if sms_consent:
         from time_utils import restaurant_now_by_id
         consent_at = restaurant_now_by_id(restaurant_id, naive=True).isoformat()
-    conn = get_conn(db_path)
+    conn = models.get_conn(db_path)
     cur = conn.execute(
         "INSERT INTO alert_contacts (restaurant_id, name, phone, sms_consent, sms_consent_at) VALUES (?,?,?,?,?)",
         (restaurant_id, name.strip(), phone.strip(), int(sms_consent), consent_at),
@@ -242,7 +254,7 @@ def add_alert_contact(restaurant_id: int, name: str, phone: str,
 
 
 def delete_alert_contact(contact_id: int, db_path: str = DB_PATH):
-    conn = get_conn(db_path)
+    conn = models.get_conn(db_path)
     conn.execute("DELETE FROM alert_contacts WHERE id=?", (contact_id,))
     conn.commit()
     conn.close()
@@ -257,7 +269,7 @@ def _is_health_alert(text: str) -> bool:
 
 
 def _neg_spike_count(restaurant_id: int, db_path: str = DB_PATH) -> int:
-    conn = get_conn(db_path)
+    conn = models.get_conn(db_path)
     count = conn.execute("""
         SELECT COUNT(*) FROM reviews
         WHERE restaurant_id=? AND sentiment='negative'
@@ -268,7 +280,7 @@ def _neg_spike_count(restaurant_id: int, db_path: str = DB_PATH) -> int:
 
 
 def _already_alerted_spike(restaurant_id: int, db_path: str = DB_PATH) -> bool:
-    conn = get_conn(db_path)
+    conn = models.get_conn(db_path)
     row = conn.execute("""
         SELECT id FROM alert_log
         WHERE restaurant_id=? AND alert_type='neg_spike'
@@ -279,7 +291,7 @@ def _already_alerted_spike(restaurant_id: int, db_path: str = DB_PATH) -> bool:
 
 
 def _log_alert(restaurant_id: int, alert_type: str, review_id: int = None, db_path: str = DB_PATH):
-    conn = get_conn(db_path)
+    conn = models.get_conn(db_path)
     conn.execute(
         "INSERT INTO alert_log (restaurant_id, alert_type, review_id) VALUES (?,?,?)",
         (restaurant_id, alert_type, review_id),
@@ -330,7 +342,7 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
     if not new_reviews:
         return
 
-    conn = get_conn(db_path)
+    conn = models.get_conn(db_path)
     row = conn.execute("""
         SELECT alert_1star, alert_2star, alert_health, alert_5star,
                alert_neg_spike, alert_negative_trend, alert_no_response,
@@ -435,7 +447,12 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
                     data={"alert_type": alert_type, "review_id": review_id})
             except Exception:
                 pass
-        _log_alert(restaurant_id, alert_type, review_id)
+        # db_path from the enclosing fire_review_alerts() call — this used
+        # to fall back to _log_alert's own stale default, silently logging (or,
+        # on a machine/CI runner with no local reviews.db, crashing) against
+        # the wrong database regardless of what db_path the caller actually
+        # passed in.
+        _log_alert(restaurant_id, alert_type, review_id, db_path=db_path)
         try:
             from webhooks import fire_webhook as _fw
             _fw(restaurant_id, "alert.fired", {"alert_type": alert_type, "review_id": review_id})
@@ -556,7 +573,7 @@ def check_no_response_alerts(db_path: str = DB_PATH):
     Called daily by the scheduler. Fires alerts for restaurants with negative
     reviews unresponded for 48+ hours. Fires both email and SMS per restaurant flags.
     """
-    conn = get_conn(db_path)
+    conn = models.get_conn(db_path)
     rows = conn.execute("""
         SELECT r.restaurant_id, rest.name, rest.owner_email,
                rest.urgent_via_sms, rest.urgent_via_email,
@@ -586,7 +603,7 @@ def check_no_response_alerts(db_path: str = DB_PATH):
         owner_email = row["owner_email"] or ""
 
         # 24h dedup
-        conn2 = get_conn(db_path)
+        conn2 = models.get_conn(db_path)
         already = conn2.execute("""
             SELECT id FROM alert_log
             WHERE restaurant_id=? AND alert_type='no_response'
@@ -628,7 +645,7 @@ def check_no_response_alerts(db_path: str = DB_PATH):
             except Exception:
                 pass
 
-        _log_alert(rid, "no_response")
+        _log_alert(rid, "no_response", db_path=db_path)
         try:
             from webhooks import fire_webhook as _fw
             _fw(rid, "alert.fired", {"alert_type": "no_response"}, db_path)
@@ -641,7 +658,7 @@ def check_daily_alerts(db_path: str = DB_PATH):
     Daily check for negative trend, rating threshold, and labor over target.
     Called once per day by the scheduler alongside check_no_response_alerts.
     """
-    conn = get_conn(db_path)
+    conn = models.get_conn(db_path)
     restaurants = conn.execute("""
         SELECT id, name, owner_email,
                urgent_via_sms, urgent_via_email,
@@ -699,7 +716,7 @@ def check_daily_alerts(db_path: str = DB_PATH):
             # single run, sending the same alert daily until the owner
             # fixes it. A week between repeats for the SAME unresolved
             # issue is still timely without becoming daily noise.
-            c2 = get_conn(db_path)
+            c2 = models.get_conn(db_path)
             row = c2.execute("""
                 SELECT id FROM alert_log
                 WHERE restaurant_id=? AND alert_type=?
@@ -710,7 +727,7 @@ def check_daily_alerts(db_path: str = DB_PATH):
 
         # ── Negative trend ────────────────────────────────────
         if r["alert_negative_trend"] and not _already_alerted("negative_trend"):
-            c2 = get_conn(db_path)
+            c2 = models.get_conn(db_path)
             weeks = c2.execute("""
                 SELECT strftime('%Y-%W', review_date) as week,
                        AVG(rating) as avg_rating
@@ -767,7 +784,7 @@ def check_daily_alerts(db_path: str = DB_PATH):
 
         # ── Labor over target ──────────────────────────────────
         if r["alert_labor_over"] and not _already_alerted("labor_over"):
-            c2 = get_conn(db_path)
+            c2 = models.get_conn(db_path)
             recent = c2.execute("""
                 SELECT labor_pct, period_start, period_end
                 FROM labor_history
@@ -801,7 +818,7 @@ def check_daily_alerts(db_path: str = DB_PATH):
 
 def health_bypasses_quiet_hours(restaurant_id: int, db_path: str = DB_PATH) -> bool:
     try:
-        conn = get_conn(db_path)
+        conn = models.get_conn(db_path)
         row = conn.execute("SELECT alert_health_bypass_quiet FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
         conn.close()
         return bool(row and row["alert_health_bypass_quiet"])
@@ -814,7 +831,7 @@ def check_extra_daily_alerts(db_path: str = DB_PATH):
     an AI-visibility drop — run right after check_daily_alerts(). Same
     7-day repeat window, same three channels (email to owner + extra
     recipients, SMS to consented contacts, push)."""
-    conn = get_conn(db_path)
+    conn = models.get_conn(db_path)
     restaurants = conn.execute("""
         SELECT id, name, owner_email, urgent_via_sms, urgent_via_email,
                alert_food_waste, alert_ai_visibility_drop
@@ -830,7 +847,7 @@ def check_extra_daily_alerts(db_path: str = DB_PATH):
         contacts = get_alert_contacts(rid, sms_consent_only=True, db_path=db_path) if via_sms else []
 
         def _recent(alert_type):
-            c2 = get_conn(db_path)
+            c2 = models.get_conn(db_path)
             row = c2.execute("""SELECT id FROM alert_log WHERE restaurant_id=? AND alert_type=?
                                 AND fired_at >= datetime('now', '-7 days')""", (rid, alert_type)).fetchone()
             c2.close()

@@ -13,7 +13,21 @@ or refactoring a large, currently-working, production code path just to
 save ~20 lines here. Duplicating this one isolated formula was the lower-
 risk option.
 """
-from models import get_conn, get_restaurant, get_review_stats, DB_PATH
+import models
+from models import get_restaurant, get_review_stats, DB_PATH
+
+# get_conn is looked up on the models module at call time (models.get_conn(...)),
+# never imported by name here. Every test in this codebase redirects the
+# database by monkeypatching models.get_conn — `from models import get_conn`
+# would bind a private, unpatchable copy of the original function into this
+# module's own namespace, exactly the bug already documented and fixed once
+# before in guest_marketing.py. That bug existed here for real: every test
+# exercising the Home brief's Total Value Delivered figure was silently
+# reading and writing the developer's own real local reviews.db instead of
+# the test's isolated fixture database (masked on any machine that happens
+# to have one sitting around), and hard-crashed with "no such table:
+# value_snapshots" on a clean checkout with no such file — exactly what
+# GitHub Actions' CI runner hit on every push (confirmed Sep 7 2026).
 
 
 def compute_total_value_delivered(restaurant_id: int, db_path: str = DB_PATH) -> int:
@@ -68,7 +82,7 @@ def compute_total_value_delivered(restaurant_id: int, db_path: str = DB_PATH) ->
 def _marketing_agency_value(restaurant_id: int, db_path: str) -> int:
     """$1,500/mo social-media-manager baseline, only once content has
     actually been generated — same rule as the web dashboard."""
-    conn = get_conn(db_path)
+    conn = models.get_conn(db_path)
     conn.execute("""CREATE TABLE IF NOT EXISTS marketing_content_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT, restaurant_id INTEGER NOT NULL,
         content_type TEXT, topic TEXT, post_id TEXT, post_platform TEXT,
@@ -100,7 +114,7 @@ def record_value_snapshot(restaurant_id: int, total_value: int, db_path: str = D
     day's figure. No separate scheduled job: a restaurant whose owner never
     opens the app that day simply doesn't get a data point for it, which is
     fine for a "how's this trending" sparkline."""
-    conn = get_conn(db_path)
+    conn = models.get_conn(db_path)
     conn.execute("""
         INSERT INTO value_snapshots (restaurant_id, snapshot_date, total_value)
         VALUES (?, date('now'), ?)
@@ -113,7 +127,7 @@ def record_value_snapshot(restaurant_id: int, total_value: int, db_path: str = D
 def get_value_history(restaurant_id: int, days: int = 30, db_path: str = DB_PATH) -> list[dict]:
     """Ascending by date — oldest first, matching how a sparkline is drawn
     left to right."""
-    conn = get_conn(db_path)
+    conn = models.get_conn(db_path)
     rows = conn.execute(f"""
         SELECT snapshot_date, total_value FROM value_snapshots
         WHERE restaurant_id=? AND snapshot_date >= date('now', '-{int(days)} days')

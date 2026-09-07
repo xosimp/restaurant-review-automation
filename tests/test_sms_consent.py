@@ -18,7 +18,7 @@ def _redirect_db(monkeypatch, db_path):
     import models, notify, client_api, admin_routes
     real_get_conn = models.get_conn
     redirect = lambda *a, **k: real_get_conn(db_path)
-    for mod in (models, notify, client_api, admin_routes):
+    for mod in (models, client_api, admin_routes):
         monkeypatch.setattr(mod, "get_conn", redirect)
 
 

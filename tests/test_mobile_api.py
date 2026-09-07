@@ -25,7 +25,7 @@ def _redirect_db(monkeypatch, db_path):
     comment for the same gotcha."""
     real_get_conn = models.get_conn
     redirect = lambda *a, **k: real_get_conn(db_path)
-    for mod in (models, auth, auth_routes, client_api, mobile_api, notify, guest_marketing, value_delivered):
+    for mod in (models, auth, auth_routes, client_api, mobile_api, guest_marketing):
         monkeypatch.setattr(mod, "get_conn", redirect)
 
 

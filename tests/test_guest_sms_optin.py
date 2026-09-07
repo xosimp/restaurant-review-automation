@@ -25,7 +25,7 @@ from models import create_restaurant, Restaurant, get_conn
 def _redirect_db(monkeypatch, db_path):
     real_get_conn = models.get_conn
     redirect = lambda *a, **k: real_get_conn(db_path)
-    for mod in (models, gm, notify, webhook_routes):
+    for mod in (models, gm, webhook_routes):
         monkeypatch.setattr(mod, "get_conn", redirect, raising=False)
     gm.init_guest_marketing(db_path)
     monkeypatch.setattr(gm, "DB_PATH", db_path)
