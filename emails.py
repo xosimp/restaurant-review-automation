@@ -857,14 +857,14 @@ def send_payment_email(to_email, restaurant_name, tier=None,
   <div style="flex:1;min-width:200px;background:white;border:2px solid #c84b2f;border-radius:8px;padding:16px">
     <div style="font-size:10px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:#7a736a;margin-bottom:4px">Monthly</div>
     <div style="font-size:20px;font-weight:600;color:#0e0c0a;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;margin-bottom:2px">{retainer_price}</div>
-    <div style="font-size:11px;color:#7a736a;margin-bottom:12px">Cancel anytime with 30 days written notice &nbsp;·&nbsp; No long-term contracts</div>
+    <div style="font-size:11px;color:#7a736a;margin-bottom:12px">Billed monthly from day 31 &nbsp;·&nbsp; Cancel with 30 days' written notice</div>
     <a href="{checkout_monthly}" style="display:block;text-align:center;background:#c84b2f;color:white;padding:10px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600">Choose monthly →</a>
   </div>
   <div style="flex:1;min-width:200px;background:#fdf8f6;border:2px solid #2d6a4f;border-radius:8px;padding:16px;position:relative">
     <div style="position:absolute;top:-10px;left:50%;transform:translateX(-50%);background:#2d6a4f;color:white;font-size:10px;font-weight:600;padding:3px 10px;border-radius:20px;white-space:nowrap">2 MONTHS FREE</div>
     <div style="font-size:10px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:#7a736a;margin-bottom:4px">Annual</div>
     <div style="font-size:20px;font-weight:600;color:#0e0c0a;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;margin-bottom:2px">{annual_price}</div>
-    <div style="font-size:11px;color:#2d6a4f;font-weight:500;margin-bottom:12px">{annual_monthly} equivalent — save ${saving:,}</div>
+    <div style="font-size:11px;color:#2d6a4f;font-weight:500;margin-bottom:12px">{annual_monthly} equivalent — save ${saving:,} &nbsp;·&nbsp; billed once on day 31</div>
     <a href="{checkout_annual}" style="display:block;text-align:center;background:#2d6a4f;color:white;padding:10px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600">Choose annual →</a>
   </div>
 </div>"""
@@ -890,9 +890,9 @@ def send_payment_email(to_email, restaurant_name, tier=None,
     Here is your payment link for the <strong>{label}</strong> plan.
   </p>
   <p style="font-size:14px;color:#3a3530;line-height:1.6;margin-bottom:20px">
-    Pick your plan below — {setup_price} setup is the same either way.
+    Pick your plan below — {setup_price} setup is the same either way and is billed today.
     Monthly at {retainer_price}, or save ${saving:,} by going annual.
-    Setup is billed once. The retainer starts today and you can cancel with 30 days' notice.
+    The retainer starts 30 days after setup, and you can cancel with 30 days' written notice.
   </p>
   <div style="background:#f7f4ef;border-radius:8px;padding:20px 22px;margin-bottom:24px;border-left:3px solid #c84b2f">
     <p style="font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:#7a736a;margin:0 0 6px">{label}</p>
@@ -1179,6 +1179,7 @@ def create_stripe_checkout(module_count: int, owner_email: str,
 
     _stripe.api_key = stripe_key
     from pricing import plan_for
+    from pricing import money, RETAINER_START_DAYS
     plan = plan_for(module_count)
     setup_amount = plan["setup"] * 100   # cents, same for both billing periods
     if billing_period == "annual":
@@ -1229,11 +1230,11 @@ def create_stripe_checkout(module_count: int, owner_email: str,
             ],
             mode="subscription",
             subscription_data={
-                # NO trial_period_days. This used to hand every client a
-                # genuine 30-day free trial in Stripe — not just email copy,
-                # an actual billing term: the retainer did not charge until
-                # day 31. Cavnar AI does not offer a free trial, so the
-                # subscription now starts when they pay.
+                # The setup fee (one-time line item) is charged at checkout;
+                # the retainer — monthly or annual — starts on day 31. This
+                # is the contract's term (pricing.RETAINER_START_DAYS), not
+                # a marketing trial, and applies to both billing periods.
+                "trial_period_days": RETAINER_START_DAYS,
                 "metadata": {
                     "restaurant": restaurant_name,
                     "modules": str(module_count),
@@ -1243,7 +1244,7 @@ def create_stripe_checkout(module_count: int, owner_email: str,
             success_url="https://dashboard.cavnar.ai?payment=success",
             cancel_url="https://dashboard.cavnar.ai?payment=cancelled",
             custom_text={
-                "submit": {"message": f"${module_count*500} setup plus your first {'year' if billing_period == 'annual' else 'month'} today."}
+                "submit": {"message": f"{money(plan['setup'])} setup today. Your {'annual' if billing_period == 'annual' else 'monthly'} retainer of {money(plan['annual'] if billing_period == 'annual' else plan['monthly'])} starts in {RETAINER_START_DAYS} days."}
             },
             metadata={"restaurant": restaurant_name, "modules": str(module_count)},
         )

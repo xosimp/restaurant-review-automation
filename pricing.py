@@ -7,11 +7,20 @@ contract and Stripe were still on the launch prices ($500 setup, $300/mo)
 while the website said $750 / $349 — a client signing at one price and
 paying another is exactly the kind of thing that costs the deal.
 
-Plans (all one-time setup + subscription, annual billing saves two months):
+Plans (one-time setup at checkout + retainer from day 31, annual saves two months):
   Starter (1 module):  $750 setup · $349/mo · $3,490/yr
   Full System (4):     $3,000 setup · $1,199/mo · $11,990/yr
   2–3 modules are not published; priced as N × Starter until they are.
 """
+
+# Billing terms (Sep 7 2026, Will's call): the setup fee is charged at
+# checkout; the retainer — monthly or annual, chosen at checkout — starts
+# RETAINER_START_DAYS after setup payment and is billed automatically from
+# then on. Either party may cancel with NOTICE_DAYS written notice. The
+# contract PDF (scripts/build_contract_pdf.py), the Stripe checkout
+# (emails.create_stripe_checkout) and the payment email all read these.
+RETAINER_START_DAYS = 30
+NOTICE_DAYS = 30
 
 STARTER = {"setup": 750, "monthly": 349, "annual": 3490}
 FULL = {"setup": 3000, "monthly": 1199, "annual": 11990}

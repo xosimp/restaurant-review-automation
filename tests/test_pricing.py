@@ -45,9 +45,15 @@ def test_stripe_checkout_uses_pricing(monkeypatch):
     monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_x")
     url = emails.create_stripe_checkout(4, "o@example.com", "R", "annual")
     assert url and [p["unit_amount"] for p in captured["prices"]] == [300000, 1199000]
+    # setup at checkout, retainer on day 31 — for annual too
+    assert captured["session"]["subscription_data"]["trial_period_days"] == pricing.RETAINER_START_DAYS == 30
+    assert "$3,000 setup today" in captured["session"]["custom_text"]["submit"]["message"]
+    assert "$11,990" in captured["session"]["custom_text"]["submit"]["message"]
     captured.clear()
     emails.create_stripe_checkout(1, "o@example.com", "R", "monthly")
     assert [p["unit_amount"] for p in captured["prices"]] == [75000, 34900]
+    assert captured["session"]["subscription_data"]["trial_period_days"] == 30
+    assert "$349" in captured["session"]["custom_text"]["submit"]["message"]
 
 
 def test_docusign_tabs_and_admin_role(monkeypatch):
@@ -71,4 +77,5 @@ def test_docusign_tabs_and_admin_role(monkeypatch):
     roles = {x["roleName"]: x for x in sent["body"]["templateRoles"]}
     assert set(roles) == {"Admin", "Client"}
     tabs = {t["tabLabel"]: t["value"] for t in roles["Client"]["tabs"]["textTabs"]}
-    assert tabs["setup_fee"] == "$3,000" and tabs["monthly_fee"] == "$1,199/mo"
+    assert tabs["setup_fee"] == "$3,000" and tabs["monthly_fee"] == "$1,199 / month" and tabs["annual_fee"] == "$11,990 / year"
+    assert tabs["modules"] == "all" and tabs["restaurant_name"] == "Simple EJ's" and tabs["owner_email"] == "erik@example.com"

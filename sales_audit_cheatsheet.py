@@ -354,7 +354,7 @@ def build(audit, results):
             "Notifications: iOS push, SMS and email alerts — urgent reviews, labor alerts, price changes, digests; quiet hours and a daily alert cap exist.",
             "Emails: weekly digest on the client's chosen day, monthly summary, urgent review alerts, staff schedule emails, supplier order emails, login and security emails.",
             "Multi-location: a brand can hold several locations; switch between them or view all locations together; each location is its own record.",
-            "Setup: contract via DocuSign, payment via Stripe, credentials and connections done in onboarding; the setup fee covers that work.",
+            "Setup: contract via DocuSign, payment via Stripe, credentials and connections done in onboarding; the setup fee covers that work. Billing: setup fee at checkout; the retainer (monthly, or annual with two months free) starts 30 days after setup and bills automatically; cancel with 30 days' written notice.",
         ]},
         {"h": "Pricing (pricing.html)", "items": [
             "%s" % PRICING["starter"]["note"],

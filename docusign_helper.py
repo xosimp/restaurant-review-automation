@@ -113,7 +113,8 @@ def send_contract(
     from pricing import plan_for, money
     plan = plan_for(module_count)
     setup_fee    = money(plan["setup"])
-    monthly_fee  = f"{money(plan['monthly'])}/mo"   # the template's Amount cell is narrow; the annual option is in the payment email
+    monthly_fee  = f"{money(plan['monthly'])} / month"
+    annual_fee   = f"{money(plan['annual'])} / year"
 
     access_token = get_access_token()
 
@@ -153,6 +154,8 @@ def send_contract(
                     "textTabs": [
                         {"tabLabel": "setup_fee",       "value": setup_fee,       "locked": "true"},
                         {"tabLabel": "monthly_fee",     "value": monthly_fee,     "locked": "true"},
+                        {"tabLabel": "annual_fee",      "value": annual_fee,      "locked": "true"},
+                        {"tabLabel": "modules",         "value": modules_list or plan["label"], "locked": "true"},
                         {"tabLabel": "restaurant_name", "value": restaurant_name, "locked": "true"},
                         {"tabLabel": "owner_name",      "value": owner_name,      "locked": "true"},
                         {"tabLabel": "owner_email",     "value": owner_email,     "locked": "true"},
