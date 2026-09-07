@@ -251,6 +251,30 @@ def api_unshare(audit_id, current_user):
     return jsonify(ok=True)
 
 
+def _latest_active_audit_id():
+    rows = store.list_audits()
+    for r in rows:
+        if r["status"] in ("Draft", "In Progress", "Follow-Up"):
+            return r["id"]
+    return rows[0]["id"] if rows else None
+
+
+@audit_bp.route("/admin/audits/latest")
+@admin_required
+def latest_audit_redirect(current_user):
+    """The admin console's 'Open audit' button: straight into the audit
+    being worked on, or the list when there isn't one."""
+    aid = _latest_active_audit_id()
+    return redirect("/admin/audits/%d" % aid if aid else "/admin/audits")
+
+
+@audit_bp.route("/admin/audits/latest/cheatsheet")
+@admin_required
+def latest_cheatsheet_redirect(current_user):
+    aid = _latest_active_audit_id()
+    return redirect("/admin/audits/%d/cheatsheet" % aid if aid else "/admin/audits")
+
+
 @audit_bp.route("/admin/audits/new")
 @admin_required
 def new_audit_redirect(current_user):

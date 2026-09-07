@@ -50,6 +50,10 @@ input::placeholder,textarea::placeholder{color:var(--ink4)}
 .search .res .t{font-size:9.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;padding:2px 6px;border-radius:4px;background:var(--paper3);color:var(--ink3);min-width:62px;text-align:center}
 .top .pill{font-size:11.5px;color:var(--ink3);display:flex;align-items:center;gap:6px;white-space:nowrap}
 .top .who{margin-left:auto;font-size:12px;color:var(--ink3)}
+.top .topbtn{display:inline-flex;align-items:center;gap:7px;padding:7px 13px;border-radius:8px;background:var(--ember);color:#fff;font-size:12.5px;font-weight:700;white-space:nowrap;text-decoration:none;border:1px solid var(--ember)}
+.top .topbtn:hover{background:#b0402a;text-decoration:none}
+.top .topbtn.ghost{background:transparent;color:var(--ember2);border-color:rgba(232,149,106,.45)}
+.top .topbtn.ghost:hover{background:var(--ember-bg)}
 .top .who b{color:var(--ink)}
 .content{padding:20px 22px 60px;max-width:1600px}
 /* type */
@@ -167,7 +171,8 @@ td.r,th.r{text-align:right}
       <a href="#jobs" data-v="jobs">Jobs <span class="cnt" id="n-jobs" hidden></span></a>
       <a href="#issues" data-v="issues">Support &amp; issues <span class="cnt" id="n-issues" hidden></span></a>
       <div class="sec">Sales</div>
-      <a href="/admin/audits">Restaurant audits ↗</a>
+      <a href="/admin/audits">Restaurant audits</a>
+      <a href="/admin/audits/latest/cheatsheet">Meeting cheat sheet</a>
       <div class="sec">Admin</div>
       <a href="#system" data-v="system">System</a>
       <a href="/status" target="_blank">Public status ↗</a>
@@ -182,6 +187,8 @@ td.r,th.r{text-align:right}
       </div>
       <span class="pill" id="hb-pill"><span class="heart"></span> Scheduler</span>
       <span class="pill" id="gen-at"></span>
+      <a class="topbtn" href="/admin/audits/latest" title="Open the current restaurant audit"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v16H4z"/><path d="M8 9h8M8 13h8M8 17h5"/></svg>Open audit</a>
+      <a class="topbtn ghost" href="/admin/audits/latest/cheatsheet" title="Meeting cheat sheet for the current audit"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 4.5-9 4.5-9-4.5L12 3z"/><path d="M3 12l9 4.5 9-4.5M3 16.5L12 21l9-4.5"/></svg>Cheat sheet</a>
       <span class="who">Signed in as <b>{{ current_user.username }}</b> · <a href="/logout">Sign out</a></span>
     </div>
     <div class="content" id="view"><div class="sk"></div><div class="sk" style="width:70%"></div><div class="sk" style="width:40%"></div></div>

@@ -335,3 +335,12 @@ def test_csrf_required_for_saves(app, db_path, monkeypatch):
     r = c.patch("/admin/api/audits/%d" % aid, json={"answers": {"restaurant_name": "X"}})
     assert r.status_code == 403
     assert store.get_audit(aid)["answers"]["restaurant_name"] == "C"
+
+
+def test_latest_redirects_for_admin_console_buttons(app, db_path, monkeypatch):
+    c = _admin_client(app, db_path, monkeypatch)
+    r = c.get("/admin/audits/latest")
+    assert r.status_code == 302 and r.headers["Location"].endswith("/admin/audits")
+    aid = store.create_audit(answers={"restaurant_name": "Latest"})
+    assert c.get("/admin/audits/latest").headers["Location"].endswith("/admin/audits/%d" % aid)
+    assert c.get("/admin/audits/latest/cheatsheet").headers["Location"].endswith("/admin/audits/%d/cheatsheet" % aid)
