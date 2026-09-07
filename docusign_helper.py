@@ -14,6 +14,41 @@ ACCOUNT_ID      = os.getenv("DOCUSIGN_ACCOUNT_ID", "")
 TEMPLATE_ID     = os.getenv("DOCUSIGN_TEMPLATE_ID", "")
 BASE_URL        = os.getenv("DOCUSIGN_BASE_URL", "https://demo.docusign.net")
 PRIVATE_KEY     = os.getenv("DOCUSIGN_PRIVATE_KEY", "")
+# OAuth callback registered on the integration key (must match exactly).
+REDIRECT_URI    = os.getenv("DOCUSIGN_REDIRECT_URI", "https://dashboard.cavnar.ai/docusign/callback")
+
+
+def is_demo(base_url: str = None) -> bool:
+    """The developer sandbox lives at demo.docusign.net; every production
+    account is on a shard like na4.docusign.net / www.docusign.net."""
+    return "demo.docusign.net" in (base_url if base_url is not None else BASE_URL)
+
+
+def auth_host(base_url: str = None) -> str:
+    """The OAuth server follows the environment: account-d.docusign.com for
+    the developer sandbox, account.docusign.com for production. Before Sep
+    2026 this was hard-coded to the sandbox host, so flipping
+    DOCUSIGN_BASE_URL to a production shard would have kept minting sandbox
+    tokens and every production send would have failed with 401.
+    DOCUSIGN_AUTH_HOST overrides the inference if DocuSign ever changes it."""
+    override = os.getenv("DOCUSIGN_AUTH_HOST", "").strip()
+    if override:
+        return override
+    return "account-d.docusign.com" if is_demo(base_url) else "account.docusign.com"
+
+
+def consent_url(base_url: str = None) -> str:
+    """One-time consent link for JWT impersonation. Open it while logged in
+    to the DocuSign account that matches the environment (sandbox or
+    production) and click Allow; consent is per environment."""
+    from urllib.parse import urlencode
+    q = urlencode({
+        "response_type": "code",
+        "scope": "signature impersonation",
+        "client_id": INTEGRATION_KEY,
+        "redirect_uri": REDIRECT_URI,
+    })
+    return f"https://{auth_host(base_url)}/oauth/auth?{q}"
 
 
 def get_access_token() -> str:
@@ -28,10 +63,7 @@ def get_access_token() -> str:
         raise ValueError("DOCUSIGN_PRIVATE_KEY is not set or invalid")
 
     now = int(time.time())
-    # For demo: account-d.docusign.com, for prod: account.docusign.com
-    # Integration key lives on DocuSign developer account (apps-d.docusign.com)
-    # JWT auth always uses account-d.docusign.com regardless of API base URL
-    auth_domain = "account-d.docusign.com"
+    auth_domain = auth_host()
 
     # Use integration key as sub (works for both demo and production JWT auth)
     sub = USER_ID if USER_ID else INTEGRATION_KEY
