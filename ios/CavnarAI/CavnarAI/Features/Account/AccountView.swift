@@ -29,6 +29,18 @@ struct AccountView: View {
                         VStack(spacing: 8) {
                             Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarInk3)
                             Button("Retry") { Task { await viewModel.load() } }
+                            // Account is the only screen that can sign someone
+                            // out, and its own content — Sign Out included —
+                            // only renders once this same load succeeds. A
+                            // session the server will never accept (wrong
+                            // environment, revoked, anything) used to trap
+                            // the user here permanently: every retry fails
+                            // the same way, and there was no way out short of
+                            // knowing to delete the app. This is that way out.
+                            Button("Sign Out", role: .destructive) {
+                                Task { await sessionStore.logout() }
+                            }
+                            .padding(.top, 4)
                         }
                         .padding(.top, 60)
                         .frame(maxWidth: .infinity)

@@ -48,9 +48,19 @@ final class SessionStore {
 
     private let client: APIClient
 
-    init(client: APIClient = .shared) {
+    convenience init(client: APIClient = .shared) {
+        self.init(client: client, storedToken: Keychain.get(Keychain.Key.sessionToken))
+    }
+
+    /// Test seam for the launch path below: exercises the exact same logic
+    /// as the public initializer against an explicit token, so tests don't
+    /// depend on Keychain — a plain `Keychain.set` followed by `Keychain.get`
+    /// in this XCTest bundle silently returns nil (no keychain-access-group
+    /// shared with a real signed app), which isn't something a test seam can
+    /// fix and isn't a real defect in Keychain.swift, which does work in a
+    /// running app — this file's own `login()` depends on it every day.
+    init(client: APIClient = .shared, storedToken: String?) {
         self.client = client
-        let storedToken = Keychain.get(Keychain.Key.sessionToken)
         self.token = storedToken
         self.appPasscodeSet = AppPasscode.isSet
         // Only gate a cold launch when something can actually enforce the
@@ -62,6 +72,55 @@ final class SessionStore {
             await client.setSessionExpiredHandler { [weak self] in
                 Task { @MainActor in self?.handleSessionExpired() }
             }
+            if storedToken != nil {
+                await validateStoredSession()
+            }
+        }
+    }
+
+    /// Confirms a token restored from Keychain is still good against
+    /// whichever server this build actually talks to, before the app
+    /// trusts it for anything.
+    ///
+    /// A token minted by a different backend — a local dev server, an old
+    /// ngrok tunnel from a Debug build later reinstalled as Release — is
+    /// byte-for-byte indistinguishable from a real one until a request is
+    /// made with it. Without this check, `isAuthenticated` (token != nil)
+    /// goes true at launch purely from Keychain's presence, so the app
+    /// skips straight past the login screen into a UI that can never load
+    /// anything: every screen's own fetch 401s the same way, forever,
+    /// with no path back to Sign In short of finding a Sign Out button —
+    /// and Account's, the only one that exists, is itself unreachable for
+    /// the identical reason (its content only renders once its own load
+    /// succeeds). Root-caused live on Sep 7 2026 rebuilding a Debug
+    /// install as Release right before a client visit: production had
+    /// never seen a single request from the app, yet Face ID unlocked
+    /// straight into a dead dashboard.
+    ///
+    /// Deliberately narrow: only a confirmed rejection from the server
+    /// clears the session. `APIClient.APIError.isRetryable` (offline,
+    /// timed out) leaves it alone — a phone with no signal at launch must
+    /// still open to its last known state, per this file's whole offline-
+    /// first design, not get logged out because the network hasn't come
+    /// up yet.
+    private func validateStoredSession() async {
+        guard token != nil else { return }
+        do {
+            let response: MeResponse = try await client.send("/mobile/api/me", hapticOnError: false)
+            currentUser = response.user
+        } catch is APIClient.SessionExpiredError {
+            // The client's own onSessionExpired handler also fires for
+            // this, asynchronously — call it here too rather than wait on
+            // that hop, so a UI observing isAuthenticated sees the change
+            // as soon as this validation resolves. clearLocalSession() is
+            // idempotent, so the handler firing a second time is harmless.
+            handleSessionExpired()
+        } catch let error as APIClient.APIError where !error.isRetryable {
+            handleSessionExpired()
+        } catch {
+            // Offline, timed out, or an odd decode — say nothing here;
+            // whichever screen the user lands on already has its own
+            // Retry for this.
         }
     }
 
