@@ -273,10 +273,13 @@ html{background:linear-gradient(160deg,#edddd0 0%,#f2ece4 30%,#ede8df 65%,#e8e0d
 .hdr-logo{font-family:'Clash Display',sans-serif;font-size:16px;color:var(--paper)}
 .hdr-logo em{color:var(--ember2);font-style:italic}
 .hdr,.hdr button,.hdr a,.hdr span,.hdr div{font-family:'Apfel Grotezk',sans-serif}
-.hdr-restaurant{font-size:12.5px;color:var(--ink3);padding-left:16px;border-left:1px solid #2a2520}
+/* Restaurant + location in the headline face (Clash Display), like the Home
+   headlines; owner and Sign out in the chrome face at a readable weight. */
+.hdr-restaurant{font-family:'Clash Display',sans-serif!important;font-size:15px;font-weight:500;letter-spacing:-.01em;color:var(--paper);padding-left:16px;border-left:1px solid #2a2520}
+#loc-switcher-btn{font-family:'Clash Display',sans-serif!important}
 .hdr-right{display:flex;align-items:center;gap:16px}
-.hdr-user{font-size:12px;color:var(--ink3)}
-.logout-btn{font-size:11px;color:var(--ink3);text-decoration:none;padding:5px 10px;border:1px solid #2a2520;border-radius:4px;transition:all .15s}
+.hdr-user{font-family:'Apfel Grotezk',sans-serif!important;font-size:13px;font-weight:700;color:var(--paper);opacity:.85}
+.logout-btn{font-family:'Apfel Grotezk',sans-serif!important;font-size:12px;font-weight:700;color:var(--ink3);text-decoration:none;padding:6px 12px;border:1px solid #2a2520;border-radius:6px;transition:all .15s}
 .logout-btn:hover{color:var(--paper);border-color:var(--paper)}
 .calc-tip{position:relative;display:inline-flex;align-items:center;margin-top:5px;cursor:default}
 .calc-tip .tip-icon{width:14px;height:14px;flex-shrink:0;color:rgba(255,255,255,.55);transition:color .15s}
