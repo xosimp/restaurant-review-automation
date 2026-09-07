@@ -725,8 +725,17 @@ def _build(current_user):
                      "biggest_issue": ({"location": worst["name"], "id": worst["id"], "issue": worst["top_issue"]} if worst["top_issue"] else None),
                      "strongest": ({"location": best["name"], "id": best["id"], "rating": best["rating_30d"]} if best else None)}
 
+    charts = {
+        "rating": [{"label": w.get("label"), "avg": w.get("avg_rating") or 0, "pos": w.get("positive") or 0, "neg": w.get("negative") or 0, "total": w.get("total") or 0} for w in sentiment if w.get("total")],
+        "labor": [{"label": (h.get("period_start") or "")[5:], "pct": h.get("labor_pct")} for h in labor_hist[::-1] if h.get("labor_pct") is not None] if labor_live else [],
+        "labor_target": labor_target,
+        "labor_days": ([{"day": k[:3], "pct": v} for k, v in (labor.get("dow_summary") or {}).items() if v] if (labor_live and labor) else []),
+        "waste": ([{"item": w.get("item"), "cost": float(w.get("waste_cost") or 0)} for w in (inv.get("waste_items") or [])[:5]] if inv_live else []),
+    }
+
     payload = {
         "ok": True,
+        "charts": charts,
         "generated_at": _iso(now),
         "local_now": local_now.isoformat(),
         "greeting_name": (restaurant.owner_name or current_user.get("username") or "").split(" ")[0].title() if (restaurant.owner_name or current_user.get("username")) else None,
