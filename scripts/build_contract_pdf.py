@@ -237,10 +237,12 @@ def build(out=OUT):
     p.bullet("Marketing Autopilot", "social, SMS and email content written in the restaurant’s voice and scheduled from one place, a guest text club, and performance tracking.")
     p.para("Modules can be added later by written agreement (email is sufficient) at the then-current published price. Cavnar AI connects to the Client’s systems — Google Business Profile, point of sale, social accounts — only with the Client’s authorization and only to provide these services. Nothing Cavnar AI drafts is published, sent or scheduled without the Client’s approval.", size=9.5)
 
-    # ── 2 fees ──
+    # ── 2 fees ── (the whole section stays on one page)
+    p.need(250)
     p.h("2", "Fees and billing")
     p.para("Setup fee, one-time. Charged at checkout through the Stripe payment link, before setup begins. Not refundable once setup has started.", size=9.5)
     p.kv_row("Setup fee (one-time)", "{{setup_fee}}", "due at checkout")
+    p.need(112)  # keep the retainer paragraph and both fee rows together
     p.para("Retainer. The Client chooses one of the two options at checkout. Either way the retainer begins %d days after the setup fee is paid and is billed automatically through Stripe on that date and on each renewal after it." % days, size=9.5)
     p.kv_row("Monthly retainer", "{{monthly_fee}}", "from day %d, then monthly" % (days + 1))
     p.kv_row("Annual retainer", "{{annual_fee}}", "from day %d, then yearly" % (days + 1), note="Two months free compared with paying monthly.")
@@ -280,7 +282,8 @@ def build(out=OUT):
     ya = col(left, M); yb = col(right, M + half + 20)
     p.y = min(ya, yb) - 6
 
-    # ── 5 data ──
+    # ── 5 data ── (kept on one page together with the signatures)
+    p.need(300)
     p.h("5", "Data, confidentiality and liability")
     p.para("All Client data remains the property of the Client. Cavnar AI will not sell, share or use Client data for any purpose other than providing the services in this Agreement, and retains it for the life of the account plus thirty days, after which it is deleted on request. Cavnar AI uses third-party AI models to draft content and analysis; all AI-generated content and recommendations should be reviewed before use, and Cavnar AI is not liable for decisions made on the basis of them. Cavnar AI’s total liability under this Agreement is limited to the fees paid by the Client in the thirty days before the claim.", size=9.5)
 
