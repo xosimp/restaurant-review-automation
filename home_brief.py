@@ -128,6 +128,23 @@ def _plural(n, one, many=None):
     return f"{n} {one if n == 1 else (many or one + 's')}"
 
 
+def _mdy(v, year=None):
+    """Home shows every date as M/D/YY. Accepts 'YYYY-MM-DD…', 'M/D' (+ year), or passes through."""
+    if not v:
+        return v
+    s = str(v)
+    try:
+        if len(s) >= 10 and s[4] == "-":
+            d = datetime.strptime(s[:10], "%Y-%m-%d")
+            return f"{d.month}/{d.day}/{d.year % 100:02d}"
+        if "/" in s and s.count("/") == 1 and year:
+            m, d = s.split("/")
+            return f"{int(m)}/{int(d)}/{int(year) % 100:02d}"
+    except Exception:
+        pass
+    return s
+
+
 def _pct_delta(cur, prev):
     if prev in (None, 0) or cur is None:
         return None
@@ -726,8 +743,8 @@ def _build(current_user):
                      "strongest": ({"location": best["name"], "id": best["id"], "rating": best["rating_30d"]} if best else None)}
 
     charts = {
-        "rating": [{"label": w.get("label"), "avg": w.get("avg_rating") or 0, "pos": w.get("positive") or 0, "neg": w.get("negative") or 0, "total": w.get("total") or 0} for w in sentiment if w.get("total")],
-        "labor": [{"label": (h.get("period_start") or "")[5:], "pct": h.get("labor_pct")} for h in labor_hist[::-1] if h.get("labor_pct") is not None] if labor_live else [],
+        "rating": [{"label": _mdy(w.get("label"), (w.get("week_key") or "")[:4]), "avg": w.get("avg_rating") or 0, "pos": w.get("positive") or 0, "neg": w.get("negative") or 0, "total": w.get("total") or 0} for w in sentiment if w.get("total")],
+        "labor": [{"label": _mdy(h.get("period_start")), "pct": h.get("labor_pct")} for h in labor_hist[::-1] if h.get("labor_pct") is not None] if labor_live else [],
         "labor_target": labor_target,
         "labor_days": ([{"day": k[:3], "pct": v} for k, v in (labor.get("dow_summary") or {}).items() if v] if (labor_live and labor) else []),
         "waste": ([{"item": w.get("item"), "cost": float(w.get("waste_cost") or 0)} for w in (inv.get("waste_items") or [])[:5]] if inv_live else []),

@@ -1151,6 +1151,10 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-sugg{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
 .hb-sugg button{background:none;border:1px solid var(--hb-line);border-radius:999px;padding:5px 11px;font-family:inherit;font-size:11.5px;color:var(--ink2);cursor:pointer}
 .hb-sugg button:hover{border-color:var(--ember);color:var(--ember)}
+.hb-askout{margin-top:12px;font-size:13px;line-height:1.6}
+.hb-askout .q{font-weight:600;color:var(--ink);margin-bottom:4px}
+.hb-askout .a{color:var(--ink2);white-space:pre-wrap;padding-left:12px;border-left:2px solid var(--ember)}
+.hb-think{color:var(--ink3)}
 /* locations */
 .hb-locs{display:flex;gap:6px;flex-wrap:wrap;margin:16px 0 0}
 .hb-loc{display:inline-flex;align-items:center;gap:8px;padding:7px 12px;border-radius:999px;border:1px solid var(--hb-line);background:transparent;cursor:pointer;font-family:inherit;font-size:12.5px;color:var(--ink);transition:background .12s ease}
@@ -1197,7 +1201,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 <div class="hb-wrap" id="hb-root">
   <div class="hb-top">
     <div style="min-width:0;flex:1">
-      <div class="hb-kicker" id="hb-kicker">{{ now }} · {{ restaurant.name }}{% if restaurant.location_name %} — {{ restaurant.location_name }}{% endif %}</div>
+      <div class="hb-kicker" id="hb-kicker">{{ now_mdy }} · {{ restaurant.name }}{% if restaurant.location_name %} — {{ restaurant.location_name }}{% endif %}</div>
       <h1 class="hb-h1" id="hb-h1">{% if restaurant.owner_name or current_user.username %}Hello, {{ (restaurant.owner_name or current_user.username).split(' ')[0]|title }}.{% else %}Your brief.{% endif %} <span class="hb-head neutral">Reading the room…</span></h1>
       <div class="hb-sub" id="hb-sub">Pulling your latest numbers.</div>
     </div>
@@ -1222,7 +1226,8 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
   function num(v){var parts=esc(v).split(/(&#?[a-z0-9]+;)/i),out='';for(var i=0;i<parts.length;i++){out+=(i%2)?parts[i]:parts[i].replace(NUM_RE,'<span class="hb-num">$1</span>');}return out;}
   function parseTs(s){if(!s)return null;var t=String(s);if(t.indexOf('T')<0){t=t.replace(' ','T')+'Z';}var d=new Date(t);return isNaN(d)?null:d;}
   function ago(s){var d=parseTs(s);if(!d)return '—';var m=Math.round((Date.now()-d)/60000);if(m<1)return 'just now';if(m<60)return m+'m ago';var h=Math.round(m/60);if(h<48)return h+'h ago';return Math.round(h/24)+'d ago';}
-  function dateKicker(iso){var d=iso?new Date(iso):new Date();return d.toLocaleDateString([],{weekday:'long',month:'long',day:'numeric'});}
+  function mdy(x){var d=x instanceof Date?x:(typeof x==='string'&&/^\d{4}-\d{2}-\d{2}/.test(x)?new Date(x.slice(0,4),+x.slice(5,7)-1,+x.slice(8,10)):new Date(x));if(isNaN(d))return esc(x||'');return (d.getMonth()+1)+'/'+d.getDate()+'/'+String(d.getFullYear()).slice(-2);}
+  function dateKicker(iso){return mdy(iso?new Date(iso):new Date());}
   function greeting(iso){var d=iso?new Date(iso):new Date();var h=d.getHours();return h<12?'Good morning':h<17?'Good afternoon':'Good evening';}
   function reduced(){return !!(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches);}
   // Catmull-Rom → cubic bezier, same idea as CavnarChart.smoothPath on iOS.
@@ -1296,8 +1301,36 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     if(btn&&typeof switchTab==='function'){switchTab(module==='intel'?'competitor':module,btn);window.scrollTo(0,0);}
     else if(typeof toast==='function'){toast((MODLABEL[module]||'That module')+' isn\'t active on this account','warning');}
   };
-  window.hbAsk=function(q){var inp=document.getElementById('ask-cavnar-input'),panel=document.getElementById('ask-cavnar-panel');if(panel&&panel.style.display==='none'&&typeof toggleAskCavnar==='function')toggleAskCavnar();if(inp){inp.value=q||'';inp.focus();}if(q&&typeof sendAskCavnar==='function')sendAskCavnar();};
-  window.hbAskSubmit=function(){var i=document.getElementById('hb-ask-in');if(!i)return;var q=i.value.trim();if(!q)return;i.value='';hbAsk(q);};
+  // Ask from Home: open the floating Ask panel and send there. If the panel
+  // isn't available for any reason, answer inline under the Home input so a
+  // click never does nothing.
+  function askInline(q){
+    var out=document.getElementById('hb-ask-out');if(!out)return;
+    out.hidden=false;out.innerHTML='<div class="q">'+esc(q)+'</div><div class="a"><span class="hb-think">Thinking…</span></div>';
+    fetch('/api/ask-cavnar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q,history:[]})}).then(function(r){return r.json();}).then(function(d){
+      out.innerHTML='<div class="q">'+esc(q)+'</div><div class="a">'+esc(d&&d.ok?(d.answer||''):((d&&d.error)||'Something went wrong — try again.'))+'</div>';
+    }).catch(function(){out.innerHTML='<div class="q">'+esc(q)+'</div><div class="a">Couldn\'t reach Cavnar — check your connection.</div>';});
+  }
+  window.hbAsk=function(q){
+    q=(q||'').trim();
+    var inp=document.getElementById('ask-cavnar-input'),panel=document.getElementById('ask-cavnar-panel');
+    try{
+      if(panel&&inp&&typeof sendAskCavnar==='function'){
+        if(panel.style.display!=='flex'){if(typeof toggleAskCavnar==='function')toggleAskCavnar();if(panel.style.display!=='flex')panel.style.display='flex';}
+        inp.value=q;inp.focus();
+        if(q)sendAskCavnar();
+        return;
+      }
+    }catch(e){if(window.console)console.error('Ask Cavnar panel failed, answering inline',e);}
+    if(q)askInline(q);
+  };
+  window.hbAskSubmit=function(){var i=document.getElementById('hb-ask-in');if(!i)return;var q=i.value.trim();if(!q){i.focus();return;}i.value='';hbAsk(q);};
+  document.addEventListener('click',function(e){
+    var t=e.target&&e.target.closest?e.target.closest('[data-ask],[data-ask-submit]'):null;if(!t)return;
+    e.preventDefault();
+    if(t.hasAttribute('data-ask-submit'))hbAskSubmit();else hbAsk(t.getAttribute('data-ask'));
+  });
+  document.addEventListener('keydown',function(e){if(e.key==='Enter'&&e.target&&e.target.id==='hb-ask-in'){e.preventDefault();hbAskSubmit();}});
   window.hbAct=function(kind,module,btn){if(kind==='publish_replies'){if(typeof publishAllReplies==='function')publishAllReplies(btn);return;}if(kind==='ask'){hbAsk('');return;}if(kind==='alerts'){hbOpen('alerts');return;}hbOpen(module);};
   window.hbSwitchLoc=function(rid,name){if(typeof switchLocation==='function')switchLocation(rid,name);};
   window.hbScope=function(scope){_hbScope=scope;_hbLoadedAt=0;hbLoad(false);};
@@ -1343,7 +1376,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     var rangeLabel=_hbRange==='1M'?'month':_hbRange==='3M'?'3 months':'year';
     var h='<div class="hd"><div><div class="hb-kicker">Value delivered</div><div class="big"><span id="hb-big" class="hb-num">$0</span><small>since you started</small></div>'+(vals.length>1?'<div class="delta hb-num">'+(delta>=0?'+':'−')+'$'+Math.abs(Math.round(delta)).toLocaleString()+' <span>in the last '+rangeLabel+'</span></div>':'')+'</div>';
     h+='<div class="hb-range">'+['1M','3M','1Y'].map(function(r){return '<button class="'+(r===_hbRange?'on':'')+'" onclick="hbRange(\''+r+'\')">'+r+'</button>';}).join('')+'</div></div>';
-    if(vals.length>1){h+=glowLine(vals,1000,190,EMBER2,{pad:10});h+='<div class="ax hb-num"><span>'+esc(sel[0].date)+'</span><span>'+esc(sel[sel.length-1].date)+'</span></div>';}
+    if(vals.length>1){h+=glowLine(vals,1000,190,EMBER2,{pad:10});h+='<div class="ax hb-num"><span>'+mdy(sel[0].date)+'</span><span>'+mdy(sel[sel.length-1].date)+'</span></div>';}
     else h+='<div class="hb-empty" style="margin-top:14px">The curve starts on the second day of tracking.</div>';
     el.innerHTML=h;countUp(document.getElementById('hb-big'),v.total||0,'$');
   }
@@ -1380,8 +1413,9 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     h+='<h3 style="margin-top:26px"><span>Cavnar recommends</span>'+(hid.length?'<button class="hb-link" onclick="hbDismiss(\''+esc(hid[0].key).replace(/'/g,'\\\'')+'\',true)">restore hidden</button>':'')+'</h3>';
     if(!recs.length)h+='<div class="hb-empty">Nothing to recommend yet — that changes as your data grows.</div>';
     for(var j=0;j<Math.min(recs.length,3);j++){var r=recs[j];h+='<div class="hb-row"><span class="no hb-num">0'+(j+1)+'</span><span class="t" title="'+esc(r.why||'')+'">'+num(r.title)+'</span><span class="m hb-num">'+esc((r.evidence||'').split(' · ')[0].slice(0,42))+'</span><button class="hb-link" onclick="hbOpen(\''+esc(r.module)+'\')">'+esc(MODLABEL[r.module]||r.action_label)+' →</button><button class="hb-x" title="Hide for two weeks" aria-label="Hide" onclick="hbDismiss(\''+esc(r.key).replace(/'/g,'\\\'')+'\')">✕</button></div>';}
-    h+='</div><div><h3><span>Ask Cavnar AI</span></h3><div class="hb-ask"><input id="hb-ask-in" type="text" placeholder="Why did labor go up this week?" aria-label="Ask Cavnar AI" onkeydown="if(event.key===\'Enter\')hbAskSubmit()"><button class="hb-btn p" onclick="hbAskSubmit()">Ask</button></div>';
-    if(sg.length){h+='<div class="hb-sugg">';for(var s=0;s<Math.min(sg.length,3);s++){h+='<button onclick="hbAsk(\''+esc(sg[s]).replace(/'/g,'\\\'')+'\')">'+esc(sg[s])+'</button>';}h+='</div>';}
+    h+='</div><div><h3><span>Ask Cavnar AI</span></h3><div class="hb-ask"><input id="hb-ask-in" type="text" placeholder="Why did labor go up this week?" aria-label="Ask Cavnar AI"><button type="button" class="hb-btn p" data-ask-submit="1">Ask</button></div>';
+    if(sg.length){h+='<div class="hb-sugg">';for(var s=0;s<Math.min(sg.length,3);s++){h+='<button type="button" data-ask="'+esc(sg[s])+'">'+esc(sg[s])+'</button>';}h+='</div>';}
+    h+='<div id="hb-ask-out" class="hb-askout" hidden></div>';
     var qa=(d.quick_actions||[]).filter(function(q){return q.kind!=='ask'&&q.kind!=='publish_replies'&&q.key!=='urgent';});
     if(qa.length){h+='<h3 style="margin-top:26px"><span>Shortcuts</span></h3><div class="hb-sugg" style="margin-top:0">';for(var q=0;q<Math.min(qa.length,4);q++){h+='<button onclick="hbAct(\''+esc(qa[q].kind)+'\',\''+esc(qa[q].module||'')+'\',this)">'+esc(qa[q].label)+'</button>';}h+='</div>';}
     return h+'</div></div>';

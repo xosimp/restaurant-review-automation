@@ -243,3 +243,22 @@ def test_group_brief_lists_every_location_without_averaging(db_path, monkeypatch
     monkeypatch.setattr(auth, "get_current_user", lambda: _user(a, role="owner"))
     r = cl.get("/api/home/brief/group?fresh=1")
     assert r.status_code == 200 and len(r.get_json()["locations"]) == 2
+
+
+def test_home_dates_are_m_d_yy_and_ask_uses_data_attributes(db_path):
+    rid = _seed(db_path)
+    c = get_conn(db_path)
+    for i in range(4):
+        _review(c, rid, 5, days_ago=2 + i * 7, ext=f"w{i}")
+    c.commit(); c.close()
+    p, _ = home_brief.build_home_brief(_user(rid), fresh=True)
+    import re
+    for w in p["charts"]["rating"]:
+        assert re.fullmatch(r"\d{1,2}/\d{1,2}/\d{2}", w["label"]), w["label"]
+    assert home_brief._mdy("2026-09-06") == "9/6/26" and home_brief._mdy("7/19", "2026") == "7/19/26"
+    html = open("templates/dashboard.html").read()
+    a = html.index('id="panel-home"'); b = html.index("<!-- /panel-home -->")
+    panel = html[a:b]
+    assert 'data-ask="' in panel and 'data-ask-submit' in panel
+    assert "onclick=\"hbAsk(" not in panel and "hbAskSubmit()\"" not in panel
+    assert "now_mdy" in panel

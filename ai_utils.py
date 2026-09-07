@@ -39,6 +39,11 @@ def create_with_retry(client, retries=2, backoff=1.5, restaurant_id=None, action
     to the ai_usage table on success. Neither is forwarded to the Anthropic
     API; they're popped off before reaching client.messages.create()."""
     kwargs.setdefault("thinking", {"type": "disabled"})
+    # anthropic>=0.105 (what Railway installs) rejects `temperature` outright
+    # — TypeError before the request is even made — and current Sonnet
+    # models refuse it server-side anyway. Strip it here so no caller can
+    # take production down with a parameter that never mattered.
+    kwargs.pop("temperature", None)
     attempt = 0
     while True:
         try:

@@ -48,7 +48,6 @@ def generate_email_personalization(context: str, fallback: str, restaurant_id: i
             client,
             model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
             max_tokens=200,
-            temperature=0.6,
             messages=[{"role": "user", "content": prompt}],
             restaurant_id=restaurant_id,
             action="email_personalization",

@@ -42,7 +42,6 @@ def analyse_review(review_id: int, rating: int, text: str, restaurant_id: int = 
         client,
         model="claude-haiku-4-5-20251001",
         max_tokens=256,
-        temperature=0.2,
         messages=[{"role": "user", "content": prompt}],
         restaurant_id=restaurant_id,
         action="review_analysis",

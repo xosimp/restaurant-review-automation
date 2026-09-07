@@ -220,3 +220,22 @@ def test_usage_summary_unscoped_covers_all_restaurants(db_path):
 
     rows = usage_summary(db_path=db_path)
     assert sum(r["calls"] for r in rows) == 2
+
+
+def test_create_with_retry_strips_temperature(monkeypatch):
+    """anthropic>=0.105 raises TypeError on `temperature`; production hit it
+    from the review insight. The retry wrapper drops it before the call."""
+    seen = {}
+
+    class Client:
+        class messages:
+            @staticmethod
+            def create(**kw):
+                seen.update(kw)
+                if "temperature" in kw:
+                    raise TypeError("Messages.create() got an unexpected keyword argument 'temperature'")
+                return FakeMessageWithUsage(FakeUsage(1, 1))
+
+    monkeypatch.setattr("ai_utils.log_ai_usage", lambda *a, **k: None)
+    create_with_retry(Client(), model="m", max_tokens=5, temperature=0.2, messages=[])
+    assert "temperature" not in seen

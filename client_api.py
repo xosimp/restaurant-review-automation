@@ -741,7 +741,6 @@ def _do_review_insight(rid):
             _client_ri,
             model=os.getenv("CLAUDE_MODEL","claude-haiku-4-5-20251001"),
             max_tokens=260,
-            temperature=0.2,
             messages=[{"role":"user","content":prompt}],
             restaurant_id=rid,
             action="review_insight",
