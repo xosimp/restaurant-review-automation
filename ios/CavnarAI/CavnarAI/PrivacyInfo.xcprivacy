@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- No ad/analytics tracking, no cross-app/cross-site tracking domains.
+	     True as of Sep 2026: the app has no SDK that does either. -->
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+
+	<!-- NOT YET FILLED IN — must match whatever is declared in App Store
+	     Connect's own Privacy Nutrition Label, which is a separate,
+	     manual step Will fills in there; that page is the actual source
+	     of truth Apple checks against. Based on what this app's own code
+	     sends the server, the categories that likely apply:
+	       - Contact Info: email, name, phone number (account holder)
+	       - Contact Info: a guest's phone number, only for restaurants
+	         that opt into the guest text club, collected under the
+	         restaurant's own consent flow, not the app account holder's
+	       - Financial Info: revenue, labor cost, other business figures
+	         the owner enters or connects a POS to
+	       - Identifiers: an app-generated device id (Keychain.deviceIdentity,
+	         a random UUID) — used only to recognize a returning device at
+	         login, never for tracking or ads
+	       - Usage Data: which screens/actions are used, for the app's own
+	         product analytics (if any exist), and any AI-usage logging
+	     This array is intentionally left empty rather than guessed at —
+	     the "isLinkedToUser" / "isUsedForTracking" / purpose flags on each
+	     entry carry real weight and should be set once, correctly, by
+	     whoever also fills in the App Store Connect page, so the two
+	     never disagree. -->
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+
+	<!-- Required Reason API usage — the two categories this app's own
+	     code actually touches (checked directly, not assumed):
+	       - UserDefaults: AppPreferences, the Face ID/biometric-lock
+	         preference, etc. — always this app's own keys, never an App
+	         Group, never reading anything written by another app -> CA92.1
+	       - File Timestamp: SecureCache reads the modification date of
+	         cache files it wrote itself, inside the app's own container,
+	         never a user-picked file -> C617.1 -->
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array>
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>CA92.1</string>
+			</array>
+		</dict>
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>C617.1</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>
