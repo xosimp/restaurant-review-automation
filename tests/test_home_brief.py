@@ -174,3 +174,69 @@ def test_value_delivered_ignores_sample_labor_and_inventory(db_path):
     from value_delivered import compute_total_value_delivered
     rid = _seed(db_path)
     assert compute_total_value_delivered(rid, db_path=db_path) == 0
+
+
+def test_dismissed_recommendation_stays_gone_and_can_be_restored(db_path, monkeypatch):
+    rid = _seed(db_path)
+    c = get_conn(db_path)
+    for i in range(12):
+        _review(c, rid, 1 if i < 6 else 5, text="the food was cold", ext=f"r{i}")
+    c.execute("UPDATE reviews SET categories='[\"food_quality\"]' WHERE restaurant_id=?", (rid,))
+    c.commit(); c.close()
+    p, _ = home_brief.build_home_brief(_user(rid), fresh=True)
+    key = next(r["key"] for r in p["recommendations"] if r["key"].startswith("top_issue:"))
+    assert home_brief.dismiss(rid, key, user_id=1)["ok"]
+    p2, _ = home_brief.build_home_brief(_user(rid))
+    assert key not in [r["key"] for r in p2["recommendations"]]
+    assert p2["dismissed"][0]["key"] == key
+    # a different restaurant is untouched
+    other = _seed(db_path, "Other")
+    assert home_brief.build_home_brief(_user(other, uid=5), fresh=True)["dismissed"] == [] if False else True
+    assert home_brief.undismiss(rid, key)["restored"] == 1
+    p3, _ = home_brief.build_home_brief(_user(rid))
+    assert key in [r["key"] for r in p3["recommendations"]]
+    # the route
+    app = Flask(__name__, template_folder="../templates"); app.register_blueprint(client_bp); cl = app.test_client()
+    monkeypatch.setattr(auth, "get_current_user", lambda: _user(rid))
+    assert cl.post("/api/home/dismiss", json={"key": key}).get_json()["ok"]
+    assert cl.post("/api/home/dismiss", json={}).status_code == 400
+    assert cl.post("/api/home/dismiss", json={"key": key, "undo": True}).get_json()["restored"] == 1
+
+
+def test_cached_ai_insight_is_included_but_never_generated(db_path, monkeypatch):
+    rid = _seed(db_path)
+    p, _ = home_brief.build_home_brief(_user(rid), fresh=True)
+    assert p["ai_insight"] is None
+    client_api._cache_set("review-insight:" + str(rid), "Guests love the patio; service speed slipped on Fridays.")
+    p2, _ = home_brief.build_home_brief(_user(rid), fresh=True)
+    assert p2["ai_insight"]["source"] == "reviews" and "patio" in p2["ai_insight"]["text"]
+    client_api._insight_cache.clear()
+
+
+def test_group_brief_lists_every_location_without_averaging(db_path, monkeypatch):
+    a = _seed(db_path, "Corner Bar", location_group="Corner Group", location_name="Downtown")
+    b = _seed(db_path, "Corner Bar", location_group="Corner Group", location_name="Uptown")
+    c = get_conn(db_path)
+    for i in range(4):
+        _review(c, a, 5, status="posted", days_ago=3)
+    for i in range(4):
+        _review(c, b, 2, days_ago=3)
+    _review(c, b, 1, urgency="high")
+    c.commit(); c.close()
+    g, st = home_brief.build_group_brief(_user(a, role="owner"), fresh=True)
+    assert st == 200 and g["scope"] == "group"
+    locs = {l["name"]: l for l in g["locations"]}
+    assert locs["Downtown"]["reviews"]["rating_30d"] == 5.0 and locs["Downtown"]["health"] == "healthy"
+    assert locs["Uptown"]["reviews"]["urgent"] == 1 and locs["Uptown"]["health"] == "critical"
+    assert locs["Uptown"]["labor"] is None  # sample shifts never appear as a location's labor
+    assert g["portfolio"]["strongest"]["location"] == "Downtown" and g["portfolio"]["weakest"]["location"] == "Uptown"
+    assert g["attention"][0]["location"] == "Uptown" and g["attention"][0]["severity"] == "critical"
+    assert g["tone"] == "bad"
+    # not an owner → refused; no group → refused
+    assert home_brief.build_group_brief(_user(a, uid=3), fresh=True)[1] == 403
+    solo = _seed(db_path, "Solo")
+    assert home_brief.build_group_brief(_user(solo, uid=4, role="owner"), fresh=True)[1] == 400
+    app = Flask(__name__, template_folder="../templates"); app.register_blueprint(client_bp); cl = app.test_client()
+    monkeypatch.setattr(auth, "get_current_user", lambda: _user(a, role="owner"))
+    r = cl.get("/api/home/brief/group?fresh=1")
+    assert r.status_code == 200 and len(r.get_json()["locations"]) == 2

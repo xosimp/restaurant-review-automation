@@ -26,6 +26,53 @@ _CACHE = {}
 _CACHE_TTL = 60  # seconds — a refresh within a minute costs nothing
 
 _REVIEW_FETCH_HOURS_CT = (8, 12, 16, 20)  # scheduler.py's review_fetch cadence
+_DISMISS_DAYS = 14  # a dismissed recommendation stays gone this long, then can resurface if still true
+
+_DISMISS_SQL = """
+CREATE TABLE IF NOT EXISTS home_dismissals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    restaurant_id INTEGER NOT NULL,
+    key TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'recommendation',
+    dismissed_by INTEGER,
+    dismissed_at TEXT NOT NULL DEFAULT (datetime('now')),
+    expires_at TEXT NOT NULL,
+    UNIQUE(restaurant_id, key) ON CONFLICT REPLACE
+)
+"""
+
+
+def _dismissed_keys(conn, rid):
+    try:
+        conn.execute(_DISMISS_SQL)
+        return {r["key"]: r for r in conn.execute("SELECT key, kind, dismissed_at, expires_at FROM home_dismissals WHERE restaurant_id=? AND expires_at > datetime('now')", (rid,)).fetchall()}
+    except Exception:
+        return {}
+
+
+def dismiss(rid, key, kind="recommendation", user_id=None, days=_DISMISS_DAYS):
+    """Hide one recommendation for this restaurant. Keys carry their subject
+    ("trim_day:Monday", "cut_waste:Salmon Fillet"), so a different day or
+    item is a new recommendation and comes through."""
+    key = (key or "").strip()[:120]
+    if not key:
+        return {"ok": False, "error": "Missing key"}
+    conn = get_conn()
+    conn.execute(_DISMISS_SQL)
+    conn.execute("INSERT INTO home_dismissals (restaurant_id, key, kind, dismissed_by, expires_at) VALUES (?,?,?,?, datetime('now', ?))",
+                 (rid, key, kind, user_id, f"+{int(days)} days"))
+    conn.commit(); conn.close()
+    invalidate(rid)
+    return {"ok": True, "key": key, "days": int(days)}
+
+
+def undismiss(rid, key):
+    conn = get_conn()
+    conn.execute(_DISMISS_SQL)
+    n = conn.execute("DELETE FROM home_dismissals WHERE restaurant_id=? AND key=?", (rid, (key or "").strip()[:120])).rowcount
+    conn.commit(); conn.close()
+    invalidate(rid)
+    return {"ok": True, "restored": n}
 
 
 # ── small helpers ────────────────────────────────────────────────────────────
@@ -240,7 +287,19 @@ def _build(current_user):
                                    FROM alert_log a LEFT JOIN reviews rv ON rv.id=a.review_id
                                    WHERE a.restaurant_id=? AND julianday(a.fired_at) >= julianday('now','-7 days')
                                    ORDER BY a.id DESC LIMIT 12""", (rid,))
+    dismissed = _dismissed_keys(conn, rid)
     conn.close()
+
+    # The Reviews tab's AI read, only if it's already been generated and is
+    # still in the 5-minute cache — Home never triggers a model call itself.
+    ai_insight = None
+    try:
+        from client_api import _cache_get
+        cached = _cache_get("review-insight:" + str(rid))
+        if cached and isinstance(cached, str) and cached.strip():
+            ai_insight = {"source": "reviews", "text": cached.strip()[:900]}
+    except Exception:
+        ai_insight = None
 
     # ═════════════════════════════════════════════════════════════════════════
     # Derivations
@@ -370,7 +429,7 @@ def _build(current_user):
         if top_issues and total >= 10:
             lbl, cnt = top_issues[0]['label'], int(top_issues[0].get('count') or 0)
             if cnt >= 3:
-                add_rec("top_issue", f"Look into {lbl.lower()} — it's the most-mentioned complaint", "Repeat themes in negative reviews are the fixable kind.",
+                add_rec(f"top_issue:{lbl}", f"Look into {lbl.lower()} — it's the most-mentioned complaint", "Repeat themes in negative reviews are the fixable kind.",
                         f"{lbl} raised in {cnt} reviews over 90 days", "Reviews · rating", "reviews", "This week", "strong" if cnt >= 5 else "moderate", "See the reviews")
         # changes
         if (reviews_since.get("n") or 0) > 0:
@@ -431,7 +490,7 @@ def _build(current_user):
                 mean = sum(vals) / len(vals) if vals else 0
                 worst_day, worst_pct = max(dow.items(), key=lambda kv: kv[1] or 0)
                 if mean and worst_pct - mean >= 4 and worst_pct > labor_target:
-                    add_rec("trim_day", f"Trim {worst_day} staffing", f"{worst_day} runs {worst_pct - mean:.0f} pts above your other days without the sales to justify it.",
+                    add_rec(f"trim_day:{worst_day}", f"Trim {worst_day} staffing", f"{worst_day} runs {worst_pct - mean:.0f} pts above your other days without the sales to justify it.",
                             f"{worst_day} labor {worst_pct:.1f}% vs {mean:.1f}% average · target {labor_target:.0f}%", "Labor · weekly cost", "labor", "Next schedule",
                             "strong" if worst_pct - mean >= 6 else "moderate", "Rebuild the schedule")
             if delta is not None and delta >= 1.5:
@@ -480,7 +539,7 @@ def _build(current_user):
                          ", ".join(str(c.get("item", ""))[:22] for c in crit[:4]) + " — likely to run out before the next delivery.", "inventory", "See the list",
                          evidence=f"{len(reorder)} more to reorder soon")
             if top and float(top.get("waste_cost") or 0) >= 40:
-                add_rec("cut_waste", f"Cut {top.get('item', 'top-item')} waste", f"It's the single biggest line in last week's waste — {top.get('waste_pct', 0)}% of what you ordered.",
+                add_rec(f"cut_waste:{top.get('item', 'item')}", f"Cut {top.get('item', 'top-item')} waste", f"It's the single biggest line in last week's waste — {top.get('waste_pct', 0)}% of what you ordered.",
                         f"${float(top.get('waste_cost') or 0):,.0f} wasted last week · ${recoverable:,.0f}/mo recoverable across items", "Food cost · margin", "inventory", "Next order",
                         "strong" if float(top.get("waste_cost") or 0) >= 100 else "moderate", "Adjust the order")
             if recoverable > 0:
@@ -620,6 +679,9 @@ def _build(current_user):
         empty_state = {"kind": "new_account", "title": f"Welcome{', ' + (restaurant.owner_name or current_user.get('username') or '') if (restaurant.owner_name or current_user.get('username')) else ''}.",
                        "body": "Your brief fills in as data arrives: reviews the moment Google is connected, labor once shifts are in, food cost after a first count. Start with the checklist."}
 
+    dismissed_recs = [r for r in recs if r["key"] in dismissed]
+    recs = [r for r in recs if r["key"] not in dismissed]
+
     # ── quick actions ──────────────────────────────────────────────────────
     quick = []
     if "reviews" in active_keys and int(rstats.get("awaiting_approval") or 0):
@@ -677,6 +739,8 @@ def _build(current_user):
         "wins": wins[:4],
         "snapshot": snapshot,
         "recommendations": recs[:5],
+        "dismissed": [{"key": r["key"], "title": r["title"], "until": dismissed[r["key"]]["expires_at"]} for r in dismissed_recs],
+        "ai_insight": ai_insight,
         "changes": {"since": _iso(since_dt), "since_label": since_label, "items": changes[:8]},
         "alerts": alert_items[:8],
         "quick_actions": quick,
@@ -689,4 +753,127 @@ def _build(current_user):
         "alert_quiet_end": r.get("alert_quiet_end"),
         "empty_state": empty_state,
     }
+    return payload, 200
+
+
+# ── consolidated view: every location in the owner's group ─────────────────
+
+def _location_record(conn, r, now):
+    """One location's row for the consolidated view. Cheap by default; the
+    labor and inventory analyses run only when that location has live data,
+    so a seven-location owner doesn't pay for seven sample analyses."""
+    rid = r["id"]
+    sig = _location_signal(conn, r, now)
+    rs = _one(conn, """SELECT COUNT(*) AS total, SUM(response_status IN ('posted','approved')) AS responded,
+                              SUM(response_status='drafted') AS awaiting,
+                              SUM(urgency='high' AND response_status NOT IN ('posted','approved','skipped')) AS urgent,
+                              ROUND(AVG(CASE WHEN review_date >= date('now','-30 days') THEN rating END),1) AS avg30,
+                              SUM(review_date >= date('now','-30 days')) AS n30,
+                              ROUND(AVG(CASE WHEN review_date >= date('now','-60 days') AND review_date < date('now','-30 days') THEN rating END),1) AS avg_prev,
+                              SUM(rating<=2 AND review_date >= date('now','-7 days')) AS low7
+                       FROM reviews WHERE restaurant_id=? AND processed=1 AND deleted_at IS NULL""", (rid,)) or {}
+    total = int(rs.get("total") or 0)
+    rate = round(100.0 * int(rs.get("responded") or 0) / total) if total else None
+    last_active = (_one(conn, "SELECT MAX(created_at) AS t FROM login_history WHERE restaurant_id=?", (rid,)) or {}).get("t")
+    labor = None
+    cd = _one(conn, "SELECT shifts_csv IS NOT NULL AND shifts_csv != '' AS live FROM client_data WHERE restaurant_id=?", (rid,)) or {}
+    if r.get("module_labor") and cd.get("live"):
+        try:
+            from labor import analyse_shifts_for_restaurant
+            la = analyse_shifts_for_restaurant(rid)
+            if la.get("is_live"):
+                target = float(r.get("labor_target_pct") or 30.0)
+                labor = {"pct": float(la.get("overall_labor_pct") or 0), "target": target,
+                         "over": round(float(la.get("overall_labor_pct") or 0) - target, 1),
+                         "overtime": sum(1 for o in (la.get("overtime_risk") or []) if o.get("status") == "overtime")}
+        except Exception:
+            labor = None
+    inv = None
+    if r.get("module_inventory"):
+        try:
+            from inventory import load_inventory_for_restaurant, analyse_inventory
+            items, live = load_inventory_for_restaurant(rid)
+            if live and items:
+                a = analyse_inventory(items)
+                inv = {"recoverable": float(a.get("recoverable_monthly") or 0), "critical_low": len(a.get("critical_low") or []), "waste_rate": a.get("waste_rate_pct")}
+        except Exception:
+            inv = None
+    issues = []
+    if sig["top_issue"]:
+        issues.append({"severity": sig["health"] if sig["health"] != "healthy" else "watch", "text": sig["top_issue"], "module": "reviews"})
+    if labor and labor["over"] > 3:
+        issues.append({"severity": "critical" if labor["over"] >= 6 else "important", "text": f"Labor {labor['pct']:.1f}% — {labor['over']:.1f} pts over target", "module": "labor"})
+    if labor and labor["overtime"]:
+        issues.append({"severity": "important", "text": f"{_plural(labor['overtime'], 'staff member')} in overtime", "module": "labor"})
+    if inv and inv["critical_low"]:
+        issues.append({"severity": "important", "text": f"{_plural(inv['critical_low'], 'item')} critically low", "module": "inventory"})
+    avg30 = rs.get("avg30"); prev = rs.get("avg_prev")
+    if avg30 and prev and (rs.get("n30") or 0) >= 3 and avg30 - prev <= -0.3:
+        issues.append({"severity": "important", "text": f"Rating slipped to {avg30:.1f}★ (from {prev:.1f}★)", "module": "reviews"})
+    rank = {"critical": 3, "important": 2, "watch": 1}
+    worst = max((rank[i["severity"]] for i in issues), default=0)
+    health = {3: "critical", 2: "important", 1: "watch", 0: "healthy"}[worst]
+    issues.sort(key=lambda i: -rank[i["severity"]])
+    return {"id": rid, "name": r.get("location_name") or r["name"], "restaurant_name": r["name"], "health": health,
+            "issues": issues, "attention": len(issues),
+            "reviews": {"total": total, "rating_30d": avg30, "reviews_30d": int(rs.get("n30") or 0), "rating_prev": prev,
+                        "response_rate": rate, "urgent": int(rs.get("urgent") or 0), "awaiting": int(rs.get("awaiting") or 0), "low_7d": int(rs.get("low7") or 0)},
+            "labor": labor, "inventory": inv,
+            "google_connected": bool(r.get("gmb_refresh_token") or r.get("reviews_live")),
+            "last_active": last_active, "last_fetched_at": r.get("last_fetched_at")}
+
+
+def build_group_brief(current_user, fresh=False):
+    """The consolidated view for an owner with several locations: one row per
+    location, the attention list across all of them, and the portfolio
+    summary. Numbers are never averaged across locations — the strongest and
+    weakest are named, and every metric stays attached to its location."""
+    key = ("group", current_user.get("base_restaurant_id") or current_user["restaurant_id"], current_user.get("id"))
+    if not fresh:
+        hit = _CACHE.get(key)
+        if hit and (datetime.now(timezone.utc) - hit[0]).total_seconds() < _CACHE_TTL:
+            return hit[1], 200
+    if current_user.get("role") != "owner":
+        return {"ok": False, "error": "Only the owner login sees all locations"}, 403
+    from models import get_location_group
+    base = get_restaurant(current_user.get("base_restaurant_id") or current_user["restaurant_id"])
+    if not base or not base.location_group:
+        return {"ok": False, "error": "No location group on this account"}, 400
+    now = datetime.now(timezone.utc)
+    conn = get_conn()
+    locs = [_location_record(conn, r, now) for r in get_location_group(base.location_group)]
+    conn.close()
+    for l in locs:
+        l["active"] = l["id"] == current_user["restaurant_id"]
+    rank = {"critical": 0, "important": 1, "watch": 2}
+    attention = []
+    for l in locs:
+        for i in l["issues"]:
+            attention.append({**i, "location": l["name"], "restaurant_id": l["id"], "severity_rank": rank[i["severity"]]})
+    attention.sort(key=lambda a: (a["severity_rank"], a["location"]))
+    rated = [l for l in locs if l["reviews"]["rating_30d"] and l["reviews"]["reviews_30d"] >= 3]
+    best = max(rated, key=lambda l: (l["reviews"]["rating_30d"], l["reviews"]["reviews_30d"]), default=None)
+    worst = min(rated, key=lambda l: (l["reviews"]["rating_30d"], -l["reviews"]["reviews_30d"]), default=None)
+    heaviest = max([l for l in locs if l["labor"]], key=lambda l: l["labor"]["over"], default=None)
+    critical = sum(1 for a in attention if a["severity"] == "critical")
+    needing = [l for l in locs if l["health"] in ("critical", "important")]
+    if critical:
+        headline = f"{_plural(critical, 'critical item')} across {_plural(len(set(a['location'] for a in attention if a['severity']=='critical')), 'location')}"; tone = "bad"
+    elif needing:
+        headline = f"{_plural(len(needing), 'location')} need{'s' if len(needing) == 1 else ''} a look"; tone = "warn"
+    else:
+        headline = "All locations healthy"; tone = "good"
+    payload = {
+        "ok": True, "scope": "group", "generated_at": _iso(now), "group_name": base.location_group,
+        "greeting_name": (base.owner_name or current_user.get("username") or "").split(" ")[0].title() or None,
+        "headline": headline, "tone": tone,
+        "locations": locs, "attention": attention[:12],
+        "portfolio": {"total": len(locs), "healthy": sum(1 for l in locs if l["health"] == "healthy"), "needing": len(needing),
+                      "urgent_reviews": sum(l["reviews"]["urgent"] for l in locs), "awaiting": sum(l["reviews"]["awaiting"] for l in locs),
+                      "strongest": ({"location": best["name"], "id": best["id"], "rating": best["reviews"]["rating_30d"]} if best else None),
+                      "weakest": ({"location": worst["name"], "id": worst["id"], "rating": worst["reviews"]["rating_30d"]} if worst and worst is not best else None),
+                      "heaviest_labor": ({"location": heaviest["name"], "id": heaviest["id"], "pct": heaviest["labor"]["pct"], "over": heaviest["labor"]["over"]} if heaviest and heaviest["labor"]["over"] > 0 else None),
+                      "biggest_issue": ({"location": attention[0]["location"], "id": attention[0]["restaurant_id"], "issue": attention[0]["text"]} if attention else None)},
+    }
+    _CACHE[key] = (datetime.now(timezone.utc), payload)
     return payload, 200

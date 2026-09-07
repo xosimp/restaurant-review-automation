@@ -5379,6 +5379,31 @@ def home_brief_api(current_user):
     return resp, status
 
 
+@client_bp.route("/api/home/brief/group")
+@login_required
+def home_brief_group_api(current_user):
+    """Every location in the owner's group, side by side — see home_brief.build_group_brief."""
+    import home_brief
+    payload, status = home_brief.build_group_brief(current_user, fresh=request.args.get("fresh") == "1")
+    resp = jsonify(**payload)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp, status
+
+
+@client_bp.route("/api/home/dismiss", methods=["POST"])
+@login_required
+def home_dismiss_api(current_user):
+    """Hide a recommendation for two weeks (or restore it with undo=true)."""
+    import home_brief
+    data = request.get_json(silent=True) or {}
+    key = (data.get("key") or "").strip()
+    if not key:
+        return jsonify(ok=False, error="Missing key"), 400
+    if data.get("undo"):
+        return jsonify(**home_brief.undismiss(current_user["restaurant_id"], key))
+    return jsonify(**home_brief.dismiss(current_user["restaurant_id"], key, kind=(data.get("kind") or "recommendation")[:40], user_id=current_user.get("id")))
+
+
 @client_bp.route("/api/home")
 @login_required
 def home_summary_api(current_user):

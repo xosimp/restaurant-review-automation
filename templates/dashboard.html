@@ -1064,186 +1064,220 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 <!-- HOME -->
 <div class="panel active" id="panel-home" style="max-width:100%;padding:0;min-height:100%;position:relative">
 <style>
-/* ── Home brief (hb-*) ─────────────────────────────────────────────────────── */
-#panel-home{--hb-card:var(--surface);--hb-line:var(--paper3);--hb-good:var(--green);--hb-warn:var(--amber);--hb-bad:var(--red);--hb-r:10px}
-.hb-wrap{max-width:1180px;margin:0 auto;padding:26px 28px 48px;position:relative;z-index:1}
+/* ── Home brief (hb-*) — an editorial page, not a grid of boxes ──────────────
+   One surface (the page glow). Sections are separated by rules and space;
+   only rows that need a stripe get one. Tints are warm (ember at low alpha),
+   never gray. */
+#panel-home{--hb-line:rgba(14,12,10,.12);--hb-line2:rgba(14,12,10,.07);--hb-tint:rgba(200,75,47,.06);--hb-tint2:rgba(200,75,47,.11);--hb-good:var(--green);--hb-warn:var(--amber);--hb-bad:var(--red);--hb-field:rgba(255,255,255,.55)}
+[data-theme="dark"] #panel-home{--hb-line:rgba(240,235,224,.14);--hb-line2:rgba(240,235,224,.07);--hb-tint:rgba(224,100,68,.09);--hb-tint2:rgba(224,100,68,.16);--hb-field:rgba(255,255,255,.05)}
+.hb-wrap{max-width:1140px;margin:0 auto;padding:30px 32px 64px;position:relative;z-index:1}
 .hb-num,.hb-num *{font-family:'Space Grotesk',sans-serif!important;font-variant-numeric:tabular-nums}
 .hb-kicker{font-size:10.5px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--ember)}
-.hb-h1{font-family:'Clash Display',sans-serif;font-weight:500;font-size:clamp(28px,3.2vw,40px);line-height:1.08;letter-spacing:-.01em;color:var(--ink);margin:6px 0 4px;text-wrap:balance}
+.hb-h1{font-family:'Clash Display',sans-serif;font-weight:500;font-size:clamp(30px,3.4vw,44px);line-height:1.06;letter-spacing:-.012em;color:var(--ink);margin:8px 0 6px;text-wrap:balance}
 .hb-h1 .hb-head{color:var(--ink3)}
 .hb-h1 .hb-head.bad{color:var(--hb-bad)}.hb-h1 .hb-head.warn{color:var(--hb-warn)}.hb-h1 .hb-head.good{color:var(--hb-good)}.hb-h1 .hb-head.neutral{color:var(--ink2)}
 .hb-sub{font-size:13px;color:var(--ink3)}
-.hb-top{display:flex;justify-content:space-between;gap:24px;align-items:flex-end;flex-wrap:wrap;margin-bottom:18px}
+.hb-top{display:flex;justify-content:space-between;gap:24px;align-items:flex-end;flex-wrap:wrap;padding-bottom:18px;border-bottom:1px solid var(--hb-line)}
 .hb-top .hb-right{display:flex;flex-direction:column;align-items:flex-end;gap:8px;min-width:240px}
-.hb-fresh{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end}
-.hb-chip{display:inline-flex;align-items:center;gap:6px;font-size:11px;line-height:1;padding:6px 9px;border-radius:999px;border:1px solid var(--hb-line);background:var(--hb-card);color:var(--ink2);white-space:nowrap}
-.hb-chip .d{width:6px;height:6px;border-radius:50%;background:var(--ink3);flex-shrink:0}
-.hb-chip.fresh .d{background:var(--hb-good)}.hb-chip.stale .d{background:var(--hb-warn)}.hb-chip.missing .d{background:var(--hb-bad)}.hb-chip.sample .d{background:var(--ink3);box-shadow:0 0 0 2px var(--paper2)}.hb-chip.manual .d{background:var(--ink3)}
-.hb-chip.sample{border-style:dashed}
+.hb-fresh{display:flex;flex-wrap:wrap;gap:4px 14px;justify-content:flex-end;font-size:11px;color:var(--ink3)}
+.hb-fresh span{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.hb-fresh .d{width:6px;height:6px;border-radius:50%;background:var(--ink3);flex-shrink:0}
+.hb-fresh .fresh .d{background:var(--hb-good)}.hb-fresh .stale .d{background:var(--hb-warn)}.hb-fresh .missing .d{background:var(--hb-bad)}.hb-fresh .sample .d{background:transparent;box-shadow:inset 0 0 0 1.5px var(--ink3)}
 .hb-refresh{background:none;border:none;color:var(--ink3);font-family:inherit;font-size:11.5px;cursor:pointer;padding:2px 0;display:inline-flex;gap:6px;align-items:center}
 .hb-refresh:hover{color:var(--ember)}
-.hb-locs{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 16px}
-.hb-loc{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:var(--hb-r);border:1px solid var(--hb-line);background:var(--hb-card);cursor:pointer;font-family:inherit;font-size:12.5px;color:var(--ink);transition:transform .12s ease,box-shadow .12s ease}
-.hb-loc:hover{transform:translateY(-1px);box-shadow:0 4px 14px rgba(14,12,10,.10)}
-.hb-loc.active{border-color:var(--ember);box-shadow:inset 0 0 0 1px var(--ember)}
-.hb-loc .d{width:8px;height:8px;border-radius:50%;background:var(--hb-good)}
-.hb-loc.critical .d{background:var(--hb-bad)}.hb-loc.important .d{background:var(--hb-warn)}.hb-loc.watch .d{background:var(--ink3)}
-.hb-loc .n{font-size:11px;color:var(--ink3)}
-.hb-port{display:flex;gap:18px;flex-wrap:wrap;font-size:12px;color:var(--ink2);margin:-6px 0 16px}
-.hb-port b{color:var(--ink)}
-.hb-grid{display:grid;gap:14px}
-.hb-g12{grid-template-columns:minmax(0,7fr) minmax(0,5fr)}
-.hb-g3{grid-template-columns:repeat(3,minmax(0,1fr))}
-.hb-g2{grid-template-columns:repeat(2,minmax(0,1fr))}
-.hb-card{background:var(--hb-card);border:1px solid var(--hb-line);border-radius:var(--hb-r);padding:18px 20px;min-width:0;box-shadow:0 1px 2px rgba(14,12,10,.04)}
-.hb-card h2{font-family:'Space Grotesk',sans-serif;font-size:15px;font-weight:600;color:var(--ink);margin:0;letter-spacing:-.01em}
-.hb-ch{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}
-.hb-ch .k{font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);margin-bottom:2px}
+/* section headers */
+.hb-sh{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin:34px 0 14px;padding-bottom:8px;border-bottom:1px solid var(--hb-line)}
+.hb-sh h2{font-family:'Clash Display',sans-serif;font-size:20px;font-weight:500;letter-spacing:-.01em;color:var(--ink);margin:0}
+.hb-sh h2 small{font-family:'Apfel Grotezk',sans-serif;font-size:12px;color:var(--ink3);margin-left:10px;font-weight:400;letter-spacing:0}
+.hb-sh .k{font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);margin-bottom:4px}
 .hb-link{background:none;border:none;color:var(--ember);font-family:inherit;font-size:12px;font-weight:600;cursor:pointer;padding:0;white-space:nowrap}
 .hb-link:hover{text-decoration:underline}
-.hb-sec{margin-top:16px}
-/* brief */
-.hb-brief{border-left:3px solid var(--ember);background:linear-gradient(90deg,rgba(200,75,47,.07),transparent 60%),var(--hb-card)}
-.hb-brief ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:9px}
-.hb-brief li{display:flex;gap:10px;align-items:flex-start;font-size:14px;line-height:1.5;color:var(--ink)}
-.hb-brief li .d{width:8px;height:8px;border-radius:50%;margin-top:7px;flex-shrink:0;background:var(--ink3)}
+.hb-cols{display:grid;grid-template-columns:minmax(0,7fr) minmax(0,5fr);gap:0 48px}
+.hb-cols>div+div{border-left:1px solid var(--hb-line2);padding-left:32px}
+/* locations strip */
+.hb-locs{display:flex;gap:6px;flex-wrap:wrap;margin:18px 0 0}
+.hb-loc{display:inline-flex;align-items:center;gap:8px;padding:7px 12px;border-radius:999px;border:1px solid var(--hb-line);background:transparent;cursor:pointer;font-family:inherit;font-size:12.5px;color:var(--ink);transition:background .12s ease}
+.hb-loc:hover{background:var(--hb-tint)}
+.hb-loc.active{background:var(--ember);border-color:var(--ember);color:#fff}
+.hb-loc .d{width:7px;height:7px;border-radius:50%;background:var(--hb-good)}
+.hb-loc.critical .d{background:var(--hb-bad)}.hb-loc.important .d{background:var(--hb-warn)}.hb-loc.watch .d{background:var(--ink3)}.hb-loc.active .d{background:#fff}
+.hb-loc .n{font-size:11px;opacity:.75}
+.hb-port{font-size:12.5px;color:var(--ink2);margin-top:10px;line-height:1.6}
+.hb-port b{color:var(--ink);font-weight:600}
+.hb-port .sep{color:var(--ink3);margin:0 8px}
+/* today's intelligence */
+.hb-brief{margin-top:26px;padding-left:22px;border-left:3px solid var(--ember)}
+.hb-brief ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
+.hb-brief li{font-size:17px;line-height:1.5;color:var(--ink);letter-spacing:-.005em}
+.hb-brief li .d{display:inline-block;width:8px;height:8px;border-radius:50%;margin:0 12px 2px 0;background:var(--ink3)}
 .hb-brief li.bad .d{background:var(--hb-bad)}.hb-brief li.warn .d{background:var(--hb-warn)}.hb-brief li.good .d{background:var(--hb-good)}
-.hb-brief .over{margin-top:12px;padding-top:10px;border-top:1px solid var(--hb-line);font-size:12px;color:var(--ink3)}
-/* attention */
-.hb-attn{display:flex;flex-direction:column;gap:8px}
-.hb-item{display:grid;grid-template-columns:4px 1fr auto;gap:0 14px;align-items:center;padding:11px 14px 11px 0;border:1px solid var(--hb-line);border-radius:8px;background:var(--hb-card);overflow:hidden}
-.hb-item .st{align-self:stretch;background:var(--ink3);border-radius:8px 0 0 8px}
-.hb-item.critical .st{background:var(--hb-bad)}.hb-item.important .st{background:var(--hb-warn)}.hb-item.watch .st{background:var(--ink3)}
-.hb-item .t{font-size:13.5px;font-weight:600;color:var(--ink);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.hb-item .t .sev{font-size:9.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;padding:2px 6px;border-radius:4px;background:var(--paper2);color:var(--ink3)}
-.hb-item.critical .sev{background:var(--red-bg);color:var(--hb-bad)}.hb-item.important .sev{background:var(--amber-bg);color:var(--hb-warn)}
-.hb-item .dt{font-size:12px;color:var(--ink2);margin-top:3px;line-height:1.5}
-.hb-item .ev{font-size:11px;color:var(--ink3);margin-top:4px}
-.hb-item .ev>span+span:before{content:'·';margin:0 6px;color:var(--paper3)}
-.hb-btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:32px;padding:0 13px;border-radius:7px;border:1px solid var(--hb-line);background:var(--hb-card);color:var(--ink);font-family:'Apfel Grotezk',sans-serif;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;transition:background .12s ease,transform .12s ease,box-shadow .12s ease}
-.hb-btn:hover{background:var(--paper2);transform:translateY(-1px);box-shadow:0 2px 8px rgba(14,12,10,.10)}
+.hb-brief li .hb-link{font-size:12.5px;margin-left:8px;vertical-align:1px}
+.hb-brief .over{margin-top:12px;font-size:13px;color:var(--ink3)}
+.hb-ai{margin-top:16px;padding:14px 18px;border-radius:10px;background:var(--hb-tint);font-size:14px;line-height:1.65;color:var(--ink2)}
+.hb-ai .tag{font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);margin-bottom:5px;display:flex;align-items:center;gap:8px}
+.hb-ai .tag i{font-style:normal;font-weight:400;letter-spacing:0;text-transform:none;color:var(--ink3);font-size:11px}
+/* attention rows */
+.hb-attn{display:flex;flex-direction:column}
+.hb-item{display:grid;grid-template-columns:1fr auto;gap:0 16px;align-items:center;padding:13px 12px 13px 16px;border-top:1px solid var(--hb-line2);position:relative;transition:background .12s ease}
+.hb-item:first-child{border-top:none}
+.hb-item:hover{background:var(--hb-tint)}
+.hb-item:before{content:'';position:absolute;left:0;top:12px;bottom:12px;width:3px;border-radius:2px;background:var(--ink3)}
+.hb-item.critical:before{background:var(--hb-bad)}.hb-item.important:before{background:var(--hb-warn)}
+.hb-item .t{font-size:14.5px;font-weight:600;color:var(--ink);display:flex;gap:9px;align-items:center;flex-wrap:wrap}
+.hb-item .t .sev{font-size:9.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3)}
+.hb-item.critical .sev{color:var(--hb-bad)}.hb-item.important .sev{color:var(--hb-warn)}
+.hb-item .dt{font-size:12.5px;color:var(--ink2);margin-top:3px;line-height:1.5}
+.hb-item .ev{font-size:11.5px;color:var(--ink3);margin-top:4px}
+.hb-item .ev>span+span:before{content:'·';margin:0 7px;color:var(--ink3)}
+.hb-btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:32px;padding:0 13px;border-radius:7px;border:1px solid var(--hb-line);background:transparent;color:var(--ink);font-family:'Apfel Grotezk',sans-serif;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;transition:background .12s ease,transform .12s ease}
+.hb-btn:hover{background:var(--hb-tint);transform:translateY(-1px)}
 .hb-btn.p{background:var(--ember);border-color:var(--ember);color:#fff}
 .hb-btn.p:hover{background:#a83d25}
 .hb-btn:disabled{opacity:.6;cursor:default;transform:none}
-.hb-btn .c{font-family:'Space Grotesk',sans-serif;font-size:11px;padding:1px 6px;border-radius:999px;background:rgba(255,255,255,.18)}
-.hb-btn:not(.p) .c{background:var(--paper2);color:var(--ink2)}
-.hb-clear{display:flex;align-items:center;gap:12px;padding:14px;border:1px dashed var(--hb-line);border-radius:8px;color:var(--ink2);font-size:13px}
+.hb-btn .c{font-family:'Space Grotesk',sans-serif;font-size:11px;padding:1px 6px;border-radius:999px;background:rgba(255,255,255,.2)}
+.hb-btn:not(.p) .c{background:var(--hb-tint2);color:var(--ink)}
+.hb-clear{display:flex;align-items:center;gap:12px;padding:10px 0;color:var(--ink2);font-size:14px}
 .hb-clear .ok{width:30px;height:30px;border-radius:50%;background:var(--green-bg);color:var(--hb-good);display:flex;align-items:center;justify-content:center;flex-shrink:0}
-/* wins */
-.hb-wins{display:flex;flex-direction:column;gap:8px}
-.hb-win{display:flex;gap:10px;align-items:flex-start;font-size:12.5px;color:var(--ink2);line-height:1.45}
-.hb-win .d{width:18px;height:18px;border-radius:50%;background:var(--green-bg);color:var(--hb-good);display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px}
+/* right column: wins, quick actions, ask */
+.hb-side h3{font-size:10.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin:0 0 10px}
+.hb-side .blk+.blk{margin-top:26px}
+.hb-wins{display:flex;flex-direction:column;gap:9px}
+.hb-win{display:flex;gap:10px;align-items:flex-start;font-size:13px;color:var(--ink2);line-height:1.5}
+.hb-win .d{color:var(--hb-good);flex-shrink:0;margin-top:2px}
 .hb-win b{color:var(--ink);font-weight:600}
-/* quick actions + ask */
 .hb-qa{display:flex;flex-wrap:wrap;gap:8px}
-.hb-ask{display:flex;gap:8px;margin-top:10px}
-.hb-ask input{flex:1;height:36px;border:1px solid var(--hb-line);border-radius:8px;padding:0 12px;font-family:inherit;font-size:13px;background:var(--paper);color:var(--ink)}
+.hb-ask{display:flex;gap:8px;margin-top:2px}
+.hb-ask input{flex:1;height:38px;border:1px solid var(--hb-line);border-radius:8px;padding:0 12px;font-family:inherit;font-size:13px;background:var(--hb-field);color:var(--ink)}
+.hb-ask input::placeholder{color:var(--ink3)}
 .hb-ask input:focus{border-color:var(--ember);outline:none;box-shadow:0 0 0 3px rgba(200,75,47,.14)}
-.hb-sugg{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
-.hb-sugg button{background:var(--paper2);border:1px solid transparent;border-radius:999px;padding:5px 10px;font-family:inherit;font-size:11.5px;color:var(--ink2);cursor:pointer}
-.hb-sugg button:hover{border-color:var(--ember);color:var(--ember)}
-/* snapshot */
-.hb-snap{position:relative;display:flex;flex-direction:column;gap:10px;cursor:pointer;transition:transform .12s ease,box-shadow .12s ease}
-.hb-snap:hover{transform:translateY(-2px);box-shadow:0 8px 22px rgba(14,12,10,.12)}
-.hb-snap .top{display:flex;justify-content:space-between;align-items:center}
-.hb-snap .lbl{font-size:10.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3)}
-.hb-snap .state{font-size:9.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;padding:3px 7px;border-radius:4px;background:var(--paper2);color:var(--ink3)}
-.hb-snap.good .state{background:var(--green-bg);color:var(--hb-good)}.hb-snap.warn .state{background:var(--amber-bg);color:var(--hb-warn)}.hb-snap.bad .state{background:var(--red-bg);color:var(--hb-bad)}
-.hb-snap.sample{border-style:dashed}.hb-snap.sample .v{color:var(--ink3)}
-.hb-snap.coming{opacity:.62;cursor:default}.hb-snap.coming:hover{transform:none;box-shadow:none}
-.hb-snap .v{font-family:'Space Grotesk',sans-serif;font-size:34px;font-weight:600;letter-spacing:-.02em;line-height:1;color:var(--ink);display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
-.hb-snap .v small{font-family:'Apfel Grotezk',sans-serif;font-size:12px;font-weight:400;color:var(--ink3);letter-spacing:0}
-.hb-snap .delta{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:600;padding:3px 8px;border-radius:999px;background:var(--paper2);color:var(--ink2)}
-.hb-snap .delta.good{background:var(--green-bg);color:var(--hb-good)}.hb-snap .delta.bad{background:var(--red-bg);color:var(--hb-bad)}
-.hb-snap svg{display:block;width:100%;height:38px}
-.hb-snap .sec{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding-top:10px;border-top:1px solid var(--hb-line)}
-.hb-snap .sec .l{font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:.08em}
-.hb-snap .sec .x{font-family:'Space Grotesk',sans-serif;font-size:13px;font-weight:600;color:var(--ink);margin-top:2px}
-.hb-snap .int{font-size:12.5px;color:var(--ink2);line-height:1.5}
-.hb-snap .ft{display:flex;justify-content:space-between;align-items:center;font-size:11.5px;color:var(--ink3)}
-.hb-snap .ft .go{color:var(--ember);font-weight:600}
-/* recommendations */
-.hb-recs{display:flex;flex-direction:column;gap:10px}
-.hb-rec{padding:12px 14px;border:1px solid var(--hb-line);border-radius:8px;background:var(--hb-card)}
-.hb-rec .t{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
-.hb-rec .t b{font-size:13.5px;color:var(--ink);font-weight:600;line-height:1.35}
-.hb-rec .str{font-size:9.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;padding:3px 7px;border-radius:4px;white-space:nowrap;background:var(--paper2);color:var(--ink3)}
-.hb-rec .str.strong{background:var(--green-bg);color:var(--hb-good)}
-.hb-rec .why{font-size:12.5px;color:var(--ink2);margin-top:5px;line-height:1.5}
-.hb-rec .ev{font-size:11.5px;color:var(--ink3);margin-top:6px;display:flex;flex-wrap:wrap;gap:4px 14px}
-.hb-rec .ev>span:before{content:'';display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--ember);margin-right:6px;vertical-align:middle}
-.hb-rec .ft{display:flex;justify-content:space-between;align-items:center;margin-top:10px;font-size:11.5px;color:var(--ink3)}
-/* changes / alerts / upcoming lists */
-.hb-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
-.hb-list li{display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-top:1px solid var(--hb-line);font-size:12.5px;color:var(--ink2);line-height:1.45}
+.hb-sugg{display:flex;flex-direction:column;gap:2px;margin-top:10px}
+.hb-sugg button{background:none;border:none;text-align:left;padding:4px 0;font-family:inherit;font-size:12.5px;color:var(--ink2);cursor:pointer}
+.hb-sugg button:before{content:'→';color:var(--ember);margin-right:8px}
+.hb-sugg button:hover{color:var(--ember)}
+.hb-empty{font-size:13px;color:var(--ink3);line-height:1.55}
+/* snapshot: module columns split by rules */
+.hb-mods{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:0}
+.hb-mod{padding:6px 22px 8px 0;margin-right:22px;border-right:1px solid var(--hb-line2);cursor:pointer;display:flex;flex-direction:column;gap:9px;min-width:0;border-radius:6px;transition:background .12s ease}
+.hb-mod:last-child{border-right:none;margin-right:0}
+.hb-mod:hover{background:var(--hb-tint)}
+.hb-mod:hover .go{text-decoration:underline}
+.hb-mod .lbl{display:flex;justify-content:space-between;align-items:center;font-size:10.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3)}
+.hb-mod .lbl i{font-style:normal;letter-spacing:.06em;font-size:9.5px;padding:2px 0}
+.hb-mod.good .lbl i{color:var(--hb-good)}.hb-mod.warn .lbl i{color:var(--hb-warn)}.hb-mod.bad .lbl i{color:var(--hb-bad)}.hb-mod.sample .lbl i,.hb-mod.neutral .lbl i{color:var(--ink3)}
+.hb-mod .v{font-family:'Space Grotesk',sans-serif;font-size:40px;font-weight:600;letter-spacing:-.025em;line-height:1;color:var(--ink);display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.hb-mod .v small{font-family:'Apfel Grotezk',sans-serif;font-size:12px;font-weight:400;color:var(--ink3);letter-spacing:0}
+.hb-mod.sample .v{color:var(--ink3)}
+.hb-mod .delta{font-size:12px;font-weight:600;color:var(--ink2)}
+.hb-mod .delta.good{color:var(--hb-good)}.hb-mod .delta.bad{color:var(--hb-bad)}
+.hb-mod .delta span{font-weight:400;color:var(--ink3)}
+.hb-mod svg{display:block;width:100%;height:34px}
+.hb-mod .sec{display:flex;gap:16px;flex-wrap:wrap}
+.hb-mod .sec div{min-width:52px}
+.hb-mod .sec .l{font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:.08em}
+.hb-mod .sec .x{font-family:'Space Grotesk',sans-serif;font-size:13px;font-weight:600;color:var(--ink);margin-top:1px}
+.hb-mod .int{font-size:13px;color:var(--ink2);line-height:1.5;flex:1}
+.hb-mod .ft{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:11.5px;color:var(--ink3)}
+.hb-mod .ft .go{color:var(--ember);font-weight:600}
+.hb-mod.coming{opacity:.55;cursor:default}.hb-mod.coming:hover{background:transparent}
+/* recommendations: numbered editorial list */
+.hb-recs{counter-reset:rec}
+.hb-rec{display:grid;grid-template-columns:36px 1fr auto;gap:0 14px;padding:14px 0;border-top:1px solid var(--hb-line2);position:relative}
+.hb-rec:first-child{border-top:none;padding-top:4px}
+.hb-rec .no{font-family:'Space Grotesk',sans-serif;font-size:22px;font-weight:600;color:var(--ember);line-height:1;padding-top:2px}
+.hb-rec .no:before{counter-increment:rec;content:counter(rec,decimal-leading-zero)}
+.hb-rec b{font-size:15px;color:var(--ink);font-weight:600;line-height:1.35}
+.hb-rec .str{font-size:9.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);margin-left:10px}
+.hb-rec .str.strong{color:var(--hb-good)}
+.hb-rec .why{font-size:13px;color:var(--ink2);margin-top:4px;line-height:1.5}
+.hb-rec .ev{font-size:12px;color:var(--ink3);margin-top:5px}
+.hb-rec .ev:before{content:'';display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--ember);margin-right:7px;vertical-align:middle}
+.hb-rec .ft{margin-top:8px;font-size:12px;color:var(--ink3);display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+.hb-rec .x{background:none;border:none;color:var(--ink3);font-size:15px;line-height:1;cursor:pointer;padding:2px 6px;border-radius:4px;opacity:0;transition:opacity .12s ease;align-self:start}
+.hb-rec:hover .x,.hb-rec .x:focus-visible{opacity:1}
+.hb-rec .x:hover{color:var(--ember);background:var(--hb-tint)}
+.hb-hidden{font-size:12px;color:var(--ink3);margin-top:10px}
+/* lists (changes, alerts, upcoming, receipts) */
+.hb-list{list-style:none;margin:0;padding:0}
+.hb-list li{display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-top:1px solid var(--hb-line2);font-size:13px;color:var(--ink2);line-height:1.45}
 .hb-list li:first-child{border-top:none;padding-top:0}
 .hb-list .d{width:7px;height:7px;border-radius:50%;background:var(--ink3);margin-top:6px;flex-shrink:0}
 .hb-list .d.good{background:var(--hb-good)}.hb-list .d.bad{background:var(--hb-bad)}.hb-list .d.warn{background:var(--hb-warn)}.hb-list .d.new{background:var(--ember)}
-.hb-list .w{margin-left:auto;font-family:'Space Grotesk',sans-serif;font-size:11px;color:var(--ink3);white-space:nowrap}
-.hb-list li.resolved{opacity:.55}
-.hb-list li.resolved .txt{text-decoration:line-through}
-.hb-empty{font-size:12.5px;color:var(--ink3);line-height:1.5}
-/* value + receipts */
-.hb-value .tot{font-family:'Space Grotesk',sans-serif;font-size:26px;font-weight:600;color:var(--hb-good);letter-spacing:-.02em}
-.hb-value svg{display:block;width:100%;height:76px;margin-top:8px}
-.hb-rc{display:flex;flex-direction:column}
-.hb-rc div{display:flex;gap:10px;align-items:baseline;padding:7px 0;border-top:1px solid var(--hb-line);font-size:12.5px;color:var(--ink2)}
+.hb-list .w{margin-left:auto;font-family:'Space Grotesk',sans-serif;font-size:11px;color:var(--ink3);white-space:nowrap;padding-left:10px}
+.hb-list li.resolved{opacity:.55}.hb-list li.resolved .txt{text-decoration:line-through}
+.hb-foot{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0;margin-top:34px;padding-top:22px;border-top:1px solid var(--hb-line)}
+.hb-foot>div{padding:0 24px 0 0;margin-right:24px;border-right:1px solid var(--hb-line2);min-width:0}
+.hb-foot>div:last-child{border-right:none;margin-right:0;padding-right:0}
+.hb-foot h3{font-size:10.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin:0 0 10px;display:flex;justify-content:space-between;align-items:baseline}
+.hb-foot h3 .hb-link{font-size:11px}
+.hb-value .tot{font-family:'Space Grotesk',sans-serif;font-size:28px;font-weight:600;color:var(--hb-good);letter-spacing:-.02em;line-height:1}
+.hb-value svg{display:block;width:100%;height:56px;margin-top:10px}
+.hb-rc div{display:block;padding:7px 0;border-top:1px solid var(--hb-line2);font-size:13px;color:var(--ink2);line-height:1.5}
 .hb-rc div:first-child{border-top:none;padding-top:0}
-.hb-rc b{font-family:'Space Grotesk',sans-serif;font-weight:600;color:var(--ink);white-space:nowrap}
-/* checklist */
-.hb-steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px}
-.hb-step{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid var(--hb-line);border-radius:8px;background:var(--hb-card);cursor:pointer;font-family:inherit;text-align:left;color:var(--ink)}
-.hb-step .ck{width:18px;height:18px;border-radius:50%;border:1.5px solid var(--hb-line);flex-shrink:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px}
-.hb-step.done .ck{background:var(--hb-good);border-color:var(--hb-good)}
+.hb-rc b{font-family:'Space Grotesk',sans-serif;font-weight:600;color:var(--ink);margin-right:6px}
+/* checklist + welcome */
+.hb-welcome{margin-top:26px;padding-left:22px;border-left:3px solid var(--ember)}
+.hb-welcome h2{font-family:'Clash Display',sans-serif;font-size:24px;font-weight:500;margin:4px 0 6px;color:var(--ink)}
+.hb-welcome p{font-size:15px;color:var(--ink2);line-height:1.6;margin:0;max-width:640px}
+.hb-steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:0}
+.hb-step{display:flex;gap:10px;align-items:flex-start;padding:10px 16px 10px 0;margin-right:16px;border-right:1px solid var(--hb-line2);background:none;border-top:none;border-bottom:none;border-left:none;cursor:pointer;font-family:inherit;text-align:left;color:var(--ink);min-width:0}
+.hb-step:last-child{border-right:none}
+.hb-step .ck{width:18px;height:18px;border-radius:50%;border:1.5px solid var(--hb-line);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:11px}
+.hb-step.done .ck{background:var(--hb-good);border-color:var(--hb-good);color:#fff}
 .hb-step.done .l{text-decoration:line-through;color:var(--ink3)}
-.hb-step .l{font-size:12.5px;font-weight:600}
-.hb-step .s{font-size:11px;color:var(--ink3);margin-top:2px}
-.hb-prog{height:4px;border-radius:2px;background:var(--paper2);overflow:hidden;margin:6px 0 12px}
+.hb-step .l{font-size:13px;font-weight:600}
+.hb-step .s{font-size:11.5px;color:var(--ink3);margin-top:2px;line-height:1.4}
+.hb-prog{height:3px;border-radius:2px;background:var(--hb-line2);overflow:hidden;margin:0 0 14px}
 .hb-prog i{display:block;height:100%;background:var(--ember);border-radius:2px;transition:width .4s ease}
-/* welcome */
-.hb-welcome{border-left:3px solid var(--ember)}
-.hb-welcome p{font-size:14px;color:var(--ink2);line-height:1.6;margin:6px 0 0;max-width:640px}
-/* skeleton */
-.hb-skel{position:relative;overflow:hidden;background:var(--paper2);border-radius:6px;min-height:14px}
-.hb-skel:after{content:'';position:absolute;inset:0;transform:translateX(-100%);background:linear-gradient(90deg,transparent,rgba(200,75,47,.10),transparent);animation:hbSkel 1.4s ease-in-out infinite}
+/* group (all locations) */
+.hb-tbl{width:100%;border-collapse:collapse;font-size:13px}
+.hb-tbl th{text-align:left;font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);padding:0 10px 8px 0;border-bottom:1px solid var(--hb-line);white-space:nowrap}
+.hb-tbl th.r,.hb-tbl td.r{text-align:right}
+.hb-tbl td{padding:11px 10px 11px 0;border-bottom:1px solid var(--hb-line2);vertical-align:middle;color:var(--ink2)}
+.hb-tbl tr{cursor:pointer;transition:background .12s ease}
+.hb-tbl tbody tr:hover{background:var(--hb-tint)}
+.hb-tbl tr.active td{color:var(--ink)}
+.hb-tbl .nm{font-weight:600;color:var(--ink);display:flex;align-items:center;gap:9px}
+.hb-tbl .nm .d{width:8px;height:8px;border-radius:50%;background:var(--hb-good);flex-shrink:0}
+.hb-tbl tr.critical .nm .d{background:var(--hb-bad)}.hb-tbl tr.important .nm .d{background:var(--hb-warn)}.hb-tbl tr.watch .nm .d{background:var(--ink3)}
+.hb-tbl .iss{font-size:11.5px;color:var(--ink3);margin-top:2px;font-weight:400}
+.hb-tbl .up{color:var(--hb-bad);font-weight:600}.hb-tbl .ok{color:var(--hb-good)}
+.hb-tbl .dim{color:var(--ink3)}
+/* skeleton + motion */
+.hb-skel{position:relative;overflow:hidden;background:var(--hb-line2);border-radius:6px;min-height:14px}
+.hb-skel:after{content:'';position:absolute;inset:0;transform:translateX(-100%);background:linear-gradient(90deg,transparent,var(--hb-tint2),transparent);animation:hbSkel 1.4s ease-in-out infinite}
 @keyframes hbSkel{to{transform:translateX(100%)}}
 .hb-fade{animation:hbIn .32s ease both}
 @keyframes hbIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
-.hb-err{padding:14px;border:1px solid var(--red-bg);background:var(--red-bg);color:var(--hb-bad);border-radius:8px;font-size:13px;display:flex;justify-content:space-between;gap:12px;align-items:center}
+.hb-err{padding:14px 0;color:var(--hb-bad);font-size:13px;display:flex;justify-content:space-between;gap:12px;align-items:center;border-top:1px solid var(--hb-line);border-bottom:1px solid var(--hb-line)}
 .hb-quiet{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--ink3)}
-@media (prefers-reduced-motion:reduce){.hb-skel:after,.hb-fade{animation:none}.hb-snap,.hb-btn,.hb-loc{transition:none}}
-@media (max-width:1060px){.hb-g3{grid-template-columns:repeat(2,minmax(0,1fr))}.hb-g12{grid-template-columns:1fr}}
-@media (max-width:720px){.hb-wrap{padding:18px 16px 40px}.hb-g3,.hb-g2{grid-template-columns:1fr}.hb-top{align-items:flex-start}.hb-top .hb-right{align-items:flex-start;min-width:0}.hb-fresh{justify-content:flex-start}.hb-item{grid-template-columns:4px 1fr}.hb-item .act{grid-column:2;margin-top:8px}}
-[data-theme="dark"] .hb-brief{background:linear-gradient(90deg,rgba(224,100,68,.10),transparent 60%),var(--hb-card)}
-[data-theme="dark"] .hb-snap:hover{box-shadow:0 8px 22px rgba(0,0,0,.35)}
-[data-theme="dark"] .hb-btn:not(.p):hover{background:var(--paper3)}
+@media (prefers-reduced-motion:reduce){.hb-skel:after,.hb-fade{animation:none}.hb-mod,.hb-btn,.hb-loc,.hb-item{transition:none}}
+@media (max-width:1000px){.hb-cols{grid-template-columns:1fr;gap:26px}.hb-cols>div+div{border-left:none;padding-left:0;padding-top:22px;border-top:1px solid var(--hb-line)}.hb-foot{grid-template-columns:repeat(2,minmax(0,1fr));row-gap:26px}.hb-foot>div:nth-child(2){border-right:none}.hb-tbl .hide-m{display:none}}
+@media (max-width:680px){.hb-wrap{padding:20px 18px 48px}.hb-top{align-items:flex-start}.hb-top .hb-right{align-items:flex-start;min-width:0}.hb-fresh{justify-content:flex-start}.hb-item{grid-template-columns:1fr}.hb-item .act{margin-top:8px}.hb-foot{grid-template-columns:1fr}.hb-foot>div{border-right:none;margin-right:0;padding-right:0}.hb-mods{grid-template-columns:1fr}.hb-mod{border-right:none;border-bottom:1px solid var(--hb-line2);margin-right:0;padding:14px 0}.hb-brief li{font-size:15.5px}.hb-rec{grid-template-columns:30px 1fr auto}}
 </style>
 
 <div class="hb-wrap" id="hb-root">
-  <!-- First paint: the context the server already knows, and skeletons for the rest. -->
   <div class="hb-top">
     <div>
       <div class="hb-kicker" id="hb-kicker">{{ now }} · {{ restaurant.name }}{% if restaurant.location_name %} — {{ restaurant.location_name }}{% endif %}</div>
       <h1 class="hb-h1" id="hb-h1">{% if restaurant.owner_name or current_user.username %}Hello, {{ (restaurant.owner_name or current_user.username).split(' ')[0]|title }}.{% else %}Your brief.{% endif %} <span class="hb-head neutral">Reading the room…</span></h1>
       <div class="hb-sub" id="hb-sub">Building today's brief from your latest data.</div>
     </div>
-    <div class="hb-right" id="hb-right"><div class="hb-skel" style="width:220px;height:26px"></div></div>
+    <div class="hb-right" id="hb-right"><div class="hb-skel" style="width:220px;height:18px"></div></div>
   </div>
   <div id="hb-body">
-    <div class="hb-card hb-skel" style="height:120px;margin-bottom:14px"></div>
-    <div class="hb-grid hb-g12"><div class="hb-card hb-skel" style="height:220px"></div><div class="hb-card hb-skel" style="height:220px"></div></div>
-    <div class="hb-grid hb-g3 hb-sec"><div class="hb-card hb-skel" style="height:190px"></div><div class="hb-card hb-skel" style="height:190px"></div><div class="hb-card hb-skel" style="height:190px"></div></div>
+    <div class="hb-skel" style="height:96px;margin:26px 0 30px"></div>
+    <div class="hb-cols"><div><div class="hb-skel" style="height:220px"></div></div><div><div class="hb-skel" style="height:220px"></div></div></div>
+    <div class="hb-skel" style="height:180px;margin-top:34px"></div>
   </div>
 </div>
 
 <script>
 (function(){
   // ── Home brief renderer (ES5) ─────────────────────────────────────────────
-  var _hbData=null,_hbLoadedAt=0,_hbLoading=false;
+  var _hbData=null,_hbLoadedAt=0,_hbLoading=false,_hbScope='location';
   var TAB={reviews:'tab-reviews',labor:'tab-labor',inventory:'tab-inventory',marketing:'tab-marketing',intel:'tab-competitor',account:'tab-account'};
   var MODLABEL={reviews:'Reviews',labor:'Labor',inventory:'Food Cost',marketing:'Marketing',intel:'Intel',account:'Account',alerts:'Alerts'};
   function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
-  // Numbers inside prose get the numeral face (Space Grotesk) — the same rule iOS follows.
   var NUM_RE=/(\$?[\d][\d,]*(?:\.\d+)?%?★?|[+\-−]\d[\d,.]*(?:\s?pts)?%?)/g;
   function num(v){
     // Escape first, then wrap numerals — but never inside an entity like &#39;.
@@ -1266,6 +1300,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     var area=fill?'<path d="'+line+'L'+last[0].toFixed(1)+' '+(h-pad)+' L'+pts[0][0].toFixed(1)+' '+(h-pad)+' Z" fill="'+col+'" opacity=".12"/>':'';
     return '<svg viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none" aria-hidden="true">'+area+'<path d="'+line+'" fill="none" stroke="'+col+'" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/><circle cx="'+last[0].toFixed(1)+'" cy="'+last[1].toFixed(1)+'" r="2.6" fill="'+col+'"/></svg>';
   }
+  function sh(kicker,title,small,right){return '<div class="hb-sh"><div><div class="k">'+esc(kicker)+'</div><h2>'+esc(title)+(small?'<small>'+small+'</small>':'')+'</h2></div>'+(right||'')+'</div>';}
   // ── navigation + actions ──────────────────────────────────────────────────
   window.hbOpen=function(module){
     if(module==='alerts'){if(typeof toggleNotifPanel==='function')toggleNotifPanel();return;}
@@ -1288,7 +1323,15 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     hbOpen(module);
   };
   window.hbSwitchLoc=function(rid,name){if(typeof switchLocation==='function')switchLocation(rid,name);};
-  // ── render ────────────────────────────────────────────────────────────────
+  window.hbScope=function(scope){_hbScope=scope;_hbLoadedAt=0;hbLoad(false);};
+  window.hbDismiss=function(key,undo){
+    fetch('/api/home/dismiss',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:key,undo:!!undo})}).then(function(r){return r.json();}).then(function(d){
+      if(!d.ok){if(typeof toast==='function')toast(d.error||'Couldn\'t update that','error');return;}
+      if(typeof toast==='function')toast(undo?'Recommendation restored':'Hidden for two weeks','success');
+      _hbLoadedAt=0;hbLoad(false);
+    }).catch(function(){if(typeof toast==='function')toast('Network error','error');});
+  };
+  // ── render: header ────────────────────────────────────────────────────────
   function sevLabel(s){return s==='critical'?'Critical':s==='important'?'Important':'Watch';}
   function renderTop(d){
     var c=d.context||{};
@@ -1302,123 +1345,156 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     var cnt=d.brief.counts||{};var parts=[];
     if(cnt.critical)parts.push(cnt.critical+' critical');if(cnt.important)parts.push(cnt.important+' important');if(cnt.watch)parts.push(cnt.watch+' to watch');if(cnt.wins)parts.push(cnt.wins+' going well');
     if(sub)sub.innerHTML=(parts.length?num(parts.join(' · ')):'Nothing flagged right now.')+(d.quiet_hours_active?' &nbsp;<span class="hb-quiet">🌙 alerts quiet until '+esc(d.alert_quiet_end||'morning')+'</span>':'');
-    var right=document.getElementById('hb-right');
+    renderRight(d.freshness||[],d.generated_at);
+  }
+  function renderRight(fresh,at){
+    var right=document.getElementById('hb-right');if(!right)return;
     var chips='';
-    for(var i=0;i<(d.freshness||[]).length;i++){var f=d.freshness[i];chips+='<span class="hb-chip '+esc(f.state)+'" title="'+esc(f.note||'')+'"><span class="d"></span>'+esc(f.label)+' <span class="hb-num" style="color:var(--ink3)">'+(f.state==='sample'?'sample':f.state==='missing'?'not connected':f.at?ago(f.at):(f.state==='manual'?'manual':'live'))+'</span></span>';}
-    if(right)right.innerHTML='<div class="hb-fresh">'+chips+'</div><button class="hb-refresh" onclick="hbLoad(true)" aria-label="Refresh the brief"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><polyline points="21 3 21 9 15 9"/></svg> Updated <span class="hb-num">'+ago(d.generated_at)+'</span> · refresh</button>';
+    for(var i=0;i<fresh.length;i++){var f=fresh[i];chips+='<span class="'+esc(f.state)+'" title="'+esc(f.note||'')+'"><span class="d"></span>'+esc(f.label)+' <span class="hb-num">'+(f.state==='sample'?'sample':f.state==='missing'?'not connected':f.at?ago(f.at):(f.state==='manual'?'manual':'live'))+'</span></span>';}
+    right.innerHTML=(chips?'<div class="hb-fresh">'+chips+'</div>':'')+'<button class="hb-refresh" onclick="hbLoad(true)" aria-label="Refresh the brief"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><polyline points="21 3 21 9 15 9"/></svg> Updated <span class="hb-num">'+ago(at)+'</span> · refresh</button>';
   }
   function renderLocations(d){
     var c=d.context||{};if(!c.locations||c.locations.length<2)return '';
-    var h='<div class="hb-locs" role="list" aria-label="Your locations">';
-    for(var i=0;i<c.locations.length;i++){var l=c.locations[i];h+='<button role="listitem" class="hb-loc '+esc(l.health)+(l.active?' active':'')+'" onclick="hbSwitchLoc('+l.id+',\''+esc(l.name)+'\')" title="'+esc(l.top_issue||'Healthy')+'"><span class="d"></span><span>'+esc(l.name)+'</span>'+(l.attention?'<span class="n hb-num">'+l.attention+'</span>':'')+(l.rating_30d?'<span class="n hb-num">'+l.rating_30d+'★</span>':'')+'</button>';}
+    var h='<div class="hb-locs" role="list" aria-label="Your locations"><button role="listitem" class="hb-loc'+(_hbScope==='group'?' active':'')+'" onclick="hbScope(\'group\')">All locations</button>';
+    for(var i=0;i<c.locations.length;i++){var l=c.locations[i];h+='<button role="listitem" class="hb-loc '+esc(l.health)+(l.active&&_hbScope!=='group'?' active':'')+'" onclick="hbSwitchLoc('+l.id+',\''+esc(l.name)+'\')" title="'+esc(l.top_issue||'Healthy')+'"><span class="d"></span><span>'+esc(l.name)+'</span>'+(l.attention?'<span class="n hb-num">'+l.attention+'</span>':'')+'</button>';}
     h+='</div>';
     var p=c.portfolio;
-    if(p){h+='<div class="hb-port"><span><b class="hb-num">'+p.healthy+'</b>/<span class="hb-num">'+p.total+'</span> locations healthy</span>'+(p.needing?'<span><b class="hb-num">'+p.needing+'</b> need attention</span>':'')+(p.biggest_issue?'<span>Biggest issue: <b>'+esc(p.biggest_issue.location)+'</b> — '+num(p.biggest_issue.issue)+'</span>':'')+(p.strongest?'<span>Strongest: <b>'+esc(p.strongest.location)+'</b> <span class="hb-num">'+p.strongest.rating+'★</span> · 30d</span>':'')+'</div>';}
+    if(p){h+='<div class="hb-port"><b class="hb-num">'+p.healthy+'</b>/<span class="hb-num">'+p.total+'</span> locations healthy'+(p.needing?'<span class="sep">·</span><b class="hb-num">'+p.needing+'</b> need attention':'')+(p.biggest_issue?'<span class="sep">·</span>Biggest issue: <b>'+esc(p.biggest_issue.location)+'</b> — '+num(p.biggest_issue.issue):'')+(p.strongest?'<span class="sep">·</span>Strongest: <b>'+esc(p.strongest.location)+'</b> <span class="hb-num">'+p.strongest.rating+'★</span> · 30d':'')+'</div>';}
     return h;
   }
   function renderWelcome(d){
     var e=d.empty_state;if(!e)return '';
-    return '<section class="hb-card hb-welcome" aria-label="Welcome" style="margin-bottom:14px"><div class="hb-kicker">Getting started</div><h2 style="font-family:\'Clash Display\',sans-serif;font-size:22px;font-weight:500;margin-top:4px">'+esc(e.title)+'</h2><p>'+esc(e.body)+'</p></section>';
+    return '<section class="hb-welcome" aria-label="Welcome"><div class="hb-kicker">Getting started</div><h2>'+esc(e.title)+'</h2><p>'+esc(e.body)+'</p></section>';
   }
   function renderChecklist(d){
     var steps=d.setup_checklist||[];if(!steps.length)return '';
     var done=0;for(var i=0;i<steps.length;i++)if(steps[i].done)done++;
-    var h='<section class="hb-card" aria-labelledby="hb-setup-h" style="margin-bottom:14px"><div class="hb-ch"><div><div class="k">Setup</div><h2 id="hb-setup-h">Let\'s get you set up</h2></div><span class="hb-num" style="font-size:13px;color:var(--ink2)">'+done+'/'+steps.length+'</span></div><div class="hb-prog"><i style="width:'+Math.round(100*done/steps.length)+'%"></i></div><div class="hb-steps">';
+    var h='<section aria-labelledby="hb-setup-h">'+sh('Setup','Let\'s get you set up','<span class="hb-num">'+done+'/'+steps.length+'</span>')+'<div class="hb-prog"><i style="width:'+Math.round(100*done/steps.length)+'%"></i></div><div class="hb-steps">';
     for(var j=0;j<steps.length;j++){var s=steps[j];h+='<button class="hb-step'+(s.done?' done':'')+'" onclick="hbOpen(\''+esc(s.module||'account')+'\')"><span class="ck">'+(s.done?'✓':'')+'</span><span><div class="l">'+esc(s.label)+'</div>'+(s.sub?'<div class="s">'+esc(s.sub)+'</div>':'')+'</span></button>';}
     return h+'</div></section>';
   }
   function renderBrief(d){
-    var b=d.brief||{};var lines=b.lines||[];
-    if(!lines.length&&!(b.overnight&&(b.overnight.answered||b.overnight.flagged)))return '';
-    var h='<section class="hb-card hb-brief" aria-labelledby="hb-brief-h" style="margin-bottom:14px"><div class="hb-ch"><div><div class="k">Today\'s intelligence</div><h2 id="hb-brief-h">What you should know</h2></div><span class="hb-sub hb-num">'+esc(dateKicker(d.local_now))+'</span></div><ul>';
-    for(var i=0;i<lines.length;i++){h+='<li class="'+esc(lines[i].tone)+'"><span class="d"></span><span>'+num(lines[i].text)+(lines[i].module?' <button class="hb-link" onclick="hbOpen(\''+esc(lines[i].module)+'\')">'+esc(MODLABEL[lines[i].module]||lines[i].module)+' →</button>':'')+'</span></li>';}
+    var b=d.brief||{};var lines=b.lines||[];var ai=d.ai_insight;
+    if(!lines.length&&!ai&&!(b.overnight&&(b.overnight.answered||b.overnight.flagged)))return '';
+    var h='<section class="hb-brief" aria-label="Today\'s intelligence"><div class="hb-kicker" style="margin-bottom:10px">Today\'s intelligence</div><ul>';
+    for(var i=0;i<lines.length;i++){h+='<li class="'+esc(lines[i].tone)+'"><span class="d"></span>'+num(lines[i].text)+(lines[i].module?'<button class="hb-link" onclick="hbOpen(\''+esc(lines[i].module)+'\')">'+esc(MODLABEL[lines[i].module]||lines[i].module)+' →</button>':'')+'</li>';}
     h+='</ul>';
     var o=b.overnight;
     if(o&&(o.answered||o.flagged)){h+='<div class="over">In the last <span class="hb-num">'+(o.window_hours||24)+'</span> hours Cavnar '+(o.answered?'drafted <b class="hb-num">'+o.answered+'</b> '+(o.answered===1?'reply':'replies'):'')+(o.answered&&o.flagged?' and ':'')+(o.flagged?'sent <b class="hb-num">'+o.flagged+'</b> '+(o.flagged===1?'alert':'alerts'):'')+'.</div>';}
+    if(ai){h+='<div class="hb-ai"><div class="tag">Cavnar\'s read on your reviews <i>· from the Reviews tab, this session</i></div>'+num(ai.text)+'</div>';}
     return h+'</section>';
   }
   function renderAttention(d){
     var items=d.attention||[];
-    var h='<section class="hb-card" aria-labelledby="hb-attn-h"><div class="hb-ch"><div><div class="k">Needs attention</div><h2 id="hb-attn-h">'+(items.length?'Start here':'All clear')+'</h2></div>'+(items.length?'<span class="hb-sub hb-num">'+items.length+'</span>':'')+'</div>';
+    var h='<section aria-labelledby="hb-attn-h">'+sh('Needs attention',items.length?'Start here':'All clear',items.length?'<span class="hb-num">'+items.length+'</span>':'')+'';
     if(!items.length){h+='<div class="hb-clear"><span class="ok"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span><span>Nothing needs you right now. Cavnar keeps watching reviews, labor and costs and will flag the next thing here.</span></div>';}
     else{h+='<div class="hb-attn" role="list">';
-      for(var i=0;i<items.length;i++){var a=items[i];var ev=[];if(a.evidence)ev.push(num(a.evidence));if(a.since)ev.push('<span class="hb-num">'+esc(a.since)+'</span>');if(a.location)ev.push(esc(a.location));
-        h+='<div class="hb-item '+esc(a.severity)+'" role="listitem"><span class="st"></span><div><div class="t"><span class="sev">'+sevLabel(a.severity)+'</span>'+num(a.title)+'</div><div class="dt">'+num(a.detail||'')+'</div>'+(ev.length?'<div class="ev">'+ev.map(function(x){return '<span>'+x+'</span>';}).join('')+'</div>':'')+'</div><div class="act"><button class="hb-btn'+(a.severity==='critical'||a.action.kind==='publish_replies'?' p':'')+'" onclick="hbAct(\''+esc(a.action.kind)+'\',\''+esc(a.action.module||'')+'\',this)">'+esc(a.action.label)+'</button></div></div>';}
+      for(var i=0;i<items.length;i++){var a=items[i];var ev=[];if(a.evidence)ev.push(num(a.evidence));if(a.since)ev.push('<span class="hb-num">'+esc(a.since)+'</span>');
+        h+='<div class="hb-item '+esc(a.severity)+'" role="listitem"><div><div class="t"><span class="sev">'+sevLabel(a.severity)+'</span>'+num(a.title)+'</div><div class="dt">'+num(a.detail||'')+'</div>'+(ev.length?'<div class="ev">'+ev.map(function(x){return '<span>'+x+'</span>';}).join('')+'</div>':'')+'</div><div class="act"><button class="hb-btn'+(a.severity==='critical'||a.action.kind==='publish_replies'?' p':'')+'" onclick="hbAct(\''+esc(a.action.kind)+'\',\''+esc(a.action.module||'')+'\',this)">'+esc(a.action.label)+'</button></div></div>';}
       h+='</div>';}
     return h+'</section>';
   }
   function renderSide(d){
-    var h='';
+    var h='<div class="hb-side" style="padding-top:34px">';
     var wins=d.wins||[];
-    h+='<section class="hb-card" aria-labelledby="hb-wins-h" style="margin-bottom:14px"><div class="hb-ch"><div><div class="k">Going well</div><h2 id="hb-wins-h">'+(wins.length?'Wins to keep':'Nothing to report yet')+'</h2></div></div>';
-    if(!wins.length)h+='<div class="hb-empty">Improvements show up here as they happen — a rating climb, labor under target, waste falling.</div>';
-    else{h+='<div class="hb-wins">';for(var i=0;i<wins.length;i++){h+='<div class="hb-win"><span class="d"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span><span><b>'+num(wins[i].title)+'</b> '+num(wins[i].detail||'')+'</span></div>';}h+='</div>';}
-    h+='</section>';
+    h+='<div class="blk"><h3>Going well</h3>';
+    if(!wins.length)h+='<div class="hb-empty">Wins land here as they happen — a rating climb, labor under target, waste falling.</div>';
+    else{h+='<div class="hb-wins">';for(var i=0;i<wins.length;i++){h+='<div class="hb-win"><span class="d"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span><span><b>'+num(wins[i].title)+'</b> '+num(wins[i].detail||'')+'</span></div>';}h+='</div>';}
+    h+='</div>';
     var qa=d.quick_actions||[];
-    h+='<section class="hb-card" aria-labelledby="hb-qa-h"><div class="hb-ch"><div><div class="k">Quick actions</div><h2 id="hb-qa-h">Do it from here</h2></div></div><div class="hb-qa">';
-    for(var j=0;j<qa.length;j++){var q=qa[j];h+='<button class="hb-btn'+(q.kind==='publish_replies'?' p':'')+'" onclick="hbAct(\''+esc(q.kind)+'\',\''+esc(q.module||'')+'\',this)">'+esc(q.label)+(q.count?' <span class="c">'+q.count+'</span>':'')+'</button>';}
-    h+='</div><div class="hb-ask"><input id="hb-ask-in" type="text" placeholder="Ask Cavnar AI about your restaurant…" aria-label="Ask Cavnar AI" onkeydown="if(event.key===\'Enter\')hbAskSubmit()"><button class="hb-btn p" onclick="hbAskSubmit()">Ask</button></div>';
+    h+='<div class="blk"><h3>Quick actions</h3><div class="hb-qa">';
+    for(var j=0;j<qa.length;j++){var q=qa[j];if(q.kind==='ask')continue;h+='<button class="hb-btn'+(q.kind==='publish_replies'?' p':'')+'" onclick="hbAct(\''+esc(q.kind)+'\',\''+esc(q.module||'')+'\',this)">'+esc(q.label)+(q.count?' <span class="c">'+q.count+'</span>':'')+'</button>';}
+    h+='</div></div>';
+    h+='<div class="blk"><h3>Ask Cavnar AI</h3><div class="hb-ask"><input id="hb-ask-in" type="text" placeholder="Ask anything about your restaurant…" aria-label="Ask Cavnar AI" onkeydown="if(event.key===\'Enter\')hbAskSubmit()"><button class="hb-btn p" onclick="hbAskSubmit()">Ask</button></div>';
     var sg=d.ask_suggestions||[];if(sg.length){h+='<div class="hb-sugg">';for(var s=0;s<sg.length;s++){h+='<button onclick="hbAsk(\''+esc(sg[s]).replace(/'/g,'\\\'')+'\')">'+esc(sg[s])+'</button>';}h+='</div>';}
-    return h+'</section>';
+    h+='</div></div>';
+    return h;
   }
   function renderSnapshot(d){
     var cards=d.snapshot||[];if(!cards.length)return '';
-    var h='<section class="hb-sec" aria-labelledby="hb-snap-h"><div class="hb-ch" style="margin-bottom:10px"><div><div class="hb-kicker">Performance snapshot</div><h2 id="hb-snap-h" style="font-family:\'Space Grotesk\',sans-serif;font-size:15px;font-weight:600;margin:2px 0 0">By module</h2></div></div><div class="hb-grid hb-g3">';
+    var h='<section aria-labelledby="hb-snap-h">'+sh('Performance snapshot','By module','current value · trend · what it means')+'<div class="hb-mods">';
     for(var i=0;i<cards.length;i++){var c=cards[i];
-      if(c.status==='coming_soon'){h+='<div class="hb-card hb-snap coming" aria-label="'+esc(c.label)+' coming soon"><div class="top"><span class="lbl">'+esc(c.label)+'</span><span class="state">soon</span></div><div class="int">'+esc(c.interpretation)+'</div></div>';continue;}
+      if(c.status==='coming_soon'){h+='<div class="hb-mod coming" aria-label="'+esc(c.label)+' coming soon"><div class="lbl"><span>'+esc(c.label)+'</span><i>soon</i></div><div class="int">'+esc(c.interpretation)+'</div></div>';continue;}
       var st=c.sample?'sample':c.state;
-      h+='<div class="hb-card hb-snap '+esc(st)+'" role="link" tabindex="0" aria-label="Open '+esc(c.label)+'" onclick="hbOpen(\''+esc(c.key)+'\')" onkeydown="if(event.key===\'Enter\')hbOpen(\''+esc(c.key)+'\')">';
-      h+='<div class="top"><span class="lbl">'+esc(c.label)+'</span><span class="state">'+(c.sample?'sample data':st==='bad'?'needs action':st==='warn'?'watch':st==='good'?'on track':'no data')+'</span></div>';
+      h+='<div class="hb-mod '+esc(st)+'" role="link" tabindex="0" aria-label="Open '+esc(c.label)+'" onclick="hbOpen(\''+esc(c.key)+'\')" onkeydown="if(event.key===\'Enter\')hbOpen(\''+esc(c.key)+'\')">';
+      h+='<div class="lbl"><span>'+esc(c.label)+'</span><i>'+(c.sample?'sample data':st==='bad'?'needs action':st==='warn'?'watch':st==='good'?'on track':'no data')+'</i></div>';
       h+='<div class="v">'+esc(c.value)+(c.unit?'<small>'+esc(c.unit)+'</small>':'')+'</div>';
-      if(c.delta)h+='<div><span class="delta '+(c.delta.good?'good':'bad')+'"><span class="hb-num">'+esc(c.delta.value)+'</span>'+(c.delta.label?' <span style="font-weight:400;opacity:.8">'+esc(c.delta.label)+'</span>':'')+'</span></div>';
-      if(c.spark&&c.spark.length>1)h+=spark(c.spark,300,38,st==='sample'?'neutral':st,true)+(c.spark_label?'<div style="font-size:10px;color:var(--ink3);margin-top:-4px">'+esc(c.spark_label)+'</div>':'');
+      if(c.delta)h+='<div class="delta '+(c.delta.good?'good':'bad')+'"><span class="hb-num" style="font-weight:600;color:inherit">'+esc(c.delta.value)+'</span>'+(c.delta.label?' <span>'+esc(c.delta.label)+'</span>':'')+'</div>';
+      if(c.spark&&c.spark.length>1)h+=spark(c.spark,300,34,st==='sample'?'neutral':st,true)+(c.spark_label?'<div style="font-size:10px;color:var(--ink3);margin-top:-4px">'+esc(c.spark_label)+'</div>':'');
       if(c.secondary&&c.secondary.length){h+='<div class="sec">';for(var j=0;j<c.secondary.length;j++){h+='<div><div class="l">'+esc(c.secondary[j].label)+'</div><div class="x">'+esc(c.secondary[j].value)+'</div></div>';}h+='</div>';}
       h+='<div class="int">'+num(c.interpretation||'')+'</div>';
-      h+='<div class="ft"><span>'+(c.last_data?'data '+ago(c.last_data):(c.sample?'':'—'))+'</span>'+(c.setup?'<button class="hb-btn" onclick="event.stopPropagation();hbOpen(\''+esc(c.setup.module)+'\')">'+esc(c.setup.label)+'</button>':'<span class="go">Open '+esc(c.label)+' →</span>')+'</div>';
+      h+='<div class="ft"><span>'+(c.last_data?'data '+ago(c.last_data):'')+'</span>'+(c.setup?'<button class="hb-btn" onclick="event.stopPropagation();hbOpen(\''+esc(c.setup.module)+'\')">'+esc(c.setup.label)+'</button>':'<span class="go">Open '+esc(c.label)+' →</span>')+'</div>';
       h+='</div>';}
     return h+'</div></section>';
   }
   function renderRecs(d){
-    var recs=d.recommendations||[];
-    var h='<section class="hb-card" aria-labelledby="hb-rec-h"><div class="hb-ch"><div><div class="k">Cavnar recommends</div><h2 id="hb-rec-h">'+(recs.length?'Grounded in your numbers':'No recommendations yet')+'</h2></div></div>';
+    var recs=d.recommendations||[];var hid=d.dismissed||[];
+    var h='<section aria-labelledby="hb-rec-h">'+sh('Cavnar recommends',recs.length?'Grounded in your numbers':'No recommendations yet',recs.length?'hover a row to hide it for two weeks':'');
     if(!recs.length){h+='<div class="hb-empty">Recommendations appear when the data supports one — a day running heavy on labor, a waste line worth cutting, replies waiting. Nothing is invented to fill the space.</div>';}
     else{h+='<div class="hb-recs">';for(var i=0;i<recs.length;i++){var r=recs[i];
-      h+='<div class="hb-rec"><div class="t"><b>'+num(r.title)+'</b><span class="str '+esc(r.strength)+'">'+esc(r.strength==='strong'?'strong evidence':r.strength==='early'?'early signal':'moderate')+'</span></div><div class="why">'+num(r.why)+'</div><div class="ev"><span>'+num(r.evidence)+'</span></div><div class="ft"><span>'+esc(r.impact)+' · '+esc(r.timeframe)+'</span><button class="hb-link" onclick="hbOpen(\''+esc(r.module)+'\')">'+esc(r.action_label)+' →</button></div></div>';}
+      h+='<div class="hb-rec"><div class="no"></div><div><b>'+num(r.title)+'</b><span class="str '+esc(r.strength)+'">'+esc(r.strength==='strong'?'strong evidence':r.strength==='early'?'early signal':'moderate')+'</span><div class="why">'+num(r.why)+'</div><div class="ev">'+num(r.evidence)+'</div><div class="ft"><span>'+esc(r.impact)+' · '+esc(r.timeframe)+'</span><button class="hb-link" onclick="hbOpen(\''+esc(r.module)+'\')">'+esc(r.action_label)+' →</button></div></div><button class="x" title="Hide for two weeks" aria-label="Hide this recommendation for two weeks" onclick="hbDismiss(\''+esc(r.key).replace(/'/g,'\\\'')+'\')">✕</button></div>';}
       h+='</div>';}
+    if(hid.length){h+='<div class="hb-hidden"><span class="hb-num">'+hid.length+'</span> hidden: '+hid.map(function(x){return esc(x.title)+' <button class="hb-link" onclick="hbDismiss(\''+esc(x.key).replace(/'/g,'\\\'')+'\',true)">restore</button>';}).join(' · ')+'</div>';}
     return h+'</section>';
   }
   function renderChanges(d){
     var ch=d.changes||{};var items=ch.items||[];
-    var h='<section class="hb-card" aria-labelledby="hb-chg-h" style="margin-bottom:14px"><div class="hb-ch"><div><div class="k">What changed</div><h2 id="hb-chg-h">'+esc((ch.since_label||'since your last visit').charAt(0).toUpperCase()+(ch.since_label||'since your last visit').slice(1))+'</h2></div></div>';
-    if(!items.length)h+='<div class="hb-empty">No meaningful change '+esc(ch.since_label||'since your last visit')+'.</div>';
-    else{h+='<ul class="hb-list">';for(var i=0;i<items.length;i++){h+='<li><span class="d '+esc(items[i].tone)+'"></span><span class="txt">'+num(items[i].text)+'</span>'+(items[i].module&&MODLABEL[items[i].module]?'<button class="hb-link" style="margin-left:auto" onclick="hbOpen(\''+esc(items[i].module)+'\')">'+esc(MODLABEL[items[i].module])+'</button>':'')+'</li>';}h+='</ul>';}
-    h+='</section>';
+    var label=(ch.since_label||'since your last visit');
+    var h='<div class="hb-side" style="padding-top:34px"><div class="blk"><h3>What changed · '+esc(label.replace(/^since /,''))+'</h3>';
+    if(!items.length)h+='<div class="hb-empty">No meaningful change '+esc(label)+'.</div>';
+    else{h+='<ul class="hb-list">';for(var i=0;i<items.length;i++){h+='<li><span class="d '+esc(items[i].tone)+'"></span><span class="txt">'+num(items[i].text)+'</span>'+(items[i].module&&MODLABEL[items[i].module]?'<button class="hb-link w" onclick="hbOpen(\''+esc(items[i].module)+'\')">'+esc(MODLABEL[items[i].module])+'</button>':'')+'</li>';}h+='</ul>';}
+    h+='</div>';
     var al=d.alerts||[];
-    h+='<section class="hb-card" aria-labelledby="hb-al-h"><div class="hb-ch"><div><div class="k">Alerts · 7 days</div><h2 id="hb-al-h">'+(al.length?'What Cavnar flagged':'No alerts this week')+'</h2></div><button class="hb-link" onclick="hbOpen(\'alerts\')">All alerts →</button></div>';
+    h+='<div class="blk"><h3 style="display:flex;justify-content:space-between"><span>Alerts · 7 days</span><button class="hb-link" style="font-size:11px" onclick="hbOpen(\'alerts\')">All alerts →</button></h3>';
     if(!al.length)h+='<div class="hb-empty">Urgent reviews, rating drops and labor overruns land here the moment they fire.</div>';
     else{h+='<ul class="hb-list">';for(var j=0;j<al.length;j++){var a=al[j];h+='<li class="'+(a.resolved?'resolved':'')+'"><span class="d '+(a.new&&!a.resolved?'new':a.severity==='critical'?'bad':a.severity==='important'?'warn':'')+'"></span><span class="txt">'+esc(a.label)+(a.resolved?' · handled':'')+'</span><span class="w">'+ago(a.fired_at)+'</span></li>';}h+='</ul>';}
-    return h+'</section>';
+    return h+'</div></div>';
   }
-  function renderUpcoming(d){
-    var up=d.upcoming||[];
-    var h='<section class="hb-card" aria-labelledby="hb-up-h"><div class="hb-ch"><div><div class="k">Upcoming</div><h2 id="hb-up-h">On the calendar</h2></div></div>';
-    if(!up.length)h+='<div class="hb-empty">Scheduled posts, the weekly digest and the next review pull show up here.</div>';
-    else{h+='<ul class="hb-list">';for(var i=0;i<up.length;i++){h+='<li><span class="d"></span><span class="txt">'+esc(up[i].label)+'</span><span class="w">'+whenLabel(up[i].when)+'</span></li>';}h+='</ul>';}
-    return h+'</section>';
+  function renderFoot(d){
+    var up=d.upcoming||[];var v=d.value||{};var hist=v.history||[];var rc=d.receipts||[];
+    var vals=[];for(var i=0;i<hist.length;i++)vals.push(+hist[i].value||0);
+    var h='<div class="hb-foot">';
+    h+='<div><h3>Upcoming</h3>'+(up.length?'<ul class="hb-list">'+up.map(function(u){return '<li><span class="d"></span><span class="txt">'+esc(u.label)+'</span><span class="w">'+whenLabel(u.when)+'</span></li>';}).join('')+'</ul>':'<div class="hb-empty">Scheduled posts, the weekly digest and the next review pull show up here.</div>')+'</div>';
+    h+='<div class="hb-value"><h3>Value delivered</h3><div class="tot">$'+Math.round(v.total||0).toLocaleString()+'</div>'+(vals.length>1?spark(vals,320,56,'good',true)+'<div style="font-size:11px;color:var(--ink3);margin-top:6px"><span class="hb-num">'+hist.length+'</span> days tracked</div>':'<div class="hb-empty" style="margin-top:6px">Trend starts after the second day of tracking.</div>')+'</div>';
+    h+='<div><h3>This week</h3>'+(rc.length?'<div class="hb-rc">'+rc.map(function(r){return '<div><b>'+esc(r.emphasis)+'</b><span>'+num(r.text)+'</span></div>';}).join('')+'</div>':'<div class="hb-empty">Replies, schedules, waste flags and posts land here as they happen.</div>')+'</div>';
+    var fr=d.freshness||[];
+    h+='<div><h3>Data sources</h3><ul class="hb-list">'+fr.map(function(f){return '<li><span class="d '+(f.state==='fresh'?'good':f.state==='stale'?'warn':f.state==='missing'?'bad':'')+'"></span><span class="txt">'+esc(f.label)+' <span style="color:var(--ink3)">— '+esc(f.note||'')+'</span></span></li>';}).join('')+'</ul></div>';
+    return h+'</div>';
   }
-  function renderValue(d){
-    var v=d.value||{};var hist=v.history||[];var vals=[];for(var i=0;i<hist.length;i++)vals.push(+hist[i].value||0);
-    var h='<section class="hb-card hb-value" aria-labelledby="hb-val-h"><div class="hb-ch"><div><div class="k">Value delivered</div><h2 id="hb-val-h">Since you started</h2></div><span class="tot">$'+Math.round(v.total||0).toLocaleString()+'</span></div>';
-    if(vals.length>1)h+=spark(vals,320,76,'good',true)+'<div style="font-size:11px;color:var(--ink3);margin-top:6px"><span class="hb-num">'+esc(hist[0].date)+'</span> – <span class="hb-num">'+esc(hist[hist.length-1].date)+'</span> · <span class="hb-num">'+hist.length+'</span> days tracked</div>';
-    else h+='<div class="hb-empty">The trend line starts after the second day of tracking.</div>';
-    return h+'</section>';
-  }
-  function renderReceipts(d){
-    var rc=d.receipts||[];
-    var h='<section class="hb-card" aria-labelledby="hb-rc-h"><div class="hb-ch"><div><div class="k">This week</div><h2 id="hb-rc-h">What Cavnar did for you</h2></div></div>';
-    if(!rc.length)h+='<div class="hb-empty">Replies, schedules, waste flags and posts land here as they happen this week.</div>';
-    else{h+='<div class="hb-rc">';for(var i=0;i<rc.length;i++){h+='<div><b>'+esc(rc[i].emphasis)+'</b><span>'+num(rc[i].text)+'</span></div>';}h+='</div>';}
-    return h+'</section>';
+  // ── render: consolidated (all locations) ──────────────────────────────────
+  function renderGroup(g){
+    var k=document.getElementById('hb-kicker');if(k)k.textContent=dateKicker()+' · '+g.group_name+' · all locations';
+    var h1=document.getElementById('hb-h1');if(h1)h1.innerHTML=esc(greeting())+(g.greeting_name?', '+esc(g.greeting_name):'')+'. <span class="hb-head '+esc(g.tone)+'">'+esc(g.headline)+'</span>';
+    var p=g.portfolio||{};
+    var sub=document.getElementById('hb-sub');if(sub)sub.innerHTML=num(p.healthy+' of '+p.total+' locations healthy')+(p.urgent_reviews?' · '+num(p.urgent_reviews+' urgent reviews'):'')+(p.awaiting?' · '+num(p.awaiting+' replies awaiting approval'):'');
+    renderRight([],g.generated_at);
+    var h='<div class="hb-locs" role="list"><button class="hb-loc active" onclick="hbScope(\'group\')">All locations</button>';
+    for(var i=0;i<g.locations.length;i++){var l=g.locations[i];h+='<button role="listitem" class="hb-loc '+esc(l.health)+'" onclick="hbSwitchLoc('+l.id+',\''+esc(l.name)+'\')"><span class="d"></span>'+esc(l.name)+(l.attention?'<span class="n hb-num">'+l.attention+'</span>':'')+'</button>';}
+    h+='</div>';
+    var pl=[];
+    if(p.strongest)pl.push('Strongest: <b>'+esc(p.strongest.location)+'</b> <span class="hb-num">'+p.strongest.rating+'★</span> · 30d');
+    if(p.weakest)pl.push('Weakest: <b>'+esc(p.weakest.location)+'</b> <span class="hb-num">'+p.weakest.rating+'★</span>');
+    if(p.heaviest_labor)pl.push('Heaviest labor: <b>'+esc(p.heaviest_labor.location)+'</b> <span class="hb-num">'+p.heaviest_labor.pct.toFixed(1)+'%</span> (<span class="hb-num">+'+p.heaviest_labor.over.toFixed(1)+' pts</span>)');
+    if(p.biggest_issue)pl.push('Biggest issue: <b>'+esc(p.biggest_issue.location)+'</b> — '+num(p.biggest_issue.issue));
+    if(pl.length)h+='<div class="hb-port">'+pl.join('<span class="sep">·</span>')+'</div>';
+    h+='<section>'+sh('Locations','Side by side','each row is its own numbers — nothing is averaged')+'<div style="overflow-x:auto"><table class="hb-tbl"><thead><tr><th>Location</th><th class="r">Rating · 30d</th><th class="r">Answered</th><th class="r">Urgent</th><th class="r">Awaiting</th><th class="r hide-m">Labor</th><th class="r hide-m">Food cost</th><th class="r hide-m">Last active</th><th></th></tr></thead><tbody>';
+    for(var j=0;j<g.locations.length;j++){var r=g.locations[j];var rv=r.reviews||{};
+      h+='<tr class="'+esc(r.health)+(r.active?' active':'')+'" onclick="hbSwitchLoc('+r.id+',\''+esc(r.name)+'\')" tabindex="0" onkeydown="if(event.key===\'Enter\')hbSwitchLoc('+r.id+',\''+esc(r.name)+'\')">';
+      h+='<td><div class="nm"><span class="d"></span>'+esc(r.name)+(r.active?' <span class="dim" style="font-weight:400">· viewing</span>':'')+'</div>'+(r.issues.length?'<div class="iss">'+num(r.issues[0].text)+(r.issues.length>1?' <span class="hb-num">+'+(r.issues.length-1)+'</span>':'')+'</div>':(r.google_connected?'':'<div class="iss">Google not connected</div>'))+'</td>';
+      h+='<td class="r hb-num">'+(rv.rating_30d?rv.rating_30d+'★'+(rv.rating_prev&&(rv.rating_30d-rv.rating_prev)<=-0.3?' <span class="up">↓</span>':(rv.rating_prev&&(rv.rating_30d-rv.rating_prev)>=0.2?' <span class="ok">↑</span>':'')):'<span class="dim">—</span>')+'</td>';
+      h+='<td class="r hb-num">'+(rv.response_rate!=null?rv.response_rate+'%':'<span class="dim">—</span>')+'</td>';
+      h+='<td class="r hb-num">'+(rv.urgent?'<span class="up">'+rv.urgent+'</span>':'<span class="dim">0</span>')+'</td>';
+      h+='<td class="r hb-num">'+(rv.awaiting||'<span class="dim">0</span>')+'</td>';
+      h+='<td class="r hb-num hide-m">'+(r.labor?r.labor.pct.toFixed(1)+'%'+(r.labor.over>3?' <span class="up">+'+r.labor.over.toFixed(1)+'</span>':r.labor.over<=0?' <span class="ok">✓</span>':''):'<span class="dim">sample</span>')+'</td>';
+      h+='<td class="r hb-num hide-m">'+(r.inventory?'$'+Math.round(r.inventory.recoverable).toLocaleString()+'/mo'+(r.inventory.critical_low?' <span class="up">'+r.inventory.critical_low+' low</span>':''):'<span class="dim">sample</span>')+'</td>';
+      h+='<td class="r hb-num hide-m dim">'+ago(r.last_active)+'</td><td class="r"><span class="hb-link">Open →</span></td></tr>';}
+    h+='</tbody></table></div></section>';
+    var at=g.attention||[];
+    h+='<section>'+sh('Needs attention','Across all locations',at.length?'<span class="hb-num">'+at.length+'</span>':'');
+    if(!at.length)h+='<div class="hb-clear"><span class="ok">✓</span><span>Nothing needs you at any location right now.</span></div>';
+    else{h+='<div class="hb-attn" role="list">';for(var a=0;a<at.length;a++){var x=at[a];h+='<div class="hb-item '+esc(x.severity)+'" role="listitem"><div><div class="t"><span class="sev">'+sevLabel(x.severity)+'</span>'+num(x.text)+'</div><div class="dt">'+esc(x.location)+'</div></div><div class="act"><button class="hb-btn'+(x.severity==='critical'?' p':'')+'" onclick="hbSwitchLoc('+x.restaurant_id+',\''+esc(x.location)+'\')">Open '+esc(x.location)+'</button></div></div>';}h+='</div>';}
+    h+='</section>';
+    var body=document.getElementById('hb-body');if(body)body.innerHTML='<div class="hb-fade">'+h+'</div>';
   }
   function render(d){
     _hbData=d;renderTop(d);
@@ -1426,24 +1502,24 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     var h='';
     h+=renderLocations(d);
     h+=renderWelcome(d);
-    h+=renderChecklist(d);
     h+=renderBrief(d);
-    h+='<div class="hb-grid hb-g12"><div>'+renderAttention(d)+'</div><div>'+renderSide(d)+'</div></div>';
+    h+=renderChecklist(d);
+    h+='<div class="hb-cols"><div>'+renderAttention(d)+'</div><div>'+renderSide(d)+'</div></div>';
     h+=renderSnapshot(d);
-    h+='<div class="hb-grid hb-g12 hb-sec"><div>'+renderRecs(d)+'</div><div>'+renderChanges(d)+'</div></div>';
-    h+='<div class="hb-grid hb-g3 hb-sec">'+renderUpcoming(d)+renderValue(d)+renderReceipts(d)+'</div>';
+    h+='<div class="hb-cols"><div>'+renderRecs(d)+'</div><div>'+renderChanges(d)+'</div></div>';
+    h+=renderFoot(d);
     body.innerHTML='<div class="hb-fade">'+h+'</div>';
   }
   window.hbLoad=function(fresh){
     if(_hbLoading)return;_hbLoading=true;
     var btn=document.querySelector('.hb-refresh');if(btn){btn.disabled=true;btn.textContent='Refreshing…';}
-    fetch('/api/home/brief'+(fresh?'?fresh=1':''),{credentials:'same-origin'}).then(function(r){return r.json();}).then(function(d){
+    var url=(_hbScope==='group'?'/api/home/brief/group':'/api/home/brief')+(fresh?'?fresh=1':'');
+    fetch(url,{credentials:'same-origin'}).then(function(r){return r.json();}).then(function(d){
       _hbLoading=false;
-      if(!d||!d.ok){var b=document.getElementById('hb-body');if(b)b.innerHTML='<div class="hb-err"><span>'+esc((d&&d.error)||'Couldn\'t build your brief right now.')+'</span><button class="hb-btn" onclick="hbLoad(true)">Try again</button></div>';if(d&&d.session_expired)location.reload();return;}
-      _hbLoadedAt=Date.now();render(d);
+      if(!d||!d.ok){if(_hbScope==='group'){_hbScope='location';hbLoad(fresh);if(typeof toast==='function')toast((d&&d.error)||'Couldn\'t load all locations','error');return;}var b=document.getElementById('hb-body');if(b)b.innerHTML='<div class="hb-err"><span>'+esc((d&&d.error)||'Couldn\'t build your brief right now.')+'</span><button class="hb-btn" onclick="hbLoad(true)">Try again</button></div>';if(d&&d.session_expired)location.reload();return;}
+      _hbLoadedAt=Date.now();if(d.scope==='group')renderGroup(d);else render(d);
     }).catch(function(){_hbLoading=false;var b=document.getElementById('hb-body');if(b)b.innerHTML='<div class="hb-err"><span>Couldn\'t reach Cavnar — check your connection.</span><button class="hb-btn" onclick="hbLoad(true)">Try again</button></div>';});
   };
-  // Re-pull when Home is reopened after a while (the tab bar calls hbRefresh from switchTab).
   window.hbRefresh=function(){if(!_hbLoadedAt||Date.now()-_hbLoadedAt>5*60*1000)hbLoad(false);};
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',function(){hbLoad(false);});else hbLoad(false);
   document.addEventListener('visibilitychange',function(){if(!document.hidden&&document.getElementById('panel-home').classList.contains('active'))hbRefresh();});
