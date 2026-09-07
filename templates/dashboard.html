@@ -27,7 +27,7 @@
   --amber:#d4a030;--amber-bg:#251d08;--blue:#6aabff;--blue-bg:#0a1828;
   --surface:#201d19;--hdr-bg:#0f0d0b
 }
-html[data-theme="dark"]{background:#1a1714!important;background-image:none!important}
+html[data-theme="dark"]{background:#0c0c0c!important;background-image:none!important}
 html[data-theme="dark"] body{color:var(--ink)}
 /* Review status badge dark mode overrides */
 [data-theme="dark"] .rv-status-approved{background:#0a1828!important;color:#6aabff!important}
@@ -272,7 +272,8 @@ html{background:linear-gradient(160deg,#edddd0 0%,#f2ece4 30%,#ede8df 65%,#e8e0d
 .hdr-left{display:flex;align-items:center;gap:16px}
 .hdr-logo{font-family:'Clash Display',sans-serif;font-size:16px;color:var(--paper)}
 .hdr-logo em{color:var(--ember2);font-style:italic}
-.hdr-restaurant{font-size:12px;color:var(--ink3);padding-left:16px;border-left:1px solid #2a2520}
+.hdr,.hdr button,.hdr a,.hdr span,.hdr div{font-family:'Apfel Grotezk',sans-serif}
+.hdr-restaurant{font-size:12.5px;color:var(--ink3);padding-left:16px;border-left:1px solid #2a2520}
 .hdr-right{display:flex;align-items:center;gap:16px}
 .hdr-user{font-size:12px;color:var(--ink3)}
 .logout-btn{font-size:11px;color:var(--ink3);text-decoration:none;padding:5px 10px;border:1px solid #2a2520;border-radius:4px;transition:all .15s}
@@ -915,6 +916,7 @@ document.documentElement.classList.add('pjs-loading');
 </head>
 <body>
 {% include "_csrf_fetch.html" %}
+<script src="/static/cavnar-orb.js"></script>
 
 <!-- Branded upload loading overlay -->
 <div id="upload-loading-overlay" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(14,12,10,0.85);align-items:center;justify-content:center;flex-direction:column">
@@ -950,14 +952,14 @@ document.documentElement.classList.add('pjs-loading');
     <div class="hdr-logo">{% if restaurant.brand_name %}{{ restaurant.brand_name | e }}{% else %}<svg viewBox="-6 -14 666 128" height="0.8em" style="vertical-align:-0.08em" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M53.43 101.49Q28.81 101.49 14.40 87.46Q0.00 73.43 0.00 50.00Q0.00 26.57 14.40 12.54Q28.81 -1.49 53.43 -1.49Q76.87 -1.49 90.67 9.48Q104.48 20.45 104.48 39.40V41.64H79.55V39.40Q79.55 29.40 73.43 24.70Q67.31 20.00 53.88 20.00Q37.31 20.00 30.52 26.72Q23.73 33.43 23.73 50.00Q23.73 66.57 30.52 73.28Q37.31 80.00 53.88 80.00Q67.31 80.00 73.43 75.30Q79.55 70.60 79.55 60.60V58.36H104.48V60.60Q104.48 79.55 90.67 90.52Q76.87 101.49 53.43 101.49Z"/><path d="M127.87 100.00H102.79L146.52 0.00H178.47L222.50 100.00H196.82L187.42 77.91H137.42ZM155.48 35.97 146.08 57.76H178.76L169.36 35.97L163.24 20.45H161.60Z"/><path d="M266.08 100.00H234.14L192.65 0.00H219.67L249.67 77.31H251.16L280.71 0.00H307.58Z"/><path d="M341.47 100.00H319.08V0.00H342.96L378.78 47.31L392.51 68.36H394.15L393.11 48.21V0.00H415.50V100.00H391.61L354.75 52.24L342.06 33.43H340.57L341.47 51.79Z"/><path d="M451.92 100.00H426.85L470.58 0.00H502.52L546.55 100.00H520.88L511.47 77.91H461.47ZM479.53 35.97 470.13 57.76H502.82L493.41 35.97L487.29 20.45H485.65Z"/><path d="M580.39 100.00H558.00V0.00H613.22Q631.73 0.00 641.80 7.84Q651.88 15.67 651.88 30.00Q651.88 55.07 623.67 57.76V58.96Q629.94 60.60 633.30 63.88Q636.65 67.16 639.79 73.13L654.27 100.00H628.30L614.56 74.03Q611.43 68.06 607.55 65.90Q603.67 63.73 595.16 63.73H580.39ZM580.39 20.15V46.87H613.07Q621.28 46.87 624.86 43.96Q628.45 41.04 628.45 33.43Q628.45 26.12 624.79 23.13Q621.13 20.15 613.07 20.15Z"/><circle cx="250.1" cy="28" r="11" fill="#D4583A"/></svg><span style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',sans-serif;font-weight:800;font-size:0.34em;letter-spacing:0.16em;color:#D4583A;vertical-align:0.62em;margin-left:0.12em;font-style:normal">AI</span>{% endif %}</div>
     {% if group_locations and group_locations|length > 1 %}
     <div style="position:relative" id="loc-switcher-wrap">
-      <button id="loc-switcher-btn" onclick="toggleLocSwitcher()" style="display:flex;align-items:center;gap:5px;background:none;border:none;cursor:pointer;padding:0;font-family:'DM Sans',sans-serif">
+      <button id="loc-switcher-btn" onclick="toggleLocSwitcher()" style="display:flex;align-items:center;gap:5px;background:none;border:none;cursor:pointer;padding:0;font-family:'Apfel Grotezk',sans-serif">
         <span class="hdr-restaurant" id="loc-current-name" style="cursor:pointer">{{ restaurant.name }}{% if restaurant.location_name %} — {{ restaurant.location_name }}{% endif %}</span>
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="color:var(--ink3);margin-top:1px"><polyline points="6 9 12 15 18 9"/></svg>
       </button>
       <div id="loc-switcher-panel" style="display:none;position:absolute;left:0;top:calc(100% + 8px);min-width:180px;background:white;border:1px solid var(--paper3);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);z-index:999;overflow:hidden">
         {% for loc in group_locations %}
         <button onclick="switchLocation({{ loc.id }}, '{{ loc.name | e }}')"
-          style="display:block;width:100%;text-align:left;padding:9px 14px;border:none;background:{% if loc.active %}var(--paper2){% else %}white{% endif %};cursor:pointer;font-size:13px;font-family:'DM Sans',sans-serif;color:{% if loc.active %}var(--ember){% else %}var(--ink){% endif %};font-weight:{% if loc.active %}600{% else %}400{% endif %}">
+          style="display:block;width:100%;text-align:left;padding:9px 14px;border:none;background:{% if loc.active %}var(--paper2){% else %}white{% endif %};cursor:pointer;font-size:13px;font-family:'Apfel Grotezk',sans-serif;color:{% if loc.active %}var(--ember){% else %}var(--ink){% endif %};font-weight:{% if loc.active %}600{% else %}400{% endif %}">
           {{ loc.name }}{% if loc.active %} ✓{% endif %}
         </button>
         {% endfor %}
@@ -1155,7 +1157,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-msg{font-size:13px;line-height:1.55;white-space:pre-wrap;max-width:92%;padding:8px 12px;border-radius:12px}
 .hb-msg.me{align-self:flex-end;background:var(--ember);color:#fff;border-bottom-right-radius:3px}
 .hb-msg.ai{align-self:flex-start;color:var(--ink);background:var(--hb-tint);border-bottom-left-radius:3px}
-.hb-msg.hb-think{color:var(--ink3);display:flex;align-items:center;gap:8px}
+.hb-msg.hb-think{color:var(--ink3);display:flex;align-items:center;gap:10px}
 .hb-tdot{width:8px;height:8px;border-radius:50%;background:var(--ember);box-shadow:0 0 8px var(--ember);animation:hbBreath 1.4s ease-in-out infinite;display:inline-block}
 .hb-askfoot{margin-top:8px;font-size:12px}
 /* locations */
@@ -1182,13 +1184,17 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-welcome h2{font-family:'Clash Display',sans-serif;font-size:24px;font-weight:500;margin:4px 0 6px;color:var(--ink)}
 .hb-welcome p{font-size:15px;color:var(--ink2);line-height:1.6;margin:0;max-width:620px}
 /* motion */
-.hb-draw{stroke-dasharray:2000;stroke-dashoffset:2000;animation:hbDraw 1.6s cubic-bezier(.4,0,.2,1) forwards}
+/* Only the thin line is drawn with a dash offset; the blurred glow and the
+   fill fade in on opacity (compositor work, no per-frame filter re-raster). */
+.hb-draw{stroke-dasharray:2000;stroke-dashoffset:2000;animation:hbDraw 2.4s cubic-bezier(.35,0,.15,1) forwards}
 @keyframes hbDraw{to{stroke-dashoffset:0}}
-.hb-fill{opacity:0;animation:hbFillIn .9s ease .8s forwards}
+.hb-glow{opacity:0;animation:hbFillIn 1.4s ease 1.3s forwards}
+.hb-fill{opacity:0;animation:hbFillIn 1.4s ease 1.1s forwards}
 @keyframes hbFillIn{to{opacity:1}}
-.hb-hot{animation:hbHot 2.2s ease-in-out 1.6s infinite}
+.hb-hot{opacity:0;animation:hbHot 2.6s ease-in-out 2.5s infinite}
 @keyframes hbHot{0%,100%{opacity:.35;transform:scale(1)}50%{opacity:.9;transform:scale(1.6)}}
-.hb-bar{transform-origin:bottom;transform:scaleY(0);animation:hbBar .7s cubic-bezier(.4,0,.2,1) forwards}
+.hb-dot{opacity:0;animation:hbFillIn .5s ease 2.3s forwards}
+.hb-bar{transform-box:fill-box;transform-origin:bottom;transform:scaleY(0);animation:hbBar 1.1s cubic-bezier(.3,0,.15,1) forwards}
 @keyframes hbBar{to{transform:scaleY(1)}}
 .hb-skel{position:relative;overflow:hidden;background:var(--hb-line2);border-radius:6px;min-height:14px}
 .hb-skel:after{content:'';position:absolute;inset:0;transform:translateX(-100%);background:linear-gradient(90deg,transparent,var(--hb-tint2),transparent);animation:hbSkel 1.4s ease-in-out infinite}
@@ -1196,7 +1202,13 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-fade{animation:hbIn .32s ease both}
 @keyframes hbIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 .hb-err{padding:14px 0;color:var(--hb-bad);font-size:13px;display:flex;justify-content:space-between;gap:12px;align-items:center;border-top:1px solid var(--hb-line);border-bottom:1px solid var(--hb-line)}
-@media (prefers-reduced-motion:reduce){.hb-draw,.hb-fill,.hb-hot,.hb-bar,.hb-skel:after,.hb-fade,.hb-chip .dot b{animation:none!important;stroke-dashoffset:0;opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){.hb-draw,.hb-fill,.hb-glow,.hb-dot,.hb-hot,.hb-bar,.hb-skel:after,.hb-fade,.hb-chip .dot b{animation:none!important;stroke-dashoffset:0;opacity:1;transform:none}}
+.hb-xl{display:flex;margin-top:2px}
+.hb-xl span{flex:1;min-width:0;text-align:center;font-family:'Space Grotesk',sans-serif;font-size:10px;color:var(--ink3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 2px}
+.hb-sub .chg .hb-num{font-size:15px;font-weight:700;color:var(--ember)}
+.hb-load{display:flex;align-items:center;gap:10px;color:var(--ink3);font-size:13px;min-height:28px}
+.hb-load canvas{display:block;flex-shrink:0}
+.hb-msg.ai b{font-weight:600;color:var(--ink)}
 @media (max-width:1000px){.hb-sig{grid-template-columns:1fr}.hb-sg{border-right:none;margin-right:0;padding:0 0 18px;border-bottom:1px solid var(--hb-line2);margin-bottom:18px}.hb-sg:last-child{border-bottom:none;margin-bottom:0}.hb-act{grid-template-columns:1fr;gap:24px}.hb-act>div+div{border-left:none;padding-left:0;padding-top:20px;border-top:1px solid var(--hb-line)}.hb-pulse{justify-content:flex-start}.hb-tbl .hide-m{display:none}}
 @media (max-width:680px){.hb-wrap{padding:20px 18px 44px}.hb-hero svg{height:140px}.hb-row .t{white-space:normal}}
 </style>
@@ -1211,8 +1223,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     <div class="hb-pulse" id="hb-pulse"><div class="hb-skel" style="width:260px;height:34px;border-radius:999px"></div></div>
   </div>
   <div id="hb-body">
-    <div class="hb-skel" style="height:220px;margin-top:30px"></div>
-    <div class="hb-sig"><div class="hb-sg"><div class="hb-skel" style="height:130px"></div></div><div class="hb-sg"><div class="hb-skel" style="height:130px"></div></div><div class="hb-sg"><div class="hb-skel" style="height:130px"></div></div></div>
+    <div class="hb-load" style="height:260px;justify-content:center;margin-top:30px;flex-direction:column;gap:14px"><canvas class="hb-orb" data-orb-state="working" width="64" height="64" style="width:64px;height:64px"></canvas><span>Building today's brief from your latest numbers…</span></div>
   </div>
 </div>
 
@@ -1257,10 +1268,10 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     var anim=reduced()?'':' class="hb-draw"';
     var s='<svg viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none" aria-hidden="true">'+glowDefs(id,col);
     s+='<path class="hb-fill" d="'+line+' L'+last[0].toFixed(1)+' '+h+' L'+first[0].toFixed(1)+' '+h+' Z" fill="url(#'+id+'g)"/>';
-    s+='<path'+anim+' d="'+line+'" fill="none" stroke="'+col+'" stroke-opacity=".55" stroke-width="6" filter="url(#'+id+'f)" stroke-linecap="round"/>';
+    s+='<path class="hb-glow" d="'+line+'" fill="none" stroke="'+col+'" stroke-opacity=".55" stroke-width="6" filter="url(#'+id+'f)" stroke-linecap="round"/>';
     s+='<path'+anim+' d="'+line+'" fill="none" stroke="'+col+'" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>';
     s+='<circle class="hb-hot" cx="'+last[0].toFixed(1)+'" cy="'+last[1].toFixed(1)+'" r="14" fill="url(#'+id+'h)" style="transform-box:fill-box;transform-origin:center"/>';
-    s+='<circle cx="'+last[0].toFixed(1)+'" cy="'+last[1].toFixed(1)+'" r="4" fill="'+col+'" stroke="#fff" stroke-opacity=".9" stroke-width="1.5"/>';
+    s+='<circle class="hb-dot" cx="'+last[0].toFixed(1)+'" cy="'+last[1].toFixed(1)+'" r="4" fill="'+col+'" stroke="#fff" stroke-opacity=".9" stroke-width="1.5"/>';
     return s+'</svg>';
   }
   // Bars with an optional target rule; bars over target glow red. Text uses currentColor (the tile sets it).
@@ -1271,12 +1282,14 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     var s='<svg viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none" aria-hidden="true"><defs><linearGradient id="'+id+'g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="'+col+'"/><stop offset="1" stop-color="'+col+'" stop-opacity=".25"/></linearGradient><linearGradient id="'+id+'r" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="'+RED+'"/><stop offset="1" stop-color="'+RED+'" stop-opacity=".3"/></linearGradient><filter id="'+id+'f" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="2.5"/></filter></defs>';
     var base=h-16;
     for(var i=0;i<n;i++){var v=items[i].v||0,bh=Math.max(2,(v/max)*(base-4)),x=gap+i*(bw+gap),y=base-bh,over=opts.target!=null&&v>opts.target;
-      var delay=reduced()?'':' style="animation-delay:'+(i*70)+'ms"';
+      var delay=reduced()?'':' style="animation-delay:'+(i*110)+'ms"';
       if(over)s+='<rect class="hb-bar"'+delay+' x="'+x.toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+bh.toFixed(1)+'" rx="3" fill="url(#'+id+'r)" filter="url(#'+id+'f)" opacity=".7"/>';
       s+='<rect class="hb-bar"'+delay+' x="'+x.toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+bh.toFixed(1)+'" rx="3" fill="url(#'+id+(over?'r':'g')+')"/>';
-      if(items[i].l)s+='<text x="'+(x+bw/2).toFixed(1)+'" y="'+(h-3)+'" text-anchor="middle" font-size="9.5" font-family="Space Grotesk, sans-serif" fill="currentColor" fill-opacity=".7">'+esc(items[i].l)+'</text>';}
+      if(items[i].l&&!opts.labelsOutside)s+='<text x="'+(x+bw/2).toFixed(1)+'" y="'+(h-3)+'" text-anchor="middle" font-size="9.5" font-family="Space Grotesk, sans-serif" fill="currentColor" fill-opacity=".7">'+esc(items[i].l)+'</text>';}
     if(opts.target!=null){var ty=base-(opts.target/max)*(base-4);s+='<line x1="0" y1="'+ty.toFixed(1)+'" x2="'+w+'" y2="'+ty.toFixed(1)+'" stroke="currentColor" stroke-opacity=".5" stroke-dasharray="3 4"/><text x="'+(w-2)+'" y="'+(ty-4).toFixed(1)+'" text-anchor="end" font-size="9.5" font-family="Space Grotesk, sans-serif" fill="currentColor" fill-opacity=".8">target '+opts.target+'%</text>';}
-    return s+'</svg>';
+    s+='</svg>';
+    if(opts.labelsOutside){s+='<div class="hb-xl">'+items.map(function(it){return '<span title="'+esc(it.full||it.l||'')+'">'+esc(it.l||'')+'</span>';}).join('')+'</div>';}
+    return s;
   }
   // Stacked positive / negative bars per week.
   function stacked(weeks,w,h){
@@ -1284,7 +1297,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     var n=weeks.length,gap=6,bw=(w-gap*(n+1))/n,max=Math.max.apply(null,weeks.map(function(x){return x.total||0;}))||1,base=h-16;
     var s='<svg viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none" aria-hidden="true">';
     for(var i=0;i<n;i++){var wk=weeks[i],x=gap+i*(bw+gap),ph=((wk.pos||0)/max)*(base-4),nh=((wk.neg||0)/max)*(base-4),oh=(((wk.total||0)-(wk.pos||0)-(wk.neg||0))/max)*(base-4);
-      var delay=reduced()?'':' style="animation-delay:'+(i*60)+'ms"';var y=base;
+      var delay=reduced()?'':' style="animation-delay:'+(i*100)+'ms"';var y=base;
       if(nh>0){y-=nh;s+='<rect class="hb-bar"'+delay+' x="'+x.toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+nh.toFixed(1)+'" rx="2" fill="'+RED+'"/>';}
       if(oh>0){y-=oh;s+='<rect class="hb-bar"'+delay+' x="'+x.toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+oh.toFixed(1)+'" fill="currentColor" fill-opacity=".25"/>';}
       if(ph>0){y-=ph;s+='<rect class="hb-bar"'+delay+' x="'+x.toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+ph.toFixed(1)+'" rx="2" fill="'+GREEN+'"/>';}
@@ -1292,11 +1305,33 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     return s+'</svg>';
   }
   function countUp(el,target,prefix){
-    if(!el)return;if(reduced()){el.textContent=prefix+Math.round(target).toLocaleString();return;}
-    var start=null,dur=1400;
-    function step(ts){if(!start)start=ts;var p=Math.min((ts-start)/dur,1),e=1-Math.pow(1-p,3);el.textContent=prefix+Math.round(target*e).toLocaleString();if(p<1)requestAnimationFrame(step);}
+    if(!el)return;
+    var final=prefix+Math.round(target).toLocaleString();
+    if(reduced()){el.textContent=final;return;}
+    // Reserve the final width first so the digits never reflow the row
+    // mid-count (that reflow was the visible stutter), then ease over 2.2s
+    // with a quartic curve so the last hundred dollars settle gently.
+    el.textContent=final;el.style.display='inline-block';el.style.minWidth=el.getBoundingClientRect().width+'px';el.style.textAlign='left';el.style.willChange='contents';
+    el.textContent=prefix+'0';
+    var start=null,dur=2200,last=-1;
+    function step(ts){if(!start)start=ts;var p=Math.min((ts-start)/dur,1),e=1-Math.pow(1-p,4),v=Math.round(target*e);if(v!==last){last=v;el.textContent=prefix+v.toLocaleString();}if(p<1)requestAnimationFrame(step);else{el.textContent=final;el.style.willChange='';}}
     requestAnimationFrame(step);
   }
+  // Loading state = the Cavnar orb (same component the iOS app uses).
+  function isDark(){return document.documentElement.getAttribute('data-theme')==='dark';}
+  window.cavnarLoading=function(label,size,state,height){size=size||28;return '<div class="hb-load"'+(height?' style="height:'+height+'px"':'')+'><canvas class="hb-orb" data-orb-state="'+esc(state||'working')+'" width="'+size+'" height="'+size+'" style="width:'+size+'px;height:'+size+'px"></canvas>'+(label?'<span>'+esc(label)+'</span>':'')+'</div>';};
+  window.cavnarMountOrbs=function(root){
+    if(!window.CavnarOrb)return;
+    var cs=(root||document).querySelectorAll('canvas.hb-orb:not([data-mounted])');
+    for(var i=0;i<cs.length;i++){var c=cs[i];c.setAttribute('data-mounted','1');try{var h=CavnarOrb.mount(c,c.getAttribute('data-orb-state')||'working',{size:parseInt(c.getAttribute('width'),10)||28,dark:isDark()});c._orb=h;}catch(e){}}
+  };
+  if(window.MutationObserver){new MutationObserver(function(){cavnarMountOrbs(document);}).observe(document.documentElement,{childList:true,subtree:true});}
+  document.addEventListener('DOMContentLoaded',function(){
+    // Every legacy skeleton block becomes an orb.
+    var legacy=document.querySelectorAll('.insight-loading .cm-compose');
+    for(var i=0;i<legacy.length;i++){legacy[i].parentNode.innerHTML=cavnarLoading('Thinking this through…',28,'composing');}
+    cavnarMountOrbs(document);
+  });
   window.CavnarCharts={glowLine:glowLine,bars:bars,stacked:stacked,smooth:smooth,esc:esc,num:num,mdy:mdy};
   // ── navigation + actions ──────────────────────────────────────────────────
   window.hbOpen=function(module){
@@ -1310,13 +1345,15 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
   // depends on the floating panel. Falls back to the plain JSON endpoint.
   var _hbAskHistory=[],_hbAskBusy=false;
   function askOut(){var o=document.getElementById('hb-ask-out');if(o)o.hidden=false;return o;}
-  function askBubble(text,me){var d=document.createElement('div');d.className='hb-msg '+(me?'me':'ai');d.textContent=text;return d;}
+  // Markdown-lite for answers: **bold** kept, everything else flattened to plain text.
+  function mdLite(t){var h=esc(t).replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/^#{1,6}\s+/gm,'').replace(/^\s*[-*]\s+/gm,'• ').replace(/(^|[^*])\*(?!\*)([^*\n]+)\*(?!\*)/g,'$1$2').replace(/\*\*/g,'').replace(/\n{3,}/g,'\n\n');return h;}
+  function askBubble(text,me){var d=document.createElement('div');d.className='hb-msg '+(me?'me':'ai');if(me)d.textContent=text;else d.innerHTML=mdLite(text);return d;}
   function askInline(q){
     var out=askOut();if(!out||_hbAskBusy)return;_hbAskBusy=true;
     var inp=document.getElementById('hb-ask-in'),btn=document.querySelector('[data-ask-submit]');
     if(inp)inp.disabled=true;if(btn)btn.disabled=true;
     out.appendChild(askBubble(q,true));
-    var think=document.createElement('div');think.className='hb-msg ai hb-think';think.innerHTML='<span class="hb-tdot"></span> Thinking…';out.appendChild(think);
+    var think=document.createElement('div');think.className='hb-msg ai hb-think';think.innerHTML='<canvas class="hb-orb" data-orb-state="composing" width="22" height="22" style="width:22px;height:22px"></canvas><span class="lbl">Thinking…</span>';out.appendChild(think);cavnarMountOrbs(think);
     out.scrollTop=out.scrollHeight;
     var historyToSend=_hbAskHistory.slice();
     function finish(d){
@@ -1327,17 +1364,17 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       if(d&&d.ok){_hbAskHistory.push({role:'user',content:q});_hbAskHistory.push({role:'assistant',content:answer});}
     }
     function viaJson(){
-      fetch('/api/ask-cavnar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q,history:historyToSend})}).then(function(r){return r.json();}).then(finish).catch(function(){finish({ok:false,error:'Couldn\'t reach Cavnar — check your connection.'});});
+      fetch('/api/ask-cavnar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q,history:historyToSend,surface:'home'})}).then(function(r){return r.json();}).then(finish).catch(function(){finish({ok:false,error:'Couldn\'t reach Cavnar — check your connection.'});});
     }
     try{
-      fetch('/api/ask-cavnar/stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q,conversation_id:null})}).then(function(resp){
+      fetch('/api/ask-cavnar/stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q,conversation_id:null,surface:'home'})}).then(function(resp){
         if(!resp.ok||!resp.body||!window.TextDecoder)throw new Error('stream unavailable');
         var reader=resp.body.getReader(),dec=new TextDecoder(),buf='',done=false;
         function pump(){return reader.read().then(function(res){
           if(res.done){if(!done){done=true;viaJson();}return;}
           buf+=dec.decode(res.value,{stream:true});var chunks=buf.split('\n\n');buf=chunks.pop();
           for(var i=0;i<chunks.length;i++){var line=chunks[i].replace(/^data: /,'').trim();if(!line)continue;var evt;try{evt=JSON.parse(line);}catch(e){continue;}
-            if(evt.type==='progress'){think.innerHTML='<span class="hb-tdot"></span> '+esc(evt.label||'Working…');}
+            if(evt.type==='progress'){var lb=think.querySelector('.lbl');if(lb)lb.textContent=evt.label||'Working…';var oc=think.querySelector('canvas.hb-orb');if(oc&&oc._orb&&window.CavnarOrb&&evt.state)CavnarOrb.setState(oc._orb,evt.state);}
             else if(evt.type==='answer'){done=true;finish({ok:true,answer:evt.answer});}
             else if(evt.type==='error'){done=true;finish({ok:false,error:evt.error});}}
           if(!done)return pump();});}
@@ -1376,7 +1413,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     if(h)h.innerHTML=esc(greeting(d.local_now))+(d.greeting_name?', '+esc(d.greeting_name):'')+'. <span class="hb-head '+esc(d.brief.tone)+'">'+esc(d.brief.headline)+'</span>';
     var sub=document.getElementById('hb-sub');var parts=[];
     var ch=(d.changes||{}).items||[];var lab=((d.changes||{}).since_label||'since yesterday').replace('since your last sign-in','since your last visit');
-    if(ch.length){var first=ch[0].text.replace(/ — .*$/,'');parts.push('<span>'+esc(lab.charAt(0).toUpperCase()+lab.slice(1))+': '+num(first)+'</span>');for(var i=1;i<Math.min(ch.length,3);i++){parts.push('<span>'+num(ch[i].text.replace(/ — .*$/,''))+'</span>');}}
+    if(ch.length){var first=ch[0].text.replace(/ — .*$/,'');parts.push('<span class="chg">'+esc(lab.charAt(0).toUpperCase()+lab.slice(1))+': '+num(first)+'</span>');for(var i=1;i<Math.min(ch.length,3);i++){parts.push('<span class="chg">'+num(ch[i].text.replace(/ — .*$/,''))+'</span>');}}
     else parts.push('<span>Nothing new '+esc(lab)+'</span>');
     if(d.quiet_hours_active)parts.push('<span>🌙 alerts quiet until '+esc(d.alert_quiet_end||'morning')+'</span>');
     parts.push('<button class="hb-refresh" onclick="hbLoad(true)" aria-label="Refresh"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><polyline points="21 3 21 9 15 9"/></svg><span class="hb-num">'+ago(d.generated_at)+'</span></button>');
@@ -1422,7 +1459,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     if(snaps.inventory){var inv=snaps.inventory;
       if(inv.sample)tiles.push(tile('inventory','Food cost','sample','<span class="hb-num">—</span>','<div class="ph"><button class="hb-btn" onclick="event.stopPropagation();hbOpen(\'inventory\')">Add inventory</button></div>','Lights up after a first count or Toast depletion.','',true));
       else{var ws=ch.waste||[];tiles.push(tile('inventory','Waste · last week',inv.state==='bad'?'needs action':inv.state==='warn'?'watch':'','<span class="hb-num">'+esc(inv.value)+'</span><small>recoverable / mo</small>',
-        ws.length?'<div style="color:var(--ink3)">'+bars(ws.map(function(x){return {v:x.cost,l:String(x.item||'').split(' ')[0].slice(0,7)};}),320,86,EMBER2,{})+'</div>':'<div class="hb-empty" style="height:86px">No waste flagged this week.</div>','$ wasted by item',sec(inv,2)));}}
+        ws.length?'<div style="color:var(--ink3)">'+bars(ws.map(function(x){return {v:x.cost,l:String(x.item||'').split(' ')[0],full:x.item};}),320,86,EMBER2,{labelsOutside:true})+'</div>':'<div class="hb-empty" style="height:86px">No waste flagged this week.</div>','$ wasted by item',sec(inv,2)));}}
     if(tiles.length<3&&snaps.reviews&&(ch.rating||[]).length>1){var rw2=ch.rating;tiles.push(tile('reviews','Reviews · per week','','<span class="hb-num">'+rw2[rw2.length-1].total+'</span><small>this week</small>','<div style="color:var(--ink3)">'+stacked(rw2.slice(-8),320,86)+'</div>','<span style="color:'+GREEN+'">■</span> positive &nbsp; <span style="color:'+RED+'">■</span> negative',''));}
     if(tiles.length<3&&snaps.marketing){var m=snaps.marketing;tiles.push(tile('marketing','Marketing',m.state==='bad'?'failed post':'','<span class="hb-num">'+esc(m.value)+'</span><small>pieces this month</small>','<div class="hb-empty" style="height:86px;display:flex;align-items:center">'+num(m.interpretation||'')+'</div>','',sec(m,2)));}
     return tiles.length?'<div class="hb-sig">'+tiles.slice(0,3).join('')+'</div>':'';
@@ -1582,8 +1619,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 #panel-reviews .filter-pills{display:flex;gap:4px;flex-wrap:wrap}
 #panel-reviews .fpill{padding:6px 12px;border-radius:999px;border:1px solid var(--hb-line)!important;font-size:12px;cursor:pointer;background:transparent!important;color:var(--ink2)!important;font-family:inherit}
 #panel-reviews .fpill:hover{background:var(--hb-tint)!important}
-#panel-reviews .fpill.active{background:var(--ember)!important;color:#fff!important;border-color:var(--ember)!important}
-#panel-reviews .fpill.active-red{background:var(--hb-bad)!important;color:#fff!important;border-color:var(--hb-bad)!important}
+#panel-reviews .fpill.active,#panel-reviews .fpill.active-red{background:linear-gradient(180deg,rgba(200,75,47,.62) 0%,rgba(12,12,12,1) 78%)!important;color:#fff!important;border-color:rgba(200,75,47,.6)!important;box-shadow:0 0 14px rgba(200,75,47,.28)}
 #panel-reviews .count-lbl{margin-left:auto;font-size:12px;color:var(--ink3);font-family:'Space Grotesk',sans-serif}
 .rv2-list{display:flex;flex-direction:column;margin-top:8px}
 .rv2-row{position:relative;display:grid;grid-template-columns:1fr;padding:18px 12px 18px 18px;border-top:1px solid var(--hb-line2);transition:background .12s ease}
@@ -1675,15 +1711,15 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
   <div id="rv-panel-analytics">
     <section class="rv2-hero" aria-label="Rating trend">
       <div class="hd"><div><div class="hb-kicker">Rating · last 8 weeks</div><div class="big"><span id="rv-hero-n" class="hb-num">{{ _rating }}</span><small>★ {{ 'on Google' if restaurant.gbp_rating else 'across ' ~ rstats.total ~ ' reviews' }}</small></div><div class="delta" id="rv-hero-delta"></div></div><div id="trend-summary" style="font-size:12px;color:var(--ink3)"></div></div>
-      <div id="rv-hero-chart"><div class="hb-skel" style="height:170px;margin-top:6px"></div></div>
+      <div id="rv-hero-chart"><div class="hb-load" style="height:170px;justify-content:center"><canvas class="hb-orb" data-orb-state="searching" width="44" height="44"></canvas><span>Charting your rating…</span></div></div>
       <div id="trend-avg-rating" hidden></div>
     </section>
-    <div class="rv2-ai"><div class="tag">Cavnar's read on your reviews</div><div class="insight-text insight-loading" id="review-insight"><div class="cm-compose" data-w=".88,.72,.6"><div class="cm-l" style="height:11px;margin-bottom:9px"></div><div class="cm-l" style="height:11px;margin-bottom:9px"></div><div class="cm-l" style="height:11px"></div><div class="cm-caret" style="height:16px"></div></div></div></div>
+    <div class="rv2-ai"><div class="tag">Cavnar's read on your reviews</div><div class="insight-text insight-loading" id="review-insight"><div class="hb-load"><canvas class="hb-orb" data-orb-state="composing" width="28" height="28"></canvas><span>Reading your reviews…</span></div></div></div>
 
     <div class="rv2-sig">
-      <div class="rv2-sg"><div class="k"><span>Reviews · per week</span></div><div class="v"><span id="rv-sent-n" class="hb-num">—</span><small>this week</small></div><div id="sentiment-trend-bars" style="color:var(--ink3)"><div class="hb-skel" style="height:86px;margin-top:10px"></div></div><div class="cap"><span><span style="color:#2d6a4f">■</span> positive &nbsp; <span style="color:#e05555">■</span> negative</span><span id="sentiment-trend-labels"></span></div></div>
-      <div class="rv2-sg" id="perf-card"><div class="k"><span>How replies got approved</span><span class="rv2-days" id="perf-days-btns"><button class="hm-days-btn" data-days="30" onclick="loadResponsePerf(30)">30d</button><button class="hm-days-btn on" data-days="90" onclick="loadResponsePerf(90)">90d</button><button class="hm-days-btn" data-days="180" onclick="loadResponsePerf(180)">6mo</button></span></div><div class="v"><span id="rv-perf-n" class="hb-num">—</span><small>approved</small></div><div id="perf-body"><div class="hb-skel" style="height:86px;margin-top:10px"></div></div><div class="cap"><span id="rv-perf-cap">as-is · edited · regenerated</span></div></div>
-      <div class="rv2-sg" id="topic-heatmap-card"><div class="k"><span>What guests talk about</span><span class="rv2-days" id="topic-days-btns"><button class="hm-days-btn" data-days="30" onclick="loadTopicHeatmap(30)">30d</button><button class="hm-days-btn on" data-days="90" onclick="loadTopicHeatmap(90)">90d</button><button class="hm-days-btn" data-days="180" onclick="loadTopicHeatmap(180)">6mo</button></span></div><div id="heatmap-grid" class="rv2-topics"><div class="hb-skel" style="height:110px;margin-top:10px"></div></div><div class="cap"><span>click a topic to filter the inbox</span><span><span style="color:#2d6a4f">■</span> pos &nbsp; <span style="color:#e05555">■</span> neg</span></div></div>
+      <div class="rv2-sg"><div class="k"><span>Reviews · per week</span></div><div class="v"><span id="rv-sent-n" class="hb-num">—</span><small>this week</small></div><div id="sentiment-trend-bars" style="color:var(--ink3)"><div class="hb-load" style="height:86px"><canvas class="hb-orb" data-orb-state="working" width="28" height="28"></canvas></div></div><div class="cap"><span><span style="color:#2d6a4f">■</span> positive &nbsp; <span style="color:#e05555">■</span> negative</span><span id="sentiment-trend-labels"></span></div></div>
+      <div class="rv2-sg" id="perf-card"><div class="k"><span>How replies got approved</span><span class="rv2-days" id="perf-days-btns"><button class="hm-days-btn" data-days="30" onclick="loadResponsePerf(30)">30d</button><button class="hm-days-btn on" data-days="90" onclick="loadResponsePerf(90)">90d</button><button class="hm-days-btn" data-days="180" onclick="loadResponsePerf(180)">6mo</button></span></div><div class="v"><span id="rv-perf-n" class="hb-num">—</span><small>approved</small></div><div id="perf-body"><div class="hb-load" style="height:86px"><canvas class="hb-orb" data-orb-state="working" width="28" height="28"></canvas></div></div><div class="cap"><span id="rv-perf-cap">as-is · edited · regenerated</span></div></div>
+      <div class="rv2-sg" id="topic-heatmap-card"><div class="k"><span>What guests talk about</span><span class="rv2-days" id="topic-days-btns"><button class="hm-days-btn" data-days="30" onclick="loadTopicHeatmap(30)">30d</button><button class="hm-days-btn on" data-days="90" onclick="loadTopicHeatmap(90)">90d</button><button class="hm-days-btn" data-days="180" onclick="loadTopicHeatmap(180)">6mo</button></span></div><div id="heatmap-grid" class="rv2-topics"><div class="hb-load" style="height:110px"><canvas class="hb-orb" data-orb-state="searching" width="28" height="28"></canvas></div></div><div class="cap"><span>click a topic to filter the inbox</span><span><span style="color:#2d6a4f">■</span> pos &nbsp; <span style="color:#e05555">■</span> neg</span></div></div>
     </div>
   </div>
 
@@ -1771,6 +1807,45 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
   </div>
 </div>
 </div><!-- /panel-reviews -->
+
+<!-- Ask Cavnar — body level so it floats over every tab, not just Account -->
+<button id="ask-cavnar-fab" onclick="toggleAskCavnar()" title="Ask Cavnar AI" aria-label="Ask Cavnar AI"
+  class="ask-cavnar-accent-bg"
+  style="position:fixed;bottom:24px;right:24px;width:52px;height:52px;border-radius:50%;border:none;box-shadow:0 4px 16px rgba(200,75,47,.4);display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:998;transition:transform .15s,box-shadow .15s"
+  onmouseover="this.style.transform='translateY(-2px)';this.style.boxShadow='0 6px 20px rgba(200,75,47,.5)'"
+  onmouseout="this.style.transform='';this.style.boxShadow='0 4px 16px rgba(200,75,47,.4)'"
+  onmousedown="this.style.transform='scale(.9)'"
+  onmouseup="this.style.transform='translateY(-2px)'">
+  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <rect x="3" y="4" width="18" height="13" rx="4" fill="white"/>
+    <path d="M8.5 17l-3.5 4v-4h3.5z" fill="white"/>
+    <path d="M18 2l.75 2.25L21 5l-2.25.75L18 8l-.75-2.25L15 5l2.25-.75L18 2z" fill="white" opacity=".85"/>
+  </svg>
+</button>
+
+<div id="ask-cavnar-panel" style="display:none;flex-direction:column;position:fixed;bottom:88px;right:24px;width:360px;max-height:min(520px,70vh);background:var(--surface);border:1.5px solid var(--ember);border-radius:16px;box-shadow:0 12px 48px rgba(0,0,0,.35);z-index:999;overflow:hidden">
+  <div style="padding:14px 16px;border-bottom:1px solid rgba(200,75,47,.3);display:flex;align-items:center;justify-content:space-between;background:#1a1410;flex-shrink:0">
+    <div style="display:flex;align-items:center;gap:8px">
+      <canvas id="ask-cavnar-header-orb" width="22" height="22" aria-hidden="true" style="width:22px;height:22px;display:block"></canvas>
+      <span style="font-family:'Clash Display',sans-serif;font-size:14px;color:#f0ebe0">Ask Cavnar AI</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px">
+      <button onclick="askToggleHistory()" title="Chat history" style="background:none;border:1px solid rgba(240,235,224,.25);border-radius:6px;cursor:pointer;color:#f0ebe0;font-size:11px;padding:3px 8px;font-family:'Apfel Grotezk',sans-serif">History</button>
+      <button onclick="askNewChat()" title="New chat" style="background:none;border:1px solid rgba(240,235,224,.25);border-radius:6px;cursor:pointer;color:#f0ebe0;font-size:11px;padding:3px 8px;font-family:'Apfel Grotezk',sans-serif">New</button>
+      <button aria-label="Close" onclick="toggleAskCavnar()" style="background:none;border:none;cursor:pointer;color:#f0ebe0;font-size:15px;line-height:1;padding:0">&#x2715;</button>
+    </div>
+  </div>
+  <div id="ask-cavnar-history" style="display:none;max-height:200px;overflow-y:auto;border-bottom:1px solid var(--paper3);background:var(--paper2)"></div>
+  <div id="ask-cavnar-messages" style="flex:1;overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column;gap:10px;min-height:180px">
+    <div style="font-size:12px;color:var(--ink3);line-height:1.6">Ask me anything — your reviews, labor, food cost, and marketing numbers, or general advice on running the place. I'll pull in your real data whenever it's relevant.</div>
+  </div>
+  <div style="padding:12px 14px;border-top:1px solid var(--paper3);display:flex;gap:8px;flex-shrink:0">
+    <input type="text" id="ask-cavnar-input" placeholder="Ask anything — or tell me to do it" maxlength="2000"
+      style="flex:1;padding:9px 12px;border:1px solid var(--paper3);border-radius:8px;font-size:12px;font-family:'Apfel Grotezk',sans-serif;outline:none;background:var(--paper2);color:var(--ink)"
+      onkeydown="if(event.key==='Enter'){event.preventDefault();sendAskCavnar();}">
+    <button onclick="sendAskCavnar()" class="btn-primary" id="ask-cavnar-send-btn" style="padding:0 14px;font-size:12px">Ask</button>
+  </div>
+</div>
 
 <!-- Review request modal -->
 <div id="rr-modal" style="display:none;position:fixed;inset:0;z-index:10000;background:rgba(14,12,10,.72);align-items:center;justify-content:center" onclick="if(event.target===this)this.style.display='none'">
@@ -4307,7 +4382,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       </div>
       <div style="font-size:11px;color:var(--ink3);margin-bottom:6px">Last delivery: <span id="webhook-last-status">—</span></div>
       <div style="margin-bottom:6px">
-        <button type="button" onclick="toggleWhHistory()" style="background:none;border:none;padding:0;font-size:11px;color:var(--ember);font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif">Delivery history <span id="wh-history-arrow" style="font-size:9px">▾</span></button>
+        <button type="button" onclick="toggleWhHistory()" style="background:none;border:none;padding:0;font-size:11px;color:var(--ember);font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif">Delivery history <span id="wh-history-arrow" style="font-size:9px">▾</span></button>
       </div>
       <div id="wh-history-panel" style="display:none;margin-bottom:10px;max-height:220px;overflow-y:auto;border:1px solid var(--paper3);border-radius:6px">
         <table style="width:100%;border-collapse:collapse;font-size:11px">
@@ -4323,11 +4398,11 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     </div>
 
     <div style="display:flex;gap:8px;margin-bottom:10px">
-      <input type="url" id="webhook-url" placeholder="https://hooks.zapier.com/..." style="flex:1;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-size:13px;font-family:'DM Sans',sans-serif">
+      <input type="url" id="webhook-url" placeholder="https://hooks.zapier.com/..." style="flex:1;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-size:13px;font-family:'Apfel Grotezk',sans-serif">
     </div>
 
     <div style="margin-bottom:14px">
-      <button type="button" onclick="toggleEvtPanel()" style="display:inline-flex;align-items:center;gap:6px;background:none;border:1px solid var(--paper3);border-radius:6px;padding:5px 10px;font-size:12px;cursor:pointer;font-family:'DM Sans',sans-serif;color:var(--ink2)">
+      <button type="button" onclick="toggleEvtPanel()" style="display:inline-flex;align-items:center;gap:6px;background:none;border:1px solid var(--paper3);border-radius:6px;padding:5px 10px;font-size:12px;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;color:var(--ink2)">
         Events &nbsp;<span id="evt-count-label" style="color:var(--ink3);font-weight:400">3 selected</span><span id="evt-arrow" style="font-size:9px;color:var(--ink3);margin-left:2px">▾</span>
       </button>
       <div id="evt-panel" style="display:none;margin-top:10px;padding:14px 16px;background:var(--paper1);border:1px solid var(--paper3);border-radius:8px">
@@ -4373,7 +4448,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     <div style="display:flex;gap:8px;flex-wrap:wrap">
       <button onclick="saveWebhook()" class="btn-primary" style="padding:8px 14px;font-size:12px" id="wh-save-btn">Save webhook</button>
       <button onclick="testWebhook()" id="wh-test-btn" class="btn-secondary" style="padding:8px 14px;font-size:12px;display:none">Send test</button>
-      <button onclick="deleteWebhook()" id="wh-delete-btn" style="padding:8px 14px;background:none;border:1px solid var(--red);color:var(--red);border-radius:6px;font-size:12px;cursor:pointer;font-family:'DM Sans',sans-serif;display:none">Remove</button>
+      <button onclick="deleteWebhook()" id="wh-delete-btn" style="padding:8px 14px;background:none;border:1px solid var(--red);color:var(--red);border-radius:6px;font-size:12px;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;display:none">Remove</button>
     </div>
     <div id="wh-status" style="font-size:12px;margin-top:8px;display:none"></div>
   </div>
@@ -4390,45 +4465,6 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <!-- Ask Cavnar — AI copilot over the restaurant's own live data -->
-<script src="/static/cavnar-orb.js"></script>
-<button id="ask-cavnar-fab" onclick="toggleAskCavnar()" title="Ask Cavnar AI" aria-label="Ask Cavnar AI"
-  class="ask-cavnar-accent-bg"
-  style="position:fixed;bottom:24px;right:24px;width:52px;height:52px;border-radius:50%;border:none;box-shadow:0 4px 16px rgba(200,75,47,.4);display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:998;transition:transform .15s,box-shadow .15s"
-  onmouseover="this.style.transform='translateY(-2px)';this.style.boxShadow='0 6px 20px rgba(200,75,47,.5)'"
-  onmouseout="this.style.transform='';this.style.boxShadow='0 4px 16px rgba(200,75,47,.4)'"
-  onmousedown="this.style.transform='scale(.9)'"
-  onmouseup="this.style.transform='translateY(-2px)'">
-  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-    <rect x="3" y="4" width="18" height="13" rx="4" fill="white"/>
-    <path d="M8.5 17l-3.5 4v-4h3.5z" fill="white"/>
-    <path d="M18 2l.75 2.25L21 5l-2.25.75L18 8l-.75-2.25L15 5l2.25-.75L18 2z" fill="white" opacity=".85"/>
-  </svg>
-</button>
-
-<div id="ask-cavnar-panel" style="display:none;flex-direction:column;position:fixed;bottom:88px;right:24px;width:360px;max-height:min(520px,70vh);background:var(--surface);border:1.5px solid var(--ember);border-radius:16px;box-shadow:0 12px 48px rgba(0,0,0,.35);z-index:999;overflow:hidden">
-  <div style="padding:14px 16px;border-bottom:1px solid rgba(200,75,47,.3);display:flex;align-items:center;justify-content:space-between;background:#1a1410;flex-shrink:0">
-    <div style="display:flex;align-items:center;gap:8px">
-      <canvas id="ask-cavnar-header-orb" width="22" height="22" aria-hidden="true" style="width:22px;height:22px;display:block"></canvas>
-      <span style="font-family:'Clash Display',sans-serif;font-size:14px;color:#f0ebe0">Ask Cavnar AI</span>
-    </div>
-    <div style="display:flex;align-items:center;gap:10px">
-      <button onclick="askToggleHistory()" title="Chat history" style="background:none;border:1px solid rgba(240,235,224,.25);border-radius:6px;cursor:pointer;color:#f0ebe0;font-size:11px;padding:3px 8px;font-family:'Apfel Grotezk',sans-serif">History</button>
-      <button onclick="askNewChat()" title="New chat" style="background:none;border:1px solid rgba(240,235,224,.25);border-radius:6px;cursor:pointer;color:#f0ebe0;font-size:11px;padding:3px 8px;font-family:'Apfel Grotezk',sans-serif">New</button>
-      <button aria-label="Close" onclick="toggleAskCavnar()" style="background:none;border:none;cursor:pointer;color:#f0ebe0;font-size:15px;line-height:1;padding:0">&#x2715;</button>
-    </div>
-  </div>
-  <div id="ask-cavnar-history" style="display:none;max-height:200px;overflow-y:auto;border-bottom:1px solid var(--paper3);background:var(--paper2)"></div>
-  <div id="ask-cavnar-messages" style="flex:1;overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column;gap:10px;min-height:180px">
-    <div style="font-size:12px;color:var(--ink3);line-height:1.6">Ask me anything — your reviews, labor, food cost, and marketing numbers, or general advice on running the place. I'll pull in your real data whenever it's relevant.</div>
-  </div>
-  <div style="padding:12px 14px;border-top:1px solid var(--paper3);display:flex;gap:8px;flex-shrink:0">
-    <input type="text" id="ask-cavnar-input" placeholder="Ask anything — or tell me to do it" maxlength="2000"
-      style="flex:1;padding:9px 12px;border:1px solid var(--paper3);border-radius:8px;font-size:12px;font-family:'Apfel Grotezk',sans-serif;outline:none;background:var(--paper2);color:var(--ink)"
-      onkeydown="if(event.key==='Enter'){event.preventDefault();sendAskCavnar();}">
-    <button onclick="sendAskCavnar()" class="btn-primary" id="ask-cavnar-send-btn" style="padding:0 14px;font-size:12px">Ask</button>
-  </div>
-</div>
-
 <script>
 // The backend has no memory of its own between calls (each is a stateless
 // Claude request) — this array IS the conversation's memory, sent back as
@@ -4657,8 +4693,8 @@ function regenDraft(id) {
   var txtEl = document.getElementById('draft-txt-'+id);
   var editorEl = document.getElementById('editor-text-'+id);
   var boxEl = document.getElementById('draft-box-'+id);
-  if (txtEl) txtEl.textContent = 'Generating new response…';
-  else if (boxEl) boxEl.innerHTML = '<div class="draft-lbl" style="color:var(--ink3)">Generating response…</div>';
+  if (txtEl) txtEl.innerHTML = window.cavnarLoading ? cavnarLoading('Writing a reply in your voice…', 22, 'composing') : 'Generating new response…';
+  else if (boxEl) boxEl.innerHTML = window.cavnarLoading ? cavnarLoading('Writing a reply in your voice…', 22, 'composing') : '<div class="draft-lbl" style="color:var(--ink3)">Generating response…</div>';
   fetch('/api/regenerate-draft/'+id, {method:'POST'}).then(function(r){return r.json();}).then(function(data){
     if (data.ok) {
       var actionsEl = document.getElementById('draft-actions-'+id);
@@ -5040,7 +5076,7 @@ function loadTopicHeatmap(days){
   var grid=document.getElementById('heatmap-grid');
   if(!grid)return;
   var C=window.CavnarCharts;var esc=C?C.esc:function(v){return String(v==null?'':v);};
-  grid.innerHTML='<div class="hb-skel" style="height:110px;margin-top:10px"></div>';
+  grid.innerHTML=window.cavnarLoading?cavnarLoading('',28,'searching',110):'';
   fetch('/api/topic-heatmap?days='+_hmDays).then(function(r){return r.json();}).then(function(d){
     if(!d.ok||!d.data){grid.innerHTML='<div class="hb-empty">Topics appear as reviews get analysed.</div>';return;}
     var items=d.data.filter(function(x){return (x.count||0)>0;}).sort(function(a,b){return (b.count||0)-(a.count||0);}).slice(0,6);
@@ -5059,7 +5095,7 @@ function loadResponsePerf(days){
   for(var i=0;i<btns.length;i++){btns[i].classList.toggle('on',String(btns[i].getAttribute('data-days'))===String(days));}
   var body=document.getElementById('perf-body');
   if(!body)return;
-  body.innerHTML='<div class="hb-skel" style="height:86px;margin-top:10px"></div>';
+  body.innerHTML=window.cavnarLoading?cavnarLoading('',28,'working',86):'';
   fetch('/api/response-performance?days='+days).then(function(r){return r.json();}).then(function(d){
     if(!d.ok){body.innerHTML='<div class="hb-empty">Unavailable.</div>';return;}
     var data=d.data||{},total=data.total||0;
@@ -5301,13 +5337,13 @@ function _moveTabIndicator(tabEl){
 function _dark(){return document.documentElement.getAttribute('data-theme')==='dark';}
 function setPageBg(n){
   var d=_dark();
-  var home = d
-    ? 'radial-gradient(ellipse 100% 55% at 50% 0%,rgba(200,75,47,.45) 0%,rgba(200,75,47,.18) 40%,transparent 70%),linear-gradient(180deg,#0a0806 0%,#0e0c0a 100%)'
-    : 'radial-gradient(ellipse 100% 55% at 50% 0%,rgba(200,75,47,.32) 0%,rgba(200,75,47,.10) 45%,transparent 70%),linear-gradient(180deg,#f7f4ef 0%,#faf7f2 100%)';
-  var mod = d
-    ? 'radial-gradient(ellipse 80% 40% at 50% 0%,rgba(200,75,47,.38) 0%,rgba(200,75,47,.12) 45%,transparent 75%),linear-gradient(180deg,#0a0806 0%,#0e0c0a 100%)'
-    : 'radial-gradient(ellipse 80% 40% at 50% 0%,rgba(200,75,47,.18) 0%,rgba(200,75,47,.05) 50%,transparent 75%),linear-gradient(180deg,#f7f4ef 0%,#faf7f2 100%)';
-  document.body.style.background = (n==='home') ? home : mod;
+  // One background for every page: the ember glow at the top running down
+  // into obsidian (#0c0c0c — the iOS dark Paper). Taller than before so the
+  // glow reaches the first section instead of stopping at the header.
+  var bg = d
+    ? 'radial-gradient(ellipse 120% 75% at 50% 0%,rgba(200,75,47,.48) 0%,rgba(200,75,47,.22) 35%,rgba(200,75,47,.06) 62%,transparent 80%),linear-gradient(180deg,#0c0c0c 0%,#0c0c0c 100%)'
+    : 'radial-gradient(ellipse 120% 70% at 50% 0%,rgba(200,75,47,.30) 0%,rgba(200,75,47,.12) 40%,rgba(200,75,47,.03) 65%,transparent 80%),linear-gradient(180deg,#f7f4ef 0%,#faf7f2 100%)';
+  document.body.style.background = bg;
 }
 function switchTab(n,btn){
   setPageBg(n);
@@ -5323,7 +5359,7 @@ function switchTab(n,btn){
   _swPanel.style.animation = 'panelIn .22s ease forwards';
   animateStatNums('panel-'+n);
   animateBars('panel-'+n);
-  if(n==='reviews') staggerCards();
+  if(n==='reviews'){staggerCards();if(!window._rvFiltered){window._rvFiltered=true;filterReviews();}}
   if(n==='labor'){
     var _gapEl=document.getElementById('gap-current-pct');
     if(_gapEl&&!_gapEl.dataset.animated){_gapEl.dataset.animated='1';var _gapRaw=parseFloat((_gapEl.textContent||'').replace('%','').trim());if(!isNaN(_gapRaw))countUp(_gapEl,_gapRaw,900,'','%',1);}
@@ -5337,7 +5373,7 @@ function switchTab(n,btn){
     // countUp animations and insight load triggered by switchFcTab when analytics tab is shown
   }
   if(n==='labor'){renderBars();loadLaborTrend(false);}
-  if(n==='account'){loadBillingInfo();loadSessions();loadAlertsSummary();loadAccountSettings();loadEmailHistory();}
+  if(n==='account'){loadBillingInfo();loadSessions();loadAlertsSummary();loadAccountSettings();loadEmailHistory();if(window._acctExtras)window._acctExtras();}
   if(n==='marketing'){var _mi=document.getElementById('mkt-insight');if(_mi&&(_mi.classList.contains('insight-loading')||_mi.textContent.trim()==='Loading marketing brief…'||!mktLoaded)){loadMktInsight();}loadRecentTopics();startMetricsPoller();if(!window._calLoaded){window._calLoaded=true;loadCalCached();}}else{stopMetricsPoller();}
   // Calendar is generated on demand only — no auto-generate to avoid wasteful API calls on reconnect/reload
   history.replaceState(null,null,'#'+n);
@@ -5376,8 +5412,8 @@ document.addEventListener('DOMContentLoaded', function(){
     if (rPanel) { rPanel.style.animation = 'panelIn .22s ease forwards'; }
     if(!_gbpReload){ animateStatNums('panel-reviews'); staggerCards(); }
   }
-  // Initialize filter so count label is accurate on page load
-  filterReviews();
+  // Initialize filter so count label is accurate — only when the inbox is on screen
+  if(document.getElementById('panel-reviews')&&document.getElementById('panel-reviews').classList.contains('active'))filterReviews();
 
   // Init aiv-body max-height so collapse transition works immediately
   var _aivBody = document.getElementById('aiv-body');
@@ -10020,7 +10056,9 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
   var _origOpenPublish=window.openPublishSchedule;
   if(_origOpenPublish){window.openPublishSchedule=function(){_origOpenPublish.apply(this,arguments);loadShareStatus();};}
   document.addEventListener('DOMContentLoaded',function(){
-    loadSecurityExtras();loadTeam();loadScheduleHistory();loadAivHistory();
+    // Account-tab extras load when the tab opens (see switchTab), not on every page load.
+    window._acctExtras=function(){if(window._acctExtrasDone)return;window._acctExtrasDone=true;loadSecurityExtras();loadTeam();loadScheduleHistory();loadAivHistory();};
+    if(document.getElementById('panel-account')&&document.getElementById('panel-account').classList.contains('active'))window._acctExtras();
   });
 })();
 

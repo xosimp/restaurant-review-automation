@@ -938,7 +938,7 @@ def _resolve_ask_conversation(restaurant_id, conversation_id, new_conversation=F
 
 
 def _do_ask_cavnar(restaurant_id, question, history=None, user_id=None, conversation_id=None,
-                   new_conversation=False):
+                   new_conversation=False, brief=False):
     """The AI copilot's shared body — answers a plain-English question about
     the restaurant's own live data (reviews/labor/food cost/marketing,
     whichever modules are active) instead of the owner having to piece it
@@ -979,7 +979,7 @@ def _do_ask_cavnar(restaurant_id, question, history=None, user_id=None, conversa
                        for h in get_ask_history(restaurant_id, conversation_id=conversation_id)]
 
         answer, truncated, proposals = ask_with_tools(
-            restaurant, question, history=history)
+            restaurant, question, history=history, **({'brief': True} if brief else {}))
 
         try:
             conversation_id = save_ask_message(restaurant_id, "user", question, user_id=user_id,
@@ -1014,14 +1014,14 @@ def _do_ask_cavnar(restaurant_id, question, history=None, user_id=None, conversa
 def ask_cavnar_api(current_user):
     rid = current_user["restaurant_id"]
     data = request.get_json() or {}
-    payload, status = _do_ask_cavnar(rid, data.get("question"), history=data.get("history"),
+    payload, status = _do_ask_cavnar(rid, data.get("question"), history=data.get("history"), brief=(data.get("surface") == "home"),
                                      user_id=current_user.get("id"),
                                      conversation_id=_parse_conversation_id(data.get("conversation_id")),
                                      new_conversation=bool(data.get("new_conversation")))
     return jsonify(**payload), status
 
 
-def _ask_cavnar_stream_response(rid, uid, question, conversation_id=None, new_conversation=False):
+def _ask_cavnar_stream_response(rid, uid, question, conversation_id=None, new_conversation=False, brief=False):
     """Server-sent events: progress while tools run, then the answer.
 
     Shared by the web and mobile stream routes so iOS gets the same live
@@ -1067,7 +1067,8 @@ def _ask_cavnar_stream_response(rid, uid, question, conversation_id=None, new_co
             answer, truncated, proposals = ask_with_tools(
                 restaurant, question, history=history,
                 on_progress=lambda label, state: events.put(
-                    {"type": "progress", "label": label, "state": state}))
+                    {"type": "progress", "label": label, "state": state}),
+                **({"brief": True} if brief else {}))
             try:
                 cid = save_ask_message(rid, "user", question, user_id=uid, conversation_id=cid)
                 save_ask_message(rid, "assistant", answer, proposals=proposals or None,
@@ -1107,7 +1108,8 @@ def ask_cavnar_stream(current_user):
     return _ask_cavnar_stream_response(
         current_user["restaurant_id"], current_user.get("id"), data.get("question"),
         conversation_id=_parse_conversation_id(data.get("conversation_id")),
-        new_conversation=bool(data.get("new_conversation")))
+        new_conversation=bool(data.get("new_conversation")),
+        brief=(data.get("surface") == "home"))
 
 
 @client_bp.route("/api/ask-cavnar/history")

@@ -519,6 +519,10 @@ _MAX_TOOL_ROUNDS = 4
 #   breathing   idle — the header orb, nothing in flight
 #   listening   reserved: voice input, not built
 #   weaving     reserved: multi-tool synthesis, not currently emitted
+BRIEF_SURFACE_SUFFIX = """
+
+SURFACE: the Home screen's quick-answer box. Reply in at most three short sentences of plain text. No markdown, no headers, no bullet points, no bold. Lead with the single most important thing and the number that backs it; offer to go deeper in one clause at most."""
+
 ORB_STATES = ("connecting", "solving", "searching", "working", "shaping",
               "composing", "breathing", "listening", "weaving")
 
@@ -561,7 +565,7 @@ _TOOL_LABELS = {
 }
 
 
-def ask_with_tools(restaurant, question, history=None, on_progress=None):
+def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=False):
     """Ask Cavnar, with the ability to look things up and to propose actions.
 
     Returns (answer_text, truncated, proposals). `proposals` is the list of
@@ -591,8 +595,18 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None):
 
     context = build_context(restaurant)
     system_prompt = ASK_CAVNAR_SYSTEM_PROMPT.format(restaurant_name=restaurant.name, context=context)
+    if brief:
+        # The Home screen's inline box: an owner glancing between tables.
+        system_prompt += BRIEF_SURFACE_SUFFIX
+    user_turn = question.strip()[:_MAX_QUESTION_LENGTH]
+    if brief:
+        # Repeated on the user turn: after a tool loop the final answer is
+        # generated with the tool results freshest in context, and a length
+        # rule stated right beside the question survives that far better
+        # than one buried at the end of a long system prompt.
+        user_turn += "\n\n(Answer in at most three short plain-text sentences. No list, no markdown, no bold.)"
     messages = _sanitize_history(history) + [
-        {"role": "user", "content": question.strip()[:_MAX_QUESTION_LENGTH]}
+        {"role": "user", "content": user_turn}
     ]
 
     proposals = []
