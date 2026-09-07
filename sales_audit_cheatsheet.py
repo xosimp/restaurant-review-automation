@@ -274,24 +274,31 @@ def build(audit, results):
     lb = BENCHMARKS["labor"]
     fb = BENCHMARKS["food"]
     defense = [
-        ("Labor", "gap = revenue × (labor % − target) ÷ 100; range = 30% / 50% / 70% of gap. If overtime $ given: premium = OT ÷ 3, range 40% / 70% / 100% of premium. Final = the LARGER of the two, never the sum.",
+        ("Labor", "gap = labor % − target (points). Recover 30% / 50% / 70% of the gap, CAPPED at 1 / 2 / 3 points of revenue. $ = points × revenue. If overtime $ given: premium = OT ÷ 3, range 40% / 70% / 100% of premium. Final = the LARGER of the two, never the sum.",
          "Inputs: revenue, labor %, owner target (else band top: full-service 34, sports bar 32). Source: NRA 2025 Ops Data Abstract. Wrong when: owner's % is wages-only (gap understated), wage market is high, or the number is a guess. Overlap: overtime is inside labor dollars — max, not sum. Strength: solid when both inputs are the owner's own."),
-        ("Food Cost", "gap = food sales × (food % − target) ÷ 100; range 30/50/70%. Waste: $/week × 52 × 25/40/50%. Final = LARGER of gap and waste.",
+        ("Food Cost", "gap = food % − target (points); recover 30/50/70% of it, CAPPED at 1 / 2 / 3 points of FOOD sales. Waste: $/week × 52 × 25/40/50%. Final = LARGER of gap and waste.",
          "Inputs: food %, food sales (or revenue − alcohol sales), target (else band top 32–33). Source: NRA 2025. Wrong when: % is on total sales, is theoretical, or combines beverage (then a blended band is used and the bar is not sized separately). Overlap: waste is inside food cost — max, not sum; comps/discounts are Operations only. Strength: moderate; high only with an actual figure from counts."),
-        ("Bar & Alcohol", "gap = alcohol sales × (pour cost − target) ÷ 100; range 30/50/70%. Variance: bev COGS × (variance − 3%) × 40/60/80%. Final = LARGER of the two.",
+        ("Bar & Alcohol", "gap = pour cost − target (points); recover 30/50/70% of it, CAPPED at 1 / 2 / 4 points of ALCOHOL sales. Variance: bev COGS × (variance − 3%) × 40/60/80%. Final = LARGER of the two.",
          "Inputs: alcohol sales or bar % of sales, pour cost, variance %. Source: bar-industry consensus (vendor-published; directional). Wrong when: wine-heavy mix, pour cost guessed, variance counted against purchases rather than POS. Overlap: variance is inside pour cost — max; bar comps are Operations only. Strength: moderate at best; say 'directional' if asked. Module is UPCOMING."),
-        ("Reviews", "revenue × 0.5% / 1.0% / 2.0% when rating < 4.3 with a weak response process; half that between 4.3 and 4.6; nothing at 4.6+ with a good process.",
+        ("Reviews", "ADDED REVENUE, not savings: revenue × 0.25% / 0.5% / 1.0% when rating < 4.3; × 0.15 / 0.3 / 0.6% between 4.3 and 4.6 with a weak response process; × 0.1 / 0.2 / 0.4% at 4.6+ with a weak process; nothing at 4.6+ with a good one.",
          "Inputs: Google rating, revenue, response rate/time. Source: HBS (Luca) +1 star ≈ +5–9% revenue for independents; audit assumes only 0.1–0.3 star. Wrong when: rating is already high, or reviews aren't where his guests come from. Overlap: none (revenue, not cost). Strength: WEAK and speculative — it is labelled low confidence on purpose. Lead with the practice gap, not the dollars."),
         ("Marketing", "untracked ad spend × 10/15/25% + agency fee × (Yes: 50/75/100%, Maybe: 0/25/50%).",
          "Inputs: monthly spend, agency cost, ROI tracked?, would-replace-agency? Source: operator assumption — no authoritative benchmark exists. Wrong when: spend is actually working and just untracked. Overlap: agency counted here only; marketing software counted in Technology only if marked replaceable. Strength: WEAK — keep it small and honest."),
-        ("Waitlist", "walkaway parties/week × party size (default 2.5) × avg check × 52 × 25/40/50%.",
+        ("Waitlist", "ADDED REVENUE, not savings: walkaway parties/week × party size (default 2.5) × avg check × 52 × 25/40/50%.",
          "Inputs: owner's walkaway estimate, avg check, party size. Source: operator assumption. Wrong when: the estimate is a guess (it always is) — and it is REVENUE, not profit (contribution ~60–70%). Overlap: none. Strength: WEAK; module is UPCOMING. Present as 'what a busy night might be leaving on the table'."),
         ("Operations", "comps + voids + discounts per month × 12 × 15/25/35%, only when not reviewed daily by person. Owner reporting hours shown as time, not dollars.",
          "Inputs: monthly comps/voids/discounts, monitoring cadence. Source: operator assumption. Wrong when: comps are deliberate hospitality. Overlap: waste (food) and overtime (labor) explicitly excluded. Strength: moderate — the POS has the real number, ask for it."),
         ("Technology", "sum of tools the owner marked replaceable × 12 × 50/75/100%. POS, payroll and accounting never count.",
          "Inputs: the software table. Source: his answers only. Wrong when: he marks something replaceable that he'd actually keep. Overlap: agency fees excluded (Marketing). Strength: strong but usually small."),
     ]
-    sections.append({"key": "defense", "title": "Part 9 — Savings defense guide", "tag": "defend the number", "table": {
+    sections.append({"key": "defense", "title": "Part 9 — Savings defense guide", "tag": "defend the number",
+                     "blocks": [{"h": "How the headline is built", "items": [
+                         "Cost savings (labor, food, bar, marketing, operations, technology) and added revenue (reviews, guest flow) are summed separately and shown separately — the report headline is the combined range with both lines underneath. If Erik pushes back on the combined number, retreat to cost savings alone; that is the defensible core.",
+                         "Every gap-based line is capped at a few points of its base. In plain words: 'we never assume you'll move labor or food cost more than about three points, however far over you are.'",
+                         "Overlaps are never summed: overtime sits inside labor, waste inside food, variance inside pour cost, comps only in operations, agency fees only in marketing.",
+                         "Realistic scale for a $2.4M sports bar: a well-run one shows $0; an average one lands around 1–3% of sales; a badly run one can show 4–10% because it is genuinely leaking that much, and the report will also show a low health score to match.",
+                     ]}],
+                     "table": {
         "cols": ["Category", "Formula", "Inputs · benchmark · what breaks it · overlap · honest strength"], "rows": [list(d) for d in defense]}})
 
     # ── PART 10 — product ──────────────────────────────────────────────────

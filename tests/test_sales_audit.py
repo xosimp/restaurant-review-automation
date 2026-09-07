@@ -344,3 +344,28 @@ def test_latest_redirects_for_admin_console_buttons(app, db_path, monkeypatch):
     aid = store.create_audit(answers={"restaurant_name": "Latest"})
     assert c.get("/admin/audits/latest").headers["Location"].endswith("/admin/audits/%d" % aid)
     assert c.get("/admin/audits/latest/cheatsheet").headers["Location"].endswith("/admin/audits/%d/cheatsheet" % aid)
+
+
+def test_gap_recovery_is_capped_in_points():
+    r = engine.compute({"fin_annual_revenue": "2400000", "lab_labor_pct": "45"})
+    lab = r["categories"]["labor"]
+    # 13 points over a 34 target: uncapped high would be 9.1 pts; capped at 3 pts = $72,000
+    assert lab["high"] == 72000 and lab["likely"] == 48000 and lab["low"] == 24000
+    assert "capped" in lab["calc"]["formula"]
+    small = engine.compute({"fin_annual_revenue": "2400000", "lab_labor_pct": "35"})["categories"]["labor"]
+    assert small["high"] == 16800  # 1 pt gap × 70% — under the cap, unchanged
+
+
+def test_totals_split_cost_savings_from_added_revenue():
+    r = engine.compute(FULL)
+    t = r["totals"]
+    assert t["cost"]["high"] + t["revenue"]["high"] == t["annual"]["high"]
+    assert t["revenue"]["high"] == r["categories"]["reviews"]["high"] + r["categories"]["waitlist"]["high"]
+    assert r["roi"]["cost_high_x"] < r["roi"]["high_x"]
+    assert t["pct_of_revenue"]["high"] < 10
+
+
+def test_marketing_agency_replacement_does_not_crash_and_counts_fee():
+    r = engine.compute({"mkt_spend_month": "4000", "mkt_agency_cost": "1500", "mkt_agency_replace": "Yes", "mkt_roi_tracked": "yes", "mkt_know_channels": "yes"})
+    m = r["categories"]["marketing"]
+    assert m["status"] == "ok" and m["high"] == 18000 and m["low"] == 9000

@@ -473,7 +473,7 @@ function howBlock(c){ if(!c.calc) return ''; const k = c.calc; return `<details 
 function renderSummary(){
   const r = RESULTS; const tot = r.totals.annual, mo = r.totals.monthly;
   let h = `<div class="sh"><div class="k">Internal preview · live</div><h1>Opportunity summary</h1><p>Updates as you type. Ranges only — nothing here is counted without enough data, and overlapping categories never sum.</p></div>
-  <div class="tot"><div class="b"><div class="k">Annual opportunity</div><div class="v e">${tot.high?money(tot.low)+' – '+money(tot.high):'—'}</div><div class="sub">likely ${money(tot.likely)} · ${r.totals.counted} of 8 areas sized</div></div>
+  <div class="tot"><div class="b"><div class="k">Annual opportunity</div><div class="v e">${tot.high?money(tot.low)+' – '+money(tot.high):'—'}</div><div class="sub">${tot.high?'cost savings '+money(r.totals.cost.low)+'–'+money(r.totals.cost.high)+' · added revenue '+money(r.totals.revenue.low)+'–'+money(r.totals.revenue.high)+(r.totals.pct_of_revenue?' · '+r.totals.pct_of_revenue.low+'–'+r.totals.pct_of_revenue.high+'% of sales':''):r.totals.counted+' of 8 areas sized'}</div></div>
   <div class="b"><div class="k">Monthly opportunity</div><div class="v">${mo.high?money(mo.low)+' – '+money(mo.high):'—'}</div><div class="sub">annual ÷ 12</div></div>
   <div class="b"><div class="k">Confidence</div><div class="v">${r.totals.confidence||'—'}</div><div class="sub">${r.health.score!=null?'health score '+r.health.score+' · '+esc(r.health.label):'health not yet assessed'}</div></div></div><div class="cards">`;
   const order = ['labor','food','bar','reviews','marketing','waitlist','operations','technology'];
@@ -496,7 +496,7 @@ function renderRecommendation(){
   h += `</div><h2 class="sub">Investment</h2><div class="plan">${[['auto','Auto ('+(p.plan==='full'?'Full System':'Starter')+')'],['starter:1','1 module'],['starter:2','2 modules'],['full','Full System']].map(([v,l])=>`<button class="btn ${ov===v?'primary':''}" onclick="setPlan('${v}')">${l}</button>`).join('')}</div>
   <div class="tot"><div class="b"><div class="k">${esc(p.label)}</div><div class="v">${money(p.annual)}<small style="font-size:12px;color:var(--ink4)"> / yr</small></div><div class="sub">${esc(p.note)}</div></div>
   <div class="b"><div class="k">First year incl. setup</div><div class="v">${money(p.first_year)}</div><div class="sub">setup ${money(p.setup)} + annual ${money(p.annual)}</div></div>
-  <div class="b"><div class="k">Opportunity ÷ annual investment</div><div class="v e">${r.roi?r.roi.low_x+'× – '+r.roi.high_x+'×':'—'}</div><div class="sub">${r.roi?'first year incl. setup '+r.roi.first_year_low_x+'× – '+r.roi.first_year_high_x+'×':'size an opportunity first'}</div></div></div>`;
+  <div class="b"><div class="k">Opportunity ÷ annual investment</div><div class="v e">${r.roi?r.roi.low_x+'× – '+r.roi.high_x+'×':'—'}</div><div class="sub">${r.roi?'cost savings alone '+r.roi.cost_low_x+'× – '+r.roi.cost_high_x+'× · first year incl. setup '+r.roi.first_year_low_x+'× – '+r.roi.first_year_high_x+'×':'size an opportunity first'}</div></div></div>`;
   if(p.verify) h += `<div class="warn">${esc(p.verify)}</div>`;
   h += `<div class="stepnav"><button class="btn" onclick="go('summary')">← Summary</button><button class="btn primary" onclick="go('results')">Final audit results →</button></div>`;
   return h;

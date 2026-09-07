@@ -201,7 +201,7 @@ details .b ul{margin:6px 0 0;padding-left:16px}
     <h2><span class="k">Estimated financial opportunity</span>Conservative ranges, never a single number</h2>
     <div class="big2">
       <div class="b"><div class="k">Estimated monthly opportunity</div><div class="v">{% if mon.high %}{{ mon.low | money }} – {{ mon.high | money }}{% else %}Insufficient data{% endif %}</div><div class="s">{% if mon.high %}likely around {{ mon.likely | money }} a month{% else %}not enough numbers were shared to size this reliably{% endif %}</div></div>
-      <div class="b"><div class="k">Estimated annual opportunity</div><div class="v">{% if ann.high %}{{ ann.low | money }} – {{ ann.high | money }}{% else %}Insufficient data{% endif %}</div><div class="s">{% if tot.confidence %}<span class="conf {{ tot.confidence }}">{{ tot.confidence }} confidence</span> · {{ tot.counted }} of 8 areas sized{% else %}no area could be sized{% endif %}</div></div>
+      <div class="b"><div class="k">Estimated annual opportunity</div><div class="v">{% if ann.high %}{{ ann.low | money }} – {{ ann.high | money }}{% else %}Insufficient data{% endif %}</div><div class="s">{% if tot.confidence %}<span class="conf {{ tot.confidence }}">{{ tot.confidence }} confidence</span> · {{ tot.counted }} of 8 areas sized{% if tot.cost and tot.revenue %}<br>cost savings {{ tot.cost.low | money }} – {{ tot.cost.high | money }} · added revenue {{ tot.revenue.low | money }} – {{ tot.revenue.high | money }}{% endif %}{% else %}no area could be sized{% endif %}</div></div>
     </div>
     <table>
       <thead><tr><th>Area</th><th>Current state</th><th>Opportunity</th><th class="r">Estimated annual value</th></tr></thead>
@@ -243,7 +243,7 @@ details .b ul{margin:6px 0 0;padding-left:16px}
     <div class="inv">
       <div class="b"><div class="k">{{ p.label }}</div><div class="v">{{ p.annual | money }}<span class="small"> / yr</span></div><div class="s">{{ p.note }}</div></div>
       <div class="b"><div class="k">First year, including setup</div><div class="v">{{ p.first_year | money }}</div><div class="s">one-time setup {{ p.setup | money }}</div></div>
-      <div class="b"><div class="k">Identified opportunity ÷ annual investment</div><div class="v e">{% if r.roi %}{{ r.roi.low_x }}× – {{ r.roi.high_x }}×{% else %}—{% endif %}</div><div class="s">{% if r.roi %}{{ ann.low | money }} – {{ ann.high | money }} identified against {{ p.annual | money }} a year{% else %}an opportunity must be sized first{% endif %}</div></div>
+      <div class="b"><div class="k">Identified opportunity ÷ annual investment</div><div class="v e">{% if r.roi %}{{ r.roi.low_x }}× – {{ r.roi.high_x }}×{% else %}—{% endif %}</div><div class="s">{% if r.roi %}{{ ann.low | money }} – {{ ann.high | money }} identified against {{ p.annual | money }} a year{% if r.roi.cost_high_x %} · cost savings alone {{ r.roi.cost_low_x }}× – {{ r.roi.cost_high_x }}×{% endif %}{% else %}an opportunity must be sized first{% endif %}</div></div>
     </div>
     <p>Cavnar AI is designed to help identify, monitor and act on opportunities like these. It does not capture them on its own, and no share of the identified opportunity is promised.</p>
   </section>

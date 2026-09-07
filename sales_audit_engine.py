@@ -54,12 +54,15 @@ BENCHMARKS = {
     },
     "prime": {"band": (60, 65), "source": "Widely used operator target: prime cost (labor + COGS) under 60–65% of sales."},
     "reviews": {"source": "Luca, M. (Harvard Business School, 2016) 'Reviews, Reputation, and Revenue: The Case of Yelp.com': a one-star increase in rating associated with 5–9% revenue increase for independent restaurants.",
-                "note": "The audit assumes only a 0.1–0.3 star improvement from consistent, personal responses and acting on complaint patterns — not a full star."},
+                "note": "The audit assumes only a 0.05–0.2 star improvement from consistent, personal responses and acting on complaint patterns — not a full star — and takes the low end of the revenue effect."},
     "waste": {"source": "Waste reduction share is an operator assumption (25–50% of logged waste is avoidable with tracking and ordering discipline)."},
 }
 
 # Recovery shares — what share of a benchmark gap is realistically recoverable.
 RECOVERY = {"low": 0.30, "likely": 0.50, "high": 0.70}
+
+COST_CATEGORIES = ("labor", "food", "bar", "marketing", "operations", "technology")
+REVENUE_CATEGORIES = ("reviews", "waitlist")
 
 CATEGORY_LABELS = [
     ("labor", "Labor"), ("food", "Food Cost"), ("bar", "Bar & Alcohol"), ("reviews", "Reviews"),
@@ -360,21 +363,34 @@ def derive_financials(a):
 
 # ── Category opportunity calculations ───────────────────────────────────────
 
-def _gap_calc(base, current, target, band, source, base_label, metric_label):
+# Recovered improvement is capped in percentage points of the base, whatever
+# the gap. Scheduling and cost tracking realistically move a cost line by one
+# to three points; a restaurant ten points over benchmark has a structural
+# problem (wage market, menu, concept) that monitoring does not fix, and
+# quoting 70% of that gap would be the kind of number that loses the room.
+POINT_CAPS = {"labor": (1.0, 2.0, 3.0), "food": (1.0, 2.0, 3.0), "bar": (1.0, 2.0, 4.0)}
+
+
+def _gap_calc(base, current, target, band, source, base_label, metric_label, caps=(1.0, 2.0, 3.0)):
     gap_pts = current - target
-    gap_dollars = base * max(0.0, gap_pts) / 100.0
-    r = _rng(gap_dollars, RECOVERY["low"], RECOVERY["likely"], RECOVERY["high"])
+    g = max(0.0, gap_pts)
+    pts = {"low": min(g * RECOVERY["low"], caps[0]), "likely": min(g * RECOVERY["likely"], caps[1]), "high": min(g * RECOVERY["high"], caps[2])}
+    r = {k: max(0, int(round(base * v / 100.0, -2))) for k, v in pts.items()}
+    gap_dollars = base * g / 100.0
+    capped = g > 0 and (g * RECOVERY["high"] > caps[2] or g * RECOVERY["likely"] > caps[1] or g * RECOVERY["low"] > caps[0])
     calc = {
         "current_metric": "%s %.1f%%" % (metric_label, current),
         "benchmark": "target %.1f%% (band %d–%d%%)" % (target, band[0], band[1]),
         "benchmark_source": source,
         "base": "%s $%s" % (base_label, "{:,.0f}".format(base)),
-        "formula": "(%.1f%% − %.1f%%) × $%s = $%s gap; × %d%% / %d%% / %d%% recoverable" % (
-            current, target, "{:,.0f}".format(base), "{:,.0f}".format(gap_dollars),
-            RECOVERY["low"] * 100, RECOVERY["likely"] * 100, RECOVERY["high"] * 100),
+        "formula": "gap %.1f pts × $%s = $%s; recover %d%% / %d%% / %d%% of the gap = %.1f / %.1f / %.1f pts%s" % (
+            g, "{:,.0f}".format(base), "{:,.0f}".format(gap_dollars),
+            RECOVERY["low"] * 100, RECOVERY["likely"] * 100, RECOVERY["high"] * 100,
+            pts["low"], pts["likely"], pts["high"], " (capped at %.0f / %.0f / %.0f pts)" % caps if capped else ""),
         "assumptions": ["Only the gap above the target is counted, never the whole cost line.",
-                        "A benchmark gap is never treated as fully recoverable; the range brackets 30–70% of it."],
-        "gap_pts": round(gap_pts, 1), "gap_dollars": _round100(gap_dollars),
+                        "A benchmark gap is never treated as fully recoverable; the range brackets 30–70% of it.",
+                        "Recovered improvement is capped at %.0f / %.0f / %.0f points of the base even when the gap is larger — beyond that the cause is usually structural, not something daily visibility fixes." % caps],
+        "gap_pts": round(gap_pts, 1), "gap_dollars": _round100(gap_dollars), "recovered_pts": {k: round(v, 2) for k, v in pts.items()},
     }
     return r, calc
 
@@ -436,7 +452,7 @@ def calc_labor(a, fin, cls, owner):
             return out
         return _insufficient("labor", "Labor", missing)
 
-    gap_rng, gap_calc = _gap_calc(R, L, target, band, bench["source"], "annual revenue", "labor")
+    gap_rng, gap_calc = _gap_calc(R, L, target, band, bench["source"], "annual revenue", "labor", POINT_CAPS["labor"])
     basis = _txt(a, "lab_labor_pct_basis")
     if basis == "Wages only":
         gap_calc["assumptions"].append("Owner's labor % is wages only; the benchmark includes benefits, so the real gap is likely wider, not narrower.")
@@ -517,7 +533,7 @@ def calc_food(a, fin, cls, owner):
     owner_target = _num(a, "food_target_pct")
     target = owner_target if owner_target is not None else band[1]
     gap_rng, gap_calc = _gap_calc(FS, F, target, band, bench["source"], "annual revenue (combined COGS)" if combined else "annual food sales",
-                                  "combined food + beverage cost" if combined else "food cost")
+                                  "combined food + beverage cost" if combined else "food cost", POINT_CAPS["food"])
     basis = _txt(a, "food_cost_basis")
     if basis == "Theoretical (from recipes)":
         gap_calc["assumptions"].append("Owner's figure is theoretical; actual is typically higher, so the gap is likely understated.")
@@ -576,12 +592,13 @@ def calc_bar(a, fin, cls, owner):
     target = owner_target if owner_target is not None else band[1]
     var_pct = _num(a, "bar_variance_pct")
     var_rng = var_calc = None
+    var_calc = None
     if A and var_pct is not None:
         pour = P if P is not None else 22.0
         cogs = A * pour / 100.0
         excess = max(0.0, var_pct - BENCHMARKS["bar"]["variance_target"])
         lost = cogs * excess / 100.0
-        var_rng = _rng(lost, 0.4, 0.6, 0.8)
+        var_rng = _rng(lost, 0.4, 0.6, 0.8) if lost > 0 else None
         var_calc = {"current_metric": "inventory variance %.1f%% of usage" % var_pct,
                     "benchmark": "variance target ≤ %.0f%%" % BENCHMARKS["bar"]["variance_target"],
                     "benchmark_source": BENCHMARKS["bar"]["variance_source"],
@@ -602,7 +619,7 @@ def calc_bar(a, fin, cls, owner):
             return out
         return _insufficient("bar", "Bar & Alcohol", missing)
 
-    gap_rng, gap_calc = _gap_calc(A, P, target, band, bench["source"], "annual alcohol sales", "pour cost")
+    gap_rng, gap_calc = _gap_calc(A, P, target, band, bench["source"], "annual alcohol sales", "pour cost", POINT_CAPS["bar"])
     if owner_target is None:
         gap_calc["assumptions"].append(bench["note"])
     conf = "high" if (fin["bev_pct"]["source"] == "owner" and fin["alcohol_sales"]["source"] == "owner" and _yes(a, "bar_theoretical")) else ("moderate" if fin["bev_pct"]["source"] != "estimated" else "low")
@@ -656,21 +673,21 @@ def calc_reviews(a, fin, cls, owner):
                 "current_state": "Google rating %.1f with a consistent response process." % rating,
                 "opportunity": "Performing well — protect it", "calc": None, "missing": missing, "module": module}
     if rating >= 4.6:
-        lo, lk, hi = 0.0025, 0.005, 0.01
-        star = "0.05–0.15"
+        lo, lk, hi = 0.001, 0.002, 0.004
+        star = "0.02–0.08"
     elif rating >= 4.3:
-        lo, lk, hi = 0.005, 0.0075, 0.015
-        star = "0.1–0.2"
+        lo, lk, hi = 0.0015, 0.003, 0.006
+        star = "0.03–0.12"
     else:
-        lo, lk, hi = 0.005, 0.01, 0.02
-        star = "0.1–0.3"
+        lo, lk, hi = 0.0025, 0.005, 0.01
+        star = "0.05–0.2"
     rng = _rng(R, lo, lk, hi)
     calc = {"current_metric": "Google rating %.1f%s%s" % (rating, (", %d reviews" % _num(a, "rev_google_count")) if _num(a, "rev_google_count") else "", (", %.0f%% response rate" % rr) if rr is not None else ""),
             "benchmark": "%s star improvement × 5–9%% revenue per star" % star,
             "benchmark_source": BENCHMARKS["reviews"]["source"],
             "base": "annual revenue $%s" % "{:,.0f}".format(R),
             "formula": "revenue × %.2f%% / %.2f%% / %.1f%%" % (lo * 100, lk * 100, hi * 100),
-            "assumptions": [BENCHMARKS["reviews"]["note"], "This is a revenue opportunity, not a cost saving; it is the most speculative category in the audit and is labelled low confidence."],
+            "assumptions": [BENCHMARKS["reviews"]["note"], "This is added revenue, not a cost saving — it is counted in the revenue line, never mixed into cost savings — and it is the most speculative category in the audit, so it is labelled low confidence."],
             "method": "reputation lift", "overlap": "Does not overlap any cost category. Owner time spent on reviews is reported as hours, not dollars."}
     state = "Google rating %.1f." % rating
     if rr is not None:
@@ -709,10 +726,10 @@ def calc_marketing(a, fin, cls, owner):
     ag_note = "No agency fee, or the owner would keep the agency — nothing counted."
     if agency and replace == "Yes":
         ag = _rng(agency * 12, 0.5, 0.75, 1.0)
-        ag_note = "Owner said they would replace the agency: 50–100% of the $%s/yr fee counted." % "{:,.0f}".format(agency * 12)
+        ag_note = "Owner said they would replace the agency: 50–100%% of the $%s/yr fee counted." % "{:,.0f}".format(agency * 12)
     elif agency and replace == "Maybe":
         ag = _rng(agency * 12, 0.0, 0.25, 0.5)
-        ag_note = "Owner might replace the agency: 0–50% of the $%s/yr fee counted." % "{:,.0f}".format(agency * 12)
+        ag_note = "Owner might replace the agency: 0–50%% of the $%s/yr fee counted." % "{:,.0f}".format(agency * 12)
     total = {k: eff[k] + ag[k] for k in ("low", "likely", "high")}
     if roi is None and knows is None:
         missing.append("Ask %s whether they track which campaigns actually produce revenue." % owner)
@@ -1264,7 +1281,10 @@ def compute(answers, pricing_override=None):
         else:
             health_interp = "Controls are thin across most of the operation. Prioritise the two or three areas with the biggest dollar impact first."
 
+    R = fin.get("annual_revenue", {}).get("value")
     total = {k: sum(c[k] for c in cats.values() if c.get("status") == "ok") for k in ("low", "likely", "high")}
+    cost = {k: sum(cats[c][k] for c in COST_CATEGORIES if cats[c].get("status") == "ok") for k in ("low", "likely", "high")}
+    revenue = {k: sum(cats[c][k] for c in REVENUE_CATEGORIES if cats[c].get("status") == "ok") for k in ("low", "likely", "high")}
     monthly = {k: int(round(v / 12.0, -1)) for k, v in total.items()}
     counted = [c for c in cats.values() if c.get("status") == "ok" and c.get("high")]
     conf_pts = {"high": 3, "moderate": 2, "low": 1}
@@ -1286,7 +1306,9 @@ def compute(answers, pricing_override=None):
     roi = None
     if total["high"] and plan["annual"]:
         roi = {"low_x": round(total["low"] / plan["annual"], 1), "high_x": round(total["high"] / plan["annual"], 1),
-               "first_year_low_x": round(total["low"] / plan["first_year"], 1), "first_year_high_x": round(total["high"] / plan["first_year"], 1)}
+               "first_year_low_x": round(total["low"] / plan["first_year"], 1), "first_year_high_x": round(total["high"] / plan["first_year"], 1),
+               "cost_low_x": round(cost["low"] / plan["annual"], 1), "cost_high_x": round(cost["high"] / plan["annual"], 1)}
+    R = fin.get("annual_revenue", {}).get("value")
     hours = cats["operations"].get("hours_week")
     return {
         "concept_class": cls,
@@ -1295,7 +1317,8 @@ def compute(answers, pricing_override=None):
         "scores": scores,
         "health": {"score": health, "label": _score_label(health), "interpretation": health_interp, "strongest": strongest,
                    "weakest": weakest, "immediate": immediate, "assessed": len(assessed), "preliminary": len(assessed) < 3},
-        "totals": {"annual": total, "monthly": monthly, "confidence": overall_conf, "counted": len(counted)},
+        "totals": {"annual": total, "monthly": monthly, "cost": cost, "revenue": revenue, "confidence": overall_conf, "counted": len(counted),
+                   "pct_of_revenue": {"low": round(100.0 * total["low"] / R, 1), "high": round(100.0 * total["high"] / R, 1)} if R else None},
         "findings": build_findings(cats, scores),
         "wins": build_wins(a, fin, cats, scores),
         "problems": build_problems(a, cats, scores),
