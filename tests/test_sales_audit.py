@@ -369,3 +369,23 @@ def test_marketing_agency_replacement_does_not_crash_and_counts_fee():
     r = engine.compute({"mkt_spend_month": "4000", "mkt_agency_cost": "1500", "mkt_agency_replace": "Yes", "mkt_roi_tracked": "yes", "mkt_know_channels": "yes"})
     m = r["categories"]["marketing"]
     assert m["status"] == "ok" and m["high"] == 18000 and m["low"] == 9000
+
+
+def test_new_restaurant_annualizes_as_estimate_and_lowers_confidence():
+    r = engine.compute({"restaurant_name": "Fresh", "years_in_business": "0.25", "fin_monthly_revenue": "180000", "lab_labor_pct": "36"})
+    assert r["financials"]["annual_revenue"]["source"] == "estimated" and "opening period" in r["financials"]["annual_revenue"]["note"]
+    assert r["context"]["new_restaurant"] and r["context"]["months_open"] == 3
+    lab = r["categories"]["labor"]
+    assert lab["status"] == "ok" and lab["confidence"] == "low"
+    assert any("baseline to watch" in x for x in lab["calc"]["assumptions"])
+    old = engine.compute({"years_in_business": "4", "fin_monthly_revenue": "180000", "lab_labor_pct": "36"})
+    assert old["financials"]["annual_revenue"]["source"] == "calculated" and not old["context"]["new_restaurant"]
+
+
+def test_well_run_operation_is_flagged_not_inflated():
+    a = {"fin_annual_revenue": "2400000", "lab_labor_pct": "29", "lab_target_pct": "30", "lab_know_daily": "yes", "lab_schedule_how": "Based on forecasted sales",
+         "food_cost_pct": "30", "food_inventory_freq": "Weekly", "food_theoretical": "yes", "bar_alcohol_pct": "45", "bar_bev_cost_pct": "21", "bar_inventory_freq": "Weekly", "bar_theoretical": "yes",
+         "rev_google_rating": "4.7", "rev_response_rate": "95", "rev_response_time": "Same day", "ops_comps_month": "1500", "ops_comps_monitored": "Daily", "ops_report_lag": "Next day"}
+    r = engine.compute(a)
+    assert r["health"]["score"] >= 90 and r["totals"]["cost"]["high"] == 0
+    assert r["context"]["well_run"] and "well-run" in r["context"]["note"]

@@ -80,6 +80,26 @@ def build(audit, results):
     }
     sections.append(five)
 
+    # ── Special cases ──────────────────────────────────────────────────────
+    months_open = (fin.get("months_open") or {}).get("value")
+    sections.append({"key": "special", "title": "Two situations that change the pitch", "tag": "well-run / new", "blocks": [
+        {"h": "If Erik already runs it tight (numbers at or below target)", "items": [
+            "Say it first, out loud: 'These numbers are good. I'm not going to invent a problem.' The report will show 'Performing well' on those lines and a high health score — that is the credibility you spend later.",
+            "The audit will size little or nothing in cost savings and the ROI line may be under 1×. Do not fight it. Switch the case to: time (his hours on reports × 52), early warning (drift caught the day it starts, not at month-end), and consolidation (fewer dashboards).",
+            "Ask: 'How do you keep it this tight — and what happens on the weeks you're not here?' Well-run operators usually own the numbers personally. That is the gap: the operation depends on him doing the reading.",
+            "Ask: 'When did you last catch a supplier price creep the week it happened?' and 'Who answers reviews when you're off?' Even tight operators have one or two of these.",
+            "Offer the smaller commitment: one Starter module on the line he cares about most, not the Full System. Over-selling a good operator costs the referral.",
+        ]},
+        {"h": "If the bar opened only a few months ago" + (" (Simple EJ's: about %d months)" % months_open if months_open else ""), "items": [
+            "There is no annual revenue yet — enter monthly, and enter years in business as a fraction (3 months = 0.25). The tool then annualizes, labels it 'estimated', drops every confidence to low, and adds an opening-period note to every line and to the report.",
+            "Opening-period numbers are not a run rate: labor runs high while the team trains, sales ramp for 6–12 months, waste and comps are high while recipes and staff settle. Say so before he does — 'nothing in your first quarter is representative, and I'm not going to pretend it is.'",
+            "Do not quote savings as recoverable. Say 'baseline to watch'. The report is written that way automatically.",
+            "The pitch becomes: set targets now, connect the systems now, and let the daily brief show the drift as things settle — the owners who do this in month three know their real numbers by month six instead of month twelve.",
+            "Ask: 'What did you budget labor and food at when you built the model?' Those budget numbers become his targets in the tool and replace every benchmark.",
+            "Ask: 'What has surprised you most since opening?' and 'Which number are you watching hardest right now?' — that is the module to lead with.",
+            "Offer to re-run the audit at six months with real numbers. Put the date in.",
+        ]}]})
+
     # ── PART 1 — numbers ───────────────────────────────────────────────────
     metrics = [
         ("Labor %", "Labor cost ÷ sales × 100", "Largest controllable cost. Every point is real money every week.",

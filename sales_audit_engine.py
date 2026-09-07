@@ -199,6 +199,10 @@ def derive_financials(a):
         if value is not None:
             f[k] = {"value": value, "source": source, "note": note}
 
+    years = _num(a, "years_in_business")
+    months_open = int(round(years * 12)) if (years is not None and years < 1) else None
+    if months_open is not None:
+        f["months_open"] = {"value": months_open, "source": "owner", "note": "opened %d month%s ago" % (months_open, "" if months_open == 1 else "s")}
     annual = _pos(_num(a, "fin_annual_revenue"))
     if annual is not None:
         put("annual_revenue", annual, "owner")
@@ -208,7 +212,8 @@ def derive_financials(a):
         d = _pos(_num(a, "fin_daily_sales"))
         days = _num(a, "days_open")
         if m is not None:
-            put("annual_revenue", m * 12, "calculated", "monthly revenue × 12")
+            put("annual_revenue", m * 12, "estimated" if months_open else "calculated",
+                "monthly revenue × 12" + (" — annualized from an opening period of %d months, which is rarely representative" % months_open if months_open else ""))
         elif w is not None:
             put("annual_revenue", w * 52, "calculated", "weekly revenue × 52")
         elif d is not None:
@@ -1252,6 +1257,17 @@ def compute(answers, pricing_override=None):
     cls = concept_class(a)
     fin = derive_financials(a)
     cats = {k: CALCS[k](a, fin, cls, owner) for k, _ in CATEGORY_LABELS}
+    months_open = (fin.get("months_open") or {}).get("value")
+    if months_open:
+        # Opening-period numbers are not a run rate: labor runs high while
+        # the team trains, sales ramp, and vendors are still being settled.
+        # Everything sized becomes a watch item at reduced confidence.
+        for c in cats.values():
+            if c.get("status") == "ok":
+                c["confidence"] = "low" if months_open < 6 else ("moderate" if c.get("confidence") == "high" else c.get("confidence"))
+                if c.get("calc"):
+                    c["calc"]["assumptions"] = list(c["calc"].get("assumptions") or []) + [
+                        "%s opened %d months ago. Opening-period labor runs high and sales are still ramping, so this gap is a baseline to watch, not a leak to recover yet." % ((_txt(a, "restaurant_name") or "The restaurant"), months_open)]
     scores = {}
     for k, label in CATEGORY_LABELS:
         s, reasons = SCORERS[k](a, fin, cats[k])
@@ -1310,7 +1326,15 @@ def compute(answers, pricing_override=None):
                "cost_low_x": round(cost["low"] / plan["annual"], 1), "cost_high_x": round(cost["high"] / plan["annual"], 1)}
     R = fin.get("annual_revenue", {}).get("value")
     hours = cats["operations"].get("hours_week")
+    well_run = bool(health is not None and health >= 75 and cost["high"] < plan["annual"])
+    context = {
+        "new_restaurant": bool(months_open), "months_open": months_open,
+        "well_run": well_run,
+        "note": ("Opened %d month%s ago. Annual figures are annualized from the opening period and every gap is treated as a baseline to watch rather than a leak to recover; the audit should be re-run once six months of normal trading exist." % (months_open, "" if months_open == 1 else "s")) if months_open
+                else ("A well-run operation: the identified cost savings (%s – %s) do not on their own exceed the annual investment. The case here is time, early warning and consolidation, not recovery." % (_money(cost["low"]), _money(cost["high"])) if well_run else None),
+    }
     return {
+        "context": context,
         "concept_class": cls,
         "financials": fin,
         "categories": cats,

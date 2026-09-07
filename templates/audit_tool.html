@@ -473,6 +473,7 @@ function howBlock(c){ if(!c.calc) return ''; const k = c.calc; return `<details 
 function renderSummary(){
   const r = RESULTS; const tot = r.totals.annual, mo = r.totals.monthly;
   let h = `<div class="sh"><div class="k">Internal preview · live</div><h1>Opportunity summary</h1><p>Updates as you type. Ranges only — nothing here is counted without enough data, and overlapping categories never sum.</p></div>
+  ${r.context&&r.context.note?`<div class="warn" style="margin-bottom:16px">${esc(r.context.note)}</div>`:''}
   <div class="tot"><div class="b"><div class="k">Annual opportunity</div><div class="v e">${tot.high?money(tot.low)+' – '+money(tot.high):'—'}</div><div class="sub">${tot.high?'cost savings '+money(r.totals.cost.low)+'–'+money(r.totals.cost.high)+' · added revenue '+money(r.totals.revenue.low)+'–'+money(r.totals.revenue.high)+(r.totals.pct_of_revenue?' · '+r.totals.pct_of_revenue.low+'–'+r.totals.pct_of_revenue.high+'% of sales':''):r.totals.counted+' of 8 areas sized'}</div></div>
   <div class="b"><div class="k">Monthly opportunity</div><div class="v">${mo.high?money(mo.low)+' – '+money(mo.high):'—'}</div><div class="sub">annual ÷ 12</div></div>
   <div class="b"><div class="k">Confidence</div><div class="v">${r.totals.confidence||'—'}</div><div class="sub">${r.health.score!=null?'health score '+r.health.score+' · '+esc(r.health.label):'health not yet assessed'}</div></div></div><div class="cards">`;
