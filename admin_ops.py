@@ -316,6 +316,9 @@ def location_record(r, d):
     return {
         "id": rid,
         "name": r.get("name"),
+        # Will's own login lives on a restaurant row too — it is never a
+        # client, never MRR.
+        "is_admin_home": bool(users) and all(u.get("is_admin") for u in users),
         "brand": r.get("location_group") or r.get("name"),
         "location_name": r.get("location_name"),
         "city": r.get("neighborhood"),
@@ -478,7 +481,7 @@ def _brands(recs):
 def overview():
     recs, d = _records()
     now = d["now"]
-    real = [r for r in recs if not r["is_demo"] and r["billing"]["status"] != "internal"]
+    real = [r for r in recs if not r["is_demo"] and not r["is_admin_home"] and r["billing"]["status"] != "internal"]
     month_start = now.strftime("%Y-%m-01")
     conn = get_conn()
     today = now.strftime("%Y-%m-%d")
@@ -697,10 +700,10 @@ def billing():
         rows.append({"restaurant_id": r["id"], "restaurant": r["name"], "brand": r["brand"], "owner": (r["owner"] or {}).get("username"),
                      "owner_email": r["owner_email"], "stripe_customer_id": b["stripe_customer_id"], "status": b["status"], "tier": b["tier"],
                      "modules": b["modules"], "monthly": b["monthly"], "contract_status": b["contract_status"], "envelope_id": b["envelope_id"],
-                     "created_at": r["created_at"], "is_demo": r["is_demo"], "live": live.get(r["id"])})
+                     "created_at": r["created_at"], "is_demo": r["is_demo"], "is_admin_home": r["is_admin_home"], "live": live.get(r["id"])})
     rows.sort(key=lambda x: ({"past_due": 0, "churned": 1, "canceled": 1, "trial": 2, "active": 3, "internal": 4, "paused": 1}.get(x["status"], 2), x["restaurant"].lower()))
     return {"ok": True, "rows": rows, "stripe_live": bool(key), "stripe_error": live.get("_error"),
-            "mrr": sum(x["monthly"] for x in rows if not x["is_demo"])}
+            "mrr": sum(x["monthly"] for x in rows if not x["is_demo"] and not x.get("is_admin_home"))}
 
 
 def jobs():

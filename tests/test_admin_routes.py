@@ -146,40 +146,55 @@ def test_reactivate_client_flips_is_active_back(monkeypatch, app, db_path):
 
 # ── main admin dashboard view ────────────────────────────────────────────────
 
+def _ops_db(monkeypatch, db_path):
+    import admin_ops
+    real = models.get_conn
+    monkeypatch.setattr(admin_ops, "get_conn", lambda *a, **k: real(db_path))
+
+
 def test_admin_dashboard_renders_with_real_data(monkeypatch, app, db_path):
-    monkeypatch.setattr(auth, "get_current_user", lambda: {"id": 999, "is_admin": 1})
+    """The console is a shell; the data comes from /admin/api/clients."""
+    monkeypatch.setattr(auth, "get_current_user", lambda: {"id": 999, "is_admin": 1, "username": "will"})
+    _ops_db(monkeypatch, db_path)
     rid = _restaurant(db_path, name="Rendered Restaurant")
     create_user(rid, "alice", "alice@x.com", "pw", db_path=db_path)
     with app.test_request_context("/admin"):
-        resp = admin()
-    assert "Rendered Restaurant" in resp
+        shell = admin()
+    assert "Cavnar AI — Admin" in shell and "/admin/api/overview" in shell
+    from admin_routes import admin_api_clients
+    with app.test_request_context("/admin/api/clients"):
+        data = admin_api_clients().get_json()
+    assert any(c["name"] == "Rendered Restaurant" and c["owner"]["username"] == "alice" for c in data["clients"])
 
 
 def test_admin_dashboard_mrr_counts_only_active_billing(monkeypatch, app, db_path):
-    """MRR = $300 per active module, but only for non-admin users with
-    billing_status == 'active' — a trial client must not inflate MRR."""
-    monkeypatch.setattr(auth, "get_current_user", lambda: {"id": 999, "is_admin": 1})
+    """MRR is list price by module count, but only for billing_status ==
+    'active' — a trial client must not inflate MRR."""
+    monkeypatch.setattr(auth, "get_current_user", lambda: {"id": 999, "is_admin": 1, "username": "will"})
+    _ops_db(monkeypatch, db_path)
     rid_active = _restaurant(db_path, name="Active Co", billing_status="active",
                               module_reviews=1, module_labor=1, module_inventory=0, module_marketing=0)
     rid_trial = _restaurant(db_path, name="Trial Co", billing_status="trial",
                              module_reviews=1, module_labor=1, module_inventory=1, module_marketing=1)
     create_user(rid_active, "activeowner", "active@x.com", "pw", db_path=db_path)
     create_user(rid_trial, "trialowner", "trial@x.com", "pw", db_path=db_path)
-    with app.test_request_context("/admin"):
-        resp = admin()
-    # 2 active modules × $300 = $600 from the active client; the trial
-    # client (4 modules) contributes nothing to MRR.
-    assert "$600" in resp or ">600<" in resp
+    from admin_routes import admin_api_overview
+    with app.test_request_context("/admin/api/overview"):
+        kpis = admin_api_overview().get_json()["kpis"]
+    # 2 active modules = the $649 tier; the trial client (4 modules) adds nothing.
+    assert kpis["mrr"] == 649
 
 
 def test_admin_dashboard_never_counts_admin_toward_mrr(monkeypatch, app, db_path):
-    monkeypatch.setattr(auth, "get_current_user", lambda: {"id": 999, "is_admin": 1})
+    monkeypatch.setattr(auth, "get_current_user", lambda: {"id": 999, "is_admin": 1, "username": "will"})
+    _ops_db(monkeypatch, db_path)
     rid = _restaurant(db_path, name="Admin Home", billing_status="active",
                        module_reviews=1, module_labor=1, module_inventory=1, module_marketing=1)
     create_user(rid, "willadmin", "will@x.com", "pw", is_admin=True, db_path=db_path)
-    with app.test_request_context("/admin"):
-        resp = admin()
-    assert "$1,200" not in resp and ">1200<" not in resp
+    from admin_routes import admin_api_overview
+    with app.test_request_context("/admin/api/overview"):
+        kpis = admin_api_overview().get_json()["kpis"]
+    assert kpis["mrr"] == 0 and kpis["clients"] == 0
 
 
 # ── AI usage view (added alongside the ai_usage table in this session) ─────

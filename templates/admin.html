@@ -7,7 +7,6 @@
 <title>Cavnar AI — Admin</title>
 <link rel="icon" href="/favicon.png">
 <link rel="stylesheet" href="/static/fonts/cavnar-fonts.css">
-{% include '_csrf_fetch.html' %}
 <style>
 /* ── Cavnar admin console — the iOS palette, at desk density ─────────────── */
 :root{
@@ -146,6 +145,7 @@ td.r,th.r{text-align:right}
 </style>
 </head>
 <body>
+{% include "_csrf_fetch.html" %}
 <div class="shell">
   <aside class="side">
     <div class="brand">
