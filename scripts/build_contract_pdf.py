@@ -208,8 +208,8 @@ def build(out=OUT):
     p.c.drawString(M, p.y - 8, "PARTIES"); p.y -= 18
     colw = COL / 2 - 10
     y0 = p.y
-    c.setFillColor(TINT); c.roundRect(M, y0 - 84, colw, 84, 6, stroke=0, fill=1)
-    c.roundRect(M + colw + 20, y0 - 84, colw, 84, 6, stroke=0, fill=1)
+    c.setFillColor(TINT); c.roundRect(M, y0 - 104, colw, 104, 6, stroke=0, fill=1)
+    c.roundRect(M + colw + 20, y0 - 104, colw, 104, 6, stroke=0, fill=1)
     c.setFillColor(EMBER); c.setFont("Apfel", 8); c.drawString(M + 14, y0 - 16, "SERVICE PROVIDER")
     c.drawString(M + colw + 34, y0 - 16, "CLIENT")
     c.setFillColor(INK); c.setFont("ClashSemi", 12.5); c.drawString(M + 14, y0 - 34, "Cavnar AI LLC")
@@ -217,10 +217,11 @@ def build(out=OUT):
     c.drawString(M + 14, y0 - 50, "Will Cavnar, Owner")
     c.drawString(M + 14, y0 - 64, "will@cavnar.ai  ·  cavnar.ai")
     cx = M + colw + 34
-    c.setFillColor(MUTED); c.setFont("Apfel", 8); c.drawString(cx, y0 - 30, "Restaurant"); c.drawString(cx, y0 - 50, "Owner / authorized signer"); c.drawString(cx, y0 - 70, "Email")
-    for tok, yy in (("{{restaurant_name}}", y0 - 40), ("{{owner_name}}", y0 - 60), ("{{owner_email}}", y0 - 80)):
-        p.anchor(tok, cx + 84, yy)
-    p.y = y0 - 96
+    # label on one line, the DocuSign value on the line beneath it
+    for lab, tok, yy in (("Restaurant", "{{restaurant_name}}", y0 - 30), ("Owner / authorized signer", "{{owner_name}}", y0 - 58), ("Email", "{{owner_email}}", y0 - 86)):
+        c.setFillColor(MUTED); c.setFont("Apfel", 7.5); c.drawString(cx, yy, lab)
+        p.anchor(tok, cx, yy - 13)
+    p.y = y0 - 116
 
     p.para("This Service Agreement (the “Agreement”) is between Cavnar AI LLC (“Cavnar AI”) and the Client named above, and takes effect on the date the setup fee is paid. It must be signed before setup begins.", size=9.5, color=MUTED)
 
@@ -288,22 +289,22 @@ def build(out=OUT):
     p.para("All Client data remains the property of the Client. Cavnar AI will not sell, share or use Client data for any purpose other than providing the services in this Agreement, and retains it for the life of the account plus thirty days, after which it is deleted on request. Cavnar AI uses third-party AI models to draft content and analysis; all AI-generated content and recommendations should be reviewed before use, and Cavnar AI is not liable for decisions made on the basis of them. Cavnar AI’s total liability under this Agreement is limited to the fees paid by the Client in the thirty days before the claim.", size=9.5)
 
     # ── signatures ──
-    p.need(150); p.y -= 6
+    p.need(180); p.y -= 6
     c.setFillColor(MUTED); c.setFont("Apfel", 8.5); c.drawString(M, p.y - 8, "SIGNATURES"); p.y -= 14
     p.para("By signing below, both parties agree to the terms of this Service Agreement.", size=9.5)
     top = p.y; half = COL / 2 - 10
     for i, (kicker, who, sig, dt) in enumerate((("CLIENT", "Authorized signer", "{{sig_client}}", "{{date_client}}"),
                                                 ("CAVNAR AI LLC", "Will Cavnar, Owner", "{{sig_admin}}", "{{date_admin}}"))):
         x = M + i * (half + 20)
-        c.setFillColor(TINT); c.roundRect(x, top - 104, half, 104, 6, stroke=0, fill=1)
+        c.setFillColor(TINT); c.roundRect(x, top - 130, half, 130, 6, stroke=0, fill=1)
         c.setFillColor(EMBER); c.setFont("Apfel", 8); c.drawString(x + 14, top - 15, kicker)
-        c.setStrokeColor(RULE); c.setLineWidth(0.7); c.line(x + 14, top - 58, x + half - 14, top - 58)
-        p.anchor(sig, x + 16, top - 52)
-        c.setFillColor(MUTED); c.setFont("Apfel", 8); c.drawString(x + 14, top - 69, "Signature")
-        c.setFillColor(INK); c.setFont("Apfel", 9.5); c.drawString(x + 14, top - 83, who)
-        c.setFillColor(MUTED); c.setFont("Apfel", 8); c.drawString(x + 14, top - 96, "Date")
-        p.anchor(dt, x + 44, top - 96)
-    p.y = top - 114
+        c.setStrokeColor(RULE); c.setLineWidth(0.7); c.line(x + 14, top - 82, x + half - 14, top - 82)
+        p.anchor(sig, x + 16, top - 76)
+        c.setFillColor(MUTED); c.setFont("Apfel", 8); c.drawString(x + 14, top - 93, "Signature")
+        c.setFillColor(INK); c.setFont("Apfel", 9.5); c.drawString(x + 14, top - 107, who)
+        c.setFillColor(MUTED); c.setFont("Apfel", 8); c.drawString(x + 14, top - 121, "Date")
+        p.anchor(dt, x + 48, top - 121)
+    p.y = top - 140
 
     p._footer(); c.save()
     return out
