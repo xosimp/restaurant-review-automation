@@ -1326,12 +1326,16 @@ def compute(answers, pricing_override=None):
                "cost_low_x": round(cost["low"] / plan["annual"], 1), "cost_high_x": round(cost["high"] / plan["annual"], 1)}
     R = fin.get("annual_revenue", {}).get("value")
     hours = cats["operations"].get("hours_week")
-    well_run = bool(health is not None and health >= 75 and cost["high"] < plan["annual"])
+    # Well-run: strong scores and cost savings that are small relative to
+    # sales (under 1% of revenue, or under the subscription when revenue is
+    # unknown). The report then makes the time-and-early-warning case
+    # instead of pretending there is money to recover.
+    well_run = bool(health is not None and health >= 75 and cost["likely"] < max(plan["annual"], (R or 0) * 0.01))
     context = {
         "new_restaurant": bool(months_open), "months_open": months_open,
         "well_run": well_run,
         "note": ("Opened %d month%s ago. Annual figures are annualized from the opening period and every gap is treated as a baseline to watch rather than a leak to recover; the audit should be re-run once six months of normal trading exist." % (months_open, "" if months_open == 1 else "s")) if months_open
-                else ("A well-run operation: the identified cost savings (%s – %s) do not on their own exceed the annual investment. The case here is time, early warning and consolidation, not recovery." % (_money(cost["low"]), _money(cost["high"])) if well_run else None),
+                else ("A well-run operation: the identified cost savings (%s – %s) are small relative to sales. The case here is time, early warning and consolidation, not recovery." % (_money(cost["low"]), _money(cost["high"])) if well_run else None),
     }
     return {
         "context": context,
