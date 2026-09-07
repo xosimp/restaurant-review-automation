@@ -585,6 +585,60 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none}
    fills too, so everything in the panel matches the same branded shade. */
 .ask-cavnar-accent-bg{background:#c84b2f}
 [data-theme="dark"] .ask-cavnar-accent-bg{background:#923020!important}
+/* ── Ask Cavnar (ask-*) — the iOS Ask screen, floating. Dark-first, theme-aware. */
+.ask-fab{position:fixed;bottom:24px;right:24px;width:60px;height:60px;border-radius:50%;border:1px solid rgba(232,149,106,.35);background:radial-gradient(circle at 35% 30%,#2c2c2e,#0c0c0c 72%);box-shadow:0 10px 30px rgba(200,75,47,.35),0 0 0 6px rgba(200,75,47,.08);display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:998;padding:0;transition:transform .18s,box-shadow .18s}
+.ask-fab:hover{transform:translateY(-2px);box-shadow:0 14px 36px rgba(200,75,47,.5),0 0 0 8px rgba(200,75,47,.12)}
+.ask-fab:active{transform:scale(.94)}
+.ask-fab canvas{display:block;width:34px;height:34px}
+.ask-fab-l{position:absolute;right:calc(100% + 12px);top:50%;transform:translateY(-50%) translateX(6px);white-space:nowrap;font-family:'Clash Display',sans-serif;font-size:14px;color:#f0ebe0;background:#161618;border:1px solid rgba(232,149,106,.3);border-radius:999px;padding:7px 13px;opacity:0;pointer-events:none;transition:opacity .18s,transform .18s}
+.ask-fab:hover .ask-fab-l{opacity:1;transform:translateY(-50%)}
+.ask-fab.open .ask-fab-l{display:none}
+.ask-panel{position:fixed;bottom:98px;right:24px;width:420px;max-width:calc(100vw - 32px);height:min(680px,calc(100vh - 130px));flex-direction:column;border-radius:22px;border:1px solid rgba(232,149,106,.22);background:var(--paper);background-image:linear-gradient(180deg,rgba(200,75,47,.34),rgba(200,75,47,0) 46%);box-shadow:0 24px 70px rgba(0,0,0,.5),0 0 0 1px rgba(0,0,0,.18);z-index:999;overflow:hidden;color:var(--ink)}
+.ask-head{display:flex;align-items:center;gap:12px;padding:18px 18px 12px}
+.ask-head canvas{display:block;width:40px;height:40px;flex-shrink:0}
+.ask-ttl{flex:1;min-width:0}
+.ask-ttl b{display:block;font-family:'Clash Display',sans-serif;font-weight:500;font-size:19px;color:var(--ink);line-height:1.1}
+.ask-ttl span{display:block;font-size:12.5px;color:var(--ink3);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ask-chips{display:flex;gap:8px}
+.ask-chip{width:34px;height:34px;border-radius:50%;border:1px solid rgba(14,12,10,.08);background:rgba(14,12,10,.05);color:var(--ember);display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0;transition:background .15s}
+[data-theme="dark"] .ask-chip{border-color:rgba(255,255,255,.08);background:rgba(255,255,255,.06)}
+.ask-chip:hover{background:rgba(200,75,47,.16)}
+.ask-hist{max-height:200px;overflow-y:auto;border-top:1px solid var(--paper3);border-bottom:1px solid var(--paper3);background:var(--paper2);flex-shrink:0}
+.ask-msgs{flex:1;overflow-y:auto;padding:8px 16px 16px;display:flex;flex-direction:column;gap:14px;min-height:180px}
+.ask-empty{display:flex;flex-direction:column;align-items:center;text-align:center;padding:18px 4px 6px}
+.ask-badge{width:64px;height:64px;border-radius:19px;background:linear-gradient(180deg,#2c2c2e,#161618);border:1px solid rgba(255,255,255,.08);display:flex;align-items:center;justify-content:center;color:#e8956a;box-shadow:0 10px 30px rgba(200,75,47,.28);flex-shrink:0}
+.ask-badge.s{width:28px;height:28px;border-radius:9px;box-shadow:0 4px 14px rgba(200,75,47,.25);margin-top:2px}
+.ask-badge.s svg{width:15px;height:15px}
+.ask-empty h3{font-family:'Clash Display',sans-serif;font-weight:500;font-size:21px;color:var(--ink);margin:16px 0 6px}
+.ask-empty p{font-size:13.5px;line-height:1.55;color:var(--ink3);margin:0 12px 14px;max-width:36ch}
+.ask-sugg{width:100%;display:flex;flex-direction:column;gap:8px}
+.ask-sugg button{display:flex;align-items:center;gap:9px;width:100%;text-align:left;padding:11px 14px;border-radius:12px;background:rgba(200,75,47,.10);border:1px solid rgba(200,75,47,.25);color:#e8956a;font-family:'Apfel Grotezk',sans-serif;font-size:13.5px;font-weight:600;cursor:pointer;transition:background .15s,transform .15s}
+.ask-sugg button svg{width:13px;height:13px;flex-shrink:0}
+.ask-sugg button:hover{background:rgba(200,75,47,.18);transform:translateY(-1px)}
+.ask-b{display:flex;gap:8px;align-items:flex-start;max-width:92%}
+.ask-b.user{align-self:flex-end;justify-content:flex-end}
+.ask-b .bb{padding:10px 14px;font-size:13.5px;line-height:1.55;white-space:pre-wrap;word-wrap:break-word;border-radius:18px 18px 18px 4px;background:var(--paper2);color:var(--ink);border:1px solid rgba(14,12,10,.06);min-width:0}
+[data-theme="dark"] .ask-b .bb{border-color:rgba(255,255,255,.05)}
+.ask-b.user .bb{border-radius:18px 18px 4px 18px;background:linear-gradient(180deg,#d95b3d,#c84b2f);color:#fff;border-color:transparent;box-shadow:0 6px 18px rgba(200,75,47,.3)}
+.ask-b .bb b{font-weight:700}
+.ask-b.loading .bb{display:flex;align-items:center;gap:10px;min-width:170px}
+.ask-b.loading .bb canvas{display:block;flex-shrink:0}
+.ask-b.loading .bb span{font-size:12.5px;color:var(--ink3)}
+.ask-prop{align-self:flex-start;max-width:92%;background:var(--paper2);border:1px solid var(--ember);border-radius:14px;padding:12px 14px}
+.ask-prop .t{font-size:13px;font-weight:700;color:var(--ink);margin-bottom:9px}
+.ask-prop .r{display:flex;gap:8px}
+.ask-prop .ok{font-size:12.5px;color:var(--green);font-weight:700}.ask-prop .dim{font-size:12.5px;color:var(--ink3)}.ask-prop .err{font-size:12px;color:var(--red);margin-top:7px}
+.ask-compose{display:flex;gap:10px;align-items:center;padding:10px 14px 14px;border-top:1px solid rgba(14,12,10,.06);flex-shrink:0}
+[data-theme="dark"] .ask-compose{border-top-color:rgba(255,255,255,.05)}
+.ask-compose input{flex:1;min-width:0;padding:12px 14px;border-radius:16px;border:1px solid rgba(14,12,10,.08);background:var(--paper2);color:var(--ink);font-family:'Apfel Grotezk',sans-serif;font-size:14.5px;outline:none;transition:border-color .15s}
+[data-theme="dark"] .ask-compose input{border-color:rgba(255,255,255,.06)}
+.ask-compose input:focus{border-color:rgba(200,75,47,.55)}
+.ask-compose input::placeholder{color:var(--ink3)}
+.ask-send{width:44px;height:44px;border-radius:50%;border:none;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:var(--paper3);color:var(--ink3);cursor:pointer;padding:0;transition:background .15s,box-shadow .15s,color .15s}
+.ask-send.on,.ask-send:not(:disabled):hover{background:linear-gradient(180deg,#e8956a,#c84b2f);color:#fff;box-shadow:0 8px 20px rgba(200,75,47,.4)}
+.ask-send:disabled{opacity:.55;cursor:default;box-shadow:none}
+@media(max-width:520px){.ask-panel{right:12px;bottom:90px;height:min(620px,calc(100vh - 110px))}.ask-fab{right:16px;bottom:16px}}
+
 .ask-cavnar-accent-fill{fill:#c84b2f}
 [data-theme="dark"] .ask-cavnar-accent-fill{fill:#923020!important}
 /* Platform-brand buttons (Post to Instagram/Facebook) — need to win over
@@ -1822,42 +1876,31 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 </div>
 </div><!-- /panel-reviews -->
 
-<!-- Ask Cavnar — body level so it floats over every tab, not just Account -->
-<button id="ask-cavnar-fab" onclick="toggleAskCavnar()" title="Ask Cavnar AI" aria-label="Ask Cavnar AI"
-  class="ask-cavnar-accent-bg"
-  style="position:fixed;bottom:24px;right:24px;width:52px;height:52px;border-radius:50%;border:none;box-shadow:0 4px 16px rgba(200,75,47,.4);display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:998;transition:transform .15s,box-shadow .15s"
-  onmouseover="this.style.transform='translateY(-2px)';this.style.boxShadow='0 6px 20px rgba(200,75,47,.5)'"
-  onmouseout="this.style.transform='';this.style.boxShadow='0 4px 16px rgba(200,75,47,.4)'"
-  onmousedown="this.style.transform='scale(.9)'"
-  onmouseup="this.style.transform='translateY(-2px)'">
-  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-    <rect x="3" y="4" width="18" height="13" rx="4" fill="white"/>
-    <path d="M8.5 17l-3.5 4v-4h3.5z" fill="white"/>
-    <path d="M18 2l.75 2.25L21 5l-2.25.75L18 8l-.75-2.25L15 5l2.25-.75L18 2z" fill="white" opacity=".85"/>
-  </svg>
+<!-- Ask Cavnar — body level so it floats over every tab, not just Account.
+     The floating button is the breathing Cavnar orb on an obsidian disc; the
+     panel is the iOS Ask screen: orb header, suggested questions, iOS bubble
+     radii, the circular ember send button. -->
+<button id="ask-cavnar-fab" onclick="toggleAskCavnar()" title="Ask Cavnar AI" aria-label="Ask Cavnar AI" class="ask-fab">
+  <canvas id="ask-fab-orb" width="34" height="34" aria-hidden="true"></canvas>
+  <span class="ask-fab-l">Ask Cavnar AI</span>
 </button>
 
-<div id="ask-cavnar-panel" style="display:none;flex-direction:column;position:fixed;bottom:88px;right:24px;width:360px;max-height:min(520px,70vh);background:var(--surface);border:1.5px solid var(--ember);border-radius:16px;box-shadow:0 12px 48px rgba(0,0,0,.35);z-index:999;overflow:hidden">
-  <div style="padding:14px 16px;border-bottom:1px solid rgba(200,75,47,.3);display:flex;align-items:center;justify-content:space-between;background:#1a1410;flex-shrink:0">
-    <div style="display:flex;align-items:center;gap:8px">
-      <canvas id="ask-cavnar-header-orb" width="22" height="22" aria-hidden="true" style="width:22px;height:22px;display:block"></canvas>
-      <span style="font-family:'Clash Display',sans-serif;font-size:14px;color:#f0ebe0">Ask Cavnar AI</span>
-    </div>
-    <div style="display:flex;align-items:center;gap:10px">
-      <button onclick="askToggleHistory()" title="Chat history" style="background:none;border:1px solid rgba(240,235,224,.25);border-radius:6px;cursor:pointer;color:#f0ebe0;font-size:11px;padding:3px 8px;font-family:'Apfel Grotezk',sans-serif">History</button>
-      <button onclick="askNewChat()" title="New chat" style="background:none;border:1px solid rgba(240,235,224,.25);border-radius:6px;cursor:pointer;color:#f0ebe0;font-size:11px;padding:3px 8px;font-family:'Apfel Grotezk',sans-serif">New</button>
-      <button aria-label="Close" onclick="toggleAskCavnar()" style="background:none;border:none;cursor:pointer;color:#f0ebe0;font-size:15px;line-height:1;padding:0">&#x2715;</button>
+<div id="ask-cavnar-panel" class="ask-panel" style="display:none">
+  <div class="ask-head">
+    <canvas id="ask-cavnar-header-orb" width="40" height="40" aria-hidden="true"></canvas>
+    <div class="ask-ttl"><b>Ask Cavnar AI</b><span>Your restaurant intelligence consultant</span></div>
+    <div class="ask-chips">
+      <button class="ask-chip" onclick="askToggleHistory()" title="Chat history" aria-label="Chat history"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/></svg></button>
+      <button class="ask-chip" onclick="askNewChat()" title="New chat" aria-label="New chat"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></button>
+      <button class="ask-chip" onclick="toggleAskCavnar()" title="Close" aria-label="Close"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
     </div>
   </div>
-  <div id="ask-cavnar-history" style="display:none;max-height:200px;overflow-y:auto;border-bottom:1px solid var(--paper3);background:var(--paper2)"></div>
-  <div id="ask-cavnar-messages" style="flex:1;overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column;gap:10px;min-height:180px">
-    <div style="font-size:12px;color:var(--ink3);line-height:1.6">Ask me anything — your reviews, labor, food cost, and marketing numbers, or general advice on running the place. I'll pull in your real data whenever it's relevant.</div>
-  </div>
-  <div style="padding:12px 14px;border-top:1px solid var(--paper3);display:flex;gap:8px;flex-shrink:0">
-    <input type="text" id="ask-cavnar-input" placeholder="Ask anything — or tell me to do it" maxlength="2000"
-      style="flex:1;padding:9px 12px;border:1px solid var(--paper3);border-radius:8px;font-size:12px;font-family:'Apfel Grotezk',sans-serif;outline:none;background:var(--paper2);color:var(--ink)"
-      onkeydown="if(event.key==='Enter'){event.preventDefault();sendAskCavnar();}">
-    <button onclick="sendAskCavnar()" class="btn-primary" id="ask-cavnar-send-btn" style="padding:0 14px;font-size:12px">Ask</button>
+  <div id="ask-cavnar-history" class="ask-hist" style="display:none"></div>
+  <div id="ask-cavnar-messages" class="ask-msgs"></div>
+  <div class="ask-compose">
+    <input type="text" id="ask-cavnar-input" placeholder="How can I help?" maxlength="2000" autocomplete="off"
+      onkeydown="if(event.key==='Enter'){event.preventDefault();sendAskCavnar();}" oninput="askInputChanged()">
+    <button onclick="sendAskCavnar()" id="ask-cavnar-send-btn" class="ask-send" aria-label="Send question"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg></button>
   </div>
 </div>
 
@@ -4198,56 +4241,93 @@ var _askCavnarHistory = [];
 var _askCavnarHeaderOrb = null;
 var _askCavnarLoadingOrb = null;
 
+var _askFabOrb = null;
+var ASK_SPARK = '<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2l1.8 5.2L19 9l-5.2 1.8L12 16l-1.8-5.2L5 9l5.2-1.8L12 2zM19 14l.9 2.6 2.6.9-2.6.9L19 21l-.9-2.6-2.6-.9 2.6-.9L19 14zM5 15l.7 2 2 .7-2 .7L5 20.4l-.7-2-2-.7 2-.7L5 15z"/></svg>';
+function _askEsc(t){return String(t==null?'':t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+// Bold and bullets only — the same light markdown pass the Home inline ask uses.
+function _askMd(t){return _askEsc(t).replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/^#{1,6}\s+/gm,'').replace(/^\s*[-*]\s+/gm,'• ').replace(/(^|[^*])\*(?!\*)([^*\n]+)\*(?!\*)/g,'$1$2').replace(/\*\*/g,'').replace(/\n{3,}/g,'\n\n');}
+function _askIsDark(){return document.documentElement.getAttribute('data-theme')==='dark';}
+window._askEmptyHtml = function() {
+  var qs = ['How are my reviews doing?', 'What upcoming holidays should I focus on?', 'How do I get my labor cost down?'];
+  return '<div class="ask-empty"><div class="ask-badge">' + ASK_SPARK + '</div><h3>Ask me anything</h3><p>Your numbers, or general advice on running the place — I\'ll pull in your real data whenever it\'s relevant.</p><div class="ask-sugg">'
+    + qs.map(function(q){ return '<button type="button" onclick="askSuggest(this)">' + ASK_SPARK + '<span>' + _askEsc(q) + '</span></button>'; }).join('') + '</div></div>';
+};
+window.askSuggest = function(btn) {
+  var input = document.getElementById('ask-cavnar-input');
+  if (!input) return;
+  input.value = btn.textContent.trim();
+  askInputChanged();
+  sendAskCavnar();
+};
+window.askInputChanged = function() {
+  var input = document.getElementById('ask-cavnar-input'), btn = document.getElementById('ask-cavnar-send-btn');
+  if (input && btn) btn.classList.toggle('on', input.value.trim().length > 0);
+};
+function _askClearEmpty() { var e = document.querySelector('#ask-cavnar-messages .ask-empty'); if (e) e.remove(); }
 window.toggleAskCavnar = function() {
   var panel = document.getElementById('ask-cavnar-panel');
+  var fab = document.getElementById('ask-cavnar-fab');
   var isOpen = panel.style.display === 'flex';
   panel.style.display = isOpen ? 'none' : 'flex';
+  if (fab) fab.classList.toggle('open', !isOpen);
   if (!isOpen) {
-    // Idle orb in the header — a slow breathing ring while nothing is in
-    // flight. The header bar is dark in both themes, so paint the dark ramp.
+    // Idle orb in the header — a slow breathing ring while nothing is in flight.
     if (!_askCavnarHeaderOrb && window.CavnarOrb) {
-      _askCavnarHeaderOrb = CavnarOrb.mount(document.getElementById('ask-cavnar-header-orb'), 'breathing', {size: 22, dark: true});
+      _askCavnarHeaderOrb = CavnarOrb.mount(document.getElementById('ask-cavnar-header-orb'), 'breathing', {size: 40, dark: _askIsDark()});
     }
+    var box = document.getElementById('ask-cavnar-messages');
+    if (box && !box.children.length) box.innerHTML = _askEmptyHtml();
     var input = document.getElementById('ask-cavnar-input');
     if (input) input.focus();
   }
 };
+document.addEventListener('DOMContentLoaded', function() {
+  // The floating button is the orb itself, always on its dark disc.
+  var c = document.getElementById('ask-fab-orb');
+  if (c && window.CavnarOrb && !_askFabOrb) _askFabOrb = CavnarOrb.mount(c, 'breathing', {size: 34, dark: true});
+});
 
 function _appendAskCavnarMessage(text, isUser) {
   var messages = document.getElementById('ask-cavnar-messages');
+  _askClearEmpty();
+  var wrap = document.createElement('div');
+  wrap.className = 'ask-b ' + (isUser ? 'user' : 'ai');
+  if (!isUser) wrap.innerHTML = '<div class="ask-badge s">' + ASK_SPARK + '</div>';
   var bubble = document.createElement('div');
-  bubble.className = isUser ? 'ask-cavnar-accent-bg' : '';
-  bubble.style.cssText = isUser
-    ? 'align-self:flex-end;color:white;padding:8px 12px;border-radius:12px 12px 2px 12px;font-size:12px;line-height:1.5;max-width:85%;white-space:pre-wrap'
-    : 'align-self:flex-start;background:var(--paper3);color:var(--ink);padding:8px 12px;border-radius:12px 12px 12px 2px;font-size:12px;line-height:1.5;max-width:85%;white-space:pre-wrap';
-  bubble.textContent = text;
-  messages.appendChild(bubble);
+  bubble.className = 'bb';
+  if (isUser) bubble.textContent = text; else bubble.innerHTML = _askMd(text);
+  wrap.appendChild(bubble);
+  messages.appendChild(wrap);
   messages.scrollTop = messages.scrollHeight;
   return bubble;
 }
 
 function _appendAskCavnarLoadingBubble() {
   var messages = document.getElementById('ask-cavnar-messages');
+  _askClearEmpty();
+  var wrap = document.createElement('div');
+  wrap.className = 'ask-b ai loading';
   var bubble = document.createElement('div');
-  bubble.style.cssText = 'align-self:flex-start;background:var(--paper3);padding:10px 12px;border-radius:12px 12px 12px 2px;display:flex;align-items:center;gap:10px;min-width:170px';
+  bubble.className = 'bb';
   // The thinking orb: its motion changes with what the agent is doing —
   // connecting, then searching/working/shaping per tool, then composing —
   // driven by the stream's state events (mirrors iOS's LoadingBubble).
   var canvas = document.createElement('canvas');
   canvas.setAttribute('aria-hidden', 'true');
+  canvas.width = 28; canvas.height = 28;
   bubble.appendChild(canvas);
   var status = document.createElement('span');
-  status.style.cssText = 'font-size:11.5px;color:var(--ink3)';
   status.textContent = 'Connecting\u2026';
   bubble.appendChild(status);
-  messages.appendChild(bubble);
+  wrap.appendChild(bubble);
+  messages.appendChild(wrap);
   messages.scrollTop = messages.scrollHeight;
   if (window.CavnarOrb) {
     if (_askCavnarLoadingOrb) CavnarOrb.destroy(_askCavnarLoadingOrb);
-    _askCavnarLoadingOrb = CavnarOrb.mount(canvas, 'connecting', {size: 28});
+    _askCavnarLoadingOrb = CavnarOrb.mount(canvas, 'connecting', {size: 28, dark: _askIsDark()});
   }
-  bubble._status = status;
-  return bubble;
+  wrap._status = status;
+  return wrap;
 }
 
 function _setAskCavnarLoadingState(bubble, label, state) {
@@ -4258,30 +4338,24 @@ function _setAskCavnarLoadingState(bubble, label, state) {
 function _appendAskCavnarProposal(p) {
   var messages = document.getElementById('ask-cavnar-messages');
   var card = document.createElement('div');
-  card.style.cssText = 'align-self:flex-start;max-width:92%;background:var(--paper2);border:1px solid var(--ember);border-radius:12px;padding:11px 13px';
+  card.className = 'ask-prop';
   var title = document.createElement('div');
-  title.style.cssText = 'font-size:11.5px;font-weight:700;color:var(--ink);margin-bottom:8px';
+  title.className = 't';
   title.textContent = p.summary || 'Confirm this action';
   card.appendChild(title);
-
   var row = document.createElement('div');
-  row.style.cssText = 'display:flex;gap:8px';
-
+  row.className = 'r';
   var confirm = document.createElement('button');
-  confirm.className = 'btn-primary';
-  confirm.style.cssText = 'font-size:11px;padding:5px 12px';
+  confirm.className = 'hb-btn p';
   confirm.textContent = 'Confirm';
   confirm.onclick = function() { _runAskCavnarProposal(p, card, confirm); };
-
   var dismiss = document.createElement('button');
-  dismiss.className = 'btn';
-  dismiss.style.cssText = 'font-size:11px;padding:5px 12px;background:transparent;color:var(--ink3);border:1px solid var(--paper3)';
+  dismiss.className = 'hb-btn';
   dismiss.textContent = 'Not now';
   dismiss.onclick = function() {
     _recordAskCavnarAction(p, 'dismissed');
-    card.innerHTML = '<div style="font-size:11.5px;color:var(--ink3)">Dismissed.</div>';
+    card.innerHTML = '<div class="dim">Dismissed.</div>';
   };
-
   row.appendChild(confirm);
   row.appendChild(dismiss);
   card.appendChild(row);
@@ -4302,7 +4376,7 @@ function _runAskCavnarProposal(p, card, btn) {
   btn.textContent = 'Working…';
   var route = (p.route && p.route.web) || '';
   var method = (p.route && p.route.method) || 'POST';
-  if (!route) { card.innerHTML = '<div style="font-size:11.5px;color:#ef4444">No route for that action.</div>'; return; }
+  if (!route) { card.innerHTML = '<div class="err">No route for that action.</div>'; return; }
   var opts = {method: method, headers: {'Content-Type': 'application/json'}};
   if (method !== 'GET') opts.body = JSON.stringify(p.body || {});
   // The proposal fires the very same authenticated endpoint the button in
@@ -4310,11 +4384,11 @@ function _runAskCavnarProposal(p, card, btn) {
   fetch(route, opts).then(function(r) { return r.json(); }).then(function(d) {
     if (d.ok) {
       _recordAskCavnarAction(p, 'confirmed');
-      card.innerHTML = '<div style="font-size:11.5px;color:#6fcf97;font-weight:700">Done \u2713</div>';
+      card.innerHTML = '<div class="ok">Done \u2713</div>';
     } else {
       btn.disabled = false; btn.textContent = 'Confirm';
       var err = document.createElement('div');
-      err.style.cssText = 'font-size:11px;color:#ef4444;margin-top:7px';
+      err.className = 'err';
       err.textContent = d.error || "That didn't go through.";
       card.appendChild(err);
     }
@@ -9450,7 +9524,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
 
   // ── Ask Cavnar history ──
   window._askConversationId=window._askConversationId||null;
-  function askMsgHtml(m){var me=m.role==='user';return '<div style="align-self:'+(me?'flex-end':'flex-start')+';max-width:86%;padding:8px 11px;border-radius:12px;font-size:12px;line-height:1.55;white-space:pre-wrap;background:'+(me?'var(--ember)':'var(--paper2)')+';color:'+(me?'#fff':'var(--ink)')+';border:1px solid '+(me?'var(--ember)':'var(--paper3)')+'">'+esc(m.content)+'</div>';}
+  function askMsgHtml(m){var me=m.role==='user';return '<div class="ask-b '+(me?'user':'ai')+'">'+(me?'':'<div class="ask-badge s">'+ASK_SPARK+'</div>')+'<div class="bb">'+(me?_askEsc(m.content):_askMd(m.content))+'</div></div>';}
   window.askRefreshConversations=function(quiet){
     var box=document.getElementById('ask-cavnar-history');if(!box)return;
     if(!quiet&&box.style.display==='none')return;
@@ -9469,7 +9543,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       var msgs=d.messages||[];
       _askCavnarHistory=msgs.filter(function(m){return m.role==='user'||m.role==='assistant';}).map(function(m){return {role:m.role,content:m.content};});
       var box=document.getElementById('ask-cavnar-messages');
-      if(box){box.innerHTML=msgs.length?msgs.map(askMsgHtml).join(''):'<div style="font-size:12px;color:var(--ink3)">Empty chat — ask away.</div>';box.scrollTop=box.scrollHeight;}
+      if(box){box.innerHTML=msgs.length?msgs.map(askMsgHtml).join(''):_askEmptyHtml();box.scrollTop=box.scrollHeight;}
       var h=document.getElementById('ask-cavnar-history');if(h)h.style.display='none';
     });
   };
@@ -9477,7 +9551,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     jsend('/api/ask-cavnar/conversations',{},function(d){
       if(!d.ok){toast(d.error||'Could not start a chat','error');return;}
       window._askConversationId=d.conversation_id;_askCavnarHistory=[];
-      var box=document.getElementById('ask-cavnar-messages');if(box)box.innerHTML='<div style="font-size:12px;color:var(--ink3);line-height:1.6">New chat. Ask me anything — your reviews, labor, food cost, and marketing numbers, or general advice on running the place.</div>';
+      var box=document.getElementById('ask-cavnar-messages');if(box)box.innerHTML=_askEmptyHtml();
       var h=document.getElementById('ask-cavnar-history');if(h)h.style.display='none';
       var inp=document.getElementById('ask-cavnar-input');if(inp)inp.focus();
     });
