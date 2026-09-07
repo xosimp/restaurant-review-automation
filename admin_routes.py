@@ -57,146 +57,32 @@ STRIPE_SECRET_KEY     = os.getenv("STRIPE_SECRET_KEY", "")
 @admin_bp.route("/admin")
 @admin_required
 def admin(current_user):
-    users = list_users()
-    # Enrich with restaurant data
-    from models import get_restaurant
-    enriched = []
-    for u in users:
-        r = get_restaurant(u["restaurant_id"])
-        u["billing_status"] = r.billing_status if r else "trial"
-        u["is_demo"] = bool(r and r.is_demo)
-        u["last_active_tab"] = r.last_active_tab if r else None
-        u["internal_notes"] = r.internal_notes if r else None
-        u["phone"] = r.owner_phone if r else None
-        u["last_fetched_at"] = r.last_fetched_at[:10] if r and r.last_fetched_at else None
-        u["location_group"]    = r.location_group if r else None
-        u["location_name"]     = r.location_name if r else None
-        u["contract_status"]   = r.contract_status if r else "pending"
-        u["envelope_id"]       = r.docusign_envelope_id if r else None
+    """The admin console. Everything it shows is fetched from /admin/api/*
+    (see admin_ops.py) — this only renders the shell."""
+    return render_template("admin.html", current_user=current_user)
 
-        # #10 Client activity dashboard additions
-        # Module flags
-        u["module_reviews"]   = r.module_reviews if r else 0
-        u["module_labor"]     = r.module_labor if r else 0
-        u["module_inventory"] = r.module_inventory if r else 0
-        u["module_marketing"] = r.module_marketing if r else 0
-        u["pos_system"]            = r.pos_system if r else None
-        u["toast_restaurant_guid"] = r.toast_restaurant_guid if r else None
-        u["gmb_connected"]         = bool(r and r.gmb_refresh_token)
 
-        # Unreviewed reviews count
+@admin_bp.route("/admin/api/system")
+@admin_required
+def admin_api_system(current_user):
+    """Which services this server has keys for — presence only, never the
+    values."""
+    import os as _os
+    keys = {"Anthropic (Claude)": "ANTHROPIC_API_KEY", "Perplexity": "PERPLEXITY_API_KEY", "Resend (email)": "RESEND_API_KEY",
+            "Stripe": "STRIPE_SECRET_KEY", "Stripe webhook": "STRIPE_WEBHOOK_SECRET", "DocuSign": "DOCUSIGN_INTEGRATION_KEY",
+            "Twilio (SMS)": "TWILIO_ACCOUNT_SID", "Google OAuth": "GOOGLE_CLIENT_ID", "Google Places": "GOOGLE_PLACES_API_KEY",
+            "Meta (Instagram)": "META_APP_ID", "APNs (push)": "APNS_KEY_ID", "Sentry": "SENTRY_DSN"}
+    services = {label: bool(_os.getenv(var)) for label, var in keys.items()}
+    build = _os.getenv("RAILWAY_GIT_COMMIT_SHA", "")[:8] or None
+    if not build:
         try:
-            from models import get_conn as _gc
-            _conn = _gc()
-            _row = _conn.execute(
-                """SELECT COUNT(*) as cnt FROM reviews
-                   WHERE restaurant_id=? AND response_status NOT IN ('approved','posted','skipped')""",
-                (u["restaurant_id"],)
-            ).fetchone()
-            _conn.close()
-            u["pending_reviews"] = _row["cnt"] if _row else 0
+            import subprocess
+            build = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], stderr=subprocess.DEVNULL, timeout=2).decode().strip()
         except Exception:
-            u["pending_reviews"] = 0
-
-        # Health score: green / amber / red (admin always green)
-        try:
-            if u.get("is_admin"):
-                u["health"] = "green"
-            else:
-                from datetime import datetime as _dt, timedelta as _td
-                _now = _dt.now()
-                _last = u.get("last_login")
-                _days_since_login = 999
-                if _last:
-                    try:
-                        _ll = _dt.fromisoformat(_last.replace("Z",""))
-                        _days_since_login = (_now - _ll).days
-                    except Exception:
-                        pass
-                _pending = u.get("pending_reviews", 0)
-                if _days_since_login <= 7 and _pending < 5:
-                    u["health"] = "green"
-                elif _days_since_login <= 14 and _pending < 10:
-                    u["health"] = "amber"
-                else:
-                    u["health"] = "red"
-        except Exception:
-            u["health"] = "amber"
-
-        enriched.append(u)
-    from models import get_all_location_groups
-    location_groups = get_all_location_groups()
-    # Calculate MRR from active clients
-    mrr = 0
-    for u in enriched:
-        if u.get("is_admin"):
-            continue  # Never count admin account in MRR
-        if u.get("is_active") and u.get("billing_status") == "active":
-            r = get_restaurant(u["restaurant_id"])
-            if r:
-                mods = sum([
-                    1 if r.module_reviews else 0,
-                    1 if r.module_labor else 0,
-                    1 if r.module_inventory else 0,
-                    1 if r.module_marketing else 0,
-                ])
-                mrr += mods * 300
-
-    # Get email log
-    from models import get_email_log
-    email_log = get_email_log(limit=50)
-
-    # Activity feed — recent logins, approvals, uploads
-    try:
-        from models import get_conn as _gc
-        _conn = _gc()
-        activity_feed = []
-
-        # Recent logins
-        _logins = _conn.execute(
-            """SELECT u.last_login, r.name as restaurant_name
-               FROM users u JOIN restaurants r ON u.restaurant_id=r.id
-               WHERE u.last_login IS NOT NULL AND u.is_admin=0
-               ORDER BY u.last_login DESC LIMIT 10"""
-        ).fetchall()
-        for row in _logins:
-            activity_feed.append({
-                "ts": row["last_login"],
-                "restaurant": row["restaurant_name"],
-                "action": "Logged in",
-                "color": "#2d6a4f"
-            })
-
-        # Recent approvals — use posted_at or review_date as proxy
-        _approvals = _conn.execute(
-            """SELECT COALESCE(r.posted_at, r.review_date) as ts, rest.name as restaurant_name
-               FROM reviews r JOIN restaurants rest ON r.restaurant_id=rest.id
-               WHERE r.response_status IN ('approved','posted')
-               ORDER BY ts DESC LIMIT 10"""
-        ).fetchall()
-        for row in _approvals:
-            activity_feed.append({
-                "ts": row["ts"],
-                "restaurant": row["restaurant_name"],
-                "action": "Approved a review response",
-                "color": "#c84b2f"
-            })
-
-        _conn.close()
-
-        # Sort by timestamp desc
-        activity_feed.sort(key=lambda x: x["ts"] or "", reverse=True)
-        activity_feed = activity_feed[:20]
-    except Exception as e:
-        print(f"Activity feed error: {e}")
-        activity_feed = []
-
-    return render_template('admin.html',
-        current_user=current_user, users=enriched,
-        location_groups=location_groups,
-        mrr=mrr,
-        email_log=email_log,
-        activity_feed=activity_feed)
+            build = None
+    from models import DB_PATH
+    return jsonify(ok=True, services=services, env=("railway" if _os.getenv("RAILWAY_ENVIRONMENT") else "local"),
+                   tick=int(_os.getenv("SCHEDULER_TICK_SECONDS", "300")), db=_os.path.basename(str(DB_PATH)), build=build)
 
 @admin_bp.route("/admin/create-client", methods=["POST"])
 @admin_required
@@ -2122,3 +2008,107 @@ def admin_set_brand(restaurant_id, current_user):
         return jsonify(ok=False, error="No valid fields"), 400
     update_restaurant(restaurant_id, updates)
     return jsonify(ok=True)
+
+
+
+# ── Admin console (templates/admin.html) — every read goes through admin_ops ─
+
+@admin_bp.route("/admin/api/overview")
+@admin_required
+def admin_api_overview(current_user):
+    import admin_ops
+    return jsonify(**admin_ops.overview())
+
+
+@admin_bp.route("/admin/api/clients")
+@admin_required
+def admin_api_clients(current_user):
+    import admin_ops
+    return jsonify(**admin_ops.clients())
+
+
+@admin_bp.route("/admin/api/client/<int:restaurant_id>")
+@admin_required
+def admin_api_client(restaurant_id, current_user):
+    import admin_ops
+    payload = admin_ops.client_detail(restaurant_id)
+    return jsonify(**payload), (200 if payload.get("ok") else 404)
+
+
+@admin_bp.route("/admin/api/integrations")
+@admin_required
+def admin_api_integrations(current_user):
+    import admin_ops
+    return jsonify(**admin_ops.integrations())
+
+
+@admin_bp.route("/admin/api/ai")
+@admin_required
+def admin_api_ai(current_user):
+    import admin_ops
+    days = request.args.get("days", 30, type=int)
+    return jsonify(**admin_ops.ai_ops(days=days if days in (1, 7, 30, 90) else 30))
+
+
+@admin_bp.route("/admin/api/emails")
+@admin_required
+def admin_api_emails(current_user):
+    import admin_ops
+    return jsonify(**admin_ops.emails())
+
+
+@admin_bp.route("/admin/api/notifications")
+@admin_required
+def admin_api_notifications(current_user):
+    import admin_ops
+    return jsonify(**admin_ops.notifications())
+
+
+@admin_bp.route("/admin/api/billing")
+@admin_required
+def admin_api_billing(current_user):
+    import admin_ops
+    return jsonify(**admin_ops.billing())
+
+
+@admin_bp.route("/admin/api/jobs")
+@admin_required
+def admin_api_jobs(current_user):
+    import admin_ops
+    return jsonify(**admin_ops.jobs())
+
+
+@admin_bp.route("/admin/api/issues")
+@admin_required
+def admin_api_issues(current_user):
+    import admin_ops
+    out = admin_ops.issues()
+    out["resolved"] = admin_ops.resolved_issues()["resolved"]
+    return jsonify(**out)
+
+
+@admin_bp.route("/admin/api/issues/resolve", methods=["POST"])
+@admin_required
+def admin_api_issue_resolve(current_user):
+    import admin_ops
+    data = request.get_json(silent=True) or {}
+    key = (data.get("key") or "").strip()
+    if not key:
+        return jsonify(ok=False, error="Missing key"), 400
+    if data.get("undo"):
+        return jsonify(**admin_ops.unresolve_issue(key))
+    return jsonify(**admin_ops.resolve_issue(key, (data.get("note") or "")[:300], current_user.get("username")))
+
+
+@admin_bp.route("/admin/api/activity")
+@admin_required
+def admin_api_activity(current_user):
+    import admin_ops
+    return jsonify(**admin_ops.activity(limit=request.args.get("limit", 80, type=int)))
+
+
+@admin_bp.route("/admin/api/search")
+@admin_required
+def admin_api_search(current_user):
+    import admin_ops
+    return jsonify(**admin_ops.search(request.args.get("q", "")))

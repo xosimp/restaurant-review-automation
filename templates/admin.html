@@ -2,1325 +2,688 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
 <title>Cavnar AI — Admin</title>
-<script>if(localStorage.getItem('cavnar_admin_theme')==='dark')document.documentElement.setAttribute('data-theme','dark');</script>
-<link rel="icon" type="image/x-icon" href="/favicon.ico">
-<link rel="icon" type="image/png" href="/favicon.png">
-<link rel="shortcut icon" href="/favicon.ico">
-<meta name="theme-color" content="#0e0c0a">
-<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@400;500;600&family=Bricolage+Grotesque:opsz,wght@12..96,700&display=swap" rel="stylesheet">
+<link rel="icon" href="/favicon.png">
+<link rel="stylesheet" href="/static/fonts/cavnar-fonts.css">
+{% include '_csrf_fetch.html' %}
 <style>
-*{box-sizing:border-box;margin:0;padding:0}
-:root{--ink:#0e0c0a;--ink2:#3a3530;--ink3:#7a736a;--paper:#f7f4ef;--paper2:#edeae3;--paper3:#e0dbd0;--ember:#c84b2f;--green:#2d6a4f;--green-bg:#eaf4ee;--red:#c0392b;--purple:#7c3aed;--r:8px}
-[data-theme="dark"]{--ink:#f0ebe0;--ink2:#c4bdb4;--ink3:#7a736a;--paper:#1a1714;--paper2:#231f1b;--paper3:#4a4038;--ember:#e06444;--green:#4ead7a;--green-bg:#0c2318;--red:#e05555;--purple:#a78bfa}
-html[data-theme="dark"],html[data-theme="dark"] body{background:#1a1714!important;color:var(--ink)}
-[data-theme="dark"] .hdr{background:#0f0d0b!important}
-[data-theme="dark"] .hdr-logo{color:#f0ebe0!important}
-[data-theme="dark"] .hdr-logo em{color:#e8956a!important}
-[data-theme="dark"] .card{background:var(--paper2)!important;border-color:var(--paper3)!important}
-[data-theme="dark"] input,[data-theme="dark"] select,[data-theme="dark"] textarea{background:var(--paper)!important;color:var(--ink)!important;border-color:var(--paper3)!important}
-[data-theme="dark"] input[type=number]::-webkit-inner-spin-button,[data-theme="dark"] input[type=number]::-webkit-outer-spin-button{filter:invert(1) brightness(0.8)}
-[data-theme="dark"] select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23c4bdb4'/%3E%3C/svg%3E")!important;background-repeat:no-repeat!important;background-position:right 10px center!important}
-[data-theme="dark"] label{color:var(--ink3)!important}
-[data-theme="dark"] .section-title{color:var(--ink3)!important}
-[data-theme="dark"] .tbl th{background:var(--paper3)!important;color:var(--ink2)!important}
-[data-theme="dark"] .tbl td{border-color:var(--paper3)!important;color:var(--ink2)!important}
-[data-theme="dark"] .tbl tr:hover td{background:var(--paper)!important}
-[data-theme="dark"] .action-menu-btn{background:var(--paper2)!important;color:var(--ink2)!important;border-color:var(--paper3)!important}
-[data-theme="dark"] .action-menu-btn:hover{background:#c84b2f!important;color:#0e0c0a!important;border-color:#c84b2f!important}
-[data-theme="dark"] .action-dropdown{background:var(--paper2)!important;border-color:var(--paper3)!important}
-[data-theme="dark"] .action-item{background:var(--paper2)!important;color:var(--ink2)!important;border-color:var(--paper3)!important}
-[data-theme="dark"] .action-item:hover{background:#c84b2f!important;color:#0e0c0a!important}
-[data-theme="dark"] .group-filter-btn{background:var(--paper2)!important;color:var(--ink2)!important;border-color:var(--paper3)!important}
-/* Stat cards — background:var(--ink) becomes cream in dark mode; count color:var(--paper) becomes near-black */
-[data-theme="dark"] #admin-mrr-grid > div{background:#1a1410!important;border:1px solid var(--paper3)!important}
-[data-theme="dark"] #admin-mrr-grid [style*="color:var(--paper)"]{color:#f0ebe0!important}
-/* Status / health badge colors — override hardcoded light pastels */
-[data-theme="dark"] [style*="background:#eaf4ee"]{background:#0c2318!important}
-[data-theme="dark"] [style*="background:#fef9ec"]{background:#251d08!important}
-[data-theme="dark"] [style*="background:#fef2f2"]{background:#2a1010!important}
-[data-theme="dark"] [style*="background:#f0faf4"]{background:#071a0f!important;border-color:#1a4a30!important;color:#4ead7a!important}
-[data-theme="dark"] [style*="background:#f3f4f6"]{background:#252320!important}
-[data-theme="dark"] [style*="background:#e8f4fd"]{background:#0a1828!important}
-[data-theme="dark"] [style*="background:#fff3e0"]{background:#251a08!important}
-[data-theme="dark"] [style*="color:#2d6a4f"]{color:#4ead7a!important}
-[data-theme="dark"] [style*="color:#b7791f"]{color:#d4a030!important}
-[data-theme="dark"] [style*="color:#c84b2f"],[data-theme="dark"] [style*="color:var(--red)"]{color:#e07055!important}
-[data-theme="dark"] [style*="color:#1565c0"]{color:#6aabff!important}
-[data-theme="dark"] [style*="color:#e65100"]{color:#e89060!important}
-[data-theme="dark"] [style*="color:#6b7280"],[data-theme="dark"] [style*="color:#9ca3af"]{color:#7a736a!important}
-[data-theme="dark"] [style*="background:white"]{background:var(--paper2)!important}
-[data-theme="dark"] [style*="color:#0e0c0a"],[data-theme="dark"] [style*="color:#3a3530"]{color:var(--ink)!important}
-[data-theme="dark"] [style*="color:#7a736a"]{color:var(--ink3)!important}
-[data-theme="dark"] [style*="border-color:#e0dbd0"],[data-theme="dark"] [style*="border:1px solid #e0dbd0"]{border-color:var(--paper3)!important}
-body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);font-size:14px}
-.hdr{background:var(--ink);height:54px;display:flex;align-items:center;padding:0 28px;justify-content:space-between}
-.hdr-logo{font-family:'DM Serif Display',serif;font-size:16px;color:var(--paper)}
-.hdr-logo em{color:#e8956a;font-style:italic}
-.hdr-badge{font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;padding:3px 8px;background:var(--ember);color:white;border-radius:4px;margin-left:10px}
-.logout-btn{font-size:11px;color:var(--ink3);text-decoration:none;padding:5px 10px;border:1px solid #2a2520;border-radius:4px}
-.footer-link{font-size:11px;color:#4a4540;text-decoration:none;transition:color .15s}
-.footer-link:hover{color:#e06444}
-[data-theme="dark"] footer{background:#0a0908!important}
-[data-theme="dark"] .footer-link{color:#5a5550}
-[data-theme="dark"] .footer-link:hover{color:#e06444}
-.container{max-width:900px;margin:0 auto;padding:32px 24px}
-.section-title{font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);margin-bottom:10px}
-.card{background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:20px;margin-bottom:20px}
-.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-.form-group{display:flex;flex-direction:column;gap:4px}
-.form-group.full{grid-column:1/-1}
-label{font-size:10px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--ink3)}
-input,select{padding:9px 12px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:13px;color:var(--ink);background:white;outline:none;transition:border .15s;width:100%}
-input:focus,select:focus{border-color:var(--ember)}
-.btn{padding:9px 18px;border-radius:6px;border:none;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;cursor:pointer;transition:background .15s,box-shadow .15s,transform .15s}
-.btn-primary{background:var(--ember);color:white}
-.btn-primary:hover{background:#a83d25;box-shadow:0 4px 14px rgba(200,75,47,.32);transform:translateY(-1px)}
-.btn-primary:active{transform:scale(.97)}
-[data-theme="dark"] .btn-primary{background:#923020}
-[data-theme="dark"] .btn-primary:hover{background:#a83828;box-shadow:0 4px 14px rgba(146,48,32,.45)}
-.btn-ember-sm{padding:9px 12px;background:#c84b2f;color:white;border:none;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;flex-shrink:0}
-.btn-ember-sm:hover{background:#a83d25}
-[data-theme="dark"] .btn-ember-sm{background:#923020}
-[data-theme="dark"] .btn-ember-sm:hover{background:#a83828}
-.tbl{width:100%;border-collapse:collapse;font-size:13px}
-.tbl th{text-align:left;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;color:var(--ink3);padding:8px 12px;border-bottom:1px solid var(--paper3);background:var(--paper2)}
-.tbl td{padding:10px 12px;border-bottom:1px solid var(--paper3);overflow:visible}
-.tbl tr:last-child td{border-bottom:none}
-.badge-active{background:var(--green-bg);color:var(--green);font-size:10px;padding:2px 7px;border-radius:20px;font-weight:500}
-.status-msg{padding:10px 14px;border-radius:6px;font-size:13px;margin-top:10px;display:none}
-.status-ok{background:var(--green-bg);color:var(--green);border:1px solid #b7dfca}
-.status-err{background:#fdf0ef;color:var(--ember);border:1px solid #f5c6c2}
-.action-menu{position:relative;display:inline-block}
-.action-menu-btn{padding:5px 12px;border-radius:4px;border:1px solid var(--paper3);background:white;font-family:'DM Sans',sans-serif;font-size:11px;font-weight:500;cursor:pointer;color:var(--ink2);white-space:nowrap;transition:background .15s,box-shadow .15s,transform .15s}
-.action-menu-btn:hover{background:var(--ink);color:white;border-color:var(--ink);box-shadow:0 2px 8px rgba(14,12,10,.18);transform:translateY(-1px)}
-.action-menu-btn:active{transform:scale(.97)}
-.action-dropdown{display:none;position:absolute;right:0;top:calc(100% + 4px);background:white;border:1px solid var(--paper3);border-radius:6px;box-shadow:0 6px 20px rgba(14,12,10,.15);min-width:175px;z-index:9999}
-.action-dropdown.open{display:block}
-.action-item{display:block;width:100%;box-sizing:border-box;text-align:left;padding:9px 14px;font-family:'DM Sans',sans-serif;font-size:12px;color:var(--ink2);background:white;border:none;border-bottom:1px solid var(--paper3);cursor:pointer;white-space:nowrap;transition:background .15s,transform .1s}
-.action-item:last-child{border-bottom:none}
-.action-item:hover{background:var(--paper2);color:var(--ink);transform:translateX(2px)}
-.action-item:active{transform:scale(.98)}
-.action-item-danger{color:var(--red)}
-.action-item-danger:hover{background:#fdf0ef;color:var(--red)}
-.action-item-success{color:var(--green)}
-.action-item-success:hover{background:var(--green-bg);color:var(--green)}
-.group-filter-btn{padding:3px 10px;border-radius:20px;border:1px solid var(--paper3);background:white;font-family:'DM Sans',sans-serif;font-size:11px;cursor:pointer;color:var(--ink2);transition:background .15s,box-shadow .15s,transform .15s}
-.group-filter-btn:hover,.group-filter-btn.active{background:var(--ink);color:white;border-color:var(--ink);box-shadow:0 2px 8px rgba(14,12,10,.18);transform:translateY(-1px)}
-.group-filter-btn:active{transform:scale(.97)}
+/* ── Cavnar admin console — the iOS palette, at desk density ─────────────── */
+:root{
+  --paper:#0C0C0C;--paper2:#121212;--paper3:#262626;--paper4:#2f2c29;
+  --ink:#F0EBE0;--ink2:#E0D6C6;--ink3:#A79D8E;--ink4:#7a7267;
+  --ember:#c84b2f;--ember2:#E8956A;--ember-bg:rgba(200,75,47,.13);
+  --green:#4EAD7A;--green-bg:rgba(78,173,122,.14);--amber:#D4A030;--amber-bg:rgba(212,160,48,.14);
+  --red:#E3333F;--red-bg:rgba(227,51,63,.14);--blue:#6AABFF;--blue-bg:rgba(106,171,255,.14);
+  --disp:'Clash Display',sans-serif;--sans:'Apfel Grotezk',-apple-system,sans-serif;--num:'Space Grotesk',monospace;
+  --r:8px;--sidebar:214px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);font-size:13px;line-height:1.45}
+a{color:var(--ember2);text-decoration:none}a:hover{text-decoration:underline}
+button{font-family:inherit}
+input,select,textarea{font-family:inherit;font-size:12.5px;background:var(--paper);color:var(--ink);border:1px solid var(--paper3);border-radius:6px;padding:6px 9px;outline:none}
+input:focus,select:focus,textarea:focus{border-color:var(--ember)}
+input::placeholder,textarea::placeholder{color:var(--ink4)}
+.num{font-family:var(--num);font-variant-numeric:tabular-nums}
+.mono{font-family:var(--num);font-size:11.5px}
+/* layout */
+.shell{display:grid;grid-template-columns:var(--sidebar) 1fr;min-height:100vh}
+.side{background:var(--paper2);border-right:1px solid var(--paper3);padding:16px 12px;position:sticky;top:0;height:100vh;overflow-y:auto}
+.brand{display:flex;align-items:center;gap:8px;padding:4px 8px 14px;border-bottom:1px solid var(--paper3);margin-bottom:10px}
+.brand svg{height:16px;width:auto}
+.brand .tag{font-family:var(--num);font-weight:700;font-size:9.5px;letter-spacing:.14em;color:var(--ember2);border:1px solid rgba(232,149,106,.4);border-radius:4px;padding:1px 5px}
+.nav a{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 10px;border-radius:6px;color:var(--ink2);font-size:13px;font-weight:600;margin-bottom:2px}
+.nav a:hover{background:var(--paper3);text-decoration:none;color:var(--ink)}
+.nav a.on{background:var(--ember-bg);color:var(--ember2)}
+.nav .sec{font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink4);padding:14px 10px 6px}
+.nav .cnt{font-family:var(--num);font-size:11px;font-weight:700;color:var(--ink);background:var(--paper3);border-radius:10px;padding:1px 7px;min-width:20px;text-align:center}
+.nav .cnt.bad{background:var(--red-bg);color:var(--red)}.nav .cnt.warn{background:var(--amber-bg);color:var(--amber)}
+.main{min-width:0}
+.top{display:flex;align-items:center;gap:14px;padding:10px 22px;border-bottom:1px solid var(--paper3);background:var(--paper2);position:sticky;top:0;z-index:20}
+.search{position:relative;flex:1;max-width:520px}
+.search input{width:100%;padding:8px 12px 8px 32px;border-radius:8px;background:var(--paper);font-size:13px}
+.search svg{position:absolute;left:11px;top:10px;color:var(--ink4)}
+.search .res{position:absolute;top:calc(100% + 6px);left:0;right:0;background:var(--paper2);border:1px solid var(--paper3);border-radius:8px;box-shadow:0 12px 40px rgba(0,0,0,.5);z-index:40;display:none;max-height:420px;overflow:auto}
+.search .res a{display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--paper3);color:var(--ink)}
+.search .res a:hover{background:var(--paper3);text-decoration:none}
+.search .res .t{font-size:9.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;padding:2px 6px;border-radius:4px;background:var(--paper3);color:var(--ink3);min-width:62px;text-align:center}
+.top .pill{font-size:11.5px;color:var(--ink3);display:flex;align-items:center;gap:6px;white-space:nowrap}
+.top .who{margin-left:auto;font-size:12px;color:var(--ink3)}
+.top .who b{color:var(--ink)}
+.content{padding:20px 22px 60px;max-width:1600px}
+/* type */
+h1{font-family:var(--disp);font-weight:600;font-size:22px;letter-spacing:-.01em;margin:0}
+h2{font-family:var(--disp);font-weight:600;font-size:15px;letter-spacing:-.005em;margin:0}
+.k{font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink4)}
+.k.ember{color:var(--ember2)}
+.sub{color:var(--ink3);font-size:12.5px}
+.head{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin-bottom:16px;flex-wrap:wrap}
+.head .r{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+/* blocks */
+.card{background:var(--paper2);border:1px solid var(--paper3);border-radius:var(--r)}
+.card .ch{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 14px;border-bottom:1px solid var(--paper3)}
+.card .cb{padding:12px 14px}
+.grid{display:grid;gap:12px}
+.g2{grid-template-columns:1fr 1fr}.g3{grid-template-columns:repeat(3,1fr)}.g4{grid-template-columns:repeat(4,1fr)}.g6{grid-template-columns:repeat(6,1fr)}.g8{grid-template-columns:repeat(8,1fr)}
+.kpi{background:var(--paper2);border:1px solid var(--paper3);border-radius:var(--r);padding:10px 12px;min-width:0}
+.kpi .v{font-family:var(--num);font-size:22px;font-weight:600;line-height:1.1;color:var(--ink)}
+.kpi .v small{font-size:12px;color:var(--ink3);font-weight:500;margin-left:4px}
+.kpi .l{font-size:11px;color:var(--ink3);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kpi.bad .v{color:var(--red)}.kpi.warn .v{color:var(--amber)}.kpi.good .v{color:var(--green)}.kpi.ember .v{color:var(--ember2)}
+/* tables */
+.tw{overflow:auto;border:1px solid var(--paper3);border-radius:var(--r);background:var(--paper2)}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th{position:sticky;top:0;background:var(--paper2);z-index:2;text-align:left;font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink4);padding:8px 10px;border-bottom:1px solid var(--paper3);white-space:nowrap;cursor:pointer;user-select:none}
+th.s:after{content:' ↕';color:var(--paper4)}th.asc:after{content:' ↑';color:var(--ember2)}th.desc:after{content:' ↓';color:var(--ember2)}
+td{padding:7px 10px;border-bottom:1px solid var(--paper3);vertical-align:middle;white-space:nowrap;color:var(--ink2)}
+td.wrap{white-space:normal;max-width:380px}
+tr:last-child td{border-bottom:0}
+tr.rowlink{cursor:pointer}tr.rowlink:hover td{background:var(--paper3)}
+td .name{font-weight:700;color:var(--ink)}td .dim{color:var(--ink4);font-size:11.5px}
+td.r,th.r{text-align:right}
+.empty{padding:26px 14px;color:var(--ink4);text-align:center;font-size:12.5px}
+/* badges */
+.b{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:700;letter-spacing:.03em;padding:2px 8px;border-radius:20px;white-space:nowrap;line-height:1.6}
+.b:before{content:'';width:6px;height:6px;border-radius:50%;background:currentColor}
+.b.ok{background:var(--green-bg);color:var(--green)}.b.warn{background:var(--amber-bg);color:var(--amber)}.b.bad{background:var(--red-bg);color:var(--red)}
+.b.off{background:var(--paper3);color:var(--ink4)}.b.info{background:var(--blue-bg);color:var(--blue)}.b.ember{background:var(--ember-bg);color:var(--ember2)}
+.b.nodot:before{display:none}
+.chip{display:inline-block;font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:4px;background:var(--paper3);color:var(--ink3);margin-right:3px}
+.chip.ok{background:var(--green-bg);color:var(--green)}.chip.warn{background:var(--amber-bg);color:var(--amber)}.chip.bad{background:var(--red-bg);color:var(--red)}.chip.off{opacity:.5}
+/* filters */
+.filters{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+.f{font-size:11.5px;font-weight:600;padding:4px 10px;border-radius:20px;border:1px solid var(--paper3);background:var(--paper2);color:var(--ink3);cursor:pointer}
+.f:hover{border-color:var(--ink4);color:var(--ink)}.f.on{background:var(--ember);border-color:var(--ember);color:#fff}
+.f .n{font-family:var(--num);opacity:.8;margin-left:4px}
+.filters input{min-width:200px}
+/* buttons */
+.btn{font-size:11.5px;font-weight:700;padding:5px 11px;border-radius:6px;border:1px solid var(--paper3);background:var(--paper2);color:var(--ink);cursor:pointer;white-space:nowrap}
+.btn:hover{border-color:var(--ink4)}.btn.p{background:var(--ember);border-color:var(--ember);color:#fff}.btn.p:hover{filter:brightness(1.1)}
+.btn.d{color:var(--red);border-color:rgba(227,51,63,.35)}.btn.d:hover{background:var(--red-bg)}
+.btn.s{font-size:11px;padding:3px 8px}
+.btn:disabled{opacity:.5;cursor:default}
+.lnk{background:none;border:none;color:var(--ember2);font-weight:600;cursor:pointer;padding:0;font-size:12px}
+.lnk:hover{text-decoration:underline}
+/* misc */
+.bars{display:flex;align-items:flex-end;gap:2px;height:44px}
+.bars i{flex:1;background:var(--ember);opacity:.75;border-radius:2px 2px 0 0;min-width:3px}
+.bars i.bad{background:var(--red)}
+.sk{height:12px;border-radius:4px;background:linear-gradient(90deg,var(--paper3),var(--paper4),var(--paper3));background-size:200% 100%;animation:sk 1.2s linear infinite;margin:8px 0}
+@keyframes sk{to{background-position:-200% 0}}
+.err{padding:14px;border:1px solid rgba(227,51,63,.4);background:var(--red-bg);border-radius:var(--r);color:var(--red)}
+.tabs{display:flex;gap:2px;border-bottom:1px solid var(--paper3);margin-bottom:14px;overflow:auto}
+.tabs a{padding:8px 12px;font-size:12.5px;font-weight:600;color:var(--ink3);border-bottom:2px solid transparent;white-space:nowrap}
+.tabs a.on{color:var(--ink);border-bottom-color:var(--ember)}.tabs a:hover{text-decoration:none;color:var(--ink)}
+.kv{display:grid;grid-template-columns:130px 1fr;gap:4px 12px;font-size:12.5px}.kv .k{align-self:center}
+.steps{display:flex;flex-direction:column;gap:4px}.steps div{display:flex;gap:8px;align-items:center;font-size:12.5px}
+.steps .ok{color:var(--green)}.steps .no{color:var(--ink4)}
+.list{display:flex;flex-direction:column}
+.list .it{display:grid;grid-template-columns:82px 1fr auto;gap:10px;padding:7px 0;border-bottom:1px solid var(--paper3);font-size:12.5px;align-items:baseline}
+.list .it:last-child{border-bottom:0}
+.list .when{color:var(--ink4);font-family:var(--num);font-size:11px}
+.list .who{color:var(--ink3)}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:middle}
+.dot.ok{background:var(--green)}.dot.warn{background:var(--amber)}.dot.bad{background:var(--red)}.dot.off{background:var(--ink4)}
+.sev{font-family:var(--num);font-size:10px;font-weight:700;letter-spacing:.1em;padding:2px 7px;border-radius:4px}
+.sev.critical{background:var(--red-bg);color:var(--red)}.sev.warning{background:var(--amber-bg);color:var(--amber)}
+/* modal */
+.mo{position:fixed;inset:0;background:rgba(0,0,0,.7);display:none;align-items:center;justify-content:center;z-index:100;padding:20px}
+.mo.on{display:flex}
+.mo .mb{background:var(--paper2);border:1px solid var(--paper3);border-radius:12px;width:100%;max-width:560px;max-height:90vh;overflow:auto;padding:18px 20px}
+.mo .mh{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.mo .x{background:none;border:none;color:var(--ink3);font-size:18px;cursor:pointer}
+.fl{display:flex;flex-direction:column;gap:8px}.fl label{font-size:11px;color:var(--ink3);font-weight:600}
+.frm{display:grid;grid-template-columns:1fr 1fr;gap:10px}.frm .full{grid-column:1/-1}
+.toast{position:fixed;bottom:18px;right:18px;background:var(--ink);color:var(--paper);padding:10px 14px;border-radius:8px;font-size:12.5px;font-weight:600;box-shadow:0 8px 30px rgba(0,0,0,.5);opacity:0;transform:translateY(8px);transition:.2s;z-index:200;pointer-events:none}
+.toast.on{opacity:1;transform:none}.toast.bad{background:var(--red);color:#fff}.toast.good{background:var(--green);color:#fff}
+.heart{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 0 0 rgba(78,173,122,.5);animation:hb 2s infinite}
+.heart.bad{background:var(--red);animation:none}
+@keyframes hb{0%{box-shadow:0 0 0 0 rgba(78,173,122,.5)}70%{box-shadow:0 0 0 7px rgba(78,173,122,0)}100%{box-shadow:0 0 0 0 rgba(78,173,122,0)}}
+@media (max-width:1100px){.g8{grid-template-columns:repeat(4,1fr)}.g6{grid-template-columns:repeat(3,1fr)}.g4{grid-template-columns:repeat(2,1fr)}}
+@media (max-width:820px){.shell{grid-template-columns:1fr}.side{position:relative;height:auto;display:flex;flex-wrap:wrap;gap:4px;padding:10px}.nav{display:contents}.nav .sec{display:none}.brand{width:100%;border:0;margin:0;padding-bottom:6px}.g3,.g2{grid-template-columns:1fr}.top{flex-wrap:wrap}.top .who{margin-left:0}.kv{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
-{% include "_csrf_fetch.html" %}
-<header class="hdr">
-  <div style="display:flex;align-items:center">
-    <div class="hdr-logo"><svg viewBox="-6 -14 666 128" height="0.8em" style="vertical-align:-0.08em" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M53.43 101.49Q28.81 101.49 14.40 87.46Q0.00 73.43 0.00 50.00Q0.00 26.57 14.40 12.54Q28.81 -1.49 53.43 -1.49Q76.87 -1.49 90.67 9.48Q104.48 20.45 104.48 39.40V41.64H79.55V39.40Q79.55 29.40 73.43 24.70Q67.31 20.00 53.88 20.00Q37.31 20.00 30.52 26.72Q23.73 33.43 23.73 50.00Q23.73 66.57 30.52 73.28Q37.31 80.00 53.88 80.00Q67.31 80.00 73.43 75.30Q79.55 70.60 79.55 60.60V58.36H104.48V60.60Q104.48 79.55 90.67 90.52Q76.87 101.49 53.43 101.49Z"/><path d="M127.87 100.00H102.79L146.52 0.00H178.47L222.50 100.00H196.82L187.42 77.91H137.42ZM155.48 35.97 146.08 57.76H178.76L169.36 35.97L163.24 20.45H161.60Z"/><path d="M266.08 100.00H234.14L192.65 0.00H219.67L249.67 77.31H251.16L280.71 0.00H307.58Z"/><path d="M341.47 100.00H319.08V0.00H342.96L378.78 47.31L392.51 68.36H394.15L393.11 48.21V0.00H415.50V100.00H391.61L354.75 52.24L342.06 33.43H340.57L341.47 51.79Z"/><path d="M451.92 100.00H426.85L470.58 0.00H502.52L546.55 100.00H520.88L511.47 77.91H461.47ZM479.53 35.97 470.13 57.76H502.82L493.41 35.97L487.29 20.45H485.65Z"/><path d="M580.39 100.00H558.00V0.00H613.22Q631.73 0.00 641.80 7.84Q651.88 15.67 651.88 30.00Q651.88 55.07 623.67 57.76V58.96Q629.94 60.60 633.30 63.88Q636.65 67.16 639.79 73.13L654.27 100.00H628.30L614.56 74.03Q611.43 68.06 607.55 65.90Q603.67 63.73 595.16 63.73H580.39ZM580.39 20.15V46.87H613.07Q621.28 46.87 624.86 43.96Q628.45 41.04 628.45 33.43Q628.45 26.12 624.79 23.13Q621.13 20.15 613.07 20.15Z"/><circle cx="250.1" cy="28" r="11" fill="#D4583A"/></svg><span style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',sans-serif;font-weight:800;font-size:0.34em;letter-spacing:0.16em;color:#D4583A;vertical-align:0.62em;margin-left:0.12em;font-style:normal">AI</span></div>
-    <span class="hdr-badge">Admin</span>
-  </div>
-  <div style="display:flex;align-items:center;gap:12px">
-    <button onclick="openStatusModal()" style="padding:0 13px;height:30px;font-size:12px;font-weight:600;font-family:'DM Sans',sans-serif;background:none;border:1px solid rgba(255,255,255,.2);border-radius:6px;color:rgba(255,255,255,.75);cursor:pointer;display:inline-flex;align-items:center">System Status</button>
-    <button id="admin-dark-btn" onclick="toggleAdminDark()" title="Toggle dark mode" style="background:none;border:1px solid rgba(255,255,255,.2);border-radius:6px;padding:0 10px;height:30px;cursor:pointer;color:rgba(255,255,255,.75);display:inline-flex;align-items:center;justify-content:center">
-      <svg id="dark-icon-moon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-      <svg id="dark-icon-sun" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
-    </button>
-    <a href="/logout" class="logout-btn" style="height:30px;display:inline-flex;align-items:center;padding:0 10px">Sign out</a>
-  </div>
-</header>
-<div class="container">
-
-  <!-- MRR Stats Bar -->
-  <div id="admin-mrr-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:24px">
-    <div style="background:var(--ink);border-radius:var(--r);padding:14px 16px">
-      <div style="font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px">Active Clients</div>
-      <div style="font-family:'Bricolage Grotesque',sans-serif;font-weight:700;font-size:28px;color:var(--paper)">{{users|selectattr('is_active')|selectattr('is_admin','equalto',0)|list|length}}</div>
+<div class="shell">
+  <aside class="side">
+    <div class="brand">
+      <svg viewBox="-6 -14 666 128" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M53.43 101.49Q28.81 101.49 14.40 87.46Q0.00 73.43 0.00 50.00Q0.00 26.57 14.40 12.54Q28.81 -1.49 53.43 -1.49Q76.87 -1.49 90.67 9.48Q104.48 20.45 104.48 39.40V41.64H79.55V39.40Q79.55 29.40 73.43 24.70Q67.31 20.00 53.88 20.00Q37.31 20.00 30.52 26.72Q23.73 33.43 23.73 50.00Q23.73 66.57 30.52 73.28Q37.31 80.00 53.88 80.00Q67.31 80.00 73.43 75.30Q79.55 70.60 79.55 60.60V58.36H104.48V60.60Q104.48 79.55 90.67 90.52Q76.87 101.49 53.43 101.49Z"/><path d="M127.87 100.00H102.79L146.52 0.00H178.47L222.50 100.00H196.82L187.42 77.91H137.42ZM155.48 35.97 146.08 57.76H178.76L169.36 35.97L163.24 20.45H161.60Z"/><path d="M266.08 100.00H234.14L192.65 0.00H219.67L249.67 77.31H251.16L280.71 0.00H307.58Z"/><path d="M341.47 100.00H319.08V0.00H342.96L378.78 47.31L392.51 68.36H394.15L393.11 48.21V0.00H415.50V100.00H391.61L354.75 52.24L342.06 33.43H340.57L341.47 51.79Z"/><path d="M451.92 100.00H426.85L470.58 0.00H502.52L546.55 100.00H520.88L511.47 77.91H461.47ZM479.53 35.97 470.13 57.76H502.82L493.41 35.97L487.29 20.45H485.65Z"/><path d="M580.39 100.00H558.00V0.00H613.22Q631.73 0.00 641.80 7.84Q651.88 15.67 651.88 30.00Q651.88 55.07 623.67 57.76V58.96Q629.94 60.60 633.30 63.88Q636.65 67.16 639.79 73.13L654.27 100.00H628.30L614.56 74.03Q611.43 68.06 607.55 65.90Q603.67 63.73 595.16 63.73H580.39ZM580.39 20.15V46.87H613.07Q621.28 46.87 624.86 43.96Q628.45 41.04 628.45 33.43Q628.45 26.12 624.79 23.13Q621.13 20.15 613.07 20.15Z"/><circle cx="250.1" cy="28" r="11" fill="#c84b2f"/></svg>
+      <span class="tag">ADMIN</span>
     </div>
-    <div style="background:var(--ink);border-radius:var(--r);padding:14px 16px">
-      <div style="font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px">MRR</div>
-      <div style="font-family:'Bricolage Grotesque',sans-serif;font-weight:700;font-size:28px;color:#6fcf97">${{mrr|default(0)|int|format_num}}</div>
-    </div>
-    <div style="background:var(--ink);border-radius:var(--r);padding:14px 16px">
-      <div style="font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px">Annual Run Rate</div>
-      <div style="font-family:'Bricolage Grotesque',sans-serif;font-weight:700;font-size:28px;color:#6fcf97">${{(mrr|default(0)*12)|int|format_num}}</div>
-    </div>
-    <div style="background:var(--ink);border-radius:var(--r);padding:14px 16px">
-      <div style="font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px">Contracts Signed</div>
-      <div style="font-family:'Bricolage Grotesque',sans-serif;font-weight:700;font-size:28px;color:var(--ember)">{{users|selectattr('contract_status','equalto','signed')|selectattr('is_admin','equalto',0)|list|length}} / {{users|selectattr('is_active')|selectattr('is_admin','equalto',0)|list|length}}</div>
-    </div>
-  </div>
-
-  <div class="section-title">Create new client account</div>
-  <div class="card">
-    <div class="form-grid">
-      <div class="form-group"><label>Restaurant name</label><input type="text" id="r-name" placeholder="Maplewood Kitchen"></div>
-      <div class="form-group"><label>Owner email</label><input type="email" id="r-email" placeholder="owner@restaurant.com"></div>
-      <div class="form-group"><label>Dashboard username</label><input type="text" id="u-username" placeholder="maplewoodkitchen"></div>
-      <div class="form-group"><label>Owner / GM name</label><input type="text" id="r-owner-name" placeholder="e.g. Sarah"></div>
-      <div class="form-group">
-        <label>Temporary password</label>
-        <div style="display:flex;gap:6px;align-items:center">
-          <input type="text" id="u-password" placeholder="Click Generate →" style="flex:1">
-          <button type="button" onclick="genPassword()" class="btn-ember-sm">
-            Generate
-          </button>
-          <button type="button" onclick="copyPassword()" id="copy-pw-btn"
-            style="padding:9px 12px;background:white;color:var(--ink2);border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:11px;font-weight:500;cursor:pointer;white-space:nowrap;flex-shrink:0">
-            Copy
-          </button>
-        </div>
+    <nav class="nav" id="nav">
+      <a href="#overview" data-v="overview">Overview <span class="cnt" id="n-attn" hidden></span></a>
+      <div class="sec">Customers</div>
+      <a href="#clients" data-v="clients">Clients <span class="cnt" id="n-clients" hidden></span></a>
+      <a href="#locations" data-v="locations">Restaurants &amp; locations</a>
+      <a href="#onboarding" data-v="onboarding">Onboarding <span class="cnt" id="n-onb" hidden></span></a>
+      <a href="#billing" data-v="billing">Billing <span class="cnt" id="n-bill" hidden></span></a>
+      <div class="sec">Operations</div>
+      <a href="#integrations" data-v="integrations">Integrations <span class="cnt" id="n-int" hidden></span></a>
+      <a href="#ai" data-v="ai">AI operations <span class="cnt" id="n-ai" hidden></span></a>
+      <a href="#alerts" data-v="alerts">Alerts &amp; notifications</a>
+      <a href="#emails" data-v="emails">Emails <span class="cnt" id="n-mail" hidden></span></a>
+      <a href="#jobs" data-v="jobs">Jobs <span class="cnt" id="n-jobs" hidden></span></a>
+      <a href="#issues" data-v="issues">Support &amp; issues <span class="cnt" id="n-issues" hidden></span></a>
+      <div class="sec">Admin</div>
+      <a href="#system" data-v="system">System</a>
+      <a href="/status" target="_blank">Public status ↗</a>
+    </nav>
+  </aside>
+  <div class="main">
+    <div class="top">
+      <div class="search">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input id="q" placeholder="Search owners, restaurants, locations, cities, emails, IDs, Stripe customers…" autocomplete="off">
+        <div class="res" id="q-res"></div>
       </div>
-      <div class="form-group"><label>Owner phone number</label><input type="text" id="r-phone" placeholder="(312) 555-0100"></div>
-      <div class="form-group"><label>Location group (optional)</label><input type="text" id="r-group" placeholder="e.g. Syrup" list="existing-groups"><datalist id="existing-groups">{% for g in location_groups %}<option value="{{g}}">{% endfor %}</datalist></div>
-      <div class="form-group"><label>Location name (optional)</label><input type="text" id="r-location" placeholder="e.g. Lincoln Park"></div>
-      <div class="form-group"><label>Google Place ID (optional)</label><input type="text" id="r-google" placeholder="ChIJ..."></div>
-      <div class="form-group"><label>Yelp Business ID (optional)</label><input type="text" id="r-yelp" placeholder="restaurant-name-chicago"></div>
-      <div class="form-group full"><label>Owner voice notes (for AI drafting)</label><input type="text" id="r-voice" placeholder="Warm, casual tone. Always invite guests back. Never sound corporate."></div>
-      <div class="form-group full">
-        <label>Modules (check all that apply)</label>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px">
-          <label style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--paper2);border:1px solid var(--paper3);border-radius:6px;cursor:pointer;font-size:13px;font-weight:400;letter-spacing:0;text-transform:none">
-            <input type="checkbox" id="mod-reviews" value="reviews" checked style="width:14px;height:14px;accent-color:#c84b2f">
-            Review Intelligence — $300/mo
-          </label>
-          <label style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--paper2);border:1px solid var(--paper3);border-radius:6px;cursor:pointer;font-size:13px;font-weight:400;letter-spacing:0;text-transform:none">
-            <input type="checkbox" id="mod-labor" value="labor" style="width:14px;height:14px;accent-color:#c84b2f">
-            Labor Optimizer — $300/mo
-          </label>
-          <label style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--paper2);border:1px solid var(--paper3);border-radius:6px;cursor:pointer;font-size:13px;font-weight:400;letter-spacing:0;text-transform:none">
-            <input type="checkbox" id="mod-inventory" value="inventory" style="width:14px;height:14px;accent-color:#c84b2f">
-            Food Cost Control — $300/mo
-          </label>
-          <label style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--paper2);border:1px solid var(--paper3);border-radius:6px;cursor:pointer;font-size:13px;font-weight:400;letter-spacing:0;text-transform:none">
-            <input type="checkbox" id="mod-marketing" value="marketing" style="width:14px;height:14px;accent-color:#c84b2f">
-            Marketing Autopilot — $300/mo
-          </label>
-        </div>
-
-      </div>
+      <span class="pill" id="hb-pill"><span class="heart"></span> Scheduler</span>
+      <span class="pill" id="gen-at"></span>
+      <span class="who">Signed in as <b>{{ current_user.username }}</b> · <a href="/logout">Sign out</a></span>
     </div>
-    <div style="background:#f0faf4;border:1px solid #a7d7b8;border-radius:6px;padding:8px 14px;margin-top:14px;font-size:12px;color:#2d6a4f">
-      ✓ Contract sent automatically on creation. Payment link and welcome email sent automatically after client signs.
-    </div>
-    <button class="btn btn-primary" style="margin-top:12px" onclick="createClient()">Create client account</button>
-    <div class="status-msg" id="create-status"></div>
-  </div>
-
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-    <div class="section-title" style="margin-bottom:0">Active client accounts</div>
-    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-      <input type="text" id="client-search" placeholder="Search clients…" oninput="searchClients(this.value)"
-        style="padding:6px 12px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;width:200px;outline:none">
-      {% if location_groups %}
-      <span style="font-size:11px;color:var(--ink3)">Filter:</span>
-      <button onclick="filterGroup('')" class="group-filter-btn active" id="filter-all">All</button>
-      {% for g in location_groups %}
-      <button onclick="filterGroup('{{g}}')" class="group-filter-btn" id="filter-{{g|replace(' ','-')}}">{{g}}</button>
-      {% endfor %}
-      {% endif %}
-    </div>
-  </div>
-  <div style="display:flex;flex-direction:column;gap:10px">
-      {% for user in users %}
-      <div class="client-row card" data-group="{{user.location_group or ''}}" style="padding:14px 18px">
-
-        <!-- Top row: name + health + actions -->
-        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px">
-          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-            <strong style="font-size:14px">{{user.restaurant_name}}</strong>
-            {% if user.location_group %}<span style="font-size:11px;color:var(--ink3)">{{user.location_group}}{% if user.location_name %} · {{user.location_name}}{% endif %}</span>{% endif %}
-            {% if user.internal_notes %}<span title="{{user.internal_notes}}" style="cursor:help;font-size:10px;background:var(--amber-bg);color:var(--amber);padding:1px 6px;border-radius:10px;font-weight:500">note</span>{% endif %}
-
-            <!-- Health pill -->
-            {% set hc = {'green':'#2d6a4f','amber':'#b7791f','red':'#c84b2f'} %}
-            {% set hbg = {'green':'#eaf4ee','amber':'#fef9ec','red':'#fef2f2'} %}
-            {% set hl = user.health or 'amber' %}
-            <span style="font-size:10px;font-weight:700;padding:2px 9px;border-radius:20px;background:{{hbg[hl]}};color:{{hc[hl]}}">{{hl|upper}}</span>
-
-            <!-- Billing -->
-            {% set bc = {'trial':'#b7791f','active':'#2d6a4f','paused':'#6b7280','churned':'#c0392b'} %}
-            <span style="font-size:10px;font-weight:500;padding:2px 8px;border-radius:20px;background:{% if user.billing_status=='active' %}var(--green-bg){% elif user.billing_status=='trial' %}var(--amber-bg){% else %}#f3f4f6{% endif %};color:{{bc.get(user.billing_status,'#6b7280')}}">{{(user.billing_status or 'trial')|title}}</span>
-
-            <!-- Contract -->
-            {% if not user.is_admin %}
-              {% if user.contract_status == 'signed' %}<span style="font-size:10px;color:#2d6a4f;font-weight:600">✓ Signed</span>
-              {% elif user.contract_status == 'sent' %}<span style="font-size:10px;color:#b7791f;font-weight:600">⏳ Contract pending</span>
-              {% else %}<span style="font-size:10px;color:#9ca3af">No contract</span>{% endif %}
-            {% endif %}
-
-            <!-- POS system badge -->
-            {% if user.pos_system and not user.is_admin %}
-            <span title="{% if user.toast_restaurant_guid %}Connected{% else %}POS set, not synced{% endif %}" style="font-size:10px;font-weight:600;padding:2px 8px;border-radius:20px;background:#fff3e0;color:#e65100;cursor:default">
-              {{user.pos_system}}{% if user.toast_restaurant_guid %} ✓{% endif %}
-            </span>
-            {% endif %}
-
-            <!-- GBP connected badge -->
-            {% if user.gmb_connected and not user.is_admin %}
-            <span title="Google Business Profile connected" style="font-size:10px;font-weight:600;padding:2px 8px;border-radius:20px;background:#e8f4fd;color:#1565c0;cursor:default">GBP ✓</span>
-            {% endif %}
-
-            <!-- Pending reviews -->
-            {% if user.pending_reviews > 0 %}
-            <span style="font-size:10px;font-weight:600;padding:2px 8px;border-radius:20px;background:{% if user.pending_reviews > 5 %}#fef2f2{% else %}#fef9ec{% endif %};color:{% if user.pending_reviews > 5 %}#c84b2f{% else %}#b7791f{% endif %}">
-              {{user.pending_reviews}} reviews pending
-            </span>
-            {% endif %}
-          </div>
-
-          <!-- Actions -->
-          {% if not user.is_admin %}
-          <div class="action-menu" id="menu-wrap-{{user.id}}" style="flex-shrink:0">
-            <button class="action-menu-btn" onclick="toggleMenu({{user.id}})">Actions ▾</button>
-            <div class="action-dropdown" id="menu-{{user.id}}">
-              <button class="action-item" onclick="window.location='/admin/client-settings/{{user.restaurant_id}}'">Settings</button>
-              <button class="action-item" onclick="window.location='/admin/client-data/{{user.restaurant_id}}'">Manage data</button>
-              <button class="action-item" onclick="window.location='/admin/view-as/{{user.restaurant_id}}'">View as client</button>
-              {% if user.is_active %}
-              <div class="action-divider"></div>
-              <button class="action-item" onclick="resendPayment({{user.restaurant_id}},'{{user.email}}','{{user.billing_status}}');closeMenu({{user.id}})">Resend payment link</button>
-              <button class="action-item" onclick="resendContract({{user.restaurant_id}});closeMenu({{user.id}})">Resend contract</button>
-              <button class="action-item" onclick="fetchReviewsNow({{user.restaurant_id}});closeMenu({{user.id}})">Fetch reviews now</button>
-              <button class="action-item" onclick="openBrandModal({{user.restaurant_id}},'{{user.restaurant_name}}');closeMenu({{user.id}})">Set white-label branding</button>
-              <button class="action-item" onclick="openReviewImport({{user.restaurant_id}},'{{user.restaurant_name}}','tripadvisor');closeMenu({{user.id}})">Import TripAdvisor CSV</button>
-              <button class="action-item" onclick="openReviewImport({{user.restaurant_id}},'{{user.restaurant_name}}','doordash');closeMenu({{user.id}})">Import DoorDash CSV</button>
-              <button class="action-item" onclick="openReviewImport({{user.restaurant_id}},'{{user.restaurant_name}}','ubereats');closeMenu({{user.id}})">Import Uber Eats CSV</button>
-              <button class="action-item" onclick="redraftAll({{user.restaurant_id}});closeMenu({{user.id}})">Re-draft all with AI</button>
-              <button class="action-item" onclick="seedReviews({{user.restaurant_id}});closeMenu({{user.id}})">Seed sample reviews</button>
-              <button class="action-item" onclick="openAiUsageModal({{user.restaurant_id}},'{{user.restaurant_name}}');closeMenu({{user.id}})">View AI usage/cost</button>
-              {% if user.is_demo %}
-              <button class="action-item" onclick="reseedDemoData({{user.restaurant_id}});closeMenu({{user.id}})">Reseed demo data (is_demo)</button>
-              {% endif %}
-              <button class="action-item" onclick="openToastModal({{user.restaurant_id}},'{{user.restaurant_name}}');closeMenu({{user.id}})">🍞 Toast POS</button>
-              <div class="action-divider"></div>
-              {% if user.role == 'owner' %}
-              <button class="action-item" onclick="setUserRole({{user.id}},'client');closeMenu({{user.id}})">Set as GM (single location)</button>
-              {% else %}
-              <button class="action-item" onclick="setUserRole({{user.id}},'owner');closeMenu({{user.id}})">Set as owner (multi-location)</button>
-              {% endif %}
-              <div class="action-divider"></div>
-              <button class="action-item action-item-danger" onclick="deactivateClient({{user.id}},'{{user.restaurant_name}}');closeMenu({{user.id}})">Deactivate</button>
-              {% else %}
-              <div class="action-divider"></div>
-              <button class="action-item action-item-success" onclick="reactivateClient({{user.id}},'{{user.restaurant_name}}');closeMenu({{user.id}})">Reactivate</button>
-              {% endif %}
-            </div>
-          </div>
-          {% endif %}
-        </div>
-
-        <!-- Detail row + usage toggle -->
-        <div style="display:flex;flex-wrap:wrap;gap:16px;font-size:11px;color:var(--ink3);border-top:1px solid var(--paper2);padding-top:8px;margin-top:2px;align-items:center">
-          <span><strong style="color:var(--ink2)">User:</strong> {{user.username}}</span>
-          <span><strong style="color:var(--ink2)">Email:</strong> {{user.email}}</span>
-          {% if user.phone %}<span><strong style="color:var(--ink2)">Phone:</strong> {{user.phone}}</span>{% endif %}
-          <span><strong style="color:var(--ink2)">Modules:</strong>
-            {% set mods = [] %}
-            {% if user.module_reviews %}{% set _ = mods.append('Reviews') %}{% endif %}
-            {% if user.module_labor %}{% set _ = mods.append('Labor') %}{% endif %}
-            {% if user.module_inventory %}{% set _ = mods.append('Inventory') %}{% endif %}
-            {% if user.module_marketing %}{% set _ = mods.append('Marketing') %}{% endif %}
-            {{ mods|join(', ') if mods else 'None' }}
-          </span>
-          <span><strong style="color:var(--ink2)">Last login:</strong> {% if user.last_login and user.last_login|length >= 10 %}{% set d=user.last_login[:10].split('-') %}{{d[1]|int}}/{{d[2]|int}}/{{d[0][2:]}}{% else %}Never{% endif %}</span>
-          {% if user.last_active_tab %}<span><strong style="color:var(--ink2)">Last tab:</strong> {{user.last_active_tab}}</span>{% endif %}
-          <span><strong style="color:var(--ink2)">Reviews fetched:</strong> {{user.last_fetched_at or 'Never'}}</span>
-          <span><strong style="color:var(--ink2)">Account:</strong> {% if user.is_active %}<span style="color:#2d6a4f">Active</span>{% else %}<span style="color:#9ca3af">Inactive</span>{% endif %}</span>
-          <span><strong style="color:var(--ink2)">Role:</strong> <span style="{% if user.role == 'owner' %}color:var(--purple);font-weight:600{% else %}color:var(--ink3){% endif %}">{{ user.role or 'client' }}</span></span>
-          {% if not user.is_admin %}
-          <button onclick="toggleUsage({{user.restaurant_id}}, this)" style="font-size:10px;color:var(--ember);background:none;border:none;cursor:pointer;padding:0;font-weight:500;margin-left:auto">Show usage ▾</button>
-          {% endif %}
-        </div>
-        {% if not user.is_admin %}
-        <div id="usage-{{user.restaurant_id}}" style="display:none;margin-top:8px;padding-top:8px;border-top:1px solid var(--paper2)">
-          <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:6px">30-day usage</div>
-          <div id="usage-data-{{user.restaurant_id}}" style="font-size:12px;color:var(--ink3)">Loading...</div>
-        </div>
-        {% endif %}
-
-      </div>
-      {% else %}
-      <div class="card" style="padding:16px;color:var(--ink3);font-style:italic">No clients yet — create one above.</div>
-      {% endfor %}
+    <div class="content" id="view"><div class="sk"></div><div class="sk" style="width:70%"></div><div class="sk" style="width:40%"></div></div>
   </div>
 </div>
+
+<!-- modals -->
+<div class="mo" id="m-toast"><div class="mb">
+  <div class="mh"><h2 id="m-toast-title">Toast POS</h2><button class="x" onclick="closeModal('m-toast')">✕</button></div>
+  <div class="fl">
+    <div id="m-toast-status" class="sub"></div>
+    <label>Client ID</label><input id="t-cid"><label>Client secret</label><input id="t-sec" type="password"><label>Restaurant GUID</label><input id="t-guid">
+    <div class="sub">Toast Admin → Integrations → API Access → create a credential set with Labor and Orders permissions.</div>
+    <div style="display:flex;gap:8px;margin-top:6px"><button class="btn p" onclick="toastSave()">Test &amp; save</button><button class="btn" onclick="toastSync()">Sync now</button><button class="btn d" onclick="toastDisconnect()">Disconnect</button></div>
+  </div>
+</div></div>
+<div class="mo" id="m-brand"><div class="mb">
+  <div class="mh"><h2>White-label branding</h2><button class="x" onclick="closeModal('m-brand')">✕</button></div>
+  <div class="fl"><label>Brand name</label><input id="b-name"><label>Brand color (hex)</label><input id="b-color" placeholder="#c84b2f"><label>Logo URL</label><input id="b-logo">
+  <div style="display:flex;gap:8px;margin-top:6px"><button class="btn p" onclick="brandSave()">Save</button><span class="sub" id="b-status"></span></div></div>
+</div></div>
+<div class="mo" id="m-import"><div class="mb">
+  <div class="mh"><h2 id="m-import-title">Import reviews CSV</h2><button class="x" onclick="closeModal('m-import')">✕</button></div>
+  <div class="fl"><div class="sub">Required columns: <b>rating</b> and <b>text</b>. Optional: author, date, title. AI drafting runs in the background after import.</div>
+  <input type="file" id="i-file" accept=".csv"><div style="display:flex;gap:8px;align-items:center"><button class="btn p" onclick="importSubmit()">Upload &amp; import</button><a class="btn" href="/admin/inventory-template">Template</a><span class="sub" id="i-status"></span></div></div>
+</div></div>
+<div class="mo" id="m-resolve"><div class="mb" style="max-width:440px">
+  <div class="mh"><h2>Mark resolved</h2><button class="x" onclick="closeModal('m-resolve')">✕</button></div>
+  <div class="fl"><div class="sub" id="r-title"></div><label>Note (optional)</label><input id="r-note" placeholder="What you did"><div style="display:flex;gap:8px"><button class="btn p" onclick="resolveSubmit()">Resolve</button><button class="btn" onclick="closeModal('m-resolve')">Cancel</button></div></div>
+</div></div>
+<div class="mo" id="m-password"><div class="mb" style="max-width:440px">
+  <div class="mh"><h2>Temporary password</h2><button class="x" onclick="closeModal('m-password')">✕</button></div>
+  <div class="fl"><div class="sub">Shown once. The client is asked to change it at next sign-in.</div><div class="mono" id="pw-out" style="font-size:16px;padding:10px;background:var(--paper);border-radius:6px;border:1px dashed var(--ember)"></div></div>
+</div></div>
+<div class="toast" id="toast"></div>
 
 <script>
-function filterGroup(group) {
-  document.querySelectorAll('.group-filter-btn').forEach(b=>b.classList.remove('active'));
-  const activeBtn = group ? document.getElementById('filter-'+group.replace(/ /g,'-')) : document.getElementById('filter-all');
-  if(activeBtn) activeBtn.classList.add('active');
-  document.querySelectorAll('.client-row').forEach(row=>{
-    if(!group || row.dataset.group===group) row.style.display='';
-    else row.style.display='none';
-  });
-}
-function genPassword() {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
-  let pw = '';
-  for(let i=0;i<10;i++) pw += chars[Math.floor(Math.random()*chars.length)];
-  document.getElementById('u-password').value = pw;
-  const btn = document.getElementById('copy-pw-btn');
-  btn.textContent = 'Copy';
-  btn.style.color = 'var(--ink2)';
-}
-function copyPassword() {
-  const pw = document.getElementById('u-password').value;
-  if(!pw) { return; }
-  navigator.clipboard.writeText(pw).then(() => {
-    const btn = document.getElementById('copy-pw-btn');
-    btn.textContent = '✓ Copied';
-    btn.style.color = 'var(--green)';
-    setTimeout(() => { btn.textContent = 'Copy'; btn.style.color = 'var(--ink2)'; }, 2000);
-  });
-}
-function toggleUsage(rid, btn){
-  const div = document.getElementById('usage-'+rid);
-  if(!div) return;
-  if(div.style.display === 'none'){
-    div.style.display = 'block';
-    btn.textContent = 'Hide usage ▴';
-    const dataDiv = document.getElementById('usage-data-'+rid);
-    if(dataDiv.textContent === 'Loading...'){
-      fetch('/admin/api/client-usage/'+rid).then(r=>r.json()).then(d=>{
-        if(!d.ok){ dataDiv.textContent = 'No data yet.'; return; }
-        const tabs = d.tab_counts || {};
-        const events = d.event_counts || {};
-        let html = '';
-        if(Object.keys(tabs).length){
-          html += '<div style="margin-bottom:6px"><strong style="color:var(--ink2)">Tab views:</strong> ';
-          html += Object.entries(tabs).sort((a,b)=>b[1]-a[1]).map(([k,v])=>k+' ('+v+')').join(' · ');
-          html += '</div>';
-        }
-        if(events.login) html += '<span style="margin-right:12px">🔑 Logins: <strong>'+events.login+'</strong></span>';
-        if(events.review_approved) html += '<span style="margin-right:12px">✓ Approvals: <strong>'+events.review_approved+'</strong></span>';
-        if(events.csv_upload) html += '<span style="margin-right:12px">📤 CSV uploads: <strong>'+events.csv_upload+'</strong></span>';
-        if(events.admin_settings_update) html += '<span>⚙️ Settings saved: <strong>'+events.admin_settings_update+'</strong></span>';
-        if(d.last_settings_update) html += '<div style="margin-top:4px;font-size:11px;color:var(--ink3)">Last settings change: '+d.last_settings_update+'</div>';
-        if(!html) html = 'No activity logged yet.';
-        dataDiv.innerHTML = html;
-      }).catch(function(){ dataDiv.textContent = 'Error loading usage.'; });
-    }
-  } else {
-    div.style.display = 'none';
-    btn.textContent = 'Show usage ▾';
-  }
-}
+// ── plumbing ────────────────────────────────────────────────────────────────
+const $ = (id) => document.getElementById(id);
+const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmtN = (n) => (n == null ? '—' : Number(n).toLocaleString());
+const fmtUSD = (n, d) => (n == null ? '—' : '$' + Number(n).toLocaleString(undefined, {minimumFractionDigits: d == null ? 0 : d, maximumFractionDigits: d == null ? 0 : d}));
+// sqlite's datetime('now') stamps are UTC with a space; Python isoformat stamps are local with a T. Same rule as admin_ops._parse.
+function parseTs(s){ if(!s) return null; s=String(s).trim(); const utc = /Z$/.test(s) || (s.indexOf('T')<0 && s.indexOf(' ')>0); const t = Date.parse(s.replace(' ','T').replace(/Z$/,'') + (utc?'Z':'')); return isNaN(t) ? null : new Date(t); }
+function ago(s){ const d = parseTs(s); if(!d) return '—'; const m = Math.round((Date.now()-d)/60000); if(m<1) return 'now'; if(m<60) return m+'m'; const h=Math.round(m/60); if(h<48) return h+'h'; const dd=Math.round(h/24); if(dd<60) return dd+'d'; return Math.round(dd/30)+'mo'; }
+function fmtD(s){ const d = parseTs(s); return d ? d.toLocaleDateString(undefined,{month:'short',day:'numeric'}) + (d.getFullYear()!==new Date().getFullYear()?' '+d.getFullYear():'') : '—'; }
+function fmtDT(s){ const d = parseTs(s); return d ? d.toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}) : '—'; }
+let _tt; function toast(msg, tone){ const t=$('toast'); t.textContent=msg; t.className='toast on'+(tone?' '+tone:''); clearTimeout(_tt); _tt=setTimeout(()=>t.className='toast',3200); }
+async function api(path, opts){ const r = await fetch(path, opts); let j; try{ j = await r.json(); }catch(e){ j = {ok:false, error:'HTTP '+r.status}; } if(r.status===401){ location.href='/login?next=/admin'; } return j; }
+async function post(path, body){ return api(path, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body||{})}); }
+function openModal(id){ $(id).classList.add('on'); } function closeModal(id){ $(id).classList.remove('on'); }
+document.addEventListener('keydown', e => { if(e.key==='Escape') document.querySelectorAll('.mo.on').forEach(m=>m.classList.remove('on')); if(e.key==='/' && document.activeElement!==$('q') && !/INPUT|TEXTAREA/.test(document.activeElement.tagName)){ e.preventDefault(); $('q').focus(); } });
 
-function toast(msg){
-  let t = document.getElementById('admin-toast');
-  if(!t){
-    t = document.createElement('div');
-    t.id = 'admin-toast';
-    t.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#0e0c0a;color:white;padding:10px 20px;border-radius:8px;font-size:13px;z-index:9999;opacity:0;transition:opacity .3s;pointer-events:none';
-    document.body.appendChild(t);
-  }
-  t.textContent = msg;
-  t.style.opacity = '1';
-  setTimeout(()=>{ t.style.opacity = '0'; }, 2600);
+const HEALTH = {healthy:['ok','Healthy'], warning:['warn','Warning'], critical:['bad','Critical'], inactive:['off','Inactive']};
+const hb = (h) => { const x = HEALTH[h] || ['off', h||'—']; return `<span class="b ${x[0]}">${x[1]}</span>`; };
+const BILL = {active:'ok', trial:'info', past_due:'bad', churned:'off', canceled:'off', paused:'warn', internal:'off'};
+const bill = (s) => `<span class="b ${BILL[s]||'off'} nodot">${esc((s||'trial').replace('_',' '))}</span>`;
+const INT = {connected:'ok', error:'bad', off:'off'};
+const intb = (s, label) => `<span class="b ${INT[s]||'off'}">${esc(label||s)}</span>`;
+const MOD = {healthy:'ok', stale:'warn', no_data:'warn', unconfigured:'bad', off:'off'};
+const MODL = {healthy:'healthy', stale:'stale', no_data:'no data', unconfigured:'not configured', off:'off'};
+const modchip = (m) => `<span class="chip ${MOD[m.state]}" title="${esc(m.label)}: ${MODL[m.state]}${m.last_data?' · last '+ago(m.last_data):''}">${esc(m.label)}</span>`;
+const intchip = (i) => i.in_use||i.key==='google_business' ? `<span class="chip ${INT[i.state]}" title="${esc(i.label)}: ${i.state}${i.error?' — '+esc(i.error):''}${i.last_success?' · '+ago(i.last_success):''}">${esc(i.label.replace(' POS','').replace(' & Facebook','').replace('Google Business','GBP').replace('Outbound webhook','Webhook'))}</span>` : '';
+const clientLink = (id, label) => `<a href="#client/${id}" onclick="event.stopPropagation()">${esc(label)}</a>`;
+function bars(vals, key, badKey){ const max = Math.max(1, ...vals.map(v=>+v[key]||0)); return `<div class="bars">${vals.map(v=>`<i style="height:${Math.max(3, 44*(+v[key]||0)/max)}px" class="${badKey&&v[badKey]?'bad':''}" title="${esc(v.day||'')}: ${fmtN(v[key])}${badKey&&v[badKey]?' · '+v[badKey]+' failed':''}"></i>`).join('')}</div>`; }
+function sortable(rows, defaultKey){ return {rows, key: defaultKey, dir: 'desc'}; }
+function table(cols, rows, opts){
+  opts = opts||{}; const id = opts.id || ('t'+Math.random().toString(36).slice(2,7));
+  window._tables = window._tables||{}; window._tables[id] = {cols, rows, opts, key: opts.sort||null, dir: opts.dir||'desc'};
+  return `<div class="tw" id="${id}">${renderTable(id)}</div>`;
 }
+function renderTable(id){
+  const t = window._tables[id]; let rows = t.rows.slice();
+  if(t.key){ const c = t.cols.find(c=>c.key===t.key); const get = c && c.val ? c.val : (r=>r[t.key]); rows.sort((a,b)=>{ let x=get(a), y=get(b); if(x==null) x=''; if(y==null) y=''; if(typeof x==='number'&&typeof y==='number') return t.dir==='asc'?x-y:y-x; x=String(x).toLowerCase(); y=String(y).toLowerCase(); return t.dir==='asc'?x.localeCompare(y):y.localeCompare(x); }); }
+  const head = t.cols.map(c=>`<th class="${c.key?'s':''} ${t.key===c.key?t.dir:''} ${c.r?'r':''}" ${c.key?`onclick="sortTable('${id}','${c.key}')"`:''} style="${c.w?'width:'+c.w:''}">${esc(c.h)}</th>`).join('');
+  const body = rows.length ? rows.map(r=>`<tr class="${t.opts.link?'rowlink':''}" ${t.opts.link?`onclick="location.hash='${t.opts.link(r)}'"`:''}>${t.cols.map(c=>`<td class="${c.r?'r':''} ${c.wrap?'wrap':''}">${c.cell?c.cell(r):esc(r[c.key])}</td>`).join('')}</tr>`).join('') : `<tr><td colspan="${t.cols.length}" class="empty">${esc(t.opts.empty||'Nothing here.')}</td></tr>`;
+  return `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+}
+function sortTable(id, key){ const t=window._tables[id]; if(t.key===key){ t.dir = t.dir==='asc'?'desc':'asc'; } else { t.key=key; t.dir='desc'; } $(id).innerHTML = renderTable(id); }
 
-function toggleMenu(id) {
-  event.stopPropagation();
-  const menu = document.getElementById('menu-'+id);
-  const isOpen = menu.classList.contains('open');
-  document.querySelectorAll('.action-dropdown').forEach(m => m.classList.remove('open'));
-  if(!isOpen) menu.classList.add('open');
-}
-function closeMenu(id) {
-  setTimeout(() => {
-    const menu = document.getElementById('menu-'+id);
-    if(menu) menu.classList.remove('open');
-  }, 100);
-}
-document.addEventListener('click', function(e) {
-  if(!e.target.closest('.action-menu')) {
-    document.querySelectorAll('.action-dropdown').forEach(m => m.classList.remove('open'));
-  }
-});
-async function createClient() {
-  const btn = document.querySelector('.btn-primary');
-  const status = document.getElementById('create-status');
-  btn.textContent = 'Creating…'; btn.disabled = true;
-  const payload = {
-    restaurant_name: document.getElementById('r-name').value,
-    owner_email:     document.getElementById('r-email').value,
-    username:        document.getElementById('u-username').value,
-    password:        document.getElementById('u-password').value,
-    google_place_id: document.getElementById('r-google').value,
-    yelp_business_id:document.getElementById('r-yelp').value,
-    owner_name:      document.getElementById('r-owner-name') ? document.getElementById('r-owner-name').value : '',
-    voice_notes:     document.getElementById('r-voice').value,
-    owner_phone:     document.getElementById('r-phone').value,
-    location_group:  document.getElementById('r-group') ? document.getElementById('r-group').value : '',
-    location_name:   document.getElementById('r-location') ? document.getElementById('r-location').value : '',
-    module_reviews:  document.getElementById('mod-reviews').checked ? 1 : 0,
-    module_labor:    document.getElementById('mod-labor').checked ? 1 : 0,
-    module_inventory:document.getElementById('mod-inventory').checked ? 1 : 0,
-    module_marketing:document.getElementById('mod-marketing').checked ? 1 : 0,
-
-  };
+// ── router ──────────────────────────────────────────────────────────────────
+const VIEWS = {overview, clients: clientsView, locations, onboarding, integrations, ai, alerts, emails, billing, jobs, issues, system};
+async function route(){
+  const h = (location.hash || '#overview').slice(1); const [name, arg] = h.split('/'); const q = new URLSearchParams(location.search);
+  document.querySelectorAll('#nav a').forEach(a => a.classList.toggle('on', a.dataset.v === name));
+  const view = $('view'); view.innerHTML = '<div class="sk"></div><div class="sk" style="width:70%"></div><div class="sk" style="width:40%"></div>';
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 20000);
-    const res = await fetch('/admin/create-client', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify(payload),
-      signal: controller.signal
-    });
-    clearTimeout(timeout);
-    const data = await res.json();
-    status.style.display = 'block';
-    if (data.ok) {
-      status.className = 'status-msg status-ok';
-      let msg = '✓ Client created — username: ' + payload.username;
-      if (data.docusign_skipped) msg += '. (DocuSign unavailable — send contract manually)';
-      status.textContent = msg;
-      setTimeout(() => location.reload(), 1800);
-    } else {
-      status.className = 'status-msg status-err';
-      status.textContent = data.error || 'Something went wrong';
-    }
-  } catch(e) {
-    status.style.display = 'block';
-    status.className = 'status-msg status-err';
-    if(e.name === 'AbortError') {
-      status.textContent = 'Request timed out — check Railway logs and try again';
-    } else {
-      status.textContent = 'Request failed: ' + e.message;
-    }
-  }
-  btn.textContent = 'Create client account'; btn.disabled = false;
+    if(name === 'client' && arg) await clientView(parseInt(arg, 10), (h.split('?')[1]||''));
+    else if(VIEWS[name]) await VIEWS[name](arg);
+    else view.innerHTML = '<div class="empty">No such page.</div>';
+  } catch(e){ view.innerHTML = `<div class="err">Couldn't load this page — ${esc(e.message||e)}</div>`; console.error(e); }
+  window.scrollTo(0,0);
 }
-function searchClients(query) {
-  const q = query.toLowerCase();
-  document.querySelectorAll('.client-row').forEach(row => {
-    const text = row.textContent.toLowerCase();
-    row.style.display = (!q || text.includes(q)) ? '' : 'none';
-  });
+window.addEventListener('hashchange', route);
+// nav badges from the overview, refreshed in the background
+async function badges(){
+  const d = await api('/admin/api/overview'); if(!d.ok) return; const k = d.kpis;
+  const set = (id, n, cls) => { const el = $(id); el.textContent = n; el.hidden = !n; el.className = 'cnt' + (cls ? ' ' + cls : ''); };
+  set('n-attn', k.attention, k.critical ? 'bad' : (k.attention ? 'warn' : '')); set('n-clients', k.clients);
+  set('n-int', k.integrations_failing, 'bad'); set('n-ai', k.ai_failures_24h, 'bad'); set('n-mail', k.email_failures_today, 'bad');
+  set('n-jobs', k.job_failures_24h, 'bad'); set('n-issues', k.attention, k.critical ? 'bad' : 'warn'); set('n-bill', k.past_due + k.canceled, 'bad');
+  const onb = (d.brands||[]).length; set('n-onb', 0);
+  const m = k.scheduler_heartbeat_minutes; const bad = m == null || m > 15;
+  $('hb-pill').innerHTML = `<span class="heart ${bad?'bad':''}"></span> Scheduler ${m==null?'never':('· '+(m<1?'just now':Math.round(m)+'m ago'))}`;
+  $('gen-at').textContent = 'Updated ' + new Date().toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'});
 }
 
-async function resendContract(restaurantId) {
-  const btn = event.target;
-  btn.textContent = 'Sending…'; btn.disabled = true;
-  const res = await fetch('/admin/resend-contract/' + restaurantId, {method:'POST'});
-  const data = await res.json();
-  if (data.ok) {
-    btn.textContent = '✓ Sent';
-    setTimeout(() => { btn.textContent = 'Resend contract'; btn.disabled = false; }, 3000);
-  } else {
-    btn.textContent = 'Error: ' + (data.error || 'failed');
-    btn.disabled = false;
-  }
-}
+// ── search ──────────────────────────────────────────────────────────────────
+let _qt; $('q').addEventListener('input', () => { clearTimeout(_qt); const q = $('q').value.trim(); if(q.length<2){ $('q-res').style.display='none'; return; } _qt = setTimeout(async () => {
+  const d = await api('/admin/api/search?q='+encodeURIComponent(q)); const box = $('q-res');
+  if(!d.ok || !d.results.length){ box.innerHTML = '<div class="empty">No matches.</div>'; box.style.display='block'; return; }
+  box.innerHTML = d.results.map(r => `<a href="${r.type==='brand'?'#locations?brand='+encodeURIComponent(r.title):(r.id?'#client/'+r.id:'#clients')}" onclick="$('q-res').style.display='none'"><span class="t">${esc(r.type)}</span><span><b>${esc(r.title)}</b> <span class="dim" style="color:var(--ink4)">${esc(r.sub||'')}</span></span></a>`).join('');
+  box.style.display='block';
+}, 220); });
+document.addEventListener('click', e => { if(!e.target.closest('.search')) $('q-res').style.display='none'; });
 
-async function resendPayment(restaurantId, email, billing) {
-  const btn = event.target;
-  btn.textContent = 'Sending…'; btn.disabled = true;
-  const res = await fetch('/admin/resend-payment/' + restaurantId, {method:'POST'});
-  const data = await res.json();
-  if (data.ok) {
-    btn.textContent = '✓ Sent';
-    btn.style.background = '#eaf2ed';
-    setTimeout(() => { btn.textContent = 'Resend payment'; btn.disabled = false; }, 3000);
-  } else {
-    btn.textContent = 'Error';
-    btn.disabled = false;
-    toast('Error: ' + (data.error || 'unknown'));
-  }
+// ── shared pieces ───────────────────────────────────────────────────────────
+function issuesTable(issues, opts){
+  opts = opts||{};
+  return table([
+    {h:'Sev', key:'severity_rank', w:'70px', cell:i=>`<span class="sev ${i.severity}">${i.severity==='critical'?'CRIT':'WARN'}</span>`},
+    {h:'Client · location', key:'restaurant', cell:i=>i.restaurant_id?`${clientLink(i.restaurant_id, i.restaurant)}${i.location_name?' <span class="dim">· '+esc(i.location_name)+'</span>':''}${i.brand&&i.brand!==i.restaurant?' <span class="dim">('+esc(i.brand)+')</span>':''}`:`<span class="b info nodot">Platform</span>`},
+    {h:'Issue', key:'title', wrap:true, cell:i=>`<span class="name">${esc(i.title)}</span>${i.detail?'<div class="dim">'+esc(i.detail)+'</div>':''}`},
+    {h:'For', key:'since_at', w:'60px', cell:i=>`<span class="num">${esc(i.since)}</span>`},
+    {h:'', cell:i=>`${i.action_route?`<button class="btn s" onclick="event.stopPropagation();issueAction('${esc(i.action_route)}','${esc(i.action)}')">${esc(i.action)}</button>`:(i.action?`<span class="dim">${esc(i.action)}</span>`:'')} <button class="btn s" onclick="event.stopPropagation();resolveOpen('${esc(i.key)}','${esc(i.title)}')">Resolve</button>`}
+  ], issues, {id: opts.id||'issues-t', sort:'severity_rank', empty: 'Nothing needs attention.'});
 }
+async function issueAction(route, label){
+  if(route.startsWith('/admin/view-as/') || route.startsWith('/admin/client-settings/')){ location.href = route; return; }
+  if(!confirm(label + '?')) return; const d = await post(route); toast(d.ok ? (label + ' — done') : (d.error||'Failed'), d.ok?'good':'bad'); if(d.ok) route(); }
+let _resolveKey = null;
+function resolveOpen(key, title){ _resolveKey = key; $('r-title').textContent = title; $('r-note').value=''; openModal('m-resolve'); }
+async function resolveSubmit(){ const d = await post('/admin/api/issues/resolve', {key:_resolveKey, note:$('r-note').value}); closeModal('m-resolve'); toast(d.ok?'Marked resolved':'Failed', d.ok?'good':'bad'); route(); badges(); }
+async function unresolve(key){ const d = await post('/admin/api/issues/resolve', {key, undo:true}); toast(d.ok?'Reopened':'Failed', d.ok?'good':'bad'); route(); badges(); }
+function activityList(events){
+  if(!events.length) return '<div class="empty">Quiet.</div>';
+  const tone = {good:'ok', bad:'bad', warn:'warn', neutral:'off'};
+  return `<div class="list">${events.map(e=>`<div class="it"><span class="when">${esc(ago(e.at))} · ${esc(fmtDT(e.at))}</span><span><span class="dot ${tone[e.tone]||'off'}"></span>${esc(e.label)}${e.detail?' <span class="dim" style="color:var(--ink4)">— '+esc(e.detail)+'</span>':''}</span><span class="who">${e.restaurant_id?clientLink(e.restaurant_id, e.restaurant):esc(e.restaurant||'')}</span></div>`).join('')}</div>`;
+}
+function kpi(v, l, cls, small){ return `<div class="kpi ${cls||''}"><div class="v">${v}${small?' <small>'+esc(small)+'</small>':''}</div><div class="l">${esc(l)}</div></div>`; }
 
-async function fetchReviewsNow(rid){
-  if(!confirm('Fetch latest reviews from Google for this restaurant?')) return;
-  const btn = event.target;
-  btn.textContent = 'Fetching...'; btn.disabled = true;
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(()=>controller.abort(), 30000);
-    const res = await fetch('/admin/fetch-reviews/'+rid, {method:'POST', signal:controller.signal});
-    clearTimeout(timeout);
-    const data = await res.json();
-    if(data.ok){
-      const n = data.new_reviews || data.new_count || 0;
-      toast('Fetched ' + n + ' new reviews ✓' + (data.errors&&data.errors.length?' ('+data.errors.length+' warnings)':''));
-    } else {
-      toast('Error: ' + (data.error||'unknown'));
-    }
-  } catch(e) {
-    if(e.name==='AbortError') toast('Timed out — try again or check Railway logs');
-    else toast('Fetch failed: '+e.message);
-  }
-  btn.textContent = 'Fetch reviews now'; btn.disabled = false;
-}
-
-async function redraftAll(rid) {
-  if(!confirm('Reset and re-draft ALL review responses for this restaurant using real AI? This will overwrite existing drafts (posted responses are safe).')) return;
-  const btn = event.target;
-  btn.textContent = 'Re-drafting…'; btn.disabled = true;
-  try {
-    const res = await fetch('/admin/redraft-all/'+rid, {method:'POST'});
-    const data = await res.json();
-    if(data.ok){
-      toast('Re-drafting started — takes ~1 min in background. Refresh client view to see results.');
-    } else {
-      toast('Error: '+(data.error||'unknown'));
-    }
-  } catch(e) {
-    toast('Failed: '+e.message);
-  }
-  btn.textContent = 'Re-draft all with AI'; btn.disabled = false;
-}
-
-async function seedReviews(restaurantId) {
-  const btn = event.target;
-  btn.textContent = 'Seeding…'; btn.disabled = true;
-  const res = await fetch('/admin/seed-reviews/' + restaurantId, {method:'POST'});
-  const data = await res.json();
-  if (data.ok) {
-    btn.textContent = '✓ Seeded ' + data.seeded + ' reviews';
-    setTimeout(() => { btn.textContent = 'Seed reviews'; btn.disabled = false; }, 3000);
-  } else {
-    btn.textContent = 'Error'; btn.disabled = false;
-    toast('Error: ' + (data.error || 'unknown'));
-  }
-}
-
-async function reseedDemoData(restaurantId) {
-  const btn = event.target;
-  btn.textContent = 'Reseeding…'; btn.disabled = true;
-  try {
-    const res = await fetch('/admin/reseed-demo-data/' + restaurantId, {method:'POST'});
-    const data = await res.json();
-    if (data.ok) {
-      toast('Demo data reseeded');
-    } else {
-      toast('Error: ' + (data.error || 'unknown'));
-    }
-  } catch(e) {
-    toast('Failed: ' + e.message);
-  }
-  btn.textContent = 'Reseed demo data (is_demo)'; btn.disabled = false;
-}
-
-async function openAiUsageModal(restaurantId, name) {
-  document.getElementById('ai-usage-restaurant').textContent = name + ' — last 30 days';
-  document.getElementById('ai-usage-body').innerHTML = 'Loading…';
-  document.getElementById('ai-usage-modal').style.display = 'flex';
-  try {
-    const res = await fetch('/admin/ai-usage/' + restaurantId);
-    const data = await res.json();
-    if (!data.ok || !data.rows.length) {
-      document.getElementById('ai-usage-body').innerHTML = '<div style="color:var(--ink3)">No AI usage recorded yet in this window.</div>';
-      return;
-    }
-    let html = '<div style="display:flex;gap:20px;margin-bottom:16px">'
-      + '<div><div style="font-size:22px;font-weight:700;color:var(--ink)">$' + data.total_cost.toFixed(2) + '</div><div style="font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:.06em">Est. cost</div></div>'
-      + '<div><div style="font-size:22px;font-weight:700;color:var(--ink)">' + data.total_calls + '</div><div style="font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:.06em">AI calls</div></div>'
-      + '</div>';
-    html += '<table style="width:100%;border-collapse:collapse;font-size:12px">';
-    html += '<tr><th style="text-align:left;padding:6px 8px;border-bottom:1px solid var(--paper3)">Action</th><th style="text-align:left;padding:6px 8px;border-bottom:1px solid var(--paper3)">Model</th><th style="text-align:right;padding:6px 8px;border-bottom:1px solid var(--paper3)">Calls</th><th style="text-align:right;padding:6px 8px;border-bottom:1px solid var(--paper3)">Cost</th></tr>';
-    for (const row of data.rows) {
-      html += '<tr><td style="padding:6px 8px;border-bottom:1px solid var(--paper3)">' + row.action + '</td>'
-        + '<td style="padding:6px 8px;border-bottom:1px solid var(--paper3);color:var(--ink3)">' + row.model + '</td>'
-        + '<td style="padding:6px 8px;border-bottom:1px solid var(--paper3);text-align:right">' + row.calls + '</td>'
-        + '<td style="padding:6px 8px;border-bottom:1px solid var(--paper3);text-align:right">$' + (row.cost_usd || 0).toFixed(3) + '</td></tr>';
-    }
-    html += '</table>';
-    document.getElementById('ai-usage-body').innerHTML = html;
-  } catch (e) {
-    document.getElementById('ai-usage-body').innerHTML = '<div style="color:var(--red)">Failed to load: ' + e.message + '</div>';
-  }
-}
-function closeAiUsageModal() {
-  document.getElementById('ai-usage-modal').style.display = 'none';
-}
-
-async function deactivateClient(id, name) {
-  const btn = event.target;
-  btn.textContent = 'Deactivating...';
-  btn.disabled = true;
-  try {
-    const res = await fetch('/admin/deactivate-client/' + id, {method:'POST', headers:{'Content-Type':'application/json'}});
-    const data = await res.json();
-    if (data.ok) { location.reload(); }
-    else { btn.textContent = 'Error'; toast('Error: ' + (data.error || 'unknown')); }
-  } catch(e) { btn.textContent = 'Error'; toast('Failed: ' + e.message); }
-}
-async function reactivateClient(id, name) {
-  const btn = event.target;
-  btn.textContent = 'Reactivating...';
-  btn.disabled = true;
-  try {
-    const res = await fetch('/admin/reactivate-client/' + id, {method:'POST', headers:{'Content-Type':'application/json'}});
-    const data = await res.json();
-    if (data.ok) { location.reload(); }
-    else { btn.textContent = 'Error'; toast('Error: ' + (data.error || 'unknown')); }
-  } catch(e) { btn.textContent = 'Error'; toast('Failed: ' + e.message); }
-}
-
-async function setUserRole(userId, role) {
-  const btn = event.target;
-  const orig = btn.textContent;
-  btn.textContent = 'Saving…';
-  btn.disabled = true;
-  try {
-    const res = await fetch('/admin/api/set-user-role', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({user_id: userId, role: role})
-    });
-    const data = await res.json();
-    if (data.ok) {
-      btn.textContent = '✓ Saved';
-      setTimeout(function(){ location.reload(); }, 600);
-    } else {
-      btn.textContent = 'Error: ' + (data.error || 'unknown');
-      btn.disabled = false;
-      console.error('setUserRole error', data);
-    }
-  } catch(e) {
-    btn.textContent = 'Network error';
-    btn.disabled = false;
-    console.error('setUserRole exception', e);
-  }
-}
-
-async function addStaffNote() {
-  const name = document.getElementById('staff-name').value.trim();
-  const notes = document.getElementById('staff-constraint').value.trim();
-  const result = document.getElementById('staff-note-result');
-  if(!name || !notes) { showResult(result, false, 'Enter both a name and constraint'); return; }
-  const form = new FormData();
-  form.append('employee_name', name);
-  form.append('notes', notes);
-  const res = await fetch('/admin/staff-notes/' + restaurantId, {method:'POST', body: form});
-  const data = await res.json();
-  if(data.ok) {
-    showResult(result, true, '✓ Constraint saved');
-    setTimeout(() => location.reload(), 1000);
-  } else {
-    showResult(result, false, data.error || 'Save failed');
-  }
-}
-async function deleteNote(noteId) {
-  const res = await fetch('/admin/staff-notes/' + noteId + '/delete', {method:'POST'});
-  const data = await res.json();
-  if(data.ok) location.reload();
-}
-
-// ── Toast POS modal ───────────────────────────────────────────────────────────
-var _toastRid = null;
-
-function openToastModal(rid, name) {
-  _toastRid = rid;
-  document.getElementById('toast-modal-restaurant').textContent = name;
-  document.getElementById('toast-client-id').value = '';
-  document.getElementById('toast-client-secret').value = '';
-  document.getElementById('toast-guid').value = '';
-  _setToastBanner('', '');
-  document.getElementById('toast-sync-btn').style.display = 'none';
-  document.getElementById('toast-disconnect-btn').style.display = 'none';
-  document.getElementById('toast-save-btn').textContent = 'Test & Save';
-  var modal = document.getElementById('toast-modal');
-  modal.style.display = 'flex';
-  // Load current status
-  fetch('/admin/toast/status/' + rid)
-    .then(function(r){ return r.json(); })
-    .then(function(d){
-      if(d.connected) {
-        _setToastBanner(
-          '✓ Connected — GUID: ' + d.guid_masked +
-          (d.last_synced ? ' · Last synced: ' + d.last_synced.slice(0,16).replace('T',' ') + ' UTC' : '') +
-          (d.sync_error  ? '<br>⚠ Last error: ' + d.sync_error : ''),
-          d.sync_error ? 'warn' : 'ok'
-        );
-        document.getElementById('toast-save-btn').textContent = 'Update credentials';
-        document.getElementById('toast-sync-btn').style.display = 'inline-block';
-        document.getElementById('toast-disconnect-btn').style.display = 'inline-block';
-      }
-    })
-    .catch(function(){});
-}
-
-function closeToastModal() {
-  document.getElementById('toast-modal').style.display = 'none';
-  _toastRid = null;
-}
-
-function _setToastBanner(msg, type) {
-  var b = document.getElementById('toast-status-banner');
-  if(!msg){ b.style.display='none'; return; }
-  b.innerHTML = msg;
-  b.style.display = 'block';
-  if(type === 'ok'){
-    b.style.background = '#f0fdf4'; b.style.border = '1px solid #bbf7d0'; b.style.color = '#166534';
-  } else if(type === 'warn'){
-    b.style.background = '#fffbeb'; b.style.border = '1px solid #fde68a'; b.style.color = '#92400e';
-  } else {
-    b.style.background = '#fef2f2'; b.style.border = '1px solid #fecaca'; b.style.color = '#991b1b';
-  }
-}
-
-async function saveToastCredentials() {
-  var btn = document.getElementById('toast-save-btn');
-  var cid = document.getElementById('toast-client-id').value.trim();
-  var csec = document.getElementById('toast-client-secret').value.trim();
-  var guid = document.getElementById('toast-guid').value.trim();
-  if(!cid || !csec || !guid){
-    _setToastBanner('All three fields are required.', 'err'); return;
-  }
-  btn.disabled = true;
-  btn.textContent = 'Testing connection…';
-  _setToastBanner('', '');
-  try {
-    const res = await fetch('/admin/toast/save/' + _toastRid, {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({client_id: cid, client_secret: csec, restaurant_guid: guid, test: true})
-    });
-    const data = await res.json();
-    if(data.ok){
-      _setToastBanner('✓ Connected successfully! Starting initial sync…', 'ok');
-      btn.textContent = 'Update credentials';
-      document.getElementById('toast-sync-btn').style.display = 'inline-block';
-      document.getElementById('toast-disconnect-btn').style.display = 'inline-block';
-      // Kick off the first sync automatically
-      await fetch('/admin/toast/sync/' + _toastRid, {method:'POST'});
-      _setToastBanner('✓ Connected — initial sync started. Labor data will update in ~30 seconds.', 'ok');
-      toast('Toast POS connected ✓');
-    } else {
-      _setToastBanner('✗ ' + (data.error || 'Unknown error'), 'err');
-      btn.textContent = 'Test & Save';
-    }
-  } catch(e) {
-    _setToastBanner('✗ Request failed: ' + e.message, 'err');
-    btn.textContent = 'Test & Save';
-  }
-  btn.disabled = false;
-}
-
-async function syncToastNow() {
-  var btn = document.getElementById('toast-sync-btn');
-  btn.disabled = true;
-  btn.textContent = 'Syncing…';
-  try {
-    const res = await fetch('/admin/toast/sync/' + _toastRid, {method:'POST'});
-    const data = await res.json();
-    if(data.ok){
-      _setToastBanner('✓ Sync started — labor data refreshes in ~30 seconds.', 'ok');
-      toast('Toast sync started ✓');
-    } else {
-      _setToastBanner('✗ ' + (data.error || 'Sync failed'), 'err');
-    }
-  } catch(e) {
-    _setToastBanner('✗ Request failed: ' + e.message, 'err');
-  }
-  btn.disabled = false;
-  btn.textContent = '↻ Sync now';
-}
-
-async function disconnectToast() {
-  if(!confirm('Remove Toast POS connection for this restaurant? Existing synced data will remain until overwritten.')) return;
-  try {
-    const res = await fetch('/admin/toast/disconnect/' + _toastRid, {method:'POST'});
-    const data = await res.json();
-    if(data.ok){
-      _setToastBanner('Disconnected.', 'warn');
-      document.getElementById('toast-sync-btn').style.display = 'none';
-      document.getElementById('toast-disconnect-btn').style.display = 'none';
-      document.getElementById('toast-save-btn').textContent = 'Test & Save';
-      toast('Toast disconnected');
-    }
-  } catch(e) {
-    _setToastBanner('✗ ' + e.message, 'err');
-  }
-}
-
-document.addEventListener('click', function(e){
-  if(e.target === document.getElementById('toast-modal')) closeToastModal();
-  if(e.target === document.getElementById('status-modal')) closeStatusModal();
-});
-
-// ── Status management modal ────────────────────────────────────────────────────
-
-function openStatusModal() {
-  var m = document.getElementById('status-modal');
-  m.style.display = 'flex';
-  loadStatusServices();
-}
-
-function closeStatusModal() {
-  document.getElementById('status-modal').style.display = 'none';
-}
-
-function loadStatusServices() {
-  fetch('/admin/status/services')
-    .then(function(r){ return r.json(); })
-    .then(function(data){
-      var map = {};
-      (data.statuses || []).forEach(function(s){ map[s.service_key] = s; });
-      var html = '';
-      (data.services || []).forEach(function(svc){
-        var cur = map[svc.key] || {};
-        var st = cur.status || 'operational';
-        var msg = cur.message || '';
-        html += '<div style="border-bottom:1px solid var(--paper3);padding:12px 0">';
-        html += '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">';
-        html += '<div><div style="font-weight:600;font-size:14px">' + svc.name + '</div>';
-        html += '<div style="font-size:11px;color:var(--ink3)">' + (svc.description || '') + '</div></div>';
-        html += '<select onchange="_svcStatusChange(this,\'' + svc.key + '\')" style="padding:5px 8px;border:1px solid var(--paper3);border-radius:6px;font-family:inherit;font-size:12px">';
-        ['operational','degraded','outage','maintenance'].forEach(function(v){
-          html += '<option value="' + v + '"' + (st === v ? ' selected' : '') + '>' + v.charAt(0).toUpperCase() + v.slice(1) + '</option>';
-        });
-        html += '</select></div>';
-        html += '<input id="svc-msg-' + svc.key + '" type="text" placeholder="Optional status message…" value="' + (msg||'').replace(/"/g,'&quot;') + '" ';
-        html += 'style="width:100%;margin-top:6px;padding:7px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:inherit;font-size:12px" />';
-        html += '<button onclick="_saveServiceStatus(\'' + svc.key + '\')" style="margin-top:6px;padding:5px 12px;font-size:11px;font-weight:600;background:var(--ink);color:#fff;border:none;border-radius:5px;cursor:pointer">Save</button>';
-        html += '</div>';
-      });
-      document.getElementById('status-services-list').innerHTML = html;
-    });
-}
-
-function _svcStatusChange(sel, key) {
-  /* no-op, saved on button click */
-}
-
-async function _saveServiceStatus(key) {
-  var sel = document.querySelector('#status-services-list select[onchange*="\'' + key + '\'"]');
-  var status = sel ? sel.value : 'operational';
-  var msgEl = document.getElementById('svc-msg-' + key);
-  var message = msgEl ? msgEl.value.trim() : '';
-  var res = await fetch('/admin/status/update', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({service_key: key, status: status, message: message})
-  });
-  var data = await res.json();
-  if(data.ok) toast('Status updated');
-  else toast('Error: ' + (data.error || 'unknown'));
-}
-
-async function postIncident() {
-  var title    = document.getElementById('inc-title').value.trim();
-  var body     = document.getElementById('inc-body').value.trim();
-  var severity = document.getElementById('inc-severity').value;
-  if(!title) { toast('Title is required'); return; }
-  var checkboxes = document.querySelectorAll('.inc-svc-check:checked');
-  var keys = Array.from(checkboxes).map(function(c){ return c.value; });
-  var res = await fetch('/admin/status/incident', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({title: title, body: body, severity: severity, affected_keys: keys, status: 'investigating'})
-  });
-  var data = await res.json();
-  if(data.ok) {
-    toast('Incident posted');
-    document.getElementById('inc-title').value = '';
-    document.getElementById('inc-body').value  = '';
-    document.querySelectorAll('.inc-svc-check').forEach(function(c){ c.checked = false; });
-  } else {
-    toast('Error: ' + (data.error || 'unknown'));
-  }
-}
-</script>
-  <!-- Changelog manager -->
-  <div style="max-width:860px;margin:0 auto 32px">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin:12px 0 8px">
-      <div class="section-title" style="margin-bottom:0">In-app changelog</div>
-      <span style="font-size:11px;color:var(--ink3)">Visible to all clients via ✦ in their dashboard header</span>
+// ── Overview ────────────────────────────────────────────────────────────────
+async function overview(){
+  const d = await api('/admin/api/overview'); if(!d.ok) throw new Error(d.error||'overview failed'); const k = d.kpis;
+  const brands = d.brands.filter(b=>!b.is_demo);
+  $('view').innerHTML = `
+    <div class="head"><div><div class="k ember">Overview</div><h1>Platform health</h1></div><div class="r"><span class="sub">${k.clients} clients · ${k.locations} locations · ${k.brands} brands</span><button class="btn" onclick="route();badges()">Refresh</button></div></div>
+    <div class="grid g8" style="margin-bottom:14px">
+      ${kpi(fmtN(k.active),'Active clients','good')}${kpi(fmtN(k.trial),'On trial','')}${kpi(fmtN(k.new_this_month),'New this month','')}${kpi(fmtUSD(k.mrr),'MRR (list price)','ember')}
+      ${kpi(fmtN(k.past_due+k.canceled),'Past due / canceled',(k.past_due+k.canceled)?'bad':'')}${kpi(fmtN(k.integrations_failing),'Integrations failing',k.integrations_failing?'bad':'good')}
+      ${kpi(fmtN(k.attention),'Need attention',k.critical?'bad':(k.attention?'warn':'good'), k.critical?k.critical+' critical':'')}${kpi(k.scheduler_heartbeat_minutes==null?'—':Math.round(k.scheduler_heartbeat_minutes)+'m','Scheduler heartbeat',(k.scheduler_heartbeat_minutes==null||k.scheduler_heartbeat_minutes>15)?'bad':'good')}
     </div>
-    <div class="card" style="padding:20px;margin-bottom:16px">
-      <div style="display:grid;grid-template-columns:1fr 1fr 140px auto;gap:10px;align-items:end">
-        <div>
-          <label style="font-size:11px;font-weight:600;color:var(--ink3);display:block;margin-bottom:4px">TITLE</label>
-          <input id="cl-title" type="text" placeholder="e.g. Dark mode is here" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-size:13px;font-family:inherit;height:36px;box-sizing:border-box">
-        </div>
-        <div>
-          <label style="font-size:11px;font-weight:600;color:var(--ink3);display:block;margin-bottom:4px">BODY (optional)</label>
-          <input id="cl-body" type="text" placeholder="Short description…" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-size:13px;font-family:inherit;height:36px;box-sizing:border-box">
-        </div>
-        <div>
-          <label style="font-size:11px;font-weight:600;color:var(--ink3);display:block;margin-bottom:4px">TAG</label>
-          <select id="cl-tag" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-size:13px;font-family:inherit;height:36px;box-sizing:border-box;appearance:none;-webkit-appearance:none;background-image:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23888'/%3E%3C/svg%3E\");background-repeat:no-repeat;background-position:right 10px center">
-            <option value="feature">feature</option>
-            <option value="improvement">improvement</option>
-            <option value="fix">fix</option>
-          </select>
-        </div>
-        <div style="padding-bottom:1px">
-          <label style="font-size:11px;font-weight:600;color:transparent;display:block;margin-bottom:4px">.</label>
-          <button onclick="adminCreateChangelog()" class="btn-ember-sm" style="padding:9px 18px;font-size:13px;width:100%">+ Post</button>
-        </div>
+    <div class="grid g8" style="margin-bottom:18px">
+      ${kpi(fmtN(k.ai_calls_today),'AI calls today','', fmtUSD(k.ai_cost_today,2))}${kpi(fmtN(k.ai_failures_24h),'AI/job failures 24h',k.ai_failures_24h?'bad':'good')}
+      ${kpi(fmtN(k.emails_today),'Emails today','')}${kpi(fmtN(k.email_failures_today),'Email failures',k.email_failures_today?'bad':'good')}
+      ${kpi(fmtN(k.push_today),'Pushes today','')}${kpi(fmtN(k.push_failures_today),'Push failures',k.push_failures_today?'bad':'good')}
+      ${kpi(fmtN(k.alerts_today),'Alerts fired today','')}${kpi(fmtN(k.integrations_active),'Integrations live','')}
+    </div>
+    <div class="head" style="margin-bottom:8px"><h2>Attention required</h2><a href="#issues" class="sub">All issues →</a></div>
+    ${issuesTable(d.issues.slice(0, 14), {id:'ov-issues'})}
+    <div class="grid g2" style="margin-top:18px">
+      <div class="card"><div class="ch"><h2>Brands</h2><a href="#locations" class="sub">Locations →</a></div><div class="cb" style="display:flex;flex-direction:column;gap:6px">
+        ${brands.length?brands.map(b=>`<div style="display:flex;align-items:center;gap:10px;font-size:12.5px"><span class="dot ${HEALTH[b.health][0]}"></span><a href="${b.count>1?'#locations?brand='+encodeURIComponent(b.brand):'#client/'+b.location_ids[0]}" style="color:var(--ink);font-weight:600">${esc(b.brand)}</a><span class="dim" style="color:var(--ink4)">${b.count} location${b.count===1?'':'s'}${b.owners.length?' · '+esc(b.owners.map(o=>o.username).join(', ')):''}</span><span style="margin-left:auto" class="num">${b.issues?b.issues+' issue'+(b.issues===1?'':'s'):''}${b.monthly?' · '+fmtUSD(b.monthly)+'/mo':''}</span></div>`).join(''):'<div class="empty">No clients yet.</div>'}
+      </div></div>
+      <div class="card"><div class="ch"><h2>What changed</h2><span class="sub">last 14 days</span></div><div class="cb">${activityList(d.activity.slice(0,18))}</div></div>
+    </div>`;
+}
+
+// ── Clients ─────────────────────────────────────────────────────────────────
+let _clients = null, _cf = 'all', _cq = '', _showDemo = false;
+const CF = [
+  ['all','All', r=>true], ['attention','Needs attention', r=>r.issues.length>0], ['active','Active', r=>r.billing.status==='active'], ['trial','Trial', r=>r.billing.status==='trial'],
+  ['past_due','Past due', r=>r.billing.status==='past_due'], ['canceled','Canceled', r=>['churned','canceled'].includes(r.billing.status)],
+  ['onboarding','Onboarding', r=>!r.onboarding.complete && !r.onboarding.dismissed], ['integration','Integration issue', r=>r.integration_health==='error'],
+  ['ai','AI issue', r=>r.issues.some(i=>/ai_/.test(i.key))], ['email','Email issue', r=>r.email.failed_7d>0], ['push','Notification issue', r=>r.push.failed_7d>0||r.push.disabled>0],
+  ['stale','Data stale', r=>r.modules.some(m=>m.state==='stale'||m.state==='no_data')], ['usage','High usage', r=>r.ai.cost_30d>10||r.ai.calls_30d>150],
+  ['inactive','Inactive 14d+', r=>{const d=parseTs(r.last_active); return !d || (Date.now()-d)>14*864e5;}], ['new','Joined 30d', r=>{const d=parseTs(r.created_at); return d && (Date.now()-d)<30*864e5;}]
+];
+async function clientsView(){
+  if(!_clients){ const d = await api('/admin/api/clients'); if(!d.ok) throw new Error('clients failed'); _clients = d.clients; }
+  const base = _clients.filter(r=>_showDemo||!r.is_demo);
+  const f = CF.find(x=>x[0]===_cf)||CF[0]; const q=_cq.toLowerCase();
+  const rows = base.filter(f[2]).filter(r=>!q||[r.name,r.brand,r.location_name,r.city,r.owner_email,r.owner_name,(r.owner||{}).username,(r.owner||{}).email].some(v=>v&&String(v).toLowerCase().includes(q)));
+  $('view').innerHTML = `
+    <div class="head"><div><div class="k ember">Customers</div><h1>Clients</h1></div><div class="r"><label class="sub" style="display:flex;gap:6px;align-items:center;cursor:pointer"><input type="checkbox" ${_showDemo?'checked':''} onchange="_showDemo=this.checked;clientsView()"> show demo</label><a class="btn p" href="#system">+ New client</a></div></div>
+    <div class="filters">${CF.map(x=>`<button class="f ${_cf===x[0]?'on':''}" onclick="_cf='${x[0]}';clientsView()">${x[1]}<span class="n">${base.filter(x[2]).length}</span></button>`).join('')}<input placeholder="Filter by name, city, email…" value="${esc(_cq)}" oninput="_cq=this.value;clientsView()" style="margin-left:auto"></div>
+    ${table([
+      {h:'Health', key:'health', w:'84px', cell:r=>hb(r.health)},
+      {h:'Owner', key:'owner', val:r=>(r.owner||{}).username||'', cell:r=>`<span class="name">${esc((r.owner||{}).username||'—')}</span><div class="dim">${esc(r.owner_name||(r.owner||{}).email||'')}</div>`},
+      {h:'Restaurant', key:'name', cell:r=>`<span class="name">${esc(r.name)}</span>${r.is_demo?' <span class="chip">demo</span>':''}<div class="dim">${r.brand!==r.name?esc(r.brand)+' · ':''}${esc(r.location_name||r.city||'')}</div>`},
+      {h:'Locs', key:'locs', r:true, val:r=>_clients.filter(x=>x.brand===r.brand).length, cell:r=>`<span class="num">${_clients.filter(x=>x.brand===r.brand).length}</span>`},
+      {h:'Billing', key:'billing', val:r=>r.billing.status, cell:r=>`${bill(r.billing.status)}${r.billing.monthly?'<div class="dim num">'+fmtUSD(r.billing.monthly)+'/mo</div>':''}`},
+      {h:'Onboarding', key:'onb', val:r=>r.onboarding.done/(r.onboarding.total||1), cell:r=>r.onboarding.complete?'<span class="b ok nodot">done</span>':`<span class="num">${r.onboarding.done}/${r.onboarding.total}</span>${r.onboarding.dismissed?' <span class="dim">hidden</span>':''}`},
+      {h:'Integrations', cell:r=>r.integrations.map(intchip).join('')||'<span class="dim">none</span>'},
+      {h:'Modules', cell:r=>r.modules.filter(m=>m.enabled).map(modchip).join('')||'<span class="dim">none</span>'},
+      {h:'Data', key:'fresh', val:r=>parseTs(r.freshness.reviews||r.freshness.pos)?.getTime()||0, cell:r=>{const t=r.freshness.reviews||r.freshness.pos; const a=parseTs(t); const stale=!a||(Date.now()-a)>3*864e5; return `<span class="${stale?'chip warn':'chip ok'}">${a?ago(t):'never'}</span>`;}},
+      {h:'AI 30d', key:'aicost', r:true, val:r=>r.ai.cost_30d, cell:r=>`<span class="num">${fmtN(r.ai.calls_30d)}</span> <span class="dim num">${fmtUSD(r.ai.cost_30d,2)}</span>`},
+      {h:'Email', key:'em', val:r=>r.email.failed_7d, cell:r=>r.email.failed_7d?`<span class="b bad nodot">${r.email.failed_7d} failed</span>`:`<span class="dim num">${r.email.sent_7d} sent</span>`},
+      {h:'Push', key:'pu', val:r=>r.push.failed_7d+r.push.disabled, cell:r=>(r.push.failed_7d||r.push.disabled)?`<span class="b bad nodot">${r.push.failed_7d} failed${r.push.disabled?' · '+r.push.disabled+' dead':''}</span>`:`<span class="dim num">${r.push.devices} device${r.push.devices===1?'':'s'}</span>`},
+      {h:'Last active', key:'last', val:r=>parseTs(r.last_active)?.getTime()||0, cell:r=>`<span class="num">${ago(r.last_active)}</span>`},
+      {h:'Joined', key:'joined', val:r=>parseTs(r.created_at)?.getTime()||0, cell:r=>`<span class="num">${fmtD(r.created_at)}</span>`},
+      {h:'Attn', key:'attn', r:true, val:r=>r.issues.length, cell:r=>r.issues.length?`<span class="b ${r.issues.some(i=>i.severity==='critical')?'bad':'warn'} nodot">${r.issues.length}</span>`:''}
+    ], rows, {id:'clients-t', sort:'attn', link:r=>'client/'+r.id, empty:'No clients match.'})}`;
+}
+
+// ── Locations (owner → brand → location) ────────────────────────────────────
+async function locations(){
+  if(!_clients){ const d = await api('/admin/api/clients'); if(!d.ok) throw new Error('clients failed'); _clients = d.clients; }
+  const want = new URLSearchParams(location.hash.split('?')[1]||'').get('brand');
+  const groups = {}; _clients.forEach(r=>{ (groups[r.brand]=groups[r.brand]||[]).push(r); });
+  const rank={inactive:-1,healthy:0,warning:1,critical:2};
+  const brands = Object.entries(groups).map(([brand, locs])=>({brand, locs, health: locs.reduce((w,l)=>rank[l.health]>rank[w]?l.health:w,'inactive'), demo: locs.every(l=>l.is_demo)})).filter(b=>_showDemo||!b.demo).sort((a,b)=>rank[b.health]-rank[a.health]||a.brand.localeCompare(b.brand));
+  $('view').innerHTML = `
+    <div class="head"><div><div class="k ember">Customers</div><h1>Restaurants &amp; locations</h1><div class="sub">Owner → brand → location. A brand is only as healthy as its worst location.</div></div><div class="r"><label class="sub" style="display:flex;gap:6px;align-items:center;cursor:pointer"><input type="checkbox" ${_showDemo?'checked':''} onchange="_showDemo=this.checked;locations()"> show demo</label></div></div>
+    ${brands.map(b=>{ const owners=[...new Map(b.locs.filter(l=>l.owner).map(l=>[l.owner.id,l.owner])).values()]; const open = !want || want===b.brand; return `
+    <div class="card" style="margin-bottom:12px" id="brand-${esc(b.brand)}">
+      <div class="ch" style="cursor:pointer" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden"><div style="display:flex;align-items:center;gap:10px"><span class="dot ${HEALTH[b.health][0]}"></span><h2>${esc(b.brand)}</h2><span class="sub">${b.locs.length} location${b.locs.length===1?'':'s'}</span>${owners.map(o=>`<span class="chip">owner · ${esc(o.username)}</span>`).join('')}</div><div class="sub">${b.locs.reduce((n,l)=>n+l.issues.length,0)} issue(s) · ${fmtUSD(b.locs.reduce((n,l)=>n+l.billing.monthly,0))}/mo</div></div>
+      <div ${open?'':'hidden'}>${table([
+        {h:'Health', key:'health', w:'84px', cell:r=>hb(r.health)},
+        {h:'Location', key:'name', cell:r=>`<span class="name">${esc(r.location_name||r.name)}</span><div class="dim">${esc(r.city||'')} · #${r.id}</div>`},
+        {h:'Billing', val:r=>r.billing.status, cell:r=>bill(r.billing.status)},
+        {h:'Modules', cell:r=>r.modules.map(modchip).join('')},
+        {h:'Integrations', cell:r=>r.integrations.map(intchip).join('')||'<span class="dim">none</span>'},
+        {h:'Reviews', cell:r=>`<span class="num">${ago(r.freshness.reviews)}</span>`},{h:'POS', cell:r=>`<span class="num">${ago(r.freshness.pos)}</span>`},{h:'Inventory', cell:r=>`<span class="num">${ago(r.freshness.inventory)}</span>`},
+        {h:'AI 30d', r:true, cell:r=>`<span class="num">${fmtN(r.ai.calls_30d)}</span>`},{h:'Alerts 7d', r:true, cell:r=>`<span class="num">${fmtN(r.alerts_7d)}</span>`},
+        {h:'Issues', wrap:true, cell:r=>r.issues.length?r.issues.slice(0,3).map(i=>`<span class="chip ${i.severity==='critical'?'bad':'warn'}">${esc(i.title)}</span>`).join('')+(r.issues.length>3?`<span class="dim">+${r.issues.length-3}</span>`:''):'<span class="dim">—</span>'},
+        {h:'Last active', cell:r=>`<span class="num">${ago(r.last_active)}</span>`}
+      ], b.locs, {id:'loc-'+b.brand.replace(/\W/g,'_'), link:r=>'client/'+r.id})}</div>
+    </div>`; }).join('')||'<div class="empty">No restaurants yet.</div>'}`;
+}
+
+// ── Onboarding ──────────────────────────────────────────────────────────────
+async function onboarding(){
+  if(!_clients){ const d = await api('/admin/api/clients'); if(!d.ok) throw new Error('clients failed'); _clients = d.clients; }
+  const rows = _clients.filter(r=>!r.is_demo && !r.onboarding.complete).sort((a,b)=>(parseTs(b.created_at)||0)-(parseTs(a.created_at)||0));
+  $('view').innerHTML = `
+    <div class="head"><div><div class="k ember">Customers</div><h1>Onboarding</h1><div class="sub">Every account that hasn't finished setup, newest first.</div></div></div>
+    <div class="grid g3">${rows.map(r=>`<div class="card"><div class="ch"><div><a href="#client/${r.id}" style="color:var(--ink);font-weight:700;font-size:13.5px">${esc(r.name)}</a><div class="dim" style="color:var(--ink4)">${esc((r.owner||{}).username||r.owner_email||'')} · joined ${fmtD(r.created_at)} (${ago(r.created_at)})</div></div><div style="text-align:right"><span class="num" style="font-size:15px;font-weight:600">${r.onboarding.done}/${r.onboarding.total}</span>${r.onboarding.dismissed?'<div class="dim">card hidden by client</div>':''}</div></div>
+      <div class="cb"><div class="steps">${r.onboarding.steps.map(s=>`<div><span class="${s.done?'ok':'no'}">${s.done?'✓':'○'}</span><span style="${s.done?'color:var(--ink4)':''}">${esc(s.label)}</span></div>`).join('')}</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px">${bill(r.billing.status)}<span class="b ${r.billing.contract_status==='signed'?'ok':'warn'} nodot">contract ${esc(r.billing.contract_status)}</span></div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px">${r.billing.contract_status!=='signed'?`<button class="btn s" onclick="act('/admin/resend-contract/${r.id}','Resend contract')">Resend contract</button>`:''}<button class="btn s" onclick="act('/admin/resend-welcome/${r.id}','Resend welcome email')">Resend welcome</button>${r.billing.status!=='active'?`<button class="btn s" onclick="act('/admin/resend-payment/${r.id}','Resend payment link')">Payment link</button>`:''}<a class="btn s" href="/admin/client-settings/${r.id}">Settings</a></div></div></div>`).join('')||'<div class="empty">Everyone is set up.</div>'}</div>`;
+}
+
+// ── Integrations ────────────────────────────────────────────────────────────
+let _if = 'all';
+async function integrations(){
+  const d = await api('/admin/api/integrations'); if(!d.ok) throw new Error('integrations failed');
+  const F = [['all','All',r=>true],['error','Failed',r=>r.state==='error'],['off','Disconnected',r=>r.state==='off'],['stale','Stale',r=>r.freshness==='stale'],['never','Never synced',r=>r.freshness==='never'],['connected','Connected',r=>r.state==='connected']];
+  const f = F.find(x=>x[0]===_if)||F[0]; const rows = d.rows.filter(f[2]);
+  $('view').innerHTML = `
+    <div class="head"><div><div class="k ember">Operations</div><h1>Integrations</h1></div></div>
+    ${d.systemic.length?`<div class="err" style="margin-bottom:12px"><b>Systemic:</b> ${d.systemic.map(s=>esc(s.label)+' failing for '+s.failing+' locations').join(' · ')}</div>`:''}
+    <div class="filters">${F.map(x=>`<button class="f ${_if===x[0]?'on':''}" onclick="_if='${x[0]}';integrations()">${x[1]}<span class="n">${d.rows.filter(x[2]).length}</span></button>`).join('')}</div>
+    ${table([
+      {h:'Client · location', key:'restaurant', cell:r=>`${clientLink(r.restaurant_id, r.restaurant)}${r.location_name?' <span class="dim">· '+esc(r.location_name)+'</span>':''}`},
+      {h:'Integration', key:'label'},
+      {h:'State', key:'state', cell:r=>intb(r.state, r.state==='connected'?'Connected':r.state==='error'?'Error':'Off')},
+      {h:'Auth', key:'auth', cell:r=>`<span class="dim">${esc(r.auth)}</span>`},
+      {h:'Last success', key:'last_success', cell:r=>`<span class="num">${ago(r.last_success)}</span> <span class="dim">${fmtDT(r.last_success)}</span>`},
+      {h:'Freshness', key:'freshness', cell:r=>r.freshness==='—'?'<span class="dim">—</span>':`<span class="chip ${r.freshness==='fresh'?'ok':'warn'}">${esc(r.freshness)}</span>`},
+      {h:'Most recent error', key:'error', wrap:true, cell:r=>r.error?`<span style="color:var(--red)">${esc(r.error)}</span>`:'<span class="dim">—</span>'},
+      {h:'', cell:r=>r.integration==='toast'?`<button class="btn s" onclick="event.stopPropagation();toastOpen(${r.restaurant_id},'${esc(r.restaurant)}')">Credentials</button> ${r.state!=='off'?`<button class="btn s" onclick="event.stopPropagation();act('/admin/toast/sync/${r.restaurant_id}','Sync Toast')">Sync</button>`:''}`:r.integration==='instagram'?`<button class="btn s" onclick="event.stopPropagation();act('/admin/refresh-ig-token/${r.restaurant_id}','Refresh Instagram token')">Refresh token</button>`:r.integration==='google_business'?`<button class="btn s" onclick="event.stopPropagation();act('/admin/fetch-reviews/${r.restaurant_id}','Fetch reviews')">Fetch</button>`:`<a class="btn s" href="/admin/client-settings/${r.restaurant_id}" onclick="event.stopPropagation()">Settings</a>`}
+    ], rows, {id:'int-t', sort:'state', empty:'No integrations match.'})}`;
+}
+
+// ── AI operations ───────────────────────────────────────────────────────────
+let _aid = 30;
+async function ai(){
+  const d = await api('/admin/api/ai?days='+_aid); if(!d.ok) throw new Error('ai failed'); const t=d.totals;
+  $('view').innerHTML = `
+    <div class="head"><div><div class="k ember">Operations</div><h1>AI operations</h1><div class="sub">Claude and Perplexity — every call is metered in ai_usage; failures come from job_failures.</div></div><div class="r">${[1,7,30,90].map(n=>`<button class="f ${_aid===n?'on':''}" onclick="_aid=${n};ai()">${n===1?'Today':n+'d'}</button>`).join('')}</div></div>
+    <div class="grid g6" style="margin-bottom:14px">${kpi(fmtN(t.calls),'Calls · '+_aid+'d')}${kpi(fmtUSD(t.cost,2),'Cost · '+_aid+'d','ember')}${kpi(fmtN(t.today.calls),'Calls today','',fmtUSD(t.today.cost,2))}${kpi(fmtN(t.month.calls),'Calls this month','',fmtUSD(t.month.cost,2))}${kpi(fmtN((t.tin||0)+(t.tout||0)),'Tokens · '+_aid+'d')}${kpi(fmtN(d.failures.reduce((n,f)=>n+f.n,0)),'AI job failures',d.failures.length?'bad':'good')}</div>
+    ${d.anomalies.length?`<div class="err" style="margin-bottom:12px"><b>Anomalies:</b> ${d.anomalies.map(a=>`${a.restaurant_id?clientLink(a.restaurant_id,a.restaurant||('#'+a.restaurant_id)):'Platform'} — ${esc(a.detail)}`).join(' · ')}</div>`:''}
+    <div class="grid g3" style="margin-bottom:14px">
+      <div class="card"><div class="ch"><h2>Daily calls</h2></div><div class="cb">${bars(d.daily,'calls')}<div class="dim" style="margin-top:4px">${d.daily.length?fmtD(d.daily[0].day)+' – '+fmtD(d.daily[d.daily.length-1].day):'no data'}</div></div></div>
+      <div class="card"><div class="ch"><h2>By provider</h2></div><div class="cb">${d.by_provider.map(p=>`<div style="display:flex;justify-content:space-between;padding:4px 0"><span>${esc(p.provider)}</span><span class="num">${fmtN(p.calls)} · ${fmtUSD(p.cost,2)}</span></div>`).join('')||'<div class="empty">—</div>'}</div></div>
+      <div class="card"><div class="ch"><h2>Repeated failures</h2></div><div class="cb">${d.failures.map(f=>`<div style="padding:4px 0;border-bottom:1px solid var(--paper3)"><b>${esc(f.job)}</b> <span class="num" style="color:var(--red)">×${f.n}</span> <span class="dim">${ago(f.last_at)}</span><div class="dim" style="white-space:normal">${esc((f.sample||'').slice(0,140))}</div></div>`).join('')||'<div class="empty">None in this window.</div>'}</div></div>
+    </div>
+    <div class="grid g2" style="margin-bottom:14px">
+      <div><div class="k" style="margin-bottom:6px">By workflow</div>${table([{h:'Workflow',key:'action'},{h:'Model',key:'model',cell:r=>`<span class="dim">${esc((r.model||'').replace('claude-','').replace('-20251001',''))}</span>`},{h:'Calls',key:'calls',r:true,cell:r=>`<span class="num">${fmtN(r.calls)}</span>`},{h:'Cost',key:'cost',r:true,cell:r=>`<span class="num">${fmtUSD(r.cost,2)}</span>`},{h:'Avg tokens',key:'avg_tokens',r:true,cell:r=>`<span class="num">${fmtN(r.avg_tokens)}</span>`}], d.by_action, {id:'ai-act', sort:'cost'})}</div>
+      <div><div class="k" style="margin-bottom:6px">By client</div>${table([{h:'Client',key:'name',cell:r=>r.restaurant_id?clientLink(r.restaurant_id, r.name||('#'+r.restaurant_id)):'<span class="dim">unattributed</span>'},{h:'Calls',key:'calls',r:true,cell:r=>`<span class="num">${fmtN(r.calls)}</span>`},{h:'Cost',key:'cost',r:true,cell:r=>`<span class="num">${fmtUSD(r.cost,2)}</span>`}], d.by_client, {id:'ai-cl', sort:'cost'})}</div>
+    </div>
+    <div class="k" style="margin-bottom:6px">Recent calls</div>
+    ${table([{h:'When',key:'created_at',cell:r=>`<span class="num">${fmtDT(r.created_at)}</span>`},{h:'Client',key:'name',cell:r=>r.restaurant_id?clientLink(r.restaurant_id, r.name||('#'+r.restaurant_id)):'—'},{h:'Workflow',key:'action'},{h:'Model',key:'model',cell:r=>`<span class="dim">${esc((r.model||'').replace('claude-',''))}</span>`},{h:'In',key:'input_tokens',r:true,cell:r=>`<span class="num">${fmtN(r.input_tokens)}</span>`},{h:'Out',key:'output_tokens',r:true,cell:r=>`<span class="num">${fmtN(r.output_tokens)}</span>`},{h:'Cost',key:'cost_usd',r:true,cell:r=>`<span class="num">${fmtUSD(r.cost_usd,4)}</span>`}], d.recent, {id:'ai-rec', sort:'created_at'})}`;
+}
+
+// ── Alerts & notifications ──────────────────────────────────────────────────
+let _nf = 'all';
+async function alerts(){
+  const d = await api('/admin/api/notifications'); if(!d.ok) throw new Error('notifications failed');
+  const pushes = _nf==='failed'?d.pushes.filter(p=>!p.ok):d.pushes;
+  $('view').innerHTML = `
+    <div class="head"><div><div class="k ember">Operations</div><h1>Alerts &amp; notifications</h1></div></div>
+    <div class="grid g6" style="margin-bottom:14px">${kpi(fmtN(d.today_push.sent),'Pushes today')}${kpi(fmtN(d.today_push.failed),'Push failures today',d.today_push.failed?'bad':'good')}${kpi(fmtN(d.devices.length),'Registered devices')}${kpi(fmtN(d.devices.filter(x=>x.disabled_reason).length),'Dead devices',d.devices.some(x=>x.disabled_reason)?'bad':'good')}${kpi(fmtN(d.by_type.reduce((n,t)=>n+t.n,0)),'Alerts · 7d')}${kpi(fmtN(d.scheduled_posts.filter(p=>p.status==='failed').length),'Scheduled posts failed',d.scheduled_posts.some(p=>p.status==='failed')?'bad':'good')}</div>
+    ${d.storms.length?`<div class="err" style="margin-bottom:12px"><b>Alert storm today:</b> ${d.storms.map(s=>clientLink(s.restaurant_id,s.restaurant)+' — '+s.n+' alerts').join(' · ')}</div>`:''}
+    <div class="grid g3" style="margin-bottom:14px">
+      <div class="card"><div class="ch"><h2>Alerts by type · 7d</h2></div><div class="cb">${d.by_type.map(t=>`<div style="display:flex;justify-content:space-between;padding:3px 0"><span>${esc(t.alert_type)}</span><span class="num">${fmtN(t.n)}</span></div>`).join('')||'<div class="empty">—</div>'}</div></div>
+      <div class="card" style="grid-column:span 2"><div class="ch"><h2>Devices</h2></div><div class="cb" style="padding:0">${table([{h:'Client',key:'restaurant',cell:r=>r.restaurant_id?clientLink(r.restaurant_id,r.restaurant):'—'},{h:'User',key:'username'},{h:'Env',key:'environment'},{h:'Registered',key:'created_at',cell:r=>`<span class="num">${fmtD(r.created_at)}</span>`},{h:'Last success',key:'last_success_at',cell:r=>`<span class="num">${ago(r.last_success_at)}</span>`},{h:'Fails',key:'consecutive_failures',r:true,cell:r=>`<span class="num">${r.consecutive_failures||0}</span>`},{h:'State',key:'disabled_reason',cell:r=>r.disabled_reason?`<span class="b bad nodot">${esc(r.disabled_reason)}</span>`:'<span class="b ok nodot">live</span>'}], d.devices, {id:'dev-t', empty:'No devices registered.'})}</div></div>
+    </div>
+    <div class="filters"><span class="k">Push deliveries</span>${[['all','All'],['failed','Failed']].map(x=>`<button class="f ${_nf===x[0]?'on':''}" onclick="_nf='${x[0]}';alerts()">${x[1]}</button>`).join('')}</div>
+    ${table([{h:'When',key:'created_at',cell:r=>`<span class="num">${fmtDT(r.created_at)}</span>`},{h:'Client',key:'restaurant',cell:r=>r.restaurant_id?clientLink(r.restaurant_id,r.restaurant):'—'},{h:'User',key:'username'},{h:'Type',key:'alert_type'},{h:'Status',key:'ok',cell:r=>r.ok?'<span class="b ok nodot">delivered</span>':`<span class="b bad nodot">${esc(r.status||'failed')}</span>`},{h:'Attempts',key:'attempts',r:true},{h:'Error',key:'error',wrap:true,cell:r=>r.error?`<span style="color:var(--red)">${esc(r.error)}</span>`:''}], pushes, {id:'push-t', sort:'created_at', empty:'No push deliveries recorded yet.'})}
+    <div class="k" style="margin:16px 0 6px">Scheduled posts</div>
+    ${table([{h:'Client',key:'restaurant',cell:r=>r.restaurant_id?clientLink(r.restaurant_id,r.restaurant):'—'},{h:'Platform',key:'platform'},{h:'Topic',key:'topic',wrap:true,cell:r=>esc(r.topic||r.content_type)},{h:'Scheduled',key:'scheduled_for',cell:r=>`<span class="num">${fmtDT(r.scheduled_for)}</span>`},{h:'Status',key:'status',cell:r=>`<span class="b ${r.status==='posted'?'ok':r.status==='failed'?'bad':'info'} nodot">${esc(r.status)}</span>`},{h:'Error',key:'error',wrap:true,cell:r=>r.error?`<span style="color:var(--red)">${esc(r.error)}</span>`:''}], d.scheduled_posts, {id:'sp-t', sort:'scheduled_for', empty:'Nothing scheduled.'})}
+    <div class="k" style="margin:16px 0 6px">Recent alerts</div>
+    ${table([{h:'When',key:'fired_at',cell:r=>`<span class="num">${fmtDT(r.fired_at)}</span>`},{h:'Client',key:'restaurant',cell:r=>r.restaurant_id?clientLink(r.restaurant_id,r.restaurant):'—'},{h:'Type',key:'alert_type'},{h:'Review',key:'review_id',cell:r=>r.review_id?'#'+r.review_id:''}], d.alerts.slice(0,60), {id:'al-t', sort:'fired_at'})}`;
+}
+
+// ── Emails ──────────────────────────────────────────────────────────────────
+let _ef = 'all';
+async function emails(){
+  const d = await api('/admin/api/emails'); if(!d.ok) throw new Error('emails failed');
+  const types = [...new Set(d.rows.map(r=>r.email_type))];
+  const rows = d.rows.filter(r=>_ef==='all'||(_ef==='failed'?r.status==='failed':r.email_type===_ef));
+  $('view').innerHTML = `
+    <div class="head"><div><div class="k ember">Operations</div><h1>Emails</h1><div class="sub">Everything Resend has been asked to send, and whether it went.</div></div></div>
+    <div class="grid g6" style="margin-bottom:14px">${kpi(fmtN(d.today.n),'Sent today')}${kpi(fmtN(d.today.failed),'Failed today',d.today.failed?'bad':'good')}${kpi(fmtN(d.by_type.reduce((n,t)=>n+t.n,0)),'Sent · 7d')}${kpi(fmtN(d.by_type.reduce((n,t)=>n+t.failed,0)),'Failed · 7d',d.by_type.some(t=>t.failed)?'bad':'good')}${kpi(fmtN(d.suppressed.length),'Suppressed addresses',d.suppressed.length?'warn':'')}${kpi(fmtN(d.storms.length),'High-frequency recipients',d.storms.length?'warn':'good')}</div>
+    ${d.storms.length?`<div class="err" style="margin-bottom:12px"><b>Possible email storm today:</b> ${d.storms.map(s=>esc(s.to_email)+' ('+s.n+')').join(' · ')}</div>`:''}
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card"><div class="ch"><h2>Daily volume · 30d</h2></div><div class="cb">${bars(d.daily,'n','failed')}</div></div>
+      <div class="card"><div class="ch"><h2>By type · 7d</h2></div><div class="cb">${d.by_type.map(t=>`<div style="display:flex;justify-content:space-between;padding:3px 0"><span>${esc(t.email_type)}</span><span class="num">${fmtN(t.n)}${t.failed?' <span style="color:var(--red)">· '+t.failed+' failed</span>':''}</span></div>`).join('')||'<div class="empty">—</div>'}</div></div>
+    </div>
+    <div class="filters"><button class="f ${_ef==='all'?'on':''}" onclick="_ef='all';emails()">All</button><button class="f ${_ef==='failed'?'on':''}" onclick="_ef='failed';emails()">Failed<span class="n">${d.rows.filter(r=>r.status==='failed').length}</span></button>${types.map(t=>`<button class="f ${_ef===t?'on':''}" onclick="_ef='${esc(t)}';emails()">${esc(t)}</button>`).join('')}</div>
+    ${table([{h:'When',key:'sent_at',cell:r=>`<span class="num">${fmtDT(r.sent_at)}</span>`},{h:'Client',key:'restaurant',cell:r=>r.restaurant_id?clientLink(r.restaurant_id,r.restaurant||('#'+r.restaurant_id)):'<span class="dim">—</span>'},{h:'Type',key:'email_type'},{h:'To',key:'to_email',cell:r=>`<span class="dim">${esc(r.to_email)}</span>`},{h:'Subject',key:'subject',wrap:true},{h:'Status',key:'status',cell:r=>`<span class="b ${r.status==='failed'?'bad':'ok'} nodot">${esc(r.status||'sent')}</span>`},{h:'Error',key:'error',wrap:true,cell:r=>r.error?`<span style="color:var(--red)">${esc(r.error)}</span>`:''}], rows, {id:'em-t', sort:'sent_at', empty:'No emails match.'})}
+    ${d.suppressed.length?`<div class="k" style="margin:16px 0 6px">Suppressed (bounced / complained)</div>${table(Object.keys(d.suppressed[0]).map(k=>({h:k,key:k})), d.suppressed, {id:'sup-t'})}`:''}`;
+}
+
+// ── Billing ─────────────────────────────────────────────────────────────────
+async function billing(){
+  const d = await api('/admin/api/billing'); if(!d.ok) throw new Error('billing failed');
+  const rows = d.rows.filter(r=>_showDemo||!r.is_demo);
+  $('view').innerHTML = `
+    <div class="head"><div><div class="k ember">Customers</div><h1>Billing</h1><div class="sub">${d.stripe_live?'Live subscription state from Stripe where a customer id exists.':'STRIPE_SECRET_KEY not set on this server — showing local billing status only.'}${d.stripe_error?' <span style="color:var(--red)">Stripe error: '+esc(d.stripe_error)+'</span>':''}</div></div><div class="r"><label class="sub" style="display:flex;gap:6px;align-items:center;cursor:pointer"><input type="checkbox" ${_showDemo?'checked':''} onchange="_showDemo=this.checked;billing()"> show demo</label></div></div>
+    <div class="grid g6" style="margin-bottom:14px">${kpi(fmtUSD(d.mrr),'MRR (list price)','ember')}${kpi(fmtN(rows.filter(r=>r.status==='active').length),'Active','good')}${kpi(fmtN(rows.filter(r=>r.status==='trial').length),'Trial')}${kpi(fmtN(rows.filter(r=>r.status==='past_due').length),'Past due',rows.some(r=>r.status==='past_due')?'bad':'good')}${kpi(fmtN(rows.filter(r=>['churned','canceled'].includes(r.status)).length),'Canceled')}${kpi(fmtN(rows.filter(r=>r.contract_status!=='signed').length),'Contracts unsigned',rows.some(r=>r.contract_status!=='signed')?'warn':'good')}</div>
+    ${table([
+      {h:'Client',key:'restaurant',cell:r=>`${clientLink(r.restaurant_id,r.restaurant)}<div class="dim">${esc(r.owner||'')} · ${esc(r.owner_email||'')}</div>`},
+      {h:'Status',key:'status',cell:r=>bill(r.status)},
+      {h:'Stripe customer',key:'stripe_customer_id',cell:r=>r.stripe_customer_id?`<a class="mono" href="https://dashboard.stripe.com/customers/${esc(r.stripe_customer_id)}" target="_blank" onclick="event.stopPropagation()">${esc(r.stripe_customer_id)} ↗</a>`:'<span class="dim">none</span>'},
+      {h:'Plan',key:'modules',cell:r=>`<span class="num">${r.modules}</span> module${r.modules===1?'':'s'}${r.tier?' <span class="dim">· '+esc(r.tier)+'</span>':''}`},
+      {h:'Monthly',key:'monthly',r:true,cell:r=>`<span class="num">${r.monthly?fmtUSD(r.monthly):'—'}</span>`},
+      {h:'Stripe says',cell:r=>r.live?`<span class="b ${r.live.status==='active'?'ok':r.live.status==='past_due'?'bad':'warn'} nodot">${esc(r.live.status)}</span> <span class="num dim">${r.live.amount!=null?fmtUSD(r.live.amount)+'/'+esc(r.live.interval||'mo'):''}</span>${r.live.cancel_at_period_end?' <span class="chip warn">cancels at period end</span>':''}${r.live.current_period_end?'<div class="dim">renews '+new Date(r.live.current_period_end*1000).toLocaleDateString()+'</div>':''}`:'<span class="dim">—</span>'},
+      {h:'Contract',key:'contract_status',cell:r=>`<span class="b ${r.contract_status==='signed'?'ok':'warn'} nodot">${esc(r.contract_status)}</span>`},
+      {h:'Since',key:'created_at',cell:r=>`<span class="num">${fmtD(r.created_at)}</span>`},
+      {h:'',cell:r=>`${r.status!=='active'?`<button class="btn s" onclick="event.stopPropagation();act('/admin/resend-payment/${r.restaurant_id}','Resend payment link')">Payment link</button>`:''} ${r.contract_status!=='signed'?`<button class="btn s" onclick="event.stopPropagation();act('/admin/resend-contract/${r.restaurant_id}','Resend contract')">Contract</button>`:''}`}
+    ], rows, {id:'bill-t', sort:'status', dir:'asc', link:r=>'client/'+r.restaurant_id+'?tab=subscription'})}
+    <div class="sub" style="margin-top:10px">Billing changes are made in Stripe, never here. MRR is list price by module count for accounts marked active.</div>`;
+}
+
+// ── Jobs ────────────────────────────────────────────────────────────────────
+async function jobs(){
+  const d = await api('/admin/api/jobs'); if(!d.ok) throw new Error('jobs failed');
+  const lastOk = Object.fromEntries(d.last_ok.map(r=>[r.job,r]));
+  const failed7 = Object.fromEntries(d.grouped.map(g=>[g.job,g]));
+  $('view').innerHTML = `
+    <div class="head"><div><div class="k ember">Operations</div><h1>Jobs &amp; background tasks</h1><div class="sub">One scheduler thread on Railway. Runs are recorded from now on (job_runs); failures have always been (job_failures).</div></div><div class="r"><span class="b ${d.heartbeat_minutes==null||d.heartbeat_minutes>15?'bad':'ok'}">Heartbeat ${d.heartbeat_minutes==null?'never':Math.round(d.heartbeat_minutes)+'m ago'}</span></div></div>
+    ${d.stuck.length?`<div class="err" style="margin-bottom:12px"><b>Stuck:</b> ${d.stuck.map(s=>esc(s.job)+' started '+ago(s.started_at)+' ago and never finished').join(' · ')}</div>`:''}
+    <div class="grid g2" style="margin-bottom:14px">
+      <div><div class="k" style="margin-bottom:6px">Schedule</div>${table([{h:'Job',key:'job',cell:r=>`<span class="name">${esc(r.job)}</span>`},{h:'Cadence',key:'cadence',cell:r=>`<span class="dim">${esc(r.cadence)}</span>`},{h:'Last OK',cell:r=>{const l=lastOk[r.job];return l?`<span class="num">${ago(l.last_ok)}</span> <span class="dim">avg ${fmtN(l.avg_ms)}ms · ${l.runs} runs/7d</span>`:'<span class="dim">no run recorded yet</span>';}},{h:'Failed 7d',cell:r=>{const f=failed7[r.job];return f?`<span class="b bad nodot">×${f.n}</span> <span class="dim">${ago(f.last_at)}</span>`:'<span class="dim">—</span>';}}], d.schedule, {id:'sch-t'})}</div>
+      <div><div class="k" style="margin-bottom:6px">Failures grouped · 7d</div>${table([{h:'Job',key:'job',cell:r=>`<span class="name">${esc(r.job)}</span>`},{h:'Count',key:'n',r:true,cell:r=>`<span class="num" style="color:var(--red)">${r.n}</span>`},{h:'First',key:'first_at',cell:r=>`<span class="num">${fmtDT(r.first_at)}</span>`},{h:'Last',key:'last_at',cell:r=>`<span class="num">${ago(r.last_at)}</span>`},{h:'Sample error',key:'sample',wrap:true,cell:r=>`<span class="dim">${esc((r.sample||'').slice(0,160))}</span>`},{h:'',cell:r=>`<button class="btn s" onclick="resolveOpen('job:${esc(r.job)}','Job ${esc(r.job)} failures')">Resolve</button>`}], d.grouped, {id:'jf-t', sort:'n', empty:'No failures in 7 days.'})}</div>
+    </div>
+    ${d.inflight.length?`<div class="k" style="margin:0 0 6px">In flight (this process)</div><div class="card" style="margin-bottom:14px"><div class="cb">${d.inflight.map(j=>`<span class="chip ${j.status==='pending'?'warn':'ok'}">${esc(j.kind)} · ${esc(j.status)}</span>`).join(' ')}</div></div>`:''}
+    <div class="grid g2">
+      <div><div class="k" style="margin-bottom:6px">Recent runs</div>${table([{h:'Job',key:'job'},{h:'Started',key:'started_at',cell:r=>`<span class="num">${fmtDT(r.started_at)}</span>`},{h:'Duration',key:'duration_ms',r:true,cell:r=>r.finished_at?`<span class="num">${fmtN(r.duration_ms)}ms</span>`:'<span class="chip warn">running</span>'},{h:'Result',key:'ok',cell:r=>r.finished_at?(r.ok?'<span class="b ok nodot">ok</span>':`<span class="b bad nodot">failed</span>`):''},{h:'Error',key:'error',wrap:true,cell:r=>r.error?`<span style="color:var(--red)">${esc(r.error)}</span>`:''}], d.runs, {id:'runs-t', sort:'started_at', empty:'No runs recorded yet — the next scheduler tick will start filling this in.'})}</div>
+      <div><div class="k" style="margin-bottom:6px">Recent failures</div>${table([{h:'When',key:'created_at',cell:r=>`<span class="num">${fmtDT(r.created_at)}</span>`},{h:'Job',key:'job'},{h:'Error',key:'error',wrap:true,cell:r=>`<span style="color:var(--red)">${esc((r.error||'').slice(0,200))}</span>${r.context?'<div class="dim">'+esc(r.context)+'</div>':''}`}], d.failures.slice(0,60), {id:'fail-t', sort:'created_at'})}</div>
+    </div>`;
+}
+
+// ── Issues ──────────────────────────────────────────────────────────────────
+let _sf = 'all';
+async function issues(){
+  const d = await api('/admin/api/issues'); if(!d.ok) throw new Error('issues failed');
+  const kinds = {billing:/billing|canceled|contract/, integration:/int:/, data:/stale|nodata|unconf/, comms:/email|push|posts/, usage:/ai_|inactive|onboarding|urgent|dup/, platform:/^job:|^scheduler/};
+  const F = [['all','All',i=>true],['critical','Critical',i=>i.severity==='critical'],['billing','Billing',i=>kinds.billing.test(i.key)],['integration','Integrations',i=>kinds.integration.test(i.key)],['data','Data',i=>kinds.data.test(i.key)],['comms','Email / push',i=>kinds.comms.test(i.key)],['platform','Platform',i=>kinds.platform.test(i.key)]];
+  const f = F.find(x=>x[0]===_sf)||F[0];
+  $('view').innerHTML = `
+    <div class="head"><div><div class="k ember">Operations</div><h1>Support &amp; issues</h1><div class="sub">Every account with a known problem. Resolving hides it until the underlying signal changes.</div></div></div>
+    <div class="filters">${F.map(x=>`<button class="f ${_sf===x[0]?'on':''}" onclick="_sf='${x[0]}';issues()">${x[1]}<span class="n">${d.issues.filter(x[2]).length}</span></button>`).join('')}</div>
+    ${issuesTable(d.issues.filter(f[2]), {id:'iss-t'})}
+    ${d.resolved.length?`<div class="k" style="margin:16px 0 6px">Resolved</div>${table([{h:'Issue',key:'key',cell:r=>`<span class="mono">${esc(r.key)}</span>`},{h:'Note',key:'note'},{h:'By',key:'actor'},{h:'When',key:'resolved_at',cell:r=>`<span class="num">${fmtDT(r.resolved_at)}</span>`},{h:'',cell:r=>`<button class="btn s" onclick="unresolve('${esc(r.key)}')">Reopen</button>`}], d.resolved, {id:'res-t'})}`:''}`;
+}
+
+// ── System ──────────────────────────────────────────────────────────────────
+async function system(){
+  const d = await api('/admin/api/system');
+  $('view').innerHTML = `
+    <div class="head"><div><div class="k ember">Admin</div><h1>System</h1></div></div>
+    <div class="grid g2">
+      <div class="card"><div class="ch"><h2>Create a client account</h2><span class="sub">Contract is sent on creation; payment link + welcome after they sign.</span></div><div class="cb">
+        <div class="frm">
+          <div class="fl"><label>Restaurant name</label><input id="r-name"></div><div class="fl"><label>Owner email</label><input id="r-email" type="email"></div>
+          <div class="fl"><label>Dashboard username</label><input id="u-username"></div><div class="fl"><label>Temporary password</label><div style="display:flex;gap:6px"><input id="u-password" style="flex:1"><button class="btn" onclick="$('u-password').value=Math.random().toString(36).slice(2,8)+'-'+Math.random().toString(36).slice(2,6)">Generate</button></div></div>
+          <div class="fl"><label>Owner / GM name</label><input id="r-owner-name"></div><div class="fl"><label>Owner phone</label><input id="r-phone"></div>
+          <div class="fl"><label>Location group (brand, for multi-location)</label><input id="r-group" placeholder="e.g. Gia Mia"></div><div class="fl"><label>Location name</label><input id="r-location" placeholder="e.g. Geneva"></div>
+          <div class="fl"><label>Google Place ID</label><input id="r-google"></div><div class="fl"><label>Yelp Business ID</label><input id="r-yelp"></div>
+          <div class="fl full"><label>Owner voice notes (for AI drafting)</label><textarea id="r-voice" rows="2"></textarea></div>
+          <div class="full" style="display:flex;gap:14px;flex-wrap:wrap;font-size:12.5px"><label><input type="checkbox" id="mod-reviews" checked> Reviews</label><label><input type="checkbox" id="mod-labor"> Labor</label><label><input type="checkbox" id="mod-inventory"> Food Cost</label><label><input type="checkbox" id="mod-marketing"> Marketing</label></div>
+          <div class="full" style="display:flex;gap:10px;align-items:center"><button class="btn p" id="cc-btn" onclick="createClient()">Create client account</button><span class="sub" id="create-status"></span></div>
+        </div></div></div>
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <div class="card"><div class="ch"><h2>Configuration</h2><span class="sub">what this server has keys for</span></div><div class="cb" style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px">${(d.ok?Object.entries(d.services):[]).map(([k,v])=>`<div style="display:flex;justify-content:space-between;font-size:12.5px"><span>${esc(k)}</span>${v?'<span class="b ok nodot">configured</span>':'<span class="b off nodot">missing</span>'}</div>`).join('')}</div>${d.ok?`<div class="cb" style="border-top:1px solid var(--paper3)" ><div class="kv"><span class="k">Environment</span><span>${esc(d.env)}</span><span class="k">Scheduler tick</span><span class="num">${d.tick}s</span><span class="k">DB</span><span class="mono">${esc(d.db)}</span><span class="k">Build</span><span class="mono">${esc(d.build||'—')}</span></div></div>`:''}</div>
+        <div class="card"><div class="ch"><h2>Public status page</h2><a class="sub" href="/status" target="_blank">status.cavnar.ai ↗</a></div><div class="cb" id="svc-list"><div class="sk"></div></div>
+          <div class="cb" style="border-top:1px solid var(--paper3)"><div class="k" style="margin-bottom:6px">Post an incident</div><div class="fl"><input id="inc-title" placeholder="Title"><textarea id="inc-body" rows="2" placeholder="What's happening and what you're doing about it"></textarea><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><select id="inc-sev"><option value="degraded">Degraded</option><option value="outage">Outage</option><option value="maintenance">Maintenance</option></select><span class="sub">Affected:</span>${['dashboard','ai_drafting','review_sync','email','labor_analytics','scheduler','scheduled_posts'].map(k=>`<label style="font-size:12px"><input type="checkbox" class="inc-k" value="${k}"> ${k}</label>`).join('')}<button class="btn p" onclick="postIncident()">Post</button></div></div></div></div>
+        <div class="card"><div class="ch"><h2>In-app changelog</h2><span class="sub">✦ What's new, on web and iOS</span></div><div class="cb"><div class="fl"><input id="cl-title" placeholder="Title"><textarea id="cl-body" rows="2" placeholder="Body (optional)"></textarea><div style="display:flex;gap:8px"><select id="cl-tag"><option value="feature">feature</option><option value="improvement">improvement</option><option value="fix">fix</option></select><button class="btn p" onclick="changelogPost()">Post</button></div></div><div id="cl-list" style="margin-top:10px"></div></div></div>
+        <div class="card"><div class="ch"><h2>Utilities</h2></div><div class="cb" style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn" href="/admin/inventory-template">Inventory CSV template</a><a class="btn" href="/health" target="_blank">/health</a><a class="btn" href="/sitemap.xml" target="_blank">sitemap.xml</a><a class="btn" href="/admin/stop-viewing">Stop viewing as client</a></div></div>
       </div>
-    </div>
-    <div id="cl-list" style="display:flex;flex-direction:column;gap:8px"></div>
-  </div>
-
-  <!-- Email Log -->
-  <div style="max-width:860px;margin:0 auto">
-  <div style="display:flex;align-items:center;justify-content:space-between;margin:12px 0 8px">
-    <div class="section-title" style="margin-bottom:0">Email log</div>
-    <span style="font-size:11px;color:var(--ink3)">Last 50 emails sent</span>
-  </div>
-  <div class="card" style="padding:0;overflow:auto;margin-bottom:32px">
-    <table class="tbl">
-      <thead><tr><th>Time</th><th>Client</th><th>Type</th><th>To</th></tr></thead>
-      <tbody>
-      {% for log in email_log %}
-      <tr>
-        <td style="font-size:11px;color:var(--ink3);white-space:nowrap">
-          {% if log.sent_at and log.sent_at|length >= 10 %}{% set d=log.sent_at[:10].split('-') %}{{d[1]|int}}/{{d[2]|int}}/{{d[0][2:]}}{% else %}—{% endif %}
-          <span style="color:var(--paper3)"> · </span>{% set hr=log.sent_at[11:13]|int %}{% set mn=log.sent_at[14:16] %}{% set ampm='am' if hr < 12 else 'pm' %}{% set hr12=hr if hr <= 12 else hr-12 %}{% set hr12=12 if hr12==0 else hr12 %}{{hr12}}:{{mn}}{{ampm}}
-        </td>
-        <td style="font-size:12px">{{log.restaurant_name or '—'}}</td>
-        <td>
-          {% set type_colors = {'welcome':'#2d6a4f','payment':'#b7791f','contract':'#1a56cc','digest':'#7a736a'} %}
-          <span style="font-size:10px;font-weight:600;padding:2px 8px;border-radius:20px;
-            background:{{'#eaf4ee' if log.email_type=='welcome' else ('#fef9ec' if log.email_type=='payment' else ('#e8f0fe' if log.email_type=='contract' else '#f3f4f6'))}};
-            color:{{type_colors.get(log.email_type,'#6b7280')}}">
-            {{log.email_type|title}}
-          </span>
-        </td>
-        <td style="font-size:12px;color:var(--ink3)">{{log.to_email}}</td>
-      </tr>
-      {% else %}
-      <tr><td colspan="4" style="color:var(--ink3);font-style:italic;padding:16px">No emails logged yet.</td></tr>
-      {% endfor %}
-      </tbody>
-    </table>
-  </div>
-  </div>
-
-  <!-- Activity Feed -->
-  <div style="max-width:860px;margin:0 auto 32px">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin:12px 0 8px">
-      <div class="section-title" style="margin-bottom:0">Activity feed</div>
-      <span style="font-size:11px;color:var(--ink3)">Recent client actions</span>
-    </div>
-    <div class="card" style="padding:0;overflow:auto">
-      <table class="tbl">
-        <thead><tr><th>Time</th><th>Client</th><th>Action</th></tr></thead>
-        <tbody>
-        {% if activity_feed %}
-          {% for item in activity_feed %}
-          <tr>
-            <td style="font-size:11px;color:var(--ink3);white-space:nowrap">
-              {% if item.ts %}
-                {% if item.ts and item.ts|length >= 10 %}{% set d=item.ts[:10].split('-') %}{{d[1]|int}}/{{d[2]|int}}/{{d[0][2:]}}{% else %}—{% endif %}
-                <span style="color:var(--paper3)"> · </span>
-                {% set hr=item.ts[11:13]|int %}{% set mn=item.ts[14:16] %}
-                {% set ampm='am' if hr < 12 else 'pm' %}
-                {% set hr12=hr if hr<=12 else hr-12 %}{% set hr12=12 if hr12==0 else hr12 %}
-                {{hr12}}:{{mn}}{{ampm}} CT
-              {% else %}—{% endif %}
-            </td>
-            <td style="font-size:12px">{{item.restaurant or '—'}}</td>
-            <td>
-              <span style="font-size:12px;color:{{item.color or '#6b7280'}}">{{item.action}}</span>
-            </td>
-          </tr>
-          {% endfor %}
-        {% else %}
-          <tr><td colspan="3" style="color:var(--ink3);font-style:italic;padding:16px">No activity yet.</td></tr>
-        {% endif %}
-        </tbody>
-      </table>
-    </div>
-  </div>
-</div>
-
-<!-- Toast POS Modal -->
-<div id="toast-modal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(14,12,10,.55);align-items:center;justify-content:center">
-  <div style="background:white;border-radius:12px;padding:28px 32px;max-width:480px;width:90%;box-shadow:0 12px 48px rgba(14,12,10,.22);position:relative">
-    <button onclick="closeToastModal()" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:18px;color:var(--ink3);cursor:pointer;line-height:1">✕</button>
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
-      <span style="font-size:22px">🍞</span>
-      <div style="font-size:16px;font-weight:700;color:var(--ink)">Toast POS Integration</div>
-    </div>
-    <div id="toast-modal-restaurant" style="font-size:12px;color:var(--ink3);margin-bottom:20px"></div>
-
-    <!-- Status banner -->
-    <div id="toast-status-banner" style="display:none;padding:10px 14px;border-radius:7px;font-size:12px;margin-bottom:16px;line-height:1.5"></div>
-
-    <!-- Credentials form -->
-    <div style="display:flex;flex-direction:column;gap:12px;margin-bottom:20px">
-      <div>
-        <label style="font-size:11px;font-weight:600;color:var(--ink3);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Client ID</label>
-        <input id="toast-client-id" type="text" placeholder="e.g. 8f3a2c1d-…" autocomplete="off"
-               style="width:100%;padding:8px 10px;border:1px solid #d0cbc3;border-radius:6px;font-size:13px;font-family:monospace;outline:none">
-      </div>
-      <div>
-        <label style="font-size:11px;font-weight:600;color:var(--ink3);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Client Secret</label>
-        <input id="toast-client-secret" type="password" placeholder="••••••••••••••••" autocomplete="off"
-               style="width:100%;padding:8px 10px;border:1px solid #d0cbc3;border-radius:6px;font-size:13px;font-family:monospace;outline:none">
-      </div>
-      <div>
-        <label style="font-size:11px;font-weight:600;color:var(--ink3);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Restaurant GUID</label>
-        <input id="toast-guid" type="text" placeholder="e.g. a1b2c3d4-…" autocomplete="off"
-               style="width:100%;padding:8px 10px;border:1px solid #d0cbc3;border-radius:6px;font-size:13px;font-family:monospace;outline:none">
-        <div style="font-size:10px;color:var(--ink3);margin-top:4px">Found in Toast Admin → Integrations → API Access → Location GUID</div>
-      </div>
-    </div>
-
-    <!-- Action buttons -->
-    <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <button id="toast-save-btn" onclick="saveToastCredentials()" class="btn-primary" style="padding:9px 18px;font-size:13px">Test &amp; Save</button>
-      <button id="toast-sync-btn" onclick="syncToastNow()" style="display:none;padding:9px 18px;font-size:13px;background:#1a56cc;color:white;border:none;border-radius:6px;font-weight:600;cursor:pointer;transition:background .15s,box-shadow .15s,transform .15s">↻ Sync now</button>
-      <button id="toast-disconnect-btn" onclick="disconnectToast()" style="display:none;padding:9px 18px;font-size:13px;background:none;border:1px solid #e0dbd0;border-radius:6px;color:#c84b2f;font-weight:600;cursor:pointer;transition:background .15s,box-shadow .15s,transform .15s">Disconnect</button>
-    </div>
-
-    <div style="margin-top:16px;padding-top:14px;border-top:1px solid #f0ece6;font-size:11px;color:var(--ink3);line-height:1.6">
-      <strong>How to get credentials:</strong> Toast Admin → Integrations → API Access → create a new credential set with <em>Labor</em> and <em>Orders</em> permissions. Copy the Client ID, Secret, and Location GUID here.
-    </div>
-  </div>
-</div>
-
-<!-- AI Usage Modal -->
-<div id="ai-usage-modal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(14,12,10,.55);align-items:center;justify-content:center">
-  <div style="background:white;border-radius:12px;padding:28px 32px;max-width:560px;width:90%;max-height:80vh;overflow-y:auto;box-shadow:0 12px 48px rgba(14,12,10,.22);position:relative">
-    <button onclick="closeAiUsageModal()" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:18px;color:var(--ink3);cursor:pointer;line-height:1">✕</button>
-    <div style="font-size:16px;font-weight:700;color:var(--ink);margin-bottom:2px">AI usage &amp; cost</div>
-    <div id="ai-usage-restaurant" style="font-size:12px;color:var(--ink3);margin-bottom:16px"></div>
-    <div id="ai-usage-body" style="font-size:13px;color:var(--ink2)">Loading…</div>
-  </div>
-</div>
-
-<!-- System Status Modal -->
-<div id="status-modal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(14,12,10,.55);align-items:center;justify-content:center;padding:24px 16px">
-  <div style="background:#fff;border-radius:12px;width:100%;max-width:600px;max-height:90vh;overflow-y:auto;position:relative;box-shadow:0 20px 60px rgba(0,0,0,.25)">
-    <button onclick="closeStatusModal()" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:18px;color:var(--ink3);cursor:pointer;line-height:1;z-index:1">✕</button>
-
-    <!-- Header -->
-    <div style="padding:22px 24px 16px;border-bottom:1px solid var(--paper3)">
-      <div style="font-size:16px;font-weight:700;color:var(--ink)">System Status</div>
-      <div style="font-size:12px;color:var(--ink3);margin-top:2px">Manage service status visible at <a href="/status" target="_blank" style="color:var(--ember)">status.cavnar.ai</a></div>
-    </div>
-
-    <!-- Service statuses -->
-    <div style="padding:18px 24px">
-      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);margin-bottom:10px">Service Statuses</div>
-      <div id="status-services-list" style="color:var(--ink3);font-size:13px">Loading…</div>
-    </div>
-
-    <div style="height:1px;background:var(--paper3)"></div>
-
-    <!-- Post incident -->
-    <div style="padding:18px 24px">
-      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);margin-bottom:12px">Post Incident</div>
-      <input id="inc-title" type="text" placeholder="Incident title…" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:inherit;font-size:13px;margin-bottom:8px" />
-      <textarea id="inc-body" placeholder="Initial status update message…" rows="2" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:inherit;font-size:13px;resize:vertical;margin-bottom:10px"></textarea>
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
-        <span style="font-size:12px;color:var(--ink3);white-space:nowrap">Severity:</span>
-        <select id="inc-severity" style="padding:6px 8px;border:1px solid var(--paper3);border-radius:7px;font-family:inherit;font-size:12px">
-          <option value="degraded">Degraded</option>
-          <option value="outage">Outage</option>
-          <option value="maintenance">Maintenance</option>
-        </select>
-      </div>
-      <div style="margin-bottom:16px">
-        <div style="font-size:12px;color:var(--ink3);margin-bottom:8px;font-weight:600">Affected services</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-          <label style="font-size:13px;display:block;cursor:pointer;padding:7px 10px;border:1px solid var(--paper3);border-radius:6px"><input type="checkbox" class="inc-svc-check" value="dashboard" style="width:auto;margin-right:6px"> Dashboard</label>
-          <label style="font-size:13px;display:block;cursor:pointer;padding:7px 10px;border:1px solid var(--paper3);border-radius:6px"><input type="checkbox" class="inc-svc-check" value="ai_drafting" style="width:auto;margin-right:6px"> AI Drafting</label>
-          <label style="font-size:13px;display:block;cursor:pointer;padding:7px 10px;border:1px solid var(--paper3);border-radius:6px"><input type="checkbox" class="inc-svc-check" value="review_sync" style="width:auto;margin-right:6px"> Review Sync</label>
-          <label style="font-size:13px;display:block;cursor:pointer;padding:7px 10px;border:1px solid var(--paper3);border-radius:6px"><input type="checkbox" class="inc-svc-check" value="email" style="width:auto;margin-right:6px"> Email Delivery</label>
-          <label style="font-size:13px;display:block;cursor:pointer;padding:7px 10px;border:1px solid var(--paper3);border-radius:6px"><input type="checkbox" class="inc-svc-check" value="labor_analytics" style="width:auto;margin-right:6px"> Labor & Analytics</label>
-          <label style="font-size:13px;display:block;cursor:pointer;padding:7px 10px;border:1px solid var(--paper3);border-radius:6px"><input type="checkbox" class="inc-svc-check" value="scheduler" style="width:auto;margin-right:6px"> Scheduler</label>
-        </div>
-      </div>
-      <button onclick="postIncident()" class="btn btn-primary">Post incident</button>
-    </div>
-
-    <div style="padding:12px 24px;background:var(--paper2);border-radius:0 0 12px 12px;display:flex;justify-content:space-between;align-items:center">
-      <a href="/status" target="_blank" style="font-size:12px;color:var(--ember);text-decoration:none;font-weight:600">View public status page →</a>
-      <button onclick="closeStatusModal()" style="padding:8px 16px;font-size:13px;background:none;border:1px solid var(--paper3);border-radius:7px;font-family:inherit;cursor:pointer;font-weight:600">Close</button>
-    </div>
-  </div>
-</div>
-
-<footer style="background:#0e0c0a;padding:14px 28px;display:flex;align-items:center;justify-content:space-between">
-  <span style="font-size:11px;color:#4a4540">© 2026 Cavnar AI LLC</span>
-  <div style="display:flex;gap:16px;align-items:center">
-    <a href="https://cavnar.ai/privacy" target="_blank" class="footer-link">Privacy Policy</a>
-    <a href="https://cavnar.ai" target="_blank" class="footer-link">cavnar.ai</a>
-  </div>
-</footer>
-
-<!-- Review import modal (TripAdvisor / DoorDash / Uber Eats) -->
-<div id="ta-modal" style="display:none;position:fixed;inset:0;z-index:10000;background:rgba(14,12,10,.6);align-items:center;justify-content:center">
-  <div style="background:white;border-radius:14px;padding:28px;max-width:440px;width:90%;position:relative">
-    <button onclick="document.getElementById('ta-modal').style.display='none'" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:18px;cursor:pointer;color:#7a736a">✕</button>
-    <div id="ta-modal-title" style="font-size:16px;font-weight:700;margin-bottom:4px"></div>
-    <div id="ta-modal-name" style="font-size:13px;color:#7a736a;margin-bottom:16px"></div>
-    <p style="font-size:13px;color:#3a3530;line-height:1.6;margin-bottom:14px">
-      Upload a CSV of reviews for this client. Required columns: <strong>rating</strong> and <strong>text</strong>. Optional: author, date, title.
-    </p>
-    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
-      <label style="display:inline-flex;align-items:center;gap:6px;background:#c84b2f;color:white;padding:9px 16px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif">
-        📂 Choose CSV
-        <input type="file" id="ta-modal-file" accept=".csv" style="display:none">
-      </label>
-      <a href="/static/tripadvisor_template.csv" download style="font-size:12px;color:#c84b2f;text-decoration:none">↓ Template</a>
-    </div>
-    <button onclick="submitReviewImport()" style="background:#c84b2f;color:white;border:none;padding:10px 22px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif">Upload & import</button>
-    <div id="ta-modal-status" style="font-size:12px;margin-top:12px;display:none"></div>
-  </div>
-</div>
-
-<script>
-var _taRid = null;
-var _taPlatform = null;
-var _platformLabels = {tripadvisor:'TripAdvisor', doordash:'DoorDash', ubereats:'Uber Eats'};
-function openReviewImport(rid, name, platform) {
-  _taRid = rid; _taPlatform = platform;
-  var label = _platformLabels[platform] || platform;
-  document.getElementById('ta-modal-title').textContent = 'Import ' + label + ' reviews';
-  document.getElementById('ta-modal-name').textContent = name;
-  document.getElementById('ta-modal-status').style.display = 'none';
-  document.getElementById('ta-modal-file').value = '';
-  document.getElementById('ta-modal').style.display = 'flex';
+    </div>`;
+  loadServices(); changelogLoad();
 }
-function submitReviewImport() {
-  var file = document.getElementById('ta-modal-file').files[0];
-  var status = document.getElementById('ta-modal-status');
-  if (!file) { status.style.display='block';status.style.color='#c0392b';status.textContent='Select a CSV file first'; return; }
-  status.style.display='block';status.style.color='#7a736a';status.textContent='Uploading…';
-  var form = new FormData();
-  form.append('file', file);
-  form.append('restaurant_id', _taRid);
-  form.append('platform', _taPlatform);
-  fetch('/api/import-tripadvisor', {method:'POST', body:form})
-    .then(function(r){ return r.json(); })
-    .then(function(d){
-      if (d.ok) {
-        status.style.color='#2d6a4f';
-        status.textContent='✓ Imported ' + d.imported + ' reviews (' + d.new + ' new). AI processing in background.';
-      } else {
-        status.style.color='#c0392b';
-        status.textContent='Error: ' + (d.error||'Import failed');
-      }
-    }).catch(function(){ status.style.color='#c0392b';status.textContent='Upload failed'; });
+async function createClient(){
+  const v = id => ($(id)||{}).value||''; const btn=$('cc-btn'); const st=$('create-status');
+  const payload = {restaurant_name:v('r-name'), owner_email:v('r-email'), username:v('u-username'), password:v('u-password'), google_place_id:v('r-google'), yelp_business_id:v('r-yelp'), owner_name:v('r-owner-name'), voice_notes:v('r-voice'), owner_phone:v('r-phone'), location_group:v('r-group'), location_name:v('r-location'), module_reviews:$('mod-reviews').checked?1:0, module_labor:$('mod-labor').checked?1:0, module_inventory:$('mod-inventory').checked?1:0, module_marketing:$('mod-marketing').checked?1:0};
+  if(!payload.restaurant_name||!payload.owner_email||!payload.username||!payload.password){ st.textContent='Name, email, username and password are required.'; st.style.color='var(--red)'; return; }
+  btn.disabled=true; btn.textContent='Creating…'; st.textContent='';
+  const d = await post('/admin/create-client', payload); btn.disabled=false; btn.textContent='Create client account';
+  if(d.ok){ st.style.color='var(--green)'; st.textContent='✓ Created — username '+payload.username+(d.docusign_skipped?' (DocuSign unavailable — send the contract manually)':''); _clients=null; badges(); }
+  else { st.style.color='var(--red)'; st.textContent=d.error||'Something went wrong'; }
 }
+async function loadServices(){
+  const d = await api('/admin/status/services'); const map={}; (d.statuses||[]).forEach(s=>map[s.service_key]=s);
+  $('svc-list').innerHTML = (d.services||[]).map(s=>{ const cur=map[s.key]||{}; return `<div style="display:grid;grid-template-columns:1fr 130px auto;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--paper3)"><div><b>${esc(s.name)}</b><div class="dim" style="color:var(--ink4)">${esc(cur.message||s.description||'')}</div></div><select id="svc-${esc(s.key)}">${['operational','degraded','outage','maintenance'].map(v=>`<option ${cur.status===v?'selected':''}>${v}</option>`).join('')}</select><button class="btn s" onclick="saveService('${esc(s.key)}')">Save</button></div>`; }).join('')||'<div class="empty">No services defined.</div>';
+}
+async function saveService(key){ const msg = prompt('Optional status message for '+key, '') || ''; const d = await post('/admin/status/update', {service_key:key, status:$('svc-'+key).value, message:msg}); toast(d.ok?'Status saved':'Failed', d.ok?'good':'bad'); }
+async function postIncident(){ const keys=[...document.querySelectorAll('.inc-k:checked')].map(c=>c.value); const d = await post('/admin/status/incident', {title:$('inc-title').value, body:$('inc-body').value, severity:$('inc-sev').value, affected_keys:keys, status:'investigating'}); toast(d.ok?'Incident posted':(d.error||'Failed'), d.ok?'good':'bad'); }
+async function changelogLoad(){ const d = await api('/admin/api/changelog'); const list = d.entries||d.changelog||[]; $('cl-list').innerHTML = list.slice(0,12).map(e=>`<div style="display:flex;gap:8px;align-items:baseline;padding:5px 0;border-bottom:1px solid var(--paper3)"><span class="chip">${esc(e.tag||'')}</span><span><b>${esc(e.title)}</b> <span class="dim" style="color:var(--ink4)">${esc(e.body||'')}</span></span><span class="dim num" style="margin-left:auto;white-space:nowrap">${fmtD(e.created_at)}</span><button class="lnk" onclick="changelogDelete(${e.id})">delete</button></div>`).join('')||'<div class="empty">No entries yet.</div>'; }
+async function changelogPost(){ const d = await post('/admin/api/changelog', {title:$('cl-title').value, body:$('cl-body').value, tag:$('cl-tag').value}); toast(d.ok?'Posted':(d.error||'Failed'), d.ok?'good':'bad'); if(d.ok){ $('cl-title').value=''; $('cl-body').value=''; changelogLoad(); } }
+async function changelogDelete(id){ if(!confirm('Delete this changelog entry?')) return; await api('/admin/api/changelog/'+id, {method:'DELETE'}); changelogLoad(); }
 
-// ── Changelog ────────────────────────────────────────────────────────────────
-function adminLoadChangelog() {
-  fetch('/admin/api/changelog').then(function(r){ return r.json(); }).then(function(d) {
-    var el = document.getElementById('cl-list');
-    if (!el) return;
-    if (!d.entries || !d.entries.length) {
-      el.innerHTML = '<div style="font-size:12px;color:var(--ink3);padding:8px 0">No entries yet.</div>';
-      return;
-    }
-    var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-    var tagColors = isDark
-      ? {feature:'#7aacff',fix:'#4ead7a',improvement:'#d4a030'}
-      : {feature:'#1a56cc',fix:'#2d6a4f',improvement:'#b7791f'};
-    var tagBg = isDark
-      ? {feature:'#0d1f3c',fix:'#0c2318',improvement:'#251d08'}
-      : {feature:'#e8f0fe',fix:'#eaf4ee',improvement:'#fef9ec'};
-    var cardBg = isDark ? 'var(--surface)' : 'white';
-    var cardBorder = isDark ? '1px solid var(--paper3)' : '1px solid #e0dbd0';
-    var html = '';
-    d.entries.forEach(function(e) {
-      var tag = e.tag || 'feature';
-      var dt = e.published_at || '';
-      var fmtDate = dt ? (function(s){var p=s.slice(0,10).split('-');return (parseInt(p[1])+'/'+ parseInt(p[2])+'/'+ p[0].slice(2));})() : '';
-      html += '<div style="background:'+cardBg+';border:'+cardBorder+';border-radius:8px;padding:12px 16px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px">';
-      html += '<div>';
-      html += '<span style="font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;background:'+(tagBg[tag]||tagBg.feature)+';color:'+(tagColors[tag]||tagColors.feature)+';padding:2px 7px;border-radius:4px;margin-right:8px">'+e.tag+'</span>';
-      html += '<span style="font-size:12px;color:#7a736a">'+fmtDate+'</span>';
-      html += '<div style="font-size:13px;font-weight:600;color:'+(isDark?'var(--ink)':'#0e0c0a')+';margin-top:5px">'+escHtml(e.title)+'</div>';
-      if (e.body) html += '<div style="font-size:12px;color:'+(isDark?'var(--ink2)':'#3a3530')+';margin-top:2px">'+escHtml(e.body)+'</div>';
-      html += '</div>';
-      html += '<button onclick="adminDeleteChangelog('+e.id+',this)" style="background:none;border:none;cursor:pointer;color:var(--red);font-size:15px;flex-shrink:0;padding:0 2px" title="Delete">✕</button>';
-      html += '</div>';
-    });
-    el.innerHTML = html;
-  });
+// ── Client detail ───────────────────────────────────────────────────────────
+const TABS = ['overview','locations','subscription','integrations','modules','ai','emails','notifications','jobs','activity','errors','actions'];
+async function clientView(id, qs){
+  const tab = new URLSearchParams(qs).get('tab') || 'overview';
+  const d = await api('/admin/api/client/'+id); if(!d.ok) throw new Error(d.error||'client failed'); const c = d.client;
+  const login = c.owner;
+  const hdr = `
+    <div class="head"><div><div class="k ember">${esc(c.brand!==c.name?c.brand+' · ':'')}Client #${c.id}${c.is_demo?' · DEMO':''}</div><h1>${esc(c.name)}${c.location_name?' <span class="sub" style="font-size:14px">— '+esc(c.location_name)+'</span>':''}</h1>
+      <div class="sub" style="margin-top:4px">${hb(c.health)} ${bill(c.billing.status)} <span class="b ${c.billing.contract_status==='signed'?'ok':'warn'} nodot">contract ${esc(c.billing.contract_status)}</span> · owner <b style="color:var(--ink)">${esc(login?login.username:'no login')}</b>${c.owner_name?' ('+esc(c.owner_name)+')':''} · ${esc(c.owner_email||'')}${c.owner_phone?' · '+esc(c.owner_phone):''} · joined ${fmtD(c.created_at)} · last active <span class="num">${ago(c.last_active)}</span> · ${d.siblings.length+1} location${d.siblings.length?'s':''}</div></div>
+      <div class="r"><a class="btn" href="/admin/view-as/${c.id}">View as client</a><a class="btn" href="/admin/client-settings/${c.id}">Settings</a><a class="btn" href="/admin/client-data/${c.id}">Data</a><a class="btn p" href="#client/${c.id}?tab=actions">Actions</a></div></div>
+    <div class="tabs">${TABS.map(t=>`<a href="#client/${c.id}?tab=${t}" class="${tab===t?'on':''}">${t==='ai'?'AI':t[0].toUpperCase()+t.slice(1)}${t==='errors'&&d.errors.length?' <span class="cnt bad">'+d.errors.length+'</span>':''}${t==='overview'&&c.issues.length?' <span class="cnt warn">'+c.issues.length+'</span>':''}</a>`).join('')}</div>`;
+  let body = '';
+  if(tab==='overview') body = `
+    <div class="grid g6" style="margin-bottom:14px">${kpi(fmtN(c.reviews.total),'Reviews','',c.reviews.awaiting+' awaiting')}${kpi(fmtN(c.ai.calls_30d),'AI calls · 30d','',fmtUSD(c.ai.cost_30d,2))}${kpi(fmtN(c.email.sent_7d),'Emails · 7d',c.email.failed_7d?'bad':'',c.email.failed_7d?c.email.failed_7d+' failed':'')}${kpi(fmtN(c.push.devices),'Devices',c.push.disabled?'bad':'',c.push.disabled?c.push.disabled+' dead':'')}${kpi(fmtN(c.alerts_7d),'Alerts · 7d')}${kpi(fmtN(c.guests),'Text club guests')}</div>
+    <div class="grid g2">
+      <div>${issuesTable(c.issues.map(i=>({...i, restaurant:c.name})), {id:'ci-t'})}
+        <div class="card" style="margin-top:12px"><div class="ch"><h2>Onboarding</h2><span class="num">${c.onboarding.done}/${c.onboarding.total}</span></div><div class="cb"><div class="steps">${c.onboarding.steps.map(s=>`<div><span class="${s.done?'ok':'no'}">${s.done?'✓':'○'}</span><span style="${s.done?'color:var(--ink4)':''}">${esc(s.label)}</span></div>`).join('')}</div></div></div></div>
+      <div class="card"><div class="ch"><h2>Profile</h2><a class="sub" href="/admin/client-settings/${c.id}">edit in settings →</a></div><div class="cb"><div class="kv">
+        <span class="k">Logins</span><span>${c.logins.map(l=>`<span class="chip ${l.is_active?'':'off'}">${esc(l.username)} · ${esc(l.role)}${l.last_login?' · '+ago(l.last_login):' · never'}</span>`).join(' ')||'—'}</span>
+        <span class="k">Neighborhood</span><span>${esc(d.profile.neighborhood||'—')}</span><span class="k">Vibe</span><span>${esc(d.profile.vibe||'—')}</span><span class="k">Known for</span><span>${esc(d.profile.known_for||'—')}</span>
+        <span class="k">Timezone</span><span>${esc(d.profile.timezone||'—')}</span><span class="k">POS</span><span>${esc(d.profile.pos_system||'—')}</span><span class="k">Place ID</span><span class="mono">${esc(d.profile.google_place_id||'—')}</span>
+        <span class="k">Labor target</span><span class="num">${d.profile.labor_target_pct!=null?d.profile.labor_target_pct+'%':'—'}</span><span class="k">Food cost target</span><span class="num">${d.profile.food_cost_target!=null?d.profile.food_cost_target+'%':'—'}</span><span class="k">Digest day</span><span>${esc(d.profile.digest_day||'—')}</span>
+        <span class="k">Voice notes</span><span style="white-space:normal">${esc(d.profile.voice_notes||'—')}</span><span class="k">Internal notes</span><span style="white-space:normal;color:var(--amber)">${esc(d.profile.internal_notes||'—')}</span>
+      </div></div></div>
+    </div>`;
+  else if(tab==='locations') body = `<div class="sub" style="margin-bottom:10px">${esc(c.brand)} — ${d.siblings.length+1} location${d.siblings.length?'s':''}. Each row is its own health record.</div>${table([{h:'Health',key:'health',cell:r=>hb(r.health)},{h:'Location',key:'name',cell:r=>`<span class="name">${esc(r.location_name||r.name)}</span><div class="dim">#${r.id} · ${esc(r.city||'')}</div>`},{h:'Modules',cell:r=>r.modules.map(modchip).join('')},{h:'Integrations',cell:r=>r.integrations.map(intchip).join('')},{h:'Reviews data',cell:r=>`<span class="num">${ago(r.freshness.reviews)}</span>`},{h:'POS data',cell:r=>`<span class="num">${ago(r.freshness.pos)}</span>`},{h:'AI 30d',r:true,cell:r=>`<span class="num">${fmtN(r.ai.calls_30d)}</span>`},{h:'Alerts 7d',r:true,cell:r=>`<span class="num">${fmtN(r.alerts_7d)}</span>`},{h:'Issues',cell:r=>r.issues.length?`<span class="b ${r.issues.some(i=>i.severity==='critical')?'bad':'warn'} nodot">${r.issues.length}</span>`:''},{h:'Last active',cell:r=>`<span class="num">${ago(r.last_active)}</span>`}], [c, ...d.siblings], {id:'sib-t', link:r=>'client/'+r.id})}`;
+  else if(tab==='subscription') body = `<div class="grid g2"><div class="card"><div class="ch"><h2>Subscription</h2></div><div class="cb"><div class="kv"><span class="k">Status</span><span>${bill(c.billing.status)}</span><span class="k">Tier</span><span>${esc(c.billing.tier||'—')}</span><span class="k">Modules</span><span class="num">${c.billing.modules}</span><span class="k">Monthly (list)</span><span class="num">${c.billing.monthly?fmtUSD(c.billing.monthly):'—'}</span><span class="k">Stripe customer</span><span>${c.billing.stripe_customer_id?`<a class="mono" target="_blank" href="https://dashboard.stripe.com/customers/${esc(c.billing.stripe_customer_id)}">${esc(c.billing.stripe_customer_id)} ↗</a>`:'—'}</span><span class="k">Contract</span><span><span class="b ${c.billing.contract_status==='signed'?'ok':'warn'} nodot">${esc(c.billing.contract_status)}</span>${c.billing.envelope_id?' <span class="mono dim">'+esc(c.billing.envelope_id)+'</span>':''}</span><span class="k">Since</span><span class="num">${fmtD(c.created_at)}</span></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">${c.billing.status!=='active'?`<button class="btn" onclick="act('/admin/resend-payment/${c.id}','Resend payment link')">Resend payment link</button>`:''}${c.billing.contract_status!=='signed'?`<button class="btn" onclick="act('/admin/resend-contract/${c.id}','Resend contract')">Resend contract</button>`:''}</div>
+    <div class="sub" style="margin-top:12px">Plan and payment changes are made in Stripe. Live subscription state is on the <a href="#billing">Billing</a> page.</div></div></div></div>`;
+  else if(tab==='integrations') body = table([{h:'Integration',key:'label',cell:r=>`<span class="name">${esc(r.label)}</span>`},{h:'State',key:'state',cell:r=>intb(r.state, r.state==='connected'?'Connected':r.state==='error'?'Error':(r.configured?'Configured':'Not connected'))},{h:'Auth',key:'auth'},{h:'Last success',key:'last_success',cell:r=>`<span class="num">${ago(r.last_success)}</span> <span class="dim">${fmtDT(r.last_success)}</span>`},{h:'Error',key:'error',wrap:true,cell:r=>r.error?`<span style="color:var(--red)">${esc(r.error)}</span>`:''},{h:'',cell:r=>r.key==='toast'?`<button class="btn s" onclick="toastOpen(${c.id},'${esc(c.name)}')">Credentials</button> <button class="btn s" onclick="act('/admin/toast/sync/${c.id}','Sync Toast')">Sync now</button>`:r.key==='instagram'?`<button class="btn s" onclick="act('/admin/refresh-ig-token/${c.id}','Refresh Instagram token')">Refresh token</button>`:r.key==='google_business'?`<button class="btn s" onclick="act('/admin/fetch-reviews/${c.id}','Fetch reviews now')">Fetch reviews</button>`:`<a class="btn s" href="/admin/client-settings/${c.id}">Settings</a>`}], c.integrations, {id:'cint-t'});
+  else if(tab==='modules') body = table([{h:'Module',key:'label',cell:r=>`<span class="name">${esc(r.label)}</span>`},{h:'Enabled',cell:r=>r.enabled?'<span class="b ok nodot">on</span>':'<span class="b off nodot">off</span>'},{h:'Configured',cell:r=>r.configured?'<span class="b ok nodot">yes</span>':'<span class="b warn nodot">no</span>'},{h:'Receiving data',cell:r=>r.receiving?'<span class="b ok nodot">yes</span>':'<span class="b warn nodot">no</span>'},{h:'State',cell:r=>`<span class="chip ${MOD[r.state]}">${MODL[r.state]}</span>`},{h:'Last data',cell:r=>`<span class="num">${ago(r.last_data)}</span> <span class="dim">${fmtDT(r.last_data)}</span>`}], c.modules, {id:'cmod-t'}) + `<div class="sub" style="margin-top:10px">Turn modules on or off in <a href="/admin/client-settings/${c.id}">Settings</a>.</div>`;
+  else if(tab==='ai') body = `<div class="grid g6" style="margin-bottom:14px">${kpi(fmtN(c.ai.calls_30d),'Calls · 30d')}${kpi(fmtUSD(c.ai.cost_30d,2),'Cost · 30d','ember')}${kpi(fmtN(c.ai.tokens_30d),'Tokens · 30d')}${kpi(fmtN(c.ai.calls_today),'Today')}${kpi(fmtN(c.ai.calls_7d),'This week','',c.ai.calls_prev_7d+' last week')}${kpi(ago(c.ai.last_at),'Last call')}</div>
+    <div class="card" style="margin-bottom:14px"><div class="ch"><h2>Daily · 30d</h2></div><div class="cb">${bars(d.ai.daily,'calls')}</div></div>
+    <div class="grid g2"><div>${table([{h:'Workflow',key:'action'},{h:'Model',key:'model',cell:r=>`<span class="dim">${esc((r.model||'').replace('claude-',''))}</span>`},{h:'Calls',key:'calls',r:true,cell:r=>`<span class="num">${fmtN(r.calls)}</span>`},{h:'Cost',key:'cost',r:true,cell:r=>`<span class="num">${fmtUSD(r.cost,3)}</span>`},{h:'Last',key:'last_at',cell:r=>`<span class="num">${ago(r.last_at)}</span>`}], d.ai.by_action, {id:'cai-a', sort:'cost'})}</div>
+    <div>${table([{h:'When',key:'created_at',cell:r=>`<span class="num">${fmtDT(r.created_at)}</span>`},{h:'Workflow',key:'action'},{h:'Tokens',r:true,cell:r=>`<span class="num">${fmtN((r.input_tokens||0)+(r.output_tokens||0))}</span>`},{h:'Cost',key:'cost_usd',r:true,cell:r=>`<span class="num">${fmtUSD(r.cost_usd,4)}</span>`}], d.ai.recent, {id:'cai-r', sort:'created_at'})}</div></div>`;
+  else if(tab==='emails') body = table([{h:'When',key:'sent_at',cell:r=>`<span class="num">${fmtDT(r.sent_at)}</span>`},{h:'Type',key:'email_type'},{h:'To',key:'to_email'},{h:'Subject',key:'subject',wrap:true},{h:'Status',key:'status',cell:r=>`<span class="b ${r.status==='failed'?'bad':'ok'} nodot">${esc(r.status||'sent')}</span>`},{h:'Error',key:'error',wrap:true,cell:r=>r.error?`<span style="color:var(--red)">${esc(r.error)}</span>`:''}], d.emails, {id:'cem-t', sort:'sent_at', empty:'No emails logged for this client.'}) + `<div style="display:flex;gap:8px;margin-top:10px"><button class="btn" onclick="act('/admin/test-digest/${c.id}','Send a test digest')">Send test digest</button><button class="btn" onclick="act('/admin/test-urgent/${c.id}','Send a test urgent alert')">Send test urgent alert</button><button class="btn" onclick="act('/admin/resend-welcome/${c.id}','Resend the welcome email')">Resend welcome</button></div>`;
+  else if(tab==='notifications') body = `<div class="grid g2"><div><div class="k" style="margin-bottom:6px">Devices</div>${table([{h:'User',key:'user_id'},{h:'Env',key:'environment'},{h:'Registered',key:'created_at',cell:r=>`<span class="num">${fmtD(r.created_at)}</span>`},{h:'Last success',key:'last_success_at',cell:r=>`<span class="num">${ago(r.last_success_at)}</span>`},{h:'State',cell:r=>r.disabled_reason?`<span class="b bad nodot">${esc(r.disabled_reason)}</span>`:'<span class="b ok nodot">live</span>'}], d.devices, {id:'cdev-t', empty:'No devices — the client hasn\'t allowed notifications on the app yet.'})}
+    <div class="k" style="margin:14px 0 6px">Push deliveries</div>${table([{h:'When',key:'created_at',cell:r=>`<span class="num">${fmtDT(r.created_at)}</span>`},{h:'Type',key:'alert_type'},{h:'Status',cell:r=>r.ok?'<span class="b ok nodot">delivered</span>':`<span class="b bad nodot">${esc(r.status||'failed')}</span>`},{h:'Error',key:'error',wrap:true,cell:r=>esc(r.error||'')}], d.pushes, {id:'cpush-t', empty:'No pushes yet.'})}</div>
+    <div><div class="k" style="margin-bottom:6px">Alerts fired</div>${table([{h:'When',key:'fired_at',cell:r=>`<span class="num">${fmtDT(r.fired_at)}</span>`},{h:'Type',key:'alert_type'},{h:'Review',key:'review_id',cell:r=>r.review_id?'#'+r.review_id:''}], d.alerts, {id:'cal-t', empty:'No alerts yet.'})}
+    <div class="k" style="margin:14px 0 6px">Scheduled posts</div>${table([{h:'Platform',key:'platform'},{h:'Topic',key:'topic',wrap:true,cell:r=>esc(r.topic||r.content_type)},{h:'Scheduled',key:'scheduled_for',cell:r=>`<span class="num">${fmtDT(r.scheduled_for)}</span>`},{h:'Status',key:'status',cell:r=>`<span class="b ${r.status==='posted'?'ok':r.status==='failed'?'bad':'info'} nodot">${esc(r.status)}</span>`},{h:'Error',key:'error',wrap:true,cell:r=>esc(r.error||'')}], d.scheduled_posts, {id:'cpost-t', empty:'Nothing scheduled.'})}</div></div>`;
+  else if(tab==='jobs') body = `<div class="grid g2"><div><div class="k" style="margin-bottom:6px">Generated schedules</div>${table([{h:'Week',key:'week_start',cell:r=>`<span class="num">${esc(r.week_start||'')} – ${esc(r.week_end||'')}</span>`},{h:'Generated',key:'generated_at',cell:r=>`<span class="num">${fmtDT(r.generated_at)}</span>`},{h:'Hours',r:true,cell:r=>`<span class="num">${r.hours_scheduled!=null?Math.round(r.hours_scheduled):'—'}</span> <span class="dim">/ ${r.hours_budget!=null?Math.round(r.hours_budget):'—'}</span>`}], d.schedules, {id:'csch-t', empty:'No schedules generated.'})}
+    <div class="k" style="margin:14px 0 6px">Runs mentioning this client</div>${table([{h:'Job',key:'job'},{h:'Started',key:'started_at',cell:r=>`<span class="num">${fmtDT(r.started_at)}</span>`},{h:'Result',cell:r=>r.finished_at?(r.ok?'<span class="b ok nodot">ok</span>':'<span class="b bad nodot">failed</span>'):'<span class="chip warn">running</span>'},{h:'Error',key:'error',wrap:true,cell:r=>esc(r.error||'')}], d.job_runs, {id:'cruns-t', empty:'None recorded.'})}</div>
+    <div><div class="k" style="margin-bottom:6px">Job failures mentioning this client</div>${table([{h:'When',key:'created_at',cell:r=>`<span class="num">${fmtDT(r.created_at)}</span>`},{h:'Job',key:'job'},{h:'Error',key:'error',wrap:true,cell:r=>`<span style="color:var(--red)">${esc(r.error||'')}</span>`}], d.jobs, {id:'cjobs-t', empty:'None.'})}
+    <div class="k" style="margin:14px 0 6px">Webhook deliveries</div>${table([{h:'When',key:'created_at',cell:r=>`<span class="num">${fmtDT(r.created_at)}</span>`},{h:'Event',key:'event_type'},{h:'Result',cell:r=>r.ok?'<span class="b ok nodot">ok</span>':`<span class="b bad nodot">${esc(r.status||'failed')}</span>`},{h:'Error',key:'error',wrap:true,cell:r=>esc(r.error||'')}], d.webhook_deliveries, {id:'chook-t', empty:'No webhook configured or no deliveries yet.'})}</div></div>`;
+  else if(tab==='activity') body = `<div class="grid g2"><div class="card"><div class="ch"><h2>Account activity</h2></div><div class="cb">${d.activity.length?`<div class="list">${d.activity.map(a=>`<div class="it"><span class="when">${ago(a.at)} · ${fmtDT(a.at)}</span><span>${esc((a.type||'').replace(/_/g,' '))}${a.data?' <span class="dim" style="color:var(--ink4)">'+esc(String(a.data).slice(0,80))+'</span>':''}</span><span></span></div>`).join('')}</div>`:'<div class="empty">Nothing yet.</div>'}</div></div>
+    <div><div class="card"><div class="ch"><h2>Sign-ins</h2></div><div class="cb" style="padding:0">${table([{h:'When',key:'created_at',cell:r=>`<span class="num">${fmtDT(r.created_at)}</span>`},{h:'Device',key:'device_type'},{h:'IP',key:'ip_address',cell:r=>`<span class="mono">${esc(r.ip_address||'')}</span>`},{h:'Agent',key:'user_agent',wrap:true,cell:r=>`<span class="dim">${esc((r.user_agent||'').slice(0,60))}</span>`}], d.logins, {id:'clog-t', empty:'No sign-ins recorded.'})}</div></div>
+    <div class="card" style="margin-top:12px"><div class="ch"><h2>Active sessions</h2></div><div class="cb" style="padding:0">${table([{h:'User',key:'username'},{h:'Device',key:'device_type'},{h:'Last active',key:'last_active',cell:r=>`<span class="num">${ago(r.last_active)}</span>`},{h:'IP',key:'ip_address',cell:r=>`<span class="mono">${esc(r.ip_address||'')}</span>`}], d.sessions, {id:'cses-t', empty:'No active sessions.'})}</div></div></div></div>`;
+  else if(tab==='errors') body = table([{h:'When',key:'at',cell:r=>`<span class="num">${fmtDT(r.at)}</span>`},{h:'Kind',key:'kind',cell:r=>`<span class="chip">${esc(r.kind)}</span>`},{h:'What',key:'label'},{h:'Error',key:'error',wrap:true,cell:r=>`<span style="color:var(--red)">${esc(r.error||'')}</span>`}], d.errors, {id:'cerr-t', sort:'at', empty:'No errors on record for this client.'});
+  else if(tab==='actions') body = `<div class="grid g3">
+    <div class="card"><div class="ch"><h2>Reviews</h2></div><div class="cb" style="display:flex;flex-direction:column;gap:8px"><button class="btn" onclick="act('/admin/fetch-reviews/${c.id}','Fetch reviews now')">Fetch reviews now</button><button class="btn" onclick="act('/admin/redraft-all/${c.id}','Re-draft every pending reply with AI',true)">Re-draft all with AI</button><button class="btn" onclick="importOpen(${c.id},'${esc(c.name)}','tripadvisor')">Import TripAdvisor CSV</button><button class="btn" onclick="importOpen(${c.id},'${esc(c.name)}','doordash')">Import DoorDash CSV</button><button class="btn" onclick="importOpen(${c.id},'${esc(c.name)}','ubereats')">Import Uber Eats CSV</button><button class="btn" onclick="act('/admin/seed-reviews/${c.id}','Seed sample reviews',true)">Seed sample reviews</button>${c.is_demo?`<button class="btn d" onclick="act('/admin/reseed-demo-data/${c.id}','Reseed ALL demo data (wipes this demo account\\'s data)',true)">Reseed demo data</button>`:''}</div></div>
+    <div class="card"><div class="ch"><h2>Communications</h2></div><div class="cb" style="display:flex;flex-direction:column;gap:8px"><button class="btn" onclick="act('/admin/resend-contract/${c.id}','Resend the DocuSign contract')">Resend contract</button><button class="btn" onclick="act('/admin/resend-payment/${c.id}','Resend the payment link')">Resend payment link</button><button class="btn" onclick="act('/admin/resend-welcome/${c.id}','Resend the welcome email')">Resend welcome email</button><button class="btn" onclick="act('/admin/test-digest/${c.id}','Send a test digest')">Send test digest</button><button class="btn" onclick="act('/admin/test-urgent/${c.id}','Send a test urgent alert')">Send test urgent alert</button></div></div>
+    <div class="card"><div class="ch"><h2>Integrations &amp; branding</h2></div><div class="cb" style="display:flex;flex-direction:column;gap:8px"><button class="btn" onclick="toastOpen(${c.id},'${esc(c.name)}')">Toast credentials</button><button class="btn" onclick="act('/admin/toast/sync/${c.id}','Sync Toast now')">Sync Toast now</button><button class="btn" onclick="act('/admin/refresh-ig-token/${c.id}','Refresh Instagram token')">Refresh Instagram token</button><button class="btn" onclick="brandOpen(${c.id},'${esc(c.name)}')">White-label branding</button><a class="btn" href="/admin/client-settings/${c.id}">Full settings</a><a class="btn" href="/admin/client-data/${c.id}">Manage data (CSV)</a></div></div>
+    <div class="card"><div class="ch"><h2>Access</h2></div><div class="cb" style="display:flex;flex-direction:column;gap:8px">${c.logins.map(l=>`<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span class="chip ${l.is_active?'':'off'}">${esc(l.username)} · ${esc(l.role)}</span>${l.is_active?`<button class="btn s d" onclick="act('/admin/deactivate-client/${l.id}','Deactivate ${esc(l.username)} (they are signed out everywhere)',true)">Deactivate</button>`:`<button class="btn s" onclick="act('/admin/reactivate-client/${l.id}','Reactivate ${esc(l.username)}')">Reactivate</button>`}<select onchange="setRole(${l.id},this.value)" style="padding:3px 6px;font-size:11px"><option value="" selected disabled>role…</option><option value="client">GM (single location)</option><option value="owner">Owner (multi-location)</option><option value="member">Teammate</option></select></div>`).join('')||'<span class="dim">No logins.</span>'}<button class="btn d" onclick="resetPassword(${c.id})">Reset password (issue a temporary one)</button><a class="btn" href="/admin/view-as/${c.id}">View dashboard as this client</a></div></div>
+    <div class="card"><div class="ch"><h2>Guardrails</h2></div><div class="cb sub">Nothing on this page changes billing or deletes a restaurant. Reseeding demo data, re-drafting, deactivating and password resets ask for confirmation. Data deletion is done from the database directly, on purpose.</div></div>
+  </div>`;
+  $('view').innerHTML = hdr + body;
 }
-function escHtml(s) {
-  return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+async function act(route, label, dangerous){
+  if(dangerous ? !confirm(label + '?\n\nThis cannot be undone.') : !confirm(label + '?')) return;
+  const d = await post(route); toast(d.ok===false ? (d.error||'Failed') : (d.message||d.msg||label+' — done'), d.ok===false?'bad':'good'); if(d.ok!==false){ _clients=null; badges(); route(); }
 }
-function adminCreateChangelog() {
-  var title = (document.getElementById('cl-title').value||'').trim();
-  var body  = (document.getElementById('cl-body').value||'').trim();
-  var tag   = document.getElementById('cl-tag').value;
-  if (!title) { alert('Title required'); return; }
-  fetch('/admin/api/changelog', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({title:title, body:body, tag:tag})
-  }).then(function(r){ return r.json(); }).then(function(d) {
-    if (d.ok) {
-      document.getElementById('cl-title').value = '';
-      document.getElementById('cl-body').value  = '';
-      adminLoadChangelog();
-    } else { alert('Error: ' + (d.error||'unknown')); }
-  });
-}
-function adminDeleteChangelog(id, btn) {
-  if (!confirm('Delete this changelog entry?')) return;
-  fetch('/admin/api/changelog/'+id, {method:'DELETE'})
-    .then(function(r){ return r.json(); })
-    .then(function(d){ if (d.ok) adminLoadChangelog(); });
-}
+async function setRole(userId, role){ if(!role) return; const d = await post('/admin/api/set-user-role', {user_id:userId, role}); toast(d.ok?'Role updated':(d.error||'Failed'), d.ok?'good':'bad'); _clients=null; }
+async function resetPassword(rid){ const pw = prompt('New temporary password for this client (6+ characters). Their current password stops working immediately.', Math.random().toString(36).slice(2,8)+'-'+Math.random().toString(36).slice(2,6)); if(!pw) return; const d = await post('/admin/reset-password-by-restaurant/'+rid, {password: pw}); if(d.ok){ $('pw-out').textContent = pw; openModal('m-password'); } else toast(d.error||'Failed','bad'); }
+// Toast credentials
+let _tRid=null;
+async function toastOpen(rid, name){ _tRid=rid; $('m-toast-title').textContent='Toast POS — '+name; $('m-toast-status').textContent='Loading…'; ['t-cid','t-sec','t-guid'].forEach(i=>$(i).value=''); openModal('m-toast'); const d = await api('/admin/toast/status/'+rid); $('m-toast-status').textContent = d.connected ? ('Connected · GUID '+(d.guid_masked||'')+' · last sync '+ago(d.last_synced)+(d.sync_error?' · error: '+d.sync_error:'')) : 'Not connected — enter credentials below.'; }
+async function toastSave(){ const d = await post('/admin/toast/save/'+_tRid, {client_id:$('t-cid').value.trim(), client_secret:$('t-sec').value.trim(), restaurant_guid:$('t-guid').value.trim(), test:true}); $('m-toast-status').textContent = d.ok ? ('✓ '+(d.message||'Saved and tested')) : ('✕ '+(d.error||'Failed')); if(d.ok){ _clients=null; } }
+async function toastSync(){ const d = await post('/admin/toast/sync/'+_tRid); $('m-toast-status').textContent = d.ok ? ('✓ '+(d.message||'Synced')) : ('✕ '+(d.error||'Sync failed')); }
+async function toastDisconnect(){ if(!confirm('Disconnect Toast for this restaurant?')) return; const d = await post('/admin/toast/disconnect/'+_tRid); $('m-toast-status').textContent = d.ok?'Disconnected':(d.error||'Failed'); _clients=null; }
+// Brand
+let _bRid=null; function brandOpen(rid, name){ _bRid=rid; $('b-status').textContent=''; openModal('m-brand'); }
+async function brandSave(){ const d = await post('/admin/api/brand/'+_bRid, {brand_name:$('b-name').value.trim(), brand_color:$('b-color').value.trim(), brand_logo_url:$('b-logo').value.trim()}); $('b-status').textContent = d.ok?'✓ Saved':('✕ '+(d.error||'Failed')); }
+// Review import
+let _iRid=null, _iPlat=null; function importOpen(rid, name, platform){ _iRid=rid; _iPlat=platform; $('m-import-title').textContent='Import '+platform+' reviews — '+name; $('i-status').textContent=''; $('i-file').value=''; openModal('m-import'); }
+async function importSubmit(){ const f=$('i-file').files[0]; if(!f){ $('i-status').textContent='Choose a CSV first'; return; } const fd=new FormData(); fd.append('file',f); fd.append('restaurant_id',_iRid); fd.append('platform',_iPlat); $('i-status').textContent='Uploading…'; const r = await fetch('/api/import-tripadvisor',{method:'POST',body:fd}); const d = await r.json(); $('i-status').textContent = d.ok?('✓ Imported '+d.imported+' ('+d.new+' new) — AI drafting in the background'):('✕ '+(d.error||'Import failed')); }
 
-// ── White-label brand ────────────────────────────────────────────────────────
-function openBrandModal(rid, name) {
-  var html = '<div style="position:fixed;inset:0;z-index:10001;background:rgba(14,12,10,.6);display:flex;align-items:center;justify-content:center" id="brand-overlay">';
-  html += '<div style="background:white;border-radius:14px;padding:28px;max-width:400px;width:90%;position:relative">';
-  html += '<button onclick="document.getElementById(\'brand-overlay\').remove()" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:18px;cursor:pointer;color:#7a736a">✕</button>';
-  html += '<div style="font-size:15px;font-weight:700;margin-bottom:4px">White-label branding</div>';
-  html += '<div style="font-size:12px;color:#7a736a;margin-bottom:18px">'+escHtml(name)+'</div>';
-  html += '<div style="display:flex;flex-direction:column;gap:12px">';
-  html += '<div><label style="font-size:11px;font-weight:600;color:#7a736a;display:block;margin-bottom:4px">BRAND NAME</label><input id="brand-name-inp" type="text" placeholder="Cavnar AI" style="width:100%;padding:8px 10px;border:1px solid #e0dbd0;border-radius:6px;font-size:13px;font-family:inherit"></div>';
-  html += '<div><label style="font-size:11px;font-weight:600;color:#7a736a;display:block;margin-bottom:4px">BRAND COLOR (hex)</label><input id="brand-color-inp" type="text" placeholder="#c84b2f" style="width:100%;padding:8px 10px;border:1px solid #e0dbd0;border-radius:6px;font-size:13px;font-family:inherit"></div>';
-  html += '<div><label style="font-size:11px;font-weight:600;color:#7a736a;display:block;margin-bottom:4px">LOGO URL (optional)</label><input id="brand-logo-inp" type="text" placeholder="https://…/logo.png" style="width:100%;padding:8px 10px;border:1px solid #e0dbd0;border-radius:6px;font-size:13px;font-family:inherit"></div>';
-  html += '</div>';
-  html += '<button onclick="saveBrand('+rid+')" style="margin-top:18px;background:#c84b2f;color:white;border:none;padding:10px 22px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">Save branding</button>';
-  html += '<div id="brand-status" style="font-size:12px;margin-top:10px;display:none"></div>';
-  html += '</div></div>';
-  document.body.insertAdjacentHTML('beforeend', html);
-}
-function saveBrand(rid) {
-  var payload = {
-    brand_name:     document.getElementById('brand-name-inp').value.trim(),
-    brand_color:    document.getElementById('brand-color-inp').value.trim(),
-    brand_logo_url: document.getElementById('brand-logo-inp').value.trim()
-  };
-  var st = document.getElementById('brand-status');
-  st.style.display='block'; st.style.color='#7a736a'; st.textContent='Saving…';
-  fetch('/admin/api/brand/'+rid, {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify(payload)
-  }).then(function(r){ return r.json(); }).then(function(d) {
-    if (d.ok) { st.style.color='#2d6a4f'; st.textContent='✓ Saved'; }
-    else { st.style.color='#c0392b'; st.textContent='Error: '+(d.error||'unknown'); }
-  });
-}
-
-// Init
-adminLoadChangelog();
-
-// ── Admin dark mode ───────────────────────────────────────────────────────
-function _syncDarkIcon(isDark) {
-  var moon = document.getElementById('dark-icon-moon');
-  var sun  = document.getElementById('dark-icon-sun');
-  if (moon) moon.style.display = isDark ? 'none' : 'block';
-  if (sun)  sun.style.display  = isDark ? 'block' : 'none';
-}
-(function(){
-  _syncDarkIcon(localStorage.getItem('cavnar_admin_theme') === 'dark');
-})();
-function toggleAdminDark() {
-  var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-  var next = isDark ? 'light' : 'dark';
-  document.documentElement.setAttribute('data-theme', next);
-  localStorage.setItem('cavnar_admin_theme', next);
-  _syncDarkIcon(next === 'dark');
-}
+// go
+route(); badges(); setInterval(badges, 120000);
 </script>
 </body>
 </html>

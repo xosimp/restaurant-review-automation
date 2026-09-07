@@ -62,14 +62,66 @@ def capture(exc, job="unknown", context=""):
         log.error(f"ops.capture could not persist failure ({job}): {db_err}")
 
 
+_RUNS_SQL = """
+CREATE TABLE IF NOT EXISTS job_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job TEXT NOT NULL,
+    started_at TEXT DEFAULT (datetime('now')),
+    finished_at TEXT,
+    duration_ms INTEGER,
+    ok INTEGER,
+    error TEXT,
+    context TEXT
+)
+"""
+
+
+def _record_run_start(name, context=""):
+    try:
+        from models import get_conn
+        conn = get_conn()
+        conn.execute(_RUNS_SQL)
+        cur = conn.execute("INSERT INTO job_runs (job, context) VALUES (?, ?)", (str(name)[:100], str(context)[:200]))
+        run_id = cur.lastrowid
+        conn.commit()
+        conn.close()
+        return run_id
+    except Exception:
+        return None
+
+
+def _record_run_end(run_id, started, ok, error=None):
+    if run_id is None:
+        return
+    try:
+        import time as _time
+        from models import get_conn
+        conn = get_conn()
+        conn.execute("UPDATE job_runs SET finished_at=datetime('now'), duration_ms=?, ok=?, error=? WHERE id=?",
+                     (int((_time.time() - started) * 1000), 1 if ok else 0, (str(error)[:500] if error else None), run_id))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
 def run_job(name, fn, *args, **kwargs):
     """Run a scheduled job with failure capture. Returns the job's result,
-    or None if it raised."""
+    or None if it raised. Every run — not only the failures — lands in
+    job_runs (start, end, duration, ok), which is what the admin console's
+    Jobs page reads; before this the only record of a job that worked was
+    the scheduler's heartbeat."""
+    import time as _time
+    started = _time.time()
+    run_id = _record_run_start(name)
     try:
-        return fn(*args, **kwargs)
+        result = fn(*args, **kwargs)
+        _record_run_end(run_id, started, True)
+        return result
     except Exception as e:
         log.error(f"Job '{name}' crashed: {e}")
         capture(e, job=name)
+        _record_run_end(run_id, started, False, e)
         return None
 
 
