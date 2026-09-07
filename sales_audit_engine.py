@@ -1251,7 +1251,57 @@ def price_plan(n_modules, override=None):
 
 # ── Entry point ──────────────────────────────────────────────────────────────
 
-def compute(answers, pricing_override=None):
+_CONF_ORDER = ["low", "moderate", "high"]
+
+
+def apply_notes(cats, notes_read):
+    """Fold what the notes reader concluded into the category results
+    before scoring and ranking, so confidence-weighted problems, totals
+    confidence and the report all see the same thing.
+
+    Insights only ever move a sized category's confidence one step or add
+    context. They never change a dollar figure — a note that carries a
+    number becomes a suggested answer instead, and the engine sizes it
+    from the typed answer like any other. A read whose fingerprint no
+    longer matches the notes is shown but not applied."""
+    if not notes_read:
+        return None
+    insights = [i for i in (notes_read.get("insights") or []) if isinstance(i, dict) and i.get("text")]
+    out = {"read_at": notes_read.get("read_at"), "fingerprint": notes_read.get("fingerprint"), "model": notes_read.get("model"),
+           "stale": bool(notes_read.get("stale")), "notes_seen": notes_read.get("notes_seen", 0),
+           "insights": insights, "suggestions": list(notes_read.get("suggestions") or []),
+           "caveats": list(notes_read.get("caveats") or []), "applied": 0}
+    if out["stale"]:
+        return out
+    # Net direction per category, clamped to one step: three notes that all
+    # say "less certain" move labor from high to moderate, not to low.
+    net = {}
+    for ins in insights:
+        k = ins.get("category") or ""
+        if ins.get("effect") == "raise_confidence":
+            net[k] = net.get(k, 0) + 1
+        elif ins.get("effect") == "lower_confidence":
+            net[k] = net.get(k, 0) - 1
+    for k, d in net.items():
+        c = cats.get(k)
+        if c and c.get("status") == "ok" and d:
+            cur = c.get("confidence") if c.get("confidence") in _CONF_ORDER else "moderate"
+            i = _CONF_ORDER.index(cur)
+            c["confidence"] = _CONF_ORDER[min(2, i + 1)] if d > 0 else _CONF_ORDER[max(0, i - 1)]
+    for ins in insights:
+        c = cats.get(ins.get("category") or "")
+        if not c:
+            continue
+        # Only owner-safe, audit-note insights may reach the report's
+        # "how this was estimated" block. Internal notes stay internal.
+        if c.get("calc") is not None and ins.get("report_safe") and ins.get("source") == "audit":
+            c["calc"]["assumptions"] = list(c["calc"].get("assumptions") or []) + ["From the conversation: " + ins["text"]]
+        c["notes"] = list(c.get("notes") or []) + [ins]
+        out["applied"] += 1
+    return out
+
+
+def compute(answers, pricing_override=None, notes_read=None):
     a = answers or {}
     owner = _txt(a, "owner_name")
     owner = owner.split(" ")[0] if owner else "the owner"
@@ -1269,6 +1319,7 @@ def compute(answers, pricing_override=None):
                 if c.get("calc"):
                     c["calc"]["assumptions"] = list(c["calc"].get("assumptions") or []) + [
                         "%s opened %d months ago. Opening-period labor runs high and sales are still ramping, so this gap is a baseline to watch, not a leak to recover yet." % ((_txt(a, "restaurant_name") or "The restaurant"), months_open)]
+    notes_applied = apply_notes(cats, notes_read)
     scores = {}
     for k, label in CATEGORY_LABELS:
         s, reasons = SCORERS[k](a, fin, cats[k])
@@ -1340,6 +1391,7 @@ def compute(answers, pricing_override=None):
     }
     return {
         "context": context,
+        "notes_read": notes_applied,
         "concept_class": cls,
         "financials": fin,
         "categories": cats,

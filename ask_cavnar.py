@@ -203,7 +203,7 @@ def _labor_context(restaurant_id):
         "LABOR\n"
         f"- Overall labor cost: {a['overall_labor_pct']}% of sales ({over_under} this restaurant's {target}% target)\n"
         f"- Total labor cost this period: ${a['total_labor_cost']:,.0f} on ${a['total_sales']:,.0f} in sales\n"
-        f"- Estimated monthly savings available from optimized scheduling: ${a.get('potential_savings', 0):,.0f}\n"
+        f"- Estimated monthly savings available from optimized scheduling: ${a.get('potential_savings_monthly', 0):,.0f} (gap above target over the {a.get('period_days', 0)} days synced, per month)\n"
         f"- Overstaffed days this period: {len(a.get('overstaffed_days') or [])}\n"
         f"- Understaffed days this period: {len(a.get('understaffed_days') or [])}\n"
     )

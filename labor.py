@@ -296,6 +296,22 @@ def analyse_shifts(shifts: list[dict],
     overall_pct  = round(total_labor / total_sales * 100, 1) if total_sales else 0
     target_labor_cost = total_sales * (LABOR_TARGET / 100)
     potential_savings = round(max(0, total_labor - target_labor_cost), 2)
+    # potential_savings is the gap over the WHOLE synced period. Callers
+    # used to multiply it by 4.33 as if every sync were one week, which
+    # doubled the monthly figure for a two-week period. Normalize by the
+    # calendar days the data covers (closed days are part of the week too)
+    # and express it per week and per month (52/12 weeks) explicitly.
+    _dates = sorted(k for k in by_day.keys() if k)
+    period_days = 0
+    if _dates:
+        try:
+            from datetime import datetime as _dt
+            period_days = (_dt.strptime(_dates[-1][:10], "%Y-%m-%d") - _dt.strptime(_dates[0][:10], "%Y-%m-%d")).days + 1
+        except (ValueError, TypeError):
+            period_days = len(_dates)
+        period_days = max(period_days, len(_dates))
+    potential_savings_weekly = round(potential_savings / period_days * 7, 2) if period_days else 0.0
+    potential_savings_monthly = round(potential_savings_weekly * 52.0 / 12.0, 2)
 
     # Role-level breakdown
     by_role = defaultdict(lambda: {"hours": 0, "labor_cost": 0, "headcount": set()})
@@ -325,6 +341,9 @@ def analyse_shifts(shifts: list[dict],
         "overtime_risk": overtime_flags,
         "dow_summary": dow_summary,
         "potential_savings": potential_savings,
+        "potential_savings_weekly": potential_savings_weekly,
+        "potential_savings_monthly": potential_savings_monthly,
+        "period_days": period_days,
         "role_summary": role_summary,
         "by_day": {k: {kk: vv for kk, vv in v.items() if kk != "shifts"}
                    for k, v in by_day.items()},
@@ -446,7 +465,7 @@ Data:
 - Understaffed days (IMPORTANT — these are NOT good days despite low labor %): {json.dumps(analysis['understaffed_days'][:2])} — these days had strong sales but lean staffing, meaning the restaurant likely left revenue on the table through slower service, longer waits, or missed covers. Flag these explicitly as missed revenue opportunities and recommend adding 1-2 staff on these days going forward.
 - Overtime risk: {json.dumps(analysis['overtime_risk'])}{role_context}{trend_context}
 - Labor % by day of week: {json.dumps(analysis['dow_summary'])}
-- Estimated monthly savings with optimized scheduling: ${analysis['potential_savings']:,.0f}{constraints_context}
+- Estimated monthly savings with optimized scheduling: ${analysis.get('potential_savings_monthly', 0):,.0f} (the gap above target over the {analysis.get('period_days', 0)} days synced, per month){constraints_context}
 
 This is read on a phone screen — brevity is the whole point. Every sentence you don't need is a sentence a client scrolls past. Cut ruthlessly.
 

@@ -17,10 +17,12 @@ from models import get_conn, get_restaurant, get_review_stats, DB_PATH
 
 
 def compute_total_value_delivered(restaurant_id: int, db_path: str = DB_PATH) -> int:
-    """Reviews-response value ($5/response) + labor scheduling savings +
-    recoverable food cost + marketing agency-equivalent value — each
-    counted only when its module is active. Matches
-    hosted_dashboard.py's savings_breakdown['total'] exactly."""
+    """Reviews-response value ($5/response) + labor scheduling savings
+    (monthly, normalized by the synced period) + recoverable food cost
+    (monthly, waste above each category's tolerance band) + marketing
+    agency-equivalent value — each counted only when its module is active
+    and its data is live. Matches hosted_dashboard.py's
+    savings_breakdown['total'] exactly."""
     restaurant = get_restaurant(restaurant_id, db_path=db_path)
     if not restaurant:
         return 0
@@ -37,7 +39,9 @@ def compute_total_value_delivered(restaurant_id: int, db_path: str = DB_PATH) ->
             labor = analyse_shifts_for_restaurant(restaurant_id)
             # Sample shifts (no upload, no POS sync yet) are not the
             # restaurant's savings — count labor only once it's live.
-            labor_value = int(round(labor.get("potential_savings", 0) * 4.33)) if labor.get("is_live") else 0
+            # Per-month figure normalized by the synced period (labor.py) —
+            # never the whole-period gap times a weeks-per-month constant.
+            labor_value = int(round(labor.get("potential_savings_monthly", 0) or 0)) if labor.get("is_live") else 0
         except Exception:
             labor_value = 0
 

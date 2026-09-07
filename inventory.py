@@ -22,6 +22,12 @@ _WASTE_TOLERANCE_PCT = {
     "pantry":  20,
 }
 _DEFAULT_WASTE_TOLERANCE_PCT = 20
+# Weeks in a month, exactly — 52 / 12. Not 4.3, not 4.33.
+WEEKS_PER_MONTH = 52.0 / 12.0
+RECOVERABLE_BASIS = ("Only waste above each category's tolerance band counts — produce 28%, bakery 25%, "
+                     "beverage and pantry 20%, protein and dairy 15% of the last order. Waste inside the band "
+                     "is normal trim and spoilage and is never counted. Summed per item from the POS-synced "
+                     "count and projected at 52/12 weeks a month.")
 
 # Ingredient keywords relevant to each upcoming holiday/event — shared by
 # get_claude_insights (narrative "heads-up" text) and analyse_inventory
@@ -179,6 +185,7 @@ def analyse_inventory(items: list[dict], delivery_days: str = None,
 
     total_waste_cost  = 0.0
     total_stock_value = 0.0
+    total_recoverable_week = 0.0
 
     for item in items:
         # Weekend-weighted depletion simulation instead of a flat division —
@@ -246,6 +253,20 @@ def analyse_inventory(items: list[dict], delivery_days: str = None,
 
         # Per-category waste tolerance — see _WASTE_TOLERANCE_PCT above.
         tolerance = _WASTE_TOLERANCE_PCT.get(category, _DEFAULT_WASTE_TOLERANCE_PCT)
+        item["waste_tolerance_pct"] = tolerance
+        # Recoverable dollars are the slice of this item's waste that sits
+        # above its category's tolerance band — the part ordering and par
+        # changes can actually remove. An item wasting 40% of its order in
+        # a 28% band has 12/40 of its waste dollars recoverable; an item
+        # inside the band contributes nothing. This replaced a flat 65%
+        # of all waste (Sep 2026), which assumed the same share of every
+        # item's waste was avoidable regardless of what the count said.
+        if waste_pct > tolerance and waste_cost > 0:
+            recoverable_cost = waste_cost * (waste_pct - tolerance) / waste_pct
+        else:
+            recoverable_cost = 0.0
+        item["recoverable_cost"] = round(recoverable_cost, 2)
+        total_recoverable_week += recoverable_cost
         if waste_pct > tolerance:
             waste_items.append(item)
         if overstock_units > 0:
@@ -279,9 +300,9 @@ def analyse_inventory(items: list[dict], delivery_days: str = None,
     critical_low     = sorted(critical_low,     key=lambda x: x["days_remaining"])
     order_reduction  = sorted(order_reduction,  key=lambda x: x["savings_vs_last"], reverse=True)
 
-    monthly_waste_projection = total_waste_cost * 4.3
+    monthly_waste_projection = total_waste_cost * WEEKS_PER_MONTH
     annual_waste_projection  = monthly_waste_projection * 12
-    recoverable = monthly_waste_projection * 0.65
+    recoverable = total_recoverable_week * WEEKS_PER_MONTH
     annual_recoverable = recoverable * 12
 
     # Industry benchmark: waste cost as % of total purchased this week
@@ -329,6 +350,8 @@ def analyse_inventory(items: list[dict], delivery_days: str = None,
         "annual_waste_projection":  round(annual_waste_projection, 2),
         "recoverable_monthly":      round(recoverable),
         "annual_recoverable":       round(annual_recoverable, 2),
+        "recoverable_weekly":       round(total_recoverable_week, 2),
+        "recoverable_basis":        RECOVERABLE_BASIS,
         "waste_rate_pct":           waste_rate_pct,
         "benchmark_label":          benchmark_label,
         "benchmark_color":          benchmark_color,

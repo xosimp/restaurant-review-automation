@@ -1883,18 +1883,12 @@ def _do_mobile_labor(restaurant_id):
             ot_premium += max(0, o.get("hours", 0) - 40) * hourly_rate * 0.5
 
     date_range = analysis.get("date_range") or {}
-    period_days = 14
-    try:
-        if date_range.get("start") and date_range.get("end"):
-            _start = datetime.strptime(date_range["start"], "%Y-%m-%d")
-            _end = datetime.strptime(date_range["end"], "%Y-%m-%d")
-            period_days = max((_end - _start).days + 1, 1)
-    except Exception:
-        pass
+    # Calendar days the synced shifts cover — computed once in labor.py.
+    period_days = int(analysis.get("period_days") or 0)
     total_sales = analysis.get("total_sales", 0)
     monthly_sales_est = (total_sales / period_days * 30) if period_days else 0
     potential_savings = analysis.get("potential_savings", 0)
-    labor_monthly = round(potential_savings * 4.33)
+    labor_monthly = round(analysis.get("potential_savings_monthly", 0) or 0)
     # 0.345 = midpoint of the 33-36% full-service industry range (NRA 2024
     # Restaurant Operations Data Abstract) — was 0.32, a leftover from the
     # stale pre-pandemic 28-32% benchmark already corrected everywhere else

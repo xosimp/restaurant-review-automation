@@ -454,7 +454,7 @@ def index(current_user):
         print(f"Labor analysis error: {e}")
         labor = {"is_live":False,"total_labor_cost":0,"total_sales":0,"overall_labor_pct":0,
                  "overstaffed_days":[],"understaffed_days":[],"overtime_risk":[],
-                 "dow_summary":{},"potential_savings":0,"labor_target":30.0,
+                 "dow_summary":{},"potential_savings":0,"potential_savings_weekly":0,"potential_savings_monthly":0,"period_days":0,"labor_target":30.0,
                  "by_day":{},"employee_hours":{},"role_summary":{},"role_summary_sorted":[],"role_max_pct":0,"trend_delta":None,"staff_constraints":{}}
     try:
         _inv_items, _inv_live = load_inventory_for_restaurant(rid)
@@ -549,9 +549,9 @@ def index(current_user):
     # Reviews value: each managed response saves ~$5 vs outsourcing to a rep service
     _reviews_value = int(rstats.get("responded", 0)) * 5
     # Labor value: scheduling savings monthly; if below industry avg, use vs-industry figure
-    _labor_monthly = int(round(labor.get("potential_savings", 0) * 4.33))
+    _labor_monthly = int(round(labor.get("potential_savings_monthly", 0) or 0))
     # When on/under target, compute what they're saving vs. 32% industry average
-    _period_days = labor.get("date_range", {}).get("days", 14) or 14
+    _period_days = labor.get("period_days") or labor.get("date_range", {}).get("days") or 0
     _monthly_sales_est = (labor.get("total_sales", 0) / _period_days * 30) if _period_days else 0
     _labor_vs_industry_monthly = max(0, int((0.32 - labor.get("overall_labor_pct", 32) / 100) * _monthly_sales_est))
     _labor_vs_industry_annual  = _labor_vs_industry_monthly * 12

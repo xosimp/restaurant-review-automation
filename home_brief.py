@@ -480,7 +480,9 @@ def _build(current_user):
             over = pct - labor_target
             days = int((labor.get("date_range") or {}).get("days") or 0)
             ot = [o for o in (labor.get("overtime_risk") or []) if o.get("status") == "overtime"]
-            savings = float(labor.get("potential_savings") or 0)
+            # Shown as "/week" below — use the per-week figure, not the
+            # whole-period gap.
+            savings = float(labor.get("potential_savings_weekly") or 0)
             dow = labor.get("dow_summary") or {}
             hist_pcts = [h["labor_pct"] for h in labor_hist[::-1] if h.get("labor_pct") is not None]
             prev_pct = hist_pcts[-2] if len(hist_pcts) >= 2 else None

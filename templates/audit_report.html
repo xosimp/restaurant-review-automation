@@ -219,6 +219,7 @@ details .b ul{margin:6px 0 0;padding-left:16px}
     {% if r.owner_hours_week %}<p class="small" style="margin-top:12px">Separately, about {{ r.owner_hours_week | int }} hours a week of owner time currently goes to reports and data — around {{ (r.owner_hours_week * 52) | int }} hours a year. Shown as time, not dollars.</p>{% endif %}
     <p class="small" style="margin-top:10px">Overlapping categories are never added together: overtime sits inside labor, waste inside food cost, variance inside pour cost, and comps only under operations. Reviews and guest-flow figures are revenue opportunities rather than cost savings.</p>
     {% if r.audit_notes %}<h3 style="font-family:var(--disp);font-weight:500;font-size:18px;margin:22px 0 8px">Notes from the audit</h3>{% for k, n in r.audit_notes.items() %}<p class="small" style="color:var(--ink2)">{{ n }}</p>{% endfor %}{% endif %}
+    {% if r.conversation %}<h3 style="font-family:var(--disp);font-weight:500;font-size:18px;margin:22px 0 8px">From the conversation</h3>{% for c in r.conversation %}<p class="small" style="color:var(--ink2)">{{ c.text }}</p>{% endfor %}{% endif %}
   </section>
 
   <section>

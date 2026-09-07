@@ -52,6 +52,29 @@ def _clean_blob(v):
 
 # ── Pages ────────────────────────────────────────────────────────────────────
 
+import sales_audit_notes_ai as notes_ai
+
+
+def _results(a):
+    """Engine results for an audit row, with the notes reader's last
+    conclusions folded in. Marked stale (shown, not applied) when the
+    notes have changed since they were read."""
+    nr = a.get("notes_ai") or None
+    if nr:
+        nr = dict(nr, stale=(nr.get("fingerprint") != notes_ai.notes_fingerprint(a)))
+    return engine.compute(a["answers"], a.get("pricing_override"), nr)
+
+
+def _read_notes_into(a):
+    """Run the reader and store it. Returns (record, error)."""
+    try:
+        rec = notes_ai.read_notes(a, engine.compute(a["answers"], a.get("pricing_override")))
+    except Exception as e:  # network, key, malformed JSON — never blocks the audit
+        return None, str(e)[:300]
+    store.store_notes_ai(a["id"], rec)
+    return rec, None
+
+
 @audit_bp.route("/admin/audits")
 @admin_required
 def audits_page(current_user):
@@ -138,7 +161,7 @@ def api_get(audit_id, current_user):
     a = store.get_audit(audit_id)
     if not a:
         return jsonify(ok=False, error="Audit not found"), 404
-    res = engine.compute(a["answers"], a.get("pricing_override"))
+    res = _results(a)
     share = store.active_share(audit_id)
     return jsonify(ok=True, audit=a, results=res, share=({"token": share["token"], "views": share["views"], "created_at": share["created_at"]} if share else None))
 
@@ -163,10 +186,10 @@ def api_save(audit_id, current_user):
         )
     except store.VersionConflict as vc:
         return jsonify(ok=False, conflict=True, error="This audit was changed elsewhere.", audit=vc.current,
-                       results=engine.compute(vc.current["answers"], vc.current.get("pricing_override"))), 409
+                       results=_results(vc.current)), 409
     if not saved:
         return jsonify(ok=False, error="Audit not found"), 404
-    res = engine.compute(saved["answers"], saved.get("pricing_override"))
+    res = _results(saved)
     return jsonify(ok=True, version=saved["version"], updated_at=saved["updated_at"], status=saved["status"], results=res)
 
 
@@ -176,7 +199,7 @@ def api_results(audit_id, current_user):
     a = store.get_audit(audit_id)
     if not a:
         return jsonify(ok=False, error="Audit not found"), 404
-    return jsonify(ok=True, results=engine.compute(a["answers"], a.get("pricing_override")))
+    return jsonify(ok=True, results=_results(a))
 
 
 @audit_bp.route("/admin/api/audits/<int:audit_id>/generate", methods=["POST"])
@@ -188,11 +211,39 @@ def api_generate(audit_id, current_user):
     a = store.get_audit(audit_id)
     if not a:
         return jsonify(ok=False, error="Audit not found"), 404
-    res = engine.compute(a["answers"], a.get("pricing_override"))
+    # Notes the reader has not seen yet (or that changed since) get read
+    # now, so the frozen report reflects the whole conversation. A reader
+    # failure is reported but never stops the generate.
+    notes_warning = None
+    nr = a.get("notes_ai") or {}
+    if notes_ai.collect_notes(a) and nr.get("fingerprint") != notes_ai.notes_fingerprint(a):
+        rec, err = _read_notes_into(a)
+        if rec:
+            a["notes_ai"] = rec
+        else:
+            notes_warning = "Notes were not read: " + (err or "unknown error")
+    res = _results(a)
     store.store_results(audit_id, res, mark_generated=True)
     if a["status"] in ("Draft", "In Progress"):
         store.save_audit(audit_id, status="Completed")
-    return jsonify(ok=True, results=res, report_url="/admin/audits/%d/report" % audit_id)
+    return jsonify(ok=True, results=res, report_url="/admin/audits/%d/report" % audit_id, notes_warning=notes_warning)
+
+
+@audit_bp.route("/admin/api/audits/<int:audit_id>/read-notes", methods=["POST"])
+@admin_required
+def api_read_notes(audit_id, current_user):
+    """Run the notes reader on demand. Returns fresh results with the
+    reader's conclusions applied."""
+    a = store.get_audit(audit_id)
+    if not a:
+        return jsonify(ok=False, error="Audit not found"), 404
+    if not notes_ai.collect_notes(a):
+        return jsonify(ok=False, error="No notes to read yet — type something in a section's notes first."), 400
+    rec, err = _read_notes_into(a)
+    if not rec:
+        return jsonify(ok=False, error="The notes reader failed: " + (err or "unknown error")), 502
+    a["notes_ai"] = rec
+    return jsonify(ok=True, notes_read=rec, results=_results(a))
 
 
 @audit_bp.route("/admin/api/audits/<int:audit_id>/duplicate", methods=["POST"])

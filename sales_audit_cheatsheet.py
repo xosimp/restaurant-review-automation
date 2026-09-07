@@ -195,7 +195,8 @@ def build(audit, results):
         ("What if the AI is wrong?", "Then you see it and don't act on it. Nothing posts, publishes or changes a schedule without you approving it. It drafts; you decide."),
         ("Does Cavnar AI make decisions automatically?", "No. It drafts review replies you approve with one click, generates schedules you publish, writes posts you schedule, and sends alerts. It never acts on its own."),
         ("Will this tell me to cut staff?", "It tells you where labor is running against your own target by day, shift and role, and it builds schedules from your sales patterns. What you do with that is yours."),
-        ("How does it know my food cost?", "From your inventory and invoices — uploaded or synced — plus your menu and recipes if you have them costed. Without those inputs it tells you it doesn't know, rather than inventing a number."),
+        ("How does it know my food cost?", "From your POS: Toast depletion and inventory sync nightly, plus invoices and your menu if it's costed. Without that data it tells you it doesn't know rather than inventing a number."),
+        ("Do I have to upload anything?", "No. Toast connects directly and syncs shifts, sales and inventory every night. Upload exists only as an emergency fallback if a connection is down."),
         ("How does it know if bartenders are overpouring?", "Today it doesn't — bar variance tracking is an upcoming module. What I can size today is the gap from the counts you already do."),
         ("Actual vs theoretical food cost?", "Theoretical is what your recipes say it should have cost for what you sold. Actual is what your inventory says you used. The gap is waste, portioning, theft and pricing mistakes."),
         ("Beverage cost vs pour cost?", "Same thing — beverage cost ÷ beverage sales. 'Pour cost' is just how bar people say it, usually per category."),
@@ -325,10 +326,17 @@ def build(audit, results):
     sections.append({"key": "product", "title": "Part 10 — Cavnar AI product cheat sheet", "tag": "product", "blocks": [
         {"h": "What it does today", "items": [
             "Reviews (live): fetches Google reviews four times a day, drafts a personalised reply in the restaurant's voice for one-click approval and posting, urgent-review alerts, sentiment and topic trends, competitor rating monitoring, weekly review summary.",
-            "Labor (live): daily labor % vs the restaurant's target, by day / shift / role; overstaffed, understaffed and overtime tables; AI-generated schedules from sales patterns and staff availability, published to staff by email; Toast shift sync nightly (CSV upload otherwise).",
+            "Labor (live): daily labor % vs the restaurant's target, by day / shift / role; overstaffed, understaffed and overtime tables; AI-generated schedules from sales patterns and staff availability, published to staff by email; shifts and sales sync from the POS (Toast) nightly — nothing for the owner to upload.",
             "Food Cost (live): ingredient cost history, supplier price-creep alerts, food cost % vs target, waste rate vs benchmark, AI-suggested order quantities and a supplier order email, menu margin reads, weekly food cost digest.",
             "Marketing (live): social / SMS / email content written in the restaurant's voice and scheduled from the dashboard, a guest text club with QR opt-in, Meta post performance synced nightly, content calendar.",
             "Platform: a daily Home brief across every active module, a weekly AI digest email, iOS app with push alerts, Ask Cavnar (plain-English questions answered from the restaurant's own data, with proposed actions that always need confirmation), competitor intelligence, AI-search visibility check.",
+        ]},
+        {"h": "How the dashboard sizes savings once connected (no flat assumptions)", "items": [
+            "Labor: the dollars above the restaurant's own labor target over the synced period, normalized to a week by the calendar days synced and to a month at 52/12 weeks. Never a whole-period gap times a constant.",
+            "Food cost: only the waste above each category's tolerance band counts as recoverable — produce 28%, bakery 25%, beverage and pantry 20%, protein and dairy 15% of the last order. Waste inside the band is normal trim and spoilage and is never counted. Per item, from the POS-synced count, projected at 52/12 weeks a month.",
+            "Reviews: managed responses at what a reputation service charges per response. Marketing: a part-time social manager equivalent, only once content has been produced.",
+            "Total Value Delivered on Home is the sum of those four for active modules with live data. If asked 'per what?': reviews and marketing are lifetime, labor and food are monthly run-rate.",
+            "The audit itself works differently: it sizes from what the owner tells you, against benchmarks, in ranges. Once connected, the dashboard sizes from their actual POS data.",
         ]},
         {"h": "What it does NOT do", "items": [
             "Not a POS, payroll or accounting system — it reads from them.",
@@ -342,7 +350,7 @@ def build(audit, results):
             "Every AI call is logged with cost and status in the admin console; failures are visible, not silent.",
         ]},
         {"h": "Data, notifications, emails, multi-location, setup", "items": [
-            "Data needed: Google Business Profile connection (reviews), POS connection (Toast live; Square and Clover connectors exist — confirm state before claiming) or CSV uploads of shifts, inventory CSV / menu, social accounts for marketing.",
+            "Data needed: Google Business Profile connection (reviews), POS connection (Toast live; Square and Clover connectors exist — confirm state before claiming) for shifts, sales and inventory depletion, the menu, social accounts for marketing. Everything syncs on its own; manual upload exists only as an emergency fallback if a connection is down — never pitch it as the workflow.",
             "Notifications: iOS push, SMS and email alerts — urgent reviews, labor alerts, price changes, digests; quiet hours and a daily alert cap exist.",
             "Emails: weekly digest on the client's chosen day, monthly summary, urgent review alerts, staff schedule emails, supplier order emails, login and security emails.",
             "Multi-location: a brand can hold several locations; switch between them or view all locations together; each location is its own record.",

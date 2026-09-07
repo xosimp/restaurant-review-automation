@@ -272,12 +272,14 @@ def test_labor_context_includes_target_comparison_and_savings(db_path, monkeypat
     r = _restaurant(db_path, module_labor=1)
     monkeypatch.setattr(labor, "analyse_shifts_for_restaurant", lambda rid: {
         "is_live": True, "overall_labor_pct": 34.0, "labor_target": 30.0,
-        "total_labor_cost": 12000, "total_sales": 35000, "potential_savings": 1400,
+        "total_labor_cost": 12000, "total_sales": 35000, "potential_savings": 2800,
+        "potential_savings_weekly": 646.15, "potential_savings_monthly": 1400, "period_days": 14,
         "overstaffed_days": ["Mon"], "understaffed_days": [],
     })
     ctx = build_context(r)
     assert "over this restaurant's 30.0% target" in ctx
-    assert "$1,400" in ctx
+    # the per-month figure, never the whole-period gap
+    assert "$1,400" in ctx and "$2,800" not in ctx and "14 days synced" in ctx
 
 
 def test_labor_context_flags_under_target_correctly(db_path, monkeypatch):

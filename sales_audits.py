@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS sales_audits (
     status TEXT NOT NULL DEFAULT 'Draft',
     answers_json TEXT NOT NULL DEFAULT '{}',
     notes_json TEXT NOT NULL DEFAULT '{}',
+    notes_ai_json TEXT NOT NULL DEFAULT '{}',
     sales_json TEXT NOT NULL DEFAULT '{}',
     results_json TEXT,
     pricing_override TEXT,
@@ -63,6 +64,10 @@ def init_sales_audits(db_path=DB_PATH):
     conn = get_conn(db_path)
     try:
         conn.executescript(_SQL)
+        # Added Sep 2026: what the notes agent read and concluded.
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(sales_audits)").fetchall()}
+        if "notes_ai_json" not in cols:
+            conn.execute("ALTER TABLE sales_audits ADD COLUMN notes_ai_json TEXT NOT NULL DEFAULT '{}'")
         conn.commit()
     finally:
         conn.close()
@@ -84,10 +89,11 @@ def _row_to_dict(r, full=True):
     d = dict(r)
     d["answers"] = _loads(d.pop("answers_json", None), {})
     d["notes"] = _loads(d.pop("notes_json", None), {})
+    d["notes_ai"] = _loads(d.pop("notes_ai_json", None), {}) or None
     d["sales"] = _loads(d.pop("sales_json", None), {})
     d["results"] = _loads(d.pop("results_json", None), {}) or None
     if not full:
-        d.pop("answers", None); d.pop("notes", None); d.pop("sales", None); d.pop("results", None)
+        d.pop("answers", None); d.pop("notes", None); d.pop("sales", None); d.pop("results", None); d.pop("notes_ai", None)
     return d
 
 
@@ -229,6 +235,17 @@ def store_results(audit_id, results, mark_generated=False, db_path=DB_PATH):
         conn.close()
 
 
+def store_notes_ai(audit_id, notes_ai, db_path=DB_PATH):
+    """What the notes agent concluded, keyed to a fingerprint of the notes
+    it read so the tool can tell when the notes have moved on."""
+    conn = get_conn(db_path)
+    try:
+        conn.execute("UPDATE sales_audits SET notes_ai_json=? WHERE id=?", (json.dumps(notes_ai or {}), audit_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def duplicate_audit(audit_id, created_by=None, db_path=DB_PATH):
     src = get_audit(audit_id, db_path=db_path)
     if not src:
@@ -341,6 +358,10 @@ def public_view(audit):
         "categories": cats, "recommended_modules": res.get("recommended_modules"), "upcoming_modules": res.get("upcoming_modules"),
         "plan": res.get("plan"), "roi": res.get("roi"), "owner_hours_week": res.get("owner_hours_week"),
         "disclaimer": res.get("disclaimer"), "audit_notes": audit_notes,
+        # Only insights the reader drew from audit notes that Will ticked
+        # "include in report" — never anything from an internal note.
+        "conversation": [{"category": i.get("category"), "text": i.get("text")} for i in ((res.get("notes_read") or {}).get("insights") or [])
+                         if i.get("report_safe") and i.get("source") == "audit" and i.get("in_report")],
         "financials": {k: v for k, v in (res.get("financials") or {}).items() if k in ("annual_revenue", "labor_pct", "food_pct", "bev_pct", "prime_cost_pct", "alcohol_pct")},
     }
 

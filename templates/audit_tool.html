@@ -122,6 +122,15 @@ button{font-family:inherit;cursor:pointer}
 .note textarea{width:100%;min-height:120px;font-family:inherit;font-size:14px;background:var(--paper2);color:var(--ink);border:1px solid var(--paper3);border-radius:9px;padding:10px 12px;resize:vertical;outline:none;line-height:1.5}
 .note textarea:focus{border-color:var(--ember)}.note.internal textarea{border-color:rgba(212,160,48,.35);background:rgba(212,160,48,.04)}
 .note .k label{font-weight:500;text-transform:none;letter-spacing:0;font-size:12px;color:var(--ink3);display:flex;gap:6px;align-items:center}
+.notes-h{margin-top:36px;display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}.notes-h h2{font-family:var(--disp);font-weight:500;font-size:19px;margin:0}.notes-h span{font-size:12.5px;color:var(--ink4)}
+.notes{margin-top:12px}
+/* notes reader */
+.nr-top{display:flex;flex-direction:column;gap:8px}.nr-st{font-size:12px;color:var(--ink3);line-height:1.4}.nr-st.warn{color:var(--amber)}.nr-st.ok{color:var(--green)}
+.nr-list{margin:10px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px;font-size:12.5px;color:var(--ink2);line-height:1.45}
+.eff{display:inline-block;font-size:10px;letter-spacing:.08em;text-transform:uppercase;font-weight:700;padding:2px 6px;border-radius:5px;margin-right:6px;background:var(--paper3);color:var(--ink3);vertical-align:middle;white-space:nowrap}.eff.up{color:var(--green);background:rgba(111,207,151,.12)}.eff.down{color:var(--amber);background:rgba(212,160,48,.14)}
+.conv{margin-top:16px;border-left:2px solid var(--ember);padding:2px 0 2px 14px;display:flex;flex-direction:column;gap:8px;font-size:13.5px;color:var(--ink2);line-height:1.5}.conv .src{font-size:11px;color:var(--ink4);margin-left:6px;white-space:nowrap}
+.sugg{display:flex;align-items:center;gap:12px;justify-content:space-between;background:var(--paper2);border:1px solid var(--paper3);border-radius:9px;padding:9px 12px;font-size:13px;color:var(--ink2);margin-top:8px}.sugg b{font-family:var(--num);color:var(--ink)}.sugg .why{color:var(--ink4);font-size:12px}.sugg.done{opacity:.6}
+.card .cn{margin-top:8px;font-size:12.5px;color:var(--ink3);line-height:1.45;border-top:1px dashed var(--paper3);padding-top:8px}
 .stepnav{display:flex;justify-content:space-between;margin-top:36px;padding-top:22px;border-top:1px solid rgba(255,255,255,.06)}
 /* computed views */
 .cards{display:grid;grid-template-columns:1fr 1fr;gap:16px}
@@ -215,7 +224,9 @@ h2.sub{font-family:var(--disp);font-weight:500;font-size:22px;margin:30px 0 12px
     <div class="kv" id="side-kv"></div>
     <h3 style="margin-top:22px">Ask next</h3>
     <ul id="side-missing"></ul>
-    <h3 style="margin-top:22px">Internal notes</h3>
+    <h3 style="margin-top:22px">Notes reader</h3>
+    <div id="side-notes-ai"><span class="nr-st">Loading…</span></div>
+    <h3 style="margin-top:22px">Internal notes · whole audit</h3>
     <textarea id="side-notes" placeholder="Only you see this. Never in the report."></textarea>
   </aside>
 </div>
@@ -364,6 +375,70 @@ function renderSide(){
     <div><div class="k">Strongest Cavnar AI fit</div><div class="t">${fit?esc(fit.label):'—'}</div></div>
     ${r.health.score!=null?`<div><div class="k">Health score (internal preview)</div><div class="v">${r.health.score}<small> / 100 · ${esc(r.health.label)}</small></div></div>`:''}`;
   $('side-missing').innerHTML = (r.missing||[]).slice(0,6).map(m=>`<li>${esc(m)}</li>`).join('') || '<li style="color:var(--ink4)">Nothing pressing — keep going.</li>';
+  renderNotesAgent();
+}
+
+// ── notes reader ───────────────────────────────────────────────────────────
+// Every section's notes (audit + internal), the whole-audit internal notes
+// and every free-text answer are sent to Claude on demand or at generate
+// time. It returns insights (confidence up/down/context per category),
+// suggested answers (applied only by clicking Apply — the engine then
+// recomputes from the typed answer) and caveats. Results carry the
+// fingerprint of the notes read; editing any note marks the read stale.
+let _nrBusy = false;
+function notesRead(){ return RESULTS && RESULTS.notes_read ? RESULTS.notes_read : null; }
+function hasNotes(){ const n = AUDIT.notes||{}; for(const k in n){ const v = n[k]||{}; if((v.audit||'').trim() || (v.internal||'').trim()) return true; } for(const s of SCHEMA.sections){ for(const qq of (s.questions||[])){ if(qq.type==='textarea' && typeof AUDIT.answers[qq.id]==='string' && AUDIT.answers[qq.id].trim()) return true; } } return false; }
+function effPill(e){ return e==='raise_confidence' ? '<span class="eff up">confidence ↑</span>' : (e==='lower_confidence' ? '<span class="eff down">confidence ↓</span>' : '<span class="eff">context</span>'); }
+function srcTag(i){ return `<span class="src">${i.source==='internal'?'internal note':(i.source==='answer'?'typed answer':'audit note')}${i.in_report?' · in report':''}</span>`; }
+function renderNotesAgent(){
+  const el = $('side-notes-ai'); if(!el) return; const nr = notesRead(); const has = hasNotes();
+  let st;
+  if(_nrBusy) st = '<span class="nr-st">Reading every note…</span>';
+  else if(!nr) st = has ? '<span class="nr-st warn">Notes not read yet — they will be read when you generate, or read them now.</span>' : '<span class="nr-st">No notes yet. Type in any section and they get read.</span>';
+  else if(nr.stale) st = '<span class="nr-st warn">Notes changed since the last read — re-read before generating (or generate, which re-reads).</span>';
+  else st = `<span class="nr-st ok">Read ${ago(nr.read_at)} · ${nr.notes_seen} note${nr.notes_seen===1?'':'s'} · ${nr.insights.length} insight${nr.insights.length===1?'':'s'}${nr.suggestions.length?' · '+nr.suggestions.length+' suggested answer'+(nr.suggestions.length===1?'':'s'):''}</span>`;
+  const btn = `<button class="btn s ${(!nr||nr.stale)&&has?'primary':''}" id="nr-btn" onclick="readNotes()" ${has&&!_nrBusy?'':'disabled'}>${_nrBusy?'Reading…':(nr?'Re-read notes':'Read notes now')}</button>`;
+  const list = nr && !nr.stale && nr.insights.length ? `<ul class="nr-list">${nr.insights.slice(0,4).map(i=>`<li>${effPill(i.effect)}${esc(i.text)}</li>`).join('')}</ul>` : '';
+  el.innerHTML = `<div class="nr-top">${st}${btn}</div>${list}`;
+}
+async function readNotes(){
+  if(_nrBusy) return; if(dirtyAny()) await save();
+  _nrBusy = true; renderNotesAgent();
+  const d = await post('/admin/api/audits/'+AUDIT_ID+'/read-notes');
+  _nrBusy = false;
+  if(!d.ok){ renderNotesAgent(); return toast(d.error||'Notes read failed', true); }
+  RESULTS = d.results; render(); renderSide();
+  const n = d.notes_read; toast(`Notes read · ${n.insights.length} insight${n.insights.length===1?'':'s'}${n.suggestions.length?' · '+n.suggestions.length+' suggested answer'+(n.suggestions.length===1?'':'s'):''}`);
+}
+function suggApplied(sg){ const v = AUDIT.answers[sg.id]; return v!=null && String(v).trim().toLowerCase()===String(sg.value).toLowerCase(); }
+function renderSuggestion(sg){
+  const done = suggApplied(sg);
+  return `<div class="sugg ${done?'done':''}"><div><div>${esc(sg.label)} → <b>${esc(sg.value)}</b>${sg.current!=null?` <span class="why">(currently ${esc(String(sg.current))})</span>`:''}</div><div class="why">${esc(sg.reason||'')}</div></div>${done?'<span class="eff up">applied</span>':`<button class="btn s primary" onclick="applySuggestion('${esc(sg.id)}', ${JSON.stringify(String(sg.value)).replace(/"/g,'&quot;')})">Apply</button>`}</div>`;
+}
+function applySuggestion(id, value){
+  const u = unknownSet(); if(u.includes(id)) AUDIT.answers._unknown = u.filter(x=>x!==id);
+  setAnswer(id, value); toast('Applied — recalculating'); render();
+}
+function renderSectionInsights(key){
+  const nr = notesRead(); if(!nr) return '';
+  const ins = (nr.insights||[]).filter(i=>i.section===key), sg = (nr.suggestions||[]).filter(x=>x.section===key);
+  if(!ins.length && !sg.length) return '';
+  let h = `<div class="conv">${nr.stale?'<div class="nr-st warn">From the last read — notes have changed since; re-read to refresh.</div>':''}`;
+  ins.forEach(i => { h += `<div>${effPill(i.effect)}${esc(i.text)}${srcTag(i)}</div>`; });
+  h += '</div>';
+  sg.forEach(x => { h += renderSuggestion(x); });
+  return h;
+}
+function renderConversation(opts){
+  const nr = notesRead(); if(!nr) return '';
+  const ins = nr.insights||[], sg = nr.suggestions||[], cav = nr.caveats||[];
+  if(!ins.length && !sg.length && !cav.length) return '';
+  let h = `<h2 class="sub">From the conversation</h2>`;
+  if(nr.stale) h += `<div class="warn">Notes changed since they were last read — these are from the previous read and are not applied to the numbers. <button class="btn s" onclick="readNotes()">Re-read now</button></div>`;
+  if(ins.length){ h += '<div class="conv" style="margin-top:8px">'; ins.forEach(i => { h += `<div>${effPill(i.effect)}${esc(i.text)}${srcTag(i)}</div>`; }); h += '</div>'; }
+  if(sg.length && opts && opts.suggestions){ h += `<h4 style="margin:16px 0 4px;font-size:13px;color:var(--ink3)">Suggested answers from your notes</h4>`; sg.forEach(x => { h += renderSuggestion(x); }); }
+  if(cav.length){ h += `<h4 style="margin:16px 0 4px;font-size:13px;color:var(--ink3)">Caveats the numbers cannot honour yet</h4><ul style="margin:0;padding-left:18px;color:var(--ink3);font-size:13px">${cav.map(c=>`<li>${esc(c)}</li>`).join('')}</ul>`; }
+  return h;
 }
 function renderStatusMenu(){ $('dd-status').innerHTML = SCHEMA.statuses.map(s => `<button onclick="setStatus('${esc(s)}')">${s===AUDIT.status?'● ':'&nbsp;&nbsp; '}${esc(s)}</button>`).join(''); }
 async function setStatus(s){ $('menu').classList.remove('on'); if(s==='Archived' && !confirm('Archive this audit? It disappears from the list and any share link is revoked.')) return; const d = await post('/admin/api/audits/'+AUDIT_ID+'/status', {status:s}); if(d.ok){ AUDIT.status = s; if(d.version) AUDIT.version = d.version; renderStatusMenu(); toast('Status: '+s); if(s==='Archived') location.href='/admin/audits'; } else toast(d.error||'Failed', true); }
@@ -383,7 +458,7 @@ function render(){
   const idx = SCHEMA.sections.indexOf(sec);
   let h = rec + `<div class="sh"><div class="k">Section ${idx+1} of ${SCHEMA.sections.length}${sec.upcoming_module?'<span class="upc">upcoming module</span>':''}</div><h1>${esc(sec.label)}</h1><p>${esc(sec.intro||'')}</p></div><div class="qs">`;
   sec.questions.forEach(qq => { h += renderQ(qq); });
-  h += '</div>' + renderNotes(sec.key);
+  h += '</div>' + `<div class="notes-h"><h2>Notes for this section</h2><span>Everything typed here is read by the notes reader and can change confidence or suggest answers.</span></div>` + renderNotes(sec.key) + renderSectionInsights(sec.key);
   const prev = SCHEMA.sections[idx-1], next = SCHEMA.sections[idx+1];
   h += `<div class="stepnav"><span>${prev?`<button class="btn" onclick="go('${prev.key}')">← ${esc(prev.short)}</button>`:''}</span><span>${next?`<button class="btn primary" onclick="go('${next.key}')">${esc(next.short)} →</button>`:`<button class="btn primary" onclick="go('summary')">Opportunity summary →</button>`}</span></div>`;
   m.innerHTML = h;
@@ -420,7 +495,7 @@ function renderTools(qq){
 }
 function renderNotes(key){
   const n = AUDIT.notes[key]||{};
-  return `<div class="notes"><div class="note"><div class="k"><span>Audit notes</span><label><input type="checkbox" data-noteflag="${key}" ${n.audit_in_report?'checked':''}> include in report</label></div><textarea data-note="${key}" data-kind="audit" placeholder="Facts worth keeping. Can appear in the report if ticked.">${esc(n.audit||'')}</textarea></div><div class="note internal"><div class="k"><span>Internal sales notes · never exported</span></div><textarea data-note="${key}" data-kind="internal" placeholder="Read of the room, objections, angles. Only you see this.">${esc(n.internal||'')}</textarea></div></div>`;
+  return `<div class="notes"><div class="note"><div class="k"><span>Audit notes · can appear in the report</span><label><input type="checkbox" data-noteflag="${key}" ${n.audit_in_report?'checked':''}> include in report</label></div><textarea data-note="${key}" data-kind="audit" placeholder="Facts worth keeping. Can appear in the report if ticked.">${esc(n.audit||'')}</textarea></div><div class="note internal"><div class="k"><span>Internal sales notes · never exported</span></div><textarea data-note="${key}" data-kind="internal" placeholder="Read of the room, objections, angles. Only you see this.">${esc(n.internal||'')}</textarea></div></div>`;
 }
 function renderSales(){
   let h = `<div class="sh"><div class="k" style="color:var(--amber)">Internal only · never in any report or export</div><h1>Sales observations</h1><p>Your read on the deal. This stays on the admin side no matter what gets generated or shared.</p></div><div class="qs">`;
@@ -481,8 +556,10 @@ function renderSummary(){
   order.forEach(k => { const c = r.categories[k]; const s = r.scores[k].score;
     const cls = c.status==='insufficient'?'ins':(c.status==='none'?'none':'');
     const rng = c.status==='ok' && c.high ? `<div class="rng">${money(c.low)} – ${money(c.high)}<small>per year · likely ${money(c.likely)}</small></div>` : `<div class="rng" style="font-size:14px;color:var(--ink4);font-weight:500">${c.status==='none'?'No opportunity counted':'Insufficient data to calculate reliably'}</div>`;
-    h += `<div class="card ${cls}"><div class="t"><h3>${esc(c.label)}${c.module&&!c.module.live?' <span class="upc">upcoming</span>':''}</h3><span style="display:flex;gap:6px;align-items:center">${scorePill(s)}${confPill(c.confidence)}</span></div>${rng}<div class="st">${esc(c.current_state)}</div><div class="op">${esc(c.opportunity)}</div>${howBlock(c)}${(c.missing||[]).length?`<div class="op" style="color:var(--amber)">Ask: ${esc(c.missing[0])}</div>`:''}</div>`; });
+    const cn = (c.notes||[]).length ? `<div class="cn">${c.notes.map(i=>`${effPill(i.effect)}${esc(i.text)}`).join('<br>')}</div>` : '';
+    h += `<div class="card ${cls}"><div class="t"><h3>${esc(c.label)}${c.module&&!c.module.live?' <span class="upc">upcoming</span>':''}</h3><span style="display:flex;gap:6px;align-items:center">${scorePill(s)}${confPill(c.confidence)}</span></div>${rng}<div class="st">${esc(c.current_state)}</div><div class="op">${esc(c.opportunity)}</div>${cn}${howBlock(c)}${(c.missing||[]).length?`<div class="op" style="color:var(--amber)">Ask: ${esc(c.missing[0])}</div>`:''}</div>`; });
   h += '</div>';
+  h += renderConversation({suggestions:true});
   if(r.missing.length) h += `<div class="miss"><h4>Missing information that would improve confidence</h4><ul style="margin:0;padding-left:18px">${r.missing.map(m=>`<li>${esc(m)}</li>`).join('')}</ul></div>`;
   h += `<div class="stepnav"><button class="btn" onclick="go('priorities')">← Priorities</button><button class="btn primary" onclick="go('recommendation')">Cavnar AI recommendation →</button></div>`;
   return h;
@@ -511,12 +588,13 @@ function renderResults(){
   h += `<h2 class="sub">Top problems</h2><div class="list">${r.problems.length?r.problems.map((p,i)=>`<div class="item"><span class="n">${i+1}</span><div><h4>${esc(p.title)}</h4><p>${esc(p.current_state||'')} ${esc(p.why)}</p>${p.evidence.length?`<div class="ev">Evidence: ${esc(p.evidence.join(' · '))}</div>`:''}</div><span class="rg">${esc(p.impact)}</span></div>`).join(''):'<div class="item"><span class="n">–</span><p>No problems supported by data yet.</p></div>'}</div>`;
   h += `<h2 class="sub">Top opportunities</h2><div class="list">${r.opportunities.length?r.opportunities.map((o,i)=>`<div class="item"><span class="n">${i+1}</span><div><h4>${esc(o.title)}</h4><p>${esc(o.opportunity)}</p><div class="ev">${esc(o.module)} · ${esc(o.feasibility)} · ${esc(o.confidence||'')} confidence</div></div><span class="rg">${esc(o.range||'')}</span></div>`).join(''):'<div class="item"><span class="n">–</span><p>No sized opportunities yet.</p></div>'}</div>`;
   h += `<h2 class="sub">Doing well</h2><div class="list">${r.wins.length?r.wins.map(w=>`<div class="item" style="grid-template-columns:1fr"><p style="color:var(--green)">${esc(w)}</p></div>`).join(''):'<div class="item" style="grid-template-columns:1fr"><p>Nothing confirmed as strong yet.</p></div>'}</div>`;
+  h += renderConversation({suggestions:false});
   const share = AUDIT.share ? `<div class="banner" style="margin-top:18px"><span>Share link is live · ${AUDIT.share.views} view${AUDIT.share.views===1?'':'s'} · <span class="num" id="share-url">${esc(location.origin+'/audit/r/'+AUDIT.share.token)}</span></span><span style="display:flex;gap:8px"><button class="btn s" onclick="copyShare()">Copy</button><button class="btn s danger" onclick="revokeShare()">Revoke</button></span></div>` : '';
   h += `<div style="text-align:center;margin:44px 0 20px"><button class="btn primary big" onclick="generate()">Generate Final Cavnar AI Audit</button><div style="color:var(--ink4);font-size:12.5px;margin-top:10px">${AUDIT.report_generated_at?'Last generated '+ago(AUDIT.report_generated_at)+' · regenerating replaces the snapshot':'Freezes the numbers and opens the customer-facing report'}</div>
   <div style="display:flex;gap:8px;justify-content:center;margin-top:14px">${AUDIT.report_generated_at?`<a class="btn" href="/admin/audits/${AUDIT_ID}/report" target="_blank">Open report</a><button class="btn" onclick="createShare()">${AUDIT.share?'New share link':'Create share link'}</button>`:''}</div>${share}</div>`;
   return h;
 }
-async function generate(){ if(dirtyAny()){ await save(); } const d = await post('/admin/api/audits/'+AUDIT_ID+'/generate'); if(!d.ok) return toast(d.error||'Failed', true); RESULTS = d.results; AUDIT.report_generated_at = new Date().toISOString(); if(AUDIT.status==='Draft'||AUDIT.status==='In Progress') AUDIT.status='Completed'; renderStatusMenu(); render(); window.open(d.report_url, '_blank'); }
+async function generate(){ if(dirtyAny()){ await save(); } const b = document.querySelector('.btn.big'); if(b){ b.disabled = true; b.textContent = hasNotes() ? 'Reading notes and generating…' : 'Generating…'; } const d = await post('/admin/api/audits/'+AUDIT_ID+'/generate'); if(!d.ok){ if(b){ b.disabled=false; b.textContent='Generate Final Cavnar AI Audit'; } return toast(d.error||'Failed', true); } if(d.notes_warning) toast(d.notes_warning, true); RESULTS = d.results; renderSide(); AUDIT.report_generated_at = new Date().toISOString(); if(AUDIT.status==='Draft'||AUDIT.status==='In Progress') AUDIT.status='Completed'; renderStatusMenu(); render(); window.open(d.report_url, '_blank'); }
 async function createShare(){ const d = await post('/admin/api/audits/'+AUDIT_ID+'/share'); if(!d.ok) return toast(d.error||'Failed', true); AUDIT.share = {token:d.token, views:0}; render(); try{ await navigator.clipboard.writeText(d.url); toast('Share link copied'); }catch(e){ toast('Share link created'); } }
 async function revokeShare(){ if(!confirm('Revoke the share link? Anyone with it loses access immediately.')) return; const d = await api('/admin/api/audits/'+AUDIT_ID+'/share', {method:'DELETE'}); if(d.ok){ AUDIT.share = null; render(); toast('Share link revoked'); } }
 async function copyShare(){ try{ await navigator.clipboard.writeText($('share-url').textContent); toast('Copied'); }catch(e){ toast('Select and copy the link', true); } }
