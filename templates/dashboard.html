@@ -734,18 +734,14 @@ function addCustomFoodItem(){
   var tbody=document.getElementById('fc-rows');
   if(!tbody)return;
   var tr=document.createElement('tr');
-  tr.style.borderBottom='1px solid rgba(255,255,255,.07)';
   tr.setAttribute('data-custom','1');
-  var inpStyle='width:100%;border:none;background:transparent;font-size:12px;color:rgba(255,255,255,.85);font-family:inherit;outline:none';
-  var numStyle='width:100%;border:none;background:transparent;font-size:12px;color:rgba(255,255,255,.85);font-family:Space Grotesk,sans-serif;outline:none';
-  tr.innerHTML='<td style="padding:7px 8px"><input type="text" placeholder="Item name" style="'+inpStyle+'" onblur="saveFcCustomItem(this)"></td>'
-    +'<td style="padding:7px 8px"><input type="text" placeholder="unit" style="'+inpStyle+'"></td>'
-    +'<td style="padding:7px 8px"><input type="number" step="0.01" min="0" placeholder="0.00" style="'+numStyle+'"></td>'
-    +'<td style="padding:7px 8px"><input type="number" step="0.1" min="0" placeholder="0" style="'+numStyle+'"></td>'
-    +'<td style="padding:7px 8px;width:90px;text-align:right;white-space:nowrap"><span class="fc-save-badge" style="font-size:9px;color:rgba(255,255,255,.25);font-weight:600;letter-spacing:.05em">UNSAVED</span> <button aria-label="Close" onclick="this.parentNode.parentNode.remove()" style="background:none;border:none;cursor:pointer;color:rgba(255,255,255,.25);font-size:14px;line-height:1;padding:0 2px;vertical-align:middle" title="Remove row">&#x2715;</button></td>';
+  tr.innerHTML='<td><input type="text" class="fc2-in" placeholder="Item name" onblur="saveFcCustomItem(this)"></td>'
+    +'<td><input type="text" class="fc2-in" placeholder="unit"></td>'
+    +'<td><input type="number" class="fc2-in num" step="0.01" min="0" placeholder="0.00"></td>'
+    +'<td><input type="number" class="fc2-in num" step="0.1" min="0" placeholder="0"></td>'
+    +'<td style="text-align:right;white-space:nowrap"><span class="fc-save-badge">UNSAVED</span> <button aria-label="Remove" class="rm" onclick="this.parentNode.parentNode.remove()" title="Remove item">&#x2715;</button></td>';
   tbody.appendChild(tr);
   tr.querySelector('input').focus();
-  tr.querySelector('input').style.borderBottom='1px solid rgba(200,75,47,.5)';
 }
 function removeFcCustomItem(btn, name){
   var row=btn.parentNode.parentNode;
@@ -766,18 +762,18 @@ function saveFcCustomItem(inp){
   var unit=inputs[1]?inputs[1].value.trim():'';
   var badge=row.querySelector('.fc-save-badge');
   if(!name)return;
-  if(badge){badge.textContent='SAVING…';badge.style.color='rgba(255,255,255,.35)';}
+  if(badge){badge.textContent='SAVING…';badge.className='fc-save-badge';}
   fetch('/api/food-cost/save-custom-item',{
     method:'POST',
     headers:{'Content-Type':'application/json','X-CSRFToken':'{{csrf_token}}'},
     body:JSON.stringify({name:name,unit:unit})
   }).then(function(r){return r.json();}).then(function(d){
     if(badge){
-      if(d.ok){badge.textContent='SAVED';badge.style.color='#6fcf97';}
-      else{badge.textContent='ERROR';badge.style.color='#ef4444';}
+      if(d.ok){badge.textContent='SAVED';badge.className='fc-save-badge saved';}
+      else{badge.textContent='ERROR';badge.className='fc-save-badge err';}
     }
   }).catch(function(){
-    if(badge){badge.textContent='ERROR';badge.style.color='#ef4444';}
+    if(badge){badge.textContent='ERROR';badge.className='fc-save-badge err';}
   });
 }
 function submitFoodCostCount() {
@@ -800,7 +796,7 @@ function submitFoodCostCount() {
   var _fcL2=document.getElementById('fc-pill-line2');
   var _fmtFcDate=function(s){var p=String(s).split(/[-T ]/);return p.length>=3?(parseInt(p[1],10)+'/'+parseInt(p[2],10)+'/'+String(s).slice(2,4)):s;};
   if(_fcPill){_fcPill.style.display='inline-flex';}
-  if(_fcL1){_fcL1.textContent='Saving…';_fcL1.style.color='rgba(255,255,255,.4)';}
+  if(_fcL1){_fcL1.textContent='Saving…';_fcL1.style.color='var(--ink3)';}
   if(_fcL2){_fcL2.textContent='';}
   fetch('/api/food-cost-quickcount', {
     method: 'POST',
@@ -815,7 +811,7 @@ function submitFoodCostCount() {
         if(_fcL2){_fcL2.textContent='';}
         return;
       }
-      if(_fcL1){_fcL1.textContent='✓ Saved '+_fmtFcDate(data.submitted_at);_fcL1.style.color='#6fcf97';}
+      if(_fcL1){_fcL1.textContent='✓ Saved '+_fmtFcDate(data.submitted_at);_fcL1.style.color='';}
       if(_fcL2){_fcL2.textContent=_fcPrevSaved?'Last saved: '+_fmtFcDate(_fcPrevSaved):'First submission';_fcL2.style.color='rgba(111,207,151,.5)';}
       _fcPrevSaved=data.submitted_at;
       var driftEl = document.getElementById('fc-drift-live');
@@ -2393,249 +2389,284 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 </div><!-- /panel-labor -->
 
 <!-- FOOD COST -->
-<div class="panel {{'active' if not mod_reviews and not mod_labor and mod_inventory}}" id="panel-inventory" style="max-width:100%;padding:0;min-height:100vh">
-<div style="max-width:1080px;margin:0 auto;padding:24px 28px">
+<div class="panel {{'active' if not mod_reviews and not mod_labor and mod_inventory}}" id="panel-inventory" style="max-width:100%;padding:0;min-height:100vh;position:relative">
+<style>
+/* ── Food Cost (fc2-*) — Home/Reviews/Labor language: one hero chart, three
+   iOS chart tiles (gauge, ledgers), order list and price watch as rows, the
+   weekly price monitor as a quiet table. Tracker + Analytics are one page. */
+#panel-inventory{--hb-line:rgba(14,12,10,.12);--hb-line2:rgba(14,12,10,.07);--hb-tint:rgba(200,75,47,.06);--hb-tint2:rgba(200,75,47,.12);--hb-good:var(--green);--hb-warn:var(--amber);--hb-bad:var(--red);--hb-field:rgba(255,255,255,.55)}
+[data-theme="dark"] #panel-inventory{--hb-line:rgba(240,235,224,.14);--hb-line2:rgba(240,235,224,.07);--hb-tint:rgba(224,100,68,.09);--hb-tint2:rgba(224,100,68,.16);--hb-field:rgba(255,255,255,.05)}
+#panel-inventory .hb-chip .v{display:inline-flex;align-items:baseline;gap:2px}
+#panel-inventory #inv-insight{font-size:14px;line-height:1.65;color:var(--ink2);white-space:pre-wrap;padding-left:0}
+.fc2-sample{margin-bottom:14px;padding:10px 14px;border-radius:10px;background:var(--hb-tint);border:1px solid var(--hb-line2);font-size:12.5px;color:var(--ink2)}
+.fc2-sample b{color:var(--ember)}
+.fc2-hero-nums{display:flex;gap:34px;flex-wrap:wrap;align-items:flex-end}
+.fc2-hero-nums .n .big{font-size:clamp(34px,4vw,50px)}
+.fc2-hero-nums .n .big.bad{color:var(--hb-bad)}.fc2-hero-nums .n .big.good{color:var(--hb-good)}
+.fc2-trend{display:flex;gap:10px;margin-top:8px}
+.fc2-trend .y{display:flex;flex-direction:column;justify-content:space-between;align-items:flex-end;width:44px;font-size:10px;color:var(--ink3);font-family:'Space Grotesk',sans-serif;padding-bottom:18px;flex-shrink:0}
+.fc2-trend .plot{flex:1;min-width:0;position:relative}
+.fc2-trend .plot svg{display:block;width:100%;height:190px;overflow:visible}
+.fc2-trend .ax{display:flex;font-size:11px;color:var(--ink3);margin-top:4px}
+.fc2-trend .ax span{flex:1;text-align:center}
+.fc2-leg{display:flex;gap:16px;flex-wrap:wrap;font-size:11px;color:var(--ink3);margin-top:10px;align-items:center}
+.fc2-leg i{display:inline-block;width:9px;height:9px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+.fc2-tip{position:fixed;z-index:9999;pointer-events:none;display:none;background:var(--paper);border:1px solid var(--hb-line);border-radius:8px;padding:10px 14px;min-width:160px;box-shadow:0 8px 24px rgba(0,0,0,.35);color:var(--ink);font-size:11px}
+.fc2-tip .w{font-size:10px;font-weight:700;color:var(--ink3);letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px}
+.fc2-tip .n{font-family:'Space Grotesk',sans-serif;font-size:18px;font-weight:700;color:var(--ember);line-height:1;margin-bottom:8px}
+.fc2-tip .up{color:var(--hb-bad)}.fc2-tip .dn{color:var(--hb-good)}
+.fc2-gauge{position:relative;height:170px;margin-top:6px}
+.fc2-gauge svg{display:block;width:100%;height:170px;overflow:visible}
+.fc2-gauge .c{position:absolute;left:0;right:0;bottom:22px;text-align:center;pointer-events:none}
+.fc2-gauge .c b{display:block;font-family:'Space Grotesk',sans-serif;font-size:26px;font-weight:700;color:var(--ink);line-height:1}
+.fc2-gauge .c span{display:block;font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);margin-top:4px}
+.fc2-ledger{margin-top:10px;display:flex;flex-direction:column;gap:9px}
+.fc2-ledger .r{display:grid;grid-template-columns:minmax(0,1fr) 64px;gap:10px;align-items:center}
+.fc2-ledger .r .nm{font-size:12px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fc2-ledger .r .sub{font-size:10.5px;color:var(--ink3);font-family:'Space Grotesk',sans-serif;margin-top:1px}
+.fc2-ledger .r .bar{height:7px;border-radius:4px;background:var(--hb-line2);overflow:hidden;margin-top:5px;position:relative}
+.fc2-ledger .r .bar i{display:block;height:100%;border-radius:4px;background:linear-gradient(90deg,#c84b2f,#e8956a);box-shadow:0 0 10px rgba(200,75,47,.45);transform-origin:left;transform:scaleX(0);transition:transform 1.4s cubic-bezier(.3,0,.15,1)}
+.fc2-ledger .r .bar i.amber{background:linear-gradient(90deg,#b7791f,#e8b04a);box-shadow:0 0 10px rgba(212,160,48,.4)}
+.fc2-ledger .r .bar i::after{content:'';position:absolute;top:0;bottom:0;width:36%;background:linear-gradient(90deg,transparent,rgba(255,255,255,.35),transparent);animation:fc2Sheen 2.6s ease-in-out 1.2s both}
+.fc2-ledger .r .bar.on i{transform:scaleX(1)}
+.fc2-ledger .r .v{font-family:'Space Grotesk',sans-serif;font-size:13px;font-weight:700;color:var(--ember);text-align:right;white-space:nowrap}
+.fc2-ledger .r .v.amber{color:var(--hb-warn)}
+@keyframes fc2Sheen{0%{left:-40%}100%{left:110%}}
+.fc2-bar{transform-box:fill-box;transform-origin:bottom;transform:scaleY(0);transition:transform 1.1s cubic-bezier(.3,0,.15,1)}
+.fc2-bar.on{transform:scaleY(1)}
+.fc2-trend .plot svg text{font-family:'Space Grotesk',sans-serif}
+.fc2-empty{font-size:12.5px;color:var(--ink3);padding:26px 0;text-align:center}
+.fc2-sec{margin-top:34px;padding-top:22px;border-top:1px solid var(--hb-line)}
+.fc2-sec .hd{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:8px}
+.fc2-sec .hd h2{font-family:'Clash Display',sans-serif;font-weight:500;font-size:22px;letter-spacing:-.01em;color:var(--ink);margin:4px 0 0}
+.fc2-sec .hd .sub{font-size:12.5px;color:var(--ink3);margin-top:3px}
+.fc2-orders{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:26px;margin-top:10px}
+.fc2-col .ch{display:flex;align-items:center;gap:8px;font-size:10.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);padding-bottom:8px;border-bottom:1px solid var(--hb-line2)}
+.fc2-col .ch .d{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.fc2-col .ch .n{margin-left:auto;font-family:'Space Grotesk',sans-serif;font-size:11px;color:var(--ink)}
+.fc2-col.urgent .ch .d{background:var(--hb-bad);box-shadow:0 0 8px var(--hb-bad)}.fc2-col.soon .ch .d{background:var(--hb-warn);box-shadow:0 0 8px var(--hb-warn)}.fc2-col.reduce .ch .d{background:var(--hb-good);box-shadow:0 0 8px var(--hb-good)}
+.fc2-col .row{display:flex;align-items:center;gap:10px;padding:10px 0 10px 12px;border-top:1px solid var(--hb-line2);position:relative}
+.fc2-col .row:first-of-type{border-top:none}
+.fc2-col .row::before{content:'';position:absolute;left:0;top:10px;bottom:10px;width:2.5px;border-radius:2px;background:var(--hb-line)}
+.fc2-col.urgent .row::before{background:var(--hb-bad)}.fc2-col.soon .row::before{background:var(--hb-warn)}.fc2-col.reduce .row::before{background:var(--hb-good)}
+.fc2-col .row .t{flex:1;min-width:0}
+.fc2-col .row .t b{display:block;font-size:13px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fc2-col .row .t span{display:block;font-size:11px;color:var(--ink3);margin-top:2px}
+.fc2-col .row .q{text-align:right;flex-shrink:0}
+.fc2-col .row .q .l{font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3)}
+.fc2-col .row .q .p{display:inline-block;font-family:'Space Grotesk',sans-serif;font-size:12px;font-weight:700;color:var(--ink);background:var(--hb-tint2);border-radius:6px;padding:3px 9px;margin-top:2px;white-space:nowrap}
+.fc2-col.reduce .row .q .p{color:var(--hb-good)}
+.fc2-col .row .q .s{font-family:'Space Grotesk',sans-serif;font-size:10.5px;font-weight:700;margin-top:3px}
+.fc2-col .row .q .s.good{color:var(--hb-good)}.fc2-col .row .q .s.bad{color:var(--hb-bad)}.fc2-col .row .q .s.dim{color:var(--ink3);font-weight:400}
+.fc2-col .none{font-size:11.5px;color:var(--ink3);padding:16px 0 6px 12px}
+.fc2-ok{display:flex;align-items:center;gap:10px;margin-top:12px;font-size:13.5px;color:var(--hb-good);font-weight:500}
+.fc2-ok i{width:8px;height:8px;border-radius:50%;background:var(--hb-good);box-shadow:0 0 8px var(--hb-good)}
+.fc2-pw .row{display:flex;align-items:flex-start;gap:12px;padding:11px 0 11px 12px;border-top:1px solid var(--hb-line2);position:relative}
+.fc2-pw .row:first-of-type{border-top:none}
+.fc2-pw .row::before{content:'';position:absolute;left:0;top:11px;bottom:11px;width:2.5px;border-radius:2px;background:var(--hb-warn)}
+.fc2-pw .row.trend::before{background:var(--hb-bad)}
+.fc2-pw .row .t{flex:1;min-width:0}
+.fc2-pw .row .t b{font-size:13.5px;font-weight:600;color:var(--ink)}
+.fc2-pw .row .t .pr{font-size:11px;color:var(--ink3);font-family:'Space Grotesk',sans-serif;margin-top:2px}
+.fc2-pw .row .t .h{font-size:12px;color:var(--ink2);margin-top:4px;line-height:1.5}
+.fc2-pw .row .pct{font-family:'Space Grotesk',sans-serif;font-size:14px;font-weight:700;color:var(--hb-warn);text-align:right;white-space:nowrap}
+.fc2-pw .row.trend .pct{color:var(--hb-bad)}
+.fc2-pw .row .pct small{display:block;font-family:'Apfel Grotezk',sans-serif;font-size:10px;font-weight:400;color:var(--ink3);margin-top:1px}
+.fc2-track{margin-top:12px;border-radius:12px;background:var(--hb-tint);padding:16px 18px}
+.fc2-drift{margin-bottom:12px;font-size:12.5px;font-weight:600;border-radius:8px;padding:9px 12px}
+.fc2-drift.warn{background:rgba(212,160,48,.12);color:var(--hb-warn)}.fc2-drift.good{background:rgba(78,173,122,.12);color:var(--hb-good)}
+.fc2-table{width:100%;border-collapse:collapse;font-size:12.5px}
+.fc2-table th{text-align:left;padding:6px 8px;color:var(--ink3);font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;border-bottom:1px solid var(--hb-line)}
+.fc2-table td{padding:6px 8px;border-bottom:1px solid var(--hb-line2)}
+.fc2-table .fc2-in{width:100%;border:none;border-bottom:1px solid transparent;background:transparent;font-size:13px;color:var(--ink);font-family:inherit;outline:none;padding:4px 0;transition:border-color .15s}
+.fc2-table .fc2-in.num{font-family:'Space Grotesk',sans-serif}
+.fc2-table .fc2-in:focus{border-bottom-color:var(--ember)}
+.fc2-table .fc2-in::placeholder{color:var(--ink3);opacity:.7}
+.fc2-table .fc-save-badge{font-size:9px;font-weight:700;letter-spacing:.06em;color:var(--ink3)}
+.fc2-table .fc-save-badge.saved{color:var(--hb-good)}.fc2-table .fc-save-badge.err{color:var(--hb-bad)}
+.fc2-table .rm{background:none;border:none;cursor:pointer;color:var(--ink3);font-size:13px;line-height:1;padding:0 4px;vertical-align:middle}
+.fc2-table .rm:hover{color:var(--ember)}
+.fc2-submit{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:16px;flex-wrap:wrap}
+.fc2-submit .l{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.fc2-submit .btn-primary{height:36px;padding:0 18px;border-radius:8px;font-size:12.5px;box-shadow:0 0 16px rgba(200,75,47,.28)}
+#fc-submit-pill{flex-direction:column;align-items:flex-start;justify-content:center;gap:1px;height:36px;padding:0 14px;background:rgba(78,173,122,.12);border:1px solid rgba(78,173,122,.3);border-radius:8px}
+#fc-pill-line1{font-size:11px;font-weight:700;color:var(--hb-good);line-height:1.3;white-space:nowrap}
+#fc-pill-line2{font-size:9px;color:var(--ink3);letter-spacing:.02em;line-height:1.3;white-space:nowrap}
+.fc2-tools{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:26px;margin-top:10px}
+.fc2-tool .ch{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:10.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);padding-bottom:8px;border-bottom:1px solid var(--hb-line2)}
+.fc2-tool .bd{font-size:12.5px;color:var(--ink3);padding-top:10px;line-height:1.5}
+.fc2-tool table{width:100%;border-collapse:collapse;font-size:12px}
+.fc2-tool td{padding:6px 4px;border-bottom:1px solid var(--hb-line2);color:var(--ink2)}
+.fc2-tool td:first-child{color:var(--ink);font-weight:600}
+.fc2-tool td .num{font-family:'Space Grotesk',sans-serif}
+.fc2-tool input.price{width:66px;background:var(--hb-field);border:1px solid var(--hb-line);border-radius:5px;color:var(--ink);padding:3px 6px;font-size:11.5px;text-align:right;font-family:'Space Grotesk',sans-serif}
+.fc2-tool .g{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid var(--hb-line2)}
+.fc2-tool .g b{font-size:12.5px;font-weight:600;color:var(--ink)}
+.fc2-tool .g span{font-size:11px;color:var(--ink3);display:block;margin-top:2px}
+.fc2-po{margin-top:14px}
+.fc2-po .row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid var(--hb-line2);font-size:12px;color:var(--ink2)}
+.fc2-po .row b{font-family:'Space Grotesk',sans-serif;color:var(--ink);font-weight:600}
+@media(max-width:900px){.fc2-orders,.fc2-tools{grid-template-columns:1fr}.fc2-col{margin-bottom:12px}}
+</style>
 
-  <!-- Header: CSV + tab switcher grouped right (matching labor) -->
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:8px">
-    <div></div>
-    <div style="display:flex;align-items:center;gap:10px">
-      {% if inv.is_live %}
-      <label class="btn-primary" style="display:inline-flex;align-items:center;gap:6px">
-        Update CSV <input type="file" accept=".csv" style="display:none" id="inventory-inline-input" onchange="clientUpload('inventory', this)">
-      </label>
-      {% else %}
-      <label class="btn-primary" style="display:inline-flex;align-items:center;gap:6px;background:var(--paper3);color:var(--ink)">
-        Upload CSV <input type="file" accept=".csv" style="display:none" id="inventory-inline-input" onchange="clientUpload('inventory', this)">
-      </label>
-      {% endif %}
-      <div style="display:inline-flex;box-shadow:0 0 0 1px var(--paper3);border-radius:8px;overflow:hidden;background:var(--paper2)">
-        <button id="fc-tab-tracker"   onclick="switchFcTab('tracker')"   class="rv-tab-active" style="border:none;height:34px;padding:0 16px;font-size:11px;font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;transition:background .15s,color .15s">Tracker</button>
-        <button id="fc-tab-analytics" onclick="switchFcTab('analytics')" style="border:none;height:34px;padding:0 16px;font-size:11px;font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;background:transparent;color:var(--ink3);transition:background .15s,color .15s">Analytics</button>
-      </div>
-    </div>
-  </div>
-  <span id="inventory-inline-result" style="font-size:12px;color:#2d6a4f;display:none;margin-bottom:10px"></span>
-
-  <!-- ══ TRACKER sub-panel ══ -->
-  <div id="fc-panel-tracker">
-
-  <!-- Key Ingredient Price Monitor — ember hero card -->
-  <div class="dark-hero-card" style="border:1px solid rgba(200,75,47,.55);border-radius:var(--r);padding:24px 28px;position:relative;overflow:visible;box-shadow:0 0 0 1px rgba(200,75,47,.18),0 8px 32px rgba(200,75,47,.28),0 1px 0 rgba(255,255,255,.06) inset">
-    <div style="position:absolute;top:-40px;right:-60px;width:300px;height:220px;background:radial-gradient(ellipse at center,rgba(200,75,47,.18) 0%,transparent 70%);pointer-events:none;z-index:0"></div>
-
-    <!-- Card header -->
-    <div style="position:relative;z-index:1;display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:20px">
-      <div>
-        <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember);margin-bottom:6px">Key Ingredient Price Monitor</div>
-        <div style="font-size:13px;color:rgba(255,255,255,.55);line-height:1.5;max-width:480px">Track your key ingredients weekly. Submit every time you get an invoice — we'll flag price drift automatically.</div>
-      </div>
-      <div style="text-align:right;flex-shrink:0">
-        {% if food_cost_data and food_cost_data.current %}
-        <div style="font-size:10px;color:rgba(255,255,255,.3);letter-spacing:.05em">Last submitted</div>
-        <div style="font-family:'Space Grotesk',sans-serif;font-size:14px;font-weight:700;color:rgba(255,255,255,.6);margin-top:2px">{{food_cost_data.current.submitted_at}}</div>
-        {% endif %}
-      </div>
-    </div>
-
-    <!-- Price drift status -->
-    {% if food_cost_data and food_cost_data.current and food_cost_data.previous and food_cost_data.previous['items'] %}
-    <div id="fc-drift-saved" style="position:relative;z-index:1;margin-bottom:16px">
-      {% set curr_map = {} %}
-      {% for it in food_cost_data.current['items'] %}{% if it.name %}{% set _ = curr_map.update({it.name|lower: it}) %}{% endif %}{% endfor %}
-      {% set drift_found = namespace(count=0) %}
-      {% for it in food_cost_data.previous['items'] %}
-        {% set curr_it = curr_map.get(it.name|lower) %}
-        {% if curr_it and it.price and curr_it.price %}
-          {% set pct = ((curr_it.price|float - it.price|float) / it.price|float * 100)|round(1) %}
-          {% if pct|abs >= 3 %}{% set drift_found.count = drift_found.count + 1 %}{% endif %}
-        {% endif %}
-      {% endfor %}
-      {% if drift_found.count > 0 %}
-      <div style="background:rgba(239,159,39,.12);border:1px solid rgba(239,159,39,.35);border-radius:8px;padding:10px 14px;font-size:12px;color:#ef9f27;font-weight:600">
-        ⚠ {{drift_found.count}} ingredient price change{{''  if drift_found.count == 1 else 's'}} vs last week — update below to refresh.
-      </div>
-      {% else %}
-      <div style="background:rgba(111,207,151,.1);border:1px solid rgba(111,207,151,.3);border-radius:8px;padding:8px 14px;font-size:12px;color:#6fcf97;font-weight:600">
-        ✓ Prices stable vs last week ({{food_cost_data.previous.submitted_at}})
-      </div>
-      {% endif %}
-    </div>
-    {% endif %}
-    <div id="fc-drift-live" style="display:none;margin-bottom:14px;position:relative;z-index:1"></div>
-
-    <!-- Ingredient table -->
-    <div style="position:relative;z-index:1">
-    <table style="width:100%;border-collapse:collapse;font-size:12px" id="fc-table">
-      <thead>
-        <tr style="border-bottom:1px solid rgba(200,75,47,.25)">
-          <th style="text-align:left;padding:6px 8px;color:rgba(255,255,255,.35);font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase">Ingredient</th>
-          <th style="text-align:left;padding:6px 8px;color:rgba(255,255,255,.35);font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;width:60px">Unit</th>
-          <th style="text-align:left;padding:6px 8px;color:rgba(255,255,255,.35);font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;width:100px">Price/unit $</th>
-          <th style="text-align:left;padding:6px 8px;color:rgba(255,255,255,.35);font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;width:80px">Wk usage</th>
-        </tr>
-      </thead>
-      <tbody id="fc-rows">
-        {% if food_cost_data and food_cost_data.current %}
-          {% for _fci in food_cost_data.current['items'] %}
-          <tr style="border-bottom:1px solid rgba(255,255,255,.07)">
-            <td style="padding:7px 8px"><input type="text" value="{{_fci.name}}" style="width:100%;border:none;background:transparent;font-size:12px;color:rgba(255,255,255,.85);font-family:inherit;outline:none" placeholder="Item name"></td>
-            <td style="padding:7px 8px"><input type="text" value="{{_fci.unit}}" style="width:100%;border:none;background:transparent;font-size:12px;color:rgba(255,255,255,.85);font-family:inherit;outline:none" placeholder="lb"></td>
-            <td style="padding:7px 8px"><input type="number" value="{{_fci.price}}" step="0.01" min="0" style="width:100%;border:none;background:transparent;font-size:12px;color:rgba(255,255,255,.85);font-family:'Space Grotesk',sans-serif;outline:none" placeholder="0.00"></td>
-            <td style="padding:7px 8px"><input type="number" value="{{_fci.usage}}" step="0.1" min="0" style="width:100%;border:none;background:transparent;font-size:12px;color:rgba(255,255,255,.85);font-family:'Space Grotesk',sans-serif;outline:none" placeholder="0"></td>
-          </tr>
-          {% endfor %}
-        {% else %}
-          {% for _fci in [
-            {"name":"Chicken Breast","unit":"lb","price":"","usage":""},
-            {"name":"Beef/Steak","unit":"lb","price":"","usage":""},
-            {"name":"Salmon / Fish","unit":"lb","price":"","usage":""},
-            {"name":"Shrimp","unit":"lb","price":"","usage":""},
-            {"name":"Heavy Cream","unit":"qt","price":"","usage":""},
-            {"name":"Butter","unit":"lb","price":"","usage":""},
-            {"name":"Produce (misc)","unit":"case","price":"","usage":""}
-          ] %}
-          <tr style="border-bottom:1px solid rgba(255,255,255,.07)">
-            <td style="padding:7px 8px"><input type="text" value="{{_fci.name}}" style="width:100%;border:none;background:transparent;font-size:12px;color:rgba(255,255,255,.85);font-family:inherit;outline:none" placeholder="Item name"></td>
-            <td style="padding:7px 8px"><input type="text" value="{{_fci.unit}}" style="width:100%;border:none;background:transparent;font-size:12px;color:rgba(255,255,255,.85);font-family:inherit;outline:none" placeholder="lb"></td>
-            <td style="padding:7px 8px"><input type="number" value="" step="0.01" min="0" style="width:100%;border:none;background:transparent;font-size:12px;color:rgba(255,255,255,.85);font-family:'Space Grotesk',sans-serif;outline:none" placeholder="0.00"></td>
-            <td style="padding:7px 8px"><input type="number" value="" step="0.1" min="0" style="width:100%;border:none;background:transparent;font-size:12px;color:rgba(255,255,255,.85);font-family:'Space Grotesk',sans-serif;outline:none" placeholder="0"></td>
-          </tr>
-          {% endfor %}
-          {% for _ci in (food_cost_data.custom_items if food_cost_data and food_cost_data.custom_items else []) %}
-          <tr style="border-bottom:1px solid rgba(255,255,255,.07)" data-custom="1">
-            <td style="padding:7px 8px"><input type="text" value="{{_ci.name}}" style="width:100%;border:none;background:transparent;font-size:12px;color:rgba(255,255,255,.85);font-family:inherit;outline:none" placeholder="Item name"></td>
-            <td style="padding:7px 8px"><input type="text" value="{{_ci.unit}}" style="width:100%;border:none;background:transparent;font-size:12px;color:rgba(255,255,255,.85);font-family:inherit;outline:none" placeholder="lb"></td>
-            <td style="padding:7px 8px"><input type="number" value="" step="0.01" min="0" style="width:100%;border:none;background:transparent;font-size:12px;color:rgba(255,255,255,.85);font-family:'Space Grotesk',sans-serif;outline:none" placeholder="0.00"></td>
-            <td style="padding:7px 8px"><input type="number" value="" step="0.1" min="0" style="width:100%;border:none;background:transparent;font-size:12px;color:rgba(255,255,255,.85);font-family:'Space Grotesk',sans-serif;outline:none" placeholder="0"></td>
-            <td style="padding:7px 8px;width:90px;text-align:right;white-space:nowrap"><span style="font-size:9px;color:#6fcf97;font-weight:600;letter-spacing:.05em">SAVED</span> <button aria-label="Close" onclick="removeFcCustomItem(this,'{{_ci.name|e}}')" style="background:none;border:none;cursor:pointer;color:rgba(255,255,255,.25);font-size:14px;line-height:1;padding:0 2px;vertical-align:middle" title="Remove item">&#x2715;</button></td>
-          </tr>
-          {% endfor %}
-        {% endif %}
-      </tbody>
-    </table>
-    </div>
-
-    <!-- Submit row -->
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:20px;position:relative;z-index:1;flex-wrap:wrap">
-      <div style="display:flex;align-items:center;gap:12px">
-        <button onclick="submitFoodCostCount()" class="btn-primary" style="padding:0 24px">Submit this week's prices</button>
-        <div id="fc-submit-pill" style="display:{% if food_cost_data and food_cost_data.current and food_cost_data.current.submitted_at %}inline-flex{% else %}none{% endif %};flex-direction:column;align-items:flex-start;justify-content:center;gap:1px;height:36px;padding:0 14px;background:rgba(111,207,151,.1);border:1px solid rgba(111,207,151,.28);border-radius:6px">
-          <div id="fc-pill-line1" style="font-size:11px;font-weight:700;color:#6fcf97;line-height:1.3;white-space:nowrap">&#10003; Saved {% if food_cost_data and food_cost_data.current and food_cost_data.current.submitted_at %}{% set _sa=food_cost_data.current.submitted_at %}{{ _sa[5:7]|int }}/{{ _sa[8:10]|int }}/{{ _sa[2:4] }}{% endif %}</div>
-          <div id="fc-pill-line2" style="font-size:9px;color:rgba(111,207,151,.5);letter-spacing:.02em;line-height:1.3;white-space:nowrap">{% if food_cost_data and food_cost_data.previous and food_cost_data.previous.submitted_at %}{% set _pa=food_cost_data.previous.submitted_at %}Last saved: {{ _pa[5:7]|int }}/{{ _pa[8:10]|int }}/{{ _pa[2:4] }}{% elif food_cost_data and food_cost_data.current and food_cost_data.current.submitted_at %}First submission{% endif %}</div>
-        </div>
-        <script>var _fcPrevSaved='{{food_cost_data.current.submitted_at if food_cost_data and food_cost_data.current and food_cost_data.current.submitted_at else ""}}';</script>
-      </div>
-      <button onclick="addCustomFoodItem()" style="background:#166534;color:white;border:none;border-radius:6px;height:36px;padding:0 18px;font-size:12px;font-weight:700;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;display:inline-flex;align-items:center;gap:6px;transition:background .15s" onmouseover="this.style.background='#14532d'" onmouseout="this.style.background='#166534'"><span style="font-size:17px;line-height:1;margin-top:-1px">+</span> Add Custom Item</button>
-    </div>
-  </div>
-
-  </div><!-- /fc-panel-tracker -->
-
-  <!-- ══ ANALYTICS sub-panel ══ -->
-  <div id="fc-panel-analytics" style="display:none">
-
+<div class="hb-wrap">
+  {% set _wl = inv.benchmark_label %}
+  {% set _ostock_total = inv.overstock|sum(attribute='overstock_cost') if inv.overstock else 0 %}
+  {% if not inv.is_live %}{% set _head = 'Add your inventory to light this up' %}{% set _tone = 'neutral' %}
+  {% elif _wl in ['Excellent','On Track'] %}{% set _head = 'On track' %}{% set _tone = 'good' %}
+  {% elif _wl == 'Above Average' %}{% set _head = 'Waste is creeping up' %}{% set _tone = 'warn' %}
+  {% elif _wl in ['Concerning','Needs Attention'] %}{% set _head = 'Waste needs attention' %}{% set _tone = 'bad' %}
+  {% else %}{% set _head = 'Tracking this week' %}{% set _tone = 'neutral' %}{% endif %}
   {% if not inv.is_live %}
-  <div style="background:rgba(239,159,39,.1);border:1px solid rgba(239,159,39,.3);border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:12px;color:#ef9f27">
-    <strong>Sample data below.</strong> Upload a CSV with item, current_stock, par_level, unit_cost, waste_last_week to see your real numbers.
+  <div class="fc2-sample"><b>Sample data.</b> Upload a CSV with item, current_stock, par_level, unit_cost, waste_last_week — or connect Toast — to see your real numbers.</div>
+  {% endif %}
+  <div class="hb-top">
+    <div style="min-width:0;flex:1">
+      <div class="hb-kicker">Food Cost · {{ now_mdy }} · {{ restaurant.name }}</div>
+      <h1 class="hb-h1">Food cost. <span class="hb-head {{ _tone }}">{{ _head }}</span></h1>
+      <div class="hb-sub"><span><span class="hb-num">${{ inv.total_waste_cost_week|int|format_num }}</span> waste this week</span><span class="sep">·</span><span><span class="hb-num">${{ inv.monthly_waste_projection|int|format_num }}</span> projected / mo</span><span class="sep">·</span><span><span class="hb-num">{{ inv.waste_rate_pct }}%</span> of purchases vs a <span class="hb-num">4–5%</span> target</span><span class="sep">·</span><span><span class="hb-num">{{ inv.total_items }}</span> items tracked</span><span class="sep">·</span><span>updated <span class="hb-num">{{ inv.last_updated }}</span></span></div>
+      <div class="hb-sub" style="margin-top:4px">{% if inv.is_live %}{% if inv.recoverable_monthly > 0 %}About ${{ inv.recoverable_monthly|int|format_num }} a month is recoverable with tighter ordering — ${{ inv.annual_recoverable|int|format_num }} a year.{% else %}Nothing is leaking this week — ordering looks calibrated.{% endif %}{% else %}Everything below is a sample until your first count lands.{% endif %}</div>
+      <div class="lb2-actions">
+        <label class="btn-primary" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer">{% if inv.is_live %}Update inventory CSV{% else %}Upload inventory CSV{% endif %}<input type="file" accept=".csv" style="display:none" id="inventory-inline-input" onchange="clientUpload('inventory', this)"></label>
+        <button class="hb-btn" onclick="fc2Jump('fc2-tracker')">Submit this week's prices</button>
+        <button class="hb-btn" onclick="fc2Jump('fc2-tools');loadOrderDraft()">Send order</button>
+        <button class="hb-btn" onclick="fc2Jump('fc2-tools');loadMenuMargins()">Menu margins</button>
+      </div>
+      <span id="inventory-inline-result" style="font-size:12px;color:var(--hb-good);display:none;margin-top:8px"></span>
+    </div>
+    <div class="hb-pulse">
+      <span class="hb-chip {{ 'sample' if not inv.is_live else ('bad' if _tone == 'bad' else ('warn' if inv.total_waste_cost_week > 0 else 'good')) }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num">${{ inv.total_waste_cost_week|int|format_num }}</span></span><span class="l">waste / wk</span></span>
+      <span class="hb-chip {{ 'sample' if not inv.is_live else 'warn' }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num">${{ inv.monthly_waste_projection|int|format_num }}</span></span><span class="l">projected / mo</span></span>
+      <span class="hb-chip {{ 'sample' if not inv.is_live else ('good' if inv.waste_items|length == 0 else 'warn') }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num">{{ inv.waste_items|length }}</span></span><span class="l">waste items</span></span>
+      <span class="hb-chip {{ 'sample' if not inv.is_live else ('good' if inv.critical_low|length == 0 else 'bad') }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num">{{ inv.critical_low|length }}</span></span><span class="l">critical low</span></span>
+      <span class="hb-chip {{ 'sample' if not inv.is_live else 'good' }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num">${{ inv.total_stock_value|int|format_num }}</span></span><span class="l">inventory value</span></span>
+    </div>
+  </div>
+
+  <section class="lb2-hero" aria-label="Waste trend">
+    <div class="hd">
+      <div class="fc2-hero-nums">
+        <div class="n"><div class="hb-kicker">Projected annual waste</div><div class="big bad"><span id="inv-annual-waste" class="hb-num">${{ inv.annual_waste_projection|int|format_num }}</span></div><div class="delta"><span>${{ inv.monthly_waste_projection|int|format_num }}/mo at the current rate</span></div></div>
+        <div class="n"><div class="hb-kicker">Recoverable / year</div><div class="big good"><span id="inv-annual-recoverable" class="hb-num">${{ inv.annual_recoverable|int|format_num }}</span></div><div class="delta"><span>${{ inv.recoverable_monthly|int|format_num }}/mo with better ordering</span></div></div>
+      </div>
+      <div style="text-align:right"><div class="hb-kicker">Waste · last 8 weeks</div><div class="delta {{ 'good' if _wl in ['Excellent','On Track'] else ('bad' if _wl in ['Concerning','Needs Attention'] else '') }}" id="fc2-bench">{% if inv.is_live and _wl != '—' %}<span class="hb-num">{{ inv.waste_rate_pct }}%</span> <span>vs. industry · {{ _wl }}</span>{% else %}<span>Not enough history yet</span>{% endif %}</div></div>
+    </div>
+    <div id="fc2-trend"><div class="hb-load" style="height:190px;justify-content:center"><canvas class="hb-orb" data-orb-state="working" width="44" height="44"></canvas></div></div>
+    <div class="fc2-leg"><span><i style="background:#4ead7a"></i>Below average</span><span><i style="background:#d4a030"></i>Near average</span><span><i style="background:#e05555"></i>Above average</span><span><i style="background:#e8956a"></i>This week</span><span style="margin-left:auto"><i style="background:transparent;border-top:2px dashed var(--ink3);height:0;border-radius:0;vertical-align:2px"></i>8-week average</span></div>
+  </section>
+  <div class="lb2-ai"><div class="tag">Cavnar's read on your food cost · week of {{ inv.week_start }} – {{ inv.week_end }}</div><div class="insight-text insight-loading" id="inv-insight"><div class="hb-load"><canvas class="hb-orb" data-orb-state="composing" width="28" height="28"></canvas><span>Counting the pantry…</span></div></div></div>
+
+  <div class="lb2-sig">
+    <div class="lb2-sg"><div class="k"><span>Recoverable gauge</span><i>{% if inv.is_live and _wl != '—' %}{{ _wl }}{% endif %}</i></div><div class="v"><span class="hb-num" id="fc2-gauge-n">${{ inv.recoverable_monthly|int|format_num }}</span><small>/ mo you can claw back</small></div>
+      <div class="fc2-gauge" id="fc2-gauge"><div class="hb-load" style="height:170px;justify-content:center"><canvas class="hb-orb" data-orb-state="shaping" width="36" height="36"></canvas></div></div>
+      <div class="cap"><span>of ${{ (inv.monthly_waste_projection + _ostock_total)|int|format_num }} leaking this month</span><span class="hb-num">${{ inv.annual_recoverable|int|format_num }}/yr</span></div></div>
+    <div class="lb2-sg"><div class="k"><span>Waste ledger · top offenders</span></div><div class="v"><span class="hb-num">${{ inv.total_waste_cost_week|int|format_num }}</span><small>this week</small></div>
+      <div class="fc2-ledger" id="fc2-ledger-waste"></div>
+      <div class="cap"><span>sorted by cost — the first bar is the thing to fix</span></div></div>
+    <div class="lb2-sg"><div class="k"><span>Tied-up capital · overstocked</span></div><div class="v"><span class="hb-num">${{ _ostock_total|int|format_num }}</span><small>sitting over par</small></div>
+      <div class="fc2-ledger" id="fc2-ledger-stock"></div>
+      <div class="cap"><span>current stock vs. par level</span></div></div>
+  </div>
+
+  <div class="fc2-sec" id="fc2-orders">
+    <div class="hd"><div><div class="hb-kicker">Order list · recommended quantities</div><h2>What to order this week</h2><div class="sub">Built from days remaining, par levels and your last order — deltas are against what you ordered last time.</div></div></div>
+    {% if inv.critical_low or inv.reorder_soon or inv.order_reduction %}
+    <div class="fc2-orders">
+      {% for _grp, _label, _items in [('urgent','Urgent — order now', inv.critical_low), ('soon','Order soon', inv.reorder_soon), ('reduce','Reduce order', inv.order_reduction)] %}
+      <div class="fc2-col {{ _grp }}">
+        <div class="ch"><span class="d"></span>{{ _label }}<span class="n">{{ _items|length }}</span></div>
+        {% for item in _items %}
+        {% set _delta = (item.suggested_order_qty - item.last_order_qty) if (item.suggested_order_qty and item.suggested_order_qty > 0 and item.last_order_qty is not none) else 0 %}
+        <div class="row"><div class="t"><b>{{ item.item }}</b><span>{% if _grp != 'reduce' %}{{ item.days_remaining }}d left · {% endif %}last order {{ item.last_order_qty|int }}{% if item.unit %} {{ item.unit }}{% endif %}</span></div>
+          <div class="q"><div class="l">{% if _delta > 0.05 %}Order {{ _delta|round|int }} more{% elif _delta < -0.05 %}Order {{ (-_delta)|round|int }} less{% else %}Order{% endif %}</div><div class="p">{% if item.suggested_order_qty == 0 %}skip{% else %}{{ item.suggested_order_qty }}{% if item.unit %} {{ item.unit }}{% endif %}{% endif %}</div>
+            <div class="s {{ 'good' if item.savings_vs_last > 0 else ('bad' if item.savings_vs_last < 0 else 'dim') }}">{% if item.savings_vs_last > 0 %}↓ ${{ item.savings_vs_last }}{% elif item.savings_vs_last < 0 %}↑ ${{ "{:.2f}".format(item.savings_vs_last * -1) }}{% else %}—{% endif %}</div></div></div>
+        {% else %}
+        <div class="none">{% if _grp == 'urgent' %}Nothing critical this week{% elif _grp == 'soon' %}Nothing upcoming this week{% else %}No reductions needed{% endif %}</div>
+        {% endfor %}
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="fc2-ok"><i></i>Your ordering looks well-calibrated this week — no adjustments needed.</div>
+    {% endif %}
+  </div>
+
+  {% if inv.price_watch %}
+  <div class="fc2-sec" id="price-watch-detail">
+    <div class="hd"><div><div class="hb-kicker">Price watch</div><h2>Supplier prices that moved</h2><div class="sub">Caught from your weekly submissions — a trend means it has moved more than once.</div></div></div>
+    <div class="fc2-pw">
+      {% for w in inv.price_watch %}
+      <div class="row {{ 'trend' if w.kind == 'trend' else '' }}"><div class="t"><b>{{ w.item }}</b><div class="pr">${{ "%.2f"|format(w.old_price) }} → ${{ "%.2f"|format(w.new_price) }}</div><div class="h">{{ w.action_hint }}</div></div><div class="pct">+{{ w.change_pct|round|int }}%<small>{% if w.kind == 'trend' %}over {{ w.weeks }} week{% if w.weeks != 1 %}s{% endif %}{% else %}this week{% endif %}</small></div></div>
+      {% endfor %}
+    </div>
   </div>
   {% endif %}
 
-  <!-- Annual waste hero — dark ember card, two columns -->
-  <div class="dark-hero-card" style="border:1px solid rgba(200,75,47,.45);border-radius:12px;padding:20px 28px;margin-bottom:14px;position:relative;overflow:visible;box-shadow:0 0 0 1px rgba(200,75,47,.1),0 8px 32px rgba(200,75,47,.18)">
-    <div style="position:absolute;top:-40px;right:-60px;width:300px;height:220px;background:radial-gradient(ellipse at center,rgba(200,75,47,.12) 0%,transparent 70%);pointer-events:none;z-index:0"></div>
-    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:20px;position:relative;z-index:1">
-      <div>
-        <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:rgba(255,255,255,.35);margin-bottom:8px">Projected Annual Waste Cost</div>
-        <div style="font-family:'Space Grotesk',sans-serif;font-size:38px;font-weight:700;line-height:1;letter-spacing:-.02em" class="stat-glow-red"><span id="inv-annual-waste">${{inv.annual_waste_projection|int|format_num}}</span></div>
-        <div style="font-size:12px;color:rgba(255,255,255,.35);margin-top:8px">Based on this week — ${{inv.monthly_waste_projection|int|format_num}}/mo projected</div>
+  <div class="fc2-sec" id="fc2-tracker">
+    <div class="hd"><div><div class="hb-kicker">Key ingredient price monitor</div><h2>This week's prices</h2><div class="sub">Fill in price per unit right after an invoice arrives — drift against last week is flagged automatically.</div></div>
+      {% if food_cost_data and food_cost_data.current and food_cost_data.current.submitted_at %}{% set _sa2=food_cost_data.current.submitted_at %}<div class="sub">Last submitted <span class="hb-num">{{ _sa2[5:7]|int }}/{{ _sa2[8:10]|int }}/{{ _sa2[2:4] }}</span></div>{% endif %}</div>
+    <div class="fc2-track">
+      {% if food_cost_data and food_cost_data.current and food_cost_data.previous and food_cost_data.previous['items'] %}
+      <div id="fc-drift-saved">
+        {% set curr_map = {} %}
+        {% for it in food_cost_data.current['items'] %}{% if it.name %}{% set _ = curr_map.update({it.name|lower: it}) %}{% endif %}{% endfor %}
+        {% set drift_found = namespace(count=0) %}
+        {% for it in food_cost_data.previous['items'] %}
+          {% set curr_it = curr_map.get(it.name|lower) %}
+          {% if curr_it and it.price and curr_it.price %}
+            {% set pct = ((curr_it.price|float - it.price|float) / it.price|float * 100)|round(1) %}
+            {% if pct|abs >= 3 %}{% set drift_found.count = drift_found.count + 1 %}{% endif %}
+          {% endif %}
+        {% endfor %}
+        {% if drift_found.count > 0 %}
+        <div class="fc2-drift warn">⚠ {{ drift_found.count }} ingredient price change{{ '' if drift_found.count == 1 else 's' }} vs last week — update below to refresh.</div>
+        {% else %}
+        {% set _pa2=food_cost_data.previous.submitted_at %}<div class="fc2-drift good">✓ Prices stable vs last week (<span class="hb-num">{{ _pa2[5:7]|int }}/{{ _pa2[8:10]|int }}/{{ _pa2[2:4] }}</span>)</div>
+        {% endif %}
       </div>
-      <div style="width:1px;height:60px;background:rgba(200,75,47,.3);flex-shrink:0;display:none" class="hero-divider"></div>
-      <div style="text-align:right">
-        <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:rgba(255,255,255,.35);margin-bottom:8px">Recoverable with Better Ordering</div>
-        <div style="display:flex;align-items:baseline;gap:4px;justify-content:flex-end">
-          <span style="font-family:'Space Grotesk',sans-serif;font-size:38px;font-weight:700;line-height:1;letter-spacing:-.02em" class="stat-glow-green" id="inv-annual-recoverable">${{inv.annual_recoverable|int|format_num}}</span>
-          <span style="font-size:14px;font-weight:600;color:rgba(255,255,255,.3)">/yr</span>
-        </div>
-        <div style="font-size:12px;color:rgba(255,255,255,.35);margin-top:8px">${{inv.recoverable_monthly|int|format_num}}/mo recoverable <span class="calc-tip calc-tip-up"><svg class="tip-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="5.5" r="1" fill="currentColor"/><rect x="7.1" y="7.5" width="1.8" height="4.5" rx="0.9" fill="currentColor"/></svg><span class="tip-text">65% of your logged waste cost — industry estimate for avoidable spoilage with optimized par levels and ordering.</span></span></div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Stat tiles — rv-stat-cell style matching labor analytics -->
-  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:14px">
-    <div class="rv-stat-cell" style="padding:20px 16px">
-      <div class="stat-glow-red" style="font-size:clamp(22px,2.6vw,34px);font-weight:700;line-height:1;letter-spacing:-.02em">${{inv.total_waste_cost_week|format_num}}</div>
-      <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:8px">Waste/week</div>
-    </div>
-    <div class="rv-stat-cell" style="padding:20px 16px">
-      <div class="stat-glow-amber" style="font-size:clamp(22px,2.6vw,34px);font-weight:700;line-height:1;letter-spacing:-.02em">${{inv.monthly_waste_projection|int|format_num}}</div>
-      <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:8px">Projected/mo</div>
-    </div>
-    <div class="rv-stat-cell" style="padding:20px 16px">
-      <div class="{% if inv.waste_items|length == 0 %}stat-glow-green{% else %}stat-glow-amber{% endif %}" style="font-size:clamp(22px,2.6vw,34px);font-weight:700;line-height:1;letter-spacing:-.02em">{{inv.waste_items|length}}</div>
-      <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:8px">Waste items</div>
-    </div>
-    <div class="rv-stat-cell" style="padding:20px 16px">
-      <div class="{% if inv.critical_low|length == 0 %}stat-glow-green{% else %}stat-glow-red{% endif %}" style="font-size:clamp(22px,2.6vw,34px);font-weight:700;line-height:1;letter-spacing:-.02em">{{inv.critical_low|length}}</div>
-      <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:8px">Critical low</div>
-    </div>
-    <div class="rv-stat-cell" style="padding:20px 16px">
-      <div style="font-family:'Space Grotesk',sans-serif;font-size:clamp(22px,2.6vw,34px);font-weight:700;line-height:1;letter-spacing:-.02em;color:var(--ink)">${{inv.total_stock_value|int|format_num}}</div>
-      <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:8px">Inventory value</div>
-    </div>
-  </div>
-
-  <!-- AI insight banner with week range in header -->
-  <div class="dark-insight-card" style="border-radius:10px;padding:16px 20px;margin-bottom:14px;position:relative;overflow:hidden">
-    <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:var(--ember)"></div>
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;padding-left:4px">
-      <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember)">Cavnar AI Food Cost Analysis</div>
-      <div style="text-align:right">
-        <div style="font-size:11px;font-weight:600;color:rgba(255,255,255,.6)">Week of {{inv.week_start}} – {{inv.week_end}}</div>
-        <div style="font-size:10px;color:rgba(255,255,255,.3);margin-top:1px">Last updated: {{inv.last_updated}}</div>
-      </div>
-    </div>
-    <div class="insight-text insight-loading" id="inv-insight" style="font-size:13px;line-height:1.7;padding-left:4px"><div class="cm-compose" data-w=".88,.72,.6"><div class="cm-l" style="height:11px;margin-bottom:9px"></div><div class="cm-l" style="height:11px;margin-bottom:9px"></div><div class="cm-l" style="height:11px"></div><div class="cm-caret" style="height:16px"></div></div></div>
-  </div>
-
-  <!-- Waste offenders + Overstocked as side-by-side donut ring charts -->
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
-
-    <!-- Waste offenders donut -->
-    <div class="dark-hero-card" style="border:1px solid rgba(200,75,47,.45);border-radius:12px;padding:18px 20px;position:relative;overflow:visible;box-shadow:0 0 0 1px rgba(200,75,47,.1),0 8px 32px rgba(200,75,47,.18)">
-      <div style="position:absolute;top:-30px;right:-40px;width:220px;height:160px;background:radial-gradient(ellipse at center,rgba(200,75,47,.1) 0%,transparent 70%);pointer-events:none;z-index:0"></div>
-      <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember);margin-bottom:14px;position:relative;z-index:1">Top Waste Offenders</div>
-      <div style="display:flex;align-items:center;gap:16px;position:relative;z-index:1;flex-wrap:wrap">
-        <div style="position:relative;flex-shrink:0;width:140px;height:140px">
-          <svg id="waste-donut-svg" viewBox="0 0 200 200" width="140" height="140" xmlns="http://www.w3.org/2000/svg"></svg>
-          <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;pointer-events:none">
-            <div id="waste-donut-total" style="font-family:'Space Grotesk',sans-serif;font-size:16px;font-weight:700;color:white;line-height:1"></div>
-            <div style="font-size:8px;font-weight:700;letter-spacing:.08em;color:rgba(255,255,255,.3);margin-top:3px;text-transform:uppercase">Total</div>
+      {% endif %}
+      <div id="fc-drift-live" style="display:none;margin-bottom:12px"></div>
+      <table class="fc2-table" id="fc-table">
+        <thead><tr><th>Ingredient</th><th style="width:70px">Unit</th><th style="width:110px">Price / unit $</th><th style="width:90px">Wk usage</th><th style="width:90px"></th></tr></thead>
+        <tbody id="fc-rows">
+          {% if food_cost_data and food_cost_data.current %}
+            {% for _fci in food_cost_data.current['items'] %}
+            <tr><td><input type="text" class="fc2-in" value="{{ _fci.name }}" placeholder="Item name"></td><td><input type="text" class="fc2-in" value="{{ _fci.unit }}" placeholder="lb"></td><td><input type="number" class="fc2-in num" value="{{ _fci.price }}" step="0.01" min="0" placeholder="0.00"></td><td><input type="number" class="fc2-in num" value="{{ _fci.usage }}" step="0.1" min="0" placeholder="0"></td><td></td></tr>
+            {% endfor %}
+          {% else %}
+            {% for _fci in [{"name":"Chicken Breast","unit":"lb"},{"name":"Beef/Steak","unit":"lb"},{"name":"Salmon / Fish","unit":"lb"},{"name":"Shrimp","unit":"lb"},{"name":"Heavy Cream","unit":"qt"},{"name":"Butter","unit":"lb"},{"name":"Produce (misc)","unit":"case"}] %}
+            <tr><td><input type="text" class="fc2-in" value="{{ _fci.name }}" placeholder="Item name"></td><td><input type="text" class="fc2-in" value="{{ _fci.unit }}" placeholder="lb"></td><td><input type="number" class="fc2-in num" value="" step="0.01" min="0" placeholder="0.00"></td><td><input type="number" class="fc2-in num" value="" step="0.1" min="0" placeholder="0"></td><td></td></tr>
+            {% endfor %}
+            {% for _ci in (food_cost_data.custom_items if food_cost_data and food_cost_data.custom_items else []) %}
+            <tr data-custom="1"><td><input type="text" class="fc2-in" value="{{ _ci.name }}" placeholder="Item name"></td><td><input type="text" class="fc2-in" value="{{ _ci.unit }}" placeholder="lb"></td><td><input type="number" class="fc2-in num" value="" step="0.01" min="0" placeholder="0.00"></td><td><input type="number" class="fc2-in num" value="" step="0.1" min="0" placeholder="0"></td><td style="text-align:right;white-space:nowrap"><span class="fc-save-badge saved">SAVED</span> <button aria-label="Remove" class="rm" onclick="removeFcCustomItem(this,'{{ _ci.name|e }}')" title="Remove item">&#x2715;</button></td></tr>
+            {% endfor %}
+          {% endif %}
+        </tbody>
+      </table>
+      <div class="fc2-submit">
+        <div class="l">
+          <button onclick="submitFoodCostCount()" class="btn-primary">Submit this week's prices</button>
+          <div id="fc-submit-pill" style="display:{% if food_cost_data and food_cost_data.current and food_cost_data.current.submitted_at %}inline-flex{% else %}none{% endif %}">
+            <div id="fc-pill-line1">&#10003; Saved {% if food_cost_data and food_cost_data.current and food_cost_data.current.submitted_at %}{% set _sa=food_cost_data.current.submitted_at %}{{ _sa[5:7]|int }}/{{ _sa[8:10]|int }}/{{ _sa[2:4] }}{% endif %}</div>
+            <div id="fc-pill-line2">{% if food_cost_data and food_cost_data.previous and food_cost_data.previous.submitted_at %}{% set _pa=food_cost_data.previous.submitted_at %}Last saved: {{ _pa[5:7]|int }}/{{ _pa[8:10]|int }}/{{ _pa[2:4] }}{% elif food_cost_data and food_cost_data.current and food_cost_data.current.submitted_at %}First submission{% endif %}</div>
           </div>
+          <script>var _fcPrevSaved='{{food_cost_data.current.submitted_at if food_cost_data and food_cost_data.current and food_cost_data.current.submitted_at else ""}}';</script>
         </div>
-        <div id="waste-donut-legend" style="flex:1;min-width:120px"></div>
+        <button onclick="addCustomFoodItem()" class="hb-btn"><span style="font-size:16px;line-height:1">+</span> Add custom item</button>
       </div>
     </div>
-
-    <!-- Overstocked donut -->
-    <div class="dark-hero-card" style="border:1px solid rgba(200,75,47,.45);border-radius:12px;padding:18px 20px;position:relative;overflow:visible;box-shadow:0 0 0 1px rgba(200,75,47,.1),0 8px 32px rgba(200,75,47,.18)">
-      <div style="position:absolute;top:-30px;right:-40px;width:220px;height:160px;background:radial-gradient(ellipse at center,rgba(200,75,47,.1) 0%,transparent 70%);pointer-events:none;z-index:0"></div>
-      <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember);margin-bottom:14px;position:relative;z-index:1">Overstocked — Tied-up Capital</div>
-      <div style="display:flex;align-items:center;gap:16px;position:relative;z-index:1;flex-wrap:wrap">
-        <div style="position:relative;flex-shrink:0;width:140px;height:140px">
-          <svg id="ostock-donut-svg" viewBox="0 0 200 200" width="140" height="140" xmlns="http://www.w3.org/2000/svg"></svg>
-          <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;pointer-events:none">
-            <div id="ostock-donut-total" style="font-family:'Space Grotesk',sans-serif;font-size:16px;font-weight:700;color:white;line-height:1"></div>
-            <div style="font-size:8px;font-weight:700;letter-spacing:.08em;color:rgba(255,255,255,.3);margin-top:3px;text-transform:uppercase">Tied Up</div>
-          </div>
-        </div>
-        <div id="ostock-donut-legend" style="flex:1;min-width:120px"></div>
-      </div>
-    </div>
-
   </div>
-  <!-- Donut data (baked at render time) -->
+
+  <div class="fc2-sec" id="fc2-tools">
+    <div class="hd"><div><div class="hb-kicker">Tools</div><h2>Margins and ordering</h2><div class="sub">Plate cost and margin for every priced dish, and this week's suggested order emailed to each supplier.</div></div></div>
+    <div class="fc2-tools">
+      <div class="fc2-tool"><div class="ch"><span>Menu margins</span><button onclick="loadMenuMargins()" class="hb-btn" style="height:28px;padding:0 11px;font-size:11.5px">Load</button></div><div class="bd" id="mm-body">See plate cost and margin for every priced dish.</div></div>
+      <div class="fc2-tool"><div class="ch"><span>Send order to suppliers</span><button onclick="loadOrderDraft()" class="hb-btn" style="height:28px;padding:0 11px;font-size:11.5px">Load</button></div><div class="bd" id="so-body">Email this week's suggested order to each supplier.</div></div>
+    </div>
+    <div id="po-history" class="fc2-po"></div>
+  </div>
+  <div style="display:none"><span id="fc-tab-tracker"></span><span id="fc-tab-analytics"></span><span id="fc-panel-tracker"></span><span id="fc-panel-analytics"></span></div>
+
   <script>
   var _wasteDonutData=[
     {% for item in inv.waste_items %}{"name":"{{item.item|e}}","cost":{{item.waste_cost|round(2)}},"pct":{{item.waste_pct}},"qty":"{{item.waste_last_week|int if item.waste_last_week % 1 == 0 else item.waste_last_week|round(1)}} {{item.unit}}"},{% endfor %}
@@ -2643,219 +2674,72 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
   var _ostockDonutData=[
     {% for item in inv.overstock %}{"name":"{{item.item|e}}","cost":{{item.overstock_cost|round(2)}},"stock":"{{item.current_stock|int}}{% if item.unit %} {{item.unit}}{% endif %}","par":"{{item.par_level|int}}{% if item.unit %} {{item.unit}}{% endif %}"},{% endfor %}
   ];
-  var _invDonutColors=['#c84b2f','#6fcf97','#ef9f27','#60adf5','#b39df3','#f472b6','#4dd0e1','#fbbf24'];
-  function _renderDonut(svgId,legendId,totalId,data,costKey){
-    var svgEl=document.getElementById(svgId);
-    var legend=document.getElementById(legendId);
-    var totalEl=document.getElementById(totalId);
-    if(!svgEl||!data)return;
-    if(!data.length){
-      svgEl.innerHTML='<circle cx="100" cy="100" r="72" fill="none" stroke="rgba(255,255,255,.05)" stroke-width="22"/>';
-      if(totalEl)totalEl.textContent='—';
-      if(legend)legend.innerHTML='<div style="font-size:11px;color:rgba(255,255,255,.35);font-style:italic">None this week</div>';
-      return;
-    }
-    var r=72,cx=100,cy=100,sw=22,gap=4;
-    var circ=2*Math.PI*r;
-    var total=0;
-    for(var i=0;i<data.length;i++)total+=data[i][costKey];
-    var circles='<circle cx="'+cx+'" cy="'+cy+'" r="'+r+'" fill="none" stroke="rgba(255,255,255,.05)" stroke-width="'+sw+'"/>';
-    var cumOffset=0;
-    for(var i=0;i<data.length;i++){
-      var d=data[i];var col=_invDonutColors[i%_invDonutColors.length];
-      var segLen=total>0?(d[costKey]/total)*circ-gap:0;if(segLen<0)segLen=0;
-      // "Donut Sweep" — same staggered sweep-in as the Labor role donut.
-      circles+='<circle class="cm-seg" data-da="'+segLen+' '+(circ-segLen)+'" cx="'+cx+'" cy="'+cy+'" r="'+r+'" fill="none" stroke="'+col+'" stroke-width="'+sw+'" stroke-dashoffset="'+(-cumOffset)+'" transform="rotate(-90 '+cx+' '+cy+')" style="filter:drop-shadow(0 0 6px '+col+'99);stroke-dasharray:0 '+circ+';transition:stroke-dasharray .9s cubic-bezier(.4,0,.2,1) '+(0.2+i*0.3).toFixed(2)+'s"></circle>';
-      cumOffset+=segLen+gap;
-    }
-    svgEl.innerHTML=circles;
-    requestAnimationFrame(function(){requestAnimationFrame(function(){var segs=svgEl.querySelectorAll('.cm-seg');for(var s=0;s<segs.length;s++){segs[s].style.strokeDasharray=segs[s].getAttribute('data-da');}});});
-    if(totalEl)totalEl.textContent='$'+Math.round(total);
-    var lhtml='';
-    for(var i=0;i<data.length;i++){
-      var d=data[i];var col=_invDonutColors[i%_invDonutColors.length];
-      var isLast=i===data.length-1;
-      lhtml+='<div style="display:flex;align-items:center;gap:8px;padding:5px 0;'+(isLast?'':'border-bottom:1px solid rgba(255,255,255,.05)')+'">';
-      lhtml+='<span style="width:8px;height:8px;border-radius:50%;background:'+col+';flex-shrink:0;box-shadow:0 0 6px '+col+'99"></span>';
-      lhtml+='<span style="font-size:11px;font-weight:600;color:rgba(255,255,255,.8);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+d.name+'</span>';
-      lhtml+='<span style="font-family:Space Grotesk,sans-serif;font-size:11px;font-weight:700;color:'+col+';white-space:nowrap">$'+d[costKey].toFixed(0)+'</span>';
-      lhtml+='</div>';
-    }
-    if(legend)legend.innerHTML=lhtml;
-  }
-  function renderWasteDonut(){_renderDonut('waste-donut-svg','waste-donut-legend','waste-donut-total',_wasteDonutData,'cost');}
-  function renderOstockDonut(){_renderDonut('ostock-donut-svg','ostock-donut-legend','ostock-donut-total',_ostockDonutData,'cost');}
-  </script>
-
-  <!-- Order list -->
-  <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember);margin-bottom:10px">Order List — Recommended Quantities</div>
-  {% if inv.critical_low or inv.reorder_soon or inv.order_reduction %}
-  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;align-items:start">
-
-    <!-- Urgent col -->
-    <div class="dark-hero-card" style="border:1px solid {% if inv.critical_low %}rgba(239,68,68,.45){% else %}rgba(200,75,47,.2){% endif %};border-radius:12px;overflow:hidden;box-shadow:0 0 0 1px rgba(239,68,68,.07),0 4px 16px rgba(239,68,68,.12)">
-      <div style="display:flex;align-items:center;gap:8px;padding:11px 16px 9px;background:rgba(239,68,68,.07);border-bottom:1px solid rgba(239,68,68,.15)">
-        <div style="width:7px;height:7px;border-radius:50%;background:#ef4444;box-shadow:0 0 8px rgba(239,68,68,.8);flex-shrink:0"></div>
-        <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#ef4444;flex:1">Urgent — Order Now</div>
-        <div style="font-size:9px;background:rgba(239,68,68,.18);color:#ef4444;border-radius:10px;padding:2px 7px;font-weight:700">{{inv.critical_low|length}}</div>
-      </div>
-      {% if inv.critical_low %}
-      {% for item in inv.critical_low %}
-      <div style="display:flex;align-items:center;padding:9px 16px;border-bottom:1px solid rgba(255,255,255,.04);gap:10px">
-        <div style="flex:1;min-width:0">
-          <div style="font-size:12px;font-weight:600;color:rgba(255,255,255,.88);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{item.item}}</div>
-          <div style="font-size:10px;color:rgba(255,255,255,.3);margin-top:2px">{{item.days_remaining}}d left · last order ({{item.last_order_qty|int}}{% if item.unit %} {{item.unit}}{% endif %})</div>
-        </div>
-        <div style="text-align:right;flex-shrink:0">
-          {% set _delta = (item.suggested_order_qty - item.last_order_qty) if (item.suggested_order_qty and item.suggested_order_qty > 0 and item.last_order_qty is not none) else 0 %}
-          <div style="font-size:8px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:rgba(255,255,255,.3);margin-bottom:2px">{% if _delta > 0.05 %}Order {{ _delta|round|int }} more{% elif _delta < -0.05 %}Order {{ (-_delta)|round|int }} less{% else %}Order{% endif %}</div>
-          <div style="font-size:12px;font-weight:700;color:white;background:rgba(239,68,68,.14);border:1px solid rgba(239,68,68,.32);border-radius:6px;padding:3px 10px;white-space:nowrap;font-family:'Space Grotesk',sans-serif">{% if item.suggested_order_qty == 0 %}skip{% else %}{{item.suggested_order_qty}}{% if item.unit %} {{item.unit}}{% endif %}{% endif %}</div>
-          <div style="font-size:10px;font-weight:700;font-family:'Space Grotesk',sans-serif;margin-top:3px">{% if item.savings_vs_last > 0 %}<span style="color:#6fcf97">↓ ${{item.savings_vs_last}}</span>{% elif item.savings_vs_last < 0 %}<span style="color:#ef4444">↑ ${{"{:.2f}".format(item.savings_vs_last * -1)}}</span>{% else %}<span style="color:rgba(255,255,255,.25)">—</span>{% endif %}</div>
-        </div>
-      </div>
-      {% endfor %}
-      {% else %}
-      <div style="padding:20px 16px;font-size:11px;color:rgba(255,255,255,.25);text-align:center">Nothing critical this week</div>
-      {% endif %}
-    </div>
-
-    <!-- Order Soon col -->
-    <div class="dark-hero-card" style="border:1px solid {% if inv.reorder_soon %}rgba(239,159,39,.38){% else %}rgba(200,75,47,.2){% endif %};border-radius:12px;overflow:hidden;box-shadow:0 0 0 1px rgba(239,159,39,.06),0 4px 16px rgba(239,159,39,.09)">
-      <div style="display:flex;align-items:center;gap:8px;padding:11px 16px 9px;background:rgba(239,159,39,.05);border-bottom:1px solid rgba(239,159,39,.12)">
-        <div style="width:7px;height:7px;border-radius:50%;background:#ef9f27;box-shadow:0 0 8px rgba(239,159,39,.7);flex-shrink:0"></div>
-        <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#ef9f27;flex:1">Order Soon</div>
-        <div style="font-size:9px;background:rgba(239,159,39,.14);color:#ef9f27;border-radius:10px;padding:2px 7px;font-weight:700">{{inv.reorder_soon|length}}</div>
-      </div>
-      {% if inv.reorder_soon %}
-      {% for item in inv.reorder_soon %}
-      <div style="display:flex;align-items:center;padding:9px 16px;border-bottom:1px solid rgba(255,255,255,.04);gap:10px">
-        <div style="flex:1;min-width:0">
-          <div style="font-size:12px;font-weight:600;color:rgba(255,255,255,.88);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{item.item}}</div>
-          <div style="font-size:10px;color:rgba(255,255,255,.3);margin-top:2px">{{item.days_remaining}}d left · last order ({{item.last_order_qty|int}}{% if item.unit %} {{item.unit}}{% endif %})</div>
-        </div>
-        <div style="text-align:right;flex-shrink:0">
-          {% set _delta = (item.suggested_order_qty - item.last_order_qty) if (item.suggested_order_qty and item.suggested_order_qty > 0 and item.last_order_qty is not none) else 0 %}
-          <div style="font-size:8px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:rgba(255,255,255,.3);margin-bottom:2px">{% if _delta > 0.05 %}Order {{ _delta|round|int }} more{% elif _delta < -0.05 %}Order {{ (-_delta)|round|int }} less{% else %}Order{% endif %}</div>
-          <div style="font-size:12px;font-weight:700;color:white;background:rgba(239,159,39,.11);border:1px solid rgba(239,159,39,.28);border-radius:6px;padding:3px 10px;white-space:nowrap;font-family:'Space Grotesk',sans-serif">{% if item.suggested_order_qty == 0 %}skip{% else %}{{item.suggested_order_qty}}{% if item.unit %} {{item.unit}}{% endif %}{% endif %}</div>
-          <div style="font-size:10px;font-weight:700;font-family:'Space Grotesk',sans-serif;margin-top:3px">{% if item.savings_vs_last > 0 %}<span style="color:#6fcf97">↓ ${{item.savings_vs_last}}</span>{% elif item.savings_vs_last < 0 %}<span style="color:#ef4444">↑ ${{"{:.2f}".format(item.savings_vs_last * -1)}}</span>{% else %}<span style="color:rgba(255,255,255,.25)">—</span>{% endif %}</div>
-        </div>
-      </div>
-      {% endfor %}
-      {% else %}
-      <div style="padding:20px 16px;font-size:11px;color:rgba(255,255,255,.25);text-align:center">Nothing upcoming this week</div>
-      {% endif %}
-    </div>
-
-    <!-- Reduce Order col -->
-    <div class="dark-hero-card" style="border:1px solid {% if inv.order_reduction %}rgba(111,207,151,.35){% else %}rgba(200,75,47,.2){% endif %};border-radius:12px;overflow:hidden;box-shadow:0 0 0 1px rgba(111,207,151,.05),0 4px 16px rgba(111,207,151,.08)">
-      <div style="display:flex;align-items:center;gap:8px;padding:11px 16px 9px;background:rgba(111,207,151,.04);border-bottom:1px solid rgba(111,207,151,.1)">
-        <div style="width:7px;height:7px;border-radius:50%;background:#6fcf97;box-shadow:0 0 8px rgba(111,207,151,.6);flex-shrink:0"></div>
-        <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#6fcf97;flex:1">Reduce Order</div>
-        <div style="font-size:9px;background:rgba(111,207,151,.1);color:#6fcf97;border-radius:10px;padding:2px 7px;font-weight:700">{{inv.order_reduction|length}}</div>
-      </div>
-      {% if inv.order_reduction %}
-      {% for item in inv.order_reduction %}
-      <div style="display:flex;align-items:center;padding:9px 16px;border-bottom:1px solid rgba(255,255,255,.04);gap:10px">
-        <div style="flex:1;min-width:0">
-          <div style="font-size:12px;font-weight:600;color:rgba(255,255,255,.88);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{item.item}}</div>
-          <div style="font-size:10px;color:rgba(255,255,255,.3);margin-top:2px">last order: ({{item.last_order_qty|int}}{% if item.unit %} {{item.unit}}{% endif %})</div>
-        </div>
-        <div style="text-align:right;flex-shrink:0">
-          {% set _delta = (item.suggested_order_qty - item.last_order_qty) if (item.suggested_order_qty and item.suggested_order_qty > 0 and item.last_order_qty is not none) else 0 %}
-          <div style="font-size:8px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:rgba(255,255,255,.3);margin-bottom:2px">{% if _delta > 0.05 %}Order {{ _delta|round|int }} more{% elif _delta < -0.05 %}Order {{ (-_delta)|round|int }} less{% else %}Order{% endif %}</div>
-          <div style="font-size:12px;font-weight:700;color:#6fcf97;background:rgba(111,207,151,.09);border:1px solid rgba(111,207,151,.25);border-radius:6px;padding:3px 10px;white-space:nowrap;font-family:'Space Grotesk',sans-serif">{% if item.suggested_order_qty == 0 %}skip{% else %}{{item.suggested_order_qty}}{% if item.unit %} {{item.unit}}{% endif %}{% endif %}</div>
-          <div style="font-size:10px;font-weight:700;font-family:'Space Grotesk',sans-serif;margin-top:3px;color:#6fcf97">↓ ${{item.savings_vs_last}}</div>
-        </div>
-      </div>
-      {% endfor %}
-      {% else %}
-      <div style="padding:20px 16px;font-size:11px;color:rgba(255,255,255,.25);text-align:center">No reductions needed</div>
-      {% endif %}
-    </div>
-
-  </div>
-  {% else %}
-  <div class="dark-hero-card" style="border:1px solid rgba(111,207,151,.3);border-radius:12px;padding:16px 20px;display:flex;align-items:center;gap:10px">
-    <div style="width:8px;height:8px;border-radius:50%;background:#6fcf97;box-shadow:0 0 8px rgba(111,207,151,.7);flex-shrink:0"></div>
-    <div style="font-size:13px;color:#6fcf97;font-weight:500">Your ordering looks well-calibrated this week — no adjustments needed.</div>
-  </div>
-  {% endif %}
-
-  {% if inv.price_watch %}
-  <div id="price-watch-detail" style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember);margin:16px 0 10px">Price Watch</div>
-  <div class="dark-hero-card" style="border:1px solid rgba(239,159,39,.3);border-radius:12px;overflow:hidden">
-    {% for w in inv.price_watch %}
-    <div style="display:flex;align-items:flex-start;padding:12px 16px;{% if not loop.last %}border-bottom:1px solid rgba(255,255,255,.04);{% endif %}gap:12px">
-      <div style="width:2.5px;align-self:stretch;border-radius:0;flex-shrink:0;background:{% if w.kind == 'trend' %}#ef4444{% else %}#ef9f27{% endif %}"></div>
-      <div style="flex:1;min-width:0">
-        <div style="font-size:13px;font-weight:600;color:rgba(255,255,255,.88)">{{w.item}}</div>
-        <div style="font-size:10px;color:rgba(255,255,255,.3);margin-top:2px;font-family:'Space Grotesk',sans-serif">${{"%.2f"|format(w.old_price)}} &#8594; ${{"%.2f"|format(w.new_price)}}</div>
-        <div style="font-size:10.5px;color:rgba(255,255,255,.5);margin-top:4px;line-height:1.5">{{w.action_hint}}</div>
-      </div>
-      <div style="text-align:right;flex-shrink:0">
-        <div style="font-size:13px;font-weight:700;font-family:'Space Grotesk',sans-serif;color:{% if w.kind == 'trend' %}#ef4444{% else %}#ef9f27{% endif %}">+{{w.change_pct|round|int}}%</div>
-        <div style="font-size:9px;color:rgba(255,255,255,.3);margin-top:1px">{% if w.kind == 'trend' %}{{w.weeks}} week{% if w.weeks != 1 %}s{% endif %}{% else %}this week{% endif %}</div>
-      </div>
-    </div>
-    {% endfor %}
-  </div>
-  {% endif %}
-
-  <!-- Menu margins + Send order to suppliers -->
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px">
-
-    <div class="dark-hero-card" style="border:1px solid rgba(200,75,47,.3);border-radius:12px;padding:16px 18px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-        <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember)">Menu margins</div>
-        <button onclick="loadMenuMargins()" class="btn" style="background:rgba(200,75,47,.14);color:#e8956a;border:1px solid rgba(200,75,47,.32);font-size:11px;padding:5px 12px">Load</button>
-      </div>
-      <div id="mm-body" style="font-size:12px;color:rgba(255,255,255,.35)">See plate cost and margin for every priced dish.</div>
-    </div>
-
-    <div class="dark-hero-card" style="border:1px solid rgba(200,75,47,.3);border-radius:12px;padding:16px 18px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-        <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember)">Send order to suppliers</div>
-        <button onclick="loadOrderDraft()" class="btn" style="background:rgba(200,75,47,.14);color:#e8956a;border:1px solid rgba(200,75,47,.32);font-size:11px;padding:5px 12px">Load</button>
-      </div>
-      <div id="so-body" style="font-size:12px;color:rgba(255,255,255,.35)">Email this week's suggested order to each supplier.</div>
-    </div>
-
-  </div>
-  <div id="po-history" style="margin-top:10px"></div>
-
-  <script>
+  var _fc2Rate={{ inv.waste_rate_pct|float }},_fc2WasteWeek={{ inv.total_waste_cost_week|float }};
+  var _fc2Gauge={monthly:{{ inv.recoverable_monthly|int }},annual:{{ inv.annual_recoverable|int }},ceiling:{{ [inv.recoverable_monthly|int, (inv.monthly_waste_projection + _ostock_total)|int]|max }}};
   function _mmEsc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
-
+  function fc2Jump(id){var el=document.getElementById(id);if(el)el.scrollIntoView({behavior:'smooth',block:'start'});}
+  // Waste Ledger / Tied-Up Capital — every flagged item as a bar with its
+  // dollars counting up beside it, sorted by cost (same chart as iOS).
+  function _fc2Ledger(id,data,key,detailFn,amber){
+    var el=document.getElementById(id);if(!el)return;
+    if(el.dataset.done)return;el.dataset.done='1';
+    var rows=(data||[]).slice().sort(function(a,b){return b[key]-a[key];}).slice(0,6);
+    if(!rows.length){el.innerHTML='<div class="fc2-empty">'+(amber?'Nothing over par this week':'No waste logged this week')+'</div>';return;}
+    var max=rows[0][key]||1,h='';
+    for(var i=0;i<rows.length;i++){var r=rows[i];
+      h+='<div class="r"><div><div class="nm" title="'+_mmEsc(r.name)+'">'+_mmEsc(r.name)+'</div><div class="bar"><i class="'+(amber?'amber':'')+'" style="transition-delay:'+(i*120)+'ms;width:'+Math.max(4,Math.round(r[key]/max*100))+'%"></i></div><div class="sub">'+_mmEsc(detailFn(r))+'</div></div><div class="v '+(amber?'amber':'')+'" data-n="'+Math.round(r[key])+'">$0</div></div>';}
+    el.innerHTML=h;
+    var vs=el.querySelectorAll('.v');
+    requestAnimationFrame(function(){requestAnimationFrame(function(){var bars=el.querySelectorAll('.bar');for(var b=0;b<bars.length;b++)bars[b].classList.add('on');
+      for(var k=0;k<vs.length;k++){(function(v,delay){setTimeout(function(){if(typeof countUp==='function')countUp(v,parseInt(v.getAttribute('data-n'),10),1400,'$','',0);else v.textContent='$'+v.getAttribute('data-n');},delay);})(vs[k],k*120);}});});
+  }
+  function renderWasteDonut(){_fc2Ledger('fc2-ledger-waste',_wasteDonutData,'cost',function(r){return r.qty+' wasted · '+r.pct+'% of stock';},false);}
+  function renderOstockDonut(){_fc2Ledger('fc2-ledger-stock',_ostockDonutData,'cost',function(r){return r.stock+' on hand · par '+r.par;},true);}
+  // Recoverable Gauge — the month's recoverable dollars as a half-arc that
+  // fills with an ember gradient and a hot tip; full = everything leaking.
+  function renderFcGauge(){
+    var el=document.getElementById('fc2-gauge');if(!el||el.dataset.done)return;el.dataset.done='1';
+    var g=_fc2Gauge,frac=g.ceiling>0?Math.min(1,g.monthly/g.ceiling):0;
+    var W=300,H=170,cx=150,cy=136,R=104,sw=16;
+    var len=Math.PI*R;
+    var s='<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet" aria-hidden="true"><defs><linearGradient id="fc2gg" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#c84b2f"/><stop offset="1" stop-color="#e8956a"/></linearGradient><filter id="fc2gf" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="4"/></filter></defs>';
+    var d='M'+(cx-R)+' '+cy+' A'+R+' '+R+' 0 0 1 '+(cx+R)+' '+cy;
+    s+='<path d="'+d+'" fill="none" stroke="currentColor" stroke-opacity=".1" stroke-width="'+sw+'" stroke-linecap="round"/>';
+    if(frac>0){
+      s+='<path d="'+d+'" fill="none" stroke="#c84b2f" stroke-opacity=".5" stroke-width="'+(sw+6)+'" stroke-linecap="round" filter="url(#fc2gf)" stroke-dasharray="'+len+'" stroke-dashoffset="'+len+'" style="transition:stroke-dashoffset 2.4s cubic-bezier(.3,0,.15,1)" class="fc2-arc" data-off="'+(len*(1-frac))+'"/>';
+      s+='<path d="'+d+'" fill="none" stroke="url(#fc2gg)" stroke-width="'+sw+'" stroke-linecap="round" stroke-dasharray="'+len+'" stroke-dashoffset="'+len+'" style="transition:stroke-dashoffset 2.4s cubic-bezier(.3,0,.15,1)" class="fc2-arc" data-off="'+(len*(1-frac))+'"/>';
+      var tx=cx-R*Math.cos(Math.PI*frac),ty=cy-R*Math.sin(Math.PI*frac);
+      s+='<circle class="hb-hot" cx="'+tx.toFixed(1)+'" cy="'+ty.toFixed(1)+'" r="13" fill="#e8956a" fill-opacity=".25" style="transform-box:fill-box;transform-origin:center;opacity:0;transition:opacity .6s 2s" data-tip="1"/>';
+      s+='<circle cx="'+tx.toFixed(1)+'" cy="'+ty.toFixed(1)+'" r="5" fill="#f2b183" stroke="#fff" stroke-opacity=".8" stroke-width="1.5" style="opacity:0;transition:opacity .6s 2s" data-tip="1"/>';
+    }
+    s+='<text x="'+(cx-R)+'" y="'+(cy+18)+'" text-anchor="middle" font-size="10" font-family="Space Grotesk, sans-serif" fill="currentColor" fill-opacity=".55">$0</text>';
+    s+='<text x="'+(cx+R)+'" y="'+(cy+18)+'" text-anchor="middle" font-size="10" font-family="Space Grotesk, sans-serif" fill="currentColor" fill-opacity=".55">$'+Math.round(g.ceiling).toLocaleString()+'</text>';
+    s+='</svg><div class="c"><b data-n="'+g.monthly+'">$0</b><span>recoverable / mo</span></div>';
+    el.innerHTML=s;
+    var b=el.querySelector('.c b');
+    requestAnimationFrame(function(){requestAnimationFrame(function(){var arcs=el.querySelectorAll('.fc2-arc');for(var i=0;i<arcs.length;i++)arcs[i].style.strokeDashoffset=arcs[i].getAttribute('data-off');var tips=el.querySelectorAll('[data-tip]');for(var t=0;t<tips.length;t++)tips[t].style.opacity='1';if(typeof countUp==='function')countUp(b,g.monthly,2200,'$','',0);else b.textContent='$'+g.monthly.toLocaleString();});});
+  }
   function loadMenuMargins(){
     var el = document.getElementById('mm-body');
-    el.innerHTML = '<span style="color:rgba(255,255,255,.3)">Loading…</span>';
+    el.innerHTML = cavnarLoading('Working out plate costs…',22,'working');
     fetch('/api/food-cost/menu-profitability').then(function(r){return r.json();}).then(function(d){
-      if(!d.ok){ el.innerHTML='<span style="color:#ef4444">'+_mmEsc(d.error||'Couldn\'t load menu margins')+'</span>'; return; }
-      if(!d.priced.length && !d.unpriced.length && !d.unmapped.length){
-        el.innerHTML='<span style="color:rgba(255,255,255,.3)">No menu items mapped to recipes yet.</span>';
-        return;
-      }
+      if(!d.ok){ el.innerHTML='<span style="color:var(--hb-bad)">'+_mmEsc(d.error||'Couldn\'t load menu margins')+'</span>'; return; }
+      if(!d.priced.length && !d.unpriced.length && !d.unmapped.length){ el.innerHTML='No menu items mapped to recipes yet.'; return; }
       var html = '';
       if(d.priced.length){
-        html += '<table style="width:100%;border-collapse:collapse;font-size:11.5px"><tbody>';
+        html += '<table><tbody>';
         d.priced.forEach(function(item){
-          var band = item.food_cost_pct>=40 ? '#ef4444' : (item.food_cost_pct>=32 ? '#ef9f27' : '#6fcf97');
-          html += '<tr style="border-bottom:1px solid rgba(255,255,255,.06)">';
-          html += '<td style="padding:6px 4px;color:rgba(255,255,255,.85)">'+_mmEsc(item.name)+'</td>';
-          html += '<td style="padding:6px 4px;text-align:right;color:rgba(255,255,255,.4)">cost $'+item.plate_cost.toFixed(2)+'</td>';
-          html += '<td style="padding:6px 4px;text-align:right"><input type="number" step="0.01" value="'+item.sell_price.toFixed(2)+'" data-id="'+item.id+'" onchange="saveMenuPrice(this)" style="width:64px;background:#101010;border:1px solid var(--paper3);border-radius:4px;color:var(--ink);padding:3px 6px;font-size:11px;text-align:right"></td>';
-          html += '<td style="padding:6px 4px;text-align:right;color:'+band+';font-weight:700;white-space:nowrap">'+item.food_cost_pct.toFixed(0)+'% fc</td>';
-          html += '</tr>';
+          var band = item.food_cost_pct>=40 ? 'var(--hb-bad)' : (item.food_cost_pct>=32 ? 'var(--hb-warn)' : 'var(--hb-good)');
+          html += '<tr><td>'+_mmEsc(item.name)+'</td><td class="num" style="text-align:right;color:var(--ink3)">cost $'+item.plate_cost.toFixed(2)+'</td>';
+          html += '<td style="text-align:right"><input class="price" type="number" step="0.01" value="'+item.sell_price.toFixed(2)+'" data-id="'+item.id+'" onchange="saveMenuPrice(this)"></td>';
+          html += '<td class="num" style="text-align:right;color:'+band+';font-weight:700;white-space:nowrap">'+item.food_cost_pct.toFixed(0)+'% fc</td></tr>';
         });
         html += '</tbody></table>';
       }
-      if(d.unpriced.length){
-        html += '<div style="font-size:10px;color:rgba(255,255,255,.3);margin-top:10px">'+d.unpriced.length+' item'+(d.unpriced.length!==1?'s':'')+' with a recipe but no price set — add one above to see their margin.</div>';
-      }
+      if(d.unpriced.length){ html += '<div style="font-size:11px;color:var(--ink3);margin-top:10px">'+d.unpriced.length+' item'+(d.unpriced.length!==1?'s':'')+' with a recipe but no price set — add one to see their margin.</div>'; }
       el.innerHTML = html;
-    }).catch(function(){ el.innerHTML='<span style="color:#ef4444">Couldn\'t load menu margins</span>'; });
+    }).catch(function(){ el.innerHTML='<span style="color:var(--hb-bad)">Couldn\'t load menu margins</span>'; });
   }
-
   function saveMenuPrice(input){
     var id = input.getAttribute('data-id');
     var price = parseFloat(input.value);
@@ -2866,29 +2750,22 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       else { toast(d.error||'Couldn\'t save price','error'); }
     });
   }
-
   function loadOrderDraft(){
     var el = document.getElementById('so-body');
-    el.innerHTML = '<span style="color:rgba(255,255,255,.3)">Loading…</span>';
+    el.innerHTML = cavnarLoading('Building this week\'s order…',22,'working');
     fetch('/api/food-cost/order-draft').then(function(r){return r.json();}).then(function(d){
-      if(!d.ok){ el.innerHTML='<span style="color:#ef4444">'+_mmEsc(d.error||'Couldn\'t build the order')+'</span>'; return; }
+      if(!d.ok){ el.innerHTML='<span style="color:var(--hb-bad)">'+_mmEsc(d.error||'Couldn\'t build the order')+'</span>'; return; }
       var groups = d.groups || [];
-      if(!groups.length){ el.innerHTML='<span style="color:rgba(255,255,255,.3)">Nothing to order — assign suppliers to ingredients first.</span>'; loadPurchaseOrders(); return; }
+      if(!groups.length){ el.innerHTML='Nothing to order — assign suppliers to ingredients first.'; loadPurchaseOrders(); return; }
       var html = '';
       groups.forEach(function(g){
-        html += '<div style="border-bottom:1px solid rgba(255,255,255,.06);padding:8px 0">';
-        html += '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">';
-        html += '<div style="font-size:12px;font-weight:600;color:rgba(255,255,255,.85)">'+_mmEsc(g.supplier_name||g.supplier_email)+'</div>';
-        html += '<button onclick="sendSupplierOrder(\''+_mmEsc(g.supplier_email)+'\',this)" class="btn" style="background:rgba(111,207,151,.12);color:#6fcf97;border:1px solid rgba(111,207,151,.3);font-size:10px;padding:4px 10px">Send ($'+(g.total_cost||0).toFixed(0)+')</button>';
-        html += '</div>';
-        html += '<div style="font-size:10px;color:rgba(255,255,255,.3);margin-top:2px">'+g.items.length+' item'+(g.items.length!==1?'s':'')+'</div>';
-        html += '</div>';
+        html += '<div class="g"><div><b>'+_mmEsc(g.supplier_name||g.supplier_email)+'</b><span>'+g.items.length+' item'+(g.items.length!==1?'s':'')+'</span></div>';
+        html += '<button onclick="sendSupplierOrder(\''+_mmEsc(g.supplier_email)+'\',this)" class="hb-btn p" style="height:28px;padding:0 11px;font-size:11.5px">Send ($'+(g.total_cost||0).toFixed(0)+')</button></div>';
       });
       el.innerHTML = html;
       loadPurchaseOrders();
-    }).catch(function(){ el.innerHTML='<span style="color:#ef4444">Couldn\'t build the order</span>'; });
+    }).catch(function(){ el.innerHTML='<span style="color:var(--hb-bad)">Couldn\'t build the order</span>'; });
   }
-
   function sendSupplierOrder(email, btn){
     btn.disabled = true; btn.textContent = 'Sending…';
     fetch('/api/food-cost/send-order', {method:'POST', headers:{'Content-Type':'application/json'},
@@ -2898,24 +2775,18 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       else { toast(d.error||'Couldn\'t send order','error'); btn.disabled=false; btn.textContent='Send'; }
     });
   }
-
   function loadPurchaseOrders(){
     var el = document.getElementById('po-history');
     fetch('/api/food-cost/purchase-orders?status=sent').then(function(r){return r.json();}).then(function(d){
       if(!d.ok || !d.orders || !d.orders.length){ el.innerHTML=''; return; }
-      var html = '<div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember);margin-bottom:8px">Recent purchase orders</div>';
-      html += '<div class="dark-hero-card" style="border:1px solid rgba(200,75,47,.2);border-radius:12px;overflow:hidden">';
-      d.orders.slice(0,8).forEach(function(po,i){
-        html += '<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 14px;'+(i>0?'border-top:1px solid rgba(255,255,255,.04);':'')+'gap:10px">';
-        html += '<div style="font-size:11.5px;color:rgba(255,255,255,.8)">'+_mmEsc(po.po_number)+' · '+_mmEsc(po.supplier_name||po.supplier_email)+'</div>';
-        html += '<button onclick="receivePO('+po.id+',this)" class="btn" style="background:rgba(255,255,255,.06);color:rgba(255,255,255,.6);border:1px solid rgba(255,255,255,.12);font-size:9.5px;padding:3px 8px">Mark received</button>';
-        html += '</div>';
+      var html = '<div class="hb-kicker">Recent purchase orders</div>';
+      d.orders.slice(0,8).forEach(function(po){
+        html += '<div class="row"><div><b>'+_mmEsc(po.po_number)+'</b> · '+_mmEsc(po.supplier_name||po.supplier_email)+'</div>';
+        html += '<button onclick="receivePO('+po.id+',this)" class="hb-btn" style="height:26px;padding:0 10px;font-size:11px">Mark received</button></div>';
       });
-      html += '</div>';
       el.innerHTML = html;
     }).catch(function(){});
   }
-
   function receivePO(id, btn){
     btn.disabled = true;
     fetch('/api/food-cost/purchase-orders/'+id+'/received', {method:'POST'}).then(function(r){return r.json();}).then(function(d){
@@ -2924,37 +2795,9 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     });
   }
   </script>
+</div><!-- /hb-wrap -->
+</div><!-- /panel-inventory -->
 
-  <!-- 8-week waste cost trend — labor-style dark ember card, moved to bottom -->
-  <div class="dark-hero-card" style="border:1px solid rgba(200,75,47,.45);border-radius:12px;padding:20px 24px;margin-top:16px;position:relative;overflow:hidden;box-shadow:0 0 0 1px rgba(200,75,47,.1),0 8px 32px rgba(200,75,47,.18)">
-    <div style="position:absolute;top:-60px;right:-80px;width:320px;height:260px;background:radial-gradient(ellipse at center,rgba(200,75,47,.14) 0%,transparent 70%);pointer-events:none;z-index:0"></div>
-    <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember);margin-bottom:3px;position:relative;z-index:1">Waste Cost Trend</div>
-    <div style="font-size:11px;color:rgba(255,255,255,.35);margin-bottom:20px;position:relative;z-index:1">Last 8 weeks</div>
-    <div style="display:flex;gap:10px;position:relative;z-index:1">
-      <div id="inv-trend-y-axis" style="display:flex;flex-direction:column;justify-content:space-between;align-items:flex-end;width:46px;font-size:9px;color:rgba(255,255,255,.28);font-family:'Space Grotesk',sans-serif;padding-bottom:2px;flex-shrink:0"></div>
-      <div style="flex:1;position:relative">
-        <div id="inv-trend-gridlines" style="position:absolute;inset:0 0 0 0;pointer-events:none;z-index:0"></div>
-        <div id="inv-trend-avg-line" style="position:absolute;left:0;right:0;height:2px;background:repeating-linear-gradient(90deg,rgba(200,75,47,.7) 0px,rgba(200,75,47,.7) 6px,transparent 6px,transparent 12px);z-index:3;pointer-events:none">
-          <span id="inv-trend-avg-label" style="position:absolute;right:0;bottom:4px;font-size:9px;font-family:'Space Grotesk',sans-serif;font-weight:700;color:#e8956a;background:rgba(18,12,8,.85);padding:1px 6px;border-radius:4px;white-space:nowrap">avg</span>
-        </div>
-        <div id="inv-trend-bars" style="height:200px;display:flex;align-items:flex-end;gap:5px;position:relative;z-index:1">
-          <div style="color:rgba(255,255,255,.3);font-size:12px;font-style:italic;align-self:center;padding:16px">Loading…</div>
-        </div>
-        <div id="inv-trend-labels" style="display:flex;gap:5px;margin-top:6px;font-size:9px;color:rgba(255,255,255,.35);font-family:'Apfel Grotezk',sans-serif"></div>
-      </div>
-    </div>
-    <div style="margin-top:16px;padding-top:12px;border-top:1px solid rgba(255,255,255,.06);display:flex;gap:16px;flex-wrap:wrap;font-size:10px;color:rgba(255,255,255,.38);position:relative;z-index:1;align-items:center">
-      <span style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border-radius:3px;background:#6fcf97;display:inline-block;box-shadow:0 0 6px rgba(111,207,151,.6)"></span>Below average</span>
-      <span style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border-radius:3px;background:#ef9f27;display:inline-block;box-shadow:0 0 6px rgba(239,159,39,.6)"></span>Near average</span>
-      <span style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border-radius:3px;background:#c0392b;display:inline-block;box-shadow:0 0 6px rgba(192,57,43,.6)"></span>Above average</span>
-      <span style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border-radius:3px;background:#ff9f4a;display:inline-block;box-shadow:0 0 6px rgba(255,159,74,.7)"></span>This week</span>
-      <span style="margin-left:auto;color:rgba(200,75,47,.6);display:flex;align-items:center;gap:5px"><span style="display:inline-block;width:20px;height:1px;background:rgba(200,75,47,.7);vertical-align:middle"></span>8-wk avg</span>
-    </div>
-  </div>
-
-  </div><!-- /fc-panel-analytics -->
-</div><!-- /inner-fc-content -->
-</div>
 <!-- MARKETING -->
 <div class="panel {{'active' if not mod_reviews and not mod_labor and not mod_inventory and mod_marketing}}" id="panel-marketing" style="margin:0 auto">
 <div style="max-width:1080px;margin:0 auto;padding:24px 28px">
@@ -5027,22 +4870,15 @@ function loadResponsePerf(days){
   }).catch(function(){body.innerHTML='<div class="hb-empty">Unavailable.</div>';});
 }
 window.switchFcTab = function(tab) {
-  var isTracker = tab === 'tracker';
-  document.getElementById('fc-panel-tracker').style.display   = isTracker ? '' : 'none';
-  document.getElementById('fc-panel-analytics').style.display = isTracker ? 'none' : '';
-  var tt = document.getElementById('fc-tab-tracker');
-  var ta = document.getElementById('fc-tab-analytics');
-  if(tt){ tt.classList.toggle('rv-tab-active', isTracker);  tt.style.background=''; tt.style.color = isTracker ? '' : 'var(--ink3)'; }
-  if(ta){ ta.classList.toggle('rv-tab-active', !isTracker); ta.style.background=''; ta.style.color = isTracker ? 'var(--ink3)' : ''; }
-  if(!isTracker){
-    if(!invLoaded) loadInvInsight();
-    if(typeof renderWasteDonut==='function')renderWasteDonut();
-    if(typeof renderOstockDonut==='function')renderOstockDonut();
-    var _iw=document.getElementById('inv-annual-waste');
-    if(_iw&&!_iw.dataset.animated){_iw.dataset.animated='1';var _iwR=parseInt((_iw.textContent||'').replace(/[$,]/g,'').trim(),10);if(!isNaN(_iwR)&&_iwR>0)countUpMoney(_iw,_iwR,900);}
-    var _ir=document.getElementById('inv-annual-recoverable');
-    if(_ir&&!_ir.dataset.animated){_ir.dataset.animated='1';var _irR=parseInt((_ir.textContent||'').replace(/[$,]/g,'').trim(),10);if(!isNaN(_irR)&&_irR>0)countUpMoney(_ir,_irR,900);}
-  }
+  // Tracker and Analytics are one page now; this just lights it up once.
+  if(!invLoaded) loadInvInsight();
+  if(typeof renderFcGauge==='function') renderFcGauge();
+  if(typeof renderWasteDonut==='function') renderWasteDonut();
+  if(typeof renderOstockDonut==='function') renderOstockDonut();
+  var _iw=document.getElementById('inv-annual-waste');
+  if(_iw&&!_iw.dataset.animated){_iw.dataset.animated='1';var _iwR=parseInt((_iw.textContent||'').replace(/[$,]/g,'').trim(),10);if(!isNaN(_iwR)&&_iwR>0)countUpMoney(_iw,_iwR,1400);}
+  var _ir=document.getElementById('inv-annual-recoverable');
+  if(_ir&&!_ir.dataset.animated){_ir.dataset.animated='1';var _irR=parseInt((_ir.textContent||'').replace(/[$,]/g,'').trim(),10);if(!isNaN(_irR)&&_irR>0)countUpMoney(_ir,_irR,1400);}
 };
 
 window.switchLaborTab = function(tab) {
@@ -5296,9 +5132,7 @@ function switchTab(n,btn){
   if(n==='home'&&typeof hbRefresh==='function'){hbRefresh();}
   if(n==='reviews'&&!reviewInsightLoaded){loadReviewInsight();loadSentimentTrend();loadTopicHeatmap();if(!_perfLoaded)loadResponsePerf();}
   if(n==='labor'&&!laborLoaded){loadLaborInsight();}
-  if(n==='inventory'){
-    // countUp animations and insight load triggered by switchFcTab when analytics tab is shown
-  }
+  if(n==='inventory'){switchFcTab('analytics');}
   if(n==='labor'){renderBars();if(_perfTab==='trend')loadLaborTrend(false);else renderLaborHero();if(typeof renderRoleDonut==='function'&&!window._donutDone){window._donutDone=true;renderRoleDonut();}if(window.loadScheduleHistory&&!window._schedHistDone){window._schedHistDone=true;loadScheduleHistory();}}
   if(n==='account'){loadBillingInfo();loadSessions();loadAlertsSummary();loadAccountSettings();loadEmailHistory();if(window._acctExtras)window._acctExtras();}
   if(n==='marketing'){var _mi=document.getElementById('mkt-insight');if(_mi&&(_mi.classList.contains('insight-loading')||_mi.textContent.trim()==='Loading marketing brief…'||!mktLoaded)){loadMktInsight();}loadRecentTopics();startMetricsPoller();if(!window._calLoaded){window._calLoaded=true;loadCalCached();}}else{stopMetricsPoller();}
@@ -5341,6 +5175,7 @@ document.addEventListener('DOMContentLoaded', function(){
   }
   // Initialize filter so count label is accurate — only when the inbox is on screen
   if(document.getElementById('panel-reviews')&&document.getElementById('panel-reviews').classList.contains('active'))filterReviews();
+  if(document.getElementById('panel-inventory')&&document.getElementById('panel-inventory').classList.contains('active')&&typeof switchFcTab==='function')switchFcTab('analytics');
 
   // Init aiv-body max-height so collapse transition works immediately
   var _aivBody = document.getElementById('aiv-body');
@@ -7156,7 +6991,7 @@ function loadInvInsight(){
   if(!el)return;
   // "Counting the Pantry" — the Food Cost analysis wait is a ledger filling
   // in category by category (over-budget one in ember), not anonymous bars.
-  if(el.classList.contains('insight-loading'))el.innerHTML='<div style="text-align:center">'+cavnarLedgerHtml()+'</div>';
+  // Loading state is the Cavnar orb already in the markup (same as Labor).
   loadInvTrend();
   var fiveMin=5*60*1000;
   try{
@@ -7187,91 +7022,58 @@ function loadInvInsight(){
 }
 var _invTrendData=null;
 function renderInvTrend(){
-  var barsEl=document.getElementById('inv-trend-bars');
-  var labelsEl=document.getElementById('inv-trend-labels');
-  var yAxisEl=document.getElementById('inv-trend-y-axis');
-  var gridEl=document.getElementById('inv-trend-gridlines');
-  var avgEl=document.getElementById('inv-trend-avg-line');
-  var avgLbl=document.getElementById('inv-trend-avg-label');
-  if(!barsEl)return;
+  // "Waste — last 8 weeks": the iOS FoodCostTrendChart. Bars tinted by how
+  // the week sat against the 8-week average, this week hot, the average as
+  // a dashed rule and the 4.5% industry target as a green one.
+  var host=document.getElementById('fc2-trend');if(!host)return;
+  var esc=function(x){return String(x==null?'':x).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');};
   var items=_invTrendData;
-  if(!items||!items.length){
-    barsEl.innerHTML='<div style="color:rgba(255,255,255,.3);font-size:12px;font-style:italic;align-self:center;padding:16px">No history yet — waste trend will appear after your first upload.</div>';
-    if(labelsEl)labelsEl.innerHTML='';if(yAxisEl)yAxisEl.innerHTML='';return;
-  }
-  var maxWaste=0,sum=0;
-  for(var i=0;i<items.length;i++){if(items[i].waste>maxWaste)maxWaste=items[i].waste;sum+=items[i].waste;}
-  var avg=sum/items.length;
-  maxWaste=Math.ceil(Math.max(maxWaste*1.15,50)/10)*10;
-  var steps=[0,Math.round(maxWaste*.25),Math.round(maxWaste*.5),Math.round(maxWaste*.75),maxWaste];
-  var yHtml='';
-  for(var i=steps.length-1;i>=0;i--){yHtml+='<span>$'+steps[i]+'</span>';}
-  if(yAxisEl)yAxisEl.innerHTML=yHtml;
-  var glHtml='';
-  for(var i=0;i<5;i++){glHtml+='<div style="position:absolute;left:0;right:0;bottom:'+(i/4*100)+'%;height:1px;background:rgba(255,255,255,.'+(i===0?'10':'05')+')"></div>';}
-  if(gridEl)gridEl.innerHTML=glHtml;
-  if(avgEl)avgEl.style.bottom=(avg/maxWaste*100)+'%';
-  if(avgLbl)avgLbl.textContent='$'+Math.round(avg)+' avg';
-  // ensure tooltip el exists
-  var tipEl=document.getElementById('inv-trend-tip');
-  if(!tipEl){
-    tipEl=document.createElement('div');
-    tipEl.id='inv-trend-tip';
-    tipEl.style.cssText='position:fixed;z-index:9999;pointer-events:none;display:none;background:rgba(18,12,8,.97);border:1px solid rgba(200,75,47,.4);border-radius:8px;padding:10px 14px;min-width:160px;box-shadow:0 8px 24px rgba(0,0,0,.6)';
-    document.body.appendChild(tipEl);
-  }
-  var barHtml='',labHtml='';
-  for(var i=0;i<items.length;i++){
-    var w=items[i];
-    var isLast=(i===items.length-1);
-    var isOver=w.waste>avg*1.15;
-    var isLow=w.waste<avg*0.85;
-    var col=isLast?'#ff9f4a':isOver?'#c0392b':isLow?'#6fcf97':'#ef9f27';
-    var grad=isLast?'linear-gradient(to top,rgba(180,80,10,.9),rgba(255,159,74,1))':isOver?'linear-gradient(to top,rgba(120,20,20,.9),rgba(192,57,43,1))':isLow?'linear-gradient(to top,rgba(20,80,50,.9),rgba(111,207,151,1))':'linear-gradient(to top,rgba(120,90,10,.9),rgba(239,159,39,1))';
-    var glow=isLast?'rgba(255,159,74,.6)':isOver?'rgba(192,57,43,.5)':isLow?'rgba(111,207,151,.5)':'rgba(239,159,74,.5)';
-    var hPx=Math.max(4,Math.round((w.waste/maxWaste)*200));
-    var vsAvg=Math.round(w.waste-avg);
-    var vsPrevDiff=(i>0)?Math.round(w.waste-items[i-1].waste):999999;
-    var tipData='data-week="Week of '+w.week_start_label+' – '+w.label+'" data-waste="'+Math.round(w.waste)+'" data-vsavg="'+vsAvg+'" data-vsprev="'+vsPrevDiff+'" data-rate="'+w.waste_rate_pct+'"';
-    barHtml+='<div '+tipData+' class="inv-tip-bar" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:3px;height:100%;cursor:pointer;transition:opacity .2s">';
-    barHtml+='<span style="font-family:Space Grotesk,sans-serif;font-size:10px;font-weight:700;color:'+col+';line-height:1">$'+Math.round(w.waste)+'</span>';
-    barHtml+='<div style="width:85%;height:'+hPx+'px;background:'+grad+';border-radius:4px 4px 0 0;box-shadow:0 -2px 12px '+glow+',0 0 6px '+glow+'"></div>';
-    barHtml+='</div>';
-    labHtml+='<span style="flex:1;text-align:center">'+w.label+'</span>';
-  }
-  barsEl.innerHTML=barHtml;
-  if(labelsEl)labelsEl.innerHTML=labHtml;
-  // wire tooltip
-  var bars=barsEl.querySelectorAll('.inv-tip-bar');
-  for(var b=0;b<bars.length;b++){
-    (function(bar){
-      bar.addEventListener('mouseenter',function(e){bar.style.opacity='.72';
-        var week=bar.getAttribute('data-week');
-        var waste=parseInt(bar.getAttribute('data-waste'),10);
-        var vsavg=parseInt(bar.getAttribute('data-vsavg'),10);
-        var vsprev=parseInt(bar.getAttribute('data-vsprev'),10);
-        var rate=parseFloat(bar.getAttribute('data-rate'));
-        var arrowUp='&#8593;',arrowDn='&#8595;';
-        var html='<div style="font-size:10px;font-weight:700;color:rgba(255,255,255,.4);letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px">'+week+'</div>';
-        html+='<div style="font-size:18px;font-weight:700;color:#ff9f4a;font-family:\'Space Grotesk\',sans-serif;line-height:1;margin-bottom:8px">$'+waste+'</div>';
-        if(rate)html+='<div style="font-size:11px;color:rgba(255,255,255,.45);margin-bottom:6px">'+rate+'% waste rate</div>';
-        var avgClr=vsavg>=0?'#ef4444':'#6fcf97';
-        var avgArr=vsavg>=0?arrowUp:arrowDn;
-        html+='<div style="font-size:11px;margin-bottom:3px"><span style="color:'+avgClr+'">'+avgArr+' $'+Math.abs(vsavg)+'</span><span style="color:rgba(255,255,255,.45)"> vs 8-wk avg</span></div>';
-        if(vsprev!==999999){var pvClr=vsprev>=0?'#ef4444':'#6fcf97';var pvArr=vsprev>=0?arrowUp:arrowDn;html+='<div style="font-size:11px"><span style="color:'+pvClr+'">'+pvArr+' $'+Math.abs(vsprev)+'</span><span style="color:rgba(255,255,255,.45)"> vs prior week</span></div>';}
-        tipEl.innerHTML=html;
-        tipEl.style.display='block';
-      });
-      bar.addEventListener('mousemove',function(e){
-        var tx=e.clientX+14;
-        var ty=e.clientY-10;
-        if(tx+180>window.innerWidth)tx=e.clientX-180;
-        tipEl.style.left=tx+'px';
-        tipEl.style.top=ty+'px';
-      });
-      bar.addEventListener('mouseleave',function(){bar.style.opacity='1';tipEl.style.display='none';});
-    })(bars[b]);
-  }
+  if(!items||!items.length){host.innerHTML='<div class="fc2-empty" style="height:190px;display:flex;align-items:center;justify-content:center">Not enough history yet — the trend appears after a couple of weekly submissions.</div>';return;}
+  var W=720,H=190,padT=18,padB=16,n=items.length,gap=Math.round(W*0.03),bw=(W-gap*(n+1))/n;
+  var max=0,sum=0;for(var i=0;i<n;i++){if(items[i].waste>max)max=items[i].waste;sum+=items[i].waste;}
+  var avg=sum/n,top=Math.ceil(Math.max(max*1.15,50)/10)*10;
+  var target=(typeof _fc2Rate!=='undefined'&&_fc2Rate>0&&typeof _fc2WasteWeek!=='undefined'&&_fc2WasteWeek>0)?_fc2WasteWeek*4.5/_fc2Rate:null;
+  if(target&&target>top)top=Math.ceil(target*1.1/10)*10;
+  function y(v){return padT+(H-padT-padB)*(1-v/top);}
+  var cols={good:['#2d6a4f','#4ead7a'],warn:['#8a5e12','#e8b04a'],bad:['#7a1f1f','#e05555'],hot:['#a8341c','#e8956a']};
+  var svg='<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none" aria-hidden="true"><defs>';
+  for(var k in cols){svg+='<linearGradient id="fc2t'+k+'" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="'+cols[k][0]+'"/><stop offset="1" stop-color="'+cols[k][1]+'"/></linearGradient>';}
+  svg+='<filter id="fc2tf" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="4"/></filter></defs>';
+  for(var g=1;g<=4;g++){var gy=y(top*g/4);svg+='<line x1="0" y1="'+gy.toFixed(1)+'" x2="'+W+'" y2="'+gy.toFixed(1)+'" stroke="currentColor" stroke-opacity=".07"/>';}
+  var yLab='',steps=[top,top*.75,top*.5,top*.25,0];
+  for(var q=0;q<steps.length;q++)yLab+='<span>$'+Math.round(steps[q]).toLocaleString()+'</span>';
+  var ax='';
+  for(var i=0;i<n;i++){var w=items[i],isLast=i===n-1,over=w.waste>avg*1.15,low=w.waste<avg*0.85;
+    var k=isLast?'hot':over?'bad':low?'good':'warn',x=gap+i*(bw+gap),bh=Math.max(2,y(0)-y(w.waste)),by=y(0)-bh;
+    var vsAvg=Math.round(w.waste-avg),vsPrev=i>0?Math.round(w.waste-items[i-1].waste):null;
+    var data=' data-week="'+esc('Week of '+(w.week_start_label||w.label)+' – '+w.label)+'" data-waste="'+Math.round(w.waste)+'" data-vsavg="'+vsAvg+'" data-vsprev="'+(vsPrev===null?'':vsPrev)+'" data-rate="'+(w.waste_rate_pct||'')+'"';
+    if(over||isLast)svg+='<rect class="fc2-bar" style="transition-delay:'+(i*110)+'ms" x="'+x.toFixed(1)+'" y="'+by.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+bh.toFixed(1)+'" rx="4" fill="url(#fc2t'+k+')" filter="url(#fc2tf)" opacity=".55"/>';
+    svg+='<rect class="fc2-bar fc2-tipbar" style="transition-delay:'+(i*110)+'ms;cursor:pointer" x="'+x.toFixed(1)+'" y="'+by.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+bh.toFixed(1)+'" rx="4" fill="url(#fc2t'+k+')"'+data+'/>';
+    svg+='<text x="'+(x+bw/2).toFixed(1)+'" y="'+(by-5).toFixed(1)+'" text-anchor="middle" font-size="10.5" font-weight="700" fill="'+cols[k][1]+'">$'+Math.round(w.waste).toLocaleString()+'</text>';
+    ax+='<span>'+esc(w.label)+'</span>';}
+  // Rule labels sit on a paper-coloured stroke so they stay legible over a bar
+  // that happens to land at the same height (paint-order keeps the fill on top).
+  var lab='style="paint-order:stroke;stroke:var(--paper);stroke-width:4px;stroke-linejoin:round"';
+  var ay=y(avg),lastTop=y(items[n-1].waste),avgBelow=Math.abs(lastTop-ay)<16;
+  svg+='<line x1="0" y1="'+ay.toFixed(1)+'" x2="'+W+'" y2="'+ay.toFixed(1)+'" stroke="currentColor" stroke-opacity=".55" stroke-width="1.5" stroke-dasharray="5 5"/><text '+lab+' x="'+(W-4)+'" y="'+(avgBelow?ay+13:ay-5).toFixed(1)+'" text-anchor="end" font-size="10" font-weight="700" fill="currentColor" fill-opacity=".8">8-wk avg $'+Math.round(avg).toLocaleString()+'</text>';
+  if(target){var ty=y(target);svg+='<line x1="0" y1="'+ty.toFixed(1)+'" x2="'+W+'" y2="'+ty.toFixed(1)+'" stroke="#4ead7a" stroke-opacity=".8" stroke-width="1.5" stroke-dasharray="3 5"/><text '+lab+' x="4" y="'+(ty-5).toFixed(1)+'" font-size="10" font-weight="700" fill="#4ead7a">4.5% industry target · $'+Math.round(target).toLocaleString()+'</text>';}
+  svg+='</svg>';
+  host.innerHTML='<div class="fc2-trend"><div class="y">'+yLab+'</div><div class="plot">'+svg+'<div class="ax">'+ax+'</div></div></div>';
+  var bars=host.querySelectorAll('.fc2-bar');
+  requestAnimationFrame(function(){requestAnimationFrame(function(){for(var b=0;b<bars.length;b++)bars[b].classList.add('on');});});
+  var tip=document.getElementById('fc2-tip');
+  if(!tip){tip=document.createElement('div');tip.id='fc2-tip';tip.className='fc2-tip';document.body.appendChild(tip);}
+  var tb=host.querySelectorAll('.fc2-tipbar');
+  for(var t=0;t<tb.length;t++){(function(bar){
+    bar.addEventListener('mouseenter',function(){var vsavg=parseInt(bar.getAttribute('data-vsavg'),10),vp=bar.getAttribute('data-vsprev'),rate=bar.getAttribute('data-rate');
+      var h='<div class="w">'+bar.getAttribute('data-week')+'</div><div class="n">$'+parseInt(bar.getAttribute('data-waste'),10).toLocaleString()+'</div>';
+      if(rate)h+='<div style="color:var(--ink3);margin-bottom:6px">'+rate+'% waste rate</div>';
+      h+='<div><span class="'+(vsavg>=0?'up':'dn')+'">'+(vsavg>=0?'&#8593;':'&#8595;')+' $'+Math.abs(vsavg)+'</span> <span style="color:var(--ink3)">vs 8-wk avg</span></div>';
+      if(vp!==''){var v=parseInt(vp,10);h+='<div><span class="'+(v>=0?'up':'dn')+'">'+(v>=0?'&#8593;':'&#8595;')+' $'+Math.abs(v)+'</span> <span style="color:var(--ink3)">vs prior week</span></div>';}
+      tip.innerHTML=h;tip.style.display='block';bar.style.opacity='.75';});
+    bar.addEventListener('mousemove',function(e){var tx=e.clientX+14,ty=e.clientY-10;if(tx+190>window.innerWidth)tx=e.clientX-190;tip.style.left=tx+'px';tip.style.top=ty+'px';});
+    bar.addEventListener('mouseleave',function(){tip.style.display='none';bar.style.opacity='1';});
+  })(tb[t]);}
 }
 function loadInvTrend(){
   fetch('/api/inv-trend',{cache:'no-store'}).then(function(r){return r.json();}).then(function(data){
