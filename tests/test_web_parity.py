@@ -105,8 +105,7 @@ def test_mobile_home_carries_the_setup_checklist(client, db_path):
     # Onboarding checklists were retired on web and iOS (Sep 2026): the key
     # stays in the payload for older app builds, always empty.
     assert steps == []
-    assert any(s["key"] == "marketing" for s in steps)
-    assert all(s["done"] is False for s in steps)
+    # the dismiss route still answers for older builds, and Home stays empty after it
     assert client.post("/mobile/api/account/dismiss-onboarding", headers=headers).get_json()["ok"]
     assert client.get("/mobile/api/home", headers=headers).get_json()["setup_checklist"] == []
 
