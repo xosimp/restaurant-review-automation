@@ -126,14 +126,6 @@ html[data-theme="dark"] body{color:var(--ink)}
 [data-theme="dark"] .toast.toast-error{background:#2a1010!important;color:#ff9b8a!important;border-left-color:#c0392b!important}
 [data-theme="dark"] .toast.toast-warning{background:#251d08!important;color:#d4a030!important;border-left-color:#d4a030!important}
 /* Home module */
-[data-theme="dark"] #panel-home [style*="background:var(--paper)"]{background:var(--surface)!important}
-[data-theme="dark"] #panel-home [style*="background:rgba(200,75,47,.06)"]{background:rgba(200,75,47,.12)!important}
-[data-theme="dark"] #panel-home [style*="background:rgba(192,57,43,.06)"]{background:rgba(192,57,43,.12)!important}
-[data-theme="dark"] #panel-home [style*="background:rgba(212,160,48,.06)"]{background:rgba(212,160,48,.1)!important}
-[data-theme="dark"] #panel-home [style*="background:rgba(45,106,79,.07)"]{background:rgba(45,106,79,.14)!important}
-[data-theme="dark"] #panel-home [style*="background:rgba(184,150,80,.07)"]{background:rgba(184,150,80,.12)!important}
-[data-theme="dark"] #panel-home [style*="background:rgba(124,58,237,.07)"]{background:rgba(124,58,237,.14)!important}
-[data-theme="dark"] #panel-home [style*="background:rgba(26,84,204,.07)"]{background:rgba(26,84,204,.12)!important}
 /* GBP checklist */
 [data-theme="dark"] #aiv-gbp-checklist{background:var(--surface)!important;border-color:var(--paper3)!important}
 /* Disclaimer */
@@ -265,8 +257,6 @@ html:not([data-theme="dark"]) :where(.dark-hero-card,.dark-hero-card *,.dark-ins
 /* Loading skeleton bars — semi-transparent white is invisible on light cards */
 html:not([data-theme="dark"]) .skeleton{background:rgba(20,15,10,.12)!important}
 
-.hm-stat-tile{flex:1;text-align:center;padding:0 12px;cursor:pointer;transition:opacity 60ms}
-.hm-stat-tile:hover{opacity:.72}
 .labor-num{font-family:'Space Grotesk',sans-serif!important}
 /* Benchmark card gradients */
 [data-theme="dark"] [style*="background:linear-gradient(to right,#f5d5d5"]{background:linear-gradient(to right,#2a1010,var(--surface))!important}
@@ -405,22 +395,7 @@ html:not([data-theme="dark"]) .empty-state-sm.on-dark .es-sub{color:var(--ink3)}
 @keyframes statShimmer{0%{color:var(--ember)}80%{color:var(--ember)}100%{color:var(--ink)}}
 .stat-shimmer{animation:statShimmer 4.5s ease-out 1;animation-fill-mode:forwards}
 @keyframes nameUnderline{from{transform:scaleX(0)}to{transform:scaleX(1)}}
-@keyframes rayA{0%{transform:rotate(-34deg) scaleX(.75);opacity:0}12%{opacity:.32}42%{transform:rotate(-22deg) scaleX(1.3);opacity:.15}68%{transform:rotate(-30deg) scaleX(.88);opacity:.34}88%{opacity:.04}100%{transform:rotate(-34deg) scaleX(.75);opacity:0}}
-@keyframes rayB{0%{transform:rotate(-18deg) scaleX(1.1);opacity:.16}28%{transform:rotate(-6deg) scaleX(.8);opacity:.06}54%{opacity:.26}78%{transform:rotate(-13deg) scaleX(1.18);opacity:.12}100%{transform:rotate(-18deg) scaleX(1.1);opacity:.16}}
-@keyframes rayC{0%{transform:rotate(-5deg) scaleX(1);opacity:.07}18%{opacity:.32}44%{transform:rotate(8deg) scaleX(1.42);opacity:.17}72%{opacity:.04}88%{transform:rotate(2deg) scaleX(.88);opacity:.26}100%{transform:rotate(-5deg) scaleX(1);opacity:.07}}
-@keyframes rayD{0%{transform:rotate(10deg) scaleX(.85);opacity:.13}33%{transform:rotate(2deg) scaleX(1.25);opacity:.27}62%{opacity:.05}82%{transform:rotate(13deg) scaleX(.82);opacity:.21}100%{transform:rotate(10deg) scaleX(.85);opacity:.13}}
-@keyframes rayE{0%{transform:rotate(26deg) scaleX(.7);opacity:.04}24%{transform:rotate(17deg) scaleX(1.18);opacity:.25}56%{opacity:.08}80%{transform:rotate(22deg) scaleX(.92);opacity:.27}100%{transform:rotate(26deg) scaleX(.7);opacity:.04}}
-@keyframes ptclL{0%{transform:translateY(0) translateX(0);opacity:0}8%{opacity:.75}90%{opacity:.5}100%{transform:translateY(-520px) translateX(-28px);opacity:0}}
-@keyframes ptclR{0%{transform:translateY(0) translateX(0);opacity:0}8%{opacity:.75}90%{opacity:.5}100%{transform:translateY(-520px) translateX(28px);opacity:0}}
-@keyframes ptclSL{0%{transform:translateY(0) translateX(0);opacity:0}10%{opacity:.55}90%{opacity:.35}100%{transform:translateY(-360px) translateX(-14px);opacity:0}}
-@keyframes ptclSR{0%{transform:translateY(0) translateX(0);opacity:0}10%{opacity:.55}90%{opacity:.35}100%{transform:translateY(-360px) translateX(14px);opacity:0}}
-.home-rays{position:absolute;top:0;left:0;right:0;bottom:0;pointer-events:none;z-index:0;overflow:hidden;opacity:.22}
-[data-theme="dark"] .home-rays{opacity:1}
-.home-ray{position:absolute;top:-8%;height:90%;transform-origin:top center;background:linear-gradient(180deg,rgba(240,150,80,.88) 0%,rgba(220,120,60,.52) 25%,rgba(200,90,45,.18) 55%,transparent 100%);filter:blur(20px)}
-.home-ptcl{position:absolute;border-radius:50%;background:rgba(250,185,115,.9);pointer-events:none;filter:blur(1px)}
-[data-theme="dark"] .home-ray{background:linear-gradient(180deg,rgba(220,110,60,.92) 0%,rgba(200,85,45,.58) 25%,rgba(180,70,35,.22) 55%,transparent 100%)}
-[data-theme="dark"] .home-ptcl{background:rgba(235,155,95,.95)}
-.name-underlined{position:relative;display:inline-block}
+[data-theme="dark"] [data-theme="dark"] [data-theme="dark"] .name-underlined{position:relative;display:inline-block}
 .name-underlined::after{content:'';position:absolute;bottom:-3px;left:0;right:0;height:1.5px;background:linear-gradient(90deg,var(--ember),rgba(200,75,47,.4));transform:scaleX(0);transform-origin:left;animation:nameUnderline .65s cubic-bezier(.25,.46,.45,.94) forwards}
 .name-underlined-slow{position:relative;display:inline-block}
 .name-underlined-slow::after{content:'';position:absolute;bottom:-10px;left:0;right:0;height:1.5px;background:linear-gradient(90deg,var(--ember),rgba(200,75,47,.4));transform:scaleX(0);transform-origin:left;animation:nameUnderline 1.4s cubic-bezier(.25,.46,.45,.94) forwards}
@@ -1087,381 +1062,393 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 </script>
 
 <!-- HOME -->
-<div class="panel active" id="panel-home" style="max-width:100%;padding:0;min-height:100%;position:relative;overflow:hidden">
-<div class="home-rays" aria-hidden="true">
-  <div class="home-ray" style="left:7%;width:58px;animation:rayA 17s ease-in-out infinite"></div>
-  <div class="home-ray" style="left:19%;width:40px;animation:rayB 21s ease-in-out infinite;animation-delay:-6s"></div>
-  <div class="home-ray" style="left:31%;width:74px;animation:rayC 14s ease-in-out infinite;animation-delay:-3s"></div>
-  <div class="home-ray" style="left:44%;width:52px;animation:rayA 20s ease-in-out infinite;animation-delay:-10s"></div>
-  <div class="home-ray" style="left:56%;width:84px;animation:rayC 15s ease-in-out infinite;animation-delay:-2s"></div>
-  <div class="home-ray" style="left:68%;width:46px;animation:rayD 18s ease-in-out infinite;animation-delay:-7s"></div>
-  <div class="home-ray" style="left:79%;width:64px;animation:rayE 22s ease-in-out infinite;animation-delay:-4s"></div>
-  <div class="home-ray" style="left:91%;width:38px;animation:rayB 16s ease-in-out infinite;animation-delay:-12s"></div>
-  <div class="home-ptcl" style="width:3px;height:3px;left:12%;bottom:28%;animation:ptclL 9s linear infinite;animation-delay:-2s"></div>
-  <div class="home-ptcl" style="width:2px;height:2px;left:23%;bottom:14%;animation:ptclR 13s linear infinite;animation-delay:-5s"></div>
-  <div class="home-ptcl" style="width:4px;height:4px;left:36%;bottom:48%;animation:ptclSL 15s linear infinite"></div>
-  <div class="home-ptcl" style="width:2px;height:2px;left:42%;bottom:22%;animation:ptclR 8s linear infinite;animation-delay:-3s"></div>
-  <div class="home-ptcl" style="width:3px;height:3px;left:54%;bottom:58%;animation:ptclSR 12s linear infinite;animation-delay:-7s"></div>
-  <div class="home-ptcl" style="width:2px;height:2px;left:62%;bottom:9%;animation:ptclL 11s linear infinite;animation-delay:-1s"></div>
-  <div class="home-ptcl" style="width:4px;height:4px;left:71%;bottom:38%;animation:ptclR 17s linear infinite;animation-delay:-4s"></div>
-  <div class="home-ptcl" style="width:2px;height:2px;left:83%;bottom:18%;animation:ptclSL 10s linear infinite;animation-delay:-6s"></div>
-  <div class="home-ptcl" style="width:3px;height:3px;left:17%;bottom:62%;animation:ptclR 14s linear infinite;animation-delay:-8s"></div>
-  <div class="home-ptcl" style="width:2px;height:2px;left:48%;bottom:72%;animation:ptclL 12s linear infinite;animation-delay:-2s"></div>
-  <div class="home-ptcl" style="width:3px;height:3px;left:75%;bottom:66%;animation:ptclSR 16s linear infinite;animation-delay:-9s"></div>
-  <div class="home-ptcl" style="width:2px;height:2px;left:89%;bottom:44%;animation:ptclR 9s linear infinite;animation-delay:-4s"></div>
-  <div class="home-ptcl" style="width:4px;height:4px;left:28%;bottom:33%;animation:ptclL 19s linear infinite;animation-delay:-11s"></div>
-  <div class="home-ptcl" style="width:2px;height:2px;left:59%;bottom:82%;animation:ptclSL 13s linear infinite;animation-delay:-6s"></div>
-  <div class="home-ptcl" style="width:3px;height:3px;left:4%;bottom:52%;animation:ptclR 11s linear infinite;animation-delay:-3s"></div>
-  <div class="home-ptcl" style="width:2px;height:2px;left:94%;bottom:30%;animation:ptclL 15s linear infinite;animation-delay:-7s"></div>
-</div>
-{% set _sb = savings_breakdown or {} %}
-{% set _hr = namespace(val=0) %}
-{% set _now_h = now %}
-<div style="max-width:900px;margin:0 auto;padding:24px 28px;position:relative;z-index:1">
+<div class="panel active" id="panel-home" style="max-width:100%;padding:0;min-height:100%;position:relative">
+<style>
+/* ── Home brief (hb-*) ─────────────────────────────────────────────────────── */
+#panel-home{--hb-card:var(--surface);--hb-line:var(--paper3);--hb-good:var(--green);--hb-warn:var(--amber);--hb-bad:var(--red);--hb-r:10px}
+.hb-wrap{max-width:1180px;margin:0 auto;padding:26px 28px 48px;position:relative;z-index:1}
+.hb-num,.hb-num *{font-family:'Space Grotesk',sans-serif!important;font-variant-numeric:tabular-nums}
+.hb-kicker{font-size:10.5px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--ember)}
+.hb-h1{font-family:'Clash Display',sans-serif;font-weight:500;font-size:clamp(28px,3.2vw,40px);line-height:1.08;letter-spacing:-.01em;color:var(--ink);margin:6px 0 4px;text-wrap:balance}
+.hb-h1 .hb-head{color:var(--ink3)}
+.hb-h1 .hb-head.bad{color:var(--hb-bad)}.hb-h1 .hb-head.warn{color:var(--hb-warn)}.hb-h1 .hb-head.good{color:var(--hb-good)}.hb-h1 .hb-head.neutral{color:var(--ink2)}
+.hb-sub{font-size:13px;color:var(--ink3)}
+.hb-top{display:flex;justify-content:space-between;gap:24px;align-items:flex-end;flex-wrap:wrap;margin-bottom:18px}
+.hb-top .hb-right{display:flex;flex-direction:column;align-items:flex-end;gap:8px;min-width:240px}
+.hb-fresh{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end}
+.hb-chip{display:inline-flex;align-items:center;gap:6px;font-size:11px;line-height:1;padding:6px 9px;border-radius:999px;border:1px solid var(--hb-line);background:var(--hb-card);color:var(--ink2);white-space:nowrap}
+.hb-chip .d{width:6px;height:6px;border-radius:50%;background:var(--ink3);flex-shrink:0}
+.hb-chip.fresh .d{background:var(--hb-good)}.hb-chip.stale .d{background:var(--hb-warn)}.hb-chip.missing .d{background:var(--hb-bad)}.hb-chip.sample .d{background:var(--ink3);box-shadow:0 0 0 2px var(--paper2)}.hb-chip.manual .d{background:var(--ink3)}
+.hb-chip.sample{border-style:dashed}
+.hb-refresh{background:none;border:none;color:var(--ink3);font-family:inherit;font-size:11.5px;cursor:pointer;padding:2px 0;display:inline-flex;gap:6px;align-items:center}
+.hb-refresh:hover{color:var(--ember)}
+.hb-locs{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 16px}
+.hb-loc{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:var(--hb-r);border:1px solid var(--hb-line);background:var(--hb-card);cursor:pointer;font-family:inherit;font-size:12.5px;color:var(--ink);transition:transform .12s ease,box-shadow .12s ease}
+.hb-loc:hover{transform:translateY(-1px);box-shadow:0 4px 14px rgba(14,12,10,.10)}
+.hb-loc.active{border-color:var(--ember);box-shadow:inset 0 0 0 1px var(--ember)}
+.hb-loc .d{width:8px;height:8px;border-radius:50%;background:var(--hb-good)}
+.hb-loc.critical .d{background:var(--hb-bad)}.hb-loc.important .d{background:var(--hb-warn)}.hb-loc.watch .d{background:var(--ink3)}
+.hb-loc .n{font-size:11px;color:var(--ink3)}
+.hb-port{display:flex;gap:18px;flex-wrap:wrap;font-size:12px;color:var(--ink2);margin:-6px 0 16px}
+.hb-port b{color:var(--ink)}
+.hb-grid{display:grid;gap:14px}
+.hb-g12{grid-template-columns:minmax(0,7fr) minmax(0,5fr)}
+.hb-g3{grid-template-columns:repeat(3,minmax(0,1fr))}
+.hb-g2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.hb-card{background:var(--hb-card);border:1px solid var(--hb-line);border-radius:var(--hb-r);padding:18px 20px;min-width:0;box-shadow:0 1px 2px rgba(14,12,10,.04)}
+.hb-card h2{font-family:'Space Grotesk',sans-serif;font-size:15px;font-weight:600;color:var(--ink);margin:0;letter-spacing:-.01em}
+.hb-ch{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}
+.hb-ch .k{font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);margin-bottom:2px}
+.hb-link{background:none;border:none;color:var(--ember);font-family:inherit;font-size:12px;font-weight:600;cursor:pointer;padding:0;white-space:nowrap}
+.hb-link:hover{text-decoration:underline}
+.hb-sec{margin-top:16px}
+/* brief */
+.hb-brief{border-left:3px solid var(--ember);background:linear-gradient(90deg,rgba(200,75,47,.07),transparent 60%),var(--hb-card)}
+.hb-brief ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:9px}
+.hb-brief li{display:flex;gap:10px;align-items:flex-start;font-size:14px;line-height:1.5;color:var(--ink)}
+.hb-brief li .d{width:8px;height:8px;border-radius:50%;margin-top:7px;flex-shrink:0;background:var(--ink3)}
+.hb-brief li.bad .d{background:var(--hb-bad)}.hb-brief li.warn .d{background:var(--hb-warn)}.hb-brief li.good .d{background:var(--hb-good)}
+.hb-brief .over{margin-top:12px;padding-top:10px;border-top:1px solid var(--hb-line);font-size:12px;color:var(--ink3)}
+/* attention */
+.hb-attn{display:flex;flex-direction:column;gap:8px}
+.hb-item{display:grid;grid-template-columns:4px 1fr auto;gap:0 14px;align-items:center;padding:11px 14px 11px 0;border:1px solid var(--hb-line);border-radius:8px;background:var(--hb-card);overflow:hidden}
+.hb-item .st{align-self:stretch;background:var(--ink3);border-radius:8px 0 0 8px}
+.hb-item.critical .st{background:var(--hb-bad)}.hb-item.important .st{background:var(--hb-warn)}.hb-item.watch .st{background:var(--ink3)}
+.hb-item .t{font-size:13.5px;font-weight:600;color:var(--ink);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.hb-item .t .sev{font-size:9.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;padding:2px 6px;border-radius:4px;background:var(--paper2);color:var(--ink3)}
+.hb-item.critical .sev{background:var(--red-bg);color:var(--hb-bad)}.hb-item.important .sev{background:var(--amber-bg);color:var(--hb-warn)}
+.hb-item .dt{font-size:12px;color:var(--ink2);margin-top:3px;line-height:1.5}
+.hb-item .ev{font-size:11px;color:var(--ink3);margin-top:4px}
+.hb-item .ev>span+span:before{content:'·';margin:0 6px;color:var(--paper3)}
+.hb-btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:32px;padding:0 13px;border-radius:7px;border:1px solid var(--hb-line);background:var(--hb-card);color:var(--ink);font-family:'Apfel Grotezk',sans-serif;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;transition:background .12s ease,transform .12s ease,box-shadow .12s ease}
+.hb-btn:hover{background:var(--paper2);transform:translateY(-1px);box-shadow:0 2px 8px rgba(14,12,10,.10)}
+.hb-btn.p{background:var(--ember);border-color:var(--ember);color:#fff}
+.hb-btn.p:hover{background:#a83d25}
+.hb-btn:disabled{opacity:.6;cursor:default;transform:none}
+.hb-btn .c{font-family:'Space Grotesk',sans-serif;font-size:11px;padding:1px 6px;border-radius:999px;background:rgba(255,255,255,.18)}
+.hb-btn:not(.p) .c{background:var(--paper2);color:var(--ink2)}
+.hb-clear{display:flex;align-items:center;gap:12px;padding:14px;border:1px dashed var(--hb-line);border-radius:8px;color:var(--ink2);font-size:13px}
+.hb-clear .ok{width:30px;height:30px;border-radius:50%;background:var(--green-bg);color:var(--hb-good);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+/* wins */
+.hb-wins{display:flex;flex-direction:column;gap:8px}
+.hb-win{display:flex;gap:10px;align-items:flex-start;font-size:12.5px;color:var(--ink2);line-height:1.45}
+.hb-win .d{width:18px;height:18px;border-radius:50%;background:var(--green-bg);color:var(--hb-good);display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px}
+.hb-win b{color:var(--ink);font-weight:600}
+/* quick actions + ask */
+.hb-qa{display:flex;flex-wrap:wrap;gap:8px}
+.hb-ask{display:flex;gap:8px;margin-top:10px}
+.hb-ask input{flex:1;height:36px;border:1px solid var(--hb-line);border-radius:8px;padding:0 12px;font-family:inherit;font-size:13px;background:var(--paper);color:var(--ink)}
+.hb-ask input:focus{border-color:var(--ember);outline:none;box-shadow:0 0 0 3px rgba(200,75,47,.14)}
+.hb-sugg{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.hb-sugg button{background:var(--paper2);border:1px solid transparent;border-radius:999px;padding:5px 10px;font-family:inherit;font-size:11.5px;color:var(--ink2);cursor:pointer}
+.hb-sugg button:hover{border-color:var(--ember);color:var(--ember)}
+/* snapshot */
+.hb-snap{position:relative;display:flex;flex-direction:column;gap:10px;cursor:pointer;transition:transform .12s ease,box-shadow .12s ease}
+.hb-snap:hover{transform:translateY(-2px);box-shadow:0 8px 22px rgba(14,12,10,.12)}
+.hb-snap .top{display:flex;justify-content:space-between;align-items:center}
+.hb-snap .lbl{font-size:10.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3)}
+.hb-snap .state{font-size:9.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;padding:3px 7px;border-radius:4px;background:var(--paper2);color:var(--ink3)}
+.hb-snap.good .state{background:var(--green-bg);color:var(--hb-good)}.hb-snap.warn .state{background:var(--amber-bg);color:var(--hb-warn)}.hb-snap.bad .state{background:var(--red-bg);color:var(--hb-bad)}
+.hb-snap.sample{border-style:dashed}.hb-snap.sample .v{color:var(--ink3)}
+.hb-snap.coming{opacity:.62;cursor:default}.hb-snap.coming:hover{transform:none;box-shadow:none}
+.hb-snap .v{font-family:'Space Grotesk',sans-serif;font-size:34px;font-weight:600;letter-spacing:-.02em;line-height:1;color:var(--ink);display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.hb-snap .v small{font-family:'Apfel Grotezk',sans-serif;font-size:12px;font-weight:400;color:var(--ink3);letter-spacing:0}
+.hb-snap .delta{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:600;padding:3px 8px;border-radius:999px;background:var(--paper2);color:var(--ink2)}
+.hb-snap .delta.good{background:var(--green-bg);color:var(--hb-good)}.hb-snap .delta.bad{background:var(--red-bg);color:var(--hb-bad)}
+.hb-snap svg{display:block;width:100%;height:38px}
+.hb-snap .sec{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding-top:10px;border-top:1px solid var(--hb-line)}
+.hb-snap .sec .l{font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:.08em}
+.hb-snap .sec .x{font-family:'Space Grotesk',sans-serif;font-size:13px;font-weight:600;color:var(--ink);margin-top:2px}
+.hb-snap .int{font-size:12.5px;color:var(--ink2);line-height:1.5}
+.hb-snap .ft{display:flex;justify-content:space-between;align-items:center;font-size:11.5px;color:var(--ink3)}
+.hb-snap .ft .go{color:var(--ember);font-weight:600}
+/* recommendations */
+.hb-recs{display:flex;flex-direction:column;gap:10px}
+.hb-rec{padding:12px 14px;border:1px solid var(--hb-line);border-radius:8px;background:var(--hb-card)}
+.hb-rec .t{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
+.hb-rec .t b{font-size:13.5px;color:var(--ink);font-weight:600;line-height:1.35}
+.hb-rec .str{font-size:9.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;padding:3px 7px;border-radius:4px;white-space:nowrap;background:var(--paper2);color:var(--ink3)}
+.hb-rec .str.strong{background:var(--green-bg);color:var(--hb-good)}
+.hb-rec .why{font-size:12.5px;color:var(--ink2);margin-top:5px;line-height:1.5}
+.hb-rec .ev{font-size:11.5px;color:var(--ink3);margin-top:6px;display:flex;flex-wrap:wrap;gap:4px 14px}
+.hb-rec .ev>span:before{content:'';display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--ember);margin-right:6px;vertical-align:middle}
+.hb-rec .ft{display:flex;justify-content:space-between;align-items:center;margin-top:10px;font-size:11.5px;color:var(--ink3)}
+/* changes / alerts / upcoming lists */
+.hb-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
+.hb-list li{display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-top:1px solid var(--hb-line);font-size:12.5px;color:var(--ink2);line-height:1.45}
+.hb-list li:first-child{border-top:none;padding-top:0}
+.hb-list .d{width:7px;height:7px;border-radius:50%;background:var(--ink3);margin-top:6px;flex-shrink:0}
+.hb-list .d.good{background:var(--hb-good)}.hb-list .d.bad{background:var(--hb-bad)}.hb-list .d.warn{background:var(--hb-warn)}.hb-list .d.new{background:var(--ember)}
+.hb-list .w{margin-left:auto;font-family:'Space Grotesk',sans-serif;font-size:11px;color:var(--ink3);white-space:nowrap}
+.hb-list li.resolved{opacity:.55}
+.hb-list li.resolved .txt{text-decoration:line-through}
+.hb-empty{font-size:12.5px;color:var(--ink3);line-height:1.5}
+/* value + receipts */
+.hb-value .tot{font-family:'Space Grotesk',sans-serif;font-size:26px;font-weight:600;color:var(--hb-good);letter-spacing:-.02em}
+.hb-value svg{display:block;width:100%;height:76px;margin-top:8px}
+.hb-rc{display:flex;flex-direction:column}
+.hb-rc div{display:flex;gap:10px;align-items:baseline;padding:7px 0;border-top:1px solid var(--hb-line);font-size:12.5px;color:var(--ink2)}
+.hb-rc div:first-child{border-top:none;padding-top:0}
+.hb-rc b{font-family:'Space Grotesk',sans-serif;font-weight:600;color:var(--ink);white-space:nowrap}
+/* checklist */
+.hb-steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px}
+.hb-step{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid var(--hb-line);border-radius:8px;background:var(--hb-card);cursor:pointer;font-family:inherit;text-align:left;color:var(--ink)}
+.hb-step .ck{width:18px;height:18px;border-radius:50%;border:1.5px solid var(--hb-line);flex-shrink:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px}
+.hb-step.done .ck{background:var(--hb-good);border-color:var(--hb-good)}
+.hb-step.done .l{text-decoration:line-through;color:var(--ink3)}
+.hb-step .l{font-size:12.5px;font-weight:600}
+.hb-step .s{font-size:11px;color:var(--ink3);margin-top:2px}
+.hb-prog{height:4px;border-radius:2px;background:var(--paper2);overflow:hidden;margin:6px 0 12px}
+.hb-prog i{display:block;height:100%;background:var(--ember);border-radius:2px;transition:width .4s ease}
+/* welcome */
+.hb-welcome{border-left:3px solid var(--ember)}
+.hb-welcome p{font-size:14px;color:var(--ink2);line-height:1.6;margin:6px 0 0;max-width:640px}
+/* skeleton */
+.hb-skel{position:relative;overflow:hidden;background:var(--paper2);border-radius:6px;min-height:14px}
+.hb-skel:after{content:'';position:absolute;inset:0;transform:translateX(-100%);background:linear-gradient(90deg,transparent,rgba(200,75,47,.10),transparent);animation:hbSkel 1.4s ease-in-out infinite}
+@keyframes hbSkel{to{transform:translateX(100%)}}
+.hb-fade{animation:hbIn .32s ease both}
+@keyframes hbIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.hb-err{padding:14px;border:1px solid var(--red-bg);background:var(--red-bg);color:var(--hb-bad);border-radius:8px;font-size:13px;display:flex;justify-content:space-between;gap:12px;align-items:center}
+.hb-quiet{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--ink3)}
+@media (prefers-reduced-motion:reduce){.hb-skel:after,.hb-fade{animation:none}.hb-snap,.hb-btn,.hb-loc{transition:none}}
+@media (max-width:1060px){.hb-g3{grid-template-columns:repeat(2,minmax(0,1fr))}.hb-g12{grid-template-columns:1fr}}
+@media (max-width:720px){.hb-wrap{padding:18px 16px 40px}.hb-g3,.hb-g2{grid-template-columns:1fr}.hb-top{align-items:flex-start}.hb-top .hb-right{align-items:flex-start;min-width:0}.hb-fresh{justify-content:flex-start}.hb-item{grid-template-columns:4px 1fr}.hb-item .act{grid-column:2;margin-top:8px}}
+[data-theme="dark"] .hb-brief{background:linear-gradient(90deg,rgba(224,100,68,.10),transparent 60%),var(--hb-card)}
+[data-theme="dark"] .hb-snap:hover{box-shadow:0 8px 22px rgba(0,0,0,.35)}
+[data-theme="dark"] .hb-btn:not(.p):hover{background:var(--paper3)}
+</style>
 
-<!-- Hero — content pre-rendered; JS grabs innerHTML and re-types it -->
-<div style="text-align:center;padding:48px 0 36px">
-  <div id="home-tw-date" style="font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--ember);margin-bottom:18px;visibility:hidden">{% if now %}{{ now }}{% endif %}</div>
-  <div id="home-tw-headline" style="font-family:'Clash Display',sans-serif;font-size:clamp(40px,5vw,66px);font-weight:500;color:var(--ink);line-height:1.06;letter-spacing:-.01em;margin-bottom:16px;text-shadow:0 2px 12px rgba(14,10,6,.18),0 1px 3px rgba(14,10,6,.12);visibility:hidden;min-height:2.2em"><span style="color:var(--ember)">{% if current_user.username %}{{ current_user.username|title }}{% else %}Welcome back{% endif %}</span> — your restaurant<br>is running on AI.</div>
-  <div id="home-tw-sub" style="font-size:14px;color:var(--ink3);letter-spacing:.01em;visibility:hidden">{{ restaurant.name }}{% if restaurant.location_name %} &mdash; {{ restaurant.location_name }}{% endif %}{% if rstats.awaiting_approval > 0 %} &nbsp;·&nbsp; <span style="color:var(--ember);font-weight:600">{{ rstats.awaiting_approval }} review{% if rstats.awaiting_approval != 1 %}s{% endif %} awaiting approval</span>{% endif %}</div>
-  {% if _sb.total and _sb.total > 0 %}
-  <div id="home-tw-dollar" style="margin-top:20px;display:none;align-items:baseline;gap:8px;visibility:hidden"><span style="font-family:'Space Grotesk',sans-serif;font-size:clamp(28px,3.5vw,46px);font-weight:600;color:var(--ink);letter-spacing:-.02em">${{(_sb.total or 0)|format_num}}</span><span style="font-size:12px;color:var(--ink3);letter-spacing:.06em;text-transform:uppercase;font-weight:500;margin-left:8px">delivered since launch</span></div>
-  {% endif %}
+<div class="hb-wrap" id="hb-root">
+  <!-- First paint: the context the server already knows, and skeletons for the rest. -->
+  <div class="hb-top">
+    <div>
+      <div class="hb-kicker" id="hb-kicker">{{ now }} · {{ restaurant.name }}{% if restaurant.location_name %} — {{ restaurant.location_name }}{% endif %}</div>
+      <h1 class="hb-h1" id="hb-h1">{% if restaurant.owner_name or current_user.username %}Hello, {{ (restaurant.owner_name or current_user.username).split(' ')[0]|title }}.{% else %}Your brief.{% endif %} <span class="hb-head neutral">Reading the room…</span></h1>
+      <div class="hb-sub" id="hb-sub">Building today's brief from your latest data.</div>
+    </div>
+    <div class="hb-right" id="hb-right"><div class="hb-skel" style="width:220px;height:26px"></div></div>
+  </div>
+  <div id="hb-body">
+    <div class="hb-card hb-skel" style="height:120px;margin-bottom:14px"></div>
+    <div class="hb-grid hb-g12"><div class="hb-card hb-skel" style="height:220px"></div><div class="hb-card hb-skel" style="height:220px"></div></div>
+    <div class="hb-grid hb-g3 hb-sec"><div class="hb-card hb-skel" style="height:190px"></div><div class="hb-card hb-skel" style="height:190px"></div><div class="hb-card hb-skel" style="height:190px"></div></div>
+  </div>
 </div>
+
 <script>
 (function(){
-  var _twFired = false;
-  // Uses requestAnimationFrame + timestamps — never gets dropped by Safari like setTimeout can
-  function _tw(el, speed, cb) {
-    var html = el.innerHTML.trim();
-    el.innerHTML = '';
-    el.style.visibility = 'visible';
-    if (!html) { if (cb) requestAnimationFrame(cb); return; }
-    var i = 0;
-    var lastTs = 0;
-    function step(ts) {
-      try {
-        if (!lastTs) lastTs = ts;
-        if (ts - lastTs < speed) { requestAnimationFrame(step); return; }
-        lastTs = ts;
-        // skip HTML tags in one frame
-        while (i < html.length && html[i] === '<') {
-          var end = html.indexOf('>', i);
-          i = (end !== -1) ? end + 1 : i + 1;
-        }
-        // skip HTML entities in one frame
-        if (i < html.length && html[i] === '&') {
-          var end2 = html.indexOf(';', i);
-          i = (end2 !== -1 && end2 - i < 8) ? end2 + 1 : i + 1;
-        } else if (i < html.length) {
-          i++;
-        }
-        el.innerHTML = html.substring(0, i);
-        if (i >= html.length) { if (cb) requestAnimationFrame(cb); return; }
-        requestAnimationFrame(step);
-      } catch(e) {
-        el.innerHTML = html;
-        if (cb) cb();
-      }
-    }
-    requestAnimationFrame(step);
+  // ── Home brief renderer (ES5) ─────────────────────────────────────────────
+  var _hbData=null,_hbLoadedAt=0,_hbLoading=false;
+  var TAB={reviews:'tab-reviews',labor:'tab-labor',inventory:'tab-inventory',marketing:'tab-marketing',intel:'tab-competitor',account:'tab-account'};
+  var MODLABEL={reviews:'Reviews',labor:'Labor',inventory:'Food Cost',marketing:'Marketing',intel:'Intel',account:'Account',alerts:'Alerts'};
+  function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+  // Numbers inside prose get the numeral face (Space Grotesk) — the same rule iOS follows.
+  var NUM_RE=/(\$?[\d][\d,]*(?:\.\d+)?%?★?|[+\-−]\d[\d,.]*(?:\s?pts)?%?)/g;
+  function num(v){
+    // Escape first, then wrap numerals — but never inside an entity like &#39;.
+    var parts=esc(v).split(/(&#?[a-z0-9]+;)/i),out='';
+    for(var i=0;i<parts.length;i++){out+=(i%2)?parts[i]:parts[i].replace(NUM_RE,'<span class="hb-num">$1</span>');}
+    return out;
   }
-  function runHeroTypewriter() {
-    if (_twFired) return;
-    _twFired = true;
-    var elDate   = document.getElementById('home-tw-date');
-    // Set date from client local timezone so Railway UTC never shows wrong day
-    if(elDate){var _dn=new Date();var _mo=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];elDate.textContent=_mo[_dn.getMonth()]+' '+_dn.getDate()+', '+_dn.getFullYear();}
-    var elHead   = document.getElementById('home-tw-headline');
-    var elSub    = document.getElementById('home-tw-sub');
-    var elDollar = document.getElementById('home-tw-dollar');
-    if (!elDate) return;
-    var nameSpan = null;
-    function triggerUnderline() {
-      if (nameSpan) setTimeout(function() { nameSpan.className = 'name-underlined'; }, 200);
-    }
-    _tw(elDate, 55, function() {
-      if (!elHead) return;
-      _tw(elHead, 32, function() {
-        nameSpan = elHead.querySelector('span');
-        if (!elSub) { triggerUnderline(); return; }
-        setTimeout(function() {
-          _tw(elSub, 72, function() {
-            if (!elDollar) { triggerUnderline(); return; }
-            setTimeout(function() {
-              elDollar.style.display = 'inline-flex';
-              _tw(elDollar, 55, function() { triggerUnderline(); });
-            }, 120);
-          });
-        }, 80);
-      });
-    });
+  function parseTs(s){if(!s)return null;var t=String(s);if(t.indexOf('T')<0){t=t.replace(' ','T')+'Z';}var d=new Date(t);return isNaN(d)?null:d;}
+  function ago(s){var d=parseTs(s);if(!d)return '—';var m=Math.round((Date.now()-d)/60000);if(m<1)return 'just now';if(m<60)return m+'m ago';var h=Math.round(m/60);if(h<48)return h+'h ago';var dd=Math.round(h/24);if(dd<60)return dd+'d ago';return Math.round(dd/30)+'mo ago';}
+  function whenLabel(s){var d=parseTs(s);if(!d)return esc(s||'');var now=new Date();var sameDay=d.toDateString()===now.toDateString();var tmr=new Date(now.getTime()+864e5).toDateString()===d.toDateString();var t=d.toLocaleTimeString([],{hour:'numeric',minute:'2-digit'});if(String(s).length<=10)return d.toLocaleDateString([],{month:'short',day:'numeric'});return (sameDay?'Today':tmr?'Tomorrow':d.toLocaleDateString([],{weekday:'short',month:'short',day:'numeric'}))+' · '+t;}
+  function dateKicker(iso){var d=iso?new Date(iso):new Date();return d.toLocaleDateString([],{weekday:'long',month:'long',day:'numeric'});}
+  function greeting(iso){var d=iso?new Date(iso):new Date();var h=d.getHours();return h<12?'Good morning':h<17?'Good afternoon':'Good evening';}
+  function spark(vals,w,h,tone,fill){
+    if(!vals||vals.length<2)return '';
+    var max=Math.max.apply(null,vals),min=Math.min.apply(null,vals),rng=(max-min)||1,pad=3;
+    var pts=[];for(var i=0;i<vals.length;i++){pts.push([pad+i*(w-2*pad)/(vals.length-1),h-pad-((vals[i]-min)/rng)*(h-2*pad)]);}
+    var line='';for(var j=0;j<pts.length;j++){line+=(j?'L':'M')+pts[j][0].toFixed(1)+' '+pts[j][1].toFixed(1)+' ';}
+    var col=tone==='good'?'var(--green)':tone==='bad'?'var(--red)':tone==='warn'?'var(--amber)':'var(--ember)';
+    var last=pts[pts.length-1];
+    var area=fill?'<path d="'+line+'L'+last[0].toFixed(1)+' '+(h-pad)+' L'+pts[0][0].toFixed(1)+' '+(h-pad)+' Z" fill="'+col+'" opacity=".12"/>':'';
+    return '<svg viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none" aria-hidden="true">'+area+'<path d="'+line+'" fill="none" stroke="'+col+'" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/><circle cx="'+last[0].toFixed(1)+'" cy="'+last[1].toFixed(1)+'" r="2.6" fill="'+col+'"/></svg>';
   }
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', runHeroTypewriter);
-  } else {
-    runHeroTypewriter();
+  // ── navigation + actions ──────────────────────────────────────────────────
+  window.hbOpen=function(module){
+    if(module==='alerts'){if(typeof toggleNotifPanel==='function')toggleNotifPanel();return;}
+    var id=TAB[module];var btn=id&&document.getElementById(id);
+    if(btn&&typeof switchTab==='function'){switchTab(module==='intel'?'competitor':module,btn);window.scrollTo(0,0);}
+    else if(typeof toast==='function'){toast((MODLABEL[module]||'That module')+' isn\'t active on this account','warning');}
+  };
+  window.hbAsk=function(q){
+    var inp=document.getElementById('ask-cavnar-input');
+    var panel=document.getElementById('ask-cavnar-panel');
+    if(panel&&panel.style.display==='none'&&typeof toggleAskCavnar==='function')toggleAskCavnar();
+    if(inp){inp.value=q||'';inp.focus();}
+    if(q&&typeof sendAskCavnar==='function')sendAskCavnar();
+  };
+  window.hbAskSubmit=function(){var i=document.getElementById('hb-ask-in');if(!i)return;var q=i.value.trim();if(!q)return;i.value='';hbAsk(q);};
+  window.hbAct=function(kind,module,btn){
+    if(kind==='publish_replies'){if(typeof publishAllReplies==='function')publishAllReplies(btn);return;}
+    if(kind==='ask'){hbAsk('');return;}
+    if(kind==='alerts'){hbOpen('alerts');return;}
+    hbOpen(module);
+  };
+  window.hbSwitchLoc=function(rid,name){if(typeof switchLocation==='function')switchLocation(rid,name);};
+  // ── render ────────────────────────────────────────────────────────────────
+  function sevLabel(s){return s==='critical'?'Critical':s==='important'?'Important':'Watch';}
+  function renderTop(d){
+    var c=d.context||{};
+    var k=document.getElementById('hb-kicker');
+    var ctx=c.restaurant_name+(c.location_name?' — '+c.location_name:'');
+    if(c.view==='location'&&c.group_name)ctx=c.group_name+' · '+(c.location_name||c.restaurant_name)+' · location view';
+    if(k)k.textContent=dateKicker(d.local_now)+' · '+ctx;
+    var h=document.getElementById('hb-h1');
+    if(h)h.innerHTML=esc(greeting(d.local_now))+(d.greeting_name?', '+esc(d.greeting_name):'')+'. <span class="hb-head '+esc(d.brief.tone)+'">'+esc(d.brief.headline)+'</span>';
+    var sub=document.getElementById('hb-sub');
+    var cnt=d.brief.counts||{};var parts=[];
+    if(cnt.critical)parts.push(cnt.critical+' critical');if(cnt.important)parts.push(cnt.important+' important');if(cnt.watch)parts.push(cnt.watch+' to watch');if(cnt.wins)parts.push(cnt.wins+' going well');
+    if(sub)sub.innerHTML=(parts.length?num(parts.join(' · ')):'Nothing flagged right now.')+(d.quiet_hours_active?' &nbsp;<span class="hb-quiet">🌙 alerts quiet until '+esc(d.alert_quiet_end||'morning')+'</span>':'');
+    var right=document.getElementById('hb-right');
+    var chips='';
+    for(var i=0;i<(d.freshness||[]).length;i++){var f=d.freshness[i];chips+='<span class="hb-chip '+esc(f.state)+'" title="'+esc(f.note||'')+'"><span class="d"></span>'+esc(f.label)+' <span class="hb-num" style="color:var(--ink3)">'+(f.state==='sample'?'sample':f.state==='missing'?'not connected':f.at?ago(f.at):(f.state==='manual'?'manual':'live'))+'</span></span>';}
+    if(right)right.innerHTML='<div class="hb-fresh">'+chips+'</div><button class="hb-refresh" onclick="hbLoad(true)" aria-label="Refresh the brief"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><polyline points="21 3 21 9 15 9"/></svg> Updated <span class="hb-num">'+ago(d.generated_at)+'</span> · refresh</button>';
   }
+  function renderLocations(d){
+    var c=d.context||{};if(!c.locations||c.locations.length<2)return '';
+    var h='<div class="hb-locs" role="list" aria-label="Your locations">';
+    for(var i=0;i<c.locations.length;i++){var l=c.locations[i];h+='<button role="listitem" class="hb-loc '+esc(l.health)+(l.active?' active':'')+'" onclick="hbSwitchLoc('+l.id+',\''+esc(l.name)+'\')" title="'+esc(l.top_issue||'Healthy')+'"><span class="d"></span><span>'+esc(l.name)+'</span>'+(l.attention?'<span class="n hb-num">'+l.attention+'</span>':'')+(l.rating_30d?'<span class="n hb-num">'+l.rating_30d+'★</span>':'')+'</button>';}
+    h+='</div>';
+    var p=c.portfolio;
+    if(p){h+='<div class="hb-port"><span><b class="hb-num">'+p.healthy+'</b>/<span class="hb-num">'+p.total+'</span> locations healthy</span>'+(p.needing?'<span><b class="hb-num">'+p.needing+'</b> need attention</span>':'')+(p.biggest_issue?'<span>Biggest issue: <b>'+esc(p.biggest_issue.location)+'</b> — '+num(p.biggest_issue.issue)+'</span>':'')+(p.strongest?'<span>Strongest: <b>'+esc(p.strongest.location)+'</b> <span class="hb-num">'+p.strongest.rating+'★</span> · 30d</span>':'')+'</div>';}
+    return h;
+  }
+  function renderWelcome(d){
+    var e=d.empty_state;if(!e)return '';
+    return '<section class="hb-card hb-welcome" aria-label="Welcome" style="margin-bottom:14px"><div class="hb-kicker">Getting started</div><h2 style="font-family:\'Clash Display\',sans-serif;font-size:22px;font-weight:500;margin-top:4px">'+esc(e.title)+'</h2><p>'+esc(e.body)+'</p></section>';
+  }
+  function renderChecklist(d){
+    var steps=d.setup_checklist||[];if(!steps.length)return '';
+    var done=0;for(var i=0;i<steps.length;i++)if(steps[i].done)done++;
+    var h='<section class="hb-card" aria-labelledby="hb-setup-h" style="margin-bottom:14px"><div class="hb-ch"><div><div class="k">Setup</div><h2 id="hb-setup-h">Let\'s get you set up</h2></div><span class="hb-num" style="font-size:13px;color:var(--ink2)">'+done+'/'+steps.length+'</span></div><div class="hb-prog"><i style="width:'+Math.round(100*done/steps.length)+'%"></i></div><div class="hb-steps">';
+    for(var j=0;j<steps.length;j++){var s=steps[j];h+='<button class="hb-step'+(s.done?' done':'')+'" onclick="hbOpen(\''+esc(s.module||'account')+'\')"><span class="ck">'+(s.done?'✓':'')+'</span><span><div class="l">'+esc(s.label)+'</div>'+(s.sub?'<div class="s">'+esc(s.sub)+'</div>':'')+'</span></button>';}
+    return h+'</div></section>';
+  }
+  function renderBrief(d){
+    var b=d.brief||{};var lines=b.lines||[];
+    if(!lines.length&&!(b.overnight&&(b.overnight.answered||b.overnight.flagged)))return '';
+    var h='<section class="hb-card hb-brief" aria-labelledby="hb-brief-h" style="margin-bottom:14px"><div class="hb-ch"><div><div class="k">Today\'s intelligence</div><h2 id="hb-brief-h">What you should know</h2></div><span class="hb-sub hb-num">'+esc(dateKicker(d.local_now))+'</span></div><ul>';
+    for(var i=0;i<lines.length;i++){h+='<li class="'+esc(lines[i].tone)+'"><span class="d"></span><span>'+num(lines[i].text)+(lines[i].module?' <button class="hb-link" onclick="hbOpen(\''+esc(lines[i].module)+'\')">'+esc(MODLABEL[lines[i].module]||lines[i].module)+' →</button>':'')+'</span></li>';}
+    h+='</ul>';
+    var o=b.overnight;
+    if(o&&(o.answered||o.flagged)){h+='<div class="over">In the last <span class="hb-num">'+(o.window_hours||24)+'</span> hours Cavnar '+(o.answered?'drafted <b class="hb-num">'+o.answered+'</b> '+(o.answered===1?'reply':'replies'):'')+(o.answered&&o.flagged?' and ':'')+(o.flagged?'sent <b class="hb-num">'+o.flagged+'</b> '+(o.flagged===1?'alert':'alerts'):'')+'.</div>';}
+    return h+'</section>';
+  }
+  function renderAttention(d){
+    var items=d.attention||[];
+    var h='<section class="hb-card" aria-labelledby="hb-attn-h"><div class="hb-ch"><div><div class="k">Needs attention</div><h2 id="hb-attn-h">'+(items.length?'Start here':'All clear')+'</h2></div>'+(items.length?'<span class="hb-sub hb-num">'+items.length+'</span>':'')+'</div>';
+    if(!items.length){h+='<div class="hb-clear"><span class="ok"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span><span>Nothing needs you right now. Cavnar keeps watching reviews, labor and costs and will flag the next thing here.</span></div>';}
+    else{h+='<div class="hb-attn" role="list">';
+      for(var i=0;i<items.length;i++){var a=items[i];var ev=[];if(a.evidence)ev.push(num(a.evidence));if(a.since)ev.push('<span class="hb-num">'+esc(a.since)+'</span>');if(a.location)ev.push(esc(a.location));
+        h+='<div class="hb-item '+esc(a.severity)+'" role="listitem"><span class="st"></span><div><div class="t"><span class="sev">'+sevLabel(a.severity)+'</span>'+num(a.title)+'</div><div class="dt">'+num(a.detail||'')+'</div>'+(ev.length?'<div class="ev">'+ev.map(function(x){return '<span>'+x+'</span>';}).join('')+'</div>':'')+'</div><div class="act"><button class="hb-btn'+(a.severity==='critical'||a.action.kind==='publish_replies'?' p':'')+'" onclick="hbAct(\''+esc(a.action.kind)+'\',\''+esc(a.action.module||'')+'\',this)">'+esc(a.action.label)+'</button></div></div>';}
+      h+='</div>';}
+    return h+'</section>';
+  }
+  function renderSide(d){
+    var h='';
+    var wins=d.wins||[];
+    h+='<section class="hb-card" aria-labelledby="hb-wins-h" style="margin-bottom:14px"><div class="hb-ch"><div><div class="k">Going well</div><h2 id="hb-wins-h">'+(wins.length?'Wins to keep':'Nothing to report yet')+'</h2></div></div>';
+    if(!wins.length)h+='<div class="hb-empty">Improvements show up here as they happen — a rating climb, labor under target, waste falling.</div>';
+    else{h+='<div class="hb-wins">';for(var i=0;i<wins.length;i++){h+='<div class="hb-win"><span class="d"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span><span><b>'+num(wins[i].title)+'</b> '+num(wins[i].detail||'')+'</span></div>';}h+='</div>';}
+    h+='</section>';
+    var qa=d.quick_actions||[];
+    h+='<section class="hb-card" aria-labelledby="hb-qa-h"><div class="hb-ch"><div><div class="k">Quick actions</div><h2 id="hb-qa-h">Do it from here</h2></div></div><div class="hb-qa">';
+    for(var j=0;j<qa.length;j++){var q=qa[j];h+='<button class="hb-btn'+(q.kind==='publish_replies'?' p':'')+'" onclick="hbAct(\''+esc(q.kind)+'\',\''+esc(q.module||'')+'\',this)">'+esc(q.label)+(q.count?' <span class="c">'+q.count+'</span>':'')+'</button>';}
+    h+='</div><div class="hb-ask"><input id="hb-ask-in" type="text" placeholder="Ask Cavnar AI about your restaurant…" aria-label="Ask Cavnar AI" onkeydown="if(event.key===\'Enter\')hbAskSubmit()"><button class="hb-btn p" onclick="hbAskSubmit()">Ask</button></div>';
+    var sg=d.ask_suggestions||[];if(sg.length){h+='<div class="hb-sugg">';for(var s=0;s<sg.length;s++){h+='<button onclick="hbAsk(\''+esc(sg[s]).replace(/'/g,'\\\'')+'\')">'+esc(sg[s])+'</button>';}h+='</div>';}
+    return h+'</section>';
+  }
+  function renderSnapshot(d){
+    var cards=d.snapshot||[];if(!cards.length)return '';
+    var h='<section class="hb-sec" aria-labelledby="hb-snap-h"><div class="hb-ch" style="margin-bottom:10px"><div><div class="hb-kicker">Performance snapshot</div><h2 id="hb-snap-h" style="font-family:\'Space Grotesk\',sans-serif;font-size:15px;font-weight:600;margin:2px 0 0">By module</h2></div></div><div class="hb-grid hb-g3">';
+    for(var i=0;i<cards.length;i++){var c=cards[i];
+      if(c.status==='coming_soon'){h+='<div class="hb-card hb-snap coming" aria-label="'+esc(c.label)+' coming soon"><div class="top"><span class="lbl">'+esc(c.label)+'</span><span class="state">soon</span></div><div class="int">'+esc(c.interpretation)+'</div></div>';continue;}
+      var st=c.sample?'sample':c.state;
+      h+='<div class="hb-card hb-snap '+esc(st)+'" role="link" tabindex="0" aria-label="Open '+esc(c.label)+'" onclick="hbOpen(\''+esc(c.key)+'\')" onkeydown="if(event.key===\'Enter\')hbOpen(\''+esc(c.key)+'\')">';
+      h+='<div class="top"><span class="lbl">'+esc(c.label)+'</span><span class="state">'+(c.sample?'sample data':st==='bad'?'needs action':st==='warn'?'watch':st==='good'?'on track':'no data')+'</span></div>';
+      h+='<div class="v">'+esc(c.value)+(c.unit?'<small>'+esc(c.unit)+'</small>':'')+'</div>';
+      if(c.delta)h+='<div><span class="delta '+(c.delta.good?'good':'bad')+'"><span class="hb-num">'+esc(c.delta.value)+'</span>'+(c.delta.label?' <span style="font-weight:400;opacity:.8">'+esc(c.delta.label)+'</span>':'')+'</span></div>';
+      if(c.spark&&c.spark.length>1)h+=spark(c.spark,300,38,st==='sample'?'neutral':st,true)+(c.spark_label?'<div style="font-size:10px;color:var(--ink3);margin-top:-4px">'+esc(c.spark_label)+'</div>':'');
+      if(c.secondary&&c.secondary.length){h+='<div class="sec">';for(var j=0;j<c.secondary.length;j++){h+='<div><div class="l">'+esc(c.secondary[j].label)+'</div><div class="x">'+esc(c.secondary[j].value)+'</div></div>';}h+='</div>';}
+      h+='<div class="int">'+num(c.interpretation||'')+'</div>';
+      h+='<div class="ft"><span>'+(c.last_data?'data '+ago(c.last_data):(c.sample?'':'—'))+'</span>'+(c.setup?'<button class="hb-btn" onclick="event.stopPropagation();hbOpen(\''+esc(c.setup.module)+'\')">'+esc(c.setup.label)+'</button>':'<span class="go">Open '+esc(c.label)+' →</span>')+'</div>';
+      h+='</div>';}
+    return h+'</div></section>';
+  }
+  function renderRecs(d){
+    var recs=d.recommendations||[];
+    var h='<section class="hb-card" aria-labelledby="hb-rec-h"><div class="hb-ch"><div><div class="k">Cavnar recommends</div><h2 id="hb-rec-h">'+(recs.length?'Grounded in your numbers':'No recommendations yet')+'</h2></div></div>';
+    if(!recs.length){h+='<div class="hb-empty">Recommendations appear when the data supports one — a day running heavy on labor, a waste line worth cutting, replies waiting. Nothing is invented to fill the space.</div>';}
+    else{h+='<div class="hb-recs">';for(var i=0;i<recs.length;i++){var r=recs[i];
+      h+='<div class="hb-rec"><div class="t"><b>'+num(r.title)+'</b><span class="str '+esc(r.strength)+'">'+esc(r.strength==='strong'?'strong evidence':r.strength==='early'?'early signal':'moderate')+'</span></div><div class="why">'+num(r.why)+'</div><div class="ev"><span>'+num(r.evidence)+'</span></div><div class="ft"><span>'+esc(r.impact)+' · '+esc(r.timeframe)+'</span><button class="hb-link" onclick="hbOpen(\''+esc(r.module)+'\')">'+esc(r.action_label)+' →</button></div></div>';}
+      h+='</div>';}
+    return h+'</section>';
+  }
+  function renderChanges(d){
+    var ch=d.changes||{};var items=ch.items||[];
+    var h='<section class="hb-card" aria-labelledby="hb-chg-h" style="margin-bottom:14px"><div class="hb-ch"><div><div class="k">What changed</div><h2 id="hb-chg-h">'+esc((ch.since_label||'since your last visit').charAt(0).toUpperCase()+(ch.since_label||'since your last visit').slice(1))+'</h2></div></div>';
+    if(!items.length)h+='<div class="hb-empty">No meaningful change '+esc(ch.since_label||'since your last visit')+'.</div>';
+    else{h+='<ul class="hb-list">';for(var i=0;i<items.length;i++){h+='<li><span class="d '+esc(items[i].tone)+'"></span><span class="txt">'+num(items[i].text)+'</span>'+(items[i].module&&MODLABEL[items[i].module]?'<button class="hb-link" style="margin-left:auto" onclick="hbOpen(\''+esc(items[i].module)+'\')">'+esc(MODLABEL[items[i].module])+'</button>':'')+'</li>';}h+='</ul>';}
+    h+='</section>';
+    var al=d.alerts||[];
+    h+='<section class="hb-card" aria-labelledby="hb-al-h"><div class="hb-ch"><div><div class="k">Alerts · 7 days</div><h2 id="hb-al-h">'+(al.length?'What Cavnar flagged':'No alerts this week')+'</h2></div><button class="hb-link" onclick="hbOpen(\'alerts\')">All alerts →</button></div>';
+    if(!al.length)h+='<div class="hb-empty">Urgent reviews, rating drops and labor overruns land here the moment they fire.</div>';
+    else{h+='<ul class="hb-list">';for(var j=0;j<al.length;j++){var a=al[j];h+='<li class="'+(a.resolved?'resolved':'')+'"><span class="d '+(a.new&&!a.resolved?'new':a.severity==='critical'?'bad':a.severity==='important'?'warn':'')+'"></span><span class="txt">'+esc(a.label)+(a.resolved?' · handled':'')+'</span><span class="w">'+ago(a.fired_at)+'</span></li>';}h+='</ul>';}
+    return h+'</section>';
+  }
+  function renderUpcoming(d){
+    var up=d.upcoming||[];
+    var h='<section class="hb-card" aria-labelledby="hb-up-h"><div class="hb-ch"><div><div class="k">Upcoming</div><h2 id="hb-up-h">On the calendar</h2></div></div>';
+    if(!up.length)h+='<div class="hb-empty">Scheduled posts, the weekly digest and the next review pull show up here.</div>';
+    else{h+='<ul class="hb-list">';for(var i=0;i<up.length;i++){h+='<li><span class="d"></span><span class="txt">'+esc(up[i].label)+'</span><span class="w">'+whenLabel(up[i].when)+'</span></li>';}h+='</ul>';}
+    return h+'</section>';
+  }
+  function renderValue(d){
+    var v=d.value||{};var hist=v.history||[];var vals=[];for(var i=0;i<hist.length;i++)vals.push(+hist[i].value||0);
+    var h='<section class="hb-card hb-value" aria-labelledby="hb-val-h"><div class="hb-ch"><div><div class="k">Value delivered</div><h2 id="hb-val-h">Since you started</h2></div><span class="tot">$'+Math.round(v.total||0).toLocaleString()+'</span></div>';
+    if(vals.length>1)h+=spark(vals,320,76,'good',true)+'<div style="font-size:11px;color:var(--ink3);margin-top:6px"><span class="hb-num">'+esc(hist[0].date)+'</span> – <span class="hb-num">'+esc(hist[hist.length-1].date)+'</span> · <span class="hb-num">'+hist.length+'</span> days tracked</div>';
+    else h+='<div class="hb-empty">The trend line starts after the second day of tracking.</div>';
+    return h+'</section>';
+  }
+  function renderReceipts(d){
+    var rc=d.receipts||[];
+    var h='<section class="hb-card" aria-labelledby="hb-rc-h"><div class="hb-ch"><div><div class="k">This week</div><h2 id="hb-rc-h">What Cavnar did for you</h2></div></div>';
+    if(!rc.length)h+='<div class="hb-empty">Replies, schedules, waste flags and posts land here as they happen this week.</div>';
+    else{h+='<div class="hb-rc">';for(var i=0;i<rc.length;i++){h+='<div><b>'+esc(rc[i].emphasis)+'</b><span>'+num(rc[i].text)+'</span></div>';}h+='</div>';}
+    return h+'</section>';
+  }
+  function render(d){
+    _hbData=d;renderTop(d);
+    var body=document.getElementById('hb-body');if(!body)return;
+    var h='';
+    h+=renderLocations(d);
+    h+=renderWelcome(d);
+    h+=renderChecklist(d);
+    h+=renderBrief(d);
+    h+='<div class="hb-grid hb-g12"><div>'+renderAttention(d)+'</div><div>'+renderSide(d)+'</div></div>';
+    h+=renderSnapshot(d);
+    h+='<div class="hb-grid hb-g12 hb-sec"><div>'+renderRecs(d)+'</div><div>'+renderChanges(d)+'</div></div>';
+    h+='<div class="hb-grid hb-g3 hb-sec">'+renderUpcoming(d)+renderValue(d)+renderReceipts(d)+'</div>';
+    body.innerHTML='<div class="hb-fade">'+h+'</div>';
+  }
+  window.hbLoad=function(fresh){
+    if(_hbLoading)return;_hbLoading=true;
+    var btn=document.querySelector('.hb-refresh');if(btn){btn.disabled=true;btn.textContent='Refreshing…';}
+    fetch('/api/home/brief'+(fresh?'?fresh=1':''),{credentials:'same-origin'}).then(function(r){return r.json();}).then(function(d){
+      _hbLoading=false;
+      if(!d||!d.ok){var b=document.getElementById('hb-body');if(b)b.innerHTML='<div class="hb-err"><span>'+esc((d&&d.error)||'Couldn\'t build your brief right now.')+'</span><button class="hb-btn" onclick="hbLoad(true)">Try again</button></div>';if(d&&d.session_expired)location.reload();return;}
+      _hbLoadedAt=Date.now();render(d);
+    }).catch(function(){_hbLoading=false;var b=document.getElementById('hb-body');if(b)b.innerHTML='<div class="hb-err"><span>Couldn\'t reach Cavnar — check your connection.</span><button class="hb-btn" onclick="hbLoad(true)">Try again</button></div>';});
+  };
+  // Re-pull when Home is reopened after a while (the tab bar calls hbRefresh from switchTab).
+  window.hbRefresh=function(){if(!_hbLoadedAt||Date.now()-_hbLoadedAt>5*60*1000)hbLoad(false);};
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',function(){hbLoad(false);});else hbLoad(false);
+  document.addEventListener('visibilitychange',function(){if(!document.hidden&&document.getElementById('panel-home').classList.contains('active'))hbRefresh();});
 })();
 </script>
-<script>
-(function(){
-  function runCountUp() {
-    var els = document.querySelectorAll('[data-countup]');
-    for (var i = 0; i < els.length; i++) {
-      (function(el) {
-        var target = parseFloat(el.getAttribute('data-countup')) || 0;
-        var decimals = parseInt(el.getAttribute('data-countup-decimals') || '0', 10);
-        var isInt = el.getAttribute('data-countup-int') === '1';
-        var duration = 4000;
-        var start = null;
-        function step(now) {
-          if (!start) start = now;
-          var p = Math.min((now - start) / duration, 1);
-          var ease = 1 - Math.pow(1 - p, 3);
-          var val = target * ease;
-          el.textContent = isInt ? Math.round(val).toLocaleString() : val.toFixed(decimals);
-          if (p < 1) requestAnimationFrame(step);
-          else {
-            el.textContent = isInt ? target.toLocaleString() : target.toFixed(decimals);
-            el.classList.remove('stat-shimmer');
-          }
-        }
-        // Use RAF-based delay instead of setTimeout — Safari throttles setTimeout
-        (function() {
-          var deadline = performance.now() + 2200;
-          function waitThenStart(ts) {
-            if (ts < deadline) { requestAnimationFrame(waitThenStart); return; }
-            requestAnimationFrame(step);
-          }
-          requestAnimationFrame(waitThenStart);
-        })();
-      })(els[i]);
-    }
-  }
-  function runRelativeTimes() {
-    var now = new Date();
-    var els = document.querySelectorAll('.home-rel-time');
-    for (var i = 0; i < els.length; i++) {
-      var raw = els[i].getAttribute('data-date');
-      if (!raw) continue;
-      var d = new Date(raw);
-      if (isNaN(d)) continue;
-      var diff = Math.floor((now - d) / 1000);
-      var label;
-      if (diff < 60) { label = 'just now'; }
-      else if (diff < 3600) { label = Math.floor(diff/60) + 'm ago'; }
-      else if (diff < 86400) { label = Math.floor(diff/3600) + 'h ago'; }
-      else if (diff < 172800) { label = 'yesterday'; }
-      else if (diff < 604800) { label = Math.floor(diff/86400) + 'd ago'; }
-      else if (diff < 2592000) { label = Math.floor(diff/604800) + 'w ago'; }
-      else { label = Math.floor(diff/2592000) + 'mo ago'; }
-      els[i].textContent = label;
-    }
-  }
-  // Always use DOMContentLoaded — this script is above the stat elements in the DOM
-  // so querySelectorAll would find nothing if called immediately
-  document.addEventListener('DOMContentLoaded', function() {
-    runCountUp();
-    runRelativeTimes();
-  });
-})();
-</script>
-<!-- KPI stat bar — flex so it scales uniformly from 4 to 6 modules -->
-<div style="display:flex;align-items:stretch;margin-bottom:36px;padding:12px 0 32px">
-
-  <!-- Reviews -->
-  <div class="hm-stat-tile" onclick="switchTab('reviews',document.getElementById('tab-reviews'))">
-    <div style="font-family:'Space Grotesk',sans-serif;font-size:clamp(32px,3.5vw,52px);font-weight:500;color:var(--ink);letter-spacing:-.02em;line-height:1;text-shadow:0 2px 8px rgba(14,10,6,.12)"><span id="home-responded-n" class="stat-shimmer" data-countup="{{rstats.responded or 0}}" data-countup-int="1">0</span><span id="home-total-n" style="font-size:.45em;font-weight:400;color:var(--ink3);letter-spacing:0;margin-left:4px">/{{rstats.total or 0}}</span></div>
-    <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);margin-top:10px">Reviews</div>
-    <div id="home-rr-sub" style="font-size:11px;color:var(--ink3);margin-top:4px">{{rstats.response_rate or 0}}% response rate</div>
-  </div>
-
-  <div style="width:1px;background:rgba(247,244,239,.18);flex-shrink:0;margin:4px 0"></div>
-
-  <!-- Labor cost -->
-  {% if mod_labor %}
-  <div class="hm-stat-tile" onclick="switchTab('labor',document.getElementById('tab-labor'))">
-    <div style="font-family:'Space Grotesk',sans-serif;font-size:clamp(32px,3.5vw,52px);font-weight:500;color:var(--ink);letter-spacing:-.02em;line-height:1;text-shadow:0 2px 8px rgba(14,10,6,.12)"><span class="stat-shimmer" data-countup="{{labor.overall_labor_pct|round(1)}}" data-countup-decimals="1">0</span><span style="font-size:.5em;font-weight:400;color:var(--ink3);letter-spacing:0;margin-left:2px">%</span></div>
-    <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);margin-top:10px">Labor Cost</div>
-    <div style="font-size:11px;color:var(--ink3);margin-top:4px">target {{labor_target}}%<br>{% if labor.overall_labor_pct <= labor_target %}<span style="color:var(--green);font-weight:600">on track</span>{% else %}<span style="color:var(--red);font-weight:600">over target</span>{% endif %}</div>
-  </div>
-  {% else %}
-  <div style="flex:1;text-align:center;padding:0 12px;opacity:.35">
-    <div style="font-family:'Space Grotesk',sans-serif;font-size:clamp(32px,3.5vw,52px);font-weight:500;color:var(--ink3);line-height:1">—</div>
-    <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">Labor Cost</div>
-    <div style="font-size:11px;color:var(--ink3);margin-top:4px">not active</div>
-  </div>
-  {% endif %}
-
-  <div style="width:1px;background:rgba(247,244,239,.18);flex-shrink:0;margin:4px 0"></div>
-
-  <!-- Food cost -->
-  {% if mod_inventory %}
-  <div class="hm-stat-tile" onclick="switchTab('inventory',document.getElementById('tab-inventory'))">
-    <div style="font-family:'Space Grotesk',sans-serif;font-size:clamp(32px,3.5vw,52px);font-weight:500;color:var(--ink);letter-spacing:-.02em;line-height:1;text-shadow:0 2px 8px rgba(14,10,6,.12)"><span style="font-size:.6em;font-weight:400;vertical-align:baseline;color:var(--ink3);margin-right:3px">$</span><span class="stat-shimmer" data-countup="{{(inv.recoverable_monthly or 0)|int}}" data-countup-int="1">0</span></div>
-    <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);margin-top:10px">Food Cost</div>
-    <div style="font-size:11px;color:var(--ink3);margin-top:4px">recoverable waste / mo</div>
-  </div>
-  {% else %}
-  <div style="flex:1;text-align:center;padding:0 12px;opacity:.35">
-    <div style="font-family:'Space Grotesk',sans-serif;font-size:clamp(32px,3.5vw,52px);font-weight:500;color:var(--ink3);line-height:1">—</div>
-    <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">Food Cost</div>
-    <div style="font-size:11px;color:var(--ink3);margin-top:4px">not active</div>
-  </div>
-  {% endif %}
-
-  <div style="width:1px;background:rgba(247,244,239,.18);flex-shrink:0;margin:4px 0"></div>
-
-  <!-- Marketing -->
-  {% if mod_marketing %}
-  <div class="hm-stat-tile" onclick="switchTab('marketing',document.getElementById('tab-marketing'))">
-    <div style="font-family:'Space Grotesk',sans-serif;font-size:clamp(32px,3.5vw,52px);font-weight:500;color:var(--ink);letter-spacing:-.02em;line-height:1;text-shadow:0 2px 8px rgba(14,10,6,.12)"><span class="stat-shimmer" data-countup="{{mkt_stats.this_month or 0}}" data-countup-int="1">0</span></div>
-    <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);margin-top:10px">Marketing</div>
-    <div style="font-size:11px;color:var(--ink3);margin-top:4px">pieces this month</div>
-  </div>
-  {% else %}
-  <div style="flex:1;text-align:center;padding:0 12px;opacity:.35">
-    <div style="font-family:'Space Grotesk',sans-serif;font-size:clamp(32px,3.5vw,52px);font-weight:500;color:var(--ink3);line-height:1">—</div>
-    <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">Marketing</div>
-    <div style="font-size:11px;color:var(--ink3);margin-top:4px">not active</div>
-  </div>
-  {% endif %}
-
-  <!-- Waitlist (coming soon) — always shown, scales uniformly with future modules -->
-  <div style="width:1px;background:rgba(247,244,239,.18);flex-shrink:0;margin:4px 0"></div>
-  <div style="flex:1;text-align:center;padding:0 12px;opacity:.28">
-    <div style="font-family:'Space Grotesk',sans-serif;font-size:clamp(32px,3.5vw,52px);font-weight:500;color:var(--ink3);line-height:1">—</div>
-    <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">Waitlist</div>
-    <div style="font-size:11px;color:var(--ink3);margin-top:4px;font-style:italic">coming soon</div>
-  </div>
-
-  <!-- Bar & Alcohol (coming soon) -->
-  <div style="width:1px;background:rgba(247,244,239,.18);flex-shrink:0;margin:4px 0"></div>
-  <div style="flex:1;text-align:center;padding:0 12px;opacity:.28">
-    <div style="font-family:'Space Grotesk',sans-serif;font-size:clamp(32px,3.5vw,52px);font-weight:500;color:var(--ink3);line-height:1">—</div>
-    <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">Bar & Alcohol</div>
-    <div style="font-size:11px;color:var(--ink3);margin-top:4px;font-style:italic">coming soon</div>
-  </div>
-
-</div>
-
-<!-- Needs attention + Recent reviews -->
-<div style="background:var(--paper2);border:1px solid var(--paper3);border-radius:var(--r);padding:20px;display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px">
-
-  <!-- Needs attention -->
-  <div style="background:var(--paper);border:1px solid var(--paper3);border-radius:var(--r);padding:20px 22px">
-    <div style="font-family:'Space Grotesk',sans-serif;font-size:17px;font-weight:500;color:var(--ink);margin-bottom:14px;display:flex;align-items:center;gap:8px">
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--ember)" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-      Needs attention
-    </div>
-    <div style="display:flex;flex-direction:column;gap:8px" id="home-attention-list">
-      {% if rstats.awaiting_approval > 0 %}
-      <div onclick="switchTab('reviews',document.getElementById('tab-reviews'))" style="display:flex;align-items:center;gap:12px;padding:10px 12px;background:rgba(200,75,47,.06);border:1px solid rgba(200,75,47,.18);border-radius:6px;cursor:pointer;transition:background .15s" onmouseover="this.style.background='rgba(200,75,47,.1)'" onmouseout="this.style.background='rgba(200,75,47,.06)'">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--ember)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
-        <div style="flex:1;min-width:0">
-          <div style="font-size:12px;font-weight:600;color:var(--ink)">{{rstats.awaiting_approval}} review{{'' if rstats.awaiting_approval==1 else 's'}} awaiting approval</div>
-          <div style="font-size:11px;color:var(--ink3)">AI responses drafted — publish in one click</div>
-        </div>
-        <button onclick="event.stopPropagation();publishAllReplies(this)" class="btn-primary" style="font-size:11px;padding:5px 11px;white-space:nowrap">Publish {{ [rstats.awaiting_approval, 25] | min }} {{ 'reply' if rstats.awaiting_approval == 1 else 'replies' }}</button>
-        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="flex-shrink:0"><path d="M6.5 5.5l3 2.5-3 2.5" stroke="var(--ember)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      </div>
-      {% endif %}
-      {% if mod_labor and labor.overtime_risk %}
-      {% set _ot_count = labor.overtime_risk|selectattr('status','equalto','overtime')|list|length %}
-      {% if _ot_count > 0 %}
-      <div onclick="switchTab('labor',document.getElementById('tab-labor'))" style="display:flex;align-items:center;gap:12px;padding:10px 12px;background:rgba(192,57,43,.06);border:1px solid rgba(192,57,43,.18);border-radius:6px;cursor:pointer;transition:background .15s" onmouseover="this.style.background='rgba(192,57,43,.1)'" onmouseout="this.style.background='rgba(192,57,43,.06)'">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#c0392b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-        <div style="flex:1;min-width:0">
-          <div style="font-size:12px;font-weight:600;color:var(--ink)">{{_ot_count}} staff member{{'' if _ot_count==1 else 's'}} in overtime</div>
-          <div style="font-size:11px;color:var(--ink3)">Est. ${{(_ot_count * 38)|int}}+ extra in OT wages this week</div>
-        </div>
-        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="flex-shrink:0"><path d="M6.5 5.5l3 2.5-3 2.5" stroke="var(--ember)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      </div>
-      {% endif %}
-      {% endif %}
-      {% if mod_reviews and rstats.total > 0 and rstats.response_rate < 50 %}
-      <div onclick="switchTab('reviews',document.getElementById('tab-reviews'))" style="display:flex;align-items:center;gap:12px;padding:10px 12px;background:rgba(212,160,48,.06);border:1px solid rgba(212,160,48,.2);border-radius:6px;cursor:pointer;transition:background .15s" onmouseover="this.style.background='rgba(212,160,48,.1)'" onmouseout="this.style.background='rgba(212,160,48,.06)'">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--amber)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
-        <div style="flex:1;min-width:0">
-          <div style="font-size:12px;font-weight:600;color:var(--ink)">Response rate at {{rstats.response_rate}}%</div>
-          <div style="font-size:11px;color:var(--ink3)">Restaurants at 80%+ get 2× more new guests</div>
-        </div>
-        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="flex-shrink:0"><path d="M6.5 5.5l3 2.5-3 2.5" stroke="var(--ember)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      </div>
-      {% endif %}
-      {% if rstats.awaiting_approval == 0 and (not mod_labor or not labor.overtime_risk or labor.overtime_risk|selectattr('status','equalto','overtime')|list|length == 0) and (not mod_reviews or rstats.total == 0 or rstats.response_rate >= 50) %}
-      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px 16px;text-align:center;gap:10px">
-        <div style="width:40px;height:40px;border-radius:50%;background:rgba(45,106,79,.1);border:1.5px solid rgba(45,106,79,.25);display:flex;align-items:center;justify-content:center">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2.2" stroke-linecap="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-        </div>
-        <div>
-          <div style="font-family:'Space Grotesk',sans-serif;font-size:15px;font-weight:500;color:var(--ink);margin-bottom:3px">All clear</div>
-          <div style="font-size:11px;color:var(--ink3)">Nothing needs your attention right now</div>
-        </div>
-      </div>
-      {% endif %}
-    </div>
-  </div>
-
-  <!-- Recent reviews -->
-  {% if mod_reviews %}
-  <div style="background:var(--paper);border:1px solid var(--paper3);border-radius:var(--r);padding:20px 22px">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-      <div style="font-family:'Space Grotesk',sans-serif;font-size:17px;font-weight:500;color:var(--ink);display:flex;align-items:center;gap:8px">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--ember)" stroke-width="2.5" stroke-linecap="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-        Latest reviews
-      </div>
-      <button onclick="switchTab('reviews',document.getElementById('tab-reviews'))" style="font-size:11px;color:var(--ember);background:none;border:none;cursor:pointer;font-weight:600;font-family:'Apfel Grotezk',sans-serif;padding:0">View all →</button>
-    </div>
-    <div style="display:flex;flex-direction:column;gap:8px">
-      {% set _colors = ['#c84b2f','#2d6a4f','#7c3aed','#b89650','#1a56cc'] %}
-      {% for r in reviews[:4] %}
-      {% set _col = _colors[loop.index0 % _colors|length] %}
-      <div style="display:flex;align-items:flex-start;gap:10px;padding:8px 0;{% if not loop.last %}border-bottom:1px solid var(--paper3);{% endif %}">
-        <div style="width:26px;height:26px;border-radius:50%;background:{{_col}};display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:white;flex-shrink:0;margin-top:1px">{{r.author[0].upper() if r.author else '?'}}</div>
-        <div style="flex:1;min-width:0">
-          <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px;flex-wrap:wrap">
-            <span style="font-size:12px;font-weight:600;color:var(--ink)">{{r.author|e if r.author else 'Anonymous'}}</span>
-            <span style="font-size:11px;color:var(--amber)">{% for i in range(r.rating) %}★{% endfor %}{% for i in range(5-r.rating) %}<span style="color:var(--paper3)">★</span>{% endfor %}</span>
-            {% if r.response_status == 'posted' %}<span class="rv-status-live" style="font-size:9px;font-weight:700;background:#e8f5ee;color:var(--green);padding:1px 6px;border-radius:3px;letter-spacing:.04em">LIVE</span>{% elif r.response_status == 'approved' %}<span class="rv-status-approved" style="font-size:9px;font-weight:700;background:#e8f0fe;color:#1a56cc;padding:1px 6px;border-radius:3px;letter-spacing:.04em">APPROVED</span>{% else %}<span class="rv-status-pending" style="font-size:9px;font-weight:700;background:rgba(200,75,47,.1);color:var(--ember);padding:1px 6px;border-radius:3px;letter-spacing:.04em">PENDING</span>{% endif %}
-            {% if r.review_date %}<span class="home-rel-time" data-date="{{r.review_date}}" style="font-size:10px;color:var(--ink3);margin-left:auto"></span>{% endif %}
-          </div>
-          <div style="font-size:11px;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%">{{r.text[:80]|e if r.text else 'No text'}}{% if r.text and r.text|length > 80 %}…{% endif %}</div>
-        </div>
-      </div>
-      {% else %}
-      <div class="empty-state-sm" style="padding:14px 8px"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 17l5-5 4 3 6-7"></path><path d="M3 21h18"></path></svg><div class="es-title">No reviews yet</div><div class="es-sub">New reviews land here automatically once your platforms are connected</div></div>
-      {% endfor %}
-    </div>
-  </div>
-  {% else %}
-  <div style="background:var(--paper);border:1px dashed var(--paper3);border-radius:var(--r);padding:20px 22px;display:flex;align-items:center;justify-content:center">
-    <div style="text-align:center;color:var(--ink3);font-size:13px">Reviews module not active</div>
-  </div>
-  {% endif %}
-
-</div><!-- /section grid -->
-</div><!-- /section bg wrapper -->
-
-<!-- iOS parity: this week's receipts + value over time (filled by loadHomeExtras) -->
-<div id="home-extras" style="display:none;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px">
-  <div style="background:var(--paper2);border:1px solid var(--paper3);border-radius:var(--r);padding:20px 22px">
-    <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);margin-bottom:4px">This week</div>
-    <div style="font-family:'Space Grotesk',sans-serif;font-size:17px;font-weight:500;color:var(--ink);margin-bottom:12px">What Cavnar AI did for you</div>
-    <div id="home-receipts" style="display:flex;flex-direction:column;gap:8px;font-size:12px;color:var(--ink2)"></div>
-  </div>
-  <div style="background:var(--paper2);border:1px solid var(--paper3);border-radius:var(--r);padding:20px 22px">
-    <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);margin-bottom:4px">Value delivered</div>
-    <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px">
-      <div style="font-family:'Space Grotesk',sans-serif;font-size:17px;font-weight:500;color:var(--ink)">Over time</div>
-      <div id="home-value-total" style="font-family:'Space Grotesk',sans-serif;font-size:22px;font-weight:600;color:var(--green)"></div>
-    </div>
-    <svg id="home-value-chart" viewBox="0 0 320 90" preserveAspectRatio="none" style="width:100%;height:90px;display:block"></svg>
-    <div id="home-value-range" style="font-size:11px;color:var(--ink3);margin-top:6px"></div>
-  </div>
-</div>
-</div><!-- /centering wrapper -->
 </div><!-- /panel-home -->
 
 <!-- REVIEWS -->
@@ -5483,7 +5470,7 @@ function switchTab(n,btn){
     var _lnums=document.querySelectorAll('#panel-labor .labor-num');
     for(var _li=0;_li<_lnums.length;_li++){(function(el){if(el.dataset.animated)return;el.dataset.animated='1';var raw=el.textContent.replace(/[$,]/g,'').trim();var num=parseInt(raw,10);if(!isNaN(num)&&num>0)countUpMoney(el,num,900);}(_lnums[_li]));}
   }
-  if(n==='home'&&!homeInsightLoaded){loadHomeInsight();}
+  if(n==='home'&&typeof hbRefresh==='function'){hbRefresh();}
   if(n==='reviews'&&!reviewInsightLoaded){loadReviewInsight();loadSentimentTrend();loadTopicHeatmap();}
   if(n==='labor'&&!laborLoaded){loadLaborInsight();}
   if(n==='inventory'){
@@ -6280,17 +6267,6 @@ var _gbpReload=!!sessionStorage.getItem('_gbpReload');if(_gbpReload)sessionStora
 var laborLoaded=false,invLoaded=false,reviewInsightLoaded=false,sentimentTrendLoaded=false,mktLoaded=false,homeInsightLoaded=false,mktPerfLoaded=false;
 var _twTokens={};
 var _laborInsightFull=null,_invInsightFull=null;
-function loadHomeInsight(){
-  homeInsightLoaded=true;
-  var el=document.getElementById('home-insight-text');
-  if(!el)return;
-  fetch('/api/review-insight').then(function(r){return r.json();}).then(function(d){
-    var txt=d.insight||d.text||'';
-    if(txt){el.innerHTML='<span style="font-size:13px;color:var(--ink2);line-height:1.75">'+txt+'</span>';}
-    else{el.innerHTML='<span style="font-size:13px;color:var(--ink3)">Check back after more reviews come in.</span>';}
-  }).catch(function(){el.innerHTML='<span style="font-size:13px;color:var(--ink3)">Insight unavailable right now.</span>';});
-}
-document.addEventListener('DOMContentLoaded',function(){loadHomeInsight();});
 function postToInstagram(){
   var el=document.getElementById('mkoutput');
   var content=(el.innerText||el.textContent||'').trim();
@@ -10035,36 +10011,6 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       var n=d.approved||0;toast(n+' '+(n===1?'reply':'replies')+' approved'+(d.posted?' · '+d.posted+' posting to Google':''),'success');
       setTimeout(function(){location.reload();},900);});
   };
-  window.loadHomeExtras=function(){
-    var wrap=document.getElementById('home-extras');if(!wrap)return;
-    jget('/api/home',function(d){
-      if(!d.ok)return;
-      var rec=d.weekly_receipts||[],hist=d.value_history||[];
-      var show=false;
-      var rl=document.getElementById('home-receipts');
-      if(rl){
-        if(rec.length){show=true;rl.innerHTML=rec.map(function(r){return '<div style="display:flex;gap:10px;align-items:baseline;padding:6px 0;border-top:1px solid var(--paper3)"><span style="font-family:\'Space Grotesk\',sans-serif;font-weight:600;color:var(--ink);white-space:nowrap">'+esc(r.emphasis)+'</span><span>'+esc(r.text)+'</span></div>';}).join('');}
-        else rl.innerHTML='<div style="color:var(--ink3)">Nothing logged yet this week — replies, schedules and posts land here as they happen.</div>';
-      }
-      var svg=document.getElementById('home-value-chart');
-      if(svg&&hist.length>1){
-        show=true;
-        var vals=hist.map(function(p){return +p.value||0;}),max=Math.max.apply(null,vals)||1,min=Math.min.apply(null,vals);
-        var W=320,H=90,pad=6,rng=(max-min)||1;
-        var pts=vals.map(function(v,i){return [pad+i*(W-2*pad)/(vals.length-1),H-pad-((v-min)/rng)*(H-2*pad)];});
-        var line=pts.map(function(p,i){return (i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1);}).join(' ');
-        var area=line+' L'+pts[pts.length-1][0].toFixed(1)+' '+(H-pad)+' L'+pts[0][0].toFixed(1)+' '+(H-pad)+' Z';
-        svg.innerHTML='<defs><linearGradient id="hvg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2d6a4f" stop-opacity=".35"/><stop offset="1" stop-color="#2d6a4f" stop-opacity="0"/></linearGradient></defs><path d="'+area+'" fill="url(#hvg)"/><path d="'+line+'" fill="none" stroke="#2d6a4f" stroke-width="2" stroke-linejoin="round"/><circle cx="'+pts[pts.length-1][0].toFixed(1)+'" cy="'+pts[pts.length-1][1].toFixed(1)+'" r="3.5" fill="#2d6a4f"/>';
-        var tot=document.getElementById('home-value-total');if(tot)tot.textContent='$'+Math.round(d.total_value_delivered||vals[vals.length-1]).toLocaleString();
-        var rg=document.getElementById('home-value-range');if(rg)rg.textContent=fmtDate(hist[0].date)+' – '+fmtDate(hist[hist.length-1].date)+' · '+hist.length+' days tracked';
-      } else if(svg){
-        var tot2=document.getElementById('home-value-total');if(tot2)tot2.textContent='$'+Math.round(d.total_value_delivered||0).toLocaleString();
-        var rg2=document.getElementById('home-value-range');if(rg2)rg2.textContent='The trend line starts after the second day of tracking.';
-        if(rec.length)show=true;
-      }
-      if(show)wrap.style.display='grid';
-    });
-  };
 
   // ── Ask Cavnar history ──
   window._askConversationId=window._askConversationId||null;
@@ -10214,7 +10160,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
   var _origOpenPublish=window.openPublishSchedule;
   if(_origOpenPublish){window.openPublishSchedule=function(){_origOpenPublish.apply(this,arguments);loadShareStatus();};}
   document.addEventListener('DOMContentLoaded',function(){
-    loadSecurityExtras();loadTeam();loadHomeExtras();loadScheduleHistory();loadAivHistory();
+    loadSecurityExtras();loadTeam();loadScheduleHistory();loadAivHistory();
   });
 })();
 

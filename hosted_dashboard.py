@@ -587,11 +587,14 @@ def index(current_user):
     _labor_vs_industry_annual  = _labor_vs_industry_monthly * 12
     # Banner value = scheduling savings (only claimed when platform identified over-target spend)
     # The vs-industry figure belongs on the Labor tab as context, not in "Total Value Delivered"
-    _labor_value = _labor_monthly
+    # Sample shifts/inventory are never the restaurant's own savings — the
+    # banner (and value_delivered.py, which mirrors this) count them only
+    # once the data is live.
+    _labor_value = _labor_monthly if labor.get("is_live") else 0
     # Revenue lift from responding to reviews — 3.1% of annual sales (Cornell HBS research)
     _sales_lift_yr = int(_monthly_sales_est * 12 * 0.031) if _monthly_sales_est > 10000 else 0
     # Inventory value: monthly recoverable waste
-    _inv_value = int(inv.get("recoverable_monthly", 0))
+    _inv_value = int(inv.get("recoverable_monthly", 0)) if inv.get("is_live") else 0
     # Marketing value: agency equivalent already computed
     _mkt_value = mkt_stats["agency_value"]
     # Only count modules that are active
@@ -1107,14 +1110,9 @@ def _seed_gia_mia_background():
             "SELECT id, is_demo FROM restaurants WHERE name=?", ("Gia Mia",)
         ).fetchone()
         _gia_mia_is_demo = bool(_gia_mia_row["is_demo"]) if _gia_mia_row else False
-        # One-time backfill: restaurants created before is_demo existed default
-        # to 0. Only the seed path above ever creates a restaurant literally
-        # named "Gia Mia" with billing_status='trial', so it's safe to infer
-        # is_demo=1 here rather than losing existing demo behavior silently.
-        if _gia_mia_row and not _gia_mia_is_demo:
-            conn2.execute("UPDATE restaurants SET is_demo=1 WHERE id=?", (_gia_mia_row["id"],))
-            conn2.commit()
-            _gia_mia_is_demo = True
+        # The flag is the only gate. It used to be re-set to 1 by name on
+        # every boot ("one-time backfill"), which meant turning it off in the
+        # console never stuck and the next deploy wiped the reviews again.
         conn2.close()
         if _gia_mia_row and _gia_mia_is_demo:
             _refresh_gia_mia_reviews(_gia_mia_row["id"])

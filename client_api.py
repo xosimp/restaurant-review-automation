@@ -184,6 +184,10 @@ def _do_approve_all(restaurant_id, limit=25):
 @client_bp.route("/api/reviews/approve-all", methods=["POST"])
 @login_required
 def approve_all_reviews_api(current_user):
+    try:
+        import home_brief; home_brief.invalidate(current_user["restaurant_id"])
+    except Exception:
+        pass
     data = request.get_json(silent=True) or {}
     payload, status = _do_approve_all(current_user["restaurant_id"], data.get("limit", 25))
     return jsonify(**payload), status
@@ -4586,6 +4590,10 @@ def _do_switch_location(current_user, target_id, token):
         return {"ok": False, "error": "Location not in your group"}, 403
     from auth import switch_active_restaurant
     switch_active_restaurant(token, target_id)
+    try:
+        import home_brief; home_brief.invalidate()
+    except Exception:
+        pass
     target = get_restaurant(target_id)
     return {"ok": True, "restaurant_name": target.name, "restaurant_id": target_id}, 200
 
@@ -5357,6 +5365,18 @@ def _m(name):
     import mobile_api as _mob
     fn = getattr(_mob, name)
     return getattr(fn, "__wrapped__", fn)
+
+
+@client_bp.route("/api/home/brief")
+@login_required
+def home_brief_api(current_user):
+    """The web Home screen in one payload — see home_brief.py. Deterministic,
+    cached 60s per restaurant, no AI call on load. ?fresh=1 recomputes."""
+    import home_brief
+    payload, status = home_brief.build_home_brief(current_user, fresh=request.args.get("fresh") == "1")
+    resp = jsonify(**payload)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp, status
 
 
 @client_bp.route("/api/home")

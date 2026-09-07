@@ -35,7 +35,9 @@ def compute_total_value_delivered(restaurant_id: int, db_path: str = DB_PATH) ->
         try:
             from labor import analyse_shifts_for_restaurant
             labor = analyse_shifts_for_restaurant(restaurant_id)
-            labor_value = int(round(labor.get("potential_savings", 0) * 4.33))
+            # Sample shifts (no upload, no POS sync yet) are not the
+            # restaurant's savings — count labor only once it's live.
+            labor_value = int(round(labor.get("potential_savings", 0) * 4.33)) if labor.get("is_live") else 0
         except Exception:
             labor_value = 0
 
@@ -45,7 +47,7 @@ def compute_total_value_delivered(restaurant_id: int, db_path: str = DB_PATH) ->
             from inventory import load_inventory_for_restaurant, analyse_inventory
             items, _live = load_inventory_for_restaurant(restaurant_id)
             inv = analyse_inventory(items)
-            inv_value = int(inv.get("recoverable_monthly", 0))
+            inv_value = int(inv.get("recoverable_monthly", 0)) if _live else 0
         except Exception:
             inv_value = 0
 

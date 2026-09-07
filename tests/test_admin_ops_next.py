@@ -168,3 +168,27 @@ def test_alert_cap_toggle(db_path, rid):
     assert admin_ops.set_alert_cap(rid, 0, "will")["ok"]
     assert admin_ops.notifications()["caps"] == []
     assert any(e["event_type"] == "alert_cap.set" for e in admin_ops.client_detail(rid)["events"])
+
+
+def test_demo_flag_route_and_console_default(monkeypatch, rid):
+    """Gia Mia vanished from Clients because it was flagged demo and the page
+    hid demo rows by default. Demo rows are now shown (chipped), and the flag
+    can be flipped from the console."""
+    from flask import Flask
+    from admin_routes import admin_bp
+    from auth_routes import auth_bp
+    app = Flask(__name__, template_folder="../templates")
+    app.register_blueprint(admin_bp); app.register_blueprint(auth_bp)
+    cl = app.test_client()
+    monkeypatch.setattr(auth, "get_current_user", lambda: {"id": 1, "restaurant_id": None, "is_admin": 1, "username": "will", "email": "x@x.com", "role": "admin"})
+    r = cl.post(f"/admin/api/client/{rid}/demo", json={"is_demo": 1})
+    assert r.status_code == 200 and r.get_json()["is_demo"] == 1
+    assert next(c for c in admin_ops.clients()["clients"] if c["id"] == rid)["is_demo"] is True
+    r = cl.post(f"/admin/api/client/{rid}/demo", json={"is_demo": 0})
+    assert r.get_json()["is_demo"] == 0
+    assert next(c for c in admin_ops.clients()["clients"] if c["id"] == rid)["is_demo"] is False
+    assert cl.post("/admin/api/client/999999/demo", json={"is_demo": 1}).status_code == 404
+    html = open("templates/admin.html").read()
+    assert "_showDemo = true" in html
+    src = open("hosted_dashboard.py").read()
+    assert "UPDATE restaurants SET is_demo=1" not in src

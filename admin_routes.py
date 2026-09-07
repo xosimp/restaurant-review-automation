@@ -2095,6 +2095,27 @@ def admin_api_alert_cap(restaurant_id, current_user):
     return jsonify(**out), (200 if out.get("ok") else (404 if out.get("error") == "Not found" else 400))
 
 
+@admin_bp.route("/admin/api/client/<int:restaurant_id>/demo", methods=["POST"])
+@admin_required
+def admin_api_set_demo(restaurant_id, current_user):
+    """The is_demo flag decides whether boot-time seeding may wipe this
+    restaurant's reviews and labor history. Nothing else in the console can
+    change it, so a real client stays real."""
+    from models import get_restaurant, update_restaurant
+    data = request.get_json(silent=True) or {}
+    on = 1 if data.get("is_demo") else 0
+    if not get_restaurant(restaurant_id):
+        return jsonify(ok=False, error="Not found"), 404
+    update_restaurant(restaurant_id, {"is_demo": on})
+    try:
+        import admin_events
+        admin_events.record("admin", "demo_flag.set", restaurant_id=restaurant_id, amount=on,
+                            summary=f"Marked as {'demo' if on else 'real client'} by {current_user.get('username')}")
+    except Exception:
+        pass
+    return jsonify(ok=True, restaurant_id=restaurant_id, is_demo=on)
+
+
 @admin_bp.route("/admin/api/events")
 @admin_required
 def admin_api_events(current_user):
