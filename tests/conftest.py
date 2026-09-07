@@ -24,6 +24,36 @@ def _reset_ai_rate_limiter():
     ai_utils._ai_call_log.clear()
 
 
+@pytest.fixture(autouse=True)
+def _no_real_email_or_sms(monkeypatch):
+    """The suite must never reach Resend, Twilio, Stripe or DocuSign.
+
+    It did: the full run sent ~75 real 2FA and notification emails to the
+    tests' fake addresses through the production Resend key and exhausted
+    the account's daily quota the night before a client meeting. Blank the
+    keys so every send short-circuits, and trip loudly if anything still
+    tries the network. Tests that exercise delivery stub `requests.post`
+    and `emails._resend_key` themselves, which overrides this."""
+    import requests
+    import emails
+    monkeypatch.setenv("RESEND_API_KEY", "")
+    monkeypatch.setenv("TWILIO_AUTH_TOKEN", "")
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "")
+    monkeypatch.setattr(emails, "_resend_key", lambda: "")
+    blocked = ("api.resend.com", "api.twilio.com", "api.stripe.com", "docusign.net", "docusign.com")
+    real_post, real_request = requests.post, requests.request
+
+    def guard(fn):
+        def wrapped(url, *a, **k):
+            if any(b in str(url) for b in blocked):
+                raise RuntimeError("test tried to reach %s — stub it" % url)
+            return fn(url, *a, **k)
+        return wrapped
+    monkeypatch.setattr(requests, "post", guard(real_post))
+    monkeypatch.setattr(requests, "request", guard(real_request))
+    yield
+
+
 @pytest.fixture
 def db_path(tmp_path):
     path = str(tmp_path / "test_reviews.db")
