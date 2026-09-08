@@ -340,8 +340,22 @@ final class SessionStore {
         await PendingWriteQueue.shared.drain()
     }
 
+    private struct LogoutBody: Encodable {
+        let apnsToken: String?
+        enum CodingKeys: String, CodingKey { case apnsToken = "apns_token" }
+    }
+
     func logout() async {
-        _ = try? await client.send("/mobile/api/logout", method: .post) as APIClient.EmptyResponse
+        // Unregister push while the bearer token is still valid. Signing out
+        // used to leave the device_tokens row in place, so the phone kept
+        // getting that restaurant's review alerts and daily digests — the
+        // apns_token also rides along in the logout body so a single request
+        // still clears it if the DELETE above didn't land.
+        let apnsToken = PushManager.shared.registeredToken
+        await PushManager.shared.unregisterCurrentDevice()
+        _ = try? await client.send(
+            "/mobile/api/logout", method: .post, body: LogoutBody(apnsToken: apnsToken)
+        ) as APIClient.EmptyResponse
         clearLocalSession()
     }
 

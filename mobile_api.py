@@ -494,6 +494,19 @@ def mobile_me(current_user):
 @mobile_bp.route("/logout", methods=["POST"])
 @mobile_login_required
 def mobile_logout(current_user):
+    # Unregister this device's APNs token first, while the bearer token is
+    # still valid. Signing out used to leave the device_tokens row behind, so
+    # the phone kept receiving that restaurant's review alerts and daily
+    # digests indefinitely — a real problem on a shared back-office iPad or a
+    # departing manager's phone. Best-effort: a push-registry failure must
+    # never block the sign-out itself.
+    apns_token = ((request.get_json(silent=True) or {}).get("apns_token") or "").strip()
+    if apns_token:
+        try:
+            _unregister_device_token(current_user["restaurant_id"], apns_token)
+        except Exception as e:
+            import ops
+            ops.capture(e, job="mobile_logout", context=f"restaurant_id={current_user['restaurant_id']}")
     token = _bearer_token()
     if token:
         delete_session(token)
@@ -1785,17 +1798,25 @@ def mobile_register_device_token(current_user):
     return jsonify(ok=True)
 
 
-@mobile_bp.route("/device-tokens/<apns_token>", methods=["DELETE"])
-@mobile_login_required
-def mobile_delete_device_token(apns_token, current_user):
+def _unregister_device_token(restaurant_id, apns_token):
+    """Delete one APNs token, scoped to the restaurant that owns it. Returns
+    False when the token belongs to someone else (or no longer exists), so
+    the caller decides between 404 and silence."""
     from push import get_device_tokens, remove_device_token
     # apns_tokens are long random hex strings issued by Apple, not sequential
     # ids — effectively unguessable — but scope the delete to the caller's
     # own restaurant anyway rather than trusting any authenticated bearer.
-    owned = any(t["apns_token"] == apns_token for t in get_device_tokens(current_user["restaurant_id"]))
-    if not owned:
-        return jsonify(ok=False, error="Device token not found"), 404
+    if not any(t["apns_token"] == apns_token for t in get_device_tokens(restaurant_id)):
+        return False
     remove_device_token(apns_token)
+    return True
+
+
+@mobile_bp.route("/device-tokens/<apns_token>", methods=["DELETE"])
+@mobile_login_required
+def mobile_delete_device_token(apns_token, current_user):
+    if not _unregister_device_token(current_user["restaurant_id"], apns_token):
+        return jsonify(ok=False, error="Device token not found"), 404
     return jsonify(ok=True)
 
 

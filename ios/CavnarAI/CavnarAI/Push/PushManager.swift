@@ -26,6 +26,12 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
     /// explain why (audit 4.3). Held here until a send succeeds.
     private var pendingToken: (token: String, environment: String)?
 
+    /// The token this install last registered with the backend. Apple issues
+    /// one per install and it is stable across launches, so holding it lets
+    /// sign-out unregister the device — without it, a signed-out phone kept
+    /// receiving that restaurant's review alerts and daily digests forever.
+    private(set) var registeredToken: String?
+
     func requestAuthorizationAndRegister() {
         guard !hasRegisteredThisLaunch else { return }
         hasRegisteredThisLaunch = true
@@ -68,11 +74,37 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
                 body: DeviceTokenBody(apnsToken: pending.token, environment: pending.environment),
                 hapticOnError: false
             )
+            registeredToken = pending.token
             pendingToken = nil
         } catch {
             // Stays queued for the next attempt — a failed push registration
             // must not be silently permanent.
         }
+    }
+
+    /// Called on sign-out, before the bearer token is cleared. The backend
+    /// deletes the row scoped to the caller's own restaurant; the token stays
+    /// queued locally so the next sign-in re-registers it.
+    func unregisterCurrentDevice() async {
+        guard let token = registeredToken else { return }
+        do {
+            let _: APIClient.EmptyResponse = try await APIClient.shared.send(
+                "/mobile/api/device-tokens/\(token)", method: .delete, hapticOnError: false
+            )
+        } catch {
+            // Best effort — sign-out must never be blocked by the push
+            // registry. The backend also unregisters from /logout's body.
+        }
+        pendingToken = (token, currentEnvironment)
+        registeredToken = nil
+    }
+
+    private var currentEnvironment: String {
+        #if DEBUG
+        "sandbox"
+        #else
+        "production"
+        #endif
     }
 
     /// Show the banner even while the app is open — an owner mid-task

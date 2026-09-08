@@ -10,6 +10,7 @@ import client_api
 import mobile_api
 import models
 import notify
+import push
 import guest_marketing
 import value_delivered
 from auth import create_user, init_auth, set_user_role, hash_session_token
@@ -25,7 +26,7 @@ def _redirect_db(monkeypatch, db_path):
     comment for the same gotcha."""
     real_get_conn = models.get_conn
     redirect = lambda *a, **k: real_get_conn(db_path)
-    for mod in (models, auth, auth_routes, client_api, mobile_api, guest_marketing):
+    for mod in (models, auth, auth_routes, client_api, mobile_api, guest_marketing, push):
         monkeypatch.setattr(mod, "get_conn", redirect)
 
 
@@ -34,6 +35,8 @@ def _init_auth_tables(db_path):
     init_auth(db_path=db_path)
     from models import init_two_fa_backup_codes
     init_two_fa_backup_codes(db_path=db_path)
+    from push import init_push
+    init_push(db_path=db_path)
 
 
 @pytest.fixture(autouse=True)
@@ -3622,3 +3625,79 @@ def test_marketing_payload_counts_textable_guests_for_the_shelf_tile(client, db_
     data = client.get("/mobile/api/marketing", headers=_auth_headers(token)).get_json()
 
     assert data["guest_textable"] == 1
+
+
+# ── push registration is released on sign-out ────────────────────────────────
+#
+# Signing out used to leave the device_tokens row in place: the phone kept
+# receiving that restaurant's review alerts and daily digests indefinitely.
+# On a shared back-office iPad, or a departing manager's phone, that's the
+# previous account's data arriving on a device nobody is signed in on.
+
+def _register_push(client, token, apns="a" * 64, environment="production"):
+    return client.post("/mobile/api/device-tokens", headers=_auth_headers(token),
+                       json={"apns_token": apns, "environment": environment})
+
+
+def _push_tokens(db_path, rid):
+    from push import get_device_tokens
+    return [t["apns_token"] for t in get_device_tokens(rid, db_path=db_path)]
+
+
+def test_logout_unregisters_the_device_that_signed_out(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    assert _register_push(client, token).status_code == 200
+    assert _push_tokens(db_path, rid) == ["a" * 64]
+
+    resp = client.post("/mobile/api/logout", headers=_auth_headers(token),
+                       json={"apns_token": "a" * 64})
+    assert resp.status_code == 200
+    assert _push_tokens(db_path, rid) == [], "a signed-out phone must stop receiving pushes"
+
+
+def test_logout_leaves_this_owner_other_devices_alone(client, db_path):
+    """One owner, phone and iPad. Signing out of the phone must not silence
+    the iPad."""
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    _register_push(client, token, apns="phone" + "0" * 59)
+    _register_push(client, token, apns="ipad" + "0" * 60)
+
+    client.post("/mobile/api/logout", headers=_auth_headers(token),
+                json={"apns_token": "phone" + "0" * 59})
+    assert _push_tokens(db_path, rid) == ["ipad" + "0" * 60]
+
+
+def test_logout_without_an_apns_token_still_ends_the_session(client, db_path):
+    """Push permission is optional — an owner who never granted it, or a
+    build with no APNs token yet, must still be able to sign out."""
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    assert client.post("/mobile/api/logout", headers=_auth_headers(token)).status_code == 200
+    assert client.get("/mobile/api/home", headers=_auth_headers(token)).status_code == 401
+
+
+def test_logout_cannot_unregister_another_restaurant_device(client, db_path):
+    """The token is caller-supplied, so it gets the same tenant scoping the
+    DELETE route has — otherwise any authenticated user could silence any
+    other restaurant's alerts by guessing a token."""
+    mine = _restaurant(db_path, name="Mine")
+    theirs = _restaurant(db_path, name="Theirs")
+    their_token = _login(client, db_path, theirs, username="them")
+    _register_push(client, their_token, apns="t" * 64)
+
+    my_token = _login(client, db_path, mine, username="me")
+    client.post("/mobile/api/logout", headers=_auth_headers(my_token), json={"apns_token": "t" * 64})
+    assert _push_tokens(db_path, theirs) == ["t" * 64]
+
+
+def test_a_push_registry_failure_does_not_block_signing_out(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    _register_push(client, token)
+    monkeypatch.setattr(mobile_api, "_unregister_device_token",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("push db down")))
+    resp = client.post("/mobile/api/logout", headers=_auth_headers(token), json={"apns_token": "a" * 64})
+    assert resp.status_code == 200
+    assert client.get("/mobile/api/home", headers=_auth_headers(token)).status_code == 401
