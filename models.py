@@ -3219,15 +3219,67 @@ def subscription_allows_access(restaurant_id: int, db_path: str = DB_PATH) -> bo
     return status not in BLOCKED_BILLING_STATES
 
 
-def get_location_group(group_name: str, db_path: str = DB_PATH) -> list:
-    """Get all restaurants in a location group."""
+def normalize_owner_email(value) -> str:
+    """Owner emails are compared, never displayed, from here — one spelling."""
+    return (value or "").strip().lower()
+
+
+def get_location_group(group_name: str, db_path: str = DB_PATH, owner_email=None) -> list:
+    """Every restaurant in a location group.
+
+    `location_group` is free text an admin types per location, and it is what
+    the multi-location features key on: switching the active location, the
+    group Home rollup, and (since billing reconciliation moved here) which
+    restaurants a Stripe cancellation churns. Matching on the string alone
+    meant two unrelated clients typed into the same group — "Syrup" twice,
+    a paste into the wrong row — became one tenant: either owner could
+    switch into the other's locations and read their reviews, labor and
+    sales, and cancelling one would churn the other.
+
+    Passing `owner_email` scopes the group to that owner, which is what every
+    caller acting on a client's behalf does. Callers that deliberately want
+    the raw name match (admin tooling reporting on a collision) omit it.
+    """
     conn = get_conn(db_path)
-    rows = conn.execute(
-        "SELECT * FROM restaurants WHERE location_group=? ORDER BY location_name",
-        (group_name,)
-    ).fetchall()
+    if owner_email is not None:
+        rows = conn.execute(
+            "SELECT * FROM restaurants WHERE location_group=? AND LOWER(TRIM(COALESCE(owner_email,'')))=? "
+            "ORDER BY location_name",
+            (group_name, normalize_owner_email(owner_email))
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM restaurants WHERE location_group=? ORDER BY location_name",
+            (group_name,)
+        ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+def location_group_conflict(group_name: str, owner_email: str, exclude_id=None,
+                            db_path: str = DB_PATH):
+    """The owner email already using `group_name`, if it isn't this one.
+
+    Returns None when the name is free or already belongs to `owner_email`.
+    Called before an admin writes a group name so a collision is refused at
+    the point it is created rather than discovered as a data leak later.
+    """
+    name = (group_name or "").strip()
+    if not name:
+        return None
+    conn = get_conn(db_path)
+    rows = conn.execute(
+        "SELECT id, owner_email FROM restaurants WHERE location_group=?", (name,)
+    ).fetchall()
+    conn.close()
+    mine = normalize_owner_email(owner_email)
+    for r in rows:
+        if exclude_id is not None and r["id"] == exclude_id:
+            continue
+        theirs = normalize_owner_email(r["owner_email"])
+        if theirs and theirs != mine:
+            return r["owner_email"]
+    return None
 
 
 def get_all_location_groups(db_path: str = DB_PATH) -> list:

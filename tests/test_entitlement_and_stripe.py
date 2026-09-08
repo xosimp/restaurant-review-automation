@@ -144,8 +144,11 @@ def test_unmatched_stripe_customer_returns_none(db_path):
 
 
 def test_billing_state_applies_to_every_location_in_the_group(db_path):
+    # A group is (group name + owner email) — see models.get_location_group.
+    # The owner pays once for the group, so billing state has to land on all
+    # of their locations, not just whichever the paying user row pointed at.
     a = _restaurant(db_path, name="Downtown", owner_email="g@x.test", location_group="Group A")
-    b = _restaurant(db_path, name="Uptown", owner_email="g2@x.test", location_group="Group A")
+    b = _restaurant(db_path, name="Uptown", owner_email="g@x.test", location_group="Group A")
     solo = _restaurant(db_path, name="Solo", owner_email="s@x.test")
     assert set(webhook_routes._sibling_restaurant_ids(a)) == {a, b}
     assert webhook_routes._sibling_restaurant_ids(solo) == [solo]

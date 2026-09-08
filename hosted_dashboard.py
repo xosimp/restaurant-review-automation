@@ -546,7 +546,7 @@ def index(current_user):
             from models import get_restaurant as _gr_grp, get_location_group as _glg
             _base = _gr_grp(current_user["base_restaurant_id"])
             if _base and _base.location_group:
-                _grp = _glg(_base.location_group)
+                _grp = _glg(_base.location_group, owner_email=_base.owner_email)
                 _active_id = current_user["restaurant_id"]
                 _group_locations = [{"id": r["id"],
                                      "name": r.get("location_name") or r["name"],

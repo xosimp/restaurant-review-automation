@@ -4585,7 +4585,7 @@ def _do_switch_location(current_user, target_id, token):
     base = get_restaurant(current_user["base_restaurant_id"])
     if not base or not base.location_group:
         return {"ok": False, "error": "No location group configured"}, 400
-    group = get_location_group(base.location_group)
+    group = get_location_group(base.location_group, owner_email=base.owner_email)
     valid_ids = [r["id"] for r in group]
     if target_id not in valid_ids:
         return {"ok": False, "error": "Location not in your group"}, 403
@@ -4606,7 +4606,7 @@ def _do_group_locations(current_user):
     base = get_restaurant(current_user["base_restaurant_id"])
     if not base or not base.location_group:
         return {"ok": True, "locations": []}, 200
-    group = get_location_group(base.location_group)
+    group = get_location_group(base.location_group, owner_email=base.owner_email)
     active_id = current_user["restaurant_id"]
     locs = [{"id": r["id"], "name": r.get("location_name") or r["name"],
               "active": r["id"] == active_id} for r in group]

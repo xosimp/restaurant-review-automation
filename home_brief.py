@@ -728,7 +728,7 @@ def _build(current_user):
             if base and base.location_group:
                 group_name = base.location_group
                 c2 = get_conn()
-                for lr in get_location_group(base.location_group):
+                for lr in get_location_group(base.location_group, owner_email=base.owner_email):
                     sig = _location_signal(c2, lr, now)
                     sig["active"] = lr["id"] == rid
                     locations.append(sig)
@@ -869,7 +869,7 @@ def build_group_brief(current_user, fresh=False):
         return {"ok": False, "error": "No location group on this account"}, 400
     now = datetime.now(timezone.utc)
     conn = get_conn()
-    locs = [_location_record(conn, r, now) for r in get_location_group(base.location_group)]
+    locs = [_location_record(conn, r, now) for r in get_location_group(base.location_group, owner_email=base.owner_email)]
     conn.close()
     for l in locs:
         l["active"] = l["id"] == current_user["restaurant_id"]

@@ -115,12 +115,19 @@ def _sibling_restaurant_ids(restaurant_id: int):
     """
     try:
         conn = get_conn()
-        row = conn.execute("SELECT location_group FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
+        row = conn.execute(
+            "SELECT location_group, owner_email FROM restaurants WHERE id=?", (restaurant_id,)
+        ).fetchone()
         if not row or not (row["location_group"] or "").strip():
             conn.close()
             return [restaurant_id]
+        # Scoped to the owner as well as the group name: two unrelated clients
+        # typed into the same group must not have one's cancellation churn the
+        # other's locations. See models.get_location_group.
         rows = conn.execute(
-            "SELECT id FROM restaurants WHERE location_group=?", (row["location_group"],)
+            "SELECT id FROM restaurants WHERE location_group=? "
+            "AND LOWER(TRIM(COALESCE(owner_email,'')))=?",
+            (row["location_group"], (row["owner_email"] or "").strip().lower())
         ).fetchall()
         conn.close()
         ids = [r["id"] for r in rows]

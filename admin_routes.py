@@ -12,7 +12,8 @@ from functools import wraps
 from models import (get_conn, get_restaurant, update_restaurant,
                     create_restaurant, Restaurant, get_reviews_data,
                     get_review_stats, get_email_log, log_email, get_all_restaurants,
-                    get_changelog, save_changelog_entry, delete_changelog_entry)
+                    get_changelog, save_changelog_entry, delete_changelog_entry,
+                    location_group_conflict)
 from auth import (create_session, get_session_user, delete_session,
                   verify_password, list_users, create_user, update_password,
                   admin_required, login_required)
@@ -99,6 +100,20 @@ def create_client(current_user):
         conn_check.close()
         if existing:
             return jsonify(ok=False, error="A user with that email or username already exists — try a different username or email")
+
+        # location_group is free text and defines a tenancy boundary: everyone
+        # in a group can switch into each other's locations and shares billing
+        # state. Two unrelated clients typed into the same group would become
+        # one tenant, so a name already used by a different owner is refused
+        # here rather than discovered later as a data leak.
+        conflict = location_group_conflict(
+            data.get("location_group", "").strip(), data["owner_email"]
+        )
+        if conflict:
+            return jsonify(ok=False, error=(
+                f"Location group \u201c{data.get('location_group','').strip()}\u201d already belongs to "
+                f"{conflict}. Pick a different group name — locations in a group share data and billing."
+            ))
 
         # Create restaurant
         rid = create_restaurant(Restaurant(
@@ -566,6 +581,18 @@ def save_client_settings(restaurant_id, current_user):
     try:
         from models import set_service_tier
         tier = data.get("service_tier","trial")
+        # Same tenancy guard as create-client: a group name in use by another
+        # owner would silently merge two clients into one tenant.
+        conflict = location_group_conflict(
+            data.get("location_group", "").strip(),
+            data.get("owner_email", "").strip(),
+            exclude_id=restaurant_id,
+        )
+        if conflict:
+            return jsonify(ok=False, error=(
+                f"Location group \u201c{data.get('location_group','').strip()}\u201d already belongs to "
+                f"{conflict}. Pick a different group name — locations in a group share data and billing."
+            ))
         # Set modules directly from checkboxes
         update_restaurant(restaurant_id, {
             "name":            data.get("name","").strip(),

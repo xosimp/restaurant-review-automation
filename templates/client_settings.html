@@ -131,7 +131,7 @@ textarea{resize:vertical;min-height:60px}
         <div class="form-group">
           <label>Location group (multi-location)</label>
           <input type="text" id="location_group" value="{{ restaurant.location_group or '' }}" placeholder="e.g. Syrup">
-          <div class="hint">Group name shared across all locations of the same brand</div>
+          <div class="hint">Group name shared across all locations of the same brand. Locations in a group see each other's data and share one subscription, so every location in the group must have the same owner email — a name already used by a different owner is rejected.</div>
         </div>
         <div class="form-group">
           <label>Location name</label>
