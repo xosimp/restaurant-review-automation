@@ -1924,6 +1924,27 @@ def send_recovery_email_code(to_email: str, code: str) -> bool:
     """)
 
 
+def send_account_deletion_request_email(restaurant_name: str, owner_name: str, owner_email: str, requested_at: str) -> bool:
+    """Fires the moment Account -> Close my account is tapped. Cavnar AI
+    can't self-serve deactivate an account under contract, so this is the
+    actual initiation Apple's account-deletion requirement asks for: it
+    lands in Will's inbox so he can start the 30-day wind-down, the same
+    manual process as before — the difference is the request now comes
+    from a real in-app action instead of the owner having to know to email
+    him themselves."""
+    return _send_branded(os.getenv("BUG_REPORT_EMAIL", "will@cavnar.ai"),
+        f"Account deletion requested — {restaurant_name}", f"""
+      <h2 style="font-size:18px;font-weight:600;margin-bottom:12px;color:#0e0c0a">{restaurant_name} requested account deletion</h2>
+      <p style="font-size:14px;color:#4a4540;line-height:1.6;margin-bottom:16px">
+        {owner_name or "The owner"} ({owner_email or "no email on file"}) tapped
+        "Close my account" in the app at {requested_at} UTC. Per the 30-day
+        notice policy, the account stays active through the end of the
+        current billing period plus 30 days from this request — reach out
+        to confirm and start winding it down.
+      </p>
+    """, from_label="Cavnar AI Account Requests")
+
+
 def send_bug_report_email(restaurant_name: str, from_email: str, message: str, meta: dict) -> bool:
     """Account -> More -> Report a bug. Lands in Will's inbox with the build
     stamp and device details attached, so 'which build is this' never has

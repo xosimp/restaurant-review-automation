@@ -768,6 +768,17 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE restaurants ADD COLUMN urgent_via_email INTEGER DEFAULT 1",
         "ALTER TABLE restaurants ADD COLUMN urgent_via_sms INTEGER DEFAULT 0",
         "ALTER TABLE restaurants ADD COLUMN alert_5star INTEGER DEFAULT 0",
+        # Account -> Close my account: Apple App Store Review Guideline
+        # 5.1.1(v) requires apps that support account creation to also let
+        # the user initiate deletion from inside the app — a "please email
+        # us" flow doesn't count for anything but a handful of regulated
+        # industries, which this isn't. Cavnar AI still can't self-serve
+        # deactivate an account (clients are under contract), so this
+        # records the request and notifies Will to wind it down per the
+        # 30-day notice policy, same as before, but the user now actually
+        # DOES something in the app rather than being routed to their own
+        # email client.
+        "ALTER TABLE restaurants ADD COLUMN deletion_requested_at TEXT",
         "ALTER TABLE restaurants ADD COLUMN alert_rating_threshold INTEGER DEFAULT 0",
         "ALTER TABLE restaurants ADD COLUMN alert_rating_floor REAL DEFAULT 4.0",
         "ALTER TABLE restaurants ADD COLUMN alert_labor_over INTEGER DEFAULT 0",
@@ -1902,6 +1913,34 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH):
     conn.execute(f"UPDATE restaurants SET {set_clause} WHERE id=?", values)
     conn.commit()
     conn.close()
+
+
+def get_deletion_requested_at(restaurant_id: int, db_path: str = DB_PATH):
+    """Raw column read, not the Restaurant dataclass — deletion_requested_at
+    isn't one of its declared fields, so get_restaurant() would never
+    surface it and a getattr() against the dataclass would silently always
+    return the default instead of the real value."""
+    conn = get_conn(db_path)
+    row = conn.execute("SELECT deletion_requested_at FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
+    conn.close()
+    return row["deletion_requested_at"] if row else None
+
+
+def request_account_deletion(restaurant_id: int, db_path: str = DB_PATH) -> str:
+    """Records that the owner asked to close their account. Idempotent — a
+    second request returns the original timestamp rather than resetting the
+    clock, so re-opening the sheet and tapping the button again doesn't look
+    like it reset a 30-day notice period that already started."""
+    conn = get_conn(db_path)
+    existing = conn.execute("SELECT deletion_requested_at FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
+    if existing and existing["deletion_requested_at"]:
+        conn.close()
+        return existing["deletion_requested_at"]
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    conn.execute("UPDATE restaurants SET deletion_requested_at=? WHERE id=?", (now, restaurant_id))
+    conn.commit()
+    conn.close()
+    return now
 
 
 def get_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> Optional[Restaurant]:

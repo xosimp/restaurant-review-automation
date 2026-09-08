@@ -37,6 +37,8 @@ final class AccountViewModel {
     var isExportingData = false
     var exportDataError: String?
     var exportDataSucceeded = false
+    var isRequestingDeletion = false
+    var deletionRequestError: String?
 
     // Self-serve test digest
     var isSendingTestDigest = false
@@ -348,6 +350,36 @@ final class AccountViewModel {
             exportDataError = error.message
         } catch {
             exportDataError = "Couldn't export your data."
+        }
+    }
+
+    /// Account -> Close my account. Not self-serve deletion — Cavnar AI
+    /// clients are under a service contract — but this is a real request
+    /// now, not a mailto: link. Reloads summary on success (the established
+    /// pattern here, same as updateProfile below) so the sheet immediately
+    /// reflects deletion_requested_at without a separate patch path.
+    private struct DeletionRequestResponse: Decodable { let ok: Bool; let requestedAt: String?; let error: String?
+        enum CodingKeys: String, CodingKey { case ok, error; case requestedAt = "requested_at" }
+    }
+
+    func requestAccountDeletion() async -> Bool {
+        isRequestingDeletion = true
+        deletionRequestError = nil
+        defer { isRequestingDeletion = false }
+        do {
+            let response: DeletionRequestResponse = try await client.send("/mobile/api/account/request-deletion", method: .post)
+            if response.ok {
+                await load()
+                return true
+            }
+            deletionRequestError = response.error ?? "Couldn't send that request."
+            return false
+        } catch let error as APIClient.APIError {
+            deletionRequestError = error.message
+            return false
+        } catch {
+            deletionRequestError = "Couldn't send that request."
+            return false
         }
     }
 

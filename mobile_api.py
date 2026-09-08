@@ -3129,8 +3129,10 @@ def _do_mobile_account(current_user):
     if not restaurant:
         return {"ok": False, "error": "Restaurant not found"}, 404
 
+    from models import get_deletion_requested_at
     profile = {
         "restaurant_name": restaurant.name,
+        "deletion_requested_at": get_deletion_requested_at(rid),
         "location_name": restaurant.location_name or None,
         "owner_name": restaurant.owner_name or None,
         "owner_email": restaurant.owner_email or None,
@@ -4159,6 +4161,39 @@ def mobile_data_retention(current_user):
     payload, status = _capi._do_data_retention(current_user["restaurant_id"],
                                                request.get_json(silent=True) or {}, current_user)
     return jsonify(**payload), status
+
+
+@mobile_bp.route("/account/request-deletion", methods=["POST"])
+@mobile_login_required
+def mobile_request_account_deletion(current_user):
+    """Account -> Close my account. Not self-serve deletion — Cavnar AI
+    clients are under a service contract, so this records the request and
+    notifies Will to start the 30-day wind-down, same as the process has
+    always been. What changed (Apple App Store Review Guideline 5.1.1(v)):
+    the user now initiates this from a real control in the app, and gets a
+    real confirmation back, instead of the app just opening their email
+    client and hoping they send it. Idempotent: re-tapping the button after
+    a request already went through returns the original timestamp rather
+    than sending a second notification."""
+    from models import request_account_deletion, get_deletion_requested_at
+    rid = current_user["restaurant_id"]
+    restaurant = get_restaurant(rid)
+    if not restaurant:
+        return jsonify(ok=False, error="Restaurant not found"), 404
+    already_requested = bool(get_deletion_requested_at(rid))
+    requested_at = request_account_deletion(rid)
+    if not already_requested:
+        try:
+            from emails import send_account_deletion_request_email
+            send_account_deletion_request_email(restaurant.name, restaurant.owner_name,
+                                                current_user.get("email"), requested_at)
+        except Exception as e:
+            print(f"Account deletion notice email failed: {e}")
+        try:
+            _log_account_event(rid, "deletion_requested", current_user)
+        except Exception:
+            pass
+    return jsonify(ok=True, requested_at=requested_at)
 
 
 @mobile_bp.route("/account/report-bug", methods=["POST"])

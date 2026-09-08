@@ -19,8 +19,14 @@ struct AccountProfile: Decodable {
     let openTimesJson: String?
     let closeTimesJson: String?
     let skipHolidays: String?
+    /// Set the moment "Close my account" is tapped — an ISO-ish UTC
+    /// timestamp string, or nil if no request is on file. Lets the sheet
+    /// show "request received" instead of the button again on a later
+    /// visit, without a separate round trip.
+    let deletionRequestedAt: String?
 
     enum CodingKeys: String, CodingKey {
+        case deletionRequestedAt = "deletion_requested_at"
         case restaurantName = "restaurant_name"
         case signOffName = "sign_off_name"
         case responseLanguage = "response_language"
