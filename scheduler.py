@@ -628,23 +628,10 @@ def run_marketing_metrics_sync():
 
 # ── Scheduler loop ────────────────────────────────────────────────────────────
 
-_last_fetch_date      = None
-_last_digest_date     = None
-_last_backup_date     = None
-_last_toast_sync_date = None
-_last_depletion_sync_date = None
-_last_onboard_date    = None
-_last_stale_inv_date  = None
-_last_inactive_date   = None
-_last_optin_invite_date = None
-_last_followup_hour = None
 
 # The loop used to sleep for an hour, which was fine when everything it did
 # was daily. Scheduled posts need finer granularity than "sometime this hour".
 SCHEDULER_TICK_SECONDS = int(os.getenv("SCHEDULER_TICK_SECONDS", "300"))
-_last_monthly_date    = None
-_last_opsdigest_date  = None
-_last_mktmetrics_date = None
 
 
 # Backups keep this many days of local snapshots on the Railway volume.
@@ -1063,10 +1050,9 @@ def check_inactive_clients():
 
 
 def scheduler_loop():
-    global _last_fetch_date, _last_digest_date, _last_backup_date
-    global _last_toast_sync_date, _last_depletion_sync_date, _last_onboard_date, _last_stale_inv_date
-    global _last_inactive_date, _last_monthly_date, _last_opsdigest_date, _last_mktmetrics_date
-    global _last_optin_invite_date, _last_followup_hour
+    # No module-level "already ran" globals any more — every gate below is
+    # ops.claim_period(), which is DB-backed and survives redeploys. See
+    # ops.claim_period for what was wrong with the globals.
     log.info("Scheduler started — review fetch every 4hr (8am/12pm/4pm/8pm CT), digests 9am on client's chosen day")
 
 
@@ -1077,12 +1063,11 @@ def scheduler_loop():
 
             # Monday 6am — run competitor analysis for all clients
             # 2am daily — backup DB to email
-            if now.hour == 2 and _last_backup_date != today:
-                _last_backup_date = today
+            if now.hour == 2 and _ops.claim_period("backup_db", str(today)):
                 log.info("Running daily DB backup...")
                 _ops.run_job("backup_db", backup_db)
 
-            if now.hour == 6 and now.weekday() == 0 and _last_fetch_date != today:
+            if now.hour == 6 and now.weekday() == 0 and _ops.claim_period("competitor_analysis", str(today)):
                 log.info("Running weekly competitor analysis...")
                 try:
                     from competitor import run_competitor_analysis
@@ -1097,49 +1082,42 @@ def scheduler_loop():
                 except Exception as e:
                     log.error(f"Competitor analysis scheduler error: {e}")
 
-            if now.hour == 3 and _last_toast_sync_date != today:
-                _last_toast_sync_date = today
+            if now.hour == 3 and _ops.claim_period("pos_sync", str(today)):
                 log.info("Running nightly Toast POS sync...")
                 _ops.run_job("pos_sync", run_toast_sync)
 
-            if now.hour == 5 and _last_depletion_sync_date != today:
-                _last_depletion_sync_date = today
+            if now.hour == 5 and _ops.claim_period("inventory_depletion", str(today)):
                 log.info("Running nightly ingredient depletion sync...")
                 _ops.run_job("inventory_depletion", run_daily_depletion_sync)
 
-            if now.hour == 4 and _last_mktmetrics_date != today:
-                _last_mktmetrics_date = today
+            if now.hour == 4 and _ops.claim_period("marketing_metrics_sync", str(today)):
                 log.info("Running marketing metrics sync...")
                 _ops.run_job("marketing_metrics_sync", run_marketing_metrics_sync)
 
-            if now.hour == 7 and _last_fetch_date != today:
+            if now.hour == 7 and _ops.claim_period("refresh_tokens", str(today)):
                 log.info("Refreshing expiring IG/FB tokens...")
                 _ops.run_job("refresh_tokens", refresh_expiring_tokens)
 
             # Fetch every 4 hours: 8am, 12pm, 4pm, 8pm Chicago time
-            if now.hour in (8, 12, 16, 20) and _last_fetch_date != f"{today}-{now.hour}":
-                _last_fetch_date = f"{today}-{now.hour}"
+            if now.hour in (8, 12, 16, 20) and _ops.claim_period("review_fetch", f"{today}-{now.hour}"):
                 log.info(f"Running review fetch (every 4hr) at {now.hour}:00 CT...")
                 _ops.run_job("review_fetch", run_daily_fetch)
 
             # 8am daily — operator failure digest (only sends if something failed)
-            if now.hour == 8 and _last_opsdigest_date != today:
-                _last_opsdigest_date = today
+            if now.hour == 8 and _ops.claim_period("ops_digest", str(today)):
                 _ops.run_job("ops_failure_digest", _ops.send_failure_digest)
 
-            if now.hour == 9 and _last_digest_date != today:
-                _last_digest_date = today
+            if now.hour == 9 and _ops.claim_period("weekly_digest", str(today)):
                 log.info("Running weekly digest check...")
                 _ops.run_job("weekly_digests", run_weekly_digests)
 
-            if now.hour == 10 and now.weekday() == 0 and _last_stale_inv_date != today:
-                _last_stale_inv_date = today
+            if now.hour == 10 and now.weekday() == 0 and _ops.claim_period("stale_inventory", str(today)):
                 # Monday 10am — check for stale inventory data
                 log.info("Running stale inventory check...")
                 _ops.run_job("stale_inventory", check_stale_inventory)
 
             # 10am daily — no-response + trend/threshold/labor alerts
-            if now.hour == 10 and _last_fetch_date != f"noresponse-{today}":
+            if now.hour == 10 and _ops.claim_period("daily_alerts", str(today)):
                 try:
                     from notify import check_no_response_alerts, check_daily_alerts, check_extra_daily_alerts
                     check_no_response_alerts()
@@ -1156,8 +1134,7 @@ def scheduler_loop():
                     log.error(f"Daily alert check failed: {_nre}")
 
             # 1st of the month at 9am — send monthly summary to all active clients
-            if now.day == 1 and now.hour == 9 and _last_monthly_date != today:
-                _last_monthly_date = today
+            if now.day == 1 and now.hour == 9 and _ops.claim_period("monthly_summary", str(today)):
                 log.info("Running monthly summary emails...")
                 try:
                     from emails import send_monthly_summary_email
@@ -1184,20 +1161,17 @@ def scheduler_loop():
                 except Exception as e:
                     log.error(f"Monthly summary scheduler error: {e}")
 
-            if now.hour == 10 and _last_onboard_date != today:
-                _last_onboard_date = today
+            if now.hour == 10 and _ops.claim_period("onboarding", str(today)):
                 # 10am daily — onboarding email sequence
                 log.info("Running onboarding sequence check...")
                 _ops.run_job("onboarding_emails", run_onboarding_sequence)
 
-            if now.hour == 11 and now.weekday() == 0 and _last_inactive_date != today:
-                _last_inactive_date = today
+            if now.hour == 11 and now.weekday() == 0 and _ops.claim_period("inactive_clients", str(today)):
                 # Monday 11am — inactive client check
                 log.info("Running inactive client check...")
                 _ops.run_job("inactive_clients", check_inactive_clients)
 
-            if now.hour == 11 and _last_optin_invite_date != today:
-                _last_optin_invite_date = today
+            if now.hour == 11 and _ops.claim_period("optin_invite", str(today)):
                 # 11am daily — invite guests Toast identified yesterday to
                 # opt in for themselves. Yesterday, not today: Toast's
                 # business day doesn't end at midnight, so today's is still
@@ -1213,8 +1187,7 @@ def scheduler_loop():
             # this needs hourly granularity, but no more than that: the loop
             # now ticks every few minutes for scheduled posts, and re-running
             # this twelve times an hour would just be twelve queries.
-            if _last_followup_hour != f"{today}-{now.hour}":
-                _last_followup_hour = f"{today}-{now.hour}"
+            if _ops.claim_period("review_request_followups", f"{today}-{now.hour}"):
                 from guest_marketing import run_review_request_followups
                 _ops.run_job("review_request_followups", run_review_request_followups)
 

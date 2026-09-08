@@ -105,6 +105,58 @@ def _record_run_end(run_id, started, ok, error=None):
         pass
 
 
+_PERIOD_CLAIM_SQL = """CREATE TABLE IF NOT EXISTS job_period_claims (
+    job_key    TEXT PRIMARY KEY,
+    claimed_at TEXT NOT NULL DEFAULT (datetime('now'))
+)"""
+
+
+def claim_period(job: str, period: str) -> bool:
+    """True the first time `job` is claimed for `period`, False afterwards.
+
+    Replaces the module-level `_last_*_date` globals the scheduler used to
+    gate its daily/weekly work. Those had two failure modes the audit caught:
+
+    1. They lived in process memory, so every Railway redeploy reset them —
+       a deploy inside a job's hour re-ran that job (re-emailing the whole
+       database, re-sending client digests). Deploys are frequent.
+    2. Several jobs shared one variable and compared it against values of a
+       different type (`_last_fetch_date != today`, where the variable held
+       a string like "2026-09-08-6" and `today` was a date), so the guard was
+       never satisfied and the job re-ran on every tick — 12 times an hour at
+       a 300s tick, including the weekly competitor analysis, which calls
+       Google Places and Claude for every full-tier restaurant.
+
+    The PRIMARY KEY insert is the claim, so it is atomic and survives
+    restarts. Fails OPEN (returns True) if the bookkeeping table is
+    unreachable — a scheduler that silently stops working is worse than one
+    that occasionally repeats.
+    """
+    key = f"{job}:{period}"
+    try:
+        from models import get_conn
+        conn = get_conn()
+        conn.execute(_PERIOD_CLAIM_SQL)
+        conn.commit()
+        try:
+            conn.execute("INSERT INTO job_period_claims (job_key) VALUES (?)", (key,))
+            conn.commit()
+            claimed = True
+        except Exception:
+            claimed = False
+        # Keep the table from growing without bound.
+        try:
+            conn.execute("DELETE FROM job_period_claims WHERE claimed_at < datetime('now','-45 days')")
+            conn.commit()
+        except Exception:
+            pass
+        conn.close()
+        return claimed
+    except Exception as e:
+        log.error(f"claim_period({key}) failed, allowing run: {e}")
+        return True
+
+
 def run_job(name, fn, *args, context="", **kwargs):
     """Run a scheduled job with failure capture. Returns the job's result,
     or None if it raised. Every run — not only the failures — lands in
