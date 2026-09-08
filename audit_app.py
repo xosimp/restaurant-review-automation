@@ -767,7 +767,7 @@ async function submitAudit(action) {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `Cavnar_AI_Audit_${(data.restaurant||'Report').replace(/\s+/g,'_')}.pdf`;
+      a.download = `Cavnar_AI_Audit_${(data.restaurant||'Report').replace(/\\s+/g,'_')}.pdf`;
       a.click();
       status.textContent = '✓ PDF downloaded';
       status.className = 'send-status ok';

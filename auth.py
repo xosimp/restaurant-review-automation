@@ -464,8 +464,17 @@ def get_session_user(token: str, db_path: str = DB_PATH) -> Optional[dict]:
                 conn.commit()
                 conn.close()
                 return None
-        except Exception:
-            pass
+        except Exception as e:
+            # A last_active this can't parse means the 8-hour inactivity
+            # window silently stops applying to that session — a security
+            # control quietly switching itself off is exactly the kind of
+            # failure that must not be invisible.
+            try:
+                import ops
+                ops.capture(e, job="session_inactivity_check",
+                            context=f"last_active={last_active!r}")
+            except Exception:
+                pass
     # Update last_active timestamp
     conn.execute("UPDATE sessions SET last_active=datetime('now') WHERE token=?", (hash_session_token(token),))
     conn.commit()

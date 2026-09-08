@@ -953,8 +953,12 @@ def google_sso_callback():
             if not row["google_id"]:
                 conn.execute("UPDATE users SET google_id=? WHERE id=?", (google_id, row["id"]))
                 conn.commit()
-        except Exception:
-            pass
+        except Exception as e:
+            # Sign-in still succeeds without the link, but losing this write
+            # silently means the account never gets linked and the user is
+            # asked to link again on every single Google sign-in.
+            import ops
+            ops.capture(e, job="google_sso_link", context=f"user_id={row['id']}")
     conn.close()
 
     if not row:

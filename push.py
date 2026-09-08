@@ -221,8 +221,15 @@ def _deliver(device_token_row, alert_type, title, body, data, db_path=DB_PATH):
                 )
         conn.commit()
         conn.close()
-    except Exception:
-        pass
+    except Exception as e:
+        # This bookkeeping is what advances consecutive_failures, and that
+        # counter is the only thing that ever deletes a dead token. Losing it
+        # silently means retrying a token that will never work, forever.
+        try:
+            import ops
+            ops.capture(e, job="push_delivery_log", context=f"alert_type={alert_type}")
+        except Exception:
+            pass
     return {"ok": ok, "status": status, "attempts": attempts, "error": error}
 
 

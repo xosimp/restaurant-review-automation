@@ -3154,8 +3154,14 @@ def log_activity(restaurant_id: int, tab: str,
             INSERT INTO activity_log (restaurant_id, event_type, event_data, created_at)
             VALUES (?, 'tab_view', ?, ?)
         """, (restaurant_id, json.dumps({"tab": tab}), now))
-    except Exception:
-        pass
+    except Exception as e:
+        # Best-effort, but not invisible: this feeds the Account page's
+        # activity trail, and a gap there reads as "nothing happened".
+        try:
+            import ops
+            ops.capture(e, job="log_activity", context=f"restaurant_id={restaurant_id}")
+        except Exception:
+            pass
     conn.commit()
     conn.close()
 

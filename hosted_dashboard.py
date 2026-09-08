@@ -152,7 +152,7 @@ def health():
 @app.template_filter("format_num")
 def format_num(v):
     try: return f"{float(v):,.0f}"
-    except: return v
+    except (TypeError, ValueError): return v
 
 @app.template_filter('format_date')
 def format_date_filter(d):

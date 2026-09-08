@@ -346,8 +346,14 @@ def log_content(restaurant_id: int, content_type: str, topic: str,
             )
         conn.commit()
         conn.close()
-    except Exception:
-        pass
+    except Exception as e:
+        # The marketing log is what "what did we post" is answered from —
+        # losing a row silently makes it quietly wrong.
+        try:
+            import ops
+            ops.capture(e, job="log_content", context=f"restaurant_id={restaurant_id} {content_type}")
+        except Exception:
+            pass
 
 
 def generate_content(content_type: str, topic: str,

@@ -25,6 +25,9 @@ jobs:
       - name: Theme-safety color lint
         run: python scripts/check_colors.py
 
+      - name: Silent-failure lint
+        run: python scripts/check_silent_handlers.py
+
       - name: Run tests
         run: pytest tests/ -v
         env:

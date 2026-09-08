@@ -101,8 +101,12 @@ def _record_run_end(run_id, started, ok, error=None):
                      (int((_time.time() - started) * 1000), 1 if ok else 0, (str(error)[:500] if error else None), run_id))
         conn.commit()
         conn.close()
-    except Exception:
-        pass
+    except Exception as e:
+        # log, not capture(): capture writes to the same database this just
+        # failed against, so calling it here is the recursion this module
+        # exists to avoid. A job stuck with no finished_at shows up on the
+        # admin console's Jobs page as "stuck" anyway.
+        log.error(f"_record_run_end({run_id}) failed: {e}")
 
 
 _PERIOD_CLAIM_SQL = """CREATE TABLE IF NOT EXISTS job_period_claims (

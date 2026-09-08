@@ -239,8 +239,15 @@ def _deliver(webhook, event_type, data, db_path=DB_PATH):
                 conn.execute("UPDATE webhooks SET consecutive_failures=? WHERE id=?", (failures, webhook["id"]))
         conn.commit()
         conn.close()
-    except Exception:
-        pass
+    except Exception as e:
+        # consecutive_failures is what auto-disables a broken endpoint. If
+        # this write vanishes, a dead webhook is retried indefinitely and
+        # nothing in the admin console ever says so.
+        try:
+            import ops
+            ops.capture(e, job="webhook_delivery_log", context=f"event_type={event_type}")
+        except Exception:
+            pass
     return {"ok": ok, "status": status, "attempts": attempts, "error": error}
 
 
