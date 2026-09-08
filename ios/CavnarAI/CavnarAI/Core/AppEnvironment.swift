@@ -9,8 +9,8 @@ import Foundation
 /// committed. See project.yml's environmentVariables comment.
 enum AppEnvironment {
     static var baseURL: URL {
-        if let url = validatedOverride() { return url }
         #if DEBUG
+        if let url = validatedOverride() { return url }
         if case .placeholderNotSubstituted = overrideRejectionReason {
             // localhost is meaningless on a physical device — this exact
             // silent fallback (a `${CAVNAR_DEV_API_BASE_URL}` that never got
@@ -43,6 +43,15 @@ enum AppEnvironment {
         // fails as a connection error that says so.
         return URL(string: "http://localhost:5050")!
         #else
+        // Release has no override path at all — not even a validated one.
+        // validatedOverride() used to run before this #if, so a Release build
+        // shipped to the App Store still read CAVNAR_API_BASE_URL from its
+        // process environment. That is a hostname anything able to launch the
+        // app with an environment can choose, and every bearer-token request
+        // would follow it; worse, isProductionHost below would then be false,
+        // so certificate pinning would switch itself off on the way out. The
+        // whole mechanism is compiled out of Release instead of guarded at
+        // runtime, so there is nothing left to set.
         return URL(string: "https://dashboard.cavnar.ai")!
         #endif
     }
@@ -67,7 +76,6 @@ enum AppEnvironment {
         if case .placeholderNotSubstituted = overrideRejectionReason { return true }
         return false
     }
-    #endif
 
     /// The override is externally supplied, so it is the one URL in the app
     /// that cannot be trusted to be well-formed. Three things are rejected
@@ -93,6 +101,7 @@ enum AppEnvironment {
         else { return nil }
         return url
     }
+    #endif
 
     /// True when this build is talking to the real deployment — the only case
     /// where certificate pinning applies (a local server or a dev tunnel
