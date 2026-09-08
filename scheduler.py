@@ -647,67 +647,184 @@ _last_opsdigest_date  = None
 _last_mktmetrics_date = None
 
 
+# Backups keep this many days of local snapshots on the Railway volume.
+BACKUP_RETAIN_DAYS = int(os.getenv("BACKUP_RETAIN_DAYS", "14"))
+
+# Tables whose contents must never leave the server in a backup artifact.
+# `sessions` holds live bearer tokens (auth.py stores only their hash now, but
+# a restore never needs live sessions anyway); the rest hold short-lived
+# credentials that are meaningless in a restore and dangerous in an archive.
+_BACKUP_REDACT = {
+    "sessions": "DELETE FROM sessions",
+    "two_fa_backup_codes": "DELETE FROM two_fa_backup_codes",
+    "trusted_devices": "DELETE FROM trusted_devices",
+    "device_tokens": "DELETE FROM device_tokens",
+}
+_BACKUP_SCRUB_COLUMNS = [
+    ("users", ["reset_token", "reset_token_expires", "recovery_email_code"]),
+    ("restaurants", ["temp_password", "gmb_access_token", "gmb_refresh_token",
+                     "ig_token", "fb_page_token", "stripe_customer_id"]),
+]
+
+
+def _write_consistent_snapshot(dest_path):
+    """Consistent copy of a LIVE WAL database.
+
+    shutil.copy2 was wrong here and silently so: in WAL mode (models.py sets
+    journal_mode=WAL) committed transactions can still live in reviews.db-wal,
+    and this process serves four request threads alongside the scheduler, so a
+    plain file copy can miss recent commits or capture a torn page. Neither
+    shows up until a restore is attempted, which is the worst possible moment
+    to discover your only backup doesn't open. sqlite3's own backup API takes
+    a proper online snapshot with the source locked page-by-page instead.
+    """
+    import sqlite3
+    from models import DB_PATH
+    src = sqlite3.connect(DB_PATH, timeout=30)
+    try:
+        dst = sqlite3.connect(dest_path)
+        try:
+            src.backup(dst)
+            # Integrity-check the artifact itself, so a corrupt backup is
+            # caught here rather than during an emergency restore.
+            result = dst.execute("PRAGMA integrity_check").fetchone()
+            if not result or result[0] != "ok":
+                raise RuntimeError(f"backup integrity_check failed: {result}")
+        finally:
+            dst.close()
+    finally:
+        src.close()
+
+
+def _redact_snapshot(path):
+    """Strip credentials from a snapshot before it leaves the server."""
+    import sqlite3
+    conn = sqlite3.connect(path)
+    try:
+        existing = {r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        for table, stmt in _BACKUP_REDACT.items():
+            if table in existing:
+                conn.execute(stmt)
+        for table, columns in _BACKUP_SCRUB_COLUMNS:
+            if table not in existing:
+                continue
+            have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+            for col in columns:
+                if col in have:
+                    conn.execute(f"UPDATE {table} SET {col}=NULL")
+        conn.commit()
+        conn.execute("VACUUM")
+    finally:
+        conn.close()
+
+
+def _prune_old_backups(backup_dir):
+    import glob
+    cutoff = time.time() - (BACKUP_RETAIN_DAYS * 86400)
+    for old in glob.glob(os.path.join(backup_dir, "cavnar_ai_backup_*.db")):
+        try:
+            if os.path.getmtime(old) < cutoff:
+                os.unlink(old)
+        except OSError:
+            pass
+
+
 def backup_db():
+    """Daily 2am backup.
+
+    Two changes from the original, both from the pre-launch audit:
+
+    1. The snapshot is taken with sqlite3's online backup API and
+       integrity-checked, not shutil.copy2 — see _write_consistent_snapshot.
+    2. The artifact no longer carries credentials, and the emailed copy is
+       encrypted. The old version base64'd the entire live database into an
+       email every night: every restaurant's financials, guest phone numbers,
+       and — because sessions were stored in plaintext — a working bearer
+       token for every logged-in owner. One leaked mailbox was full account
+       takeover for every customer at once.
+
+    The primary backup is now a local snapshot on the Railway volume (kept
+    BACKUP_RETAIN_DAYS days). Email is a secondary copy and requires
+    BACKUP_ENCRYPTION_KEY to be set — without it the local backup still runs
+    and the email is skipped rather than sent in the clear.
     """
-    Dump reviews.db and email it to will@cavnar.ai as an attachment.
-    Runs daily at 2am. No external dependencies — uses Resend which is already in the stack.
-    """
-    import base64, shutil, tempfile
+    import base64
     from models import DB_PATH
 
-    FROM_EMAIL = os.getenv("FROM_EMAIL", "will@cavnar.ai")
     WILL_EMAIL = os.getenv("WILL_EMAIL", "will@cavnar.ai")
+    timestamp = _chi_now().strftime("%Y-%m-%d")
+    filename = f"cavnar_ai_backup_{timestamp}.db"
+    backup_dir = os.getenv("BACKUP_DIR") or os.path.join(os.path.dirname(os.path.abspath(DB_PATH)) or ".", "backups")
 
     try:
-        if not _resend_key():
-            log.warning("backup_db: RESEND_API_KEY not set — skipping backup")
-            return
+        os.makedirs(backup_dir, exist_ok=True)
+        local_path = os.path.join(backup_dir, filename)
+        _write_consistent_snapshot(local_path)
+        _redact_snapshot(local_path)
+        size_kb = round(os.path.getsize(local_path) / 1024, 1)
+        log.info(f"backup_db: local snapshot {local_path} ({size_kb} KB)")
+        _prune_old_backups(backup_dir)
+    except Exception as e:
+        log.error(f"backup_db: snapshot failed: {e}")
+        try:
+            _ops.capture(e, job="backup_db", context="snapshot")
+        except Exception:
+            pass
+        return
+
+    key = os.getenv("BACKUP_ENCRYPTION_KEY", "").strip()
+    if not key:
+        log.warning(
+            "backup_db: BACKUP_ENCRYPTION_KEY not set — local snapshot kept, "
+            "email copy skipped. Generate one with "
+            "`python3 -c \"from cryptography.fernet import Fernet; "
+            "print(Fernet.generate_key().decode())\"` and set it in Railway."
+        )
+        return
+
+    if not _resend_key():
+        log.warning("backup_db: RESEND_API_KEY not set — local snapshot kept, email skipped")
+        return
+
+    try:
+        from cryptography.fernet import Fernet
+        with open(local_path, "rb") as f:
+            payload = Fernet(key.encode()).encrypt(f.read())
+        enc_name = filename + ".enc"
+        size_kb = round(len(payload) / 1024, 1)
 
         import resend as _resend
         _resend.api_key = _resend_key()
-
-        # Copy DB to a temp file so we don't lock the live DB during read
-        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
-            tmp_path = tmp.name
-        shutil.copy2(DB_PATH, tmp_path)
-
-        # Read and base64-encode for email attachment
-        with open(tmp_path, "rb") as f:
-            db_bytes = f.read()
-        os.unlink(tmp_path)
-
-        db_b64    = base64.b64encode(db_bytes).decode()
-        size_kb   = round(len(db_bytes) / 1024, 1)
-        timestamp = _chi_now().strftime("%Y-%m-%d")
-        filename  = f"cavnar_ai_backup_{timestamp}.db"
-
         _resend.Emails.send({
             "from": f"Cavnar AI Backups <{_from_email()}>",
             "to":   [WILL_EMAIL],
-            "subject": f"Daily DB backup — {timestamp} ({size_kb} KB)",
+            "subject": f"Daily DB backup — {timestamp} ({size_kb} KB, encrypted)",
             "html": _html_doc(f"""
 <div style="font-family:-apple-system,sans-serif;max-width:480px;color:#1a1714">
-  <p style="font-size:14px">Daily backup of <strong>reviews.db</strong> attached.</p>
+  <p style="font-size:14px">Encrypted daily backup attached.</p>
   <table style="font-size:13px;color:#3a3530;border-collapse:collapse">
     <tr><td style="padding:3px 12px 3px 0;color:#7a736a">Date</td><td>{timestamp}</td></tr>
-    <tr><td style="padding:3px 12px 3px 0;color:#7a736a">File</td><td>{filename}</td></tr>
+    <tr><td style="padding:3px 12px 3px 0;color:#7a736a">File</td><td>{enc_name}</td></tr>
     <tr><td style="padding:3px 12px 3px 0;color:#7a736a">Size</td><td>{size_kb} KB</td></tr>
   </table>
   <p style="font-size:12px;color:#7a736a;margin-top:16px">
-    To restore: download the attachment, rename to reviews.db, and replace the file on Railway.
+    Sessions, device tokens and API credentials are stripped from this copy.
+    Decrypt with BACKUP_ENCRYPTION_KEY, then rename to reviews.db.
   </p>
 </div>"""),
             "attachments": [{
-                "filename": filename,
-                "content":  db_b64,
+                "filename": enc_name,
+                "content":  base64.b64encode(payload).decode(),
             }],
         })
-        log.info(f"backup_db: sent {filename} ({size_kb} KB) to {WILL_EMAIL}")
-
+        log.info(f"backup_db: emailed encrypted {enc_name} ({size_kb} KB) to {WILL_EMAIL}")
     except Exception as e:
-        log.error(f"backup_db failed: {e}")
-
-
+        log.error(f"backup_db: email copy failed (local snapshot is intact): {e}")
+        try:
+            _ops.capture(e, job="backup_db", context="email")
+        except Exception:
+            pass
 
 
 def run_onboarding_sequence():

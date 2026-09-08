@@ -13,6 +13,7 @@ from auth import (
     create_user, verify_password, update_password,
     create_session, get_session_user, get_sessions_for_user,
     revoke_other_sessions, delete_session, switch_active_restaurant,
+    hash_session_token,
     set_user_role, login_required, admin_required, INACTIVITY_HOURS,
     init_auth, get_login_history, invite_team_member, get_team_members,
     revoke_team_member,
@@ -158,7 +159,7 @@ def test_expired_session_returns_none(db_path):
     uid = create_user(rid, "alice", "alice@x.com", "pw", db_path=db_path)
     token = create_session(uid, db_path=db_path)
     conn = get_conn(db_path)
-    conn.execute("UPDATE sessions SET expires_at=datetime('now','-1 day') WHERE token=?", (token,))
+    conn.execute("UPDATE sessions SET expires_at=datetime('now','-1 day') WHERE token=?", (hash_session_token(token),))
     conn.commit()
     conn.close()
     assert get_session_user(token, db_path=db_path) is None
@@ -172,13 +173,13 @@ def test_session_expires_after_inactivity_timeout(db_path):
     token = create_session(uid, db_path=db_path)
     stale = (datetime.utcnow() - timedelta(hours=INACTIVITY_HOURS + 1)).strftime("%Y-%m-%d %H:%M:%S")
     conn = get_conn(db_path)
-    conn.execute("UPDATE sessions SET last_active=? WHERE token=?", (stale, token))
+    conn.execute("UPDATE sessions SET last_active=? WHERE token=?", (stale, hash_session_token(token)))
     conn.commit()
     conn.close()
     assert get_session_user(token, db_path=db_path) is None
     # The inactivity check deletes the row outright, not just rejects it
     conn = get_conn(db_path)
-    row = conn.execute("SELECT * FROM sessions WHERE token=?", (token,)).fetchone()
+    row = conn.execute("SELECT * FROM sessions WHERE token=?", (hash_session_token(token),)).fetchone()
     conn.close()
     assert row is None
 
@@ -189,7 +190,7 @@ def test_session_within_inactivity_window_stays_valid(db_path):
     token = create_session(uid, db_path=db_path)
     recent = (datetime.utcnow() - timedelta(hours=INACTIVITY_HOURS - 1)).strftime("%Y-%m-%d %H:%M:%S")
     conn = get_conn(db_path)
-    conn.execute("UPDATE sessions SET last_active=? WHERE token=?", (recent, token))
+    conn.execute("UPDATE sessions SET last_active=? WHERE token=?", (recent, hash_session_token(token)))
     conn.commit()
     conn.close()
     assert get_session_user(token, db_path=db_path) is not None
@@ -201,12 +202,12 @@ def test_getting_session_user_refreshes_last_active(db_path):
     token = create_session(uid, db_path=db_path)
     stale = (datetime.utcnow() - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
     conn = get_conn(db_path)
-    conn.execute("UPDATE sessions SET last_active=? WHERE token=?", (stale, token))
+    conn.execute("UPDATE sessions SET last_active=? WHERE token=?", (stale, hash_session_token(token)))
     conn.commit()
     conn.close()
     get_session_user(token, db_path=db_path)
     conn = get_conn(db_path)
-    row = conn.execute("SELECT last_active FROM sessions WHERE token=?", (token,)).fetchone()
+    row = conn.execute("SELECT last_active FROM sessions WHERE token=?", (hash_session_token(token),)).fetchone()
     conn.close()
     refreshed = datetime.fromisoformat(row["last_active"][:19])
     assert (datetime.utcnow() - refreshed) < timedelta(minutes=1)

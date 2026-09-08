@@ -1065,9 +1065,12 @@ def view_as_client(restaurant_id, current_user):
     _conn = _gc()
     token = __import__('secrets').token_urlsafe(32)
     expires = (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat()
+    # Store the hash, not the token — same rule as auth.create_session, or
+    # this impersonation session would be unreadable by get_session_user.
+    from auth import hash_session_token as _hst
     _conn.execute(
         "INSERT INTO sessions (token, user_id, expires_at, last_active) VALUES (?,?,?,?)",
-        (token, dict(user_row)["id"], expires, datetime.now(timezone.utc).isoformat())
+        (_hst(token), dict(user_row)["id"], expires, datetime.now(timezone.utc).isoformat())
     )
     _conn.commit(); _conn.close()
     resp = make_response(redirect("/"))

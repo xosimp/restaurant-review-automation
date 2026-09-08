@@ -3184,6 +3184,41 @@ def update_last_fetched(restaurant_id: int, db_path: str = DB_PATH):
     conn.close()
 
 
+# Billing states that still entitle a restaurant to use the product.
+# `paused`/`churned` do not. Anything unrecognised — including NULL on rows
+# that predate the column — DOES, deliberately: locking a paying customer out
+# because of a value nobody anticipated is a far worse failure than briefly
+# serving one who cancelled, and the audit flagged both directions.
+ACTIVE_BILLING_STATES = {"trial", "active", "internal", "past_due", "pending", ""}
+BLOCKED_BILLING_STATES = {"churned", "paused", "canceled", "cancelled"}
+
+
+def subscription_allows_access(restaurant_id: int, db_path: str = DB_PATH) -> bool:
+    """Whether this restaurant's billing state still entitles it to service.
+
+    Before this existed nothing anywhere checked billing_status for access:
+    customer.subscription.deleted only emailed Will asking him to go
+    deactivate the account by hand, so a cancelled customer kept the full
+    dashboard, the iOS app and every Claude-backed feature — indefinitely,
+    and at Cavnar's API cost — until someone noticed an email.
+
+    Fails OPEN on any lookup error for the reason above: an unreachable
+    database must never cut off paying customers.
+    """
+    try:
+        conn = get_conn(db_path)
+        row = conn.execute(
+            "SELECT billing_status FROM restaurants WHERE id=?", (restaurant_id,)
+        ).fetchone()
+        conn.close()
+    except Exception:
+        return True
+    if not row:
+        return True
+    status = (row["billing_status"] or "").strip().lower()
+    return status not in BLOCKED_BILLING_STATES
+
+
 def get_location_group(group_name: str, db_path: str = DB_PATH) -> list:
     """Get all restaurants in a location group."""
     conn = get_conn(db_path)

@@ -4,6 +4,7 @@ from functools import wraps
 auth.py — User authentication for the Cavnar AI hosted dashboard
 Handles: user table, password hashing, session management, login/logout
 """
+import hashlib
 import sqlite3
 import secrets
 from datetime import datetime, timezone
@@ -323,6 +324,24 @@ def list_users(db_path: str = DB_PATH) -> list[dict]:
 
 # ── Session management ────────────────────────────────────────────────────────
 
+def hash_session_token(token: str) -> str:
+    """What actually goes in the sessions table.
+
+    Tokens used to be stored verbatim, which made any copy of the database a
+    ring of live master keys: the daily backup emailed every logged-in
+    owner's bearer token off the server in plaintext, and anything that could
+    read the file could impersonate any user for the full 30-day session life
+    without a password or a 2FA prompt. Only the hash is stored now, so a
+    database disclosure no longer yields anything replayable.
+
+    SHA-256 rather than scrypt/bcrypt deliberately: this runs on every
+    authenticated request, and the input is 256 bits of secrets.token_urlsafe
+    entropy, not a human-chosen password — there is no dictionary to attack,
+    so a slow KDF would buy nothing and cost latency on the hot path.
+    """
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
 def create_session(user_id: int, days: int = 30,
                    ip_address: str = None, user_agent: str = None,
                    device_type: str = "web", device_id: str = None,
@@ -349,7 +368,7 @@ def create_session(user_id: int, days: int = 30,
         conn.execute("DELETE FROM sessions WHERE user_id=? AND device_id=?", (user_id, device_id))
     conn.execute(
         "INSERT INTO sessions (token, user_id, expires_at, ip_address, user_agent, device_type, device_id) VALUES (?,?,?,?,?,?,?)",
-        (token, user_id, expires, ip_address or "", user_agent or "", device_type, device_id or "")
+        (hash_session_token(token), user_id, expires, ip_address or "", user_agent or "", device_type, device_id or "")
     )
     conn.execute(
         "INSERT INTO login_history (user_id, restaurant_id, event, ip_address, user_agent, device_type) VALUES (?,?,?,?,?,?)",
@@ -391,8 +410,10 @@ def get_sessions_for_user(user_id: int, current_token: str = None,
     result = []
     for row in rows:
         result.append({
+            # The stored value is a hash now, so the "hint" is just a stable
+            # opaque handle for the UI, never part of the real token.
             "token_hint": row["token"][-6:],
-            "is_current": row["token"] == current_token,
+            "is_current": bool(current_token) and row["token"] == hash_session_token(current_token),
             "created_at": row["created_at"],
             "last_active": row["last_active"],
             "ip_address": row["ip_address"] or "",
@@ -407,7 +428,7 @@ def revoke_other_sessions(user_id: int, current_token: str,
     """Delete all sessions for a user except the current one."""
     conn = get_conn(db_path)
     conn.execute("DELETE FROM sessions WHERE user_id=? AND token!=?",
-                 (user_id, current_token))
+                 (user_id, hash_session_token(current_token or "")))
     conn.commit()
     conn.close()
 
@@ -421,7 +442,7 @@ def get_session_user(token: str, db_path: str = DB_PATH) -> Optional[dict]:
         SELECT u.*, s.last_active, s.active_restaurant_id, s.device_type FROM sessions s
         JOIN users u ON s.user_id = u.id
         WHERE s.token=? AND s.expires_at > datetime('now') AND u.is_active=1
-    """, (token,)).fetchone()
+    """, (hash_session_token(token),)).fetchone()
     if not row:
         conn.close()
         return None
@@ -439,14 +460,14 @@ def get_session_user(token: str, db_path: str = DB_PATH) -> Optional[dict]:
             now_utc = datetime.utcnow()
             if now_utc - la > timedelta(hours=INACTIVITY_HOURS):
                 # Session expired due to inactivity — delete it
-                conn.execute("DELETE FROM sessions WHERE token=?", (token,))
+                conn.execute("DELETE FROM sessions WHERE token=?", (hash_session_token(token),))
                 conn.commit()
                 conn.close()
                 return None
         except Exception:
             pass
     # Update last_active timestamp
-    conn.execute("UPDATE sessions SET last_active=datetime('now') WHERE token=?", (token,))
+    conn.execute("UPDATE sessions SET last_active=datetime('now') WHERE token=?", (hash_session_token(token),))
     conn.commit()
     conn.close()
     user = dict(row)
@@ -463,7 +484,7 @@ def switch_active_restaurant(token: str, restaurant_id: int, db_path: str = DB_P
     conn = get_conn(db_path)
     conn.execute(
         "UPDATE sessions SET active_restaurant_id=? WHERE token=?",
-        (restaurant_id, token)
+        (restaurant_id, hash_session_token(token))
     )
     conn.commit()
     conn.close()
@@ -477,7 +498,7 @@ def set_user_role(user_id: int, role: str, db_path: str = DB_PATH):
 
 def delete_session(token: str, db_path: str = DB_PATH):
     conn = get_conn(db_path)
-    conn.execute("DELETE FROM sessions WHERE token=?", (token,))
+    conn.execute("DELETE FROM sessions WHERE token=?", (hash_session_token(token),))
     conn.commit()
     conn.close()
 
@@ -512,6 +533,38 @@ def _wants_json_response():
         return True
     return request.path.startswith("/api/")
 
+# Paths that stay reachable after a subscription lapses. A locked-out owner
+# must still be able to see why, pay, export their data, and sign out —
+# otherwise the block is indistinguishable from a broken app and there is no
+# self-service route back to paying.
+_BILLING_EXEMPT_PREFIXES = (
+    "/login", "/logout", "/health", "/static/", "/privacy", "/terms",
+    "/api/billing-info", "/account", "/mobile/api/account", "/mobile/api/login",
+    "/mobile/api/logout", "/mobile/api/me", "/mobile/api/forgot-password",
+    "/mobile/api/reset-password", "/admin",
+)
+
+
+def _billing_blocked(user) -> bool:
+    """True when this request should be refused for a lapsed subscription."""
+    try:
+        if not user or user.get("is_admin"):
+            return False
+        path = request.path or ""
+        if any(path.startswith(p) for p in _BILLING_EXEMPT_PREFIXES):
+            return False
+        from models import subscription_allows_access
+        return not subscription_allows_access(user["restaurant_id"])
+    except Exception:
+        # Fail open — see models.subscription_allows_access.
+        return False
+
+
+_BILLING_BLOCKED_MESSAGE = (
+    "This subscription is no longer active. Contact will@cavnar.ai to reactivate."
+)
+
+
 def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
@@ -521,6 +574,10 @@ def login_required(f):
                 from flask import jsonify as _jsonify_lr
                 return _jsonify_lr(ok=False, error="Your session expired — please log in again.", session_expired=True), 401
             return redirect(url_for("auth.login", next=request.path))
+        if _billing_blocked(user):
+            from flask import jsonify as _jsonify_bb
+            return _jsonify_bb(ok=False, error=_BILLING_BLOCKED_MESSAGE,
+                               billing_inactive=True), 402
         return f(*args, **kwargs, current_user=user)
     return decorated
 
@@ -552,6 +609,10 @@ def mobile_login_required(f):
         if not user:
             from flask import jsonify as _jsonify_mlr
             return _jsonify_mlr(ok=False, error="Your session expired — please log in again.", session_expired=True), 401
+        if _billing_blocked(user):
+            from flask import jsonify as _jsonify_mbb
+            return _jsonify_mbb(ok=False, error=_BILLING_BLOCKED_MESSAGE,
+                                billing_inactive=True), 402
         return f(*args, **kwargs, current_user=user)
     return decorated
 

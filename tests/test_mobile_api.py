@@ -12,7 +12,7 @@ import models
 import notify
 import guest_marketing
 import value_delivered
-from auth import create_user, init_auth, set_user_role
+from auth import create_user, init_auth, set_user_role, hash_session_token
 from auth_routes import _login_attempts
 from mobile_api import mobile_bp
 from models import create_restaurant, Restaurant, Review, save_reviews, update_restaurant, get_conn
@@ -244,7 +244,7 @@ def test_verify_2fa_correct_code_returns_ios_tagged_session(client, db_path):
     assert data["token"]
 
     conn = get_conn(db_path)
-    row = conn.execute("SELECT device_type FROM sessions WHERE token=?", (data["token"],)).fetchone()
+    row = conn.execute("SELECT device_type FROM sessions WHERE token=?", (hash_session_token(data["token"]),)).fetchone()
     conn.close()
     assert row["device_type"] == "ios"
 
@@ -296,7 +296,7 @@ def test_logout_deletes_the_session(client, db_path):
     resp = client.post("/mobile/api/logout", headers=_auth_headers(token))
     assert resp.get_json()["ok"] is True
     conn = get_conn(db_path)
-    row = conn.execute("SELECT 1 FROM sessions WHERE token=?", (token,)).fetchone()
+    row = conn.execute("SELECT 1 FROM sessions WHERE token=?", (hash_session_token(token),)).fetchone()
     conn.close()
     assert row is None
 

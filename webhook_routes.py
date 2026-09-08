@@ -22,6 +22,113 @@ def _html_doc(fragment, bg="#f7f4ef"):
 
 
 
+def _claim_stripe_event(event_id: str) -> bool:
+    """True if this is the first time we've seen this Stripe event.
+
+    Stripe delivers at-least-once and retries any non-2xx, so without this a
+    retry re-runs the whole handler: a second receipt email to the customer,
+    a second "new paying client" alert. The state changes were already
+    idempotent by accident (guarded on billing_status != active), the emails
+    were not.
+
+    INSERT on a PRIMARY KEY is the claim — two concurrent deliveries of the
+    same event cannot both succeed.
+    """
+    if not event_id:
+        return True
+    try:
+        conn = get_conn()
+        conn.execute("""CREATE TABLE IF NOT EXISTS stripe_events_seen (
+            event_id   TEXT PRIMARY KEY,
+            event_type TEXT,
+            seen_at    TEXT NOT NULL DEFAULT (datetime('now'))
+        )""")
+        conn.commit()
+        try:
+            conn.execute("INSERT INTO stripe_events_seen (event_id) VALUES (?)", (event_id,))
+            conn.commit()
+            claimed = True
+        except Exception:
+            claimed = False   # duplicate PK — already handled
+        conn.close()
+        return claimed
+    except Exception as e:
+        # Fail open: a bookkeeping failure must not drop a real payment event.
+        print(f"_claim_stripe_event failed ({event_id}): {e}")
+        return True
+
+
+def _restaurant_for_stripe(customer_id: str = "", email: str = ""):
+    """Resolve a Stripe event to a restaurant id.
+
+    Matching used to be `WHERE u.email = customer_email LIMIT 1`, which broke
+    in two ways the audit caught: an owner who changed their email in the app
+    stopped matching entirely (payments silently stopped reconciling and
+    billing_status never activated), and a multi-location owner only ever
+    resolved to their base restaurant.
+
+    stripe_customer_id is the stable key and is tried first; email is the
+    fallback for the very first payment, before we have a customer id stored.
+    """
+    if not customer_id and not email:
+        return None
+    try:
+        conn = get_conn()
+        if customer_id:
+            row = conn.execute(
+                "SELECT id FROM restaurants WHERE stripe_customer_id=? LIMIT 1",
+                (customer_id,)
+            ).fetchone()
+            if row:
+                conn.close()
+                return row["id"]
+        if email:
+            row = conn.execute(
+                """SELECT r.id FROM restaurants r
+                   JOIN users u ON u.restaurant_id = r.id
+                   WHERE lower(u.email)=lower(?) ORDER BY u.is_admin ASC, r.id ASC LIMIT 1""",
+                (email,)
+            ).fetchone()
+            if row:
+                conn.close()
+                return row["id"]
+            # Some accounts carry the billing address on the restaurant only.
+            row = conn.execute(
+                "SELECT id FROM restaurants WHERE lower(owner_email)=lower(?) ORDER BY id ASC LIMIT 1",
+                (email,)
+            ).fetchone()
+            if row:
+                conn.close()
+                return row["id"]
+        conn.close()
+    except Exception as e:
+        print(f"_restaurant_for_stripe lookup failed: {e}")
+    return None
+
+
+def _sibling_restaurant_ids(restaurant_id: int):
+    """Every location that shares this restaurant's location_group.
+
+    A multi-location owner pays once for the group, so billing state has to
+    land on all of their locations — not just whichever one the paying user
+    row happened to point at.
+    """
+    try:
+        conn = get_conn()
+        row = conn.execute("SELECT location_group FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
+        if not row or not (row["location_group"] or "").strip():
+            conn.close()
+            return [restaurant_id]
+        rows = conn.execute(
+            "SELECT id FROM restaurants WHERE location_group=?", (row["location_group"],)
+        ).fetchall()
+        conn.close()
+        ids = [r["id"] for r in rows]
+        return ids or [restaurant_id]
+    except Exception:
+        return [restaurant_id]
+
+
 webhook_bp = Blueprint('webhook', __name__)
 
 # Read fresh at call time — see scheduler.py's identical note.
@@ -51,6 +158,13 @@ def stripe_webhook():
         _ae.record_stripe(event)
     except Exception:
         pass
+
+    # Stripe retries on any non-2xx and can deliver the same event twice.
+    # Everything below this line sends email or changes billing state, so it
+    # runs at most once per event id.
+    if not _claim_stripe_event(event.get("id", "")):
+        print(f"Stripe event {event.get('id')} already handled — skipping duplicate")
+        return jsonify(received=True, duplicate=True)
 
     def send_alert(subject, body):
         """Send alert email to Will."""
@@ -128,14 +242,35 @@ def stripe_webhook():
         customer_id = sub.get("customer","")
         reason = sub.get("cancellation_details",{}).get("reason","unknown")
 
+        # Actually revoke access. This used to send Will an email asking him
+        # to go deactivate the account by hand, which meant a cancelled
+        # customer kept the full dashboard, the iOS app and every AI feature
+        # until someone read that email — indefinitely, at Cavnar's API cost.
+        # auth.login_required/mobile_login_required read billing_status.
+        revoked_rid = _restaurant_for_stripe(customer_id, email)
+        if revoked_rid:
+            try:
+                for _rid in _sibling_restaurant_ids(revoked_rid):
+                    update_restaurant(_rid, {"billing_status": "churned"})
+                print(f"Subscription cancelled — billing_status=churned for {_sibling_restaurant_ids(revoked_rid)}")
+            except Exception as _re:
+                print(f"Failed to mark restaurant {revoked_rid} churned: {_re}")
+        else:
+            print(f"Subscription cancelled but no restaurant matched customer {customer_id} / {email}")
+
         send_alert(
             f"📋 Subscription cancelled — {customer_id}",
             f"""A client subscription has been cancelled.<br><br>
             <strong>Customer ID:</strong> {customer_id}<br>
             <strong>Reason:</strong> {reason}<br>
-            <strong>Action needed:</strong> If this was unintentional, contact the client.
-            If they are churning, deactivate their dashboard access at
-            <a href="https://dashboard.cavnar.ai/admin">dashboard.cavnar.ai/admin</a>."""
+            <strong>Access:</strong> """ + (
+                f"automatically revoked (restaurant {revoked_rid} set to churned)."
+                if revoked_rid else
+                "NOT revoked — no restaurant matched this Stripe customer. "
+                "Deactivate manually at <a href=\"https://dashboard.cavnar.ai/admin\">dashboard.cavnar.ai/admin</a>."
+            ) + """<br>
+            <strong>Action needed:</strong> If this was unintentional, restore their
+            billing status at <a href="https://dashboard.cavnar.ai/admin">dashboard.cavnar.ai/admin</a>."""
         )
 
     elif event["type"] == "invoice.paid":
@@ -145,14 +280,16 @@ def stripe_webhook():
         amount      = inv.get("amount_paid", 0) / 100
         billing_reason = inv.get("billing_reason","")  # subscription_create, subscription_cycle, etc.
         print(f"Payment received: {email} — ${amount:.2f} ({billing_reason})")
-        if customer_id and email:
+        if customer_id or email:
             try:
-                conn = get_conn()
-                row = conn.execute(
-                    "SELECT r.id, r.billing_status FROM restaurants r JOIN users u ON u.restaurant_id=r.id WHERE u.email=? LIMIT 1",
-                    (email,)
-                ).fetchone()
-                conn.close()
+                _rid = _restaurant_for_stripe(customer_id, email)
+                row = None
+                if _rid:
+                    conn = get_conn()
+                    row = conn.execute(
+                        "SELECT id, billing_status FROM restaurants WHERE id=?", (_rid,)
+                    ).fetchone()
+                    conn.close()
                 if row:
                     updates = {"stripe_customer_id": customer_id}
                     # Auto-activate billing status on first real payment
@@ -164,7 +301,12 @@ def stripe_webhook():
                     if first_payment:
                         updates["billing_status"] = "active"
                         print(f"Auto-activated billing_status for {email}")
-                    update_restaurant(dict(row)["id"], updates)
+                    # A paid invoice reactivates every location in the group —
+                    # the same set cancellation churns — so a customer who
+                    # pays after lapsing regains access everywhere at once.
+                    for _sib in _sibling_restaurant_ids(dict(row)["id"]):
+                        update_restaurant(_sib, dict(updates) if _sib == dict(row)["id"]
+                                          else {k: v for k, v in updates.items() if k != "stripe_customer_id"})
                     print(f"Saved Stripe customer {customer_id} for {email}")
 
                     # Notify Will when a client converts from trial to paid
