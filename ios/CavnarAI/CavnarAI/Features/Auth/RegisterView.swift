@@ -184,13 +184,32 @@ struct RegisterView: View {
                         .loginSheen()
                         .padding(.top, LoginMetrics.spaceS)
 
-                        Text("By continuing you agree to Cavnar AI's terms. Will reviews every new account personally.")
-                            .font(.cavnarBody(12.5))
-                            .foregroundStyle(Color.cavnarInk3)
-                            .multilineTextAlignment(.center)
-                            .frame(maxWidth: .infinity)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .padding(.top, LoginMetrics.spaceXS)
+                        // Real Link elements, not a markdown-in-Text sentence: markdown
+                        // links embedded in Text look and color correctly but never actually
+                        // become tappable on a real device (proven the hard way elsewhere in
+                        // Account — see AccountCloseAccountView/AccountExportDataView). Also
+                        // the App Store review requirement this satisfies: an app that
+                        // collects personal data at account creation links to its privacy
+                        // policy from inside the app, not only in App Store Connect's own
+                        // metadata field.
+                        VStack(spacing: 3) {
+                            Text("By continuing you agree to Cavnar AI's")
+                                .font(.cavnarBody(12.5))
+                                .foregroundStyle(Color.cavnarInk3)
+                            HStack(spacing: 4) {
+                                Link("Terms", destination: URL(string: "https://dashboard.cavnar.ai/terms")!)
+                                Text("and").foregroundStyle(Color.cavnarInk3)
+                                Link("Privacy Policy", destination: URL(string: "https://dashboard.cavnar.ai/privacy")!)
+                            }
+                            .font(.cavnarBody(12.5, weight: 700))
+                            .tint(Color.cavnarEmber)
+                            Text("Will reviews every new account personally.")
+                                .font(.cavnarBody(12.5))
+                                .foregroundStyle(Color.cavnarInk3)
+                        }
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, LoginMetrics.spaceXS)
 
                         HStack(spacing: LoginMetrics.spaceXS) {
                             Text("Already have an account?")
