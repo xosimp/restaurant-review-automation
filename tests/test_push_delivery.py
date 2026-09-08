@@ -241,3 +241,79 @@ def test_fire_push_is_a_noop_with_no_registered_devices(db_path, rid):
     unconditionally when al_*_push is on; it must not raise."""
     init_push(db_path=db_path)
     push.fire_push(rid, "1star", "title", "body", db_path=db_path)  # should not raise
+
+
+# ── delivery concurrency is bounded ─────────────────────────────────────────
+#
+# fire_push used to start one thread per device. _deliver retries with
+# backoff, so each thread lives for seconds, and the scheduler fires push for
+# every restaurant in one pass — fifty restaurants with a couple of devices
+# each meant a hundred-plus concurrent threads on a small Railway container,
+# every one holding an HTTP/2 connection and writing to the same SQLite file.
+
+def test_deliveries_run_on_a_bounded_pool_not_a_thread_per_device(db_path, rid, uid, monkeypatch):
+    import threading as _t
+    init_push(db_path=db_path)
+    for i in range(12):
+        register_device_token(uid, rid, f"tok{i:02d}" + "0" * 58, "production", db_path=db_path)
+
+    peak = {"n": 0}
+    live = {"n": 0}
+    lock = _t.Lock()
+    release = _t.Event()
+
+    def slow_deliver(*a, **k):
+        with lock:
+            live["n"] += 1
+            peak["n"] = max(peak["n"], live["n"])
+        release.wait(2)
+        with lock:
+            live["n"] -= 1
+
+    monkeypatch.setattr(push, "_deliver", slow_deliver)
+    monkeypatch.setattr(push, "_MAX_PUSH_WORKERS", 4)
+    monkeypatch.setattr(push, "_executor", None)  # rebuild the pool at the patched size
+
+    push.fire_push(rid, "1star", "t", "b", db_path=db_path)
+    _t.Event().wait(0.3)
+    observed_peak = peak["n"]
+    release.set()
+    push._push_executor().shutdown(wait=True)
+    monkeypatch.setattr(push, "_executor", None)
+
+    assert observed_peak <= 4, f"{observed_peak} deliveries ran at once for 12 devices"
+    assert observed_peak >= 2, "the pool should still deliver in parallel, not one at a time"
+
+
+def test_every_device_is_still_delivered_to(db_path, rid, uid, monkeypatch):
+    """Bounding concurrency must not drop anyone."""
+    import threading as _t
+    seen = []
+    lock = _t.Lock()
+    init_push(db_path=db_path)
+    for i in range(7):
+        register_device_token(uid, rid, f"dev{i:02d}" + "0" * 58, "production", db_path=db_path)
+
+    def record(token_row, *a, **k):
+        with lock:
+            seen.append(token_row["apns_token"])
+
+    monkeypatch.setattr(push, "_deliver", record)
+    push.fire_push(rid, "1star", "t", "b", db_path=db_path)
+    push._push_executor().shutdown(wait=True)
+    monkeypatch.setattr(push, "_executor", None)
+
+    assert len(seen) == 7
+    assert len(set(seen)) == 7
+
+
+def test_a_full_queue_drops_rather_than_exhausting_the_container(db_path, rid, uid, monkeypatch):
+    init_push(db_path=db_path)
+    register_device_token(uid, rid, "z" * 64, "production", db_path=db_path)
+    calls = []
+    monkeypatch.setattr(push, "_deliver", lambda *a, **k: calls.append(a))
+    monkeypatch.setattr(push, "_MAX_PUSH_QUEUED", 0)
+    push.fire_push(rid, "1star", "t", "b", db_path=db_path)
+    push._push_executor().shutdown(wait=True)
+    monkeypatch.setattr(push, "_executor", None)
+    assert calls == [], "past the ceiling, a delivery is dropped rather than queued forever"

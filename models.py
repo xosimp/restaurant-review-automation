@@ -1,5 +1,7 @@
 import sqlite3
 import json
+import threading
+import weakref
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from typing import Optional
@@ -428,12 +430,68 @@ class WeeklyReport:
 
 # ── Connection ────────────────────────────────────────────────────────────────
 
+class _TrackedConnection(sqlite3.Connection):
+    """A plain sqlite3 connection that can be weak-referenced.
+
+    The C type can't be, and being able to hold a weak reference is what lets
+    close_thread_connections() below sweep a connection that leaked without
+    keeping it alive itself.
+    """
+
+
+# Per-thread bag of connections handed out but not yet closed. Weak, so a
+# connection the caller closes and drops disappears from here on its own.
+_open_conns = threading.local()
+
+
 def get_conn(db_path: str = DB_PATH) -> sqlite3.Connection:
-    conn = sqlite3.connect(db_path, timeout=30)
+    conn = sqlite3.connect(db_path, timeout=30, factory=_TrackedConnection)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA journal_mode=WAL")
+    bag = getattr(_open_conns, "bag", None)
+    if bag is None:
+        bag = _open_conns.bag = weakref.WeakSet()
+    try:
+        bag.add(conn)
+    except TypeError:
+        pass
     return conn
+
+
+def close_thread_connections() -> int:
+    """Close whatever this thread opened and didn't. Returns how many.
+
+    The codebase's prevailing shape is `conn = get_conn(); ...; conn.close()`,
+    which closes on every normal path (no site was found that forgets one) but
+    not when something raises in between — and an exception carries a
+    traceback that keeps the frame, and therefore the connection, alive well
+    past the failure. On SQLite that matters: a leaked connection that was
+    mid-write holds a RESERVED lock, and every other writer waits out the
+    30-second busy timeout behind it.
+
+    Called from the Flask app's teardown so a failed request can't leave one
+    behind. New code should still prefer `with db_conn() as conn:` — this is
+    the net under the wire, not a licence to skip the close.
+    """
+    bag = getattr(_open_conns, "bag", None)
+    if not bag:
+        return 0
+    leaked = 0
+    for conn in list(bag):
+        try:
+            # A connection the caller already closed raises here, which is how
+            # this counts real leaks rather than every request that ran.
+            conn.execute("SELECT 1")
+        except Exception:
+            continue
+        leaked += 1
+        try:
+            conn.close()
+        except Exception:
+            pass
+    bag.clear()
+    return leaked
 
 
 from contextlib import contextmanager as _contextmanager

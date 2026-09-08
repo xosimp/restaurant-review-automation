@@ -6,7 +6,7 @@ Events fired:
   alert.fired       — any alert trigger fires
   response.approved — client approves a draft response
 """
-import hashlib, hmac, json, threading, time
+import hashlib, hmac, json, os, threading, time
 import ipaddress, socket
 from urllib.parse import urlparse
 from datetime import datetime, timezone
@@ -244,8 +244,29 @@ def _deliver(webhook, event_type, data, db_path=DB_PATH):
     return {"ok": ok, "status": status, "attempts": attempts, "error": error}
 
 
+# Same bounded pool as push.fire_push, for the same reason: _deliver retries
+# with backoff, and a scheduler pass that fires one event per restaurant used
+# to start one thread per restaurant, all at once.
+_MAX_WEBHOOK_WORKERS = int(os.getenv("WEBHOOK_MAX_WORKERS", "4"))
+
+_executor = None
+_executor_lock = threading.Lock()
+
+
+def _webhook_executor():
+    global _executor
+    if _executor is None:
+        with _executor_lock:
+            if _executor is None:
+                from concurrent.futures import ThreadPoolExecutor
+                _executor = ThreadPoolExecutor(
+                    max_workers=_MAX_WEBHOOK_WORKERS, thread_name_prefix="webhook"
+                )
+    return _executor
+
+
 def fire_webhook(restaurant_id, event_type, data, db_path=DB_PATH):
-    """Fire webhook in background thread — never blocks the caller."""
+    """Fire webhook on a bounded background pool — never blocks the caller."""
     try:
         webhook = get_webhook(restaurant_id, db_path)
         if not webhook:
@@ -253,7 +274,6 @@ def fire_webhook(restaurant_id, event_type, data, db_path=DB_PATH):
         subscribed = json.loads(webhook.get("events") or "[]")
         if event_type not in subscribed:
             return
-        t = threading.Thread(target=_deliver, args=(webhook, event_type, data, db_path), daemon=True)
-        t.start()
+        _webhook_executor().submit(_deliver, webhook, event_type, data, db_path)
     except Exception as e:
         print(f"[webhook] fire_webhook error ({event_type}, rid={restaurant_id}): {e}")

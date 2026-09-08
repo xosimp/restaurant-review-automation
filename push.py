@@ -11,6 +11,7 @@ than waiting out the failure counter, since retrying a dead token is pure
 waste.
 """
 import json
+import os
 import threading
 import time
 from datetime import datetime, timezone
@@ -225,16 +226,66 @@ def _deliver(device_token_row, alert_type, title, body, data, db_path=DB_PATH):
     return {"ok": ok, "status": status, "attempts": attempts, "error": error}
 
 
+# Deliveries run on a small shared pool rather than a thread per device.
+# _deliver retries with backoff, so a thread lives for seconds, and the
+# scheduler fires push for every restaurant in one pass — 50 restaurants
+# times a couple of devices each used to mean a hundred-plus concurrent
+# threads on a small Railway container, every one of them holding an HTTP/2
+# connection and writing to the same SQLite file.
+_MAX_PUSH_WORKERS = int(os.getenv("PUSH_MAX_WORKERS", "4"))
+# A ceiling on how far behind the pool may fall before deliveries are
+# dropped. Dropping an alert is bad; exhausting the container's memory takes
+# the whole app down with it, so there has to be a number — generous enough
+# that a normal digest sweep never reaches it.
+_MAX_PUSH_QUEUED = int(os.getenv("PUSH_MAX_QUEUED", "500"))
+
+_executor = None
+_executor_lock = threading.Lock()
+_queued = 0
+
+
+def _push_executor():
+    global _executor
+    if _executor is None:
+        with _executor_lock:
+            if _executor is None:
+                from concurrent.futures import ThreadPoolExecutor
+                _executor = ThreadPoolExecutor(
+                    max_workers=_MAX_PUSH_WORKERS, thread_name_prefix="push"
+                )
+    return _executor
+
+
+def _run_delivery(token_row, alert_type, title, body, data, db_path):
+    global _queued
+    try:
+        _deliver(token_row, alert_type, title, body, data, db_path)
+    finally:
+        with _executor_lock:
+            _queued -= 1
+
+
 def fire_push(restaurant_id, alert_type, title, body, data=None, db_path=DB_PATH):
-    """Fire push to every device registered for this restaurant, in a
-    background thread per device — never blocks the caller. Mirrors
-    webhooks.fire_webhook()'s fire-and-forget shape."""
+    """Fire push to every device registered for this restaurant, on a bounded
+    background pool — never blocks the caller. Mirrors webhooks.fire_webhook()'s
+    fire-and-forget shape."""
+    global _queued
     try:
         tokens = get_device_tokens(restaurant_id, db_path)
         for token_row in tokens:
-            t = threading.Thread(
-                target=_deliver, args=(token_row, alert_type, title, body, data, db_path), daemon=True
+            with _executor_lock:
+                if _queued >= _MAX_PUSH_QUEUED:
+                    print(f"[push] queue full ({_queued}) — dropping {alert_type} for rid={restaurant_id}")
+                    try:
+                        import ops
+                        ops.capture(RuntimeError(f"push queue full at {_queued}"),
+                                    job="fire_push", context=f"rid={restaurant_id} {alert_type}")
+                    except Exception:
+                        pass
+                    break
+                _queued += 1
+            _push_executor().submit(
+                _run_delivery, token_row, alert_type, title, body, data, db_path
             )
-            t.start()
     except Exception as e:
         print(f"[push] fire_push error ({alert_type}, rid={restaurant_id}): {e}")

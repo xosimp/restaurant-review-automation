@@ -224,6 +224,27 @@ app.register_blueprint(status_bp)
 app.register_blueprint(mobile_bp)
 
 app.after_request(ensure_csrf_cookie)
+
+
+@app.teardown_appcontext
+def _sweep_leaked_db_connections(exc):
+    """Close any SQLite connection this request opened and didn't.
+
+    The prevailing shape in this codebase is conn = get_conn() ... conn.close(),
+    which closes on every normal path but not when something raises in between
+    — and the traceback keeps the frame, and the connection, alive well past
+    the failure. A leaked connection that was mid-write holds a RESERVED lock
+    and every other writer waits out the 30-second busy timeout behind it.
+    See models.close_thread_connections.
+    """
+    try:
+        import models as _m
+        leaked = _m.close_thread_connections()
+        if leaked:
+            print(f"[db] closed {leaked} leaked connection(s) after {request.path}")
+    except Exception:
+        pass
+
 _secret_key = os.getenv("SECRET_KEY", "")
 if not _secret_key:
     _secret_key = os.urandom(32).hex()
