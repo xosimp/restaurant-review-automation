@@ -116,6 +116,7 @@ td.r,th.r{text-align:right}
 .sk{height:12px;border-radius:4px;background:linear-gradient(90deg,var(--paper3),var(--paper4),var(--paper3));background-size:200% 100%;animation:sk 1.2s linear infinite;margin:8px 0}
 @keyframes sk{to{background-position:-200% 0}}
 .err{padding:14px;border:1px solid rgba(227,51,63,.4);background:var(--red-bg);border-radius:var(--r);color:var(--red)}
+.warnbox{padding:14px;border:1px solid rgba(217,119,6,.4);background:var(--amber-bg);border-radius:var(--r);color:var(--amber)}
 .tabs{display:flex;gap:2px;border-bottom:1px solid var(--paper3);margin-bottom:14px;overflow:auto}
 .tabs a{padding:8px 12px;font-size:12.5px;font-weight:600;color:var(--ink3);border-bottom:2px solid transparent;white-space:nowrap}
 .tabs a.on{color:var(--ink);border-bottom-color:var(--ember)}.tabs a:hover{text-decoration:none;color:var(--ink)}
@@ -477,6 +478,11 @@ async function ai(){
   $('view').innerHTML = `
     <div class="head"><div><div class="k ember">Operations</div><h1>AI operations</h1><div class="sub">Claude and Perplexity — every call is metered in ai_usage — successes with their cost, failures with the error.</div></div><div class="r">${[1,7,30,90].map(n=>`<button class="f ${_aid===n?'on':''}" onclick="_aid=${n};ai()">${n===1?'Today':n+'d'}</button>`).join('')}</div></div>
     <div class="grid g6" style="margin-bottom:14px">${kpi(fmtN(t.calls),'Calls · '+_aid+'d')}${kpi(fmtUSD(t.cost,2),'Cost · '+_aid+'d','ember')}${kpi(fmtN(t.today.calls),'Calls today','',fmtUSD(t.today.cost,2))}${kpi(fmtN(t.month.calls),'Calls this month','',fmtUSD(t.month.cost,2))}${kpi(fmtN((t.tin||0)+(t.tout||0)),'Tokens · '+_aid+'d')}${kpi(fmtN(d.failed.n),'Failed calls · '+_aid+'d',d.failed.n?'bad':'good',d.failed.n_24h?d.failed.n_24h+' in 24h':'')}</div>
+    ${(function(){var b=(d.budget||{}).global_month; if(!b||!b.budget) return '';
+        var over=b.over, near=!over&&b.pct>=80;
+        if(!over&&!near) return '<div class="dim" style="margin-bottom:12px">Spend ceiling: '+fmtUSD(b.spend,2)+' of '+fmtUSD(b.budget,2)+' this month ('+b.pct+'%). Past it, every Claude call is refused until the ceiling is raised (AI_GLOBAL_MONTHLY_BUDGET_USD).</div>';
+        return '<div class="'+(over?'err':'warnbox')+'" style="margin-bottom:12px"><b>'+(over?'AI is paused — monthly ceiling reached.':'Approaching the monthly AI ceiling.')+'</b> '+fmtUSD(b.spend,2)+' of '+fmtUSD(b.budget,2)+' ('+b.pct+'%). Raise AI_GLOBAL_MONTHLY_BUDGET_USD in Railway to lift it.</div>';
+      })()}
     ${d.anomalies.length?`<div class="err" style="margin-bottom:12px"><b>Anomalies:</b> ${d.anomalies.map(a=>`${a.restaurant_id?clientLink(a.restaurant_id,a.restaurant||('#'+a.restaurant_id)):'Platform'} — ${esc(a.detail)}`).join(' · ')}</div>`:''}
     <div class="grid g3" style="margin-bottom:14px">
       <div class="card"><div class="ch"><h2>Daily calls</h2></div><div class="cb">${bars(d.daily,'calls')}<div class="dim" style="margin-top:4px">${d.daily.length?fmtD(d.daily[0].day)+' – '+fmtD(d.daily[d.daily.length-1].day):'no data'}</div></div></div>

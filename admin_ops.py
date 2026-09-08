@@ -663,8 +663,16 @@ def ai_ops(days=30):
     anomalies = [{"kind": "spike", "restaurant_id": rid, "restaurant": names.get(rid), "detail": f"{n} calls this week vs {pv.get(rid, 0)} the week before"}
                  for rid, n in wk.items() if n >= 40 and pv.get(rid, 0) and n > 4 * pv.get(rid, 0)]
     anomalies += [{"kind": "loop", "restaurant_id": l["restaurant_id"], "restaurant": l["name"], "detail": f"{l['action']} ran {l['n']}× on {l['day']}"} for l in loops]
+    # Spend against the ceilings that actually stop calls (ai_utils), so the
+    # page shows how close the account is rather than only what it has spent.
+    try:
+        import ai_utils as _ai
+        budget = _ai.ai_budget_status()
+    except Exception:
+        budget = {}
     return {"ok": True, "days": days, "totals": {**totals, "today": t_today, "month": t_month}, "by_action": by_action,
             "by_client": by_client, "daily": daily, "by_provider": by_provider, "failures": failures, "recent": recent, "anomalies": anomalies,
+            "budget": budget,
             "failed": {"n": failed_total.get("n") or 0, "n_24h": failed_total.get("n_24h") or 0}, "recent_failed": recent_failed}
 
 
