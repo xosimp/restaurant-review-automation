@@ -59,11 +59,15 @@ def _run(monkeypatch, csv_text, close_times=None, role_close_buffers=None):
     # close-time feature below.
     monkeypatch.setattr(models, "get_close_times", lambda restaurant_id: close_times or {})
     monkeypatch.setattr(models, "get_role_close_buffers", lambda restaurant_id: role_close_buffers or {})
-    client_api._schedule_jobs.pop("test-job", None)
+    # The finished job normally lands in ops.async_jobs. These tests are
+    # about the repair-pass logic, not job bookkeeping, and this file has no
+    # db_path fixture — capture the payload rather than write to a database.
+    finished = {}
+    monkeypatch.setattr(client_api._ops, "finish_async_job",
+                        lambda job_id, status, result: finished.update(status=status, result=result))
     client_api._run_schedule_job("test-job", 1)
-    job = client_api._schedule_jobs.pop("test-job")
-    assert job["status"] == "done"
-    return job["result"]
+    assert finished.get("status") == "done", finished.get("result")
+    return finished["result"]
 
 
 HEADER = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes"

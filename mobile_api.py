@@ -2066,7 +2066,7 @@ def mobile_labor_insight(current_user):
 @mobile_login_required
 def mobile_generate_schedule(current_user):
     """Reuses client_api.py's existing background-job machinery
-    (_run_schedule_job / _schedule_jobs) rather than building a second job
+    (_run_schedule_job plus ops.async_jobs) rather than building a second job
     system — the same async-generate-then-poll pattern the web Labor tab
     already relies on."""
     import threading
@@ -2077,7 +2077,8 @@ def mobile_generate_schedule(current_user):
     if ai_rate_limited(f"schedule:{rid}", max_calls=3, window_secs=60):
         return jsonify(ok=False, error="Too many schedule generations — please wait a moment and try again."), 429
     job_id = str(uuid.uuid4())
-    _capi._schedule_jobs[job_id] = {"status": "pending", "result": None}
+    import ops as _ops
+    _ops.start_async_job(job_id, "schedule", rid)
     t = threading.Thread(target=_capi._run_schedule_job, args=(job_id, rid), daemon=True)
     t.start()
     return jsonify(ok=True, job_id=job_id)
@@ -2086,12 +2087,11 @@ def mobile_generate_schedule(current_user):
 @mobile_bp.route("/labor/schedule-status/<job_id>")
 @mobile_login_required
 def mobile_schedule_status(job_id, current_user):
-    """Mirrors client_api.py's schedule_status() route body, reading the
-    same shared _schedule_jobs dict — unlike the web route this one does
-    require auth (mobile_login_required), a small deliberate hardening over
-    the web version's job-id-is-unguessable-so-no-login-needed approach,
-    since bearer auth costs nothing extra to check here."""
-    job = _capi._schedule_jobs.get(job_id)
+    """Mirrors client_api.py's schedule_status(), reading the same
+    ops.async_jobs table — the web route generates the job the phone may end
+    up polling and vice versa, so they have to share one store."""
+    import ops as _ops
+    job = _ops.read_async_job(job_id, restaurant_id=current_user["restaurant_id"])
     if not job:
         return jsonify(ok=False, status="error", error="Job not found"), 404
     if job["status"] == "pending":
@@ -2099,7 +2099,6 @@ def mobile_schedule_status(job_id, current_user):
     try:
         result = dict(job["result"])
         result["status"] = job["status"]
-        _capi._schedule_jobs.pop(job_id, None)
         return jsonify(**result)
     except Exception as e:
         return jsonify(ok=False, status="error", error=str(e)), 500
@@ -2989,11 +2988,10 @@ def mobile_intel(current_user):
 @mobile_login_required
 def mobile_refresh_competitors(current_user):
     """Same async job pattern as /labor/generate-schedule — reuses
-    admin_routes.py's existing _run_competitor_job/_competitor_jobs rather
-    than building a second job system. (admin_routes.py despite its
-    filename: this specific route is @login_required, not @admin_required —
-    any logged-in owner can trigger it, matching the web dashboard's own
-    "Refresh" button.)"""
+    admin_routes.py's existing _run_competitor_job rather than building a
+    second job system. (admin_routes.py despite its filename: this specific
+    route is @login_required, not @admin_required — any logged-in owner can
+    trigger it, matching the web dashboard's own "Refresh" button.)"""
     import threading
     import uuid
     rid = current_user["restaurant_id"]
@@ -3003,7 +3001,8 @@ def mobile_refresh_competitors(current_user):
         return jsonify(ok=False, error="Competitor intelligence is available on the Full System plan only."), 403
     import admin_routes as _admin
     job_id = str(uuid.uuid4())
-    _admin._competitor_jobs[job_id] = {"status": "pending", "result": None}
+    import ops as _ops
+    _ops.start_async_job(job_id, "competitor_intel", current_user["restaurant_id"])
     t = threading.Thread(target=_admin._run_competitor_job, args=(job_id, rid), daemon=True)
     t.start()
     return jsonify(ok=True, job_id=job_id)
@@ -3012,10 +3011,10 @@ def mobile_refresh_competitors(current_user):
 @mobile_bp.route("/intel/refresh-status/<job_id>")
 @mobile_login_required
 def mobile_refresh_competitors_status(job_id, current_user):
-    """Mirrors mobile_schedule_status's body/shape, reading admin_routes.py's
-    shared _competitor_jobs dict."""
-    import admin_routes as _admin
-    job = _admin._competitor_jobs.get(job_id)
+    """Mirrors mobile_schedule_status's body/shape, reading the same
+    ops.async_jobs table the web Intel tab's poll reads."""
+    import ops as _ops
+    job = _ops.read_async_job(job_id, restaurant_id=current_user["restaurant_id"])
     if not job:
         return jsonify(ok=False, status="error", error="Job not found"), 404
     if job["status"] == "pending":
@@ -3023,7 +3022,6 @@ def mobile_refresh_competitors_status(job_id, current_user):
     try:
         result = dict(job["result"])
         result["status"] = job["status"]
-        _admin._competitor_jobs.pop(job_id, None)
         return jsonify(**result)
     except Exception as e:
         return jsonify(ok=False, status="error", error=str(e)), 500

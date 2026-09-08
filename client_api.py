@@ -1950,7 +1950,10 @@ def _build_schedule_result(restaurant_id):
     return result
 
 
-_schedule_jobs = {}  # job_id -> {"status": "pending"|"done"|"error", "result": ...}
+# Async schedule generation is tracked in ops.async_jobs (a table), not a
+# module dict — see ops.start_async_job for why. This alias is kept so the
+# admin console and tests have one name to reach for.
+import ops as _ops
 
 # Matches a clock time like "8:00am"/"3:00 pm" — a real role name (Server,
 # Prep Cook, Carry Out, ...) never looks like this, which is what makes it a
@@ -2810,32 +2813,29 @@ def _run_schedule_job(job_id, restaurant_id):
         except Exception as _hist_ex:
             print(f"[schedule history] save error: {_hist_ex}")
 
-        _schedule_jobs[job_id] = {
-            "status": "done",
-            "result": dict(
-                ok=True,
-                schedule_csv=result["schedule_csv"],
-                summary=result.get("summary", []),
-                preview_rows=preview_rows,
-                week_dates=result.get("week_dates", []),
-                week_days=result.get("week_days", []),
-                projected_revenue=result.get("projected_revenue", 0),
-                hours_budget=result.get("hours_budget", 0),
-                labor_budget_dollars=result.get("labor_budget_dollars", 0),
-                hours_scheduled=round(hours_scheduled, 1),
-                labor_target=result.get("labor_target", 30),
-                staff_constraints=staff_constraints,
-                hours_added_by_backstop=hours_added,
-                backstop_added_dates=added_dates,
-                backstop_extended_dates=extended_dates,
-                backstop_trimmed_dates=trimmed_dates,
-                backstop_pizza_added_dates=pizza_added_dates,
-            )
-        }
+        _ops.finish_async_job(job_id, "done", dict(
+            ok=True,
+            schedule_csv=result["schedule_csv"],
+            summary=result.get("summary", []),
+            preview_rows=preview_rows,
+            week_dates=result.get("week_dates", []),
+            week_days=result.get("week_days", []),
+            projected_revenue=result.get("projected_revenue", 0),
+            hours_budget=result.get("hours_budget", 0),
+            labor_budget_dollars=result.get("labor_budget_dollars", 0),
+            hours_scheduled=round(hours_scheduled, 1),
+            labor_target=result.get("labor_target", 30),
+            staff_constraints=staff_constraints,
+            hours_added_by_backstop=hours_added,
+            backstop_added_dates=added_dates,
+            backstop_extended_dates=extended_dates,
+            backstop_trimmed_dates=trimmed_dates,
+            backstop_pizza_added_dates=pizza_added_dates,
+        ))
     except Exception as e:
         tb = _tb.format_exc()
         print(f"[schedule job] FAILED:\n{tb}")
-        _schedule_jobs[job_id] = {"status": "error", "result": {"ok": False, "error": str(e), "traceback": tb}}
+        _ops.finish_async_job(job_id, "error", {"ok": False, "error": str(e), "traceback": tb})
 
 
 @client_bp.route("/api/generate-schedule", methods=["GET", "POST"])
@@ -2852,16 +2852,20 @@ def generate_schedule_json(current_user):
     if ai_rate_limited(f"schedule:{current_user['restaurant_id']}", max_calls=3, window_secs=60):
         return jsonify(ok=False, error="Too many schedule generations — please wait a moment and try again.")
     job_id = str(uuid.uuid4())
-    _schedule_jobs[job_id] = {"status": "pending", "result": None}
+    _ops.start_async_job(job_id, "schedule", current_user["restaurant_id"])
     t = threading.Thread(target=_run_schedule_job, args=(job_id, current_user["restaurant_id"]), daemon=True)
     t.start()
     return jsonify(ok=True, job_id=job_id)
 
 
 @client_bp.route("/api/schedule-status/<job_id>", methods=["GET"])
-def schedule_status(job_id):
-    """Poll for schedule generation result. No login_required — job_id is an unguessable UUID."""
-    job = _schedule_jobs.get(job_id)
+@login_required
+def schedule_status(current_user, job_id):
+    """Poll for schedule generation result. Scoped to the caller's own
+    restaurant — this used to be unauthenticated on the reasoning that the
+    job id is an unguessable UUID, which is true but left the result readable
+    by anyone who saw the id in a log or a shared screen."""
+    job = _ops.read_async_job(job_id, restaurant_id=current_user["restaurant_id"])
     if not job:
         return jsonify({"ok": False, "status": "error", "error": "Job not found"}), 404
     if job["status"] == "pending":
@@ -2869,7 +2873,6 @@ def schedule_status(job_id):
     try:
         result = dict(job["result"])
         result["status"] = job["status"]
-        _schedule_jobs.pop(job_id, None)
         return jsonify(result)
     except Exception as e:
         return jsonify({"ok": False, "status": "error", "error": str(e)}), 500

@@ -1603,17 +1603,20 @@ def competitor_intel_api(current_user):
     except Exception:
         return jsonify(ok=False, data=None)
 
-_competitor_jobs = {}  # job_id -> {"status": "pending"|"done"|"error", "result": ...}
+# Tracked in ops.async_jobs (a table), not a module dict — see
+# ops.start_async_job for why.
+import ops as _ops
+
 
 def _run_competitor_job(job_id, restaurant_id):
     from competitor import run_competitor_analysis
     try:
         result = run_competitor_analysis(restaurant_id)
-        _competitor_jobs[job_id] = {"status": "done" if result.get("ok") else "error", "result": result}
+        _ops.finish_async_job(job_id, "done" if result.get("ok") else "error", result)
     except Exception as e:
         import traceback as _tb
         print(f"[competitor job] FAILED:\n{_tb.format_exc()}")
-        _competitor_jobs[job_id] = {"status": "error", "result": {"ok": False, "error": str(e)}}
+        _ops.finish_async_job(job_id, "error", {"ok": False, "error": str(e)})
 
 @admin_bp.route("/api/refresh-competitor-intel", methods=["POST"])
 @login_required
@@ -1628,22 +1631,25 @@ def refresh_competitor_intel(current_user):
         return jsonify(ok=False, error="Competitor intelligence is available on the Full System plan only."), 403
     import threading, uuid
     job_id = str(uuid.uuid4())
-    _competitor_jobs[job_id] = {"status": "pending", "result": None}
+    _ops.start_async_job(job_id, "competitor_intel", current_user["restaurant_id"])
     t = threading.Thread(target=_run_competitor_job, args=(job_id, current_user["restaurant_id"]), daemon=True)
     t.start()
     return jsonify(ok=True, job_id=job_id)
 
 @admin_bp.route("/api/competitor-intel-status/<job_id>", methods=["GET"])
-def competitor_intel_status(job_id):
-    """Poll for competitor analysis result. No login_required — job_id is an unguessable UUID."""
-    job = _competitor_jobs.get(job_id)
+@login_required
+def competitor_intel_status(current_user, job_id):
+    """Poll for competitor analysis result. Scoped to the caller's own
+    restaurant — this used to be unauthenticated on the reasoning that the
+    job id is an unguessable UUID, which is true but left a competitor
+    report readable by anyone who saw the id."""
+    job = _ops.read_async_job(job_id, restaurant_id=current_user["restaurant_id"])
     if not job:
         return jsonify({"ok": False, "status": "error", "error": "Job not found"}), 404
     if job["status"] == "pending":
         return jsonify({"ok": True, "status": "pending"})
     result = dict(job["result"])
     result["status"] = job["status"]
-    _competitor_jobs.pop(job_id, None)
     return jsonify(result)
 
 @admin_bp.route("/api/send-referral", methods=["POST"])

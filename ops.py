@@ -157,6 +157,137 @@ def claim_period(job: str, period: str) -> bool:
         return True
 
 
+# ── async request-scoped jobs (schedule generation, competitor intel) ───────
+#
+# These used to live in module-level dicts in client_api.py and
+# admin_routes.py. Three problems the audit caught:
+#
+# 1. Process-local. Railway runs one gunicorn worker today, so it works — but
+#    the moment a second worker is added (the obvious response to load), the
+#    poll lands on a worker that never saw the job and returns "Job not
+#    found" forever, throwing away a 30-second Claude call the client is
+#    watching a spinner for. A redeploy mid-job does the same thing.
+# 2. Unbounded. A job nobody polls (closed tab, phone locked) stayed in the
+#    dict for the life of the process — schedule results are large.
+# 3. Untenanted. The poll routes took the job id alone, on the reasoning that
+#    a UUID is unguessable. True, but it meant the result could not be scoped
+#    even where the caller was authenticated.
+
+_ASYNC_JOB_SQL = """CREATE TABLE IF NOT EXISTS async_jobs (
+    job_id        TEXT PRIMARY KEY,
+    kind          TEXT NOT NULL,
+    restaurant_id INTEGER,
+    status        TEXT NOT NULL,
+    result_json   TEXT,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+)"""
+
+# Long enough for the slowest generation plus a client that backgrounds the
+# app mid-poll; short enough that abandoned results don't accumulate.
+_ASYNC_JOB_TTL_HOURS = 6
+
+
+def _async_conn():
+    from models import get_conn
+    conn = get_conn()
+    conn.execute(_ASYNC_JOB_SQL)
+    conn.commit()
+    return conn
+
+
+def start_async_job(job_id, kind, restaurant_id):
+    """Record a job as pending. Raises nothing — a job whose bookkeeping row
+    can't be written still runs; its poll just reports it missing, which is
+    the same outcome the old in-memory version gave after a restart."""
+    try:
+        conn = _async_conn()
+        conn.execute(
+            "INSERT OR REPLACE INTO async_jobs (job_id, kind, restaurant_id, status, result_json)"
+            " VALUES (?,?,?, 'pending', NULL)",
+            (str(job_id), str(kind), restaurant_id),
+        )
+        conn.execute(
+            "DELETE FROM async_jobs WHERE created_at < datetime('now', ?)",
+            (f"-{_ASYNC_JOB_TTL_HOURS} hours",),
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        log.error(f"start_async_job({kind}/{job_id}) failed: {e}")
+
+
+def finish_async_job(job_id, status, result):
+    """Store a finished job's payload. `status` is 'done' or 'error'."""
+    import json
+    try:
+        payload = json.dumps(result)
+    except (TypeError, ValueError) as e:
+        status, payload = "error", json.dumps({"ok": False, "error": f"Result could not be stored: {e}"})
+    try:
+        conn = _async_conn()
+        conn.execute(
+            "UPDATE async_jobs SET status=?, result_json=? WHERE job_id=?",
+            (status, payload, str(job_id)),
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        log.error(f"finish_async_job({job_id}) failed: {e}")
+
+
+def read_async_job(job_id, restaurant_id=None):
+    """The job's {"status", "result"}, or None if it doesn't exist (or belongs
+    to another restaurant). A finished job is deleted as it is read — the
+    poll consumes it, matching how the in-memory version popped its entry."""
+    import json
+    try:
+        conn = _async_conn()
+        row = conn.execute(
+            "SELECT job_id, restaurant_id, status, result_json FROM async_jobs WHERE job_id=?",
+            (str(job_id),),
+        ).fetchone()
+        if not row:
+            conn.close()
+            return None
+        # Scoped where the caller is authenticated: a job belongs to the
+        # restaurant that started it, whatever the id in the URL.
+        if restaurant_id is not None and row["restaurant_id"] is not None \
+                and int(row["restaurant_id"]) != int(restaurant_id):
+            conn.close()
+            return None
+        status = row["status"]
+        if status == "pending":
+            conn.close()
+            return {"status": "pending", "result": None}
+        conn.execute("DELETE FROM async_jobs WHERE job_id=?", (str(job_id),))
+        conn.commit()
+        conn.close()
+        try:
+            result = json.loads(row["result_json"]) if row["result_json"] else None
+        except (TypeError, ValueError):
+            return {"status": "error", "result": {"ok": False, "error": "Result could not be read back"}}
+        return {"status": status, "result": result}
+    except Exception as e:
+        log.error(f"read_async_job({job_id}) failed: {e}")
+        return None
+
+
+def inflight_async_jobs(limit=20):
+    """What the admin console's Jobs page lists — now every worker's jobs,
+    not only the one that happened to serve the request."""
+    try:
+        conn = _async_conn()
+        rows = conn.execute(
+            "SELECT job_id, kind, restaurant_id, status, created_at FROM async_jobs"
+            " ORDER BY created_at DESC LIMIT ?", (int(limit),)
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+    except Exception as e:
+        log.error(f"inflight_async_jobs failed: {e}")
+        return []
+
+
 def run_job(name, fn, *args, context="", **kwargs):
     """Run a scheduled job with failure capture. Returns the job's result,
     or None if it raised. Every run — not only the failures — lands in

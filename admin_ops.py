@@ -826,18 +826,16 @@ def jobs():
         hb = scheduler_heartbeat_age_minutes()
     except Exception:
         hb = None
-    # In-flight async jobs held in memory by the app process.
+    # In-flight async jobs. These used to be read out of two module-level
+    # dicts, so the page only ever showed the jobs belonging to whichever
+    # worker served the request; ops.async_jobs is one table every worker
+    # writes to.
     inflight = []
     try:
-        import admin_routes as _admin
-        for jid, j in list(getattr(_admin, "_competitor_jobs", {}).items())[:20]:
-            inflight.append({"kind": "competitor_intel", "id": jid, "status": j.get("status")})
-    except Exception:
-        pass
-    try:
-        import client_api as _capi
-        for jid, j in list(getattr(_capi, "_schedule_jobs", {}).items())[:20]:
-            inflight.append({"kind": "schedule", "id": jid, "status": j.get("status") if isinstance(j, dict) else str(j)[:40]})
+        import ops as _ops
+        for j in _ops.inflight_async_jobs(limit=20):
+            inflight.append({"kind": j["kind"], "id": j["job_id"], "status": j["status"],
+                             "restaurant_id": j.get("restaurant_id"), "started": j.get("created_at")})
     except Exception:
         pass
     schedule = [{"job": k, "cadence": v["cadence"], "runnable": True, "sends": v.get("sends", False), "what": v["what"]} for k, v in RUNNABLE_JOBS.items()]
