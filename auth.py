@@ -565,6 +565,106 @@ _BILLING_BLOCKED_MESSAGE = (
 )
 
 
+# ── module entitlement ──────────────────────────────────────────────────────
+#
+# Modules are sold separately (see pricing.py), and the dashboard and the app
+# both hide the tabs a client hasn't bought. Hiding is not enforcing: nothing
+# stopped a Reviews-only client from calling the Labor, Food Cost, Marketing
+# or Intel endpoints directly and getting the whole feature, Claude calls
+# included, at Cavnar's cost.
+#
+# The gate lives here rather than as a per-route decorator for the same
+# reason the billing check does: the decorator has already resolved the user,
+# a new route under an existing prefix is covered the day it is written, and
+# there is one table to audit instead of ninety decorators to keep in sync.
+#
+# Longest prefix wins, so a more specific path can opt out of its family's
+# module by listing itself with a different one. Anything not listed is
+# ungated — Home, Ask Cavnar, Account, notifications and the public token
+# pages deliberately span or sit outside the modules.
+_MODULE_PREFIXES = (
+    # Reviews
+    ("/api/reviews",                "reviews"),
+    ("/api/review-stats",           "reviews"),
+    ("/api/review-insight",         "reviews"),
+    ("/api/review-request-stats",   "reviews"),
+    ("/api/send-review-request",    "reviews"),
+    ("/api/response-performance",   "reviews"),
+    ("/api/topic-heatmap",          "reviews"),
+    ("/api/sentiment-trend",        "reviews"),
+    ("/api/regenerate-draft",       "reviews"),
+    ("/api/save-draft",             "reviews"),
+    ("/api/import-tripadvisor",     "reviews"),
+    ("/api/templates",              "reviews"),
+    ("/api/brand-voice",            "reviews"),
+    ("/approve/",                   "reviews"),
+    ("/skip/",                      "reviews"),
+    ("/undo/",                      "reviews"),
+    ("/retract/",                   "reviews"),
+    ("/mobile/api/reviews",         "reviews"),
+    ("/mobile/api/review-stats",    "reviews"),
+    ("/mobile/api/review-request-stats", "reviews"),
+    ("/mobile/api/send-review-request",  "reviews"),
+    ("/mobile/api/templates",       "reviews"),
+    # Labor
+    ("/api/labor",                  "labor"),
+    ("/api/generate-schedule",      "labor"),
+    ("/api/schedule-status",        "labor"),
+    ("/api/download-schedule",      "labor"),
+    ("/mobile/api/labor",           "labor"),
+    # Food Cost
+    ("/api/food-cost",              "inventory"),
+    ("/api/inv-insight",            "inventory"),
+    ("/mobile/api/food-cost",       "inventory"),
+    # Marketing
+    ("/api/marketing/",             "marketing"),
+    ("/api/mkt-",                   "marketing"),
+    ("/api/generate-content",       "marketing"),
+    ("/api/content-calendar",       "marketing"),
+    ("/api/recent-topics",          "marketing"),
+    ("/api/post-to-google",         "marketing"),
+    ("/api/gbp-listing",            "marketing"),
+    ("/api/guest-",                 "marketing"),
+    ("/mobile/api/marketing",       "marketing"),
+    ("/mobile/api/guest-",          "marketing"),
+    # Intel (derived: full tier + a connected listing)
+    ("/api/intel/",                 "intel"),
+    ("/api/ai-visibility",          "intel"),
+    ("/mobile/api/intel",           "intel"),
+)
+
+
+def _required_module(path: str):
+    """The module this path belongs to, or None. Longest match wins."""
+    best = None
+    for prefix, key in _MODULE_PREFIXES:
+        if path.startswith(prefix) and (best is None or len(prefix) > len(best[0])):
+            best = (prefix, key)
+    return best[1] if best else None
+
+
+def _module_blocked(user):
+    """The module label to refuse this request for, or None to allow it."""
+    try:
+        if not user or user.get("is_admin"):
+            return None
+        key = _required_module(request.path or "")
+        if not key:
+            return None
+        from models import module_label, restaurant_has_module
+        if restaurant_has_module(user["restaurant_id"], key):
+            return None
+        return module_label(key)
+    except Exception:
+        # Fail open — a lookup failure must not take a paying client's tab
+        # away. See models.restaurant_has_module.
+        return None
+
+
+def _module_blocked_message(label):
+    return f"{label} isn't part of this plan. Contact will@cavnar.ai to add it."
+
+
 def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
@@ -578,6 +678,11 @@ def login_required(f):
             from flask import jsonify as _jsonify_bb
             return _jsonify_bb(ok=False, error=_BILLING_BLOCKED_MESSAGE,
                                billing_inactive=True), 402
+        locked = _module_blocked(user)
+        if locked:
+            from flask import jsonify as _jsonify_ml
+            return _jsonify_ml(ok=False, error=_module_blocked_message(locked),
+                               module_locked=True, module=locked), 403
         return f(*args, **kwargs, current_user=user)
     return decorated
 
@@ -613,6 +718,11 @@ def mobile_login_required(f):
             from flask import jsonify as _jsonify_mbb
             return _jsonify_mbb(ok=False, error=_BILLING_BLOCKED_MESSAGE,
                                 billing_inactive=True), 402
+        locked = _module_blocked(user)
+        if locked:
+            from flask import jsonify as _jsonify_mml
+            return _jsonify_mml(ok=False, error=_module_blocked_message(locked),
+                                module_locked=True, module=locked), 403
         return f(*args, **kwargs, current_user=user)
     return decorated
 

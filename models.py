@@ -2142,6 +2142,42 @@ _MODULE_REGISTRY = [
 ]
 
 
+def restaurant_has_module(restaurant_id: int, key: str, db_path: str = DB_PATH) -> bool:
+    """Does this restaurant have the module `key`?
+
+    Reads the same _MODULE_REGISTRY get_active_modules displays from, so the
+    answer the UI shows and the answer a route enforces can never drift —
+    including "intel", which has no column of its own and is derived from
+    full tier plus a connected listing.
+
+    Fails OPEN on a lookup error, for the same reason
+    subscription_allows_access does: a database hiccup must not take a
+    paying client's Labor tab away.
+    """
+    try:
+        restaurant = get_restaurant(restaurant_id, db_path=db_path)
+        if not restaurant:
+            return True
+        if key == "intel":
+            # Entitlement, not readiness. get_active_modules also requires a
+            # connected Google listing before it will *show* the Intel tab,
+            # but a full-tier client who hasn't linked Google yet has bought
+            # Intel — refusing them here would tell them it isn't part of
+            # their plan, which is false. The routes themselves say "connect
+            # your listing", which is the true answer.
+            return is_full_tier(restaurant)
+        return any(m["key"] == key for m in get_active_modules(restaurant))
+    except Exception:
+        return True
+
+
+def module_label(key: str) -> str:
+    for entry in _MODULE_REGISTRY:
+        if entry["key"] == key:
+            return entry["label"]
+    return key.title()
+
+
 def get_active_modules(restaurant: Optional["Restaurant"]) -> list[dict]:
     """Returns only the modules this restaurant actually has, in registry
     order, each as {"key", "label", "status"} — status is "available" unless

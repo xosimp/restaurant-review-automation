@@ -67,7 +67,12 @@ def test_guest_contacts_list_rejects_without_marketing_module(monkeypatch, app, 
     with app.test_request_context("/api/guest-contacts"):
         resp, status = guest_contacts_list()
     assert status == 403
-    assert "Marketing module" in resp.get_json()["error"]
+    body = resp.get_json()
+    # The refusal now comes from the entitlement gate in login_required
+    # (auth._module_blocked), which covers every marketing route rather than
+    # only the handful that remembered to check for themselves.
+    assert body["module_locked"] is True
+    assert "Marketing" in body["error"]
 
 
 def test_guest_contacts_add_rejects_without_marketing_module(monkeypatch, app, db_path):
