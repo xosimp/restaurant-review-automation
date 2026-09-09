@@ -106,13 +106,45 @@ final class APIClientTests: XCTestCase {
             let _: OKResponse = try await client.send("/mobile/api/home")
             XCTFail("expected an error to be thrown")
         } catch let error as APIClient.APIError {
-            // APIClient classifies .notConnectedToInternet as .offline with
-            // its own copy ("You're offline — …"), distinct from the
-            // "connection dropped" wording a timeout gets.
-            XCTAssertEqual(error.kind, .offline)
-            XCTAssertTrue(error.message.lowercased().contains("offline"))
+            // -1009 alone does NOT mean offline. URLSession raises it
+            // whenever path evaluation is unsatisfied at that instant, which
+            // happens routinely on the first request after launch or a
+            // Wi-Fi/cell handoff on a device that is plainly online — so the
+            // app asks NetworkMonitor instead of trusting the code, and this
+            // test machine is online. (This assertion used to demand
+            // .offline; it was written before that fix and had been failing
+            // ever since, unnoticed because CI runs pytest only.)
+            XCTAssertEqual(error.kind, .timedOut)
+            XCTAssertTrue(error.isRetryable)
         } catch {
             XCTFail("expected APIError, got \(error)")
+        }
+    }
+
+    // Both branches of the offline decision, driven directly — reaching
+    // classify() through send() only ever exercises whichever state the
+    // machine running the tests happens to be in.
+
+    func testAGenuinelyOfflineDeviceIsToldItIsOffline() {
+        let error = APIClient.classify(URLError(.notConnectedToInternet), deviceIsOffline: true)
+        XCTAssertEqual(error.kind, .offline)
+        XCTAssertTrue(error.message.lowercased().contains("offline"))
+    }
+
+    func testAnOnlineDeviceIsAskedToRetryRatherThanToldItIsOffline() {
+        let error = APIClient.classify(URLError(.notConnectedToInternet), deviceIsOffline: false)
+        XCTAssertEqual(error.kind, .timedOut)
+        XCTAssertFalse(error.message.lowercased().contains("offline"),
+                       "telling someone on their own Wi-Fi that they are offline sends them to the router")
+    }
+
+    func testAnUnreachableServerReadsAsAConnectionProblemNotAnOfflineDevice() {
+        // The exact shape of a device pointed at a dev tunnel that has since
+        // died: the phone is online, the host simply isn't there.
+        for code in [URLError.cannotConnectToHost, .cannotFindHost, .networkConnectionLost] {
+            let error = APIClient.classify(URLError(code), deviceIsOffline: false)
+            XCTAssertEqual(error.kind, .timedOut, "\(code) should be retryable")
+            XCTAssertTrue(error.message.lowercased().contains("connection"))
         }
     }
 }

@@ -28,6 +28,12 @@ struct FoodCostAnalyticsSection: View {
             // only whitespace and the kicker label are left to do it.
             VStack(alignment: .leading, spacing: 44) {
                 if let analytics = viewModel.analytics {
+                    // Sits above everything else in the module: the numbers
+                    // in the cards below are the example pantry's, not this
+                    // restaurant's, and they read identically otherwise.
+                    if analytics.showsExampleData {
+                        CavnarCaveat.exampleData
+                    }
                     // The AI strip lives INSIDE the hero card itself (see
                     // heroCard's own comment) when there's a hero to embed
                     // into — reads as that card's own footer commentary,

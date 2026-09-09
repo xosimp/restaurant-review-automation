@@ -347,7 +347,12 @@ actor APIClient {
     /// someone standing on their own Wi-Fi that they are offline is worse
     /// than saying nothing, and it sent them looking at their router instead
     /// of tapping the button again.
-    private static func classify(_ error: Error, deviceIsOffline: Bool) -> APIError {
+    // internal, not private, so the tests can exercise BOTH branches — the
+    // online one and the genuinely-offline one. Reaching it through send()
+    // only ever tests whichever state the test machine happens to be in,
+    // which is how this behaviour's own test went stale without failing for
+    // the right reason.
+    static func classify(_ error: Error, deviceIsOffline: Bool) -> APIError {
         guard let urlError = error as? URLError else {
             return APIError(message: "Couldn't reach the server — check your connection and try again.")
         }

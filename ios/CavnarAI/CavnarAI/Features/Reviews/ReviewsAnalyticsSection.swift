@@ -28,6 +28,13 @@ struct ReviewsAnalyticsSection: View {
                 }
                 .pickerStyle(.segmented)
 
+                // Raised above the analytics when the backend could not tie
+                // every figure in the AI passage back to this restaurant's
+                // own data — see ai_guard.verify_figures.
+                if !viewModel.unsupportedFigures.isEmpty {
+                    CavnarCaveat.unverifiedFigures(viewModel.unsupportedFigures)
+                }
+
                 if let performance = viewModel.performance {
                     ResponseRingsChart(performance: performance)
                 } else if viewModel.isLoading {

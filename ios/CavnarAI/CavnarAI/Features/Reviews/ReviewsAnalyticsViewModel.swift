@@ -9,6 +9,10 @@ final class ReviewsAnalyticsViewModel {
     var sentimentWeeks: [SentimentWeek] = []
     var topicWeeks: TopicWeeks?
     var insight: String?
+    /// Set when the backend flagged figures in `insight` it could not trace
+    /// back to this restaurant's data — the view renders a caveat above it
+    /// rather than showing the number as fact.
+    var unsupportedFigures: [String] = []
     var isLoading = false
     var errorMessage: String?
     /// 30 / 90 / 180 — the same three windows as the web's analytics tab.
@@ -47,6 +51,17 @@ final class ReviewsAnalyticsViewModel {
     private struct InsightResponse: Decodable {
         let ok: Bool
         let insight: String?
+        /// False when the backend could not trace every figure in the passage
+        /// back to the data it handed the model. Optional: an older server
+        /// doesn't send it, and absent means "not flagged", never "suspect".
+        let figuresVerified: Bool?
+        let unsupportedFigures: [String]?
+
+        enum CodingKeys: String, CodingKey {
+            case ok, insight
+            case figuresVerified = "figures_verified"
+            case unsupportedFigures = "unsupported_figures"
+        }
     }
 
     func load() async {
@@ -68,7 +83,11 @@ final class ReviewsAnalyticsViewModel {
         performance = await performanceResult?.data
         heatmap = await heatmapResult?.data ?? []
         sentimentWeeks = await weeksResult?.weeks ?? []
-        insight = await insightResult?.insight
+        let insightPayload = await insightResult
+        insight = insightPayload?.insight
+        unsupportedFigures = (insightPayload?.figuresVerified == false)
+            ? (insightPayload?.unsupportedFigures ?? [])
+            : []
         topicWeeks = await topicWeeksResult?.data
     }
 }

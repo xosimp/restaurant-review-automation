@@ -1656,6 +1656,11 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .rv2-hero .ax{display:flex;justify-content:space-between;font-size:11px;color:var(--ink3);margin-top:4px}
 .rv2-ai{margin-top:16px;padding:14px 18px;border-radius:10px;background:var(--hb-tint);font-size:14px;line-height:1.65;color:var(--ink2)}
 .rv2-ai .tag{font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);margin-bottom:6px}
+/* Said above an AI passage whose figures could not be traced back to the
+   data it was given, or whose data is a built-in example set. Both used
+   to render exactly like a verified analysis. */
+.ai-caveat{display:flex;gap:7px;align-items:flex-start;font-size:12px;line-height:1.5;padding:8px 10px;margin-bottom:9px;border-radius:8px;background:var(--amber-bg);color:var(--amber);border:1px solid rgba(217,119,6,.28)}
+.ai-caveat b{font-weight:700}
 #panel-reviews #review-insight{font-size:14px;line-height:1.65;color:var(--ink2);white-space:pre-wrap}
 /* signals */
 .rv2-sig{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0;margin-top:34px;padding-top:24px;border-top:1px solid var(--hb-line)}
@@ -5071,6 +5076,7 @@ function loadReviewInsight(){
     try{sessionStorage.setItem('review_insight',html);sessionStorage.setItem('review_insight_at',String(Date.now()));}catch(e){}
     el.classList.remove('insight-loading');
     typewriterEffect(el,processInsightHtml(html));
+    applyFigureCaveat(el,d);
   }).catch(function(){
     el.classList.remove('insight-loading');
     el.innerHTML=emptyStateHtml('Analysis unavailable', 'Check back shortly — the AI retries automatically', true);
@@ -6609,6 +6615,7 @@ function loadMktInsight(){
     try{sessionStorage.setItem('mkt_brief',html);sessionStorage.setItem('mkt_brief_at',String(Date.now()));}catch(e){}
     el.classList.remove('insight-loading');
     typewriterEffect(el,html);
+    applyFigureCaveat(el,d);
     mktLoaded=true;
   }).catch(function(){
     el.classList.remove('insight-loading');
@@ -7050,7 +7057,13 @@ function loadInvInsight(){
       _invInsightFull=html;
       try{sessionStorage.setItem('inv_insight',html);sessionStorage.setItem('inv_insight_at',String(Date.now()));}catch(e){}
       elInvInsight.classList.remove('insight-loading');
-      typewriterEffect(elInvInsight,html);
+      elInvInsight.innerHTML='';
+      if(d.is_live===false){
+        elInvInsight.appendChild(aiCaveat('Example data','This is a sample pantry, not your numbers. Connect Toast or upload a count to see your own.'));
+        var _p=document.createElement('div');_p.textContent=html;elInvInsight.appendChild(_p);
+      } else {
+        typewriterEffect(elInvInsight,html);
+      }
     }
   }).catch(function(){
     var elInvErr=document.getElementById('inv-insight');
@@ -8264,6 +8277,30 @@ function dismissWelcome(){
   if(b) b.style.display='none';
   fetch('/api/dismiss-welcome', {method:'POST'});
 }
+/* The banner shown above an AI passage the app could not fully stand behind.
+   ES5 only, per this file's rules — no template literals, no arrow functions. */
+function aiCaveat(title, detail){
+  var box=document.createElement('div');
+  box.className='ai-caveat';
+  var icon=document.createElement('span');icon.textContent='\u26A0';icon.setAttribute('aria-hidden','true');
+  var body=document.createElement('div');
+  var b=document.createElement('b');b.textContent=title;
+  body.appendChild(b);body.appendChild(document.createTextNode(' \u2014 '+detail));
+  box.appendChild(icon);box.appendChild(body);
+  return box;
+}
+
+/* Prepends the caveat when the server says the figures in this passage were
+   not all traceable to the data behind it. */
+function applyFigureCaveat(el, d){
+  if(!el || !d || d.figures_verified!==false) return;
+  var n=(d.unsupported_figures||[]).length;
+  var detail=n
+    ? 'Cavnar could not trace '+(n===1?'a figure':n+' figures')+' in this to your data ('+(d.unsupported_figures||[]).slice(0,3).join(', ')+'). Check before acting on '+(n===1?'it':'them')+'.'
+    : 'Cavnar could not trace every figure in this back to your data. Check before acting on them.';
+  el.insertBefore(aiCaveat('Unverified numbers', detail), el.firstChild);
+}
+
 function emptyStateHtml(title, sub, onDark){
   /* Shared compact empty/error state — replaces the scattered bare-text
      "No data yet" / "Analysis unavailable" strings with one consistent look. */

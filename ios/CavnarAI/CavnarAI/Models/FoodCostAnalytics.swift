@@ -156,6 +156,11 @@ struct FoodCostAnalytics: Decodable {
     let weekStart: String?
     let weekEnd: String?
     let lastUpdated: String?
+    /// False when the backend served the built-in example pantry because this
+    /// restaurant has no inventory connected. Optional so a response from an
+    /// older server (which didn't send it) still decodes, and defaults to
+    /// live — absent means the old behaviour, not "assume it's fake".
+    let isLive: Bool?
 
     enum CodingKeys: String, CodingKey {
         case ok, overstock
@@ -180,7 +185,11 @@ struct FoodCostAnalytics: Decodable {
         case weekStart = "week_start"
         case weekEnd = "week_end"
         case lastUpdated = "last_updated"
+        case isLive = "is_live"
     }
+
+    /// Example data must never be read as the owner's own numbers.
+    var showsExampleData: Bool { isLive == false }
 
     var insight: AIInsight? {
         guard let insightIntro else { return nil }
