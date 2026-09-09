@@ -4,9 +4,9 @@ import os
 import sqlite3
 from datetime import datetime, timedelta
 
-log = logging.getLogger(__name__)
+from models import DB_PATH
 
-DB_PATH = "reviews.db"
+log = logging.getLogger(__name__)
 
 SERVICES = [
     {"key": "dashboard",        "name": "Dashboard & Login",     "description": "Client login and account access"},

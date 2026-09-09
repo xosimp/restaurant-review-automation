@@ -1,3 +1,4 @@
+import os
 import sqlite3
 import json
 import threading
@@ -6,7 +7,13 @@ from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from typing import Optional
 
-DB_PATH = "reviews.db"
+# On Railway, RAILWAY_VOLUME_MOUNT_PATH points at the persistent volume
+# (currently /app/data). Without this, reviews.db was written to the
+# container's ephemeral filesystem and silently reset to empty on every
+# deploy — masked because boot-time seed code in hosted_dashboard.py
+# deterministically recreates the admin/demo accounts and reviews, so
+# only sessions/login_history (which have no such reseed) visibly emptied.
+DB_PATH = os.path.join(os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "."), "reviews.db")
 
 # Restaurant.service_tier's human-readable display names — lives here
 # rather than in hosted_dashboard.py (where it originated) so anything
