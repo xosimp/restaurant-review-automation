@@ -600,7 +600,16 @@ def draft_campaign_message(restaurant, campaign_type="general", topic=""):
         restaurant_id=restaurant.id,
         action="guest_campaign_draft",
     )
-    return extract_text(message).strip()
+    text = extract_text(message).strip()
+    if getattr(message, "stop_reason", None) == "max_tokens":
+        raise ValueError("campaign copy was truncated")
+    # This goes out as an SMS to real guests. A link, a phone number or an
+    # offer the restaurant never agreed to is not something to send unread.
+    from ai_guard import check_public_reply
+    refusal = check_public_reply(text)
+    if refusal:
+        raise ValueError(f"campaign copy rejected: {refusal}")
+    return text
 
 
 def send_campaign(restaurant_id, message, db_path=DB_PATH, segment="all", link_token=None):

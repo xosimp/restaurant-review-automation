@@ -4170,16 +4170,27 @@ def count_auto_approved_today(restaurant_id: int, db_path: str = DB_PATH) -> int
 
 def auto_approve_candidates(restaurant_id: int, db_path: str = DB_PATH) -> list:
     """Drafted, unapproved 5-star reviews — the only thing the auto-approve
-    rule is ever allowed to touch."""
+    rule is ever allowed to touch.
+
+    urgency is part of the gate now. A five-star rating says nothing about
+    the text: a review can hand out five stars and still mention an allergic
+    reaction or name a staff member, and the analyser flags exactly those as
+    high urgency. Publishing a reply to one of those without a human reading
+    it is the case this rule must never cover.
+
+    Rows returned carry their draft so the caller can inspect the text before
+    publishing it — see ai_guard.check_public_reply.
+    """
     conn = get_conn(db_path)
     rows = conn.execute("""
-        SELECT id FROM reviews
+        SELECT id, draft_response FROM reviews
         WHERE restaurant_id=? AND rating=5 AND response_status='drafted'
           AND draft_response IS NOT NULL AND deleted_at IS NULL
+          AND COALESCE(urgency, 'normal') != 'high'
         ORDER BY fetched_at ASC
     """, (restaurant_id,)).fetchall()
     conn.close()
-    return [r["id"] for r in rows]
+    return [{"id": r["id"], "draft_response": r["draft_response"]} for r in rows]
 
 
 def build_labor_export_csv(restaurant_id: int, db_path: str = DB_PATH) -> str:

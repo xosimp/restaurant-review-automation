@@ -376,6 +376,8 @@ Rules:
             action="weekly_digest",
         )
         raw = extract_text(msg).strip()
+        if getattr(msg, "stop_reason", None) == "max_tokens":
+            raise ValueError("weekly digest was truncated")
         import re as _re_rpt
         parsed = {}
         for line in raw.split("\n"):
@@ -383,8 +385,39 @@ Rules:
             m = _re_rpt.match(r'^(HEADLINE|REVIEWS|LABOR|INVENTORY|MARKETING|ACTION):\s*(.+)$', line)
             if m:
                 parsed[m.group(1).lower()] = m.group(2).strip()
-        return parsed if parsed.get("headline") else {"headline": raw}
+        if not parsed.get("headline"):
+            # This used to fall back to {"headline": raw} — so a response
+            # whose format drifted put the model's entire output, preamble
+            # included, at the top of an email to the client. An unparsed
+            # digest is not a digest.
+            raise ValueError("weekly digest did not match the expected LABEL: format")
+
+        # Every figure the digest states has to be one it was handed. The
+        # prompt says "be specific with real numbers from the data above",
+        # which instructs the model to state figures and never checked that a
+        # stated figure came from anywhere. A line that invents "$2,400
+        # recoverable" is dropped rather than emailed.
+        from ai_guard import unsupported_figures
+        for key in list(parsed):
+            bad = unsupported_figures(parsed[key], prompt)
+            if bad:
+                print(f"[digest] dropped {key} line — unsupported figures {bad}")
+                try:
+                    import ops
+                    ops.capture(RuntimeError(f"digest {key} line stated {bad} — not in the input"),
+                                job="weekly_digest", context=f"restaurant_id={restaurant_id}")
+                except Exception:
+                    pass
+                parsed.pop(key)
+        if not parsed.get("headline"):
+            raise ValueError("weekly digest headline stated figures that were not in the data")
+        return parsed
     except Exception as e:
+        try:
+            import ops
+            ops.capture(e, job="weekly_digest", context=f"restaurant_id={restaurant_id}")
+        except Exception:
+            pass
         return {}
 
 def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = None,

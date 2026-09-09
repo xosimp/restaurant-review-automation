@@ -495,6 +495,10 @@ The Recommendations section must start with exactly the word "Recommendations:" 
     # Strip any markdown that slips through
     import re
     text = extract_text(msg).strip()
+    if getattr(msg, "stop_reason", None) == "max_tokens":
+        raise ValueError("labor insight was truncated")
+    from ai_guard import verify_figures
+    verify_figures(text, prompt, "labor_insight", restaurant_id)
     text = re.sub('\\*\\*(.+?)\\*\\*', lambda m: m.group(1), text)
     text = re.sub('\\*(.+?)\\*',   lambda m: m.group(1), text)
     text = re.sub(r'#{1,6}\s', '', text)

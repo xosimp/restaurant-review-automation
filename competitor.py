@@ -4,6 +4,7 @@ Pulls nearby restaurant reviews via Google Places API and generates AI insights.
 """
 import os, json, requests, anthropic
 from ai_utils import create_with_retry, extract_text
+from ai_guard import UNTRUSTED_NOTE, wrap_untrusted
 
 PLACES_API_KEY = os.getenv("GOOGLE_PLACES_API_KEY", "")
 ANTHROPIC_KEY  = os.getenv("ANTHROPIC_API_KEY", "")
@@ -104,7 +105,11 @@ def fetch_menu_from_pdf_bytes(pdf_bytes: bytes, restaurant_name: str = "", resta
             "Return a concise summary: Signature dishes: [list]. Appetizers: [list]. "
             "Mains: [list]. Desserts: [list]. Drinks: [list]. "
             "Only include actual menu items. Max 300 words. "
-            "If no menu items found, respond with exactly: NO_MENU_FOUND\n\nMenu text:\n" + text
+            "If no menu items found, respond with exactly: NO_MENU_FOUND\n\n"
+            # An uploaded PDF is a file someone handed us; its text went into
+            # this prompt raw. Fenced and labelled like every other block of
+            # outside text.
+            + UNTRUSTED_NOTE + "\n\nMenu text:\n" + wrap_untrusted(text)
         )
         msg = create_with_retry(
             client,
@@ -157,7 +162,9 @@ def fetch_menu_from_url(menu_url: str, restaurant_id: int = None) -> str:
             "Return a concise summary: Signature dishes: [list]. Appetizers: [list]. "
             "Mains: [list]. Desserts: [list]. Drinks: [list]. "
             "Only include actual menu items. Skip prices and HTML. Max 300 words. "
-            "If no menu items found, respond with exactly: NO_MENU_FOUND\n\nPage content:\n" + page_text
+            "If no menu items found, respond with exactly: NO_MENU_FOUND\n\n"
+            # Scraped from a URL — a page whose author is not our customer.
+            + UNTRUSTED_NOTE + "\n\nPage content:\n" + wrap_untrusted(page_text)
         )
         msg = create_with_retry(
             client,
@@ -459,6 +466,9 @@ def generate_competitor_insight(restaurant_name: str, competitors: list, owner_n
             # Use up to 5 reviews, 250 chars each for richer insight
             rev_list = c.get("reviews", [])
             if rev_list:
+                # Competitor review text is written by the public. Fenced
+                # below with the rest of the block — see UNTRUSTED_NOTE in
+                # the prompt.
                 reviews_text = "\n  ".join([
                     f'[{r["rating"]}★] "{r["text"][:250].strip()}"'
                     for r in rev_list[:5]
@@ -504,6 +514,8 @@ def generate_competitor_insight(restaurant_name: str, competitors: list, owner_n
         prompt = f"""You are the Cavnar AI Consultant analyzing the competitive landscape for {restaurant_name}.
 Today's date: {today_comp}{holiday_rec_context}
 
+{UNTRUSTED_NOTE}
+
 About {restaurant_name}:
 {profile_context}
 
@@ -516,7 +528,7 @@ CRITICAL RULES:
 - Every recommendation must name a specific, existing lever: a service script change, a staffing/timing adjustment, promoting an EXISTING dish or existing strength on social/signage, a direct fix to a named complaint from the competitor reviews above, or a specific way to win over customers unhappy with a named competitor
 
 Nearby competitors and their recent customer reviews:
-{comp_summary}
+{wrap_untrusted(comp_summary)}
 
 Write a competitive intelligence report for {restaurant_name} in this EXACT format with these EXACT headers:
 
@@ -546,9 +558,16 @@ Tone: sharp, direct, trusted business advisor. Every line is a single punchy sen
             restaurant_id=restaurant_id,
             action="competitor_insight",
         )
+        if getattr(msg, "stop_reason", None) == "max_tokens":
+            raise ValueError("competitor insight was truncated")
         return extract_text(msg).strip()
     except Exception as e:
         print(f"[Competitor] generate_competitor_insight error: {e}")
+        try:
+            import ops
+            ops.capture(e, job="competitor_insight", context=f"restaurant_id={restaurant_id}")
+        except Exception:
+            pass
         return ""
 
 

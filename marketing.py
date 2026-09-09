@@ -432,6 +432,8 @@ def generate_content(content_type: str, topic: str,
         action="marketing_content",
     )
     result = extract_text(msg).strip()
+    if getattr(msg, "stop_reason", None) == "max_tokens":
+        raise ValueError("marketing copy was truncated")
 
     # Strip markdown formatting Claude sometimes adds
     import re as _re
@@ -442,6 +444,22 @@ def generate_content(content_type: str, topic: str,
     # started a new line ("#GiaMia #TruffleSeason" came out "GiaMia
     # #TruffleSeason"), quietly breaking one tag on every Instagram post.
     result = _re.sub(r'^#{1,3}[ \t]+', '', result, flags=_re.MULTILINE)
+
+    # This copy is published to Instagram, Facebook and Google Business
+    # Profile. Hashtags and links are fine here — a claim the restaurant
+    # cannot make about itself is not.
+    from ai_guard import check_marketing_copy
+    _never = ""
+    if restaurant_id:
+        try:
+            from models import get_restaurant as _gr_mkt
+            _r_mkt = _gr_mkt(restaurant_id)
+            _never = (_r_mkt.never_say or "") if _r_mkt else ""
+        except Exception:
+            _never = ""
+    refusal = check_marketing_copy(result, never_say=_never)
+    if refusal:
+        raise ValueError(f"marketing copy rejected: {refusal}")
 
     # Log this content for future memory
     log_content(restaurant_id, content_type, topic)
@@ -654,5 +672,13 @@ Rules:
             ideas[0]["week_range"] = week_range
         _cache_calendar(restaurant_id, ideas)
         return ideas
-    except Exception:
+    except Exception as e:
+        # An empty calendar and a failed generation looked identical to every
+        # caller and to us. The list stays empty (the UI handles that), but
+        # the failure reaches the daily digest instead of vanishing.
+        try:
+            import ops
+            ops.capture(e, job="content_calendar", context=f"restaurant_id={restaurant_id}")
+        except Exception:
+            pass
         return []

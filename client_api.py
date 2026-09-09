@@ -750,8 +750,15 @@ def _do_review_insight(rid):
         import re as _re_ri
         insight = _re_ri.sub(r'\*\*(.+?)\*\*', lambda m: m.group(1), insight)
         insight = _re_ri.sub(r'\*(.+?)\*',   lambda m: m.group(1), insight)
+        # Figures the model states have to be figures it was handed. Kept
+        # rather than dropped — this is on-screen text the owner is reading
+        # now, so it carries a flag instead of a hole — but the flag is what
+        # lets the UI stop presenting an unverified number as a fact.
+        from ai_guard import verify_figures
+        _unsupported = verify_figures(insight, prompt, "review_insight", rid)
         _cache_set("review-insight:" + str(rid), insight)
-        return {"insight": insight}, 200
+        return {"insight": insight, "figures_verified": not _unsupported,
+                "unsupported_figures": _unsupported}, 200
     except Exception as _re:
         import traceback
         print(f"[review-insight ERROR] {_re}\n{traceback.format_exc()}")
@@ -1377,9 +1384,12 @@ brand voice. No corporate language. The whole brief must be under 60 words."""
             action="marketing_insight",
         )
         insight = extract_text(msg).strip()
+        from ai_guard import verify_figures
+        _unsupported = verify_figures(insight, prompt, "marketing_insight", rid)
         result = insight if raw else format_insight_html(insight)
         _cache_set(cache_key, result)
-        return {"insight": result}, 200
+        return {"insight": result, "figures_verified": not _unsupported,
+                "unsupported_figures": _unsupported}, 200
     except Exception as e:
         import traceback; traceback.print_exc()
         print(f"[MktInsight] ERROR: {str(e)}")
@@ -1424,15 +1434,20 @@ def inv_insight_api(current_user):
         from inventory import load_inventory_for_restaurant, analyse_inventory, get_claude_insights
         from marketing import get_upcoming_holidays
         restaurant = get_restaurant(current_user["restaurant_id"])
-        items, _is_live = load_inventory_for_restaurant(current_user["restaurant_id"])
+        items, is_live = load_inventory_for_restaurant(current_user["restaurant_id"])
         analysis = analyse_inventory(
             items,
             delivery_days=restaurant.delivery_days if restaurant else None,
             upcoming_holidays=get_upcoming_holidays(),
         )
         owner_name = restaurant.owner_name if restaurant else None
-        insight = get_claude_insights(analysis, owner_name=owner_name, restaurant_name=restaurant.name if restaurant else None, restaurant_id=current_user["restaurant_id"], items=items)
-        return jsonify(insight=format_insight_html(insight))
+        insight = get_claude_insights(analysis, owner_name=owner_name,
+                                      restaurant_name=restaurant.name if restaurant else None,
+                                      restaurant_id=current_user["restaurant_id"], items=items,
+                                      is_live=is_live)
+        # is_live travels with the insight so the UI can say whose numbers
+        # these are instead of presenting example data as the owner's own.
+        return jsonify(insight=format_insight_html(insight), is_live=bool(is_live))
     except Exception as _inv_e:
         import traceback
         print(f"[inv-insight ERROR] {_inv_e}\n{traceback.format_exc()}")
@@ -1967,6 +1982,50 @@ import ops as _ops
 # `date` shifted one position left. See _run_schedule_job's row-repair logic.
 _TIME_FIELD_RE = re.compile(r'^\d{1,2}:\d{2}\s*(am|pm)$', re.IGNORECASE)
 _WEEKDAYS = {"Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"}
+
+
+def _reconcile_scheduled_hours(row):
+    """Recompute scheduled_hours from the row's own shift times.
+
+    The model writes this column itself, and nothing checked it: _row_is_sane
+    only asked whether the value parsed as a float. A row reading
+    "11:00am,7:00pm,12.0" is an 8-hour shift labelled 12, and that number is
+    what the week's total, the labor-budget comparison and the projected
+    labor cost are all summed from — so the owner's labor percentage drifts
+    by whatever the model happened to write.
+
+    Times are the source of truth: they are what a manager reads off the
+    printed schedule and what the staff actually work. An overnight shift
+    (end before start) is treated as crossing midnight. Returns the
+    correction size in hours, or 0.0 when the row was already right or its
+    times can't be parsed.
+    """
+    start = _parse_time_to_minutes(row.get("shift_start", ""))
+    end = _parse_time_to_minutes(row.get("shift_end", ""))
+    if start is None or end is None:
+        return 0.0
+    span = end - start
+    if span < 0:
+        span += 24 * 60          # closing shift running past midnight
+    correct = round(span / 60, 1)
+    raw_hours = (row.get("scheduled_hours") or "").strip() if isinstance(row.get("scheduled_hours"), str) \
+        else row.get("scheduled_hours")
+    if raw_hours in (None, ""):
+        stated = None            # nothing was stated, so nothing was wrong
+    else:
+        try:
+            stated = round(float(raw_hours), 1)
+        except (ValueError, TypeError):
+            stated = None
+    if stated is None:
+        row["scheduled_hours"] = str(correct)
+        return 0.0
+    drift = round(correct - stated, 1)
+    if abs(drift) < 0.1:
+        return 0.0          # already right — leave the row exactly as written
+    row["scheduled_hours"] = str(correct)
+    row["hours_corrected_from"] = str(stated)
+    return drift
 
 
 def _parse_time_to_minutes(t: str):
@@ -2682,6 +2741,8 @@ def _run_schedule_job(job_id, restaurant_id):
         preview_rows = []
         hours_scheduled = 0.0
         hours_added = 0.0
+        _hours_drift_total = 0.0
+        _hours_drift_rows = 0
         added_dates = {}
         extended_dates = {}
         trimmed_dates = {}
@@ -2755,10 +2816,28 @@ def _run_schedule_job(job_id, restaurant_id):
 
                 _enforce_close_time(_row, _real_day, _close_times, _role_close_buffers)
 
+                # Times win over the model's own arithmetic — see
+                # _reconcile_scheduled_hours.
+                _drift = _reconcile_scheduled_hours(_row)
+                if abs(_drift) >= 0.1:
+                    _hours_drift_total += abs(_drift)
+                    _hours_drift_rows += 1
+
                 preview_rows.append(_row)
                 try:
                     hours_scheduled += float(_row.get("scheduled_hours") or 0)
                 except (ValueError, TypeError):
+                    pass
+            if _hours_drift_rows:
+                print(f"[schedule] corrected scheduled_hours on {_hours_drift_rows} row(s), "
+                      f"{round(_hours_drift_total, 1)}h total drift")
+                try:
+                    import ops
+                    ops.capture(RuntimeError(
+                        f"{_hours_drift_rows} schedule rows had scheduled_hours that disagreed "
+                        f"with their shift times ({round(_hours_drift_total, 1)}h total)"),
+                        job="labor_schedule", context=f"restaurant_id={restaurant_id}")
+                except Exception:
                     pass
             print(f"[schedule] parsed {len(preview_rows)} rows, first={preview_rows[0] if preview_rows else None}")
 
@@ -3849,6 +3928,39 @@ def _do_ai_visibility_inner(rid):
         return re.sub(r"[^a-z0-9 ]", "", (s or "").lower().replace("’", "").replace("’", ""))
 
     norm_name = _norm(name)
+    norm_city = _norm(city) if city else ""
+
+    def _mentions_this_restaurant(answer):
+        """Did the answer name THIS restaurant, or one that shares its name?
+
+        `norm_name in _norm(answer)` on its own is a substring test. Gia Mia
+        has locations in St. Charles, Geneva and Wheaton; a recommendation of
+        any of them counted as this one appearing. A short name ("Bar", "The
+        Table") matched almost every answer outright.
+
+        So: the name has to appear as a whole phrase, and when we know the
+        city, the sentence carrying the name has to carry the city too —
+        which is why the system prompt now asks for the city alongside each
+        recommendation. Without a city on the profile we cannot tell the
+        locations apart at all, and say so rather than claiming a match.
+        """
+        if not norm_name or not answer:
+            return False
+        norm_answer = _norm(answer)
+        # Whole-phrase, not substring: "mia" must not match "Gia Mia".
+        if not re.search(r"(?:^|\s)" + re.escape(norm_name) + r"(?:\s|$)", norm_answer):
+            return False
+        if not norm_city:
+            return False
+        # The city has to sit next to the name, not merely somewhere in an
+        # answer that also lists five other towns. Proximity rather than
+        # sentence-splitting: "St. Charles" contains a period, so splitting
+        # on punctuation tears the city in half and never matches.
+        for m in re.finditer(r"(?:^|\s)" + re.escape(norm_name) + r"(?:\s|$)", norm_answer):
+            window = norm_answer[max(0, m.start() - 40):m.end() + 80]
+            if norm_city in window:
+                return True
+        return False
 
     # LEADING patterns ported from dashboard.html's own client-side cleanup
     # (renderAIVisibility) — ONLY handled the start of the answer, never the
@@ -3909,19 +4021,34 @@ def _do_ai_visibility_inner(rid):
                 headers={"Authorization": f"Bearer {_pplx_key}", "Content-Type": "application/json"},
                 json={
                     "model": "sonar",
+                    # Citations are no longer suppressed. Perplexity's whole
+                    # value here is that its claims are grounded, and the old
+                    # prompt asked it to strip exactly that — leaving an
+                    # unverifiable assertion stored against the restaurant.
+                    # The inline [n] markers are still cleaned out of the
+                    # display text; the URLs come back separately below.
                     "messages": [
-                        {"role": "system", "content": "Answer in under 80 words. Recommend specific restaurants by name. Do not include citations, footnotes, or markdown formatting."},
+                        {"role": "system", "content": "Answer in under 80 words. Recommend specific restaurants by name, and include the city or neighbourhood each one is in. Do not use markdown formatting."},
                         {"role": "user", "content": q},
                     ],
                     "max_tokens": 300,
                 },
                 timeout=10
             )
-            answer = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "") if resp.status_code == 200 else ""
+            body = resp.json() if resp.status_code == 200 else {}
+            answer = body.get("choices", [{}])[0].get("message", {}).get("content", "") if body else ""
+            sources = [c for c in (body.get("citations") or []) if isinstance(c, str)][:6]
             if not answer and _retry:
                 _pplx_time.sleep(2)
                 return _run_query(q, _retry=False)
-            appeared = bool(norm_name) and bool(answer) and norm_name in _norm(answer)
+            if not answer:
+                # Perplexity did not answer. That is an outage on our side,
+                # not evidence the restaurant is invisible — scoring it zero
+                # is how a rate limit became a permanent dip in the owner's
+                # visibility trend.
+                return {"query": q, "answer": "Could not fetch answer.", "appeared": False,
+                        "ok": False, "sources": []}
+            appeared = _mentions_this_restaurant(answer)
             # Was answer[:400] — the system prompt already asks for "under
             # 80 words" (~440 chars including spaces), so a 400-char cap
             # sat BELOW what a compliant response typically needs and was
@@ -3930,12 +4057,14 @@ def _do_ai_visibility_inner(rid):
             # on the API call above already bounds the raw response size —
             # this extra truncation was redundant on top of that, not a
             # real safety net.
-            return {"query": q, "answer": _clean_ai_answer(answer), "appeared": appeared}
+            return {"query": q, "answer": _clean_ai_answer(answer), "appeared": appeared,
+                    "ok": True, "sources": sources}
         except Exception:
             if _retry:
                 _pplx_time.sleep(2)
                 return _run_query(q, _retry=False)
-            return {"query": q, "answer": "Could not fetch answer.", "appeared": False}
+            return {"query": q, "answer": "Could not fetch answer.", "appeared": False,
+                    "ok": False, "sources": []}
 
     # Run all queries in parallel, but staggered — caps total time at ~10s
     # instead of 30s+, while avoiding the true root cause of the rate-limit
@@ -3956,8 +4085,10 @@ def _do_ai_visibility_inner(rid):
             try:
                 query_results[i] = _fut.result()
             except Exception:
-                query_results[i] = {"query": queries[i], "answer": "Could not fetch answer.", "appeared": False}
-    appeared_count = sum(1 for r in query_results if r and r.get("appeared"))
+                query_results[i] = {"query": queries[i], "answer": "Could not fetch answer.",
+                                    "appeared": False, "ok": False, "sources": []}
+    answered = [r for r in query_results if r and r.get("ok")]
+    appeared_count = sum(1 for r in answered if r.get("appeared"))
 
     # GBP completeness score — 10 items x 10 pts = 100
     # Items 1-6: checkable from our own DB (no GMB OAuth needed)
@@ -4164,10 +4295,16 @@ def _do_ai_visibility_inner(rid):
     ).fetchone()[0] or 0
     _conn.close()
 
-    ai_score = round((appeared_count / len(queries)) * 100) if queries else 0
+    # Denominator is the queries that came back, not the ones we sent: a
+    # throttled query used to drag the score down and then be written into
+    # ai_visibility_runs, where it became a "declining visibility" data point
+    # the owner reads as real.
+    ai_score = round((appeared_count / len(answered)) * 100) if answered else None
     try:
         from models import record_ai_visibility_run
-        record_ai_visibility_run(rid, ai_score, gbp_score)
+        # A partial run is not a measurement. Show it, don't record it.
+        if ai_score is not None and len(answered) == len(queries):
+            record_ai_visibility_run(rid, ai_score, gbp_score)
     except Exception:
         pass
 
@@ -4178,6 +4315,15 @@ def _do_ai_visibility_inner(rid):
         "queries": query_results,
         "appeared_count": appeared_count,
         "total_queries": len(queries),
+        # answered_queries is what ai_score is actually out of. When it is
+        # below total_queries the run is partial: show the score as an
+        # estimate, not a measurement, and say why.
+        "answered_queries": len(answered),
+        "partial": len(answered) < len(queries),
+        # No city on the profile means two locations of the same brand are
+        # indistinguishable in an answer, so appearance cannot be judged at
+        # all. Surface that rather than silently scoring 0.
+        "location_known": bool(city),
         "ai_score": ai_score,
         "gbp_score": gbp_score,
         "checklist": checklist,

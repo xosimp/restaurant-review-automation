@@ -1,6 +1,7 @@
 import os, re, anthropic
 from models import get_conn, update_draft, get_pending_drafts, get_restaurant
 from ai_utils import create_with_retry, extract_text
+from ai_guard import UNTRUSTED_NOTE, wrap_untrusted
 
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
@@ -139,6 +140,8 @@ def draft_response(review_id: int, rating: int, text: str,
 
     prompt = f"""Write a public {sentiment} review response for {restaurant_name}.
 
+{UNTRUSTED_NOTE}
+
 Platform: {platform_note}
 Voice: {voice_notes or "Warm, genuine, never corporate. Always invite guests back."}{TONE_PRESETS.get(tone or "", "")}
 Sign off as: {sign_off_name}
@@ -148,7 +151,7 @@ LANGUAGE: {("Always write the response in " + LANGUAGE_NAMES.get(language, langu
 CRITICAL: If the reviewer mentions specific issues (cold food, slow service, wrong order, noise, parking, staff) — address each one directly by name. Never give a generic apology for a specific complaint.
 
 Review ({rating}/5 stars, {sentiment}):
-"{text}"
+{wrap_untrusted(text)}
 
 Write ONLY the response. No preamble, no labels, no quotation marks around the response. Sound like a real person — not a PR firm, not a template."""
 
@@ -166,6 +169,10 @@ Write ONLY the response. No preamble, no labels, no quotation marks around the r
         action="draft_response",
     )
     draft = extract_text(message).strip()
+    if getattr(message, "stop_reason", None) == "max_tokens":
+        # A reply cut off mid-sentence is worse published than absent, and
+        # this one can be published without a human reading it.
+        raise ValueError("draft response was truncated")
 
     # Strip markdown if AI slips any in
     draft = re.sub(r'\*\*(.+?)\*\*', lambda m: m.group(1), draft)

@@ -1659,7 +1659,8 @@ def competitor_intel_api(current_user):
     try:
         data = json.loads(restaurant.competitor_intel)
         return jsonify(ok=True, data=data,
-                      updated_at=restaurant.competitor_updated_at)
+                      updated_at=restaurant.competitor_updated_at,
+                      **__import__("ai_guard").freshness(restaurant.competitor_updated_at))
     except Exception:
         return jsonify(ok=False, data=None)
 

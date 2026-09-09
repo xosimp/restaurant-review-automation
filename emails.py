@@ -53,6 +53,15 @@ def generate_email_personalization(context: str, fallback: str, restaurant_id: i
             action="email_personalization",
         )
         text = extract_text(msg).strip()
+        if getattr(msg, "stop_reason", None) == "max_tokens":
+            return fallback
+        # This paragraph is written in Will's first person and sent from his
+        # address, so a figure it invents reads as Will personally asserting
+        # it. If any number in it isn't one we handed the model, send the
+        # deterministic fallback copy instead.
+        from ai_guard import verify_figures
+        if verify_figures(text, context, "email_personalization", restaurant_id):
+            return fallback
         return text if text else fallback
     except Exception:
         return fallback

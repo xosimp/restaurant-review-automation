@@ -517,9 +517,28 @@ def build_price_watch(trends: dict) -> list:
     return sorted(watch.values(), key=lambda x: abs(x["change_pct"]), reverse=True)
 
 
+SAMPLE_DATA_NOTICE = (
+    "Food Cost is showing example data — this restaurant has no inventory "
+    "connected yet. Connect Toast or upload a count to see your own numbers. "
+    "No analysis is generated for example data."
+)
+
+
 def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name: str = None,
-                        restaurant_id: int = None, items: list = None) -> str:
-    """Claude narrates inventory findings like a food cost consultant."""
+                        restaurant_id: int = None, items: list = None,
+                        is_live: bool = True) -> str:
+    """Claude narrates inventory findings like a food cost consultant.
+
+    is_live gates the call. load_inventory_for_restaurant falls back to a
+    built-in sample pantry when a restaurant has no ingredients and no
+    inventory_csv, and every caller used to discard that flag (`items,
+    _is_live = ...`) — so a restaurant with nothing connected got a confident
+    food-cost analysis of invented rows, phrased exactly like a real one, and
+    could cut a real produce order on the strength of it. Example data does
+    not get narrated.
+    """
+    if not is_live:
+        return SAMPLE_DATA_NOTICE
     name_line = f"Owner name: {owner_name}" if owner_name else ""
     rest_line  = f"Restaurant: {restaurant_name}" if restaurant_name else ""
     wow_context = ""
@@ -725,6 +744,10 @@ Then, on new lines after the paragraph, write 1-3 recommendations:
         action="inventory_insight",
     )
     result = extract_text(msg).strip()
+    if getattr(msg, "stop_reason", None) == "max_tokens":
+        raise ValueError("food cost insight was truncated")
+    from ai_guard import verify_figures
+    verify_figures(result, prompt, "inventory_insight", restaurant_id)
     # Strip any markdown that slips through
     import re as _re_inv
     result = _re_inv.sub('[*]{2}(.+?)[*]{2}', lambda m: m.group(1), result)
@@ -789,7 +812,14 @@ def build_supplier_orders(restaurant_id: int, db_path: str = None) -> dict:
              "total_cost": float} where each group is
     {"supplier_name", "supplier_email", "items": [...], "total_cost"}.
     """
-    items, _is_live = load_inventory_for_restaurant(restaurant_id)
+    items, is_live = load_inventory_for_restaurant(restaurant_id)
+    if not is_live:
+        # This draft reaches /food-cost/send-order, which emails a real
+        # supplier. The sample pantry carries no supplier addresses so
+        # nothing would actually send today, but an order built from
+        # invented stock levels should not exist at all.
+        return {"groups": [], "unassigned": [], "item_count": 0, "total_cost": 0.0,
+                "is_live": False, "notice": SAMPLE_DATA_NOTICE}
     analysis = analyse_inventory(items)
 
     # critical_low first — same order the UI shows them in — then
@@ -834,4 +864,5 @@ def build_supplier_orders(restaurant_id: int, db_path: str = None) -> dict:
         "unassigned": unassigned,
         "item_count": len(ordered),
         "total_cost": round(sum(r["line_cost"] for r in ordered), 2),
+        "is_live": True,
     }

@@ -1659,7 +1659,7 @@ def mobile_food_cost_analytics(current_user):
     rid = current_user["restaurant_id"]
     try:
         restaurant = get_restaurant(rid)
-        items, _is_live = load_inventory_for_restaurant(rid)
+        items, is_live = load_inventory_for_restaurant(rid)
         analysis = analyse_inventory(
             items,
             delivery_days=restaurant.delivery_days if restaurant else None,
@@ -1676,12 +1676,14 @@ def mobile_food_cost_analytics(current_user):
             insight = get_claude_insights(
                 analysis, owner_name=restaurant.owner_name if restaurant else None,
                 restaurant_name=restaurant.name if restaurant else None,
-                restaurant_id=rid, items=items,
+                restaurant_id=rid, items=items, is_live=is_live,
             )
             _capi._cache_set("mobile-inv-insight:" + str(rid), insight)
         return jsonify(
             ok=True,
             insight=insight,
+            # Example data must never read as the owner's own numbers.
+            is_live=bool(is_live),
             **_insight_json(insight),
             waste_items=analysis.get("waste_items", []),
             overstock=analysis.get("overstock", []),
@@ -2033,7 +2035,22 @@ def _insight_json(insight_text):
     to build the web's HTML, just handed back as JSON so the iOS app can
     render its own native equivalent instead of a plain text blob."""
     intro, recs, forecast = _capi.parse_insight_sections(insight_text)
-    return {"insight_intro": intro, "insight_recommendations": recs, "insight_forecast": forecast}
+    # What KIND of claim each part is. A measured fact, the model's read of
+    # it, a guess about next week and a suggestion all rendered as the same
+    # prose in the same weight, so a reader had no way to tell "your 30-day
+    # rating is 4.2" from "next week should be busier". The split already
+    # existed structurally — this names it so the clients can stop showing
+    # the three at equal authority.
+    return {
+        "insight_intro": intro,
+        "insight_recommendations": recs,
+        "insight_forecast": forecast,
+        "claim_kinds": {
+            "insight_intro": "inferred",
+            "insight_recommendations": "suggestion",
+            "insight_forecast": "forecast",
+        },
+    }
 
 
 @mobile_bp.route("/labor/insight")
@@ -2975,6 +2992,8 @@ def _do_mobile_intel(restaurant_id):
                 for c in blob.get("competitors", [])
             ],
             "updated_at": restaurant.competitor_updated_at,
+            **{k: v for k, v in __import__("ai_guard").freshness(
+                restaurant.competitor_updated_at).items() if k in ("as_of", "age_days", "stale")},
             "own_rating": own_rating,
         }, 200
     except Exception as e:

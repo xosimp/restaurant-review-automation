@@ -263,9 +263,22 @@ def _read_competitors(restaurant_id, limit=5):
                 for rv in (c.get("reviews") or [])[:3]
             ],
         })
+    from ai_guard import freshness
+    fresh = freshness(getattr(r, "competitor_updated_at", None))
     return {
         "has_data": True,
         "updated_at": getattr(r, "competitor_updated_at", None),
+        # The age travels with the claims, not just beside them in the UI.
+        # Quoted into an answer without it, a six-week-old competitor summary
+        # reads exactly like one written this morning.
+        "as_of": fresh["as_of"],
+        "age_days": fresh["age_days"],
+        "stale": fresh["stale"],
+        "_freshness_note": (
+            f"This competitor set was gathered {fresh['age_days']} days ago"
+            f" ({fresh['as_of']}). Say so when you use it, and do not state it as today's position."
+            if fresh["stale"] else None
+        ),
         "competitors": out,
         "recommendations": extract_recs(blob.get("insight", "") or ""),
     }

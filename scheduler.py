@@ -1239,9 +1239,29 @@ def auto_approve_five_stars(rid: int, restaurant) -> int:
     if cap and done_today >= cap:
         return 0
     approved = 0
-    for review_id in auto_approve_candidates(rid):
+    from ai_guard import check_public_reply
+    never_say = getattr(restaurant, "never_say", "") or ""
+    for candidate in auto_approve_candidates(rid):
         if cap and done_today + approved >= cap:
             break
+        review_id = candidate["id"]
+        # The draft is model-written from text a stranger wrote, and this is
+        # the one path that publishes it to a live Google listing with nobody
+        # reading it first. Anything that fails the check stays drafted for
+        # the owner to look at — refusing to auto-publish is always safe,
+        # publishing something odd is not.
+        refusal = check_public_reply(candidate.get("draft_response"), never_say=never_say)
+        if refusal:
+            log.warning(f"Auto-approve skipped review {review_id}: {refusal}")
+            log_event(rid, "review_auto_approve_held", {"review_id": review_id, "reason": refusal})
+            try:
+                import ops
+                ops.capture(RuntimeError(f"auto-approve held: {refusal}"),
+                            job="auto_approve_five_stars",
+                            context=f"restaurant_id={rid} review_id={review_id}")
+            except Exception:
+                pass
+            continue
         try:
             from client_api import _do_approve
             _do_approve(review_id, rid)
