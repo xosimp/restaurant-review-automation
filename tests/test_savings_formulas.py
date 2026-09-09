@@ -111,3 +111,66 @@ def test_total_value_delivered_uses_the_normalized_figures(monkeypatch):
     monkeypatch.setattr(labor, "analyse_shifts_for_restaurant", lambda rid: {
         "is_live": False, "potential_savings": 4000.0, "potential_savings_monthly": 8666.67})
     assert value_delivered.compute_total_value_delivered(1) == 15 + 150
+
+
+# ── labor savings cannot be conjured from missing sales ─────────────────────
+#
+# potential_savings is a gap to a PERCENTAGE of sales. When a Toast sync
+# brought shifts across without sales — a real and common shape — the missing
+# sales were treated as $0, so target_labor_cost was 0 and the "savings"
+# became the entire payroll: two 8-hour shifts reported "$6,309/month in
+# savings" beside "0% labor".
+
+from labor import analyse_shifts
+
+
+def _days(*sales_per_day, hours=8.0):
+    return [{"date": f"2026-09-0{i+1}", "employee": "A", "role": "Server",
+             "actual_hours": hours, "sales_that_day": s}
+            for i, s in enumerate(sales_per_day)]
+
+
+def test_no_sales_means_no_savings_not_the_whole_payroll():
+    r = analyse_shifts(_days(0, 0), hourly_rate=26.0, labor_target=30.0)
+    assert r["potential_savings"] == 0.0
+    assert r["potential_savings_monthly"] == 0.0
+    assert r["sales_data_missing"] is True
+    assert len(r["days_missing_sales"]) == 2
+
+
+def test_the_percentage_stays_a_number_when_sales_are_missing():
+    """A dozen callers do arithmetic on this and iOS decodes it as a
+    non-optional Double — None would break the Labor tab outright."""
+    r = analyse_shifts(_days(0, 0), hourly_rate=26.0, labor_target=30.0)
+    assert isinstance(r["overall_labor_pct"], (int, float))
+
+
+def test_a_partial_sync_costs_only_the_days_it_can():
+    """Labor from a day with no sales must not be charged against another
+    day's sales — that inflates the ratio and invents a gap."""
+    r = analyse_shifts(_days(2000, 0), hourly_rate=26.0, labor_target=30.0)
+    assert r["overall_labor_pct"] == 10.4          # 208 / 2000, one day only
+    assert r["potential_savings"] == 0.0
+    assert r["days_missing_sales"] == ["2026-09-02"]
+    assert r["sales_data_missing"] is False        # some sales did arrive
+
+
+def test_a_real_overage_still_reports_savings():
+    r = analyse_shifts(_days(300, 300), hourly_rate=26.0, labor_target=30.0)
+    # 416 labor against 600 sales, target 30% = 180 -> 236 over
+    assert r["potential_savings"] == 236.0
+    assert r["potential_savings_monthly"] > 0
+    assert r["sales_data_missing"] is False
+
+
+def test_under_target_reports_nothing_rather_than_a_negative():
+    r = analyse_shifts(_days(2000, 2000), hourly_rate=26.0, labor_target=30.0)
+    assert r["potential_savings"] == 0.0
+
+
+def test_full_sales_is_unchanged_by_the_partial_sync_handling():
+    """The normal case must compute exactly as it always did."""
+    r = analyse_shifts(_days(1000, 1000), hourly_rate=26.0, labor_target=30.0)
+    assert r["total_sales"] == 2000
+    assert r["overall_labor_pct"] == 20.8          # 416 / 2000
+    assert r["days_missing_sales"] == []

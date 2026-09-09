@@ -291,11 +291,43 @@ def analyse_shifts(shifts: list[dict],
         dow_summary[day_name] = round(avg_pct, 1)
 
     total_labor  = sum(d["labor_cost"] for d in by_day.values())
-    total_sales  = sum(float(s.get("sales_that_day") or s.get("sales") or 0) for s in
-                       {s["date"]: s for s in shifts}.values())
-    overall_pct  = round(total_labor / total_sales * 100, 1) if total_sales else 0
-    target_labor_cost = total_sales * (LABOR_TARGET / 100)
-    potential_savings = round(max(0, total_labor - target_labor_cost), 2)
+
+    # Labor percentage and the gap to target are ratios against sales, so they
+    # are only meaningful for days we actually have sales for. A Toast sync
+    # that brings shifts across before (or instead of) sales is a real and
+    # common shape, and treating a missing sales figure as $0 of sales made
+    # target_labor_cost 0 — so potential_savings became the ENTIRE payroll.
+    # Two 8-hour shifts with no sales reported "$6,309/month in savings" next
+    # to "0% labor", which is the kind of number that ends a sales meeting.
+    #
+    # Only days carrying sales are costed, on both sides of the ratio, so a
+    # partial sync understates the period rather than inventing savings from
+    # it. With sales on every day — the normal case — this is identical to
+    # summing everything.
+    day_sales = {}
+    for s_ in shifts:
+        d_ = s_.get("date") or ""
+        v_ = float(s_.get("sales_that_day") or s_.get("sales") or 0)
+        if v_ > 0:
+            day_sales[d_] = v_
+    total_sales = sum(day_sales.values())
+    costed_labor = sum(d["labor_cost"] for k, d in by_day.items() if k in day_sales)
+    days_missing_sales = sorted(k for k in by_day.keys() if k and k not in day_sales)
+
+    if total_sales > 0:
+        overall_pct = round(costed_labor / total_sales * 100, 1)
+        target_labor_cost = total_sales * (LABOR_TARGET / 100)
+        potential_savings = round(max(0, costed_labor - target_labor_cost), 2)
+    else:
+        # No sales at all: there is no labor percentage and no gap to a
+        # percentage target. Stays numerically 0 rather than None — a dozen
+        # callers do arithmetic on this and iOS decodes it as a non-optional
+        # Double, so a null would break the Labor tab outright. The
+        # sales_data_missing flag below is how a caller tells "0% because
+        # they spent nothing" from "0% because we have no sales to divide
+        # by"; what matters here is that savings is 0 and not the payroll.
+        overall_pct = 0
+        potential_savings = 0.0
     # potential_savings is the gap over the WHOLE synced period. Callers
     # used to multiply it by 4.33 as if every sync were one week, which
     # doubled the monthly figure for a two-week period. Normalize by the
@@ -349,6 +381,11 @@ def analyse_shifts(shifts: list[dict],
                    for k, v in by_day.items()},
         "employee_hours": {k: dict(v) for k, v in by_employee.items()},
         "labor_target": LABOR_TARGET,
+        # Days with shifts but no sales figure. Non-empty means the labor
+        # percentage and the savings gap cover only part of the period —
+        # the UI should say so rather than present a partial number as whole.
+        "days_missing_sales": days_missing_sales,
+        "sales_data_missing": not bool(total_sales),
         "date_range": {
             "start": min((k for k in by_day.keys() if k), default=None),
             "end":   max((k for k in by_day.keys() if k), default=None),
