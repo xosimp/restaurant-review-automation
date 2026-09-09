@@ -23,6 +23,20 @@ actor PendingWriteQueue {
         /// Shown in the "waiting to sync" UI, so a queued item is something
         /// the user can recognise rather than an opaque row.
         let label: String
+        /// The restaurant that was active when this was queued.
+        ///
+        /// The server resolves a write's restaurant from the session, which
+        /// for a multi-location owner is whatever location is active AT
+        /// REPLAY TIME. Queue an approval in Chicago, go offline, switch to
+        /// Dallas, come back online — and the queued write drains against
+        /// Dallas. Today both queued kinds are addressed by review id and
+        /// scoped server-side, so that particular replay fails closed rather
+        /// than writing to the wrong location; the first write queued that is
+        /// addressed by name (ingredient supplier, say) would not. Stamping
+        /// the restaurant here makes the queue refuse the replay itself
+        /// instead of relying on every future endpoint to catch it.
+        /// Optional so entries persisted before this existed still decode.
+        var restaurantId: Int?
     }
 
     /// A write older than this is dropped rather than replayed. Approving a
@@ -33,6 +47,14 @@ actor PendingWriteQueue {
 
     private var queue: [PendingWrite] = []
     private var isDraining = false
+    /// Set by SessionStore on sign-in and on every location switch, so the
+    /// drain can tell "this write belongs here" from "this write belongs to
+    /// the location we just left".
+    private var activeRestaurantId: Int?
+
+    func setActiveRestaurant(_ id: Int?) {
+        activeRestaurantId = id
+    }
 
     init() {
         if let data = SecureCache.read(key: Self.storeKey),
@@ -44,12 +66,26 @@ actor PendingWriteQueue {
     var pendingCount: Int { queue.count }
     var pendingLabels: [String] { queue.map(\.label) }
 
+    /// Stamped with whatever location is active right now — the queue owns
+    /// that fact (setActiveRestaurant), so no call site has to remember to
+    /// pass it and none can forget.
     func enqueue(path: String, method: String, bodyJSON: Data?, label: String) {
         queue.append(PendingWrite(
             id: UUID(), path: path, method: method,
-            bodyJSON: bodyJSON, createdAt: Date(), label: label
+            bodyJSON: bodyJSON, createdAt: Date(), label: label,
+            restaurantId: activeRestaurantId
         ))
         persist()
+    }
+
+    /// Called when the active location changes. Anything queued for the
+    /// location being left is dropped rather than replayed against the new
+    /// one — see PendingWrite.restaurantId.
+    func dropWrites(notFor restaurantId: Int) -> Int {
+        let before = queue.count
+        queue.removeAll { $0.restaurantId != nil && $0.restaurantId != restaurantId }
+        if queue.count != before { persist() }
+        return before - queue.count
     }
 
     /// Drains oldest-first and stops at the first failure so ordering holds —
@@ -66,6 +102,13 @@ actor PendingWriteQueue {
         persist()
 
         while let next = queue.first {
+            // A write stamped with a location other than the one now active
+            // would land on the wrong restaurant. Drop it rather than send it.
+            if let stamped = next.restaurantId, let active = activeRestaurantId, stamped != active {
+                queue.removeFirst()
+                persist()
+                continue
+            }
             do {
                 try await APIClient.shared.sendQueuedWrite(
                     path: next.path, method: next.method, bodyJSON: next.bodyJSON

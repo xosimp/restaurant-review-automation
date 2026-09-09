@@ -5,6 +5,7 @@ import SwiftUI
 struct LocationSwitcherView: View {
     @State private var viewModel = LocationSwitcherViewModel()
     @Environment(\.dismiss) private var dismiss
+    @Environment(SessionStore.self) private var session
     var onSwitched: () -> Void
     // The row just tapped — its check pops in with one ember ripple while
     // the switch is in flight, so the tap reads immediately.
@@ -23,6 +24,7 @@ struct LocationSwitcherView: View {
                         Haptic.selection()
                         tappedName = location.name
                         Task {
+                            viewModel.session = session
                             if await viewModel.switchTo(location) {
                                 onSwitched()
                                 dismiss()

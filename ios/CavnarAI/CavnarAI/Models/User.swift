@@ -6,7 +6,10 @@ struct User: Codable, Equatable {
     let id: Int
     let username: String
     let email: String
-    let restaurantId: Int
+    /// var, not let: an owner switching locations changes which restaurant
+    /// this session acts on, and SessionStore.didSwitchLocation updates it
+    /// in place so nothing downstream keeps acting on the old one.
+    var restaurantId: Int
     let role: String
     let isAdmin: Bool
 

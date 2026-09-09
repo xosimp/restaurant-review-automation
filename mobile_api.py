@@ -1202,7 +1202,8 @@ def mobile_ask_cavnar_stream(current_user):
 @mobile_login_required
 def mobile_ask_cavnar_history(current_user):
     from models import get_ask_history
-    return jsonify(ok=True, messages=get_ask_history(current_user["restaurant_id"]))
+    return jsonify(ok=True, messages=get_ask_history(current_user["restaurant_id"],
+                                                     viewer_id=current_user.get("id")))
 
 
 @mobile_bp.route("/ask-cavnar/history", methods=["DELETE"])
@@ -1219,7 +1220,8 @@ def mobile_ask_cavnar_clear_history(current_user):
 @mobile_bp.route("/ask-cavnar/conversations")
 @mobile_login_required
 def mobile_ask_cavnar_conversations(current_user):
-    payload, status = _capi._do_list_ask_conversations(current_user["restaurant_id"])
+    payload, status = _capi._do_list_ask_conversations(current_user["restaurant_id"],
+                                                       viewer_id=current_user.get("id"))
     return jsonify(**payload), status
 
 
@@ -1233,14 +1235,16 @@ def mobile_ask_cavnar_new_conversation(current_user):
 @mobile_bp.route("/ask-cavnar/conversations/<int:conversation_id>")
 @mobile_login_required
 def mobile_ask_cavnar_conversation(current_user, conversation_id):
-    payload, status = _capi._do_get_ask_conversation(current_user["restaurant_id"], conversation_id)
+    payload, status = _capi._do_get_ask_conversation(current_user["restaurant_id"], conversation_id,
+                                                     viewer_id=current_user.get("id"))
     return jsonify(**payload), status
 
 
 @mobile_bp.route("/ask-cavnar/conversations/<int:conversation_id>", methods=["DELETE"])
 @mobile_login_required
 def mobile_ask_cavnar_delete_conversation(current_user, conversation_id):
-    payload, status = _capi._do_delete_ask_conversation(current_user["restaurant_id"], conversation_id)
+    payload, status = _capi._do_delete_ask_conversation(current_user["restaurant_id"], conversation_id,
+                                                        viewer_id=current_user.get("id"))
     return jsonify(**payload), status
 
 

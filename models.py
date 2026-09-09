@@ -108,7 +108,15 @@ CREATE TABLE IF NOT EXISTS reviews (
     posted_at           TEXT,
 
     processed           INTEGER NOT NULL DEFAULT 0,
-    UNIQUE(platform, external_id)
+    -- restaurant_id is part of the key on purpose. It used to be
+    -- UNIQUE(platform, external_id), which is global: two restaurants sharing
+    -- a google_place_id (a franchise double-entry, two tenants in one food
+    -- hall, a demo copy of a real client) produce identical external_ids, so
+    -- whichever restaurant was fetched first claimed every review and the
+    -- others were silently skipped by save_reviews' IntegrityError handler
+    -- — permanently, with the reviews filed under the wrong restaurant and
+    -- replies drafted in the wrong brand voice. See _migrate_reviews_unique.
+    UNIQUE(restaurant_id, platform, external_id)
 );
 
 CREATE TABLE IF NOT EXISTS labor_history (
@@ -623,6 +631,101 @@ def ensure_columns(db_path: str = DB_PATH):
         except Exception:
             pass  # Column already exists
     conn.close()
+
+def _reviews_unique_is_global(conn) -> bool:
+    """True while `reviews` still carries the old UNIQUE(platform, external_id)."""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='reviews'"
+    ).fetchone()
+    sql = (row[0] if row else "") or ""
+    return "UNIQUE(platform, external_id)" in sql.replace("\n", " ")
+
+
+def _migrate_reviews_unique(conn):
+    """Re-key `reviews` from UNIQUE(platform, external_id) to
+    UNIQUE(restaurant_id, platform, external_id).
+
+    SQLite can't alter a table-level UNIQUE, and the implicit index it
+    creates can't be dropped, so this is a rebuild: new table, copy, swap.
+    Safe by construction — every existing row already satisfies the new,
+    strictly weaker constraint, so the copy cannot fail on data. Wrapped in
+    one transaction, and a no-op on a database that already has the new key.
+    """
+    try:
+        if not _reviews_unique_is_global(conn):
+            return
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(reviews)").fetchall()]
+        col_list = ", ".join(cols)
+        create = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='reviews'"
+        ).fetchone()[0]
+        new_create = (create
+                      .replace("UNIQUE(platform, external_id)",
+                               "UNIQUE(restaurant_id, platform, external_id)")
+                      .replace("CREATE TABLE reviews", "CREATE TABLE reviews_rekeyed", 1)
+                      .replace('CREATE TABLE "reviews"', "CREATE TABLE reviews_rekeyed", 1))
+        if "reviews_rekeyed" not in new_create:
+            print("[migrate] reviews: could not rewrite CREATE statement, leaving as is")
+            return
+        conn.execute("PRAGMA foreign_keys=OFF")
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute("DROP TABLE IF EXISTS reviews_rekeyed")
+        conn.execute(new_create)
+        conn.execute(f"INSERT INTO reviews_rekeyed ({col_list}) SELECT {col_list} FROM reviews")
+        moved = conn.execute("SELECT COUNT(*) FROM reviews_rekeyed").fetchone()[0]
+        conn.execute("DROP TABLE reviews")
+        conn.execute("ALTER TABLE reviews_rekeyed RENAME TO reviews")
+        conn.execute("COMMIT")
+        conn.execute("PRAGMA foreign_keys=ON")
+        # The rebuild drops the table's indexes with it.
+        for idx in ("CREATE INDEX IF NOT EXISTS idx_reviews_restaurant ON reviews(restaurant_id)",
+                    "CREATE INDEX IF NOT EXISTS idx_reviews_status ON reviews(response_status)",
+                    "CREATE INDEX IF NOT EXISTS idx_reviews_fetched ON reviews(fetched_at)",
+                    "CREATE INDEX IF NOT EXISTS idx_reviews_urgency ON reviews(urgency)"):
+            conn.execute(idx)
+        conn.commit()
+        print(f"[migrate] reviews re-keyed to UNIQUE(restaurant_id, platform, external_id) — {moved} rows")
+    except Exception as e:
+        try:
+            conn.execute("ROLLBACK")
+        except Exception:
+            pass
+        print(f"[migrate] reviews re-key FAILED, table left untouched: {e}")
+
+
+def _ensure_place_id_uniqueness(conn):
+    """One live restaurant per Google listing.
+
+    Two restaurants pointed at the same google_place_id is what made the
+    review key collide in the first place, and it also means two owners
+    drafting replies to the same reviews. Demo copies are excluded — a demo
+    row deliberately mirrors a real listing — so this only constrains rows
+    that actually fetch and reply.
+
+    Best-effort: if the data already violates it, the index isn't created and
+    the offending ids are printed rather than the boot failing.
+    """
+    try:
+        dupes = conn.execute(
+            "SELECT google_place_id, GROUP_CONCAT(id) AS ids, COUNT(*) AS n FROM restaurants "
+            "WHERE COALESCE(google_place_id,'')<>'' AND COALESCE(is_demo,0)=0 "
+            "GROUP BY google_place_id HAVING n > 1"
+        ).fetchall()
+        if dupes:
+            for d in dupes:
+                print(f"[migrate] google_place_id {d[0]} is on live restaurants {d[1]} — "
+                      f"reviews for it can only reach one of them. Clear it on the duplicates, "
+                      f"or mark them is_demo=1, then redeploy to enable the unique index.")
+            return
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_restaurants_place_id_live "
+            "ON restaurants(google_place_id) "
+            "WHERE COALESCE(google_place_id,'')<>'' AND COALESCE(is_demo,0)=0"
+        )
+        conn.commit()
+    except Exception as e:
+        print(f"[migrate] place_id uniqueness skipped: {e}")
+
 
 def init_db(db_path: str = DB_PATH):
     conn = sqlite3.connect(db_path)
@@ -1223,6 +1326,8 @@ def init_db(db_path: str = DB_PATH):
         except Exception:
             pass  # column already exists
     conn.commit()
+    _migrate_reviews_unique(conn)
+    _ensure_place_id_uniqueness(conn)
     # Chats existed before conversations did — fold any pre-conversation
     # messages into one chat per restaurant so they show up in history.
     try:
@@ -2262,10 +2367,22 @@ def get_active_modules(restaurant: Optional["Restaurant"]) -> list[dict]:
 # ── Review CRUD ───────────────────────────────────────────────────────────────
 
 def save_reviews(reviews: list[Review], db_path: str = DB_PATH) -> tuple[int, list]:
-    """Upsert reviews; skip duplicates. Returns (new_count, new_review_objects)."""
+    """Upsert reviews; skip ones this restaurant already has.
+
+    Returns (new_count, new_review_objects).
+
+    The skip used to be a bare `pass` under a GLOBAL UNIQUE(platform,
+    external_id), which meant "another restaurant already claimed this
+    review" was indistinguishable from "we already have it" — and the first
+    case is a data-isolation failure that ran for months without a single
+    log line. The key is per-restaurant now, so a collision here really does
+    mean a duplicate; anything else is reported rather than swallowed.
+    """
     conn = get_conn(db_path)
     new_count = 0
     new_reviews = []
+    already_had = 0
+    unexpected = []
     for r in reviews:
         try:
             conn.execute("""
@@ -2277,10 +2394,25 @@ def save_reviews(reviews: list[Review], db_path: str = DB_PATH) -> tuple[int, li
                   r.rating, r.text, r.review_date, r.fetched_at))
             new_count += 1
             new_reviews.append(r)
-        except sqlite3.IntegrityError:
-            pass  # UNIQUE(platform, external_id) — already stored
+        except sqlite3.IntegrityError as e:
+            # UNIQUE(restaurant_id, platform, external_id) — this restaurant
+            # already has it, which is the normal re-fetch case.
+            if "UNIQUE" in str(e).upper():
+                already_had += 1
+            else:
+                unexpected.append((r.external_id, str(e)))
     conn.commit()
     conn.close()
+    if unexpected:
+        print(f"[reviews] {len(unexpected)} row(s) rejected for a reason other than a duplicate: "
+              f"{unexpected[:3]}")
+        try:
+            import ops
+            ops.capture(RuntimeError(f"{len(unexpected)} reviews rejected: {unexpected[:3]}"),
+                        job="save_reviews",
+                        context=f"restaurant_id={reviews[0].restaurant_id if reviews else '?'}")
+        except Exception:
+            pass
     return new_count, new_reviews
 
 
@@ -3356,6 +3488,33 @@ def get_location_group(group_name: str, db_path: str = DB_PATH, owner_email=None
     return [dict(r) for r in rows]
 
 
+def place_id_conflict(place_id: str, exclude_id=None, db_path: str = DB_PATH):
+    """The name of another LIVE restaurant already using this Google listing.
+
+    Two live restaurants on one google_place_id means both fetch the same
+    reviews, and only one of them can store any given review (the key is
+    per-restaurant now, but the second copy is still a duplicate the wrong
+    owner replies to). Demo rows are exempt — a demo deliberately mirrors a
+    real listing and never fetches.
+    """
+    pid = (place_id or "").strip()
+    if not pid:
+        return None
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT id, name FROM restaurants WHERE google_place_id=? AND COALESCE(is_demo,0)=0",
+            (pid,)
+        ).fetchall()
+    finally:
+        conn.close()
+    for r in rows:
+        if exclude_id is not None and r["id"] == exclude_id:
+            continue
+        return r["name"] or f"restaurant #{r['id']}"
+    return None
+
+
 def location_group_conflict(group_name: str, owner_email: str, exclude_id=None,
                             db_path: str = DB_PATH):
     """The owner email already using `group_name`, if it isn't this one.
@@ -3809,12 +3968,13 @@ def delete_response_template(template_id: int, restaurant_id: int, db_path: str 
     conn.execute("DELETE FROM response_templates WHERE id=? AND restaurant_id=?", (template_id, restaurant_id))
     conn.commit(); conn.close()
 
-def increment_template_use(template_id: int, restaurant_id: int = None, db_path: str = DB_PATH):
+def increment_template_use(template_id: int, restaurant_id: int, db_path: str = DB_PATH):
+    """restaurant_id is required. It used to default to None with an
+    unscoped fallback UPDATE — the one caller always passed it, so the
+    fallback was a trap set for the next one rather than a feature."""
     conn = get_conn(db_path)
-    if restaurant_id is not None:
-        conn.execute("UPDATE response_templates SET use_count=use_count+1 WHERE id=? AND restaurant_id=?", (template_id, restaurant_id))
-    else:
-        conn.execute("UPDATE response_templates SET use_count=use_count+1 WHERE id=?", (template_id,))
+    conn.execute("UPDATE response_templates SET use_count=use_count+1 WHERE id=? AND restaurant_id=?",
+                 (template_id, restaurant_id))
     conn.commit(); conn.close()
 
 
@@ -4625,39 +4785,57 @@ def create_ask_conversation(restaurant_id, user_id=None, db_path: str = DB_PATH)
         conn.close()
 
 
-def get_ask_conversation(restaurant_id, conversation_id, db_path: str = DB_PATH):
-    """The conversation row, or None when it doesn't exist OR belongs to
-    another restaurant — the caller never learns which."""
+
+# A conversation belongs to the restaurant AND to whoever started it. Passing
+# viewer_id restricts a read to that person's own chats plus the ones that
+# predate the user_id column (NULL), so an invited teammate can't page through
+# the owner's assistant history — which carries labor cost, food cost and
+# revenue in plain text. Omitted (None) means no viewer filter: that is what
+# the data layer's own tests and any restaurant-wide maintenance use.
+def _viewer_clause(viewer_id, alias=""):
+    if viewer_id is None:
+        return "", []
+    col = f"{alias}user_id" if alias else "user_id"
+    return f" AND ({col}=? OR {col} IS NULL)", [viewer_id]
+
+
+def get_ask_conversation(restaurant_id, conversation_id, db_path: str = DB_PATH, viewer_id=None):
+    """The conversation row, or None when it doesn't exist, belongs to
+    another restaurant, or belongs to another person — the caller never
+    learns which."""
     if conversation_id is None:
         return None
+    where, params = _viewer_clause(viewer_id)
     conn = get_conn(db_path)
     try:
         row = conn.execute(
             "SELECT id, restaurant_id, user_id, title, created_at, updated_at "
-            "FROM ask_cavnar_conversations WHERE id=? AND restaurant_id=?",
-            (conversation_id, restaurant_id)
+            "FROM ask_cavnar_conversations WHERE id=? AND restaurant_id=?" + where,
+            [conversation_id, restaurant_id, *params]
         ).fetchone()
     finally:
         conn.close()
     return dict(row) if row else None
 
 
-def current_ask_conversation_id(restaurant_id, db_path: str = DB_PATH):
+def current_ask_conversation_id(restaurant_id, db_path: str = DB_PATH, viewer_id=None):
     """The most recently active chat — what a client that hasn't picked a
     specific conversation (the web panel) is talking in. None if there are
     no chats yet."""
+    where, params = _viewer_clause(viewer_id)
     conn = get_conn(db_path)
     try:
         row = conn.execute(
-            "SELECT id FROM ask_cavnar_conversations WHERE restaurant_id=? "
-            "ORDER BY updated_at DESC, id DESC LIMIT 1", (restaurant_id,)
+            "SELECT id FROM ask_cavnar_conversations WHERE restaurant_id=?" + where +
+            " ORDER BY updated_at DESC, id DESC LIMIT 1", [restaurant_id, *params]
         ).fetchone()
     finally:
         conn.close()
     return row["id"] if row else None
 
 
-def list_ask_conversations(restaurant_id, limit: int = _ASK_CONVERSATIONS_KEEP, db_path: str = DB_PATH) -> list:
+def list_ask_conversations(restaurant_id, limit: int = _ASK_CONVERSATIONS_KEEP,
+                           db_path: str = DB_PATH, viewer_id=None) -> list:
     """Newest first. Each entry carries what a history row needs: the
     title, a preview of the last thing said, when, and how many turns."""
     conn = get_conn(db_path)
@@ -4667,8 +4845,9 @@ def list_ask_conversations(restaurant_id, limit: int = _ASK_CONVERSATIONS_KEEP, 
             "  (SELECT COUNT(*) FROM ask_cavnar_messages m WHERE m.conversation_id=c.id) AS message_count, "
             "  (SELECT content FROM ask_cavnar_messages m WHERE m.conversation_id=c.id "
             "   ORDER BY m.id DESC LIMIT 1) AS preview "
-            "FROM ask_cavnar_conversations c WHERE c.restaurant_id=? "
-            "ORDER BY c.updated_at DESC, c.id DESC LIMIT ?", (restaurant_id, limit)
+            "FROM ask_cavnar_conversations c WHERE c.restaurant_id=?" + _viewer_clause(viewer_id, "c.")[0] +
+            " ORDER BY c.updated_at DESC, c.id DESC LIMIT ?",
+            [restaurant_id, *_viewer_clause(viewer_id, "c.")[1], limit]
         ).fetchall()
     finally:
         conn.close()
@@ -4682,15 +4861,15 @@ def list_ask_conversations(restaurant_id, limit: int = _ASK_CONVERSATIONS_KEEP, 
     return out
 
 
-def delete_ask_conversation(restaurant_id, conversation_id, db_path: str = DB_PATH) -> bool:
+def delete_ask_conversation(restaurant_id, conversation_id, db_path: str = DB_PATH, viewer_id=None) -> bool:
     """Permanently removes one chat and its messages. Scoped to the
     restaurant, so a guessed id from another account deletes nothing. The
     action audit is never touched."""
     conn = get_conn(db_path)
     try:
         cur = conn.execute(
-            "DELETE FROM ask_cavnar_conversations WHERE id=? AND restaurant_id=?",
-            (conversation_id, restaurant_id)
+            "DELETE FROM ask_cavnar_conversations WHERE id=? AND restaurant_id=?" + _viewer_clause(viewer_id)[0],
+            [conversation_id, restaurant_id, *_viewer_clause(viewer_id)[1]]
         )
         if cur.rowcount:
             conn.execute("DELETE FROM ask_cavnar_messages WHERE conversation_id=? AND restaurant_id=?",
@@ -4712,6 +4891,8 @@ def save_ask_message(restaurant_id, role, content, proposals=None, user_id=None,
     if conversation_id is not None and get_ask_conversation(restaurant_id, conversation_id, db_path=db_path) is None:
         raise ValueError("conversation not found")
     if conversation_id is None:
+        # Deliberately unfiltered: this is the write path, and the turn
+        # continues whatever chat the restaurant is currently in.
         conversation_id = current_ask_conversation_id(restaurant_id, db_path=db_path)
     if conversation_id is None:
         conversation_id = create_ask_conversation(restaurant_id, user_id=user_id, db_path=db_path)
@@ -4747,22 +4928,23 @@ def save_ask_message(restaurant_id, role, content, proposals=None, user_id=None,
     return conversation_id
 
 
-def get_ask_history(restaurant_id, limit: int = _ASK_HISTORY_LIMIT, conversation_id=None,
+def get_ask_history(restaurant_id, limit: int = _ASK_HISTORY_LIMIT, conversation_id=None, viewer_id=None,
                     db_path: str = DB_PATH) -> list:
     """Oldest-first, so it can be handed straight to the model. Without a
     conversation_id this is the restaurant's current chat; a specific id
     must belong to this restaurant (anything else reads as empty)."""
     import json as _json
     if conversation_id is None:
-        conversation_id = current_ask_conversation_id(restaurant_id, db_path=db_path)
+        conversation_id = current_ask_conversation_id(restaurant_id, db_path=db_path, viewer_id=viewer_id)
         if conversation_id is None:
             return []
     conn = get_conn(db_path)
     try:
         rows = conn.execute(
             "SELECT id, role, content, proposals, created_at FROM ask_cavnar_messages "
-            "WHERE restaurant_id=? AND conversation_id=? ORDER BY id DESC LIMIT ?",
-            (restaurant_id, conversation_id, limit)
+            "WHERE restaurant_id=? AND conversation_id=?" + _viewer_clause(viewer_id)[0] +
+            " ORDER BY id DESC LIMIT ?",
+            [restaurant_id, conversation_id, *_viewer_clause(viewer_id)[1], limit]
         ).fetchall()
     finally:
         conn.close()

@@ -137,6 +137,12 @@ def record_recount(restaurant_id: int, ingredient_id: int, counted_qty: float,
     from models import db_conn
     event_date_str = _as_date_str(event_date)
     with db_conn() as conn:
+        # The pair used to be taken on trust: an admin URL carrying
+        # /recount/<restaurant_id>/<ingredient_id> could write an event
+        # tagged with one location against another location's ingredient,
+        # leaving both ledgers wrong in opposite directions, permanently.
+        if not ingredient_belongs_to(conn, restaurant_id, ingredient_id):
+            return {"ok": False, "error": "That ingredient isn't this restaurant's."}
         expected = _compute_current_stock(conn, ingredient_id)
         gap = round(expected - counted_qty, 3)
 
@@ -179,6 +185,8 @@ def record_receiving(restaurant_id: int, ingredient_id: int, qty: float,
     from models import db_conn
     event_date_str = _as_date_str(event_date)
     with db_conn() as conn:
+        if not ingredient_belongs_to(conn, restaurant_id, ingredient_id):
+            return 0          # see record_recount's note on the untrusted pair
         cur = conn.execute(
             "INSERT INTO ingredient_stock_events "
             "(restaurant_id, ingredient_id, event_type, qty, event_date, source, note) "
@@ -421,31 +429,53 @@ def create_ingredient(restaurant_id: int, name: str, category: str = "", unit: s
     return ingredient_id
 
 
-def update_ingredient(ingredient_id: int, **fields) -> None:
+def ingredient_belongs_to(conn, restaurant_id: int, ingredient_id: int) -> bool:
+    row = conn.execute("SELECT restaurant_id FROM ingredients WHERE id=?", (ingredient_id,)).fetchone()
+    return bool(row) and int(row["restaurant_id"]) == int(restaurant_id)
+
+
+def menu_item_belongs_to(conn, restaurant_id: int, menu_item_id: int) -> bool:
+    row = conn.execute("SELECT restaurant_id FROM menu_items WHERE id=?", (menu_item_id,)).fetchone()
+    return bool(row) and int(row["restaurant_id"]) == int(restaurant_id)
+
+
+def update_ingredient(restaurant_id: int, ingredient_id: int, **fields) -> bool:
     """Updates static attributes only (name/category/unit/par_level/unit_cost/
     case_size) plus avg_daily_usage/waste_last_week as a manual override —
     current_stock is deliberately not editable here, it can only change via
-    record_recount/record_receiving so the ledger stays the source of truth."""
+    record_recount/record_receiving so the ledger stays the source of truth.
+
+    restaurant_id is required and enforced. The admin route has always had it
+    in the URL and used to pass only the ingredient_id, so a stale row id
+    from a second tab wrote to another location's ingredient while the URL,
+    the screen and the audit trail all named the first. Returns False when
+    the ingredient isn't this restaurant's.
+    """
     from models import db_conn
     allowed = {"name", "category", "unit", "par_level", "unit_cost", "case_size",
                "avg_daily_usage", "waste_last_week"}
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
-        return
+        return False
     sets = ", ".join(f"{k}=?" for k in updates) + ", updated_at=datetime('now')"
     with db_conn() as conn:
-        conn.execute(f"UPDATE ingredients SET {sets} WHERE id=?", [*updates.values(), ingredient_id])
+        cur = conn.execute(f"UPDATE ingredients SET {sets} WHERE id=? AND restaurant_id=?",
+                           [*updates.values(), ingredient_id, restaurant_id])
         conn.commit()
+        return cur.rowcount > 0
 
 
-def deactivate_ingredient(ingredient_id: int) -> None:
+def deactivate_ingredient(restaurant_id: int, ingredient_id: int) -> bool:
     """Soft-delete only — recipe_ingredients/ingredient_stock_events may
-    still reference this ingredient, never hard-delete it."""
+    still reference this ingredient, never hard-delete it. Scoped: see
+    update_ingredient."""
     from models import db_conn
     with db_conn() as conn:
-        conn.execute("UPDATE ingredients SET is_active=0, updated_at=datetime('now') WHERE id=?",
-                     (ingredient_id,))
+        cur = conn.execute(
+            "UPDATE ingredients SET is_active=0, updated_at=datetime('now') "
+            "WHERE id=? AND restaurant_id=?", (ingredient_id, restaurant_id))
         conn.commit()
+        return cur.rowcount > 0
 
 
 def create_menu_item(restaurant_id: int, name: str) -> int:
@@ -519,9 +549,24 @@ def priority_ingredients(restaurant_id: int) -> list:
     } for i in big_8]
 
 
-def add_recipe_ingredient(menu_item_id: int, ingredient_id: int, qty_per_unit: float) -> int:
+def add_recipe_ingredient(restaurant_id: int, menu_item_id: int, ingredient_id: int,
+                          qty_per_unit: float) -> int:
+    """Bind an ingredient to a dish. Both sides must belong to
+    `restaurant_id`.
+
+    recipe_ingredients is a join table with no tenant column of its own, and
+    nothing used to check the pair. A recipe could therefore link Chicago's
+    Margherita to Dallas's tomatoes — and menu_profitability would then cost
+    Chicago's plate from Dallas's unit_cost and show the wrong food-cost
+    percentage to the client and to Ask Cavnar. Returns 0 if either side
+    isn't this restaurant's.
+    """
     from models import db_conn
     with db_conn() as conn:
+        if not menu_item_belongs_to(conn, restaurant_id, menu_item_id):
+            return 0
+        if not ingredient_belongs_to(conn, restaurant_id, ingredient_id):
+            return 0
         cur = conn.execute(
             "INSERT INTO recipe_ingredients (menu_item_id, ingredient_id, qty_per_unit) VALUES (?,?,?)",
             (menu_item_id, ingredient_id, qty_per_unit)
@@ -530,11 +575,17 @@ def add_recipe_ingredient(menu_item_id: int, ingredient_id: int, qty_per_unit: f
         return cur.lastrowid
 
 
-def delete_recipe_ingredient(recipe_ingredient_id: int) -> None:
+def delete_recipe_ingredient(restaurant_id: int, recipe_ingredient_id: int) -> bool:
+    """Scoped through the row's own menu item — the route's menu_item_id used
+    to be accepted and then ignored entirely."""
     from models import db_conn
     with db_conn() as conn:
-        conn.execute("DELETE FROM recipe_ingredients WHERE id=?", (recipe_ingredient_id,))
+        cur = conn.execute(
+            "DELETE FROM recipe_ingredients WHERE id=? AND menu_item_id IN "
+            "(SELECT id FROM menu_items WHERE restaurant_id=?)",
+            (recipe_ingredient_id, restaurant_id))
         conn.commit()
+        return cur.rowcount > 0
 
 
 # ── Menu profitability ─────────────────────────────────────────────────────────
@@ -570,8 +621,13 @@ def menu_profitability(restaurant_id: int) -> dict:
                    SUM(ri.qty_per_unit * COALESCE(i.unit_cost, 0)) AS plate_cost,
                    COUNT(*) AS n
             FROM recipe_ingredients ri
-            JOIN ingredients i ON i.id = ri.ingredient_id
-            JOIN menu_items m ON m.id = ri.menu_item_id
+            JOIN menu_items  m ON m.id = ri.menu_item_id
+            -- The ingredient is filtered too, not just the dish. A recipe row
+            -- written before add_recipe_ingredient validated the pair can
+            -- point at another restaurant's ingredient; costing a plate from
+            -- that row's unit_cost is how one location's food-cost % ends up
+            -- computed from another's prices.
+            JOIN ingredients i ON i.id = ri.ingredient_id AND i.restaurant_id = m.restaurant_id
             WHERE m.restaurant_id=?
             GROUP BY ri.menu_item_id
         """, (restaurant_id,)).fetchall():

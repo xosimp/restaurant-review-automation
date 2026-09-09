@@ -116,16 +116,26 @@ def send_2fa_sms(to_phone: str, restaurant_name: str, code: str) -> bool:
 
 
 def alert_recipients(owner_email: str, restaurant_id: int = None, db_path: str = DB_PATH) -> list:
-    """owner_email plus the restaurant's alert_extra_emails (Account ->
-    Alerts -> 'Also email'). Resolved by restaurant_id when the caller has
-    it, else by owner_email, so no existing call site had to change."""
+    """owner_email plus THIS restaurant's alert_extra_emails (Account ->
+    Alerts -> 'Also email').
+
+    restaurant_id is required to add the extra addresses. It used to fall
+    back to `WHERE owner_email=? LIMIT 1`, which is a lookup on a column
+    that is deliberately NOT unique: every location a multi-location owner
+    runs shares one owner_email, so LIMIT 1 with no ORDER BY returned an
+    arbitrary location — in practice the oldest. A Dallas 1-star alert was
+    CC'd to the Chicago GM's address, complete with the guest's review text,
+    and the Dallas GM never got it.
+
+    Without a restaurant_id there is no honest answer, so the owner alone
+    gets the mail rather than a guessed location's CC list.
+    """
     out = [owner_email] if owner_email else []
+    if not restaurant_id:
+        return out
     try:
         conn = models.get_conn(db_path)
-        if restaurant_id:
-            row = conn.execute("SELECT alert_extra_emails FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
-        else:
-            row = conn.execute("SELECT alert_extra_emails FROM restaurants WHERE owner_email=? LIMIT 1", (owner_email,)).fetchone()
+        row = conn.execute("SELECT alert_extra_emails FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
         conn.close()
         if row and row["alert_extra_emails"]:
             for e in row["alert_extra_emails"].split(","):
@@ -439,7 +449,7 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
             for c in contacts:
                 send_sms(c["phone"], sms_text)
         if via_email and owner_email:
-            _send_alert_email(owner_email, subject, html)
+            _send_alert_email(owner_email, subject, html, restaurant_id=restaurant_id)
         if via_push:
             try:
                 from push import fire_push as _fp
@@ -635,7 +645,7 @@ def check_no_response_alerts(db_path: str = DB_PATH):
                 send_sms(c["phone"], sms)
 
         if via_email and owner_email:
-            _send_alert_email(owner_email, f"⏰ Unresponded reviews — {name}", html)
+            _send_alert_email(owner_email, f"⏰ Unresponded reviews — {name}", html, restaurant_id=rid)
 
         if via_push:
             try:
@@ -686,7 +696,7 @@ def check_daily_alerts(db_path: str = DB_PATH):
                 for c in contacts:
                     send_sms(c["phone"], sms_text)
             if via_email and owner_email:
-                _send_alert_email(owner_email, subject, html)
+                _send_alert_email(owner_email, subject, html, restaurant_id=rid)
             # These three alert types predate push and never had their own
             # al_*_push toggle columns added (unlike health/1star/2star/5star/
             # spike/unresponded, which each have one) — rather than fire

@@ -10,6 +10,10 @@ final class LocationSwitcherViewModel {
     var errorMessage: String?
 
     private let client: APIClient
+    /// Set by the view from the environment. The switch has consequences the
+    /// session owns — dropping queued writes for the location being left,
+    /// purging its cached data — so the switch can't just be a request.
+    var session: SessionStore?
 
     init(client: APIClient = .shared) {
         self.client = client
@@ -62,9 +66,14 @@ final class LocationSwitcherViewModel {
     /// Home and dismisses on success, and shows errorMessage otherwise.
     func switchTo(_ location: LocationOption) async -> Bool {
         do {
-            let _: SwitchResponse = try await client.send(
+            let response: SwitchResponse = try await client.send(
                 "/mobile/api/switch-location", method: .post, body: SwitchBody(restaurantId: location.id)
             )
+            // Everything held for the previous location — queued offline
+            // writes, cached labor/schedule data — belongs to that location,
+            // not this one.
+            await session?.didSwitchLocation(to: response.restaurantId,
+                                             name: response.restaurantName)
             return true
         } catch let error as APIClient.APIError {
             errorMessage = error.message

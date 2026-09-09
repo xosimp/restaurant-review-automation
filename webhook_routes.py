@@ -116,19 +116,39 @@ def _sibling_restaurant_ids(restaurant_id: int):
     try:
         conn = get_conn()
         row = conn.execute(
-            "SELECT location_group, owner_email FROM restaurants WHERE id=?", (restaurant_id,)
+            "SELECT location_group, owner_email, stripe_customer_id FROM restaurants WHERE id=?",
+            (restaurant_id,)
         ).fetchone()
-        if not row or not (row["location_group"] or "").strip():
+        if not row:
             conn.close()
             return [restaurant_id]
-        # Scoped to the owner as well as the group name: two unrelated clients
-        # typed into the same group must not have one's cancellation churn the
-        # other's locations. See models.get_location_group.
-        rows = conn.execute(
-            "SELECT id FROM restaurants WHERE location_group=? "
-            "AND LOWER(TRIM(COALESCE(owner_email,'')))=?",
-            (row["location_group"], (row["owner_email"] or "").strip().lower())
-        ).fetchall()
+        group = (row["location_group"] or "").strip()
+        owner = (row["owner_email"] or "").strip().lower()
+        customer = (row["stripe_customer_id"] or "").strip()
+        if group:
+            # Scoped to the owner as well as the group name: two unrelated
+            # clients typed into the same group must not have one's
+            # cancellation churn the other's locations. See
+            # models.get_location_group.
+            rows = conn.execute(
+                "SELECT id FROM restaurants WHERE location_group=? "
+                "AND LOWER(TRIM(COALESCE(owner_email,'')))=?",
+                (group, owner)
+            ).fetchall()
+        elif customer:
+            # location_group is free text an admin types, and it is unset on
+            # every production row today. Without this branch a multi-location
+            # owner's single payment activated only the location Stripe
+            # resolved to and left the rest on their previous status — which,
+            # now that billing is actually enforced, means the entitlement
+            # gate 402s a customer who has paid. One Stripe customer is one
+            # subscription, so every restaurant billed to it moves together.
+            rows = conn.execute(
+                "SELECT id FROM restaurants WHERE stripe_customer_id=?", (customer,)
+            ).fetchall()
+        else:
+            conn.close()
+            return [restaurant_id]
         conn.close()
         ids = [r["id"] for r in rows]
         return ids or [restaurant_id]

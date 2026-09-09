@@ -108,6 +108,7 @@ final class SessionStore {
         do {
             let response: MeResponse = try await client.send("/mobile/api/me", hapticOnError: false)
             currentUser = response.user
+            await PendingWriteQueue.shared.setActiveRestaurant(response.user.restaurantId)
         } catch is APIClient.SessionExpiredError {
             // The client's own onSessionExpired handler also fires for
             // this, asynchronously — call it here too rather than wait on
@@ -335,9 +336,33 @@ final class SessionStore {
         // so its registration 401s and used to be dropped forever (audit
         // 4.3). Now there is a session, flush anything queued.
         await PushManager.shared.flushPendingToken()
+        // The queue needs to know which location its writes belong to before
+        // it replays any of them — see PendingWrite.restaurantId.
+        await PendingWriteQueue.shared.setActiveRestaurant(user.restaurantId)
         // Same for writes queued while offline — signing in is a reconnect
         // signal in its own right.
         await PendingWriteQueue.shared.drain()
+    }
+
+    /// Called by the location switcher once the server has accepted the
+    /// switch. Anything still queued for the location being left is dropped
+    /// rather than replayed against the new one: the server resolves a
+    /// write's restaurant from the session at replay time, so a queued
+    /// Chicago approval draining after a switch to Dallas is a write aimed
+    /// at the wrong location.
+    func didSwitchLocation(to restaurantId: Int, name: String?) async {
+        let dropped = await PendingWriteQueue.shared.dropWrites(notFor: restaurantId)
+        await PendingWriteQueue.shared.setActiveRestaurant(restaurantId)
+        if dropped > 0 {
+            lastError = "\(dropped) unsent change\(dropped == 1 ? "" : "s") for the previous location "
+                      + "couldn't be sent and \(dropped == 1 ? "was" : "were") discarded."
+        }
+        if var user = currentUser {
+            user.restaurantId = restaurantId
+            currentUser = user
+        }
+        SecureCache.purgeAll()   // cached labor/schedule data belongs to the old location
+        hasShownHomeIntro = false
     }
 
     private struct LogoutBody: Encodable {
@@ -377,7 +402,10 @@ final class SessionStore {
         // and configureCaching() would happily restore it (audit 1.2).
         SecureCache.purgeAll()
         // Anything queued offline belongs to the session that queued it.
-        Task { await PendingWriteQueue.shared.clear() }
+        Task {
+            await PendingWriteQueue.shared.clear()
+            await PendingWriteQueue.shared.setActiveRestaurant(nil)
+        }
         Task { await client.setToken(nil) }
         token = nil
         currentUser = nil

@@ -309,40 +309,85 @@ def record_optin_invite(restaurant_id, phone, source="toast_order", external_ref
         conn.close()
 
 
-def _restaurant_for_inbound(phone, db_path=DB_PATH):
-    """Which restaurant is this guest replying to?
+# How far back an unanswered invite still counts as "what they're replying
+# to". Past this, a YES is not attributable to it.
+_INVITE_REPLY_WINDOW_DAYS = 14
 
-    Every restaurant shares one platform Twilio number, so the inbound
-    `To` can't identify the restaurant — the most recent thing we actually
-    sent this number can. Falls back to a guest_contacts match so a STOP
-    from someone who never got an invite still lands somewhere.
+
+def _inbound_candidates(phone, db_path=DB_PATH):
+    """Every restaurant this phone could plausibly be replying to, newest
+    invite first, as [(restaurant_id, name)].
+
+    Every restaurant shares one platform Twilio number, so the inbound `To`
+    cannot identify the restaurant. This used to take the single most recent
+    invite and treat it as the answer — which silently attributed a guest's
+    YES to whichever restaurant happened to text last. A diner on two
+    restaurants' lists could consent to one and be enrolled in the other's
+    marketing, with that owner then seeing their phone number.
     """
     phone = _normalize_phone(phone)
     conn = get_conn(db_path)
     try:
-        row = conn.execute(
-            "SELECT restaurant_id FROM sms_optin_invites WHERE phone=? ORDER BY sent_at DESC, id DESC LIMIT 1",
+        rows = conn.execute(
+            "SELECT i.restaurant_id, r.name, MAX(i.sent_at) AS last_sent "
+            "FROM sms_optin_invites i JOIN restaurants r ON r.id = i.restaurant_id "
+            "WHERE i.phone=? AND i.responded_at IS NULL "
+            "  AND i.sent_at >= datetime('now', ?) "
+            "GROUP BY i.restaurant_id ORDER BY last_sent DESC",
+            (phone, f"-{_INVITE_REPLY_WINDOW_DAYS} days")
+        ).fetchall()
+        if rows:
+            return [(r["restaurant_id"], r["name"] or "") for r in rows]
+        rows = conn.execute(
+            "SELECT DISTINCT g.restaurant_id, r.name FROM guest_contacts g "
+            "JOIN restaurants r ON r.id = g.restaurant_id WHERE g.phone=?",
             (phone,)
-        ).fetchone()
-        if row:
-            return row["restaurant_id"]
-        row = conn.execute(
-            "SELECT restaurant_id FROM guest_contacts WHERE phone=? ORDER BY id DESC LIMIT 1",
-            (phone,)
-        ).fetchone()
-        return row["restaurant_id"] if row else None
+        ).fetchall()
+        return [(r["restaurant_id"], r["name"] or "") for r in rows]
     finally:
         conn.close()
 
 
-def _mark_invite_response(phone, response, db_path=DB_PATH):
+def _match_named_restaurant(body, candidates):
+    """Did the guest name one of them in the reply itself?"""
+    text = " ".join((body or "").lower().split())
+    for rid, name in candidates:
+        n = " ".join((name or "").lower().split())
+        if n and n in text:
+            return rid
+    return None
+
+
+def _restaurant_for_inbound(phone, db_path=DB_PATH):
+    """The single restaurant this reply belongs to, or None when it is
+    ambiguous. Never guesses — see _inbound_candidates."""
+    candidates = _inbound_candidates(phone, db_path=db_path)
+    return candidates[0][0] if len(candidates) == 1 else None
+
+
+def _mark_invite_response(phone, response, db_path=DB_PATH, restaurant_id=None):
+    """Close the invite this reply answers.
+
+    `restaurant_id` pins which one. Without it (a STOP, which is global by
+    design) the most recent unanswered invite is closed, but a YES must
+    always pass the restaurant it was actually resolved to — closing the
+    wrong restaurant's invite leaves the right one open forever and the
+    guest never gets their review link.
+    """
     from time_utils import restaurant_now_by_id
     conn = get_conn(db_path)
     try:
-        row = conn.execute(
-            "SELECT id, restaurant_id FROM sms_optin_invites WHERE phone=? AND responded_at IS NULL "
-            "ORDER BY sent_at DESC, id DESC LIMIT 1", (_normalize_phone(phone),)
-        ).fetchone()
+        if restaurant_id is not None:
+            row = conn.execute(
+                "SELECT id, restaurant_id FROM sms_optin_invites WHERE phone=? AND restaurant_id=? "
+                "AND responded_at IS NULL ORDER BY sent_at DESC, id DESC LIMIT 1",
+                (_normalize_phone(phone), restaurant_id)
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT id, restaurant_id FROM sms_optin_invites WHERE phone=? AND responded_at IS NULL "
+                "ORDER BY sent_at DESC, id DESC LIMIT 1", (_normalize_phone(phone),)
+            ).fetchone()
         if not row:
             return
         now_iso = restaurant_now_by_id(row["restaurant_id"], naive=True).isoformat()
@@ -372,20 +417,30 @@ def handle_inbound_sms(from_phone, body, db_path=DB_PATH):
         _mark_invite_response(phone, "stop", db_path=db_path)
         return "You're unsubscribed and won't get any more texts from us. Reply START to opt back in."
 
-    restaurant_id = _restaurant_for_inbound(phone, db_path=db_path)
-    if restaurant_id is None:
+    candidates = _inbound_candidates(phone, db_path=db_path)
+    if not candidates:
         return None          # nothing of ours — stay silent rather than guess
 
     if word in HELP_KEYWORDS:
         return "This is a guest text line for restaurant updates. Reply STOP to unsubscribe."
 
-    if word in START_KEYWORDS:
+    if word in START_KEYWORDS or _match_named_restaurant(body, candidates):
+        # One candidate is unambiguous. Several means two restaurants texted
+        # this number and only the guest knows which they meant — consent
+        # recorded against a guess is consent for a business they never
+        # agreed to hear from, so ask instead of picking.
+        restaurant_id = (candidates[0][0] if len(candidates) == 1
+                         else _match_named_restaurant(body, candidates))
+        if restaurant_id is None:
+            names = " or ".join(n for _, n in candidates[:3] if n)
+            return (f"Thanks! Which restaurant did you mean — {names}? "
+                    "Reply with the name. Reply STOP to opt out of all of them.")
         conn = get_conn(db_path)
         row = conn.execute("SELECT name FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
         conn.close()
         add_guest_contact_sms_optin(restaurant_id, phone, db_path=db_path)
         resubscribe_guest(restaurant_id, phone, db_path=db_path)
-        _mark_invite_response(phone, "yes", db_path=db_path)
+        _mark_invite_response(phone, "yes", db_path=db_path, restaurant_id=restaurant_id)
         name = row["name"] if row else "us"
         return f"Thanks! You're in — we'll text you a review link after your next visit to {name}. Reply STOP anytime."
 

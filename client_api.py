@@ -1116,7 +1116,8 @@ def ask_cavnar_stream(current_user):
 @login_required
 def ask_cavnar_history(current_user):
     from models import get_ask_history
-    return jsonify(ok=True, messages=get_ask_history(current_user["restaurant_id"]))
+    return jsonify(ok=True, messages=get_ask_history(current_user["restaurant_id"],
+                                                     viewer_id=current_user.get("id")))
 
 
 @client_bp.route("/api/ask-cavnar/history", methods=["DELETE"])
@@ -1133,9 +1134,10 @@ def ask_cavnar_clear_history(current_user):
 # scoped to the caller's restaurant inside models — an id that belongs to
 # someone else reads as "doesn't exist", never as theirs.
 
-def _do_list_ask_conversations(restaurant_id):
+def _do_list_ask_conversations(restaurant_id, viewer_id=None):
     from models import list_ask_conversations
-    return {"ok": True, "conversations": list_ask_conversations(restaurant_id)}, 200
+    return {"ok": True,
+            "conversations": list_ask_conversations(restaurant_id, viewer_id=viewer_id)}, 200
 
 
 def _do_create_ask_conversation(restaurant_id, user_id=None):
@@ -1144,18 +1146,19 @@ def _do_create_ask_conversation(restaurant_id, user_id=None):
     return {"ok": True, "conversation_id": cid}, 200
 
 
-def _do_get_ask_conversation(restaurant_id, conversation_id):
+def _do_get_ask_conversation(restaurant_id, conversation_id, viewer_id=None):
     from models import get_ask_conversation, get_ask_history, _ASK_TRANSCRIPT_KEEP
-    convo = get_ask_conversation(restaurant_id, conversation_id)
+    convo = get_ask_conversation(restaurant_id, conversation_id, viewer_id=viewer_id)
     if convo is None:
         return {"ok": False, "error": "That conversation doesn't exist."}, 404
-    messages = get_ask_history(restaurant_id, limit=_ASK_TRANSCRIPT_KEEP, conversation_id=conversation_id)
+    messages = get_ask_history(restaurant_id, limit=_ASK_TRANSCRIPT_KEEP,
+                               conversation_id=conversation_id, viewer_id=viewer_id)
     return {"ok": True, "conversation": convo, "messages": messages}, 200
 
 
-def _do_delete_ask_conversation(restaurant_id, conversation_id):
+def _do_delete_ask_conversation(restaurant_id, conversation_id, viewer_id=None):
     from models import delete_ask_conversation
-    if not delete_ask_conversation(restaurant_id, conversation_id):
+    if not delete_ask_conversation(restaurant_id, conversation_id, viewer_id=viewer_id):
         return {"ok": False, "error": "That conversation doesn't exist."}, 404
     return {"ok": True}, 200
 
@@ -1163,7 +1166,8 @@ def _do_delete_ask_conversation(restaurant_id, conversation_id):
 @client_bp.route("/api/ask-cavnar/conversations")
 @login_required
 def ask_cavnar_conversations(current_user):
-    payload, status = _do_list_ask_conversations(current_user["restaurant_id"])
+    payload, status = _do_list_ask_conversations(current_user["restaurant_id"],
+                                                 viewer_id=current_user.get("id"))
     return jsonify(**payload), status
 
 
@@ -1177,14 +1181,16 @@ def ask_cavnar_new_conversation(current_user):
 @client_bp.route("/api/ask-cavnar/conversations/<int:conversation_id>")
 @login_required
 def ask_cavnar_conversation(current_user, conversation_id):
-    payload, status = _do_get_ask_conversation(current_user["restaurant_id"], conversation_id)
+    payload, status = _do_get_ask_conversation(current_user["restaurant_id"], conversation_id,
+                                               viewer_id=current_user.get("id"))
     return jsonify(**payload), status
 
 
 @client_bp.route("/api/ask-cavnar/conversations/<int:conversation_id>", methods=["DELETE"])
 @login_required
 def ask_cavnar_delete_conversation(current_user, conversation_id):
-    payload, status = _do_delete_ask_conversation(current_user["restaurant_id"], conversation_id)
+    payload, status = _do_delete_ask_conversation(current_user["restaurant_id"], conversation_id,
+                                                  viewer_id=current_user.get("id"))
     return jsonify(**payload), status
 
 

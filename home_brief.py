@@ -197,11 +197,23 @@ def build_home_brief(current_user, fresh=False):
 
 def invalidate(rid=None):
     """Called after an action that changes what Home should say (publishing
-    replies, switching location) — the next load recomputes."""
+    replies, switching location) — the next load recomputes.
+
+    Two key shapes live in _CACHE: a single-location brief keyed (rid, uid)
+    and a group brief keyed ("group", base_rid, uid). Matching only k[0]
+    against rid skipped every group entry, since k[0] there is the literal
+    string "group" — so a group rollup kept serving pre-change numbers for
+    the rest of its TTL. Both shapes are matched now.
+    """
     if rid is None:
         _CACHE.clear()
         return
-    for k in [k for k in _CACHE if k[0] == rid]:
+    # Every group entry goes, not just the ones keyed to this restaurant: a
+    # group brief aggregates all of an owner's locations, so a change at any
+    # one of them makes every group rollup that includes it wrong, and the
+    # key only records the owner's BASE location, never the others.
+    stale = [k for k in _CACHE if k[0] == rid or k[0] == "group"]
+    for k in stale:
         _CACHE.pop(k, None)
 
 

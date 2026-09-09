@@ -13,7 +13,7 @@ from models import (get_conn, get_restaurant, update_restaurant,
                     create_restaurant, Restaurant, get_reviews_data,
                     get_review_stats, get_email_log, log_email, get_all_restaurants,
                     get_changelog, save_changelog_entry, delete_changelog_entry,
-                    location_group_conflict)
+                    location_group_conflict, place_id_conflict)
 from auth import (create_session, get_session_user, delete_session,
                   verify_password, list_users, create_user, update_password,
                   admin_required, login_required)
@@ -106,6 +106,15 @@ def create_client(current_user):
         # state. Two unrelated clients typed into the same group would become
         # one tenant, so a name already used by a different owner is refused
         # here rather than discovered later as a data leak.
+        place_clash = place_id_conflict((data.get("google_place_id") or "").strip())
+        if place_clash:
+            return jsonify(ok=False, error=(
+                f"That Google listing is already connected to {place_clash}. Two live "
+                f"restaurants on one listing both pull the same reviews and only one of "
+                f"them can own any given review — use a different Place ID, or mark this "
+                f"one as a demo."
+            ))
+
         conflict = location_group_conflict(
             data.get("location_group", "").strip(), data["owner_email"]
         )
@@ -327,7 +336,8 @@ def update_ingredient_route(restaurant_id, ingredient_id, current_user):
     for key in ("par_level", "unit_cost", "case_size", "avg_daily_usage", "waste_last_week"):
         if key in data and data[key] not in (None, ""):
             fields[key] = float(data[key])
-    inventory_ledger.update_ingredient(ingredient_id, **fields)
+    if not inventory_ledger.update_ingredient(restaurant_id, ingredient_id, **fields):
+        return jsonify(ok=False, error="That ingredient isn't this restaurant's, or nothing changed."), 404
     return jsonify(ok=True)
 
 
@@ -335,7 +345,8 @@ def update_ingredient_route(restaurant_id, ingredient_id, current_user):
 @admin_required
 def delete_ingredient_route(restaurant_id, ingredient_id, current_user):
     import inventory_ledger
-    inventory_ledger.deactivate_ingredient(ingredient_id)
+    if not inventory_ledger.deactivate_ingredient(restaurant_id, ingredient_id):
+        return jsonify(ok=False, error="That ingredient isn't this restaurant's."), 404
     return jsonify(ok=True)
 
 
@@ -372,6 +383,18 @@ def list_recipes_route(restaurant_id, current_user):
                    priority_ingredients=inventory_ledger.priority_ingredients(restaurant_id))
 
 
+def _restaurant_of_menu_item(menu_item_id):
+    """The menu item's own restaurant. These two routes are addressed by
+    menu_item_id alone, so the tenant has to be derived from the row rather
+    than trusted from anywhere else."""
+    conn = get_conn()
+    try:
+        row = conn.execute("SELECT restaurant_id FROM menu_items WHERE id=?", (menu_item_id,)).fetchone()
+        return row["restaurant_id"] if row else None
+    finally:
+        conn.close()
+
+
 @admin_bp.route("/admin/inventory/recipes/<int:menu_item_id>", methods=["POST"])
 @admin_required
 def add_recipe_ingredient_route(menu_item_id, current_user):
@@ -381,7 +404,15 @@ def add_recipe_ingredient_route(menu_item_id, current_user):
     qty_per_unit = data.get("qty_per_unit")
     if not ingredient_id or not qty_per_unit:
         return jsonify(ok=False, error="ingredient_id and qty_per_unit required")
-    row_id = inventory_ledger.add_recipe_ingredient(menu_item_id, int(ingredient_id), float(qty_per_unit))
+    rid = _restaurant_of_menu_item(menu_item_id)
+    if rid is None:
+        return jsonify(ok=False, error="No such menu item."), 404
+    # ingredient_id is caller-supplied and must belong to the same restaurant
+    # as the dish — a recipe that reaches across locations silently costs one
+    # location's plate from another's prices.
+    row_id = inventory_ledger.add_recipe_ingredient(rid, menu_item_id, int(ingredient_id), float(qty_per_unit))
+    if not row_id:
+        return jsonify(ok=False, error="That ingredient belongs to a different restaurant."), 400
     return jsonify(ok=True, id=row_id)
 
 
@@ -389,7 +420,11 @@ def add_recipe_ingredient_route(menu_item_id, current_user):
 @admin_required
 def delete_recipe_ingredient_route(menu_item_id, recipe_ingredient_id, current_user):
     import inventory_ledger
-    inventory_ledger.delete_recipe_ingredient(recipe_ingredient_id)
+    rid = _restaurant_of_menu_item(menu_item_id)
+    if rid is None:
+        return jsonify(ok=False, error="No such menu item."), 404
+    if not inventory_ledger.delete_recipe_ingredient(rid, recipe_ingredient_id):
+        return jsonify(ok=False, error="That recipe row isn't this restaurant's."), 404
     return jsonify(ok=True)
 
 
@@ -404,6 +439,8 @@ def record_recount_route(restaurant_id, ingredient_id, current_user):
         restaurant_id, ingredient_id, float(data["counted_qty"]),
         source="admin", note=data.get("note")
     )
+    if result.get("ok") is False:
+        return jsonify(**result), 404
     return jsonify(ok=True, **result)
 
 
@@ -418,6 +455,8 @@ def record_receiving_route(restaurant_id, ingredient_id, current_user):
         restaurant_id, ingredient_id, float(data["qty"]),
         source="admin", note=data.get("note")
     )
+    if not event_id:
+        return jsonify(ok=False, error="That ingredient isn't this restaurant's."), 404
     return jsonify(ok=True, id=event_id)
 
 
@@ -583,6 +622,15 @@ def save_client_settings(restaurant_id, current_user):
         tier = data.get("service_tier","trial")
         # Same tenancy guard as create-client: a group name in use by another
         # owner would silently merge two clients into one tenant.
+        place_clash = place_id_conflict((data.get("google_place_id") or "").strip(),
+                                        exclude_id=restaurant_id)
+        if place_clash and not int(data.get("is_demo") or 0):
+            return jsonify(ok=False, error=(
+                f"That Google listing is already connected to {place_clash}. Two live "
+                f"restaurants on one listing both pull the same reviews and only one of "
+                f"them can own any given review."
+            ))
+
         conflict = location_group_conflict(
             data.get("location_group", "").strip(),
             data.get("owner_email", "").strip(),
@@ -1095,11 +1143,23 @@ def view_as_client(restaurant_id, current_user):
     # Store the hash, not the token — same rule as auth.create_session, or
     # this impersonation session would be unreadable by get_session_user.
     from auth import hash_session_token as _hst
+    # device_type marks this as an admin impersonation rather than a real
+    # client sign-in. Without it the row is indistinguishable from the
+    # client's own session: it shows up in their Account -> Devices list as an
+    # unexplained login, and nothing in activity_log separates what Will did
+    # while viewing-as from what the client did themselves.
     _conn.execute(
-        "INSERT INTO sessions (token, user_id, expires_at, last_active) VALUES (?,?,?,?)",
-        (_hst(token), dict(user_row)["id"], expires, datetime.now(timezone.utc).isoformat())
+        "INSERT INTO sessions (token, user_id, expires_at, last_active, device_type) VALUES (?,?,?,?,?)",
+        (_hst(token), dict(user_row)["id"], expires,
+         datetime.now(timezone.utc).isoformat(), "admin-view-as")
     )
     _conn.commit(); _conn.close()
+    try:
+        import admin_events
+        admin_events.record("admin", "view_as_started", restaurant_id=restaurant_id,
+                            summary=f"{current_user.get('username')} opened a view-as session")
+    except Exception:
+        pass
     resp = make_response(redirect("/"))
     resp.set_cookie("session_token", token, max_age=1800,
                     httponly=True, secure=bool(os.getenv("RAILWAY_ENVIRONMENT")), samesite="Strict")
