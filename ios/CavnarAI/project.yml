@@ -173,5 +173,10 @@ schemes:
         CAVNAR_API_BASE_URL: "${CAVNAR_DEV_API_BASE_URL}"
     test:
       config: Debug
+      # Set to "1" to also run PinnedLiveHandshakeTests, which makes a real
+      # TLS connection to dashboard.cavnar.ai through the pinning delegate.
+      # Left off so the suite never depends on the network.
+      environmentVariables:
+        CAVNAR_LIVE_TLS_TEST: "0"
       targets:
         - CavnarAITests
