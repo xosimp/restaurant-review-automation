@@ -127,6 +127,26 @@ targets:
         CODE_SIGNING_REQUIRED: NO
 
 schemes:
+  # Pick this one to demo, or to put the app on a phone that will be away
+  # from this Mac. Release + no environment override, so it talks to
+  # https://dashboard.cavnar.ai and nothing else — it cannot be pointed at a
+  # dev tunnel or a LAN address by accident, because AppEnvironment compiles
+  # the override out of Release entirely.
+  #
+  # It exists as its OWN scheme rather than as a note to flip the run
+  # configuration by hand, because `xcodegen generate` rewrites every scheme
+  # from this file: setting Release in Xcode's scheme editor survives exactly
+  # until the next regenerate, which is how a phone built for a client
+  # meeting silently went back to pointing at a Mac's LAN address.
+  CavnarAI (Production):
+    build:
+      targets:
+        CavnarAI: all
+    run:
+      config: Release
+    archive:
+      config: Release
+
   CavnarAI:
     build:
       targets:
