@@ -1,0 +1,14 @@
+{
+  "name": "cavnar-ai",
+  "compatibility_date": "2026-09-03",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+
+  // ONLY ./public is uploaded. This used to be "." — the whole repository
+  // root — which meant cavnar.ai publicly served auth.py, models.py,
+  // hosted_dashboard.py, .env.example and .git/index to anyone who guessed
+  // a filename. An allow-list is the point: a file is served because it was
+  // deliberately put in public/, never because nobody remembered to exclude
+  // it. Do not widen this back out.
+  "assets": { "directory": "./public" }
+}

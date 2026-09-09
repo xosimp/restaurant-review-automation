@@ -16,7 +16,9 @@
       "runtimeArgs": [
         "-m",
         "http.server",
-        "8787"
+        "8787",
+        "--directory",
+        "public"
       ],
       "port": 8787
     }

@@ -1209,7 +1209,7 @@ def privacy_page():
     from flask import Response
     import os as _os
     try:
-        html_path = _os.path.join(_os.path.dirname(__file__), "privacy.html")
+        html_path = _os.path.join(_os.path.dirname(__file__), "public", "privacy.html")
         with open(html_path, "r") as f:
             html = f.read()
     except FileNotFoundError:
@@ -1221,7 +1221,7 @@ def terms_page():
     from flask import Response
     import os as _os
     try:
-        html_path = _os.path.join(_os.path.dirname(__file__), "terms.html")
+        html_path = _os.path.join(_os.path.dirname(__file__), "public", "terms.html")
         with open(html_path, "r") as f:
             html = f.read()
     except FileNotFoundError:

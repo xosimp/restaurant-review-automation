@@ -25,3 +25,7 @@ hosted_dashboard_recovered.py
 
 # iOS dev API base URL — per-machine, points at your tunnel or LAN IP
 ios/CavnarAI/.dev-url
+
+# wrangler
+.wrangler
+.dev.vars*
