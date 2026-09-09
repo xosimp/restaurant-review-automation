@@ -734,7 +734,59 @@ def _ensure_place_id_uniqueness(conn):
         print(f"[migrate] place_id uniqueness skipped: {e}")
 
 
+def adopt_legacy_db(db_path: str = DB_PATH):
+    """Carry the pre-volume database onto the volume, once.
+
+    Moving DB_PATH onto the Railway volume fixes the reset-every-deploy bug,
+    but it also points the app at a file that has never existed before — so
+    the first boot after that change would come up on an empty database and
+    quietly abandon whatever was in the container's copy. The boot seed
+    recreates the admin and demo accounts, which is exactly what makes the
+    loss hard to notice: real client configuration is what actually goes.
+
+    So on the first boot where the volume has no database and the old
+    location still has one, the old one is copied across. Copy, not move —
+    if anything goes wrong the original is still sitting there. Runs only
+    when the two paths genuinely differ, which off Railway they do not, so
+    this is a no-op for local runs and tests.
+    """
+    # Two guards before anything is touched, and both matter. Only Railway
+    # has a volume to adopt onto, and only the module's own DB_PATH is the
+    # database the app actually runs on — without the second check this
+    # fires for every test that inits a database at a tmp_path, and quietly
+    # copies the developer's real reviews.db into it.
+    if not os.getenv("RAILWAY_VOLUME_MOUNT_PATH"):
+        return False
+    if os.path.abspath(db_path) != os.path.abspath(DB_PATH):
+        return False
+    legacy = "reviews.db"
+    if os.path.abspath(db_path) == os.path.abspath(legacy):
+        return False
+    if os.path.exists(db_path) or not os.path.exists(legacy):
+        return False
+    try:
+        import shutil
+        os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
+        # sqlite3's own backup API rather than a file copy: it takes a read
+        # lock and captures a consistent snapshot even if something is
+        # mid-write, and it folds in any -wal content instead of leaving it
+        # behind in a sidecar file we would not be copying.
+        src = sqlite3.connect(legacy)
+        dst = sqlite3.connect(db_path)
+        try:
+            src.backup(dst)
+        finally:
+            dst.close()
+            src.close()
+        print(f"[models] adopted legacy {legacy} -> {db_path}")
+        return True
+    except Exception as e:
+        print(f"[models] could not adopt legacy {legacy}: {e}")
+        return False
+
+
 def init_db(db_path: str = DB_PATH):
+    adopt_legacy_db(db_path)
     conn = sqlite3.connect(db_path)
     conn.executescript(SCHEMA)
     # Migrate: add new columns to existing databases
