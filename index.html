@@ -210,6 +210,44 @@ footer{background:#080706;padding:40px 80px;display:flex;align-items:center;just
 .nav-logo .ai-tag{display:inline-block;opacity:0;animation:wmTag .4s ease 1.2s forwards}
 @media (prefers-reduced-motion:reduce){.nav-logo .wl,.nav-logo .wm-dot,.nav-logo .ai-tag{animation-duration:.001s!important;animation-delay:0s!important}}
 
+.pocket-section{background:var(--ink);color:var(--paper)}
+.pocket-section .section-eyebrow{color:var(--ember2)}
+.pocket-section .section-eyebrow::before{background:var(--ember2)}
+.pocket-section .section-headline{color:var(--paper)}
+.pocket-section .section-sub{color:rgba(247,244,239,.6)}
+.pocket-grid{display:grid;grid-template-columns:326px 1fr;gap:76px;align-items:center;margin-top:64px}
+.phone{width:326px;height:648px;border-radius:52px;padding:11px;background:linear-gradient(150deg,#3a332c,#15120f 42%,#0a0908);box-shadow:0 40px 90px rgba(0,0,0,.55),0 0 0 1px rgba(255,255,255,.08);position:relative;margin:0 auto}
+.phone-screen{width:100%;height:100%;border-radius:42px;background:linear-gradient(170deg,#2a1d18 0%,#171310 38%,#100d0b 100%);overflow:hidden;position:relative;padding:0 12px}
+.phone-screen::after{content:'';position:absolute;top:-60px;left:-40px;width:240px;height:240px;border-radius:50%;background:radial-gradient(circle,rgba(200,75,47,.22),transparent 70%);pointer-events:none}
+.phone-notch{position:absolute;top:11px;left:50%;transform:translateX(-50%);width:96px;height:26px;border-radius:20px;background:#000;z-index:3}
+.lock-time{font-family:'Syne',sans-serif;font-size:66px;font-weight:500;color:rgba(255,255,255,.95);text-align:center;letter-spacing:-.02em;line-height:1;margin-top:64px;position:relative;z-index:2}
+.lock-date{font-size:12.5px;color:rgba(255,255,255,.6);text-align:center;letter-spacing:.05em;margin-top:8px;position:relative;z-index:2}
+.notif-stack{display:flex;flex-direction:column;gap:9px;margin-top:34px;position:relative;z-index:2}
+.notif{background:rgba(58,50,44,.62);backdrop-filter:blur(18px);border:1px solid rgba(255,255,255,.09);border-radius:17px;padding:11px 12px;display:flex;gap:10px;align-items:flex-start}
+.notif.dim{opacity:.5}
+.notif-icon{width:26px;height:26px;border-radius:7px;flex-shrink:0}
+.notif-main{flex:1;min-width:0}
+.notif-top{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:2px}
+.notif-app{font-size:9.5px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.5)}
+.notif-when{font-size:9.5px;color:rgba(255,255,255,.4);white-space:nowrap}
+.notif-title{font-size:12px;font-weight:700;color:rgba(255,255,255,.95);line-height:1.3;margin-bottom:2px}
+.notif-text{font-size:11.5px;color:rgba(255,255,255,.68);line-height:1.4}
+.pocket-copy .pocket-lead{font-size:15px;color:rgba(247,244,239,.72);line-height:1.75;max-width:520px}
+.pocket-copy .pocket-lead + .pocket-lead{margin-top:16px}
+.alert-chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:28px;max-width:560px}
+.alert-chip{font-size:11.5px;font-weight:500;color:rgba(247,244,239,.75);background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:20px;padding:6px 13px;letter-spacing:.02em;transition:border-color .2s,color .2s}
+.alert-chip:hover{border-color:var(--ember);color:var(--paper)}
+.pocket-note{margin-top:26px;padding-left:16px;border-left:2px solid var(--ember);font-size:12.5px;color:rgba(247,244,239,.5);line-height:1.65;max-width:480px}
+.cap-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.07);border-radius:10px;overflow:hidden;margin-top:76px}
+.cap-card{background:var(--ink);padding:34px 30px;transition:background .2s;position:relative;overflow:hidden}
+.cap-card:hover{background:#1a1714}
+.cap-card::after{content:'';position:absolute;bottom:0;left:30px;right:30px;height:2px;background:var(--ember);transform:scaleX(0);transition:transform .3s;transform-origin:left}
+.cap-card:hover::after{transform:scaleX(1)}
+.cap-kicker{font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember2);margin-bottom:14px}
+.cap-title{font-family:'Cormorant Garamond',serif;font-size:27px;font-weight:500;color:var(--paper);line-height:1.15;margin-bottom:12px;letter-spacing:-.01em}
+.cap-body{font-size:13px;color:rgba(247,244,239,.55);line-height:1.68}
+.cap-foot{margin-top:18px;padding-top:14px;border-top:1px solid rgba(255,255,255,.07);font-size:11px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:rgba(247,244,239,.42)}
+
 @media(max-width:900px){
   nav{padding:16px 24px}
   .nav-links{display:none}
@@ -221,6 +259,9 @@ footer{background:#080706;padding:40px 80px;display:flex;align-items:center;just
   .pain-grid{grid-template-columns:1fr 1fr}
   .how-grid,.about-grid,.contact-grid{grid-template-columns:1fr;gap:40px}
   .offer-grid{grid-template-columns:1fr}
+  .pocket-grid{grid-template-columns:1fr;gap:48px}
+  .cap-grid{grid-template-columns:1fr;margin-top:48px}
+  .phone{transform:scale(.92);transform-origin:top center}
   .cta-section{padding:80px 24px}
   footer{flex-direction:column;gap:12px;text-align:center;padding:32px 24px}
   .form-row{grid-template-columns:1fr}
@@ -234,6 +275,7 @@ footer{background:#080706;padding:40px 80px;display:flex;align-items:center;just
   <div class="nav-logo"><span class="sr-only">Cavnar AI</span><svg aria-hidden="true" viewBox="-6 -14 666 128" height="0.8em" style="vertical-align:-0.08em" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><g class="wl wl1"><path d="M53.43 101.49Q28.81 101.49 14.40 87.46Q0.00 73.43 0.00 50.00Q0.00 26.57 14.40 12.54Q28.81 -1.49 53.43 -1.49Q76.87 -1.49 90.67 9.48Q104.48 20.45 104.48 39.40V41.64H79.55V39.40Q79.55 29.40 73.43 24.70Q67.31 20.00 53.88 20.00Q37.31 20.00 30.52 26.72Q23.73 33.43 23.73 50.00Q23.73 66.57 30.52 73.28Q37.31 80.00 53.88 80.00Q67.31 80.00 73.43 75.30Q79.55 70.60 79.55 60.60V58.36H104.48V60.60Q104.48 79.55 90.67 90.52Q76.87 101.49 53.43 101.49Z"/></g><g class="wl wl2"><path d="M127.87 100.00H102.79L146.52 0.00H178.47L222.50 100.00H196.82L187.42 77.91H137.42ZM155.48 35.97 146.08 57.76H178.76L169.36 35.97L163.24 20.45H161.60Z"/></g><g class="wl wl3"><path d="M266.08 100.00H234.14L192.65 0.00H219.67L249.67 77.31H251.16L280.71 0.00H307.58Z"/></g><g class="wl wl4"><path d="M341.47 100.00H319.08V0.00H342.96L378.78 47.31L392.51 68.36H394.15L393.11 48.21V0.00H415.50V100.00H391.61L354.75 52.24L342.06 33.43H340.57L341.47 51.79Z"/></g><g class="wl wl5"><path d="M451.92 100.00H426.85L470.58 0.00H502.52L546.55 100.00H520.88L511.47 77.91H461.47ZM479.53 35.97 470.13 57.76H502.82L493.41 35.97L487.29 20.45H485.65Z"/></g><g class="wl wl6"><path d="M580.39 100.00H558.00V0.00H613.22Q631.73 0.00 641.80 7.84Q651.88 15.67 651.88 30.00Q651.88 55.07 623.67 57.76V58.96Q629.94 60.60 633.30 63.88Q636.65 67.16 639.79 73.13L654.27 100.00H628.30L614.56 74.03Q611.43 68.06 607.55 65.90Q603.67 63.73 595.16 63.73H580.39ZM580.39 20.15V46.87H613.07Q621.28 46.87 624.86 43.96Q628.45 41.04 628.45 33.43Q628.45 26.12 624.79 23.13Q621.13 20.15 613.07 20.15Z"/></g><circle class="wm-dot" cx="250.1" cy="28" r="11" fill="#D4583A"/></svg><span class="ai-tag" style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',sans-serif;font-weight:800;font-size:0.34em;letter-spacing:0.16em;color:#D4583A;vertical-align:0.62em;margin-left:0.12em;font-style:normal">AI</span></div>
   <div class="nav-links">
     <a href="#how">How it works</a>
+    <a href="#platform">Platform</a>
     <a href="#services">Services</a>
     <a href="/pricing">Pricing</a>
     <a href="#about">About</a>
@@ -356,10 +398,101 @@ footer{background:#080706;padding:40px 80px;display:flex;align-items:center;just
   </div>
 </section>
 
+<section class="pocket-section" id="platform">
+  <div class="section-eyebrow reveal">Beyond the dashboard</div>
+  <h2 class="section-headline reveal">The work finds you.<br>Not the other way around.</h2>
+  <p class="section-sub reveal">A dashboard only helps if you remember to open it. Cavnar AI runs whether you do or not — and taps you on the shoulder the moment something needs a decision.</p>
+
+  <div class="pocket-grid">
+    <div class="phone reveal">
+      <div class="phone-screen">
+        <div class="phone-notch"></div>
+        <div class="lock-time">9:41</div>
+        <div class="lock-date">Tuesday, September 9</div>
+        <div class="notif-stack">
+        <div class="notif">
+          <img class="notif-icon" src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+PHJlY3Qgd2lkdGg9IjMyIiBoZWlnaHQ9IjMyIiByeD0iNiIgZmlsbD0iIzBlMGMwYSIvPjxwYXRoIGQ9Ik0yMi45LDEzLjQgVjEzLjM1IEE2LjQsNi40IDAgMCAwIDE2LjUsNi45NSBIMTIuOSBBNi40LDYuNCAwIDAgMCA2LjUsMTMuMzUgVjE2LjY1IEE2LjQsNi40IDAgMCAwIDEyLjksMjMuMDUgSDE2LjUgQTYuNCw2LjQgMCAwIDAgMjIuOSwxNi42NSBWMTYuNSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZjBlYmUwIiBzdHJva2Utd2lkdGg9IjQuNCIvPjxjaXJjbGUgY3g9IjIyLjkiIGN5PSIxNiIgcj0iMi42IiBmaWxsPSIjZTg5NTZhIi8+PC9zdmc+" alt="">
+          <div class="notif-main">
+            <div class="notif-top"><span class="notif-app">Cavnar AI</span><span class="notif-when">now</span></div>
+            <div class="notif-title">🚨 Health alert — The Copper Table</div>
+            <div class="notif-text">A new review mentions a food-safety issue. Tap to read and respond.</div>
+          </div>
+        </div>
+        <div class="notif">
+          <img class="notif-icon" src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+PHJlY3Qgd2lkdGg9IjMyIiBoZWlnaHQ9IjMyIiByeD0iNiIgZmlsbD0iIzBlMGMwYSIvPjxwYXRoIGQ9Ik0yMi45LDEzLjQgVjEzLjM1IEE2LjQsNi40IDAgMCAwIDE2LjUsNi45NSBIMTIuOSBBNi40LDYuNCAwIDAgMCA2LjUsMTMuMzUgVjE2LjY1IEE2LjQsNi40IDAgMCAwIDEyLjksMjMuMDUgSDE2LjUgQTYuNCw2LjQgMCAwIDAgMjIuOSwxNi42NSBWMTYuNSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZjBlYmUwIiBzdHJva2Utd2lkdGg9IjQuNCIvPjxjaXJjbGUgY3g9IjIyLjkiIGN5PSIxNiIgcj0iMi42IiBmaWxsPSIjZTg5NTZhIi8+PC9zdmc+" alt="">
+          <div class="notif-main">
+            <div class="notif-top"><span class="notif-app">Cavnar AI</span><span class="notif-when">18m ago</span></div>
+            <div class="notif-title">💸 Labor over target — The Copper Table</div>
+            <div class="notif-text">Most recent period ran 34.2% against your 30% goal — 4.2 points over.</div>
+          </div>
+        </div>
+        <div class="notif">
+          <img class="notif-icon" src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+PHJlY3Qgd2lkdGg9IjMyIiBoZWlnaHQ9IjMyIiByeD0iNiIgZmlsbD0iIzBlMGMwYSIvPjxwYXRoIGQ9Ik0yMi45LDEzLjQgVjEzLjM1IEE2LjQsNi40IDAgMCAwIDE2LjUsNi45NSBIMTIuOSBBNi40LDYuNCAwIDAgMCA2LjUsMTMuMzUgVjE2LjY1IEE2LjQsNi40IDAgMCAwIDEyLjksMjMuMDUgSDE2LjUgQTYuNCw2LjQgMCAwIDAgMjIuOSwxNi42NSBWMTYuNSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZjBlYmUwIiBzdHJva2Utd2lkdGg9IjQuNCIvPjxjaXJjbGUgY3g9IjIyLjkiIGN5PSIxNiIgcj0iMi42IiBmaWxsPSIjZTg5NTZhIi8+PC9zdmc+" alt="">
+          <div class="notif-main">
+            <div class="notif-top"><span class="notif-app">Cavnar AI</span><span class="notif-when">1h ago</span></div>
+            <div class="notif-title">🔴 1★ review — The Copper Table</div>
+            <div class="notif-text">Marcus L. left a 1-star review on Google. Your draft reply is ready.</div>
+          </div>
+        </div>
+        <div class="notif dim">
+          <img class="notif-icon" src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+PHJlY3Qgd2lkdGg9IjMyIiBoZWlnaHQ9IjMyIiByeD0iNiIgZmlsbD0iIzBlMGMwYSIvPjxwYXRoIGQ9Ik0yMi45LDEzLjQgVjEzLjM1IEE2LjQsNi40IDAgMCAwIDE2LjUsNi45NSBIMTIuOSBBNi40LDYuNCAwIDAgMCA2LjUsMTMuMzUgVjE2LjY1IEE2LjQsNi40IDAgMCAwIDEyLjksMjMuMDUgSDE2LjUgQTYuNCw2LjQgMCAwIDAgMjIuOSwxNi42NSBWMTYuNSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZjBlYmUwIiBzdHJva2Utd2lkdGg9IjQuNCIvPjxjaXJjbGUgY3g9IjIyLjkiIGN5PSIxNiIgcj0iMi42IiBmaWxsPSIjZTg5NTZhIi8+PC9zdmc+" alt="">
+          <div class="notif-main">
+            <div class="notif-top"><span class="notif-app">Cavnar AI</span><span class="notif-when">Yesterday</span></div>
+            <div class="notif-title">📉 Rating trend down — The Copper Table</div>
+            <div class="notif-text">Your 30-day average slipped from 4.6 to 4.3 stars.</div>
+          </div>
+        </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="pocket-copy reveal">
+      <p class="pocket-lead">The iPhone app puts every alert on your lock screen the moment it fires — a 1★ review while the guest is still in the parking lot, labor drifting over target with three days left to fix it, a health-and-safety mention that can't wait until Monday.</p>
+      <p class="pocket-lead">Twelve kinds of alert, each one switched on or off by you:</p>
+      <div class="alert-chips">
+        <span class="alert-chip">1★ review</span>
+        <span class="alert-chip">2★ review</span>
+        <span class="alert-chip">5★ review</span>
+        <span class="alert-chip">Health &amp; safety mention</span>
+        <span class="alert-chip">Negative review spike</span>
+        <span class="alert-chip">Reviews left unanswered</span>
+        <span class="alert-chip">Rating below your threshold</span>
+        <span class="alert-chip">Rating trend falling</span>
+        <span class="alert-chip">Labor over target</span>
+        <span class="alert-chip">Food waste flagged</span>
+        <span class="alert-chip">AI visibility dropped</span>
+        <span class="alert-chip">New sign-in to your account</span>
+      </div>
+      <div class="pocket-note">Set quiet hours and nothing wakes you overnight — except a health-and-safety mention, which is the one alert allowed to break through. Every alert also arrives by email, so nothing depends on a phone being nearby.</div>
+    </div>
+  </div>
+
+  <div class="cap-grid">
+    <div class="cap-card reveal">
+      <div class="cap-kicker">Every week, one tap</div>
+      <div class="cap-title">Next week's schedule,<br>already written.</div>
+      <div class="cap-body">One button builds the full week. It reads your actual sales by day and daypart, last year's same week, who's available, your role minimums, what's on the local events calendar and even the forecast — then writes a schedule that lands on the labor target you set. You edit anything you disagree with.</div>
+      <div class="cap-foot">Approve → every employee is emailed their own shifts</div>
+    </div>
+    <div class="cap-card reveal">
+      <div class="cap-kicker">Ask Cavnar</div>
+      <div class="cap-title">An assistant that can<br>actually do the thing.</div>
+      <div class="cap-body">Ask it anything about your restaurant and it reads your live numbers to answer — reviews, food cost, labor, competitors, guest list. It also acts on what it finds: approve every pending review reply, publish the schedule, send the supplier order, change a setting. You confirm before anything leaves the building.</div>
+      <div class="cap-foot">Type it the way you'd say it out loud</div>
+    </div>
+    <div class="cap-card reveal">
+      <div class="cap-kicker">AI visibility</div>
+      <div class="cap-title">When guests ask AI<br>where to eat.</div>
+      <div class="cap-body">More people open ChatGPT than a search engine to pick dinner. We run the questions your guests actually ask — "where can I find good wings near me?" — and check whether you come up, who does instead, and what they're being told about you. Then we alert you when you drop off.</div>
+      <div class="cap-foot">Scored and re-checked on a schedule</div>
+    </div>
+  </div>
+</section>
+
 <section class="offer-section" id="services">
   <div class="section-eyebrow reveal">Services & pricing</div>
   <h2 class="section-headline reveal">Straightforward pricing.<br>No surprises.</h2>
-  <p class="section-sub reveal">Start with a free audit. Most clients begin with one module and expand from there.</p>
+  <p class="section-sub reveal">Start with a free audit. Most clients begin with one module and expand from there. <a href="/pricing" style="color:var(--ember);text-decoration:none;font-weight:600;border-bottom:1px solid rgba(200,75,47,.35)">See the full module-by-module breakdown →</a></p>
   <div class="offer-grid">
     <div class="offer-card reveal">
       <div class="offer-icon">🔍</div>
@@ -379,28 +512,30 @@ footer{background:#080706;padding:40px 80px;display:flex;align-items:center;just
       <div class="offer-badge">Most popular</div>
       <div class="offer-icon">⚡</div>
       <div class="offer-title">Starter Module</div>
-      <div class="offer-price">$500</div>
-      <div class="offer-price-note">One-time setup · + $300/mo introductory rate</div>
+      <div class="offer-price">$750</div>
+      <div class="offer-price-note">One-time setup · + $349/mo — or $3,490/yr, two months free</div>
       <ul class="offer-features">
         <li>One AI module of your choice</li>
         <li>Full setup and integration</li>
         <li>Personalized onboarding walkthrough</li>
         <li>Monthly support & continuous improvements</li>
         <li>Dedicated client dashboard</li>
+        <li>iPhone app with real-time alerts</li>
       </ul>
       <a href="#contact" class="offer-cta">Get started</a>
     </div>
     <div class="offer-card reveal">
       <div class="offer-icon">🚀</div>
       <div class="offer-title">Full System</div>
-      <div class="offer-price">$2,000</div>
-      <div class="offer-price-note">One-time setup · + $1,200/mo retainer</div>
+      <div class="offer-price">$3,000</div>
+      <div class="offer-price-note">One-time setup · + $1,199/mo — or $11,990/yr, two months free</div>
       <ul class="offer-features">
         <li>All four AI modules — reviews, labor, food cost &amp; marketing</li>
         <li>AI-drafted review responses with one-click approval</li>
         <li>Weekly AI digest email with labor, food cost &amp; review summary</li>
         <li>Competitor intelligence — see what nearby restaurants are doing</li>
         <li>Full POS integration</li>
+        <li>iPhone app with real-time alerts &amp; Ask Cavnar</li>
         <li>Dedicated client dashboard + same-day support</li>
       </ul>
       <a href="#contact" class="offer-cta">Learn more</a>
