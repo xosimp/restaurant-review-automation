@@ -18,8 +18,13 @@ from datetime import datetime, timedelta
 
 from models import get_conn, get_restaurant
 
-# The published tiers (pricing.html / the one-sheet) by module count, for MRR.
-MONTHLY_BY_MODULES = {1: 349, 2: 649, 3: 899, 4: 1199}
+# MRR by module count. This used to be its own {1: 349, 2: 649, ...} literal,
+# which is how the 2- and 3-module prices ended up living in three places and
+# disagreeing in one of them: this table and pricing.html both said $649/$899
+# while pricing.py — the one that actually bills — said $698/$1,047. Read it
+# from pricing.py so there is nothing left to drift.
+from pricing import TIERS as _TIERS
+MONTHLY_BY_MODULES = {n: t["monthly"] for n, t in _TIERS.items()}
 
 INTEGRATIONS = ("google_business", "toast", "square", "clover", "instagram", "webhook")
 

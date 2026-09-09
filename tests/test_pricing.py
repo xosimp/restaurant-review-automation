@@ -8,10 +8,43 @@ def test_plans_match_the_public_pricing_page():
     assert (s["setup"], s["monthly"], s["annual"]) == (750, 349, 3490) and s["published"]
     f = pricing.plan_for(4)
     assert (f["setup"], f["monthly"], f["annual"]) == (3000, 1199, 11990) and f["plan"] == "full"
-    two = pricing.plan_for(2)
-    assert two["annual"] == 6980 and not two["published"]
+    # Every tier the page publishes, in the page's own numbers. 2 and 3 used
+    # to be computed as N x Starter here ($698/$1,047) while pricing.html's
+    # FAQ advertised $649/$899 — a client would have signed at one price and
+    # been billed the other.
+    assert {n: (t["setup"], t["monthly"], t["annual"]) for n, t in pricing.TIERS.items()} == {
+        1: (750, 349, 3490),
+        2: (1500, 649, 6490),
+        3: (2250, 899, 8990),
+        4: (3000, 1199, 11990),
+    }
+    for n in (1, 2, 3, 4):
+        p = pricing.plan_for(n)
+        assert p["published"], f"{n} modules is on the public page — it must not be flagged unpublished"
+        assert p["annual"] == p["monthly"] * 10, f"{n} modules: annual must be ten months (two free)"
+        assert p["setup"] == 750 * n, f"{n} modules: setup is $750 per module"
+    # The ladder is hand-picked round numbers, not a formula, so don't pin a
+    # smooth curve on it — 3 modules works out at $299.67 each and 4 at
+    # $299.75, an eight-cent artifact of $899 and $1,199 being nice prices.
+    # What must hold: buying more modules never costs less in total, and
+    # there is a real volume discount by the top of the ladder.
+    monthly = [pricing.plan_for(n)["monthly"] for n in (1, 2, 3, 4)]
+    assert monthly == sorted(monthly), f"more modules costs less: {monthly}"
+    assert pricing.plan_for(4)["monthly"] / 4 < pricing.plan_for(1)["monthly"], "no volume discount at all"
+    assert pricing.plan_for(4)["monthly"] < pricing.plan_for(1)["monthly"] * 4, "the full system costs more than 4 singles"
+    # Above the top tier you get the Full System, not a bigger bill.
+    assert pricing.plan_for(9)["monthly"] == 1199 and pricing.plan_for(9)["modules"] == 4
     assert pricing.plan_for(0)["setup"] == 0
     assert pricing.annual_saving(1) == 349 * 12 - 3490 and pricing.annual_saving(4) == 1199 * 12 - 11990
+    assert pricing.annual_saving(2) == 649 * 2 and pricing.annual_saving(3) == 899 * 2
+
+
+def test_the_mrr_table_and_the_billing_table_cannot_drift():
+    """admin_ops used to keep its own {1: 349, 2: 649, ...} literal, which is
+    how the disagreement survived: the MRR dashboard and the website agreed
+    with each other and disagreed with the thing that sends the contract."""
+    import admin_ops
+    assert admin_ops.MONTHLY_BY_MODULES == {n: t["monthly"] for n, t in pricing.TIERS.items()}
 
 
 def test_stripe_checkout_uses_pricing(monkeypatch):

@@ -1240,13 +1240,20 @@ def price_plan(n_modules, override=None):
             n = 1
     elif ov == "auto":
         n = max(1, n_modules)
+    # Two modules used to be quoted as 2 × Starter with a "confirm before
+    # quoting" caveat, because the price wasn't published. It is published —
+    # $649/mo, $6,490/yr — and it is a volume price, not a doubling, so the
+    # multiply overcharged by $490 a year. Read the real tier.
+    from pricing import plan_for as _plan_for
+    tier = _plan_for(n)
     p = PRICING["starter"]
-    verify = None
-    if n == 2:
-        verify = "Two-module pricing is not published on pricing.html — the figure shown is 2 × Starter. Confirm before quoting."
-    return {"plan": "starter", "label": p["label"] + (" × %d" % n if n > 1 else ""), "modules": n, "setup": p["setup"] * n,
-            "annual": p["annual"] * n, "first_year": (p["setup"] + p["annual"]) * n, "monthly_equiv": p["monthly_equiv"] * n,
-            "note": p["note"], "verify": verify}
+    note = ("%d modules. $%s one-time setup, $%s/yr billed annually ($%s/mo equivalent)."
+            % (n, "{:,}".format(tier["setup"]), "{:,}".format(tier["annual"]), "{:,}".format(tier["monthly"]))
+            ) if n > 1 else p["note"]
+    return {"plan": "starter", "label": p["label"] + (" × %d" % n if n > 1 else ""), "modules": n,
+            "setup": tier["setup"], "annual": tier["annual"],
+            "first_year": tier["setup"] + tier["annual"], "monthly_equiv": tier["monthly"],
+            "note": note, "verify": None}
 
 
 # ── Entry point ──────────────────────────────────────────────────────────────

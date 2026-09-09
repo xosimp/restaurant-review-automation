@@ -148,7 +148,10 @@ def test_pricing_follows_recommended_modules_and_override():
     one = engine.compute({"fin_annual_revenue": "2000000", "lab_labor_pct": "36", "lab_know_daily": "no"})
     assert one["plan"]["plan"] == "starter" and one["plan"]["annual"] == 3490 and one["plan"]["setup"] == 750
     two = engine.compute(FULL, pricing_override="starter:2")
-    assert two["plan"]["annual"] == 6980 and two["plan"]["verify"]
+    # The published two-module price, not 2 x Starter, and no "confirm before
+    # quoting" caveat now that pricing.html carries the number.
+    assert two["plan"]["annual"] == 6490 and two["plan"]["setup"] == 1500
+    assert two["plan"]["monthly_equiv"] == 649 and two["plan"]["verify"] is None
     assert engine.compute(FULL, pricing_override="full")["plan"]["plan"] == "full"
 
 
