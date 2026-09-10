@@ -292,17 +292,20 @@ def _check_ai_drafting():
 
 def _check_review_sync():
     conn = _conn()
-    # Every restaurant the fetch actually tries to serve — anything with a
-    # Google Business refresh token OR a Place ID.
+    # EXACTLY the predicate scheduler.run_daily_fetch selects on. Nothing else
+    # is a defensible population to measure staleness against.
     #
-    # This counted `gmb_access_token IS NOT NULL`, which is not the column
-    # scheduler.run_daily_fetch branches on (gmb_refresh_token) and misses
-    # Places-only restaurants entirely, so the population being monitored was
-    # not the population being fetched.
+    # It read `gmb_access_token IS NOT NULL` originally, which is not the
+    # column the fetch branches on. Audit #6 widened it to include any
+    # google_place_id, which over-corrected in the other direction: a
+    # restaurant with a Place ID but reviews_live=0 is deliberately NOT
+    # fetched, so it could never be anything but stale and reported a
+    # permanent outage nobody could clear.
+    _FETCH_POPULATION = "(r.reviews_live=1 OR r.gmb_refresh_token IS NOT NULL)"
     active_with_gmb = conn.execute(
         "SELECT COUNT(*) as cnt FROM restaurants r "
         "JOIN users u ON u.restaurant_id=r.id "
-        "WHERE u.is_active=1 AND (r.gmb_refresh_token IS NOT NULL OR r.google_place_id IS NOT NULL)"
+        f"WHERE u.is_active=1 AND {_FETCH_POPULATION}"
     ).fetchone()["cnt"]
 
     if active_with_gmb == 0:
@@ -314,7 +317,7 @@ def _check_review_sync():
     stale = conn.execute(
         "SELECT COUNT(*) as cnt FROM restaurants r "
         "JOIN users u ON u.restaurant_id=r.id "
-        "WHERE u.is_active=1 AND (r.gmb_refresh_token IS NOT NULL OR r.google_place_id IS NOT NULL) "
+        f"WHERE u.is_active=1 AND {_FETCH_POPULATION} "
         "AND (r.last_fetched_at IS NULL OR r.last_fetched_at < ?)",
         (cutoff,)
     ).fetchone()["cnt"]

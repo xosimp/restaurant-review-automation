@@ -139,8 +139,8 @@ def test_the_staleness_detector_sees_a_stalled_restaurant(db_path, monkeypatch):
 
 
 def test_a_places_only_restaurant_is_monitored_too(db_path, monkeypatch):
-    """It counted gmb_access_token, which is not the column the fetch branches
-    on, so Places-only restaurants were invisible to the monitor."""
+    """A Places-only restaurant with reviews_live=1 IS fetched, so it must be
+    monitored. The original check read gmb_access_token and missed it."""
     import status_manager as sm
     real = models.get_conn
     monkeypatch.setattr(sm, "_conn", lambda *a, **k: real(db_path), raising=False)
@@ -157,6 +157,29 @@ def test_a_places_only_restaurant_is_monitored_too(db_path, monkeypatch):
     row = conn.execute("SELECT status FROM service_status WHERE service_key='review_sync'").fetchone()
     conn.close()
     assert row["status"] in ("degraded", "outage")
+
+
+def test_a_restaurant_that_is_not_fetched_is_not_reported_stale(db_path, monkeypatch):
+    """The over-correction. A Place ID with reviews_live=0 is deliberately not
+    fetched, so measuring its last_fetched_at reports an outage that nothing
+    can ever clear — which is what the live status page was showing."""
+    import status_manager as sm
+    real = models.get_conn
+    monkeypatch.setattr(sm, "_conn", lambda *a, **k: real(db_path), raising=False)
+    rid = _restaurant(db_path, 1, google_place_id="ChIJplace", reviews_live=0)
+    conn = models.get_conn(db_path)
+    conn.execute("INSERT INTO users (restaurant_id, username, email, password_hash, is_active) "
+                 "VALUES (?,?,?,?,1)", (rid, "u1", "u1@x.test", "x"))
+    conn.execute("UPDATE restaurants SET last_fetched_at = NULL WHERE id=?", (rid,))
+    conn.commit()
+    conn.close()
+    sm.seed_default_services()
+    sm._check_review_sync()
+    conn = models.get_conn(db_path)
+    row = conn.execute("SELECT status FROM service_status WHERE service_key='review_sync'").fetchone()
+    conn.close()
+    assert row["status"] == "operational", \
+        "a restaurant the scheduler never fetches was reported as a review-sync outage"
 
 
 # ── Scenario 3: Stripe is down during onboarding ───────────────────────────
