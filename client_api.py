@@ -3874,10 +3874,33 @@ def _do_ai_visibility(rid):
         return {"ok": False, "error": str(e)}, 200
 
 
-def _do_ai_visibility_inner(rid):
-    from ai_utils import ai_rate_limited
+# A visibility check asks the same three questions about the same restaurant
+# and gets near-identical answers within a day, so re-running it inside this
+# window buys nothing and costs three sonar queries. There was no cache at all
+# — only a burst limit, which caps nine queries a minute rather than the month
+# (the same distinction ai_utils makes about rate limits versus budgets).
+_AIVIS_CACHE_SECS = int(os.getenv("AI_VISIBILITY_CACHE_SECS", "21600"))  # 6 hours
+_aivis_cache = {}
+
+
+def _do_ai_visibility_inner(rid, force=False):
+    from ai_utils import ai_rate_limited, ai_budget_exceeded
     if ai_rate_limited(f"aivis:{rid}", max_calls=3, window_secs=60):
         return {"ok": False, "error": "Too many visibility checks — please wait a moment and try again."}, 200
+
+    if not force:
+        _hit = _aivis_cache.get(rid)
+        if _hit and (datetime.utcnow() - _hit[0]).total_seconds() < _AIVIS_CACHE_SECS:
+            _cached = dict(_hit[1])
+            _cached["cached"] = True
+            return _cached, 200
+
+    # Perplexity is a paid dependency like any other, so it answers to the
+    # same ceiling. It used to be exempt purely because it wasn't Claude.
+    _over = ai_budget_exceeded(rid)
+    if _over:
+        return {"ok": False, "error": f"AI visibility is paused — {_over} reached."}, 200
+
     r = get_restaurant(rid)
     if not r:
         return {"ok": False, "error": "Restaurant not found"}, 404
@@ -4062,6 +4085,22 @@ def _do_ai_visibility_inner(rid):
             body = resp.json() if resp.status_code == 200 else {}
             answer = body.get("choices", [{}])[0].get("message", {}).get("content", "") if body else ""
             sources = [c for c in (body.get("citations") or []) if isinstance(c, str)][:6]
+
+            # Meter it. Perplexity used to sit entirely outside the ledger and
+            # the budget — the $10/day and $1,500/month ceilings bound Claude
+            # only, so nine sonar queries a minute per restaurant were both
+            # unbounded and invisible. Same table, same budget, same admin view.
+            try:
+                from ai_utils import log_api_call as _lac
+                _u = (body.get("usage") or {}) if isinstance(body, dict) else {}
+                _lac(rid, "ai_visibility", "perplexity-search",
+                     calls=1,
+                     input_tokens=int(_u.get("prompt_tokens") or 0),
+                     output_tokens=int(_u.get("completion_tokens") or 0),
+                     status="ok" if answer else "error",
+                     error=None if answer else f"HTTP {resp.status_code}, no answer")
+            except Exception:
+                pass
             if not answer and _retry:
                 _pplx_time.sleep(2)
                 return _run_query(q, _retry=False)
@@ -4332,7 +4371,7 @@ def _do_ai_visibility_inner(rid):
     except Exception:
         pass
 
-    return {
+    _payload = {
         "ok": True,
         "restaurant_name": name,
         "neighborhood": neighborhood,
@@ -4363,7 +4402,13 @@ def _do_ai_visibility_inner(rid):
         # where they actually stand.
         "review_total": review_total,
         "resp_rate": resp_rate,
-    }, 200
+    }
+    # Only a COMPLETE run is worth caching. Caching a partial one would pin a
+    # Perplexity outage in place for six hours and make it look like the
+    # restaurant's real standing.
+    if not _payload["partial"]:
+        _aivis_cache[rid] = (datetime.utcnow(), dict(_payload))
+    return _payload, 200
 
 
 @client_bp.route("/api/webhook", methods=["GET"])

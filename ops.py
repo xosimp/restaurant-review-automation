@@ -408,6 +408,69 @@ def scheduler_lease_holder():
         return None
 
 
+# Ledgers that only ever grew. Audit #7 found seven of them: ai_usage (read
+# by the budget check on every AI call), job_runs, job_failures, alert_log,
+# push_deliveries, webhook_deliveries and email_log. Nothing pruned any of
+# them, on SQLite, on a volume whose only protection against filling up is
+# the status check added in audit #6.
+#
+# Retention is per-table because they are not equally useful old: the budget
+# only ever asks about this month, but a year of email history is worth
+# keeping for a billing dispute.
+_RETENTION_DAYS = {
+    "ai_usage":            int(os.getenv("RETAIN_AI_USAGE_DAYS", "120")),
+    "job_runs":            int(os.getenv("RETAIN_JOB_RUNS_DAYS", "45")),
+    "job_failures":        int(os.getenv("RETAIN_JOB_FAILURES_DAYS", "90")),
+    "push_deliveries":     int(os.getenv("RETAIN_PUSH_DELIVERIES_DAYS", "30")),
+    "webhook_deliveries":  int(os.getenv("RETAIN_WEBHOOK_DELIVERIES_DAYS", "60")),
+    "alert_log":           int(os.getenv("RETAIN_ALERT_LOG_DAYS", "180")),
+    "email_log":           int(os.getenv("RETAIN_EMAIL_LOG_DAYS", "365")),
+}
+
+# Each table's own timestamp column — they do not agree on a name.
+_RETENTION_COLUMN = {
+    "ai_usage": "created_at", "job_runs": "started_at", "job_failures": "created_at",
+    "push_deliveries": "created_at", "webhook_deliveries": "created_at",
+    "alert_log": "fired_at", "email_log": "sent_at",
+}
+
+
+def prune_ledgers(db_path=None):
+    """Delete rows past their retention window. Returns {table: rows_deleted}.
+
+    Deliberately tolerant: a table that does not exist yet, or whose stamp
+    column is named something else on an older database, is skipped rather
+    than taking the whole sweep down with it.
+    """
+    from models import get_conn, DB_PATH
+    deleted = {}
+    try:
+        conn = get_conn(db_path or DB_PATH)
+    except Exception as e:
+        log.error(f"prune_ledgers could not open the database: {e}")
+        return deleted
+    try:
+        for table, days in _RETENTION_DAYS.items():
+            if days <= 0:
+                continue            # 0 disables retention for that table
+            col = _RETENTION_COLUMN.get(table, "created_at")
+            try:
+                cur = conn.execute(
+                    f"DELETE FROM {table} WHERE {col} < datetime('now', ?)", (f"-{days} days",)
+                )
+                conn.commit()
+                if cur.rowcount and cur.rowcount > 0:
+                    deleted[table] = cur.rowcount
+            except Exception as e:
+                # Missing table or renamed column — not worth failing the sweep.
+                log.debug(f"prune_ledgers skipped {table}: {e}")
+    finally:
+        conn.close()
+    if deleted:
+        log.info(f"Pruned old rows: {deleted}")
+    return deleted
+
+
 def stuck_jobs(older_than_minutes: int = 90):
     """Jobs that started and never finished — the failure mode nothing reports.
 

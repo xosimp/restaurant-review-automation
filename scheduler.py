@@ -1217,6 +1217,8 @@ def scheduler_loop():
             if now.hour == 2 and _ops.claim_period("backup_db", str(today)):
                 log.info("Running daily DB backup...")
                 _ops.run_job("backup_db", backup_db)
+                # Straight after the backup, so the pruned rows are in it.
+                _ops.run_job("prune_ledgers", _ops.prune_ledgers)
 
             if now.hour == 6 and now.weekday() == 0 and _ops.claim_period("competitor_analysis", str(today)):
                 log.info("Running weekly competitor analysis...")

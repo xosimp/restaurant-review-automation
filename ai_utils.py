@@ -40,7 +40,43 @@ AI_DAILY_BUDGET_USD = float(os.getenv("AI_DAILY_BUDGET_USD", "10"))
 AI_MONTHLY_BUDGET_USD = float(os.getenv("AI_MONTHLY_BUDGET_USD", "150"))
 # The real backstop: total spend across every restaurant, so one bad deploy
 # can't drain the account through a hundred separate under-budget clients.
+#
+# It SCALES with the number of paying clients. As a flat $1,500 it was ten
+# clients at their own monthly cap before the shared pool bound — and the
+# blast radius got worse with every client won, because one runaway would
+# refuse AI for everyone. The floor keeps the backstop meaningful at one or
+# two clients; the per-client allowance means the ceiling grows with the
+# business instead of throttling it.
 AI_GLOBAL_MONTHLY_BUDGET_USD = float(os.getenv("AI_GLOBAL_MONTHLY_BUDGET_USD", "1500"))
+AI_GLOBAL_PER_CLIENT_USD = float(os.getenv("AI_GLOBAL_PER_CLIENT_USD", "200"))
+
+
+def _paying_client_count(db_path=None):
+    try:
+        from models import get_conn, DB_PATH
+        conn = get_conn(db_path or DB_PATH)
+        n = conn.execute(
+            "SELECT COUNT(*) c FROM restaurants "
+            "WHERE LOWER(TRIM(COALESCE(billing_status,''))) IN ('active','internal')"
+        ).fetchone()["c"]
+        conn.close()
+        return int(n or 0)
+    except Exception:
+        return 0
+
+
+def global_monthly_budget(db_path=None):
+    """The shared ceiling for this many paying clients.
+
+    Never below AI_GLOBAL_MONTHLY_BUDGET_USD, so a small client base still has
+    a real backstop; above that it is AI_GLOBAL_PER_CLIENT_USD per paying
+    client, so winning a client raises the pool rather than shrinking
+    everyone's share of it. A budget of 0 still disables the ceiling.
+    """
+    if not AI_GLOBAL_MONTHLY_BUDGET_USD:
+        return 0.0
+    return max(AI_GLOBAL_MONTHLY_BUDGET_USD,
+               _paying_client_count(db_path) * AI_GLOBAL_PER_CLIENT_USD)
 
 # Unpaid accounts — demos, prospects, anything not billing_status active or
 # internal — get their own, much smaller ceilings, AND their spend is excluded
@@ -138,7 +174,7 @@ def ai_budget_status(restaurant_id=None, db_path=None):
     paid = _is_paid_account(restaurant_id, db_path)
     out = {
         "global_month": {"spend": _cached_spend(("g", month), month, None, db_path, paid_only=True),
-                         "budget": AI_GLOBAL_MONTHLY_BUDGET_USD},
+                         "budget": global_monthly_budget(db_path)},
     }
     if restaurant_id is not None:
         # An unpaid account is bounded by its own, much smaller ceilings and
@@ -290,6 +326,15 @@ CREATE TABLE IF NOT EXISTS ai_usage (
 )
 """
 
+# _spend_since runs a SUM over this table on every AI call (behind a 60s
+# cache) and the global variant joins restaurants on top. It had no index at
+# all, so the budget check was a full scan of a ledger that nothing pruned —
+# it got slower every day the product was used, on the hot path, on SQLite.
+_USAGE_INDEX_SQL = (
+    "CREATE INDEX IF NOT EXISTS idx_ai_usage_created ON ai_usage(created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_ai_usage_restaurant_created ON ai_usage(restaurant_id, created_at)",
+)
+
 
 def _ensure_usage_columns(conn):
     """status/error arrived after the table existed on Railway — add them in
@@ -309,7 +354,59 @@ def _ensure_usage_columns(conn):
 _MODEL_PRICING = {
     "claude-haiku-4-5-20251001": (1.00, 5.00),
     "claude-sonnet-5": (3.00, 15.00),
+    # Perplexity sonar, per million tokens. Audit #7 found this vendor was
+    # entirely outside the ledger and the budget — the $10/day and
+    # $1,500/month ceilings bound Claude only, while AI visibility could fire
+    # nine sonar queries a minute per restaurant, unmetered and unlogged.
+    "perplexity-sonar": (1.00, 1.00),
 }
+
+# Vendors billed per REQUEST rather than per token. Same ledger, same budget,
+# so one ceiling covers every paid dependency instead of just the one that
+# happened to have a token count.
+#
+# Rates are list prices at the time of writing and are the thing most likely
+# to drift here — they are env-overridable so a price change is a Railway
+# variable, not a deploy.
+_PER_CALL_PRICING = {
+    # Perplexity charges a per-search fee on top of tokens.
+    "perplexity-search":     float(os.getenv("PRICE_PERPLEXITY_SEARCH", "0.005")),
+    # Google Places Details / Nearby Search, roughly $17 per 1,000.
+    "google-places-details": float(os.getenv("PRICE_PLACES_DETAILS", "0.017")),
+    "google-places-nearby":  float(os.getenv("PRICE_PLACES_NEARBY", "0.032")),
+}
+
+
+def log_api_call(restaurant_id, action, vendor, calls=1, input_tokens=0, output_tokens=0,
+                 db_path=None, status="ok", error=None):
+    """Record a non-Claude paid dependency against the same budget.
+
+    Perplexity and Google Places were both invisible to ai_budget_exceeded, so
+    a runaway on either could not be stopped by the ceiling that exists to
+    stop runaways. They land in ai_usage now, which means the admin console's
+    spend view, the per-restaurant caps and the global pool all cover them.
+    """
+    per_call = _PER_CALL_PRICING.get(vendor, 0.0) * max(0, int(calls or 0))
+    token_cost = _estimate_cost(vendor, input_tokens, output_tokens) if (input_tokens or output_tokens) else 0.0
+    cost = 0.0 if status != "ok" else (per_call + token_cost)
+    try:
+        from models import get_conn, DB_PATH
+        conn = get_conn(db_path or DB_PATH)
+        conn.execute(_USAGE_TABLE_SQL)
+        for _ix in _USAGE_INDEX_SQL:
+            conn.execute(_ix)
+        _ensure_usage_columns(conn)
+        conn.execute(
+            "INSERT INTO ai_usage (restaurant_id, action, model, input_tokens, output_tokens, cost_usd, status, error) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (restaurant_id, action, vendor, input_tokens, output_tokens, cost, status, error),
+        )
+        conn.commit()
+        conn.close()
+        note_ai_spend(cost, restaurant_id)
+    except Exception as e:
+        log.warning("log_api_call(%s/%s) failed: %s", vendor, action, e)
+    return cost
 
 
 def _estimate_cost(model, input_tokens, output_tokens):
@@ -345,6 +442,8 @@ def log_ai_usage(restaurant_id, action, model, input_tokens, output_tokens, db_p
     from models import get_conn, DB_PATH
     conn = get_conn(db_path or DB_PATH)
     conn.execute(_USAGE_TABLE_SQL)
+    for _ix in _USAGE_INDEX_SQL:
+        conn.execute(_ix)
     _ensure_usage_columns(conn)
     cost = _estimate_cost(model, input_tokens, output_tokens) if status == "ok" else 0.0
     conn.execute(

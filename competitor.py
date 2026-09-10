@@ -6,6 +6,20 @@ import os, json, requests, anthropic
 from ai_utils import create_with_retry, extract_text
 from ai_guard import UNTRUSTED_NOTE, wrap_untrusted
 
+
+def _meter_places(restaurant_id, action, kind="details", status="ok", error=None):
+    """Google Places is billed per request. Audit #7 found it outside the
+    ledger and the budget entirely, so a Places-only restaurant's four daily
+    review fetches and the weekly competitor run were real money that no
+    ceiling could see. Best-effort: metering must never break a fetch."""
+    try:
+        from ai_utils import log_api_call
+        log_api_call(restaurant_id, action, f"google-places-{kind}",
+                     calls=1, status=status, error=error)
+    except Exception:
+        pass
+
+
 PLACES_API_KEY = os.getenv("GOOGLE_PLACES_API_KEY", "")
 ANTHROPIC_KEY  = os.getenv("ANTHROPIC_API_KEY", "")
 
@@ -580,6 +594,13 @@ def run_competitor_analysis(restaurant_id: int) -> dict:
             return {"ok": False, "error": "No Google Place ID set"}
 
         competitors = get_nearby_competitors(restaurant.google_place_id)
+        # One nearby search, then a details lookup per candidate it kept.
+        # Google Places is billed per request and was invisible to the budget
+        # entirely, which for a weekly job across every full-tier client is
+        # real money no ceiling could see.
+        _meter_places(restaurant_id, "competitor_intel", "nearby")
+        for _ in competitors or []:
+            _meter_places(restaurant_id, "competitor_intel", "details")
 
         # Add any manually specified competitor Place IDs
         if restaurant.custom_competitors:

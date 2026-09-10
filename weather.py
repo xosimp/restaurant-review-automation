@@ -23,6 +23,20 @@ import requests
 
 from models import DB_PATH, update_restaurant
 
+
+def _meter_places(restaurant_id, action, kind="details", status="ok", error=None):
+    """Google Places is billed per request. Audit #7 found it outside the
+    ledger and the budget entirely, so a Places-only restaurant's four daily
+    review fetches and the weekly competitor run were real money that no
+    ceiling could see. Best-effort: metering must never break a fetch."""
+    try:
+        from ai_utils import log_api_call
+        log_api_call(restaurant_id, action, f"google-places-{kind}",
+                     calls=1, status=status, error=error)
+    except Exception:
+        pass
+
+
 _GOOGLE_KEY = os.getenv("GOOGLE_PLACES_API_KEY") or os.getenv("GOOGLE_API_KEY", "")
 _USER_AGENT = "CavnarAI/1.0 (will@cavnar.ai)"  # NWS asks for an identifying UA, not a key
 _CACHE_HOURS = 6
@@ -42,6 +56,9 @@ def _geocode(restaurant, db_path=DB_PATH):
             timeout=10,
         )
         resp.raise_for_status()
+        # Geocoding a restaurant once is cheap, but it is still a billed
+        # Places request and belongs in the same ledger as the rest.
+        _meter_places(getattr(restaurant, "id", None), "weather_geocode", "details")
         loc = resp.json().get("result", {}).get("geometry", {}).get("location", {})
         lat, lon = loc.get("lat"), loc.get("lng")
         if lat is None or lon is None:

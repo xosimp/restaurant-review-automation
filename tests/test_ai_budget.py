@@ -103,6 +103,10 @@ def test_the_global_ceiling_catches_spend_spread_across_clients(db_path, monkeyp
     monkeypatch.setattr(ai_utils, "AI_DAILY_BUDGET_USD", 1000.00)
     monkeypatch.setattr(ai_utils, "AI_MONTHLY_BUDGET_USD", 1000.00)
     monkeypatch.setattr(ai_utils, "AI_GLOBAL_MONTHLY_BUDGET_USD", 3.00)
+    # The global pool scales with paying clients now (audit #7), so pin the
+    # per-client allowance too or five paying rows would lift the ceiling
+    # well past the 3.00 this test is about.
+    monkeypatch.setattr(ai_utils, "AI_GLOBAL_PER_CLIENT_USD", 0.0)
     _paying(db_path, 1, 2, 3, 4, 9)
     for rid in range(1, 5):
         _spend(rid, 1.00)
