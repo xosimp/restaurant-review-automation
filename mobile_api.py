@@ -1892,18 +1892,61 @@ def _has_ot_allowance(employee, constraints_index):
     )
 
 
+def _labor_data_caveat(analysis_failed, hours_estimated, sales_missing,
+                       days_missing, period_short, conflicting, duplicates) -> str:
+    """One plain sentence naming what is incomplete about these numbers.
+
+    labor.py has always known when a period was partial; nothing carried it
+    to a screen, so a percentage covering four of fourteen days looked
+    exactly like one covering all fourteen.
+    """
+    if analysis_failed:
+        return "We couldn't finish reading your shift data — these figures aren't reliable yet."
+    parts = []
+    if sales_missing:
+        parts.append("no sales figures were found, so there's no labor percentage to show")
+    elif days_missing:
+        n = len(days_missing)
+        parts.append(f"{n} day{'s' if n != 1 else ''} in this period {'have' if n != 1 else 'has'} "
+                     "shifts but no sales, so the percentage covers only part of it")
+    if hours_estimated:
+        parts.append("these are scheduled hours, not clocked hours")
+    if conflicting:
+        n = len(conflicting)
+        parts.append(f"{n} day{'s' if n != 1 else ''} had two different sales figures; the larger was used")
+    if duplicates:
+        parts.append(f"{duplicates} duplicate row{'s' if duplicates != 1 else ''} ignored")
+    if period_short:
+        parts.append("the period is under a week, so there's no monthly figure")
+    if not parts:
+        return ""
+    return parts[0][:1].upper() + parts[0][1:] + ("; " + "; ".join(parts[1:]) if len(parts) > 1 else "") + "."
+
+
 def _do_mobile_labor(restaurant_id):
     from labor import analyse_shifts_for_restaurant
 
     restaurant = get_restaurant(restaurant_id)
     target = float(restaurant.labor_target_pct or 30.0) if restaurant else 30.0
     hourly_rate = float(restaurant.hourly_rate or 26.0) if restaurant else 26.0
+    analysis_failed = False
     try:
         analysis = analyse_shifts_for_restaurant(restaurant_id)
     except Exception:
+        # An empty dict defaults every figure below to zero, and zero percent
+        # labor reads as "comfortably under target" rather than as "we could
+        # not work this out". The flag travels so the client can say so.
         analysis = {}
+        analysis_failed = True
 
     overall_pct = analysis.get("overall_labor_pct", 0)
+    # Every reason the numbers below are not a clean measured actual.
+    hours_are_estimated = bool(analysis.get("hours_are_estimated"))
+    days_missing_sales = analysis.get("days_missing_sales") or []
+    sales_data_missing = bool(analysis.get("sales_data_missing"))
+    period_too_short = bool(analysis.get("period_too_short_to_project"))
+    data_complete = not (analysis_failed or hours_are_estimated or days_missing_sales
+                         or sales_data_missing or analysis.get("days_with_conflicting_sales"))
 
     constraints_index = _staff_constraints_index(restaurant_id)
     employee_hours = {
@@ -1933,16 +1976,18 @@ def _do_mobile_labor(restaurant_id):
     # Overtime premium — 0.5x blended rate on hours over 40/week, same
     # formula hosted_dashboard.py's web dashboard uses for its "overtime
     # premium" savings tile.
-    ot_premium = 0.0
-    for o in analysis.get("overtime_risk", []):
-        if o.get("status") == "overtime":
-            ot_premium += max(0, o.get("hours", 0) - 40) * hourly_rate * 0.5
+    # Computed in labor.py now, where it is also added to the labor cost the
+    # percentage is derived from. This loop summed only the first flagged
+    # week per employee and never fed the cost model, so an employee with
+    # three overtime weeks contributed one, and the labor percentage the
+    # owner read excluded the premium entirely.
+    ot_premium = float(analysis.get("overtime_premium") or 0.0)
 
     date_range = analysis.get("date_range") or {}
     # Calendar days the synced shifts cover — computed once in labor.py.
     period_days = int(analysis.get("period_days") or 0)
     total_sales = analysis.get("total_sales", 0)
-    monthly_sales_est = (total_sales / period_days * 30) if period_days else 0
+    monthly_sales_est = (total_sales / period_days * 30) if period_days >= 7 else 0
     potential_savings = analysis.get("potential_savings", 0)
     labor_monthly = round(analysis.get("potential_savings_monthly", 0) or 0)
     # 0.345 = midpoint of the 33-36% full-service industry range (NRA 2024
@@ -1950,7 +1995,16 @@ def _do_mobile_labor(restaurant_id):
     # stale pre-pandemic 28-32% benchmark already corrected everywhere else
     # this figure appears (labor.py's AI prompt, the web dashboard, iOS's
     # own benchmark band).
-    labor_vs_industry_monthly = max(0, round((0.345 - overall_pct / 100) * monthly_sales_est))
+    # A benchmark comparison is only honest against a measured actual over a
+    # real period. When hours were estimated, the labor percentage was
+    # understated, so the gap to the industry midpoint was overstated by
+    # exactly as much — a CSV missing one column produced $62,100/month of
+    # claimed savings. A sub-week period has no monthly rate to compare at
+    # all. Both now yield no claim rather than a large one.
+    if analysis_failed or hours_are_estimated or sales_data_missing or period_too_short or not overall_pct:
+        labor_vs_industry_monthly = 0
+    else:
+        labor_vs_industry_monthly = max(0, round((0.345 - overall_pct / 100) * monthly_sales_est))
 
     savings_breakdown = {
         "labor_monthly": labor_monthly,
@@ -1996,7 +2050,27 @@ def _do_mobile_labor(restaurant_id):
         "is_live": bool(analysis.get("is_live")),
         "overall_labor_pct": overall_pct,
         "target": target,
-        "on_track": overall_pct <= target,
+        # "On track" is a claim about a measured number. Without one there is
+        # nothing to be on track against, and saying so beats a green badge.
+        "on_track": (overall_pct <= target) if data_complete else False,
+        "data_complete": data_complete,
+        "analysis_failed": analysis_failed,
+        # labor.py has computed these since the savings-formula work and
+        # nothing has ever returned them, so no client could tell a partial
+        # period from a whole one.
+        "hours_are_estimated": hours_are_estimated,
+        "sales_data_missing": sales_data_missing,
+        "days_missing_sales": days_missing_sales,
+        "days_with_conflicting_sales": analysis.get("days_with_conflicting_sales") or [],
+        "duplicate_rows_ignored": int(analysis.get("duplicate_rows_ignored") or 0),
+        "period_too_short_to_project": period_too_short,
+        "period_days": period_days,
+        "overtime_hours": analysis.get("overtime_hours", 0),
+        "data_caveat": _labor_data_caveat(analysis_failed, hours_are_estimated,
+                                          sales_data_missing, days_missing_sales,
+                                          period_too_short,
+                                          analysis.get("days_with_conflicting_sales") or [],
+                                          int(analysis.get("duplicate_rows_ignored") or 0)),
         "potential_savings": potential_savings,
         "overtime_risk": overtime_risk,
         "role_summary": role_summary,

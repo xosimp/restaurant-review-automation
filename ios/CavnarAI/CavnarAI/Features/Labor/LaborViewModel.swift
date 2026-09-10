@@ -143,6 +143,28 @@ struct LaborStats: Codable {
     let dowSummary: [String: Double]
     let savingsBreakdown: LaborSavingsBreakdown
     let laborUpcoming: [LaborUpcomingEvent]
+    // Everything the backend knows is incomplete about the upload behind
+    // these numbers. labor.py has computed most of this since the
+    // savings-formula work and no endpoint returned it, so a percentage
+    // covering four of fourteen days looked exactly like one covering all
+    // fourteen. Optional so an older server that omits them still decodes.
+    let dataComplete: Bool?
+    let analysisFailed: Bool?
+    let hoursAreEstimated: Bool?
+    let salesDataMissing: Bool?
+    let daysMissingSales: [String]?
+    let periodTooShortToProject: Bool?
+    let periodDays: Int?
+    let dataCaveat: String?
+
+    /// One line naming what is incomplete, or nil when nothing is.
+    var caveat: String? {
+        guard let c = dataCaveat, !c.trimmingCharacters(in: .whitespaces).isEmpty else { return nil }
+        return c
+    }
+
+    /// True only when these figures are a measured actual over a real period.
+    var figuresAreTrustworthy: Bool { dataComplete ?? true }
 
     enum CodingKeys: String, CodingKey {
         case ok
@@ -159,6 +181,14 @@ struct LaborStats: Codable {
         case dowSummary = "dow_summary"
         case savingsBreakdown = "savings_breakdown"
         case laborUpcoming = "labor_upcoming"
+        case dataComplete = "data_complete"
+        case analysisFailed = "analysis_failed"
+        case hoursAreEstimated = "hours_are_estimated"
+        case salesDataMissing = "sales_data_missing"
+        case daysMissingSales = "days_missing_sales"
+        case periodTooShortToProject = "period_too_short_to_project"
+        case periodDays = "period_days"
+        case dataCaveat = "data_caveat"
     }
 }
 

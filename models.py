@@ -53,6 +53,11 @@ CREATE TABLE IF NOT EXISTS restaurants (
     -- Labor settings
     hourly_rate     REAL DEFAULT 26.0,
     labor_target_pct REAL DEFAULT 30.0,  -- owner's custom labor % target
+    -- Payroll workweek start (0=Monday .. 6=Sunday). FLSA overtime is
+    -- computed on the employer's OWN designated 7-day workweek, which is
+    -- very often not Monday. Defaults to Monday, which is what the module
+    -- hardcoded before this column existed.
+    week_start_day  INTEGER DEFAULT 0,
     stripe_customer_id TEXT,              -- Stripe customer ID for billing lookup
     docusign_envelope_id TEXT,            -- DocuSign envelope ID for contract tracking
     contract_status TEXT DEFAULT 'pending', -- pending/sent/signed
@@ -261,6 +266,7 @@ class Restaurant:
     never_say: Optional[str]        = None
     hourly_rate: float              = 26.0
     labor_target_pct: float         = 30.0
+    week_start_day: int             = 0
     stripe_customer_id: Optional[str]    = None
     docusign_envelope_id: Optional[str]  = None
     contract_status: str                 = "pending"
@@ -802,6 +808,7 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE restaurants ADD COLUMN pos_system TEXT",
         "ALTER TABLE restaurants ADD COLUMN owner_name TEXT",
         "ALTER TABLE restaurants ADD COLUMN labor_target_pct REAL DEFAULT 30.0",
+        "ALTER TABLE restaurants ADD COLUMN week_start_day INTEGER DEFAULT 0",
         "ALTER TABLE restaurants ADD COLUMN stripe_customer_id TEXT",
         "ALTER TABLE restaurants ADD COLUMN docusign_envelope_id TEXT",
         "ALTER TABLE restaurants ADD COLUMN contract_status TEXT DEFAULT 'pending'",
@@ -2104,7 +2111,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH):
     allowed = {
         "name","owner_email","google_place_id","yelp_business_id","voice_notes",
         "neighborhood","vibe","known_for","sign_off_name","never_say",
-        "hourly_rate","labor_target_pct","monthly_revenue_target","hours_notes","role_rates_json","close_times_json","role_close_buffer_json","stripe_customer_id","docusign_envelope_id","contract_status","location_group","location_name","pos_system","inventory_frequency","delivery_days","inventory_notes","food_cost_target","inventory_updated_at","temp_password","ig_token","ig_user_id","fb_page_token","fb_page_id","ig_token_expires","fb_token_expires","competitor_intel","competitor_updated_at","reviews_live","billing_status","is_demo","internal_notes","gmb_access_token","gmb_refresh_token","gmb_account_id","gmb_location_id","gmb_token_expires",
+        "hourly_rate","labor_target_pct","week_start_day","monthly_revenue_target","hours_notes","role_rates_json","close_times_json","role_close_buffer_json","stripe_customer_id","docusign_envelope_id","contract_status","location_group","location_name","pos_system","inventory_frequency","delivery_days","inventory_notes","food_cost_target","inventory_updated_at","temp_password","ig_token","ig_user_id","fb_page_token","fb_page_id","ig_token_expires","fb_token_expires","competitor_intel","competitor_updated_at","reviews_live","billing_status","is_demo","internal_notes","gmb_access_token","gmb_refresh_token","gmb_account_id","gmb_location_id","gmb_token_expires",
         "service_tier","module_reviews","module_labor","module_inventory","module_marketing",
         "last_active_tab","last_activity","owner_name","owner_phone","digest_day","digest_enabled","menu_notes","menu_url","skip_holidays","custom_competitors",
         "two_fa_enabled","two_fa_code","two_fa_expires","two_fa_device_token","two_fa_pending","two_fa_method","login_notify","marketing_emails_opt_out","timezone","onboarding_dismissed",
@@ -2188,6 +2195,7 @@ def get_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> Optional[Resta
         never_say=row["never_say"] if "never_say" in row.keys() else None,
         hourly_rate=row["hourly_rate"] if "hourly_rate" in row.keys() else 26.0,
         labor_target_pct=row["labor_target_pct"] if "labor_target_pct" in row.keys() else 30.0,
+        week_start_day=int(row["week_start_day"] or 0) if "week_start_day" in row.keys() else 0,
         stripe_customer_id=row["stripe_customer_id"] if "stripe_customer_id" in row.keys() else None,
         docusign_envelope_id=row["docusign_envelope_id"] if "docusign_envelope_id" in row.keys() else None,
         contract_status=row["contract_status"] if "contract_status" in row.keys() else "pending",

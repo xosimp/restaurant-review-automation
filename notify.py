@@ -727,6 +727,25 @@ def check_no_response_alerts(db_path: str = DB_PATH):
             pass
 
 
+# A labor snapshot older than this is history, not news. The alert used to
+# take the most recently SAVED row with no bound on the period it covered.
+LABOR_ALERT_MAX_PERIOD_AGE_DAYS = 21
+
+
+def _short_period(start, end) -> str:
+    """"Aug 25-31" for an alert body. The SMS and the push carried no period
+    at all, so a figure from months ago read as this week's."""
+    from datetime import datetime as _d
+    try:
+        a = _d.strptime(str(start)[:10], "%Y-%m-%d")
+        b = _d.strptime(str(end)[:10], "%Y-%m-%d")
+    except (ValueError, TypeError):
+        return str(start or "the last synced period")
+    if a.month == b.month:
+        return f"{a.strftime('%b')} {a.day}-{b.day}"
+    return f"{a.strftime('%b %-d')}-{b.strftime('%b %-d')}"
+
+
 def check_daily_alerts(db_path: str = DB_PATH):
     """
     Daily check for negative trend, rating threshold, and labor over target.
@@ -861,20 +880,29 @@ def check_daily_alerts(db_path: str = DB_PATH):
         # ── Labor over target ──────────────────────────────────
         if r["alert_labor_over"] and not _already_alerted("labor_over"):
             c2 = models.get_conn(db_path)
+            # Bounded on the age of the PERIOD, not just on when the snapshot
+            # happened to be written. Snapshots are saved every time an
+            # insight is generated — i.e. on every Labor tab open — so a
+            # restaurant that last uploaded in June kept getting a fresh
+            # "labor over target" text every seven days, forever, quoting
+            # June. An alert about a period nobody is working any more is
+            # not an alert, it is noise the owner learns to ignore.
             recent = c2.execute("""
                 SELECT labor_pct, period_start, period_end
                 FROM labor_history
                 WHERE restaurant_id=?
-                ORDER BY saved_at DESC LIMIT 1
-            """, (rid,)).fetchone()
+                  AND period_end >= date('now', ?)
+                ORDER BY period_end DESC, saved_at DESC LIMIT 1
+            """, (rid, f"-{LABOR_ALERT_MAX_PERIOD_AGE_DAYS} days")).fetchone()
             c2.close()
             if recent and recent["labor_pct"] is not None:
                 actual = recent["labor_pct"]
                 target = r["labor_target_pct"] or 30.0
                 if actual > target:
                     over_by = round(actual - target, 1)
+                    _period_label = _short_period(recent["period_start"], recent["period_end"])
                     sms  = (
-                        f"💸 {name}: Labor at {actual:.1f}% — "
+                        f"💸 {name}: Labor at {actual:.1f}% for {_period_label} — "
                         f"{over_by}pts over your {target:.0f}% target.\n"
                         f"dashboard.cavnar.ai"
                     )

@@ -281,6 +281,19 @@ textarea{resize:vertical;min-height:60px}
           <div class="hint">Default is 30%. Adjust if this restaurant has a different target (e.g. fine dining may run 35%, fast casual may target 25%).</div>
         </div>
         <div class="form-group">
+          <label>Payroll week starts on</label>
+          <select id="week_start_day">
+            <option value="0"{% if (restaurant.week_start_day or 0) == 0 %} selected{% endif %}>Monday</option>
+            <option value="1"{% if (restaurant.week_start_day or 0) == 1 %} selected{% endif %}>Tuesday</option>
+            <option value="2"{% if (restaurant.week_start_day or 0) == 2 %} selected{% endif %}>Wednesday</option>
+            <option value="3"{% if (restaurant.week_start_day or 0) == 3 %} selected{% endif %}>Thursday</option>
+            <option value="4"{% if (restaurant.week_start_day or 0) == 4 %} selected{% endif %}>Friday</option>
+            <option value="5"{% if (restaurant.week_start_day or 0) == 5 %} selected{% endif %}>Saturday</option>
+            <option value="6"{% if (restaurant.week_start_day or 0) == 6 %} selected{% endif %}>Sunday</option>
+          </select>
+          <div class="hint">Overtime is calculated per this 7-day week, and generated schedules start on this day. Federal overtime rules use the employer's own designated workweek, so this must match payroll.</div>
+        </div>
+        <div class="form-group">
           <label>Monthly revenue target ($)</label>
           <input type="number" id="monthly_revenue_target" value="{{ restaurant.monthly_revenue_target or 0 }}" min="0" step="1000" placeholder="e.g. 365000">
           <div class="hint">Used to compute PAR hours budget for AI schedule generation. Divide by 4.33 to get weekly projection.</div>
@@ -868,6 +881,7 @@ async function saveSettings() {
     menu_url:        document.getElementById('menu_url').value,
     hourly_rate:             parseFloat(document.getElementById('hourly_rate').value),
     labor_target_pct:        parseFloat(document.getElementById('labor_target_pct').value) || 30.0,
+    week_start_day:          parseInt(document.getElementById('week_start_day').value) || 0,
     monthly_revenue_target:  parseFloat(document.getElementById('monthly_revenue_target').value) || 0,
     hours_notes:             document.getElementById('hours_notes').value,
     sched_notes:             document.getElementById('sched_notes').value,

@@ -201,10 +201,29 @@ private struct AIConsultantSheet: View {
             text = text + Text(name).foregroundStyle(Color.cavnarEmber)
         }
         text = text + Self.mixedText(rest, numberFont: numberFont, color: Color.cavnarInk)
-        return text
-            .font(.cavnarHeadline(22))
-            .lineSpacing(6)
-            .fixedSize(horizontal: false, vertical: true)
+        return VStack(alignment: .leading, spacing: 8) {
+            text
+                .font(.cavnarHeadline(22))
+                .lineSpacing(6)
+                .fixedSize(horizontal: false, vertical: true)
+            claimKindLabel("READING OF YOUR NUMBERS", icon: "chart.bar.doc.horizontal", color: Color.cavnarInk3)
+        }
+    }
+
+    /// A measured fact, the model's read of it, a guess about next week and
+    /// a suggestion were all rendered as the same prose in the same weight,
+    /// so a reader had no way to tell one from another. The API has labelled
+    /// them as inferred / suggestion / forecast for a while; nothing showed
+    /// the distinction. These say which is which.
+    private func claimKindLabel(_ text: String, icon: String, color: Color) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: icon)
+                .font(.system(size: 9, weight: .bold))
+            Text(text)
+                .font(.cavnarBody(10.5, weight: 700))
+                .tracking(1.1)
+        }
+        .foregroundStyle(color)
     }
 
     private var recommendations: some View {
@@ -212,7 +231,7 @@ private struct AIConsultantSheet: View {
             HStack(spacing: 6) {
                 Image(systemName: "bolt.fill")
                     .font(.system(size: 11, weight: .bold))
-                Text("WHAT TO DO THIS WEEK")
+                Text("SUGGESTED — YOUR CALL")
                     .font(.cavnarBody(13, weight: 700))
                     .tracking(1.3)
             }
@@ -269,6 +288,10 @@ private struct AIConsultantSheet: View {
             Self.mixedText(forecast, numberFont: .cavnarNumber(16, weight: 600), color: Color.cavnarInk2)
                 .font(.cavnarBody(16))
                 .lineSpacing(5)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("A projection, not a measurement. It assumes the current trend holds.")
+                .font(.cavnarBody(12.5))
+                .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(18)

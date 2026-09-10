@@ -2082,8 +2082,22 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       <h1 class="hb-h1">Labor. <span class="hb-head {{ _tone }}">{{ _head }}</span></h1>
       <div class="hb-sub"><span><span class="hb-num">${{ labor.total_sales|int|format_num }}</span> sales</span><span class="sep">·</span><span><span class="hb-num">${{ labor.total_labor_cost|int|format_num }}</span> labor</span><span class="sep">·</span><span><span class="hb-num" id="labor-period">{{ _days }}-day window</span></span><span class="sep">·</span><span>target <span class="hb-num">{{ _lt|int }}%</span></span>{% if not labor.is_live %}<span class="sep">·</span><span>sample data</span>{% endif %}</div>
       <div id="gap-dollar" class="hb-sub" style="margin-top:4px">{% if _lp > _lt %}Labor is at {{ _lp }}% against a {{ _lt|int }}% target — working out the monthly gap…{% else %}Labor is on target at {{ _lp }}%.{% endif %}</div>
+      {# Everything labor.py knows is incomplete about this upload. It has
+         computed these for a while and no surface showed them, so a
+         percentage covering four of fourteen days looked exactly like one
+         covering all fourteen. #}
+      {% if labor.is_live and (labor.hours_are_estimated or labor.days_missing_sales or labor.days_with_conflicting_sales or labor.duplicate_rows_ignored or labor.period_too_short_to_project) %}
+      <div class="hb-sub" style="margin-top:6px;color:var(--amber)">
+        <strong>Heads up:</strong>
+        {% if labor.days_missing_sales %}{{ labor.days_missing_sales|length }} day(s) here have shifts but no sales, so this percentage covers only part of the period.{% endif %}
+        {% if labor.hours_are_estimated %} These are scheduled hours, not clocked hours.{% endif %}
+        {% if labor.days_with_conflicting_sales %} {{ labor.days_with_conflicting_sales|length }} day(s) had two different sales figures; the larger was used.{% endif %}
+        {% if labor.duplicate_rows_ignored %} {{ labor.duplicate_rows_ignored }} duplicate row(s) ignored.{% endif %}
+        {% if labor.period_too_short_to_project %} The period is under a week, so there's no monthly figure.{% endif %}
+      </div>
+      {% endif %}
       <div class="lb2-actions">
-        <button onclick="generateSchedule(this)" id="gen-sched-btn" class="btn-primary">Generate optimized schedule</button>
+        {% if labor.is_live %}<button onclick="generateSchedule(this)" id="gen-sched-btn" class="btn-primary">Generate optimized schedule</button>{% endif %}
         {% if not restaurant.toast_restaurant_guid %}
         <label class="btn-primary" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer">{% if labor.is_live %}Update shifts CSV{% else %}Upload shifts CSV{% endif %}<input type="file" accept=".csv" style="display:none" id="shifts-inline-input" onchange="clientUpload('shifts', this)"></label>
         {% endif %}

@@ -77,6 +77,20 @@ def test_fire_review_alerts_no_push_when_everything_off(db_path, monkeypatch):
     assert calls == []
 
 
+def _recent_week():
+    """A period that ended in the last few days.
+
+    The labor alert is bounded on how old the PERIOD is, not just on when
+    the snapshot was written — a fixed January date is history, and an
+    alert about it is exactly the stale weekly text the bound exists to
+    stop. These tests are about push delivery, so give them a period an
+    owner would actually be alerted about.
+    """
+    from datetime import date, timedelta
+    end = date.today() - timedelta(days=2)
+    return (end - timedelta(days=6)).isoformat(), end.isoformat()
+
+
 def test_check_daily_alerts_fires_push_for_labor_over(db_path, monkeypatch):
     from models import save_labor_snapshot
     rid = _restaurant(db_path)
@@ -84,7 +98,8 @@ def test_check_daily_alerts_fires_push_for_labor_over(db_path, monkeypatch):
         "urgent_via_sms": 0, "urgent_via_email": 1, "owner_email": "p@x.com",
         "alert_labor_over": 1, "labor_target_pct": 30.0,
     }, db_path=db_path)
-    save_labor_snapshot(rid, "2026-01-01", "2026-01-07", 35.0, 3500, 10000, db_path=db_path)
+    _start, _end = _recent_week()
+    save_labor_snapshot(rid, _start, _end, 35.0, 3500, 10000, db_path=db_path)
 
     calls = []
     monkeypatch.setattr("push.fire_push", lambda *a, **kw: calls.append(a))
@@ -105,7 +120,8 @@ def test_check_daily_alerts_does_not_refire_within_7_days(db_path, monkeypatch):
         "urgent_via_sms": 0, "urgent_via_email": 1, "owner_email": "p@x.com",
         "alert_labor_over": 1, "labor_target_pct": 30.0,
     }, db_path=db_path)
-    save_labor_snapshot(rid, "2026-01-01", "2026-01-07", 35.0, 3500, 10000, db_path=db_path)
+    _start, _end = _recent_week()
+    save_labor_snapshot(rid, _start, _end, 35.0, 3500, 10000, db_path=db_path)
 
     calls = []
     monkeypatch.setattr("push.fire_push", lambda *a, **kw: calls.append(a))

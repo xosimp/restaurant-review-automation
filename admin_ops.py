@@ -611,6 +611,7 @@ def client_detail(rid):
             "profile": {"neighborhood": r.neighborhood, "vibe": r.vibe, "known_for": r.known_for, "timezone": r.timezone,
                         "voice_notes": r.voice_notes, "pos_system": r.pos_system, "google_place_id": r.google_place_id,
                         "yelp_business_id": r.yelp_business_id, "labor_target_pct": r.labor_target_pct,
+                        "week_start_day": r.week_start_day,
                         "food_cost_target": r.food_cost_target, "digest_day": r.digest_day, "internal_notes": r.internal_notes},
             "ai": {"by_action": ai_by_action, "recent": ai_recent, "daily": ai_daily, "failed": ai_failed},
             "events": events, "emails": emails, "pushes": pushes, "devices": devices, "alerts": alerts,

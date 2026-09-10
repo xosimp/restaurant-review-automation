@@ -188,15 +188,33 @@ struct LaborView: View {
 
     @ViewBuilder
     private func heroCard(_ stats: LaborStats) -> some View {
-        let tone: CavnarTone = stats.onTrack ? .good : .bad
+        // Neither "on track" nor "over target" is a claim you can make about
+        // a number you couldn't measure. A failed analysis used to default
+        // every figure to zero, and 0% read as comfortably under target.
+        let tone: CavnarTone = stats.figuresAreTrustworthy ? (stats.onTrack ? .good : .bad) : .neutral
         VStack(alignment: .leading, spacing: 12) {
+            // Sample data is not this restaurant's data. This used to be a
+            // tap-to-open popover behind an icon that rendered DIM AND PLAIN
+            // for the sample case — the same "nothing to see here" icon a
+            // healthy live restaurant gets — because `stale` was defined as
+            // isLive && daysOld > 21, so sample data could never be stale.
+            // The one state with the most to disclose got the most
+            // reassuring affordance. It is a banner now.
+            if !stats.isLive {
+                sampleDataBanner
+            }
             HStack(spacing: 6) {
                 Label("Labor cost", systemImage: "person.2.fill")
                     .font(.cavnarBody(14, weight: 700))
                     .foregroundStyle(Color.cavnarInk3)
                 dataFreshnessInfoButton(stats)
                 Spacer()
-                TonePill(text: stats.onTrack ? "On track" : "Over target", tone: tone)
+                if stats.isLive {
+                    TonePill(text: stats.figuresAreTrustworthy
+                             ? (stats.onTrack ? "On track" : "Over target")
+                             : "Incomplete data",
+                             tone: tone)
+                }
             }
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 // Colored to the same on-track/over-target read the card's
@@ -209,18 +227,32 @@ struct LaborView: View {
                     .foregroundStyle(Color.cavnarInk3)
             }
             StatProgressBar(progress: stats.overallLaborPct / max(stats.target, 1), tone: tone)
-            if stats.potentialSavings > 0 {
+            if let caveat = stats.caveat {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Color.cavnarAmber)
+                        .padding(.top, 2)
+                    Text(caveat)
+                        .font(.cavnarBody(13.5))
+                        .foregroundStyle(Color.cavnarInk2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            if stats.potentialSavings > 0 && stats.figuresAreTrustworthy {
                 (Text("Est. ") + Text("$\(Int(stats.potentialSavings))").font(.cavnarNumber(14, weight: 600)) + Text(" in optimized-scheduling savings available"))
                     .font(.cavnarBody(14, weight: 600))
                     .foregroundStyle(Color.cavnarAmber)
             }
 
-            ScheduleGenerateButton(
-                tone: tone,
-                isGenerating: viewModel.isGeneratingSchedule,
-                action: { Task { await viewModel.generateSchedule() } }
-            )
-            .padding(.top, 2)
+            if stats.isLive {
+                ScheduleGenerateButton(
+                    tone: tone,
+                    isGenerating: viewModel.isGeneratingSchedule,
+                    action: { Task { await viewModel.generateSchedule() } }
+                )
+                .padding(.top, 2)
+            }
 
             // "Building the Week" — shifts fill a 7-day grid while an ember
             // dash travels the header, for the ~minute the generator runs
@@ -256,6 +288,34 @@ struct LaborView: View {
         .cavnarRibbonHeroAnchor()
     }
 
+    private var sampleDataBanner: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Color.cavnarAmber)
+                .padding(.top, 1)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Sample data")
+                    .font(.cavnarBody(14, weight: 700))
+                    .foregroundStyle(Color.cavnarAmber)
+                Text("These are example figures, not your restaurant's. Upload your shifts CSV under Account to see your own numbers.")
+                    .font(.cavnarBody(13.5))
+                    .foregroundStyle(Color.cavnarInk2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(11)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.cavnarAmber.opacity(0.12))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Color.cavnarAmber.opacity(0.35), lineWidth: 1)
+        )
+    }
+
     private var heroTone: CavnarTone? {
         viewModel.stats.map { $0.onTrack ? .good : .bad }
     }
@@ -271,9 +331,16 @@ struct LaborView: View {
         guard let start = stats.dateRange.start, let end = stats.dateRange.end,
               let startDate = Self.isoDayFormatter.date(from: start),
               let endDate = Self.isoDayFormatter.date(from: end) else { return nil }
-        let daysOld = Calendar.current.dateComponents([.day], from: endDate, to: Date()).day ?? 0
+        let cal = Calendar.current
+        let daysOld = cal.dateComponents([.day],
+                                         from: cal.startOfDay(for: endDate),
+                                         to: cal.startOfDay(for: Date())).day ?? 0
         let rangeText = "\(Self.displayDayFormatter.string(from: startDate)) – \(Self.displayDayFormatter.string(from: endDate))"
-        return DataFreshness(rangeText: rangeText, daysOld: daysOld, stale: stats.isLive && daysOld > 21, isLive: stats.isLive)
+        // `stale` drives a brighter, exclamation-shaped icon. It required
+        // isLive, so sample data — the case with the most to disclose —
+        // always drew the dim, plain "nothing to check" glyph.
+        return DataFreshness(rangeText: rangeText, daysOld: daysOld,
+                             stale: !stats.isLive || daysOld > 21, isLive: stats.isLive)
     }
 
     /// Was an always-visible amber text row under the hero numbers — moved
@@ -366,7 +433,12 @@ struct LaborView: View {
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM-dd"
         f.calendar = Calendar(identifier: .gregorian)
-        f.timeZone = TimeZone(identifier: "UTC")
+        // Parsed as UTC and then compared against a device-local Date(),
+        // which put the boundary in the middle of the evening for anyone
+        // west of Greenwich and made a same-day sync read a day old.
+        // A shift date is a calendar day where the restaurant is, so
+        // parse it in the same calendar the comparison uses.
+        f.timeZone = Calendar.current.timeZone
         return f
     }()
 

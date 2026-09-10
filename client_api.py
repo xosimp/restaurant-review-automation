@@ -38,6 +38,20 @@ def _cache_get(key):
 def _cache_set(key, value):
     _insight_cache[key] = (datetime.utcnow(), value)
 
+
+def invalidate_insight_cache(restaurant_id, prefixes=None):
+    """Drop cached AI insight for one restaurant.
+
+    Called when the underlying data changes. Without it a five-minute-old
+    narrative sits next to freshly uploaded numbers and contradicts them.
+    """
+    prefixes = prefixes or ("labor-insight:", "mobile-labor-insight:",
+                            "inv-insight:", "mobile-inv-insight:")
+    suffix = str(restaurant_id)
+    for key in [k for k in _insight_cache
+                if any(k == p + suffix for p in prefixes)]:
+        _insight_cache.pop(key, None)
+
 # ── Shared handler bodies ────────────────────────────────────────────────────
 # Plain, Flask-independent helpers behind the web (client_bp) routes below.
 # Each returns (payload_dict, status_code) so both the web view (jsonify(**p),
@@ -1845,6 +1859,14 @@ def _build_schedule_result(restaurant_id):
     if not shifts:
         raise ValueError("No shift data available — upload shifts CSV first")
     analysis = analyse_shifts_for_restaurant(restaurant_id)
+    # The guard above can never fire: load_shifts_for_restaurant substitutes
+    # a bundled fictional week when a restaurant has uploaded nothing, so
+    # `shifts` is always non-empty. That let a brand-new restaurant generate
+    # a full week's schedule staffed by eight people who do not exist, with a
+    # PAR banner priced off a fictional restaurant's revenue. is_live is the
+    # real signal and was already computed; only the two AI paths ignored it.
+    if not analysis.get("is_live"):
+        raise ValueError("No shift data available — upload shifts CSV first")
     # Use blended rate from per-role rates if available, otherwise flat rate
     rate = analysis.get("blended_rate") or get_hourly_rate(restaurant_id)
     target   = float(restaurant.labor_target_pct or 30.0) if restaurant else 30.0
@@ -2311,7 +2333,12 @@ def _top_up_hours_gap(preview_rows: list, daily_target_hours: dict, hours_budget
                 pool = {e for e in pool
                         if day_name not in unavailable_by_emp.get(e, set())
                         and (e not in available_by_emp or day_name in available_by_emp[e])
-                        and e not in notes_restricted}
+                        and e not in notes_restricted
+                        # "No employee over 40h for the week" was prompt text
+                        # with nothing enforcing it, so this pass could push
+                        # someone into overtime to consume an hours budget —
+                        # and the cost model priced those hours straight.
+                        and hours_by_employee.get(e, 0.0) < _WEEKLY_HOURS_CEILING}
                 if pool:
                     best_shortfall = shortfall
                     candidates_role = (role, pool)
@@ -2347,6 +2374,9 @@ def _top_up_hours_gap(preview_rows: list, daily_target_hours: dict, hours_budget
         new_row["scheduled_hours"] = str(round((e_min - s_min) / 60, 1))
         hrs = float(new_row["scheduled_hours"])
         if hrs <= 0:
+            daily_target_hours[target_date] = by_date_hours.get(target_date, 0.0)
+            continue
+        if hours_by_employee.get(employee, 0.0) + hrs > _WEEKLY_HOURS_CEILING:
             daily_target_hours[target_date] = by_date_hours.get(target_date, 0.0)
             continue
 
@@ -2408,6 +2438,7 @@ def _extend_shifts_to_close_gap(preview_rows: list, daily_target_hours: dict, ho
 
     by_date_hours: dict = {}
     rows_by_date: dict = {}
+    week_hours_by_emp: dict = {}
     for r in preview_rows:
         d = r.get("date")
         if not d:
@@ -2418,6 +2449,9 @@ def _extend_shifts_to_close_gap(preview_rows: list, daily_target_hours: dict, ho
             hrs = 0.0
         by_date_hours[d] = by_date_hours.get(d, 0.0) + hrs
         rows_by_date.setdefault(d, []).append(r)
+        emp = r.get("employee")
+        if emp:
+            week_hours_by_emp[emp] = week_hours_by_emp.get(emp, 0.0) + hrs
 
     hours_added = 0.0
     extended_dates: dict = {}
@@ -2453,12 +2487,18 @@ def _extend_shifts_to_close_gap(preview_rows: list, daily_target_hours: dict, ho
                 break
             if row.get("employee") in notes_restricted_ext:
                 continue
+            # Never extend somebody into overtime to consume an hours
+            # budget. The prompt's "no employee over 40h" rule had no
+            # enforcement, and the cost model priced overtime straight.
+            if week_hours_by_emp.get(row.get("employee"), 0.0) >= _WEEKLY_HOURS_CEILING:
+                continue
             end_min = _parse_time_to_minutes(row.get("shift_end", ""))
             start_min = _parse_time_to_minutes(row.get("shift_start", ""))
             if end_min is None or start_min is None or end_min <= start_min:
                 continue
 
-            extend_by = min(MAX_EXTENSION_MINUTES, int(day_gap * 60))
+            _emp_room = _WEEKLY_HOURS_CEILING - week_hours_by_emp.get(row.get("employee"), 0.0)
+            extend_by = min(MAX_EXTENSION_MINUTES, int(day_gap * 60), int(max(0.0, _emp_room) * 60))
             if extend_by <= 0:
                 continue
             original_end = row["shift_end"]
@@ -2481,10 +2521,17 @@ def _extend_shifts_to_close_gap(preview_rows: list, daily_target_hours: dict, ho
             remaining_gap -= added_hours
             day_gap -= added_hours
             by_date_hours[target_date] = by_date_hours.get(target_date, 0.0) + added_hours
+            if row.get("employee"):
+                week_hours_by_emp[row["employee"]] = week_hours_by_emp.get(row["employee"], 0.0) + added_hours
             extended_dates[target_date] = extended_dates.get(target_date, 0) + 1
 
     return preview_rows, round(hours_added, 1), extended_dates
 
+
+# FLSA overtime starts past this many hours in the payroll week. The
+# generated schedule must not create overtime on its own; the prompt said
+# so and nothing enforced it.
+_WEEKLY_HOURS_CEILING = 40.0
 
 _SERVER_MAX_OVERLAP = 7
 
@@ -2515,9 +2562,18 @@ def _peak_server_overlap(day_rows: list) -> tuple:
     return peak, peak_time
 
 
-def _trim_server_overlap_cap(preview_rows: list, close_times: dict, role_buffers: dict) -> tuple:
-    """Deterministic backstop for the "never more than 7 servers at once"
-    hard cap already stated in hours_notes. Live testing showed the AI
+def _trim_server_overlap_cap(preview_rows: list, close_times: dict, role_buffers: dict,
+                              max_overlap: int = None) -> tuple:
+    """Deterministic backstop for the "never more than N servers at once"
+    hard cap already stated in hours_notes.
+
+    N is the restaurant's own configured section count when it has one —
+    one server per section is the rule the prompt states. This was a flat
+    module constant of 7 applied to every restaurant, so a dining room
+    with twelve sections had rows silently shortened or deleted against a
+    ceiling its owner never set, while the prompt above told the model to
+    use the real figure. The constant remains the fallback for a
+    restaurant that hasn't configured sections. Live testing showed the AI
     missing this reliably at 190-220+ row scale, including via double
     shifts (a server working both morning and night) that were never
     subtracted from the night total before more closers got added on top —
@@ -2536,6 +2592,8 @@ def _trim_server_overlap_cap(preview_rows: list, close_times: dict, role_buffers
 
     Returns (preview_rows, rows_trimmed, trimmed_dates).
     """
+    _cap = int(max_overlap) if max_overlap and int(max_overlap) > 0 else _SERVER_MAX_OVERLAP
+
     by_date: dict = {}
     for r in preview_rows:
         if (r.get("role") or "").strip().lower() == "server":
@@ -2566,7 +2624,7 @@ def _trim_server_overlap_cap(preview_rows: list, close_times: dict, role_buffers
 
         for _pass in range(20):  # bounded — one trim per pass, per day
             peak, peak_time = _peak_server_overlap(day_rows)
-            if peak <= _SERVER_MAX_OVERLAP or peak_time is None:
+            if peak <= _cap or peak_time is None:
                 break
 
             active = []
@@ -2597,7 +2655,7 @@ def _trim_server_overlap_cap(preview_rows: list, close_times: dict, role_buffers
                 final_end = _parse_time_to_minutes(candidate["shift_end"])
                 candidate["scheduled_hours"] = str(round((final_end - start_min) / 60, 1))
                 note = (candidate.get("notes") or "").strip()
-                candidate["notes"] = f"{note} (trimmed — over the 7-server cap)" if note else "trimmed — over the 7-server cap"
+                candidate["notes"] = f"{note} (trimmed — over the {_cap}-server cap)" if note else f"trimmed — over the {_cap}-server cap"
 
             rows_trimmed += 1
             trimmed_dates[date] = trimmed_dates.get(date, 0) + 1
@@ -2738,6 +2796,7 @@ def _run_schedule_job(job_id, restaurant_id):
         staff_constraints = {n["employee_name"]: n["notes"] for n in _raw_notes if n.get("employee_name")}
         _close_times = _gct_sched(restaurant_id)
         _role_close_buffers = _grcb_sched(restaurant_id)
+        _restaurant_for_sched = get_restaurant(restaurant_id)
         preview_rows = []
         hours_scheduled = 0.0
         hours_added = 0.0
@@ -2876,18 +2935,74 @@ def _run_schedule_job(job_id, restaurant_id):
 
             preview_rows, rows_trimmed, trimmed_dates = _trim_server_overlap_cap(
                 preview_rows, _close_times, _role_close_buffers,
+                max_overlap=getattr(_restaurant_for_sched, 'section_count', None),
             )
             if rows_trimmed:
                 hours_scheduled = _safe_hours_sum(preview_rows)
-                print(f"[schedule] trimmed {rows_trimmed} row(s) over the 7-server cap across {trimmed_dates}")
+                print(f"[schedule] trimmed {rows_trimmed} row(s) over the server cap across {trimmed_dates}")
+
+            # Final sanity pass against facts the model cannot be trusted to
+            # respect on its own: the real roster, the real week, and one
+            # person in one place at a time. _row_fields_look_sane only ever
+            # checked that fields were individually well-FORMED, so a
+            # hallucinated name or a date outside next week passed straight
+            # through into a schedule that gets emailed to staff.
+            _roster = {(e or "").strip().lower() for e in (result.get("roster") or []) if e}
+            _valid_dates = set(result.get("week_dates") or [])
+            _seen_slots: dict = {}
+            for _r in preview_rows:
+                _emp_l = (_r.get("employee") or "").strip().lower()
+                if _roster and _emp_l and _emp_l not in _roster:
+                    _r["needs_review"] = True
+                    _r["review_reason"] = "not on the staff list"
+                if _valid_dates and _r.get("date") not in _valid_dates:
+                    _r["needs_review"] = True
+                    _r["review_reason"] = "date is outside next week"
+                _slot = (_r.get("date"), _emp_l, _parse_time_to_minutes(_r.get("shift_start", "")))
+                if _emp_l and _slot in _seen_slots:
+                    _r["needs_review"] = True
+                    _r["review_reason"] = "double-booked at the same start time"
+                elif _emp_l:
+                    _seen_slots[_slot] = True
+            _week_by_emp: dict = {}
+            for _r in preview_rows:
+                _e = (_r.get("employee") or "").strip().lower()
+                if not _e:
+                    continue
+                try:
+                    _week_by_emp[_e] = _week_by_emp.get(_e, 0.0) + float(_r.get("scheduled_hours") or 0)
+                except (ValueError, TypeError):
+                    pass
+            _over_40 = {e for e, h in _week_by_emp.items() if h > _WEEKLY_HOURS_CEILING}
+            if _over_40:
+                for _r in preview_rows:
+                    if (_r.get("employee") or "").strip().lower() in _over_40:
+                        _r["needs_review"] = True
+                        _r["review_reason"] = "over 40h for the week"
+            _flagged = sum(1 for _r in preview_rows if _r.get("needs_review"))
+            result["rows_needing_review"] = _flagged
+            if _flagged:
+                print(f"[schedule] {_flagged} row(s) flagged for review")
 
             # Rebuild schedule_csv from the (possibly repaired) rows so the
             # downloadable/shared CSV matches what the app displays instead
             # of shipping the pre-repair text out from under it.
+            #
+            # needs_review used to live only on preview_rows, so the flag was
+            # lost the moment the CSV was rebuilt — a row generation could not
+            # repair was saved to history and emailed to staff with nothing
+            # marking it. It rides in the notes column now, which is the one
+            # field a human actually reads on the printed schedule.
             if preview_rows:
                 _lines_out = [",".join(_COLS)]
                 for _r in preview_rows:
-                    _lines_out.append(",".join(_r.get(c, "") for c in _COLS))
+                    if _r.get("needs_review"):
+                        _n = (_r.get("notes") or "").strip()
+                        _why = _r.get("review_reason") or "could not be auto-checked"
+                        _mark = f"NEEDS REVIEW: {_why}"
+                        if "NEEDS REVIEW" not in _n:
+                            _r["notes"] = f"{_n} — {_mark}" if _n else _mark
+                    _lines_out.append(",".join(str(_r.get(c, "") or "").replace(",", ";") for c in _COLS))
                 result["schedule_csv"] = "\n".join(_lines_out)
         except Exception as _csv_ex:
             print(f"[schedule] csv parse error: {_csv_ex}")
@@ -2927,6 +3042,11 @@ def _run_schedule_job(job_id, restaurant_id):
             schedule_csv=result["schedule_csv"],
             summary=result.get("summary", []),
             preview_rows=preview_rows,
+            # How many rows failed a check the model cannot be trusted to
+            # make for itself — a hallucinated name, a date outside the
+            # generated week, a double booking, a week over 40 hours. The
+            # owner must see this before publishing to staff.
+            rows_needing_review=result.get("rows_needing_review", 0),
             week_dates=result.get("week_dates", []),
             week_days=result.get("week_days", []),
             projected_revenue=result.get("projected_revenue", 0),
@@ -3317,6 +3437,10 @@ def client_upload_data(current_user):
 
     # Save it
     save_client_data(restaurant_id, data_type, csv_content, source="upload")
+    # The AI insight is cached for five minutes with no invalidation, so a
+    # fresh upload showed the previous data's narrative beside the new
+    # data's numbers on the same screen. Drop it on write.
+    invalidate_insight_cache(restaurant_id)
 
     # Trigger immediate re-analysis so dashboard reflects new data right away
     _ot_flags = []

@@ -61,12 +61,23 @@ def test_no_order_history_means_nothing_is_claimed():
     assert a["recoverable_monthly"] == 0
 
 
-def _shifts(days, daily_labor_hours, daily_sales, rate=20.0):
+def _shifts(days, daily_labor_hours, daily_sales, rate=20.0, crew=5):
+    """The day's hours spread across a crew, not piled on one person.
+
+    This used to book every hour of the day to a single employee, which at
+    20h/day is 140h a week — so once overtime was priced at 1.5x the way
+    federal law requires, the "gap doubles with the period" assertion below
+    stopped holding for a reason that had nothing to do with period
+    normalization. A realistic crew keeps everyone under 40 and leaves the
+    arithmetic these tests are actually about unchanged."""
     out = []
+    per_person = daily_labor_hours / float(crew)
     for i in range(days):
         d = "2026-08-%02d" % (1 + i)
-        out.append({"date": d, "employee": "A", "role": "Server", "scheduled_hours": daily_labor_hours,
-                    "actual_hours": daily_labor_hours, "hourly_rate": rate, "sales_that_day": daily_sales})
+        for c in range(crew):
+            out.append({"date": d, "employee": f"E{c}", "role": "Server",
+                        "scheduled_hours": per_person, "actual_hours": per_person,
+                        "hourly_rate": rate, "sales_that_day": daily_sales})
     return out
 
 
@@ -159,8 +170,18 @@ def test_a_real_overage_still_reports_savings():
     r = analyse_shifts(_days(300, 300), hourly_rate=26.0, labor_target=30.0)
     # 416 labor against 600 sales, target 30% = 180 -> 236 over
     assert r["potential_savings"] == 236.0
-    assert r["potential_savings_monthly"] > 0
     assert r["sales_data_missing"] is False
+    # Two days is not a week. The period gap above is real and is still
+    # reported; a monthly rate built from it would not be.
+    assert r["period_too_short_to_project"] is True
+    assert r["potential_savings_monthly"] == 0.0
+
+
+def test_a_real_overage_over_a_full_week_does_report_a_monthly_figure():
+    r = analyse_shifts(_days(*([300] * 8)), hourly_rate=26.0, labor_target=30.0)
+    assert r["potential_savings"] > 0
+    assert r["period_too_short_to_project"] is False
+    assert r["potential_savings_monthly"] > 0
 
 
 def test_under_target_reports_nothing_rather_than_a_negative():

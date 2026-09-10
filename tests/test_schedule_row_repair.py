@@ -25,13 +25,20 @@ import client_api
 import models
 
 
-def _fake_build_schedule_result(csv_text):
+def _fake_build_schedule_result(csv_text, roster=None):
     def fake(restaurant_id):
         return {
+            "roster": roster if roster is not None else [],
             "schedule_csv": csv_text,
             "summary": ["- ok"],
-            "week_dates": ["2026-08-17"],
-            "week_days": ["Monday"],
+            # A real 7-day week (Mon 8/17 - Sun 8/23). Was a one-element
+            # stub, which no live generation ever produces — the schedule
+            # job now checks every row's date against the week it generated
+            # for, so the fixture has to be the shape the code really sees.
+            "week_dates": ["2026-08-17", "2026-08-18", "2026-08-19", "2026-08-20",
+                           "2026-08-21", "2026-08-22", "2026-08-23"],
+            "week_days": ["Monday", "Tuesday", "Wednesday", "Thursday",
+                          "Friday", "Saturday", "Sunday"],
             "projected_revenue": 84296,
             "hours_budget": 745.7,
             "labor_budget_dollars": 19388,
@@ -41,8 +48,9 @@ def _fake_build_schedule_result(csv_text):
     return fake
 
 
-def _run(monkeypatch, csv_text, close_times=None, role_close_buffers=None):
-    monkeypatch.setattr(client_api, "_build_schedule_result", _fake_build_schedule_result(csv_text))
+def _run(monkeypatch, csv_text, close_times=None, role_close_buffers=None, roster=None):
+    monkeypatch.setattr(client_api, "_build_schedule_result",
+                        _fake_build_schedule_result(csv_text, roster))
     monkeypatch.setattr(models, "get_staff_notes", lambda restaurant_id: [])
     # The top-up/extend-to-close repair passes also read staff_availability
     # for real (models.get_staff_availability) — unstubbed, this test never
@@ -291,3 +299,68 @@ def test_shift_start_already_past_close_is_flagged_not_fabricated(monkeypatch):
     assert row.get("needs_review") is True
     # Left as the model wrote it — not silently rewritten to something wrong.
     assert row["shift_end"] == "11:00pm"
+
+
+# ── Facts the model cannot be trusted to respect on its own ────────────────
+#
+# _row_fields_look_sane only ever checked that fields were individually
+# well-FORMED — non-empty, not a weekday word, not a clock time. A
+# hallucinated employee, a date outside the generated week, the same person
+# booked twice at once, and a 44-hour week all passed straight through into
+# a CSV that gets emailed to staff.
+
+
+def test_a_name_not_on_the_staff_list_is_flagged(monkeypatch):
+    csv_text = HEADER + "\n" + "2026-08-21,Friday,Ghost B.,Server,5:00pm,10:00pm,5.0,closer"
+    result = _run(monkeypatch, csv_text, roster=["Jamie L.", "Sofia R."])
+    row = result["preview_rows"][0]
+    assert row.get("needs_review") is True
+    assert "staff list" in row.get("review_reason", "")
+
+
+def test_a_real_name_is_not_flagged(monkeypatch):
+    csv_text = HEADER + "\n" + "2026-08-21,Friday,Jamie L.,Server,5:00pm,10:00pm,5.0,closer"
+    result = _run(monkeypatch, csv_text, roster=["Jamie L.", "Sofia R."])
+    assert "needs_review" not in result["preview_rows"][0]
+
+
+def test_a_date_outside_the_generated_week_is_flagged(monkeypatch):
+    csv_text = HEADER + "\n" + "2026-09-04,Friday,Jamie L.,Server,5:00pm,10:00pm,5.0,closer"
+    result = _run(monkeypatch, csv_text, roster=["Jamie L."])
+    row = result["preview_rows"][0]
+    assert row.get("needs_review") is True
+    assert "outside next week" in row.get("review_reason", "")
+
+
+def test_the_same_person_twice_at_one_start_time_is_flagged(monkeypatch):
+    csv_text = HEADER + "\n" + "\n".join([
+        "2026-08-21,Friday,Jamie L.,Server,5:00pm,10:00pm,5.0,closer",
+        "2026-08-21,Friday,Jamie L.,Host,5:00pm,10:00pm,5.0,also host",
+    ])
+    result = _run(monkeypatch, csv_text, roster=["Jamie L."])
+    assert any(r.get("needs_review") for r in result["preview_rows"])
+
+
+def test_a_week_over_forty_hours_is_flagged(monkeypatch):
+    rows = [f"2026-08-{d},{n},Jamie L.,Server,10:00am,9:00pm,11.0,long day"
+            for d, n in (("17", "Monday"), ("18", "Tuesday"), ("19", "Wednesday"),
+                         ("20", "Thursday"))]
+    result = _run(monkeypatch, HEADER + "\n" + "\n".join(rows), roster=["Jamie L."])
+    assert all(r.get("needs_review") for r in result["preview_rows"])
+    assert "over 40h" in result["preview_rows"][0]["review_reason"]
+
+
+def test_a_flagged_row_carries_its_warning_into_the_published_csv(monkeypatch):
+    """needs_review lived only on preview_rows, so the flag was lost the
+    moment the CSV was rebuilt — and the CSV is what reaches staff."""
+    csv_text = HEADER + "\n" + "2026-08-21,Friday,Ghost B.,Server,5:00pm,10:00pm,5.0,closer"
+    result = _run(monkeypatch, csv_text, roster=["Jamie L."])
+    assert "NEEDS REVIEW" in result["schedule_csv"]
+    assert result["rows_needing_review"] == 1
+
+
+def test_a_clean_schedule_says_nothing_about_review(monkeypatch):
+    csv_text = HEADER + "\n" + "2026-08-21,Friday,Jamie L.,Server,5:00pm,10:00pm,5.0,closer"
+    result = _run(monkeypatch, csv_text, roster=["Jamie L."])
+    assert "NEEDS REVIEW" not in result["schedule_csv"]
+    assert result["rows_needing_review"] == 0
