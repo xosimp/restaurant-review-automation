@@ -828,7 +828,9 @@ def send_signup_admin_alert(restaurant_name: str, owner_name: str, email: str, p
 
 
 def send_payment_email(to_email, restaurant_name, tier=None,
-                       module_count: int = None):
+                       module_count: int = None,
+                       restaurant_id: int = None,
+                       modules: list = None):
     """Send payment email with a dynamically generated Stripe checkout link."""
     if not _resend_key():
         return
@@ -853,8 +855,10 @@ def send_payment_email(to_email, restaurant_name, tier=None,
     saving = annual_saving(module_count)
 
     # Generate dynamic Stripe checkout links — both monthly and annual
-    checkout_monthly = create_stripe_checkout(module_count, to_email, restaurant_name, "monthly")
-    checkout_annual  = create_stripe_checkout(module_count, to_email, restaurant_name, "annual")
+    checkout_monthly = create_stripe_checkout(module_count, to_email, restaurant_name, "monthly",
+                                              restaurant_id=restaurant_id, modules=modules)
+    checkout_annual  = create_stripe_checkout(module_count, to_email, restaurant_name, "annual",
+                                              restaurant_id=restaurant_id, modules=modules)
 
     annual_price    = f"{_pm(plan['annual'])}/yr"
     annual_monthly  = f"{_pm(round(plan['annual'] / 12.0))}/mo"
@@ -1167,9 +1171,33 @@ def send_team_invite_email(to_email, restaurant_name, username, password, invite
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
+def _checkout_metadata(restaurant_name, module_count, restaurant_id=None, modules=None):
+    """What Stripe carries back to us on every event for this subscription.
+
+    Audit #5: this used to be the restaurant NAME and a module COUNT, and no
+    handler read either. Reconciliation ran on stripe_customer_id — which does
+    not exist until the first invoice.paid — falling back to matching the
+    customer email against users.email then restaurants.owner_email, so an
+    owner who changed their email between checkout and first payment stopped
+    reconciling silently.
+
+    restaurant_id is the stable answer, and `module_keys` is what the client
+    actually bought, so a payment can grant entitlement instead of leaving it
+    to whatever an admin last typed. Stripe metadata values must be strings.
+    """
+    meta = {"restaurant": restaurant_name, "modules": str(module_count)}
+    if restaurant_id is not None:
+        meta["restaurant_id"] = str(restaurant_id)
+    if modules:
+        meta["module_keys"] = ",".join(sorted(str(m).strip().lower() for m in modules if str(m).strip()))
+    return meta
+
+
 def create_stripe_checkout(module_count: int, owner_email: str,
                             restaurant_name: str,
-                            billing_period: str = "monthly"):
+                            billing_period: str = "monthly",
+                            restaurant_id: int = None,
+                            modules: list = None):
     """
     Dynamically create a Stripe checkout session for any module count.
     Returns the checkout URL or None on failure.
@@ -1244,18 +1272,17 @@ def create_stripe_checkout(module_count: int, owner_email: str,
                 # is the contract's term (pricing.RETAINER_START_DAYS), not
                 # a marketing trial, and applies to both billing periods.
                 "trial_period_days": RETAINER_START_DAYS,
-                "metadata": {
-                    "restaurant": restaurant_name,
-                    "modules": str(module_count),
-                    "billing_period": billing_period,
-                }
+                "metadata": dict(
+                    _checkout_metadata(restaurant_name, module_count, restaurant_id, modules),
+                    billing_period=billing_period,
+                )
             },
             success_url="https://dashboard.cavnar.ai?payment=success",
             cancel_url="https://dashboard.cavnar.ai?payment=cancelled",
             custom_text={
                 "submit": {"message": f"{money(plan['setup'])} setup today. Your {'annual' if billing_period == 'annual' else 'monthly'} retainer of {money(plan['annual'] if billing_period == 'annual' else plan['monthly'])} starts in {RETAINER_START_DAYS} days."}
             },
-            metadata={"restaurant": restaurant_name, "modules": str(module_count)},
+            metadata=_checkout_metadata(restaurant_name, module_count, restaurant_id, modules),
         )
         return session.url
 

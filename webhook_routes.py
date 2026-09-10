@@ -145,6 +145,70 @@ def _restaurant_for_stripe(customer_id: str = "", email: str = ""):
     return None
 
 
+def _restaurant_from_metadata(meta) -> int:
+    """restaurant_id out of Stripe metadata, if it is there and it is real.
+
+    Preferred over customer id and email both: it is set at checkout, it is
+    stable, and it survives an owner changing their email. Validated against
+    the table rather than trusted, because metadata is only as good as the
+    session that set it."""
+    try:
+        raw = (meta or {}).get("restaurant_id")
+        if not raw:
+            return None
+        rid = int(str(raw).strip())
+        conn = get_conn()
+        row = conn.execute("SELECT id FROM restaurants WHERE id=?", (rid,)).fetchone()
+        conn.close()
+        return row["id"] if row else None
+    except Exception:
+        return None
+
+
+# The module keys checkout is allowed to grant. "intel" is derived from full
+# tier and has no column, so it is not settable here.
+_GRANTABLE_MODULES = ("reviews", "labor", "inventory", "marketing")
+
+
+def _apply_module_entitlement(restaurant_id: int, module_keys: str) -> dict:
+    """Set this restaurant's module flags to exactly what was paid for.
+
+    Audit #5: checkout put a module COUNT in metadata and nothing read it, so
+    what a client paid for and what they could open were two unconnected
+    facts — every flag was a manual admin step, and Stripe would never correct
+    a mismatch in either direction.
+
+    Only called with keys that came from OUR checkout metadata, and only for
+    the four real columns. Returns the updates applied, or {} if the metadata
+    carried nothing usable — an empty list must never be read as "revoke
+    everything", because that is also what a missing key looks like.
+    """
+    keys = {k.strip().lower() for k in (module_keys or "").split(",") if k.strip()}
+    keys &= set(_GRANTABLE_MODULES)
+    if not keys:
+        return {}
+    updates = {f"module_{k}": (1 if k in keys else 0) for k in _GRANTABLE_MODULES}
+    try:
+        update_restaurant(restaurant_id, updates)
+        print(f"Entitlement set from Stripe for restaurant {restaurant_id}: {sorted(keys)}")
+        return updates
+    except Exception as e:
+        print(f"Failed to apply entitlement for {restaurant_id}: {e}")
+        return {}
+
+
+def _set_billing_status(restaurant_id: int, status: str, reason: str = ""):
+    """Move a restaurant and every location it is billed with to one status."""
+    try:
+        for _rid in _sibling_restaurant_ids(restaurant_id):
+            update_restaurant(_rid, {"billing_status": status})
+        print(f"billing_status={status} for {_sibling_restaurant_ids(restaurant_id)} ({reason})")
+        return True
+    except Exception as e:
+        print(f"Failed to set billing_status={status} for {restaurant_id}: {e}")
+        return False
+
+
 def _sibling_restaurant_ids(restaurant_id: int):
     """Every location that shares this restaurant's location_group.
 
@@ -262,7 +326,117 @@ def stripe_webhook():
             print(f"Alert email failed: {e}")
 
     # ── Handle events ──────────────────────────────────────────────────────
-    if event["type"] == "invoice.payment_failed":
+    if event["type"] == "checkout.session.completed":
+        # The event that actually knows who paid and what for. Before this
+        # existed, nothing ran until the first invoice.paid — so the Stripe
+        # customer id was unknown in between, and the module count sitting in
+        # metadata was never read by anything at all.
+        sess        = event["data"]["object"]
+        meta        = sess.get("metadata") or {}
+        customer_id = sess.get("customer", "") or ""
+        sub_id      = sess.get("subscription", "") or ""
+        email       = (sess.get("customer_details") or {}).get("email") or sess.get("customer_email") or ""
+        rid = _restaurant_from_metadata(meta) or _restaurant_for_stripe(customer_id, email)
+        if rid:
+            updates = {"billing_status": "active"}
+            if customer_id:
+                updates["stripe_customer_id"] = customer_id
+            try:
+                update_restaurant(rid, updates)
+                for _sib in _sibling_restaurant_ids(rid):
+                    if _sib != rid:
+                        update_restaurant(_sib, {"billing_status": "active"})
+            except Exception as e:
+                print(f"checkout.session.completed: failed to activate {rid}: {e}")
+            granted = _apply_module_entitlement(rid, meta.get("module_keys", ""))
+            send_alert(
+                f"✅ Checkout completed — {meta.get('restaurant') or email}",
+                f"""Checkout completed and access provisioned.<br><br>
+                <strong>Restaurant:</strong> {meta.get('restaurant') or '(unknown)'} (id {rid})<br>
+                <strong>Stripe customer:</strong> {customer_id or '(none)'}<br>
+                <strong>Subscription:</strong> {sub_id or '(none)'}<br>
+                <strong>Modules granted:</strong> """ + (
+                    ", ".join(sorted(k.replace("module_", "") for k, v in granted.items() if v))
+                    if granted else "none in metadata — entitlement left as it was, set it in admin")
+            )
+        else:
+            send_alert(
+                "⚠ Checkout completed but no restaurant matched",
+                f"""A checkout completed and could not be reconciled.<br><br>
+                <strong>Customer:</strong> {customer_id}<br>
+                <strong>Email:</strong> {email}<br>
+                <strong>Metadata:</strong> {meta}<br><br>
+                Nothing was provisioned. Set this up by hand at
+                <a href="https://dashboard.cavnar.ai/admin">dashboard.cavnar.ai/admin</a>."""
+            )
+
+    elif event["type"] == "customer.subscription.updated":
+        # Upgrades and downgrades. Without this a plan change in Stripe never
+        # reached the module flags, so a client could pay for one module and
+        # keep four, or pay for four and keep one, indefinitely.
+        sub  = event["data"]["object"]
+        meta = sub.get("metadata") or {}
+        rid  = _restaurant_from_metadata(meta) or _restaurant_for_stripe(sub.get("customer", ""), "")
+        status = (sub.get("status") or "").lower()
+        if rid:
+            granted = _apply_module_entitlement(rid, meta.get("module_keys", ""))
+            # Stripe's own subscription status is authoritative for access.
+            if status in ("active", "trialing"):
+                _set_billing_status(rid, "active", "subscription.updated")
+            elif status == "past_due":
+                _set_billing_status(rid, "past_due", "subscription.updated")
+            elif status in ("canceled", "unpaid", "incomplete_expired"):
+                _set_billing_status(rid, "churned", f"subscription.updated status={status}")
+            if granted or status not in ("active", "trialing"):
+                send_alert(
+                    f"🔁 Subscription changed — {meta.get('restaurant') or rid}",
+                    f"""Subscription status is now <strong>{status}</strong>.<br><br>
+                    <strong>Restaurant id:</strong> {rid}<br>
+                    <strong>Modules:</strong> """ + (
+                        ", ".join(sorted(k.replace("module_", "") for k, v in granted.items() if v))
+                        if granted else "unchanged (no module_keys in metadata)")
+                )
+        else:
+            print(f"subscription.updated for unmatched customer {sub.get('customer','')}")
+
+    elif event["type"] in ("charge.refunded", "charge.dispute.created"):
+        # Money came back. Nothing here used to react at all, so a refunded or
+        # disputed customer kept the whole product indefinitely.
+        obj         = event["data"]["object"]
+        customer_id = obj.get("customer", "") or ""
+        email       = obj.get("billing_details", {}).get("email") or obj.get("receipt_email") or ""
+        disputed    = event["type"] == "charge.dispute.created"
+        amount      = (obj.get("amount_refunded") or obj.get("amount") or 0) / 100
+        rid = _restaurant_for_stripe(customer_id, email)
+        acted = _set_billing_status(rid, "paused", event["type"]) if rid else False
+        send_alert(
+            ("⛔ Chargeback opened — " if disputed else "↩ Refund issued — ") + (email or customer_id),
+            f"""{'A customer has disputed a charge.' if disputed else 'A charge was refunded.'}<br><br>
+            <strong>Amount:</strong> ${amount:,.2f}<br>
+            <strong>Customer:</strong> {customer_id or '(none)'}<br>
+            <strong>Email:</strong> {email or '(none)'}<br>
+            <strong>Access:</strong> """ + (
+                f"paused for restaurant {rid} and every location billed with it. "
+                "Reactivate in admin if this was expected."
+                if acted else
+                "NOT changed — no restaurant matched. Handle this by hand at "
+                "<a href=\"https://dashboard.cavnar.ai/admin\">dashboard.cavnar.ai/admin</a>.")
+        )
+
+    elif event["type"] == "invoice.payment_action_required":
+        # 3-D Secure. The client has to authenticate or the payment never
+        # lands; silence here looked exactly like a successful renewal.
+        inv   = event["data"]["object"]
+        email = inv.get("customer_email", "unknown")
+        send_alert(
+            f"🔐 Payment needs authentication — {email}",
+            f"""Stripe needs the client to confirm this payment (3-D Secure).<br><br>
+            <strong>Customer:</strong> {email}<br>
+            <strong>Amount:</strong> ${(inv.get('amount_due', 0) / 100):.2f}<br><br>
+            They should have an email from Stripe. Access is unchanged for now."""
+        )
+
+    elif event["type"] == "invoice.payment_failed":
         inv     = event["data"]["object"]
         email   = inv.get("customer_email","unknown")
         amount  = inv.get("amount_due", 0) / 100
@@ -272,6 +446,16 @@ def stripe_webhook():
         if next_attempt:
             from datetime import datetime
             next_str = f" Stripe will retry on {datetime.fromtimestamp(next_attempt).strftime('%B %d')}."
+
+        # past_due is in ACTIVE_BILLING_STATES, so this is a warning state and
+        # not a lockout — access continues while Stripe retries, which is the
+        # right direction. What it changes is that the state was in the
+        # allowlist and nothing ever wrote it: a failing client stayed
+        # "active" through the whole retry schedule and then dropped to
+        # churned with no step in between, invisible to you and to them.
+        _failed_rid = _restaurant_for_stripe(inv.get("customer", "") or "", email)
+        if _failed_rid:
+            _set_billing_status(_failed_rid, "past_due", "invoice.payment_failed")
 
         send_alert(
             f"⚠ Payment failed — {email}",
@@ -367,6 +551,12 @@ def stripe_webhook():
                     if first_payment:
                         updates["billing_status"] = "active"
                         print(f"Auto-activated billing_status for {email}")
+                    elif (dict(row)["billing_status"] or "").lower() == "past_due":
+                        # A retry succeeded. Clear the dunning state even when
+                        # billing_reason isn't one of the two above, or a
+                        # recovered client would sit in past_due forever.
+                        updates["billing_status"] = "active"
+                        print(f"Payment recovered — cleared past_due for {email}")
                     # A paid invoice reactivates every location in the group —
                     # the same set cancellation churns — so a customer who
                     # pays after lapsing regains access everywhere at once.
@@ -552,6 +742,12 @@ def docusign_webhook():
                     1 if r.get("module_inventory") else 0,
                     1 if r.get("module_marketing") else 0,
                 ])
+                _module_keys = [k for k, on in (
+                    ("reviews",   r.get("module_reviews")),
+                    ("labor",     r.get("module_labor")),
+                    ("inventory", r.get("module_inventory")),
+                    ("marketing", r.get("module_marketing")),
+                ) if on]
 
                 # Send payment email
                 try:
@@ -559,6 +755,8 @@ def docusign_webhook():
                         to_email=r["owner_email"],
                         restaurant_name=r["name"],
                         module_count=mods,
+                        restaurant_id=r["id"],
+                        modules=_module_keys,
                     )
                     print(f"Payment email sent to {r['owner_email']} after signing")
                     try:

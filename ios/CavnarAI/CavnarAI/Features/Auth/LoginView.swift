@@ -290,23 +290,37 @@ struct LoginView: View {
 
     // MARK: - Anchor
 
+    /// Self-serve signup is closed: every account is set up by Will directly,
+    /// and the backend refuses /mobile/api/register with a 403 unless
+    /// ALLOW_PUBLIC_SIGNUP is set (see mobile_api.public_signup_open). The
+    /// button and RegisterView are kept, not deleted — flip this to true on
+    /// the day the backend flag is turned on, and the flow works again.
+    private let publicSignupOpen = false
+
     private var anchor: some View {
         HStack(spacing: LoginMetrics.spaceXS) {
-            Text("Don't have an account?")
-                .font(.cavnarBody(14))
-                .foregroundStyle(Color.cavnarInk3)
-            Button {
-                Haptic.light()
-                showingRegister = true
-            } label: {
-                Text("Sign up")
-                    .font(.cavnarBody(14, weight: 700))
-                    .foregroundStyle(Color.cavnarEmber2)
-                    .frame(minHeight: LoginMetrics.touch)
-                    .padding(.horizontal, LoginMetrics.spaceXS)
-                    .contentShape(Rectangle())
+            if publicSignupOpen {
+                Text("Don't have an account?")
+                    .font(.cavnarBody(14))
+                    .foregroundStyle(Color.cavnarInk3)
+                Button {
+                    Haptic.light()
+                    showingRegister = true
+                } label: {
+                    Text("Sign up")
+                        .font(.cavnarBody(14, weight: 700))
+                        .foregroundStyle(Color.cavnarEmber2)
+                        .frame(minHeight: LoginMetrics.touch)
+                        .padding(.horizontal, LoginMetrics.spaceXS)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            } else {
+                Text("Accounts are set up with you directly — email will@cavnar.ai")
+                    .font(.cavnarBody(13))
+                    .foregroundStyle(Color.cavnarInk3)
+                    .multilineTextAlignment(.center)
             }
-            .buttonStyle(.plain)
         }
         .frame(maxWidth: .infinity)
         .loginRise(Cue.anchor, enabled: introReady)

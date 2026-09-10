@@ -42,6 +42,44 @@ AI_MONTHLY_BUDGET_USD = float(os.getenv("AI_MONTHLY_BUDGET_USD", "150"))
 # can't drain the account through a hundred separate under-budget clients.
 AI_GLOBAL_MONTHLY_BUDGET_USD = float(os.getenv("AI_GLOBAL_MONTHLY_BUDGET_USD", "1500"))
 
+# Unpaid accounts — demos, prospects, anything not billing_status active or
+# internal — get their own, much smaller ceilings, AND their spend is excluded
+# from the global figure above.
+#
+# Audit #5 found the sharp edge: ai_budget_exceeded checks the global ceiling
+# first, for every caller, so spend on non-paying accounts could exhaust it
+# and the people who then saw "AI is over budget" were the paying clients.
+# A demo account going stale, or a handful of prospect accounts left open,
+# should never be able to take Ask Cavnar away from someone who pays for it.
+AI_UNPAID_DAILY_BUDGET_USD = float(os.getenv("AI_UNPAID_DAILY_BUDGET_USD", "2"))
+AI_UNPAID_MONTHLY_BUDGET_USD = float(os.getenv("AI_UNPAID_MONTHLY_BUDGET_USD", "25"))
+
+# billing_status values that count as paying for budget purposes.
+_PAID_BILLING_STATES = {"active", "internal"}
+
+
+def _is_paid_account(restaurant_id, db_path=None):
+    """Whether this restaurant draws on the paid budgets and the global pool.
+
+    A row that does not exist is not a client, so it gets the unpaid ceilings.
+    A lookup that ERRORS fails open to paid, matching what every other gate in
+    this codebase does (subscription_allows_access, restaurant_has_module): a
+    database hiccup must not quietly drop a paying client onto a $2 ceiling.
+    restaurant_id always comes from an authenticated session, so there is no
+    caller who benefits from the open direction."""
+    if restaurant_id is None:
+        return True   # global/system calls are not attributable to a client
+    try:
+        from models import get_conn, DB_PATH
+        conn = get_conn(db_path or DB_PATH)
+        row = conn.execute("SELECT billing_status FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
+        conn.close()
+        if not row:
+            return False
+        return (row["billing_status"] or "").strip().lower() in _PAID_BILLING_STATES
+    except Exception:
+        return True
+
 # Spend only moves when a call completes, and a SUM over ai_usage on every
 # call would be pure overhead on a path that already takes seconds.
 _BUDGET_CACHE_SECS = 60
@@ -57,7 +95,7 @@ class AIBudgetExceeded(RuntimeError):
     """
 
 
-def _spend_since(sql_window, restaurant_id=None, db_path=None):
+def _spend_since(sql_window, restaurant_id=None, db_path=None, paid_only=False):
     from models import get_conn, DB_PATH
     conn = get_conn(db_path or DB_PATH)
     try:
@@ -67,6 +105,12 @@ def _spend_since(sql_window, restaurant_id=None, db_path=None):
         if restaurant_id is not None:
             where += " AND restaurant_id=?"
             params.append(restaurant_id)
+        elif paid_only:
+            # The global pool is what paying clients share. Spend on demo and
+            # prospect accounts is bounded by its own ceilings and must not
+            # count here, or those accounts can starve the people paying.
+            where += (" AND (restaurant_id IS NULL OR restaurant_id IN "
+                      "(SELECT id FROM restaurants WHERE LOWER(TRIM(COALESCE(billing_status,''))) IN ('active','internal')))")
         row = conn.execute(
             f"SELECT COALESCE(SUM(cost_usd), 0) AS spend FROM ai_usage {where}", params
         ).fetchone()
@@ -75,12 +119,12 @@ def _spend_since(sql_window, restaurant_id=None, db_path=None):
         conn.close()
 
 
-def _cached_spend(cache_key, sql_window, restaurant_id, db_path):
+def _cached_spend(cache_key, sql_window, restaurant_id, db_path, paid_only=False):
     now = time.time()
     hit = _budget_cache.get(cache_key)
     if hit and now - hit[0] < _BUDGET_CACHE_SECS:
         return hit[1]
-    spend = _spend_since(sql_window, restaurant_id, db_path)
+    spend = _spend_since(sql_window, restaurant_id, db_path, paid_only=paid_only)
     _budget_cache[cache_key] = (now, spend)
     return spend
 
@@ -91,16 +135,27 @@ def ai_budget_status(restaurant_id=None, db_path=None):
     now = datetime.now(timezone.utc)
     day = now.strftime("%Y-%m-%d 00:00:00")
     month = now.strftime("%Y-%m-01 00:00:00")
+    paid = _is_paid_account(restaurant_id, db_path)
     out = {
-        "global_month": {"spend": _cached_spend(("g", month), month, None, db_path),
+        "global_month": {"spend": _cached_spend(("g", month), month, None, db_path, paid_only=True),
                          "budget": AI_GLOBAL_MONTHLY_BUDGET_USD},
     }
     if restaurant_id is not None:
+        # An unpaid account is bounded by its own, much smaller ceilings and
+        # is deliberately absent from the global figure above, so it cannot
+        # exhaust the pool a paying client depends on.
         out["day"] = {"spend": _cached_spend((restaurant_id, day), day, restaurant_id, db_path),
-                      "budget": AI_DAILY_BUDGET_USD}
+                      "budget": AI_DAILY_BUDGET_USD if paid else AI_UNPAID_DAILY_BUDGET_USD}
         out["month"] = {"spend": _cached_spend((restaurant_id, month), month, restaurant_id, db_path),
-                        "budget": AI_MONTHLY_BUDGET_USD}
-    for v in out.values():
+                        "budget": AI_MONTHLY_BUDGET_USD if paid else AI_UNPAID_MONTHLY_BUDGET_USD}
+        out["paid"] = paid
+        if not paid:
+            # An unpaid account is never refused for the global pool it does
+            # not draw on.
+            out["global_month"] = dict(out["global_month"], budget=0.0)
+    for k, v in out.items():
+        if not isinstance(v, dict):
+            continue
         v["over"] = bool(v["budget"]) and v["spend"] >= v["budget"]
         v["pct"] = round((v["spend"] / v["budget"]) * 100, 1) if v["budget"] else 0.0
     return out
@@ -116,9 +171,12 @@ def ai_budget_exceeded(restaurant_id=None, db_path=None):
     """
     try:
         status = ai_budget_status(restaurant_id, db_path)
+        unpaid = status.get("paid") is False
         for scope, label in (("global_month", "monthly budget across all clients"),
-                             ("day", "daily budget"), ("month", "monthly budget")):
-            if scope in status and status[scope]["over"]:
+                             ("day", "daily budget for accounts that aren't on a paid plan" if unpaid else "daily budget"),
+                             ("month", "monthly budget for accounts that aren't on a paid plan" if unpaid else "monthly budget")):
+            entry = status.get(scope)
+            if isinstance(entry, dict) and entry.get("over"):
                 return label
         return None
     except Exception as e:

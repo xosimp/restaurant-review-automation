@@ -47,6 +47,26 @@ def _client(recorder=None):
     return _Client()
 
 
+def _paying(db_path, *rids):
+    """Create these restaurants as paying accounts.
+
+    Added when audit #5 split the ceilings: accounts that aren't on a paid
+    plan now get their own much smaller budgets and are excluded from the
+    global pool, so spend on a demo can't block someone who pays. These tests
+    are all about the PAID ceilings, and they used to log usage against
+    restaurant ids that had no row at all — which now resolves as unpaid and
+    silently tests the wrong limits. The rows make the fixture say what the
+    tests already meant.
+    """
+    conn = models.get_conn(db_path)
+    for rid in rids:
+        conn.execute("INSERT OR IGNORE INTO restaurants (id, name, owner_email, billing_status) "
+                     "VALUES (?,?,?,'active')", (rid, f"Client {rid}", f"c{rid}@example.test"))
+    conn.commit()
+    conn.close()
+    ai_utils._budget_cache.clear()
+
+
 def _spend(rid, dollars):
     """Write a row worth roughly `dollars` at Sonnet output pricing."""
     log_ai_usage(rid, "test", "claude-sonnet-5", 0, int(dollars / 15.00 * 1_000_000))
@@ -62,6 +82,7 @@ def test_nothing_spent_is_under_every_budget(db_path):
 
 
 def test_a_client_past_its_daily_budget_is_stopped(db_path, monkeypatch):
+    _paying(db_path, 1)
     monkeypatch.setattr(ai_utils, "AI_DAILY_BUDGET_USD", 1.00)
     _spend(1, 1.50)
     assert ai_budget_exceeded(1) == "daily budget"
@@ -70,6 +91,7 @@ def test_a_client_past_its_daily_budget_is_stopped(db_path, monkeypatch):
 def test_one_client_overspending_does_not_stop_another(db_path, monkeypatch):
     monkeypatch.setattr(ai_utils, "AI_DAILY_BUDGET_USD", 1.00)
     monkeypatch.setattr(ai_utils, "AI_GLOBAL_MONTHLY_BUDGET_USD", 1000.00)
+    _paying(db_path, 1, 2)
     _spend(1, 5.00)
     assert ai_budget_exceeded(1) == "daily budget"
     assert ai_budget_exceeded(2) is None
@@ -81,6 +103,7 @@ def test_the_global_ceiling_catches_spend_spread_across_clients(db_path, monkeyp
     monkeypatch.setattr(ai_utils, "AI_DAILY_BUDGET_USD", 1000.00)
     monkeypatch.setattr(ai_utils, "AI_MONTHLY_BUDGET_USD", 1000.00)
     monkeypatch.setattr(ai_utils, "AI_GLOBAL_MONTHLY_BUDGET_USD", 3.00)
+    _paying(db_path, 1, 2, 3, 4, 9)
     for rid in range(1, 5):
         _spend(rid, 1.00)
     assert ai_budget_exceeded(9) == "monthly budget across all clients"
@@ -90,6 +113,7 @@ def test_a_budget_of_zero_disables_that_ceiling(db_path, monkeypatch):
     monkeypatch.setattr(ai_utils, "AI_DAILY_BUDGET_USD", 0)
     monkeypatch.setattr(ai_utils, "AI_MONTHLY_BUDGET_USD", 0)
     monkeypatch.setattr(ai_utils, "AI_GLOBAL_MONTHLY_BUDGET_USD", 0)
+    _paying(db_path, 1)
     _spend(1, 500.00)
     assert ai_budget_exceeded(1) is None
 
@@ -112,6 +136,7 @@ def test_a_call_under_budget_goes_through(db_path):
 
 
 def test_a_call_over_budget_never_reaches_anthropic(db_path, monkeypatch):
+    _paying(db_path, 1)
     monkeypatch.setattr(ai_utils, "AI_DAILY_BUDGET_USD", 1.00)
     _spend(1, 2.00)
     calls = []
@@ -125,6 +150,7 @@ def test_a_call_over_budget_never_reaches_anthropic(db_path, monkeypatch):
 def test_the_refusal_has_its_own_type(db_path, monkeypatch):
     """Callers need to tell 'we stopped spending' apart from 'the AI is
     down' — they mean different things to whoever reads the message."""
+    _paying(db_path, 1)
     monkeypatch.setattr(ai_utils, "AI_DAILY_BUDGET_USD", 1.00)
     _spend(1, 2.00)
     with pytest.raises(AIBudgetExceeded):
@@ -137,6 +163,7 @@ def test_a_burst_inside_one_cache_window_still_trips_the_ceiling(db_path, monkey
     """Spend is cached for a minute to keep a SUM off every call — but the
     calls made during that minute have to count, or a tight loop slides
     under the ceiling forever."""
+    _paying(db_path, 1)
     monkeypatch.setattr(ai_utils, "AI_DAILY_BUDGET_USD", 0.05)
     client = _client()
     made = 0

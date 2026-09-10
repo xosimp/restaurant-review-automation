@@ -345,6 +345,24 @@ def get_user_by_email_rid(email):
     return row["restaurant_id"] if row else None
 
 
+# Self-serve signup is CLOSED by default (audit #5 P0).
+#
+# The route creates a restaurant on the Restaurant dataclass's own defaults —
+# all four modules on, billing_status 'trial' — and 'trial' is in
+# ACTIVE_BILLING_STATES, so the account had full entitlement including Intel.
+# Nothing in this codebase expires a trial, so it kept that access forever,
+# drawing on the same global AI ceiling paying clients draw on. Hiding the
+# Sign Up button would have left the endpoint answering on the open internet,
+# which is where the exposure actually was.
+#
+# Every client today is onboarded by hand. When self-serve is wanted, set
+# ALLOW_PUBLIC_SIGNUP=1 — and fix the entitlement defaults first: a signup
+# should not arrive full-tier, and unpaid accounts need their own AI budget
+# (see ai_utils.AI_UNPAID_* ).
+def public_signup_open() -> bool:
+    return (os.getenv("ALLOW_PUBLIC_SIGNUP", "") or "").strip().lower() in ("1", "true", "yes", "on")
+
+
 @mobile_bp.route("/register", methods=["POST"])
 def mobile_register():
     """Self-serve signup from the app's Sign Up screen — the first public
@@ -355,6 +373,10 @@ def mobile_register():
     straight in — same {token, user} shape /login returns — so the app
     lands on Home instead of bouncing back to the login form. Will gets a
     heads-up email so a signup nobody set up isn't discovered later."""
+    if not public_signup_open():
+        return jsonify(ok=False,
+                       error="Cavnar AI accounts are set up with you directly. Email will@cavnar.ai to get started."), 403
+
     ip = _get_client_ip()
     if _is_rate_limited(ip):
         return jsonify(ok=False, error="Too many attempts — please wait a few minutes and try again."), 429

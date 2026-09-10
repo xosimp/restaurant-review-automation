@@ -837,18 +837,24 @@ def resend_payment(restaurant_id, current_user):
     if not restaurant:
         return jsonify(ok=False, error="Restaurant not found")
     try:
-        mods = sum([
-            1 if restaurant.module_reviews else 0,
-            1 if restaurant.module_labor else 0,
-            1 if restaurant.module_inventory else 0,
-            1 if restaurant.module_marketing else 0,
-        ])
+        # The module KEYS, not just the count — they ride in the checkout
+        # metadata so the paid subscription can grant exactly what was bought
+        # instead of leaving entitlement to whatever an admin last typed.
+        module_keys = [k for k, on in (
+            ("reviews",   restaurant.module_reviews),
+            ("labor",     restaurant.module_labor),
+            ("inventory", restaurant.module_inventory),
+            ("marketing", restaurant.module_marketing),
+        ) if on]
+        mods = len(module_keys)
         if mods == 0:
             return jsonify(ok=False, error="No modules active for this client")
         send_payment_email(
             to_email=restaurant.owner_email,
             restaurant_name=restaurant.name,
             module_count=mods,
+            restaurant_id=restaurant_id,
+            modules=module_keys,
         )
         try:
             log_email(restaurant_id, "payment", restaurant.owner_email, f"Payment link — {restaurant.name}")
