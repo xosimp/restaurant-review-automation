@@ -125,7 +125,99 @@ tracking purposes?" The app has no ads, analytics or attribution SDK.
 
 ---
 
-## 4. Everything else on the form
+## 4. The version page (1.0 Prepare for Submission)
+
+Five fields on this page are required and three are not. Everything here is a
+draft to read before pasting — it is your marketing copy, not mine.
+
+### Required
+
+**Screenshots.** At least one, up to ten, at exactly the pixel size the drop
+zone names. Sign into the `appreview` account (section 1) and shoot Home,
+Reviews, Labor, Food Cost and Marketing — it is seeded precisely so these have
+content. From a simulator at the size App Store Connect asks for, Cmd-S saves a
+correctly-sized PNG to the desktop.
+
+**Subtitle** (30 chars, on the App Information page):
+
+```
+Restaurant intelligence
+```
+
+**Description** (4,000 chars):
+
+```
+Cavnar AI gives an independent restaurant one place to see what its reviews, its labor cost and its food cost are actually doing — and tells you the moment one of them needs you.
+
+REVIEWS
+Every Google review lands in the app as it arrives. Cavnar AI drafts a reply in your voice for each one; you read it, change what you want, and post. A bad review reaches your phone the day it lands instead of sitting for a week.
+
+LABOR
+Import your sales history and Cavnar AI builds next week's schedule against it — the right people on the right shifts for the volume you actually do. You see your labor percentage before you publish the schedule, not after payroll.
+
+FOOD COST
+Track what you buy against what you sell. Cavnar AI surfaces the items running short, the items going in the bin, and what each one costs you a week.
+
+MARKETING
+Schedule posts to your channels, drafted from what is actually happening in your restaurant this week.
+
+INTELLIGENCE
+See how you stand against the restaurants around you, and how you show up when someone asks an AI assistant where to eat nearby.
+
+ALERTS
+A new one-star review, labor running long on a Saturday, an item about to run out — it goes to your phone as it happens, not in a weekly digest you forget to open.
+
+Cavnar AI is a service for restaurants we work with directly. Accounts are set up by us after a service agreement is signed. There is no signup inside the app, and nothing is sold inside the app.
+
+Questions: will@cavnar.ai
+```
+
+**Keywords** (100 chars, commas, no spaces):
+
+```
+reviews,labor cost,scheduling,food cost,inventory,POS,bar,cafe,manager,margins,operations
+```
+
+Leave out anything already in the app name or subtitle — Apple indexes those
+separately and a repeat wastes the character.
+
+**Support URL**:
+
+```
+https://cavnar.ai
+```
+
+### Optional
+
+**Promotional text** (170 chars). Worth filling because it is the one field you
+can change without shipping a build:
+
+```
+Reviews, labor cost and food cost in one place — with an alert the moment one of them needs you.
+```
+
+**Marketing URL**: `https://cavnar.ai`.
+
+**Copyright**: `2026 Cavnar AI`, using whatever the legal entity on the
+Apple Developer account is.
+
+### Skip
+
+**App previews** — video, not required for a first release.
+
+**Routing App Coverage File** — turn-by-turn navigation apps only.
+
+### Not on this page, still needed
+
+- **A build.** Nothing else unlocks Add for Review. Xcode > Product > Archive >
+  Distribute App > App Store Connect. It then takes ten to thirty minutes to
+  finish processing before it can be picked on the version page.
+- **Age rating** and **Pricing and Availability** — both in the left sidebar.
+- Everything in sections 1 to 3 above.
+
+---
+
+## 5. Everything else on the form
 
 | Field | Answer |
 |---|---|
@@ -139,7 +231,7 @@ tracking purposes?" The app has no ads, analytics or attribution SDK.
 
 ---
 
-## 5. Checked in code, no action needed
+## 6. Checked in code, no action needed
 
 Recorded so nobody re-litigates them at submission time:
 
