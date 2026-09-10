@@ -294,6 +294,42 @@ def delete_staff_note_route(note_id, current_user):
     delete_staff_note(note_id)
     return jsonify(ok=True)
 
+@admin_bp.route("/admin/seed-review-account", methods=["POST"])
+@admin_required
+def seed_review_account_route(current_user):
+    """Create (or refresh) the App Store review account, from inside production.
+
+    scripts/seed_review_account.py does the same thing, but running it needs a
+    shell on the container that holds the volume — the database path only
+    exists there, so running it on a laptop either fails or quietly seeds a
+    local file that Apple will never see. This is the same code path, one
+    click, in the process that already has the right database.
+
+    Returns the credentials once. They go in App Store Connect under App
+    Review Information; see docs/app-store-submission.md.
+    """
+    import subprocess
+    import sys
+    import os as _os
+    script = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
+                           "scripts", "seed_review_account.py")
+    if not _os.path.exists(script):
+        return jsonify(ok=False, error="seed_review_account.py is not in this deployment"), 500
+    try:
+        out = subprocess.run(
+            [sys.executable, script],
+            capture_output=True, text=True, timeout=120,
+            # Inherit the environment so the script resolves the same DB_PATH
+            # this process is using, volume mount included.
+            env=dict(_os.environ),
+        )
+    except subprocess.TimeoutExpired:
+        return jsonify(ok=False, error="Seeding timed out"), 504
+    if out.returncode != 0:
+        return jsonify(ok=False, error=(out.stderr or out.stdout or "")[-1500:]), 500
+    return jsonify(ok=True, output=out.stdout)
+
+
 @admin_bp.route("/admin/inventory/import-csv/<int:restaurant_id>", methods=["POST"])
 @admin_required
 def import_csv_to_ingredients_route(restaurant_id, current_user):

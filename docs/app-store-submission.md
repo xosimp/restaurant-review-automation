@@ -14,15 +14,35 @@ The app has no self-serve signup. `/mobile/api/register` returns 403 unless
 unknown identity. **A reviewer with no account cannot get past the login
 screen**, which is an automatic Guideline 2.1 rejection.
 
-Create the account against production:
+Create the account **against production**. The database lives on the Railway
+volume, so this has to run inside that container — running it on a laptop
+either fails (the path does not exist) or quietly seeds a local file Apple
+will never see.
+
+Easiest, from any browser you are signed into the admin panel with:
 
 ```bash
-DB=/app/data/reviews.db python3 scripts/seed_review_account.py
+curl -s -X POST https://dashboard.cavnar.ai/admin/seed-review-account \
+  -H "Cookie: session=YOUR_ADMIN_SESSION_COOKIE"
 ```
 
-It prints a username and password once. Put them in **App Store Connect →
+Or from a shell on the container:
+
+```bash
+railway ssh
+cd /app && python3 scripts/seed_review_account.py
+```
+
+Either way it prints a username and password once. Put them in **App Store Connect →
 your app → App Review Information → Sign-In Required**, with "Sign-in
 required" ticked.
+
+It also seeds demo content so no screen opens empty: ten reviews spread
+across every response state, three weeks of shifts landing slightly over the
+labor target so the savings figure has something to show, and a fourteen-item
+inventory with two items critically low and three past the waste tolerance.
+Total Value Delivered on Home comes out around $4,000. All of it is invented
+for a restaurant that does not exist, and the account is flagged `is_demo`.
 
 The script sets two-factor **off** deliberately — a reviewer cannot receive a
 code — and marks the account `internal`, so it is fully entitled but never
