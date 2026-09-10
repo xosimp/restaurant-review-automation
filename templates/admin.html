@@ -597,6 +597,25 @@ async function issues(){
 }
 
 // ── System ──────────────────────────────────────────────────────────────────
+async function seedReviewAccount(){
+  const btn = $('seed-btn'), status = $('seed-status'), out = $('seed-out');
+  btn.disabled = true; status.textContent = 'Creating…'; out.hidden = true;
+  try{
+    const r = await fetch('/admin/seed-review-account', {method:'POST'});
+    const d = await r.json();
+    if(d.ok){
+      status.textContent = 'Done — copy the password below, it is only shown once.';
+      out.textContent = d.output || '';
+      out.hidden = false;
+    } else {
+      status.textContent = 'Failed: ' + (d.error || r.status);
+    }
+  }catch(e){
+    status.textContent = 'Failed: ' + e;
+  }
+  btn.disabled = false;
+}
+
 async function system(){
   const d = await api('/admin/api/system');
   $('view').innerHTML = `
@@ -618,7 +637,8 @@ async function system(){
         <div class="card"><div class="ch"><h2>Public status page</h2><a class="sub" href="/status" target="_blank">status.cavnar.ai ↗</a></div><div class="cb" id="svc-list"><div class="sk"></div></div>
           <div class="cb" style="border-top:1px solid var(--paper3)"><div class="k" style="margin-bottom:6px">Post an incident</div><div class="fl"><input id="inc-title" placeholder="Title"><textarea id="inc-body" rows="2" placeholder="What's happening and what you're doing about it"></textarea><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><select id="inc-sev"><option value="degraded">Degraded</option><option value="outage">Outage</option><option value="maintenance">Maintenance</option></select><span class="sub">Affected:</span>${['dashboard','ai_drafting','review_sync','email','labor_analytics','scheduler','scheduled_posts'].map(k=>`<label style="font-size:12px"><input type="checkbox" class="inc-k" value="${k}"> ${k}</label>`).join('')}<button class="btn p" onclick="postIncident()">Post</button></div></div></div></div>
         <div class="card"><div class="ch"><h2>In-app changelog</h2><span class="sub">✦ What's new, on web and iOS</span></div><div class="cb"><div class="fl"><input id="cl-title" placeholder="Title"><textarea id="cl-body" rows="2" placeholder="Body (optional)"></textarea><div style="display:flex;gap:8px"><select id="cl-tag"><option value="feature">feature</option><option value="improvement">improvement</option><option value="fix">fix</option></select><button class="btn p" onclick="changelogPost()">Post</button></div></div><div id="cl-list" style="margin-top:10px"></div></div></div>
-        <div class="card"><div class="ch"><h2>Utilities</h2></div><div class="cb" style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn" href="/admin/inventory-template">Inventory CSV template</a><a class="btn" href="/health" target="_blank">/health</a><a class="btn" href="/sitemap.xml" target="_blank">sitemap.xml</a><a class="btn" href="/admin/stop-viewing">Stop viewing as client</a></div></div>
+        <div class="card"><div class="ch"><h2>Utilities</h2></div><div class="cb" style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn" href="/admin/inventory-template">Inventory CSV template</a><a class="btn" href="/health" target="_blank">/health</a><a class="btn" href="/sitemap.xml" target="_blank">sitemap.xml</a><a class="btn" href="/admin/stop-viewing">Stop viewing as client</a></div>
+          <div class="cb" style="border-top:1px solid var(--paper3)"><div class="k" style="margin-bottom:6px">App Store review account</div><div class="sub" style="margin-bottom:8px">Creates (or refreshes) the account Apple signs in with, seeded with demo data so no screen opens empty. Runs here, against this server's database. Re-running rotates the password and leaves the data alone.</div><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button class="btn p" id="seed-btn" onclick="seedReviewAccount()">Create review account</button><span class="sub" id="seed-status"></span></div><pre id="seed-out" hidden style="margin-top:10px;padding:12px;background:var(--ink);color:#f2ece2;border-radius:8px;font-family:var(--num);font-size:12px;line-height:1.55;white-space:pre-wrap;overflow-x:auto"></pre></div></div>
       </div>
     </div>`;
   loadServices(); changelogLoad();
