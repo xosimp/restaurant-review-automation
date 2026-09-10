@@ -114,7 +114,7 @@ Answer **"Yes, we collect data from this app"**, then for every item below:
 | Phone Number | Contact Info | Owner's SMS alerts, plus guest text-club numbers a restaurant adds under its own consent flow |
 | Other Financial Info | Financial Info | The restaurant's sales, labor cost and food cost figures. **Not** payment details — cards live only with Stripe and are never entered in the app |
 | Device ID | Identifiers | A UUID the app generates for itself and keeps in the Keychain, to recognise a returning device at sign-in and address push. Not the IDFA or IDFV |
-| Customer Support | Other Data | The message a user writes in Report a Bug |
+| Customer Support | User Content | The message a user writes in Report a Bug |
 | Other Diagnostic Data | Diagnostics | App version, iOS version, device model and current screen, attached to a bug report |
 
 **Do not tick** Purchases, Location, Contacts, Browsing History, Search
