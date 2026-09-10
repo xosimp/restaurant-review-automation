@@ -884,7 +884,19 @@ def send_payment_email(to_email, restaurant_name, tier=None,
         elif checkout_monthly:
             btn_html = f'<a href="{checkout_monthly}" style="display:inline-block;background:#c84b2f;color:white;padding:12px 24px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600;letter-spacing:.04em">Complete payment →</a>'
         else:
-            btn_html = '<p style="font-size:13px;color:#3a3530;margin-top:8px">Your payment link will arrive in a separate email shortly.</p>' 
+            # Both checkout links failed to generate. Saying "it will arrive
+            # shortly" was a promise nothing kept — there is no retry and no
+            # follow-up job. Give the client a way to act instead.
+            btn_html = ('<p style="font-size:13px;color:#3a3530;margin-top:8px">'
+                        'We hit a problem generating your payment link. Reply to this email or write to '
+                        '<a href="mailto:will@cavnar.ai" style="color:#c84b2f">will@cavnar.ai</a> '
+                        'and I will send it straight over.</p>')
+            try:
+                import ops as _ops
+                _ops.capture(RuntimeError("payment email sent with no checkout link"),
+                             job="stripe_checkout", context=f"{restaurant_name} · {to_email}")
+            except Exception:
+                pass 
         deliver(email_type="send_payment_email", payload={
             "from": f"Will Cavnar <{_from_email()}>",
             "to": [to_email],
@@ -1290,6 +1302,15 @@ def create_stripe_checkout(module_count: int, owner_email: str,
         import traceback
         print(f"[STRIPE ERROR] Checkout creation failed for {restaurant_name}: {e}")
         traceback.print_exc()
+        # A print and a traceback are invisible: this failure never reached
+        # the 8am digest, so a Stripe outage during onboarding sent the client
+        # an email promising a payment link that nobody was going to send.
+        try:
+            import ops as _ops
+            _ops.capture(e, job="stripe_checkout",
+                         context=f"{restaurant_name} · {module_count} module(s) · {billing_period}")
+        except Exception:
+            pass
         return None
 
 

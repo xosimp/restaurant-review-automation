@@ -242,8 +242,18 @@ def finish_async_job(job_id, status, result):
 
 def read_async_job(job_id, restaurant_id=None):
     """The job's {"status", "result"}, or None if it doesn't exist (or belongs
-    to another restaurant). A finished job is deleted as it is read — the
-    poll consumes it, matching how the in-memory version popped its entry."""
+    to another restaurant).
+
+    Reads are NON-destructive. This used to delete the row on the first read,
+    "matching how the in-memory version popped its entry" — which meant a
+    browser refresh, a dropped response, or a second device polling the same
+    job got nothing, after the user had waited thirty seconds for a Claude
+    call. Schedules are written to schedule_history before the result lands
+    here so the work was usually recoverable, but "usually" was doing real
+    work in that sentence.
+
+    Rows are cleaned up by the TTL sweep in start_async_job instead, so a
+    finished result stays readable for the rest of its window."""
     import json
     try:
         conn = _async_conn()
@@ -264,8 +274,6 @@ def read_async_job(job_id, restaurant_id=None):
         if status == "pending":
             conn.close()
             return {"status": "pending", "result": None}
-        conn.execute("DELETE FROM async_jobs WHERE job_id=?", (str(job_id),))
-        conn.commit()
         conn.close()
         try:
             result = json.loads(row["result_json"]) if row["result_json"] else None

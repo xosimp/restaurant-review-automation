@@ -75,11 +75,30 @@ def test_a_result_survives_the_worker_that_produced_it(db_path):
         importlib.reload(ops)
 
 
-def test_reading_a_finished_job_consumes_it(db_path):
+def test_a_finished_job_can_be_read_more_than_once(db_path):
+    """Reads used to consume the row, which lost the result to a browser
+    refresh, a dropped response, or a second device polling the same job —
+    after the user had waited thirty seconds for a Claude call (audit #6).
+    The TTL sweep in start_async_job is what cleans these up now."""
     ops.start_async_job("job-4", "schedule", 7)
-    ops.finish_async_job("job-4", "done", {"ok": True})
-    assert ops.read_async_job("job-4") is not None
-    assert ops.read_async_job("job-4") is None, "a consumed result must not linger"
+    ops.finish_async_job("job-4", "done", {"ok": True, "schedule_csv": "mon,tue"})
+    first = ops.read_async_job("job-4")
+    assert first is not None and first["result"]["schedule_csv"] == "mon,tue"
+    again = ops.read_async_job("job-4")
+    assert again == first, "a refresh must get the same result, not nothing"
+
+
+def test_finished_results_do_not_linger_past_the_ttl(db_path):
+    """Non-destructive reads must not mean unbounded growth."""
+    ops.start_async_job("job-old", "schedule", 7)
+    ops.finish_async_job("job-old", "done", {"ok": True})
+    conn = ops._async_conn()
+    conn.execute("UPDATE async_jobs SET created_at = datetime('now', '-48 hours') WHERE job_id='job-old'")
+    conn.commit()
+    conn.close()
+    # The sweep runs when the next job starts.
+    ops.start_async_job("job-new", "schedule", 7)
+    assert ops.read_async_job("job-old") is None
 
 
 def test_an_unknown_job_is_not_found(db_path):

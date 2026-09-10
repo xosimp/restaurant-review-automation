@@ -16,6 +16,7 @@ SERVICES = [
     {"key": "labor_analytics",  "name": "Labor & Analytics",     "description": "Labor data processing and insights"},
     {"key": "scheduler",        "name": "Background Scheduler",  "description": "Automated tasks and nightly syncs"},
     {"key": "scheduled_posts",  "name": "Scheduled Posting",     "description": "Publishing queued marketing posts"},
+    {"key": "storage",          "name": "Data Storage",          "description": "Database volume capacity"},
 ]
 
 # How long the scheduler's heartbeat may go unstamped before the thread is
@@ -176,6 +177,36 @@ def check_scheduler_liveness():
     return age
 
 
+def _check_storage():
+    """Free space on the volume the database lives on.
+
+    Audit #6 had no detector for this at all: a full volume is one of the few
+    failures that takes writes down without taking reads down, so the app
+    keeps serving, every gate keeps failing open, and the first symptom is
+    data quietly not being saved. sqlite raises "database or disk is full" on
+    write and every caller in this codebase catches broadly, so it looks like
+    a hundred unrelated small failures rather than one cause.
+    """
+    import shutil
+    from models import DB_PATH
+    try:
+        target = os.path.dirname(os.path.abspath(DB_PATH)) or "."
+        usage = shutil.disk_usage(target)
+        free_mb = usage.free / (1024 * 1024)
+        pct_free = (usage.free / usage.total * 100) if usage.total else 100.0
+    except Exception as e:
+        update_service_status("storage", "degraded", f"Could not read volume capacity: {str(e)[:80]}")
+        return
+
+    detail = f"{free_mb:,.0f} MB free ({pct_free:.0f}%)"
+    if free_mb < 50 or pct_free < 2:
+        update_service_status("storage", "outage", f"Volume almost full — {detail}. Writes will start failing.")
+    elif free_mb < 250 or pct_free < 10:
+        update_service_status("storage", "degraded", f"Volume filling up — {detail}")
+    else:
+        update_service_status("storage", "operational", None)
+
+
 def run_health_checks():
     """Check every service and update its status. Called from the scheduler.
 
@@ -191,7 +222,7 @@ def run_health_checks():
     except Exception as e:
         log.error(f"Seeding default services failed: {e}")
     for fn in (_check_dashboard, _check_ai_drafting, _check_review_sync, _check_email,
-               _check_labor_analytics, _check_scheduled_posts):
+               _check_labor_analytics, _check_scheduled_posts, _check_storage):
         try:
             fn()
         except Exception as e:
@@ -261,11 +292,17 @@ def _check_ai_drafting():
 
 def _check_review_sync():
     conn = _conn()
-    # Restaurants with GBP connected (join users to get is_active)
+    # Every restaurant the fetch actually tries to serve — anything with a
+    # Google Business refresh token OR a Place ID.
+    #
+    # This counted `gmb_access_token IS NOT NULL`, which is not the column
+    # scheduler.run_daily_fetch branches on (gmb_refresh_token) and misses
+    # Places-only restaurants entirely, so the population being monitored was
+    # not the population being fetched.
     active_with_gmb = conn.execute(
         "SELECT COUNT(*) as cnt FROM restaurants r "
         "JOIN users u ON u.restaurant_id=r.id "
-        "WHERE u.is_active=1 AND r.gmb_access_token IS NOT NULL"
+        "WHERE u.is_active=1 AND (r.gmb_refresh_token IS NOT NULL OR r.google_place_id IS NOT NULL)"
     ).fetchone()["cnt"]
 
     if active_with_gmb == 0:
@@ -277,7 +314,7 @@ def _check_review_sync():
     stale = conn.execute(
         "SELECT COUNT(*) as cnt FROM restaurants r "
         "JOIN users u ON u.restaurant_id=r.id "
-        "WHERE u.is_active=1 AND r.gmb_access_token IS NOT NULL "
+        "WHERE u.is_active=1 AND (r.gmb_refresh_token IS NOT NULL OR r.google_place_id IS NOT NULL) "
         "AND (r.last_fetched_at IS NULL OR r.last_fetched_at < ?)",
         (cutoff,)
     ).fetchone()["cnt"]

@@ -190,30 +190,76 @@ def run_daily_fetch():
             if not restaurant:
                 continue
 
-            # Fetch
+            # Fetch.
+            #
+            # `fetched_ok` is the whole point of this block. last_fetched_at
+            # used to be stamped unconditionally, one line below here, which
+            # meant a restaurant whose Google connection had died still looked
+            # freshly synced — and status_manager's 25-hour staleness check
+            # reads exactly that column, so the monitor built to catch this
+            # could never fire. Reviews stopped arriving permanently and
+            # everything reported operational.
             reviews = []
+            fetched_ok = False
+            gmb_failed_reason = None
+
             if restaurant.gmb_refresh_token:
                 try:
                     from gmb import get_valid_token, fetch_reviews_via_gmb, get_gmb_account_id, get_gmb_location_id
                     token = get_valid_token(rid)
-                    if token:
+                    if not token:
+                        # Returns None rather than raising — a revoked or
+                        # expired refresh token used to land here and be
+                        # indistinguishable from "nothing new today".
+                        gmb_failed_reason = "Google refresh token is no longer valid (revoked, or expired)"
+                    else:
                         loc_id = restaurant.gmb_location_id
                         if not loc_id and restaurant.google_place_id:
                             acct_id = get_gmb_account_id(token)
                             if acct_id:
                                 loc_id = get_gmb_location_id(token, acct_id, restaurant.google_place_id)
-                        if loc_id:
+                        if not loc_id:
+                            gmb_failed_reason = "Google Business location could not be resolved"
+                        else:
                             reviews += fetch_reviews_via_gmb(token, loc_id, rid)
+                            fetched_ok = True
                 except Exception as e:
+                    gmb_failed_reason = str(e)[:200]
                     log.error(f"GMB fetch [{restaurant.name}]: {e}")
                     _ops.capture(e, job="review_fetch", context=f"GMB {restaurant.name}")
+
+                if gmb_failed_reason:
+                    # Fall back to Places rather than fetching nothing. This
+                    # used to be an `elif` on gmb_refresh_token, so a
+                    # connected-but-broken restaurant never reached it and
+                    # simply stopped receiving reviews.
+                    _ops.capture(RuntimeError(f"GMB unusable: {gmb_failed_reason}"),
+                                 job="review_fetch",
+                                 context=f"restaurant_id={rid} {restaurant.name} — falling back to Places")
+                    if restaurant.google_place_id:
+                        try:
+                            reviews += fetch_google(restaurant.google_place_id, rid)
+                            fetched_ok = True
+                            log.warning(f"GMB unusable for {restaurant.name}; served from Places instead")
+                        except Exception as e:
+                            log.error(f"Places fallback [{restaurant.name}]: {e}")
+                            _ops.capture(e, job="review_fetch", context=f"Places fallback {restaurant.name}")
+
             elif restaurant.google_place_id:
                 try:
                     reviews += fetch_google(restaurant.google_place_id, rid)
+                    fetched_ok = True
                 except Exception as e:
                     log.error(f"Google fetch [{restaurant.name}]: {e}")
                     _ops.capture(e, job="review_fetch", context=f"Google {restaurant.name}")
-            update_last_fetched(rid)
+
+            # Only a fetch that actually reached a provider counts as a sync.
+            # A failed one leaves last_fetched_at where it was, so the 25-hour
+            # staleness check sees it and the status page goes degraded.
+            if fetched_ok:
+                update_last_fetched(rid)
+            else:
+                log.warning(f"Review fetch did not complete for {restaurant.name} — last_fetched_at left stale on purpose")
 
             if not reviews:
                 continue

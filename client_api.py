@@ -2751,12 +2751,18 @@ def _run_schedule_job(job_id, restaurant_id):
             _COLS = ["date", "day", "employee", "role", "shift_start", "shift_end", "scheduled_hours", "notes"]
             _csv_lines = result["schedule_csv"].split("\n")
             print(f"[schedule] csv lines={len(_csv_lines)} first3={_csv_lines[:3]}")
+            # A malformed row from the model used to be skipped in silence, so
+            # a garbled response produced a SHORT schedule rather than an
+            # error and nobody was told how much was missing. Counted now, and
+            # surfaced below.
+            _dropped_rows = []
             for _line in _csv_lines[1:]:  # skip header
                 _line = _line.strip()
                 if not _line:
                     continue
                 _parts = _line.split(",", 7)  # max 7 splits — notes gets remainder
                 if len(_parts) < 6:
+                    _dropped_rows.append(_line[:120])
                     continue
                 # Strip outer quotes Sonnet sometimes adds around field values
                 _row = {_COLS[i]: _parts[i].strip().strip('"').strip() for i in range(min(len(_parts), 8))}
@@ -2897,9 +2903,27 @@ def _run_schedule_job(job_id, restaurant_id):
             )
         except Exception as _hist_ex:
             print(f"[schedule history] save error: {_hist_ex}")
+            # The history row is the ONLY durable copy of this schedule — the
+            # async result is deleted the first time it is polled. If the save
+            # failed and the poll is then lost, a paid-for Claude call is gone.
+            _ops.capture(_hist_ex, job="schedule_generate",
+                         context=f"restaurant_id={restaurant_id} — history save failed, result is poll-only")
+
+        if _dropped_rows:
+            # Not fatal — the rest of the week is still usable — but the owner
+            # must not be handed a short schedule that looks complete.
+            print(f"[schedule] dropped {len(_dropped_rows)} malformed row(s): {_dropped_rows[:3]}")
+            _ops.capture(RuntimeError(f"{len(_dropped_rows)} malformed schedule row(s) dropped"),
+                         job="schedule_generate",
+                         context=f"restaurant_id={restaurant_id} · examples={_dropped_rows[:3]}")
 
         _ops.finish_async_job(job_id, "done", dict(
             ok=True,
+            dropped_rows=len(_dropped_rows),
+            dropped_row_note=(
+                f"{len(_dropped_rows)} line(s) of the generated schedule could not be read and were "
+                "left out. Check the week before you publish it."
+            ) if _dropped_rows else None,
             schedule_csv=result["schedule_csv"],
             summary=result.get("summary", []),
             preview_rows=preview_rows,

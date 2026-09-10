@@ -244,6 +244,16 @@ def compute_daily_depletion(restaurant_id: int, business_date) -> dict:
     unmapped = []
 
     with db_conn() as conn:
+        # One transaction, explicitly. This block deletes the day's depletion
+        # events and rebuilds them, which is what makes a re-run idempotent —
+        # but between the DELETE and the last INSERT the day is empty. It was
+        # safe only because sqlite3's default isolation opens an implicit
+        # transaction and rolls back when a connection closes uncommitted, so
+        # a crash mid-loop undid the delete too. That is a real guarantee
+        # resting on an implicit default: anyone setting isolation_level=None
+        # on get_conn would silently turn a crash here into a day of
+        # inventory quietly reading as zero depletion. Say it out loud.
+        conn.execute("BEGIN IMMEDIATE")
         conn.execute(
             "DELETE FROM ingredient_stock_events "
             "WHERE restaurant_id=? AND event_date=? AND event_type='depletion' AND source='toast'",
