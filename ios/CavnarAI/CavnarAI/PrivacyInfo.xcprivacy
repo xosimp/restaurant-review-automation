@@ -9,29 +9,118 @@
 	<key>NSPrivacyTrackingDomains</key>
 	<array/>
 
-	<!-- NOT YET FILLED IN — must match whatever is declared in App Store
-	     Connect's own Privacy Nutrition Label, which is a separate,
-	     manual step Will fills in there; that page is the actual source
-	     of truth Apple checks against. Based on what this app's own code
-	     sends the server, the categories that likely apply:
-	       - Contact Info: email, name, phone number (account holder)
-	       - Contact Info: a guest's phone number, only for restaurants
-	         that opt into the guest text club, collected under the
-	         restaurant's own consent flow, not the app account holder's
-	       - Financial Info: revenue, labor cost, other business figures
-	         the owner enters or connects a POS to
-	       - Identifiers: an app-generated device id (Keychain.deviceIdentity,
-	         a random UUID) — used only to recognize a returning device at
-	         login, never for tracking or ads
-	       - Usage Data: which screens/actions are used, for the app's own
-	         product analytics (if any exist), and any AI-usage logging
-	     This array is intentionally left empty rather than guessed at —
-	     the "isLinkedToUser" / "isUsedForTracking" / purpose flags on each
-	     entry carry real weight and should be set once, correctly, by
-	     whoever also fills in the App Store Connect page, so the two
-	     never disagree. -->
+	<!-- Filled in from what this app's own code actually sends, checked
+	     against the request payloads rather than assumed. It must agree with
+	     App Store Connect's Privacy Nutrition Label, which is a separate
+	     manual step — see docs/app-store-submission.md for the exact answers
+	     to enter there so the two cannot disagree.
+
+	     Nothing here is used for tracking, and nothing is shared with data
+	     brokers or advertisers: NSPrivacyTracking above is false and the app
+	     has no ads, analytics or attribution SDK of any kind. Every item is
+	     linked to the account holder, because every one of them is only ever
+	     sent from inside an authenticated session. -->
 	<key>NSPrivacyCollectedDataTypes</key>
-	<array/>
+	<array>
+		<!-- Account holder's email — sign-in, password reset, alert delivery. -->
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeEmailAddress</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+		<!-- owner_name on the profile, and the sign-off name on review replies. -->
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeName</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+		<!-- Two separate uses under one Apple category: owner_phone for the
+		     account holder's own SMS alerts, and guest phone numbers a
+		     restaurant adds to its text club under its own consent flow. -->
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypePhoneNumber</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+		<!-- The restaurant's own business figures: sales, labor cost, food
+		     cost, supplier pricing. Business data, not the user's personal
+		     finances, and no payment instrument is ever collected in the app —
+		     card details live only with Stripe. -->
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeOtherFinancialInfo</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+		<!-- Keychain.deviceIdentity(): a UUID this app generates for itself,
+		     used only to recognise a returning device at sign-in and to
+		     address push. Not the IDFA, not the IDFV, never used for tracking. -->
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeDeviceID</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+		<!-- Report a Bug sends the message the user wrote plus app version,
+		     iOS version, device model and which screen they were on. -->
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeCustomerSupport</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeOtherDiagnosticData</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+	</array>
 
 	<!-- Required Reason API usage — the two categories this app's own
 	     code actually touches (checked directly, not assumed):

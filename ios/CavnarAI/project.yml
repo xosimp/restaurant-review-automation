@@ -67,6 +67,17 @@ targets:
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         ITSAppUsesNonExemptEncryption: false
+        # Kept deliberately. It exists for generate.sh --lan, which points a
+        # Debug build at a raw LAN IP over http so the app can be tested from
+        # a real phone; localhost and the ngrok (https) path would both work
+        # without it, that one would not.
+        #
+        # It is dead weight in Release, since AppEnvironment compiles the
+        # override out entirely and hardcodes https://dashboard.cavnar.ai —
+        # but it is not a review risk. Apple documents NSAllowsLocalNetworking
+        # as usable without providing a justification during App Review, which
+        # is the whole reason it exists as an alternative to
+        # NSAllowsArbitraryLoads. Do not confuse the two.
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
         CFBundleURLTypes:

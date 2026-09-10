@@ -164,7 +164,14 @@ def mobile_apple_signin():
     conn.close()
 
     if not row:
-        return jsonify(ok=False, error="No account found for that Apple ID. Contact will@cavnar.ai."), 401
+        # Reads as a dead end otherwise, which is exactly what an App Store
+        # reviewer sees if they tap "Continue with Apple" before reading the
+        # review notes. Say what this app is and how an account is obtained.
+        return jsonify(ok=False, error=(
+            "Cavnar AI accounts are set up for a restaurant by Will directly — there is no "
+            "self-serve signup. If you already have one, sign in with the username and password "
+            "you were given. Otherwise email will@cavnar.ai."
+        )), 401
 
     user = dict(row)
     ip = _get_client_ip()
