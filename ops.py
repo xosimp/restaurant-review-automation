@@ -9,6 +9,7 @@ through capture(): recorded in a job_failures table, forwarded to Sentry when
 configured, and rolled up into a daily 8am digest email if anything failed.
 """
 import logging
+import uuid
 import os
 
 
@@ -330,11 +331,115 @@ def failures_last_24h():
         return []
 
 
+_LEASE_SQL = """CREATE TABLE IF NOT EXISTS scheduler_lease (
+    id           INTEGER PRIMARY KEY CHECK (id = 1),
+    owner        TEXT,
+    heartbeat_at TEXT
+)"""
+
+# How stale a heartbeat has to be before another process may take over. Must
+# comfortably exceed the scheduler tick, or a slow pass loses its own lease
+# mid-run and two processes end up holding it.
+SCHEDULER_LEASE_STALE_SECONDS = int(os.getenv("SCHEDULER_LEASE_STALE_SECONDS", "1800"))
+
+_LEASE_OWNER = f"{os.getpid()}-{uuid.uuid4().hex[:8]}"
+
+
+def acquire_scheduler_lease(owner: str = None, stale_seconds: int = None) -> bool:
+    """True if this process may run the scheduler right now.
+
+    Everything in scheduler_loop is protected by claim_period(), so two
+    schedulers mostly collide harmlessly — but "mostly" was doing real work
+    there. run_due_posts has no claim of its own (it must publish within
+    minutes of a slot, not once a day), and claim_period deliberately fails
+    OPEN, so a database hiccup drops the guard for every job at once. The
+    only reason none of that has bitten is `--workers 1` in railway.json:
+    one character of deploy config standing between the current behaviour
+    and every scheduled job running twice.
+
+    So the guarantee moves into the database, where it can be reasoned about.
+    The holder refreshes its heartbeat on every tick; if it dies, its lease
+    goes stale and another process takes over rather than the scheduler
+    simply stopping. Fails OPEN for the same reason claim_period does — a
+    bookkeeping outage must not silently stop every scheduled job.
+    """
+    owner = owner or _LEASE_OWNER
+    stale = SCHEDULER_LEASE_STALE_SECONDS if stale_seconds is None else stale_seconds
+    try:
+        from models import get_conn
+        conn = get_conn()
+        conn.execute(_LEASE_SQL)
+        conn.execute("INSERT OR IGNORE INTO scheduler_lease (id, owner, heartbeat_at) VALUES (1, NULL, NULL)")
+        conn.commit()
+        cur = conn.execute(
+            "UPDATE scheduler_lease SET owner=?, heartbeat_at=datetime('now') "
+            "WHERE id=1 AND (owner IS NULL OR owner=? OR heartbeat_at IS NULL "
+            "               OR heartbeat_at < datetime('now', ?))",
+            (owner, owner, f"-{int(stale)} seconds"),
+        )
+        conn.commit()
+        held = cur.rowcount == 1
+        conn.close()
+        return held
+    except Exception as e:
+        log.error(f"acquire_scheduler_lease failed, allowing run: {e}")
+        return True
+
+
+def scheduler_lease_holder():
+    """Who currently owns the lease, for the admin console and for tests."""
+    try:
+        from models import get_conn
+        conn = get_conn()
+        conn.execute(_LEASE_SQL)
+        conn.commit()
+        row = conn.execute("SELECT owner, heartbeat_at FROM scheduler_lease WHERE id=1").fetchone()
+        conn.close()
+        return dict(row) if row else None
+    except Exception:
+        return None
+
+
+def stuck_jobs(older_than_minutes: int = 90):
+    """Jobs that started and never finished — the failure mode nothing reports.
+
+    claim_period() claims BEFORE the work runs, which is exactly what stops a
+    redeploy from re-emailing the whole client list. The cost is that a hard
+    kill (SIGKILL, an OOM, a container replaced mid-run) leaves the claim
+    standing with no code left to release it, so the job does not run again
+    until its next slot. For daily_alerts that is a whole day with no alerts
+    at all, and because nothing raised, capture() never fired and the digest
+    below stayed empty. Silence looked identical to "nothing went wrong".
+
+    A row with started_at and no finished_at is the evidence. The admin
+    console already lists these; this is what puts them in the mail.
+    """
+    try:
+        from models import get_conn
+        conn = get_conn()
+        conn.execute(_RUNS_SQL)
+        conn.commit()
+        rows = conn.execute(
+            "SELECT job, started_at, context FROM job_runs "
+            "WHERE finished_at IS NULL AND started_at < datetime('now', ?) "
+            "AND started_at >= datetime('now', '-7 days') ORDER BY started_at DESC LIMIT 25",
+            (f"-{int(older_than_minutes)} minutes",),
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+    except Exception as e:
+        log.error(f"stuck_jobs failed: {e}")
+        return []
+
+
 def send_failure_digest():
     """Daily 8am: one compact email to the operator if anything failed in the
     last 24h. No failures → no email (silence stays meaningful)."""
     failures = failures_last_24h()
-    if not failures:
+    stuck = stuck_jobs()
+    # A job that died without raising leaves no failure row, so "no failures"
+    # was never the same thing as "nothing went wrong".
+    if not failures and not stuck:
         return False
     resend_key = os.getenv("RESEND_API_KEY", "")
     if not resend_key:
@@ -346,6 +451,27 @@ def send_failure_digest():
         _resend.api_key = resend_key
         will = os.getenv("WILL_EMAIL", "will@cavnar.ai")
         total = sum(f["cnt"] for f in failures)
+        stuck_html = ""
+        if stuck:
+            stuck_rows = "".join(
+                f"""<tr>
+              <td style="padding:8px 12px;border-bottom:1px solid #e0dbd0;font-weight:600">{_html.escape(j['job'])}</td>
+              <td style="padding:8px 12px;border-bottom:1px solid #e0dbd0;font-size:12px;color:#7a736a">started {_html.escape(str(j['started_at'] or ''))}</td>
+              <td style="padding:8px 12px;border-bottom:1px solid #e0dbd0;font-size:12px;color:#7a736a">{_html.escape((j['context'] or '')[:120])}</td>
+            </tr>"""
+                for j in stuck
+            )
+            stuck_html = f"""
+  <p style="font-size:13px;font-weight:600;color:#0e0c0a;margin:22px 0 6px">Started and never finished</p>
+  <p style="font-size:12px;color:#7a736a;margin:0 0 10px">These did not raise, so they are not counted above. The job holds its claim until its next slot, so whatever it does was skipped for that period.</p>
+  <table style="width:100%;border-collapse:collapse;font-size:13px">
+    <tr>
+      <th style="text-align:left;padding:8px 12px;border-bottom:2px solid #b7791f">Job</th>
+      <th style="text-align:left;padding:8px 12px;border-bottom:2px solid #b7791f">Started</th>
+      <th style="text-align:left;padding:8px 12px;border-bottom:2px solid #b7791f">Context</th>
+    </tr>
+    {stuck_rows}
+  </table>"""
         rows_html = "".join(
             f"""<tr>
               <td style="padding:8px 12px;border-bottom:1px solid #e0dbd0;font-weight:600">{_html.escape(f['job'])}</td>
@@ -357,7 +483,9 @@ def send_failure_digest():
         _resend.Emails.send({
             "from": f"Cavnar AI Ops <{os.getenv('FROM_EMAIL', 'will@cavnar.ai')}>",
             "to": [will],
-            "subject": f"⚠ {total} background job failure{'s' if total != 1 else ''} in the last 24h",
+            "subject": (f"⚠ {total} background job failure{'s' if total != 1 else ''} in the last 24h"
+                        + (f" · {len(stuck)} stuck" if stuck else "")) if failures
+                       else f"⚠ {len(stuck)} background job{'s' if len(stuck) != 1 else ''} started and never finished",
             "html": _html_doc(f"""
 <div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
 <div style="font-family:-apple-system,sans-serif;max-width:640px;margin:0 auto;color:#1a1714;background:white;border-radius:12px;padding:28px 24px;box-sizing:border-box">
@@ -365,14 +493,14 @@ def send_failure_digest():
     <img src="https://dashboard.cavnar.ai/static/brand/wordmark-dark-email.png" width="150" height="26" alt="Cavnar AI" style="display:block;width:150px;height:26px;border:0;outline:none;margin-bottom:4px">
     <p style="font-size:13px;font-weight:600;color:#0e0c0a;margin:0">Job failures</p>
   </div>
-  <table style="width:100%;border-collapse:collapse;font-size:13px">
+  <table style="width:100%;border-collapse:collapse;font-size:13px;{'' if failures else 'display:none'}">
     <tr>
       <th style="text-align:left;padding:8px 12px;border-bottom:2px solid #c84b2f">Job</th>
       <th style="padding:8px 12px;border-bottom:2px solid #c84b2f">Count</th>
       <th style="text-align:left;padding:8px 12px;border-bottom:2px solid #c84b2f">Latest error</th>
     </tr>
     {rows_html}
-  </table>
+  </table>{stuck_html}
   <p style="font-size:12px;color:#7a736a;margin-top:16px">Full stack traces are in Sentry (if configured) and Railway logs.</p>
 </div>
 </div>"""),

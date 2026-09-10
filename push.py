@@ -129,6 +129,34 @@ def _apns_host(environment):
     return "api.push.apple.com" if environment == "production" else "api.sandbox.push.apple.com"
 
 
+def _collapse_id(restaurant_id, alert_type, data) -> str:
+    """A stable identifier for one logical alert, for APNs' apns-collapse-id.
+
+    The retry loop below treats a client-side timeout as a failure and sends
+    again, twice more — but a timeout often means Apple took the push and the
+    response was what got lost. Without this header those become two or three
+    separate banners on the same phone for the same event.
+
+    It has to be stable across the retries of ONE alert and different between
+    two alerts, so the review id is in the key: two 1-star reviews arriving in
+    the same fetch are two things the owner needs to see, not one. Alerts with
+    no review behind them (labor over target, food waste) get the local date
+    instead, which also means the daily job cannot stack duplicates if it runs
+    twice. Apple caps this at 64 bytes.
+    """
+    parts = [str(restaurant_id), str(alert_type or "alert")]
+    review_id = (data or {}).get("review_id")
+    if review_id:
+        parts.append(f"r{review_id}")
+    else:
+        parts.append(datetime.now(timezone.utc).strftime("%Y%m%d"))
+    key = "-".join(parts)
+    if len(key.encode()) > 64:
+        import hashlib
+        key = hashlib.sha256(key.encode()).hexdigest()[:32]
+    return key
+
+
 def _deliver(device_token_row, alert_type, title, body, data, db_path=DB_PATH):
     import httpx
     bundle_id = __import__("os").getenv("APNS_BUNDLE_ID", "")
@@ -158,6 +186,7 @@ def _deliver(device_token_row, alert_type, title, body, data, db_path=DB_PATH):
         "authorization": f"bearer {_provider_jwt()}",
         "apns-topic": bundle_id,
         "apns-push-type": "alert",
+        "apns-collapse-id": _collapse_id(device_token_row.get("restaurant_id"), alert_type, data),
         "content-type": "application/json",
     }
     status = 0

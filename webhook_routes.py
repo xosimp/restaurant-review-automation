@@ -58,6 +58,45 @@ def _claim_stripe_event(event_id: str) -> bool:
         return True
 
 
+def _claim_docusign_event(envelope_id: str, status: str) -> bool:
+    """True the first time this envelope reaches this status.
+
+    DocuSign Connect retries any non-2xx and can deliver the same
+    notification more than once. Without this, a repeat of a single
+    "completed" callback re-sends the payment link AND the welcome email
+    containing the client's temporary password — to a client who already got
+    both, at the least confusing moment possible.
+
+    Deliberately the same shape as _claim_stripe_event above: the primary-key
+    insert is the claim, and it fails open, because a bookkeeping outage must
+    not swallow the one callback that starts a paying client's account.
+    """
+    if not envelope_id:
+        return True
+    key = f"{envelope_id}:{status or ''}"
+    try:
+        conn = get_conn()
+        conn.execute("""CREATE TABLE IF NOT EXISTS docusign_events_seen (
+            event_key   TEXT PRIMARY KEY,
+            envelope_id TEXT,
+            status      TEXT,
+            seen_at     TEXT NOT NULL DEFAULT (datetime('now'))
+        )""")
+        conn.commit()
+        try:
+            conn.execute("INSERT INTO docusign_events_seen (event_key, envelope_id, status) VALUES (?,?,?)",
+                         (key, envelope_id, status))
+            conn.commit()
+            claimed = True
+        except Exception:
+            claimed = False   # duplicate PK — already handled
+        conn.close()
+        return claimed
+    except Exception as e:
+        print(f"_claim_docusign_event failed ({key}): {e}")
+        return True
+
+
 def _restaurant_for_stripe(customer_id: str = "", email: str = ""):
     """Resolve a Stripe event to a restaurant id.
 
@@ -472,6 +511,9 @@ def docusign_webhook():
         print(f"DocuSign webhook envelope_id={envelope_id} status={status}")
 
         if envelope_id and status in ("completed", "envelope-completed"):
+            if not _claim_docusign_event(envelope_id, "completed"):
+                print(f"DocuSign envelope {envelope_id} already processed — ignoring repeat delivery")
+                return jsonify(ok=True, duplicate=True), 200
             # Mark contract as signed
             conn = get_conn()
             row = conn.execute(

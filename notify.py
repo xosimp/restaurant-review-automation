@@ -272,6 +272,66 @@ def delete_alert_contact(contact_id: int, db_path: str = DB_PATH):
 
 # ── Alert helpers ─────────────────────────────────────────────
 
+# A restaurant cannot be sent more than this many alerts in one local day,
+# whatever its settings say.
+#
+# "Max alerts/day" offers Unlimited (stored as 0) and that is a real choice an
+# owner can make, so it is respected — but Unlimited was never meant to mean
+# "however many a bad day produces". Audit #4 traced one review fetch of a
+# Google-Business-connected restaurant to 180 notifications: 20 reviews in a
+# single pass, each fanning out to every contact, inbox and device, with the
+# only brake switched off by default. This is the backstop under all of it.
+# High enough that a genuinely busy day never touches it, low enough that a
+# runaway stops being the owner's problem.
+ALERT_HARD_CEILING_PER_DAY = 50
+
+
+def _over_alert_ceiling(restaurant_id: int, db_path: str = DB_PATH) -> bool:
+    try:
+        from models import count_alerts_today
+        n = count_alerts_today(restaurant_id, db_path)
+        if n >= ALERT_HARD_CEILING_PER_DAY:
+            print(f"[notify] rid={restaurant_id} SUPPRESSED — hit the {ALERT_HARD_CEILING_PER_DAY}/day ceiling ({n} sent)")
+            if n == ALERT_HARD_CEILING_PER_DAY:
+                try:
+                    import ops
+                    ops.capture(RuntimeError(f"rid={restaurant_id} hit the daily alert ceiling ({n})"),
+                                job="alert_ceiling", context=f"restaurant_id={restaurant_id}")
+                except Exception:
+                    pass
+            return True
+    except Exception as e:
+        # Fail CLOSED is wrong here — a bookkeeping error must not silence a
+        # 1-star alert — but say so rather than passing silently.
+        print(f"[notify] ceiling check failed for rid={restaurant_id}: {e}")
+    return False
+
+
+def _daily_alert_suppressed(restaurant_id: int, alert_type: str, db_path: str = DB_PATH) -> bool:
+    """Quiet hours + the owner's daily cap + the hard ceiling, for the alert
+    types that run out of the daily jobs rather than out of blast().
+
+    check_daily_alerts and check_extra_daily_alerts built their own _fire()
+    closures and consulted none of the three, so an owner who set "2 per day"
+    could still receive a labor alert, a trend alert, a threshold alert, a
+    food-waste alert and a visibility alert on top of their two. They run at
+    10am so quiet hours rarely bit, but "rarely" is not a design.
+    """
+    try:
+        from models import is_in_quiet_hours, count_alerts_today, get_restaurant
+        if is_in_quiet_hours(restaurant_id, db_path):
+            print(f"[notify] rid={restaurant_id} {alert_type} suppressed — quiet hours")
+            return True
+        r = get_restaurant(restaurant_id, db_path)
+        cap = int(getattr(r, "alert_max_per_day", 0) or 0)
+        if cap > 0 and count_alerts_today(restaurant_id, db_path) >= cap:
+            print(f"[notify] rid={restaurant_id} {alert_type} suppressed — daily cap {cap} reached")
+            return True
+    except Exception as e:
+        print(f"[notify] daily-alert DND check failed for rid={restaurant_id}: {e}")
+    return _over_alert_ceiling(restaurant_id, db_path)
+
+
 def _is_health_alert(text: str) -> bool:
     import unicodedata
     t = unicodedata.normalize("NFKC", text).lower().strip()
@@ -421,6 +481,10 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
                 return True
         except Exception as _de:
             print(f"[notify] DND check error: {_de}")
+        # Outside the try above so a failure in the owner's own settings can
+        # never skip the ceiling — that is the one check that has to hold.
+        if _over_alert_ceiling(restaurant_id, db_path):
+            return True
         return False
 
     def blast(sms_text: str, subject: str, html: str, alert_type: str, review_id: int = None):
@@ -692,6 +756,8 @@ def check_daily_alerts(db_path: str = DB_PATH):
         contacts = get_alert_contacts(rid, sms_consent_only=True, db_path=db_path) if via_sms else []
 
         def _fire(sms_text, subject, html, alert_type):
+            if _daily_alert_suppressed(rid, alert_type, db_path):
+                return
             if via_sms and contacts:
                 for c in contacts:
                     send_sms(c["phone"], sms_text)
@@ -864,6 +930,8 @@ def check_extra_daily_alerts(db_path: str = DB_PATH):
             return row is not None
 
         def _fire(alert_type, sms_text, subject, lines):
+            if _daily_alert_suppressed(rid, alert_type, db_path):
+                return
             html = _alert_email_html(name, subject, lines, restaurant_id=rid)
             if via_sms:
                 for c in contacts:

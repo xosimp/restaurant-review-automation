@@ -1049,6 +1049,94 @@ def check_inactive_clients():
         log.error(f"check_inactive_clients email failed: {e}")
 
 
+# ── Jobs that used to live inline in scheduler_loop ──────────────────────────
+#
+# These three ran inside bare try/except blocks rather than through
+# ops.run_job(), so they wrote no job_runs row, never reached ops.capture(),
+# and never appeared in the 8am failure digest or the admin console's Jobs
+# page. Two of them are the largest email senders in the system: the audit
+# found the only evidence a monthly summary run had died halfway was a line
+# in the Railway log, which nobody reads on the first of the month.
+
+def run_weekly_competitor_analysis():
+    """Monday 6am — competitor analysis for every full-tier client."""
+    from competitor import run_competitor_analysis
+    from models import get_all_restaurants, is_full_tier
+    done = failed = 0
+    for r in get_all_restaurants():
+        if r.google_place_id and r.id and is_full_tier(r):
+            try:
+                run_competitor_analysis(r.id)
+                done += 1
+            except Exception as ce:
+                failed += 1
+                log.error(f"Competitor analysis failed for {r.name}: {ce}")
+                _ops.capture(ce, job="competitor_analysis", context=f"restaurant_id={r.id}")
+    return {"analysed": done, "failed": failed}
+
+
+def run_daily_alert_checks():
+    """10am — unresponded, trend/threshold/labor, food waste and visibility
+    alerts, then the retention purge. A failure in one must not take the rest
+    down with it, which is why each is wrapped separately rather than the
+    whole block sharing one except."""
+    from notify import check_no_response_alerts, check_daily_alerts, check_extra_daily_alerts
+    out = {}
+    for name, fn in (("no_response", check_no_response_alerts),
+                     ("daily", check_daily_alerts),
+                     ("extra_daily", check_extra_daily_alerts)):
+        try:
+            fn()
+            out[name] = "ok"
+        except Exception as e:
+            out[name] = f"failed: {e}"
+            log.error(f"Alert check {name} failed: {e}")
+            _ops.capture(e, job="daily_alerts", context=name)
+    try:
+        from models import purge_expired_reviews
+        purged = purge_expired_reviews()
+        out["purged"] = purged
+        if purged:
+            log.info(f"Data retention: soft-deleted {purged} expired reviews")
+    except Exception as pe:
+        out["purged"] = f"failed: {pe}"
+        log.error(f"Retention purge failed: {pe}")
+        _ops.capture(pe, job="daily_alerts", context="retention purge")
+    return out
+
+
+def run_monthly_summaries():
+    """1st of the month, 9am — the monthly summary email to active clients."""
+    from emails import send_monthly_summary_email
+    from models import get_all_restaurants
+    sent = skipped = failed = 0
+    for r in get_all_restaurants():
+        if not r.owner_email or r.billing_status in ('internal', 'churned'):
+            skipped += 1
+            continue
+        if getattr(r, "marketing_emails_opt_out", 0):
+            skipped += 1
+            continue
+        try:
+            send_monthly_summary_email(
+                to_email=r.owner_email,
+                restaurant_name=r.name,
+                owner_name=r.owner_name,
+                restaurant_id=r.id,
+                has_reviews=bool(r.module_reviews),
+                has_labor=bool(r.module_labor),
+                has_inventory=bool(r.module_inventory),
+                has_marketing=bool(r.module_marketing),
+            )
+            sent += 1
+            log.info(f"Monthly summary sent to {r.name}")
+        except Exception as me:
+            failed += 1
+            log.error(f"Monthly summary failed for {r.name}: {me}")
+            _ops.capture(me, job="monthly_summary", context=f"restaurant_id={r.id}")
+    return {"sent": sent, "skipped": skipped, "failed": failed}
+
+
 def scheduler_loop():
     # No module-level "already ran" globals any more — every gate below is
     # ops.claim_period(), which is DB-backed and survives redeploys. See
@@ -1056,8 +1144,25 @@ def scheduler_loop():
     log.info("Scheduler started — review fetch every 4hr (8am/12pm/4pm/8pm CT), digests 9am on client's chosen day")
 
 
+    _lease_lost_logged = False
+
     while True:
         try:
+            # One scheduler per deployment, enforced in the database rather
+            # than by gunicorn's worker count. A second process idles here
+            # and takes over only if the holder stops heartbeating.
+            if not _ops.acquire_scheduler_lease():
+                if not _lease_lost_logged:
+                    holder = _ops.scheduler_lease_holder() or {}
+                    log.info(f"Scheduler standing by — lease held by {holder.get('owner')} "
+                             f"(last heartbeat {holder.get('heartbeat_at')})")
+                    _lease_lost_logged = True
+                time.sleep(SCHEDULER_TICK_SECONDS)
+                continue
+            if _lease_lost_logged:
+                log.info("Scheduler lease acquired — this process is now the runner")
+                _lease_lost_logged = False
+
             now   = _chi_now()
             today = now.date()
 
@@ -1069,18 +1174,7 @@ def scheduler_loop():
 
             if now.hour == 6 and now.weekday() == 0 and _ops.claim_period("competitor_analysis", str(today)):
                 log.info("Running weekly competitor analysis...")
-                try:
-                    from competitor import run_competitor_analysis
-                    from models import get_all_restaurants, is_full_tier
-                    for r in get_all_restaurants():
-                        # Only run for full-tier clients (all 4 modules)
-                        if r.google_place_id and r.id and is_full_tier(r):
-                            try:
-                                run_competitor_analysis(r.id)
-                            except Exception as ce:
-                                log.error(f"Competitor analysis failed for {r.name}: {ce}")
-                except Exception as e:
-                    log.error(f"Competitor analysis scheduler error: {e}")
+                _ops.run_job("competitor_analysis", run_weekly_competitor_analysis)
 
             if now.hour == 3 and _ops.claim_period("pos_sync", str(today)):
                 log.info("Running nightly Toast POS sync...")
@@ -1118,48 +1212,13 @@ def scheduler_loop():
 
             # 10am daily — no-response + trend/threshold/labor alerts
             if now.hour == 10 and _ops.claim_period("daily_alerts", str(today)):
-                try:
-                    from notify import check_no_response_alerts, check_daily_alerts, check_extra_daily_alerts
-                    check_no_response_alerts()
-                    check_daily_alerts()
-                    check_extra_daily_alerts()
-                    try:
-                        from models import purge_expired_reviews
-                        purged = purge_expired_reviews()
-                        if purged:
-                            log.info(f"Data retention: soft-deleted {purged} expired reviews")
-                    except Exception as _pe:
-                        log.error(f"Retention purge failed: {_pe}")
-                except Exception as _nre:
-                    log.error(f"Daily alert check failed: {_nre}")
+                log.info("Running daily alert checks...")
+                _ops.run_job("daily_alerts", run_daily_alert_checks)
 
             # 1st of the month at 9am — send monthly summary to all active clients
             if now.day == 1 and now.hour == 9 and _ops.claim_period("monthly_summary", str(today)):
                 log.info("Running monthly summary emails...")
-                try:
-                    from emails import send_monthly_summary_email
-                    from models import get_all_restaurants
-                    for r in get_all_restaurants():
-                        if not r.owner_email or r.billing_status in ('internal', 'churned'):
-                            continue
-                        if getattr(r, "marketing_emails_opt_out", 0):
-                            continue
-                        try:
-                            send_monthly_summary_email(
-                                to_email=r.owner_email,
-                                restaurant_name=r.name,
-                                owner_name=r.owner_name,
-                                restaurant_id=r.id,
-                                has_reviews=bool(r.module_reviews),
-                                has_labor=bool(r.module_labor),
-                                has_inventory=bool(r.module_inventory),
-                                has_marketing=bool(r.module_marketing),
-                            )
-                            log.info(f"Monthly summary sent to {r.name}")
-                        except Exception as me:
-                            log.error(f"Monthly summary failed for {r.name}: {me}")
-                except Exception as e:
-                    log.error(f"Monthly summary scheduler error: {e}")
+                _ops.run_job("monthly_summary", run_monthly_summaries)
 
             if now.hour == 10 and _ops.claim_period("onboarding", str(today)):
                 # 10am daily — onboarding email sequence

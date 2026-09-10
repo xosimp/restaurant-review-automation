@@ -64,14 +64,14 @@ def publish_now(restaurant_id, platform, body, *, topic="", media_token=None,
     platform = (platform or "").lower().strip()
     body = (body or "").strip()
     if not body:
-        return {"ok": False, "error": "There's no post text to publish."}
+        return {"ok": False, "error": "There's no post text to publish.", "reached_platform": False}
 
     try:
         if platform == "instagram":
             from social_routes import _do_post_to_instagram
             image_url = _media_url(base_url, media_token)
             if not image_url:
-                return {"ok": False, "error": "Instagram needs a photo — add one before posting."}
+                return {"ok": False, "error": "Instagram needs a photo — add one before posting.", "reached_platform": False}
             payload, _ = _do_post_to_instagram(restaurant_id, body, image_url, topic)
         elif platform == "facebook":
             from social_routes import _do_post_to_facebook
@@ -79,20 +79,26 @@ def publish_now(restaurant_id, platform, body, *, topic="", media_token=None,
         elif platform == "google":
             import gmb
             if not gmb.is_connected(restaurant_id):
-                return {"ok": False, "error": "Google Business isn't connected."}
+                return {"ok": False, "error": "Google Business isn't connected.", "reached_platform": False}
             result = gmb.create_local_post(restaurant_id, body,
                                            cta_type=cta_type or None, cta_url=cta_url or None)
             payload = {"ok": bool(result.get("ok")),
                        "post_id": result.get("name"),
                        "error": result.get("error")}
         else:
-            return {"ok": False, "error": f"Cavnar AI can't publish to {platform or 'that'}."}
+            return {"ok": False, "error": f"Cavnar AI can't publish to {platform or 'that'}.", "reached_platform": False}
     except Exception as e:
         log.warning("publish_now %s failed for %s: %s", platform, restaurant_id, e)
-        return {"ok": False, "error": "That platform rejected the post — try again in a moment."}
+        # A raised exception here is ambiguous: a timeout can mean the
+        # platform never saw it, or saw it and accepted it. The caller must
+        # not retry on this without a human looking.
+        return {"ok": False, "error": "That platform rejected the post — try again in a moment.",
+                "reached_platform": True}
 
     if not payload.get("ok"):
-        return {"ok": False, "error": payload.get("error") or "The post didn't go through."}
+        # The platform answered and said no. Definite, so retrying is safe.
+        return {"ok": False, "error": payload.get("error") or "The post didn't go through.",
+                "reached_platform": False}
 
     post_id = payload.get("post_id")
     # Instagram and Facebook log their own content row inside social_routes;
@@ -335,7 +341,10 @@ def _alert_failed_post(row, error, db_path: str = DB_PATH):
     that raises must never take down the queue runner behind it.
     """
     try:
-        restaurant = get_restaurant(row["restaurant_id"])
+        # db_path from the caller — this used to fall back to get_restaurant's
+        # own module default, so on any database but the process-wide one it
+        # emailed whoever happened to hold that id in the wrong file.
+        restaurant = get_restaurant(row["restaurant_id"], db_path)
         if not restaurant or not restaurant.owner_email:
             return
         import notify
@@ -372,6 +381,13 @@ def run_due_posts(base_url="https://dashboard.cavnar.ai", db_path: str = DB_PATH
     what the owner picked — two restaurants in different timezones asking for
     "11am" are two different moments.
     """
+    # Anything a dying process left mid-publish is resolved before this pass
+    # picks new work, so a stuck row can never be silently retried later.
+    try:
+        reap_stuck_publishes(db_path=db_path)
+    except Exception as e:
+        log.warning("reap_stuck_publishes failed: %s", e)
+
     conn = get_conn(db_path)
     try:
         rows = conn.execute(
@@ -401,6 +417,12 @@ def run_due_posts(base_url="https://dashboard.cavnar.ai", db_path: str = DB_PATH
             failed += 1
             continue
 
+        # Take the row before the network call, not after. Whoever wins this
+        # owns the publish; a concurrent tick sees 'publishing' and moves on.
+        if not _claim_for_publish(row["id"], db_path=db_path):
+            skipped += 1
+            continue
+
         result = publish_now(
             row["restaurant_id"], row["platform"], row["body"],
             topic=row["topic"] or "", media_token=row["media_token"],
@@ -410,10 +432,20 @@ def run_due_posts(base_url="https://dashboard.cavnar.ai", db_path: str = DB_PATH
         if result.get("ok"):
             _finish(row["id"], "posted", post_id=result.get("post_id"), db_path=db_path)
             published += 1
+        elif result.get("reached_platform"):
+            # The request went out and we never got a clean answer. It may
+            # be live. Retrying could put a second copy on a public feed, so
+            # this stops here and tells the owner rather than guessing.
+            _finish(row["id"], "failed",
+                    error=(result.get("error") or "Publish interrupted")
+                          + " — it may already be live, check the platform before reposting.",
+                    attempts=(row["attempts"] or 0) + 1, db_path=db_path)
+            _alert_failed_post(row, "Publish interrupted — check the platform before reposting", db_path=db_path)
+            failed += 1
         else:
             attempts = (row["attempts"] or 0) + 1
-            # Retried on the next tick unless it has clearly failed for good —
-            # a transient Meta 500 shouldn't burn the post.
+            # Nothing was sent, so retrying is safe — a transient Meta 500 or
+            # a missing photo shouldn't burn the post.
             status = "failed" if attempts >= MAX_ATTEMPTS else "scheduled"
             _finish(row["id"], status, error=result.get("error"), attempts=attempts, db_path=db_path)
             if status == "failed":
@@ -433,6 +465,67 @@ def run_due_posts(base_url="https://dashboard.cavnar.ai", db_path: str = DB_PATH
         except Exception:
             pass
     return {"published": published, "failed": failed, "pending": skipped}
+
+
+def _claim_for_publish(row_id, db_path: str = DB_PATH) -> bool:
+    """Move one row from 'scheduled' to 'publishing', atomically.
+
+    run_due_posts used to call publish_now() while the row still said
+    'scheduled' and only write the result afterwards. Two ways that posts
+    twice to a real Instagram account: the process dies between the Graph
+    call and the UPDATE, or the Graph call times out on a request Meta
+    actually accepted. Either way the next tick — five minutes later — sees
+    'scheduled' and publishes it again, up to MAX_ATTEMPTS.
+
+    The UPDATE's own WHERE clause is the claim: `status='scheduled'` can only
+    match once, so whoever gets rowcount 1 owns the publish.
+    """
+    conn = get_conn(db_path)
+    try:
+        cur = conn.execute(
+            "UPDATE marketing_scheduled_posts SET status='publishing', claimed_at=datetime('now') "
+            "WHERE id=? AND status='scheduled'",
+            (row_id,),
+        )
+        conn.commit()
+        return cur.rowcount == 1
+    finally:
+        conn.close()
+
+
+def reap_stuck_publishes(older_than_minutes: int = 15, db_path: str = DB_PATH) -> int:
+    """Resolve rows left in 'publishing' by a process that died mid-flight.
+
+    We cannot know whether the post reached the platform, and guessing wrong
+    in the optimistic direction puts a duplicate on the restaurant's public
+    feed. So these are failed, not retried, with an error that says exactly
+    what is uncertain — a missing post the owner can repost beats a double
+    post they have to go and delete.
+    """
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT id, restaurant_id, platform, topic, body, scheduled_for FROM marketing_scheduled_posts "
+            "WHERE status='publishing' AND claimed_at < datetime('now', ?)",
+            (f"-{int(older_than_minutes)} minutes",),
+        ).fetchall()
+        if not rows:
+            return 0
+        conn.execute(
+            "UPDATE marketing_scheduled_posts SET status='failed', "
+            "error='Interrupted while publishing — it may or may not have gone out. Check the platform before reposting.' "
+            "WHERE status='publishing' AND claimed_at < datetime('now', ?)",
+            (f"-{int(older_than_minutes)} minutes",),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    for r in rows:
+        try:
+            _alert_failed_post(r, "Interrupted while publishing — check the platform before reposting", db_path=db_path)
+        except Exception as e:
+            log.warning("reap_stuck_publishes alert failed for row %s: %s", r["id"], e)
+    return len(rows)
 
 
 def _finish(row_id, status, *, post_id=None, error=None, attempts=None,

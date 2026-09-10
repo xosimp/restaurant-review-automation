@@ -626,6 +626,8 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "brand_color",     "TEXT"),
         ("restaurants", "brand_logo_url",  "TEXT"),
         # Response performance tracking
+        # Existing databases: the scheduled-post publish claim.
+        ("marketing_scheduled_posts", "claimed_at", "TEXT"),
         ("reviews", "draft_edited",     "INTEGER DEFAULT 0"),
         ("reviews", "regenerate_count", "INTEGER DEFAULT 0"),
         ("reviews", "response_action",  "TEXT"),
@@ -1094,7 +1096,11 @@ def init_db(db_path: str = DB_PATH):
             error           TEXT,
             attempts        INTEGER NOT NULL DEFAULT 0,
             created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
-            posted_at       TEXT
+            posted_at       TEXT,
+            -- Stamped when a scheduler tick takes the row for publishing, so
+            -- a row abandoned by a dying process can be told apart from one
+            -- that is simply due. See marketing_publish._claim_for_publish.
+            claimed_at      TEXT
         )""",
         "CREATE INDEX IF NOT EXISTS idx_mkt_sched_due ON marketing_scheduled_posts(status, scheduled_for)",
         "CREATE INDEX IF NOT EXISTS idx_mkt_sched_restaurant ON marketing_scheduled_posts(restaurant_id, scheduled_for)",
@@ -3994,10 +4000,28 @@ def is_in_quiet_hours(restaurant_id: int, db_path: str = DB_PATH) -> bool:
         return False
 
 def count_alerts_today(restaurant_id: int, db_path: str = DB_PATH) -> int:
+    """Alerts sent so far in the RESTAURANT's own day.
+
+    This compared against date('now'), which sqlite evaluates in UTC. For a
+    Chicago restaurant that rolls over at 7pm local, so "max 5 alerts a day"
+    was really five before dinner service and five more during it — the cap
+    reset in the middle of the shift it existed to protect. fired_at is
+    stored in UTC, so the local midnight is converted back to UTC to compare.
+    """
+    try:
+        from time_utils import restaurant_now_by_id, restaurant_tz
+        local_now = restaurant_now_by_id(restaurant_id)
+        if local_now.tzinfo is None:
+            local_now = local_now.replace(tzinfo=restaurant_tz(None))
+        local_midnight = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+        since = local_midnight.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        # Never let a timezone lookup turn into "no cap at all".
+        since = datetime.now(timezone.utc).strftime("%Y-%m-%d 00:00:00")
     conn = get_conn(db_path)
     row = conn.execute(
-        "SELECT COUNT(*) as c FROM alert_log WHERE restaurant_id=? AND fired_at >= date('now')",
-        (restaurant_id,)
+        "SELECT COUNT(*) as c FROM alert_log WHERE restaurant_id=? AND fired_at >= ?",
+        (restaurant_id, since)
     ).fetchone()
     conn.close()
     return row["c"] if row else 0
