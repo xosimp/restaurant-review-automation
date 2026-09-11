@@ -23,7 +23,7 @@ struct ShiftQualityPanel: View {
     @State private var showingReasoning = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 18) {
             header
             if let dimensions = customerDimensions, !dimensions.isEmpty {
                 dimensionGrid(dimensions)
@@ -32,7 +32,7 @@ struct ShiftQualityPanel: View {
             shiftStrip
             reasoningBlock
         }
-        .padding(16)
+        .padding(18)
         .background(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .fill(Color.cavnarPaper2.opacity(0.6))
@@ -52,11 +52,11 @@ struct ShiftQualityPanel: View {
             QualityDial(score: quality.score ?? 0, tone: tone, muted: isRescoring)
             VStack(alignment: .leading, spacing: 5) {
                 Text("SHIFT QUALITY")
-                    .font(.cavnarBody(11.5, weight: 700))
+                    .font(.cavnarBody(12.5, weight: 700))
                     .tracking(1.4)
                     .foregroundStyle(Color.cavnarInk3)
                 Text(bandLabel)
-                    .font(.cavnarHeadline(19))
+                    .font(.cavnarHeadline(23))
                     .foregroundStyle(Color.cavnarInk)
                 if let confidence = quality.confidence {
                     confidencePill(confidence)
@@ -72,10 +72,10 @@ struct ShiftQualityPanel: View {
                 .fill(confidenceTone(confidence.level))
                 .frame(width: 6, height: 6)
             Text("\(confidence.label) confidence")
-                .font(.cavnarBody(12.5, weight: 600))
+                .font(.cavnarBody(14, weight: 600))
                 .foregroundStyle(Color.cavnarInk2)
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 9)
         .padding(.vertical, 4)
         .background(Capsule().fill(Color.cavnarPaper3.opacity(0.7)))
     }
@@ -88,18 +88,18 @@ struct ShiftQualityPanel: View {
     }
 
     private func dimensionGrid(_ dimensions: [QualityDimension]) -> some View {
-        VStack(spacing: 9) {
+        VStack(spacing: 11) {
             ForEach(dimensions) { dimension in
                 HStack(spacing: 10) {
                     Text(dimension.label)
-                        .font(.cavnarBody(13.5))
+                        .font(.cavnarBody(14.5))
                         .foregroundStyle(Color.cavnarInk2)
-                        .frame(width: 122, alignment: .leading)
+                        .frame(width: 132, alignment: .leading)
                     QualityBar(score: dimension.score, tone: toneFor(dimension.score))
                     Text("\(dimension.score)%")
-                        .font(.cavnarNumber(13, weight: 700))
+                        .font(.cavnarNumber(14.5, weight: 700))
                         .foregroundStyle(Color.cavnarInk)
-                        .frame(width: 40, alignment: .trailing)
+                        .frame(width: 46, alignment: .trailing)
                 }
             }
         }
@@ -127,13 +127,13 @@ struct ShiftQualityPanel: View {
                         .frame(width: 5, height: 5)
                         .padding(.top, 6)
                     Text(line)
-                        .font(.cavnarBody(13.5))
+                        .font(.cavnarBody(14.5))
                         .foregroundStyle(Color.cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
-        .padding(11)
+        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -144,9 +144,9 @@ struct ShiftQualityPanel: View {
     // MARK: Per-shift
 
     private var shiftStrip: some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: 8) {
             Text("EVERY SHIFT")
-                .font(.cavnarBody(11, weight: 700))
+                .font(.cavnarBody(12, weight: 700))
                 .tracking(1.3)
                 .foregroundStyle(Color.cavnarInk3)
             ForEach(quality.scoredShifts) { shift in
@@ -163,13 +163,13 @@ struct ShiftQualityPanel: View {
             } label: {
                 HStack(spacing: 10) {
                     Text(shift.title)
-                        .font(.cavnarBody(14, weight: 600))
+                        .font(.cavnarBody(15.5, weight: 600))
                         .foregroundStyle(Color.cavnarInk)
                         .lineLimit(1)
                         .layoutPriority(1)
                     if shift.profile.demand == "peak" || shift.profile.demand == "high" {
                         Text(shift.profile.demand == "peak" ? "PEAK" : "BUSY")
-                            .font(.cavnarBody(9.5, weight: 700))
+                            .font(.cavnarBody(11, weight: 700))
                             .tracking(0.6)
                             .foregroundStyle(Color.cavnarEmber)
                             .padding(.horizontal, 5)
@@ -178,7 +178,7 @@ struct ShiftQualityPanel: View {
                     }
                     if shift.profile.trainingAllowed == true {
                         Text("TRAINING")
-                            .font(.cavnarBody(9.5, weight: 700))
+                            .font(.cavnarBody(11, weight: 700))
                             .tracking(0.6)
                             .foregroundStyle(Color.cavnarBlue)
                             .padding(.horizontal, 5)
@@ -191,11 +191,11 @@ struct ShiftQualityPanel: View {
                     QualityBar(score: shift.score ?? 0, tone: toneFor(shift.score ?? 0))
                         .frame(minWidth: 44)
                     Text("\(shift.score ?? 0)")
-                        .font(.cavnarNumber(15, weight: 700))
+                        .font(.cavnarNumber(17, weight: 700))
                         .foregroundStyle(toneFor(shift.score ?? 0))
-                        .frame(width: 26, alignment: .trailing)
+                        .frame(width: 30, alignment: .trailing)
                     Image(systemName: "chevron.down")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(expandedShift == shift.id
                                          ? toneFor(shift.score ?? 0) : Color.cavnarInk3)
                         .rotationEffect(.degrees(expandedShift == shift.id ? 180 : 0))
@@ -228,16 +228,16 @@ struct ShiftQualityPanel: View {
     /// and anything the engine could not see. Kept to what a manager would
     /// read standing at the pass.
     private func shiftDetail(_ shift: QualityShift) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             if let people = shift.people, !people.isEmpty {
                 Text("On this shift: " + people.joined(separator: ", "))
-                    .font(.cavnarBody(12.5))
+                    .font(.cavnarBody(13.5))
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Text("Judged as \(shift.profile.label)"
                  + (shift.profile.minQuality.map { ", which wants \($0)+" } ?? "") + ".")
-                .font(.cavnarBody(12))
+                .font(.cavnarBody(13.5))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
             // Grouped under quiet labels rather than eight identically
@@ -247,7 +247,7 @@ struct ShiftQualityPanel: View {
             group("Not known", shift.blindSpots, limit: 2, color: .cavnarInk3)
             if let capped = shift.cappedBy {
                 Text("Capped by \(capped.replacingOccurrences(of: "_", with: " ")) — a shift is never better than its weakest critical part.")
-                    .font(.cavnarBody(12.5))
+                    .font(.cavnarBody(13.5))
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -256,10 +256,10 @@ struct ShiftQualityPanel: View {
                     ForEach(dimensions) { d in
                         VStack(spacing: 2) {
                             Text("\(d.score)")
-                                .font(.cavnarNumber(12, weight: 700))
+                                .font(.cavnarNumber(14, weight: 700))
                                 .foregroundStyle(toneFor(d.score))
                             Text(shortLabel(d.label))
-                                .font(.cavnarBody(9))
+                                .font(.cavnarBody(11))
                                 .foregroundStyle(Color.cavnarInk3)
                         }
                         .frame(maxWidth: .infinity)
@@ -277,9 +277,9 @@ struct ShiftQualityPanel: View {
     @ViewBuilder
     private func group(_ label: String, _ lines: [String]?, limit: Int, color: Color) -> some View {
         if let lines, !lines.isEmpty {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 5) {
                 Text(label.uppercased())
-                    .font(.cavnarBody(9.5, weight: 700))
+                    .font(.cavnarBody(11, weight: 700))
                     .tracking(1.1)
                     .foregroundStyle(color)
                 ForEach(lines.prefix(limit), id: \.self) { line in
@@ -291,14 +291,14 @@ struct ShiftQualityPanel: View {
     }
 
     private func detailLine(_ text: String, symbol: String, color: Color) -> some View {
-        HStack(alignment: .top, spacing: 7) {
+        HStack(alignment: .top, spacing: 8) {
             Image(systemName: symbol)
-                .font(.system(size: symbol == "circle.fill" ? 4 : 9, weight: .bold))
+                .font(.system(size: symbol == "circle.fill" ? 5 : 10, weight: .bold))
                 .foregroundStyle(color)
-                .frame(width: 12)
-                .padding(.top, symbol == "circle.fill" ? 6 : 3)
+                .frame(width: 13)
+                .padding(.top, symbol == "circle.fill" ? 7 : 4)
             Text(text)
-                .font(.cavnarBody(12.5))
+                .font(.cavnarBody(14))
                 .foregroundStyle(Color.cavnarInk2)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -314,10 +314,10 @@ struct ShiftQualityPanel: View {
             } label: {
                 HStack(spacing: 6) {
                     Text(showingReasoning ? "Hide reasoning" : "Why this schedule?")
-                        .font(.cavnarBody(13.5, weight: 700))
+                        .font(.cavnarBody(15, weight: 700))
                         .foregroundStyle(Color.cavnarEmber)
                     Image(systemName: "chevron.down")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(Color.cavnarEmber)
                         .rotationEffect(.degrees(showingReasoning ? 180 : 0))
                 }
@@ -329,7 +329,7 @@ struct ShiftQualityPanel: View {
                 VStack(alignment: .leading, spacing: 9) {
                     if let whatIf, whatIf.ran, let verdict = whatIf.verdict {
                         Text(verdict)
-                            .font(.cavnarBody(13))
+                            .font(.cavnarBody(14))
                             .foregroundStyle(Color.cavnarInk2)
                             .fixedSize(horizontal: false, vertical: true)
                         ForEach((whatIf.swaps ?? []).prefix(3)) { swap in
@@ -341,7 +341,7 @@ struct ShiftQualityPanel: View {
                     group("Worth a look", quality.weaknesses, limit: 3, color: .cavnarAmber)
                     if let confidence = quality.confidence, !confidence.reasons.isEmpty {
                         Text(confidence.summary)
-                            .font(.cavnarBody(12.5, weight: 600))
+                            .font(.cavnarBody(14, weight: 600))
                             .foregroundStyle(Color.cavnarInk2)
                             .padding(.top, 2)
                         ForEach(confidence.reasons, id: \.self) { reason in
@@ -401,26 +401,26 @@ private struct QualityDial: View {
     var body: some View {
         ZStack {
             Circle()
-                .stroke(Color.cavnarPaper3, lineWidth: 7)
+                .stroke(Color.cavnarPaper3, lineWidth: 8)
             Circle()
                 .trim(from: 0, to: CGFloat(max(0, min(100, score))) / 100)
                 .stroke(
                     AngularGradient(
                         colors: [tone.opacity(0.55), tone, tone.opacity(0.9)],
                         center: .center, startAngle: .degrees(0), endAngle: .degrees(360)),
-                    style: StrokeStyle(lineWidth: 7, lineCap: .round))
+                    style: StrokeStyle(lineWidth: 8, lineCap: .round))
                 .rotationEffect(.degrees(-90))
                 .shadow(color: tone.opacity(0.5), radius: 6)
             VStack(spacing: -2) {
                 Text("\(score)")
-                    .font(.cavnarNumber(26, weight: 700))
+                    .font(.cavnarNumber(30, weight: 700))
                     .foregroundStyle(Color.cavnarInk)
                 Text("/100")
-                    .font(.cavnarNumber(10))
+                    .font(.cavnarNumber(11.5))
                     .foregroundStyle(Color.cavnarInk3)
             }
         }
-        .frame(width: 84, height: 84)
+        .frame(width: 92, height: 92)
         .opacity(muted ? 0.45 : 1)
         .animation(.easeOut(duration: 0.45), value: score)
     }
@@ -431,7 +431,7 @@ private struct QualityDial: View {
 private struct QualityBar: View {
     let score: Int
     let tone: Color
-    var height: CGFloat = 7
+    var height: CGFloat = 8
 
     var body: some View {
         GeometryReader { geo in

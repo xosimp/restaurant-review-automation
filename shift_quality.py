@@ -172,6 +172,11 @@ class ShiftContext:
     week_assignments: dict = field(default_factory=dict)   # {name: [assignment]}
     prior_pattern: dict = field(default_factory=dict)  # {name: {"days": [...], "dayparts": [...]}}
     availability: dict = field(default_factory=dict)   # {name: set(unavailable days)}
+    # Where a dimension leaves a note on its way OUT. A dimension that
+    # withdraws for want of data takes its findings with it, and the owner
+    # would never learn that rating somebody unlocks the check — so the
+    # reason is left here instead and folded into the shift's blind spots.
+    notes: list = field(default_factory=list)
 
     # ── Derived views every dimension wants ────────────────────────────
     @property
@@ -403,7 +408,32 @@ def dim_leadership(ctx: ShiftContext) -> DimensionResult | None:
 
     people = ctx.people
     on_role = ctx.by_role
-    satisfied, missed = [], []
+    satisfied, missed, unanswerable = [], [], []
+
+    # A requirement phrased in scores cannot be judged by a restaurant that
+    # has rated nobody. Answering it "not met" would be a zero, and
+    # leadership carries a floor, so one unconfigured built-in profile
+    # capped a perfectly good Saturday at nothing on the strength of a fact
+    # the owner never supplied. Unanswerable requirements are set aside and
+    # named; the dimension withdraws if none are left.
+    blind = not ctx.scores and not ctx.leader_flags
+    answerable = []
+    for rule in rules:
+        if blind and rule.get("min_score") is not None:
+            unanswerable.append(f"{(rule.get('role') or 'somebody').lower()} scoring "
+                                f"{float(rule['min_score']):g} or above")
+        else:
+            answerable.append(rule)
+    rules = answerable
+    check_profile = ctx.profile.requires_leader and not blind
+    if ctx.profile.requires_leader and blind:
+        unanswerable.append("somebody able to run the shift")
+    if not rules and not check_profile:
+        if unanswerable:
+            ctx.notes.append(
+                "Leadership was not checked — nobody is rated yet, so "
+                + ", ".join(sorted(set(unanswerable))) + " could not be identified.")
+        return None
 
     for rule in rules:
         role = (rule.get("role") or "").strip()
@@ -429,7 +459,7 @@ def dim_leadership(ctx: ShiftContext) -> DimensionResult | None:
     # The profile's own softer requirement: anybody authorised to close, or
     # anybody clearing the leader score, in one of the leader roles.
     profile_ok = True
-    if ctx.profile.requires_leader:
+    if check_profile:
         pool = people
         if ctx.profile.leader_roles:
             wanted = {r.strip().lower() for r in ctx.profile.leader_roles}
@@ -440,8 +470,8 @@ def dim_leadership(ctx: ShiftContext) -> DimensionResult | None:
                    or (ctx.scores.get(n) or 0) >= ctx.profile.leader_min_score]
         profile_ok = bool(leaders)
 
-    total = len(rules) + (1 if ctx.profile.requires_leader else 0)
-    met = len(satisfied) + (1 if (ctx.profile.requires_leader and profile_ok) else 0)
+    total = len(rules) + (1 if check_profile else 0)
+    met = len(satisfied) + (1 if (check_profile and profile_ok) else 0)
     score = _pct(met, total)
 
     res = DimensionResult(
@@ -452,14 +482,16 @@ def dim_leadership(ctx: ShiftContext) -> DimensionResult | None:
     for miss in missed:
         res.weaknesses.append(
             f"Needs {miss['rule']}, found {miss['found']}. On this shift: {miss['scheduled']}.")
-    if ctx.profile.requires_leader and not profile_ok:
+    if check_profile and not profile_ok:
         res.weaknesses.append(
             f"Nobody on this shift is authorised to close or rated "
             f"{ctx.profile.leader_min_score:g} or above.")
     if met == total and total:
         res.strengths.append("Leadership requirements met.")
-    if not ctx.scores and rules:
-        res.blind_spots.append("Leader rules reference scores nobody has set yet.")
+    if unanswerable:
+        res.blind_spots.append(
+            "Nobody is rated yet, so " + ", ".join(sorted(set(unanswerable)))
+            + " could not be checked on this shift.")
     return res
 
 
@@ -756,11 +788,12 @@ def dim_fairness(ctx: ShiftContext) -> DimensionResult | None:
                "least": {"names": starved, "shifts": bottom}},
     )
     if spread <= 2:
-        res.strengths.append("Premium shifts are spread evenly across the roster.")
+        res.strengths.append("The week's busiest shifts are spread evenly across the roster.")
     else:
         res.weaknesses.append(
-            f"{_names(hogs[:2])} work {top} premium {_plural(top, 'shift')} this week "
-            f"while {_names(starved[:2])} work {bottom}.")
+            f"{_names(hogs[:2])} " + _plural(len(hogs[:2]), "works", "work") +
+            f" {top} of the week's busiest shifts while {_names(starved[:2])} "
+            + _plural(len(starved[:2]), "works", "work") + f" {bottom}.")
     return res
 
 
@@ -883,6 +916,7 @@ def evaluate_shift(ctx: ShiftContext, weights: dict = None) -> dict:
     merged.update(ctx.profile.weights or {})
     merged.update(weights or {})
 
+    ctx.notes = []
     applied, skipped = [], []
     for key, fn in DIMENSIONS.items():
         try:
@@ -935,7 +969,7 @@ def evaluate_shift(ctx: ShiftContext, weights: dict = None) -> dict:
     strengths = [s for d in sorted(applied, key=lambda x: -x.weight) for s in d.strengths]
     weaknesses = [w for d in sorted(applied, key=lambda x: (x.score, -x.weight))
                   for w in d.weaknesses]
-    blind = [b for d in applied for b in d.blind_spots]
+    blind = [b for d in applied for b in d.blind_spots] + list(ctx.notes)
 
     return {
         "date": ctx.date, "day": ctx.day, "daypart": ctx.daypart,

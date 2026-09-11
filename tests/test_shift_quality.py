@@ -1127,3 +1127,95 @@ def test_the_web_tone_helper_returns_only_hex():
     assert "rgba" not in body, body
     import re as _re
     assert len(_re.findall(r"#[0-9a-f]{6}", body)) == 4
+
+
+def test_leadership_withdraws_when_nobody_is_rated_rather_than_scoring_zero():
+    """A requirement phrased in scores cannot be judged by a restaurant that
+    has rated nobody. Answering it "not met" is a zero, and leadership
+    carries a floor — so one unconfigured built-in profile capped a
+    perfectly good Saturday at nothing, on a fact the owner never supplied."""
+    rows = saturday({"Bartender": ["A", "B"], "Cook": ["C", "D"], "Server": ["E", "F"]})
+    out = sq.score_rows(rows, profiles=sq.BUILTIN_PROFILES,
+                        role_minimums={"Bartender": 2, "Cook": 2, "Server": 2},
+                        leader_rules=[{"role": "Bartender", "days": ["Saturday"],
+                                       "daypart": "night", "min_score": 5}])
+    shift = out["shifts"][0]
+    assert "leadership" in shift["not_applicable"]
+    assert shift["capped_by"] != "leadership"
+    assert shift["score"] == 100, shift["score"]
+    # Withdrawing silently would leave the owner never learning that rating
+    # somebody unlocks the check, so the reason survives the withdrawal.
+    assert any("Leadership was not checked" in b for b in shift["blind_spots"])
+
+
+def test_leadership_is_judged_normally_once_anybody_is_rated():
+    """One rating is enough to make the question answerable. An unrated
+    person genuinely does not clear a 5, and that is a real finding."""
+    rows = saturday({"Bartender": ["A", "B"]})
+    out = sq.score_rows(rows, profiles=profiles(), scores={"A": 3},
+                        leader_rules=[{"role": "Bartender", "days": ["Saturday"],
+                                       "daypart": "night", "min_score": 5}])
+    leadership = next(d for d in out["shifts"][0]["dimensions"] if d["key"] == "leadership")
+    assert leadership["score"] == 0
+    assert leadership["facts"]["misses"]
+
+
+def test_a_headcount_only_leader_rule_is_answerable_without_ratings():
+    """"At least one bartender on" needs no score at all, so it must still
+    be checked by a restaurant that has rated nobody."""
+    rows = saturday({"Cook": ["C"]})
+    out = sq.score_rows(rows, profiles=[sq.ShiftProfile(key="std", source="restaurant")],
+                        role_minimums={"Cook": 1},
+                        leader_rules=[{"role": "Bartender", "count": 1}])
+    leadership = next(d for d in out["shifts"][0]["dimensions"] if d["key"] == "leadership")
+    assert leadership["score"] == 0
+    assert leadership["facts"]["misses"][0]["rule"] == "1 bartender"
+
+
+def test_a_closer_flag_alone_makes_leadership_answerable():
+    """can_close is a fact about a person that owes nothing to ratings."""
+    rows = saturday({"Bartender": ["A", "B"]})
+    out = sq.score_rows(rows, profiles=sq.BUILTIN_PROFILES,
+                        role_minimums={"Bartender": 2}, leader_flags={"A": True})
+    leadership = next(d for d in out["shifts"][0]["dimensions"] if d["key"] == "leadership")
+    assert leadership["score"] == 100
+
+
+def test_the_fairness_wording_names_the_shifts_rather_than_calling_them_premium():
+    """"Premium shift" is scheduling jargon. An owner reading this should
+    not have to ask which shifts it means."""
+    rows = [row(d, "Favourite", "Server") for d in (THU, FRI, SAT, SUN)]
+    rows += [row(MON, "Ignored", "Server"), row(TUE, "Ignored", "Server"),
+             row(MON, "Third", "Server")]
+    setup = [sq.ShiftProfile(key="nights", demand="peak", daypart="night",
+                             label="Nights", source="restaurant"),
+             sq.ShiftProfile(key="days", demand="low", daypart="morning",
+                             label="Days", source="restaurant")]
+    out = sq.score_rows(rows, profiles=setup,
+                        scores={"Favourite": 4, "Ignored": 4, "Third": 4},
+                        role_minimums={"Server": 1})
+    text = " ".join(w for s in out["shifts"] for w in s["weaknesses"])
+    text += " ".join(s for sh in out["shifts"] for s in sh["strengths"])
+    assert "premium" not in text.lower(), text
+    assert "busiest shifts" in text
+
+
+def test_the_ios_quality_panel_reads_at_the_labor_tabs_own_type_scale():
+    """The panel shipped a full step under the rest of the Labor tab, whose
+    body text sits at 14-15, and the expanded shift detail was the worst of
+    it. Only tracked uppercase micro-labels and the chip numerals under them
+    are allowed below 12."""
+    import re
+    src = _source("ios/CavnarAI/CavnarAI/Features/Labor/ShiftQualityPanel.swift")
+    small = []
+    for line_no, line in enumerate(src.split("\n"), 1):
+        for match in re.finditer(r"\.cavnar(?:Body|Number)\(([0-9.]+)", line):
+            size = float(match.group(1))
+            if size < 12 and "tracking" not in src.split("\n")[line_no]:
+                small.append((line_no, size, line.strip()))
+    # The two allowed: the "/100" under the dial's own numeral, and the
+    # five-across dimension chip labels that sit directly beneath theirs.
+    # Both are sub-labels of a figure the reader has already read.
+    assert len(small) <= 2, small
+    assert all(size >= 11 for _line, size, _text in small), small
+    assert ".cavnarBody(14))" in src, "detail lines should sit at the module's body size"
