@@ -1867,6 +1867,35 @@ def labor_gap_api(current_user):
         return jsonify(ok=False, error=_safe_err(e), over_target=False, monthly_gap=0,
                       current_pct=0, target_pct=30)
 
+def _no_shift_data_message(restaurant_id, restaurant=None):
+    """Say which restaurant is missing shifts, and what is actually missing.
+
+    "No shift data available — upload shifts CSV first" was shown beside a
+    Labor tab full of numbers, which reads as a contradiction and gives
+    nobody anywhere to start. The numbers on that page can come from a
+    bundled sample when a restaurant has uploaded nothing, so the page
+    looking populated proves nothing — and that is exactly the confusion
+    worth naming.
+    """
+    from models import get_client_data
+    name = getattr(restaurant, "name", None) or f"restaurant {restaurant_id}"
+    try:
+        data = get_client_data(restaurant_id) or {}
+    except Exception:
+        data = {}
+    csv_text = (data.get("shifts_csv") or "").strip()
+    if not data:
+        detail = "it has no client data row at all"
+    elif not csv_text:
+        detail = "its client data row has no shifts CSV"
+    else:
+        detail = f"its shifts CSV is {len(csv_text.splitlines()) - 1} rows but could not be read"
+    return (f"{name} (id {restaurant_id}) has no shift data to schedule from — {detail}. "
+            "Upload a shifts CSV under Update shifts CSV. The figures already on this "
+            "page can come from sample data, so a populated Labor tab does not mean "
+            "this restaurant has its own shifts on file.")
+
+
 def _build_schedule_result(restaurant_id):
     """Shared logic for both schedule endpoints."""
     from labor import (analyse_shifts_for_restaurant, load_shifts_for_restaurant,
@@ -1879,7 +1908,7 @@ def _build_schedule_result(restaurant_id):
     restaurant = get_restaurant(restaurant_id)
     shifts = load_shifts_for_restaurant(restaurant_id)
     if not shifts:
-        raise ValueError("No shift data available — upload shifts CSV first")
+        raise ValueError(_no_shift_data_message(restaurant_id, restaurant))
     analysis = analyse_shifts_for_restaurant(restaurant_id)
     # The guard above can never fire: load_shifts_for_restaurant substitutes
     # a bundled fictional week when a restaurant has uploaded nothing, so
@@ -1888,7 +1917,7 @@ def _build_schedule_result(restaurant_id):
     # PAR banner priced off a fictional restaurant's revenue. is_live is the
     # real signal and was already computed; only the two AI paths ignored it.
     if not analysis.get("is_live"):
-        raise ValueError("No shift data available — upload shifts CSV first")
+        raise ValueError(_no_shift_data_message(restaurant_id, restaurant))
     # Use blended rate from per-role rates if available, otherwise flat rate
     rate = analysis.get("blended_rate") or get_hourly_rate(restaurant_id)
     target   = float(restaurant.labor_target_pct or 30.0) if restaurant else 30.0

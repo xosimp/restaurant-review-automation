@@ -1685,3 +1685,27 @@ def test_the_demo_seed_never_touches_a_restaurant_with_real_uploads(db_path, mon
     import labor
     rows = labor.load_shifts(csv_string=models.get_client_data(rid, db_path=db_path)["shifts_csv"])
     assert {r["employee"] for r in rows} == {"Real"}
+
+
+def test_the_missing_shift_data_error_says_which_restaurant_and_why(db_path, monkeypatch):
+    """"No shift data available — upload shifts CSV first" was shown beside a
+    Labor tab full of numbers, which reads as a contradiction and gives
+    nobody anywhere to start. Those numbers can come from bundled sample
+    data, which is exactly the confusion worth naming."""
+    import client_api
+    import models
+    real = models.get_conn
+    monkeypatch.setattr(models, "get_conn", lambda *a, **k: real(db_path))
+    monkeypatch.setattr(models, "DB_PATH", db_path)
+    monkeypatch.setattr(client_api, "get_conn", lambda *a, **k: real(db_path), raising=False)
+    rid = models.create_restaurant(
+        models.Restaurant(name="Nowhere Diner", owner_email="n@x.test"), db_path=db_path)
+
+    message = client_api._no_shift_data_message(rid, models.get_restaurant(rid, db_path))
+    assert "Nowhere Diner" in message and f"id {rid}" in message
+    assert "no client data row at all" in message
+    assert "sample data" in message
+
+    models.save_client_data(rid, "shifts", "", source="seed", db_path=db_path)
+    assert "no shifts CSV" in client_api._no_shift_data_message(
+        rid, models.get_restaurant(rid, db_path))
