@@ -2874,8 +2874,8 @@ def quality_inputs_from_db(restaurant_id, daily_target_hours=None):
     """
     from models import (get_operational_scores, get_role_strength_thresholds,
                         get_shift_leader_rules, get_shift_profiles, get_restaurant)
-    from labor import (load_shifts_for_restaurant, build_demand_forecast,
-                       historical_patterns)
+    from labor import build_demand_forecast, historical_patterns
+    from models import _cached_shifts
     import shift_quality as _sq
 
     scores = get_operational_scores(restaurant_id)
@@ -2899,7 +2899,10 @@ def quality_inputs_from_db(restaurant_id, daily_target_hours=None):
             demand_by_day=demand_by_day)
 
     try:
-        patterns = historical_patterns(load_shifts_for_restaurant(restaurant_id))
+        # Through the request-scoped cache, like every other reader. Parsing
+        # the whole history here and again in _quality_signals meant a single
+        # manager edit paid for two full passes over it.
+        patterns = historical_patterns(_cached_shifts(restaurant_id))
     except Exception:
         patterns = {"typical_headcount": {}, "cross_trained": {}}
 
@@ -3268,10 +3271,19 @@ def _run_schedule_job(job_id, restaurant_id):
             # still ships.
             try:
                 result["staff_constraints"] = staff_constraints
+                # Only the flags that mean the person is not really on that
+                # shift. A row flagged "over 40h for the week" still has a
+                # real person on the floor — it is a cost problem, not a
+                # coverage one — and excluding it made a fully staffed week
+                # read as zero coverage on every shift.
+                _NO_SHOW_REASONS = ("double-booked at the same start time",
+                                    "not on the staff list",
+                                    "date is outside next week")
                 result["flagged_rows"] = {
                     ((_r.get("employee") or "").strip().lower(), _r.get("date") or "",
                      _r.get("shift_start") or "")
-                    for _r in preview_rows if _r.get("needs_review")}
+                    for _r in preview_rows
+                    if _r.get("needs_review") and _r.get("review_reason") in _NO_SHOW_REASONS}
                 result["prior_week_assignments"] = _prior_week_assignments(restaurant_id)
                 from models import sibling_location_shifts as _sibs
                 result["elsewhere"] = _sibs(

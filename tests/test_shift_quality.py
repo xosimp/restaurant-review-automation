@@ -1587,3 +1587,34 @@ def test_both_surfaces_say_what_the_explanation_is_not():
     for text in (_source("ios/CavnarAI/CavnarAI/Features/Labor/ShiftQualityPanel.swift"),
                  _source("templates", "dashboard.html")):
         assert "does not record why the AI" in text
+
+
+def test_a_manager_edit_parses_the_shift_history_once():
+    """P2-2. Three readers each loaded and re-parsed the whole CSV, so one
+    edit paid for three full passes over the restaurant's entire history."""
+    import client_api
+    import labor
+    from flask import Flask
+    calls = []
+    original = labor.load_shifts_for_restaurant
+    labor.load_shifts_for_restaurant = lambda rid: (calls.append(rid), [])[1]
+    try:
+        with Flask(__name__).test_request_context("/"):
+            inputs = client_api.quality_inputs_from_db(4242, daily_target_hours={})
+            client_api._quality_signals(4242, inputs)
+    finally:
+        labor.load_shifts_for_restaurant = original
+    assert len(calls) == 1, calls
+
+
+def test_an_over_hours_row_still_counts_as_somebody_on_the_floor():
+    """Caught by looking at a rendered panel: a fully staffed week read as
+    zero coverage on every shift, because every row was flagged "over 40h
+    for the week" and flagged rows had been excluded wholesale. Being over
+    hours is a cost problem; the person is still there."""
+    job = _source("client_api.py")
+    block = job[job.index("_NO_SHOW_REASONS"):]
+    block = block[:block.index("result[\"prior_week_assignments\"]")]
+    assert "over 40h" not in block
+    assert "double-booked at the same start time" in block
+    assert "not on the staff list" in block
