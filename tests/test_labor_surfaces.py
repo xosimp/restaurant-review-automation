@@ -64,8 +64,14 @@ def test_the_schedule_job_refuses_sample_data(monkeypatch, db_path):
     conn.commit()
     conn.close()
     monkeypatch.setattr(client_api, "get_restaurant", lambda rid: models.get_restaurant(rid, db_path))
-    with pytest.raises(ValueError, match="No shift data"):
+    with pytest.raises(ValueError, match="no shift data to schedule from") as caught:
         client_api._build_schedule_result(1)
+    # The refusal has to say which restaurant and what is missing. The old
+    # wording was shown beside a Labor tab full of sample-derived numbers,
+    # which read as a contradiction and gave nobody anywhere to start.
+    assert "R (id 1)" in str(caught.value)
+    assert "no client data row at all" in str(caught.value)
+    assert "sample data" in str(caught.value)
 
 
 # ── The partial-data flags reach the payload ───────────────────────────────
