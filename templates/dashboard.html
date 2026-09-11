@@ -7937,20 +7937,54 @@ function renderAIVisibility(d) {
   var btn = document.getElementById('aiv-run-btn');
   if (btn) { btn.textContent = 'Re-run'; btn.disabled = false; }
   var esc=function(x){return String(x==null?'':x).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');};
-  var ai = Math.round(d.ai_score||0), gbp = Math.round(d.gbp_score||0);
+  // d.ai_score is null when no question came back, and a bare ||0 turned
+  // that into a hard zero labelled "not yet indexed" — a Perplexity outage
+  // shown to the owner as a verdict on their business. The backend has
+  // always returned partial / location_known / answered_queries saying
+  // exactly this; nothing read them.
+  var hasScore = (d.ai_score !== null && d.ai_score !== undefined);
+  var measured = hasScore && !d.partial && d.location_known !== false;
+  var ai = hasScore ? Math.round(d.ai_score) : null;
+  // presence_score is the restaurant's real public listing and review
+  // record. gbp_score used to blend that with whether a Yelp ID had been
+  // typed into Cavnar AI, which is this product's own configuration.
+  var gbp = Math.round((d.presence_score !== undefined && d.presence_score !== null) ? d.presence_score : (d.gbp_score||0));
   var scoreEl = document.getElementById('aiv-score-num');
   var scoreLbl = document.getElementById('aiv-score-label');
-  if (scoreEl) countUp(scoreEl, ai, 1400, '', '%', 0);
-  if (scoreLbl) scoreLbl.textContent = ai >= 67 ? 'strong presence' : (ai >= 34 ? 'moderate presence' : 'not yet indexed');
+  if (scoreEl) {
+    if (!hasScore) { scoreEl.textContent = '—'; }
+    else if (d.ai_score_low != null && d.ai_score_high != null && d.ai_score_high > d.ai_score_low) {
+      scoreEl.textContent = d.ai_score_low + '–' + d.ai_score_high + '%';
+    } else { countUp(scoreEl, ai, 1400, '', '%', 0); }
+  }
+  if (scoreLbl) {
+    scoreLbl.textContent = !measured ? 'not measured'
+      : (ai >= 67 ? 'strong presence' : (ai >= 34 ? 'moderate presence' : 'not yet indexed'));
+  }
   var tone = function(v,hi,mid){return v>=hi?'good':(v>=mid?'warn':'bad');};
   var chipAi=document.getElementById('in2-chip-ai'), chipAiN=document.getElementById('in2-chip-ai-n');
-  if(chipAi){chipAi.className='hb-chip '+tone(ai,67,34);}if(chipAiN)chipAiN.textContent=ai+'%';
+  if(chipAi){chipAi.className='hb-chip '+(measured?tone(ai,67,34):'');}
+  if(chipAiN)chipAiN.textContent = hasScore ? (ai+'%') : '—';
   var chipG=document.getElementById('in2-chip-gbp'), chipGN=document.getElementById('in2-chip-gbp-n');
   if(chipG){chipG.className='hb-chip '+tone(gbp,70,40);}if(chipGN)chipGN.textContent=gbp+'%';
   var aivNote = document.getElementById('aiv-disclaimer');
   if (aivNote) {
-    if (ai === 0) { aivNote.innerHTML = '<b>Not yet appearing in AI search</b> — normal for independent restaurants this early. More reviews, a complete Google Business Profile and online mentions are what get you there. That is exactly what this platform drives.'; aivNote.style.display = 'block'; }
-    else aivNote.style.display = 'none';
+    var note = '';
+    if (d.location_known === false) {
+      note = "<b>Can't be measured yet</b> — we don't have a city for this restaurant, so we can't tell your listing apart from another location with the same name. Add your Google Place ID in Account.";
+    } else if (!hasScore) {
+      note = "<b>AI search didn't answer this time</b> — this is not a reading of your visibility. Try again shortly.";
+    } else if (d.partial) {
+      note = '<b>Partial check</b> — only ' + (d.answered_queries||0) + ' of ' + (d.total_queries||0) + ' questions came back, so this is an estimate rather than a measurement.';
+    } else if (d.city_source === 'profile') {
+      note = "<b>Heads up</b> — the city in these questions comes from your profile text, not from your Google listing. Add a Google Place ID for a firmer match.";
+    } else if (ai === 0) {
+      note = '<b>Not yet appearing in AI search</b> — normal for independent restaurants this early. More reviews, a complete Google Business Profile and online mentions are what get you there. That is exactly what this platform drives.';
+    } else if (d.setup_total) {
+      note = (d.setup_done||0) + ' of ' + d.setup_total + ' Cavnar connections set up. These help us read your listing; they do not change what AI search sees.';
+    }
+    aivNote.innerHTML = note;
+    aivNote.style.display = note ? 'block' : 'none';
   }
   var gbpEl = document.getElementById('aiv-gbp-num');
   var gbpLbl = document.getElementById('aiv-gbp-label');

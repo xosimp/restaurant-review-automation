@@ -651,6 +651,10 @@ def ensure_columns(db_path: str = DB_PATH):
         # failed refresh left the previous value in place indefinitely,
         # shown as current and driving the rating-threshold alert.
         ("restaurants", "gbp_rating_updated_at", "TEXT"),
+        # Sample size behind each visibility run, so a change can be told
+        # from a difference in how many queries came back.
+        ("ai_visibility_runs", "answered", "INTEGER"),
+        ("ai_visibility_runs", "appeared", "INTEGER"),
     ]
     for table, col, col_type in columns_to_add:
         try:
@@ -4356,24 +4360,129 @@ def get_account_activity(restaurant_id: int, limit: int = 100, db_path: str = DB
     return out
 
 
-def record_ai_visibility_run(restaurant_id: int, ai_score: int, gbp_score: int = None, db_path: str = DB_PATH):
+def init_competitor_snapshots(db_path: str = DB_PATH):
+    conn = get_conn(db_path)
+    conn.execute("""CREATE TABLE IF NOT EXISTS competitor_snapshots (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        restaurant_id INTEGER NOT NULL,
+        place_id      TEXT    NOT NULL,
+        name          TEXT,
+        rating        REAL,
+        review_count  INTEGER,
+        price_level   INTEGER,
+        match_basis   TEXT,
+        captured_at   TEXT    NOT NULL DEFAULT (datetime('now'))
+    )""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_compsnap_rest_time "
+                 "ON competitor_snapshots(restaurant_id, captured_at)")
+    conn.commit()
+    conn.close()
+
+
+def record_competitor_snapshot(restaurant_id: int, competitors: list, db_path: str = DB_PATH):
+    """One row per competitor per run.
+
+    competitor_intel is a single JSON blob overwritten on every run, so the
+    module could describe the competitive landscape today and nothing about
+    how it changed. A rating sliding from 4.6 to 4.1 over two months is the
+    most useful thing this module could tell an owner, and it was being
+    thrown away every Monday.
+    """
+    init_competitor_snapshots(db_path)
     conn = get_conn(db_path)
     try:
-        conn.execute("INSERT INTO ai_visibility_runs (restaurant_id, ai_score, gbp_score) VALUES (?,?,?)",
-                     (restaurant_id, ai_score, gbp_score))
+        for c in competitors or []:
+            if not c.get("place_id"):
+                continue
+            conn.execute(
+                "INSERT INTO competitor_snapshots (restaurant_id, place_id, name, rating, "
+                "review_count, price_level, match_basis) VALUES (?,?,?,?,?,?,?)",
+                (restaurant_id, c["place_id"], c.get("name"), c.get("rating"),
+                 c.get("review_count"), c.get("price_level"), c.get("match_basis")))
         conn.commit()
     finally:
         conn.close()
 
 
-def last_two_ai_visibility_scores(restaurant_id: int, db_path: str = DB_PATH) -> list:
+def competitor_movement(restaurant_id: int, days: int = 60, db_path: str = DB_PATH) -> list:
+    """How each competitor's rating and review count have moved.
+
+    Returns one entry per competitor with its earliest and latest snapshot
+    inside the window, and only where both exist — a single data point is
+    not a movement and is reported as such by being absent.
+    """
+    init_competitor_snapshots(db_path)
     conn = get_conn(db_path)
     rows = conn.execute("""
-        SELECT ai_score FROM ai_visibility_runs WHERE restaurant_id=? AND ai_score IS NOT NULL
+        SELECT place_id, name, rating, review_count, captured_at
+        FROM competitor_snapshots
+        WHERE restaurant_id=? AND captured_at >= datetime('now', ?)
+        ORDER BY captured_at ASC
+    """, (restaurant_id, f"-{int(days)} days")).fetchall()
+    conn.close()
+    by_place = {}
+    for r in rows:
+        by_place.setdefault(r["place_id"], []).append(dict(r))
+    out = []
+    for pid, snaps in by_place.items():
+        if len(snaps) < 2:
+            continue
+        first, last = snaps[0], snaps[-1]
+        if first["rating"] is None or last["rating"] is None:
+            continue
+        out.append({
+            "place_id": pid,
+            "name": last["name"],
+            "rating_then": round(first["rating"], 2),
+            "rating_now": round(last["rating"], 2),
+            "rating_change": round(last["rating"] - first["rating"], 2),
+            "reviews_then": first["review_count"],
+            "reviews_now": last["review_count"],
+            "reviews_added": (last["review_count"] or 0) - (first["review_count"] or 0),
+            "first_seen": first["captured_at"],
+            "last_seen": last["captured_at"],
+            "snapshots": len(snaps),
+        })
+    out.sort(key=lambda d: abs(d["rating_change"]), reverse=True)
+    return out
+
+
+def record_ai_visibility_run(restaurant_id: int, ai_score: int, gbp_score: int = None,
+                             answered: int = None, appeared: int = None,
+                             db_path: str = DB_PATH):
+    """Record one complete visibility run.
+
+    answered/appeared are stored so a later comparison can tell a real
+    change from a difference in sample size, and so the drop alert can
+    refuse to fire on a sample too small to say anything.
+    """
+    conn = get_conn(db_path)
+    try:
+        conn.execute(
+            "INSERT INTO ai_visibility_runs (restaurant_id, ai_score, gbp_score, answered, appeared) "
+            "VALUES (?,?,?,?,?)",
+            (restaurant_id, ai_score, gbp_score, answered, appeared))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def last_two_ai_visibility_runs(restaurant_id: int, db_path: str = DB_PATH) -> list:
+    """The two most recent complete runs, newest first, with their samples."""
+    conn = get_conn(db_path)
+    rows = conn.execute("""
+        SELECT ai_score, answered, appeared, created_at
+        FROM ai_visibility_runs
+        WHERE restaurant_id=? AND ai_score IS NOT NULL
         ORDER BY created_at DESC, id DESC LIMIT 2
     """, (restaurant_id,)).fetchall()
     conn.close()
-    return [r["ai_score"] for r in rows]
+    return [dict(r) for r in rows]
+
+
+def last_two_ai_visibility_scores(restaurant_id: int, db_path: str = DB_PATH) -> list:
+    """Scores only. Kept for callers that just want the numbers."""
+    return [r["ai_score"] for r in last_two_ai_visibility_runs(restaurant_id, db_path)]
 
 
 def purge_expired_reviews(db_path: str = DB_PATH) -> int:

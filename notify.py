@@ -962,6 +962,43 @@ def health_bypasses_quiet_hours(restaurant_id: int, db_path: str = DB_PATH) -> b
         return False
 
 
+# A visibility score is appearances over a handful of questions answered by
+# a non-deterministic model. The alert threshold used to be 15 points on a
+# three-question run, where the score could only be 0, 33, 67 or 100 — so
+# every single question flipping cleared it, and the owner got a text about
+# a decline that was model variance rather than anything about their
+# business. Two bars now: the run has to be big enough to say anything, and
+# the move has to be more than one question changing its mind.
+AI_VISIBILITY_MIN_SAMPLE = 5
+AI_VISIBILITY_MIN_QUERIES_MOVED = 2
+
+
+def _ai_visibility_drop(runs: list):
+    """(current, previous, questions_moved) when a drop is worth telling
+    the owner about, else None."""
+    if len(runs) != 2:
+        return None
+    now, prev = runs[0], runs[1]
+    n_now, n_prev = now.get("answered") or 0, prev.get("answered") or 0
+    if n_now < AI_VISIBILITY_MIN_SAMPLE or n_prev < AI_VISIBILITY_MIN_SAMPLE:
+        return None
+    # Compare like with like: two runs over different numbers of questions
+    # are not comparable as counts, so scale the previous appearance rate
+    # onto this run's sample.
+    a_now = now.get("appeared")
+    a_prev = prev.get("appeared")
+    if a_now is None or a_prev is None:
+        return None
+    expected_now = (a_prev / n_prev) * n_now
+    moved = expected_now - a_now
+    if moved < AI_VISIBILITY_MIN_QUERIES_MOVED:
+        return None
+    s_now, s_prev = now.get("ai_score"), prev.get("ai_score")
+    if s_now is None or s_prev is None or s_now >= s_prev:
+        return None
+    return s_now, s_prev, int(round(moved))
+
+
 def check_extra_daily_alerts(db_path: str = DB_PATH):
     """The two daily triggers added by the settings audit — food waste and
     an AI-visibility drop — run right after check_daily_alerts(). Same
@@ -1027,13 +1064,20 @@ def check_extra_daily_alerts(db_path: str = DB_PATH):
         # ── AI visibility drop ───────────────────────────────
         if r["alert_ai_visibility_drop"] and not _recent("ai_visibility_drop"):
             try:
-                from models import last_two_ai_visibility_scores
-                scores = last_two_ai_visibility_scores(rid, db_path)
-                if len(scores) == 2 and scores[0] < scores[1] - 15:
+                from models import last_two_ai_visibility_runs
+                runs = last_two_ai_visibility_runs(rid, db_path)
+                drop = _ai_visibility_drop(runs)
+                if drop:
+                    now_s, prev_s, moved = drop
                     _fire("ai_visibility_drop",
-                          f"Cavnar AI: {name}'s AI visibility fell from {scores[1]} to {scores[0]}.",
+                          f"Cavnar AI: {name}'s AI visibility fell from {prev_s}% to {now_s}% "
+                          f"({moved} fewer of the questions we ask mentioned you).",
                           f"AI visibility dropped — {name}",
-                          [f"Your AI visibility score went from {scores[1]} to {scores[0]} since the last check.",
-                           "Open Intel → AI Visibility to see which queries stopped mentioning you."])
+                          [f"Your AI visibility went from <strong>{prev_s}%</strong> to "
+                           f"<strong>{now_s}%</strong> since the last check.",
+                           f"That is {moved} fewer of the questions we ask AI search that mentioned you.",
+                           "These questions are answered by a model that varies run to run, so a small "
+                           "move is normal. This one was large enough to be worth a look.",
+                           "Open Intel → AI Visibility to see which questions changed."])
             except Exception as e:
                 print(f"[notify] ai visibility check error rid={rid}: {e}")

@@ -1152,6 +1152,37 @@ def run_weekly_competitor_analysis():
     return {"analysed": done, "failed": failed}
 
 
+def run_weekly_ai_visibility():
+    """Monday 7am — one AI visibility run per full-tier client.
+
+    There was no scheduled run at all. Visibility was checked only when an
+    owner happened to open the Intel tab, so ai_visibility_runs accumulated
+    at whatever rate they browsed: two adjacent "runs" could be weeks apart
+    and were drawn as consecutive points on a trend line, and the drop alert
+    compared them as though they were a week apart. A fixed cadence is what
+    makes that history a trend rather than a record of tab-opening.
+
+    force=True bypasses the six-hour display cache; the budget ceiling and
+    the per-restaurant rate limit inside the call still apply.
+    """
+    from client_api import _do_ai_visibility_inner
+    from models import get_all_restaurants, is_full_tier
+    done = failed = 0
+    for r in get_all_restaurants():
+        if r.id and is_full_tier(r):
+            try:
+                payload, _ = _do_ai_visibility_inner(r.id, force=True)
+                if payload.get("ok"):
+                    done += 1
+                else:
+                    failed += 1
+            except Exception as ve:
+                failed += 1
+                log.error(f"AI visibility run failed for {r.name}: {ve}")
+                _ops.capture(ve, job="ai_visibility", context=f"restaurant_id={r.id}")
+    return {"checked": done, "failed": failed}
+
+
 def run_daily_alert_checks():
     """10am — unresponded, trend/threshold/labor, food waste and visibility
     alerts, then the retention purge. A failure in one must not take the rest
@@ -1254,6 +1285,12 @@ def scheduler_loop():
             if now.hour == 6 and now.weekday() == 0 and _ops.claim_period("competitor_analysis", str(today)):
                 log.info("Running weekly competitor analysis...")
                 _ops.run_job("competitor_analysis", run_weekly_competitor_analysis)
+
+            # An hour after the competitor run, so the two weekly Intel jobs
+            # do not compete for the same minute.
+            if now.hour == 7 and now.weekday() == 0 and _ops.claim_period("ai_visibility", str(today)):
+                log.info("Running weekly AI visibility checks...")
+                _ops.run_job("ai_visibility", run_weekly_ai_visibility)
 
             if now.hour == 3 and _ops.claim_period("pos_sync", str(today)):
                 log.info("Running nightly Toast POS sync...")

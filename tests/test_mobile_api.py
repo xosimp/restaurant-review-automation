@@ -2635,11 +2635,15 @@ def test_ai_visibility_drop_alert(client, db_path, monkeypatch):
     emails_sent = []
     monkeypatch.setattr(notify, "_send_alert_email", lambda *a, **kw: emails_sent.append(a[1]) or True)
     monkeypatch.setattr("push.fire_push", lambda *a, **kw: None)
-    record_ai_visibility_run(rid, 80, db_path=db_path)
-    record_ai_visibility_run(rid, 75, db_path=db_path)
+    # Runs now carry their sample. The score is appearances over questions
+    # answered by a non-deterministic model, so the alert compares
+    # appearance counts rather than percentage points — see
+    # notify._ai_visibility_drop.
+    record_ai_visibility_run(rid, 83, answered=6, appeared=5, db_path=db_path)
+    record_ai_visibility_run(rid, 67, answered=6, appeared=4, db_path=db_path)
     notify.check_extra_daily_alerts(db_path=db_path)
-    assert emails_sent == []                       # a 5-point dip isn't a drop
-    record_ai_visibility_run(rid, 40, db_path=db_path)
+    assert emails_sent == []                       # one question flipping isn't a drop
+    record_ai_visibility_run(rid, 17, answered=6, appeared=1, db_path=db_path)
     notify.check_extra_daily_alerts(db_path=db_path)
     assert emails_sent == ["AI visibility dropped — Mobile Test Co"]
     notify.check_extra_daily_alerts(db_path=db_path)

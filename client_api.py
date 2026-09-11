@@ -25,6 +25,10 @@ def _html_doc(fragment, bg="#f7f4ef"):
 
 client_bp = Blueprint('client', __name__)
 
+# Exception text handed to a client, with credentials stripped — a
+# requests error carries the failing URL, and a Places URL carries key=.
+from ai_guard import safe_error as _safe_err
+
 # Simple in-memory insight cache: {cache_key: (timestamp, value)}
 _insight_cache = {}
 _INSIGHT_TTL = 300  # 5 minutes
@@ -1785,7 +1789,7 @@ def _do_regenerate_draft(review_id, restaurant_id):
         conn.commit(); conn.close()
         return {"ok": True, "draft": new_draft}, 200
     except Exception as e:
-        return {"ok": False, "error": str(e)}, 200
+        return {"ok": False, "error": _safe_err(e)}, 200
 
 
 def _do_save_draft(review_id, restaurant_id, draft_text):
@@ -3921,7 +3925,7 @@ def _do_send_review_request(rid, data):
         return {"ok": True}, 200
 
     except Exception as e:
-        return {"ok": False, "error": str(e)}, 500
+        return {"ok": False, "error": _safe_err(e)}, 500
 
 
 @client_bp.route("/api/review-request-stats")
@@ -4027,7 +4031,7 @@ def _do_ai_visibility(rid):
     try:
         return _do_ai_visibility_inner(rid)
     except Exception as e:
-        return {"ok": False, "error": str(e)}, 200
+        return {"ok": False, "error": _safe_err(e)}, 200
 
 
 # A visibility check asks the same three questions about the same restaurant
@@ -4039,10 +4043,56 @@ _AIVIS_CACHE_SECS = int(os.getenv("AI_VISIBILITY_CACHE_SECS", "21600"))  # 6 hou
 _aivis_cache = {}
 
 
+_city_cache = {}
+
+
+def _city_from_place_id(place_id: str) -> str:
+    """The city Google has on file for this listing, or "".
+
+    Cached per process: the address of a restaurant does not change, and
+    this would otherwise be a billed Places call on every visibility check.
+    """
+    if not place_id:
+        return ""
+    if place_id in _city_cache:
+        return _city_cache[place_id]
+    city = ""
+    try:
+        import requests as _req
+        key = os.getenv("GOOGLE_PLACES_API_KEY") or os.getenv("GOOGLE_API_KEY") or ""
+        if key:
+            resp = _req.get("https://maps.googleapis.com/maps/api/place/details/json",
+                            params={"place_id": place_id, "fields": "address_component",
+                                    "key": key}, timeout=8)
+            data = resp.json()
+            if data.get("status") == "OK":
+                for comp in (data.get("result", {}).get("address_components") or []):
+                    types = comp.get("types") or []
+                    if "locality" in types:
+                        city = comp.get("long_name") or ""
+                        break
+                    if not city and "postal_town" in types:
+                        city = comp.get("long_name") or ""
+    except Exception as e:
+        print(f"[aivis] city lookup failed for {place_id}: {e}")
+    _city_cache[place_id] = city
+    return city
+
+
 def _do_ai_visibility_inner(rid, force=False):
     from ai_utils import ai_rate_limited, ai_budget_exceeded
     if ai_rate_limited(f"aivis:{rid}", max_calls=3, window_secs=60):
         return {"ok": False, "error": "Too many visibility checks — please wait a moment and try again."}, 200
+
+    # The restaurant is looked up BEFORE the cache is read. The cache lives
+    # six hours in process memory, so a restaurant that was deleted or
+    # deactivated kept being served its own intelligence — a 200 with a full
+    # payload — until the entry aged out. Whether a restaurant exists is not
+    # something a cache of its results can answer.
+    r = get_restaurant(rid)
+    if not r:
+        _aivis_cache.pop(rid, None)
+        return {"ok": False, "error": "Restaurant not found"}, 404
 
     if not force:
         _hit = _aivis_cache.get(rid)
@@ -4057,17 +4107,24 @@ def _do_ai_visibility_inner(rid, force=False):
     if _over:
         return {"ok": False, "error": f"AI visibility is paused — {_over} reached."}, 200
 
-    r = get_restaurant(rid)
-    if not r:
-        return {"ok": False, "error": "Restaurant not found"}, 404
-
     name        = r.name or ""
     neighborhood = r.neighborhood or ""
     vibe        = r.vibe or ""
     known_for   = r.known_for or ""
-    # Use just the city portion (before any em dash or comma-detail) for clean queries
-    city = neighborhood.split("—")[0].split(",")[0].strip() if neighborhood else ""
-    city_full = neighborhood.split("—")[0].strip() if neighborhood else ""
+    # The city comes from Google's own address for this Place ID, not from
+    # the free-text `neighborhood` profile field. An owner who typed "West
+    # Loop" or "Downtown" there was producing queries like "Top restaurants
+    # in West Loop" — and worse, norm_city gates every appearance match, so
+    # a neighbourhood-only profile could never register a mention and scored
+    # zero for a reason that had nothing to do with the restaurant. The
+    # profile field stays as the fallback for a restaurant with no Place ID.
+    resolved_city = _city_from_place_id(getattr(r, "google_place_id", None))
+    city_source = "google" if resolved_city else ("profile" if neighborhood else "")
+    if resolved_city:
+        city = city_full = resolved_city
+    else:
+        city = neighborhood.split("—")[0].split(",")[0].strip() if neighborhood else ""
+        city_full = neighborhood.split("—")[0].strip() if neighborhood else ""
     # Short cuisine descriptor from known_for first word(s), fallback to "restaurant"
     cuisine = (known_for.split(",")[0].strip() if known_for else "") or "restaurant"
 
@@ -4100,10 +4157,18 @@ def _do_ai_visibility_inner(rid, force=False):
         q3 = "Best " + cuisine + " in " + city_full
 
     if city:
+        # Six queries, not three. The score is appearances over queries, so
+        # three of them gave it exactly four possible values — 0, 33, 67,
+        # 100 — and a single query flipping moved it 33 points. Perplexity
+        # is non-deterministic, so that flip happens on its own. Six halves
+        # the quantum and widens the angles a guest might actually ask from.
         queries = [
             vibe_query or (name + " restaurant in " + city_full),
             "Top restaurants in " + city_full,
             q3,
+            "Where should I eat in " + city_full + " tonight?",
+            "Best " + cuisine.lower() + " restaurants near " + city_full,
+            "Highly rated local restaurants in " + city_full,
         ]
     else:
         # cuisine falls back to the literal word "restaurant" when known_for
@@ -4327,35 +4392,35 @@ def _do_ai_visibility_inner(rid, force=False):
 
     # 1. Google Place ID — lets AI tools index the right location
     if bool(r.google_place_id):
-        checklist.append({"label": "Google Place ID connected", "done": True, "pts": 10,
-                          "action": "Done — AI tools can find your location", "needs_gmb": False})
+        checklist.append({"label": "Google Place ID connected", "done": True, "kind": "setup", "pts": 10,
+                          "action": "Done — your listing is linked", "needs_gmb": False})
     else:
-        checklist.append({"label": "Add your Google Place ID", "done": False, "pts": 10,
-                          "action": "Go to Account → paste your Google Place ID so AI tools can index you",
+        checklist.append({"label": "Add your Google Place ID", "done": False, "kind": "setup", "pts": 10,
+                          "action": "Go to Account → paste your Google Place ID so we can read your listing",
                           "needs_gmb": False})
 
     # 2. Yelp profile linked — Perplexity and ChatGPT pull heavily from Yelp
     if bool(r.yelp_business_id):
-        checklist.append({"label": "Yelp profile linked", "done": True, "pts": 10,
-                          "action": "Done — Perplexity indexes Yelp heavily", "needs_gmb": False})
+        checklist.append({"label": "Yelp profile linked", "done": True, "kind": "setup", "pts": 10,
+                          "action": "Done — your Yelp listing is linked", "needs_gmb": False})
     else:
-        checklist.append({"label": "Link your Yelp business profile", "done": False, "pts": 10,
+        checklist.append({"label": "Link your Yelp business profile", "done": False, "kind": "setup", "pts": 10,
                           "action": "Go to Account → add your Yelp business ID (find it in your Yelp URL)",
                           "needs_gmb": False})
 
     # 3. Menu URL — admin sets this; silently included if present, hidden if not
     if bool(r.menu_url):
-        checklist.append({"label": "Menu URL added", "done": True, "pts": 10,
-                          "action": "Done — AI tools can surface your menu in results", "needs_gmb": False})
+        checklist.append({"label": "Menu URL added", "done": True, "kind": "setup", "pts": 10,
+                          "action": "Done — your menu is published at a public URL", "needs_gmb": False})
 
     # 4. Restaurant profile — vibe + known_for + neighborhood power all AI queries
     has_full_profile = bool(r.neighborhood and r.vibe and r.known_for)
     if has_full_profile:
-        checklist.append({"label": "Restaurant profile fully filled in", "done": True, "pts": 10,
+        checklist.append({"label": "Restaurant profile fully filled in", "done": True, "kind": "setup", "pts": 10,
                           "action": "Done — neighborhood, vibe, and specialties all set", "needs_gmb": False})
     else:
         missing = [f for f, v in [("neighborhood", r.neighborhood), ("vibe", r.vibe), ("known for", r.known_for)] if not v]
-        checklist.append({"label": "Complete restaurant profile (" + ", ".join(missing) + " missing)", "done": False, "pts": 10,
+        checklist.append({"label": "Complete restaurant profile (" + ", ".join(missing) + " missing)", "done": False, "kind": "setup", "pts": 10,
                           "action": "Go to Account → fill in neighborhood, vibe, and what you're known for",
                           "needs_gmb": False})
 
@@ -4364,78 +4429,78 @@ def _do_ai_visibility_inner(rid, force=False):
     resp_rate = rstats.get("response_rate", 0) if rstats else 0
     review_total = rstats.get("total", 0) if rstats else 0
     if review_total >= 50:
-        checklist.append({"label": "50+ Google reviews", "done": True, "pts": 10,
-                          "action": "Done — strong review volume boosts AI ranking", "needs_gmb": False})
+        checklist.append({"label": "50+ Google reviews", "done": True, "kind": "presence", "pts": 10,
+                          "action": "Done — 50+ reviews is a strong public signal", "needs_gmb": False})
     elif review_total >= 20:
-        checklist.append({"label": "Build to 50+ Google reviews (" + str(review_total) + " so far)", "done": False, "pts": 10,
-                          "action": "Send review requests to recent customers — 50+ reviews is the AI visibility threshold",
+        checklist.append({"label": "Build to 50+ Google reviews (" + str(review_total) + " so far)", "done": False, "kind": "presence", "pts": 10,
+                          "action": "Send review requests to recent customers — more reviews is a stronger public signal",
                           "needs_gmb": False})
     else:
-        checklist.append({"label": "Build to 50+ Google reviews (" + str(review_total) + " so far)", "done": False, "pts": 10,
-                          "action": "Send review requests after every visit — this is the #1 driver of AI search ranking",
+        checklist.append({"label": "Build to 50+ Google reviews (" + str(review_total) + " so far)", "done": False, "kind": "presence", "pts": 10,
+                          "action": "Send review requests after every visit — review volume is the slowest signal to build",
                           "needs_gmb": False})
 
     # 6. Review response rate — active engagement signals a healthy business to AI tools
     if resp_rate >= 75:
-        checklist.append({"label": "Excellent review response rate (" + str(resp_rate) + "%)", "done": True, "pts": 10,
-                          "action": "Done — responding to reviews signals an active, trusted business", "needs_gmb": False})
+        checklist.append({"label": "Excellent review response rate (" + str(resp_rate) + "%)", "done": True, "kind": "presence", "pts": 10,
+                          "action": "Done — replies are visible on your public listing", "needs_gmb": False})
     elif resp_rate >= 40:
-        checklist.append({"label": "Increase response rate to 75%+ (currently " + str(resp_rate) + "%)", "done": False, "pts": 10,
-                          "action": "Use the Reviews tab to draft and post responses — AI tools reward active owner engagement",
+        checklist.append({"label": "Increase response rate to 75%+ (currently " + str(resp_rate) + "%)", "done": False, "kind": "presence", "pts": 10,
+                          "action": "Use the Reviews tab to draft and post responses — replies show on your public listing",
                           "needs_gmb": False})
     else:
-        checklist.append({"label": "Start responding to Google reviews (currently " + str(resp_rate) + "%)", "done": False, "pts": 10,
+        checklist.append({"label": "Start responding to Google reviews (currently " + str(resp_rate) + "%)", "done": False, "kind": "presence", "pts": 10,
                           "action": "Go to Reviews → use AI-drafted responses to reply — aim for 75%+ response rate",
                           "needs_gmb": False})
 
     # 7. GBP OAuth connected — unlocks real-time profile data and future auto-posting
     if gbp_connected:
-        checklist.append({"label": "Google Business Profile connected", "done": True, "pts": 10,
+        checklist.append({"label": "Google Business Profile connected", "done": True, "kind": "setup", "pts": 10,
                           "action": "Done — real-time GBP data is active", "needs_gmb": False})
     else:
-        checklist.append({"label": "Connect Google Business Profile (OAuth)", "done": False, "pts": 10,
+        checklist.append({"label": "Connect Google Business Profile (OAuth)", "done": False, "kind": "setup", "pts": 10,
                           "action": "Go to Account → Connect GBP to unlock live profile editing and Google Posts",
                           "needs_gmb": True})
 
     # 8. Business description — keyword-rich descriptions are indexed by every AI search tool
     desc = gbp_data.get("description", "")
     if desc and len(desc) >= 150:
-        checklist.append({"label": "Business description written (" + str(len(desc)) + " chars)", "done": True, "pts": 10,
-                          "action": "Done — description feeds AI search results directly", "needs_gmb": False})
+        checklist.append({"label": "Business description written (" + str(len(desc)) + " chars)", "done": True, "kind": "presence", "pts": 10,
+                          "action": "Done — your description is published on your listing", "needs_gmb": False})
     elif desc:
-        checklist.append({"label": "Expand GBP description to 150+ chars (currently " + str(len(desc)) + ")", "done": False, "pts": 10,
+        checklist.append({"label": "Expand GBP description to 150+ chars (currently " + str(len(desc)) + ")", "done": False, "kind": "presence", "pts": 10,
                           "action": "In Google Business Profile → Info → Description: add cuisine type, atmosphere, and signature dishes",
                           "needs_gmb": True})
     else:
-        checklist.append({"label": "Write a keyword-rich GBP business description", "done": False, "pts": 10,
+        checklist.append({"label": "Write a keyword-rich GBP business description", "done": False, "kind": "presence", "pts": 10,
                           "action": "In Google Business Profile → Info → Description: mention cuisine, ambiance, and top dishes (150+ chars)",
                           "needs_gmb": True})
 
     # 9. Phone number in GBP — basic trust signal; missing phone = incomplete listing
     has_phone = bool(gbp_data.get("phone"))
     if gbp_connected and has_phone:
-        checklist.append({"label": "Phone number in GBP", "done": True, "pts": 10,
+        checklist.append({"label": "Phone number in GBP", "done": True, "kind": "presence", "pts": 10,
                           "action": "Done", "needs_gmb": False})
     elif gbp_connected and not has_phone:
-        checklist.append({"label": "Add phone number to GBP", "done": False, "pts": 10,
+        checklist.append({"label": "Add phone number to GBP", "done": False, "kind": "presence", "pts": 10,
                           "action": "In Google Business Profile → Info → Phone: add your primary number",
                           "needs_gmb": False})
     else:
-        checklist.append({"label": "Add phone number to GBP", "done": False, "pts": 10,
+        checklist.append({"label": "Add phone number to GBP", "done": False, "kind": "presence", "pts": 10,
                           "action": "In Google Business Profile → Info → Phone: add your primary number",
                           "needs_gmb": True})
 
     # 10. Website linked in GBP — AI tools follow the website link to gather more context
     has_website = bool(gbp_data.get("website"))
     if gbp_connected and has_website:
-        checklist.append({"label": "Website linked in GBP", "done": True, "pts": 10,
+        checklist.append({"label": "Website linked in GBP", "done": True, "kind": "presence", "pts": 10,
                           "action": "Done — AI tools crawl your website for menu and about content", "needs_gmb": False})
     elif gbp_connected and not has_website:
-        checklist.append({"label": "Add website URL to GBP", "done": False, "pts": 10,
+        checklist.append({"label": "Add website URL to GBP", "done": False, "kind": "presence", "pts": 10,
                           "action": "In Google Business Profile → Info → Website: add your restaurant's website",
                           "needs_gmb": False})
     else:
-        checklist.append({"label": "Add website URL to GBP", "done": False, "pts": 10,
+        checklist.append({"label": "Add website URL to GBP", "done": False, "kind": "presence", "pts": 10,
                           "action": "In Google Business Profile → Info → Website: add your restaurant's website",
                           "needs_gmb": True})
 
@@ -4446,14 +4511,14 @@ def _do_ai_visibility_inner(rid, force=False):
     # regularHours alongside the fields it already fetched (gmb.py).
     has_hours = bool(gbp_data.get("has_hours"))
     if gbp_connected and has_hours:
-        checklist.append({"label": "Hours listed in GBP", "done": True, "pts": 10,
+        checklist.append({"label": "Hours listed in GBP", "done": True, "kind": "presence", "pts": 10,
                           "action": "Done — AI tools can answer \"is it open now\" directly", "needs_gmb": False})
     elif gbp_connected and not has_hours:
-        checklist.append({"label": "Add hours to GBP", "done": False, "pts": 10,
+        checklist.append({"label": "Add hours to GBP", "done": False, "kind": "presence", "pts": 10,
                           "action": "In Google Business Profile → Info → Hours: set your regular hours",
                           "needs_gmb": False})
     else:
-        checklist.append({"label": "Add hours to GBP", "done": False, "pts": 10,
+        checklist.append({"label": "Add hours to GBP", "done": False, "kind": "presence", "pts": 10,
                           "action": "In Google Business Profile → Info → Hours: set your regular hours",
                           "needs_gmb": True})
 
@@ -4470,15 +4535,15 @@ def _do_ai_visibility_inner(rid, force=False):
     ).fetchone()[0] or 0
     _rconn.close()
     if recent_reviews >= 3:
-        checklist.append({"label": "Active review stream (" + str(recent_reviews) + " in last 30 days)", "done": True, "pts": 10,
-                          "action": "Done — a steady, current review stream signals an active business", "needs_gmb": False})
+        checklist.append({"label": "Active review stream (" + str(recent_reviews) + " in last 30 days)", "done": True, "kind": "presence", "pts": 10,
+                          "action": "Done — a steady, current review stream", "needs_gmb": False})
     elif recent_reviews >= 1:
-        checklist.append({"label": "Build a steadier review stream (" + str(recent_reviews) + " in last 30 days)", "done": False, "pts": 10,
-                          "action": "Send review requests regularly — a handful of new reviews each month keeps your listing looking active",
+        checklist.append({"label": "Build a steadier review stream (" + str(recent_reviews) + " in last 30 days)", "done": False, "kind": "presence", "pts": 10,
+                          "action": "Send review requests regularly — a handful of new reviews each month keeps the stream current",
                           "needs_gmb": False})
     else:
-        checklist.append({"label": "No reviews in the last 30 days", "done": False, "pts": 10,
-                          "action": "Send review requests to recent customers — an active, current stream matters as much as total volume",
+        checklist.append({"label": "No reviews in the last 30 days", "done": False, "kind": "presence", "pts": 10,
+                          "action": "Send review requests to recent customers — recency is its own signal, separate from total volume",
                           "needs_gmb": False})
 
     # gbp_score is a straight doneCount/totalCount percentage, not a
@@ -4491,8 +4556,40 @@ def _do_ai_visibility_inner(rid, force=False):
     # actually ends up being for this restaurant — currently 11 or 12 items
     # depending on whether menu_url is set — with no special-casing needed
     # for that; a new item just changes the denominator automatically.
-    _gbp_done = sum(1 for item in checklist if item["done"])
-    gbp_score = round(_gbp_done / len(checklist) * 100) if checklist else 0
+    # Two scores, because these were two different things under one name.
+    #
+    # gbp_score counted "is a Yelp ID typed into Cavnar AI" in the same
+    # percentage as "does your Google listing have opening hours on it",
+    # and called the result AI visibility. Typing a Yelp ID into a settings
+    # box does not change anything a guest or a search engine can see; it
+    # was worth ten points on the headline number of this screen.
+    #
+    # presence_score covers only what is actually true of the restaurant's
+    # public listing and review record: review volume, response rate,
+    # recency, description, phone, website, hours. setup_items are the
+    # Cavnar-side connections, listed and counted but never scored, because
+    # they describe this product's configuration rather than the
+    # restaurant's standing anywhere.
+    # An item with no kind is a bug, not a category. Defaulting it into
+    # either bucket hides the mistake; naming it makes the next one obvious.
+    _untagged = [i["label"] for i in checklist if i.get("kind") not in ("presence", "setup")]
+    if _untagged:
+        print(f"[aivis] checklist items with no kind: {_untagged}")
+        try:
+            import ops as _ops_aiv
+            _ops_aiv.capture(RuntimeError(f"untagged AI-visibility checklist items: {_untagged}"),
+                             job="ai_visibility", context=f"restaurant_id={rid}")
+        except Exception:
+            pass
+    presence_items = [i for i in checklist if i.get("kind") == "presence"]
+    setup_items    = [i for i in checklist if i.get("kind") == "setup"]
+    _presence_done = sum(1 for item in presence_items if item["done"])
+    _setup_done    = sum(1 for item in setup_items if item["done"])
+    presence_score = round(_presence_done / len(presence_items) * 100) if presence_items else 0
+    setup_done, setup_total = _setup_done, len(setup_items)
+    # Kept so an older client still decodes something sane; it is the
+    # presence figure now, not the blended one.
+    gbp_score = presence_score
 
     # Social posting cadence — deliberately NOT a checklist item / part of
     # gbp_score (this isn't a Google Business Profile field, it's marketing
@@ -4519,11 +4616,31 @@ def _do_ai_visibility_inner(rid, force=False):
     # ai_visibility_runs, where it became a "declining visibility" data point
     # the owner reads as real.
     ai_score = round((appeared_count / len(answered)) * 100) if answered else None
+
+    # A point estimate from a handful of non-deterministic queries is not a
+    # measurement, and drawing it as one is how ordinary model variance
+    # became a "declining visibility" trend line and an SMS. The interval
+    # is the Wilson score at 90%, which is the standard way to put bounds
+    # on a proportion from a small sample and degrades sensibly at 0 and
+    # 100 where a naive interval does not.
+    ai_score_low = ai_score_high = None
+    if answered:
+        import math as _math
+        _n = len(answered)
+        _p = appeared_count / _n
+        _z = 1.645  # 90%
+        _d = 1 + _z * _z / _n
+        _c = (_p + _z * _z / (2 * _n)) / _d
+        _m = (_z * _math.sqrt(_p * (1 - _p) / _n + _z * _z / (4 * _n * _n))) / _d
+        ai_score_low = max(0, round((_c - _m) * 100))
+        ai_score_high = min(100, round((_c + _m) * 100))
+
     try:
         from models import record_ai_visibility_run
         # A partial run is not a measurement. Show it, don't record it.
         if ai_score is not None and len(answered) == len(queries):
-            record_ai_visibility_run(rid, ai_score, gbp_score)
+            record_ai_visibility_run(rid, ai_score, gbp_score,
+                                     answered=len(answered), appeared=appeared_count)
     except Exception:
         pass
 
@@ -4543,8 +4660,33 @@ def _do_ai_visibility_inner(rid, force=False):
         # indistinguishable in an answer, so appearance cannot be judged at
         # all. Surface that rather than silently scoring 0.
         "location_known": bool(city),
+        # Where the city in those queries came from. "profile" means it is a
+        # free-text field an owner typed, not Google's own address for this
+        # listing, and the appearance match is only as good as that string.
+        "city": city_full,
+        "city_source": city_source,
         "ai_score": ai_score,
+        # The honest bounds on ai_score for this sample size. Present the
+        # range, not the point.
+        "ai_score_low": ai_score_low,
+        "ai_score_high": ai_score_high,
         "gbp_score": gbp_score,
+        # gbp_score's two halves, split apart — see the comment at their
+        # computation. presence_score is the only one that describes the
+        # restaurant rather than this product's own configuration.
+        "presence_score": presence_score,
+        "setup_done": setup_done,
+        "setup_total": setup_total,
+        # Which kind of claim each number is, so a client can stop rendering
+        # a measurement, an estimate and a configuration count identically.
+        # Same convention the Reviews module already ships.
+        "claim_kinds": {
+            "ai_score": "measured" if (answered and len(answered) == len(queries)) else "partial",
+            "ai_score_low": "estimate",
+            "ai_score_high": "estimate",
+            "presence_score": "measured",
+            "setup_done": "configuration",
+        },
         "checklist": checklist,
         "gbp_connected": gbp_connected,
         "social_posts_30d": social_posts_30d,

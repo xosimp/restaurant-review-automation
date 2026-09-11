@@ -522,6 +522,18 @@ struct IntelView: View {
                     }
                 }
             }
+            if let note = summary.stalenessNote {
+                HStack(alignment: .top, spacing: 7) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Color.cavnarAmber)
+                        .padding(.top, 2)
+                    Text(note)
+                        .font(.cavnarBody(13))
+                        .foregroundStyle(Color.cavnarInk2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
             if let updatedAt = summary.updatedAt {
                 updatedLabel(updatedAt)
             }

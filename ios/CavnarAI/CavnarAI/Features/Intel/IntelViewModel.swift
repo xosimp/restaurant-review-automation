@@ -66,7 +66,24 @@ struct IntelSummary: Decodable {
     let sections: [IntelSection]
     let competitors: [Competitor]
     let updatedAt: String?
+    // ai_guard.freshness has been computed on this payload all along, with a
+    // docstring saying a summary written six weeks ago read exactly like one
+    // written this morning. The date was decoded; the judgement about it was
+    // not, so nothing ever said the intelligence was old.
+    let stale: Bool?
+    let ageDays: Int?
+    let asOf: String?
     let ownRating: Double?
+
+    /// Set when this analysis is old enough that it should not be read as
+    /// current. Nil when it is fresh.
+    var stalenessNote: String? {
+        guard stale == true else { return nil }
+        if let d = ageDays {
+            return "This snapshot is \(d) days old. Competitor ratings and complaints move; treat it as background, not as today's picture."
+        }
+        return "This snapshot is out of date. Treat it as background, not as today's picture."
+    }
 
     enum CodingKeys: String, CodingKey {
         case ok, intro, recommendations, sections, competitors
@@ -75,6 +92,9 @@ struct IntelSummary: Decodable {
         case ownerName = "owner_name"
         case updatedAt = "updated_at"
         case ownRating = "own_rating"
+        case stale
+        case ageDays = "age_days"
+        case asOf = "as_of"
     }
 }
 

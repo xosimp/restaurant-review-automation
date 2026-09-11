@@ -211,6 +211,69 @@ _PURE_BEVERAGE_TYPES = {"cafe", "bar", "night_club"}
 _FOOD_SIGNAL_TYPES = {"restaurant", "meal_takeaway", "meal_delivery", "bakery"}
 
 
+def _same_business(name_a: str, name_b: str) -> bool:
+    """Do these two listings name the same business?
+
+    Google duplicates happen, and a duplicate listing of the restaurant
+    itself used to appear in its own competitor set under an exact-match
+    self-check. Normalised comparison plus a containment test catches
+    "Simple EJ's" against "Simple EJs Sports Bar & Grill".
+    """
+    import re as _re
+    def _n(x):
+        x = _re.sub(r"[^a-z0-9 ]", "", (x or "").lower())
+        for filler in (" restaurant", " bar and grill", " bar grill", " sports bar",
+                       " grill", " kitchen", " cafe", " and ", " the "):
+            x = x.replace(filler, " ")
+        return " ".join(x.split())
+    a, b = _n(name_a), _n(name_b)
+    if not a or not b:
+        return False
+    return a == b or a in b or b in a
+
+
+# A chain is a chain because it has hundreds of locations, not because it
+# is on a list somebody typed. This was 16 hardcoded fast-food brands, so
+# every casual-dining chain — Applebee's, Chili's, Olive Garden, Buffalo
+# Wild Wings, Texas Roadhouse — passed straight through as a "local
+# competitor". Kept as a named set because Places gives us no franchise
+# count, but broadened to the categories that actually distort a local
+# comparison, and grouped so a reader can see what the list is FOR.
+_CHAIN_NAMES = {
+    # fast food
+    "mcdonald", "burger king", "wendy", "taco bell", "subway", "kfc", "domino",
+    "pizza hut", "little caesar", "papa john", "chipotle", "panera", "dunkin",
+    "starbucks", "popeyes", "chick-fil-a", "arby", "sonic drive", "jack in the box",
+    "five guys", "shake shack", "whataburger", "culver", "raising cane", "jimmy john",
+    "jersey mike", "firehouse subs", "wingstop", "dairy queen", "hardee", "carl's jr",
+    "del taco", "el pollo loco", "panda express", "quiznos", "portillo",
+    # casual dining — the ones that most distort a local set
+    "applebee", "chili's", "chilis", "olive garden", "outback", "texas roadhouse",
+    "buffalo wild wings", "red lobster", "tgi friday", "cheesecake factory",
+    "ihop", "denny", "cracker barrel", "red robin", "longhorn steakhouse",
+    "bj's restaurant", "yard house", "hooters", "ruby tuesday", "carrabba",
+    "bonefish grill", "p.f. chang", "pf chang", "maggiano", "the capital grille",
+    "ruth's chris", "morton's the steakhouse", "first watch", "another broken egg",
+}
+
+
+def _is_chain(name: str) -> bool:
+    low = (name or "").lower()
+    return any(chain in low for chain in _CHAIN_NAMES)
+
+
+def _distance_m(lat1, lng1, lat2, lng2):
+    """Straight-line metres between two points, or None."""
+    if None in (lat1, lng1, lat2, lng2):
+        return None
+    import math as _m
+    r = 6371000.0
+    p1, p2 = _m.radians(lat1), _m.radians(lat2)
+    dp, dl = _m.radians(lat2 - lat1), _m.radians(lng2 - lng1)
+    a = _m.sin(dp / 2) ** 2 + _m.cos(p1) * _m.cos(p2) * _m.sin(dl / 2) ** 2
+    return int(round(2 * r * _m.asin(_m.sqrt(a))))
+
+
 def _is_pure_beverage_spot(types) -> bool:
     type_set = set(types or [])
     return bool(type_set & _PURE_BEVERAGE_TYPES) and not (type_set & _FOOD_SIGNAL_TYPES)
@@ -369,21 +432,25 @@ def get_nearby_competitors(google_place_id: str, radius_meters: int = 2000, max_
 
         # Filter: skip self, skip fast food chains, skip pure beverage
         # spots, prefer similar price level
-        fast_food_chains = {"mcdonald", "burger king", "wendy", "taco bell", "subway",
-                           "kfc", "domino", "pizza hut", "little caesar", "papa john",
-                           "chipotle", "panera", "dunkin", "starbucks", "popeyes", "chick-fil-a"}
 
-        def _filter(candidates, enforce_price):
+        def _filter(candidates, enforce_price, basis="cuisine and price match nearby"):
             out = []
             seen_ids = set()
             for p in candidates:
                 name = p.get("name", "")
                 pid = p.get("place_id")
-                if not pid or pid in seen_ids or name == own_name:
+                if not pid or pid in seen_ids:
+                    continue
+                # Self-exclusion was `name == own_name`, an exact match, so a
+                # duplicate Google listing of this same restaurant under a
+                # slightly different name ("Simple EJ's" vs "Simple EJs Sports
+                # Bar") became its own competitor. Compare on the Place ID
+                # first, then on a normalised name.
+                if pid == google_place_id or _same_business(name, own_name):
                     continue
                 if p.get("business_status") != "OPERATIONAL":
                     continue
-                if any(chain in name.lower() for chain in fast_food_chains):
+                if _is_chain(name):
                     continue
                 if _is_pure_beverage_spot(p.get("types", [])):
                     continue
@@ -392,22 +459,35 @@ def get_nearby_competitors(google_place_id: str, radius_meters: int = 2000, max_
                     if own_price and p_price and abs(own_price - p_price) > 2:
                         continue
                 seen_ids.add(pid)
+                _loc = (p.get("geometry") or {}).get("location") or {}
                 out.append({
                     "place_id": pid,
                     "name": name,
                     "rating": p.get("rating", 0),
                     "review_count": p.get("user_ratings_total", 0),
                     "vicinity": p.get("vicinity", ""),
+                    "price_level": p.get("price_level"),
+                    "types": p.get("types", []),
+                    # Which selection pass produced this one. Four passes run,
+                    # relaxing cuisine, then price, then distance out to 8km —
+                    # and a different-cuisine restaurant five miles away used
+                    # to arrive in the same list, in the same shape, as a
+                    # direct match across the street.
+                    "match_basis": basis,
+                    "distance_m": _distance_m(lat, lng, _loc.get("lat"), _loc.get("lng")),
                 })
                 if len(out) >= max_results:
                     break
             return out
 
-        competitors = _filter(places, enforce_price=True)
+        competitors = _filter(places, enforce_price=True,
+                              basis="same cuisine type and similar price level, within "
+                                    + str(radius_meters // 1000) + "km")
 
         # If still too few after filtering, relax the price-level match
         if len(competitors) < 3:
-            competitors = _filter(places, enforce_price=False)
+            competitors = _filter(places, enforce_price=False,
+                                  basis="same cuisine type nearby, price level not matched")
 
         # Still short of a reasonable minimum — the initial radius may
         # just not have enough comparable restaurants in it (suburban/
@@ -427,7 +507,9 @@ def get_nearby_competitors(google_place_id: str, radius_meters: int = 2000, max_
                 }, timeout=8).json()
                 more_places = wider.get("results", []) if wider.get("status") in ("OK", "ZERO_RESULTS") else []
                 existing_ids = {c["place_id"] for c in competitors}
-                for extra in _filter(more_places, enforce_price=False):
+                for extra in _filter(more_places, enforce_price=False,
+                                     basis="widened search — no cuisine or price match, up to "
+                                           + str(min(radius_meters * 2, 8000) // 1000) + "km away"):
                     if extra["place_id"] not in existing_ids:
                         competitors.append(extra)
                         existing_ids.add(extra["place_id"])
@@ -468,6 +550,53 @@ def get_competitor_reviews(place_id: str, max_reviews: int = 5) -> list:
         return []
 
 
+# Words that look like a proper noun in an insight but are not a business.
+_NOT_A_BUSINESS = {
+    "WHAT", "PRICE", "POSITIONING", "COMPETITORS", "RECOMMENDATIONS", "DOING",
+    "WELL", "POORLY", "UNVERIFIED", "GOOGLE", "YELP", "AI", "THE", "THIS",
+    "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY",
+}
+
+
+def _invented_competitors(text: str, competitors: list) -> list:
+    """Capitalised multi-word names in the insight that are not in the list.
+
+    Deliberately narrow: only runs of two or more capitalised words, which
+    is what a restaurant name looks like and what a sentence opener does
+    not. A single capitalised word is far too noisy to flag.
+    """
+    import re as _re
+    known = set()
+    for c in competitors or []:
+        n = (c.get("name") or "").strip().lower()
+        if n:
+            known.add(n)
+            for word in n.split():
+                if len(word) > 3:
+                    known.add(word)
+    out = []
+    for m in _re.finditer(r"\b([A-Z][\w&\'-]+(?:\s+[A-Z][\w&\'-]+){1,3})\b", text or ""):
+        phrase = m.group(1).strip()
+        if phrase.upper() == phrase and phrase.replace(" ", "") .isalpha():
+            continue  # an ALL-CAPS section header
+        if any(w.upper() in _NOT_A_BUSINESS for w in phrase.split()):
+            continue
+        low = phrase.lower()
+        if low in known:
+            continue
+        if any(low in k or k in low for k in known):
+            continue
+        if any(w in known for w in low.split() if len(w) > 3):
+            continue
+        out.append(phrase)
+    seen, uniq = set(), []
+    for p_ in out:
+        if p_.lower() not in seen:
+            seen.add(p_.lower())
+            uniq.append(p_)
+    return uniq
+
+
 def generate_competitor_insight(restaurant_name: str, competitors: list, owner_name: str = None, restaurant_profile: dict = None, tz_name: str = None, restaurant_id: int = None) -> str:
     """Use Claude to generate a strategic competitor insight."""
     if not competitors or not ANTHROPIC_KEY:
@@ -475,6 +604,8 @@ def generate_competitor_insight(restaurant_name: str, competitors: list, owner_n
     try:
         client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
 
+        _PRICE_WORDS = {1: "$ (inexpensive)", 2: "$$ (moderate)",
+                        3: "$$$ (expensive)", 4: "$$$$ (very expensive)"}
         comp_summary = ""
         for c in competitors:
             # Use up to 5 reviews, 250 chars each for richer insight
@@ -483,15 +614,31 @@ def generate_competitor_insight(restaurant_name: str, competitors: list, owner_n
                 # Competitor review text is written by the public. Fenced
                 # below with the rest of the block — see UNTRUSTED_NOTE in
                 # the prompt.
+                #
+                # Each review now carries its age. Google picks these five
+                # by its own relevance ranking, not by recency, so without a
+                # date a complaint from three years ago read as what a
+                # competitor is doing wrong now — and that is what the
+                # "DOING POORLY" section was built from.
                 reviews_text = "\n  ".join([
-                    f'[{r["rating"]}★] "{r["text"][:250].strip()}"'
+                    f'[{r["rating"]}★, {r.get("time") or "date unknown"}] "{r["text"][:250].strip()}"'
                     for r in rev_list[:5]
                 ])
             else:
                 reviews_text = "No recent reviews"
+            # price_level is a real Google field. It was fetched and used to
+            # filter candidates, then thrown away — so the model was asked to
+            # judge price positioning from adjectives in five reviews while
+            # the actual figure sat unused two functions away.
+            _pl = c.get("price_level")
+            price_line = f"\n  Google price level: {_PRICE_WORDS.get(_pl, 'not listed')}" if _pl else "\n  Google price level: not listed"
+            _how = c.get("match_basis")
+            match_line = f"\n  How this one was selected: {_how}" if _how else ""
+            _dist = c.get("distance_m")
+            dist_line = f"\n  About {round(_dist/1000, 1)} km away" if _dist else ""
             comp_summary += f"""
-- {c["name"]} ({c["rating"]}★, {c["review_count"]} reviews)
-  Recent customer reviews:
+- {c["name"]} ({c["rating"]}★, {c["review_count"]} reviews){price_line}{dist_line}{match_line}
+  Recent customer reviews (with how long ago each was written):
   {reviews_text}
 """
 
@@ -544,6 +691,13 @@ CRITICAL RULES:
 Nearby competitors and their recent customer reviews:
 {wrap_untrusted(comp_summary)}
 
+EVIDENCE RULES — these bound what you may claim:
+- Each review carries how long ago it was written. A review over a year old is NOT evidence of what a competitor is doing now. Prefer recent ones, and if you cite an older one, say when it was ("last year", "two years ago").
+- Every competitor strength or weakness you state must trace to a review quoted above for THAT named competitor. Never attribute a complaint to a restaurant it was not written about.
+- Only name restaurants that appear in the list above. Do not introduce any other business.
+- "How this one was selected" tells you how close a match each competitor is. One selected on a widened radius with no cuisine or price constraint is a weaker comparison — do not present it as a direct rival without saying so.
+- State no figure — a dollar amount, a percentage, a count — that does not appear above.
+
 Write a competitive intelligence report for {restaurant_name} in this EXACT format with these EXACT headers:
 
 {greeting}, here is your competitive landscape snapshot.
@@ -555,7 +709,7 @@ WHAT COMPETITORS ARE DOING POORLY:
 Write 2-3 bullet points (starting with -). EACH BULLET IS ONE SENTENCE, 12 WORDS OR FEWER. Name the restaurant and the one specific complaint — no parenthetical asides, no stacked examples, no explaining why it matters.
 
 PRICE POSITIONING:
-One sentence, 15 words or fewer. Based on price-related language in competitor reviews ("overpriced", "great value", "worth it", "too expensive", "affordable"), state whether competitors read as overpriced or good value. Skip this section entirely if no price signals appear in the reviews.
+One sentence, 15 words or fewer, based on the Google price levels listed above — a real field, not an impression. State where these competitors sit as a group. You may add whether review language agrees, but never state a positioning that the price levels alone do not support. Skip this section entirely if fewer than two competitors have a price level listed.
 
 Recommendations:
 1. [One operational or service fix using only what {restaurant_name} already has — a specific script, timing, or staffing change, 15 words or fewer]
@@ -574,7 +728,31 @@ Tone: sharp, direct, trusted business advisor. Every line is a single punchy sen
         )
         if getattr(msg, "stop_reason", None) == "max_tokens":
             raise ValueError("competitor insight was truncated")
-        return extract_text(msg).strip()
+        text = extract_text(msg).strip()
+
+        # Every other AI insight in this codebase runs through this guard —
+        # labor, review, marketing, inventory, email. Competitor intel, the
+        # one whose prompt says "Always use $ signs before dollar amounts",
+        # did not. A figure the model states that was never in its input is
+        # exactly what an owner would act on.
+        from ai_guard import verify_figures
+        unsupported = verify_figures(text, prompt, "competitor_insight", restaurant_id)
+
+        # And a named restaurant that was never in the competitor list is an
+        # invented competitor, which is the single worst thing this module
+        # can produce.
+        invented = _invented_competitors(text, competitors)
+
+        if unsupported or invented:
+            notes = []
+            if invented:
+                notes.append("names a business that is not in your competitor list: "
+                             + ", ".join(invented[:3]))
+            if unsupported:
+                notes.append("states figures that were not in the data: "
+                             + ", ".join(str(u) for u in unsupported[:3]))
+            text = text.rstrip() + "\n\nUNVERIFIED: " + "; ".join(notes) + "."
+        return text
     except Exception as e:
         print(f"[Competitor] generate_competitor_insight error: {e}")
         try:
@@ -603,6 +781,7 @@ def run_competitor_analysis(restaurant_id: int) -> dict:
             _meter_places(restaurant_id, "competitor_intel", "details")
 
         # Add any manually specified competitor Place IDs
+        _closed_custom = []
         if restaurant.custom_competitors:
             custom_ids = [pid.strip() for pid in restaurant.custom_competitors.split(',') if pid.strip()]
             existing_ids = {c['place_id'] for c in competitors}
@@ -613,11 +792,18 @@ def run_competitor_analysis(restaurant_id: int) -> dict:
                         import requests as _req
                         r = _req.get(details_url, params={
                             "place_id": pid,
-                            "fields": "name,rating,user_ratings_total,types,vicinity",
+                            "fields": "name,rating,user_ratings_total,types,vicinity,"
+                                      "business_status,price_level",
                             "key": PLACES_API_KEY,
                         }, timeout=8)
                         d = r.json().get("result", {})
-                        if d.get("name"):
+                        # An owner-added competitor skipped every check the
+                        # discovered ones run, including whether it is still
+                        # trading. A restaurant that closed two years ago
+                        # stayed in the comparison forever with its frozen
+                        # rating, and the AI wrote strategy against it.
+                        _status = d.get("business_status") or "OPERATIONAL"
+                        if d.get("name") and _status == "OPERATIONAL":
                             competitors.append({
                                 "place_id": pid,
                                 "name": d["name"],
@@ -625,8 +811,14 @@ def run_competitor_analysis(restaurant_id: int) -> dict:
                                 "review_count": d.get("user_ratings_total", 0),
                                 "vicinity": d.get("vicinity", ""),
                                 "types": d.get("types", []),
+                                "price_level": d.get("price_level"),
+                                "match_basis": "added by you",
                                 "custom": True,
                             })
+                        elif d.get("name"):
+                            print(f"[Competitor] custom competitor {d['name']} is {_status} — skipped")
+                            _closed_custom.append({"place_id": pid, "name": d["name"],
+                                                   "status": _status})
                     except Exception as ce:
                         print(f"[Competitor] Could not fetch custom competitor {pid}: {ce}")
 
@@ -652,6 +844,14 @@ def run_competitor_analysis(restaurant_id: int) -> dict:
             restaurant_id=restaurant_id,
         )
 
+        # generate_competitor_insight returns "" on any failure. That empty
+        # string used to be stored and the freshness timestamp stamped with
+        # it, so the dashboard showed a competitor set with no analysis under
+        # today's date and only the ops digest knew anything was wrong.
+        if not (insight or "").strip():
+            return {"ok": False, "error": "Competitor analysis could not be generated",
+                    "competitors": competitors}
+
         # Store in DB — stamped in the restaurant's local time so "generated
         # today" reads correctly on their dashboard
         from time_utils import restaurant_now
@@ -660,6 +860,7 @@ def run_competitor_analysis(restaurant_id: int) -> dict:
             "competitors": competitors,
             "insight": insight,
             "generated_at": _now_ct.strftime("%Y-%m-%d"),
+            "closed_custom": _closed_custom,
         }
         conn = get_conn()
         conn.execute(
@@ -668,6 +869,15 @@ def run_competitor_analysis(restaurant_id: int) -> dict:
         )
         conn.commit()
         conn.close()
+        # One JSON blob overwritten every Monday was the entire record, so
+        # nothing could show that a competitor's rating fell, that a new one
+        # opened, or that a complaint theme appeared. A snapshot per run is
+        # what makes any of that answerable later.
+        try:
+            from models import record_competitor_snapshot
+            record_competitor_snapshot(restaurant_id, competitors)
+        except Exception as _se:
+            print(f"[Competitor] snapshot failed: {_se}")
         print(f"[Competitor] Analysis complete for {restaurant.name}")
         try:
             from webhooks import fire_webhook as _fw_intel
@@ -680,4 +890,5 @@ def run_competitor_analysis(restaurant_id: int) -> dict:
         return {"ok": True, **result}
     except Exception as e:
         print(f"[Competitor] run_competitor_analysis error: {e}")
-        return {"ok": False, "error": str(e)}
+        from ai_guard import safe_error
+        return {"ok": False, "error": safe_error(e, "Competitor analysis could not be completed.")}

@@ -187,27 +187,78 @@ struct AIVisibilitySection: View {
     // one interactive element — tap it to reveal the breakdown grid below.
 
     private func heroPanel(_ result: AIVisibilityResult) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
+        // `result.aiScore ?? 0` rendered a MISSING measurement as zero, and
+        // aiScoreLabel(0) reads "Not yet indexed by AI search" in red. A
+        // Perplexity outage, or a restaurant with no city on file, was being
+        // shown to the owner as a verdict on their business. The backend has
+        // always returned partial/location_known/answered_queries saying
+        // exactly this; neither client decoded them.
+        let measured = result.scoreIsMeasured
+        let scoreText: String = {
+            guard let s = result.aiScore else { return "—" }
+            if let lo = result.aiScoreLow, let hi = result.aiScoreHigh, hi > lo {
+                return "\(lo)–\(hi)%"
+            }
+            return "\(s)%"
+        }()
+        return VStack(alignment: .leading, spacing: 0) {
             // The Orbit: today's score as a ring, every past run as a line.
             VisibilityOrbitChart(score: result.aiScore ?? 0, runs: viewModel.history)
                 .padding(.bottom, 14)
+                .opacity(measured ? 1 : 0.35)
             HStack(spacing: 0) {
                 heroStat(
-                    value: "\(result.aiScore ?? 0)%", tone: aiScoreTone(result.aiScore ?? 0),
-                    label: "AI APPEARANCE", sub: aiScoreLabel(result.aiScore ?? 0)
+                    value: scoreText,
+                    tone: measured ? aiScoreTone(result.aiScore ?? 0) : Color.cavnarInk3,
+                    label: "AI APPEARANCE",
+                    sub: measured ? aiScoreLabel(result.aiScore ?? 0) : "Not measured"
                 )
                 Rectangle().fill(Color.cavnarEmber.opacity(0.3)).frame(width: 1).padding(.vertical, 6)
                 Button {
                     Haptic.light()
                     withAnimation(.easeOut(duration: 0.2)) { showGbpChecklist.toggle() }
                 } label: {
+                    // presence_score covers the restaurant's real public
+                    // listing and review record. gbp_score used to blend that
+                    // with whether a Yelp ID had been typed into Cavnar AI,
+                    // which is this product's configuration, not the
+                    // restaurant's standing anywhere.
                     heroStat(
-                        value: "\(result.gbpScore ?? 0)%", tone: gbpTone(result.gbpScore ?? 0),
-                        label: "GBP COMPLETE", sub: gbpScoreLabel(result.gbpScore ?? 0),
+                        value: "\(result.presenceScore ?? result.gbpScore ?? 0)%",
+                        tone: gbpTone(result.presenceScore ?? result.gbpScore ?? 0),
+                        label: "LISTING STRENGTH",
+                        sub: gbpScoreLabel(result.presenceScore ?? result.gbpScore ?? 0),
                         expandable: true, isExpanded: showGbpChecklist
                     )
                 }
                 .buttonStyle(.plain)
+            }
+            // Why this number is not a measurement, when it is not one.
+            if let caveat = result.scoreCaveat {
+                HStack(alignment: .top, spacing: 7) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Color.cavnarAmber)
+                        .padding(.top, 2)
+                    Text(caveat)
+                        .font(.cavnarBody(13))
+                        .foregroundStyle(Color.cavnarInk2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.top, 12)
+            } else if let lo = result.aiScoreLow, let hi = result.aiScoreHigh,
+                      let a = result.answeredQueries, hi > lo {
+                Text("Across \(a) questions. The range is how precise that sample can be.")
+                    .font(.cavnarBody(13))
+                    .foregroundStyle(Color.cavnarInk3)
+                    .padding(.top, 10)
+            }
+            if let done = result.setupDone, let total = result.setupTotal, total > 0 {
+                Text("\(done) of \(total) Cavnar connections set up. These help us read your listing; they don't change what AI search sees.")
+                    .font(.cavnarBody(12.5))
+                    .foregroundStyle(Color.cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 8)
             }
             if let insight = heroInsightText(result) {
                 Rectangle().fill(Color.cavnarEmber.opacity(0.25)).frame(height: 1).padding(.top, 16)

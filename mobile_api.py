@@ -50,6 +50,10 @@ def _html_doc(fragment, bg="#f7f4ef"):
 
 mobile_bp = Blueprint('mobile_api', __name__, url_prefix='/mobile/api')
 
+# Exception text handed to a client, with credentials stripped — a
+# requests error carries the failing URL, and a Places URL carries key=.
+from ai_guard import safe_error as _safe_err
+
 
 # Same one-liner duplication as admin_routes.py/scheduler.py/audit_app.py —
 # only needed here for the two routes (test-digest preview, data export)
@@ -2499,7 +2503,7 @@ def _do_mobile_generate_content(restaurant_id, content_type, topic, from_calenda
     try:
         result = generate_content(content_type, topic, restaurant_id=restaurant_id)
     except Exception as e:
-        return {"ok": False, "error": str(e)}, 500
+        return {"ok": False, "error": _safe_err(e)}, 500
     # The web route has always logged this; mobile never did, so a calendar
     # idea generated on the phone never fed the "avoid repeating these"
     # signal the next calendar draw reads.
@@ -3100,7 +3104,7 @@ def _do_mobile_intel(restaurant_id):
             "own_rating": own_rating,
         }, 200
     except Exception as e:
-        return {"ok": False, "error": str(e)}, 500
+        return {"ok": False, "error": _safe_err(e)}, 500
 
 
 @mobile_bp.route("/intel")

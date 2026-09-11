@@ -716,6 +716,7 @@ try:
     from models import init_db as _init_db, ensure_columns as _ec, init_email_log as _iel, init_onboarding_emails as _ioe
     from models import init_staff_notes as _isn, init_staff_availability as _isa
     from models import init_two_fa_backup_codes as _i2fabc
+    from models import init_competitor_snapshots as _ics
     from auth import init_auth as _init_auth
     from webhooks import init_webhooks as _iwh
     from guest_marketing import init_guest_marketing as _igm
@@ -731,6 +732,7 @@ try:
     _igm()
     _ipush()
     _i2fabc()
+    _ics()
     from sales_audits import init_sales_audits as _isa2, ensure_first_audit as _efa
     _isa2()
     _efa()

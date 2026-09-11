@@ -90,6 +90,30 @@ def check_public_reply(draft: str, never_say: str = "") -> str | None:
     return None
 
 
+# ── error text that is safe to hand a client ───────────────────────────────
+#
+# A requests exception's message includes the URL it failed on, and every
+# Google Places URL in this codebase carries `key=` in its query string.
+# Six handlers returned str(e) straight to the browser.
+_SECRET_QS_RE = re.compile(r"([?&](?:key|api_key|token|access_token|secret)=)[^&\s\"']+", re.I)
+_BEARER_RE = re.compile(r"(Bearer\s+)[A-Za-z0-9._\-]+", re.I)
+
+
+def safe_error(exc, fallback: str = "Something went wrong on our side.") -> str:
+    """An exception rendered for a client, with credentials removed.
+
+    Keeps the shape of the message so it is still useful in a bug report,
+    and redacts anything that looks like a key. The full text still reaches
+    the operator through ops.capture.
+    """
+    text = str(exc or "").strip()
+    if not text:
+        return fallback
+    text = _SECRET_QS_RE.sub(r"\1[redacted]", text)
+    text = _BEARER_RE.sub(r"\1[redacted]", text)
+    return text[:300]
+
+
 # ── commitments a reply must not make on the restaurant's behalf ───────────
 #
 # A public reply is published under the owner's name. The 1-star prompt in
