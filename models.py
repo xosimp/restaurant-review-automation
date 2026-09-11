@@ -1452,6 +1452,292 @@ def _auto_seed_demo_clients():
         _seed_gia_mia()
     except Exception as e:
         print(f"[auto-seed] Gia Mia seed failed: {e}")
+    try:
+        _seed_simple_ejs()
+    except Exception as e:
+        print(f"[auto-seed] Simple EJ's seed failed: {e}")
+
+
+# ── Simple EJ's — the working demo account ────────────────────────────────
+#
+# A separate restaurant rather than a rename of the existing demo, because
+# that one's hours notes, scheduling rules and role rates name Gia Mia and
+# its wood-fired pizza inside the text that feeds the scheduling prompt, and
+# its Place ID is Gia Mia's real Google listing. Renaming it would have put
+# another restaurant's operating rules, reviews and competitors behind
+# Erik's name.
+#
+# EVERY NUMBER BELOW IS A PLACEHOLDER. It is a plausible mid-size bar and
+# grill, not Erik's real operation, and it is flagged as such in the
+# restaurant's internal notes so nobody mistakes it for confirmed data.
+# Replace it with his real CSV and hours the moment you have them.
+SIMPLE_EJS_NAME = "Simple EJ's"
+SIMPLE_EJS_EMAIL = "cavnarwill@gmail.com"
+
+_EJS_ROSTER = [
+    # name, role, operational score, typical start, typical end, hours
+    ("Marcus R.", "Bartender", 5, "3:00pm", "11:30pm", 8.5),
+    ("Devon K.",  "Bartender", 4, "4:00pm", "11:30pm", 7.5),
+    ("Priya S.",  "Bartender", 3, "4:00pm", "10:30pm", 6.5),
+    ("Cole T.",   "Bartender", 2, "5:00pm", "11:00pm", 6.0),
+    ("Angela M.", "Server",    5, "10:30am", "5:00pm", 6.5),
+    ("Reuben O.", "Server",    4, "4:00pm", "10:00pm", 6.0),
+    ("Hana W.",   "Server",    3, "11:00am", "5:00pm", 6.0),
+    ("Trey B.",   "Server",    3, "4:30pm", "10:30pm", 6.0),
+    ("Simone A.", "Server",    2, "5:00pm", "10:00pm", 5.0),
+    ("Vince L.",  "Line Cook", 5, "2:00pm", "11:00pm", 9.0),
+    ("Omar H.",   "Line Cook", 4, "3:00pm", "11:00pm", 8.0),
+    ("Bea C.",    "Line Cook", 3, "3:00pm", "10:30pm", 7.5),
+    ("Nico F.",   "Line Cook", 1, "4:00pm", "10:00pm", 6.0),
+    ("Jules P.",  "Prep Cook", 4, "8:00am", "3:30pm", 7.5),
+    ("Ari D.",    "Prep Cook", 3, "8:00am", "3:00pm", 7.0),
+    ("Tessa G.",  "Host",      4, "4:00pm", "10:00pm", 6.0),
+    ("Milo J.",   "Host",      3, "11:00am", "4:30pm", 5.5),
+    ("Kase N.",   "Busser",    3, "4:30pm", "10:30pm", 6.0),
+    ("Lupe V.",   "Busser",    2, "4:30pm", "10:30pm", 6.0),
+]
+
+# Who is trusted to lock up. Deliberately not the highest scores: being
+# trusted with keys and cash is a different thing from being good on a
+# Saturday, which is the whole reason the capability layer stores it as a
+# flag rather than a point on the rating scale.
+_EJS_CLOSERS = ("Marcus R.", "Angela M.", "Vince L.")
+
+_EJS_HOURS = (
+    "RESTAURANT HOURS: Open 11:00am Mon-Sat, 10:00am Sunday. "
+    "Close: 10:00pm Sun-Wed; 12:00am Thu-Sat.\n\n"
+    "STAFF ARRIVAL TIMES:\n"
+    "- Prep cooks: arrive 8:00am every day.\n"
+    "- Line cooks: first arrives 2:00pm; others stagger from 3:00pm.\n"
+    "- Servers: first arrives 10:30am for side work before open.\n"
+    "- Bartenders: evening only, no earlier than 3:00pm. Stay 30 minutes "
+    "after close to break down the bar.\n"
+    "- Hosts: one on at open, a second from 4:00pm Thu-Sat.\n\n"
+    "SHIFT END / CLOSER RULES:\n"
+    "- Keep 2 servers through close; cut the rest about an hour after the "
+    "dinner rush drops.\n"
+    "- 1 line cook always stays through close.\n"
+    "- Bussers cut 30 minutes before close.\n"
+    "- Thu-Sat: 2 bartenders close together; Sun-Wed one is enough.\n\n"
+    "MINIMUM STAFFING FLOORS:\n"
+    "- Servers: minimum 2 on the floor during any open hour; maximum 5 at once.\n"
+    "- Line cooks: minimum 2 for dinner service every night, 3 Thu-Sat.\n"
+    "- Bartenders: minimum 1 whenever the bar is open, 2 from 5:00pm Thu-Sat.\n"
+    "- Hosts: minimum 1 whenever the dining room is open.\n"
+    "- Bussers: minimum 1 at night, 2 Fri and Sat.\n\n"
+    "SHIFT LENGTHS:\n"
+    "- Servers 5-7h, bartenders 6-9h, line cooks 7-9h, prep 7-8h, "
+    "hosts 5-6h, bussers 5-6h."
+)
+
+_EJS_SCHED_NOTES = (
+    "Thursday through Saturday nights are the week. Sunday is a steady "
+    "all-day trade rather than a rush. Monday and Tuesday are the quiet "
+    "pair and are where somebody new should be learning."
+)
+
+_EJS_ROLE_RATES = {
+    "Bartender": 9.00, "Server": 9.00, "Busser": 9.00, "Host": 15.00,
+    "Line Cook": 21.00, "Prep Cook": 19.00,
+}
+
+_EJS_CLOSE_TIMES = {
+    "Sunday": "10:00pm", "Monday": "10:00pm", "Tuesday": "10:00pm",
+    "Wednesday": "10:00pm", "Thursday": "12:00am", "Friday": "12:00am",
+    "Saturday": "12:00am",
+}
+
+# Bartenders are the one role authorised past close, to break down the bar.
+_EJS_CLOSE_BUFFER = {"Bartender": 30}
+
+# Per-role combined Operational Score targets, and the one leadership rule
+# Erik described: a strong bartender on the busiest night.
+_EJS_STRENGTH = {"Bartender": 8, "Line Cook": 9, "Server": 9}
+_EJS_LEADER_RULES = [
+    {"role": "Bartender", "days": ["Friday", "Saturday"], "daypart": "night",
+     "min_score": 5, "count": 1},
+    {"closing": True, "role": "Bartender", "attribute": "can_close", "count": 1},
+]
+
+
+def _seed_simple_ejs(db_path: str = DB_PATH):
+    """Create and seed the Simple EJ's demo account, idempotently.
+
+    Never touches a restaurant carrying real uploaded shifts, never touches
+    Gia Mia, and never writes settings over an admin edit — the same three
+    guards the existing demo seed uses, for the same reason: a redeploy must
+    not silently undo work done in the admin panel.
+    """
+    from datetime import date, timedelta
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT id, is_demo FROM restaurants WHERE name=? LIMIT 1",
+                           (SIMPLE_EJS_NAME,)).fetchone()
+    finally:
+        conn.close()
+
+    if row:
+        rid = row["id"]
+        if not row["is_demo"]:
+            print(f"[auto-seed] {SIMPLE_EJS_NAME} (id={rid}) is no longer flagged demo — leaving it alone")
+            return rid
+    else:
+        rid = create_restaurant(Restaurant(
+            name=SIMPLE_EJS_NAME, owner_email=SIMPLE_EJS_EMAIL, owner_name="Erik",
+            is_demo=1, module_reviews=1, module_labor=1, module_inventory=1,
+            module_marketing=1, service_tier="full", timezone="America/Chicago",
+            location_name="Simple EJ's", hourly_rate=12.50, labor_target_pct=26.0,
+        ), db_path=db_path)
+        print(f"[auto-seed] created {SIMPLE_EJS_NAME} as id={rid}")
+
+    _seed_ejs_history(rid, db_path)
+    _seed_ejs_settings(rid, db_path)
+    _seed_ejs_shifts(rid, db_path)
+    _seed_ejs_capabilities(rid, db_path)
+    _ensure_ejs_login(rid, db_path)
+    return rid
+
+
+def _seed_ejs_history(rid: int, db_path: str):
+    """Four weeks of daily sales and hours, so demand, year-over-year and the
+    PAR budget all have something real to work from."""
+    from datetime import date, timedelta
+    # Monday quiet through Saturday peak. Sunday is steady all-day trade.
+    BY_WEEKDAY = {0: (4100, 52), 1: (3900, 50), 2: (5200, 61), 3: (7400, 78),
+                  4: (11800, 116), 5: (13200, 128), 6: (8600, 90)}
+    conn = get_conn(db_path)
+    try:
+        days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        d = date(2025, 6, 2)
+        while d <= date(2025, 6, 29):
+            sales, hours = BY_WEEKDAY[d.weekday()]
+            cost = round(hours * 12.5, 2)
+            conn.execute("""INSERT OR REPLACE INTO labor_daily_history
+                (restaurant_id, date, day_of_week, labor_pct, labor_cost, sales,
+                 total_hours, saved_at)
+                VALUES (?,?,?,?,?,?,?,datetime('now'))""",
+                (rid, d.strftime("%Y-%m-%d"), days[d.weekday()],
+                 round(cost / sales * 100, 2), cost, float(sales), float(hours)))
+            d += timedelta(days=1)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _seed_ejs_settings(rid: int, db_path: str):
+    """Hours, rates, close times and targets — only on a restaurant that has
+    never been configured, so an admin edit is never overwritten."""
+    existing = get_restaurant(rid, db_path)
+    if existing and (existing.hours_notes or "").strip():
+        return
+    update_restaurant(rid, {
+        "monthly_revenue_target": 232000.0,
+        "labor_target_pct": 26.0,
+        "hourly_rate": 12.50,
+        "hours_notes": _EJS_HOURS,
+        "sched_notes": _EJS_SCHED_NOTES,
+        "section_count": 5,
+        "daypart_split": "lunch 30%, dinner 70%",
+        "role_rates_json": json.dumps(_EJS_ROLE_RATES),
+        "close_times_json": json.dumps(_EJS_CLOSE_TIMES),
+        "role_close_buffer_json": json.dumps(_EJS_CLOSE_BUFFER),
+        "role_strength_json": json.dumps(_EJS_STRENGTH),
+        "shift_leader_rules_json": json.dumps(_EJS_LEADER_RULES),
+        "role_minimums_json": json.dumps({"Bartender": 1, "Server": 2, "Line Cook": 2}),
+        "internal_notes": ("DEMO ACCOUNT. Every figure here is a placeholder written to "
+                           "give the product something realistic to run on — hours, wages, "
+                           "sales, roster and ratings are all invented. Replace with Erik's "
+                           "real CSV and hours before treating any number as his."),
+        "email_theme": "dark",
+    })
+    print(f"[auto-seed] {SIMPLE_EJS_NAME} settings written")
+
+
+def _seed_ejs_shifts(rid: int, db_path: str):
+    """Two weeks of shifts, generated rather than hand-written so the roster,
+    the day-of-week volume and the role mix stay consistent with each other."""
+    from datetime import date, timedelta
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT shifts_source FROM client_data WHERE restaurant_id=?",
+                           (rid,)).fetchone()
+    except Exception:
+        row = None
+    finally:
+        conn.close()
+    if row and row["shifts_source"] in ("upload", "toast"):
+        return   # a real upload always wins
+
+    BY_WEEKDAY = {0: (4100, 0.55), 1: (3900, 0.55), 2: (5200, 0.7), 3: (7400, 0.85),
+                  4: (11800, 1.0), 5: (13200, 1.0), 6: (8600, 0.8)}
+    days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    lines = ["date,day,employee,role,shift_start,shift_end,scheduled_hours,"
+             "actual_hours,sales,notes"]
+    d = date(2026, 8, 31)                      # a Monday
+    for _ in range(14):
+        sales, share = BY_WEEKDAY[d.weekday()]
+        # A quieter day drops the back half of each role rather than
+        # thinning every role evenly — which is how a real rota shrinks.
+        by_role = {}
+        for name, role, _score, start, end, hours in _EJS_ROSTER:
+            by_role.setdefault(role, []).append((name, start, end, hours))
+        for role, people in by_role.items():
+            keep = max(1, int(round(len(people) * share)))
+            for name, start, end, hours in people[:keep]:
+                lines.append(f"{d.strftime('%Y-%m-%d')},{days[d.weekday()]},{name},{role},"
+                             f"{start},{end},{hours},{hours},{sales},")
+        d += timedelta(days=1)
+    save_client_data(rid, "shifts", "\n".join(lines), source="seed")
+    print(f"[auto-seed] {SIMPLE_EJS_NAME} shift data written ({len(lines) - 1} rows)")
+
+
+def _seed_ejs_capabilities(rid: int, db_path: str):
+    """Operational Scores and closer flags, so the Shift Quality engine has
+    something to show rather than sitting dormant behind a demo."""
+    existing = get_capabilities(rid, db_path=db_path)
+    if existing:
+        return   # already rated, by this seed or by hand
+    for name, _role, score, _s, _e, _h in _EJS_ROSTER:
+        try:
+            set_capability(rid, name, score=score, updated_by="seed", db_path=db_path)
+        except Exception:
+            pass
+    for name in _EJS_CLOSERS:
+        try:
+            set_capability(rid, name, attribute="can_close", flag=True,
+                           updated_by="seed", db_path=db_path)
+        except Exception:
+            pass
+    print(f"[auto-seed] {SIMPLE_EJS_NAME} ratings written for {len(_EJS_ROSTER)} staff")
+
+
+def _ensure_ejs_login(rid: int, db_path: str):
+    """A login for the demo account, created once with a random password.
+
+    Printed to the log and stored in restaurants.temp_password, which the
+    admin client card already surfaces — the same place the Add Client form
+    puts a new client's first password.
+    """
+    import secrets
+    from auth import create_user
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT id FROM users WHERE restaurant_id=? LIMIT 1",
+                           (rid,)).fetchone()
+    except Exception:
+        row = None
+    finally:
+        conn.close()
+    if row:
+        return
+    password = secrets.token_urlsafe(9)
+    try:
+        create_user(rid, "erik", "erik+demo@cavnar.ai", password, db_path=db_path)
+        update_restaurant(rid, {"temp_password": password})
+        print(f"[auto-seed] {SIMPLE_EJS_NAME} login created — username 'erik', "
+              f"password {password} (also on the admin client card)")
+    except Exception as e:
+        print(f"[auto-seed] {SIMPLE_EJS_NAME} login not created: {e}")
 
 
 def _seed_gia_mia(db_path: str = DB_PATH):
