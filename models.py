@@ -3829,7 +3829,15 @@ def get_review_stats(restaurant_id):
         avg_response_hours = None
 
     positive = rows["positive"] or 0
-    positive_pct = round(positive / total * 100) if total > 0 else 0
+    # Over the reviews that HAVE a sentiment, not over every review held.
+    # Dropping the processed=1 filter made `total` include reviews the
+    # analyser never classified, so a restaurant with 3 positives out of 3
+    # analysed and 2 unanalysed read 60% positive rather than 100% — a
+    # number that moves when an AI call fails, not when a guest's opinion
+    # does. The unanalysed count travels alongside so the shortfall is
+    # visible rather than absorbed into this figure.
+    _classified = (rows["positive"] or 0) + (rows["negative"] or 0) + (rows["neutral"] or 0)
+    positive_pct = round(positive / _classified * 100) if _classified > 0 else 0
     # Reviews we hold but could not analyse. Non-zero means the sentiment
     # split and the topic charts cover less than the totals beside them.
     unanalysed = rows["unanalysed"] or 0
@@ -3855,6 +3863,8 @@ def get_review_stats(restaurant_id):
         avg_response_hours= avg_response_hours,
         unanalysed        = unanalysed,
         sentiment_complete = (unanalysed == 0),
+        # How many reviews the sentiment split above actually covers.
+        classified        = _classified,
     )
 
 def get_sentiment_trend(restaurant_id, weeks=8):

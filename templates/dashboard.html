@@ -1919,6 +1919,13 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       <input id="rr-name"  type="text"  placeholder="Customer name" style="font-family:'Apfel Grotezk',sans-serif;font-size:13px;padding:10px 13px;border:1px solid var(--paper3);border-radius:8px;width:100%;outline:none;color:var(--ink);background:white">
       <input id="rr-email" type="email" placeholder="Email address" style="font-family:'Apfel Grotezk',sans-serif;font-size:13px;padding:10px 13px;border:1px solid var(--paper3);border-radius:8px;width:100%;outline:none;color:var(--ink);background:white">
       <input id="rr-phone" type="tel"   placeholder="Phone number for SMS (optional)" style="font-family:'Apfel Grotezk',sans-serif;font-size:13px;padding:10px 13px;border:1px solid var(--paper3);border-radius:8px;width:100%;outline:none;color:var(--ink);background:white">
+      <!-- Every other outbound SMS in this product goes only to a contact
+           who consented. A review request texted whatever number was typed
+           in, with nothing recording that the guest agreed to it. -->
+      <label id="rr-consent-row" hidden style="display:flex;gap:8px;align-items:flex-start;font-size:12px;color:var(--ink2);cursor:pointer">
+        <input id="rr-sms-consent" type="checkbox" style="margin-top:2px;flex-shrink:0">
+        <span>This guest agreed to be texted. <span style="color:var(--ink3)">Required before we send a review request by SMS.</span></span>
+      </label>
     </div>
     <div style="font-size:11px;color:var(--ink3);margin:10px 0 4px">Sent this month: <strong id="rr-sent-mo">—</strong> &nbsp;·&nbsp; All time: <strong id="rr-sent-total">—</strong></div>
     <button onclick="sendReviewRequest(this)" class="btn-primary" style="width:100%;padding:11px;margin-top:14px;font-size:13px">Send request<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:6px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
@@ -5691,6 +5698,17 @@ setInterval(function(){
 }, 15000);
 
 // ── Review request sender ──────────────────────────────────
+function rrToggleConsent(){
+  var phoneEl = document.getElementById('rr-phone');
+  var row = document.getElementById('rr-consent-row');
+  if(!phoneEl || !row) return;
+  row.hidden = !(phoneEl.value || '').trim();
+}
+document.addEventListener('DOMContentLoaded', function(){
+  var phoneEl = document.getElementById('rr-phone');
+  if(phoneEl) phoneEl.addEventListener('input', rrToggleConsent);
+});
+
 function sendReviewRequest(btn){
   var nameEl  = document.getElementById('rr-name');
   var emailEl = document.getElementById('rr-email');
@@ -5708,13 +5726,20 @@ function sendReviewRequest(btn){
     if(emailEl) emailEl.focus();
     return;
   }
+  var consentEl = document.getElementById('rr-sms-consent');
+  var consent = !!(consentEl && consentEl.checked);
+  if(phone && !consent){
+    toast('Confirm the guest agreed to be texted','warning');
+    if(consentEl) consentEl.focus();
+    return;
+  }
   var orig = btn.innerHTML;
   btn.textContent = 'Sending…';
   btn.disabled = true;
   fetch('/api/send-review-request', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({name: name, email: email, phone: phone})
+    body: JSON.stringify({name: name, email: email, phone: phone, sms_consent: consent})
   }).then(function(r){ return r.json(); }).then(function(d){
     btn.disabled = false;
     btn.innerHTML = orig;

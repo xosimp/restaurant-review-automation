@@ -76,6 +76,27 @@ def test_a_review_written_this_week_does_appear_in_the_trend(db_path):
     assert sum(w["total"] for w in weeks) == 1
 
 
+def test_reviews_written_in_different_weeks_get_different_bars(db_path):
+    """The window filter and the BUCKETING expression are separate. Fixing
+    only the window still let three weeks of reviews stack into one bar,
+    because a backlog pulled in a single fetch shares one fetched_at — which
+    is what the Sentiment River chart draws."""
+    _restaurant(db_path)
+    for weeks_ago in (1, 3, 5):
+        _review(db_path, 1, ext=f"w{weeks_ago}", rating=5,
+                written_days_ago=weeks_ago * 7, fetched_days_ago=0)
+    weeks = models.get_sentiment_trend(1, weeks=8)
+    assert len(weeks) == 3, f"3 separate weeks rendered as {len(weeks)} bar(s)"
+    assert all(w["total"] == 1 for w in weeks)
+
+
+def test_the_trend_labels_each_bar_with_a_real_date(db_path):
+    _restaurant(db_path)
+    _review(db_path, 1, ext="a", rating=5, written_days_ago=3)
+    label = models.get_sentiment_trend(1, weeks=8)[0]["label"]
+    assert "/" in label, f"label {label!r} is the raw week key, not a date"
+
+
 def test_top_issues_over_90_days_excludes_a_three_year_old_review(db_path):
     """Measured before the fix: every review ever imported counted as inside
     the 90-day window."""
@@ -229,3 +250,31 @@ def test_get_reviews_by_ids_is_scoped_to_one_restaurant(db_path):
     save_reviews([_r(2, "y", 4, "Theirs.")], db_path=db_path)
     got = models.get_reviews_by_ids(2, [mine[0].id], db_path=db_path)
     assert got == []
+
+
+def test_positive_percentage_is_over_the_reviews_that_have_a_sentiment(db_path):
+    """Dropping the processed=1 filter made `total` include reviews the
+    analyser never classified, so 3 positives out of 3 analysed read 60%
+    rather than 100% — a number that moves when an AI call fails, not when
+    a guest's opinion does."""
+    _restaurant(db_path)
+    for i in range(3):
+        _review(db_path, 1, ext=f"p{i}", rating=5, written_days_ago=2)
+    for i in range(2):
+        _review(db_path, 1, ext=f"u{i}", rating=1, written_days_ago=2,
+                processed=0, sentiment=None, cats=None)
+    s = models.get_review_stats(1)
+    assert s["positive_pct"] == 100
+    assert s["classified"] == 3
+    assert s["total"] == 5
+    assert s["unanalysed"] == 2
+
+
+def test_the_sentiment_split_plus_unanalysed_accounts_for_every_review(db_path):
+    _restaurant(db_path)
+    _review(db_path, 1, ext="a", rating=5, written_days_ago=2, sentiment="positive")
+    _review(db_path, 1, ext="b", rating=1, written_days_ago=2, sentiment="negative")
+    _review(db_path, 1, ext="c", rating=1, written_days_ago=2, processed=0,
+            sentiment=None, cats=None)
+    s = models.get_review_stats(1)
+    assert s["positive"] + s["negative"] + s["neutral"] + s["unanalysed"] == s["total"]
