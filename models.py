@@ -1711,31 +1711,68 @@ def _seed_ejs_capabilities(rid: int, db_path: str):
     print(f"[auto-seed] {SIMPLE_EJS_NAME} ratings written for {len(_EJS_ROSTER)} staff")
 
 
-def _ensure_ejs_login(rid: int, db_path: str):
-    """A login for the demo account, created once with a random password.
+SIMPLE_EJS_USERNAME = "erik"
 
-    Printed to the log and stored in restaurants.temp_password, which the
-    admin client card already surfaces — the same place the Add Client form
-    puts a new client's first password.
+
+def _ensure_ejs_login(rid: int, db_path: str):
+    """A login for the demo account.
+
+    Set DEMO_PASSWORD and the same credential works in every environment,
+    which is the point: a password generated per environment meant the one
+    on your laptop was not the one on Railway, and finding the live one
+    meant digging through the admin client card first.
+
+    Without that variable it falls back to a random password, printed once
+    and stored in restaurants.temp_password where the admin client card
+    already shows it — the same place the Add Client form puts a new
+    client's first password.
     """
+    import os as _os
     import secrets
     from auth import create_user
+    from werkzeug.security import generate_password_hash
+
+    wanted = (_os.getenv("DEMO_PASSWORD") or "").strip()
     conn = get_conn(db_path)
     try:
-        row = conn.execute("SELECT id FROM users WHERE restaurant_id=? LIMIT 1",
-                           (rid,)).fetchone()
+        row = conn.execute(
+            "SELECT id, username FROM users WHERE restaurant_id=? LIMIT 1", (rid,)).fetchone()
     except Exception:
         row = None
     finally:
         conn.close()
+
     if row:
+        # Re-point an existing demo login at DEMO_PASSWORD, because the
+        # account is usually created before the variable is set and a
+        # password nobody can reproduce is no use. Guarded three ways: the
+        # variable has to be set, the restaurant has to still be flagged as
+        # a demo, and it has to be the login this seed made. A real client's
+        # password is never touched.
+        restaurant = get_restaurant(rid, db_path)
+        if not (wanted and restaurant and restaurant.is_demo
+                and row["username"] == SIMPLE_EJS_USERNAME):
+            return
+        conn = get_conn(db_path)
+        try:
+            conn.execute("UPDATE users SET password_hash=? WHERE id=?",
+                         (generate_password_hash(wanted), row["id"]))
+            conn.commit()
+        finally:
+            conn.close()
+        update_restaurant(rid, {"temp_password": wanted})
+        print(f"[auto-seed] {SIMPLE_EJS_NAME} login reset to DEMO_PASSWORD "
+              f"(username {SIMPLE_EJS_USERNAME!r})")
         return
-    password = secrets.token_urlsafe(9)
+
+    password = wanted or secrets.token_urlsafe(9)
     try:
-        create_user(rid, "erik", "erik+demo@cavnar.ai", password, db_path=db_path)
+        create_user(rid, SIMPLE_EJS_USERNAME, "erik+demo@cavnar.ai", password, db_path=db_path)
         update_restaurant(rid, {"temp_password": password})
-        print(f"[auto-seed] {SIMPLE_EJS_NAME} login created — username 'erik', "
-              f"password {password} (also on the admin client card)")
+        source = "DEMO_PASSWORD" if wanted else f"generated: {password}"
+        print(f"[auto-seed] {SIMPLE_EJS_NAME} login created — username "
+              f"{SIMPLE_EJS_USERNAME!r}, password from {source} "
+              "(also on the admin client card)")
     except Exception as e:
         print(f"[auto-seed] {SIMPLE_EJS_NAME} login not created: {e}")
 
