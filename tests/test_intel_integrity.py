@@ -780,7 +780,24 @@ def test_a_dip_and_recovery_is_not_reported_as_a_trend(db_path):
     m = models.competitor_movement(1, days=90, db_path=db_path)[0]
     assert m["rating_change"] == 0.0
     assert m["snapshots"] == 4
-    assert m["rating_trend_per_month"] is not None
+    # `is not None` passed with the slope hardcoded to 0.0 — a vacuous
+    # assertion. A dip and recovery has a real, non-zero fitted direction
+    # across four snapshots even though its endpoints match.
+    assert m["rating_trend_per_month"] != 0.0
+
+
+def test_a_steady_decline_has_a_negative_fitted_slope(db_path):
+    for days, rating in ((90, 4.8), (60, 4.6), (30, 4.4), (0, 4.2)):
+        _snap(db_path, 1, "d", "Decliner", rating, 900, days)
+    m = models.competitor_movement(1, days=120, db_path=db_path)[0]
+    assert m["rating_trend_per_month"] < -0.1, m["rating_trend_per_month"]
+
+
+def test_a_steady_climb_has_a_positive_fitted_slope(db_path):
+    for days, rating in ((90, 4.0), (60, 4.2), (30, 4.4), (0, 4.6)):
+        _snap(db_path, 1, "u", "Climber", rating, 900, days)
+    m = models.competitor_movement(1, days=120, db_path=db_path)[0]
+    assert m["rating_trend_per_month"] > 0.1, m["rating_trend_per_month"]
 
 
 def test_a_single_snapshot_is_still_not_a_movement(db_path):
@@ -810,17 +827,6 @@ def test_one_run_cannot_show_roster_change(db_path):
 
 # ── The history reaches a surface ──────────────────────────────────────────
 
-def test_competitor_movement_is_actually_reachable():
-    """It was added as the fix for "there is no competitor history",
-    tested, and wired to no route and no screen — so the data accumulated
-    weekly and could not be read."""
-    import inspect
-    import mobile_api, client_api
-    assert "competitor_movement" in inspect.getsource(mobile_api)
-    assert "/intel/movement" in inspect.getsource(mobile_api)
-    assert "/api/intel/movement" in inspect.getsource(client_api)
-
-
 def test_the_movement_route_is_module_gated():
     import auth
     prefixes = [p for p, _mod in auth.MODULE_ROUTES] if hasattr(auth, "MODULE_ROUTES") else []
@@ -831,6 +837,62 @@ def test_the_movement_route_is_module_gated():
 
 # ── Selection quality ──────────────────────────────────────────────────────
 
+def _places(monkeypatch, own, candidates):
+    """Drive get_nearby_competitors with both Places calls stubbed."""
+    calls = {"n": 0}
+
+    class _R:
+        def json(self):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return {"status": "OK", "result": own}
+            return {"status": "OK", "results": candidates}
+    monkeypatch.setattr(competitor.requests, "get", lambda *a, **kw: _R())
+    monkeypatch.setattr(competitor, "PLACES_API_KEY", "k", raising=False)
+    return competitor.get_nearby_competitors("ChIJ_me", max_results=10)
+
+
+_OWN = {"name": "Mine", "types": ["restaurant", "food"], "price_level": 2,
+        "geometry": {"location": {"lat": 41.88, "lng": -87.63}}}
+
+
+def _cand(name, types, reviews=500, pid=None):
+    return {"place_id": pid or name, "name": name, "types": types,
+            "rating": 4.4, "user_ratings_total": reviews,
+            "business_status": "OPERATIONAL", "vicinity": "x",
+            "geometry": {"location": {"lat": 41.88, "lng": -87.63}}}
+
+
+def test_the_filter_actually_drops_a_delivery_only_kitchen(monkeypatch):
+    """Testing _is_delivery_only alone left the function correct and
+    unused — removing its call from _filter kept the suite green."""
+    out = _places(monkeypatch, _OWN, [
+        _cand("Ghost Kitchen", ["meal_delivery", "food"]),
+        _cand("Real Restaurant", ["restaurant", "food"]),
+    ])
+    names = [c["name"] for c in out]
+    assert "Real Restaurant" in names
+    assert "Ghost Kitchen" not in names
+
+
+def test_the_filter_keeps_a_delivery_capable_dine_in_venue(monkeypatch):
+    out = _places(monkeypatch, _OWN, [
+        _cand("Both", ["meal_delivery", "restaurant"])])
+    assert [c["name"] for c in out] == ["Both"]
+
+
+def test_a_low_review_competitor_is_marked_provisional_by_the_filter(monkeypatch):
+    """The flag has to be SET from the review count, not merely honoured
+    once someone passes it in."""
+    out = _places(monkeypatch, _OWN, [
+        _cand("Brand New", ["restaurant"], reviews=4),
+        _cand("Established", ["restaurant"], reviews=900),
+    ])
+    by_name = {c["name"]: c for c in out}
+    assert by_name["Brand New"]["rating_is_provisional"] is True
+    assert by_name["Established"]["rating_is_provisional"] is False
+
+
 def test_a_delivery_only_kitchen_is_not_a_dine_in_competitor():
     """A ghost kitchen competes on delivery economics, not on the service
     scripts and atmosphere this module advises about."""
@@ -839,11 +901,46 @@ def test_a_delivery_only_kitchen_is_not_a_dine_in_competitor():
     assert competitor._is_delivery_only(["restaurant", "bar"]) is False
 
 
-def test_the_competitor_prompt_carries_weather_and_provisional_notes(monkeypatch):
-    """The only market context was a holiday list, for recommendations
-    asked for as something to start THIS SHIFT."""
-    import inspect
-    src = inspect.getsource(competitor.generate_competitor_insight)
-    assert "weather_ctx" in src
-    assert "get_forecast_for_week" in src
-    assert "provisional" in src.lower()
+def test_the_competitor_prompt_carries_the_weather(monkeypatch):
+    """The only market context was a holiday list, for recommendations asked
+    for as something to start THIS SHIFT.
+
+    Asserted on the prompt the model actually receives. Checking that the
+    source mentions weather_ctx passed with the block nulled out."""
+    import types as _t
+    captured = {}
+
+    def fake(client, **kwargs):
+        captured.update(kwargs)
+        return _t.SimpleNamespace(
+            content=[_t.SimpleNamespace(text="Hi. Lou's Diner is busy.")],
+            stop_reason="end_turn")
+    monkeypatch.setattr(competitor, "create_with_retry", fake)
+    monkeypatch.setattr(competitor, "ANTHROPIC_KEY", "k", raising=False)
+    monkeypatch.setattr("models.get_restaurant", lambda rid, *a, **k: _t.SimpleNamespace(
+        name="R", timezone="America/Chicago", latitude=41.88, longitude=-87.63))
+    monkeypatch.setattr("weather.get_forecast_for_week", lambda r, days: [
+        {"date": d, "day_name": "Monday", "high_f": 44, "short_forecast": "Rain", "precip_pct": 90}
+        for d in days[:3]])
+    competitor.generate_competitor_insight(
+        "Mine", [{"name": "Lou's Diner", "place_id": "p1", "rating": 4.2,
+                  "review_count": 300}], restaurant_id=1)
+    prompt = captured["messages"][0]["content"]
+    assert "Rain" in prompt and "90% rain" in prompt
+    assert "never the reason for a recommendation on its own" in prompt
+
+
+def test_a_provisional_competitor_is_named_as_such_in_the_prompt(monkeypatch):
+    import types as _t
+    captured = {}
+    monkeypatch.setattr(competitor, "create_with_retry", lambda client, **kw: (
+        captured.update(kw) or _t.SimpleNamespace(
+            content=[_t.SimpleNamespace(text="Hi. Lou's Diner is busy.")],
+            stop_reason="end_turn")))
+    monkeypatch.setattr(competitor, "ANTHROPIC_KEY", "k", raising=False)
+    competitor.generate_competitor_insight(
+        "Mine", [{"name": "Lou's Diner", "place_id": "p1", "rating": 5.0,
+                  "review_count": 4, "rating_is_provisional": True}], restaurant_id=1)
+    prompt = captured["messages"][0]["content"]
+    assert "provisional" in prompt
+    assert "do not compare against it as a settled figure" in prompt

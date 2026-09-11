@@ -3761,3 +3761,52 @@ def test_a_review_request_without_a_place_id_is_refused(client, db_path, monkeyp
     body = resp.get_json()
     assert body["ok"] is False and "Place ID" in body["error"]
     assert sent == []
+
+
+def _comp_snap(db_path, rid, pid, name, rating, count, days_ago):
+    from models import record_competitor_snapshot
+    record_competitor_snapshot(rid, [
+        {"place_id": pid, "name": name, "rating": rating, "review_count": count}], db_path=db_path)
+    conn = get_conn(db_path)
+    conn.execute("UPDATE competitor_snapshots SET captured_at=datetime('now', ?) "
+                 "WHERE restaurant_id=? AND place_id=? "
+                 "AND captured_at >= datetime('now','-1 minute')",
+                 (f"-{days_ago} days", rid, pid))
+    conn.commit()
+    conn.close()
+
+
+def test_competitor_movement_is_actually_reachable(client, db_path, monkeypatch):
+    """competitor_movement was added as the fix for "there is no competitor
+    history", tested, and wired to no route and no screen — so the weekly
+    snapshots accumulated and could not be read.
+
+    Asserted by CALLING the route. A substring check on the module source
+    passed with the route renamed to /intel/movement_disabled, because the
+    old name is still a substring of the new one."""
+    rid = _restaurant(db_path, module_reviews=1, module_labor=1,
+                      module_inventory=1, module_marketing=1)
+    token = _login(client, db_path, rid)
+    _comp_snap(db_path, rid, "a", "Lou's", 4.4, 500, 30)
+    _comp_snap(db_path, rid, "a", "Lou's", 4.1, 560, 0)
+    resp = client.get("/mobile/api/intel/movement", headers=_auth_headers(token))
+    assert resp.status_code == 200, resp.status_code
+    body = resp.get_json()
+    assert body["ok"] is True
+    assert body["movement"], "the history is reachable but empty"
+    assert body["movement"][0]["name"] == "Lou's"
+    assert "significant" in body
+
+
+def test_the_movement_route_reports_who_joined_and_left(client, db_path):
+    rid = _restaurant(db_path, module_reviews=1, module_labor=1,
+                      module_inventory=1, module_marketing=1)
+    token = _login(client, db_path, rid)
+    _comp_snap(db_path, rid, "a", "Stayer", 4.4, 500, 7)
+    _comp_snap(db_path, rid, "b", "Leaver", 4.2, 300, 7)
+    _comp_snap(db_path, rid, "a", "Stayer", 4.4, 520, 0)
+    _comp_snap(db_path, rid, "c", "Newcomer", 4.8, 400, 0)
+    body = client.get("/mobile/api/intel/movement",
+                      headers=_auth_headers(token)).get_json()
+    assert [x["name"] for x in body["arrived"]] == ["Newcomer"]
+    assert [x["name"] for x in body["gone"]] == ["Leaver"]
