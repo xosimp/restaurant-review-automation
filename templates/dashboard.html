@@ -7329,9 +7329,12 @@ var _schedRows = [];
 var _schedOverrides = {};
 var _schedTargets = {};
 
+// Hex only. Every caller builds a gradient by appending an alpha suffix,
+// and an rgba() value there produces invalid CSS and a bar with no fill —
+// which is how the best shift of the week rendered blank.
 function _qTone(score) {
   if (score >= 90) return '#6fcf97';
-  if (score >= 78) return 'rgba(111,207,151,.85)';
+  if (score >= 78) return '#8fd4ab';
   if (score >= 65) return '#f2994a';
   return '#eb5757';
 }
@@ -7447,16 +7450,24 @@ function renderQualityShifts(shifts) {
     var id = sft.date + '-' + sft.daypart;
     var open = _qualityOpenShift === id;
     var tone = _qTone(sft.score);
-    html += '<div style="border-bottom:1px solid rgba(255,255,255,.06)">'
+    // A bar per shift, so the week's shape reads without anybody comparing
+    // seven near-identical two-digit numbers to each other.
+    html += '<div style="border-bottom:1px solid rgba(255,255,255,.06);'
+      + (open ? 'background:rgba(255,255,255,.025)' : '') + '">'
       + '<button type="button" data-quality-shift="' + _escAttr(id) + '" style="width:100%;display:flex;'
-      + 'align-items:center;gap:10px;background:none;border:none;cursor:pointer;padding:8px 0;font-family:inherit;text-align:left">'
-      + '<span style="font-size:13.5px;font-weight:600;color:rgba(255,255,255,.88)">' + _escHtml(_qTitle(sft)) + '</span>'
+      + 'align-items:center;gap:10px;background:none;border:none;cursor:pointer;padding:9px 6px;font-family:inherit;text-align:left">'
+      + '<span style="flex:0 0 128px;font-size:13.5px;font-weight:600;color:rgba(255,255,255,.88)">'
+      + _escHtml(_qTitle(sft)) + '</span>'
       + _qualityChips(sft)
-      + '<span style="flex:1"></span>'
-      + '<span style="font-family:Space Grotesk,sans-serif;font-size:14px;font-weight:700;color:' + tone + '">' + sft.score + '</span>'
-      + '<span style="font-size:10px;color:var(--ink3);transform:rotate(' + (open ? '180deg' : '0') + ');display:inline-block">&#9662;</span>'
+      + '<span style="flex:1;height:6px;border-radius:999px;background:rgba(255,255,255,.07);display:block;min-width:60px">'
+      + '<span style="display:block;height:6px;border-radius:999px;width:' + Math.max(3, sft.score) + '%;'
+      + 'background:linear-gradient(90deg,' + tone + '55,' + tone + ')"></span></span>'
+      + '<span style="flex:0 0 26px;text-align:right;font-family:Space Grotesk,sans-serif;font-size:14px;font-weight:700;color:' + tone + '">' + sft.score + '</span>'
+      + '<svg width="11" height="11" viewBox="0 0 16 16" fill="none" style="flex:0 0 11px;transition:transform .2s;'
+      + 'transform:rotate(' + (open ? '180deg' : '0deg') + ')"><path d="M4 6l4 4 4-4" stroke="' + (open ? tone : 'var(--ink3)')
+      + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
       + '</button>';
-    if (open) html += _qualityShiftDetail(sft);
+    if (open) html += _qualityShiftDetail(sft, tone);
     html += '</div>';
   }
   el.innerHTML = html;
@@ -7474,24 +7485,43 @@ function _qualityChips(shift) {
     out += '<span style="font-size:9px;font-weight:700;letter-spacing:.6px;color:#56ccf2;'
         + 'background:rgba(86,204,242,.14);padding:2px 6px;border-radius:999px">TRAINING</span>';
   }
-  return out;
+  // Wrapped only when there is something to wrap. An empty span still
+  // takes a slot in the row's flex layout and squeezed the score bar.
+  return out ? '<span style="flex:0 0 auto;display:inline-flex;gap:4px">' + out + '</span>' : '';
 }
 
-function _qualityShiftDetail(shift) {
-  var html = '<div style="padding:2px 0 12px">';
+// Nested behind a rail in the shift's own tone and grouped under quiet
+// labels, rather than eight identically-marked lines at the same indent as
+// the row titles — which read as a wall of text and left no visible
+// boundary between one shift's detail and the next shift's title.
+function _qualityShiftDetail(shift, tone) {
+  var html = '<div style="margin:0 6px 12px 14px;padding:2px 0 2px 12px;border-left:2px solid ' + tone + '55">';
   if (shift.people && shift.people.length) {
-    html += '<div style="font-size:12px;color:var(--ink3);margin-bottom:6px">On this shift: '
-          + _escHtml(shift.people.join(', ')) + '</div>';
+    html += '<div style="font-size:12px;color:var(--ink3);margin-bottom:8px">'
+          + _escHtml(shift.people.join(' \u00B7 ')) + '</div>';
   }
-  html += _qualityLines(shift.strengths, '#6fcf97', '&#10003;', 3);
-  html += _qualityLines(shift.weaknesses, '#f2994a', '!', 4);
-  html += _qualityLines(shift.blind_spots, 'var(--ink3)', '?', 2);
+  if (shift.profile) {
+    html += '<div style="font-size:11px;color:var(--ink3);margin-bottom:8px">Judged as '
+          + _escHtml(shift.profile.label || 'a standard shift')
+          + (shift.profile.min_quality ? ', which wants ' + shift.profile.min_quality + '+' : '') + '.</div>';
+  }
+  html += _qualityGroup('Working well', shift.strengths, '#6fcf97', 3);
+  html += _qualityGroup('Holding it back', shift.weaknesses, '#f2994a', 4);
+  html += _qualityGroup('Not known', shift.blind_spots, 'var(--ink3)', 2);
   if (shift.capped_by) {
-    html += '<div style="font-size:12px;color:var(--ink3);margin-top:4px">Capped by '
+    html += '<div style="font-size:11.5px;color:var(--ink3);margin-top:8px;font-style:italic">Capped by '
           + _escHtml(String(shift.capped_by).replace(/_/g, ' '))
           + ' — a shift is never better than its weakest critical part.</div>';
   }
   return html + '</div>';
+}
+
+function _qualityGroup(label, lines, colour, limit) {
+  if (!lines || !lines.length) return '';
+  return '<div style="margin-bottom:9px">'
+    + '<div style="font-size:9.5px;font-weight:700;letter-spacing:1.1px;text-transform:uppercase;'
+    + 'color:' + colour + ';margin-bottom:3px">' + _escHtml(label) + '</div>'
+    + _qualityLines(lines, colour, '&#8226;', limit) + '</div>';
 }
 
 function _qualityLines(lines, colour, mark, limit) {
@@ -7667,13 +7697,15 @@ function renderQualityReasoning() {
       html += _qualityLines([swaps[i].reason], '#56ccf2', '&#8644;', 1);
     }
   }
-  html += _qualityLines(_quality.strengths, '#6fcf97', '&#10003;', 3);
-  html += _qualityLines(_quality.weaknesses, '#f2994a', '!', 3);
+  // Same grouped treatment as an expanded shift, so the two never read as
+  // two different products stacked on top of each other.
+  html += _qualityGroup('Across the week', _quality.strengths, '#6fcf97', 3);
+  html += _qualityGroup('Worth a look', _quality.weaknesses, '#f2994a', 3);
   var conf = _quality.confidence;
   if (conf && conf.reasons && conf.reasons.length) {
-    html += '<div style="font-size:12.5px;font-weight:600;color:rgba(255,255,255,.78);margin:8px 0 4px">'
+    html += '<div style="font-size:12.5px;font-weight:600;color:rgba(255,255,255,.78);margin:10px 0 4px">'
           + _escHtml(conf.summary) + '</div>';
-    html += _qualityLines(conf.reasons, 'var(--ink3)', '?', 5);
+    html += _qualityLines(conf.reasons, 'var(--ink3)', '&#8226;', 5);
   }
   box.innerHTML = html;
 }

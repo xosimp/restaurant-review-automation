@@ -165,6 +165,8 @@ struct ShiftQualityPanel: View {
                     Text(shift.title)
                         .font(.cavnarBody(14, weight: 600))
                         .foregroundStyle(Color.cavnarInk)
+                        .lineLimit(1)
+                        .layoutPriority(1)
                     if shift.profile.demand == "peak" || shift.profile.demand == "high" {
                         Text(shift.profile.demand == "peak" ? "PEAK" : "BUSY")
                             .font(.cavnarBody(9.5, weight: 700))
@@ -183,23 +185,39 @@ struct ShiftQualityPanel: View {
                             .padding(.vertical, 2)
                             .background(Capsule().fill(Color.cavnarBlue.opacity(0.14)))
                     }
-                    Spacer(minLength: 6)
+                    // A bar per shift, so the week's shape reads without
+                    // anybody comparing seven near-identical two-digit
+                    // numbers to each other.
+                    QualityBar(score: shift.score ?? 0, tone: toneFor(shift.score ?? 0))
+                        .frame(minWidth: 44)
                     Text("\(shift.score ?? 0)")
                         .font(.cavnarNumber(15, weight: 700))
                         .foregroundStyle(toneFor(shift.score ?? 0))
+                        .frame(width: 26, alignment: .trailing)
                     Image(systemName: "chevron.down")
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .foregroundStyle(expandedShift == shift.id
+                                         ? toneFor(shift.score ?? 0) : Color.cavnarInk3)
                         .rotationEffect(.degrees(expandedShift == shift.id ? 180 : 0))
                 }
                 .contentShape(Rectangle())
-                .padding(.vertical, 7)
+                .padding(.vertical, 8)
             }
             .buttonStyle(.plain)
 
             if expandedShift == shift.id {
+                // Nested behind a rail in the shift's own tone, so the
+                // boundary between one shift's detail and the next shift's
+                // title is visible rather than a hairline.
                 shiftDetail(shift)
-                    .padding(.bottom, 8)
+                    .padding(.leading, 12)
+                    .overlay(alignment: .leading) {
+                        Rectangle()
+                            .fill(toneFor(shift.score ?? 0).opacity(0.4))
+                            .frame(width: 2)
+                    }
+                    .padding(.leading, 4)
+                    .padding(.bottom, 10)
                     .transition(.opacity)
             }
             Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
@@ -217,15 +235,16 @@ struct ShiftQualityPanel: View {
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            ForEach((shift.strengths ?? []).prefix(3), id: \.self) { line in
-                detailLine(line, symbol: "checkmark", color: .cavnarGreen)
-            }
-            ForEach((shift.weaknesses ?? []).prefix(4), id: \.self) { line in
-                detailLine(line, symbol: "exclamationmark", color: .cavnarAmber)
-            }
-            ForEach((shift.blindSpots ?? []).prefix(2), id: \.self) { line in
-                detailLine(line, symbol: "questionmark", color: .cavnarInk3)
-            }
+            Text("Judged as \(shift.profile.label)"
+                 + (shift.profile.minQuality.map { ", which wants \($0)+" } ?? "") + ".")
+                .font(.cavnarBody(12))
+                .foregroundStyle(Color.cavnarInk3)
+                .fixedSize(horizontal: false, vertical: true)
+            // Grouped under quiet labels rather than eight identically
+            // marked lines — the same list read as a wall of text.
+            group("Working well", shift.strengths, limit: 3, color: .cavnarGreen)
+            group("Holding it back", shift.weaknesses, limit: 4, color: .cavnarAmber)
+            group("Not known", shift.blindSpots, limit: 2, color: .cavnarInk3)
             if let capped = shift.cappedBy {
                 Text("Capped by \(capped.replacingOccurrences(of: "_", with: " ")) — a shift is never better than its weakest critical part.")
                     .font(.cavnarBody(12.5))
@@ -255,13 +274,29 @@ struct ShiftQualityPanel: View {
         }
     }
 
+    @ViewBuilder
+    private func group(_ label: String, _ lines: [String]?, limit: Int, color: Color) -> some View {
+        if let lines, !lines.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(label.uppercased())
+                    .font(.cavnarBody(9.5, weight: 700))
+                    .tracking(1.1)
+                    .foregroundStyle(color)
+                ForEach(lines.prefix(limit), id: \.self) { line in
+                    detailLine(line, symbol: "circle.fill", color: color)
+                }
+            }
+            .padding(.top, 2)
+        }
+    }
+
     private func detailLine(_ text: String, symbol: String, color: Color) -> some View {
         HStack(alignment: .top, spacing: 7) {
             Image(systemName: symbol)
-                .font(.system(size: 9, weight: .bold))
+                .font(.system(size: symbol == "circle.fill" ? 4 : 9, weight: .bold))
                 .foregroundStyle(color)
                 .frame(width: 12)
-                .padding(.top, 3)
+                .padding(.top, symbol == "circle.fill" ? 6 : 3)
             Text(text)
                 .font(.cavnarBody(12.5))
                 .foregroundStyle(Color.cavnarInk2)
@@ -302,19 +337,15 @@ struct ShiftQualityPanel: View {
                                        color: .cavnarBlue)
                         }
                     }
-                    ForEach((quality.strengths ?? []).prefix(3), id: \.self) { line in
-                        detailLine(line, symbol: "checkmark", color: .cavnarGreen)
-                    }
-                    ForEach((quality.weaknesses ?? []).prefix(3), id: \.self) { line in
-                        detailLine(line, symbol: "exclamationmark", color: .cavnarAmber)
-                    }
+                    group("Across the week", quality.strengths, limit: 3, color: .cavnarGreen)
+                    group("Worth a look", quality.weaknesses, limit: 3, color: .cavnarAmber)
                     if let confidence = quality.confidence, !confidence.reasons.isEmpty {
                         Text(confidence.summary)
                             .font(.cavnarBody(12.5, weight: 600))
                             .foregroundStyle(Color.cavnarInk2)
                             .padding(.top, 2)
                         ForEach(confidence.reasons, id: \.self) { reason in
-                            detailLine(reason, symbol: "questionmark", color: .cavnarInk3)
+                            detailLine(reason, symbol: "circle.fill", color: .cavnarInk3)
                         }
                     }
                 }
@@ -400,6 +431,7 @@ private struct QualityDial: View {
 private struct QualityBar: View {
     let score: Int
     let tone: Color
+    var height: CGFloat = 7
 
     var body: some View {
         GeometryReader { geo in
@@ -409,9 +441,10 @@ private struct QualityBar: View {
                     .fill(LinearGradient(colors: [tone.opacity(0.55), tone],
                                          startPoint: .leading, endPoint: .trailing))
                     .frame(width: max(4, geo.size.width * CGFloat(max(0, min(100, score))) / 100))
+                    .frame(height: height)
             }
         }
-        .frame(height: 7)
+        .frame(height: height)
         .animation(.easeOut(duration: 0.4), value: score)
     }
 }

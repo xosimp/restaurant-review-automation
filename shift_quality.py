@@ -1039,22 +1039,31 @@ def _rollup(scored: list) -> list:
     return out
 
 
-def _top_reasons(scored: list, field_name: str, limit: int = 5) -> list:
-    """The reasons that recur, most common first.
+def _top_reasons(scored: list, field_name: str, limit: int = 4) -> list:
+    """The reasons that recur ACROSS shifts, most common first.
 
-    Five different shifts all short a bartender is one problem stated once,
-    not five lines a manager has to notice is the same sentence.
+    Deliberately not a digest of everything: each shift already carries its
+    own lines, and repeating them at week level put the same sentence on
+    screen twice for a manager to read twice. What belongs here is the
+    pattern — one problem showing up on five different nights — because
+    that is the thing no single shift row can tell them.
+
+    A week where nothing recurs falls back to naming the worst shift's own
+    reasons, because an empty section says less than a specific one.
     """
     counts, first_seen = {}, {}
     for shift in scored:
         for line in shift.get(field_name) or []:
             counts[line] = counts.get(line, 0) + 1
             first_seen.setdefault(line, f"{shift['day']} {shift['daypart']}".strip())
-    ranked = sorted(counts.items(), key=lambda kv: -kv[1])
-    out = []
-    for line, n in ranked[:limit]:
-        out.append(f"{line} ({n} shifts)" if n > 1 else f"{first_seen[line]}: {line}")
-    return out
+    recurring = sorted([kv for kv in counts.items() if kv[1] > 1], key=lambda kv: -kv[1])
+    if recurring:
+        return [f"{line} — {n} shifts" for line, n in recurring[:limit]]
+    worst = min(scored, key=lambda s: s["score"]) if scored else None
+    if not worst:
+        return []
+    where = f"{worst['day']} {worst['daypart']}".strip() or worst["date"]
+    return [f"{where}: {line}" for line in (worst.get(field_name) or [])[:limit]]
 
 
 # ── Confidence ─────────────────────────────────────────────────────────────

@@ -769,7 +769,7 @@ def test_the_same_problem_on_five_shifts_is_stated_once():
     out = sq.score_rows(rows, profiles=every_night, scores={"Weak": 1, "Other": 1})
     strength_lines = [w for w in out["weaknesses"] if "Bartender strength" in w]
     assert len(strength_lines) == 1
-    assert "(5 shifts)" in strength_lines[0]
+    assert "5 shifts" in strength_lines[0]
 
 
 def test_the_week_names_its_best_and_worst_shift():
@@ -1080,3 +1080,50 @@ def test_the_web_can_edit_profiles_and_weighting():
                   "'/api/labor/quality-weights'", "function saveShiftProfile",
                   "function renderWeightList", 'id="sp-list"', 'id="sp-weights"'):
         assert piece in html, piece
+
+
+def test_the_week_summary_names_the_pattern_not_every_shifts_own_lines():
+    """Each shift already carries its own reasons. Repeating them at week
+    level put the same sentence on screen twice for a manager to read
+    twice, which reads as noise rather than as intelligence."""
+    common = [row(d, "Weak", "Bartender") for d in (MON, TUE, WED, THU, FRI)]
+    common += [row(d, "Other", "Bartender") for d in (MON, TUE, WED, THU, FRI)]
+    out = sq.score_rows(common, profiles=[sq.ShiftProfile(
+        key="n", label="Night", daypart="night", min_strength={"Bartender": 9},
+        source="restaurant")], scores={"Weak": 1, "Other": 1})
+    assert out["weaknesses"]
+    assert all("shifts" in line for line in out["weaknesses"]), out["weaknesses"]
+
+
+def test_a_week_with_no_repeated_problem_still_says_something_specific():
+    rows = [row(SAT, "Strong", "Bartender"), row(SAT, "Weak", "Bartender"),
+            lunch(MON, "Strong", "Bartender")]
+    out = sq.score_rows(rows, profiles=[sq.ShiftProfile(
+        key="n", label="Any", min_strength={"Bartender": 9}, source="restaurant")],
+        scores={"Strong": 5, "Weak": 1})
+    assert out["weaknesses"]
+    # Named to its shift, so the manager knows where to look.
+    assert any(":" in line for line in out["weaknesses"])
+
+
+def test_both_surfaces_group_the_reasons_rather_than_listing_them_flat():
+    """Eight identically-marked lines at one indent is the wall of text the
+    design brief rules out. Both surfaces group them and nest them behind a
+    rail in the shift's own tone."""
+    panel = _no_comments(_source("ios/CavnarAI/CavnarAI/Features/Labor/ShiftQualityPanel.swift"))
+    assert 'group("Working well"' in panel and 'group("Holding it back"' in panel
+    assert "QualityBar(score: shift.score ?? 0" in panel
+    html = _no_comments(_source("templates", "dashboard.html"))
+    assert "_qualityGroup('Working well'" in html and "_qualityGroup('Holding it back'" in html
+
+
+def test_the_web_tone_helper_returns_only_hex():
+    """Every caller builds a gradient by appending an alpha suffix. An
+    rgba() value there produces invalid CSS and a bar with no fill, which
+    is how the best shift of the week rendered blank."""
+    html = _source("templates", "dashboard.html")
+    body = html[html.index("function _qTone("):]
+    body = body[:body.index("\n}")]
+    assert "rgba" not in body, body
+    import re as _re
+    assert len(_re.findall(r"#[0-9a-f]{6}", body)) == 4
