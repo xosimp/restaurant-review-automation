@@ -3037,6 +3037,33 @@ def mobile_guest_join_link(current_user):
 
 # ── Intel ─────────────────────────────────────────────────────────────────
 
+def _market_rating(competitors: list) -> dict:
+    """The competitor set's rating, weighted by review volume.
+
+    A straight mean over competitor ratings treats a twelve-review venue as
+    equal to a three-thousand-review one. Each competitor's own rating is
+    volume-weighted internally by Google; averaging them flat throws that
+    away. Returns both so a client can show the honest one and still say
+    how many restaurants it covers.
+    """
+    # Provisional ratings are excluded from the market figure. A four-review
+    # venue at 5.0 would otherwise pull the market average the owner is
+    # measured against.
+    rated = [(float(c.get("rating") or 0), int(c.get("review_count") or 0))
+             for c in competitors
+             if c.get("rating") and not c.get("rating_is_provisional")]
+    if not rated:
+        return {"market_rating": None, "market_rating_reviews": 0, "market_rating_n": 0}
+    total_reviews = sum(n for _r, n in rated)
+    if total_reviews > 0:
+        weighted = sum(r * n for r, n in rated) / total_reviews
+    else:
+        weighted = sum(r for r, _n in rated) / len(rated)
+    return {"market_rating": round(weighted, 1),
+            "market_rating_reviews": total_reviews,
+            "market_rating_n": len(rated)}
+
+
 def _do_mobile_intel(restaurant_id):
     """Read-only for the narrative + competitor list; refreshing is its own
     async job (see mobile_refresh_competitors below), the same job-id/poll
@@ -3065,12 +3092,36 @@ def _do_mobile_intel(restaurant_id):
         insight = blob.get("insight", "")
         parsed = parse_competitor_intel(insight)
 
+        # Google's own all-time rating for this restaurant, which is the
+        # only figure comparable to the competitor ratings beside it.
+        #
+        # This used to be get_review_stats()["avg_rating"] — an average over
+        # the reviews Cavnar AI happens to hold, at most fifty per Business
+        # Profile fetch and at most five on a Places-only restaurant. It was
+        # rendered next to competitors' all-time Google averages over
+        # thousands of reviews each, and coloured green or red by the
+        # comparison. A restaurant with a genuine 4.6 and a rough month in
+        # the window we imported read as losing to its market.
+        #
+        # gbp_rating has been in the database all along, written by
+        # fetch_location_rating. When it is absent the sample is shown, and
+        # own_rating_basis says which it is so no surface can present the
+        # two as the same kind of number.
         own_rating = None
-        if restaurant.module_reviews:
+        own_rating_basis = None
+        own_rating_count = None
+        _gbp = getattr(restaurant, "gbp_rating", None)
+        if _gbp:
+            own_rating = round(float(_gbp), 1)
+            own_rating_basis = "google_all_time"
+            own_rating_count = getattr(restaurant, "gbp_review_count", None)
+        elif restaurant.module_reviews:
             from models import get_review_stats
             rstats = get_review_stats(restaurant_id)
             if rstats and rstats.get("avg_rating"):
                 own_rating = rstats["avg_rating"]
+                own_rating_basis = "imported_sample"
+                own_rating_count = rstats.get("total")
 
         return {
             "ok": True,
@@ -3095,9 +3146,34 @@ def _do_mobile_intel(restaurant_id):
                     # surfaces both fields instead of dropping them here).
                     "place_id": c.get("place_id", ""),
                     "custom": c.get("custom", False),
+                    # How this one was selected. Four relaxation passes run,
+                    # widening to 8km with no cuisine or price match, and a
+                    # wildcard five miles away used to arrive in the same
+                    # shape as a direct match across the street.
+                    "match_basis": c.get("match_basis"),
+                    "distance_m": c.get("distance_m"),
+                    "price_level": c.get("price_level"),
+                    # A rating on a handful of reviews is not a reputation.
+                    "rating_is_provisional": bool(c.get("rating_is_provisional")),
                 }
                 for c in blob.get("competitors", [])
             ],
+            "own_rating_basis": own_rating_basis,
+            "own_rating_count": own_rating_count,
+            # The market figure, weighted by how many reviews each
+            # competitor's rating rests on. An unweighted mean let a
+            # twelve-review venue count as much as a three-thousand-review
+            # one, which is an average of averages, not a market average.
+            **_market_rating(blob.get("competitors") or []),
+            # Which claims here are measured and which are the model's read
+            # of five Google-selected reviews. Same convention Reviews ships.
+            "claim_kinds": {
+                "own_rating": own_rating_basis or "unavailable",
+                "market_rating": "measured",
+                "competitor_ratings": "measured",
+                "sections": "inferred",
+                "recommendations": "suggestion",
+            },
             "updated_at": restaurant.competitor_updated_at,
             **{k: v for k, v in __import__("ai_guard").freshness(
                 restaurant.competitor_updated_at).items() if k in ("as_of", "age_days", "stale")},
@@ -3105,6 +3181,45 @@ def _do_mobile_intel(restaurant_id):
         }, 200
     except Exception as e:
         return {"ok": False, "error": _safe_err(e)}, 500
+
+
+@mobile_bp.route("/intel/movement")
+@mobile_login_required
+def mobile_intel_movement(current_user):
+    """How the competitor set has moved, and who joined or left it.
+
+    competitor_snapshots has been written on every weekly run since the
+    history was added, and competitor_movement read it — but nothing called
+    competitor_movement, so the data accumulated and could not be seen.
+    """
+    from models import competitor_movement, competitor_roster_changes
+    rid = current_user["restaurant_id"]
+    try:
+        days = min(int(request.args.get("days", 90) or 90), 365)
+    except (TypeError, ValueError):
+        days = 90
+    try:
+        moves = competitor_movement(rid, days=days)
+        changes = competitor_roster_changes(rid)
+        return jsonify(
+            ok=True,
+            days=days,
+            movement=moves,
+            # Only the moves that clear the noise floor, for a client that
+            # wants the short list rather than everything.
+            significant=[m for m in moves if m.get("significant")],
+            arrived=changes.get("arrived", []),
+            gone=changes.get("gone", []),
+            compared_from=changes.get("compared_from"),
+            compared_to=changes.get("compared_to"),
+            # A rating move is only meaningful against the volume behind it.
+            # confidence_z is how far past that noise floor each one sits.
+            claim_kinds={"movement": "measured", "significant": "measured",
+                         "arrived": "measured", "gone": "measured"},
+        )
+    except Exception as e:
+        return jsonify(ok=False, error=_safe_err(e), movement=[], significant=[],
+                       arrived=[], gone=[]), 500
 
 
 @mobile_bp.route("/intel")

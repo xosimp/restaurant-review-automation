@@ -1384,8 +1384,21 @@ def test_intel_endpoint_parses_real_json_blob_shape(client, db_path):
         "name": "Mio Modo", "rating": 4.5, "review_count": 270, "vicinity": "123 Main St",
         "reviews": [{"author": "Sam", "rating": 5, "text": "Great!", "time": "a week ago"}],
         "place_id": "", "custom": False,
+        # A blob generated before selection provenance existed carries none
+        # of it. The endpoint's documented defaults must stay stable for
+        # those, rather than the client seeing a missing key.
+        "match_basis": None, "distance_m": None, "price_level": None,
+        # 270 reviews is well past the provisional threshold.
+        "rating_is_provisional": False,
     }]
     assert data["updated_at"] == "2026-08-01 12:00:00"
+    # Google's own all-time rating is what competitor ratings are comparable
+    # to. This fixture's restaurant has no gbp_rating, so the imported
+    # sample is used and says so rather than passing as the same number.
+    assert data["own_rating_basis"] in (None, "imported_sample")
+    # Volume-weighted: one competitor at 4.5 on 270 reviews.
+    assert data["market_rating"] == 4.5
+    assert data["market_rating_reviews"] == 270
 
 
 def test_refresh_competitors_requires_full_tier(client, db_path):

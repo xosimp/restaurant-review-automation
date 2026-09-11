@@ -286,6 +286,22 @@ def _distance_m(lat1, lng1, lat2, lng2):
     return int(round(2 * r * _m.asin(_m.sqrt(a))))
 
 
+# Below this, a star rating is a handful of opinions rather than a
+# reputation, and comparing against it is comparing against noise.
+MIN_REVIEWS_FOR_A_MEANINGFUL_RATING = 15
+
+# Types that mean "no dining room". A ghost kitchen competes on delivery
+# economics, not on the things this module advises about — service scripts,
+# staffing, atmosphere — so it distorts a dine-in comparison.
+_DELIVERY_ONLY_TYPES = {"meal_delivery"}
+_DINE_IN_SIGNAL_TYPES = {"restaurant", "bar", "cafe", "bakery", "meal_takeaway"}
+
+
+def _is_delivery_only(types) -> bool:
+    t = set(types or [])
+    return bool(t & _DELIVERY_ONLY_TYPES) and not (t & _DINE_IN_SIGNAL_TYPES)
+
+
 def _is_pure_beverage_spot(types) -> bool:
     type_set = set(types or [])
     return bool(type_set & _PURE_BEVERAGE_TYPES) and not (type_set & _FOOD_SIGNAL_TYPES)
@@ -466,6 +482,8 @@ def get_nearby_competitors(google_place_id: str, radius_meters: int = 2000, max_
                     continue
                 if _is_pure_beverage_spot(p.get("types", [])):
                     continue
+                if _is_delivery_only(p.get("types", [])):
+                    continue
                 if enforce_price:
                     p_price = p.get("price_level")
                     if own_price and p_price and abs(own_price - p_price) > 2:
@@ -486,6 +504,12 @@ def get_nearby_competitors(google_place_id: str, radius_meters: int = 2000, max_
                     # to arrive in the same list, in the same shape, as a
                     # direct match across the street.
                     "match_basis": basis,
+                    # A rating resting on a handful of reviews is not a
+                    # reputation. Kept in the set — a new place nearby IS a
+                    # competitor — but flagged so nothing averages it in or
+                    # compares against it as though it were settled.
+                    "rating_is_provisional": int(p.get("user_ratings_total") or 0)
+                                             < MIN_REVIEWS_FOR_A_MEANINGFUL_RATING,
                     "distance_m": _distance_m(lat, lng, _loc.get("lat"), _loc.get("lng")),
                 })
                 if len(out) >= max_results:
@@ -644,12 +668,15 @@ def generate_competitor_insight(restaurant_name: str, competitors: list, owner_n
             # the actual figure sat unused two functions away.
             _pl = c.get("price_level")
             price_line = f"\n  Google price level: {_PRICE_WORDS.get(_pl, 'not listed')}" if _pl else "\n  Google price level: not listed"
+            _prov = c.get("rating_is_provisional")
             _how = c.get("match_basis")
             match_line = f"\n  How this one was selected: {_how}" if _how else ""
             _dist = c.get("distance_m")
             dist_line = f"\n  About {round(_dist/1000, 1)} km away" if _dist else ""
+            prov_line = ("\n  NOTE: this rating rests on very few reviews — treat it as provisional "
+                         "and do not compare against it as a settled figure.") if _prov else ""
             comp_summary += f"""
-- {c["name"]} ({c["rating"]}★, {c["review_count"]} reviews){price_line}{dist_line}{match_line}
+- {c["name"]} ({c["rating"]}★, {c["review_count"]} reviews){price_line}{dist_line}{match_line}{prov_line}
   Recent customer reviews (with how long ago each was written):
   {reviews_text}
 """
@@ -684,8 +711,37 @@ def generate_competitor_insight(restaurant_name: str, competitors: list, owner_n
             from datetime import datetime as _dt_hc2
             today_comp = _dt_hc2.now().strftime("%B %d, %Y")
 
+        # The recommendations below are asked for as something a manager can
+        # start THIS SHIFT and push THIS WEEK, and the only temporal context
+        # was a holiday list. Labor already fetches a real NWS forecast and
+        # frames it carefully; competitor intel had none of it, so it advised
+        # on patio pushes into a week of rain.
+        weather_ctx = ""
+        try:
+            if restaurant_id:
+                from models import get_restaurant as _gr_w
+                from weather import get_forecast_for_week as _fc
+                from datetime import timedelta as _td_w
+                _r_w = _gr_w(restaurant_id)
+                _days = [(_now_hc + _td_w(days=i)).strftime("%Y-%m-%d") for i in range(7)]
+                _fcast = _fc(_r_w, _days) or []
+                if _fcast:
+                    _lines = [f"  {w['day_name']}: {w['high_f']}°F, {w['short_forecast']}"
+                              + (f", {w['precip_pct']}% rain" if w.get("precip_pct") else "")
+                              for w in _fcast[:7]]
+                    weather_ctx = (
+                        "\n\nWeather where this restaurant is, for the week these recommendations "
+                        "cover:\n" + "\n".join(_lines) +
+                        "\n  Use it only where it changes what is sensible — a patio or outdoor "
+                        "push into a wet week, a delivery angle on a cold one. Weather is a nudge, "
+                        "never the reason for a recommendation on its own, and a forecast is not "
+                        "what will happen."
+                    )
+        except Exception as _we:
+            print(f"[Competitor] weather context unavailable: {_we}")
+
         prompt = f"""You are the Cavnar AI Consultant analyzing the competitive landscape for {restaurant_name}.
-Today's date: {today_comp}{holiday_rec_context}
+Today's date: {today_comp}{holiday_rec_context}{weather_ctx}
 
 {UNTRUSTED_NOTE}
 

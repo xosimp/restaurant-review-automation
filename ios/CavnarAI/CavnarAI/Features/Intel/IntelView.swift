@@ -247,7 +247,12 @@ struct IntelView: View {
 
     private func statRow(_ summary: IntelSummary) -> some View {
         let count = summary.competitors.count
-        let avgRating = count > 0 ? summary.competitors.reduce(0.0) { $0 + $1.rating } / Double(count) : 0
+        // Volume-weighted, computed server-side. The old figure was a flat
+        // mean over competitor ratings, so a twelve-review venue counted as
+        // much as a three-thousand-review one — an average of averages, not
+        // a market average.
+        let avgRating = summary.marketRating
+            ?? (count > 0 ? summary.competitors.reduce(0.0) { $0 + $1.rating } / Double(count) : 0)
 
         return HStack(spacing: 0) {
             statTile(value: plainStatValue("\(count)"), label: "Tracked")
@@ -267,8 +272,16 @@ struct IntelView: View {
                 // row accents below already use this same relative logic —
                 // this tile was the one place on the page disagreeing
                 // with itself.
+                // Coloured against the market ONLY when both numbers are
+                // the same kind. An average over the reviews we imported is
+                // not comparable to competitors' all-time Google ratings,
+                // and it used to be rendered red or green against them.
                 statTile(
-                    value: ratingText(own, numberSize: 20, tone: own >= avgRating ? Color.cavnarGreen : (own >= avgRating - 0.3 ? Color.cavnarAmber : Color.cavnarRed)),
+                    value: ratingText(own, numberSize: 20,
+                                      tone: summary.ratingsAreComparable
+                                        ? (own >= avgRating ? Color.cavnarGreen
+                                           : (own >= avgRating - 0.3 ? Color.cavnarAmber : Color.cavnarRed))
+                                        : Color.cavnarInk),
                     label: summary.restaurantName ?? "Your rating"
                 )
             } else {
@@ -522,6 +535,18 @@ struct IntelView: View {
                     }
                 }
             }
+            if let caveat = summary.ratingComparisonCaveat {
+                HStack(alignment: .top, spacing: 7) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Color.cavnarAmber)
+                        .padding(.top, 2)
+                    Text(caveat)
+                        .font(.cavnarBody(13))
+                        .foregroundStyle(Color.cavnarInk2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
             if let note = summary.stalenessNote {
                 HStack(alignment: .top, spacing: 7) {
                     Image(systemName: "exclamationmark.triangle.fill")
@@ -551,7 +576,12 @@ struct IntelView: View {
         let visibleReviews = isExpanded ? sortedReviews : Array(sortedReviews.prefix(1))
         let remaining = c.reviews.count - visibleReviews.count
         let diff = ownRating.map { ((($0) - c.rating) * 10).rounded() / 10 }
+        // A provisional rating rests on a handful of reviews. Colouring the
+        // row against it tells the owner they are behind a number that is
+        // not yet a reputation.
+        let provisional = c.ratingIsProvisional == true
         let accent: Color = {
+            if provisional { return Color.cavnarPaper3 }
             guard let diff else { return Color.cavnarPaper3 }
             if diff > 0 { return Color.cavnarGreen }
             if diff < 0 { return Color.cavnarRed }
@@ -570,6 +600,20 @@ struct IntelView: View {
                     Text(c.name)
                         .font(.cavnarBody(15, weight: 600))
                         .foregroundStyle(Color.cavnarInk)
+                    if let basis = c.matchBasis, basis.contains("widened") {
+                        Text("loose match")
+                            .font(.cavnarBody(11, weight: 700))
+                            .foregroundStyle(Color.cavnarInk3)
+                            .padding(.horizontal, 5).padding(.vertical, 1)
+                            .background(Capsule().fill(Color.cavnarPaper2))
+                    }
+                    if provisional {
+                        Text("new")
+                            .font(.cavnarBody(11, weight: 700))
+                            .foregroundStyle(Color.cavnarInk3)
+                            .padding(.horizontal, 5).padding(.vertical, 1)
+                            .background(Capsule().fill(Color.cavnarPaper2))
+                    }
                     // Only ever shown for an owner-added competitor — an
                     // auto-discovered one was never in custom_competitors,
                     // so there's nothing here for the client to remove
@@ -614,6 +658,15 @@ struct IntelView: View {
                             .font(.cavnarBody(14))
                             .foregroundStyle(Color.cavnarInk3)
                             .lineLimit(1)
+                    }
+                    // How far away, when we know. A competitor selected on
+                    // the widened pass can be five miles out and used to
+                    // read exactly like one across the street.
+                    if let m = c.distanceM, m > 0 {
+                        Text(m >= 1000 ? "· \(String(format: "%.1f", Double(m) / 1000)) km"
+                                       : "· \(m) m")
+                            .font(.cavnarBody(14))
+                            .foregroundStyle(Color.cavnarInk3)
                     }
                     if c.isCustom {
                         Text("· Added by you")

@@ -667,3 +667,183 @@ def test_every_number_the_payload_computes_reaches_a_surface():
     for field in ("brandedScore", "competitorAppearances", "setupDone",
                   "scoreCaveat", "aiScoreLow", "platform"):
         assert field in swift, f"{field} is decoded but never rendered"
+
+
+# ── Audit #13: the numbers an owner compares, and the history they can see ──
+
+def test_the_owners_rating_comes_from_google_not_our_sample(db_path, monkeypatch):
+    """own_rating was the average over the reviews Cavnar AI imported — at
+    most fifty per fetch — rendered beside competitors' all-time Google
+    averages over thousands each, and coloured green or red by the
+    comparison. gbp_rating held the right number all along."""
+    import mobile_api
+    real = models.get_conn
+    monkeypatch.setattr(models, "get_conn", lambda *a, **k: real(db_path), raising=False)
+    monkeypatch.setattr(mobile_api, "get_restaurant", lambda rid: models.get_restaurant(rid, db_path))
+    conn = real(db_path)
+    conn.execute("INSERT INTO restaurants (id,name,owner_email,module_reviews,gbp_rating,"
+                 "gbp_review_count,competitor_intel,competitor_updated_at) "
+                 "VALUES (1,'R','o@x.test',1,4.6,1400,?,'2026-09-01 12:00:00')",
+                 (json.dumps({"insight": "Hi, here is your snapshot.",
+                              "competitors": [{"name": "Lou's", "rating": 4.4,
+                                               "review_count": 900, "place_id": "p1"}]}),))
+    conn.commit()
+    conn.close()
+    payload, _ = mobile_api._do_mobile_intel(1)
+    assert payload["own_rating"] == 4.6
+    assert payload["own_rating_basis"] == "google_all_time"
+    assert payload["own_rating_count"] == 1400
+
+
+def test_without_a_google_rating_the_sample_says_it_is_a_sample(db_path, monkeypatch):
+    import mobile_api
+    real = models.get_conn
+    monkeypatch.setattr(models, "get_conn", lambda *a, **k: real(db_path), raising=False)
+    monkeypatch.setattr(mobile_api, "get_restaurant", lambda rid: models.get_restaurant(rid, db_path))
+    monkeypatch.setattr("models.get_review_stats", lambda rid: {"avg_rating": 3.9, "total": 22})
+    conn = real(db_path)
+    conn.execute("INSERT INTO restaurants (id,name,owner_email,module_reviews,competitor_intel,"
+                 "competitor_updated_at) VALUES (1,'R','o@x.test',1,?,'2026-09-01 12:00:00')",
+                 (json.dumps({"insight": "Hi.", "competitors": [
+                     {"name": "Lou's", "rating": 4.4, "review_count": 900, "place_id": "p1"}]}),))
+    conn.commit()
+    conn.close()
+    payload, _ = mobile_api._do_mobile_intel(1)
+    assert payload["own_rating"] == 3.9
+    assert payload["own_rating_basis"] == "imported_sample"
+    assert payload["own_rating_count"] == 22
+
+
+def test_the_market_rating_is_weighted_by_review_volume():
+    """A flat mean let a twelve-review venue count as much as a
+    three-thousand-review one — an average of averages, not a market."""
+    import mobile_api
+    out = mobile_api._market_rating([
+        {"name": "Tiny", "rating": 5.0, "review_count": 20},
+        {"name": "Big", "rating": 4.0, "review_count": 2000},
+    ])
+    assert out["market_rating"] == 4.0, "a 20-review venue should barely move it"
+    assert out["market_rating_reviews"] == 2020
+    assert out["market_rating_n"] == 2
+
+
+def test_a_provisional_rating_is_kept_out_of_the_market_figure():
+    import mobile_api
+    out = mobile_api._market_rating([
+        {"name": "New", "rating": 5.0, "review_count": 4, "rating_is_provisional": True},
+        {"name": "Big", "rating": 4.2, "review_count": 800},
+    ])
+    assert out["market_rating"] == 4.2
+    assert out["market_rating_n"] == 1
+
+
+# ── The trend ranks real movement, not small samples ───────────────────────
+
+def _snap(db_path, rid, pid, name, rating, count, days_ago):
+    models.record_competitor_snapshot(rid, [
+        {"place_id": pid, "name": name, "rating": rating, "review_count": count}], db_path=db_path)
+    conn = models.get_conn(db_path)
+    conn.execute("UPDATE competitor_snapshots SET captured_at=datetime('now', ?) "
+                 "WHERE restaurant_id=? AND place_id=? AND captured_at >= datetime('now','-1 minute')",
+                 (f"-{days_ago} days", rid, pid))
+    conn.commit()
+    conn.close()
+
+
+def test_a_big_venue_moving_a_little_outranks_a_tiny_one_moving_a_lot(db_path):
+    """Measured before the fix: a twelve-review venue moving 0.4 on two
+    reviews ranked above a 2,400-review venue moving 0.1 on a hundred and
+    sixty — by far the bigger thing to happen in that market."""
+    _snap(db_path, 1, "tiny", "New Spot", 4.9, 12, 45)
+    _snap(db_path, 1, "big", "Established", 4.5, 2400, 45)
+    _snap(db_path, 1, "tiny", "New Spot", 4.5, 14, 0)
+    _snap(db_path, 1, "big", "Established", 4.4, 2560, 0)
+    moves = models.competitor_movement(1, days=60, db_path=db_path)
+    assert moves[0]["name"] == "Established"
+    assert moves[0]["significant"] is True
+    assert moves[1]["significant"] is False, "two reviews is not a signal"
+
+
+def test_google_pruning_reviews_is_not_a_competitor_losing_them(db_path):
+    _snap(db_path, 1, "z", "Z", 4.6, 900, 40)
+    _snap(db_path, 1, "z", "Z", 4.6, 840, 0)
+    m = models.competitor_movement(1, days=60, db_path=db_path)[0]
+    assert m["reviews_added"] == 0
+    assert m["reviews_removed"] == 60
+
+
+def test_a_dip_and_recovery_is_not_reported_as_a_trend(db_path):
+    """Endpoints alone showed no change; one anomalous reading at a window
+    edge WAS the change."""
+    for days, rating in ((60, 4.5), (40, 4.0), (20, 4.2), (0, 4.5)):
+        _snap(db_path, 1, "w", "Wobbly", rating, 800, days)
+    m = models.competitor_movement(1, days=90, db_path=db_path)[0]
+    assert m["rating_change"] == 0.0
+    assert m["snapshots"] == 4
+    assert m["rating_trend_per_month"] is not None
+
+
+def test_a_single_snapshot_is_still_not_a_movement(db_path):
+    _snap(db_path, 1, "a", "A", 4.5, 500, 10)
+    assert models.competitor_movement(1, days=60, db_path=db_path) == []
+
+
+# ── Who joined the market, and who left ────────────────────────────────────
+
+def test_a_competitor_arriving_and_leaving_is_detected(db_path):
+    """The snapshot set changed silently every week. A restaurant opening
+    nearby is the most actionable market-change signal this module holds."""
+    _snap(db_path, 1, "a", "Stayer", 4.4, 500, 7)
+    _snap(db_path, 1, "b", "Leaver", 4.2, 300, 7)
+    _snap(db_path, 1, "a", "Stayer", 4.4, 520, 0)
+    _snap(db_path, 1, "c", "Newcomer", 4.8, 30, 0)
+    ch = models.competitor_roster_changes(1, db_path=db_path)
+    assert ch["ok"] is True
+    assert [x["name"] for x in ch["arrived"]] == ["Newcomer"]
+    assert [x["name"] for x in ch["gone"]] == ["Leaver"]
+
+
+def test_one_run_cannot_show_roster_change(db_path):
+    _snap(db_path, 1, "a", "A", 4.4, 500, 0)
+    assert models.competitor_roster_changes(1, db_path=db_path)["ok"] is False
+
+
+# ── The history reaches a surface ──────────────────────────────────────────
+
+def test_competitor_movement_is_actually_reachable():
+    """It was added as the fix for "there is no competitor history",
+    tested, and wired to no route and no screen — so the data accumulated
+    weekly and could not be read."""
+    import inspect
+    import mobile_api, client_api
+    assert "competitor_movement" in inspect.getsource(mobile_api)
+    assert "/intel/movement" in inspect.getsource(mobile_api)
+    assert "/api/intel/movement" in inspect.getsource(client_api)
+
+
+def test_the_movement_route_is_module_gated():
+    import auth
+    prefixes = [p for p, _mod in auth.MODULE_ROUTES] if hasattr(auth, "MODULE_ROUTES") else []
+    src = pathlib_read = __import__("pathlib").Path(auth.__file__).read_text()
+    assert '("/api/intel/",                 "intel")' in src or '"/api/intel/"' in src
+    assert '"/mobile/api/intel"' in src
+
+
+# ── Selection quality ──────────────────────────────────────────────────────
+
+def test_a_delivery_only_kitchen_is_not_a_dine_in_competitor():
+    """A ghost kitchen competes on delivery economics, not on the service
+    scripts and atmosphere this module advises about."""
+    assert competitor._is_delivery_only(["meal_delivery", "food"]) is True
+    assert competitor._is_delivery_only(["meal_delivery", "restaurant"]) is False
+    assert competitor._is_delivery_only(["restaurant", "bar"]) is False
+
+
+def test_the_competitor_prompt_carries_weather_and_provisional_notes(monkeypatch):
+    """The only market context was a holiday list, for recommendations
+    asked for as something to start THIS SHIFT."""
+    import inspect
+    src = inspect.getsource(competitor.generate_competitor_insight)
+    assert "weather_ctx" in src
+    assert "get_forecast_for_week" in src
+    assert "provisional" in src.lower()

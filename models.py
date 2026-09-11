@@ -1,4 +1,5 @@
 import os
+import math
 import sqlite3
 import json
 import threading
@@ -4404,6 +4405,75 @@ def record_competitor_snapshot(restaurant_id: int, competitors: list, db_path: s
         conn.close()
 
 
+# Spread of restaurant star ratings on a 1-5 scale, skewed hard to 4 and 5.
+# A stated assumption, not something estimated from data we do not hold.
+_RATING_SIGMA = 1.1
+# Two standard errors — the ordinary bar for "more than noise".
+_RATING_SIGNIFICANT_Z = 2.0
+
+
+def _least_squares_slope(snaps: list) -> float:
+    """Rating points per 30 days across every snapshot, signed.
+
+    Endpoints alone made a dip-and-recover look like no change and a single
+    anomalous reading at a window edge look like the trend.
+    """
+    from datetime import datetime as _d
+    pts = []
+    for s_ in snaps:
+        try:
+            t = _d.strptime(str(s_["captured_at"])[:19], "%Y-%m-%d %H:%M:%S")
+        except (ValueError, TypeError):
+            continue
+        pts.append((t, float(s_["rating"])))
+    if len(pts) < 2:
+        return 0.0
+    t0 = pts[0][0]
+    xs = [(t - t0).total_seconds() / 86400.0 for t, _v in pts]
+    ys = [v for _t, v in pts]
+    n = len(xs)
+    mx, my = sum(xs) / n, sum(ys) / n
+    denom = sum((x - mx) ** 2 for x in xs)
+    if denom == 0:
+        return 0.0
+    return (sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / denom) * 30.0
+
+
+def competitor_roster_changes(restaurant_id: int, db_path: str = DB_PATH) -> dict:
+    """Who appeared in, or dropped out of, the competitor set between the
+    last two runs.
+
+    The snapshot set changed silently every week. A restaurant opening
+    nearby, or a rival closing, is the most actionable market-change signal
+    this module can produce and nothing computed it.
+    """
+    init_competitor_snapshots(db_path)
+    conn = get_conn(db_path)
+    runs = conn.execute("""
+        SELECT DISTINCT DATE(captured_at) AS d FROM competitor_snapshots
+        WHERE restaurant_id=? ORDER BY d DESC LIMIT 2
+    """, (restaurant_id,)).fetchall()
+    if len(runs) < 2:
+        conn.close()
+        return {"ok": False, "reason": "needs two runs to compare",
+                "arrived": [], "gone": []}
+    now_d, prev_d = runs[0]["d"], runs[1]["d"]
+
+    def _set(day):
+        return {r["place_id"]: r["name"] for r in conn.execute(
+            "SELECT place_id, name FROM competitor_snapshots "
+            "WHERE restaurant_id=? AND DATE(captured_at)=?", (restaurant_id, day))}
+    now, prev = _set(now_d), _set(prev_d)
+    conn.close()
+    return {
+        "ok": True,
+        "compared_from": prev_d,
+        "compared_to": now_d,
+        "arrived": [{"place_id": k, "name": v} for k, v in now.items() if k not in prev],
+        "gone": [{"place_id": k, "name": v} for k, v in prev.items() if k not in now],
+    }
+
+
 def competitor_movement(restaurant_id: int, days: int = 60, db_path: str = DB_PATH) -> list:
     """How each competitor's rating and review count have moved.
 
@@ -4427,23 +4497,61 @@ def competitor_movement(restaurant_id: int, days: int = 60, db_path: str = DB_PA
     for pid, snaps in by_place.items():
         if len(snaps) < 2:
             continue
-        first, last = snaps[0], snaps[-1]
-        if first["rating"] is None or last["rating"] is None:
+        rated = [x for x in snaps if x["rating"] is not None]
+        if len(rated) < 2:
             continue
+        first, last = rated[0], rated[-1]
+        change = last["rating"] - first["rating"]
+
+        # A rating change is only a signal relative to the volume behind it.
+        # Sorting on the raw change put a twelve-review venue moving 0.4 on
+        # two reviews above a 2,400-review venue moving 0.1 on a hundred and
+        # sixty — measured, and the second is by far the bigger thing to
+        # happen in that market.
+        #
+        # Standard error of a mean rating is about sigma/sqrt(n). Restaurant
+        # ratings sit on a 1-5 scale skewed hard to 4 and 5; sigma near 1.1
+        # is the usual empirical figure and is used as a fixed, stated
+        # assumption rather than estimated from data we do not hold.
+        n_then = max(int(first["review_count"] or 0), 1)
+        n_now = max(int(last["review_count"] or 0), 1)
+        se = _RATING_SIGMA * math.sqrt(1.0 / n_then + 1.0 / n_now)
+        z = abs(change) / se if se > 0 else 0.0
+
+        # Google prunes reviews, so the count can fall. That is a correction
+        # on their side, not a competitor losing reviews, and reporting it
+        # as a negative gain reads as decline.
+        raw_delta = (last["review_count"] or 0) - (first["review_count"] or 0)
+        reviews_added = max(0, raw_delta)
+        reviews_removed = max(0, -raw_delta)
+
+        # Direction across every snapshot, not just the two endpoints. A
+        # competitor that dipped and recovered showed no change; one
+        # anomalous reading at a window edge WAS the change.
+        slope = _least_squares_slope(rated)
+
         out.append({
             "place_id": pid,
             "name": last["name"],
             "rating_then": round(first["rating"], 2),
             "rating_now": round(last["rating"], 2),
-            "rating_change": round(last["rating"] - first["rating"], 2),
+            "rating_change": round(change, 2),
+            # Points per 30 days across all snapshots, signed.
+            "rating_trend_per_month": round(slope, 3),
             "reviews_then": first["review_count"],
             "reviews_now": last["review_count"],
-            "reviews_added": (last["review_count"] or 0) - (first["review_count"] or 0),
+            "reviews_added": reviews_added,
+            "reviews_removed": reviews_removed,
+            # How far the move is beyond what this review volume could
+            # produce on its own. Below 2 is noise.
+            "confidence_z": round(z, 2),
+            "significant": bool(z >= _RATING_SIGNIFICANT_Z),
             "first_seen": first["captured_at"],
             "last_seen": last["captured_at"],
-            "snapshots": len(snaps),
+            "snapshots": len(rated),
         })
-    out.sort(key=lambda d: abs(d["rating_change"]), reverse=True)
+    # Significant movement first, then by how far past noise it sits.
+    out.sort(key=lambda d: (d["significant"], d["confidence_z"]), reverse=True)
     return out
 
 

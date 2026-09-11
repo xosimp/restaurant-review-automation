@@ -6216,6 +6216,12 @@ def ai_visibility_history(current_user):
     return _m("mobile_ai_visibility_history")(current_user)
 
 
+@client_bp.route("/api/intel/movement")
+@login_required
+def intel_movement(current_user):
+    return _m("mobile_intel_movement")(current_user)
+
+
 @client_bp.route("/api/labor/schedule-history")
 @login_required
 def labor_schedule_history(current_user):

@@ -24,6 +24,14 @@ struct Competitor: Decodable, Identifiable {
     let vicinity: String
     let reviews: [CompetitorReview]
     let placeId: String
+    // Which of four relaxation passes selected this one — the last widens
+    // to 8km with no cuisine or price match, and that used to arrive
+    // looking exactly like a direct match across the street.
+    let matchBasis: String?
+    let distanceM: Int?
+    let priceLevel: Int?
+    // A rating resting on a handful of reviews is not a reputation.
+    let ratingIsProvisional: Bool?
     // True for a competitor the owner added themselves (custom_competitors
     // on the backend) rather than one Google's own nearby-search surfaced —
     // drives the delete affordance in competitorRow, which only makes
@@ -37,6 +45,10 @@ struct Competitor: Decodable, Identifiable {
         case reviewCount = "review_count"
         case placeId = "place_id"
         case isCustom = "custom"
+        case matchBasis = "match_basis"
+        case distanceM = "distance_m"
+        case priceLevel = "price_level"
+        case ratingIsProvisional = "rating_is_provisional"
     }
 }
 
@@ -66,6 +78,31 @@ struct IntelSummary: Decodable {
     let sections: [IntelSection]
     let competitors: [Competitor]
     let updatedAt: String?
+    // Google's own all-time rating for this restaurant, and what it rests
+    // on. This used to be the average over the reviews Cavnar AI happened
+    // to import, rendered beside competitors' all-time figures and coloured
+    // by the comparison.
+    let ownRatingBasis: String?
+    let ownRatingCount: Int?
+    // The market figure, weighted by each competitor's review volume.
+    let marketRating: Double?
+    let marketRatingReviews: Int?
+    let marketRatingN: Int?
+    let claimKinds: [String: String]?
+
+    /// True only when the owner's rating and the market figure are the same
+    /// kind of number.
+    var ratingsAreComparable: Bool { ownRatingBasis == "google_all_time" }
+
+    /// Why the head-to-head cannot be read as like for like, or nil.
+    var ratingComparisonCaveat: String? {
+        guard ownRating != nil else { return nil }
+        if ownRatingBasis == "imported_sample" {
+            let n = ownRatingCount.map { " (\($0) reviews)" } ?? ""
+            return "Your figure is the average of the reviews we've imported\(n), not Google's all-time rating. Connect Google Business Profile in Account to compare like for like."
+        }
+        return nil
+    }
     // ai_guard.freshness has been computed on this payload all along, with a
     // docstring saying a summary written six weeks ago read exactly like one
     // written this morning. The date was decoded; the judgement about it was
@@ -92,6 +129,12 @@ struct IntelSummary: Decodable {
         case ownerName = "owner_name"
         case updatedAt = "updated_at"
         case ownRating = "own_rating"
+        case ownRatingBasis = "own_rating_basis"
+        case ownRatingCount = "own_rating_count"
+        case marketRating = "market_rating"
+        case marketRatingReviews = "market_rating_reviews"
+        case marketRatingN = "market_rating_n"
+        case claimKinds = "claim_kinds"
         case stale
         case ageDays = "age_days"
         case asOf = "as_of"
