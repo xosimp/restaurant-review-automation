@@ -157,6 +157,34 @@ def test_the_checklist_makes_no_unsourced_claim_about_third_party_ai(db_path, mo
         assert claim not in blob, claim
 
 
+def test_no_branch_of_the_checklist_asserts_how_third_party_ai_works():
+    """Checking the rendered payload only covers the branches one fixture
+    happens to hit — a restaurant with no Yelp ID never renders the "done"
+    string, so restoring "Perplexity indexes Yelp heavily" there left the
+    suite green. Read the source instead, which covers every branch.
+
+    None of these is sourced, dated or verifiable, and this module holds no
+    evidence for any of them. They were rendered beside a genuine
+    measurement, in the same weight.
+    """
+    import inspect
+    import client_api
+    src = inspect.getsource(client_api._do_ai_visibility_inner)
+    banned = [
+        "indexes Yelp heavily",
+        "AI visibility threshold",
+        "#1 driver of AI search",
+        "boosts AI ranking",
+        "AI tools reward",
+        "feeds AI search results",
+        "AI tools can index you",
+        "AI tools can find your location",
+        "AI tools can surface your menu",
+    ]
+    found = [b for b in banned if b in src]
+    assert not found, f"unsourced claims about third-party AI: {found}"
+
+
 def test_claim_kinds_travel_with_the_numbers(db_path, monkeypatch):
     p = _payload(monkeypatch, db_path, answers=["x"] * 12)
     assert p["claim_kinds"]["presence_score"] == "measured"
@@ -211,6 +239,20 @@ def test_a_duplicate_listing_of_yourself_is_not_a_competitor(a, b):
 
 @pytest.mark.parametrize("a,b", [("Lou's Diner", "Tony's Pizza"), ("Gia Mia", "Mia Bella")])
 def test_two_different_restaurants_are_not_merged(a, b):
+    assert competitor._same_business(a, b) is False
+
+
+@pytest.mark.parametrize("a,b", [
+    ("Bar", "Bar Louie"),
+    ("Mia", "Gia Mia"),
+    ("Lou's", "Lou's Diner"),
+])
+def test_a_short_name_does_not_swallow_a_real_competitor(a, b):
+    """Containment was added so a duplicate listing of the restaurant itself
+    stopped being its own competitor. Applied to a very short name it ran
+    backwards: a restaurant genuinely called "Bar" excluded Bar Louie from
+    its own competitor set. Containment now needs the shorter name to be
+    distinctive enough to be a business name on its own."""
     assert competitor._same_business(a, b) is False
 
 

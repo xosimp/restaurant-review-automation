@@ -229,7 +229,19 @@ def _same_business(name_a: str, name_b: str) -> bool:
     a, b = _n(name_a), _n(name_b)
     if not a or not b:
         return False
-    return a == b or a in b or b in a
+    if a == b:
+        return True
+    # Containment only counts when the shorter name is distinctive enough to
+    # BE a business name on its own. Without this, a restaurant genuinely
+    # called "Bar" excluded "Bar Louie" from its own competitor set as a
+    # duplicate of itself, and "Mia" swallowed "Gia Mia" — the exact
+    # confusion the containment test was added to solve, running backwards.
+    shorter, longer = (a, b) if len(a) <= len(b) else (b, a)
+    if len(shorter) < 8 and len(shorter.split()) < 2:
+        return False
+    # And it has to sit on word boundaries: "lous" must not match "louses".
+    import re as _re
+    return bool(_re.search(r"(?:^|\s)" + _re.escape(shorter) + r"(?:\s|$)", longer))
 
 
 # A chain is a chain because it has hundreds of locations, not because it
