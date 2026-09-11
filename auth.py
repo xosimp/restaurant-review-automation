@@ -107,6 +107,11 @@ def init_auth(db_path: str = DB_PATH):
         "ALTER TABLE users ADD COLUMN recovery_email_code TEXT",
         "ALTER TABLE users ADD COLUMN recovery_email_expires TEXT",
         "ALTER TABLE users ADD COLUMN must_reset_password INTEGER DEFAULT 0",
+        # Who may change Operational Scores, shift targets, profiles and the
+        # quality weighting. Defaults ON so every existing login keeps the
+        # access it has; the team-invite flow creates teammates with it OFF,
+        # so a second login cannot silently re-rate the whole staff.
+        "ALTER TABLE users ADD COLUMN can_manage_team INTEGER DEFAULT 1",
     ]:
         try:
             import sqlite3 as _sql

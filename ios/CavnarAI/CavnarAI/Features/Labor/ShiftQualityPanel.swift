@@ -18,6 +18,7 @@ struct ShiftQualityPanel: View {
     /// Set while a manager's edit is being re-scored, so the number reads
     /// as catching up rather than as the new truth.
     var isRescoring: Bool = false
+    var overrideState: LaborViewModel.OverrideState = .idle
 
     @State private var expandedShift: String?
     @State private var showingReasoning = false
@@ -25,6 +26,7 @@ struct ShiftQualityPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             header
+            overrideLine
             if let dimensions = customerDimensions, !dimensions.isEmpty {
                 dimensionGrid(dimensions)
             }
@@ -78,6 +80,29 @@ struct ShiftQualityPanel: View {
         .padding(.horizontal, 9)
         .padding(.vertical, 4)
         .background(Capsule().fill(Color.cavnarPaper3.opacity(0.7)))
+    }
+
+    /// What happened to the manager's last edit. A silent failure left the
+    /// old number on screen beside a CHANGED badge implying it was current.
+    @ViewBuilder
+    private var overrideLine: some View {
+        switch overrideState {
+        case .idle:
+            EmptyView()
+        case .saving:
+            Text("Saving your change…")
+                .font(.cavnarBody(13.5))
+                .foregroundStyle(Color.cavnarInk3)
+        case .saved:
+            Text("Change saved — this is what your staff will receive.")
+                .font(.cavnarBody(13.5, weight: 600))
+                .foregroundStyle(Color.cavnarGreen)
+        case .failed(let message):
+            Text("\(message) The score above is out of date.")
+                .font(.cavnarBody(13.5, weight: 600))
+                .foregroundStyle(Color.cavnarRed)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     // MARK: Dimensions
@@ -245,6 +270,12 @@ struct ShiftQualityPanel: View {
             group("Working well", shift.strengths, limit: 3, color: .cavnarGreen)
             group("Holding it back", shift.weaknesses, limit: 4, color: .cavnarAmber)
             group("Not known", shift.blindSpots, limit: 2, color: .cavnarInk3)
+            if let failures = shift.failed, !failures.isEmpty {
+                group("Could not be worked out",
+                      [failures.map(\.label).joined(separator: ", ")
+                       + " — left out of this score. This is a fault on our side, not a setting."],
+                      limit: 1, color: .cavnarRed)
+            }
             // Anything true of the whole week was hoisted into the summary,
             // so a shift with nothing left simply ran like the rest of it.
             if shift.nothingSpecific == true {
@@ -347,6 +378,11 @@ struct ShiftQualityPanel: View {
                     }
                     group("Across the week", quality.strengths, limit: 3, color: .cavnarGreen)
                     group("Worth a look", quality.weaknesses, limit: 3, color: .cavnarAmber)
+                    Text("Every line here is measured from the finished schedule, not written by the AI. It explains why each shift scored what it did. It does not record why the AI chose one person over another.")
+                        .font(.cavnarBody(12.5))
+                        .foregroundStyle(Color.cavnarInk3)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 2)
                     if let confidence = quality.confidence, !confidence.reasons.isEmpty {
                         Text(confidence.summary)
                             .font(.cavnarBody(14, weight: 600))

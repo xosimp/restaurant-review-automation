@@ -2905,6 +2905,7 @@ def quality_inputs_from_db(restaurant_id, daily_target_hours=None):
 
     restaurant = get_restaurant(restaurant_id)
     return {
+        "elsewhere": {},
         "operational_scores": scores,
         "strength_thresholds": thresholds,
         "leader_rules": leader_rules,
@@ -2915,6 +2916,54 @@ def quality_inputs_from_db(restaurant_id, daily_target_hours=None):
         "daily_target_hours": daily_target_hours or {},
         **patterns,
     }
+
+
+def _prior_week_assignments(restaurant_id, days_back: int = 7) -> dict:
+    """The tail of the last schedule, as fatigue and fairness assignments.
+
+    A run of nine days reads as five when the engine can only see inside
+    its own seven-day box, and the week boundary is exactly where that
+    matters — somebody who worked Saturday and Sunday then Monday to Friday
+    has worked nine straight and the schedule looked clean.
+    """
+    from models import get_schedule_history, get_schedule_history_detail
+    import shift_quality as _sq
+    from datetime import datetime as _dt
+    try:
+        entries = get_schedule_history(restaurant_id, limit=1)
+        if not entries:
+            return {}
+        detail = get_schedule_history_detail(entries[0]["id"], restaurant_id)
+        csv_text = (detail or {}).get("schedule_csv") or ""
+        if not csv_text:
+            return {}
+        out = {}
+        for line in csv_text.split("\n")[1:]:
+            parts = [p.strip() for p in line.split(",", 7)]
+            if len(parts) < 5:
+                continue
+            date, _day, name, _role, start = parts[0], parts[1], parts[2], parts[3], parts[4]
+            if not (date and name):
+                continue
+            try:
+                _dt.strptime(date, "%Y-%m-%d")
+            except ValueError:
+                continue
+            part = _sq.daypart_of(start)
+            entry = {"date": date, "daypart": part,
+                     "day": _dt.strptime(date, "%Y-%m-%d").strftime("%A"),
+                     "demand": "normal"}
+            bucket = out.setdefault(name, [])
+            if not any(e["date"] == date and e["daypart"] == part for e in bucket):
+                bucket.append(entry)
+        # Only the last few days matter; an entire prior week would let a
+        # long-past pattern drag this week's fairness figures.
+        for name, bucket in out.items():
+            bucket.sort(key=lambda e: e["date"])
+            out[name] = bucket[-days_back:]
+        return out
+    except Exception:
+        return {}
 
 
 def _quality_signals(restaurant_id, result, **extra):
@@ -2936,6 +2985,19 @@ def _quality_signals(restaurant_id, result, **extra):
         "role_minimums": result.get("role_minimums") or {},
         "typical_headcount": result.get("typical_headcount") or {},
         "cross_trained": result.get("cross_trained") or {},
+        # The prompt calls staff constraints the highest-priority rule of
+        # all. The engine cannot read free text, but handing it the names
+        # lets the what-if pass refuse to move anybody who has one, instead
+        # of recommending a swap that breaks a rule the generator obeyed.
+        "constraints": result.get("staff_constraints") or {},
+        # Rows the repair pass could not vouch for, so a double-booked
+        # person is not counted as coverage twice.
+        "flagged": result.get("flagged_rows") or set(),
+        # The tail of the previous schedule, so a nine-day run does not read
+        # as five just because the week boundary falls in the middle of it.
+        "prior_week_assignments": result.get("prior_week_assignments") or {},
+        # The same person on another site's schedule tonight.
+        "elsewhere": result.get("elsewhere") or {},
     }
     # Each of these is a separate read and any one of them can be empty for
     # a new restaurant. A failure to load one must cost that dimension, not
@@ -2952,6 +3014,14 @@ def _quality_signals(restaurant_id, result, **extra):
         weights = get_quality_weights(restaurant_id)
     except Exception:
         weights = {}
+    if not signals.get("constraints"):
+        try:
+            from models import get_staff_notes as _gsn
+            signals["constraints"] = {n["employee_name"]: n["notes"]
+                                      for n in (_gsn(restaurant_id) or [])
+                                      if n.get("employee_name")}
+        except Exception:
+            signals["constraints"] = {}
     signals.update(extra)
     return signals, weights
 
@@ -3181,22 +3251,15 @@ def _run_schedule_job(job_id, restaurant_id):
             # than trusted to the prompt. The same discipline close times and
             # the server cap already get: state the rule to the model, then
             # verify what it actually produced.
-            try:
-                from labor import verify_shift_strength
-                _strength = verify_shift_strength(
-                    preview_rows,
-                    result.get("operational_scores") or {},
-                    result.get("strength_thresholds") or {},
-                    leader_rules=result.get("leader_rules") or [],
-                    close_times=_close_times,
-                )
-                result["strength"] = _strength
-                if _strength["shortfalls"] or _strength["leader_misses"]:
-                    print(f"[schedule] {len(_strength['shortfalls'])} shift(s) under strength "
-                          f"target, {len(_strength['leader_misses'])} leader rule miss(es)")
-            except Exception as _sx:
-                print(f"[schedule] strength check failed: {_sx}")
-                result["strength"] = {"checked": False, "error": str(_sx)}
+            # The legacy strength banner is deliberately gone. It ran a second
+            # leadership check with different semantics — silently dropping
+            # any rule without a minimum score, which the quality engine
+            # enforces — and both rendered, so an owner read "every target
+            # met" a few centimetres above "needs 2 bartenders, found 1".
+            # Contradiction on one screen costs more trust than either
+            # message being wrong alone. dim_leadership and
+            # dim_operational_strength cover everything it reported.
+            result["strength"] = {"checked": False, "superseded_by": "quality"}
 
             # Shift Quality — the same discipline as the strength check, over
             # every dimension rather than one. Wrapped whole: a schedule that
@@ -3204,6 +3267,15 @@ def _run_schedule_job(job_id, restaurant_id):
             # raised, so a failure here degrades to "not scored" and the week
             # still ships.
             try:
+                result["staff_constraints"] = staff_constraints
+                result["flagged_rows"] = {
+                    ((_r.get("employee") or "").strip().lower(), _r.get("date") or "",
+                     _r.get("shift_start") or "")
+                    for _r in preview_rows if _r.get("needs_review")}
+                result["prior_week_assignments"] = _prior_week_assignments(restaurant_id)
+                from models import sibling_location_shifts as _sibs
+                result["elsewhere"] = _sibs(
+                    restaurant_id, sorted({(_r.get("date") or "") for _r in preview_rows}))
                 _quality, _whatif = _score_schedule_quality(
                     restaurant_id, preview_rows, result,
                     rows_needing_review=result.get("rows_needing_review", 0),
@@ -3211,6 +3283,8 @@ def _run_schedule_job(job_id, restaurant_id):
                 )
                 result["quality"] = _quality
                 result["what_if"] = _whatif
+                from models import capability_version as _capver
+                result["capability_version"] = _capver(restaurant_id)
                 if _quality.get("checked"):
                     print(f"[schedule] shift quality {_quality['score']}/100 "
                           f"({_quality['band']}), confidence {_quality['confidence']['level']}"
@@ -3256,6 +3330,7 @@ def _run_schedule_job(job_id, restaurant_id):
                 restaurant_id, _wd[0] if _wd else None, _wd[-1] if _wd else None,
                 round(hours_scheduled, 1), result.get("hours_budget", 0), result.get("labor_target", 30),
                 result["schedule_csv"], result.get("summary", []),
+                quality=result.get("quality"),
             )
         except Exception as _hist_ex:
             print(f"[schedule history] save error: {_hist_ex}")
@@ -3291,12 +3366,18 @@ def _run_schedule_job(job_id, restaurant_id):
             # Which shifts met their Operational Score target, which fell
             # short and why, and any shift leader requirement that could not
             # be satisfied. Never a silent miss.
+            # Retained as a key so an older build of either client keeps
+            # decoding; the verdict itself now lives in `quality`.
             strength=result.get("strength") or {"checked": False},
             # The Shift Quality Engine's verdict: one score per shift across
             # every dimension that had data, the week's roll-up, why each
             # shift scored what it did, and how much the engine actually
             # knew when it said so.
             quality=result.get("quality") or {"checked": False},
+            # Moves whenever a rating, target, profile or weighting moves, so
+            # a client holding a cached schedule can tell that the score on
+            # it was built against inputs that no longer exist.
+            capability_version=result.get("capability_version"),
             # Alternative arrangements of the same people, and why this one
             # won. Never a second generation — same headcount, same hours,
             # same roles, only who works which shift.
@@ -3368,11 +3449,27 @@ def schedule_status(current_user, job_id):
 @client_bp.route("/api/download-schedule")
 @login_required
 def download_schedule(current_user):
+    """Serve the schedule that was generated, reviewed and possibly edited.
+
+    This used to call _build_schedule_result, which runs the generator
+    again — so the CSV an owner printed was a different week from the one
+    on their screen, carried none of the quality review they had just
+    worked through, and billed a second model call every press.
+    """
     import io
+    from models import get_schedule_history, get_schedule_history_detail
     try:
-        result = _build_schedule_result(current_user["restaurant_id"])
-        csv_clean = result["schedule_csv"]
-        name = result.get("restaurant_name", "Restaurant").replace(" ", "_")
+        rid = current_user["restaurant_id"]
+        restaurant = get_restaurant(rid)
+        entries = get_schedule_history(rid, limit=1)
+        if not entries:
+            return jsonify(ok=False,
+                           error="Generate a schedule first — there's nothing to download yet."), 400
+        detail = get_schedule_history_detail(entries[0]["id"], rid) or {}
+        csv_clean = (detail.get("schedule_csv") or "").strip()
+        if not csv_clean:
+            return jsonify(ok=False, error="That schedule has no rows to download."), 400
+        name = (restaurant.name if restaurant else "Restaurant").replace(" ", "_")
         return send_file(
             io.BytesIO(csv_clean.encode()),
             mimetype="text/csv",
@@ -6499,6 +6596,18 @@ def labor_delete_profile(current_user):
 @login_required
 def labor_quality_weights(current_user):
     return _m("mobile_save_quality_weights")(current_user)
+
+
+@client_bp.route("/api/labor/schedule/replacements", methods=["POST"])
+@login_required
+def labor_schedule_replacements(current_user):
+    return _m("mobile_schedule_replacements")(current_user)
+
+
+@client_bp.route("/api/labor/capability-changes")
+@login_required
+def labor_capability_changes(current_user):
+    return _m("mobile_capability_changes")(current_user)
 
 
 @client_bp.route("/api/intel/movement")

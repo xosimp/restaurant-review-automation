@@ -140,6 +140,10 @@ struct RatedEmployee: Codable, Identifiable, Equatable {
     var score: Int?
     var scoreLabel: String?
     var notes: String?
+    // Authorised to close. A fact about a person that owes nothing to their
+    // rating, and the only way a leadership rule can be satisfied by
+    // somebody the owner trusts to lock up but would not call a 5.
+    var canClose: Bool?
     let updatedBy: String?
     let updatedAt: String?
     var id: String { name }
@@ -147,6 +151,7 @@ struct RatedEmployee: Codable, Identifiable, Equatable {
     enum CodingKeys: String, CodingKey {
         case name, role, shifts, score, notes
         case scoreLabel = "score_label"
+        case canClose = "can_close"
         case updatedBy = "updated_by"
         case updatedAt = "updated_at"
     }
@@ -293,6 +298,9 @@ struct QualityShift: Codable, Identifiable, Equatable {
     // True when everything this shift had to say was also true of the rest
     // of the week, and so was hoisted into the week summary.
     let nothingSpecific: Bool?
+    // Dimensions that raised rather than dimensions nobody configured. Kept
+    // apart because only one of them is the owner's to act on.
+    let failed: [QualityFailure]?
 
     var id: String { "\(date)-\(daypart)" }
 
@@ -309,6 +317,18 @@ struct QualityShift: Codable, Identifiable, Equatable {
         case cappedBy = "capped_by"
         case blindSpots = "blind_spots"
         case nothingSpecific = "nothing_specific"
+        case failed
+    }
+}
+
+/// A dimension that threw while being computed.
+struct QualityFailure: Codable, Identifiable, Equatable {
+    let key: String
+    let error: String?
+    var id: String { key }
+    var label: String {
+        (key.replacingOccurrences(of: "_", with: " ")).prefix(1).uppercased()
+        + key.replacingOccurrences(of: "_", with: " ").dropFirst()
     }
 }
 
@@ -375,6 +395,16 @@ struct QualityBelowProfile: Codable, Identifiable, Equatable {
         case date, day, daypart, score, label
         case minQuality = "min_quality"
     }
+}
+
+/// Somebody the server says could legally take a shift: same role, free
+/// that day, no staff constraint, no double booking, inside forty hours.
+struct ScheduleReplacement: Codable, Identifiable, Equatable {
+    let name: String
+    let role: String?
+    let score: Int?
+    var id: String { name }
+    var label: String { score.map { "\(name)  ·  \($0)" } ?? name }
 }
 
 /// The Shift Quality Engine's verdict on a whole week.
@@ -823,8 +853,9 @@ final class LaborViewModel {
     private struct ScoreBody: Encodable {
         let rows: [ScheduleRow]
         let dailyTargetHours: [String: Double]
+        let save: Bool
         enum CodingKeys: String, CodingKey {
-            case rows
+            case rows, save
             case dailyTargetHours = "daily_target_hours"
         }
     }
@@ -833,37 +864,49 @@ final class LaborViewModel {
         let ok: Bool
         let quality: ScheduleQuality?
         let whatIf: ScheduleWhatIf?
+        let saved: Bool?
         let error: String?
         enum CodingKeys: String, CodingKey {
-            case ok, quality, error
+            case ok, quality, error, saved
             case whatIf = "what_if"
         }
     }
 
-    /// Who could take this shift instead: same role, not already working
-    /// that day, and not somebody who said they cannot work it.
+    /// What happened to the manager's last edit. A failed save used to be
+    /// silent, which left the old score on screen beside a CHANGED badge
+    /// implying it was current — on a flaky connection, the default outcome.
+    enum OverrideState: Equatable { case idle, saving, saved, failed(String) }
+    var overrideState: OverrideState = .idle
+
+    private struct ReplacementsBody: Encodable {
+        let rows: [ScheduleRow]
+        let index: Int
+    }
+
+    private struct ReplacementsResponse: Decodable {
+        let ok: Bool
+        let replacements: [ScheduleReplacement]?
+        let error: String?
+    }
+
+    /// Who could take this shift instead, answered by the server.
     ///
-    /// Ordered strongest first, because the reason a manager opens this is
-    /// almost always a shift the engine just told them is weak.
-    func replacements(for row: ScheduleRow) -> [RatedEmployee] {
-        guard let result = scheduleResult, let rows = result.previewRows else { return [] }
-        let role = (row.role ?? "").trimmingCharacters(in: .whitespaces).lowercased()
-        let date = row.date ?? ""
-        let day = row.day ?? ""
-        let working = Set(rows.filter { $0.date == date }
-                              .compactMap { $0.employee?.lowercased() })
-        let blocked = Dictionary(uniqueKeysWithValues: availability.map {
-            ($0.employeeName.lowercased(), Set($0.unavailableDays))
-        })
-        return team
-            .filter { member in
-                guard member.name.lowercased() != (row.employee ?? "").lowercased() else { return false }
-                guard !working.contains(member.name.lowercased()) else { return false }
-                if blocked[member.name.lowercased()]?.contains(day) == true { return false }
-                let memberRole = (member.role ?? "").trimmingCharacters(in: .whitespaces).lowercased()
-                return role.isEmpty || memberRole.isEmpty || memberRole == role
-            }
-            .sorted { ($0.score ?? 0, $0.name) > ($1.score ?? 0, $1.name) }
+    /// This used to be decided here, and the same rule existed in three
+    /// places that had drifted apart: the what-if pass checked availability,
+    /// staff constraints, double booking and the forty-hour ceiling, this
+    /// checked availability only, and the dashboard checked neither. One
+    /// endpoint now runs the engine's own legality check for all of them.
+    func loadReplacements(for row: ScheduleRow) async -> [ScheduleReplacement] {
+        guard let result = scheduleResult, let rows = result.previewRows,
+              let index = rows.firstIndex(where: { $0.id == row.id }) else { return [] }
+        do {
+            let response: ReplacementsResponse = try await client.send(
+                "/mobile/api/labor/schedule/replacements", method: .post,
+                body: ReplacementsBody(rows: rows, index: index), hapticOnError: false)
+            return response.ok ? (response.replacements ?? []) : []
+        } catch {
+            return []
+        }
     }
 
     /// Put somebody else on a shift and immediately re-score the week.
@@ -882,25 +925,40 @@ final class LaborViewModel {
         await rescoreQuality()
     }
 
-    /// Re-score whatever is currently on screen.
-    func rescoreQuality() async {
+    /// Re-score AND store whatever is currently on screen.
+    ///
+    /// Storing is the whole point of an override. Without it the edit lived
+    /// in this view model, the score moved, and publishing read the CSV
+    /// saved at generation time — so staff received the week the manager
+    /// had just fixed, unfixed, with nothing on screen to say so.
+    func rescoreQuality(save: Bool = true) async {
         guard var result = scheduleResult, let rows = result.previewRows, !rows.isEmpty else { return }
         isRescoringQuality = true
+        overrideState = .saving
         defer { isRescoringQuality = false }
         do {
             let response: ScoreResponse = try await client.send(
                 "/mobile/api/labor/schedule/score", method: .post,
-                body: ScoreBody(rows: rows, dailyTargetHours: [:]),
+                body: ScoreBody(rows: rows, dailyTargetHours: [:], save: save),
                 hapticOnError: false, retryTransient: true)
-            guard response.ok, let quality = response.quality else { return }
+            guard response.ok, let quality = response.quality else {
+                overrideState = .failed(response.error ?? "Couldn't save that change.")
+                return
+            }
             result.quality = quality
             result.whatIf = response.whatIf
             scheduleResult = result
             cacheSchedule(result)
+            overrideState = (response.saved ?? false) ? .saved : .idle
+            if overrideState == .saved {
+                Haptic.success()
+                try? await Task.sleep(for: .seconds(4))
+                if overrideState == .saved { overrideState = .idle }
+            }
+        } catch let error as APIClient.APIError {
+            overrideState = .failed(error.message)
         } catch {
-            // The edit itself stands; only the score is stale. Saying
-            // "couldn't re-score" over a schedule the manager just fixed
-            // would read as the edit having failed.
+            overrideState = .failed("Couldn't save that change.")
         }
     }
 
@@ -930,6 +988,16 @@ final class LaborViewModel {
         enum CodingKeys: String, CodingKey {
             case employeeName = "employee_name"
             case score, notes
+        }
+    }
+
+    private struct CloserBody: Encodable {
+        let employeeName: String
+        let attribute = "can_close"
+        let flag: Int?
+        enum CodingKeys: String, CodingKey {
+            case employeeName = "employee_name"
+            case attribute, flag
         }
     }
 
@@ -1002,6 +1070,34 @@ final class LaborViewModel {
             team[index] = previous
             recountCoverage()
             teamError = "Couldn't save that rating."
+        }
+    }
+
+    /// Mark somebody authorised to close, or take it back.
+    ///
+    /// Stored against the same capability layer as the rating but as a flag
+    /// rather than a score, because being trusted to lock up is not a point
+    /// on a 1-to-5 scale and should not have to be earned as one.
+    func setCloser(for name: String, to on: Bool) async {
+        guard let index = team.firstIndex(where: { $0.name == name }) else { return }
+        let previous = team[index].canClose
+        savingFor = name
+        teamError = nil
+        defer { savingFor = nil }
+        team[index].canClose = on
+        do {
+            let response: OkResponse = try await client.send(
+                "/mobile/api/labor/team/rating", method: .post,
+                body: CloserBody(employeeName: name, flag: on ? 1 : nil))
+            if response.ok {
+                Haptic.light()
+            } else {
+                team[index].canClose = previous
+                teamError = response.error ?? "Couldn't save that."
+            }
+        } catch {
+            team[index].canClose = previous
+            teamError = "Couldn't save that."
         }
     }
 

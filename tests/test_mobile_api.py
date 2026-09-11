@@ -3957,11 +3957,37 @@ def _sched_rows(bartenders, date="2026-09-12"):
              "scheduled_hours": "8", "notes": ""} for n in bartenders]
 
 
+def _live_shifts(monkeypatch, rows=None):
+    """Mark this restaurant as having real uploaded shifts.
+
+    The score route refuses otherwise: load_shifts_for_restaurant falls back
+    to a bundled fictional week, and judging a real restaurant's tenure
+    against a restaurant that does not exist is the one thing this pipeline
+    has already had to fix once elsewhere.
+    """
+    import labor
+    monkeypatch.setattr(labor, "analyse_shifts_for_restaurant",
+                        lambda *a, **k: {"is_live": True})
+    monkeypatch.setattr(labor, "load_shifts_for_restaurant", lambda *a, **k: rows or [])
+
+
+def test_the_score_route_refuses_a_restaurant_with_no_shift_data(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    import labor
+    monkeypatch.setattr(labor, "analyse_shifts_for_restaurant", lambda *a, **k: {"is_live": False})
+    resp = client.post("/mobile/api/labor/schedule/score",
+                       json={"rows": _sched_rows(["Sam"])}, headers=_auth_headers(token))
+    assert resp.status_code == 400
+    assert "shifts" in resp.get_json()["error"].lower()
+
+
 def test_a_manager_edit_is_rescored_without_regenerating(client, db_path, monkeypatch):
     """The whole reason the engine is a pure function: the manager drags one
     shift, this returns the new number, and nothing calls a model."""
     rid = _restaurant(db_path)
     token = _login(client, db_path, rid)
+    _live_shifts(monkeypatch)
     from models import set_capability, update_restaurant
     for name, score in (("Pat", 5), ("Sam", 1), ("Alex", 1)):
         set_capability(rid, name, score=score, db_path=db_path)
@@ -3978,9 +4004,10 @@ def test_a_manager_edit_is_rescored_without_regenerating(client, db_path, monkey
     assert strong["quality"]["score"] > weak["quality"]["score"]
 
 
-def test_the_score_route_refuses_an_empty_or_oversized_body(client, db_path):
+def test_the_score_route_refuses_an_empty_or_oversized_body(client, db_path, monkeypatch):
     rid = _restaurant(db_path)
     token = _login(client, db_path, rid)
+    _live_shifts(monkeypatch)
     assert client.post("/mobile/api/labor/schedule/score", json={},
                        headers=_auth_headers(token)).status_code == 400
     huge = {"rows": [{"date": "2026-09-12", "employee": "x"}] * 2001}
@@ -3988,9 +4015,10 @@ def test_the_score_route_refuses_an_empty_or_oversized_body(client, db_path):
                        headers=_auth_headers(token)).status_code == 400
 
 
-def test_the_score_route_uses_the_callers_own_ratings(client, db_path):
+def test_the_score_route_uses_the_callers_own_ratings(client, db_path, monkeypatch):
     """Rows come from the client because the client holds the edit. Anything
     the score depends on beyond them is loaded server-side."""
+    _live_shifts(monkeypatch)
     mine = _restaurant(db_path, name="Mine")
     theirs = _restaurant(db_path, name="Theirs")
     from models import set_capability, update_restaurant
@@ -4085,3 +4113,170 @@ def test_the_quality_routes_need_a_login(client):
                          ("/mobile/api/labor/quality-weights", "post"),
                          ("/mobile/api/labor/schedule/score", "post")):
         assert getattr(client, method)(path, json={}).status_code in (401, 403), path
+
+
+# ── Audit fixes: routes and persistence ───────────────────────────────────
+
+def test_a_manager_edit_is_saved_not_only_scored(client, db_path, monkeypatch):
+    """P0-1. Without the save the edit lived in the page, the score moved,
+    and publishing read the CSV written at generation time — so staff
+    received the week the manager had just fixed, unfixed."""
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    _live_shifts(monkeypatch)
+    from models import save_schedule_history, get_schedule_history_detail, get_schedule_history
+    original = ("date,day,employee,role,shift_start,shift_end,scheduled_hours,notes\n"
+                "2026-09-12,Saturday,Sam,Bartender,5:00pm,11:00pm,6,")
+    save_schedule_history(rid, "2026-09-12", "2026-09-12", 6, 40, 28, original, [],
+                          db_path=db_path)
+
+    body = client.post("/mobile/api/labor/schedule/score",
+                       json={"rows": _sched_rows(["Pat"]), "save": True},
+                       headers=_auth_headers(token)).get_json()
+    assert body["ok"] and body["saved"] is True
+    detail = get_schedule_history_detail(get_schedule_history(rid, db_path=db_path)[0]["id"],
+                                         rid, db_path=db_path)
+    assert "Pat" in detail["schedule_csv"] and "Sam" not in detail["schedule_csv"]
+    assert detail["edited_at"]
+
+
+def test_scoring_without_save_leaves_the_stored_schedule_alone(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    _live_shifts(monkeypatch)
+    from models import save_schedule_history, get_schedule_history, get_schedule_history_detail
+    original = ("date,day,employee,role,shift_start,shift_end,scheduled_hours,notes\n"
+                "2026-09-12,Saturday,Sam,Bartender,5:00pm,11:00pm,6,")
+    save_schedule_history(rid, "2026-09-12", "2026-09-12", 6, 40, 28, original, [],
+                          db_path=db_path)
+    body = client.post("/mobile/api/labor/schedule/score",
+                       json={"rows": _sched_rows(["Pat"])},
+                       headers=_auth_headers(token)).get_json()
+    assert body["saved"] is False
+    detail = get_schedule_history_detail(get_schedule_history(rid, db_path=db_path)[0]["id"],
+                                         rid, db_path=db_path)
+    assert "Sam" in detail["schedule_csv"]
+
+
+def test_one_restaurant_cannot_overwrite_anothers_schedule(client, db_path, monkeypatch):
+    mine = _restaurant(db_path, name="Mine")
+    theirs = _restaurant(db_path, name="Theirs")
+    _live_shifts(monkeypatch)
+    from models import save_schedule_history, get_schedule_history, get_schedule_history_detail
+    theirs_csv = ("date,day,employee,role,shift_start,shift_end,scheduled_hours,notes\n"
+                  "2026-09-12,Saturday,Theirs,Bartender,5:00pm,11:00pm,6,")
+    tid = save_schedule_history(theirs, "2026-09-12", "2026-09-12", 6, 40, 28,
+                                theirs_csv, [], db_path=db_path)
+    token = _login(client, db_path, mine)
+    client.post("/mobile/api/labor/schedule/score",
+                json={"rows": _sched_rows(["Pat"]), "save": True, "history_id": tid},
+                headers=_auth_headers(token))
+    detail = get_schedule_history_detail(tid, theirs, db_path=db_path)
+    assert "Theirs" in detail["schedule_csv"]
+
+
+def test_replacements_are_served_from_one_endpoint(client, db_path, monkeypatch):
+    """P1-7. Three implementations of this rule had drifted apart: the
+    engine checked availability, staff notes, double booking and the hours
+    ceiling; iOS checked availability only; the dashboard checked neither."""
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    _live_shifts(monkeypatch)
+    from models import set_capability, save_staff_availability
+    for name, score in (("Pat", 5), ("Sam", 2), ("Busy", 4), ("Away", 5)):
+        set_capability(rid, name, score=score, db_path=db_path)
+    save_staff_availability(rid, "Away", ["Monday"], ["Saturday"], None, db_path=db_path)
+
+    rows = [{"date": "2026-09-12", "day": "Saturday", "employee": "Sam", "role": "Bartender",
+             "shift_start": "5:00pm", "shift_end": "11:00pm", "scheduled_hours": "6", "notes": ""},
+            {"date": "2026-09-12", "day": "Saturday", "employee": "Busy", "role": "Bartender",
+             "shift_start": "5:00pm", "shift_end": "11:00pm", "scheduled_hours": "6", "notes": ""},
+            {"date": "2026-09-11", "day": "Friday", "employee": "Pat", "role": "Bartender",
+             "shift_start": "5:00pm", "shift_end": "11:00pm", "scheduled_hours": "6", "notes": ""},
+            {"date": "2026-09-11", "day": "Friday", "employee": "Away", "role": "Bartender",
+             "shift_start": "5:00pm", "shift_end": "11:00pm", "scheduled_hours": "6", "notes": ""}]
+    body = client.post("/mobile/api/labor/schedule/replacements",
+                       json={"rows": rows, "index": 0},
+                       headers=_auth_headers(token)).get_json()
+    assert body.get("ok"), body
+    names = [r["name"] for r in body["replacements"]]
+    assert "Pat" in names                      # free on Saturday, same role
+    assert "Busy" not in names                 # already working that date
+    assert "Away" not in names                 # declared Saturday unavailable
+
+
+def test_the_replacements_route_refuses_a_bad_index(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    _live_shifts(monkeypatch)
+    for payload in ({"rows": [], "index": 0}, {"rows": _sched_rows(["Sam"])},
+                    {"rows": _sched_rows(["Sam"]), "index": 9}):
+        assert client.post("/mobile/api/labor/schedule/replacements", json=payload,
+                           headers=_auth_headers(token)).status_code == 400
+
+
+def test_a_teammate_without_permission_cannot_change_ratings(client, db_path):
+    """P2-5. Defaults open, because a restaurant has one login today. The
+    column exists so the invite flow can create a teammate without it rather
+    than handing a new hire the ability to re-rate the whole staff."""
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid, username="teammate")
+    conn = get_conn(db_path)
+    conn.execute("UPDATE users SET can_manage_team=0 WHERE username='teammate'")
+    conn.commit()
+    conn.close()
+    for path, payload in (("/mobile/api/labor/team/rating", {"employee_name": "Pat", "score": 5}),
+                          ("/mobile/api/labor/team/thresholds", {"thresholds": {"Cook": 8}}),
+                          ("/mobile/api/labor/profiles", {"profile": {"key": "x"}}),
+                          ("/mobile/api/labor/quality-weights", {"weights": {"coverage": 10}})):
+        resp = client.post(path, json=payload, headers=_auth_headers(token))
+        assert resp.status_code == 403, path
+    # Reading is still allowed.
+    assert client.get("/mobile/api/labor/profiles",
+                      headers=_auth_headers(token)).status_code == 200
+
+
+def test_every_change_to_a_target_leaves_a_trail(client, db_path, monkeypatch):
+    """P2-4. "Who moved the bartender target and when" is the first question
+    after a disputed schedule and had no answer anywhere."""
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    _live_shifts(monkeypatch)
+    client.post("/mobile/api/labor/team/rating", json={"employee_name": "Pat", "score": 5},
+                headers=_auth_headers(token))
+    client.post("/mobile/api/labor/team/thresholds", json={"thresholds": {"Bartender": 9}},
+                headers=_auth_headers(token))
+    client.post("/mobile/api/labor/quality-weights", json={"weights": {"coverage": 25}},
+                headers=_auth_headers(token))
+    body = client.get("/mobile/api/labor/capability-changes",
+                      headers=_auth_headers(token)).get_json()
+    kinds = {c["kind"] for c in body["changes"]}
+    assert {"rating", "threshold", "weights"} <= kinds
+    rating = next(c for c in body["changes"] if c["kind"] == "rating")
+    assert rating["changed_by"] and rating["after"]["score"] == 5
+
+
+def test_a_weight_beyond_the_ceiling_is_refused(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    resp = client.post("/mobile/api/labor/quality-weights",
+                       json={"weights": {"coverage": 10 ** 6}},
+                       headers=_auth_headers(token))
+    assert resp.status_code == 400
+    assert "ceiling" in resp.get_json()["error"]
+
+
+def test_the_team_payload_carries_the_closer_flag(client, db_path, monkeypatch):
+    """P1-3. Registered in the capability layer from day one and reachable
+    from no interface, so a leadership rule could only be answered by a
+    score and an experienced closer rated 3 never qualified."""
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    _team_shifts(monkeypatch, [{"date": "2026-09-12", "employee": "Pat",
+                                "role": "Bartender", "shift_start": "5:00pm"}])
+    client.post("/mobile/api/labor/team/rating",
+                json={"employee_name": "Pat", "attribute": "can_close", "flag": 1},
+                headers=_auth_headers(token))
+    body = client.get("/mobile/api/labor/team", headers=_auth_headers(token)).get_json()
+    assert body["team"][0]["can_close"] is True
+    assert body["capability_version"]

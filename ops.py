@@ -200,6 +200,34 @@ def _async_conn():
     return conn
 
 
+def sweep_stale_jobs(older_than_minutes: int = 10) -> int:
+    """Fail any job still pending long after it could plausibly finish.
+
+    Schedule generation runs on a daemon thread inside the web process, and
+    a daemon thread is killed at interpreter exit without running its
+    finally blocks — so a deploy, crash or restart mid-generation left the
+    row pending forever, the client polling until it timed out, and a paid
+    model call lost with no error anybody could see. Called at boot, which
+    is exactly when the previous process was the one that died.
+    """
+    try:
+        conn = _async_conn()
+        cur = conn.execute(
+            "UPDATE async_jobs SET status='error', result_json=? "
+            "WHERE status='pending' AND created_at < datetime('now', ?)",
+            ('{"ok": false, "error": "Generation was interrupted — please try again."}',
+             f"-{int(older_than_minutes)} minutes"))
+        conn.commit()
+        n = cur.rowcount or 0
+        conn.close()
+        if n:
+            print(f"[ops] swept {n} stale pending job(s)")
+        return n
+    except Exception as e:
+        print(f"sweep_stale_jobs failed: {e}")
+        return 0
+
+
 def start_async_job(job_id, kind, restaurant_id):
     """Record a job as pending. Raises nothing — a job whose bookkeeping row
     can't be written still runs; its poll just reports it missing, which is

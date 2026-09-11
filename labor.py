@@ -1699,12 +1699,19 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
 
     # ── What each shift is actually judged on ─────────────────────────────
     #
+    # The guidance below used to sit inside the ratings branch, so a
+    # restaurant with shift profiles and nobody rated was told it would be
+    # scored on training balance and fairness and given no instruction on
+    # how to satisfy either.
+    #
     # The scheduler used to be handed a pile of independent rules and no
     # statement of what a GOOD shift looks like, so it optimised whichever
     # rule was stated most forcefully. This block names the profile each
     # shift is scored against, so "Saturday dinner" and "Monday lunch" stop
     # being the same problem with different dates.
     _profile_block = format_profile_block(shift_profiles)
+    if _profile_block and not _strength_block:
+        _profile_block += _quality_rules_block()
 
     # Extra scheduling notes from admin
     _sched_notes_block = ""

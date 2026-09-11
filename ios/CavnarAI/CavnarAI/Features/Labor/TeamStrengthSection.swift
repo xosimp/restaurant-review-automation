@@ -116,8 +116,35 @@ struct TeamStrengthSection: View {
                 }
             }
             scorePicker(member)
+            closerToggle(member)
         }
         .padding(.vertical, 9)
+    }
+
+    /// Authorised to close. Registered in the capability layer from day one
+    /// and reachable from no interface until now, which meant a leadership
+    /// requirement could only ever be answered by a score — so an
+    /// experienced closer rated 3 never qualified, and "every closing shift
+    /// needs somebody authorised to close" could not be satisfied at all.
+    private func closerToggle(_ member: RatedEmployee) -> some View {
+        Button {
+            Haptic.selection()
+            Task { await viewModel.setCloser(for: member.name, to: !(member.canClose ?? false)) }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: (member.canClose ?? false) ? "checkmark.square.fill" : "square")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle((member.canClose ?? false) ? Color.cavnarGreen : Color.cavnarInk3)
+                Text("Authorised to close")
+                    .font(.cavnarBody(13.5))
+                    .foregroundStyle((member.canClose ?? false) ? Color.cavnarInk2 : Color.cavnarInk3)
+                Spacer()
+            }
+            .contentShape(Rectangle())
+            .padding(.top, 2)
+        }
+        .buttonStyle(.plain)
+        .disabled(viewModel.savingFor == member.name)
     }
 
     /// Five numbers, one tap each. Tapping the current score clears it,

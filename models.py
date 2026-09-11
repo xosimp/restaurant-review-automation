@@ -3165,6 +3165,37 @@ def get_capabilities(restaurant_id: int, attribute: str = None,
     return out
 
 
+def capability_version(restaurant_id: int, db_path: str = DB_PATH) -> str:
+    """A stamp that moves whenever anything the engine scores against moves.
+
+    Clients cache a whole generated schedule, quality panel included, and
+    nothing connected a rating change to that cache — so an owner could
+    rate three people, reopen the app, and read a score computed against
+    the ratings they had just replaced, with nothing marking it stale.
+    """
+    init_staff_capabilities(db_path)
+    conn = get_conn(db_path)
+    try:
+        caps = conn.execute(
+            "SELECT COUNT(*), COALESCE(MAX(updated_at),'') FROM staff_capabilities "
+            "WHERE restaurant_id=?", (restaurant_id,)).fetchone()
+        try:
+            profiles = conn.execute(
+                "SELECT COUNT(*), COALESCE(MAX(updated_at),'') FROM shift_profiles "
+                "WHERE restaurant_id=?", (restaurant_id,)).fetchone()
+        except Exception:
+            profiles = (0, "")
+        rest = conn.execute(
+            "SELECT COALESCE(role_strength_json,'') || COALESCE(shift_leader_rules_json,'') "
+            "|| COALESCE(quality_weights_json,'') FROM restaurants WHERE id=?",
+            (restaurant_id,)).fetchone()
+    finally:
+        conn.close()
+    import hashlib
+    raw = f"{caps[0]}|{caps[1]}|{profiles[0]}|{profiles[1]}|{(rest[0] if rest else '')}"
+    return hashlib.sha1(raw.encode()).hexdigest()[:16]
+
+
 def get_operational_scores(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     """{employee_name: 1-5} for everyone who has been rated. Absent means
     NOT RATED, which is deliberately different from a low rating."""
@@ -3278,6 +3309,88 @@ def init_shift_profiles(db_path: str = DB_PATH):
     conn.close()
 
 
+def init_capability_changes(db_path: str = DB_PATH):
+    """Who changed a target, when, and what it was before.
+
+    staff_capabilities and shift_profiles carry updated_by for the CURRENT
+    value only, and the per-role targets and dimension weights live in plain
+    columns on restaurants with no provenance at all — so "who moved the
+    bartender target and when", which is the first question after a disputed
+    schedule, had no answer anywhere.
+    """
+    conn = get_conn(db_path)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS capability_changes (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id INTEGER NOT NULL REFERENCES restaurants(id),
+            kind          TEXT    NOT NULL,   -- rating | threshold | leader_rule | profile | weights
+            subject       TEXT,               -- employee name, role, or profile key
+            before_json   TEXT,
+            after_json    TEXT,
+            changed_by    TEXT,
+            changed_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_capability_changes_rest "
+                 "ON capability_changes(restaurant_id, changed_at)")
+    conn.commit()
+    conn.close()
+
+
+def record_capability_change(restaurant_id: int, kind: str, subject: str = None,
+                             before=None, after=None, changed_by: str = None,
+                             db_path: str = DB_PATH):
+    """Append one change. Never raises — an audit row failing to write must
+    not stop an owner setting a target."""
+    import json as _j
+    try:
+        init_capability_changes(db_path)
+        conn = get_conn(db_path)
+        conn.execute(
+            "INSERT INTO capability_changes "
+            "(restaurant_id, kind, subject, before_json, after_json, changed_by) "
+            "VALUES (?,?,?,?,?,?)",
+            (restaurant_id, str(kind)[:40], (str(subject)[:160] if subject else None),
+             _j.dumps(before) if before is not None else None,
+             _j.dumps(after) if after is not None else None,
+             (changed_by or "").strip()[:120] or None))
+        conn.commit()
+        conn.close()
+    except Exception as exc:
+        # The write is genuinely optional — an audit row must never stop an
+        # owner setting a target — but it is NOT allowed to fail invisibly.
+        # A change log you cannot trust is worse than none, because you
+        # would believe it when it is empty.
+        try:
+            import ops as _ops_cc
+            _ops_cc.capture(exc, job="capability_change",
+                            context=f"restaurant_id={restaurant_id} kind={kind}")
+        except Exception:
+            print(f"[capability_change] failed to record {kind}: {exc}")
+
+
+def get_capability_changes(restaurant_id: int, limit: int = 100,
+                           db_path: str = DB_PATH) -> list:
+    import json as _j
+    init_capability_changes(db_path)
+    conn = get_conn(db_path)
+    rows = conn.execute(
+        "SELECT * FROM capability_changes WHERE restaurant_id=? "
+        "ORDER BY id DESC LIMIT ?", (restaurant_id, int(limit))).fetchall()
+    conn.close()
+    out = []
+    for r in rows:
+        d = dict(r)
+        for side in ("before", "after"):
+            raw = d.pop(f"{side}_json", None)
+            try:
+                d[side] = _j.loads(raw) if raw else None
+            except Exception:
+                d[side] = None
+        out.append(d)
+    return out
+
+
 def get_shift_profiles(restaurant_id: int, include_inactive: bool = False,
                        db_path: str = DB_PATH) -> list:
     """This restaurant's own profiles, as plain dicts. Empty means it has
@@ -3372,6 +3485,33 @@ def get_quality_weights(restaurant_id: int, db_path: str = DB_PATH) -> dict:
 
 # ── Signals the Shift Quality Engine reads about people ────────────────────
 
+def _cached_shifts(restaurant_id: int) -> list:
+    """One parse of the shift history per request, shared by every reader.
+
+    get_employee_tenure, get_prior_shift_pattern and historical_patterns
+    each loaded and re-parsed the whole CSV, so a single manager edit paid
+    for three full passes over the restaurant's entire history. Scoped to
+    the Flask request so it can never serve one restaurant's shifts to
+    another, and falling back to a plain load outside a request context.
+    """
+    from labor import load_shifts_for_restaurant
+    try:
+        from flask import g, has_request_context
+        if not has_request_context():
+            return load_shifts_for_restaurant(restaurant_id) or []
+        cache = getattr(g, "_shift_cache", None)
+        if cache is None:
+            cache = g._shift_cache = {}
+        if restaurant_id not in cache:
+            cache[restaurant_id] = load_shifts_for_restaurant(restaurant_id) or []
+        return cache[restaurant_id]
+    except Exception:
+        try:
+            return load_shifts_for_restaurant(restaurant_id) or []
+        except Exception:
+            return []
+
+
 def get_employee_tenure(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     """{employee_name: shifts worked} from this restaurant's own history.
 
@@ -3381,9 +3521,8 @@ def get_employee_tenure(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     column would score every restaurant identically.
     """
     try:
-        from labor import load_shifts_for_restaurant
         out = {}
-        for sh in load_shifts_for_restaurant(restaurant_id) or []:
+        for sh in _cached_shifts(restaurant_id):
             name = (sh.get("employee") or "").strip()
             if name:
                 out[name] = out.get(name, 0) + 1
@@ -3414,11 +3553,10 @@ def get_prior_shift_pattern(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     from a stated preference nobody keeps up to date.
     """
     try:
-        from labor import load_shifts_for_restaurant
         from shift_quality import daypart_of
         from datetime import datetime as _dt
         out = {}
-        for sh in load_shifts_for_restaurant(restaurant_id) or []:
+        for sh in _cached_shifts(restaurant_id):
             name = (sh.get("employee") or "").strip()
             if not name:
                 continue
@@ -3435,6 +3573,58 @@ def get_prior_shift_pattern(restaurant_id: int, db_path: str = DB_PATH) -> dict:
                 for n, v in out.items()}
     except Exception:
         return {}
+
+
+def sibling_location_shifts(restaurant_id: int, dates: list,
+                            db_path: str = DB_PATH) -> dict:
+    """{employee_name: [{date, location}]} from the OTHER sites in this group.
+
+    Employees are keyed by name per restaurant, which is correct isolation
+    and means a person working two sites of the same group has two unrelated
+    records — and nothing anywhere notices when both sites schedule them on
+    the same night. Scores are deliberately NOT merged: two locations may
+    rate the same person differently and both be right. Only the collision
+    is reported, because only the collision is a fact rather than a judgement.
+
+    Scoped to restaurants sharing this one's location_group AND owner_email,
+    which is how the rest of the codebase defines that tenancy boundary.
+    """
+    if not dates:
+        return {}
+    conn = get_conn(db_path)
+    try:
+        me = conn.execute("SELECT location_group, owner_email, location_name "
+                          "FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
+        group = ((me["location_group"] if me else "") or "").strip()
+        if not group:
+            return {}
+        siblings = conn.execute(
+            "SELECT id, COALESCE(location_name, name) AS label FROM restaurants "
+            "WHERE location_group=? AND owner_email=? AND id<>?",
+            (group, me["owner_email"], restaurant_id)).fetchall()
+        if not siblings:
+            return {}
+        out = {}
+        wanted = set(dates)
+        for sib in siblings:
+            row = conn.execute(
+                "SELECT schedule_csv FROM schedule_history WHERE restaurant_id=? "
+                "ORDER BY id DESC LIMIT 1", (sib["id"],)).fetchone()
+            for line in ((row["schedule_csv"] if row else "") or "").split("\n")[1:]:
+                parts = [p.strip() for p in line.split(",", 7)]
+                if len(parts) < 3:
+                    continue
+                date, name = parts[0], parts[2]
+                if date in wanted and name:
+                    entries = out.setdefault(name, [])
+                    if not any(e["date"] == date and e["location"] == sib["label"]
+                               for e in entries):
+                        entries.append({"date": date, "location": sib["label"]})
+        return out
+    except Exception:
+        return {}
+    finally:
+        conn.close()
 
 
 def get_unavailability_map(restaurant_id: int, db_path: str = DB_PATH) -> dict:
@@ -3466,9 +3656,8 @@ def load_shifts_for_restaurant_roles(restaurant_id: int, db_path: str = DB_PATH)
     that number", which is a per-role question.
     """
     try:
-        from labor import load_shifts_for_restaurant
         out, latest = {}, {}
-        for sh in load_shifts_for_restaurant(restaurant_id) or []:
+        for sh in _cached_shifts(restaurant_id):
             n = (sh.get("employee") or "").strip()
             r = (sh.get("role") or "").strip()
             d = sh.get("date") or ""
@@ -3717,7 +3906,8 @@ def get_labor_history(restaurant_id: int, limit: int = 4,
 
 def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
                            hours_scheduled: float, hours_budget: float, labor_target: float,
-                           schedule_csv: str, summary: list, db_path: str = DB_PATH) -> int:
+                           schedule_csv: str, summary: list, quality: dict = None,
+                           db_path: str = DB_PATH) -> int:
     """Persists every generated schedule permanently, independent of
     whatever the mobile app's own client-side caching does — a durable
     record on the Account tab's Schedule History screen that survives
@@ -3738,16 +3928,67 @@ def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
         schedule_csv TEXT,
         summary_json TEXT
     )""")
+    # The Shift Quality verdict used to live only in the async job result,
+    # which is deleted the first time it is polled — so the headline number
+    # an owner is asked to trust could never be looked at again, and
+    # Schedule History showed past weeks with no score and no trend.
+    _ensure_history_columns(conn)
     cur = conn.execute("""
         INSERT INTO schedule_history
-            (restaurant_id, week_start, week_end, hours_scheduled, hours_budget, labor_target, schedule_csv, summary_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            (restaurant_id, week_start, week_end, hours_scheduled, hours_budget,
+             labor_target, schedule_csv, summary_json, quality_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (restaurant_id, week_start, week_end, hours_scheduled, hours_budget, labor_target,
-          schedule_csv, _json_sh.dumps(summary or [])))
+          schedule_csv, _json_sh.dumps(summary or []),
+          _json_sh.dumps(quality) if quality else None))
     conn.commit()
     new_id = cur.lastrowid
     conn.close()
     return new_id
+
+
+def _ensure_history_columns(conn):
+    """Columns added to schedule_history after it first shipped."""
+    have = {r[1] for r in conn.execute("PRAGMA table_info(schedule_history)")}
+    for name, decl in (("quality_json", "TEXT"), ("edited_at", "TEXT"),
+                       ("edited_by", "TEXT")):
+        if name not in have:
+            conn.execute(f"ALTER TABLE schedule_history ADD COLUMN {name} {decl}")
+
+
+def update_schedule_history_rows(restaurant_id: int, schedule_csv: str,
+                                 quality: dict = None, history_id: int = None,
+                                 edited_by: str = None, db_path: str = DB_PATH) -> int:
+    """Write a manager's edited schedule back over the stored one.
+
+    Without this the whole override feature was decorative: the edit lived
+    in the page, the score moved, and publishing read the CSV saved at
+    generation time — so staff received the week the manager had just
+    fixed, unfixed. Returns the history row id, or 0 when there is nothing
+    to write to.
+    """
+    import json as _json_sh
+    conn = get_conn(db_path)
+    try:
+        _ensure_history_columns(conn)
+        if history_id:
+            row = conn.execute("SELECT id FROM schedule_history WHERE id=? AND restaurant_id=?",
+                               (history_id, restaurant_id)).fetchone()
+        else:
+            row = conn.execute("SELECT id FROM schedule_history WHERE restaurant_id=? "
+                               "ORDER BY id DESC LIMIT 1", (restaurant_id,)).fetchone()
+        if not row:
+            return 0
+        conn.execute("""UPDATE schedule_history
+                        SET schedule_csv=?, quality_json=COALESCE(?, quality_json),
+                            edited_at=datetime('now'), edited_by=?
+                        WHERE id=? AND restaurant_id=?""",
+                     (schedule_csv, _json_sh.dumps(quality) if quality else None,
+                      (edited_by or "").strip()[:120] or None, row["id"], restaurant_id))
+        conn.commit()
+        return row["id"]
+    finally:
+        conn.close()
 
 
 def get_schedule_history(restaurant_id: int, limit: int = 300, db_path: str = DB_PATH) -> list:
@@ -3756,15 +3997,32 @@ def get_schedule_history(restaurant_id: int, limit: int = 300, db_path: str = DB
     get_schedule_history_detail() once a specific entry is tapped."""
     conn = get_conn(db_path)
     try:
+        _ensure_history_columns(conn)
         rows = conn.execute("""
-            SELECT id, generated_at, week_start, week_end, hours_scheduled, hours_budget, labor_target
+            SELECT id, generated_at, week_start, week_end, hours_scheduled,
+                   hours_budget, labor_target, quality_json, edited_at
             FROM schedule_history WHERE restaurant_id=?
             ORDER BY generated_at DESC, id DESC LIMIT ?
         """, (restaurant_id, limit)).fetchall()
     except Exception:
         rows = []  # table doesn't exist yet -- no schedule has ever been generated
     conn.close()
-    return [dict(r) for r in rows]
+    # Only the headline travels with the list. The full evaluation is large
+    # and the list screen shows a score and a band, not eleven dimensions.
+    import json as _json_hs
+    out = []
+    for r in rows:
+        d = dict(r)
+        raw = d.pop("quality_json", None)
+        try:
+            q = _json_hs.loads(raw) if raw else None
+        except Exception:
+            q = None
+        d["quality_score"] = (q or {}).get("score")
+        d["quality_band"] = (q or {}).get("band")
+        d["confidence"] = ((q or {}).get("confidence") or {}).get("level")
+        out.append(d)
+    return out
 
 
 def get_schedule_history_detail(history_id: int, restaurant_id: int, db_path: str = DB_PATH):
@@ -3788,6 +4046,10 @@ def get_schedule_history_detail(history_id: int, restaurant_id: int, db_path: st
         d["summary"] = _json_sh.loads(d.pop("summary_json") or "[]")
     except Exception:
         d["summary"] = []
+    try:
+        d["quality"] = _json_sh.loads(d.pop("quality_json", None) or "null")
+    except Exception:
+        d["quality"] = None
     return d
 
 

@@ -70,6 +70,10 @@ def _public_user(user):
         "id": user["id"], "username": user["username"], "email": user["email"],
         "restaurant_id": user["restaurant_id"], "role": user.get("role") or "client",
         "is_admin": bool(user.get("is_admin")),
+        # Lets both clients hide the editing controls rather than letting a
+        # teammate discover the restriction by being refused.
+        "can_manage_team": True if user.get("can_manage_team") is None
+                           else bool(user.get("can_manage_team")),
     }
 
 
@@ -3224,9 +3228,15 @@ def mobile_labor_team(current_user):
         team = []
         for n, e in seen.items():
             c = (caps.get(n) or {}).get("overall") or {}
+            closer = (caps.get(n) or {}).get("can_close") or {}
             team.append({
                 "name": n, "role": e["role"], "shifts": e["shifts"],
                 "score": c.get("score"),
+                # Authorised to close. A fact about a person that owes
+                # nothing to their rating, and the only way a leadership
+                # rule can be satisfied by somebody the owner trusts to
+                # lock up but would not call a 5.
+                "can_close": bool(closer.get("flag")),
                 "score_label": SCORE_LABELS.get(c.get("score")) if c.get("score") else None,
                 "notes": c.get("notes"),
                 "updated_by": c.get("updated_by"),
@@ -3240,6 +3250,7 @@ def mobile_labor_team(current_user):
             thresholds=get_role_strength_thresholds(rid),
             leader_rules=get_shift_leader_rules(rid),
             scale={"min": SCORE_MIN, "max": SCORE_MAX, "labels": SCORE_LABELS},
+            capability_version=__import__("models").capability_version(rid),
             attributes={k: v for k, v in CAPABILITY_ATTRIBUTES.items() if v.get("v1")},
         ), 200
     except Exception as e:
@@ -3250,18 +3261,28 @@ def mobile_labor_team(current_user):
 @mobile_login_required
 def mobile_set_rating(current_user):
     """Set or clear one employee's Operational Score."""
-    from models import set_capability, CapabilityError
+    if not _may_manage_team(current_user):
+        return _refuse_team_write()
+    from models import (set_capability, CapabilityError, get_capabilities,
+                        record_capability_change)
     data = request.get_json(silent=True) or {}
+    rid = current_user["restaurant_id"]
+    who = current_user.get("username") or current_user.get("email")
+    name = data.get("employee_name") or data.get("name") or ""
+    attribute = data.get("attribute") or "overall"
     try:
+        before = (get_capabilities(rid).get(name) or {}).get(attribute)
         out = set_capability(
-            current_user["restaurant_id"],
-            employee_name=data.get("employee_name") or data.get("name") or "",
-            attribute=(data.get("attribute") or "overall"),
+            rid,
+            employee_name=name,
+            attribute=attribute,
             score=data.get("score"),
             flag=data.get("flag"),
             notes=data.get("notes"),
-            updated_by=current_user.get("username") or current_user.get("email"),
+            updated_by=who,
         )
+        record_capability_change(rid, "rating", subject=f"{name} · {attribute}",
+                                 before=before, after=out, changed_by=who)
         return jsonify(ok=True, **out), 200
     except CapabilityError as ce:
         return jsonify(ok=False, error=str(ce)), 400
@@ -3273,6 +3294,8 @@ def mobile_set_rating(current_user):
 @mobile_login_required
 def mobile_set_thresholds(current_user):
     """Minimum combined score per role, and shift leader rules."""
+    if not _may_manage_team(current_user):
+        return _refuse_team_write()
     import json as _j
     from models import (update_restaurant, validate_strength_thresholds,
                         get_operational_scores, load_shifts_for_restaurant_roles)
@@ -3298,7 +3321,12 @@ def mobile_set_thresholds(current_user):
             if not isinstance(rules, list):
                 return jsonify(ok=False, error="leader_rules must be a list"), 400
             fields["shift_leader_rules_json"] = _j.dumps(rules)
+        from models import record_capability_change, get_role_strength_thresholds
+        _before = get_role_strength_thresholds(rid)
         update_restaurant(rid, fields)
+        record_capability_change(
+            rid, "threshold", subject="per-role targets", before=_before, after=cleaned,
+            changed_by=current_user.get("username") or current_user.get("email"))
         # Unreachable targets are saved and warned about rather than
         # refused — an owner may be describing the team they intend to have.
         return jsonify(ok=True, thresholds=cleaned, warnings=warnings), 200
@@ -4692,6 +4720,27 @@ def mobile_instagram_disconnect(current_user):
     return jsonify(ok=True)
 
 
+def _may_manage_team(current_user):
+    """Whether this login may change ratings, targets, profiles or weighting.
+
+    Defaults open, because every restaurant has exactly one login today and
+    locking them out of their own settings would be absurd. The column
+    exists so that the moment a second login is invited, the invite can
+    create it without this permission rather than handing a new teammate the
+    ability to re-rate the entire staff.
+    """
+    if current_user.get("is_admin"):
+        return True
+    value = current_user.get("can_manage_team")
+    return True if value is None else bool(value)
+
+
+def _refuse_team_write():
+    return jsonify(ok=False,
+                   error="Your login can view the team but not change ratings or "
+                         "targets. Ask whoever set up this account."), 403
+
+
 # ── Shift Quality Engine ───────────────────────────────────────────────────
 
 @mobile_bp.route("/labor/schedule/score", methods=["POST"])
@@ -4729,12 +4778,116 @@ def mobile_score_schedule(current_user):
     except (TypeError, ValueError):
         targets = {}
 
+    # Sample data must never reach a real evaluation. load_shifts_for_restaurant
+    # substitutes a bundled fictional week when nothing has been uploaded,
+    # which would judge this restaurant's tenure and typical headcount
+    # against a restaurant that does not exist.
+    from labor import analyse_shifts_for_restaurant
+    try:
+        if not (analyse_shifts_for_restaurant(rid) or {}).get("is_live"):
+            return jsonify(ok=False,
+                           error="Upload your shifts before scoring a schedule."), 400
+    except Exception:
+        pass
+
     try:
         inputs = quality_inputs_from_db(rid, daily_target_hours=targets)
         quality, what_if = _score_schedule_quality(rid, rows, inputs)
-        return jsonify(ok=True, quality=quality, what_if=what_if), 200
+        saved = 0
+        # The whole point of an override. Without this the edit lived in the
+        # page, the score moved, and publishing read the CSV saved at
+        # generation time — so staff received the week the manager had just
+        # fixed, unfixed, with nothing on screen to say so.
+        if data.get("save"):
+            from models import update_schedule_history_rows
+            saved = update_schedule_history_rows(
+                rid, _rows_to_csv(rows), quality=quality,
+                history_id=data.get("history_id"),
+                edited_by=current_user.get("username") or current_user.get("email"))
+        from models import capability_version
+        return jsonify(ok=True, quality=quality, what_if=what_if, saved=bool(saved),
+                       history_id=saved or None,
+                       capability_version=capability_version(rid)), 200
     except Exception as e:
         return jsonify(ok=False, error=_safe_err(e)), 500
+
+
+_SCHEDULE_COLS = ("date", "day", "employee", "role", "shift_start", "shift_end",
+                  "scheduled_hours", "notes")
+
+
+def _rows_to_csv(rows: list) -> str:
+    """Rebuild the stored CSV from edited rows, in the one column order the
+    rest of the pipeline reads — the same writer _run_schedule_job uses, so
+    a saved edit and a generated schedule are byte-compatible."""
+    lines = [",".join(_SCHEDULE_COLS)]
+    for r in rows:
+        lines.append(",".join(str(r.get(c, "") or "").replace(",", ";")
+                              for c in _SCHEDULE_COLS))
+    return "\n".join(lines)
+
+
+@mobile_bp.route("/labor/schedule/replacements", methods=["POST"])
+@mobile_login_required
+def mobile_schedule_replacements(current_user):
+    """Who could take one shift instead of the person on it.
+
+    One answer, served to both surfaces. Three implementations of this rule
+    had drifted apart: the what-if pass checked availability, constraints,
+    double booking and the hours ceiling; iOS checked availability only; the
+    dashboard checked neither, and would happily offer somebody who had
+    declared that day unavailable or was already at thirty-eight hours.
+    """
+    from client_api import quality_inputs_from_db
+    from models import get_operational_scores, get_unavailability_map, get_staff_notes
+    import shift_quality as _sq
+    rid = current_user["restaurant_id"]
+    data = request.get_json(silent=True) or {}
+    raw_rows = data.get("rows")
+    try:
+        index = int(data.get("index"))
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error="index required"), 400
+    if not isinstance(raw_rows, list) or not (0 <= index < len(raw_rows)):
+        return jsonify(ok=False, error="rows and a valid index required"), 400
+    if len(raw_rows) > 2000:
+        return jsonify(ok=False, error="that is more rows than a week can hold"), 400
+
+    rows = [{c: str(r.get(c) or "")[:200] for c in _SCHEDULE_COLS}
+            for r in raw_rows if isinstance(r, dict)]
+    try:
+        scores = get_operational_scores(rid)
+        availability = get_unavailability_map(rid)
+        try:
+            constraints = {n["employee_name"]: n["notes"] for n in (get_staff_notes(rid) or [])
+                           if n.get("employee_name")}
+        except Exception:
+            # Constraints tighten the answer; losing them must not stop a
+            # manager finding out who is free. The swap check still enforces
+            # availability, double booking and the hours ceiling.
+            constraints = {}
+        target = rows[index]
+
+        # Everybody else already on the schedule is a candidate; the same
+        # legality check the what-if pass uses decides which of them could
+        # actually take this shift.
+        seen, out = set(), []
+        for j, row in enumerate(rows):
+            name = (row.get("employee") or "").strip()
+            if not name or name.lower() in seen or j == index:
+                continue
+            if not _sq._swap_is_legal(rows, min(index, j), max(index, j),
+                                      availability, scores, constraints):
+                continue
+            seen.add(name.lower())
+            out.append({"name": name, "role": row.get("role"),
+                        "score": scores.get(name),
+                        "date": row.get("date"), "day": row.get("day")})
+        out.sort(key=lambda m: (-(m["score"] or 0), m["name"]))
+        return jsonify(ok=True, replacements=out,
+                       employee=target.get("employee"), role=target.get("role")), 200
+    except Exception as e:
+        return jsonify(ok=False, error=_safe_err(e), replacements=[]), 500
 
 
 @mobile_bp.route("/labor/profiles")
@@ -4777,6 +4930,8 @@ def mobile_shift_profiles(current_user):
 @mobile_login_required
 def mobile_save_shift_profile(current_user):
     """Create or update one shift profile."""
+    if not _may_manage_team(current_user):
+        return _refuse_team_write()
     from models import save_shift_profile
     import shift_quality as _sq
     rid = current_user["restaurant_id"]
@@ -4798,8 +4953,13 @@ def mobile_save_shift_profile(current_user):
         # carry a shape the engine will not read back.
         clean = _sq.profile_to_dict(_sq.profile_from_dict(profile))
         clean["active"] = profile.get("active", True)
-        saved = save_shift_profile(rid, clean,
-                                   updated_by=current_user.get("username") or current_user.get("email"))
+        from models import record_capability_change, get_shift_profiles
+        who = current_user.get("username") or current_user.get("email")
+        _before = next((p for p in get_shift_profiles(rid, include_inactive=True)
+                        if p.get("key") == clean["key"]), None)
+        saved = save_shift_profile(rid, clean, updated_by=who)
+        record_capability_change(rid, "profile", subject=clean["key"],
+                                 before=_before, after=saved, changed_by=who)
         return jsonify(ok=True, profile=saved), 200
     except ValueError as ve:
         return jsonify(ok=False, error=str(ve)), 400
@@ -4810,6 +4970,8 @@ def mobile_save_shift_profile(current_user):
 @mobile_bp.route("/labor/profiles/delete", methods=["POST"])
 @mobile_login_required
 def mobile_delete_shift_profile(current_user):
+    if not _may_manage_team(current_user):
+        return _refuse_team_write()
     from models import delete_shift_profile
     data = request.get_json(silent=True) or {}
     key = str(data.get("key") or "").strip()
@@ -4830,6 +4992,8 @@ def mobile_save_quality_weights(current_user):
     weight for a dimension that has since been renamed must not stop an
     owner saving the rest.
     """
+    if not _may_manage_team(current_user):
+        return _refuse_team_write()
     import json as _j
     from models import update_restaurant
     import shift_quality as _sq
@@ -4848,12 +5012,40 @@ def mobile_save_quality_weights(current_user):
             return jsonify(ok=False, error=f"{key}: {value!r} is not a number"), 400
         if n < 0:
             return jsonify(ok=False, error=f"{key}: a weight cannot be negative"), 400
+        if n > _sq.MAX_WEIGHT:
+            return jsonify(ok=False,
+                           error=f"{key}: {n:g} is beyond the {_sq.MAX_WEIGHT} ceiling — "
+                                 "past that, every other dimension stops counting"), 400
         cleaned[key] = n
     if cleaned and not any(cleaned.values()):
         return jsonify(ok=False, error="at least one dimension has to count for something"), 400
     try:
-        update_restaurant(current_user["restaurant_id"],
-                          {"quality_weights_json": _j.dumps(cleaned) if cleaned else None})
+        from models import record_capability_change, get_quality_weights
+        rid = current_user["restaurant_id"]
+        _before = get_quality_weights(rid)
+        update_restaurant(rid, {"quality_weights_json": _j.dumps(cleaned) if cleaned else None})
+        record_capability_change(
+            rid, "weights", subject="dimension weighting", before=_before, after=cleaned,
+            changed_by=current_user.get("username") or current_user.get("email"))
         return jsonify(ok=True, weights=cleaned, ignored=ignored), 200
     except Exception as e:
         return jsonify(ok=False, error=_safe_err(e)), 500
+
+
+@mobile_bp.route("/labor/capability-changes")
+@mobile_login_required
+def mobile_capability_changes(current_user):
+    """Who changed a rating, a target, a profile or the weighting, and when.
+
+    The first question after a disputed schedule, and until now there was
+    nowhere to look: the capability tables carried the current value's
+    author and nothing else, and the per-role targets lived in a plain
+    column with no provenance at all.
+    """
+    from models import get_capability_changes
+    try:
+        return jsonify(ok=True,
+                       changes=get_capability_changes(current_user["restaurant_id"],
+                                                      limit=100)), 200
+    except Exception as e:
+        return jsonify(ok=False, error=_safe_err(e), changes=[]), 500

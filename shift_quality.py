@@ -172,6 +172,19 @@ class ShiftContext:
     week_assignments: dict = field(default_factory=dict)   # {name: [assignment]}
     prior_pattern: dict = field(default_factory=dict)  # {name: {"days": [...], "dayparts": [...]}}
     availability: dict = field(default_factory=dict)   # {name: set(unavailable days)}
+    # Free-text staff constraints, which the generator's prompt calls the
+    # highest priority rule of all. The engine cannot parse them, but it can
+    # refuse to move somebody who has one.
+    constraints: dict = field(default_factory=dict)    # {name: note}
+    # Rows the repair pass could not vouch for. A double-booked or
+    # off-roster row must not be counted as coverage.
+    flagged: set = field(default_factory=set)          # {(employee, date, start)}
+    # True for the last shift to end on this date, so a closing requirement
+    # can name the shift it actually means.
+    is_closing: bool = False
+    # {name: [{date, location}]} — the same person already on a schedule at
+    # another site in this group on this date.
+    elsewhere: dict = field(default_factory=dict)
     # Where a dimension leaves a note on its way OUT. A dimension that
     # withdraws for want of data takes its findings with it, and the owner
     # would never learn that rating somebody unlocks the check — so the
@@ -191,16 +204,48 @@ class ShiftContext:
 
     @property
     def by_role(self) -> dict:
-        out = {}
+        """{role: [names]}, each person counted ONCE across the whole shift.
+
+        Somebody listed as both Cook and Bartender at five o'clock is one
+        person who cannot be in two places. Counting them in both buckets
+        scored a physically impossible shift as fully covered — which is
+        exactly what it did before this deduplicated globally rather than
+        per role. They are credited to the first role they appear in and
+        reported through `role_conflicts`.
+        """
+        out, claimed = {}, {}
+        for r in self.rows:
+            n = (r.get("employee") or "").strip()
+            role = (r.get("role") or "").strip()
+            if not (n and role) or self._is_flagged(r):
+                continue
+            key = n.lower()
+            if key in claimed:
+                continue
+            claimed[key] = role
+            out.setdefault(role, []).append(n)
+        return out
+
+    @property
+    def role_conflicts(self) -> list:
+        """People the schedule puts in more than one role on this shift."""
+        seen, clashing = {}, {}
         for r in self.rows:
             n = (r.get("employee") or "").strip()
             role = (r.get("role") or "").strip()
             if not (n and role):
                 continue
-            bucket = out.setdefault(role, [])
-            if n not in bucket:
-                bucket.append(n)
-        return out
+            key = n.lower()
+            if key in seen and seen[key] != role:
+                clashing.setdefault(n, {seen[key]}).add(role)
+            seen.setdefault(key, role)
+        return [{"name": n, "roles": sorted(rs)} for n, rs in sorted(clashing.items())]
+
+    def _is_flagged(self, row: dict) -> bool:
+        if not self.flagged:
+            return False
+        return ((row.get("employee") or "").strip().lower(),
+                row.get("date") or "", row.get("shift_start") or "") in self.flagged
 
     def rated(self, names) -> list:
         return [n for n in names if self.scores.get(n) is not None]
@@ -332,6 +377,19 @@ def dim_coverage(ctx: ShiftContext) -> DimensionResult | None:
             f"{missing} {_plural(missing, 'position')} unfilled — " + "; ".join(gaps) + ".")
     else:
         res.strengths.append("Every required position is filled.")
+    # Somebody already working another site in this group tonight is not
+    # coverage here, whatever the row says.
+    for name in ctx.people:
+        for entry in (ctx.elsewhere.get(name) or []):
+            if entry.get("date") == ctx.date:
+                res.weaknesses.append(
+                    f"{name} is also on the schedule at {entry['location']} on this date.")
+                res.score = min(res.score, 60)
+    for clash in ctx.role_conflicts:
+        res.weaknesses.append(
+            f"{clash['name']} is down for {' and '.join(r.lower() for r in clash['roles'])} "
+            "at the same time — only one of them is counted.")
+    res.facts["role_conflicts"] = ctx.role_conflicts
     return res
 
 
@@ -419,7 +477,7 @@ def dim_leadership(ctx: ShiftContext) -> DimensionResult | None:
     blind = not ctx.scores and not ctx.leader_flags
     answerable = []
     for rule in rules:
-        if blind and rule.get("min_score") is not None:
+        if blind and rule.get("min_score") is not None and not rule.get("attribute"):
             unanswerable.append(f"{(rule.get('role') or 'somebody').lower()} scoring "
                                 f"{float(rule['min_score']):g} or above")
         else:
@@ -439,17 +497,28 @@ def dim_leadership(ctx: ShiftContext) -> DimensionResult | None:
         role = (rule.get("role") or "").strip()
         need = int(rule.get("count") or 1)
         min_score = rule.get("min_score")
+        attribute = (rule.get("attribute") or "").strip()
         pool = []
         for r, names in on_role.items():
             if r.strip().lower() == role.lower():
                 pool = names
                 break
-        if min_score is None:
+        # Three ways a rule can be answered, in the order an operator would
+        # think of them: a named capability, a minimum score, or simply
+        # being on the shift. The capability branch is what makes "every
+        # closing shift needs somebody authorised to close" real rather
+        # than documented.
+        if attribute:
+            qualified = [n for n in pool if ctx.leader_flags.get(n)]
+        elif min_score is None:
             qualified = list(pool)
         else:
             qualified = [n for n in pool if (ctx.scores.get(n) or 0) >= float(min_score)]
         label = (f"{need} {role.lower()}{'' if need == 1 else 's'}" +
-                 (f" scoring {float(min_score):g} or above" if min_score is not None else ""))
+                 (" authorised to close" if attribute
+                  else (f" scoring {float(min_score):g} or above" if min_score is not None else "")))
+        if rule.get("closing"):
+            label += " on the closing shift"
         if len(qualified) >= need:
             satisfied.append(label)
         else:
@@ -497,6 +566,10 @@ def dim_leadership(ctx: ShiftContext) -> DimensionResult | None:
 
 def _rule_applies(rule: dict, ctx: ShiftContext) -> bool:
     if not (rule.get("role") or "").strip():
+        return False
+    # "Every closing shift" means the last shift to end that day, not every
+    # shift. Applied to all of them it demanded a closer at breakfast.
+    if rule.get("closing") and not ctx.is_closing:
         return False
     days = {d.strip().lower() for d in (rule.get("days") or []) if d}
     if days and (ctx.day or "").strip().lower() not in days:
@@ -917,13 +990,17 @@ def evaluate_shift(ctx: ShiftContext, weights: dict = None) -> dict:
     merged.update(weights or {})
 
     ctx.notes = []
-    applied, skipped = [], []
+    applied, skipped, failed = [], [], []
     for key, fn in DIMENSIONS.items():
         try:
             result = fn(ctx)
             reason = "no data"
         except Exception as exc:      # one bad dimension must not lose the shift
             result, reason = None, f"failed: {exc}"
+            # Silently withdrawing here made a crash indistinguishable from
+            # an unconfigured dimension, and coverage crashing turned a
+            # capped 50 into a clean 100 with nothing on screen to say so.
+            failed.append({"key": key, "error": str(exc)[:200]})
         if result is None:
             skipped.append({"key": key, "reason": reason})
             continue
@@ -945,9 +1022,11 @@ def evaluate_shift(ctx: ShiftContext, weights: dict = None) -> dict:
 
     if not applied:
         return {"date": ctx.date, "day": ctx.day, "daypart": ctx.daypart,
-                "scored": False, "score": None,
+                "scored": False, "score": None, "failed": failed,
                 "profile": _profile_facts(ctx.profile),
-                "reason": "Nothing configured yet to judge this shift against."}
+                "reason": ("Every dimension failed to compute for this shift."
+                           if failed else
+                           "Nothing configured yet to judge this shift against.")}
 
     total_weight = sum(d.weight for d in applied) or 1.0
     raw = sum(d.score * d.weight for d in applied) / total_weight
@@ -977,6 +1056,9 @@ def evaluate_shift(ctx: ShiftContext, weights: dict = None) -> dict:
                                     key=lambda x: -((SCORE_MAX - x.score) * x.weight))
                   for w in d.weaknesses]
     blind = [b for d in applied for b in d.blind_spots] + list(ctx.notes)
+    for f in failed:
+        blind.append(f"{f['key'].replace('_', ' ').capitalize()} could not be worked out "
+                     "for this shift, so it was left out of the score.")
 
     return {
         "date": ctx.date, "day": ctx.day, "daypart": ctx.daypart,
@@ -994,10 +1076,21 @@ def evaluate_shift(ctx: ShiftContext, weights: dict = None) -> dict:
              "customer_facing": d.key in CUSTOMER_DIMENSIONS}
             for d in sorted(applied, key=lambda x: -x.weight)
         ],
-        "not_applicable": sorted({s["key"] for s in skipped}),
+        "not_applicable": sorted({s["key"] for s in skipped if s["key"] not in
+                                  {f["key"] for f in failed}}),
+        # Kept apart from not_applicable on purpose: "you have not set this
+        # up" and "we could not compute this" are different facts and only
+        # one of them is the owner's to act on.
+        "failed": failed,
         "strengths": strengths,
         "weaknesses": weaknesses,
         "blind_spots": blind,
+        # Which dimension wrote each line. Not rendered — it lets the week
+        # summary group findings by dimension rather than by exact wording,
+        # so "81h under target" and "120h under target" are recognised as
+        # one recurring problem instead of two unrelated ones.
+        "line_keys": {line: d.key for d in applied
+                      for line in d.strengths + d.weaknesses + d.blind_spots},
     }
 
 
@@ -1074,9 +1167,14 @@ def _hoist_common_lines(scored: list) -> dict:
     Returns the hoisted lines and strips them from each shift in place, so a
     shift's own section is left saying only what is different about it. The
     three most repeated offenders in practice are a fully staffed roster, a
-    role sitting the same distance under its target every night, and a
-    fatigue warning about somebody who works every day — all of them
-    genuinely week-level, and all of them previously printed seven times.
+    role sitting the same distance under target every night, and a fatigue
+    warning about somebody who works every day — all of them genuinely
+    week-level, and all of them previously printed seven times.
+
+    Grouped by DIMENSION, not by exact wording. A finding that carries a
+    per-day number writes a different sentence every day, so string matching
+    left "81h under target" on two shifts while the summary reported "120h
+    under target" for five — the same problem, presented as two.
     """
     if len(scored) < COMMON_MIN_SHIFTS:
         return {"strengths": [], "weaknesses": [], "blind_spots": []}
@@ -1084,34 +1182,45 @@ def _hoist_common_lines(scored: list) -> dict:
     bar = max(COMMON_MIN_SHIFTS, int(round(len(scored) * COMMON_SHARE)))
     out = {}
     for field_name in ("strengths", "weaknesses", "blind_spots"):
-        counts, first_at = {}, {}
+        # {dimension: {"shifts": n, "lines": {text: count}, "order": first seen}}
+        by_dim = {}
         for shift in scored:
+            keys = shift.get("line_keys") or {}
+            here = set()
             for line in shift.get(field_name) or []:
-                counts[line] = counts.get(line, 0) + 1
-                # Ties have to break on something stable. A set's iteration
-                # order is not: Python randomises string hashing per process,
-                # so the list that survives truncation below differed on
-                # every page load and a manager refreshing the page watched
-                # the findings reshuffle. First appearance is both stable and
-                # meaningful — each shift emits its worst dimension first.
-                first_at.setdefault(line, len(first_at))
-        common = [line for line, n in counts.items() if n >= bar]
-        # A line hoisted from EVERY shift carries no count. It is printed
-        # under a week-level heading, which already says what it is, and
-        # "Pat works 7 days in a row this week — every shift this week" is
-        # a sentence arguing with itself. A partial hoist keeps its count,
-        # because "5 of 7" is the whole point of that line.
-        out[field_name] = [
-            line if counts[line] == len(scored)
-            else f"{line} — {counts[line]} of {len(scored)} shifts"
-            for line in sorted(common, key=lambda x: (-counts[x], first_at[x]))
-        ]
-        hoisted = set(common)
+                dim = keys.get(line, line)   # unattributed lines group by themselves
+                entry = by_dim.setdefault(dim, {"shifts": 0, "lines": {},
+                                                "order": len(by_dim)})
+                entry["lines"][line] = entry["lines"].get(line, 0) + 1
+                here.add(dim)
+            for dim in here:
+                by_dim[dim]["shifts"] += 1
+
+        common = {dim: e for dim, e in by_dim.items() if e["shifts"] >= bar}
+        lines = []
+        # Ties break on first appearance, which is stable and meaningful:
+        # each shift emits its costliest dimension first. A set's iteration
+        # order is neither, and reshuffled the summary on every page load.
+        for dim, entry in sorted(common.items(),
+                                 key=lambda kv: (-kv[1]["shifts"], kv[1]["order"])):
+            # The wording that came up most often speaks for the group.
+            text = max(entry["lines"].items(), key=lambda kv: (kv[1], -len(kv[0])))[0]
+            varied = len(entry["lines"]) > 1
+            if entry["shifts"] == len(scored) and not varied:
+                lines.append(text)
+            elif entry["shifts"] == len(scored):
+                lines.append(f"{text} Similar on every shift this week.")
+            else:
+                lines.append(f"{text} — {entry['shifts']} of {len(scored)} shifts")
+        out[field_name] = lines
+
         for shift in scored:
+            keys = shift.get("line_keys") or {}
             shift[field_name] = [x for x in (shift.get(field_name) or [])
-                                 if x not in hoisted]
+                                 if keys.get(x, x) not in common]
 
     for shift in scored:
+        shift.pop("line_keys", None)
         if not shift["strengths"] and not shift["weaknesses"]:
             shift["nothing_specific"] = True
     return out
@@ -1237,6 +1346,14 @@ def confidence(shifts: list, signals: dict) -> dict:
         score -= min(20, dropped * 5)
         reasons.append(f"{dropped} {_plural(dropped, 'row')} could not be read at all.")
 
+    broken = sum(len(s.get("failed") or []) for s in shifts)
+    if broken:
+        # A computation failure is the one confidence penalty that is our
+        # fault rather than the owner's, and the one most worth seeing.
+        score -= min(35, broken * 6)
+        reasons.append(f"{broken} dimension {_plural(broken, 'reading')} could not be "
+                       "worked out, so the score is built on less than usual.")
+
     unfixable = int(signals.get("unsatisfiable") or 0)
     if unfixable:
         score -= min(20, unfixable * 7)
@@ -1342,6 +1459,27 @@ def _day_name(date_str: str, fallback: str = "") -> str:
         return fallback or ""
 
 
+def _end_minutes(value: str) -> int:
+    """Minutes past midnight for a shift end, or -1 when it cannot be read.
+
+    A shift ending after midnight is deliberately NOT wrapped: for the one
+    question this answers — which bucket closes the day — a 1:00am end is
+    the last one out, and treating it as 60 would make the lunch crew the
+    closers.
+    """
+    raw = (value or "").strip().lower().replace(" ", "")
+    if not raw:
+        return -1
+    for fmt in ("%I:%M%p", "%I%p", "%H:%M", "%H:%M:%S"):
+        try:
+            t = datetime.strptime(raw, fmt)
+            minutes = t.hour * 60 + t.minute
+            return minutes + 1440 if t.hour < 5 else minutes
+        except ValueError:
+            continue
+    return -1
+
+
 def _row_hours(row: dict) -> float:
     try:
         return float(row.get("scheduled_hours") or 0)
@@ -1368,9 +1506,22 @@ def build_contexts(rows: list, profiles: list = None, **signals) -> list:
         buckets.setdefault((date, part), []).append(row)
         day_hours[date] = day_hours.get(date, 0.0) + _row_hours(row)
 
+    # Which bucket actually closes each date, so a closing requirement binds
+    # the shift it means rather than every shift of the day.
+    closes_on = {}
+    for (date, part), shift_rows in buckets.items():
+        latest = max((_end_minutes(r.get("shift_end")) for r in shift_rows), default=-1)
+        if latest > closes_on.get(date, (-1, None))[0]:
+            closes_on[date] = (latest, part)
+
     # Who works what across the whole week, so fatigue and fairness can see
-    # past the one shift they are scoring.
+    # past the one shift they are scoring. Seeded with the tail of the
+    # PREVIOUS schedule, because a run of nine days looks like five when the
+    # engine can only see inside its own seven-day box — and the week
+    # boundary is exactly where that matters.
     week_assignments = {}
+    for name, entries in (signals.get("prior_week_assignments") or {}).items():
+        week_assignments.setdefault(name, []).extend(entries)
     for (date, part), shift_rows in buckets.items():
         day = _day_name(date)
         demand = resolve_profile(day, part, profiles).demand
@@ -1391,6 +1542,10 @@ def build_contexts(rows: list, profiles: list = None, **signals) -> list:
         contexts.append(ShiftContext(
             date=date, day=day, daypart=part, rows=shift_rows,
             profile=resolve_profile(day, part, profiles),
+            is_closing=(closes_on.get(date, (None, None))[1] == part),
+            elsewhere=signals.get("elsewhere") or {},
+            constraints=signals.get("constraints") or {},
+            flagged=signals.get("flagged") or set(),
             scores=signals.get("scores") or {},
             tenure=signals.get("tenure") or {},
             leader_flags=signals.get("leader_flags") or {},
@@ -1426,6 +1581,7 @@ def score_rows(rows: list, profiles: list = None, weights: dict = None,
         "has_tenure": bool(signals.get("tenure")),
         "has_demand": bool(signals.get("demand_by_day")),
         "has_availability": bool(signals.get("availability")),
+        "has_constraints": bool(signals.get("constraints")),
         "has_profiles": bool(profiles) and profiles is not BUILTIN_PROFILES,
         "rows_needing_review": signals.get("rows_needing_review"),
         "dropped_rows": signals.get("dropped_rows"),
@@ -1468,59 +1624,94 @@ def _unavailable(availability: dict, name: str, day: str) -> bool:
     return (day or "").strip().lower() in {str(d).strip().lower() for d in blocked}
 
 
+class _SwapIndex:
+    """Everything a legality check needs, computed once per pass.
+
+    The first version of this rebuilt the whole weekly-hours map and
+    rescanned every row inside the check itself, which made the check O(n)
+    and the pass O(n^3): a 300-person roster spent nineteen seconds here
+    and evaluated nothing. Each lookup below is now O(1) and the pass only
+    ever pairs rows within the same role.
+    """
+
+    def __init__(self, rows: list, availability: dict, constraints: dict):
+        self.rows = rows
+        self.availability = availability or {}
+        self.constrained = {n.strip().lower() for n, note in (constraints or {}).items()
+                            if n and str(note or "").strip()}
+        self.hours = _weekly_hours(rows)
+        self.working = set()
+        self.by_role = {}
+        for i, row in enumerate(rows):
+            name = (row.get("employee") or "").strip().lower()
+            date = row.get("date") or ""
+            if name and date:
+                self.working.add((name, date))
+            role = (row.get("role") or "").strip().lower()
+            if name and role:
+                self.by_role.setdefault(role, []).append(i)
+
+    def pairs(self):
+        """Only same-role pairs are ever candidates, so never enumerate the rest."""
+        for indices in self.by_role.values():
+            for a in range(len(indices)):
+                for b in range(a + 1, len(indices)):
+                    yield indices[a], indices[b]
+
+    def legal(self, i: int, j: int, scores: dict) -> bool:
+        a, b = self.rows[i], self.rows[j]
+        name_a = (a.get("employee") or "").strip()
+        name_b = (b.get("employee") or "").strip()
+        if not name_a or not name_b:
+            return False
+        low_a, low_b = name_a.lower(), name_b.lower()
+        if low_a == low_b:
+            return False
+        if (a.get("date") or "") == (b.get("date") or ""):
+            return False
+
+        # A staff constraint is the one rule the generator's prompt calls
+        # absolute, and it is free text this engine cannot read. It can still
+        # refuse to move the person it applies to, which is the honest
+        # answer: better no suggestion than a persuasive illegal one.
+        if low_a in self.constrained or low_b in self.constrained:
+            return False
+
+        day_a = _day_name(a.get("date", ""), a.get("day", ""))
+        day_b = _day_name(b.get("date", ""), b.get("day", ""))
+        if _unavailable(self.availability, name_b, day_a) or \
+           _unavailable(self.availability, name_a, day_b):
+            return False
+
+        if (low_b, a.get("date")) in self.working or (low_a, b.get("date")) in self.working:
+            return False
+
+        if scores is not None:
+            rated_a = scores.get(name_a) is not None
+            rated_b = scores.get(name_b) is not None
+            if rated_a != rated_b:
+                return False
+
+        delta = _row_hours(b) - _row_hours(a)
+        if self.hours.get(low_a, 0.0) + delta > WEEKLY_HOURS_CEILING:
+            return False
+        if self.hours.get(low_b, 0.0) - delta > WEEKLY_HOURS_CEILING:
+            return False
+        return True
+
+
 def _swap_is_legal(rows: list, i: int, j: int, availability: dict,
-                   scores: dict = None) -> bool:
+                   scores: dict = None, constraints: dict = None) -> bool:
     """Can these two rows trade employees without breaking anything?
 
-    Checks the five ways a swap goes wrong: an unavailable day, a person
-    already working that shift, a week pushed over forty hours, a double
-    booking at the same start time, and — the subtle one — trading a rated
-    employee against an unrated one.
-
-    That last rule matters more than it looks. An unrated person counts as
-    nothing toward shift strength, so moving them off a busy night ALWAYS
-    raises the score, and the engine would end up recommending "do not
-    schedule the people you have not got round to rating yet". That is the
-    exact behaviour the Operational Score design refuses: not being rated
-    is a gap in the owner's data, never a mark against the employee.
+    Six ways a swap goes wrong: an unavailable day, a staff constraint, a
+    person already working that shift, a week pushed over forty hours, a
+    double booking, and — the subtle one — trading a rated employee against
+    an unrated one, which always "improves" the score because an unrated
+    person counts as nothing and would have the engine advising an owner
+    not to schedule the people they have not got round to rating.
     """
-    a, b = rows[i], rows[j]
-    name_a = (a.get("employee") or "").strip()
-    name_b = (b.get("employee") or "").strip()
-    if not name_a or not name_b or name_a.lower() == name_b.lower():
-        return False
-    if scores is not None:
-        rated_a = scores.get(name_a) is not None
-        rated_b = scores.get(name_b) is not None
-        if rated_a != rated_b:
-            return False
-    if (a.get("role") or "").strip().lower() != (b.get("role") or "").strip().lower():
-        return False
-    if (a.get("date") or "") == (b.get("date") or ""):
-        return False
-
-    day_a = _day_name(a.get("date", ""), a.get("day", ""))
-    day_b = _day_name(b.get("date", ""), b.get("day", ""))
-    if _unavailable(availability, name_b, day_a) or _unavailable(availability, name_a, day_b):
-        return False
-
-    for k, row in enumerate(rows):
-        if k in (i, j):
-            continue
-        who = (row.get("employee") or "").strip().lower()
-        when = (row.get("date") or "")
-        if who == name_b.lower() and when == a.get("date"):
-            return False
-        if who == name_a.lower() and when == b.get("date"):
-            return False
-
-    hours = _weekly_hours(rows)
-    delta = _row_hours(b) - _row_hours(a)
-    if hours.get(name_a.lower(), 0.0) + delta > WEEKLY_HOURS_CEILING:
-        return False
-    if hours.get(name_b.lower(), 0.0) - delta > WEEKLY_HOURS_CEILING:
-        return False
-    return True
+    return _SwapIndex(rows, availability, constraints).legal(i, j, scores)
 
 
 def compare_candidates(rows: list, profiles: list = None, weights: dict = None,
@@ -1530,37 +1721,50 @@ def compare_candidates(rows: list, profiles: list = None, weights: dict = None,
 
     Returns the winning rows, the baseline and final scores, and one line
     per accepted swap saying which dimensions moved. A run that finds
-    nothing is a real result and says so: it means the model's own
-    assignment was already the best arrangement of these people.
+    nothing is a real result and says so — but only ever about the
+    candidates it actually tried, never about the whole space.
     """
     baseline = score_rows(rows, profiles=profiles, weights=weights, **signals)
     if not baseline.get("checked"):
         return {"ran": False, "reason": baseline.get("reason"), "baseline": baseline,
-                "best": baseline, "rows": rows, "swaps": [], "evaluated": 0}
+                "best": baseline, "rows": rows, "swaps": [], "evaluated": 0,
+                "legal_swaps": 0}
 
     availability = signals.get("availability") or {}
+    constraints = signals.get("constraints") or {}
+    scores = signals.get("scores") or {}
     current_rows = [dict(r) for r in rows]
     current = baseline
     swaps, evaluated = [], 0
-
-    # Candidate pairs, strongest-first: try the swaps most likely to help
-    # before the budget runs out, rather than walking the week in order.
-    scores = signals.get("scores") or {}
-
-    def _pair_priority(pair):
-        i, j = pair
-        a = scores.get((current_rows[i].get("employee") or "").strip())
-        b = scores.get((current_rows[j].get("employee") or "").strip())
-        return -abs((a or 0) - (b or 0))
+    legal_total = 0
 
     improved = True
     while improved and evaluated < max_evaluations:
         improved = False
-        pairs = [(i, j) for i in range(len(current_rows))
-                 for j in range(i + 1, len(current_rows))
-                 if _swap_is_legal(current_rows, i, j, availability, scores)]
-        pairs.sort(key=_pair_priority)
-        for i, j in pairs:
+        index = _SwapIndex(current_rows, availability, constraints)
+        # Keep only the most promising candidates rather than sorting the
+        # whole space: the widest score gap is where an improvement lives,
+        # and sorting a million pairs to use sixty was the other half of
+        # the cost.
+        best_pairs = []
+        legal_here = 0
+        for i, j in index.pairs():
+            if not index.legal(i, j, scores):
+                continue
+            legal_here += 1
+            gap = abs((scores.get((current_rows[i].get("employee") or "").strip()) or 0)
+                      - (scores.get((current_rows[j].get("employee") or "").strip()) or 0))
+            if len(best_pairs) < max_evaluations:
+                best_pairs.append((gap, i, j))
+                if len(best_pairs) == max_evaluations:
+                    best_pairs.sort(reverse=True)
+            elif gap > best_pairs[-1][0]:
+                best_pairs[-1] = (gap, i, j)
+                best_pairs.sort(reverse=True)
+        legal_total = max(legal_total, legal_here)
+        best_pairs.sort(reverse=True)
+
+        for _gap, i, j in best_pairs:
             if evaluated >= max_evaluations:
                 break
             trial = [dict(r) for r in current_rows]
@@ -1581,6 +1785,7 @@ def compare_candidates(rows: list, profiles: list = None, weights: dict = None,
     return {
         "ran": True,
         "evaluated": evaluated,
+        "legal_swaps": legal_total,
         "baseline_score": baseline["score"],
         "best_score": current["score"],
         "improvement": current["score"] - baseline["score"],
@@ -1588,7 +1793,7 @@ def compare_candidates(rows: list, profiles: list = None, weights: dict = None,
         "rows": current_rows,
         "baseline": baseline,
         "best": current,
-        "verdict": _candidate_verdict(baseline, current, swaps, evaluated),
+        "verdict": _candidate_verdict(baseline, current, swaps, evaluated, legal_total),
     }
 
 
@@ -1615,22 +1820,32 @@ def _describe_swap(row_a: dict, row_b: dict, before: dict, after: dict, gain: in
     }
 
 
-def _candidate_verdict(baseline: dict, best: dict, swaps: list, evaluated: int) -> str:
+def _candidate_verdict(baseline: dict, best: dict, swaps: list,
+                       evaluated: int, legal: int = 0) -> str:
+    """What the comparison actually established, and nothing more.
+
+    The first version said "This is the strongest team available from this
+    roster" after sixty evaluations. On a two-hundred-person week that is
+    sixty of roughly sixteen thousand legal swaps, and the sentence was the
+    most confident thing on the panel and the least supported. It now only
+    makes that claim when the run genuinely exhausted the candidates.
+    """
     if not evaluated:
-        # Nothing was legal to try: everybody already works every day they
-        # could, or each role has exactly one person in it. Saying "none
-        # scored better" here would claim a conclusion the run never tested.
         return ("No alternative arrangement was possible — every swap would have "
-                "double-booked somebody, broken an availability, or pushed a week "
-                "past forty hours.")
+                "double-booked somebody, broken an availability or a staff note, "
+                "or pushed a week past forty hours.")
     if not swaps:
-        return (f"Tried {evaluated} alternative " + _plural(evaluated, "arrangement") +
-                " of the same people and none scored better. "
-                "This is the strongest team available from this roster.")
+        if legal and evaluated >= legal:
+            return (f"Tried every one of the {legal} possible swaps and none scored "
+                    "better. This is the strongest team available from this roster.")
+        scope = (f" out of {legal:,} possible" if legal > evaluated else "")
+        return (f"Tried the {evaluated} most promising swaps{scope} and none scored "
+                "better. A wider search might still find something.")
     names = ", ".join(f"{s['from']['employee']}/{s['to']['employee']}" for s in swaps[:3])
+    tail = (f", out of {legal:,} possible" if legal > evaluated else "")
     return (f"{len(swaps)} " + _plural(len(swaps), "swap") +
             f" raised overall quality from {baseline['score']} to {best['score']} "
-            f"({names}), out of {evaluated} alternatives tried.")
+            f"({names}), from {evaluated} tried{tail}.")
 
 
 # ── Assembling the profile set for one restaurant ──────────────────────────
@@ -1724,24 +1939,55 @@ def _clone(profile: ShiftProfile) -> ShiftProfile:
     )
 
 
+# The Operational Score scale, duplicated here rather than imported so this
+# module stays free of database code. models.SCORE_MIN/SCORE_MAX are the
+# same numbers and a test holds them together.
+SCORE_SCALE_MIN, SCORE_SCALE_MAX = 1, 5
+MAX_WEIGHT = 100
+
+
+def _num(value, low, high, default):
+    """A number inside its own range, or the default if it is not one.
+
+    Every profile field goes through this. Without it a negative strength
+    target saved happily and was then always met, so an owner believed a
+    bar was enforced when it was inert — the worst kind of setting, one
+    that looks configured and does nothing.
+    """
+    try:
+        n = float(value)
+    except (TypeError, ValueError):
+        return default
+    if n != n or n in (float("inf"), float("-inf")):
+        return default
+    return max(low, min(high, n))
+
+
 def profile_from_dict(data: dict) -> ShiftProfile:
-    """One stored profile row into the dataclass, tolerant of missing keys."""
+    """One stored profile row into the dataclass, tolerant of missing keys
+    and refusing to carry a value the engine could never act on."""
     return ShiftProfile(
         key=str(data.get("key") or "custom"),
         label=str(data.get("label") or "Custom shift"),
-        days=list(data.get("days") or []),
+        days=[str(d) for d in (data.get("days") or []) if d],
         daypart=(data.get("daypart") or None),
-        demand=(data.get("demand") or "normal"),
-        min_quality=int(data.get("min_quality") or 70),
-        min_strength=dict(data.get("min_strength") or {}),
-        critical_positions=dict(data.get("critical_positions") or {}),
+        demand=(data.get("demand") if data.get("demand") in DEMAND_LEVELS else "normal"),
+        min_quality=int(_num(data.get("min_quality"), 0, 100, 70)),
+        min_strength={str(r): _num(v, 0, 200, 0)
+                      for r, v in (data.get("min_strength") or {}).items()
+                      if _num(v, 0, 200, 0) > 0},
+        critical_positions={str(r): int(_num(v, 0, 99, 0))
+                            for r, v in (data.get("critical_positions") or {}).items()
+                            if int(_num(v, 0, 99, 0)) > 0},
         requires_leader=bool(data.get("requires_leader")),
-        leader_roles=list(data.get("leader_roles") or []),
-        leader_min_score=float(data.get("leader_min_score") or 4.0),
-        experience_mix=float(data.get("experience_mix") or 0.4),
+        leader_roles=[str(r) for r in (data.get("leader_roles") or []) if r],
+        leader_min_score=_num(data.get("leader_min_score"),
+                              SCORE_SCALE_MIN, SCORE_SCALE_MAX, 4.0),
+        experience_mix=_num(data.get("experience_mix"), 0.0, 1.0, 0.4),
         training_allowed=bool(data.get("training_allowed")),
-        weights=dict(data.get("weights") or {}),
-        priority=int(data.get("priority") or 0),
+        weights={str(k): _num(v, 0, MAX_WEIGHT, 0)
+                 for k, v in (data.get("weights") or {}).items() if k in DIMENSIONS},
+        priority=int(_num(data.get("priority"), 0, 99, 0)),
         source=str(data.get("source") or "restaurant"),
     )
 

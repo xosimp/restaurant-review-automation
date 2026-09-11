@@ -2263,19 +2263,11 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
         </div>
       </div>
 
-      <!-- Shift strength: the Operational Score check, run over the CSV that
-           was actually produced rather than over the prompt's intent. Never
-           an error and never a blocked generation — an owner who cannot staff
-           a Saturday to target needs the best schedule available AND to be
-           told which shift fell short. -->
-      <div id="sched-strength-banner" style="display:none;padding:14px 20px;border-bottom:1px solid rgba(255,255,255,.08)">
-        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
-          <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase" id="sched-strength-kicker">Shift Strength</div>
-          <div id="sched-strength-badge" style="font-size:13px;font-weight:800;padding:8px 16px;border-radius:8px;white-space:nowrap"></div>
-        </div>
-        <div id="sched-strength-list" style="margin-top:8px"></div>
-      </div>
-
+      <!-- The Shift Strength banner is gone. It ran a second leadership
+           check with different semantics from the quality engine — silently
+           dropping any rule without a minimum score, which the engine
+           enforces — and both rendered, so an owner read "every target met"
+           a few centimetres above "needs 2 bartenders, found 1". -->
       <!-- Shift Quality — the schedule graded the way an operator reads one.
            Placed above the shift table deliberately: the score and its
            reasons are what a manager decides on; the rows are what they
@@ -2292,7 +2284,8 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
           </div>
           <div id="sq-dimensions" style="flex:2;min-width:260px"></div>
         </div>
-        <div id="sq-warnings" style="margin-top:14px"></div>
+        <div id="sq-save-state" style="margin-top:10px;font-size:13.5px;min-height:18px"></div>
+        <div id="sq-warnings" style="margin-top:10px"></div>
         <div id="sq-shifts" style="margin-top:16px"></div>
         <div style="margin-top:12px">
           <button type="button" onclick="toggleQualityReasoning()" id="sq-why-btn" style="font-family:inherit;font-size:14.5px;font-weight:700;color:var(--ember);background:none;border:none;cursor:pointer;padding:0">Why this schedule? &#9662;</button>
@@ -7006,7 +6999,6 @@ function _schedHandleResult(data) {
     parBanner.style.display = 'block';
   }
 
-  renderScheduleStrength(data.strength);
   renderShiftQuality(data.quality, data.what_if);
   loadTeamForSwap();
   _schedRows = data.preview_rows || [];
@@ -7015,37 +7007,6 @@ function _schedHandleResult(data) {
 
   if (panel) panel.style.display = 'block';
   if (panel) panel.scrollIntoView({behavior: 'smooth', block: 'nearest'});
-}
-
-// Leader requirements are listed before shortfalls: a rule that names one
-// person is a harder miss than a combined total coming in a point light.
-function renderScheduleStrength(strength) {
-  var banner = document.getElementById('sched-strength-banner');
-  if (!banner) return;
-  if (!strength || !strength.checked) { banner.style.display = 'none'; return; }
-  var misses = strength.leader_misses || [];
-  var shorts = strength.shortfalls || [];
-  var total = misses.length + shorts.length;
-  var clean = total === 0;
-  var tone = clean ? '#6fcf97' : '#f2994a';
-  banner.style.background = clean ? 'rgba(111,207,151,.06)' : 'rgba(242,153,74,.06)';
-  document.getElementById('sched-strength-kicker').style.color = tone;
-  var badge = document.getElementById('sched-strength-badge');
-  badge.textContent = clean ? '\u2713 Every target met'
-    : (total === 1 ? '1 shift to look at' : total + ' shifts to look at');
-  badge.style.background = clean ? 'rgba(111,207,151,.2)' : 'rgba(242,153,74,.18)';
-  badge.style.color = tone;
-
-  var html = '';
-  var i;
-  for (i = 0; i < misses.length; i++) {
-    html += _strengthLine((misses[i].day || misses[i].date) + ' ' + misses[i].daypart, misses[i].reason);
-  }
-  for (i = 0; i < shorts.length; i++) {
-    html += _strengthLine((shorts[i].day || shorts[i].date) + ' ' + shorts[i].daypart + ' \u00B7 ' + shorts[i].role, shorts[i].reason);
-  }
-  document.getElementById('sched-strength-list').innerHTML = html;
-  banner.style.display = 'block';
 }
 
 // ── Shift profiles and weighting ────────────────────────────────────────────
@@ -7508,6 +7469,13 @@ function _qualityShiftDetail(shift, tone) {
   html += _qualityGroup('Working well', shift.strengths, '#6fcf97', 3);
   html += _qualityGroup('Holding it back', shift.weaknesses, '#f2994a', 4);
   html += _qualityGroup('Not known', shift.blind_spots, 'var(--ink3)', 2);
+  if (shift.failed && shift.failed.length) {
+    var names = [], k;
+    for (k = 0; k < shift.failed.length; k++) names.push(shift.failed[k].key.replace(/_/g, ' '));
+    html += _qualityGroup('Could not be worked out', [names.join(', ')
+          + ' — left out of this score. That is a fault on our side, not a setting.'],
+          '#eb5757', 1);
+  }
   // Anything true of the whole week was hoisted into the summary below, so
   // a shift with nothing left is a shift that simply ran like the rest of
   // the week — which is worth saying rather than leaving blank.
@@ -7558,47 +7526,44 @@ function loadTeamForSwap() {
   }).catch(function () { });
 }
 
-// Same role, not already working that day, and nobody who said they cannot
-// work it. Strongest first, because the reason a manager opens this is
-// almost always a shift the engine just told them is weak.
-function _replacementsFor(index) {
-  var target = _schedRows[index];
-  if (!target) return [];
-  var role = (target.role || '').toLowerCase().replace(/^\s+|\s+$/g, '');
-  var working = {}, i;
-  for (i = 0; i < _schedRows.length; i++) {
-    if (_schedRows[i].date === target.date) working[(_schedRows[i].employee || '').toLowerCase()] = 1;
-  }
-  var out = [];
-  for (i = 0; i < _teamForSwap.length; i++) {
-    var m = _teamForSwap[i];
-    if (working[(m.name || '').toLowerCase()]) continue;
-    var mRole = (m.role || '').toLowerCase().replace(/^\s+|\s+$/g, '');
-    if (role && mRole && mRole !== role) continue;
-    out.push(m);
-  }
-  out.sort(function (a, b) { return (b.score || 0) - (a.score || 0); });
-  return out;
+// Who could take this shift is decided server-side, by the same check the
+// what-if pass uses. Three implementations of this rule had drifted apart:
+// the engine checked availability, staff constraints, double booking and the
+// forty-hour ceiling; iOS checked availability only; this checked neither,
+// and would offer somebody who had declared that day unavailable or was
+// already at thirty-eight hours.
+function _fetchReplacements(index, done) {
+  fetch('/api/labor/schedule/replacements', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json', 'X-CSRFToken': '{{csrf_token}}'},
+    body: JSON.stringify({rows: _schedRows, index: index})
+  }).then(function (r) { return r.json(); }).then(function (d) {
+    done(d && d.ok ? (d.replacements || []) : null);
+  }).catch(function () { done(null); });
 }
 
 function openShiftSwap(index, anchorEl) {
-  var options = _replacementsFor(index);
-  if (!options.length) { anchorEl.title = 'Nobody else is free for this shift'; return; }
-  var sel = document.createElement('select');
-  sel.style.cssText = 'font-family:inherit;font-size:12px;padding:3px 6px;border:1px solid var(--paper3);'
-                    + 'border-radius:5px;background:var(--surface);color:var(--ink)';
-  var html = '<option value="">' + _escHtml(_schedRows[index].employee || '') + '</option>', i;
-  for (i = 0; i < options.length; i++) {
-    html += '<option value="' + _escAttr(options[i].name) + '">' + _escHtml(options[i].name)
-          + (options[i].score ? '  \u00B7  ' + options[i].score : '') + '</option>';
-  }
-  sel.innerHTML = html;
-  sel.onchange = function () {
-    if (!sel.value) { anchorEl.parentNode.replaceChild(anchorEl, sel); return; }
-    applyShiftSwap(index, sel.value);
-  };
-  anchorEl.parentNode.replaceChild(sel, anchorEl);
-  sel.focus();
+  anchorEl.style.opacity = '.5';
+  _fetchReplacements(index, function (options) {
+    anchorEl.style.opacity = '1';
+    if (options === null) { anchorEl.title = 'Could not check who is free'; return; }
+    if (!options.length) { anchorEl.title = 'Nobody else can take this shift'; return; }
+    var sel = document.createElement('select');
+    sel.style.cssText = 'font-family:inherit;font-size:13px;padding:4px 7px;border:1px solid var(--paper3);'
+                      + 'border-radius:5px;background:var(--surface);color:var(--ink)';
+    var html = '<option value="">' + _escHtml(_schedRows[index].employee || '') + '</option>', i;
+    for (i = 0; i < options.length; i++) {
+      html += '<option value="' + _escAttr(options[i].name) + '">' + _escHtml(options[i].name)
+            + (options[i].score ? '  \u00B7  ' + options[i].score : '') + '</option>';
+    }
+    sel.innerHTML = html;
+    sel.onchange = function () {
+      if (!sel.value) { sel.parentNode.replaceChild(anchorEl, sel); return; }
+      applyShiftSwap(index, sel.value);
+    };
+    anchorEl.parentNode.replaceChild(sel, anchorEl);
+    sel.focus();
+  });
 }
 
 function applyShiftSwap(index, name) {
@@ -7608,22 +7573,55 @@ function applyShiftSwap(index, name) {
   _schedRenderTable();
 }
 
-// Re-score whatever is on screen. The edit itself always stands: if the
-// score call fails, the manager's change is still there and only the
-// number is stale, which is the right way round.
+// Re-score AND store whatever is on screen.
+//
+// Storing is the whole point of an override. Without it the edit lived in
+// this page, the score moved, and publishing read the CSV saved at
+// generation time — so staff received the week the manager had just fixed,
+// unfixed, with nothing on screen to say so.
 function rescoreSchedule() {
-  var panel = document.getElementById('sched-quality');
-  if (panel) panel.style.opacity = '.5';
+  _setQualityState('saving');
   fetch('/api/labor/schedule/score', {
     method: 'POST',
     headers: {'Content-Type': 'application/json', 'X-CSRFToken': '{{csrf_token}}'},
-    body: JSON.stringify({rows: _schedRows, daily_target_hours: _schedTargets})
+    body: JSON.stringify({rows: _schedRows, daily_target_hours: _schedTargets, save: true})
   }).then(function (r) { return r.json(); }).then(function (d) {
-    if (panel) panel.style.opacity = '1';
-    if (d && d.ok) renderShiftQuality(d.quality, d.what_if);
+    if (d && d.ok) {
+      renderShiftQuality(d.quality, d.what_if);
+      _schedCsvCache = '';
+      _setQualityState(d.saved ? 'saved' : 'unsaved');
+    } else {
+      _setQualityState('stale', (d && d.error) || 'Could not save that change.');
+    }
   }).catch(function () {
-    if (panel) panel.style.opacity = '1';
+    _setQualityState('stale', 'Could not save that change.');
   });
+}
+
+// A failed re-score used to leave the old number on screen beside the new
+// edit, with a CHANGED badge implying it was current. On a flaky connection
+// that was the default outcome.
+function _setQualityState(state, message) {
+  var panel = document.getElementById('sched-quality');
+  var note = document.getElementById('sq-save-state');
+  if (!panel || !note) return;
+  panel.style.opacity = state === 'saving' ? '.55' : '1';
+  if (state === 'saving') {
+    note.style.color = 'var(--ink3)';
+    note.textContent = 'Saving your change…';
+  } else if (state === 'saved') {
+    note.style.color = '#6fcf97';
+    note.textContent = 'Change saved — this is what your staff will receive.';
+    setTimeout(function () {
+      if (note.textContent.indexOf('Change saved') === 0) note.textContent = '';
+    }, 4000);
+  } else if (state === 'stale') {
+    note.style.color = '#eb5757';
+    note.textContent = (message || 'Could not save.') + ' The score above is out of date.';
+  } else {
+    note.style.color = 'var(--ink3)';
+    note.textContent = 'Scored, but not saved.';
+  }
 }
 
 document.addEventListener('click', function (ev) {
@@ -7715,6 +7713,15 @@ function renderQualityReasoning() {
           + _escHtml(conf.summary) + '</div>';
     html += _qualityLines(conf.reasons, 'var(--ink3)', '&#8226;', 5);
   }
+  // Precise about what this is. Every line above is measured from the
+  // schedule that was produced, which is why none of them can name somebody
+  // who is not on it — and also why none of them can say why the AI picked
+  // one person over another. That reasoning is not recorded anywhere.
+  html += '<div style="font-size:12.5px;color:var(--ink3);line-height:1.6;margin-top:14px;'
+        + 'padding-top:12px;border-top:1px solid rgba(255,255,255,.08)">'
+        + 'Every line here is measured from the finished schedule, not written by the AI. '
+        + 'It explains why each shift scored what it did. It does not record why the AI '
+        + 'chose one person over another.</div>';
   box.innerHTML = html;
 }
 
@@ -7730,12 +7737,6 @@ document.addEventListener('click', function (ev) {
   _qualityOpenShift = (_qualityOpenShift === id) ? null : id;
   renderQualityShifts((_quality && _quality.shifts) || []);
 });
-
-function _strengthLine(title, body) {
-  return '<div style="margin-top:6px"><div style="font-size:12px;font-weight:700;color:rgba(255,255,255,.88)">'
-    + _escHtml(title) + '</div><div style="font-size:12px;color:rgba(255,255,255,.62);line-height:1.6">'
-    + _escHtml(body) + '</div></div>';
-}
 
 function generateSchedule(btn) {
   _schedBtn = btn;
@@ -8020,11 +8021,23 @@ function renderTeamList() {
     html += '<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--paper);border:1px solid var(--paper3);border-radius:6px;gap:12px;flex-wrap:wrap">';
     html += '<div><div style="font-size:13px;font-weight:600;color:var(--ink)">' + _escHtml(m.name) + '</div>';
     html += '<div style="font-size:11px;color:var(--ink3)">' + sub.join(' · ') + '</div></div>';
+    html += '<div style="display:flex;align-items:center;gap:12px">';
     html += '<div style="display:flex;gap:4px" data-team-idx="' + i + '">';
     for (var v = 1; v <= 5; v++) {
       var on = m.score === v;
       html += '<button type="button" data-score="' + v + '" style="font-family:inherit;font-size:13px;font-weight:700;width:34px;height:30px;cursor:pointer;border-radius:6px;border:1px solid ' + (on ? 'transparent' : 'var(--paper3)') + ';background:' + (on ? _scoreColor(v) : 'var(--surface)') + ';color:' + (on ? '#fff' : 'var(--ink2)') + '">' + v + '</button>';
     }
+    html += '</div>';
+    // Authorised to close. Registered in the capability layer from day one
+    // and reachable from no interface until now, which meant a leadership
+    // rule could only ever be answered by a score — so an experienced closer
+    // rated 3 never qualified, and "every closing shift needs somebody
+    // authorised to close" could not be satisfied at all.
+    html += '<label title="Authorised to close" style="display:flex;align-items:center;gap:5px;'
+         + 'font-size:12px;color:' + (m.can_close ? '#6fcf97' : 'var(--ink3)') + ';cursor:pointer;'
+         + 'white-space:nowrap;user-select:none">'
+         + '<input type="checkbox" data-team-close="' + i + '"' + (m.can_close ? ' checked' : '')
+         + ' style="margin:0">closer</label>';
     html += '</div></div>';
   }
   list.innerHTML = html;
@@ -8080,6 +8093,29 @@ function setTeamScore(idx, score) {
     for (var i = 0; i < _teamRows.length; i++) if (_teamRows[i].score) rated++;
     renderTeamCoverage({rated: rated, total: _teamRows.length});
   }).catch(function(){ m.score = previous; renderTeamList(); });
+}
+
+document.addEventListener('change', function (ev) {
+  var el = ev.target;
+  if (!el || !el.getAttribute) return;
+  var idx = el.getAttribute('data-team-close');
+  if (idx === null) return;
+  setTeamCloser(parseInt(idx, 10), el.checked);
+});
+
+function setTeamCloser(idx, on) {
+  var m = _teamRows[idx];
+  if (!m) return;
+  var previous = m.can_close;
+  m.can_close = on;
+  renderTeamList();
+  fetch('/api/labor/team/rating', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json', 'X-CSRFToken': '{{csrf_token}}'},
+    body: JSON.stringify({employee_name: m.name, attribute: 'can_close', flag: on ? 1 : null})
+  }).then(function (r) { return r.json(); }).then(function (d) {
+    if (!d.ok) { m.can_close = previous; renderTeamList(); }
+  }).catch(function () { m.can_close = previous; renderTeamList(); });
 }
 
 function renderTeamThresholds() {
@@ -10957,7 +10993,14 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       var cnt=document.getElementById('sched-history-count');if(cnt)cnt.textContent=h.length?h.length+' generated':'';
       if(!h.length){el.textContent='No schedules generated yet — the first one you generate is kept here.';return;}
       el.innerHTML=h.slice(0,12).map(function(r){var hs=+r.hours_scheduled||0,hb=+r.hours_budget||0;var note=hb&&hs?(hs<hb?Math.round(hb-hs)+' hrs under budget':(hs>hb?Math.round(hs-hb)+' hrs over budget':'on budget')):'';var tone=hb&&hs?(hs<=hb?'good':'bad'):'';var M=window.CavnarCharts?CavnarCharts.mdy:function(x){return x;};
-        return '<div class="row"><b>'+esc(M(r.week_start||''))+'</b><span class="m">'+(r.week_end?'through <span class="hb-num">'+esc(M(r.week_end))+'</span> · ':'')+'<span class="hb-num">'+Math.round(hs)+'</span> hrs scheduled'+(note?' · <span class="n '+tone+'">'+note+'</span>':'')+'</span><span class="n hb-num">'+ago(r.generated_at)+'</span><span class="a"><button class="hb-btn" onclick="viewScheduleHistory('+r.id+',this)">View</button><button class="hb-btn" onclick="downloadHistoryCsv('+r.id+')">CSV</button><button class="hb-x" style="opacity:1" title="Delete" onclick="deleteScheduleHistory('+r.id+',this)">✕</button></span></div>';}).join('');
+        // The Shift Quality score travels with the list now, so a week can
+        // be compared against the ones before it. It used to live only in
+        // the async job result, which is deleted the first time it is
+        // polled — so the headline number an owner is asked to trust could
+        // never be looked at twice and there was no trend to see.
+        var q=r.quality_score?'<span class="n '+(r.quality_score>=78?'good':(r.quality_score>=65?'':'bad'))+'" title="Shift Quality'+(r.confidence?' · '+esc(r.confidence)+' confidence':'')+'">'+r.quality_score+'/100</span>':'';
+        var ed=r.edited_at?' · <span class="n">edited</span>':'';
+        return '<div class="row"><b>'+esc(M(r.week_start||''))+'</b><span class="m">'+(r.week_end?'through <span class="hb-num">'+esc(M(r.week_end))+'</span> · ':'')+'<span class="hb-num">'+Math.round(hs)+'</span> hrs scheduled'+(note?' · <span class="n '+tone+'">'+note+'</span>':'')+(q?' · '+q:'')+ed+'</span><span class="n hb-num">'+ago(r.generated_at)+'</span><span class="a"><button class="hb-btn" onclick="viewScheduleHistory('+r.id+',this)">View</button><button class="hb-btn" onclick="downloadHistoryCsv('+r.id+')">CSV</button><button class="hb-x" style="opacity:1" title="Delete" onclick="deleteScheduleHistory('+r.id+',this)">✕</button></span></div>';}).join('');
     });
   };
   window.viewScheduleHistory=function(id,btn){

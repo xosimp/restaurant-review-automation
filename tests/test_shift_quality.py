@@ -1054,7 +1054,10 @@ def test_ios_shows_what_the_generator_is_doing_rather_than_a_spinner():
 def test_ios_lets_a_manager_move_somebody_and_see_the_score_change():
     model = _no_comments(_source("ios/CavnarAI/CavnarAI/Features/Labor/LaborViewModel.swift"))
     assert "labor/schedule/score" in model
-    assert "func overrideEmployee" in model and "func replacements" in model
+    assert "func overrideEmployee" in model
+    # Eligibility is the server's answer, not a third hand-rolled copy of
+    # the rule that had already drifted apart across three surfaces.
+    assert "labor/schedule/replacements" in model and "func loadReplacements" in model
     view = _no_comments(_source("ios/CavnarAI/CavnarAI/Features/Labor/LaborView.swift"))
     assert "shiftRowWithOverride" in view
     assert "viewModel.overrideEmployee(rowId: row.id, to: member.name)" in view
@@ -1068,12 +1071,19 @@ def test_the_web_renders_shift_quality():
         assert piece in html, piece
 
 
-def test_the_web_rescores_a_manager_edit():
+def test_the_web_saves_a_manager_edit_rather_than_only_scoring_it():
+    """Without the save the edit lived in the page, the score moved, and
+    publishing read the CSV written at generation time — so staff received
+    the week the manager had just fixed, unfixed."""
     html = _no_comments(_source("templates", "dashboard.html"))
     assert "'/api/labor/schedule/score'" in html
+    assert "save: true" in html
     assert "function applyShiftSwap" in html and "function rescoreSchedule" in html
-    # The swap list has to respect who is already working that day.
-    assert "function _replacementsFor" in html
+    # Eligibility comes from the one endpoint both surfaces call.
+    assert "'/api/labor/schedule/replacements'" in html
+    assert "function _replacementsFor" not in html
+    # And a failed save must not leave the old number looking current.
+    assert "function _setQualityState" in html and "out of date" in html
 
 
 def test_the_web_shows_the_generation_stages():
@@ -1350,3 +1360,230 @@ def test_findings_are_ordered_by_what_they_actually_cost_the_shift():
     assert "unfilled" in weaknesses[0], weaknesses
     # And the lighter finding is still there, just lower down.
     assert any("nobody stronger" in w for w in weaknesses), weaknesses
+
+
+# ── Audit fixes ────────────────────────────────────────────────────────────
+#
+# One test per finding from the production audit, named for the failure it
+# prevents rather than for the function it calls.
+
+def test_a_person_in_two_roles_at_once_is_counted_once(db_path=None):
+    """P1-9. Somebody listed as Cook and Bartender at five o'clock is one
+    person who cannot be in two places, and counting them twice scored a
+    physically impossible shift as fully covered."""
+    rows = [row(SAT, "Solo", "Cook"), row(SAT, "Solo", "Bartender")]
+    out = sq.score_rows(rows, profiles=[sq.ShiftProfile(key="n", source="restaurant")],
+                        role_minimums={"Cook": 1, "Bartender": 1}, scores={"Solo": 5})
+    coverage = next(d for d in out["shifts"][0]["dimensions"] if d["key"] == "coverage")
+    assert coverage["score"] == 50, coverage["facts"]
+    assert coverage["facts"]["role_conflicts"]
+    assert any("at the same time" in w for w in out["shifts"][0]["weaknesses"])
+
+
+def test_a_row_the_repair_pass_flagged_is_not_counted_as_coverage():
+    """P1-9. needs_review never reached the engine, so a row the pipeline
+    had already refused to vouch for still filled a position."""
+    rows = [row(SAT, "A", "Cook"), row(SAT, "Ghost", "Cook")]
+    flagged = {("ghost", SAT, "5:00pm")}
+    clean = sq.score_rows(rows, profiles=[sq.ShiftProfile(key="n", source="restaurant")],
+                          role_minimums={"Cook": 2}, scores={"A": 4, "Ghost": 4})
+    marked = sq.score_rows(rows, profiles=[sq.ShiftProfile(key="n", source="restaurant")],
+                           role_minimums={"Cook": 2}, scores={"A": 4, "Ghost": 4},
+                           flagged=flagged)
+    assert clean["shifts"][0]["score"] == 100
+    assert marked["shifts"][0]["capped_by"] == "coverage"
+
+
+def test_a_dimension_that_crashes_is_reported_not_silently_dropped():
+    """P1-4. A crash used to be indistinguishable from an unconfigured
+    dimension, so coverage failing turned a capped 50 into a clean 100."""
+    original = sq.DIMENSIONS["coverage"]
+    def boom(_ctx):
+        raise RuntimeError("boom")
+    sq.DIMENSIONS["coverage"] = boom
+    try:
+        out = sq.score_rows([row(SAT, "A", "Cook")],
+                            profiles=[sq.ShiftProfile(key="n", min_strength={"Cook": 4},
+                                                      source="restaurant")],
+                            scores={"A": 5}, role_minimums={"Cook": 3})
+    finally:
+        sq.DIMENSIONS["coverage"] = original
+    shift = out["shifts"][0]
+    assert [f["key"] for f in shift["failed"]] == ["coverage"]
+    assert "coverage" not in shift["not_applicable"]
+    assert any("could not be worked out" in b for b in shift["blind_spots"])
+    assert any("could not be" in r for r in out["confidence"]["reasons"])
+
+
+def test_the_verdict_only_claims_the_roster_is_best_when_it_checked_all_of_it():
+    """P1-5. Sixty evaluations out of sixteen thousand legal swaps was the
+    most confident sentence on the panel and the least supported."""
+    big = []
+    for i in range(40):
+        for k in range(2):
+            big.append(row((MON, TUE, WED, THU, FRI, SAT, SUN)[(i + k * 3) % 7],
+                           f"E{i}", "Server"))
+    out = sq.compare_candidates(big, profiles=[sq.ShiftProfile(
+        key="n", min_strength={"Server": 30}, source="restaurant")],
+        scores={f"E{i}": (i % 5) + 1 for i in range(40)}, max_evaluations=5)
+    assert out["legal_swaps"] > out["evaluated"]
+    assert "strongest team available" not in out["verdict"]
+    assert "A wider search might still find something" in out["verdict"]
+
+    small = [row(SAT, "Pat", "Bartender"), row(FRI, "Casey", "Bartender")]
+    tiny = sq.compare_candidates(small, profiles=profiles(),
+                                 scores={"Pat": 5, "Casey": 5})
+    assert "strongest team available" in tiny["verdict"]
+
+
+def test_a_swap_never_moves_somebody_carrying_a_staff_constraint():
+    """P1-6. The prompt calls staff constraints the highest-priority rule of
+    all, and the what-if pass could not see them — so it recommended, with a
+    score improvement attached, swaps that broke one."""
+    setup = [sq.ShiftProfile(key="sat", label="Saturday dinner", days=["Saturday"],
+                             daypart="night", demand="peak",
+                             min_strength={"Bartender": 8}, priority=2,
+                             source="restaurant"),
+             sq.ShiftProfile(key="std", source="restaurant")]
+    rows = [row(SAT, "Sam", "Bartender"), row(FRI, "Pat", "Bartender")]
+    kw = dict(profiles=setup, scores={"Pat": 5, "Sam": 2},
+              leader_rules=[{"role": "Bartender", "days": ["Saturday"],
+                             "daypart": "night", "min_score": 5}])
+    free = sq.compare_candidates(rows, **kw)
+    bound = sq.compare_candidates(rows, constraints={"Pat": "no weekends"}, **kw)
+    assert free["swaps"], free["verdict"]
+    assert not bound["swaps"]
+    assert bound["evaluated"] == 0
+
+
+def test_a_closing_requirement_binds_the_closing_shift_and_no_other():
+    """P1-2. Documented in the code and implemented nowhere; the engine read
+    it as a plain headcount rule and demanded a closer at breakfast."""
+    rows = [lunch(SAT, "Morning", "Server"), row(SAT, "Night", "Server")]
+    rule = [{"closing": True, "role": "Server", "attribute": "can_close", "count": 1}]
+    out = sq.score_rows(rows, profiles=[sq.ShiftProfile(key="n", source="restaurant")],
+                        scores={"Morning": 4, "Night": 4}, leader_rules=rule)
+    by_part = {s["daypart"]: s for s in out["shifts"]}
+    assert "leadership" in by_part["morning"]["not_applicable"]
+    night = next(d for d in by_part["night"]["dimensions"] if d["key"] == "leadership")
+    assert night["score"] == 0
+    assert "authorised to close" in night["facts"]["misses"][0]["rule"]
+
+
+def test_a_closer_flag_satisfies_a_closing_requirement():
+    """P1-2 and P1-3. The capability the flag represents is the whole point:
+    an experienced closer rated 3 could never qualify on score alone."""
+    rows = [row(SAT, "Night", "Server")]
+    rule = [{"closing": True, "role": "Server", "attribute": "can_close", "count": 1}]
+    out = sq.score_rows(rows, profiles=[sq.ShiftProfile(key="n", source="restaurant")],
+                        scores={"Night": 3}, leader_flags={"Night": True},
+                        leader_rules=rule)
+    leadership = next(d for d in out["shifts"][0]["dimensions"] if d["key"] == "leadership")
+    assert leadership["score"] == 100
+
+
+def test_fatigue_counts_the_days_worked_before_this_week_began():
+    """P1-15. A run of nine days read as five, because the engine could only
+    see inside its own seven-day box — and the week boundary is exactly
+    where that matters."""
+    rows = [row(d, "Nonstop", "Cook") for d in (MON, TUE, WED, THU, FRI)]
+    rows += [row(d, "Other", "Cook") for d in (MON, TUE)]
+    prior = {"Nonstop": [{"date": "2026-09-05", "daypart": "night",
+                          "day": "Saturday", "demand": "normal"},
+                         {"date": "2026-09-06", "daypart": "night",
+                          "day": "Sunday", "demand": "normal"}]}
+    setup = dict(profiles=[sq.ShiftProfile(key="n", min_strength={"Cook": 4},
+                                           source="restaurant")],
+                 scores={"Nonstop": 4, "Other": 4})
+    narrow = sq.score_rows(rows, **setup)
+    wide = sq.score_rows(rows, prior_week_assignments=prior, **setup)
+    assert not any("in a row" in w for w in narrow["weaknesses"])
+    assert any("7 days in a row" in w for w in wide["weaknesses"])
+
+
+def test_somebody_on_another_sites_schedule_is_not_counted_as_coverage_here():
+    """P2-7. Employees are name-keyed per restaurant, which is the right
+    isolation — and meant nothing anywhere noticed when two sites of the
+    same group put the same person on the same night."""
+    rows = [row(SAT, "Shared", "Bartender"), row(SAT, "Local", "Bartender")]
+    out = sq.score_rows(rows, profiles=[sq.ShiftProfile(key="n", source="restaurant")],
+                        role_minimums={"Bartender": 2}, scores={"Shared": 4, "Local": 4},
+                        elsewhere={"Shared": [{"date": SAT, "location": "Lincoln Park"}]})
+    coverage = next(d for d in out["shifts"][0]["dimensions"] if d["key"] == "coverage")
+    assert coverage["score"] <= 60
+    assert any("Lincoln Park" in w for w in out["shifts"][0]["weaknesses"])
+
+
+def test_every_profile_field_is_bounded():
+    """P1-13. A negative strength target saved happily and was then always
+    met, so an owner believed a bar was enforced when it was inert."""
+    p = sq.profile_from_dict({
+        "key": "x", "min_strength": {"Cook": -50, "Server": 8},
+        "experience_mix": 9.0, "leader_min_score": 99, "min_quality": 900,
+        "critical_positions": {"Cook": -3, "Server": 2},
+        "weights": {"coverage": 10 ** 9, "not_a_dimension": 5},
+        "demand": "apocalyptic"})
+    assert p.min_strength == {"Server": 8.0}
+    assert p.experience_mix == 1.0
+    assert p.leader_min_score == sq.SCORE_SCALE_MAX
+    assert p.min_quality == 100
+    assert p.critical_positions == {"Server": 2}
+    assert p.weights == {"coverage": float(sq.MAX_WEIGHT)}
+    assert p.demand == "normal"
+
+
+def test_a_finding_that_carries_a_number_still_deduplicates():
+    """P3-1. String matching left "81h under target" on two shifts while the
+    summary reported "120h under target" for five — the same problem,
+    presented as two."""
+    rows = []
+    for i, d in enumerate((MON, TUE, WED, THU, FRI, SAT, SUN)):
+        rows.append(row(d, "A", "Cook", hours=6 + i))
+    out = sq.score_rows(rows, profiles=[sq.ShiftProfile(key="n", min_strength={"Cook": 4},
+                                                        source="restaurant")],
+                        scores={"A": 5},
+                        daily_target_hours={d: 40 for d in (MON, TUE, WED, THU, FRI, SAT, SUN)})
+    per_shift = [w for s in out["shifts"] for w in s["weaknesses"] if "under target" in w]
+    assert per_shift == [], per_shift
+    assert any("under target" in w for w in out["weaknesses"])
+
+
+def test_the_download_serves_the_stored_schedule_rather_than_generating_a_new_one():
+    """P0-2. It called _build_schedule_result, which runs the generator
+    again — so the CSV an owner printed was a different week from the one on
+    screen, carried none of the review they had just worked through, and
+    billed a second model call every press."""
+    src = _source("client_api.py")
+    body = src[src.index("def download_schedule(current_user):"):]
+    body = body[:body.index("@client_bp.route")]
+    assert "_build_schedule_result" not in body.split('"""')[2], body[:400]
+    assert "get_schedule_history_detail" in body
+
+
+def test_the_stale_job_sweep_exists_and_runs_at_boot():
+    """P1-14. Generation runs on a daemon thread, which is killed at
+    interpreter exit without running its finally blocks — so a deploy
+    mid-generation left the row pending forever and lost a paid call."""
+    assert "def sweep_stale_jobs(" in _source("ops.py")
+    boot = _source("hosted_dashboard.py")
+    assert "sweep_stale_jobs()" in boot
+
+
+def test_both_surfaces_can_mark_somebody_authorised_to_close():
+    """P1-3. The capability was registered from day one and reachable from
+    no interface, so a leadership rule could only ever be answered by a
+    score and an experienced closer rated 3 never qualified."""
+    panel = _no_comments(_source("ios/CavnarAI/CavnarAI/Features/Labor/TeamStrengthSection.swift"))
+    assert "closerToggle(member)" in panel
+    model = _no_comments(_source("ios/CavnarAI/CavnarAI/Features/Labor/LaborViewModel.swift"))
+    assert "func setCloser" in model and 'attribute = "can_close"' in model
+    html = _no_comments(_source("templates", "dashboard.html"))
+    assert "function setTeamCloser" in html and "data-team-close" in html
+
+
+def test_both_surfaces_say_what_the_explanation_is_not():
+    """P2-6. The engine can say why a shift scored what it did. It cannot
+    say why the AI chose one person over another, and should not imply it."""
+    for text in (_source("ios/CavnarAI/CavnarAI/Features/Labor/ShiftQualityPanel.swift"),
+                 _source("templates", "dashboard.html")):
+        assert "does not record why the AI" in text

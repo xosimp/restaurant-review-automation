@@ -431,6 +431,8 @@ struct LaborView: View {
         .frame(width: 240, alignment: .leading)
     }
 
+    @State private var rowReplacements: [String: [ScheduleReplacement]] = [:]
+
     private static let availabilityID = "labor-availability"
     private static let teamID = "labor-team"
     private static let targetsID = "labor-targets"
@@ -697,9 +699,6 @@ struct LaborView: View {
                     if let budget = result.hoursBudget, budget > 0, let scheduled = result.hoursScheduled {
                         parHoursBanner(budget: budget, scheduled: scheduled, dollars: result.laborBudgetDollars)
                     }
-                    if let strength = result.strength, strength.checked {
-                        strengthBanner(strength)
-                    }
                 }
                 .cavnarCard()
 
@@ -708,7 +707,8 @@ struct LaborView: View {
                 // manager decides on, and the rows are what they check after.
                 if let quality = result.quality, quality.checked {
                     ShiftQualityPanel(quality: quality, whatIf: result.whatIf,
-                                      isRescoring: viewModel.isRescoringQuality)
+                                      isRescoring: viewModel.isRescoringQuality,
+                                      overrideState: viewModel.overrideState)
                 }
 
                 if let rows = result.previewRows, !rows.isEmpty {
@@ -796,62 +796,12 @@ struct LaborView: View {
         .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
     }
 
-    /// What the Operational Score check found in the finished schedule.
-    ///
-    /// Deliberately not an error and not a blocked generation: an owner who
-    /// cannot staff a Saturday to target needs the best schedule available
-    /// AND to be told which shift fell short and why. Every line here is
-    /// computed from the CSV that was actually produced, not from the
-    /// prompt's intent.
-    @ViewBuilder
-    private func strengthBanner(_ strength: ScheduleStrength) -> some View {
-        let misses = strength.leaderMisses ?? []
-        let shortfalls = strength.shortfalls ?? []
-        VStack(alignment: .leading, spacing: 9) {
-            HStack(spacing: 7) {
-                Image(systemName: strength.isClean ? "checkmark.seal" : "exclamationmark.triangle")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(strength.isClean ? Color.cavnarGreen : Color.cavnarAmber)
-                Text("SHIFT STRENGTH")
-                    .font(.cavnarBody(13.5, weight: 700))
-                    .tracking(1)
-                    .foregroundStyle(strength.isClean ? Color.cavnarGreen : Color.cavnarAmber)
-                Spacer()
-                Text(strength.isClean
-                     ? "Every target met"
-                     : (strength.problems == 1 ? "1 shift to look at" : "\(strength.problems) shifts to look at"))
-                    .font(.cavnarBody(14, weight: 700))
-                    .foregroundStyle(strength.isClean ? Color.cavnarGreen : Color.cavnarAmber)
-            }
-
-            // Leader requirements first — a rule that names one person is a
-            // harder miss than a combined total coming in a point light.
-            ForEach(misses) { miss in
-                strengthLine(title: "\(miss.day ?? miss.date) \(miss.daypart)", body: miss.reason)
-            }
-            ForEach(shortfalls) { short in
-                strengthLine(title: "\(short.day ?? short.date) \(short.daypart) · \(short.role)",
-                             body: short.reason)
-            }
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background((strength.isClean ? Color.cavnarGreen : Color.cavnarAmber).opacity(0.06))
-        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
-    }
-
-    private func strengthLine(title: String, body: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title)
-                .font(.cavnarBody(13.5, weight: 700))
-                .foregroundStyle(Color.cavnarInk)
-            Text(body)
-                .font(.cavnarBody(13.5))
-                .foregroundStyle(Color.cavnarInk2)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
+    // The Shift Strength banner is gone. It ran a second leadership check
+    // with different semantics from the quality engine — silently dropping
+    // any rule without a minimum score, which the engine enforces — and both
+    // rendered, so an owner read "every target met" a few centimetres above
+    // "needs 2 bartenders, found 1". The engine's leadership and operational
+    // strength dimensions cover everything it reported.
 
     private static let scheduleDayOrder = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
@@ -967,19 +917,21 @@ struct LaborView: View {
     /// Picking a replacement re-scores the week immediately, so the manager
     /// sees what the change bought before they look away.
     private func shiftRowWithOverride(_ row: ScheduleRow) -> some View {
-        let replacements = viewModel.replacements(for: row)
         let wasChanged = viewModel.overriddenRows.contains(row.id)
+        let candidates = rowReplacements[row.id]
         return Menu {
-            if replacements.isEmpty {
-                Text("Nobody else is free for this shift")
-            } else {
-                ForEach(replacements) { member in
-                    Button {
-                        Task { await viewModel.overrideEmployee(rowId: row.id, to: member.name) }
-                    } label: {
-                        Text(member.score.map { "\(member.name)  ·  \($0)" } ?? member.name)
+            if let candidates {
+                if candidates.isEmpty {
+                    Text("Nobody else can take this shift")
+                } else {
+                    ForEach(candidates) { member in
+                        Button {
+                            Task { await viewModel.overrideEmployee(rowId: row.id, to: member.name) }
+                        } label: { Text(member.label) }
                     }
                 }
+            } else {
+                Text("Checking who is free…")
             }
         } label: {
             HStack {
@@ -1011,6 +963,13 @@ struct LaborView: View {
             .padding(.vertical, 4)
         }
         .buttonStyle(.plain)
+        // Eligibility is the server's answer, not a guess made here — the
+        // same check the what-if pass uses, so availability, staff notes,
+        // double booking and the forty-hour ceiling all apply.
+        .onTapGesture {
+            guard rowReplacements[row.id] == nil else { return }
+            Task { rowReplacements[row.id] = await viewModel.loadReplacements(for: row) }
+        }
     }
 
     private func needsReviewGroup(_ rows: [ScheduleRow]) -> some View {

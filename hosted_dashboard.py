@@ -720,6 +720,7 @@ try:
     from models import init_ai_visibility_queries as _iavq
     from models import init_staff_capabilities as _isc
     from models import init_shift_profiles as _isp
+    from models import init_capability_changes as _icc
     from auth import init_auth as _init_auth
     from webhooks import init_webhooks as _iwh
     from guest_marketing import init_guest_marketing as _igm
@@ -739,6 +740,14 @@ try:
     _iavq()
     _isc()
     _isp()
+    _icc()
+    # A previous process may have been killed mid-generation, leaving a job
+    # pending forever and a client polling an answer that will never come.
+    try:
+        import ops as _ops_boot
+        _ops_boot.sweep_stale_jobs()
+    except Exception:
+        pass
     from sales_audits import init_sales_audits as _isa2, ensure_first_audit as _efa
     _isa2()
     _efa()

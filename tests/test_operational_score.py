@@ -498,15 +498,16 @@ def test_ios_decodes_the_strength_check():
         assert field in swift, f"{field} is returned by the backend and decoded by nothing"
 
 
-def test_ios_renders_both_kinds_of_miss_on_the_schedule():
-    """A shortfall and a leader miss are different failures. Rendering only
-    the count, or only one list, hides the one that names a person."""
+def test_the_legacy_strength_banner_is_gone_from_both_surfaces():
+    """It ran a second leadership check with different semantics from the
+    quality engine — silently dropping any rule without a minimum score,
+    which the engine enforces — and both rendered, so an owner read "every
+    target met" a few centimetres above "needs 2 bartenders, found 1"."""
     swift = _no_comments(_source("ios/CavnarAI/CavnarAI/Features/Labor/LaborView.swift"))
-    # The call site, not the declaration — a helper nothing invokes reads
-    # exactly like one that is wired in.
-    assert "strengthBanner(strength)" in swift
-    assert "leaderMisses" in swift and "shortfalls" in swift
-    assert "miss.reason" in swift and "short.reason" in swift
+    assert "strengthBanner" not in swift
+    html = _no_comments(_source("templates", "dashboard.html"))
+    assert "renderScheduleStrength" not in html
+    assert "sched-strength-banner" not in html
 
 
 def test_ios_has_a_rating_control_that_can_clear_a_rating():
@@ -524,11 +525,13 @@ def test_ios_mounts_the_two_new_sections():
     assert "viewModel.loadTeam()" in swift
 
 
-def test_the_web_dashboard_renders_the_strength_check():
+def test_leadership_is_reported_by_the_one_engine_that_owns_it():
+    """Everything the retired banner said is covered by the quality panel's
+    leadership dimension, which is what now renders it."""
     html = _no_comments(_source("templates", "dashboard.html"))
-    assert "renderScheduleStrength(data.strength)" in html
-    assert "leader_misses" in html and "shortfalls" in html
-    assert 'id="sched-strength-banner"' in html
+    assert 'id="sched-quality"' in html
+    engine = _source("shift_quality.py")
+    assert "def dim_leadership" in engine and '"leadership": dim_leadership' in engine
 
 
 def test_the_web_dashboard_has_the_rating_panel():
