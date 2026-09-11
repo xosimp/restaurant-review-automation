@@ -257,14 +257,20 @@ def analyse_shifts(shifts: list[dict],
     # Identical rows are a re-upload of an overlapping period, not two
     # people working the same shift. Counting them twice inflates hours,
     # cost and the labor percentage with nothing anywhere saying so.
+    # The signature is the WHOLE row, deliberately. A subset of columns
+    # collapses real shifts: the CSV template this product documents to
+    # clients carries no shift_start/shift_end at all — it has a `shift`
+    # column reading "lunch" or "dinner" — so a server working both on one
+    # day, same role, same hours, is two rows identical in every field the
+    # subset looked at. Halving somebody's hours is a worse error than
+    # counting a re-upload twice, so only a row identical in every column
+    # counts as a duplicate.
     _seen_rows = set()
     duplicate_rows = 0
     _deduped = []
     for s in shifts:
-        sig = (s.get("date"), s.get("employee"), s.get("role"),
-               s.get("shift_start"), s.get("shift_end"),
-               s.get("scheduled_hours"), s.get("actual_hours"))
-        if sig in _seen_rows and sig[0] and sig[1]:
+        sig = tuple(sorted((str(k), str(v)) for k, v in s.items()))
+        if sig in _seen_rows and s.get("date") and s.get("employee"):
             duplicate_rows += 1
             continue
         _seen_rows.add(sig)
@@ -299,9 +305,18 @@ def analyse_shifts(shifts: list[dict],
         prior = day_sales.get(d_)
         if prior is not None and abs(prior - v_) > 0.01:
             sales_conflicts.add(d_)
-            day_sales[d_] = max(prior, v_)
         else:
             day_sales[d_] = v_
+
+    # A day whose rows disagree about its own sales has no figure we can
+    # stand behind. Taking the larger of the two would have been the
+    # optimistic choice — more sales means a lower labor percentage — which
+    # is exactly the direction this module must never guess in. Dropped from
+    # costing and named, the same discipline already applied to a day with
+    # no sales at all, so the percentage covers only days with one
+    # unambiguous figure.
+    for d_ in sales_conflicts:
+        day_sales.pop(d_, None)
 
     for s in shifts:
         day    = s.get("date") or ""
@@ -969,7 +984,11 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         """
         if not dates:
             return 0
-        return round(sum(len(by_date.get(d, ())) for d in dates) / len(dates))
+        # Half-up, not Python's bank rounding: 4.5 people on a Friday is
+        # 5, not 4. Understaffing is the direction that hurts service,
+        # and the hours ceiling already stops the schedule overspending.
+        import math
+        return int(math.floor(sum(len(by_date.get(d, ())) for d in dates) / len(dates) + 0.5))
     # Build headcount block: "Friday: Server 3 morning / 6 night, Cook 2 morning / 3 night"
     _dow_order = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
     _hc_lines = []
@@ -1308,19 +1327,38 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     # efficient 24% against a 30% target had staff added until it reached
     # 30%. That raised payroll inside the one module whose headline metric
     # is savings. Under budget is a good outcome and is now stated as one.
-    par_block = (f"\n\nPAR HOURS CEILING — schedule is verified against actual column totals:\n"
-                 f"  Projected revenue: ${projected_revenue:,.0f} | Labor target: {labor_target}% = ${labor_budget_dollars:,.0f}\n"
-                 f"  Blended rate: ${hourly_rate}/hr → {hours_budget}h is the MAXIMUM for the week\n"
-                 f"  This is a ceiling, not a quota. Coming in under it is a good outcome and needs no "
-                 f"correction, no explanation and no compensating headcount. NEVER add people, extend shifts "
-                 f"or invent coverage in order to reach it. If TYPICAL HEADCOUNT and the per-day targets land "
-                 f"you well under {hours_budget}h, that is the right schedule — write it and move on.\n"
-                 f"  If they would put you OVER {hours_budget}h, that is the case to act on: trim back toward "
-                 f"the ceiling, taking hours from the days furthest above their own per-day target first, and "
-                 f"never below the MINIMUM STAFFING FLOORS above. Say in the summary which days you trimmed.\n"
-                 f"  Staffing is governed by TYPICAL HEADCOUNT, the per-day targets, the minimum floors and the "
-                 f"constraints below — in that order. The hours ceiling only ever removes hours; it never adds "
-                 f"them.{_daily_targets}")
+    _hours_rule = (
+        f"- Weekly hours must not EXCEED {hours_budget}h. Landing under it is fine and expected — "
+        f"never add people or hours to reach it (see PAR HOURS CEILING above). If you are over it, trim back."
+        if hours_budget else
+        "- There is no weekly hours ceiling for this schedule (not enough history to set one honestly). "
+        "Staff from TYPICAL HEADCOUNT and the minimum floors; do not invent a total to aim at."
+    )
+
+    if not hours_budget:
+        # No defensible revenue projection — too little history, and no
+        # revenue target on file. Stating the ceiling anyway printed
+        # "0.0h is the MAXIMUM for the week", which reads as an instruction
+        # to schedule nobody. Say there is no ceiling instead.
+        par_block = ("\n\nPAR HOURS CEILING — none available. There isn't enough sales history "
+                     "(and no monthly revenue target on file) to put an honest weekly hours "
+                     "budget on this schedule. Staff it from TYPICAL HEADCOUNT, the minimum "
+                     "floors and the constraints below, and do not invent an hours figure to "
+                     "aim at." + _daily_targets)
+    else:
+        par_block = (f"\n\nPAR HOURS CEILING — schedule is verified against actual column totals:\n"
+                     f"  Projected revenue: ${projected_revenue:,.0f} | Labor target: {labor_target}% = ${labor_budget_dollars:,.0f}\n"
+                     f"  Blended rate: ${hourly_rate}/hr → {hours_budget}h is the MAXIMUM for the week\n"
+                     f"  This is a ceiling, not a quota. Coming in under it is a good outcome and needs no "
+                     f"correction, no explanation and no compensating headcount. NEVER add people, extend shifts "
+                     f"or invent coverage in order to reach it. If TYPICAL HEADCOUNT and the per-day targets land "
+                     f"you well under {hours_budget}h, that is the right schedule — write it and move on.\n"
+                     f"  If they would put you OVER {hours_budget}h, that is the case to act on: trim back toward "
+                     f"the ceiling, taking hours from the days furthest above their own per-day target first, and "
+                     f"never below the MINIMUM STAFFING FLOORS above. Say in the summary which days you trimmed.\n"
+                     f"  Staffing is governed by TYPICAL HEADCOUNT, the per-day targets, the minimum floors and the "
+                     f"constraints below — in that order. The hours ceiling only ever removes hours; it never adds "
+                     f"them.{_daily_targets}")
 
     prompt = f"""You are a restaurant scheduling expert for {restaurant_name}. Generate an optimized schedule for next week AND a brief plain-English summary of your decisions.
 
@@ -1358,7 +1396,7 @@ SCHEDULING RULES:
 - Base each day's staffing on the YoY same-day data when available — that is your primary projection
 - For holiday weeks, match staffing to last year's holiday labor hours, not recent averages
 - No employee over 40h for the week
-- Weekly hours must not EXCEED {hours_budget}h. Landing under it is fine and expected — never add people or hours to reach it (see PAR HOURS CEILING above). If you are over it, trim back.
+{_hours_rule}
 
 ROLE STAGGER RULE (universal — applies to every restaurant):
 - Never schedule two employees in the same role at the exact same start time. The first person opens; additional staff stagger in based on volume. Add headcount only when YoY data or a flagged event justifies it — never to consume an hours budget.

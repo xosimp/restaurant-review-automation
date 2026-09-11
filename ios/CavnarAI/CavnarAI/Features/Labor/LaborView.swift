@@ -595,8 +595,15 @@ struct LaborView: View {
     @ViewBuilder
     private func understaffedDropdown(_ days: [LaborUnderstaffedDay], proxy: ScrollViewProxy) -> some View {
         CavnarDropdown(
-            title: "Understaffed days", subtitle: "possible missed revenue",
-            badge: days.count, tone: .warning,
+            // Was "Understaffed days — possible missed revenue", with a
+            // warning tone and a prompt to add staff. Nothing in this system
+            // measures service time, wait time or covers, so "understaffed"
+            // and "missed revenue" are both assertions the data cannot
+            // support — a day under target on strong sales is usually a good
+            // day. The same unsupported claim was hardcoded into the AI
+            // prompt and has been removed there too.
+            title: "Under target on a strong day", subtitle: "worth a look",
+            badge: days.count, tone: .neutral,
             isExpanded: $viewModel.understaffedExpanded,
             onExpand: { scrollToReveal(Self.understaffedID, proxy: proxy) }
         ) {
@@ -610,19 +617,20 @@ struct LaborView: View {
                         Spacer()
                         VStack(alignment: .trailing, spacing: 1) {
                             Text("$\(Int(day.sales))").font(.cavnarNumber(14, weight: 600)).foregroundStyle(Color.cavnarInk)
-                            Text("\(String(format: "%.1f", day.laborPct))% labor").font(.cavnarBody(14, weight: 600)).foregroundStyle(Color.cavnarAmber)
+                            Text("\(String(format: "%.1f", day.laborPct))% labor").font(.cavnarBody(14, weight: 600)).foregroundStyle(Color.cavnarInk2)
                         }
                     }
                     .padding(10)
-                    .background(Color.cavnarAmber.opacity(0.06))
+                    .background(Color.cavnarPaper2)
                     .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
                 }
                 if days.count > 10 {
                     Text("+ \(days.count - 10) more").font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
                 }
-                Text("💡 Consider adding 1–2 staff on \(days.prefix(3).map(\.day).joined(separator: ", "))\(days.count > 3 ? " and more" : ".")")
+                Text("Labor ran under target on these days while sales held up. That is usually a good result. Worth checking whether service kept pace.")
                     .font(.cavnarBody(14))
-                    .foregroundStyle(Color.cavnarAmber)
+                    .foregroundStyle(Color.cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
                     .padding(.top, 2)
             }
         }

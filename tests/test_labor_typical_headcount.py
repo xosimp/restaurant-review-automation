@@ -211,3 +211,44 @@ def test_the_roster_travels_with_the_result(monkeypatch):
         _analysis(), _fridays([[f"S{i}" for i in range(6)]] * 3),
         restaurant_name="Test", hourly_rate=20.0, labor_target=30.0)
     assert set(result["roster"]) == {f"S{i}" for i in range(6)}
+
+
+def test_no_revenue_projection_states_no_ceiling_rather_than_zero(monkeypatch):
+    """Refusing to project a sub-week period left hours_budget at zero, and
+    the prompt then read "0.0h is the MAXIMUM for the week" — an
+    instruction to schedule nobody."""
+    captured = _capture(monkeypatch)
+    a = _analysis()
+    a.update(period_days=1, total_sales=9000)
+    generate_optimized_schedule(
+        a, [{"date": "2026-08-08", "day": "Saturday", "employee": "A", "role": "Server",
+             "shift_start": "16:00", "shift_end": "23:00", "scheduled_hours": 7,
+             "actual_hours": 7, "sales": 9000}],
+        restaurant_name="T", hourly_rate=20.0, labor_target=30.0)
+    prompt = captured["messages"][0]["content"]
+    assert "MAXIMUM for the week" not in prompt
+    assert "PAR HOURS CEILING — none available" in prompt
+    assert "do not invent a total to aim at" in prompt
+
+
+def test_a_real_budget_still_states_the_ceiling(monkeypatch):
+    captured = _capture(monkeypatch)
+    generate_optimized_schedule(
+        _analysis(), _fridays([[f"S{i}" for i in range(6)]] * 3),
+        restaurant_name="T", hourly_rate=20.0, labor_target=30.0,
+        monthly_revenue_target=365000.0)
+    prompt = captured["messages"][0]["content"]
+    assert "MAXIMUM for the week" in prompt
+    assert "ceiling, not a quota" in prompt
+
+
+def test_a_tied_headcount_rounds_up_not_down(monkeypatch):
+    """4 servers one Friday and 5 the next is 5, not 4 — understaffing is
+    the direction that hurts service, and the ceiling stops overspend."""
+    shifts = []
+    for d, n in (("2026-08-07", 4), ("2026-08-14", 5)):
+        for i in range(n):
+            shifts.append({"date": d, "day": "Friday", "employee": f"S{i}", "role": "Server",
+                           "shift_start": "16:00", "shift_end": "23:00",
+                           "scheduled_hours": 7, "actual_hours": 7, "sales": 9000})
+    assert "Friday: Server: 5 night" in _prompt(monkeypatch, shifts)

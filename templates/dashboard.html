@@ -2377,7 +2377,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       <div style="display:flex;align-items:baseline;justify-content:space-between;margin-top:16px;margin-bottom:4px">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:0">
           <span style="width:8px;height:8px;border-radius:50%;background:#ffc266;flex-shrink:0"></span>
-          <span style="font-size:14px;font-weight:700;color:var(--ink);letter-spacing:-.01em">Understaffed days <span style="font-weight:500;color:var(--ink3)">— possible missed revenue ⚠</span></span>
+          <span style="font-size:14px;font-weight:700;color:var(--ink);letter-spacing:-.01em">Under target on a strong day <span style="font-weight:500;color:var(--ink3)">— worth a look</span></span>
         </div>
         {% if labor.understaffed_days|length > 10 %}
         <button onclick="toggleRows('understaffed-tbody','understaffed-toggle',{{labor.understaffed_days|length}})" id="understaffed-toggle" style="font-size:10px;color:var(--ember);background:none;border:none;cursor:pointer;font-weight:600;padding:0;white-space:nowrap">Show all {{labor.understaffed_days|length}} ↓</button>

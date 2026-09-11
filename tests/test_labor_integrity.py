@@ -136,13 +136,27 @@ def test_the_day_of_week_table_agrees_with_the_headline():
     assert a["dow_summary"]["Monday"] == a["overall_labor_pct"]
 
 
-def test_disagreeing_sales_rows_are_named_not_silently_resolved():
+def test_disagreeing_sales_rows_are_dropped_not_silently_resolved():
+    """Picking the larger figure would be the optimistic choice — more
+    sales means a lower labor percentage — which is the one direction this
+    module must never guess in."""
     a = analyse_shifts(_rows([
         "2026-09-04,Friday,A,Server,16:00,23:00,7,7,8000,",
         "2026-09-04,Friday,B,Server,16:00,23:00,7,7,9500,",
+        "2026-09-11,Friday,A,Server,16:00,23:00,7,7,8000,",
     ]), hourly_rate=20.0, labor_target=30.0)
     assert a["days_with_conflicting_sales"] == ["2026-09-04"]
-    assert a["by_day"]["2026-09-04"]["sales"] == 9500.0
+    assert "2026-09-04" in a["days_missing_sales"]
+    assert a["total_sales"] == 8000.0
+
+
+def test_rows_that_agree_on_sales_are_not_a_conflict():
+    a = analyse_shifts(_rows([
+        "2026-09-04,Friday,A,Server,16:00,23:00,7,7,8000,",
+        "2026-09-04,Friday,B,Server,16:00,23:00,7,7,8000,",
+    ]), hourly_rate=20.0, labor_target=30.0)
+    assert a["days_with_conflicting_sales"] == []
+    assert a["total_sales"] == 8000.0
 
 
 def test_a_day_with_no_sales_is_excluded_from_its_weekday_average():
@@ -248,3 +262,30 @@ def test_every_partial_data_flag_is_present_on_the_result():
                 "duplicate_rows_ignored", "days_with_conflicting_sales",
                 "period_too_short_to_project", "overtime_hours", "overtime_premium"):
         assert key in a, key
+
+
+# ── Regressions found by the audit re-run ──────────────────────────────────
+
+def test_lunch_and_dinner_on_one_day_are_not_a_duplicate():
+    """The CSV template this product documents to clients carries no
+    shift_start/shift_end — it has a `shift` column reading lunch/dinner.
+    A signature built from a subset of columns collapsed a double shift
+    into one row and halved that person's hours, which is a worse error
+    than counting a re-upload twice."""
+    hdr = "date,day,shift,employee,role,scheduled_hours,actual_hours,sales_that_day"
+    lines = [hdr,
+             "2026-09-04,Friday,lunch,Maria G.,server,5,5,3200",
+             "2026-09-04,Friday,dinner,Maria G.,server,5,5,3200"]
+    a = analyse_shifts(list(csv.DictReader(io.StringIO("\n".join(lines)))),
+                       hourly_rate=20.0, labor_target=30.0)
+    assert a["duplicate_rows_ignored"] == 0
+    assert a["employee_hours"]["Maria G."]["actual"] == 10.0
+
+
+def test_a_row_identical_in_every_column_is_still_a_duplicate():
+    hdr = "date,day,shift,employee,role,scheduled_hours,actual_hours,sales_that_day"
+    line = "2026-09-04,Friday,dinner,Maria G.,server,5,5,3200"
+    a = analyse_shifts(list(csv.DictReader(io.StringIO("\n".join([hdr, line, line])))),
+                       hourly_rate=20.0, labor_target=30.0)
+    assert a["duplicate_rows_ignored"] == 1
+    assert a["employee_hours"]["Maria G."]["actual"] == 5.0
