@@ -1987,6 +1987,15 @@ def _build_schedule_result(restaurant_id):
     except Exception:
         prior_schedule_summary = None
 
+    # Operational Score, its targets, and any shift leader rules. All three
+    # are dormant when nobody has been rated, so an existing restaurant
+    # schedules exactly as it did before this feature existed.
+    from models import (get_operational_scores, get_role_strength_thresholds,
+                        get_shift_leader_rules)
+    _op_scores = get_operational_scores(restaurant_id)
+    _strength_thresholds = get_role_strength_thresholds(restaurant_id) if _op_scores else {}
+    _leader_rules = get_shift_leader_rules(restaurant_id) if _op_scores else []
+
     result = generate_optimized_schedule(
         analysis, shifts,
         restaurant_name=restaurant.name if restaurant else "Restaurant",
@@ -2009,6 +2018,9 @@ def _build_schedule_result(restaurant_id):
         restaurant_id=restaurant_id,
         weather_forecast=weather_forecast or None,
         prior_schedule_summary=prior_schedule_summary or None,
+        operational_scores=_op_scores,
+        strength_thresholds=_strength_thresholds,
+        leader_rules=_leader_rules,
     )
     result["restaurant_name"] = restaurant.name if restaurant else "Restaurant"
     return result
@@ -3000,6 +3012,27 @@ def _run_schedule_job(job_id, restaurant_id):
                     if (_r.get("employee") or "").strip().lower() in _over_40:
                         _r["needs_review"] = True
                         _r["review_reason"] = "over 40h for the week"
+            # Shift strength, checked against the finished schedule rather
+            # than trusted to the prompt. The same discipline close times and
+            # the server cap already get: state the rule to the model, then
+            # verify what it actually produced.
+            try:
+                from labor import verify_shift_strength
+                _strength = verify_shift_strength(
+                    preview_rows,
+                    result.get("operational_scores") or {},
+                    result.get("strength_thresholds") or {},
+                    leader_rules=result.get("leader_rules") or [],
+                    close_times=_close_times,
+                )
+                result["strength"] = _strength
+                if _strength["shortfalls"] or _strength["leader_misses"]:
+                    print(f"[schedule] {len(_strength['shortfalls'])} shift(s) under strength "
+                          f"target, {len(_strength['leader_misses'])} leader rule miss(es)")
+            except Exception as _sx:
+                print(f"[schedule] strength check failed: {_sx}")
+                result["strength"] = {"checked": False, "error": str(_sx)}
+
             _flagged = sum(1 for _r in preview_rows if _r.get("needs_review"))
             result["rows_needing_review"] = _flagged
             if _flagged:
@@ -3068,6 +3101,10 @@ def _run_schedule_job(job_id, restaurant_id):
             # generated week, a double booking, a week over 40 hours. The
             # owner must see this before publishing to staff.
             rows_needing_review=result.get("rows_needing_review", 0),
+            # Which shifts met their Operational Score target, which fell
+            # short and why, and any shift leader requirement that could not
+            # be satisfied. Never a silent miss.
+            strength=result.get("strength") or {"checked": False},
             week_dates=result.get("week_dates", []),
             week_days=result.get("week_days", []),
             projected_revenue=result.get("projected_revenue", 0),
@@ -6214,6 +6251,24 @@ def intel_remove_competitor(current_user):
 @login_required
 def ai_visibility_history(current_user):
     return _m("mobile_ai_visibility_history")(current_user)
+
+
+@client_bp.route("/api/labor/team")
+@login_required
+def labor_team(current_user):
+    return _m("mobile_labor_team")(current_user)
+
+
+@client_bp.route("/api/labor/team/rating", methods=["POST"])
+@login_required
+def labor_team_rating(current_user):
+    return _m("mobile_set_rating")(current_user)
+
+
+@client_bp.route("/api/labor/team/thresholds", methods=["POST"])
+@login_required
+def labor_team_thresholds(current_user):
+    return _m("mobile_set_thresholds")(current_user)
 
 
 @client_bp.route("/api/intel/movement")

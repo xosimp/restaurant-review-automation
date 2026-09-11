@@ -3810,3 +3810,140 @@ def test_the_movement_route_reports_who_joined_and_left(client, db_path):
                       headers=_auth_headers(token)).get_json()
     assert [x["name"] for x in body["arrived"]] == ["Newcomer"]
     assert [x["name"] for x in body["gone"]] == ["Leaver"]
+
+
+# ── Operational Score routes ──────────────────────────────────────────────
+
+def _team_shifts(monkeypatch, rows):
+    """Stand in for this restaurant's uploaded shift data.
+
+    The roster is derived from shifts because that is the only place
+    employees exist in this product — there is no staff table.
+    """
+    import labor
+    monkeypatch.setattr(labor, "load_shifts_for_restaurant", lambda *a, **k: rows)
+    monkeypatch.setattr(labor, "analyse_shifts_for_restaurant",
+                        lambda *a, **k: {"is_live": True})
+
+
+def test_team_route_lists_the_roster_with_its_ratings(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    _team_shifts(monkeypatch, [
+        {"date": "2026-09-12", "employee": "Pat", "role": "Bartender", "shift_start": "5:00pm"},
+        {"date": "2026-09-12", "employee": "Sam", "role": "Bartender", "shift_start": "5:00pm"},
+    ])
+    from models import set_capability
+    set_capability(rid, "Pat", score=4, db_path=db_path)
+
+    body = client.get("/mobile/api/labor/team", headers=_auth_headers(token)).get_json()
+    assert body["ok"] is True
+    by_name = {m["name"]: m for m in body["team"]}
+    assert by_name["Pat"]["score"] == 4
+    assert by_name["Pat"]["score_label"] == "Strong"
+    assert by_name["Sam"]["score"] is None
+    assert body["coverage"]["rated"] == 1 and body["coverage"]["total"] == 2
+    # Unrated first — that is the work in front of the owner.
+    assert body["team"][0]["name"] == "Sam"
+
+
+def test_team_route_says_what_to_do_when_no_shifts_are_uploaded(client, db_path, monkeypatch):
+    """An empty roster and no data at all are different states. The second
+    one has an answer, so it gets said rather than left blank."""
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    import labor
+    monkeypatch.setattr(labor, "analyse_shifts_for_restaurant", lambda *a, **k: {"is_live": False})
+
+    body = client.get("/mobile/api/labor/team", headers=_auth_headers(token)).get_json()
+    assert body["is_live"] is False
+    assert "shifts" in (body["note"] or "").lower()
+
+
+def test_rating_route_sets_and_clears_a_score(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    from models import get_operational_scores
+
+    ok = client.post("/mobile/api/labor/team/rating",
+                     json={"employee_name": "Pat", "score": 5},
+                     headers=_auth_headers(token)).get_json()
+    assert ok["ok"] is True
+    assert get_operational_scores(rid, db_path=db_path) == {"Pat": 5}
+
+    client.post("/mobile/api/labor/team/rating",
+                json={"employee_name": "Pat", "score": None},
+                headers=_auth_headers(token))
+    assert get_operational_scores(rid, db_path=db_path) == {}
+
+
+def test_rating_route_refuses_a_score_off_the_scale(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    resp = client.post("/mobile/api/labor/team/rating",
+                       json={"employee_name": "Pat", "score": 9},
+                       headers=_auth_headers(token))
+    assert resp.status_code == 400
+    assert "1-5" in resp.get_json()["error"]
+
+
+def test_one_restaurant_cannot_read_anothers_ratings(client, db_path, monkeypatch):
+    rid = _restaurant(db_path, name="Mine")
+    other = _restaurant(db_path, name="Theirs")
+    from models import set_capability
+    set_capability(other, "Pat", score=5, db_path=db_path)
+    token = _login(client, db_path, rid)
+    _team_shifts(monkeypatch, [{"date": "2026-09-12", "employee": "Pat",
+                                "role": "Bartender", "shift_start": "5:00pm"}])
+
+    body = client.get("/mobile/api/labor/team", headers=_auth_headers(token)).get_json()
+    assert body["team"][0]["score"] is None
+
+
+def test_thresholds_route_saves_targets_and_leader_rules(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    from models import get_role_strength_thresholds, get_shift_leader_rules
+
+    rules = [{"role": "Bartender", "days": ["Saturday"], "daypart": "night", "min_score": 5}]
+    body = client.post("/mobile/api/labor/team/thresholds",
+                       json={"thresholds": {"Bartender": 10}, "leader_rules": rules},
+                       headers=_auth_headers(token)).get_json()
+    assert body["ok"] is True
+    assert get_role_strength_thresholds(rid, db_path=db_path) == {"Bartender": 10.0}
+    assert get_shift_leader_rules(rid, db_path=db_path) == rules
+
+
+def test_an_unreachable_target_is_saved_with_a_warning_not_refused(client, db_path, monkeypatch):
+    """An owner setting a target may be describing the team they mean to
+    hire. Refusing the save would make them fight the form."""
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    _team_shifts(monkeypatch, [{"date": "2026-09-12", "employee": "Pat",
+                                "role": "Bartender", "shift_start": "5:00pm"}])
+    from models import set_capability, get_role_strength_thresholds
+    set_capability(rid, "Pat", score=3, db_path=db_path)
+
+    body = client.post("/mobile/api/labor/team/thresholds",
+                       json={"thresholds": {"Bartender": 20}},
+                       headers=_auth_headers(token)).get_json()
+    assert body["ok"] is True
+    assert get_role_strength_thresholds(rid, db_path=db_path) == {"Bartender": 20.0}
+    assert any("can never be met" in w for w in body["warnings"])
+
+
+def test_a_negative_threshold_is_refused(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    resp = client.post("/mobile/api/labor/team/thresholds",
+                       json={"thresholds": {"Bartender": -2}},
+                       headers=_auth_headers(token))
+    assert resp.status_code == 400
+
+
+def test_the_team_routes_need_a_login(client):
+    for path, method in (("/mobile/api/labor/team", "get"),
+                         ("/mobile/api/labor/team/rating", "post"),
+                         ("/mobile/api/labor/team/thresholds", "post")):
+        resp = getattr(client, method)(path, json={})
+        assert resp.status_code in (401, 403), path

@@ -616,6 +616,200 @@ def _period_length_days(snapshot: dict) -> int:
         return 0
 
 
+# ── Shift strength ────────────────────────────────────────────────────────
+#
+# An owner asked what happens when the scheduler puts his two weakest
+# bartenders on a Saturday night. Availability was satisfied; the schedule
+# was still wrong. Strength is the missing signal.
+#
+# Combined score per role per daypart. Two 5-rated bartenders make 10.
+#
+# Additive on purpose — it is what the owner described and what he can
+# reason about — but additive alone lets four 3s satisfy a threshold of 10
+# that was written to mean "two good bartenders". So a floor on the weakest
+# member travels alongside it, and the verification below reports both.
+
+def _daypart_of(shift_start: str) -> str:
+    """Same 3pm split the schedule generator uses."""
+    raw = (shift_start or "").strip().lower().replace(" ", "")
+    if not raw:
+        return "unknown"
+    for fmt in ("%I:%M%p", "%I%p", "%H:%M", "%H:%M:%S"):
+        try:
+            return "night" if datetime.strptime(raw, fmt).hour >= 15 else "morning"
+        except ValueError:
+            continue
+    return "unknown"
+
+
+def shift_strength(rows: list, scores: dict) -> dict:
+    """Combined Operational Score per (date, daypart, role).
+
+    An employee with no rating contributes NOTHING and is named. Scoring an
+    unrated person as a middle 3 would invent a fact about them, and the
+    owner would never learn the rating was missing.
+    """
+    out = {}
+    for r in rows or []:
+        name = (r.get("employee") or "").strip()
+        role = (r.get("role") or "").strip()
+        date = r.get("date") or ""
+        if not (name and role and date):
+            continue
+        key = (date, _daypart_of(r.get("shift_start", "")), role)
+        b = out.setdefault(key, {"date": date, "daypart": key[1], "role": role,
+                                 "members": [], "unrated": [], "strength": 0,
+                                 "weakest": None, "day": r.get("day")})
+        if name in [m["name"] for m in b["members"]] or name in b["unrated"]:
+            continue  # a double shift is one person, counted once
+        sc = scores.get(name)
+        if sc is None:
+            b["unrated"].append(name)
+        else:
+            b["members"].append({"name": name, "score": sc})
+            b["strength"] += sc
+            b["weakest"] = sc if b["weakest"] is None else min(b["weakest"], sc)
+    return out
+
+
+def _same_role(a: str, b: str) -> bool:
+    """Whether two role strings name the same role.
+
+    The role an owner types into the targets editor ("Bartender") and the
+    one the generated CSV carries ("bartender") are the same job. An exact
+    match meant every target and every leader rule silently checked
+    nothing — the same failure per-role wages had before _shift_rate
+    started matching this way.
+    """
+    return (a or "").strip().lower() == (b or "").strip().lower()
+
+
+def _role_lookup(mapping: dict, role: str):
+    """mapping[role], tolerant of case and stray whitespace."""
+    if role in (mapping or {}):
+        return mapping[role]
+    for name, value in (mapping or {}).items():
+        if _same_role(name, role):
+            return value
+    return None
+
+
+def verify_shift_strength(rows: list, scores: dict, thresholds: dict,
+                          leader_rules: list = None, close_times: dict = None) -> dict:
+    """Check a generated schedule against the strength targets.
+
+    Returns every shortfall with a reason, never a pass/fail. The schedule
+    still ships — an owner who cannot staff a Saturday to target needs the
+    best available schedule AND to be told, not an error.
+
+    This is a deterministic pass over the finished CSV rather than a rule in
+    the prompt alone, because a prompt-only rule plateaus below full
+    compliance — the same reason close times and the server cap have
+    backstops in code.
+    """
+    buckets = shift_strength(rows, scores)
+    shortfalls, leader_misses, met = [], [], []
+
+    for key, b in sorted(buckets.items()):
+        target = _role_lookup(thresholds, b["role"])
+        if not target:
+            continue
+        entry = {
+            "date": b["date"], "day": b["day"], "daypart": b["daypart"], "role": b["role"],
+            "strength": b["strength"], "target": target,
+            "members": sorted(b["members"], key=lambda m: -m["score"]),
+            "unrated": b["unrated"],
+        }
+        if b["strength"] >= target:
+            met.append(entry)
+            continue
+        entry["short_by"] = round(target - b["strength"], 1)
+        entry["reason"] = _shortfall_reason(b, target)
+        shortfalls.append(entry)
+
+    for rule in (leader_rules or []):
+        leader_misses.extend(_check_leader_rule(rule, buckets, scores, close_times))
+
+    return {
+        "checked": bool(thresholds) or bool(leader_rules),
+        "met": met,
+        "shortfalls": shortfalls,
+        "leader_misses": leader_misses,
+        "buckets": [dict(v, key=None) for v in buckets.values()],
+    }
+
+
+def _shortfall_reason(b: dict, target) -> str:
+    """Why this shift came in under, in the owner's terms."""
+    names = ", ".join(f"{m['name']} ({m['score']})" for m in
+                      sorted(b["members"], key=lambda m: -m["score"])) or "nobody"
+    if b["unrated"]:
+        return (f"{names} came to {b['strength']} against a target of {target:g}. "
+                f"{', '.join(b['unrated'])} " +
+                ("has" if len(b["unrated"]) == 1 else "have") +
+                " no Operational Score yet, so nothing was counted for "
+                + ("them" if len(b["unrated"]) > 1 else "them") + ".")
+    if not b["members"]:
+        return f"Nobody rated was scheduled, against a target of {target:g}."
+    if len(b["members"]) == 1:
+        return (f"Only {names} was available, against a target of {target:g}.")
+    return (f"{names} came to {b['strength']} against a target of {target:g} — "
+            f"the strongest people available were already scheduled elsewhere "
+            f"or unavailable.")
+
+
+def _leader_reason(date, part, role, need, min_score, qualified, bucket) -> str:
+    """One sentence an owner can act on, not a rule id."""
+    who = ", ".join(f"{m['name']} ({m['score']})" for m in
+                    sorted(bucket["members"], key=lambda m: -m["score"]))
+    plural = "" if need == 1 else "s"
+    head = (f"{bucket.get('day') or date} {part}: needs {need} {role.lower()}{plural} "
+            f"scoring {float(min_score):g} or above, found {len(qualified)}.")
+    if who:
+        return head + f" Scheduled: {who}."
+    if bucket["unrated"]:
+        return head + (f" {', '.join(bucket['unrated'])} scheduled, with no "
+                       f"Operational Score on file.")
+    return head + " Nobody was scheduled for that role."
+
+
+def _check_leader_rule(rule: dict, buckets: dict, scores: dict, close_times: dict = None) -> list:
+    """Shift leader requirements, on top of the same capability data.
+
+    "Saturday dinner must include at least one bartender scoring 5."
+    "Every closing shift needs somebody authorised to close."
+    """
+    role = (rule.get("role") or "").strip()
+    if not role:
+        return []
+    want_days = {d.strip().lower() for d in (rule.get("days") or []) if d}
+    want_part = (rule.get("daypart") or "").strip().lower() or None
+    min_score = rule.get("min_score")
+    need = int(rule.get("count") or 1)
+    misses = []
+
+    for (date, part, r_role), b in sorted(buckets.items()):
+        if not _same_role(r_role, role):
+            continue
+        day = (b.get("day") or "").strip().lower()
+        if want_days and day not in want_days:
+            continue
+        if want_part and part != want_part:
+            continue
+        if min_score is not None:
+            qualified = [m for m in b["members"] if m["score"] >= float(min_score)]
+            if len(qualified) < need:
+                misses.append({
+                    "date": date, "day": b.get("day"), "daypart": part, "role": role,
+                    "rule": f"at least {need} {role.lower()}"
+                            f"{'' if need == 1 else 's'} scoring {min_score:g} or above",
+                    "found": len(qualified),
+                    "reason": _leader_reason(date, part, role, need, min_score,
+                                             qualified, b),
+                })
+    return misses
+
+
 def get_claude_insights(analysis: dict, restaurant_name: str = "your restaurant",
                         owner_name: str = None, restaurant_id: int = None,
                         staff_notes: list = None) -> str:
@@ -848,6 +1042,9 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                                  tz_name: str = None,
                                  restaurant_id: int = None,
                                  weather_forecast: list = None,
+                                 operational_scores: dict = None,
+                                 strength_thresholds: dict = None,
+                                 leader_rules: list = None,
                                  prior_schedule_summary: dict = None) -> dict:
     """
     Use Claude to generate an optimized weekly schedule.
@@ -1315,6 +1512,71 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                             "This is a hard constraint, same priority as STAFF CONSTRAINTS:\n"
                             + "\n".join(_av_lines))
 
+    # ── Operational Score ─────────────────────────────────────────────────
+    #
+    # The signal that was missing: availability said two bartenders could
+    # work Saturday, and nothing said they were the two weakest.
+    #
+    # Deliberately NOT "put the best people on everything". A schedule that
+    # maximises rating benches the weaker half permanently, which is how a
+    # team stops improving and how people leave. The instruction below is to
+    # clear a bar on the shifts that matter and to pair rather than stack.
+    _strength_block = ""
+    _scores = {k: v for k, v in (operational_scores or {}).items() if v}
+    if _scores:
+        _rated_lines = []
+        for _e, _r in employees:
+            _sc = _scores.get(_e)
+            if _sc:
+                _rated_lines.append(f"  {_e} ({_r}): {_sc}")
+        _unrated = [e for e, _r in employees if e and e not in _scores]
+        _thr_lines = [f"  {role}: combined {float(v):g} or better on a shift"
+                      for role, v in sorted((strength_thresholds or {}).items())]
+        _rule_lines = []
+        for _rule in (leader_rules or []):
+            _days = ", ".join(_rule.get("days") or []) or "every day"
+            _part = _rule.get("daypart") or "any daypart"
+            if _rule.get("min_score") is not None:
+                _rule_lines.append(
+                    f"  {_days} ({_part}): at least {int(_rule.get('count') or 1)} "
+                    f"{_rule['role']} scoring {float(_rule['min_score']):g} or above")
+
+        _strength_block = (
+            "\n\nOPERATIONAL SCORE — how strong each person is, 1 weakest to 5 strongest, "
+            "set by the owner:\n" + "\n".join(_rated_lines)
+            + (f"\n  Not yet rated: {', '.join(_unrated)} — treat as unknown, "
+               f"neither strong nor weak, and do not avoid them for it.\n" if _unrated else "\n")
+        )
+        if _thr_lines:
+            _strength_block += (
+                "\nSHIFT STRENGTH TARGETS — the scores of everyone in that role on that "
+                "shift, added up:\n" + "\n".join(_thr_lines) + "\n"
+                "  Two people scoring 5 make 10. So do a 5, a 3 and a 2 — but that is a "
+                "weaker team, so prefer fewer stronger people over more weaker ones when "
+                "both clear the bar.\n"
+                "  Hit these on the busiest shifts first. Which ones those are is in the "
+                "demand and year-over-year figures above, not in the day's name.\n"
+                "  An unrated person contributes nothing to the total. That is not a reason "
+                "to leave them off — it is why the owner will be told to rate them.\n"
+            )
+        if _rule_lines:
+            _strength_block += ("\nSHIFT LEADER REQUIREMENTS — each of these must be "
+                                "satisfied, not merely aimed at:\n" + "\n".join(_rule_lines) + "\n")
+        _strength_block += (
+            "\nHOW TO USE THIS:\n"
+            "  - Never put your two weakest people on together on a high-volume shift. "
+            "That is the specific failure this exists to prevent.\n"
+            "  - Pair a weaker person with a stronger one rather than stacking the weak "
+            "together or the strong together. A quieter shift is where somebody learns.\n"
+            "  - Do NOT simply schedule the highest scores everywhere. Benching the weaker "
+            "half every week is how a team stops improving and how people quit.\n"
+            "  - Strength is about WHO works, never about adding people. It can never push "
+            "you over the hours ceiling or below the minimum staffing floors.\n"
+            "  - If you cannot clear a target with who is available, write the best schedule "
+            "you can and say so plainly in your summary — which shift, which target, and who "
+            "was missing. Never silently miss one.\n"
+        )
+
     # Extra scheduling notes from admin
     _sched_notes_block = ""
     if sched_notes:
@@ -1368,7 +1630,7 @@ CONTEXT:
 - Recent overstaffed days: {[d["day"] + " (" + str(d["labor_pct"]) + "%)" for d in overstaffed]}
 - Recent understaffed days: {[d["day"] for d in understaffed]}
 - Recent labor % by day of week: {dow}
-- Active staff: {[e[0] + " (" + e[1] + ")" for e in employees[:100]]}{yoy_block}{events_block}{_demand_block}{_weather_block}{_prior_schedule_block}{role_rates_block}{hours_block}{par_block}{_headcount_block}{_cross_block}{_section_block}{_daypart_block}{_delivery_block}{_noshows_block}{_avail_block}{_sched_notes_block}
+- Active staff: {[e[0] + " (" + e[1] + ")" for e in employees[:100]]}{yoy_block}{events_block}{_demand_block}{_weather_block}{_prior_schedule_block}{role_rates_block}{hours_block}{par_block}{_headcount_block}{_cross_block}{_section_block}{_daypart_block}{_delivery_block}{_noshows_block}{_strength_block}{_avail_block}{_sched_notes_block}
 
 Next week dates:
 {chr(10).join(f"- {d}: {n}" for d, n in zip(week_dates, week_days))}
@@ -1514,6 +1776,11 @@ ARRIVAL TIMES, ROLE MINIMUMS, SHIFT LENGTHS, AND ROLE-SPECIFIC RULES:
         # can check the model's rows against it rather than trusting that
         # "use real employee names from the staff list" was obeyed.
         "roster": sorted({e for e, _r in employees if e}),
+        # Carried back so the deterministic verification pass can check the
+        # finished CSV against the same numbers the model was given.
+        "operational_scores": _scores,
+        "strength_thresholds": dict(strength_thresholds or {}),
+        "leader_rules": list(leader_rules or []),
     }
 
 

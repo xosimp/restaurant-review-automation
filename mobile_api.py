@@ -3183,6 +3183,131 @@ def _do_mobile_intel(restaurant_id):
         return {"ok": False, "error": _safe_err(e)}, 500
 
 
+@mobile_bp.route("/labor/team")
+@mobile_login_required
+def mobile_labor_team(current_user):
+    """Everyone on the roster with their Operational Score.
+
+    The roster comes from the shift data, because that is where employees
+    exist in this product — there is no separate staff table, and the three
+    other staff features (availability, notes, contacts) are keyed the same
+    way.
+    """
+    from models import (get_capabilities, capability_coverage, CAPABILITY_ATTRIBUTES,
+                        SCORE_LABELS, SCORE_MIN, SCORE_MAX,
+                        get_role_strength_thresholds, get_shift_leader_rules)
+    from labor import load_shifts_for_restaurant, analyse_shifts_for_restaurant
+    rid = current_user["restaurant_id"]
+    try:
+        analysis = analyse_shifts_for_restaurant(rid)
+        if not analysis.get("is_live"):
+            return jsonify(ok=True, is_live=False, team=[], coverage=None,
+                           thresholds={}, leader_rules=[],
+                           note="Upload your shifts CSV under Account and your team will "
+                                "appear here to rate."), 200
+        shifts = load_shifts_for_restaurant(rid)
+        # Most recent role each person worked, and how many shifts — enough
+        # to order the list usefully without inventing a roster.
+        seen = {}
+        for sh in shifts:
+            n = (sh.get("employee") or "").strip()
+            if not n:
+                continue
+            e = seen.setdefault(n, {"name": n, "role": None, "shifts": 0, "last": ""})
+            e["shifts"] += 1
+            d = sh.get("date") or ""
+            if d >= e["last"]:
+                e["last"] = d
+                e["role"] = (sh.get("role") or "").strip() or e["role"]
+
+        caps = get_capabilities(rid)
+        team = []
+        for n, e in seen.items():
+            c = (caps.get(n) or {}).get("overall") or {}
+            team.append({
+                "name": n, "role": e["role"], "shifts": e["shifts"],
+                "score": c.get("score"),
+                "score_label": SCORE_LABELS.get(c.get("score")) if c.get("score") else None,
+                "notes": c.get("notes"),
+                "updated_by": c.get("updated_by"),
+                "updated_at": c.get("updated_at"),
+            })
+        # Unrated first — that is the work in front of the owner.
+        team.sort(key=lambda t: (t["score"] is not None, -t["shifts"], t["name"]))
+        return jsonify(
+            ok=True, is_live=True, team=team,
+            coverage=capability_coverage(rid, [t["name"] for t in team]),
+            thresholds=get_role_strength_thresholds(rid),
+            leader_rules=get_shift_leader_rules(rid),
+            scale={"min": SCORE_MIN, "max": SCORE_MAX, "labels": SCORE_LABELS},
+            attributes={k: v for k, v in CAPABILITY_ATTRIBUTES.items() if v.get("v1")},
+        ), 200
+    except Exception as e:
+        return jsonify(ok=False, error=_safe_err(e), team=[]), 500
+
+
+@mobile_bp.route("/labor/team/rating", methods=["POST"])
+@mobile_login_required
+def mobile_set_rating(current_user):
+    """Set or clear one employee's Operational Score."""
+    from models import set_capability, CapabilityError
+    data = request.get_json(silent=True) or {}
+    try:
+        out = set_capability(
+            current_user["restaurant_id"],
+            employee_name=data.get("employee_name") or data.get("name") or "",
+            attribute=(data.get("attribute") or "overall"),
+            score=data.get("score"),
+            flag=data.get("flag"),
+            notes=data.get("notes"),
+            updated_by=current_user.get("username") or current_user.get("email"),
+        )
+        return jsonify(ok=True, **out), 200
+    except CapabilityError as ce:
+        return jsonify(ok=False, error=str(ce)), 400
+    except Exception as e:
+        return jsonify(ok=False, error=_safe_err(e)), 500
+
+
+@mobile_bp.route("/labor/team/thresholds", methods=["POST"])
+@mobile_login_required
+def mobile_set_thresholds(current_user):
+    """Minimum combined score per role, and shift leader rules."""
+    import json as _j
+    from models import (update_restaurant, validate_strength_thresholds,
+                        get_operational_scores, load_shifts_for_restaurant_roles)
+    rid = current_user["restaurant_id"]
+    data = request.get_json(silent=True) or {}
+    raw = data.get("thresholds")
+    if raw is None:
+        return jsonify(ok=False, error="thresholds required"), 400
+    try:
+        cleaned = {}
+        for role, v in (raw or {}).items():
+            if v in (None, ""):
+                continue
+            n = float(v)
+            if n < 0:
+                return jsonify(ok=False, error=f"{role}: a threshold cannot be negative"), 400
+            cleaned[str(role).strip()] = n
+        warnings = validate_strength_thresholds(
+            cleaned, get_operational_scores(rid), load_shifts_for_restaurant_roles(rid))
+        fields = {"role_strength_json": _j.dumps(cleaned)}
+        if "leader_rules" in data:
+            rules = data.get("leader_rules") or []
+            if not isinstance(rules, list):
+                return jsonify(ok=False, error="leader_rules must be a list"), 400
+            fields["shift_leader_rules_json"] = _j.dumps(rules)
+        update_restaurant(rid, fields)
+        # Unreachable targets are saved and warned about rather than
+        # refused — an owner may be describing the team they intend to have.
+        return jsonify(ok=True, thresholds=cleaned, warnings=warnings), 200
+    except (TypeError, ValueError) as ve:
+        return jsonify(ok=False, error=f"Could not read those thresholds: {ve}"), 400
+    except Exception as e:
+        return jsonify(ok=False, error=_safe_err(e)), 500
+
+
 @mobile_bp.route("/intel/movement")
 @mobile_login_required
 def mobile_intel_movement(current_user):

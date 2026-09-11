@@ -63,6 +63,18 @@ struct LaborView: View {
                                     scrollToReveal(Self.availabilityID, proxy: proxy)
                                 }
                                 .id(Self.availabilityID)
+                                // Rating the team, then the targets those
+                                // ratings feed. In that order because a
+                                // target means nothing before anyone is
+                                // rated, and the targets editor says so.
+                                TeamStrengthSection(viewModel: viewModel) {
+                                    scrollToReveal(Self.teamID, proxy: proxy)
+                                }
+                                .id(Self.teamID)
+                                ShiftTargetsSection(viewModel: viewModel) {
+                                    scrollToReveal(Self.targetsID, proxy: proxy)
+                                }
+                                .id(Self.targetsID)
                             } else if viewModel.isLoading {
                                 CavnarLoadingOrb().padding(.top, 60).frame(maxWidth: .infinity)
                             } else if let error = viewModel.errorMessage {
@@ -86,6 +98,7 @@ struct LaborView: View {
                 .cavnarEmberRefreshable {
                     await viewModel.load()
                     await viewModel.loadAvailability()
+                    await viewModel.loadTeam()
                 }
             }
         }
@@ -157,6 +170,10 @@ struct LaborView: View {
         }
         .task { await analyticsViewModel.load() }
         .task { await viewModel.loadAvailability() }
+        // Loaded up front rather than on expand so both collapsed headers
+        // read their real counts ("3 of 8 rated") instead of a placeholder
+        // that changes the moment the section is opened.
+        .task { await viewModel.loadTeam() }
         .sheet(isPresented: $showingPublishSchedule) {
             PublishScheduleSheet()
         }
@@ -410,6 +427,8 @@ struct LaborView: View {
     }
 
     private static let availabilityID = "labor-availability"
+    private static let teamID = "labor-team"
+    private static let targetsID = "labor-targets"
 
     /// Scrolls the just-opened section into view once its expand animation
     /// has room to settle — firing scrollTo in the same instant as the
@@ -673,6 +692,9 @@ struct LaborView: View {
                     if let budget = result.hoursBudget, budget > 0, let scheduled = result.hoursScheduled {
                         parHoursBanner(budget: budget, scheduled: scheduled, dollars: result.laborBudgetDollars)
                     }
+                    if let strength = result.strength, strength.checked {
+                        strengthBanner(strength)
+                    }
                 }
                 .cavnarCard()
 
@@ -759,6 +781,63 @@ struct LaborView: View {
         .padding(10)
         .background(Color.cavnarGreen.opacity(0.06))
         .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+    }
+
+    /// What the Operational Score check found in the finished schedule.
+    ///
+    /// Deliberately not an error and not a blocked generation: an owner who
+    /// cannot staff a Saturday to target needs the best schedule available
+    /// AND to be told which shift fell short and why. Every line here is
+    /// computed from the CSV that was actually produced, not from the
+    /// prompt's intent.
+    @ViewBuilder
+    private func strengthBanner(_ strength: ScheduleStrength) -> some View {
+        let misses = strength.leaderMisses ?? []
+        let shortfalls = strength.shortfalls ?? []
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 7) {
+                Image(systemName: strength.isClean ? "checkmark.seal" : "exclamationmark.triangle")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(strength.isClean ? Color.cavnarGreen : Color.cavnarAmber)
+                Text("SHIFT STRENGTH")
+                    .font(.cavnarBody(13.5, weight: 700))
+                    .tracking(1)
+                    .foregroundStyle(strength.isClean ? Color.cavnarGreen : Color.cavnarAmber)
+                Spacer()
+                Text(strength.isClean
+                     ? "Every target met"
+                     : (strength.problems == 1 ? "1 shift to look at" : "\(strength.problems) shifts to look at"))
+                    .font(.cavnarBody(14, weight: 700))
+                    .foregroundStyle(strength.isClean ? Color.cavnarGreen : Color.cavnarAmber)
+            }
+
+            // Leader requirements first — a rule that names one person is a
+            // harder miss than a combined total coming in a point light.
+            ForEach(misses) { miss in
+                strengthLine(title: "\(miss.day ?? miss.date) \(miss.daypart)", body: miss.reason)
+            }
+            ForEach(shortfalls) { short in
+                strengthLine(title: "\(short.day ?? short.date) \(short.daypart) · \(short.role)",
+                             body: short.reason)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background((strength.isClean ? Color.cavnarGreen : Color.cavnarAmber).opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+    }
+
+    private func strengthLine(title: String, body: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.cavnarBody(13.5, weight: 700))
+                .foregroundStyle(Color.cavnarInk)
+            Text(body)
+                .font(.cavnarBody(13.5))
+                .foregroundStyle(Color.cavnarInk2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private static let scheduleDayOrder = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]

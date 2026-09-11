@@ -128,6 +128,127 @@ struct StaffAvailabilityEntry: Codable, Identifiable, Equatable {
     }
 }
 
+/// One person on the roster, with whatever the owner has said about them.
+///
+/// The roster is derived from shift data rather than a staff table, because
+/// that is the only place employees exist in this product — the same reason
+/// availability, notes and contacts are all keyed by name.
+struct RatedEmployee: Codable, Identifiable, Equatable {
+    let name: String
+    let role: String?
+    let shifts: Int
+    var score: Int?
+    var scoreLabel: String?
+    var notes: String?
+    let updatedBy: String?
+    let updatedAt: String?
+    var id: String { name }
+
+    enum CodingKeys: String, CodingKey {
+        case name, role, shifts, score, notes
+        case scoreLabel = "score_label"
+        case updatedBy = "updated_by"
+        case updatedAt = "updated_at"
+    }
+}
+
+/// How much of the roster has been rated. `active` is false until somebody
+/// is — the whole feature stays dormant until then, so a restaurant that
+/// never touches it schedules exactly as it did before.
+struct RatingCoverage: Codable, Equatable {
+    let rated: Int
+    let total: Int
+    let unrated: [String]
+    let active: Bool
+    let pct: Int
+}
+
+/// A shift leader requirement: "Saturday dinner needs a bartender at 5."
+struct ShiftLeaderRule: Codable, Identifiable, Equatable {
+    var role: String
+    var days: [String]?
+    var daypart: String?
+    var minScore: Double?
+    var count: Int?
+
+    var id: String {
+        "\(role)|\((days ?? []).joined(separator: ","))|\(daypart ?? "")|\(minScore ?? 0)"
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case role, days, daypart, count
+        case minScore = "min_score"
+    }
+
+    /// The rule as the owner would say it out loud.
+    var sentence: String {
+        let when = (days ?? []).isEmpty ? "Every" : (days ?? []).joined(separator: ", ")
+        let part = (daypart ?? "").isEmpty ? "shift" : (daypart ?? "")
+        let n = count ?? 1
+        let who = n == 1 ? role.lowercased() : "\(n) \(role.lowercased())s"
+        guard let min = minScore else { return "\(when) \(part): at least one \(who)." }
+        let score = min == min.rounded() ? String(Int(min)) : String(format: "%.1f", min)
+        return "\(when) \(part): at least \(n == 1 ? "one" : String(n)) \(who) scoring \(score) or above."
+    }
+}
+
+/// One person inside a scheduled shift, as the strength check counted them.
+struct StrengthMember: Codable, Equatable {
+    let name: String
+    let score: Double
+}
+
+/// A shift that came in under its combined-score target, with the reason.
+struct StrengthShortfall: Codable, Identifiable, Equatable {
+    let date: String
+    let day: String?
+    let daypart: String
+    let role: String
+    let strength: Double
+    let target: Double
+    let shortBy: Double?
+    let reason: String
+    let members: [StrengthMember]
+    let unrated: [String]
+
+    var id: String { "\(date)-\(daypart)-\(role)" }
+
+    enum CodingKeys: String, CodingKey {
+        case date, day, daypart, role, strength, target, reason, members, unrated
+        case shortBy = "short_by"
+    }
+}
+
+/// A shift leader requirement the finished schedule could not satisfy.
+struct StrengthLeaderMiss: Codable, Identifiable, Equatable {
+    let date: String
+    let day: String?
+    let daypart: String
+    let role: String
+    let rule: String
+    let found: Int
+    let reason: String
+
+    var id: String { "\(date)-\(daypart)-\(role)-\(rule)" }
+}
+
+/// The deterministic pass over the finished schedule. `checked` is false
+/// when no targets and no leader rules are configured, which is the
+/// default — nothing is claimed about a schedule nobody set targets for.
+struct ScheduleStrength: Codable, Equatable {
+    let checked: Bool
+    let shortfalls: [StrengthShortfall]?
+    let leaderMisses: [StrengthLeaderMiss]?
+
+    var problems: Int { (shortfalls?.count ?? 0) + (leaderMisses?.count ?? 0) }
+    var isClean: Bool { checked && problems == 0 }
+
+    enum CodingKeys: String, CodingKey {
+        case checked, shortfalls
+        case leaderMisses = "leader_misses"
+    }
+}
+
 struct LaborStats: Codable {
     let ok: Bool
     let isLive: Bool
@@ -237,9 +358,13 @@ struct GeneratedSchedule: Codable {
     let hoursBudget: Double?
     let laborBudgetDollars: Double?
     let staffConstraints: [String: String]?
+    // The Operational Score check the backend runs over the finished
+    // schedule. Absent on a server that predates the feature, and
+    // `checked: false` whenever no targets or leader rules are set.
+    let strength: ScheduleStrength?
 
     enum CodingKeys: String, CodingKey {
-        case ok, status, summary, error
+        case ok, status, summary, error, strength
         case weekDates = "week_dates"
         case weekDays = "week_days"
         case hoursScheduled = "hours_scheduled"
@@ -286,6 +411,26 @@ final class LaborViewModel {
     var availabilityExpanded = false
     var rolesExpanded = false
     var forecastExpanded = false
+    var teamExpanded = false
+    var targetsExpanded = false
+
+    // MARK: Operational Score
+    var team: [RatedEmployee] = []
+    var teamCoverage: RatingCoverage?
+    var teamThresholds: [String: Double] = [:]
+    var leaderRules: [ShiftLeaderRule] = []
+    var isLoadingTeam = false
+    var teamError: String?
+    // Set when the roster can't be built at all — no shift data uploaded
+    // yet. A different state from an empty roster, and says what to do.
+    var teamNote: String?
+    // Whose rating is mid-flight. Scoped to one name rather than a global
+    // flag so rating a second person doesn't grey out the first.
+    var savingFor: String?
+    var isSavingTargets = false
+    // Targets an owner can set but the current team cannot reach. Saved
+    // anyway — they may be describing the team they intend to have.
+    var targetWarnings: [String] = []
 
     private let client: APIClient
     private var restaurantId: Int?
@@ -489,6 +634,160 @@ final class LaborViewModel {
         } catch {
             availabilityError = "Couldn't remove that entry."
         }
+    }
+
+    // MARK: - Operational Score
+
+    private struct TeamResponse: Decodable {
+        let ok: Bool
+        let isLive: Bool?
+        let team: [RatedEmployee]?
+        let coverage: RatingCoverage?
+        let thresholds: [String: Double]?
+        let leaderRules: [ShiftLeaderRule]?
+        let note: String?
+        let error: String?
+
+        enum CodingKeys: String, CodingKey {
+            case ok, team, coverage, thresholds, note, error
+            case isLive = "is_live"
+            case leaderRules = "leader_rules"
+        }
+    }
+
+    private struct RatingBody: Encodable {
+        let employeeName: String
+        let score: Int?
+        let notes: String?
+        enum CodingKeys: String, CodingKey {
+            case employeeName = "employee_name"
+            case score, notes
+        }
+    }
+
+    private struct ThresholdsBody: Encodable {
+        let thresholds: [String: Double]
+        let leaderRules: [ShiftLeaderRule]
+        enum CodingKeys: String, CodingKey {
+            case thresholds
+            case leaderRules = "leader_rules"
+        }
+    }
+
+    private struct ThresholdsResponse: Decodable {
+        let ok: Bool
+        let thresholds: [String: Double]?
+        let warnings: [String]?
+        let error: String?
+    }
+
+    func loadTeam() async {
+        isLoadingTeam = true
+        defer { isLoadingTeam = false }
+        do {
+            let response: TeamResponse = try await client.send("/mobile/api/labor/team",
+                                                              hapticOnError: false)
+            teamNote = response.note
+            team = response.team ?? []
+            teamCoverage = response.coverage
+            teamThresholds = response.thresholds ?? [:]
+            leaderRules = response.leaderRules ?? []
+            teamError = response.ok ? nil : response.error
+        } catch {
+            teamError = "Couldn't load your team just now."
+        }
+    }
+
+    /// Set or clear one person's Operational Score.
+    ///
+    /// Writes the new value into the local row before the round trip and
+    /// rolls it back on failure — this control is meant to be tapped down a
+    /// list of twenty people, and a spinner between each tap would make
+    /// rating a team feel like filing paperwork.
+    func setScore(for name: String, score: Int?) async {
+        guard let index = team.firstIndex(where: { $0.name == name }) else { return }
+        let previous = team[index]
+        savingFor = name
+        teamError = nil
+        defer { savingFor = nil }
+
+        team[index].score = score
+        team[index].scoreLabel = score.flatMap { Self.scoreLabels[$0] }
+        recountCoverage()
+
+        do {
+            let response: OkResponse = try await client.send(
+                "/mobile/api/labor/team/rating", method: .post,
+                body: RatingBody(employeeName: name, score: score, notes: nil))
+            if response.ok {
+                Haptic.light()
+            } else {
+                team[index] = previous
+                recountCoverage()
+                teamError = response.error ?? "Couldn't save that rating."
+            }
+        } catch let error as APIClient.APIError {
+            team[index] = previous
+            recountCoverage()
+            teamError = error.message
+        } catch {
+            team[index] = previous
+            recountCoverage()
+            teamError = "Couldn't save that rating."
+        }
+    }
+
+    /// Minimum combined score per role, plus the shift leader rules.
+    /// Unreachable targets come back as warnings, not errors — the save
+    /// still lands, because an owner may be describing the team they mean
+    /// to hire rather than the one they have.
+    func saveTargets(_ thresholds: [String: Double], leaderRules rules: [ShiftLeaderRule]) async {
+        isSavingTargets = true
+        teamError = nil
+        defer { isSavingTargets = false }
+        do {
+            let response: ThresholdsResponse = try await client.send(
+                "/mobile/api/labor/team/thresholds", method: .post,
+                body: ThresholdsBody(thresholds: thresholds, leaderRules: rules))
+            if response.ok {
+                teamThresholds = response.thresholds ?? thresholds
+                leaderRules = rules
+                targetWarnings = response.warnings ?? []
+                Haptic.success()
+            } else {
+                teamError = response.error ?? "Couldn't save those targets."
+            }
+        } catch let error as APIClient.APIError {
+            teamError = error.message
+        } catch {
+            teamError = "Couldn't save those targets."
+        }
+    }
+
+    /// Coverage is recomputed locally after an optimistic rating change so
+    /// the "3 of 8 rated" line moves with the tap instead of lagging a
+    /// round trip behind it.
+    private func recountCoverage() {
+        let rated = team.filter { $0.score != nil }
+        teamCoverage = RatingCoverage(
+            rated: rated.count, total: team.count,
+            unrated: team.filter { $0.score == nil }.map(\.name).sorted(),
+            active: !rated.isEmpty,
+            pct: team.isEmpty ? 0 : Int((Double(rated.count) / Double(team.count) * 100).rounded()))
+    }
+
+    /// Mirrors models.SCORE_LABELS. Duplicated rather than read from the
+    /// payload so an optimistic row has a label the instant it is tapped.
+    static let scoreLabels: [Int: String] = [
+        1: "Very weak", 2: "Below average", 3: "Average", 4: "Strong", 5: "Excellent",
+    ]
+
+    /// Distinct roles across the roster, for the targets editor.
+    var teamRoles: [String] {
+        Array(Set(team.compactMap { role in
+            let r = (role.role ?? "").trimmingCharacters(in: .whitespaces)
+            return r.isEmpty ? nil : r
+        })).sorted()
     }
 
     private struct GenerateResponse: Decodable {

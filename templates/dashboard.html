@@ -2263,6 +2263,19 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
         </div>
       </div>
 
+      <!-- Shift strength: the Operational Score check, run over the CSV that
+           was actually produced rather than over the prompt's intent. Never
+           an error and never a blocked generation — an owner who cannot staff
+           a Saturday to target needs the best schedule available AND to be
+           told which shift fell short. -->
+      <div id="sched-strength-banner" style="display:none;padding:14px 20px;border-bottom:1px solid rgba(255,255,255,.08)">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
+          <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase" id="sched-strength-kicker">Shift Strength</div>
+          <div id="sched-strength-badge" style="font-size:13px;font-weight:800;padding:8px 16px;border-radius:8px;white-space:nowrap"></div>
+        </div>
+        <div id="sched-strength-list" style="margin-top:8px"></div>
+      </div>
+
       <!-- Schedule table toggle bar -->
       <div id="sched-toggle-bar" style="display:none;padding:12px 20px;border-bottom:1px solid rgba(255,255,255,.08);background:rgba(111,207,151,.04);cursor:pointer;user-select:none;display:flex;align-items:center;justify-content:space-between" onclick="toggleSchedTable()">
         <button style="background:none;border:none;cursor:pointer;font-size:12px;font-weight:700;color:#6fcf97;padding:0;letter-spacing:.02em;display:flex;align-items:center;gap:6px" id="sched-toggle-label">View full schedule<span id="sched-toggle-arrow" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:rgba(111,207,151,.12);border:1px solid rgba(111,207,151,.25);color:#6fcf97;transition:transform .25s;flex-shrink:0"><svg width="11" height="11" viewBox="0 0 16 16" fill="none"><path d="M5 6l3 3 3-3" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span></button>
@@ -2331,6 +2344,75 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
         <!-- Saved entries -->
         <div id="avail-list" style="display:flex;flex-direction:column;gap:6px">
           <div style="font-size:11px;color:var(--ink3);font-style:italic">Loading availability…</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Operational Score — how strong each person is, 1 to 5, set by the owner.
+       The scheduler already knows who is available; this is what tells it not
+       to put the two weakest people together on a Saturday. -->
+  <div style="margin-bottom:14px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+      <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ink3)">Operational Score <span id="team-coverage-chip" style="letter-spacing:0;text-transform:none;font-weight:600;color:var(--ink3)"></span></div>
+      <button onclick="toggleTeamPanel()" style="font-size:11px;color:var(--ember);background:none;border:none;cursor:pointer;font-weight:600;padding:0" id="team-toggle-btn">Rate your team ↓</button>
+    </div>
+    <div id="team-panel" style="display:none">
+      <div class="lb2-avail">
+        <div style="font-size:12px;color:var(--ink3);margin-bottom:12px">Rate each person 1 to 5 — 1 very weak, 3 average, 5 excellent. The scheduler uses this to balance who works together, never to bench anybody. Nothing changes in your schedules until somebody is rated.</div>
+        <div id="team-list" style="display:flex;flex-direction:column;gap:6px">
+          <div style="font-size:11px;color:var(--ink3);font-style:italic">Loading your team…</div>
+        </div>
+
+        <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--paper3)">
+          <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ink3);margin-bottom:6px">Shift strength targets</div>
+          <div style="font-size:12px;color:var(--ink3);margin-bottom:10px">The combined score of everyone in a role on one shift. Two people at 5 make 10 — so do a 5, a 3 and a 2, which is a weaker team, and the scheduler prefers fewer stronger people when both clear the bar. Leave a role blank for no target.</div>
+          <div id="team-thresholds" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end"></div>
+          <div id="team-threshold-warnings" style="margin-top:8px"></div>
+
+          <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ink3);margin:16px 0 6px">Shift leader requirements</div>
+          <div style="font-size:12px;color:var(--ink3);margin-bottom:10px">Stricter than a target: this names one person who has to be on that shift.</div>
+          <div id="team-rules" style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px"></div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+            <div>
+              <div style="font-size:10px;font-weight:600;color:var(--ink3);margin-bottom:4px">Role</div>
+              <select id="lr-role" style="font-size:12px;padding:6px 10px;border:1px solid var(--paper3);border-radius:6px;background:var(--surface);color:var(--ink);font-family:inherit"></select>
+            </div>
+            <div>
+              <div style="font-size:10px;font-weight:600;color:var(--ink3);margin-bottom:4px">Days <span style="font-weight:400">(none = every day)</span></div>
+              <div style="display:flex;gap:4px;flex-wrap:wrap" id="lr-days">
+                {% for day in ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'] %}
+                <label style="display:flex;align-items:center;gap:3px;font-size:11px;cursor:pointer;padding:4px 7px;border:1px solid var(--paper3);border-radius:5px;user-select:none">
+                  <input type="checkbox" value="{{day}}" style="margin:0"> {{day}}
+                </label>
+                {% endfor %}
+              </div>
+            </div>
+            <div>
+              <div style="font-size:10px;font-weight:600;color:var(--ink3);margin-bottom:4px">Time of day</div>
+              <select id="lr-daypart" style="font-size:12px;padding:6px 10px;border:1px solid var(--paper3);border-radius:6px;background:var(--surface);color:var(--ink);font-family:inherit">
+                <option value="">Any</option><option value="morning">Morning</option><option value="night">Night</option>
+              </select>
+            </div>
+            <div>
+              <div style="font-size:10px;font-weight:600;color:var(--ink3);margin-bottom:4px">Minimum score</div>
+              <select id="lr-min" style="font-size:12px;padding:6px 10px;border:1px solid var(--paper3);border-radius:6px;background:var(--surface);color:var(--ink);font-family:inherit">
+                <option value="5">5</option><option value="4">4</option><option value="3">3</option><option value="2">2</option><option value="1">1</option>
+              </select>
+            </div>
+            <div>
+              <div style="font-size:10px;font-weight:600;color:var(--ink3);margin-bottom:4px">How many</div>
+              <select id="lr-count" style="font-size:12px;padding:6px 10px;border:1px solid var(--paper3);border-radius:6px;background:var(--surface);color:var(--ink);font-family:inherit">
+                <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option>
+              </select>
+            </div>
+            <button onclick="addLeaderRule()" class="hb-btn" style="padding:7px 14px;font-size:12px;flex-shrink:0">Add requirement</button>
+          </div>
+
+          <div style="margin-top:14px">
+            <button onclick="saveTeamTargets(this)" class="btn-primary" style="padding:7px 16px;font-size:12px">Save targets</button>
+            <span id="team-save-note" style="font-size:11px;color:var(--ink3);margin-left:10px"></span>
+          </div>
         </div>
       </div>
     </div>
@@ -6846,8 +6928,47 @@ function _schedHandleResult(data) {
     parBanner.style.display = 'block';
   }
 
+  renderScheduleStrength(data.strength);
+
   if (panel) panel.style.display = 'block';
   if (panel) panel.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+}
+
+// Leader requirements are listed before shortfalls: a rule that names one
+// person is a harder miss than a combined total coming in a point light.
+function renderScheduleStrength(strength) {
+  var banner = document.getElementById('sched-strength-banner');
+  if (!banner) return;
+  if (!strength || !strength.checked) { banner.style.display = 'none'; return; }
+  var misses = strength.leader_misses || [];
+  var shorts = strength.shortfalls || [];
+  var total = misses.length + shorts.length;
+  var clean = total === 0;
+  var tone = clean ? '#6fcf97' : '#f2994a';
+  banner.style.background = clean ? 'rgba(111,207,151,.06)' : 'rgba(242,153,74,.06)';
+  document.getElementById('sched-strength-kicker').style.color = tone;
+  var badge = document.getElementById('sched-strength-badge');
+  badge.textContent = clean ? '\u2713 Every target met'
+    : (total === 1 ? '1 shift to look at' : total + ' shifts to look at');
+  badge.style.background = clean ? 'rgba(111,207,151,.2)' : 'rgba(242,153,74,.18)';
+  badge.style.color = tone;
+
+  var html = '';
+  var i;
+  for (i = 0; i < misses.length; i++) {
+    html += _strengthLine((misses[i].day || misses[i].date) + ' ' + misses[i].daypart, misses[i].reason);
+  }
+  for (i = 0; i < shorts.length; i++) {
+    html += _strengthLine((shorts[i].day || shorts[i].date) + ' ' + shorts[i].daypart + ' \u00B7 ' + shorts[i].role, shorts[i].reason);
+  }
+  document.getElementById('sched-strength-list').innerHTML = html;
+  banner.style.display = 'block';
+}
+
+function _strengthLine(title, body) {
+  return '<div style="margin-top:6px"><div style="font-size:12px;font-weight:700;color:rgba(255,255,255,.88)">'
+    + _escHtml(title) + '</div><div style="font-size:12px;color:rgba(255,255,255,.62);line-height:1.6">'
+    + _escHtml(body) + '</div></div>';
 }
 
 function generateSchedule(btn) {
@@ -7046,6 +7167,297 @@ function deleteAvailability(name) {
     headers: {'Content-Type':'application/json','X-CSRFToken':'{{csrf_token}}'},
     body: JSON.stringify({employee_name: name})
   }).then(function(r){return r.json();}).then(function(d){if(d.ok) loadAvailability();});
+}
+
+// ── Operational Score ───────────────────────────────────────────────────────
+// Rate each person 1 to 5; set a combined-score target per role and any
+// shift leader requirements on top. Names are never interpolated into an
+// onclick attribute here: rows carry a data-idx and the container listens,
+// so an employee named with a quote cannot break the markup.
+var _teamOpen = false;
+var _teamRows = [];
+var _teamRules = [];
+var _teamRoles = [];
+var _teamThresholds = {};
+var _TEAM_LABELS = {1:'Very weak',2:'Below average',3:'Average',4:'Strong',5:'Excellent'};
+var _DAY_FULL = {Mon:'Monday',Tue:'Tuesday',Wed:'Wednesday',Thu:'Thursday',Fri:'Friday',Sat:'Saturday',Sun:'Sunday'};
+
+function toggleTeamPanel() {
+  _teamOpen = !_teamOpen;
+  var p = document.getElementById('team-panel');
+  var btn = document.getElementById('team-toggle-btn');
+  if (p) p.style.display = _teamOpen ? '' : 'none';
+  if (btn) btn.textContent = _teamOpen ? 'Close ↑' : 'Rate your team ↓';
+  if (_teamOpen) loadTeamPanel();
+}
+
+function loadTeamPanel() {
+  var list = document.getElementById('team-list');
+  if (!list) return;
+  fetch('/api/labor/team').then(function(r){return r.json();}).then(function(d){
+    if (!d.ok) {
+      list.innerHTML = '<div style="font-size:11px;color:var(--ink3)">Could not load your team.</div>';
+      return;
+    }
+    if (d.note) {
+      list.innerHTML = '<div style="font-size:12px;color:var(--ink3)">' + _escHtml(d.note) + '</div>';
+      return;
+    }
+    _teamRows = d.team || [];
+    _teamRules = d.leader_rules || [];
+    _teamThresholds = d.thresholds || {};
+    _teamRoles = _rolesFromTeam(_teamRows);
+    renderTeamList();
+    renderTeamThresholds();
+    renderTeamRules();
+    renderTeamCoverage(d.coverage);
+  }).catch(function(){
+    list.innerHTML = '<div style="font-size:11px;color:var(--ink3)">Could not load your team.</div>';
+  });
+}
+
+function _rolesFromTeam(rows) {
+  var seen = {}, out = [];
+  for (var i = 0; i < rows.length; i++) {
+    var r = (rows[i].role || '').replace(/^\s+|\s+$/g, '');
+    if (r && !seen[r.toLowerCase()]) { seen[r.toLowerCase()] = 1; out.push(r); }
+  }
+  out.sort();
+  return out;
+}
+
+function renderTeamCoverage(cov) {
+  var chip = document.getElementById('team-coverage-chip');
+  if (!chip) return;
+  if (!cov || !cov.total) { chip.textContent = ''; return; }
+  chip.textContent = cov.rated === cov.total
+    ? '· all ' + cov.total + ' rated'
+    : '· ' + cov.rated + ' of ' + cov.total + ' rated';
+}
+
+function renderTeamList() {
+  var list = document.getElementById('team-list');
+  if (!list) return;
+  if (!_teamRows.length) {
+    list.innerHTML = '<div style="font-size:11px;color:var(--ink3);font-style:italic">No staff on file yet.</div>';
+    return;
+  }
+  var html = '';
+  for (var i = 0; i < _teamRows.length; i++) {
+    var m = _teamRows[i];
+    var sub = [];
+    if (m.role) sub.push(_escHtml(m.role));
+    if (m.score) sub.push(_escHtml(_TEAM_LABELS[m.score] || ''));
+    html += '<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--paper);border:1px solid var(--paper3);border-radius:6px;gap:12px;flex-wrap:wrap">';
+    html += '<div><div style="font-size:13px;font-weight:600;color:var(--ink)">' + _escHtml(m.name) + '</div>';
+    html += '<div style="font-size:11px;color:var(--ink3)">' + sub.join(' · ') + '</div></div>';
+    html += '<div style="display:flex;gap:4px" data-team-idx="' + i + '">';
+    for (var v = 1; v <= 5; v++) {
+      var on = m.score === v;
+      html += '<button type="button" data-score="' + v + '" style="font-family:inherit;font-size:13px;font-weight:700;width:34px;height:30px;cursor:pointer;border-radius:6px;border:1px solid ' + (on ? 'transparent' : 'var(--paper3)') + ';background:' + (on ? _scoreColor(v) : 'var(--surface)') + ';color:' + (on ? '#fff' : 'var(--ink2)') + '">' + v + '</button>';
+    }
+    html += '</div></div>';
+  }
+  list.innerHTML = html;
+}
+
+// Weak reads warm, strong reads green — the same direction every other
+// number on this dashboard uses, so a 2 never looks like good news.
+function _scoreColor(v) {
+  if (v === 1) return '#e3333f';
+  if (v === 2) return '#e8945a';
+  if (v === 3) return '#7c7a74';
+  if (v === 4) return 'rgba(111,207,151,.75)';
+  return '#6fcf97';
+}
+
+// _escHtml leaves quotes alone, which is fine for text but not for an
+// attribute value — a role carrying a quote would otherwise close it.
+function _escAttr(v) {
+  return _escHtml(v).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// One delegated listener on the list, bound once — a rating control the
+// owner taps down a list of twenty people should not rebuild its handlers
+// on every render.
+document.addEventListener('click', function(ev) {
+  var btn = ev.target;
+  if (!btn || btn.tagName !== 'BUTTON') return;
+  var holder = btn.parentNode;
+  if (!holder || !holder.getAttribute) return;
+  var idx = holder.getAttribute('data-team-idx');
+  if (idx === null) return;
+  var score = parseInt(btn.getAttribute('data-score'), 10);
+  setTeamScore(parseInt(idx, 10), score);
+});
+
+function setTeamScore(idx, score) {
+  var m = _teamRows[idx];
+  if (!m) return;
+  // Tapping the score somebody already has clears it. Not rated is a real
+  // state the scheduler treats differently from a low rating: it counts
+  // nothing and names the person, rather than quietly assuming a 3.
+  var next = (m.score === score) ? null : score;
+  var previous = m.score;
+  m.score = next;
+  renderTeamList();
+  fetch('/api/labor/team/rating', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json','X-CSRFToken':'{{csrf_token}}'},
+    body: JSON.stringify({employee_name: m.name, score: next})
+  }).then(function(r){return r.json();}).then(function(d){
+    if (!d.ok) { m.score = previous; renderTeamList(); }
+    var rated = 0;
+    for (var i = 0; i < _teamRows.length; i++) if (_teamRows[i].score) rated++;
+    renderTeamCoverage({rated: rated, total: _teamRows.length});
+  }).catch(function(){ m.score = previous; renderTeamList(); });
+}
+
+function renderTeamThresholds() {
+  var wrap = document.getElementById('team-thresholds');
+  if (!wrap) return;
+  if (!_teamRoles.length) {
+    wrap.innerHTML = '<div style="font-size:11px;color:var(--ink3);font-style:italic">Roles appear once your shift data carries them.</div>';
+    return;
+  }
+  var html = '';
+  for (var i = 0; i < _teamRoles.length; i++) {
+    var role = _teamRoles[i];
+    var current = _thresholdFor(role);
+    var best = _reachable(role);
+    html += '<div><div style="font-size:10px;font-weight:600;color:var(--ink3);margin-bottom:4px">' + _escHtml(role);
+    if (best !== null) html += ' <span style="font-weight:400">max ' + best + '</span>';
+    html += '</div><input type="number" min="0" step="1" data-role-threshold="' + i + '" value="' + (current === null ? '' : current) + '" placeholder="—" style="font-size:13px;font-weight:700;padding:6px 8px;width:74px;text-align:center;border:1px solid var(--paper3);border-radius:6px;background:var(--surface);color:var(--ink);font-family:inherit"></div>';
+  }
+  wrap.innerHTML = html;
+}
+
+function _thresholdFor(role) {
+  var want = role.toLowerCase();
+  for (var k in _teamThresholds) {
+    if (_teamThresholds.hasOwnProperty(k) && k.toLowerCase() === want) return _teamThresholds[k];
+  }
+  return null;
+}
+
+// The best this role could ever total if everyone rated in it worked the
+// same shift, so a target nobody can reach is obvious while it is being
+// typed rather than after saving.
+function _reachable(role) {
+  var want = role.toLowerCase(), total = 0, any = false;
+  for (var i = 0; i < _teamRows.length; i++) {
+    var m = _teamRows[i];
+    if (m.score && (m.role || '').toLowerCase() === want) { total += m.score; any = true; }
+  }
+  return any ? total : null;
+}
+
+function renderTeamRules() {
+  var wrap = document.getElementById('team-rules');
+  var sel = document.getElementById('lr-role');
+  if (sel) {
+    var opts = '';
+    for (var r = 0; r < _teamRoles.length; r++) {
+      opts += '<option value="' + _escAttr(_teamRoles[r]) + '">' + _escHtml(_teamRoles[r]) + '</option>';
+    }
+    sel.innerHTML = opts || '<option value="">No roles yet</option>';
+  }
+  if (!wrap) return;
+  if (!_teamRules.length) {
+    wrap.innerHTML = '<div style="font-size:11px;color:var(--ink3);font-style:italic">No requirements yet.</div>';
+    return;
+  }
+  var html = '';
+  for (var i = 0; i < _teamRules.length; i++) {
+    html += '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 12px;background:var(--paper);border:1px solid var(--paper3);border-radius:6px">';
+    html += '<span style="font-size:12px;color:var(--ink2)">' + _escHtml(_ruleSentence(_teamRules[i])) + '</span>';
+    html += '<button type="button" data-rule-remove="' + i + '" style="font-family:inherit;font-size:11px;color:var(--ink3);background:none;border:none;cursor:pointer;padding:0 2px">Remove</button></div>';
+  }
+  wrap.innerHTML = html;
+}
+
+document.addEventListener('click', function(ev) {
+  var t = ev.target;
+  if (!t || !t.getAttribute) return;
+  var idx = t.getAttribute('data-rule-remove');
+  if (idx === null) return;
+  _teamRules.splice(parseInt(idx, 10), 1);
+  renderTeamRules();
+});
+
+function _ruleSentence(rule) {
+  var days = (rule.days && rule.days.length) ? rule.days.join(', ') : 'Every';
+  var part = rule.daypart || 'shift';
+  var n = rule.count || 1;
+  var who = n === 1 ? (rule.role || '').toLowerCase() : n + ' ' + (rule.role || '').toLowerCase() + 's';
+  if (rule.min_score === null || rule.min_score === undefined) {
+    return days + ' ' + part + ': at least one ' + who + '.';
+  }
+  return days + ' ' + part + ': at least ' + (n === 1 ? 'one' : n) + ' ' + who + ' scoring ' + rule.min_score + ' or above.';
+}
+
+function addLeaderRule() {
+  var role = (document.getElementById('lr-role').value || '').replace(/^\s+|\s+$/g, '');
+  if (!role) { alert('Pick a role first.'); return; }
+  var days = [];
+  var checks = document.querySelectorAll('#lr-days input[type=checkbox]');
+  for (var i = 0; i < checks.length; i++) {
+    if (checks[i].checked) days.push(_DAY_FULL[checks[i].value] || checks[i].value);
+    checks[i].checked = false;
+  }
+  _teamRules.push({
+    role: role,
+    days: days.length ? days : null,
+    daypart: document.getElementById('lr-daypart').value || null,
+    min_score: parseFloat(document.getElementById('lr-min').value),
+    count: parseInt(document.getElementById('lr-count').value, 10)
+  });
+  renderTeamRules();
+}
+
+function saveTeamTargets(btn) {
+  var thresholds = {};
+  var fields = document.querySelectorAll('#team-thresholds input[data-role-threshold]');
+  for (var i = 0; i < fields.length; i++) {
+    var role = _teamRoles[parseInt(fields[i].getAttribute('data-role-threshold'), 10)];
+    var raw = (fields[i].value || '').replace(/^\s+|\s+$/g, '');
+    // A blank field means no target for that role, which is different from
+    // a target of zero — the backend treats a missing role as unconstrained.
+    if (!raw) continue;
+    var n = parseFloat(raw);
+    if (isNaN(n) || n <= 0) continue;
+    thresholds[role] = n;
+  }
+  var note = document.getElementById('team-save-note');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  fetch('/api/labor/team/thresholds', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json','X-CSRFToken':'{{csrf_token}}'},
+    body: JSON.stringify({thresholds: thresholds, leader_rules: _teamRules})
+  }).then(function(r){return r.json();}).then(function(d){
+    if (btn) { btn.disabled = false; btn.textContent = 'Save targets'; }
+    if (!d.ok) { if (note) note.textContent = d.error || 'Could not save those targets.'; return; }
+    _teamThresholds = d.thresholds || thresholds;
+    if (note) note.textContent = 'Saved.';
+    renderTeamWarnings(d.warnings || []);
+    setTimeout(function(){ if (note) note.textContent = ''; }, 2500);
+  }).catch(function(){
+    if (btn) { btn.disabled = false; btn.textContent = 'Save targets'; }
+    if (note) note.textContent = 'Could not save those targets.';
+  });
+}
+
+// Unreachable targets are saved and warned about rather than refused — an
+// owner may be describing the team they mean to hire.
+function renderTeamWarnings(warnings) {
+  var wrap = document.getElementById('team-threshold-warnings');
+  if (!wrap) return;
+  if (!warnings.length) { wrap.innerHTML = ''; return; }
+  var html = '';
+  for (var i = 0; i < warnings.length; i++) {
+    html += '<div style="font-size:11px;color:var(--amber);margin-top:3px">' + _escHtml(warnings[i]) + '</div>';
+  }
+  wrap.innerHTML = html;
 }
 // ────────────────────────────────────────────────────────────────────────────
 

@@ -286,6 +286,13 @@ class Restaurant:
     daypart_split: Optional[str]         = None   # e.g. "lunch:35,dinner:65"
     delivery_pct: Optional[int]          = None   # % of revenue from delivery/takeout
     role_minimums_json: Optional[str]    = None   # e.g. {"Server":2,"Cook":2,"Bartender":1}
+    # Minimum combined Operational Score per role on a shift, e.g.
+    # {"Bartender": 10, "Cook": 15}. Two 5-rated bartenders make 10. Nothing
+    # is hardcoded; an unset role has no threshold.
+    role_strength_json: Optional[str]    = None
+    # Shift leader requirements layered on the same capability data, e.g.
+    # [{"days":["Saturday"],"daypart":"night","role":"Bartender","min_score":5,"count":1}]
+    shift_leader_rules_json: Optional[str] = None
     sched_notes: Optional[str]           = None   # freeform scheduling notes from admin
     latitude: Optional[float]            = None   # geocoded once from google_place_id, cached
     longitude: Optional[float]           = None
@@ -580,6 +587,9 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "daypart_split", "TEXT"),
         ("restaurants", "delivery_pct", "INTEGER"),
         ("restaurants", "role_minimums_json", "TEXT"),
+        # Operational Score — see staff_capabilities and shift_strength().
+        ("restaurants", "role_strength_json", "TEXT"),
+        ("restaurants", "shift_leader_rules_json", "TEXT"),
         ("restaurants", "sched_notes", "TEXT"),
         ("restaurants", "latitude", "REAL"),
         ("restaurants", "longitude", "REAL"),
@@ -2130,7 +2140,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH):
     allowed = {
         "name","owner_email","google_place_id","yelp_business_id","voice_notes",
         "neighborhood","vibe","known_for","sign_off_name","never_say",
-        "hourly_rate","labor_target_pct","week_start_day","monthly_revenue_target","hours_notes","role_rates_json","close_times_json","role_close_buffer_json","stripe_customer_id","docusign_envelope_id","contract_status","location_group","location_name","pos_system","inventory_frequency","delivery_days","inventory_notes","food_cost_target","inventory_updated_at","temp_password","ig_token","ig_user_id","fb_page_token","fb_page_id","ig_token_expires","fb_token_expires","competitor_intel","competitor_updated_at","reviews_live","billing_status","is_demo","internal_notes","gmb_access_token","gmb_refresh_token","gmb_account_id","gmb_location_id","gmb_token_expires",
+        "hourly_rate","labor_target_pct","week_start_day","role_strength_json","shift_leader_rules_json","monthly_revenue_target","hours_notes","role_rates_json","close_times_json","role_close_buffer_json","stripe_customer_id","docusign_envelope_id","contract_status","location_group","location_name","pos_system","inventory_frequency","delivery_days","inventory_notes","food_cost_target","inventory_updated_at","temp_password","ig_token","ig_user_id","fb_page_token","fb_page_id","ig_token_expires","fb_token_expires","competitor_intel","competitor_updated_at","reviews_live","billing_status","is_demo","internal_notes","gmb_access_token","gmb_refresh_token","gmb_account_id","gmb_location_id","gmb_token_expires",
         "service_tier","module_reviews","module_labor","module_inventory","module_marketing",
         "last_active_tab","last_activity","owner_name","owner_phone","digest_day","digest_enabled","menu_notes","menu_url","skip_holidays","custom_competitors",
         "two_fa_enabled","two_fa_code","two_fa_expires","two_fa_device_token","two_fa_pending","two_fa_method","login_notify","marketing_emails_opt_out","timezone","onboarding_dismissed",
@@ -2353,6 +2363,8 @@ def get_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> Optional[Resta
         daypart_split=row["daypart_split"]            if "daypart_split" in row.keys() else None,
         delivery_pct=row["delivery_pct"]              if "delivery_pct" in row.keys() else None,
         role_minimums_json=row["role_minimums_json"]  if "role_minimums_json" in row.keys() else None,
+        role_strength_json=row["role_strength_json"] if "role_strength_json" in row.keys() else None,
+        shift_leader_rules_json=row["shift_leader_rules_json"] if "shift_leader_rules_json" in row.keys() else None,
         sched_notes=row["sched_notes"]                if "sched_notes" in row.keys() else None,
         latitude=row["latitude"]                       if "latitude" in row.keys() else None,
         longitude=row["longitude"]                     if "longitude" in row.keys() else None,
@@ -2972,6 +2984,303 @@ def init_staff_availability(db_path: str = DB_PATH):
     )""")
     conn.commit()
     conn.close()
+
+# ── Employee capability layer ─────────────────────────────────────────────
+#
+# The thing an owner asked for was "does the AI know how good each employee
+# is" — but building that as a rating column would make every later
+# capability (closing ability, trainer, cocktail expertise, reliability) a
+# new migration and a new set of call sites.
+#
+# So: one row per employee per ATTRIBUTE. Version 1 registers exactly one,
+# `overall`, and exposes only that. Adding a second is a registry entry and
+# nothing else — no schema change, no backfill, and each attribute carries
+# its own provenance so "who set this and when" is answerable per skill
+# rather than per employee.
+#
+# Employees are keyed by NAME, matching staff_notes, staff_availability and
+# staff_contacts. They come from POS shift data rather than a roster this
+# app owns, so a name is the only identity available.
+
+SCORE_MIN, SCORE_MAX = 1, 5
+
+# Each entry declares what an attribute IS, so validation, the UI and the
+# scheduler can all read the same definition instead of three copies.
+#   kind    "score" (numeric, SCORE_MIN..SCORE_MAX) or "flag" (boolean)
+#   v1      whether Version 1 surfaces it
+CAPABILITY_ATTRIBUTES = {
+    "overall": {
+        "label": "Operational Score",
+        "kind": "score",
+        "v1": True,
+        "help": "1 very weak · 2 below average · 3 average · 4 strong · 5 excellent",
+    },
+    # Registered so shift-leader rules can reference it and validation knows
+    # its shape. Not surfaced in Version 1's UI.
+    "can_close": {"label": "Authorised to close", "kind": "flag", "v1": False,
+                  "help": "May be listed as the closer on a shift"},
+}
+
+SCORE_LABELS = {1: "Very weak", 2: "Below average", 3: "Average",
+                4: "Strong", 5: "Excellent"}
+
+
+def init_staff_capabilities(db_path: str = DB_PATH):
+    conn = get_conn(db_path)
+    conn.execute("""CREATE TABLE IF NOT EXISTS staff_capabilities (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        restaurant_id  INTEGER NOT NULL REFERENCES restaurants(id),
+        employee_name  TEXT    NOT NULL,
+        attribute      TEXT    NOT NULL,
+        score          REAL,
+        flag           INTEGER,
+        notes          TEXT,
+        updated_by     TEXT,
+        updated_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(restaurant_id, employee_name, attribute)
+    )""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_staff_cap_rest "
+                 "ON staff_capabilities(restaurant_id, attribute)")
+    conn.commit()
+    conn.close()
+
+
+class CapabilityError(ValueError):
+    """A capability write that would store something meaningless."""
+
+
+def set_capability(restaurant_id: int, employee_name: str, attribute: str = "overall",
+                   score=None, flag=None, notes: str = None, updated_by: str = None,
+                   db_path: str = DB_PATH) -> dict:
+    """Set one attribute for one employee. Raises CapabilityError on junk.
+
+    Passing score=None for a score attribute CLEARS the rating rather than
+    storing a zero — "not rated yet" and "rated 1" are different facts and
+    the scheduler treats them differently.
+    """
+    spec = CAPABILITY_ATTRIBUTES.get(attribute)
+    if not spec:
+        raise CapabilityError(f"{attribute!r} is not a capability this system knows about")
+    name = (employee_name or "").strip()
+    if not name:
+        raise CapabilityError("an employee name is required")
+
+    if spec["kind"] == "score":
+        if score is None:
+            _clear_capability(restaurant_id, name, attribute, db_path)
+            return {"employee_name": name, "attribute": attribute, "score": None}
+        try:
+            score = int(round(float(score)))
+        except (TypeError, ValueError):
+            raise CapabilityError(f"{score!r} is not a number")
+        if not SCORE_MIN <= score <= SCORE_MAX:
+            raise CapabilityError(f"score must be {SCORE_MIN}-{SCORE_MAX}, got {score}")
+        flag = None
+    else:
+        if flag is None:
+            _clear_capability(restaurant_id, name, attribute, db_path)
+            return {"employee_name": name, "attribute": attribute, "flag": None}
+        flag = 1 if flag else 0
+        score = None
+
+    # A caller who said nothing about notes keeps the notes already on file.
+    # The rating control sends a score on every tap and never carries the
+    # note with it, so writing excluded.notes unconditionally would erase an
+    # owner's note the next time they nudged that person's score. Passing an
+    # empty string is how you clear one deliberately.
+    notes_given = notes is not None
+    clean_notes = (notes or "").strip()[:500] or None
+
+    init_staff_capabilities(db_path)
+    conn = get_conn(db_path)
+    try:
+        conn.execute("""
+            INSERT INTO staff_capabilities
+                (restaurant_id, employee_name, attribute, score, flag, notes, updated_by, updated_at)
+            VALUES (?,?,?,?,?,?,?,datetime('now'))
+            ON CONFLICT(restaurant_id, employee_name, attribute) DO UPDATE SET
+                score=excluded.score, flag=excluded.flag,
+                notes=CASE WHEN ? THEN excluded.notes ELSE staff_capabilities.notes END,
+                updated_by=excluded.updated_by, updated_at=datetime('now')
+        """, (restaurant_id, name, attribute, score, flag,
+              clean_notes, (updated_by or "").strip()[:120] or None,
+              1 if notes_given else 0))
+        conn.commit()
+    finally:
+        conn.close()
+    return {"employee_name": name, "attribute": attribute, "score": score, "flag": flag}
+
+
+def _clear_capability(restaurant_id, employee_name, attribute, db_path):
+    """Un-rate somebody without throwing away what was written about them.
+
+    A note explaining WHY a rating was where it was outlives the rating
+    itself, so a row carrying one is blanked rather than deleted; a row
+    carrying nothing else goes.
+    """
+    init_staff_capabilities(db_path)
+    conn = get_conn(db_path)
+    try:
+        conn.execute("UPDATE staff_capabilities SET score=NULL, flag=NULL, "
+                     "updated_at=datetime('now') WHERE restaurant_id=? "
+                     "AND employee_name=? AND attribute=? "
+                     "AND COALESCE(TRIM(notes),'') <> ''",
+                     (restaurant_id, employee_name, attribute))
+        conn.execute("DELETE FROM staff_capabilities WHERE restaurant_id=? "
+                     "AND employee_name=? AND attribute=? "
+                     "AND COALESCE(TRIM(notes),'') = ''",
+                     (restaurant_id, employee_name, attribute))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_capabilities(restaurant_id: int, attribute: str = None,
+                     db_path: str = DB_PATH) -> dict:
+    """{employee_name: {attribute: {...}}} for one restaurant."""
+    init_staff_capabilities(db_path)
+    conn = get_conn(db_path)
+    sql = ("SELECT employee_name, attribute, score, flag, notes, updated_by, updated_at "
+           "FROM staff_capabilities WHERE restaurant_id=?")
+    args = [restaurant_id]
+    if attribute:
+        sql += " AND attribute=?"
+        args.append(attribute)
+    rows = conn.execute(sql, tuple(args)).fetchall()
+    conn.close()
+    out = {}
+    for r in rows:
+        out.setdefault(r["employee_name"], {})[r["attribute"]] = {
+            "score": int(r["score"]) if r["score"] is not None else None,
+            "flag": bool(r["flag"]) if r["flag"] is not None else None,
+            "notes": r["notes"],
+            "updated_by": r["updated_by"],
+            "updated_at": r["updated_at"],
+        }
+    return out
+
+
+def get_operational_scores(restaurant_id: int, db_path: str = DB_PATH) -> dict:
+    """{employee_name: 1-5} for everyone who has been rated. Absent means
+    NOT RATED, which is deliberately different from a low rating."""
+    caps = get_capabilities(restaurant_id, attribute="overall", db_path=db_path)
+    return {n: c["overall"]["score"] for n, c in caps.items()
+            if c.get("overall", {}).get("score") is not None}
+
+
+def capability_coverage(restaurant_id: int, roster: list, db_path: str = DB_PATH) -> dict:
+    """How much of this roster has been rated.
+
+    The whole feature stays dormant at zero — no thresholds enforced, no
+    warnings raised — so an existing restaurant schedules exactly as it did
+    before anyone touches a rating.
+    """
+    scores = get_operational_scores(restaurant_id, db_path)
+    names = [n for n in (roster or []) if n]
+    rated = [n for n in names if n in scores]
+    return {
+        "rated": len(rated),
+        "total": len(names),
+        "unrated": sorted(n for n in names if n not in scores),
+        "active": bool(rated),
+        "pct": round(len(rated) / len(names) * 100) if names else 0,
+    }
+
+
+def get_role_strength_thresholds(restaurant_id: int, db_path: str = DB_PATH) -> dict:
+    """{role: minimum combined score}. Empty when unconfigured."""
+    import json as _j
+    r = get_restaurant(restaurant_id, db_path)
+    if not r or not getattr(r, "role_strength_json", None):
+        return {}
+    try:
+        raw = _j.loads(r.role_strength_json)
+        out = {}
+        for role, v in (raw or {}).items():
+            try:
+                n = float(v)
+            except (TypeError, ValueError):
+                continue
+            if n > 0:
+                out[str(role)] = n
+        return out
+    except Exception:
+        return {}
+
+
+def validate_strength_thresholds(thresholds: dict, roster_scores: dict = None,
+                                 roles_by_employee: dict = None) -> list:
+    """Problems with a threshold set, as plain sentences. Empty when fine.
+
+    A threshold no roster could ever reach is not a target, it is a warning
+    the owner will see every week and learn to ignore.
+    """
+    problems = []
+    for role, v in (thresholds or {}).items():
+        try:
+            n = float(v)
+        except (TypeError, ValueError):
+            problems.append(f"{role}: {v!r} is not a number")
+            continue
+        if n < 0:
+            problems.append(f"{role}: a threshold cannot be negative")
+        if roster_scores and roles_by_employee:
+            # Case-insensitive, for the same reason the strength check
+            # itself is: "Bartender" in the editor and "bartender" in the
+            # CSV are one role, and matching exactly made this validation
+            # quietly compare a target against an empty team.
+            want = (role or "").strip().lower()
+            best = sorted((s for e, s in roster_scores.items()
+                           if (roles_by_employee.get(e) or "").strip().lower() == want),
+                          reverse=True)
+            if best and n > sum(best):
+                problems.append(
+                    f"{role}: {n:g} is higher than your whole {role.lower()} team combined "
+                    f"({sum(best):g}), so it can never be met")
+    return problems
+
+
+def load_shifts_for_restaurant_roles(restaurant_id: int, db_path: str = DB_PATH) -> dict:
+    """{employee_name: most recent role} from this restaurant's shift data.
+
+    Threshold validation needs it to answer "could this team ever reach
+    that number", which is a per-role question.
+    """
+    try:
+        from labor import load_shifts_for_restaurant
+        out, latest = {}, {}
+        for sh in load_shifts_for_restaurant(restaurant_id) or []:
+            n = (sh.get("employee") or "").strip()
+            r = (sh.get("role") or "").strip()
+            d = sh.get("date") or ""
+            if not (n and r):
+                continue
+            if d >= latest.get(n, ""):
+                latest[n] = d
+                out[n] = r
+        return out
+    except Exception:
+        return {}
+
+
+def get_shift_leader_rules(restaurant_id: int, db_path: str = DB_PATH) -> list:
+    """Shift leader requirements, layered on the same capability data.
+
+    A rule names a role, a bar, and where it applies:
+      {"days": ["Saturday"], "daypart": "night", "role": "Bartender",
+       "min_score": 5, "count": 1}
+      {"closing": true, "role": "Server", "attribute": "can_close", "count": 1}
+    """
+    import json as _j
+    r = get_restaurant(restaurant_id, db_path)
+    if not r or not getattr(r, "shift_leader_rules_json", None):
+        return []
+    try:
+        raw = _j.loads(r.shift_leader_rules_json)
+        return [x for x in (raw or []) if isinstance(x, dict) and x.get("role")]
+    except Exception:
+        return []
+
 
 def get_staff_availability(restaurant_id: int, db_path: str = DB_PATH) -> list:
     conn = get_conn(db_path)
