@@ -1,7 +1,7 @@
 """
 labor.py — Labor cost analysis + Claude-powered scheduling recommendations
 """
-import os, csv, json
+import os, csv, json, math
 from collections import defaultdict
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -1022,6 +1022,138 @@ The Recommendations section must start with exactly the word "Recommendations:" 
     return text
 
 
+def historical_patterns(shifts: list) -> dict:
+    """What this restaurant's own history says about how it staffs.
+
+    Two signals the Shift Quality Engine needs and that only the shift data
+    can answer: how many of each role typically work a given weekday and
+    daypart, and who has actually worked more than one role.
+
+    Extracted rather than left inline in the prompt builder because the
+    live-rescore path a manager hits after moving a shift needs the same
+    numbers. Two hand-rolled versions of this is how the score on screen
+    starts disagreeing with the score in the schedule.
+    """
+    from collections import defaultdict as _dd
+    by_role_date = _dd(lambda: _dd(lambda: _dd(lambda: _dd(set))))
+    dates_by_day = _dd(set)
+    roles_by_employee = _dd(set)
+
+    for s in shifts or []:
+        date = (s.get("date") or "").strip()
+        role = (s.get("role") or "").strip()
+        name = (s.get("employee") or "").strip()
+        if name and role:
+            roles_by_employee[name].add(role)
+        if not date:
+            continue
+        try:
+            day = datetime.strptime(date, "%Y-%m-%d").strftime("%A")
+        except (ValueError, TypeError):
+            day = (s.get("day") or "").strip()
+        if not day:
+            continue
+        dates_by_day[day].add(date)
+        if name and role:
+            by_role_date[day][_daypart_of(s.get("shift_start", ""))][role][date].add(name)
+
+    typical = {}
+    for day, parts in by_role_date.items():
+        dates = dates_by_day[day]
+        for part in ("morning", "night"):
+            counts = {}
+            for role, per_date in parts.get(part, {}).items():
+                # Averaged over every date this weekday ran, not only the
+                # dates this role appeared — otherwise an occasional role
+                # reads as a permanent one.
+                n = int(math.floor(
+                    sum(len(per_date.get(d, ())) for d in dates) / max(len(dates), 1) + 0.5))
+                if n:
+                    counts[role] = n
+            if counts:
+                typical[(day, part)] = counts
+
+    return {
+        "typical_headcount": typical,
+        "cross_trained": {n: sorted(r) for n, r in roles_by_employee.items() if len(r) > 1},
+    }
+
+
+def _quality_rules_block() -> str:
+    """How the model should USE the Operational Score data.
+
+    Kept as its own function because every line here exists to counteract a
+    specific failure mode, and they are easier to argue with in one place
+    than buried in an f-string:
+
+      Benching the weaker half permanently is the obvious way to maximise a
+      rating and the fastest way to lose a team.
+      Stacking the strong together leaves a weak shift somewhere else.
+      Strength is about WHO works, never about adding people — otherwise it
+      becomes a licence to blow the hours ceiling.
+    """
+    return (
+        "\nHOW TO USE THIS:\n"
+        "  - Never put your two weakest people on together on a high-volume shift. "
+        "That is the specific failure this exists to prevent.\n"
+        "  - Pair a weaker person with a stronger one rather than stacking the weak "
+        "together or the strong together. A quieter shift is where somebody learns.\n"
+        "  - Do NOT simply schedule the highest scores everywhere. Benching the weaker "
+        "half every week is how a team stops improving and how people quit.\n"
+        "  - Spread the busiest shifts around. The same three people carrying every "
+        "Friday and Saturday is how you lose them, and it is scored against you.\n"
+        "  - Strength is about WHO works, never about adding people. It can never push "
+        "you over the hours ceiling or below the minimum staffing floors.\n"
+        "  - If you cannot clear a target with who is available, write the best schedule "
+        "you can and say so plainly in your summary — which shift, which target, and who "
+        "was missing. Never silently miss one.\n"
+    )
+
+
+def format_profile_block(profiles: list = None) -> str:
+    """The shift profiles, as the model needs to read them.
+
+    Returns "" when there is nothing worth saying — a restaurant running
+    entirely on defaults gets the generic rules above and no invented claim
+    that its Friday is busy.
+    """
+    if not profiles:
+        return ""
+    try:
+        from shift_quality import DEMAND_RANK
+    except Exception:
+        return ""
+    lines = []
+    for p in sorted(profiles, key=lambda x: (-x.priority, x.key)):
+        when = ", ".join(p.days) if p.days else "Any day"
+        part = {"morning": "lunch/day", "night": "dinner/night"}.get(p.daypart, "any daypart")
+        bits = [f"quality target {p.min_quality}/100"]
+        if p.min_strength:
+            bits.append("strength " + ", ".join(
+                f"{r} {float(v):g}+" for r, v in sorted(p.min_strength.items())))
+        if p.critical_positions:
+            bits.append("must staff " + ", ".join(
+                f"{int(c)} {r}" for r, c in sorted(p.critical_positions.items())))
+        if p.requires_leader:
+            bits.append(f"needs somebody who can run it ({p.leader_min_score:g}+ or "
+                        f"authorised to close)")
+        if p.experience_mix:
+            bits.append(f"about {int(round(p.experience_mix * 100))}% experienced hands")
+        if p.training_allowed:
+            bits.append("training shift — a weaker, mentored team is acceptable here")
+        lines.append(f"  {p.label} ({when}, {part}, {p.demand} demand): " + "; ".join(bits))
+
+    return ("\n\nSHIFT PROFILES — not every shift is judged the same way. Each shift you write "
+            "is scored 0-100 on coverage, operational strength, leadership, experience, "
+            "training balance, demand match, labor efficiency, fatigue and fairness, and "
+            "these are the bars each one is scored against. Optimise for the OVERALL quality "
+            "of each shift, not for whichever single rule is easiest to satisfy. A profile "
+            "marked as a training shift is where a developing employee should be working "
+            "alongside a mentor; a peak-demand profile is never that place:\n"
+            + "\n".join(lines) + "\n"
+            "  Where a shift matches no profile above, use the standard bar.\n")
+
+
 def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                                  restaurant_name: str = "Restaurant",
                                  hourly_rate: float = DEFAULT_HOURLY_RATE,
@@ -1045,7 +1177,8 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                                  operational_scores: dict = None,
                                  strength_thresholds: dict = None,
                                  leader_rules: list = None,
-                                 prior_schedule_summary: dict = None) -> dict:
+                                 prior_schedule_summary: dict = None,
+                                 shift_profiles: list = None) -> dict:
     """
     Use Claude to generate an optimized weekly schedule.
     Returns dict: {schedule_csv: str, summary: list[str], week_dates: list, week_days: list}
@@ -1562,20 +1695,16 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         if _rule_lines:
             _strength_block += ("\nSHIFT LEADER REQUIREMENTS — each of these must be "
                                 "satisfied, not merely aimed at:\n" + "\n".join(_rule_lines) + "\n")
-        _strength_block += (
-            "\nHOW TO USE THIS:\n"
-            "  - Never put your two weakest people on together on a high-volume shift. "
-            "That is the specific failure this exists to prevent.\n"
-            "  - Pair a weaker person with a stronger one rather than stacking the weak "
-            "together or the strong together. A quieter shift is where somebody learns.\n"
-            "  - Do NOT simply schedule the highest scores everywhere. Benching the weaker "
-            "half every week is how a team stops improving and how people quit.\n"
-            "  - Strength is about WHO works, never about adding people. It can never push "
-            "you over the hours ceiling or below the minimum staffing floors.\n"
-            "  - If you cannot clear a target with who is available, write the best schedule "
-            "you can and say so plainly in your summary — which shift, which target, and who "
-            "was missing. Never silently miss one.\n"
-        )
+        _strength_block += _quality_rules_block()
+
+    # ── What each shift is actually judged on ─────────────────────────────
+    #
+    # The scheduler used to be handed a pile of independent rules and no
+    # statement of what a GOOD shift looks like, so it optimised whichever
+    # rule was stated most forcefully. This block names the profile each
+    # shift is scored against, so "Saturday dinner" and "Monday lunch" stop
+    # being the same problem with different dates.
+    _profile_block = format_profile_block(shift_profiles)
 
     # Extra scheduling notes from admin
     _sched_notes_block = ""
@@ -1630,7 +1759,7 @@ CONTEXT:
 - Recent overstaffed days: {[d["day"] + " (" + str(d["labor_pct"]) + "%)" for d in overstaffed]}
 - Recent understaffed days: {[d["day"] for d in understaffed]}
 - Recent labor % by day of week: {dow}
-- Active staff: {[e[0] + " (" + e[1] + ")" for e in employees[:100]]}{yoy_block}{events_block}{_demand_block}{_weather_block}{_prior_schedule_block}{role_rates_block}{hours_block}{par_block}{_headcount_block}{_cross_block}{_section_block}{_daypart_block}{_delivery_block}{_noshows_block}{_strength_block}{_avail_block}{_sched_notes_block}
+- Active staff: {[e[0] + " (" + e[1] + ")" for e in employees[:100]]}{yoy_block}{events_block}{_demand_block}{_weather_block}{_prior_schedule_block}{role_rates_block}{hours_block}{par_block}{_headcount_block}{_cross_block}{_section_block}{_daypart_block}{_delivery_block}{_noshows_block}{_strength_block}{_profile_block}{_avail_block}{_sched_notes_block}
 
 Next week dates:
 {chr(10).join(f"- {d}: {n}" for d, n in zip(week_dates, week_days))}
@@ -1781,6 +1910,14 @@ ARRIVAL TIMES, ROLE MINIMUMS, SHIFT LENGTHS, AND ROLE-SPECIFIC RULES:
         "operational_scores": _scores,
         "strength_thresholds": dict(strength_thresholds or {}),
         "leader_rules": list(leader_rules or []),
+        # The profiles the prompt was built from, so the deterministic
+        # quality pass judges the result against the same bars the model
+        # was given rather than a set that has drifted since.
+        "shift_profiles": list(shift_profiles or []),
+        # {(weekday, daypart): {role: typical people}} and who can flex
+        # between roles — from the one shared implementation, so the
+        # live-rescore path scores against identical numbers.
+        **historical_patterns(shifts),
     }
 
 

@@ -293,6 +293,9 @@ class Restaurant:
     # Shift leader requirements layered on the same capability data, e.g.
     # [{"days":["Saturday"],"daypart":"night","role":"Bartender","min_score":5,"count":1}]
     shift_leader_rules_json: Optional[str] = None
+    # Per-restaurant weighting of the Shift Quality dimensions. Empty means
+    # the engine's own defaults, which is what almost every restaurant wants.
+    quality_weights_json: Optional[str]   = None
     sched_notes: Optional[str]           = None   # freeform scheduling notes from admin
     latitude: Optional[float]            = None   # geocoded once from google_place_id, cached
     longitude: Optional[float]           = None
@@ -590,6 +593,7 @@ def ensure_columns(db_path: str = DB_PATH):
         # Operational Score — see staff_capabilities and shift_strength().
         ("restaurants", "role_strength_json", "TEXT"),
         ("restaurants", "shift_leader_rules_json", "TEXT"),
+        ("restaurants", "quality_weights_json", "TEXT"),
         ("restaurants", "sched_notes", "TEXT"),
         ("restaurants", "latitude", "REAL"),
         ("restaurants", "longitude", "REAL"),
@@ -2140,7 +2144,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH):
     allowed = {
         "name","owner_email","google_place_id","yelp_business_id","voice_notes",
         "neighborhood","vibe","known_for","sign_off_name","never_say",
-        "hourly_rate","labor_target_pct","week_start_day","role_strength_json","shift_leader_rules_json","monthly_revenue_target","hours_notes","role_rates_json","close_times_json","role_close_buffer_json","stripe_customer_id","docusign_envelope_id","contract_status","location_group","location_name","pos_system","inventory_frequency","delivery_days","inventory_notes","food_cost_target","inventory_updated_at","temp_password","ig_token","ig_user_id","fb_page_token","fb_page_id","ig_token_expires","fb_token_expires","competitor_intel","competitor_updated_at","reviews_live","billing_status","is_demo","internal_notes","gmb_access_token","gmb_refresh_token","gmb_account_id","gmb_location_id","gmb_token_expires",
+        "hourly_rate","labor_target_pct","week_start_day","role_strength_json","shift_leader_rules_json","quality_weights_json","monthly_revenue_target","hours_notes","role_rates_json","close_times_json","role_close_buffer_json","stripe_customer_id","docusign_envelope_id","contract_status","location_group","location_name","pos_system","inventory_frequency","delivery_days","inventory_notes","food_cost_target","inventory_updated_at","temp_password","ig_token","ig_user_id","fb_page_token","fb_page_id","ig_token_expires","fb_token_expires","competitor_intel","competitor_updated_at","reviews_live","billing_status","is_demo","internal_notes","gmb_access_token","gmb_refresh_token","gmb_account_id","gmb_location_id","gmb_token_expires",
         "service_tier","module_reviews","module_labor","module_inventory","module_marketing",
         "last_active_tab","last_activity","owner_name","owner_phone","digest_day","digest_enabled","menu_notes","menu_url","skip_holidays","custom_competitors",
         "two_fa_enabled","two_fa_code","two_fa_expires","two_fa_device_token","two_fa_pending","two_fa_method","login_notify","marketing_emails_opt_out","timezone","onboarding_dismissed",
@@ -2365,6 +2369,7 @@ def get_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> Optional[Resta
         role_minimums_json=row["role_minimums_json"]  if "role_minimums_json" in row.keys() else None,
         role_strength_json=row["role_strength_json"] if "role_strength_json" in row.keys() else None,
         shift_leader_rules_json=row["shift_leader_rules_json"] if "shift_leader_rules_json" in row.keys() else None,
+        quality_weights_json=row["quality_weights_json"] if "quality_weights_json" in row.keys() else None,
         sched_notes=row["sched_notes"]                if "sched_notes" in row.keys() else None,
         latitude=row["latitude"]                       if "latitude" in row.keys() else None,
         longitude=row["longitude"]                     if "longitude" in row.keys() else None,
@@ -3238,6 +3243,220 @@ def validate_strength_thresholds(thresholds: dict, roster_scores: dict = None,
                     f"{role}: {n:g} is higher than your whole {role.lower()} team combined "
                     f"({sum(best):g}), so it can never be met")
     return problems
+
+
+# ── Shift profiles ─────────────────────────────────────────────────────────
+#
+# Not every shift is judged the same way. Monday lunch and Saturday dinner
+# are different jobs, and one global threshold flattens them into one.
+#
+# The whole profile is stored as JSON rather than as columns, because the
+# Shift Quality Engine's dimensions are meant to grow — reservations,
+# certifications, prep volume — and each new one would otherwise be a
+# migration. key/label/priority/active are lifted out as real columns
+# because those are what the engine orders and filters on.
+
+def init_shift_profiles(db_path: str = DB_PATH):
+    conn = get_conn(db_path)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS shift_profiles (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id INTEGER NOT NULL REFERENCES restaurants(id),
+            key           TEXT    NOT NULL,
+            label         TEXT    NOT NULL,
+            config_json   TEXT    NOT NULL,
+            priority      INTEGER NOT NULL DEFAULT 0,
+            active        INTEGER NOT NULL DEFAULT 1,
+            updated_by    TEXT,
+            updated_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(restaurant_id, key)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_shift_profiles_rest "
+                 "ON shift_profiles(restaurant_id, active)")
+    conn.commit()
+    conn.close()
+
+
+def get_shift_profiles(restaurant_id: int, include_inactive: bool = False,
+                       db_path: str = DB_PATH) -> list:
+    """This restaurant's own profiles, as plain dicts. Empty means it has
+    none, and the engine then judges against its built-in set."""
+    import json as _j
+    init_shift_profiles(db_path)
+    conn = get_conn(db_path)
+    sql = "SELECT * FROM shift_profiles WHERE restaurant_id=?"
+    if not include_inactive:
+        sql += " AND active=1"
+    sql += " ORDER BY priority, key"
+    rows = conn.execute(sql, (restaurant_id,)).fetchall()
+    conn.close()
+    out = []
+    for r in rows:
+        try:
+            config = _j.loads(r["config_json"]) or {}
+        except Exception:
+            # A corrupt row must not take the whole profile set down with
+            # it — the schedule still has to generate.
+            continue
+        config.update({"key": r["key"], "label": r["label"], "priority": r["priority"]})
+        config["active"] = bool(r["active"])
+        config["updated_by"] = r["updated_by"]
+        config["updated_at"] = r["updated_at"]
+        out.append(config)
+    return out
+
+
+def save_shift_profile(restaurant_id: int, profile: dict, updated_by: str = None,
+                       db_path: str = DB_PATH) -> dict:
+    """Insert or replace one profile, keyed by its own key."""
+    import json as _j
+    key = str(profile.get("key") or "").strip()
+    if not key:
+        raise ValueError("a profile needs a key")
+    label = str(profile.get("label") or key.replace("_", " ").title()).strip()
+    priority = int(profile.get("priority") or 0)
+    active = 0 if profile.get("active") is False else 1
+    config = {k: v for k, v in profile.items()
+              if k not in ("key", "label", "priority", "active", "updated_by", "updated_at")}
+    init_shift_profiles(db_path)
+    conn = get_conn(db_path)
+    try:
+        conn.execute("""
+            INSERT INTO shift_profiles
+                (restaurant_id, key, label, config_json, priority, active, updated_by, updated_at)
+            VALUES (?,?,?,?,?,?,?,datetime('now'))
+            ON CONFLICT(restaurant_id, key) DO UPDATE SET
+                label=excluded.label, config_json=excluded.config_json,
+                priority=excluded.priority, active=excluded.active,
+                updated_by=excluded.updated_by, updated_at=datetime('now')
+        """, (restaurant_id, key, label, _j.dumps(config), priority, active,
+              (updated_by or "").strip()[:120] or None))
+        conn.commit()
+    finally:
+        conn.close()
+    return dict(config, key=key, label=label, priority=priority, active=bool(active))
+
+
+def delete_shift_profile(restaurant_id: int, key: str, db_path: str = DB_PATH) -> bool:
+    init_shift_profiles(db_path)
+    conn = get_conn(db_path)
+    try:
+        cur = conn.execute("DELETE FROM shift_profiles WHERE restaurant_id=? AND key=?",
+                           (restaurant_id, key))
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def get_quality_weights(restaurant_id: int, db_path: str = DB_PATH) -> dict:
+    """How much each quality dimension counts for this restaurant.
+
+    Empty means the engine's own defaults. Values are validated by the
+    engine rather than here, so a stored weight for a dimension that no
+    longer exists is simply ignored instead of raising.
+    """
+    import json as _j
+    r = get_restaurant(restaurant_id, db_path)
+    raw = getattr(r, "quality_weights_json", None) if r else None
+    if not raw:
+        return {}
+    try:
+        parsed = _j.loads(raw)
+        return {str(k): float(v) for k, v in (parsed or {}).items()
+                if isinstance(v, (int, float)) and float(v) >= 0}
+    except Exception:
+        return {}
+
+
+# ── Signals the Shift Quality Engine reads about people ────────────────────
+
+def get_employee_tenure(restaurant_id: int, db_path: str = DB_PATH) -> dict:
+    """{employee_name: shifts worked} from this restaurant's own history.
+
+    A count of real shifts rather than a hire date, because shift data is
+    what this product actually has. A hire-date field would be one more
+    thing nobody fills in, and an experience dimension built on an empty
+    column would score every restaurant identically.
+    """
+    try:
+        from labor import load_shifts_for_restaurant
+        out = {}
+        for sh in load_shifts_for_restaurant(restaurant_id) or []:
+            name = (sh.get("employee") or "").strip()
+            if name:
+                out[name] = out.get(name, 0) + 1
+        return out
+    except Exception:
+        return {}
+
+
+def get_leader_flags(restaurant_id: int, db_path: str = DB_PATH) -> dict:
+    """{employee_name: True} for everyone marked authorised to close.
+
+    Reads the capability layer's can_close attribute — registered since
+    version one and surfaced for the first time here, which is the
+    architecture claim actually paying off.
+    """
+    caps = get_capabilities(restaurant_id, attribute="can_close", db_path=db_path)
+    return {name: bool(attrs.get("can_close", {}).get("flag"))
+            for name, attrs in caps.items()
+            if attrs.get("can_close", {}).get("flag")}
+
+
+def get_prior_shift_pattern(restaurant_id: int, db_path: str = DB_PATH) -> dict:
+    """{name: {"days": [...], "dayparts": [...]}} — what each person usually works.
+
+    Schedule stability is worth something to staff and costs the restaurant
+    nothing when demand has not moved. This is the baseline it is measured
+    against, drawn from the shifts they have actually worked rather than
+    from a stated preference nobody keeps up to date.
+    """
+    try:
+        from labor import load_shifts_for_restaurant
+        from shift_quality import daypart_of
+        from datetime import datetime as _dt
+        out = {}
+        for sh in load_shifts_for_restaurant(restaurant_id) or []:
+            name = (sh.get("employee") or "").strip()
+            if not name:
+                continue
+            entry = out.setdefault(name, {"days": set(), "dayparts": set()})
+            try:
+                entry["days"].add(_dt.strptime(sh.get("date", ""), "%Y-%m-%d").strftime("%A"))
+            except (ValueError, TypeError):
+                if sh.get("day"):
+                    entry["days"].add(sh["day"])
+            part = daypart_of(sh.get("shift_start", ""))
+            if part != "unknown":
+                entry["dayparts"].add(part)
+        return {n: {"days": sorted(v["days"]), "dayparts": sorted(v["dayparts"])}
+                for n, v in out.items()}
+    except Exception:
+        return {}
+
+
+def get_unavailability_map(restaurant_id: int, db_path: str = DB_PATH) -> dict:
+    """{employee_name: {days they cannot work}} from staff_availability.
+
+    The what-if pass needs this in a form it can test cheaply: a swap that
+    puts somebody on a day they said they cannot work is not an
+    improvement, it is a broken schedule with a better score.
+    """
+    import json as _j
+    out = {}
+    for row in get_staff_availability(restaurant_id, db_path=db_path) or []:
+        name = (row.get("employee_name") or "").strip()
+        if not name:
+            continue
+        try:
+            blocked = set(_j.loads(row.get("unavailable_days") or "[]") or [])
+        except Exception:
+            blocked = set()
+        if blocked:
+            out[name] = blocked
+    return out
 
 
 def load_shifts_for_restaurant_roles(restaurant_id: int, db_path: str = DB_PATH) -> dict:

@@ -232,6 +232,175 @@ struct StrengthLeaderMiss: Codable, Identifiable, Equatable {
     var id: String { "\(date)-\(daypart)-\(role)-\(rule)" }
 }
 
+/// One dimension of Shift Quality — coverage, leadership, fatigue and the
+/// rest. `facts` is deliberately not decoded: it carries the raw numbers
+/// each dimension reached its verdict from, in a shape that differs per
+/// dimension, and everything this UI shows is already in the sentences.
+struct QualityDimension: Codable, Identifiable, Equatable {
+    let key: String
+    let label: String
+    let score: Int
+    let weight: Double?
+    let strengths: [String]?
+    let weaknesses: [String]?
+    let customerFacing: Bool?
+    // Present on the week-level roll-up rather than on a single shift.
+    let shifts: Int?
+
+    var id: String { key }
+    var isCustomerFacing: Bool { customerFacing ?? true }
+
+    enum CodingKeys: String, CodingKey {
+        case key, label, score, weight, strengths, weaknesses, shifts
+        case customerFacing = "customer_facing"
+    }
+}
+
+/// What a shift was judged against. Monday lunch and Saturday dinner are
+/// different jobs, and the profile is what says so.
+struct QualityProfile: Codable, Equatable {
+    let key: String
+    let label: String
+    let demand: String
+    let minQuality: Int?
+    let trainingAllowed: Bool?
+    let source: String?
+
+    enum CodingKeys: String, CodingKey {
+        case key, label, demand, source
+        case minQuality = "min_quality"
+        case trainingAllowed = "training_allowed"
+    }
+}
+
+/// One shift's verdict, with the reasons it reached it.
+struct QualityShift: Codable, Identifiable, Equatable {
+    let date: String
+    let day: String
+    let daypart: String
+    let scored: Bool
+    let score: Int?
+    let band: String?
+    let profile: QualityProfile
+    let meetsProfile: Bool?
+    let cappedBy: String?
+    let headline: String?
+    let people: [String]?
+    let dimensions: [QualityDimension]?
+    let strengths: [String]?
+    let weaknesses: [String]?
+    let blindSpots: [String]?
+
+    var id: String { "\(date)-\(daypart)" }
+
+    /// "Saturday dinner" rather than a date — how a manager refers to it.
+    var title: String {
+        let part = ["morning": "lunch", "night": "dinner"][daypart] ?? daypart
+        return day.isEmpty ? date : "\(day) \(part)"
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case date, day, daypart, scored, score, band, profile, headline, people
+        case dimensions, strengths, weaknesses
+        case meetsProfile = "meets_profile"
+        case cappedBy = "capped_by"
+        case blindSpots = "blind_spots"
+    }
+}
+
+/// How much the engine actually knew when it scored the week. Deliberately
+/// separate from the score itself: a 94 built on a fully rated roster is a
+/// different claim from a 94 built on three ratings.
+struct QualityConfidence: Codable, Equatable {
+    let score: Int
+    let level: String
+    let reasons: [String]
+    let summary: String
+
+    var label: String { level.prefix(1).uppercased() + level.dropFirst() }
+}
+
+/// One alternative arrangement the engine tried, and what it bought.
+struct WhatIfSwap: Codable, Identifiable, Equatable {
+    struct Side: Codable, Equatable {
+        let employee: String?
+        let date: String?
+        let day: String?
+        let role: String?
+    }
+    let from: Side
+    let to: Side
+    let gain: Int
+    let moved: [String]
+    let reason: String
+
+    var id: String { reason }
+}
+
+/// The what-if pass. Never a second generation — same headcount, same
+/// hours, same roles, only who works which shift.
+struct ScheduleWhatIf: Codable, Equatable {
+    let ran: Bool
+    let evaluated: Int?
+    let baselineScore: Int?
+    let bestScore: Int?
+    let improvement: Int?
+    let swaps: [WhatIfSwap]?
+    let verdict: String?
+    let reason: String?
+
+    enum CodingKeys: String, CodingKey {
+        case ran, evaluated, swaps, verdict, reason, improvement
+        case baselineScore = "baseline_score"
+        case bestScore = "best_score"
+    }
+}
+
+/// A shift that came in under the bar its own profile sets.
+struct QualityBelowProfile: Codable, Identifiable, Equatable {
+    let date: String
+    let day: String
+    let daypart: String
+    let score: Int
+    let minQuality: Int
+    let label: String
+
+    var id: String { "\(date)-\(daypart)" }
+
+    enum CodingKeys: String, CodingKey {
+        case date, day, daypart, score, label
+        case minQuality = "min_quality"
+    }
+}
+
+/// The Shift Quality Engine's verdict on a whole week.
+struct ScheduleQuality: Codable, Equatable {
+    let checked: Bool
+    let score: Int?
+    let band: String?
+    let shifts: [QualityShift]?
+    let dimensions: [QualityDimension]?
+    let belowProfile: [QualityBelowProfile]?
+    let strengths: [String]?
+    let weaknesses: [String]?
+    let recommendations: [String]?
+    let confidence: QualityConfidence?
+    let best: String?
+    let worst: String?
+    let reason: String?
+
+    var scoredShifts: [QualityShift] { (shifts ?? []).filter { $0.scored } }
+    var customerDimensions: [QualityDimension] {
+        (dimensions ?? []).filter { $0.isCustomerFacing }
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case checked, score, band, shifts, dimensions, strengths, weaknesses
+        case recommendations, confidence, best, worst, reason
+        case belowProfile = "below_profile"
+    }
+}
+
 /// The deterministic pass over the finished schedule. `checked` is false
 /// when no targets and no leader rules are configured, which is the
 /// default — nothing is claimed about a schedule nobody set targets for.
@@ -316,7 +485,7 @@ struct LaborStats: Codable {
 struct ScheduleRow: Codable, Identifiable {
     let date: String?
     let day: String?
-    let employee: String?
+    var employee: String?
     let role: String?
     let shiftStart: String?
     let shiftEnd: String?
@@ -347,7 +516,7 @@ struct GeneratedSchedule: Codable {
     let weekDays: [String]?
     let hoursScheduled: Double?
     let laborTarget: Double?
-    let previewRows: [ScheduleRow]?
+    var previewRows: [ScheduleRow]?
     let scheduleCsv: String?
     let error: String?
     // PAR (per-average-round) hours budget — the AI's target hours/dollars
@@ -362,9 +531,13 @@ struct GeneratedSchedule: Codable {
     // schedule. Absent on a server that predates the feature, and
     // `checked: false` whenever no targets or leader rules are set.
     let strength: ScheduleStrength?
+    // The Shift Quality Engine's verdict, and the alternatives it tried.
+    var quality: ScheduleQuality?
+    var whatIf: ScheduleWhatIf?
 
     enum CodingKeys: String, CodingKey {
-        case ok, status, summary, error, strength
+        case ok, status, summary, error, strength, quality
+        case whatIf = "what_if"
         case weekDates = "week_dates"
         case weekDays = "week_days"
         case hoursScheduled = "hours_scheduled"
@@ -633,6 +806,97 @@ final class LaborViewModel {
             await loadAvailability()
         } catch {
             availabilityError = "Couldn't remove that entry."
+        }
+    }
+
+    // MARK: - Manager overrides
+
+    var isRescoringQuality = false
+    // Who has been moved, so the UI can mark the rows a human changed and
+    // the summary can say the score is no longer the generated one.
+    var overriddenRows: Set<String> = []
+
+    private struct ScoreBody: Encodable {
+        let rows: [ScheduleRow]
+        let dailyTargetHours: [String: Double]
+        enum CodingKeys: String, CodingKey {
+            case rows
+            case dailyTargetHours = "daily_target_hours"
+        }
+    }
+
+    private struct ScoreResponse: Decodable {
+        let ok: Bool
+        let quality: ScheduleQuality?
+        let whatIf: ScheduleWhatIf?
+        let error: String?
+        enum CodingKeys: String, CodingKey {
+            case ok, quality, error
+            case whatIf = "what_if"
+        }
+    }
+
+    /// Who could take this shift instead: same role, not already working
+    /// that day, and not somebody who said they cannot work it.
+    ///
+    /// Ordered strongest first, because the reason a manager opens this is
+    /// almost always a shift the engine just told them is weak.
+    func replacements(for row: ScheduleRow) -> [RatedEmployee] {
+        guard let result = scheduleResult, let rows = result.previewRows else { return [] }
+        let role = (row.role ?? "").trimmingCharacters(in: .whitespaces).lowercased()
+        let date = row.date ?? ""
+        let day = row.day ?? ""
+        let working = Set(rows.filter { $0.date == date }
+                              .compactMap { $0.employee?.lowercased() })
+        let blocked = Dictionary(uniqueKeysWithValues: availability.map {
+            ($0.employeeName.lowercased(), Set($0.unavailableDays))
+        })
+        return team
+            .filter { member in
+                guard member.name.lowercased() != (row.employee ?? "").lowercased() else { return false }
+                guard !working.contains(member.name.lowercased()) else { return false }
+                if blocked[member.name.lowercased()]?.contains(day) == true { return false }
+                let memberRole = (member.role ?? "").trimmingCharacters(in: .whitespaces).lowercased()
+                return role.isEmpty || memberRole.isEmpty || memberRole == role
+            }
+            .sorted { ($0.score ?? 0, $0.name) > ($1.score ?? 0, $1.name) }
+    }
+
+    /// Put somebody else on a shift and immediately re-score the week.
+    ///
+    /// No regeneration: the engine is a pure function, so this is one round
+    /// trip and the manager sees what their change cost or bought before
+    /// they have taken their finger off the screen.
+    func overrideEmployee(rowId: String, to name: String) async {
+        guard var result = scheduleResult, var rows = result.previewRows,
+              let index = rows.firstIndex(where: { $0.id == rowId }) else { return }
+        rows[index].employee = name
+        result.previewRows = rows
+        scheduleResult = result
+        overriddenRows.insert(rows[index].id)
+        Haptic.light()
+        await rescoreQuality()
+    }
+
+    /// Re-score whatever is currently on screen.
+    func rescoreQuality() async {
+        guard var result = scheduleResult, let rows = result.previewRows, !rows.isEmpty else { return }
+        isRescoringQuality = true
+        defer { isRescoringQuality = false }
+        do {
+            let response: ScoreResponse = try await client.send(
+                "/mobile/api/labor/schedule/score", method: .post,
+                body: ScoreBody(rows: rows, dailyTargetHours: [:]),
+                hapticOnError: false, retryTransient: true)
+            guard response.ok, let quality = response.quality else { return }
+            result.quality = quality
+            result.whatIf = response.whatIf
+            scheduleResult = result
+            cacheSchedule(result)
+        } catch {
+            // The edit itself stands; only the score is stale. Saying
+            // "couldn't re-score" over a schedule the manager just fixed
+            // would read as the edit having failed.
         }
     }
 

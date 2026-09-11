@@ -719,6 +719,7 @@ try:
     from models import init_competitor_snapshots as _ics
     from models import init_ai_visibility_queries as _iavq
     from models import init_staff_capabilities as _isc
+    from models import init_shift_profiles as _isp
     from auth import init_auth as _init_auth
     from webhooks import init_webhooks as _iwh
     from guest_marketing import init_guest_marketing as _igm
@@ -737,6 +738,7 @@ try:
     _ics()
     _iavq()
     _isc()
+    _isp()
     from sales_audits import init_sales_audits as _isa2, ensure_first_audit as _efa
     _isa2()
     _efa()

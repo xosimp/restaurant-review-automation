@@ -1870,7 +1870,8 @@ def labor_gap_api(current_user):
 def _build_schedule_result(restaurant_id):
     """Shared logic for both schedule endpoints."""
     from labor import (analyse_shifts_for_restaurant, load_shifts_for_restaurant,
-                       generate_optimized_schedule, get_hourly_rate)
+                       generate_optimized_schedule, get_hourly_rate,
+                       build_demand_forecast)
     from models import get_restaurant, get_staff_notes, get_yoy_schedule_context
     from datetime import datetime as _dt, timedelta as _td
     from zoneinfo import ZoneInfo as _ZI
@@ -1991,10 +1992,33 @@ def _build_schedule_result(restaurant_id):
     # are dormant when nobody has been rated, so an existing restaurant
     # schedules exactly as it did before this feature existed.
     from models import (get_operational_scores, get_role_strength_thresholds,
-                        get_shift_leader_rules)
+                        get_shift_leader_rules, get_shift_profiles)
     _op_scores = get_operational_scores(restaurant_id)
     _strength_thresholds = get_role_strength_thresholds(restaurant_id) if _op_scores else {}
     _leader_rules = get_shift_leader_rules(restaurant_id) if _op_scores else []
+
+    # Shift profiles — what each shift is actually judged on. A restaurant
+    # gets the engine's built-in set only once it has rated somebody, so
+    # one that never touches any of this schedules exactly as before. Demand
+    # levels come from its OWN sales rather than from an assumption that
+    # every restaurant's Friday is busy.
+    import shift_quality as _sq
+    _stored_profiles = get_shift_profiles(restaurant_id)
+    _demand_by_day = {}
+    try:
+        _forecast = build_demand_forecast(restaurant_id)
+        if _forecast.get("ok"):
+            _demand_by_day = {d["day"]: d["vs_average_pct"] for d in _forecast["days"]}
+    except Exception:
+        _demand_by_day = {}
+    _profiles = []
+    if _stored_profiles or _op_scores:
+        _profiles = _sq.profiles_from_config(
+            [_sq.profile_from_dict(p) for p in _stored_profiles] or None,
+            default_strength=_strength_thresholds,
+            default_leader_rules=_leader_rules,
+            demand_by_day=_demand_by_day,
+        )
 
     result = generate_optimized_schedule(
         analysis, shifts,
@@ -2021,9 +2045,27 @@ def _build_schedule_result(restaurant_id):
         operational_scores=_op_scores,
         strength_thresholds=_strength_thresholds,
         leader_rules=_leader_rules,
+        shift_profiles=_profiles,
     )
     result["restaurant_name"] = restaurant.name if restaurant else "Restaurant"
+    result["demand_by_day"] = _demand_by_day
+    result["role_minimums"] = _parse_role_minimums(getattr(restaurant, "role_minimums_json", None))
     return result
+
+
+def _parse_role_minimums(raw):
+    """{role: floor} from the settings textarea, or {} when it is junk.
+
+    An owner typing malformed JSON into a settings box must never be the
+    reason a schedule fails to generate.
+    """
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+        return {str(k): int(v) for k, v in (parsed or {}).items() if int(v or 0) > 0}
+    except Exception:
+        return {}
 
 
 # Async schedule generation is tracked in ops.async_jobs (a table), not a
@@ -2820,6 +2862,129 @@ def _ensure_pizza_cook_coverage(preview_rows: list, week_dates: list, week_days:
     return preview_rows, rows_added, added_dates
 
 
+def quality_inputs_from_db(restaurant_id, daily_target_hours=None):
+    """Rebuild the engine's inputs for a schedule nobody just generated.
+
+    A manager editing a published week needs the score to move as they
+    drag a shift, and there is no generation result sitting around to score
+    it against. Everything the generator passed down is re-derivable from
+    the database and the restaurant's own shift history — except the
+    per-day hour targets, which belong to that specific generation and are
+    passed back in by the caller that already holds them.
+    """
+    from models import (get_operational_scores, get_role_strength_thresholds,
+                        get_shift_leader_rules, get_shift_profiles, get_restaurant)
+    from labor import (load_shifts_for_restaurant, build_demand_forecast,
+                       historical_patterns)
+    import shift_quality as _sq
+
+    scores = get_operational_scores(restaurant_id)
+    thresholds = get_role_strength_thresholds(restaurant_id) if scores else {}
+    leader_rules = get_shift_leader_rules(restaurant_id) if scores else []
+    stored = get_shift_profiles(restaurant_id)
+
+    demand_by_day = {}
+    try:
+        forecast = build_demand_forecast(restaurant_id)
+        if forecast.get("ok"):
+            demand_by_day = {d["day"]: d["vs_average_pct"] for d in forecast["days"]}
+    except Exception:
+        demand_by_day = {}
+
+    profiles = []
+    if stored or scores:
+        profiles = _sq.profiles_from_config(
+            [_sq.profile_from_dict(p) for p in stored] or None,
+            default_strength=thresholds, default_leader_rules=leader_rules,
+            demand_by_day=demand_by_day)
+
+    try:
+        patterns = historical_patterns(load_shifts_for_restaurant(restaurant_id))
+    except Exception:
+        patterns = {"typical_headcount": {}, "cross_trained": {}}
+
+    restaurant = get_restaurant(restaurant_id)
+    return {
+        "operational_scores": scores,
+        "strength_thresholds": thresholds,
+        "leader_rules": leader_rules,
+        "shift_profiles": profiles,
+        "demand_by_day": demand_by_day,
+        "role_minimums": _parse_role_minimums(
+            getattr(restaurant, "role_minimums_json", None) if restaurant else None),
+        "daily_target_hours": daily_target_hours or {},
+        **patterns,
+    }
+
+
+def _quality_signals(restaurant_id, result, **extra):
+    """Every signal the Shift Quality Engine reads, gathered in one place.
+
+    Kept separate from the scoring call so the live-rescore route a manager
+    hits after dragging a shift is judged against exactly the same inputs
+    the generation was. Two code paths assembling these by hand is how the
+    number on screen starts disagreeing with the number in the schedule.
+    """
+    from models import (get_employee_tenure, get_leader_flags,
+                        get_prior_shift_pattern, get_unavailability_map,
+                        get_quality_weights)
+    signals = {
+        "scores": result.get("operational_scores") or {},
+        "leader_rules": result.get("leader_rules") or [],
+        "daily_target_hours": result.get("daily_target_hours") or {},
+        "demand_by_day": result.get("demand_by_day") or {},
+        "role_minimums": result.get("role_minimums") or {},
+        "typical_headcount": result.get("typical_headcount") or {},
+        "cross_trained": result.get("cross_trained") or {},
+    }
+    # Each of these is a separate read and any one of them can be empty for
+    # a new restaurant. A failure to load one must cost that dimension, not
+    # the whole evaluation — which is exactly what returning {} does, since
+    # a dimension with no data withdraws instead of scoring zero.
+    for key, fn in (("tenure", get_employee_tenure), ("leader_flags", get_leader_flags),
+                    ("prior_pattern", get_prior_shift_pattern),
+                    ("availability", get_unavailability_map)):
+        try:
+            signals[key] = fn(restaurant_id) or {}
+        except Exception:
+            signals[key] = {}
+    try:
+        weights = get_quality_weights(restaurant_id)
+    except Exception:
+        weights = {}
+    signals.update(extra)
+    return signals, weights
+
+
+def _score_schedule_quality(restaurant_id, rows, result, **extra):
+    """Score the finished schedule, then see whether a better one existed.
+
+    The what-if pass only ever trades two people between shifts of the same
+    role, so headcount, hours and coverage cannot move. That restriction is
+    what makes running it on every generation affordable and its answers
+    explainable: exactly two names changed, and here is what it bought.
+    """
+    import shift_quality as _sq
+    profiles = result.get("shift_profiles") or None
+    signals, weights = _quality_signals(restaurant_id, result, **extra)
+    quality = _sq.score_rows(rows, profiles=profiles, weights=weights, **signals)
+
+    what_if = {"ran": False, "reason": "Nothing to compare."}
+    if quality.get("checked"):
+        try:
+            what_if = _sq.compare_candidates(rows, profiles=profiles, weights=weights, **signals)
+            # The engine reports what a better arrangement WOULD have been;
+            # it does not silently rewrite the schedule the owner is about
+            # to read. A swap the manager did not ask for, applied without
+            # being told, is how trust in a generated schedule dies.
+            what_if.pop("rows", None)
+            what_if.pop("baseline", None)
+            what_if.pop("best", None)
+        except Exception as _wx:
+            what_if = {"ran": False, "reason": f"comparison unavailable: {_wx}"}
+    return quality, what_if
+
+
 def _run_schedule_job(job_id, restaurant_id):
     import csv as _csv_mod, io as _io_sched, traceback as _tb, datetime as _dt_sched
     try:
@@ -3033,6 +3198,28 @@ def _run_schedule_job(job_id, restaurant_id):
                 print(f"[schedule] strength check failed: {_sx}")
                 result["strength"] = {"checked": False, "error": str(_sx)}
 
+            # Shift Quality — the same discipline as the strength check, over
+            # every dimension rather than one. Wrapped whole: a schedule that
+            # generated fine must never be lost because a scoring dimension
+            # raised, so a failure here degrades to "not scored" and the week
+            # still ships.
+            try:
+                _quality, _whatif = _score_schedule_quality(
+                    restaurant_id, preview_rows, result,
+                    rows_needing_review=result.get("rows_needing_review", 0),
+                    dropped_rows=len(_dropped_rows),
+                )
+                result["quality"] = _quality
+                result["what_if"] = _whatif
+                if _quality.get("checked"):
+                    print(f"[schedule] shift quality {_quality['score']}/100 "
+                          f"({_quality['band']}), confidence {_quality['confidence']['level']}"
+                          + (f", what-if {_whatif['improvement']:+d}" if _whatif.get("ran") else ""))
+            except Exception as _qx:
+                print(f"[schedule] quality engine failed: {_qx}")
+                result["quality"] = {"checked": False, "error": _safe_err(_qx)}
+                result["what_if"] = {"ran": False}
+
             _flagged = sum(1 for _r in preview_rows if _r.get("needs_review"))
             result["rows_needing_review"] = _flagged
             if _flagged:
@@ -3105,6 +3292,15 @@ def _run_schedule_job(job_id, restaurant_id):
             # short and why, and any shift leader requirement that could not
             # be satisfied. Never a silent miss.
             strength=result.get("strength") or {"checked": False},
+            # The Shift Quality Engine's verdict: one score per shift across
+            # every dimension that had data, the week's roll-up, why each
+            # shift scored what it did, and how much the engine actually
+            # knew when it said so.
+            quality=result.get("quality") or {"checked": False},
+            # Alternative arrangements of the same people, and why this one
+            # won. Never a second generation — same headcount, same hours,
+            # same roles, only who works which shift.
+            what_if=result.get("what_if") or {"ran": False},
             week_dates=result.get("week_dates", []),
             week_days=result.get("week_days", []),
             projected_revenue=result.get("projected_revenue", 0),
@@ -3112,6 +3308,10 @@ def _run_schedule_job(job_id, restaurant_id):
             labor_budget_dollars=result.get("labor_budget_dollars", 0),
             hours_scheduled=round(hours_scheduled, 1),
             labor_target=result.get("labor_target", 30),
+            # Needed by the live re-score a manager triggers by moving a
+            # shift: the per-day hour targets belong to THIS generation and
+            # cannot be re-derived afterwards, so they ride with the result.
+            daily_target_hours=result.get("daily_target_hours") or {},
             staff_constraints=staff_constraints,
             hours_added_by_backstop=hours_added,
             backstop_added_dates=added_dates,
@@ -6269,6 +6469,36 @@ def labor_team_rating(current_user):
 @login_required
 def labor_team_thresholds(current_user):
     return _m("mobile_set_thresholds")(current_user)
+
+
+@client_bp.route("/api/labor/schedule/score", methods=["POST"])
+@login_required
+def labor_schedule_score(current_user):
+    return _m("mobile_score_schedule")(current_user)
+
+
+@client_bp.route("/api/labor/profiles")
+@login_required
+def labor_profiles(current_user):
+    return _m("mobile_shift_profiles")(current_user)
+
+
+@client_bp.route("/api/labor/profiles", methods=["POST"])
+@login_required
+def labor_save_profile(current_user):
+    return _m("mobile_save_shift_profile")(current_user)
+
+
+@client_bp.route("/api/labor/profiles/delete", methods=["POST"])
+@login_required
+def labor_delete_profile(current_user):
+    return _m("mobile_delete_shift_profile")(current_user)
+
+
+@client_bp.route("/api/labor/quality-weights", methods=["POST"])
+@login_required
+def labor_quality_weights(current_user):
+    return _m("mobile_save_quality_weights")(current_user)
 
 
 @client_bp.route("/api/intel/movement")

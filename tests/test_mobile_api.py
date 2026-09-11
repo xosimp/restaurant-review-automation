@@ -3947,3 +3947,141 @@ def test_the_team_routes_need_a_login(client):
                          ("/mobile/api/labor/team/thresholds", "post")):
         resp = getattr(client, method)(path, json={})
         assert resp.status_code in (401, 403), path
+
+
+# ── Shift Quality Engine routes ───────────────────────────────────────────
+
+def _sched_rows(bartenders, date="2026-09-12"):
+    return [{"date": date, "day": "Saturday", "employee": n, "role": "Bartender",
+             "shift_start": "5:00pm", "shift_end": "11:00pm",
+             "scheduled_hours": "8", "notes": ""} for n in bartenders]
+
+
+def test_a_manager_edit_is_rescored_without_regenerating(client, db_path, monkeypatch):
+    """The whole reason the engine is a pure function: the manager drags one
+    shift, this returns the new number, and nothing calls a model."""
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    from models import set_capability, update_restaurant
+    for name, score in (("Pat", 5), ("Sam", 1), ("Alex", 1)):
+        set_capability(rid, name, score=score, db_path=db_path)
+    update_restaurant(rid, {"role_strength_json": '{"Bartender": 8}'})
+
+    weak = client.post("/mobile/api/labor/schedule/score",
+                       json={"rows": _sched_rows(["Sam", "Alex"])},
+                       headers=_auth_headers(token)).get_json()
+    strong = client.post("/mobile/api/labor/schedule/score",
+                         json={"rows": _sched_rows(["Pat", "Sam"])},
+                         headers=_auth_headers(token)).get_json()
+    assert weak["ok"] and strong["ok"]
+    assert weak["quality"]["checked"] and strong["quality"]["checked"]
+    assert strong["quality"]["score"] > weak["quality"]["score"]
+
+
+def test_the_score_route_refuses_an_empty_or_oversized_body(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    assert client.post("/mobile/api/labor/schedule/score", json={},
+                       headers=_auth_headers(token)).status_code == 400
+    huge = {"rows": [{"date": "2026-09-12", "employee": "x"}] * 2001}
+    assert client.post("/mobile/api/labor/schedule/score", json=huge,
+                       headers=_auth_headers(token)).status_code == 400
+
+
+def test_the_score_route_uses_the_callers_own_ratings(client, db_path):
+    """Rows come from the client because the client holds the edit. Anything
+    the score depends on beyond them is loaded server-side."""
+    mine = _restaurant(db_path, name="Mine")
+    theirs = _restaurant(db_path, name="Theirs")
+    from models import set_capability, update_restaurant
+    set_capability(theirs, "Pat", score=5, db_path=db_path)
+    update_restaurant(theirs, {"role_strength_json": '{"Bartender": 8}'})
+    update_restaurant(mine, {"role_strength_json": '{"Bartender": 8}'})
+    set_capability(mine, "Sam", score=1, db_path=db_path)
+    token = _login(client, db_path, mine)
+
+    body = client.post("/mobile/api/labor/schedule/score",
+                       json={"rows": _sched_rows(["Pat", "Sam"])},
+                       headers=_auth_headers(token)).get_json()
+    shift = body["quality"]["shifts"][0]
+    strength = next(d for d in shift["dimensions"] if d["key"] == "operational_strength")
+    # Pat is rated 5 for the OTHER restaurant, so only Sam's 1 counts here.
+    assert strength["facts"]["shortfalls"][0]["strength"] == 1
+
+
+def test_profiles_route_returns_a_usable_set_before_anything_is_configured(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    body = client.get("/mobile/api/labor/profiles", headers=_auth_headers(token)).get_json()
+    assert body["ok"] and body["using_defaults"] is True
+    assert len(body["profiles"]) >= 5
+    assert body["weights"] and body["dimensions"]
+
+
+def test_a_saved_profile_comes_back_and_is_used(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    profile = {"key": "game_day", "label": "Game day", "days": ["Saturday"],
+               "daypart": "night", "demand": "peak", "min_quality": 90,
+               "min_strength": {"Bartender": 10}, "requires_leader": True,
+               "priority": 5}
+    assert client.post("/mobile/api/labor/profiles", json={"profile": profile},
+                       headers=_auth_headers(token)).get_json()["ok"]
+    body = client.get("/mobile/api/labor/profiles", headers=_auth_headers(token)).get_json()
+    assert body["using_defaults"] is False
+    saved = next(p for p in body["profiles"] if p["key"] == "game_day")
+    assert saved["min_quality"] == 90 and saved["demand"] == "peak"
+
+
+def test_a_profile_with_a_nonsense_demand_level_is_refused(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    for bad in ({"key": "x", "demand": "apocalyptic"}, {"key": "x", "min_quality": 900},
+                {"key": "", "demand": "high"}):
+        resp = client.post("/mobile/api/labor/profiles", json={"profile": bad},
+                           headers=_auth_headers(token))
+        assert resp.status_code == 400, bad
+
+
+def test_a_profile_can_be_deleted(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    client.post("/mobile/api/labor/profiles", json={"profile": {"key": "temp"}},
+                headers=_auth_headers(token))
+    body = client.post("/mobile/api/labor/profiles/delete", json={"key": "temp"},
+                       headers=_auth_headers(token)).get_json()
+    assert body["ok"] and body["deleted"] is True
+
+
+def test_one_restaurants_profiles_are_invisible_to_another(client, db_path):
+    mine = _restaurant(db_path, name="Mine")
+    theirs = _restaurant(db_path, name="Theirs")
+    from models import save_shift_profile
+    save_shift_profile(theirs, {"key": "secret", "label": "Theirs"}, db_path=db_path)
+    token = _login(client, db_path, mine)
+    body = client.get("/mobile/api/labor/profiles", headers=_auth_headers(token)).get_json()
+    assert not any(p["key"] == "secret" for p in body["profiles"])
+    assert body["using_defaults"] is True
+
+
+def test_quality_weights_round_trip_and_reject_junk(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    from models import get_quality_weights
+    ok = client.post("/mobile/api/labor/quality-weights",
+                     json={"weights": {"leadership": 40, "not_a_dimension": 5}},
+                     headers=_auth_headers(token)).get_json()
+    assert ok["ok"] and ok["ignored"] == ["not_a_dimension"]
+    assert get_quality_weights(rid, db_path=db_path) == {"leadership": 40.0}
+    for bad in ({"leadership": -1}, {"leadership": "lots"}, {"leadership": 0}):
+        assert client.post("/mobile/api/labor/quality-weights", json={"weights": bad},
+                           headers=_auth_headers(token)).status_code == 400
+
+
+def test_the_quality_routes_need_a_login(client):
+    for path, method in (("/mobile/api/labor/profiles", "get"),
+                         ("/mobile/api/labor/profiles", "post"),
+                         ("/mobile/api/labor/profiles/delete", "post"),
+                         ("/mobile/api/labor/quality-weights", "post"),
+                         ("/mobile/api/labor/schedule/score", "post")):
+        assert getattr(client, method)(path, json={}).status_code in (401, 403), path

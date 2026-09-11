@@ -275,9 +275,14 @@ struct LaborView: View {
             // dash travels the header, for the ~minute the generator runs
             // (see CavnarMotion). Sits right under the button that started it.
             if viewModel.isGeneratingSchedule {
-                CavnarWeekBuilder(caption: "Building next week's schedule")
-                    .padding(.top, 10)
-                    .transition(.opacity)
+                VStack(alignment: .leading, spacing: 12) {
+                    CavnarWeekBuilder(caption: "Building next week's schedule")
+                    // What it is actually doing, rather than sixty seconds
+                    // of a spinner. Every line is a real stage of the run.
+                    ScheduleProgressSteps()
+                }
+                .padding(.top, 10)
+                .transition(.opacity)
             }
 
             // The AI strip lives inside this SAME card, as its own footer
@@ -698,6 +703,14 @@ struct LaborView: View {
                 }
                 .cavnarCard()
 
+                // The Shift Quality Engine's verdict. Placed above the shift
+                // table deliberately: the score and its reasons are what a
+                // manager decides on, and the rows are what they check after.
+                if let quality = result.quality, quality.checked {
+                    ShiftQualityPanel(quality: quality, whatIf: result.whatIf,
+                                      isRescoring: viewModel.isRescoringQuality)
+                }
+
                 if let rows = result.previewRows, !rows.isEmpty {
                     fullScheduleTable(rows, csv: result.scheduleCsv)
                 }
@@ -947,6 +960,59 @@ struct LaborView: View {
         }
     }
 
+    /// One shift, with the manager's own override attached.
+    ///
+    /// Long-press rather than a visible edit control: the table's job is to
+    /// be read, and a pencil on every one of eighty rows would bury that.
+    /// Picking a replacement re-scores the week immediately, so the manager
+    /// sees what the change bought before they look away.
+    private func shiftRowWithOverride(_ row: ScheduleRow) -> some View {
+        let replacements = viewModel.replacements(for: row)
+        let wasChanged = viewModel.overriddenRows.contains(row.id)
+        return Menu {
+            if replacements.isEmpty {
+                Text("Nobody else is free for this shift")
+            } else {
+                ForEach(replacements) { member in
+                    Button {
+                        Task { await viewModel.overrideEmployee(rowId: row.id, to: member.name) }
+                    } label: {
+                        Text(member.score.map { "\(member.name)  ·  \($0)" } ?? member.name)
+                    }
+                }
+            }
+        } label: {
+            HStack {
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 5) {
+                        Text(row.employee ?? "")
+                            .font(.cavnarBody(14, weight: 600))
+                            .foregroundStyle(Color.cavnarInk)
+                        if wasChanged {
+                            Text("CHANGED")
+                                .font(.cavnarBody(9, weight: 700))
+                                .tracking(0.5)
+                                .foregroundStyle(Color.cavnarBlue)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 1)
+                                .background(Capsule().fill(Color.cavnarBlue.opacity(0.15)))
+                        }
+                    }
+                    if let role = row.role, !role.isEmpty {
+                        Text(role).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                    }
+                }
+                Spacer()
+                Text("\(row.shiftStart ?? "")–\(row.shiftEnd ?? "")")
+                    .font(.cavnarNumber(14))
+                    .foregroundStyle(Color.cavnarInk2)
+            }
+            .contentShape(Rectangle())
+            .padding(.vertical, 4)
+        }
+        .buttonStyle(.plain)
+    }
+
     private func needsReviewGroup(_ rows: [ScheduleRow]) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
@@ -1048,19 +1114,7 @@ struct LaborView: View {
             }
             .foregroundStyle(Color.cavnarEmber)
             ForEach(Self.groupedByRole(rows)) { row in
-                HStack {
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(row.employee ?? "").font(.cavnarBody(14, weight: 600)).foregroundStyle(Color.cavnarInk)
-                        if let role = row.role, !role.isEmpty {
-                            Text(role).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
-                        }
-                    }
-                    Spacer()
-                    Text("\(row.shiftStart ?? "")–\(row.shiftEnd ?? "")")
-                        .font(.cavnarNumber(14))
-                        .foregroundStyle(Color.cavnarInk2)
-                }
-                .padding(.vertical, 4)
+                shiftRowWithOverride(row)
             }
         }
     }

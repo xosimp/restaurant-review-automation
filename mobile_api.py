@@ -4690,3 +4690,170 @@ def mobile_instagram_disconnect(current_user):
         "fb_page_token": None, "fb_page_id": None, "fb_token_expires": None,
     })
     return jsonify(ok=True)
+
+
+# ── Shift Quality Engine ───────────────────────────────────────────────────
+
+@mobile_bp.route("/labor/schedule/score", methods=["POST"])
+@mobile_login_required
+def mobile_score_schedule(current_user):
+    """Re-score a schedule a manager has just edited.
+
+    The whole reason the engine is a pure function: the manager drags one
+    shift, this returns the new number and the new reasons, and nothing is
+    regenerated. No model call, no cost, no waiting.
+
+    Rows come from the client because the client is holding the edit. They
+    are treated as untrusted input — only the eight schedule columns are
+    read, and everything the score depends on beyond them (ratings,
+    profiles, targets, history) is loaded server-side.
+    """
+    from client_api import quality_inputs_from_db, _score_schedule_quality
+    rid = current_user["restaurant_id"]
+    data = request.get_json(silent=True) or {}
+    raw_rows = data.get("rows")
+    if not isinstance(raw_rows, list) or not raw_rows:
+        return jsonify(ok=False, error="rows required"), 400
+    if len(raw_rows) > 2000:
+        return jsonify(ok=False, error="that is more rows than a week can hold"), 400
+
+    _COLS = ("date", "day", "employee", "role", "shift_start", "shift_end",
+             "scheduled_hours", "notes")
+    rows = [{c: str(r.get(c) or "")[:200] for c in _COLS}
+            for r in raw_rows if isinstance(r, dict)]
+    if not rows:
+        return jsonify(ok=False, error="no readable rows"), 400
+
+    try:
+        targets = {str(k): float(v) for k, v in (data.get("daily_target_hours") or {}).items()}
+    except (TypeError, ValueError):
+        targets = {}
+
+    try:
+        inputs = quality_inputs_from_db(rid, daily_target_hours=targets)
+        quality, what_if = _score_schedule_quality(rid, rows, inputs)
+        return jsonify(ok=True, quality=quality, what_if=what_if), 200
+    except Exception as e:
+        return jsonify(ok=False, error=_safe_err(e)), 500
+
+
+@mobile_bp.route("/labor/profiles")
+@mobile_login_required
+def mobile_shift_profiles(current_user):
+    """Shift profiles, plus the defaults they would fall back to.
+
+    Always returns a usable set: a restaurant with none configured gets the
+    engine's built-ins, marked as such, so the editor has something real to
+    show rather than an empty screen and a create button.
+    """
+    from models import (get_shift_profiles, get_quality_weights,
+                        get_role_strength_thresholds, get_shift_leader_rules,
+                        get_operational_scores)
+    import shift_quality as _sq
+    rid = current_user["restaurant_id"]
+    try:
+        stored = get_shift_profiles(rid)
+        scores = get_operational_scores(rid)
+        resolved = _sq.profiles_from_config(
+            [_sq.profile_from_dict(p) for p in stored] or None,
+            default_strength=get_role_strength_thresholds(rid) if scores else {},
+            default_leader_rules=get_shift_leader_rules(rid) if scores else [])
+        return jsonify(
+            ok=True,
+            using_defaults=not stored,
+            profiles=[_sq.profile_to_dict(p) for p in resolved],
+            weights=get_quality_weights(rid) or _sq.DEFAULT_WEIGHTS,
+            default_weights=_sq.DEFAULT_WEIGHTS,
+            dimensions=[{"key": k, "label": k.replace("_", " ").capitalize(),
+                         "customer_facing": k in _sq.CUSTOMER_DIMENSIONS}
+                        for k in _sq.DIMENSIONS],
+            demand_levels=list(_sq.DEMAND_LEVELS),
+        ), 200
+    except Exception as e:
+        return jsonify(ok=False, error=_safe_err(e), profiles=[]), 500
+
+
+@mobile_bp.route("/labor/profiles", methods=["POST"])
+@mobile_login_required
+def mobile_save_shift_profile(current_user):
+    """Create or update one shift profile."""
+    from models import save_shift_profile
+    import shift_quality as _sq
+    rid = current_user["restaurant_id"]
+    data = request.get_json(silent=True) or {}
+    profile = data.get("profile") or data
+    if not str(profile.get("key") or "").strip():
+        return jsonify(ok=False, error="a profile needs a key"), 400
+    demand = str(profile.get("demand") or "normal")
+    if demand not in _sq.DEMAND_LEVELS:
+        return jsonify(ok=False, error=f"{demand!r} is not a demand level"), 400
+    try:
+        quality = int(profile.get("min_quality") or 70)
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error="min_quality must be a number"), 400
+    if not 0 <= quality <= 100:
+        return jsonify(ok=False, error="min_quality must be between 0 and 100"), 400
+    try:
+        # Normalised through the dataclass so a stored profile can never
+        # carry a shape the engine will not read back.
+        clean = _sq.profile_to_dict(_sq.profile_from_dict(profile))
+        clean["active"] = profile.get("active", True)
+        saved = save_shift_profile(rid, clean,
+                                   updated_by=current_user.get("username") or current_user.get("email"))
+        return jsonify(ok=True, profile=saved), 200
+    except ValueError as ve:
+        return jsonify(ok=False, error=str(ve)), 400
+    except Exception as e:
+        return jsonify(ok=False, error=_safe_err(e)), 500
+
+
+@mobile_bp.route("/labor/profiles/delete", methods=["POST"])
+@mobile_login_required
+def mobile_delete_shift_profile(current_user):
+    from models import delete_shift_profile
+    data = request.get_json(silent=True) or {}
+    key = str(data.get("key") or "").strip()
+    if not key:
+        return jsonify(ok=False, error="key required"), 400
+    try:
+        return jsonify(ok=True, deleted=delete_shift_profile(current_user["restaurant_id"], key)), 200
+    except Exception as e:
+        return jsonify(ok=False, error=_safe_err(e)), 500
+
+
+@mobile_bp.route("/labor/quality-weights", methods=["POST"])
+@mobile_login_required
+def mobile_save_quality_weights(current_user):
+    """How much each dimension counts for this restaurant.
+
+    An unknown dimension name is dropped rather than refused: a saved
+    weight for a dimension that has since been renamed must not stop an
+    owner saving the rest.
+    """
+    import json as _j
+    from models import update_restaurant
+    import shift_quality as _sq
+    data = request.get_json(silent=True) or {}
+    raw = data.get("weights")
+    if not isinstance(raw, dict):
+        return jsonify(ok=False, error="weights required"), 400
+    cleaned, ignored = {}, []
+    for key, value in raw.items():
+        if key not in _sq.DIMENSIONS:
+            ignored.append(key)
+            continue
+        try:
+            n = float(value)
+        except (TypeError, ValueError):
+            return jsonify(ok=False, error=f"{key}: {value!r} is not a number"), 400
+        if n < 0:
+            return jsonify(ok=False, error=f"{key}: a weight cannot be negative"), 400
+        cleaned[key] = n
+    if cleaned and not any(cleaned.values()):
+        return jsonify(ok=False, error="at least one dimension has to count for something"), 400
+    try:
+        update_restaurant(current_user["restaurant_id"],
+                          {"quality_weights_json": _j.dumps(cleaned) if cleaned else None})
+        return jsonify(ok=True, weights=cleaned, ignored=ignored), 200
+    except Exception as e:
+        return jsonify(ok=False, error=_safe_err(e)), 500

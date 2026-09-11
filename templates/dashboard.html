@@ -2276,6 +2276,30 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
         <div id="sched-strength-list" style="margin-top:8px"></div>
       </div>
 
+      <!-- Shift Quality — the schedule graded the way an operator reads one.
+           Placed above the shift table deliberately: the score and its
+           reasons are what a manager decides on; the rows are what they
+           check afterwards. Every sentence here is computed from the
+           finished schedule, so none of them can name a person or a shift
+           that is not in the week. -->
+      <div id="sched-quality" style="display:none;padding:18px 20px;border-bottom:1px solid rgba(255,255,255,.08)">
+        <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:center">
+          <div id="sq-dial"></div>
+          <div style="flex:1;min-width:220px">
+            <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink3)">Shift Quality</div>
+            <div id="sq-band" style="font-family:'Clash Display',sans-serif;font-size:20px;font-weight:600;color:rgba(255,255,255,.92);margin:2px 0 6px"></div>
+            <div id="sq-confidence"></div>
+          </div>
+          <div id="sq-dimensions" style="flex:2;min-width:260px"></div>
+        </div>
+        <div id="sq-warnings" style="margin-top:14px"></div>
+        <div id="sq-shifts" style="margin-top:16px"></div>
+        <div style="margin-top:12px">
+          <button type="button" onclick="toggleQualityReasoning()" id="sq-why-btn" style="font-family:inherit;font-size:12.5px;font-weight:700;color:var(--ember);background:none;border:none;cursor:pointer;padding:0">Why this schedule? &#9662;</button>
+          <div id="sq-reasoning" style="display:none;margin-top:10px"></div>
+        </div>
+      </div>
+
       <!-- Schedule table toggle bar -->
       <div id="sched-toggle-bar" style="display:none;padding:12px 20px;border-bottom:1px solid rgba(255,255,255,.08);background:rgba(111,207,151,.04);cursor:pointer;user-select:none;display:flex;align-items:center;justify-content:space-between" onclick="toggleSchedTable()">
         <button style="background:none;border:none;cursor:pointer;font-size:12px;font-weight:700;color:#6fcf97;padding:0;letter-spacing:.02em;display:flex;align-items:center;gap:6px" id="sched-toggle-label">View full schedule<span id="sched-toggle-arrow" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:rgba(111,207,151,.12);border:1px solid rgba(111,207,151,.25);color:#6fcf97;transition:transform .25s;flex-shrink:0"><svg width="11" height="11" viewBox="0 0 16 16" fill="none"><path d="M5 6l3 3 3-3" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span></button>
@@ -2412,6 +2436,31 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
           <div style="margin-top:14px">
             <button onclick="saveTeamTargets(this)" class="btn-primary" style="padding:7px 16px;font-size:12px">Save targets</button>
             <span id="team-save-note" style="font-size:11px;color:var(--ink3);margin-left:10px"></span>
+          </div>
+        </div>
+
+        <!-- Shift profiles. Monday lunch and Saturday dinner are different
+             jobs, and one global threshold flattens them into one. -->
+        <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--paper3)">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+            <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ink3)">Shift profiles</div>
+            <span id="sp-source" style="font-size:11px;color:var(--ink3)"></span>
+          </div>
+          <div style="font-size:12px;color:var(--ink3);margin:6px 0 10px">Each shift is scored 0&ndash;100 on coverage, operational strength, leadership, experience, training balance, demand match and labor efficiency. A profile sets the bar for the shifts it names.</div>
+          <div id="sp-list" style="display:flex;flex-direction:column;gap:6px"></div>
+          <button onclick="newShiftProfile()" class="hb-btn" style="margin-top:10px;padding:6px 14px;font-size:12px">Add a profile</button>
+        </div>
+
+        <!-- What counts most. Sensible defaults, and an owner who disagrees
+             can say so rather than arguing with a number they cannot move. -->
+        <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--paper3)">
+          <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ink3);margin-bottom:6px">What counts most</div>
+          <div style="font-size:12px;color:var(--ink3);margin-bottom:10px">How much each dimension moves the overall score. Set one to zero to take it out of the reckoning entirely.</div>
+          <div id="sp-weights" style="display:flex;flex-direction:column;gap:7px"></div>
+          <div style="margin-top:12px">
+            <button onclick="saveQualityWeights(this)" class="btn-primary" style="padding:7px 16px;font-size:12px">Save weighting</button>
+            <button onclick="resetQualityWeights()" class="hb-btn" style="padding:7px 14px;font-size:12px;margin-left:6px">Back to defaults</button>
+            <span id="sp-weights-note" style="font-size:11px;color:var(--ink3);margin-left:10px"></span>
           </div>
         </div>
       </div>
@@ -6805,7 +6854,68 @@ var _dayColors = {'Monday':'#1a2e40','Tuesday':'#1a2e40','Wednesday':'#1a2840','
 var _schedBtn = null;
 var _schedPollInterval = null;
 
+// What the generator is actually doing, while it does it.
+//
+// A spinner for sixty seconds tells an owner that something is slow. These
+// lines tell them something intelligent is happening, and each one names a
+// real stage: the prompt genuinely carries availability, labor targets,
+// operational scores and leadership rules, and the passes afterwards
+// genuinely repair rows, check strength and score quality.
+//
+// The timings are estimates, never progress. Generation is one model call
+// and the server cannot report a percentage, so this never claims one — the
+// last step simply holds until the schedule arrives.
+var _SCHED_STEPS = [
+  [0,  "Reading last year's same days"],
+  [7,  'Checking who is available'],
+  [15, 'Balancing against your labor target'],
+  [26, 'Weighing operational scores'],
+  [36, 'Checking leadership requirements'],
+  [46, 'Building the strongest team it can'],
+  [62, 'Scoring every shift for quality']
+];
+var _schedStepTimer = null;
+
+function startScheduleSteps(startedAt) {
+  stopScheduleSteps();
+  _schedStepTimer = setInterval(function () { renderScheduleSteps(startedAt); }, 500);
+  renderScheduleSteps(startedAt);
+}
+
+function stopScheduleSteps() {
+  if (_schedStepTimer) { clearInterval(_schedStepTimer); _schedStepTimer = null; }
+}
+
+function renderScheduleSteps(startedAt) {
+  var el = document.getElementById('sched-steps');
+  if (!el) { stopScheduleSteps(); return; }
+  var elapsed = (Date.now() - startedAt) / 1000;
+  var current = 0, i;
+  for (i = 0; i < _SCHED_STEPS.length; i++) {
+    if (elapsed >= _SCHED_STEPS[i][0]) current = i;
+  }
+  // A window rather than the whole list, so the block keeps its height and
+  // the eye stays on the live line.
+  var lower = Math.max(0, current - 2);
+  var upper = Math.min(_SCHED_STEPS.length - 1, current + 1);
+  var html = '';
+  for (i = lower; i <= upper; i++) {
+    var done = i < current, live = i === current;
+    var mark = done
+      ? '<span style="color:#6fcf97;font-size:10px;font-weight:800">&#10003;</span>'
+      : (live ? '<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--ember)"></span>'
+              : '<span style="display:inline-block;width:6px;height:6px;border-radius:50%;border:1px solid var(--paper3)"></span>');
+    var colour = live ? 'var(--ink)' : 'var(--ink3)';
+    html += '<div style="display:flex;align-items:center;gap:8px;padding:3px 0;opacity:' + (done ? '.65' : '1') + '">'
+          + '<span style="width:12px;text-align:center">' + mark + '</span>'
+          + '<span style="font-size:12.5px;font-weight:' + (live ? '600' : '400') + ';color:' + colour + '">'
+          + _escHtml(_SCHED_STEPS[i][1]) + '</span></div>';
+  }
+  el.innerHTML = html;
+}
+
 function _schedReset(btnEl) {
+  stopScheduleSteps();
   if (btnEl) btnEl.innerHTML = 'Generate optimized schedule<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M5.5 6.5l2.5 3 2.5-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   if (btnEl) btnEl.disabled = false;
   if (_schedPollInterval) { clearInterval(_schedPollInterval); _schedPollInterval = null; }
@@ -6826,6 +6936,7 @@ function _schedHandleResult(data) {
   }
   // "Posted" — the week grid gives way to the ember-to-checkmark for a beat,
   // then clears, once the real result is in hand.
+  stopScheduleSteps();
   var _wkDone = document.getElementById('sched-week');
   if (_wkDone) { _wkDone.innerHTML = cavnarPostedHtml('Schedule ready'); setTimeout(function(){ var w = document.getElementById('sched-week'); if (w) w.remove(); }, 2400); }
 
@@ -6855,43 +6966,10 @@ function _schedHandleResult(data) {
     if (sumEl) sumEl.style.display = 'block';
   }
 
-  // Schedule table
-  var tbody = document.getElementById('sched-tbody');
-  var _constraints = data.staff_constraints || {};
-  if (tbody && data.preview_rows && data.preview_rows.length) {
-    var tHtml = '';
-    var lastDay = '';
-    for (var i = 0; i < data.preview_rows.length; i++) {
-      var row = data.preview_rows[i];
-      var day = row.day || '';
-      var isNewDay = day !== lastDay;
-      var bgStyle = isNewDay ? 'border-top:2px solid rgba(255,255,255,.1)' : 'border-top:1px solid rgba(255,255,255,.04)';
-      var empName = row.employee || '';
-      var constraintNote = _constraints[empName] || '';
-      var constraintBadge = constraintNote
-        ? ' <span title="' + constraintNote.replace(/"/g, '&quot;') + '" style="font-size:9px;background:rgba(242,153,74,.18);color:#f2994a;padding:1px 5px;border-radius:8px;font-weight:700;vertical-align:middle;cursor:help;letter-spacing:.02em">constraint</span>'
-        : '';
-      tHtml += '<tr style="' + bgStyle + (constraintNote ? ';background:rgba(242,153,74,.04)' : '') + '">';
-      tHtml += '<td style="padding:7px 12px;color:' + (isNewDay ? 'var(--ember2)' : 'transparent') + ';font-weight:700;font-size:11px;white-space:nowrap">' + day + '</td>';
-      tHtml += '<td style="padding:7px 12px;color:rgba(255,255,255,.88);font-weight:600">' + empName + constraintBadge + '</td>';
-      tHtml += '<td style="padding:7px 12px;color:rgba(255,255,255,.45)">' + (row.role || '') + '</td>';
-      tHtml += '<td style="padding:7px 12px;color:rgba(255,255,255,.75);white-space:nowrap">' + (row.shift_start || '') + '–' + (row.shift_end || '') + '</td>';
-      tHtml += '<td style="padding:7px 12px;color:#6fcf97;font-weight:600">' + (row.scheduled_hours || '') + '</td>';
-      tHtml += '<td style="padding:7px 12px;color:var(--ink3);font-size:10px">' + (row.notes || '') + '</td>';
-      tHtml += '</tr>';
-      lastDay = day;
-    }
-    tbody.innerHTML = tHtml;
-    var toggleBar = document.getElementById('sched-toggle-bar');
-    var shiftCount = document.getElementById('sched-shift-count');
-    if (toggleBar) toggleBar.style.display = 'flex';
-    if (shiftCount) shiftCount.textContent = data.preview_rows.length + ' shifts';
-    _schedTableOpen = false;
-    var wrap = document.getElementById('sched-table-wrap');
-    var label = document.getElementById('sched-toggle-label');
-    if (wrap) wrap.style.display = 'none';
-    if (label) label.innerHTML = 'View full schedule<span id="sched-toggle-arrow" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:rgba(111,207,151,.12);border:1px solid rgba(111,207,151,.25);color:#6fcf97;transition:transform .25s;flex-shrink:0"><svg width="11" height="11" viewBox="0 0 16 16" fill="none"><path d="M5 6l3 3 3-3" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>';
-  }
+  // Schedule table — drawn from _schedRows so a manager's swap can redraw
+  // it without regenerating anything.
+  _schedConstraints = data.staff_constraints || {};
+  _schedRenderTable(true);
 
   // PAR hours banner
   var parBanner = document.getElementById('sched-par-banner');
@@ -6929,6 +7007,11 @@ function _schedHandleResult(data) {
   }
 
   renderScheduleStrength(data.strength);
+  renderShiftQuality(data.quality, data.what_if);
+  loadTeamForSwap();
+  _schedRows = data.preview_rows || [];
+  _schedTargets = data.daily_target_hours || {};
+  _schedOverrides = {};
 
   if (panel) panel.style.display = 'block';
   if (panel) panel.scrollIntoView({behavior: 'smooth', block: 'nearest'});
@@ -6965,6 +7048,649 @@ function renderScheduleStrength(strength) {
   banner.style.display = 'block';
 }
 
+// ── Shift profiles and weighting ────────────────────────────────────────────
+//
+// A profile is what makes Saturday dinner a different question from Monday
+// lunch. Everything here is optional: a restaurant that never opens this
+// section is judged against the engine's built-in set, corrected by its own
+// sales history rather than by an assumption about which nights are busy.
+var _profiles = [];
+var _profileWeights = {};
+var _defaultWeights = {};
+var _dimensionList = [];
+var _demandLevels = ['low', 'normal', 'high', 'peak'];
+var _profileEditing = null;
+var _DAY_NAMES = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+
+function loadShiftProfiles() {
+  fetch('/api/labor/profiles').then(function (r) { return r.json(); }).then(function (d) {
+    if (!d || !d.ok) return;
+    _profiles = d.profiles || [];
+    _profileWeights = d.weights || {};
+    _defaultWeights = d.default_weights || {};
+    _dimensionList = d.dimensions || [];
+    if (d.demand_levels && d.demand_levels.length) _demandLevels = d.demand_levels;
+    var src = document.getElementById('sp-source');
+    if (src) src.textContent = d.using_defaults ? 'Using Cavnar AI defaults' : 'Your own profiles';
+    renderProfileList();
+    renderWeightList();
+  }).catch(function () { });
+}
+
+function renderProfileList() {
+  var el = document.getElementById('sp-list');
+  if (!el) return;
+  if (!_profiles.length) {
+    el.innerHTML = '<div style="font-size:11px;color:var(--ink3);font-style:italic">No profiles yet.</div>';
+    return;
+  }
+  var html = '', i;
+  for (i = 0; i < _profiles.length; i++) {
+    var p = _profiles[i];
+    if (_profileEditing === p.key) { html += _profileEditor(p, i); continue; }
+    var when = (p.days && p.days.length) ? p.days.join(', ') : 'Any day';
+    var part = p.daypart === 'morning' ? 'lunch' : (p.daypart === 'night' ? 'dinner' : 'any time');
+    var bits = [when, part, (p.demand || 'normal') + ' demand', 'quality ' + (p.min_quality || 70)];
+    if (p.requires_leader) bits.push('needs a leader');
+    if (p.training_allowed) bits.push('training allowed');
+    html += '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 12px;'
+      + 'background:var(--paper);border:1px solid var(--paper3);border-radius:6px;flex-wrap:wrap">'
+      + '<div><div style="font-size:13px;font-weight:600;color:var(--ink)">' + _escHtml(p.label || p.key) + '</div>'
+      + '<div style="font-size:11px;color:var(--ink3)">' + _escHtml(bits.join(' \u00B7 ')) + '</div></div>'
+      + '<div style="display:flex;gap:6px">'
+      + '<button type="button" data-profile-edit="' + _escAttr(p.key) + '" style="font-family:inherit;font-size:11px;color:var(--ember);background:none;border:none;cursor:pointer;font-weight:600">Edit</button>'
+      + '<button type="button" data-profile-delete="' + _escAttr(p.key) + '" style="font-family:inherit;font-size:11px;color:var(--ink3);background:none;border:none;cursor:pointer">Remove</button>'
+      + '</div></div>';
+  }
+  el.innerHTML = html;
+}
+
+function _profileEditor(p, index) {
+  var f = 'font-size:12px;padding:6px 9px;border:1px solid var(--paper3);border-radius:6px;background:var(--surface);color:var(--ink);font-family:inherit';
+  var html = '<div style="padding:12px;background:var(--paper);border:1px solid var(--ember);border-radius:8px">'
+    + '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">'
+    + _spField('Name', '<input id="sp-label" type="text" value="' + _escAttr(p.label || '') + '" style="' + f + ';width:170px">')
+    + _spField('Time of day', '<select id="sp-daypart" style="' + f + '">'
+        + _spOption('', 'Any', p.daypart) + _spOption('morning', 'Lunch / day', p.daypart)
+        + _spOption('night', 'Dinner / night', p.daypart) + '</select>')
+    + _spField('Demand', '<select id="sp-demand" style="' + f + '">' + _spDemandOptions(p.demand) + '</select>')
+    + _spField('Quality bar', '<input id="sp-quality" type="number" min="0" max="100" value="' + (p.min_quality || 70) + '" style="' + f + ';width:78px;text-align:center">')
+    + _spField('Experienced %', '<input id="sp-exp" type="number" min="0" max="100" value="' + Math.round((p.experience_mix || 0) * 100) + '" style="' + f + ';width:78px;text-align:center">')
+    + '</div>'
+    + '<div style="margin-top:10px">' + _spDayChecks(p.days || []) + '</div>'
+    + '<div style="margin-top:10px;display:flex;gap:16px;flex-wrap:wrap;align-items:center">'
+    + '<label style="font-size:12px;color:var(--ink2);display:flex;gap:6px;align-items:center;cursor:pointer">'
+    + '<input id="sp-leader" type="checkbox"' + (p.requires_leader ? ' checked' : '') + '> Needs somebody who can run it</label>'
+    + '<label style="font-size:12px;color:var(--ink2);display:flex;gap:6px;align-items:center">Minimum score '
+    + '<input id="sp-leader-score" type="number" min="1" max="5" step="0.5" value="' + (p.leader_min_score || 4) + '" style="' + f + ';width:62px;text-align:center"></label>'
+    + '<label style="font-size:12px;color:var(--ink2);display:flex;gap:6px;align-items:center;cursor:pointer">'
+    + '<input id="sp-training" type="checkbox"' + (p.training_allowed ? ' checked' : '') + '> Training shift</label>'
+    + '</div>'
+    + _spRoleGrid(p)
+    + '<div style="margin-top:12px">'
+    + '<button type="button" data-profile-save="' + _escAttr(p.key) + '" class="btn-primary" style="padding:6px 14px;font-size:12px">Save profile</button>'
+    + '<button type="button" data-profile-cancel="1" class="hb-btn" style="padding:6px 14px;font-size:12px;margin-left:6px">Cancel</button>'
+    + '</div></div>';
+  return html;
+}
+
+function _spField(label, control) {
+  return '<div><div style="font-size:10px;font-weight:600;color:var(--ink3);margin-bottom:4px">'
+    + _escHtml(label) + '</div>' + control + '</div>';
+}
+
+function _spOption(value, label, current) {
+  return '<option value="' + _escAttr(value) + '"' + ((current || '') === value ? ' selected' : '') + '>'
+    + _escHtml(label) + '</option>';
+}
+
+function _spDemandOptions(current) {
+  var out = '', i;
+  for (i = 0; i < _demandLevels.length; i++) {
+    out += _spOption(_demandLevels[i],
+      _demandLevels[i].charAt(0).toUpperCase() + _demandLevels[i].slice(1), current || 'normal');
+  }
+  return out;
+}
+
+function _spDayChecks(days) {
+  var out = '<div style="font-size:10px;font-weight:600;color:var(--ink3);margin-bottom:4px">Days <span style="font-weight:400">(none = every day)</span></div>'
+          + '<div id="sp-days" style="display:flex;gap:4px;flex-wrap:wrap">', i;
+  for (i = 0; i < _DAY_NAMES.length; i++) {
+    var on = days.indexOf(_DAY_NAMES[i]) !== -1;
+    out += '<label style="display:flex;align-items:center;gap:3px;font-size:11px;cursor:pointer;padding:4px 7px;'
+        + 'border:1px solid var(--paper3);border-radius:5px;user-select:none">'
+        + '<input type="checkbox" value="' + _DAY_NAMES[i] + '"' + (on ? ' checked' : '') + ' style="margin:0"> '
+        + _DAY_NAMES[i].slice(0, 3) + '</label>';
+  }
+  return out + '</div>';
+}
+
+// Per-role bars for this shift specifically. Blank means the flat target
+// from above still applies, which is why these are never pre-filled from it.
+function _spRoleGrid(p) {
+  if (!_teamRoles.length) return '';
+  var f = 'font-size:12px;padding:5px 7px;border:1px solid var(--paper3);border-radius:6px;background:var(--surface);color:var(--ink);font-family:inherit;width:66px;text-align:center';
+  var out = '<div style="margin-top:12px"><div style="font-size:10px;font-weight:600;color:var(--ink3);margin-bottom:4px">'
+          + 'Per role on this shift <span style="font-weight:400">(blank keeps your overall target)</span></div>'
+          + '<div id="sp-roles" style="display:flex;gap:12px;flex-wrap:wrap">', i;
+  for (i = 0; i < _teamRoles.length; i++) {
+    var role = _teamRoles[i];
+    var strength = (p.min_strength || {})[role];
+    var positions = (p.critical_positions || {})[role];
+    out += '<div data-sp-role="' + _escAttr(role) + '">'
+      + '<div style="font-size:11px;color:var(--ink2);margin-bottom:3px">' + _escHtml(role) + '</div>'
+      + '<div style="display:flex;gap:4px">'
+      + '<input data-sp-strength="1" type="number" min="0" placeholder="str" value="'
+      + (strength === undefined ? '' : strength) + '" style="' + f + '">'
+      + '<input data-sp-positions="1" type="number" min="0" placeholder="ppl" value="'
+      + (positions === undefined ? '' : positions) + '" style="' + f + '">'
+      + '</div></div>';
+  }
+  return out + '</div></div>';
+}
+
+function newShiftProfile() {
+  var key = 'custom_' + Date.now().toString(36);
+  _profiles.push({key: key, label: 'New profile', days: [], daypart: '', demand: 'normal',
+                  min_quality: 70, experience_mix: 0.4, leader_min_score: 4,
+                  min_strength: {}, critical_positions: {}, priority: 3});
+  _profileEditing = key;
+  renderProfileList();
+}
+
+function collectShiftProfile(key) {
+  var existing = null, i;
+  for (i = 0; i < _profiles.length; i++) if (_profiles[i].key === key) existing = _profiles[i];
+  var days = [], checks = document.querySelectorAll('#sp-days input[type=checkbox]');
+  for (i = 0; i < checks.length; i++) if (checks[i].checked) days.push(checks[i].value);
+  var strength = {}, positions = {};
+  var roleBoxes = document.querySelectorAll('#sp-roles [data-sp-role]');
+  for (i = 0; i < roleBoxes.length; i++) {
+    var role = roleBoxes[i].getAttribute('data-sp-role');
+    var sv = roleBoxes[i].querySelector('[data-sp-strength]').value;
+    var pv = roleBoxes[i].querySelector('[data-sp-positions]').value;
+    if (sv !== '' && !isNaN(parseFloat(sv))) strength[role] = parseFloat(sv);
+    if (pv !== '' && !isNaN(parseInt(pv, 10))) positions[role] = parseInt(pv, 10);
+  }
+  return {
+    key: key,
+    label: document.getElementById('sp-label').value || key,
+    days: days,
+    daypart: document.getElementById('sp-daypart').value || null,
+    demand: document.getElementById('sp-demand').value || 'normal',
+    min_quality: parseInt(document.getElementById('sp-quality').value, 10) || 70,
+    experience_mix: (parseFloat(document.getElementById('sp-exp').value) || 0) / 100,
+    requires_leader: document.getElementById('sp-leader').checked,
+    leader_min_score: parseFloat(document.getElementById('sp-leader-score').value) || 4,
+    training_allowed: document.getElementById('sp-training').checked,
+    min_strength: strength,
+    critical_positions: positions,
+    priority: (existing && existing.priority) || 3
+  };
+}
+
+function saveShiftProfile(key) {
+  var profile = collectShiftProfile(key);
+  fetch('/api/labor/profiles', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json', 'X-CSRFToken': '{{csrf_token}}'},
+    body: JSON.stringify({profile: profile})
+  }).then(function (r) { return r.json(); }).then(function (d) {
+    if (!d.ok) { alert(d.error || 'Could not save that profile.'); return; }
+    _profileEditing = null;
+    loadShiftProfiles();
+  }).catch(function () { alert('Could not save that profile.'); });
+}
+
+function deleteShiftProfile(key) {
+  fetch('/api/labor/profiles/delete', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json', 'X-CSRFToken': '{{csrf_token}}'},
+    body: JSON.stringify({key: key})
+  }).then(function (r) { return r.json(); }).then(function () { loadShiftProfiles(); })
+    .catch(function () { });
+}
+
+function renderWeightList() {
+  var el = document.getElementById('sp-weights');
+  if (!el) return;
+  var html = '', i;
+  for (i = 0; i < _dimensionList.length; i++) {
+    var d = _dimensionList[i];
+    var value = _profileWeights[d.key];
+    if (value === undefined) value = _defaultWeights[d.key] || 0;
+    html += '<div style="display:flex;align-items:center;gap:10px">'
+      + '<span style="flex:0 0 140px;font-size:12.5px;color:var(--ink2)">' + _escHtml(d.label) + '</span>'
+      + '<input data-weight-key="' + _escAttr(d.key) + '" type="range" min="0" max="40" step="1" value="' + value + '" style="flex:1;accent-color:var(--ember)">'
+      + '<span data-weight-out="' + _escAttr(d.key) + '" style="flex:0 0 30px;text-align:right;font-family:Space Grotesk,sans-serif;font-size:12.5px;font-weight:700;color:var(--ink)">' + value + '</span>'
+      + '</div>';
+  }
+  el.innerHTML = html;
+}
+
+function saveQualityWeights(btn) {
+  var weights = {}, fields = document.querySelectorAll('#sp-weights input[data-weight-key]'), i;
+  for (i = 0; i < fields.length; i++) {
+    weights[fields[i].getAttribute('data-weight-key')] = parseFloat(fields[i].value) || 0;
+  }
+  var note = document.getElementById('sp-weights-note');
+  if (btn) btn.disabled = true;
+  fetch('/api/labor/quality-weights', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json', 'X-CSRFToken': '{{csrf_token}}'},
+    body: JSON.stringify({weights: weights})
+  }).then(function (r) { return r.json(); }).then(function (d) {
+    if (btn) btn.disabled = false;
+    if (note) note.textContent = d.ok ? 'Saved.' : (d.error || 'Could not save that.');
+    if (d.ok) { _profileWeights = d.weights || {}; setTimeout(function () { if (note) note.textContent = ''; }, 2500); }
+  }).catch(function () {
+    if (btn) btn.disabled = false;
+    if (note) note.textContent = 'Could not save that.';
+  });
+}
+
+function resetQualityWeights() {
+  _profileWeights = {};
+  renderWeightList();
+  saveQualityWeights(null);
+}
+
+document.addEventListener('input', function (ev) {
+  var el = ev.target;
+  if (!el || !el.getAttribute) return;
+  var key = el.getAttribute('data-weight-key');
+  if (!key) return;
+  var out = document.querySelector('[data-weight-out="' + key + '"]');
+  if (out) out.textContent = el.value;
+});
+
+document.addEventListener('click', function (ev) {
+  var el = ev.target;
+  if (!el || !el.getAttribute) return;
+  var edit = el.getAttribute('data-profile-edit');
+  if (edit) { _profileEditing = edit; renderProfileList(); return; }
+  if (el.getAttribute('data-profile-cancel')) { _profileEditing = null; loadShiftProfiles(); return; }
+  var save = el.getAttribute('data-profile-save');
+  if (save) { saveShiftProfile(save); return; }
+  var del = el.getAttribute('data-profile-delete');
+  if (del) { deleteShiftProfile(del); }
+});
+
+// ── Shift Quality ───────────────────────────────────────────────────────────
+//
+// One number, the dimensions behind it, how much the engine actually knew,
+// and the detail only if the manager wants it. The promise of this panel is
+// that a restaurant manager understands their week in under thirty seconds.
+var _quality = null;
+var _whatIf = null;
+var _qualityOpenShift = null;
+var _schedRows = [];
+var _schedOverrides = {};
+var _schedTargets = {};
+
+function _qTone(score) {
+  if (score >= 90) return '#6fcf97';
+  if (score >= 78) return 'rgba(111,207,151,.85)';
+  if (score >= 65) return '#f2994a';
+  return '#eb5757';
+}
+
+function _qTitle(shift) {
+  var part = shift.daypart === 'morning' ? 'lunch' : (shift.daypart === 'night' ? 'dinner' : shift.daypart);
+  return shift.day ? (shift.day + ' ' + part) : shift.date;
+}
+
+function renderShiftQuality(quality, whatIf) {
+  var panel = document.getElementById('sched-quality');
+  if (!panel) return;
+  _quality = quality;
+  _whatIf = whatIf || null;
+  if (!quality || !quality.checked) { panel.style.display = 'none'; return; }
+
+  var score = quality.score || 0, tone = _qTone(score);
+  document.getElementById('sq-dial').innerHTML = _qualityDial(score, tone);
+  var band = (quality.band || '').charAt(0).toUpperCase() + (quality.band || '').slice(1);
+  document.getElementById('sq-band').textContent = band;
+  renderQualityConfidence(quality.confidence);
+  renderQualityDimensions(quality.dimensions || []);
+  renderQualityWarnings(quality);
+  renderQualityShifts(quality.shifts || []);
+  renderQualityReasoning();
+  panel.style.display = 'block';
+}
+
+// The score as an arc that fills to it. A three-quarter-full green ring
+// reads before any digit does, which is the whole point of the panel.
+function _qualityDial(score, tone) {
+  var r = 34, c = 2 * Math.PI * r;
+  var filled = c * Math.max(0, Math.min(100, score)) / 100;
+  return '<svg width="92" height="92" viewBox="0 0 92 92">'
+    + '<circle cx="46" cy="46" r="' + r + '" fill="none" stroke="var(--paper3)" stroke-width="7"/>'
+    + '<circle cx="46" cy="46" r="' + r + '" fill="none" stroke="' + tone + '" stroke-width="7"'
+    + ' stroke-linecap="round" stroke-dasharray="' + filled.toFixed(1) + ' ' + c.toFixed(1) + '"'
+    + ' transform="rotate(-90 46 46)"/>'
+    + '<text x="46" y="48" text-anchor="middle" font-family="Space Grotesk,sans-serif" font-size="26"'
+    + ' font-weight="700" fill="rgba(255,255,255,.92)">' + score + '</text>'
+    + '<text x="46" y="62" text-anchor="middle" font-family="Space Grotesk,sans-serif" font-size="10"'
+    + ' fill="var(--ink3)">/100</text></svg>';
+}
+
+// Confidence is a separate claim from quality. A 94 built on a fully rated
+// roster is not the same statement as a 94 built on three ratings, and one
+// number for both would be the most misleading thing this panel could do.
+function renderQualityConfidence(confidence) {
+  var el = document.getElementById('sq-confidence');
+  if (!el) return;
+  if (!confidence) { el.innerHTML = ''; return; }
+  var tone = confidence.level === 'high' ? '#6fcf97'
+           : (confidence.level === 'moderate' ? '#f2994a' : '#eb5757');
+  var label = confidence.level.charAt(0).toUpperCase() + confidence.level.slice(1);
+  el.innerHTML = '<span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;'
+    + 'border-radius:999px;background:rgba(255,255,255,.06);font-size:12px;font-weight:600;color:rgba(255,255,255,.75)">'
+    + '<span style="width:6px;height:6px;border-radius:50%;background:' + tone + '"></span>'
+    + _escHtml(label) + ' confidence</span>';
+}
+
+function renderQualityDimensions(dimensions) {
+  var el = document.getElementById('sq-dimensions');
+  if (!el) return;
+  var html = '', i;
+  for (i = 0; i < dimensions.length; i++) {
+    var d = dimensions[i];
+    if (!d.customer_facing) continue;
+    var tone = _qTone(d.score);
+    html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:7px">'
+      + '<span style="flex:0 0 128px;font-size:12.5px;color:rgba(255,255,255,.72)">' + _escHtml(d.label) + '</span>'
+      + '<span style="flex:1;height:7px;border-radius:999px;background:rgba(255,255,255,.08);overflow:hidden;display:block">'
+      + '<span style="display:block;height:7px;border-radius:999px;width:' + Math.max(4, d.score) + '%;'
+      + 'background:linear-gradient(90deg,' + tone + '55,' + tone + ')"></span></span>'
+      + '<span style="flex:0 0 38px;text-align:right;font-family:Space Grotesk,sans-serif;font-size:12.5px;'
+      + 'font-weight:700;color:rgba(255,255,255,.88)">' + d.score + '%</span></div>';
+  }
+  el.innerHTML = html;
+}
+
+// Stated calmly, with the action attached. A shift under its bar is
+// something a manager fixes in thirty seconds, not an alarm.
+function renderQualityWarnings(quality) {
+  var el = document.getElementById('sq-warnings');
+  if (!el) return;
+  var lines = [], i;
+  var below = quality.below_profile || [];
+  for (i = 0; i < below.length; i++) {
+    var b = below[i];
+    lines.push(_qTitle(b) + ' came in at ' + b.score + ', under the ' + b.min_quality
+               + ' this ' + (b.label || 'shift').toLowerCase() + ' expects.');
+  }
+  lines = lines.concat(quality.recommendations || []);
+  if (!lines.length) { el.innerHTML = ''; return; }
+  var html = '<div style="padding:12px 14px;border-radius:10px;background:rgba(242,153,74,.07)">';
+  for (i = 0; i < Math.min(lines.length, 5); i++) {
+    html += '<div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:5px">'
+      + '<span style="flex:0 0 5px;width:5px;height:5px;border-radius:50%;background:#f2994a;margin-top:6px"></span>'
+      + '<span style="font-size:12.5px;color:rgba(255,255,255,.78);line-height:1.55">'
+      + _escHtml(lines[i]) + '</span></div>';
+  }
+  el.innerHTML = html + '</div>';
+}
+
+function renderQualityShifts(shifts) {
+  var el = document.getElementById('sq-shifts');
+  if (!el) return;
+  var html = '<div style="font-size:10px;font-weight:700;letter-spacing:1.3px;text-transform:uppercase;'
+           + 'color:var(--ink3);margin-bottom:6px">Every shift</div>';
+  var i;
+  for (i = 0; i < shifts.length; i++) {
+    var sft = shifts[i];
+    if (!sft.scored) continue;
+    var id = sft.date + '-' + sft.daypart;
+    var open = _qualityOpenShift === id;
+    var tone = _qTone(sft.score);
+    html += '<div style="border-bottom:1px solid rgba(255,255,255,.06)">'
+      + '<button type="button" data-quality-shift="' + _escAttr(id) + '" style="width:100%;display:flex;'
+      + 'align-items:center;gap:10px;background:none;border:none;cursor:pointer;padding:8px 0;font-family:inherit;text-align:left">'
+      + '<span style="font-size:13.5px;font-weight:600;color:rgba(255,255,255,.88)">' + _escHtml(_qTitle(sft)) + '</span>'
+      + _qualityChips(sft)
+      + '<span style="flex:1"></span>'
+      + '<span style="font-family:Space Grotesk,sans-serif;font-size:14px;font-weight:700;color:' + tone + '">' + sft.score + '</span>'
+      + '<span style="font-size:10px;color:var(--ink3);transform:rotate(' + (open ? '180deg' : '0') + ');display:inline-block">&#9662;</span>'
+      + '</button>';
+    if (open) html += _qualityShiftDetail(sft);
+    html += '</div>';
+  }
+  el.innerHTML = html;
+}
+
+function _qualityChips(shift) {
+  var out = '';
+  var demand = (shift.profile || {}).demand;
+  if (demand === 'peak' || demand === 'high') {
+    out += '<span style="font-size:9px;font-weight:700;letter-spacing:.6px;color:var(--ember);'
+        + 'background:rgba(200,75,47,.16);padding:2px 6px;border-radius:999px">'
+        + (demand === 'peak' ? 'PEAK' : 'BUSY') + '</span>';
+  }
+  if ((shift.profile || {}).training_allowed) {
+    out += '<span style="font-size:9px;font-weight:700;letter-spacing:.6px;color:#56ccf2;'
+        + 'background:rgba(86,204,242,.14);padding:2px 6px;border-radius:999px">TRAINING</span>';
+  }
+  return out;
+}
+
+function _qualityShiftDetail(shift) {
+  var html = '<div style="padding:2px 0 12px">';
+  if (shift.people && shift.people.length) {
+    html += '<div style="font-size:12px;color:var(--ink3);margin-bottom:6px">On this shift: '
+          + _escHtml(shift.people.join(', ')) + '</div>';
+  }
+  html += _qualityLines(shift.strengths, '#6fcf97', '&#10003;', 3);
+  html += _qualityLines(shift.weaknesses, '#f2994a', '!', 4);
+  html += _qualityLines(shift.blind_spots, 'var(--ink3)', '?', 2);
+  if (shift.capped_by) {
+    html += '<div style="font-size:12px;color:var(--ink3);margin-top:4px">Capped by '
+          + _escHtml(String(shift.capped_by).replace(/_/g, ' '))
+          + ' — a shift is never better than its weakest critical part.</div>';
+  }
+  return html + '</div>';
+}
+
+function _qualityLines(lines, colour, mark, limit) {
+  if (!lines || !lines.length) return '';
+  var out = '', i;
+  for (i = 0; i < Math.min(lines.length, limit); i++) {
+    out += '<div style="display:flex;gap:7px;align-items:flex-start;margin-bottom:4px">'
+      + '<span style="flex:0 0 12px;color:' + colour + ';font-size:10px;font-weight:800;margin-top:2px">' + mark + '</span>'
+      + '<span style="font-size:12.5px;color:rgba(255,255,255,.72);line-height:1.55">' + _escHtml(lines[i]) + '</span></div>';
+  }
+  return out;
+}
+
+// ── Manager overrides ───────────────────────────────────────────────────────
+//
+// The engine is a pure function, which is what makes this cheap: swapping a
+// name is one round trip and no regeneration. The manager sees the cost or
+// the benefit of their own change immediately, which is the difference
+// between a schedule they trust and one they fight.
+var _teamForSwap = [];
+
+function loadTeamForSwap() {
+  if (_teamForSwap.length) return;
+  fetch('/api/labor/team').then(function (r) { return r.json(); }).then(function (d) {
+    if (d && d.ok && d.team) _teamForSwap = d.team;
+  }).catch(function () { });
+}
+
+// Same role, not already working that day, and nobody who said they cannot
+// work it. Strongest first, because the reason a manager opens this is
+// almost always a shift the engine just told them is weak.
+function _replacementsFor(index) {
+  var target = _schedRows[index];
+  if (!target) return [];
+  var role = (target.role || '').toLowerCase().replace(/^\s+|\s+$/g, '');
+  var working = {}, i;
+  for (i = 0; i < _schedRows.length; i++) {
+    if (_schedRows[i].date === target.date) working[(_schedRows[i].employee || '').toLowerCase()] = 1;
+  }
+  var out = [];
+  for (i = 0; i < _teamForSwap.length; i++) {
+    var m = _teamForSwap[i];
+    if (working[(m.name || '').toLowerCase()]) continue;
+    var mRole = (m.role || '').toLowerCase().replace(/^\s+|\s+$/g, '');
+    if (role && mRole && mRole !== role) continue;
+    out.push(m);
+  }
+  out.sort(function (a, b) { return (b.score || 0) - (a.score || 0); });
+  return out;
+}
+
+function openShiftSwap(index, anchorEl) {
+  var options = _replacementsFor(index);
+  if (!options.length) { anchorEl.title = 'Nobody else is free for this shift'; return; }
+  var sel = document.createElement('select');
+  sel.style.cssText = 'font-family:inherit;font-size:12px;padding:3px 6px;border:1px solid var(--paper3);'
+                    + 'border-radius:5px;background:var(--surface);color:var(--ink)';
+  var html = '<option value="">' + _escHtml(_schedRows[index].employee || '') + '</option>', i;
+  for (i = 0; i < options.length; i++) {
+    html += '<option value="' + _escAttr(options[i].name) + '">' + _escHtml(options[i].name)
+          + (options[i].score ? '  \u00B7  ' + options[i].score : '') + '</option>';
+  }
+  sel.innerHTML = html;
+  sel.onchange = function () {
+    if (!sel.value) { anchorEl.parentNode.replaceChild(anchorEl, sel); return; }
+    applyShiftSwap(index, sel.value);
+  };
+  anchorEl.parentNode.replaceChild(sel, anchorEl);
+  sel.focus();
+}
+
+function applyShiftSwap(index, name) {
+  _schedRows[index].employee = name;
+  _schedOverrides[index] = true;
+  rescoreSchedule();
+  _schedRenderTable();
+}
+
+// Re-score whatever is on screen. The edit itself always stands: if the
+// score call fails, the manager's change is still there and only the
+// number is stale, which is the right way round.
+function rescoreSchedule() {
+  var panel = document.getElementById('sched-quality');
+  if (panel) panel.style.opacity = '.5';
+  fetch('/api/labor/schedule/score', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json', 'X-CSRFToken': '{{csrf_token}}'},
+    body: JSON.stringify({rows: _schedRows, daily_target_hours: _schedTargets})
+  }).then(function (r) { return r.json(); }).then(function (d) {
+    if (panel) panel.style.opacity = '1';
+    if (d && d.ok) renderShiftQuality(d.quality, d.what_if);
+  }).catch(function () {
+    if (panel) panel.style.opacity = '1';
+  });
+}
+
+document.addEventListener('click', function (ev) {
+  var el = ev.target;
+  if (!el || !el.getAttribute) return;
+  var idx = el.getAttribute('data-shift-row');
+  if (idx === null) return;
+  openShiftSwap(parseInt(idx, 10), el);
+});
+
+var _schedConstraints = {};
+
+function _schedRenderTable(collapse) {
+  var tbody = document.getElementById('sched-tbody');
+  var _constraints = _schedConstraints || {};
+  if (tbody && _schedRows && _schedRows.length) {
+    var tHtml = '';
+    var lastDay = '';
+    for (var i = 0; i < _schedRows.length; i++) {
+      var row = _schedRows[i];
+      var day = row.day || '';
+      var isNewDay = day !== lastDay;
+      var bgStyle = isNewDay ? 'border-top:2px solid rgba(255,255,255,.1)' : 'border-top:1px solid rgba(255,255,255,.04)';
+      var empName = row.employee || '';
+      var constraintNote = _constraints[empName] || '';
+      var constraintBadge = constraintNote
+        ? ' <span title="' + constraintNote.replace(/"/g, '&quot;') + '" style="font-size:9px;background:rgba(242,153,74,.18);color:#f2994a;padding:1px 5px;border-radius:8px;font-weight:700;vertical-align:middle;cursor:help;letter-spacing:.02em">constraint</span>'
+        : '';
+      tHtml += '<tr style="' + bgStyle + (constraintNote ? ';background:rgba(242,153,74,.04)' : '') + '">';
+      tHtml += '<td style="padding:7px 12px;color:' + (isNewDay ? 'var(--ember2)' : 'transparent') + ';font-weight:700;font-size:11px;white-space:nowrap">' + day + '</td>';
+      // Clicking a name opens the list of people who could take that
+      // shift instead. The score updates the moment one is picked, so a
+      // manager sees what their change bought before they look away.
+      tHtml += '<td style="padding:7px 12px;color:rgba(255,255,255,.88);font-weight:600">'
+            + '<span data-shift-row="' + i + '" style="cursor:pointer;border-bottom:1px dashed rgba(255,255,255,.25)">'
+            + empName + '</span>' + constraintBadge
+            + (_schedOverrides[i] ? ' <span style="font-size:9px;font-weight:700;letter-spacing:.5px;color:#56ccf2;background:rgba(86,204,242,.15);padding:1px 5px;border-radius:8px">CHANGED</span>' : '')
+            + '</td>';
+      tHtml += '<td style="padding:7px 12px;color:rgba(255,255,255,.45)">' + (row.role || '') + '</td>';
+      tHtml += '<td style="padding:7px 12px;color:rgba(255,255,255,.75);white-space:nowrap">' + (row.shift_start || '') + '–' + (row.shift_end || '') + '</td>';
+      tHtml += '<td style="padding:7px 12px;color:#6fcf97;font-weight:600">' + (row.scheduled_hours || '') + '</td>';
+      tHtml += '<td style="padding:7px 12px;color:var(--ink3);font-size:10px">' + (row.notes || '') + '</td>';
+      tHtml += '</tr>';
+      lastDay = day;
+    }
+    tbody.innerHTML = tHtml;
+    var toggleBar = document.getElementById('sched-toggle-bar');
+    var shiftCount = document.getElementById('sched-shift-count');
+    if (toggleBar) toggleBar.style.display = 'flex';
+    if (shiftCount) shiftCount.textContent = _schedRows.length + ' shifts';
+    if (collapse) {
+      _schedTableOpen = false;
+      var wrap = document.getElementById('sched-table-wrap');
+      if (wrap) wrap.style.display = 'none';
+    }
+    var label = document.getElementById('sched-toggle-label');
+    if (collapse && label) label.innerHTML = 'View full schedule<span id="sched-toggle-arrow" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:rgba(111,207,151,.12);border:1px solid rgba(111,207,151,.25);color:#6fcf97;transition:transform .25s;flex-shrink:0"><svg width="11" height="11" viewBox="0 0 16 16" fill="none"><path d="M5 6l3 3 3-3" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>';
+  }
+}
+
+function toggleQualityReasoning() {
+  var box = document.getElementById('sq-reasoning');
+  var btn = document.getElementById('sq-why-btn');
+  if (!box) return;
+  var open = box.style.display === 'none';
+  box.style.display = open ? 'block' : 'none';
+  if (btn) btn.innerHTML = (open ? 'Hide reasoning' : 'Why this schedule?') + ' &#9662;';
+}
+
+function renderQualityReasoning() {
+  var box = document.getElementById('sq-reasoning');
+  if (!box || !_quality) return;
+  var html = '';
+  if (_whatIf && _whatIf.ran && _whatIf.verdict) {
+    html += '<div style="font-size:12.5px;color:rgba(255,255,255,.78);line-height:1.6;margin-bottom:8px">'
+          + _escHtml(_whatIf.verdict) + '</div>';
+    var swaps = _whatIf.swaps || [], i;
+    for (i = 0; i < Math.min(swaps.length, 3); i++) {
+      html += _qualityLines([swaps[i].reason], '#56ccf2', '&#8644;', 1);
+    }
+  }
+  html += _qualityLines(_quality.strengths, '#6fcf97', '&#10003;', 3);
+  html += _qualityLines(_quality.weaknesses, '#f2994a', '!', 3);
+  var conf = _quality.confidence;
+  if (conf && conf.reasons && conf.reasons.length) {
+    html += '<div style="font-size:12.5px;font-weight:600;color:rgba(255,255,255,.78);margin:8px 0 4px">'
+          + _escHtml(conf.summary) + '</div>';
+    html += _qualityLines(conf.reasons, 'var(--ink3)', '?', 5);
+  }
+  box.innerHTML = html;
+}
+
+// Delegated once, so re-rendering the shift list never re-binds handlers.
+document.addEventListener('click', function (ev) {
+  var el = ev.target;
+  while (el && el !== document.body && !(el.getAttribute && el.getAttribute('data-quality-shift'))) {
+    el = el.parentNode;
+  }
+  if (!el || !el.getAttribute) return;
+  var id = el.getAttribute('data-quality-shift');
+  if (!id) return;
+  _qualityOpenShift = (_qualityOpenShift === id) ? null : id;
+  renderQualityShifts((_quality && _quality.shifts) || []);
+});
+
 function _strengthLine(title, body) {
   return '<div style="margin-top:6px"><div style="font-size:12px;font-weight:700;color:rgba(255,255,255,.88)">'
     + _escHtml(title) + '</div><div style="font-size:12px;color:rgba(255,255,255,.62);line-height:1.6">'
@@ -6987,8 +7713,10 @@ function generateSchedule(btn) {
   // again by _schedReset / _schedHandleResult).
   var _oldWk = document.getElementById('sched-week'); if (_oldWk) _oldWk.remove();
   var _wk = document.createElement('div'); _wk.id = 'sched-week'; _wk.style.cssText = 'margin-top:14px';
-  _wk.innerHTML = cavnarWeekHtml("Building next week's schedule");
+  _wk.innerHTML = cavnarWeekHtml("Building next week's schedule")
+    + '<div id="sched-steps" style="max-width:340px;margin:10px auto 0;text-align:left"></div>';
   btn.insertAdjacentElement('afterend', _wk);
+  startScheduleSteps(_schedStart);
 
   // Update elapsed time every 5s so owner knows it's working
   var _elapsedTimer = setInterval(function() {
@@ -7211,6 +7939,7 @@ function loadTeamPanel() {
     renderTeamThresholds();
     renderTeamRules();
     renderTeamCoverage(d.coverage);
+    loadShiftProfiles();
   }).catch(function(){
     list.innerHTML = '<div style="font-size:11px;color:var(--ink3)">Could not load your team.</div>';
   });
