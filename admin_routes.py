@@ -1032,15 +1032,16 @@ def fetch_reviews_now(restaurant_id, current_user):
         # Use GMB API if connected (stores review_name for auto-posting)
         if restaurant.gmb_refresh_token:
             try:
-                from gmb import get_valid_token, fetch_reviews_via_gmb, get_gmb_account_id, get_gmb_location_id
+                from gmb import get_valid_token, fetch_reviews_via_gmb, find_gmb_location
                 from models import update_restaurant
                 token = get_valid_token(restaurant_id)
                 if token:
                     loc_id = restaurant.gmb_location_id
                     if not loc_id:
-                        acct_id = get_gmb_account_id(token)
+                        _m = find_gmb_location(token, restaurant.google_place_id or "")
+                        acct_id = _m.get("account") if _m.get("ok") else None
                         if acct_id:
-                            loc_id = get_gmb_location_id(token, acct_id, restaurant.google_place_id or "")
+                            loc_id = _m.get("location")
                             if loc_id:
                                 update_restaurant(restaurant_id, {
                                     "gmb_account_id": acct_id,

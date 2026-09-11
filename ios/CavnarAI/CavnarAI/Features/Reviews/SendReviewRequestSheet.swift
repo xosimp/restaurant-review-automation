@@ -19,6 +19,10 @@ private final class SendReviewRequestViewModel {
         let email: String
         let phone: String
         let message: String
+        // Every other outbound SMS in this product goes only to a contact
+        // who consented. A review request texted whatever number was typed
+        // in, with nothing recording that the guest agreed to it.
+        let sms_consent: Bool
     }
 
     private struct Response: Decodable {
@@ -26,14 +30,16 @@ private final class SendReviewRequestViewModel {
         let error: String?
     }
 
-    func send(name: String, email: String, phone: String, message: String) async {
+    func send(name: String, email: String, phone: String, message: String,
+              smsConsent: Bool) async {
         isSending = true
         errorMessage = nil
         defer { isSending = false }
         do {
             let response: Response = try await client.send(
                 "/mobile/api/send-review-request", method: .post,
-                body: Body(name: name, email: email, phone: phone, message: message)
+                body: Body(name: name, email: email, phone: phone, message: message,
+                           sms_consent: smsConsent)
             )
             if response.ok {
                 didSend = true
@@ -59,13 +65,19 @@ struct SendReviewRequestSheet: View {
     @State private var email = ""
     @State private var phone = ""
     @State private var message = ""
+    @State private var smsConsent = false
     @FocusState private var focusedField: SendReviewRequestField?
     // Set only on the real 200 — the posted check plays, then the sheet
     // closes itself (see cavnarPostedOverlay).
     @State private var postedLabel: String?
 
     private var canSend: Bool {
-        !viewModel.isSending && !(email.isEmpty && phone.isEmpty)
+        if viewModel.isSending { return false }
+        if email.isEmpty && phone.isEmpty { return false }
+        // A phone number without consent has nowhere to go — the server
+        // refuses it, so don't let the button pretend otherwise.
+        if !phone.trimmingCharacters(in: .whitespaces).isEmpty && !smsConsent { return false }
+        return true
     }
 
     var body: some View {
@@ -97,6 +109,21 @@ struct SendReviewRequestSheet: View {
                         .foregroundStyle(Color.cavnarInk3)
                         .padding(.top, -14)
 
+                    if !phone.trimmingCharacters(in: .whitespaces).isEmpty {
+                        Toggle(isOn: $smsConsent) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("This guest agreed to be texted")
+                                    .font(.cavnarBody(15, weight: 600))
+                                    .foregroundStyle(Color.cavnarInk)
+                                Text("Required before we send a review request by SMS.")
+                                    .font(.cavnarBody(13.5))
+                                    .foregroundStyle(Color.cavnarInk3)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                        .tint(Color.cavnarEmber)
+                    }
+
                     if let error = viewModel.errorMessage {
                         Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
                     }
@@ -111,7 +138,8 @@ struct SendReviewRequestSheet: View {
                     VStack(spacing: 10) {
                         Button {
                             Task {
-                                await viewModel.send(name: name, email: email, phone: phone, message: message)
+                                await viewModel.send(name: name, email: email, phone: phone,
+                                                     message: message, smsConsent: smsConsent)
                                 if viewModel.didSend {
                                     Haptic.success()
                                     postedLabel = "Review request sent"

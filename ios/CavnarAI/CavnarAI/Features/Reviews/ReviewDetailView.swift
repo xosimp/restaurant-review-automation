@@ -211,6 +211,38 @@ struct ReviewDetailView: View {
                     .disabled(viewModel.isSubmitting)
                 }
             }
+            // A draft that generated cleanly but states a specific action the
+            // restaurant may never have taken. The 1-star prompt asks the
+            // model to "explain what will be done differently", so an
+            // invented remediation — staff retrained, supplier changed —
+            // used to go out as a statement of fact under the owner's name.
+            if let reason = viewModel.review.draftReviewReason, viewModel.review.draftIsFlagged {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Color.cavnarAmber)
+                        .padding(.top, 1)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Read this one before you post it")
+                            .font(.cavnarBody(14, weight: 700))
+                            .foregroundStyle(Color.cavnarAmber)
+                        Text(reason)
+                            .font(.cavnarBody(13.5))
+                            .foregroundStyle(Color.cavnarInk2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .padding(11)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color.cavnarAmber.opacity(0.12))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(Color.cavnarAmber.opacity(0.35), lineWidth: 1)
+                )
+            }
             if viewModel.isGeneratingDraft {
                 // "Composing" — an ember caret writing each line into place
                 // while Claude drafts the reply (see CavnarMotion). Covers

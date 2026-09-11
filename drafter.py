@@ -31,20 +31,56 @@ def get_approved_examples(restaurant_id: int, limit: int = 4) -> str:
         return ""
 
 
+RECURRING_WINDOW_DAYS = 90
+RECURRING_MIN_MENTIONS = 3
+
+
 def get_recurring_themes(restaurant_id: int) -> str:
-    """Check if same complaints appear 3+ times recently."""
+    """Named complaint categories a guest has raised at least three times in
+    the last 90 days, or "" when there is no such pattern.
+
+    Was a count of the last 8 negative reviews with NO date filter, phrased
+    as "{n} negative reviews recently" — so eight negatives spread over
+    three years read as a current pattern, and the number was capped by the
+    LIMIT rather than being a real count. It then told the model to
+    "acknowledge the pattern is being actively addressed" without showing it
+    a single theme, inviting it to assert a shared complaint it had never
+    seen, in a reply published on a public listing.
+
+    Now it names the actual categories the analyser assigned, over a real
+    window, and says nothing about what is being done about them — because
+    this system does not know that.
+    """
     try:
+        from collections import Counter
+        import json as _json
         conn = get_conn()
         rows = conn.execute("""
-            SELECT text FROM reviews
+            SELECT categories FROM reviews
             WHERE restaurant_id=? AND sentiment='negative'
-            AND response_status NOT IN ('skipped')
-            ORDER BY fetched_at DESC LIMIT 8
-        """, (restaurant_id,)).fetchall()
+              AND response_status NOT IN ('skipped')
+              AND deleted_at IS NULL
+              AND categories IS NOT NULL AND categories != '[]'
+              AND COALESCE(NULLIF(review_date,''), fetched_at) >= datetime('now', ?)
+        """, (restaurant_id, f"-{RECURRING_WINDOW_DAYS} days")).fetchall()
         conn.close()
-        if len(rows) >= 3:
-            return f"\nNote: This restaurant has had {len(rows)} negative reviews recently. If this review shares themes with common complaints (service, wait times, food quality), acknowledge the pattern is being actively addressed.\n"
-        return ""
+        counts = Counter()
+        for row in rows:
+            try:
+                for c in _json.loads(row["categories"] or "[]"):
+                    if c:
+                        counts[c] += 1
+            except Exception:
+                continue
+        themes = [c for c, n in counts.most_common() if n >= RECURRING_MIN_MENTIONS]
+        if not themes:
+            return ""
+        pretty = ", ".join(t.replace("_", " ") for t in themes[:3])
+        return (f"\nContext: over the last {RECURRING_WINDOW_DAYS} days, guests have raised "
+                f"{pretty} in at least {RECURRING_MIN_MENTIONS} separate negative reviews. "
+                f"If THIS review raises one of those, you may acknowledge it is something the "
+                f"restaurant is aware of. Do NOT claim any specific fix, change, retraining or "
+                f"process has happened — you have no way to know that.\n")
     except Exception:
         return ""
 
@@ -72,6 +108,10 @@ def draft_response(review_id: int, rating: int, text: str,
 
     # Extract reviewer first name if available
     reviewer_name = ""
+    # Bound up front: the try below only assigned it when a row came back,
+    # so a review_id with no row left it undefined and the next line raised
+    # NameError rather than falling back.
+    platform = "google"
     try:
         conn = get_conn()
         row = conn.execute(
@@ -87,7 +127,7 @@ def draft_response(review_id: int, rating: int, text: str,
             ):
                 reviewer_name = first
     except Exception:
-        platform = "google"
+        pass
 
     # Platform-specific guidance
     if platform == "google":
@@ -178,7 +218,19 @@ Write ONLY the response. No preamble, no labels, no quotation marks around the r
     draft = re.sub(r'\*\*(.+?)\*\*', lambda m: m.group(1), draft)
     draft = re.sub(r'\*(.+?)\*', lambda m: m.group(1), draft)
 
-    update_draft(review_id, draft)
+    # A reply is published on a public listing under the owner's name, and
+    # the 1-star prompt above literally asks the model to "explain what will
+    # be done differently". Nothing checked what it wrote there, so an
+    # invented remediation — staff retrained, supplier changed, policy
+    # updated — went out as a statement of fact the restaurant never made.
+    from ai_guard import unsupported_commitments
+    claims = unsupported_commitments(draft)
+    if claims:
+        update_draft(review_id, draft, needs_review=True,
+                     review_reason="states a specific action the restaurant may not have taken: "
+                                   + ", ".join(claims[:3]))
+    else:
+        update_draft(review_id, draft)
     return draft
 
 
@@ -202,4 +254,13 @@ def draft_pending(restaurant_id: int, limit: int = 50):
             )
             print(f"    [{r.id}] drafted ({len(draft)} chars)")
         except Exception as e:
+            # A failed draft leaves the review pending with nobody told.
+            # analyse_pending already reports its failures to the daily
+            # digest; this one printed to stdout and moved on.
             print(f"    [{r.id}] ERROR: {e}")
+            try:
+                import ops
+                ops.capture(e, job="review_draft",
+                            context=f"restaurant_id={restaurant_id} review_id={r.id}")
+            except Exception:
+                pass

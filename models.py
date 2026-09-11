@@ -433,6 +433,9 @@ class Review:
     approved_at: Optional[str] = None
     posted_at: Optional[str] = None
     review_name: Optional[str] = None  # GMB API name for auto-posting
+    # Google's own updateTime, so an edit to an existing review can be
+    # detected on the next fetch. review_date stays the CREATE time.
+    source_updated_at: Optional[str] = None
     processed: bool = False
 
 
@@ -637,6 +640,17 @@ def ensure_columns(db_path: str = DB_PATH):
         ("reviews", "draft_edited",     "INTEGER DEFAULT 0"),
         ("reviews", "regenerate_count", "INTEGER DEFAULT 0"),
         ("reviews", "response_action",  "TEXT"),
+        # Edited-review tracking — see save_reviews.
+        ("reviews", "source_updated_at", "TEXT"),
+        ("reviews", "edited_at",         "TEXT"),
+        ("reviews", "original_rating",   "INTEGER"),
+        # A draft that generated cleanly but states something unverifiable.
+        ("reviews", "draft_needs_review", "INTEGER DEFAULT 0"),
+        ("reviews", "draft_review_reason", "TEXT"),
+        # When the official Google rating was last refreshed. Without it a
+        # failed refresh left the previous value in place indefinitely,
+        # shown as current and driving the rating-threshold alert.
+        ("restaurants", "gbp_rating_updated_at", "TEXT"),
     ]
     for table, col, col_type in columns_to_add:
         try:
@@ -2122,7 +2136,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH):
         "toast_access_token","toast_token_expires","toast_last_synced","toast_sync_error",
         "square_access_token","square_location_id","square_last_synced","square_sync_error",
         "clover_merchant_id","clover_api_token","clover_last_synced","clover_sync_error",
-        "gbp_rating","gbp_review_count",
+        "gbp_rating","gbp_review_count","gbp_rating_updated_at",
         "alert_1star","alert_2star","alert_health","alert_neg_spike","alert_negative_trend","alert_no_response",
         "alert_5star","alert_rating_threshold","alert_rating_floor","alert_labor_over",
         "alert_any_review","alert_resp_approved",
@@ -2439,6 +2453,37 @@ def get_active_modules(restaurant: Optional["Restaurant"]) -> list[dict]:
 
 # ── Review CRUD ───────────────────────────────────────────────────────────────
 
+def _apply_review_edit(conn, r: "Review") -> bool:
+    """Update a stored review when its author has edited it. True if changed.
+
+    Compares the guest's own fields only. Everything the restaurant did —
+    the draft, the approval, the posted reply — is left alone, because an
+    edit to the review is not a reason to throw away a reply already
+    published against it.
+    """
+    row = conn.execute(
+        "SELECT id, rating, text, original_rating FROM reviews "
+        "WHERE restaurant_id=? AND platform=? AND external_id=?",
+        (r.restaurant_id, r.platform, r.external_id)).fetchone()
+    if not row:
+        return False
+    same_rating = int(row["rating"] or 0) == int(r.rating or 0)
+    same_text = (row["text"] or "").strip() == (r.text or "").strip()
+    if same_rating and same_text:
+        return False
+    # Keep what the guest first said, so a rating that moved can be shown as
+    # having moved rather than quietly replaced.
+    original = row["original_rating"] if row["original_rating"] is not None else row["rating"]
+    conn.execute(
+        "UPDATE reviews SET rating=?, text=?, original_rating=?, "
+        "source_updated_at=?, edited_at=datetime('now'), "
+        "processed=0, sentiment=NULL, categories=NULL, summary=NULL, urgency='normal' "
+        "WHERE id=?",
+        (r.rating, r.text, original, r.source_updated_at, row["id"]))
+    r.id = row["id"]
+    return True
+
+
 def save_reviews(reviews: list[Review], db_path: str = DB_PATH) -> tuple[int, list]:
     """Upsert reviews; skip ones this restaurant already has.
 
@@ -2455,16 +2500,23 @@ def save_reviews(reviews: list[Review], db_path: str = DB_PATH) -> tuple[int, li
     new_count = 0
     new_reviews = []
     already_had = 0
+    edited = 0
     unexpected = []
     for r in reviews:
         try:
-            conn.execute("""
+            cur = conn.execute("""
                 INSERT INTO reviews
                     (restaurant_id, platform, external_id, author, rating,
                      text, review_date, fetched_at)
                 VALUES (?,?,?,?,?,?,?,?)
             """, (r.restaurant_id, r.platform, r.external_id, r.author,
                   r.rating, r.text, r.review_date, r.fetched_at))
+            # The row id, carried back onto the object. Without it every
+            # caller downstream saw review.id as None: alert_log rows were
+            # written with a null review_id, so an alert could not be traced
+            # to the review that caused it, and nothing could re-read the
+            # batch after analysis.
+            r.id = cur.lastrowid
             new_count += 1
             new_reviews.append(r)
         except sqlite3.IntegrityError as e:
@@ -2472,10 +2524,28 @@ def save_reviews(reviews: list[Review], db_path: str = DB_PATH) -> tuple[int, li
             # already has it, which is the normal re-fetch case.
             if "UNIQUE" in str(e).upper():
                 already_had += 1
+                # A guest can edit their own review. This was insert-only, so
+                # a one-star the guest later raised to five stayed a one-star
+                # here forever: in the average, in the sentiment split, in the
+                # owner's reply queue, and in every chart. Google returns the
+                # edit under the same review name, so the change is visible on
+                # the very next fetch and was simply being discarded.
+                #
+                # Only the guest's own content is updated. response_status,
+                # draft_response and the approval timestamps are the
+                # restaurant's work and are never touched. The text changed,
+                # so the row goes back for re-analysis.
+                try:
+                    if _apply_review_edit(conn, r):
+                        edited += 1
+                except Exception as _ee:
+                    unexpected.append((r.external_id, f"edit failed: {_ee}"))
             else:
                 unexpected.append((r.external_id, str(e)))
     conn.commit()
     conn.close()
+    if edited:
+        print(f"[reviews] {edited} review(s) were edited by their author and have been updated")
     if unexpected:
         print(f"[reviews] {len(unexpected)} row(s) rejected for a reason other than a duplicate: "
               f"{unexpected[:3]}")
@@ -2553,11 +2623,22 @@ def update_analysis(review_id: int, sentiment: str, categories: list,
     conn.close()
 
 
-def update_draft(review_id: int, draft: str, db_path: str = DB_PATH):
+def update_draft(review_id: int, draft: str, db_path: str = DB_PATH,
+                 needs_review: bool = False, review_reason: str = None):
+    """Store a drafted reply.
+
+    needs_review marks a draft that passed generation but states something
+    the system cannot stand behind — see ai_guard.unsupported_commitments.
+    It never blocks the owner from posting; it makes the reason visible
+    before they do, and the auto-approve rule refuses to touch it.
+    """
     conn = get_conn(db_path)
     conn.execute("""
-        UPDATE reviews SET draft_response=?, response_status='drafted' WHERE id=?
-    """, (draft, review_id))
+        UPDATE reviews
+           SET draft_response=?, response_status='drafted',
+               draft_needs_review=?, draft_review_reason=?
+         WHERE id=?
+    """, (draft, 1 if needs_review else 0, review_reason, review_id))
     conn.commit()
     conn.close()
 
@@ -3628,12 +3709,69 @@ def get_all_location_groups(db_path: str = DB_PATH) -> list:
 RESPONSE_TIME_CAP_HOURS = 30 * 24
 
 
+# When the guest actually wrote the review. review_date is the truth and
+# fetched_at is when Cavnar AI happened to pull it — on a first connect
+# every review in a restaurant's history carries the same fetched_at, so
+# bucketing or filtering on it collapsed three years of reviews into the
+# onboarding week. Measured: an 8-week sentiment trend rendered one bar,
+# "top issues in the last 90 days" counted a three-year-old review, and the
+# negative-spike SMS claimed four reviews "in the last 7 days" when the
+# newest was 54 days old. fetched_at stays as the fallback for a row that
+# somehow has no review_date.
+WRITTEN_AT = "COALESCE(NULLIF(r.review_date,''), r.fetched_at)"
+WRITTEN_AT_BARE = "COALESCE(NULLIF(review_date,''), fetched_at)"
+
+
+def get_reviews_by_ids(restaurant_id: int, ids: list, db_path: str = DB_PATH) -> list:
+    """Re-read specific reviews as Review objects, scoped to one restaurant.
+
+    Used to pick the analysis back up before alerts fire, so the health
+    alert can read the urgency the analyser decided instead of matching
+    keywords against raw guest text.
+    """
+    if not ids:
+        return []
+    conn = get_conn(db_path)
+    marks = ",".join("?" for _ in ids)
+    rows = conn.execute(
+        f"SELECT * FROM reviews WHERE restaurant_id=? AND id IN ({marks}) AND deleted_at IS NULL",
+        (restaurant_id, *ids)).fetchall()
+    conn.close()
+    out = []
+    for row in rows:
+        k = row.keys()
+        out.append(Review(
+            id=row["id"], restaurant_id=row["restaurant_id"], platform=row["platform"],
+            external_id=row["external_id"], author=row["author"], rating=row["rating"],
+            text=row["text"], review_date=row["review_date"], fetched_at=row["fetched_at"],
+            sentiment=row["sentiment"] if "sentiment" in k else None,
+            summary=row["summary"] if "summary" in k else None,
+            urgency=(row["urgency"] if "urgency" in k else None) or "normal",
+            response_status=row["response_status"] if "response_status" in k else "pending",
+            processed=bool(row["processed"]) if "processed" in k else False,
+        ))
+    by_id = {r.id: r for r in out}
+    return [by_id[i] for i in ids if i in by_id]
+
+
 def get_review_stats(restaurant_id):
     conn = get_conn()
-    # Single query for sentiment/status counts
+    # Counts cover every review this restaurant has, analysed or not.
+    #
+    # This whole query was gated on processed=1, so a review whose Haiku
+    # analysis failed — or that fell past analyse_pending's per-run limit —
+    # vanished from the owner's totals, their average rating AND their
+    # "needs response" queue. Measured on 25 reviews with 5 unanalysed
+    # 1-stars: 20 shown, 4.2 average against a real 3.6, and five unanswered
+    # one-star reviews nowhere in the queue of reviews to answer.
+    #
+    # Sentiment counts still require analysis, because an unanalysed review
+    # genuinely has no sentiment; unanalysed is reported as its own number
+    # rather than folded into one of the three.
     rows = conn.execute("""
         SELECT
             COUNT(*)                                                                    AS total,
+            SUM(processed=0)                                                            AS unanalysed,
             SUM(sentiment='positive')                                                   AS positive,
             SUM(sentiment='negative')                                                   AS negative,
             SUM(sentiment='neutral')                                                    AS neutral,
@@ -3648,7 +3786,7 @@ def get_review_stats(restaurant_id):
             SUM(review_date >= date('now','start of month'))                            AS received_this_month,
             SUM(review_date >= date('now','-30 days'))                                  AS last_30d,
             AVG(CASE WHEN review_date >= date('now','-30 days') THEN rating END)        AS avg_rating_30d
-        FROM reviews WHERE processed=1 AND restaurant_id=? AND deleted_at IS NULL
+        FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL
     """, (restaurant_id,)).fetchone()
 
     # Average response time in hours (review_date → approved_at) — industry standard definition.
@@ -3692,6 +3830,9 @@ def get_review_stats(restaurant_id):
 
     positive = rows["positive"] or 0
     positive_pct = round(positive / total * 100) if total > 0 else 0
+    # Reviews we hold but could not analyse. Non-zero means the sentiment
+    # split and the topic charts cover less than the totals beside them.
+    unanalysed = rows["unanalysed"] or 0
 
     return dict(
         total             = total,
@@ -3712,6 +3853,8 @@ def get_review_stats(restaurant_id):
         last_30d          = last_30d,
         response_rate     = response_rate,
         avg_response_hours= avg_response_hours,
+        unanalysed        = unanalysed,
+        sentiment_complete = (unanalysed == 0),
     )
 
 def get_sentiment_trend(restaurant_id, weeks=8):
@@ -3719,8 +3862,8 @@ def get_sentiment_trend(restaurant_id, weeks=8):
     conn = get_conn()
     rows = conn.execute("""
         SELECT
-            strftime('%Y-%W', fetched_at)          AS week_key,
-            MIN(DATE(fetched_at))                  AS week_start,
+            strftime('%Y-%W', COALESCE(NULLIF(review_date,''), fetched_at))          AS week_key,
+            MIN(DATE(COALESCE(NULLIF(review_date,''), fetched_at)))                  AS week_start,
             SUM(sentiment='positive')              AS positive,
             SUM(sentiment='negative')              AS negative,
             SUM(sentiment='neutral')               AS neutral,
@@ -3728,7 +3871,7 @@ def get_sentiment_trend(restaurant_id, weeks=8):
             ROUND(AVG(rating),1)                   AS avg_rating
         FROM reviews
         WHERE restaurant_id=? AND processed=1 AND deleted_at IS NULL
-          AND fetched_at >= datetime('now', ? || ' days')
+          AND COALESCE(NULLIF(review_date,''), fetched_at) >= datetime('now', ? || ' days')
         GROUP BY week_key
         ORDER BY week_key ASC
     """, (restaurant_id, f"-{weeks * 7}")).fetchall()
@@ -3761,7 +3904,7 @@ def get_top_issues(restaurant_id, days=90, limit=6):
         SELECT categories FROM reviews
         WHERE restaurant_id=? AND processed=1 AND deleted_at IS NULL
         AND categories IS NOT NULL AND categories != '[]'
-        AND fetched_at >= datetime('now', '-' || ? || ' days')
+        AND COALESCE(NULLIF(review_date,''), fetched_at) >= datetime('now', '-' || ? || ' days')
     """, (restaurant_id, str(days))).fetchall()
     conn.close()
     counts = Counter()
@@ -3801,14 +3944,14 @@ def get_topic_heatmap(restaurant_id: int, days: int = 90) -> list:
         SELECT categories, sentiment FROM reviews
         WHERE restaurant_id=? AND processed=1 AND deleted_at IS NULL
           AND categories IS NOT NULL AND categories != '[]'
-          AND fetched_at >= datetime('now', '-' || ? || ' days')
+          AND COALESCE(NULLIF(review_date,''), fetched_at) >= datetime('now', '-' || ? || ' days')
     """, (restaurant_id, str(days))).fetchall()
     prev_rows = conn.execute("""
         SELECT categories FROM reviews
         WHERE restaurant_id=? AND processed=1 AND deleted_at IS NULL
           AND categories IS NOT NULL AND categories != '[]'
-          AND fetched_at >= datetime('now', '-' || ? || ' days')
-          AND fetched_at < datetime('now', '-' || ? || ' days')
+          AND COALESCE(NULLIF(review_date,''), fetched_at) >= datetime('now', '-' || ? || ' days')
+          AND COALESCE(NULLIF(review_date,''), fetched_at) < datetime('now', '-' || ? || ' days')
     """, (restaurant_id, str(days * 2), str(days))).fetchall()
     conn.close()
 
@@ -4278,6 +4421,9 @@ def auto_approve_candidates(restaurant_id: int, db_path: str = DB_PATH) -> list:
         WHERE restaurant_id=? AND rating=5 AND response_status='drafted'
           AND draft_response IS NOT NULL AND deleted_at IS NULL
           AND COALESCE(urgency, 'normal') != 'high'
+          -- A draft flagged for stating an action the restaurant may not
+          -- have taken is exactly what must not be published unread.
+          AND COALESCE(draft_needs_review, 0) = 0
         ORDER BY fetched_at ASC
     """, (restaurant_id,)).fetchall()
     conn.close()

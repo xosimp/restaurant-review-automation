@@ -40,7 +40,25 @@ SENTIMENTS = ("positive", "neutral", "negative")
 URGENCIES = ("high", "normal")
 
 
-def _validate_analysis(result):
+# A star rating is a fact the guest chose. Sentiment is the model's reading
+# of the text. They can legitimately differ in the middle, but not at the
+# ends: a 1-star is not a positive review and a 5-star is not a negative
+# one, whatever the prose does. An LLM reading "the staff were lovely but I
+# was ill afterwards" as positive dropped that review out of the negative
+# spike count and drew it as a positive on the sentiment chart.
+def _sentiment_floor(rating: int, sentiment: str) -> str:
+    try:
+        r = int(rating)
+    except (TypeError, ValueError):
+        return sentiment
+    if r <= 2 and sentiment == "positive":
+        return "negative"
+    if r >= 5 and sentiment == "negative":
+        return "neutral"
+    return sentiment
+
+
+def _validate_analysis(result, rating: int = None):
     """Coerce the model's JSON into what the schema and the UI can hold.
 
     The reviews table's own CHECK constraints were doing this job, which
@@ -65,6 +83,8 @@ def _validate_analysis(result):
     summary = " ".join(str(result.get("summary") or "").split())[:300]
     if not summary:
         raise ValueError("analysis had no summary")
+    if rating is not None:
+        sentiment = _sentiment_floor(rating, sentiment)
     return {"sentiment": sentiment, "categories": cats, "summary": summary, "urgency": urgency}
 
 
@@ -90,7 +110,7 @@ def analyse_review(review_id: int, rating: int, text: str, restaurant_id: int = 
         raise ValueError("analysis was truncated")
     raw = extract_text(message).strip()
     raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-    result = _validate_analysis(json.loads(raw))
+    result = _validate_analysis(json.loads(raw), rating=rating)
     update_analysis(
         review_id,
         result["sentiment"],
@@ -101,7 +121,14 @@ def analyse_review(review_id: int, rating: int, text: str, restaurant_id: int = 
     return result
 
 
-def analyse_pending(restaurant_id: int, limit: int = 50):
+def analyse_pending(restaurant_id: int, limit: int = 500):
+    """Analyse every review still waiting.
+
+    The default was 50. A review left unanalysed has no urgency, so its
+    health/safety alert never fires, and it was invisible to the owner's
+    totals entirely until get_review_stats stopped filtering on processed=1.
+    A CSV import routinely exceeds 50, and nothing came back for the rest.
+    """
     reviews = get_pending_analysis(restaurant_id, limit)
     print(f"  Analysing {len(reviews)} reviews...")
     results = []

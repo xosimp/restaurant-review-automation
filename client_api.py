@@ -413,9 +413,26 @@ def format_insight_html(text):
     return html + forecast_html
 
 def _do_review_stats(restaurant_id):
-    from models import get_review_stats as _grs
+    from models import get_review_stats as _grs, get_restaurant as _gr
     try:
         stats = _grs(restaurant_id)
+        # avg_rating is the average of the reviews Cavnar AI HOLDS, which on
+        # a Google Business connection is the most recent page of them, not
+        # the restaurant's whole history. gbp_rating is Google's own figure
+        # over every review ever left. Both were being shown with neither
+        # labelled, so two different ratings sat on one screen and an owner
+        # had no way to tell which was their real one. They travel together
+        # now, with the count each is computed over.
+        r = _gr(restaurant_id)
+        official = getattr(r, "gbp_rating", None) if r else None
+        official_count = getattr(r, "gbp_review_count", None) if r else None
+        stats["official_rating"] = float(official) if official else None
+        stats["official_review_count"] = int(official_count) if official_count else None
+        stats["official_rating_updated_at"] = getattr(r, "gbp_rating_updated_at", None) if r else None
+        stats["sample_size"] = stats.get("total", 0)
+        # True when we hold every review Google says exists.
+        stats["is_full_history"] = bool(
+            official_count and stats.get("total", 0) >= int(official_count))
         return stats, 200
     except Exception as e:
         return {"error": str(e)}, 500
@@ -3796,15 +3813,30 @@ def _do_send_review_request(rid, data):
         if not restaurant:
             return {"ok": False, "error": "Restaurant not found"}, 404
 
-        # Build Google review link
+        # Build Google review link. There is no generic fallback: the old
+        # one was https://g.page/r/review, which points at no particular
+        # business — a guest who tapped it landed nowhere useful, having
+        # been sent there by name by the restaurant.
         place_id    = restaurant.google_place_id or ""
-        review_url  = (f"https://search.google.com/local/writereview?placeid={place_id}"
-                       if place_id else "https://g.page/r/review")
+        if not place_id:
+            return {"ok": False,
+                    "error": "This restaurant has no Google Place ID on file, so there is no "
+                             "review link to send yet. Add it in settings first."}, 400
+        review_url  = f"https://search.google.com/local/writereview?placeid={place_id}"
         first_name  = customer_name.split()[0] if customer_name else "there"
         rest_name   = restaurant.name or "us"
 
         # Send via SMS if phone provided
         if customer_phone:
+            # Alerts go only to contacts who consented (get_alert_contacts'
+            # sms_consent_only). This path texted whatever number was typed
+            # in, with no record that the guest agreed to be messaged — the
+            # one outbound SMS in the product that skipped the consent model
+            # the product already has.
+            if not (data.get("sms_consent") or data.get("consent")):
+                return {"ok": False,
+                        "error": "Confirm the guest agreed to be texted before sending a "
+                                 "review request by SMS."}, 400
             from notify import send_sms as _send_sms
             sms_text = (
                 f"Hi {first_name}, thanks for dining at {rest_name}! "
@@ -3946,7 +3978,7 @@ def gbp_debug(current_user):
 @client_bp.route("/api/gbp-listing", methods=["GET"])
 @login_required
 def gbp_listing_get(current_user):
-    from gmb import get_gbp_listing, get_valid_token, get_gmb_account_id, get_gmb_location_id
+    from gmb import get_gbp_listing, get_valid_token, find_gmb_location
     from models import get_restaurant, update_restaurant
     rid = current_user["restaurant_id"]
     r = get_restaurant(rid)
@@ -3955,14 +3987,14 @@ def gbp_listing_get(current_user):
         try:
             token = get_valid_token(rid)
             if token:
-                account_id = get_gmb_account_id(token)
-                if account_id:
-                    location_id = get_gmb_location_id(token, account_id, r.google_place_id or "")
-                    if location_id:
-                        update_restaurant(rid, {
-                            "gmb_account_id":  account_id,
-                            "gmb_location_id": location_id,
-                        })
+                _m = find_gmb_location(token, r.google_place_id or "")
+                if _m.get("ok"):
+                    update_restaurant(rid, {
+                        "gmb_account_id":  _m["account"],
+                        "gmb_location_id": _m["location"],
+                    })
+                else:
+                    print(f"[GBP] auto-discover declined for rid={rid}: {_m.get('error')}")
         except Exception as e:
             print(f"[GBP] auto-discover location failed: {e}")
     return jsonify(**get_gbp_listing(rid))

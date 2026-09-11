@@ -701,7 +701,8 @@ def gmb_callback(current_user):
     tokens are always stored against the logged-in user's own restaurant_id —
     never a restaurant_id taken from the query string — so a forged state value
     can't attach an attacker's Google tokens to a victim's restaurant."""
-    from gmb import exchange_code, get_gmb_account_id, get_gmb_location_id
+    from gmb import exchange_code, find_gmb_location
+    from html import escape as _html_escape
     from models import update_restaurant, get_restaurant
     from datetime import datetime, timezone, timedelta
 
@@ -738,18 +739,28 @@ def gmb_callback(current_user):
         expires_in    = tokens.get("expires_in", 3600)
         expires_at    = (datetime.now(timezone.utc) + timedelta(seconds=expires_in)).isoformat()
 
-        account_id  = get_gmb_account_id(access_token)
-        location_id = None
-        if account_id:
-            r = get_restaurant(restaurant_id)
-            location_id = get_gmb_location_id(access_token, account_id, r.google_place_id or "")
+        # Resolve the ONE location whose Place ID matches this restaurant.
+        # This used to take accounts[0] and locations[0], so an owner with
+        # several restaurants under one Business Profile connected every one
+        # of them to the same listing — same reviews, and replies published
+        # under the wrong restaurant's name.
+        r = get_restaurant(restaurant_id)
+        match = find_gmb_location(access_token, (r.google_place_id or "") if r else "")
+        if not match.get("ok"):
+            _msg = _html_escape(match.get("error") or "Could not match this Google account to this restaurant.")
+            return (
+                "<html><body><script>"
+                "window.opener&&window.opener.postMessage({gmb:'error'},'*');"
+                "</script><p>Google Business not connected.</p>"
+                f"<p>{_msg}</p></body></html>"
+            )
 
         update_restaurant(restaurant_id, {
             "gmb_access_token":  access_token,
             "gmb_refresh_token": refresh_token,
             "gmb_token_expires": expires_at,
-            "gmb_account_id":    account_id or "",
-            "gmb_location_id":   location_id or "",
+            "gmb_account_id":    match["account"],
+            "gmb_location_id":   match["location"],
         })
 
         return (
@@ -779,7 +790,7 @@ def gmb_mobile_callback():
     google_sso_callback already uses for mobile login, so no new URL
     scheme registration is needed — GMBConnectCoordinator.swift just
     listens for a different path on it."""
-    from gmb import exchange_code, get_gmb_account_id, get_gmb_location_id, verify_mobile_state, MOBILE_REDIRECT_URI
+    from gmb import exchange_code, find_gmb_location, verify_mobile_state, MOBILE_REDIRECT_URI
     from models import update_restaurant, get_restaurant
     from datetime import datetime, timezone, timedelta
     import urllib.parse
@@ -814,18 +825,18 @@ def gmb_mobile_callback():
         expires_in    = tokens.get("expires_in", 3600)
         expires_at    = (datetime.now(timezone.utc) + timedelta(seconds=expires_in)).isoformat()
 
-        account_id  = get_gmb_account_id(access_token)
-        location_id = None
-        if account_id:
-            r = get_restaurant(restaurant_id)
-            location_id = get_gmb_location_id(access_token, account_id, r.google_place_id or "")
+        r = get_restaurant(restaurant_id)
+        match = find_gmb_location(access_token, (r.google_place_id or "") if r else "")
+        if not match.get("ok"):
+            print(f"[GMB] mobile connect refused for rid={restaurant_id}: {match.get('error')}")
+            return _finish("nomatch")
 
         update_restaurant(restaurant_id, {
             "gmb_access_token":  access_token,
             "gmb_refresh_token": refresh_token,
             "gmb_token_expires": expires_at,
-            "gmb_account_id":    account_id or "",
-            "gmb_location_id":   location_id or "",
+            "gmb_account_id":    match["account"],
+            "gmb_location_id":   match["location"],
         })
         return _finish("connected")
     except Exception as e:

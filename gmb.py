@@ -152,8 +152,8 @@ def get_valid_token(restaurant_id: int) -> str | None:
 
 # ── Account/Location discovery ────────────────────────────────────────────────
 
-def get_gmb_account_id(access_token: str) -> str | None:
-    """Get the first GBP account ID using the current Account Management API."""
+def list_gmb_accounts(access_token: str) -> list:
+    """Every GBP account this token can see, newest API shape."""
     try:
         resp = requests.get(
             "https://mybusinessaccountmanagement.googleapis.com/v1/accounts",
@@ -161,35 +161,97 @@ def get_gmb_account_id(access_token: str) -> str | None:
             timeout=10,
         )
         resp.raise_for_status()
-        accounts = resp.json().get("accounts", [])
-        if accounts:
-            return accounts[0]["name"]  # e.g. "accounts/123456"
-        return None
+        return resp.json().get("accounts", []) or []
     except Exception as e:
-        print(f"[GMB] get_gmb_account_id error: {e}")
-        return None
+        print(f"[GMB] list_gmb_accounts error: {e}")
+        return []
 
 
-def get_gmb_location_id(access_token: str, account_id: str, place_id: str) -> str | None:
+def get_gmb_account_id(access_token: str) -> str | None:
+    """First GBP account id. Only meaningful when the token sees exactly one;
+    callers that need a specific location should use find_gmb_location, which
+    searches every account rather than assuming this one."""
+    accounts = list_gmb_accounts(access_token)
+    return accounts[0]["name"] if accounts else None
+
+
+def list_gmb_locations(access_token: str, account_id: str) -> list:
+    """Locations under one account, with the Place ID each one maps to.
+
+    metadata.placeId is the field that ties a GBP location to the
+    google_place_id already stored on the restaurant. It has to be asked
+    for explicitly in readMask or it simply is not returned.
     """
-    Find the GBP location using the current Business Information API.
-    Returns the location name e.g. "locations/456".
-    """
+    out, page_token = [], None
     try:
-        resp = requests.get(
-            f"https://mybusinessbusinessinformation.googleapis.com/v1/{account_id}/locations",
-            headers={"Authorization": f"Bearer {access_token}"},
-            params={"readMask": "name,title,phoneNumbers,websiteUri,profile"},
-            timeout=10,
-        )
-        resp.raise_for_status()
-        locations = resp.json().get("locations", [])
-        if locations:
-            return locations[0]["name"]  # e.g. "locations/456"
-        return None
+        for _ in range(10):  # bounded; 100 per page covers any real group
+            params = {
+                "readMask": "name,title,storefrontAddress,metadata",
+                "pageSize": 100,
+            }
+            if page_token:
+                params["pageToken"] = page_token
+            resp = requests.get(
+                f"https://mybusinessbusinessinformation.googleapis.com/v1/{account_id}/locations",
+                headers={"Authorization": f"Bearer {access_token}"},
+                params=params,
+                timeout=10,
+            )
+            resp.raise_for_status()
+            body = resp.json()
+            out.extend(body.get("locations", []) or [])
+            page_token = body.get("nextPageToken")
+            if not page_token:
+                break
     except Exception as e:
-        print(f"[GMB] get_gmb_location_id error: {e}")
-        return None
+        print(f"[GMB] list_gmb_locations error: {e}")
+    return out
+
+
+def find_gmb_location(access_token: str, place_id: str) -> dict:
+    """Resolve the ONE GBP location that matches this restaurant's Place ID.
+
+    Returns {"ok": True, "account": ..., "location": ..., "title": ...} or
+    {"ok": False, "error": ..., "choices": [...]}.
+
+    This used to be get_gmb_location_id(access_token, account_id, place_id),
+    which accepted place_id and never read it — it returned locations[0] of
+    accounts[0]. An owner with three restaurants under one Business Profile
+    connected all three to the same location, so every one of them fetched
+    the same reviews and post_reply published each restaurant's drafts onto
+    that single listing. The reviews table was deliberately re-keyed per
+    restaurant to stop exactly this; the location lookup undid it upstream.
+
+    Matching on nothing is never safe here, so an unmatched Place ID is an
+    error carrying the candidates rather than a silent first-item pick.
+    """
+    want = (place_id or "").strip()
+    if not want:
+        return {"ok": False, "error": "This restaurant has no Google Place ID on file. "
+                                      "Add one before connecting Google Business Profile."}
+    accounts = list_gmb_accounts(access_token)
+    if not accounts:
+        return {"ok": False, "error": "This Google account manages no Business Profile locations."}
+
+    choices = []
+    for acct in accounts:
+        acct_name = acct.get("name")
+        if not acct_name:
+            continue
+        for loc in list_gmb_locations(access_token, acct_name):
+            loc_place = ((loc.get("metadata") or {}).get("placeId") or "").strip()
+            title = loc.get("title") or loc.get("name") or "(untitled)"
+            choices.append({"account": acct_name, "location": loc.get("name"),
+                            "title": title, "place_id": loc_place})
+            if loc_place and loc_place == want:
+                return {"ok": True, "account": acct_name,
+                        "location": loc.get("name"), "title": title}
+
+    return {"ok": False,
+            "error": ("None of the locations on this Google account match this restaurant's "
+                      "Place ID. Connect the Google account that manages this specific "
+                      "listing, or correct the Place ID in settings."),
+            "choices": choices}
 
 
 # ── Review fetching via Business Profile API ─────────────────────────────────
@@ -204,7 +266,7 @@ def fetch_reviews_via_gmb(access_token: str, location_id: str, restaurant_id: in
         resp = requests.get(
             f"https://mybusinessreviews.googleapis.com/v1/{location_id}/reviews",
             headers={"Authorization": f"Bearer {access_token}"},
-            params={"pageSize": 20},
+            params={"pageSize": 50},
             timeout=10,
         )
         resp.raise_for_status()
@@ -212,22 +274,37 @@ def fetch_reviews_via_gmb(access_token: str, location_id: str, restaurant_id: in
         reviews = []
         for r in raw:
             star_map = {"ONE": 1, "TWO": 2, "THREE": 3, "FOUR": 4, "FIVE": 5}
-            rating = star_map.get(r.get("starRating", "THREE"), 3)
+            raw_star = r.get("starRating")
+            rating = star_map.get(raw_star)
+            if rating is None:
+                # Defaulted to 3. Google really does return
+                # STAR_RATING_UNSPECIFIED, and a fabricated neutral rating
+                # enters the average, the sentiment mix and the owner's
+                # headline number as if a guest had chosen it. Skip instead.
+                print(f"[GMB] skipping review with unusable starRating {raw_star!r}")
+                continue
             reviewer = r.get("reviewer", {})
-            author = reviewer.get("displayName", "Anonymous")
+            author = reviewer.get("displayName") or "Anonymous"
             text = r.get("comment", "")
-            update_time = r.get("updateTime", "")
+            # createTime, not updateTime. updateTime moves when a review is
+            # edited OR when anybody replies to it, so importing a backlog a
+            # previous agency had replied to dated every one of those
+            # reviews to the day of the reply — and save_reviews is
+            # insert-only, so that wrong date was then frozen for good.
+            create_time = r.get("createTime") or r.get("updateTime") or ""
+            update_time = r.get("updateTime") or ""
             review_name = r.get("name", "")  # e.g. accounts/123/locations/456/reviews/789
 
             reviews.append(Review(
                 restaurant_id=restaurant_id,
                 platform="google",
-                external_id=review_name or f"google_{update_time}_{author}",
+                external_id=review_name or f"google_{create_time}_{author}",
                 author=author,
                 rating=rating,
                 text=text,
-                review_date=update_time,
+                review_date=create_time,
                 review_name=review_name,
+                source_updated_at=update_time,
             ))
         return reviews
     except Exception as e:
@@ -319,7 +396,8 @@ def fetch_location_rating(restaurant_id: int, access_token: str, location_id: st
         count  = data.get("userRatingCount")
         if rating is not None:
             from models import update_restaurant
-            update_fields = {"gbp_rating": float(rating)}
+            update_fields = {"gbp_rating": float(rating),
+                             "gbp_rating_updated_at": datetime.now(timezone.utc).isoformat()}
             if count is not None:
                 update_fields["gbp_review_count"] = int(count)
             update_restaurant(restaurant_id, update_fields)

@@ -332,18 +332,47 @@ def _daily_alert_suppressed(restaurant_id: int, alert_type: str, db_path: str = 
     return _over_alert_ceiling(restaurant_id, db_path)
 
 
-def _is_health_alert(text: str) -> bool:
+def _is_health_alert(text: str, urgency: str = None) -> bool:
+    """Whether a new review warrants the health/safety alert.
+
+    The analyser's own urgency classification decides this when it exists.
+    It reads the review in context and covers the same ground this keyword
+    list does — food safety, illness, injury, legal threats, staff
+    misconduct — without matching a bare substring.
+
+    The keyword list is the fallback for a review that could not be
+    analysed, and only the fallback. Used on its own it fired a 🚨 HEALTH
+    ALERT on a five-star review reading "no roach problem here, unlike the
+    place down the road": "roach" is in the list and negation is invisible
+    to a substring match. drafter.py already moved off keywords for exactly
+    this reason and documented the same false positive; the alert path,
+    which is the one that texts the owner at 11pm, had not.
+    """
+    if urgency:
+        return str(urgency).strip().lower() == "high"
     import unicodedata
-    t = unicodedata.normalize("NFKC", text).lower().strip()
+    t = unicodedata.normalize("NFKC", text or "").lower().strip()
     return any(kw in t for kw in HEALTH_KEYWORDS)
 
 
 def _neg_spike_count(restaurant_id: int, db_path: str = DB_PATH) -> int:
+    """Negative reviews a guest actually WROTE in the last seven days.
+
+    Was filtered on fetched_at, which is when Cavnar AI pulled the review.
+    On a first connect an entire review history arrives in one batch, so a
+    restaurant's opening day on the product produced an SMS reading "4
+    negative reviews in the last 7 days" about reviews up to three years
+    old. Measured before the fix: 4 counted, newest 54 days old.
+
+    Soft-deleted rows are excluded too — a review the owner removed still
+    counted toward the spike that texts them about it.
+    """
     conn = models.get_conn(db_path)
     count = conn.execute("""
         SELECT COUNT(*) FROM reviews
         WHERE restaurant_id=? AND sentiment='negative'
-        AND fetched_at >= datetime('now', '-7 days')
+          AND deleted_at IS NULL
+          AND COALESCE(NULLIF(review_date,''), fetched_at) >= datetime('now', '-7 days')
     """, (restaurant_id,)).fetchone()[0]
     conn.close()
     return count
@@ -536,13 +565,16 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
     for review in new_reviews:
         rating   = review.rating or 0
         text     = review.text or ""
-        author   = _html.escape((review.author or "").split()[0])
+        # .split()[0] on an empty author raised IndexError and took down
+        # the alert loop for every remaining review in the batch.
+        _author_parts = (review.author or "").split()
+        author   = _html.escape(_author_parts[0]) if _author_parts else ""
         platform = _html.escape((review.platform or "Google").title())
         preview  = _html.escape(text[:120].strip())
         ellipsis = "…" if len(text) > 120 else ""
 
         # Health alert — highest priority
-        if row["alert_health"] and _is_health_alert(text):
+        if row["alert_health"] and _is_health_alert(text, getattr(review, "urgency", None)):
             sms = (
                 f"🚨 HEALTH ALERT — {restaurant_name}\n"
                 f"{rating}★ {platform}: \"{preview}{ellipsis}\"\n"

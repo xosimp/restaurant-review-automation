@@ -17,12 +17,34 @@ struct Review: Codable, Identifiable, Hashable {
     let draftResponse: String?
     let responseStatus: String
     let categories: [String]
+    // Set when the draft generated cleanly but states something this system
+    // cannot stand behind — a specific action the restaurant may never have
+    // taken. Advisory: the owner can still post it, having been shown why.
+    let draftNeedsReview: Bool?
+    let draftReviewReason: String?
+    // When the guest edited their own review after leaving it, and what they
+    // first rated. A one-star raised to five used to stay a one-star here
+    // forever, because the fetch was insert-only.
+    let editedAt: String?
+    let originalRating: Int?
 
     enum CodingKeys: String, CodingKey {
         case id, platform, author, rating, text, sentiment, urgency, categories
         case reviewDate = "review_date"
         case draftResponse = "draft_response"
         case responseStatus = "response_status"
+        case draftNeedsReview = "draft_needs_review"
+        case draftReviewReason = "draft_review_reason"
+        case editedAt = "edited_at"
+        case originalRating = "original_rating"
+    }
+
+    var draftIsFlagged: Bool { draftNeedsReview == true }
+
+    /// The guest changed their rating after the fact.
+    var ratingWasChanged: Bool {
+        guard let originalRating, let rating else { return false }
+        return originalRating != rating
     }
 
     var isAwaitingApproval: Bool { responseStatus == "drafted" }
@@ -93,7 +115,9 @@ struct Review: Codable, Identifiable, Hashable {
         Review(
             id: id, platform: platform, author: author, rating: rating, text: text,
             reviewDate: reviewDate, sentiment: sentiment, urgency: urgency,
-            draftResponse: draftResponse, responseStatus: newStatus, categories: categories
+            draftResponse: draftResponse, responseStatus: newStatus, categories: categories,
+            draftNeedsReview: draftNeedsReview, draftReviewReason: draftReviewReason,
+            editedAt: editedAt, originalRating: originalRating
         )
     }
 }

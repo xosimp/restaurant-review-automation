@@ -205,7 +205,7 @@ def run_daily_fetch():
 
             if restaurant.gmb_refresh_token:
                 try:
-                    from gmb import get_valid_token, fetch_reviews_via_gmb, get_gmb_account_id, get_gmb_location_id
+                    from gmb import get_valid_token, fetch_reviews_via_gmb, find_gmb_location
                     token = get_valid_token(rid)
                     if not token:
                         # Returns None rather than raising — a revoked or
@@ -215,11 +215,23 @@ def run_daily_fetch():
                     else:
                         loc_id = restaurant.gmb_location_id
                         if not loc_id and restaurant.google_place_id:
-                            acct_id = get_gmb_account_id(token)
-                            if acct_id:
-                                loc_id = get_gmb_location_id(token, acct_id, restaurant.google_place_id)
+                            # Matched on this restaurant's own Place ID. The
+                            # old backfill took accounts[0]/locations[0],
+                            # which on a multi-location account silently
+                            # bound this restaurant to a sibling's listing.
+                            _m = find_gmb_location(token, restaurant.google_place_id)
+                            if _m.get("ok"):
+                                loc_id = _m["location"]
+                                try:
+                                    from models import update_restaurant as _ur
+                                    _ur(rid, {"gmb_account_id": _m["account"],
+                                              "gmb_location_id": _m["location"]})
+                                except Exception:
+                                    pass
+                            else:
+                                gmb_failed_reason = _m.get("error") or "location not matched"
                         if not loc_id:
-                            gmb_failed_reason = "Google Business location could not be resolved"
+                            gmb_failed_reason = gmb_failed_reason or "Google Business location could not be resolved"
                         else:
                             reviews += fetch_reviews_via_gmb(token, loc_id, rid)
                             fetched_ok = True
@@ -270,6 +282,32 @@ def run_daily_fetch():
 
             log.info(f"{new_count} new reviews for {restaurant.name}")
 
+            # Analyse BEFORE alerting. Alerts used to fire on the raw batch,
+            # so sentiment and urgency were both still NULL when the health
+            # alert ran — which is the only reason that alert reads raw text
+            # against a keyword list and sends a 🚨 HEALTH ALERT for a
+            # five-star review saying "no roach problem here". It is also
+            # why every review.received webhook reported sentiment: null,
+            # and why the negative-spike count saw none of the batch that
+            # triggered it.
+            #
+            # No limit: a review left unanalysed has no urgency, so its
+            # health alert never fires at all. Bounded by new_count, which
+            # is what this restaurant actually received.
+            for r in get_pending_analysis(rid, limit=max(new_count, 50)):
+                try:
+                    analyse_review(r.id, r.rating, r.text, restaurant_id=rid)
+                except Exception as e:
+                    log.error(f"Analyse error: {e}")
+                    _ops.capture(e, job="review_analyse", context=restaurant.name)
+
+            # Re-read the batch so alerts and webhooks see the analysis.
+            try:
+                from models import get_reviews_by_ids as _grbi
+                new_reviews = _grbi(rid, [r.id for r in new_reviews if getattr(r, "id", None)]) or new_reviews
+            except Exception:
+                pass
+
             # Fire SMS/email alerts for newly saved reviews
             try:
                 from notify import fire_review_alerts
@@ -287,6 +325,7 @@ def run_daily_fetch():
                         "author":   _nr.author,
                         "body":     (_nr.text or "")[:500],
                         "sentiment": getattr(_nr, "sentiment", None),
+                        "urgency":   getattr(_nr, "urgency", None),
                     }
                     _fw(rid, "review.received", _payload)
                     if (_nr.rating or 5) <= 2:
@@ -295,14 +334,6 @@ def run_daily_fetch():
                         _fw(rid, "review.positive", _payload)
             except Exception:
                 pass
-
-            # Analyse
-            for r in get_pending_analysis(rid, limit=50):
-                try:
-                    analyse_review(r.id, r.rating, r.text, restaurant_id=rid)
-                except Exception as e:
-                    log.error(f"Analyse error: {e}")
-                    _ops.capture(e, job="review_analyse", context=restaurant.name)
 
             # Draft — include approved examples for style learning
             from models import get_approved_examples

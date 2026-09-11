@@ -2046,13 +2046,16 @@ def test_send_review_request_requires_email_or_phone(client, db_path):
 
 
 def test_send_review_request_sms_only_logs_request(client, db_path, monkeypatch):
-    rid = _restaurant(db_path)
+    # A Place ID is required — there is no generic review link to fall back
+    # on — and an SMS needs the guest's consent recorded, the same model
+    # every other outbound text in this product already uses.
+    rid = _restaurant(db_path, google_place_id="ChIJtest")
     token = _login(client, db_path, rid)
     monkeypatch.setattr("notify.send_sms", lambda *a, **kw: True)
 
     resp = client.post(
         "/mobile/api/send-review-request",
-        json={"name": "Jamie", "phone": "312-555-0100"},
+        json={"name": "Jamie", "phone": "312-555-0100", "sms_consent": True},
         headers=_auth_headers(token),
     )
     assert resp.get_json()["ok"] is True
@@ -2066,7 +2069,7 @@ def test_send_review_request_sms_only_logs_request(client, db_path, monkeypatch)
 
 
 def test_send_review_request_includes_guest_note_in_sms(client, db_path, monkeypatch):
-    rid = _restaurant(db_path)
+    rid = _restaurant(db_path, google_place_id="ChIJtest")
     token = _login(client, db_path, rid)
     sent = {}
     monkeypatch.setattr(
@@ -2076,7 +2079,8 @@ def test_send_review_request_includes_guest_note_in_sms(client, db_path, monkeyp
 
     resp = client.post(
         "/mobile/api/send-review-request",
-        json={"name": "Jamie", "phone": "312-555-0100", "message": "Loved having you for the anniversary!"},
+        json={"name": "Jamie", "phone": "312-555-0100", "sms_consent": True,
+              "message": "Loved having you for the anniversary!"},
         headers=_auth_headers(token),
     )
     assert resp.get_json()["ok"] is True
@@ -3701,3 +3705,42 @@ def test_a_push_registry_failure_does_not_block_signing_out(client, db_path, mon
     resp = client.post("/mobile/api/logout", headers=_auth_headers(token), json={"apns_token": "a" * 64})
     assert resp.status_code == 200
     assert client.get("/mobile/api/home", headers=_auth_headers(token)).status_code == 401
+
+
+def test_a_review_request_sms_without_consent_is_refused(client, db_path, monkeypatch):
+    """Every other outbound SMS in this product goes only to a contact who
+    consented (get_alert_contacts' sms_consent_only). This path texted
+    whatever number was typed in, with nothing recording that the guest
+    agreed to it."""
+    rid = _restaurant(db_path, google_place_id="ChIJtest")
+    token = _login(client, db_path, rid)
+    sent = []
+    monkeypatch.setattr("notify.send_sms", lambda *a, **kw: sent.append(a) or True)
+
+    resp = client.post(
+        "/mobile/api/send-review-request",
+        json={"name": "Jamie", "phone": "312-555-0100"},
+        headers=_auth_headers(token),
+    )
+    assert resp.get_json()["ok"] is False
+    assert "agreed to be texted" in resp.get_json()["error"]
+    assert sent == []
+
+
+def test_a_review_request_without_a_place_id_is_refused(client, db_path, monkeypatch):
+    """The fallback link was https://g.page/r/review, which points at no
+    particular business — a guest tapped it and landed nowhere, having been
+    sent there by name by the restaurant."""
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    sent = []
+    monkeypatch.setattr("notify.send_sms", lambda *a, **kw: sent.append(a) or True)
+
+    resp = client.post(
+        "/mobile/api/send-review-request",
+        json={"name": "Jamie", "phone": "312-555-0100", "sms_consent": True},
+        headers=_auth_headers(token),
+    )
+    body = resp.get_json()
+    assert body["ok"] is False and "Place ID" in body["error"]
+    assert sent == []

@@ -90,6 +90,46 @@ def check_public_reply(draft: str, never_say: str = "") -> str | None:
     return None
 
 
+# ── commitments a reply must not make on the restaurant's behalf ───────────
+#
+# A public reply is published under the owner's name. The 1-star prompt in
+# drafter.py asks the model to "explain what will be done differently",
+# which is an instruction to state an action — and nothing this system
+# holds can confirm any action was taken. A reply claiming staff were
+# retrained, a supplier was changed or a policy was updated is a statement
+# of fact the restaurant never made, posted publicly and permanently.
+#
+# These are phrased as completed or in-flight actions specifically. An
+# apology, an invitation back, or an offer to talk are all fine and are
+# deliberately not listed.
+_COMMITMENT_RE = re.compile(
+    r"\b("
+    r"(?:we|our (?:team|staff|kitchen|management))\s+(?:have|has|'ve|ve)\s+(?:since\s+)?"
+    r"(?:retrained|re-trained|replaced|fired|let go|terminated|changed|updated|revised|"
+    r"corrected|fixed|addressed|resolved|implemented|introduced|installed|hired|"
+    r"disciplined|spoken to|speaking to)"
+    r"|"
+    r"(?:we|our (?:team|staff|kitchen|management))\s+(?:are|'re|re)\s+(?:now\s+)?"
+    r"(?:retraining|re-training|replacing|changing|updating|revising|implementing|"
+    r"introducing|installing|hiring)"
+    r"|"
+    r"(?:new|different)\s+(?:supplier|vendor|chef|manager|policy|procedure|system)\s+"
+    r"(?:is|has been|was)\s+(?:now\s+)?(?:in place|introduced|hired|appointed)"
+    r"|this (?:has been|was) (?:reported|escalated) to"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def unsupported_commitments(draft: str) -> list:
+    """Phrases in a reply that assert an action the restaurant took.
+
+    Returns the matched phrases, empty when the reply makes no such claim.
+    Advisory: the owner can still post it, having been shown what it says.
+    """
+    return [m.group(0).strip() for m in _COMMITMENT_RE.finditer(draft or "")]
+
+
 # ── numbers the model states must exist in what the model was given ────────
 
 _MONEY_RE = re.compile(r"\$\s?([\d,]+(?:\.\d+)?)")
