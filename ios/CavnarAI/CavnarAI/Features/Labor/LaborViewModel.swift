@@ -290,6 +290,9 @@ struct QualityShift: Codable, Identifiable, Equatable {
     let strengths: [String]?
     let weaknesses: [String]?
     let blindSpots: [String]?
+    // True when everything this shift had to say was also true of the rest
+    // of the week, and so was hoisted into the week summary.
+    let nothingSpecific: Bool?
 
     var id: String { "\(date)-\(daypart)" }
 
@@ -305,6 +308,7 @@ struct QualityShift: Codable, Identifiable, Equatable {
         case meetsProfile = "meets_profile"
         case cappedBy = "capped_by"
         case blindSpots = "blind_spots"
+        case nothingSpecific = "nothing_specific"
     }
 }
 

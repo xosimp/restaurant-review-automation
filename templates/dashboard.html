@@ -2286,8 +2286,8 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
         <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:center">
           <div id="sq-dial"></div>
           <div style="flex:1;min-width:220px">
-            <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink3)">Shift Quality</div>
-            <div id="sq-band" style="font-family:'Clash Display',sans-serif;font-size:20px;font-weight:600;color:rgba(255,255,255,.92);margin:2px 0 6px"></div>
+            <div style="font-size:11.5px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink3)">Shift Quality</div>
+            <div id="sq-band" style="font-family:'Clash Display',sans-serif;font-size:24px;font-weight:600;color:rgba(255,255,255,.92);margin:3px 0 8px"></div>
             <div id="sq-confidence"></div>
           </div>
           <div id="sq-dimensions" style="flex:2;min-width:260px"></div>
@@ -2295,7 +2295,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
         <div id="sq-warnings" style="margin-top:14px"></div>
         <div id="sq-shifts" style="margin-top:16px"></div>
         <div style="margin-top:12px">
-          <button type="button" onclick="toggleQualityReasoning()" id="sq-why-btn" style="font-family:inherit;font-size:12.5px;font-weight:700;color:var(--ember);background:none;border:none;cursor:pointer;padding:0">Why this schedule? &#9662;</button>
+          <button type="button" onclick="toggleQualityReasoning()" id="sq-why-btn" style="font-family:inherit;font-size:14.5px;font-weight:700;color:var(--ember);background:none;border:none;cursor:pointer;padding:0">Why this schedule? &#9662;</button>
           <div id="sq-reasoning" style="display:none;margin-top:10px"></div>
         </div>
       </div>
@@ -7366,11 +7366,11 @@ function renderShiftQuality(quality, whatIf) {
 // The score as an arc that fills to it. A three-quarter-full green ring
 // reads before any digit does, which is the whole point of the panel.
 function _qualityDial(score, tone) {
-  var r = 34, c = 2 * Math.PI * r;
+  var r = 33, c = 2 * Math.PI * r;
   var filled = c * Math.max(0, Math.min(100, score)) / 100;
-  return '<svg width="92" height="92" viewBox="0 0 92 92">'
-    + '<circle cx="46" cy="46" r="' + r + '" fill="none" stroke="var(--paper3)" stroke-width="7"/>'
-    + '<circle cx="46" cy="46" r="' + r + '" fill="none" stroke="' + tone + '" stroke-width="7"'
+  return '<svg width="104" height="104" viewBox="0 0 92 92">'
+    + '<circle cx="46" cy="46" r="' + r + '" fill="none" stroke="var(--paper3)" stroke-width="8"/>'
+    + '<circle cx="46" cy="46" r="' + r + '" fill="none" stroke="' + tone + '" stroke-width="8"'
     + ' stroke-linecap="round" stroke-dasharray="' + filled.toFixed(1) + ' ' + c.toFixed(1) + '"'
     + ' transform="rotate(-90 46 46)"/>'
     + '<text x="46" y="48" text-anchor="middle" font-family="Space Grotesk,sans-serif" font-size="26"'
@@ -7390,7 +7390,7 @@ function renderQualityConfidence(confidence) {
            : (confidence.level === 'moderate' ? '#f2994a' : '#eb5757');
   var label = confidence.level.charAt(0).toUpperCase() + confidence.level.slice(1);
   el.innerHTML = '<span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;'
-    + 'border-radius:999px;background:rgba(255,255,255,.06);font-size:12px;font-weight:600;color:rgba(255,255,255,.75)">'
+    + 'border-radius:999px;background:rgba(255,255,255,.06);font-size:13.5px;font-weight:600;color:rgba(255,255,255,.75)">'
     + '<span style="width:6px;height:6px;border-radius:50%;background:' + tone + '"></span>'
     + _escHtml(label) + ' confidence</span>';
 }
@@ -7404,11 +7404,11 @@ function renderQualityDimensions(dimensions) {
     if (!d.customer_facing) continue;
     var tone = _qTone(d.score);
     html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:7px">'
-      + '<span style="flex:0 0 128px;font-size:12.5px;color:rgba(255,255,255,.72)">' + _escHtml(d.label) + '</span>'
+      + '<span style="flex:0 0 148px;font-size:14px;color:rgba(255,255,255,.72)">' + _escHtml(d.label) + '</span>'
       + '<span style="flex:1;height:7px;border-radius:999px;background:rgba(255,255,255,.08);overflow:hidden;display:block">'
       + '<span style="display:block;height:7px;border-radius:999px;width:' + Math.max(4, d.score) + '%;'
       + 'background:linear-gradient(90deg,' + tone + '55,' + tone + ')"></span></span>'
-      + '<span style="flex:0 0 38px;text-align:right;font-family:Space Grotesk,sans-serif;font-size:12.5px;'
+      + '<span style="flex:0 0 44px;text-align:right;font-family:Space Grotesk,sans-serif;font-size:14px;'
       + 'font-weight:700;color:rgba(255,255,255,.88)">' + d.score + '%</span></div>';
   }
   el.innerHTML = html;
@@ -7432,7 +7432,7 @@ function renderQualityWarnings(quality) {
   for (i = 0; i < Math.min(lines.length, 5); i++) {
     html += '<div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:5px">'
       + '<span style="flex:0 0 5px;width:5px;height:5px;border-radius:50%;background:#f2994a;margin-top:6px"></span>'
-      + '<span style="font-size:12.5px;color:rgba(255,255,255,.78);line-height:1.55">'
+      + '<span style="font-size:14px;color:rgba(255,255,255,.78);line-height:1.6">'
       + _escHtml(lines[i]) + '</span></div>';
   }
   el.innerHTML = html + '</div>';
@@ -7441,8 +7441,8 @@ function renderQualityWarnings(quality) {
 function renderQualityShifts(shifts) {
   var el = document.getElementById('sq-shifts');
   if (!el) return;
-  var html = '<div style="font-size:10px;font-weight:700;letter-spacing:1.3px;text-transform:uppercase;'
-           + 'color:var(--ink3);margin-bottom:6px">Every shift</div>';
+  var html = '<div style="font-size:11.5px;font-weight:700;letter-spacing:1.3px;text-transform:uppercase;'
+           + 'color:var(--ink3);margin-bottom:8px">Every shift</div>';
   var i;
   for (i = 0; i < shifts.length; i++) {
     var sft = shifts[i];
@@ -7455,14 +7455,14 @@ function renderQualityShifts(shifts) {
     html += '<div style="border-bottom:1px solid rgba(255,255,255,.06);'
       + (open ? 'background:rgba(255,255,255,.025)' : '') + '">'
       + '<button type="button" data-quality-shift="' + _escAttr(id) + '" style="width:100%;display:flex;'
-      + 'align-items:center;gap:10px;background:none;border:none;cursor:pointer;padding:9px 6px;font-family:inherit;text-align:left">'
-      + '<span style="flex:0 0 128px;font-size:13.5px;font-weight:600;color:rgba(255,255,255,.88)">'
+      + 'align-items:center;gap:10px;background:none;border:none;cursor:pointer;padding:11px 6px;font-family:inherit;text-align:left">'
+      + '<span style="flex:0 0 150px;font-size:15px;font-weight:600;color:rgba(255,255,255,.88)">'
       + _escHtml(_qTitle(sft)) + '</span>'
       + _qualityChips(sft)
       + '<span style="flex:1;height:6px;border-radius:999px;background:rgba(255,255,255,.07);display:block;min-width:60px">'
       + '<span style="display:block;height:6px;border-radius:999px;width:' + Math.max(3, sft.score) + '%;'
       + 'background:linear-gradient(90deg,' + tone + '55,' + tone + ')"></span></span>'
-      + '<span style="flex:0 0 26px;text-align:right;font-family:Space Grotesk,sans-serif;font-size:14px;font-weight:700;color:' + tone + '">' + sft.score + '</span>'
+      + '<span style="flex:0 0 30px;text-align:right;font-family:Space Grotesk,sans-serif;font-size:16.5px;font-weight:700;color:' + tone + '">' + sft.score + '</span>'
       + '<svg width="11" height="11" viewBox="0 0 16 16" fill="none" style="flex:0 0 11px;transition:transform .2s;'
       + 'transform:rotate(' + (open ? '180deg' : '0deg') + ')"><path d="M4 6l4 4 4-4" stroke="' + (open ? tone : 'var(--ink3)')
       + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
@@ -7477,12 +7477,12 @@ function _qualityChips(shift) {
   var out = '';
   var demand = (shift.profile || {}).demand;
   if (demand === 'peak' || demand === 'high') {
-    out += '<span style="font-size:9px;font-weight:700;letter-spacing:.6px;color:var(--ember);'
+    out += '<span style="font-size:10.5px;font-weight:700;letter-spacing:.6px;color:var(--ember);'
         + 'background:rgba(200,75,47,.16);padding:2px 6px;border-radius:999px">'
         + (demand === 'peak' ? 'PEAK' : 'BUSY') + '</span>';
   }
   if ((shift.profile || {}).training_allowed) {
-    out += '<span style="font-size:9px;font-weight:700;letter-spacing:.6px;color:#56ccf2;'
+    out += '<span style="font-size:10.5px;font-weight:700;letter-spacing:.6px;color:#56ccf2;'
         + 'background:rgba(86,204,242,.14);padding:2px 6px;border-radius:999px">TRAINING</span>';
   }
   // Wrapped only when there is something to wrap. An empty span still
@@ -7497,19 +7497,27 @@ function _qualityChips(shift) {
 function _qualityShiftDetail(shift, tone) {
   var html = '<div style="margin:0 6px 12px 14px;padding:2px 0 2px 12px;border-left:2px solid ' + tone + '55">';
   if (shift.people && shift.people.length) {
-    html += '<div style="font-size:12px;color:var(--ink3);margin-bottom:8px">'
+    html += '<div style="font-size:13.5px;color:var(--ink3);margin-bottom:9px">'
           + _escHtml(shift.people.join(' \u00B7 ')) + '</div>';
   }
   if (shift.profile) {
-    html += '<div style="font-size:11px;color:var(--ink3);margin-bottom:8px">Judged as '
+    html += '<div style="font-size:13px;color:var(--ink3);margin-bottom:9px">Judged as '
           + _escHtml(shift.profile.label || 'a standard shift')
           + (shift.profile.min_quality ? ', which wants ' + shift.profile.min_quality + '+' : '') + '.</div>';
   }
   html += _qualityGroup('Working well', shift.strengths, '#6fcf97', 3);
   html += _qualityGroup('Holding it back', shift.weaknesses, '#f2994a', 4);
   html += _qualityGroup('Not known', shift.blind_spots, 'var(--ink3)', 2);
+  // Anything true of the whole week was hoisted into the summary below, so
+  // a shift with nothing left is a shift that simply ran like the rest of
+  // the week — which is worth saying rather than leaving blank.
+  if (shift.nothing_specific) {
+    html += '<div style="font-size:13.5px;color:var(--ink3);line-height:1.55">'
+          + 'Nothing specific to this shift — it ran like the rest of the week. '
+          + 'See the summary below.</div>';
+  }
   if (shift.capped_by) {
-    html += '<div style="font-size:11.5px;color:var(--ink3);margin-top:8px;font-style:italic">Capped by '
+    html += '<div style="font-size:13px;color:var(--ink3);margin-top:9px;font-style:italic">Capped by '
           + _escHtml(String(shift.capped_by).replace(/_/g, ' '))
           + ' — a shift is never better than its weakest critical part.</div>';
   }
@@ -7519,8 +7527,8 @@ function _qualityShiftDetail(shift, tone) {
 function _qualityGroup(label, lines, colour, limit) {
   if (!lines || !lines.length) return '';
   return '<div style="margin-bottom:9px">'
-    + '<div style="font-size:9.5px;font-weight:700;letter-spacing:1.1px;text-transform:uppercase;'
-    + 'color:' + colour + ';margin-bottom:3px">' + _escHtml(label) + '</div>'
+    + '<div style="font-size:11px;font-weight:700;letter-spacing:1.1px;text-transform:uppercase;'
+    + 'color:' + colour + ';margin-bottom:5px">' + _escHtml(label) + '</div>'
     + _qualityLines(lines, colour, '&#8226;', limit) + '</div>';
 }
 
@@ -7529,8 +7537,8 @@ function _qualityLines(lines, colour, mark, limit) {
   var out = '', i;
   for (i = 0; i < Math.min(lines.length, limit); i++) {
     out += '<div style="display:flex;gap:7px;align-items:flex-start;margin-bottom:4px">'
-      + '<span style="flex:0 0 12px;color:' + colour + ';font-size:10px;font-weight:800;margin-top:2px">' + mark + '</span>'
-      + '<span style="font-size:12.5px;color:rgba(255,255,255,.72);line-height:1.55">' + _escHtml(lines[i]) + '</span></div>';
+      + '<span style="flex:0 0 13px;color:' + colour + ';font-size:11px;font-weight:800;margin-top:3px">' + mark + '</span>'
+      + '<span style="font-size:14px;color:rgba(255,255,255,.72);line-height:1.6">' + _escHtml(lines[i]) + '</span></div>';
   }
   return out;
 }
@@ -7690,7 +7698,7 @@ function renderQualityReasoning() {
   if (!box || !_quality) return;
   var html = '';
   if (_whatIf && _whatIf.ran && _whatIf.verdict) {
-    html += '<div style="font-size:12.5px;color:rgba(255,255,255,.78);line-height:1.6;margin-bottom:8px">'
+    html += '<div style="font-size:14px;color:rgba(255,255,255,.78);line-height:1.6;margin-bottom:10px">'
           + _escHtml(_whatIf.verdict) + '</div>';
     var swaps = _whatIf.swaps || [], i;
     for (i = 0; i < Math.min(swaps.length, 3); i++) {
@@ -7703,7 +7711,7 @@ function renderQualityReasoning() {
   html += _qualityGroup('Worth a look', _quality.weaknesses, '#f2994a', 3);
   var conf = _quality.confidence;
   if (conf && conf.reasons && conf.reasons.length) {
-    html += '<div style="font-size:12.5px;font-weight:600;color:rgba(255,255,255,.78);margin:10px 0 4px">'
+    html += '<div style="font-size:14px;font-weight:600;color:rgba(255,255,255,.78);margin:12px 0 5px">'
           + _escHtml(conf.summary) + '</div>';
     html += _qualityLines(conf.reasons, 'var(--ink3)', '&#8226;', 5);
   }

@@ -337,7 +337,8 @@ def test_carrying_every_busy_shift_is_scored_against_you():
     out = sq.score_rows(heavy, profiles=busy, scores={"Workhorse": 5, "Spare": 4})
     fatigue = [d for s in out["shifts"] for d in s["dimensions"] if d["key"] == "fatigue"]
     assert any(f["score"] < 100 for f in fatigue)
-    assert any("Workhorse" in w for s in out["shifts"] for w in s["weaknesses"])
+    # Said once, at week level, rather than on every shift he works.
+    assert any("Workhorse" in w for w in out["weaknesses"])
 
 
 def test_a_week_spread_across_the_roster_is_not_penalised():
@@ -353,8 +354,10 @@ def test_a_week_spread_across_the_roster_is_not_penalised():
 def test_seven_days_in_a_row_is_flagged_even_at_low_demand():
     rows = [row(d, "Nonstop", "Cook") for d in (MON, TUE, WED, THU, FRI, SAT, SUN)]
     rows += [row(d, "Other", "Cook") for d in (MON, TUE)]
-    out = sq.score_rows(rows, profiles=[sq.ShiftProfile()], scores={"Nonstop": 4, "Other": 4})
-    text = " ".join(w for s in out["shifts"] for w in s["weaknesses"])
+    out = sq.score_rows(rows, profiles=[sq.ShiftProfile(min_strength={"Cook": 4})],
+                        scores={"Nonstop": 4, "Other": 4})
+    text = " ".join(out["weaknesses"]) + " ".join(
+        w for s in out["shifts"] for w in s["weaknesses"])
     assert "7 days in a row" in text
 
 
@@ -769,7 +772,12 @@ def test_the_same_problem_on_five_shifts_is_stated_once():
     out = sq.score_rows(rows, profiles=every_night, scores={"Weak": 1, "Other": 1})
     strength_lines = [w for w in out["weaknesses"] if "Bartender strength" in w]
     assert len(strength_lines) == 1
-    assert "5 shifts" in strength_lines[0]
+    # Hoisted from every shift, so it carries no count: it sits under a
+    # week-level heading that already says what it is.
+    assert strength_lines[0].endswith(".")
+    # And removed from the shifts themselves, so it is read once not five times.
+    assert not any("Bartender strength" in w
+                   for s in out["shifts"] for w in s["weaknesses"])
 
 
 def test_the_week_names_its_best_and_worst_shift():
@@ -1092,7 +1100,7 @@ def test_the_week_summary_names_the_pattern_not_every_shifts_own_lines():
         key="n", label="Night", daypart="night", min_strength={"Bartender": 9},
         source="restaurant")], scores={"Weak": 1, "Other": 1})
     assert out["weaknesses"]
-    assert all("shifts" in line for line in out["weaknesses"]), out["weaknesses"]
+    assert not any(line.startswith("Monday") for line in out["weaknesses"]), out["weaknesses"]
 
 
 def test_a_week_with_no_repeated_problem_still_says_something_specific():
@@ -1194,8 +1202,8 @@ def test_the_fairness_wording_names_the_shifts_rather_than_calling_them_premium(
     out = sq.score_rows(rows, profiles=setup,
                         scores={"Favourite": 4, "Ignored": 4, "Third": 4},
                         role_minimums={"Server": 1})
-    text = " ".join(w for s in out["shifts"] for w in s["weaknesses"])
-    text += " ".join(s for sh in out["shifts"] for s in sh["strengths"])
+    text = " ".join(out["weaknesses"] + out["strengths"])
+    text += " ".join(w for s in out["shifts"] for w in s["weaknesses"] + s["strengths"])
     assert "premium" not in text.lower(), text
     assert "busiest shifts" in text
 
@@ -1219,3 +1227,126 @@ def test_the_ios_quality_panel_reads_at_the_labor_tabs_own_type_scale():
     assert len(small) <= 2, small
     assert all(size >= 11 for _line, size, _text in small), small
     assert ".cavnarBody(14))" in src, "detail lines should sit at the module's body size"
+
+
+# ── Saying the same thing seven times ─────────────────────────────────────
+
+def test_a_line_true_of_the_whole_week_appears_once_not_on_every_shift():
+    """Seven shifts reading like the same paragraph seven times. The three
+    worst offenders in practice — a fully staffed roster, a role sitting the
+    same distance under target every night, and a fatigue warning about
+    somebody who works every day — are all week-level facts."""
+    rows = []
+    for d in (MON, TUE, WED, THU, FRI, SAT, SUN):
+        rows += [row(d, "Weak", "Bartender"), row(d, "Other", "Bartender")]
+    out = sq.score_rows(rows, profiles=[sq.ShiftProfile(
+        key="n", label="Night", min_strength={"Bartender": 9}, source="restaurant")],
+        scores={"Weak": 1, "Other": 1})
+    for shift in out["shifts"]:
+        assert not any("Bartender strength" in w for w in shift["weaknesses"]), shift
+        assert shift.get("nothing_specific")
+    assert any("Bartender strength" in w for w in out["weaknesses"])
+
+
+def test_a_line_specific_to_one_shift_stays_on_that_shift():
+    """The point is to leave each shift saying what is DIFFERENT about it,
+    not to empty the sections out."""
+    rows = []
+    for d in (MON, TUE, WED, THU, FRI, SAT):
+        rows += [row(d, "Pat", "Bartender"), row(d, "Casey", "Bartender")]
+    # One night only, the weak pair works instead.
+    rows += [row(SUN, "Weak1", "Bartender"), row(SUN, "Weak2", "Bartender")]
+    out = sq.score_rows(rows, profiles=[sq.ShiftProfile(
+        key="n", label="Night", min_strength={"Bartender": 8}, source="restaurant")],
+        scores={"Pat": 5, "Casey": 4, "Weak1": 1, "Weak2": 1})
+    by_day = {s["day"]: s for s in out["shifts"]}
+    assert any("Bartender strength" in w for w in by_day["Sunday"]["weaknesses"])
+    assert not by_day["Monday"]["weaknesses"]
+
+
+def test_a_two_shift_coincidence_is_not_treated_as_a_weekly_pattern():
+    rows = [row(SAT, "Weak1", "Cook"), row(SUN, "Weak1", "Cook"),
+            row(MON, "Chef", "Cook"), row(TUE, "Chef", "Cook"),
+            row(WED, "Chef", "Cook"), row(THU, "Chef", "Cook"),
+            row(FRI, "Chef", "Cook")]
+    out = sq.score_rows(rows, profiles=[sq.ShiftProfile(
+        key="n", label="Night", min_strength={"Cook": 4}, source="restaurant")],
+        scores={"Weak1": 1, "Chef": 5})
+    weak_days = [s for s in out["shifts"] if s["day"] in ("Saturday", "Sunday")]
+    assert all(s["weaknesses"] for s in weak_days), weak_days
+
+
+def test_a_short_week_is_never_hoisted_at_all():
+    """Below three shifts there is no such thing as a weekly pattern."""
+    rows = [row(SAT, "Weak", "Cook"), row(SUN, "Weak", "Cook")]
+    out = sq.score_rows(rows, profiles=[sq.ShiftProfile(
+        key="n", min_strength={"Cook": 8}, source="restaurant")], scores={"Weak": 1})
+    assert all(s["weaknesses"] for s in out["shifts"])
+
+
+def test_a_partial_pattern_keeps_its_count_and_a_total_one_does_not():
+    """"5 of 7 shifts" is the whole point of that line. "Pat works 7 days in
+    a row this week — every shift this week" is a sentence arguing with
+    itself."""
+    rows = []
+    for d in (MON, TUE, WED, THU, FRI, SAT, SUN):
+        rows += [row(d, "Weak1", "Cook"), row(d, "Weak2", "Cook")]
+    # A bartender short on five of the seven, present on the other two.
+    for d in (MON, TUE, WED, THU, FRI):
+        rows += [row(d, "Solo", "Bartender")]
+    for d in (SAT, SUN):
+        rows += [row(d, "Solo", "Bartender"), row(d, "Second", "Bartender")]
+    out = sq.score_rows(rows, profiles=[sq.ShiftProfile(
+        key="n", label="Night", source="restaurant")],
+        role_minimums={"Cook": 2, "Bartender": 2},
+        scores={"Weak1": 1, "Weak2": 1, "Solo": 3, "Second": 3})
+    partial = [w for w in out["weaknesses"] if "Bartender" in w]
+    assert partial and "5 of 7 shifts" in partial[0], out["weaknesses"]
+    # The cook problem is true of all seven, so it carries no count.
+    assert any("cook" in w.lower() and not w.endswith("shifts")
+               for w in out["weaknesses"]), out["weaknesses"]
+
+
+def test_the_week_summary_is_the_same_on_every_run():
+    """Ties were broken by a set's iteration order, and Python randomises
+    string hashing per process — so the findings that survived truncation
+    differed on every page load and a manager refreshing watched them
+    reshuffle. Run in separate interpreters, which is where it showed."""
+    import json as _json
+    import subprocess
+    import sys
+    import textwrap
+    script = textwrap.dedent('''
+        import json, sys
+        sys.path.insert(0, %r)
+        import shift_quality as sq
+        rows = []
+        for d in ("2026-09-07","2026-09-08","2026-09-09","2026-09-10",
+                  "2026-09-11","2026-09-12","2026-09-13"):
+            for n in ("Weak1", "Weak2"):
+                rows.append({"date": d, "day": "", "employee": n, "role": "Cook",
+                             "shift_start": "5:00pm", "shift_end": "11:00pm",
+                             "scheduled_hours": 8})
+        out = sq.score_rows(rows, profiles=[sq.ShiftProfile(key="n", source="restaurant")],
+                            role_minimums={"Cook": 3}, scores={"Weak1": 1, "Weak2": 1})
+        print(json.dumps(out["weaknesses"]))
+    ''') % str(__import__("pathlib").Path(__file__).resolve().parent.parent)
+    runs = {tuple(_json.loads(subprocess.run([sys.executable, "-c", script],
+                                             capture_output=True, text=True).stdout))
+            for _ in range(4)}
+    assert len(runs) == 1, runs
+
+
+def test_findings_are_ordered_by_what_they_actually_cost_the_shift():
+    """Two thirds of the shift unstaffed outranks one isolated employee, and
+    score-first ordering had it the other way round — which pushed the
+    coverage gap off the end of a truncated summary entirely. The cost is
+    how far under a dimension is, times how much it counts."""
+    rows = saturday({"Cook": ["Rookie"], "Bartender": ["Pat"]})
+    out = sq.score_rows(rows, profiles=[sq.ShiftProfile(key="n", source="restaurant")],
+                        role_minimums={"Cook": 2, "Bartender": 2, "Server": 2},
+                        scores={"Rookie": 1, "Pat": 5, "Other": 5})
+    weaknesses = out["shifts"][0]["weaknesses"]
+    assert "unfilled" in weaknesses[0], weaknesses
+    # And the lighter finding is still there, just lower down.
+    assert any("nobody stronger" in w for w in weaknesses), weaknesses

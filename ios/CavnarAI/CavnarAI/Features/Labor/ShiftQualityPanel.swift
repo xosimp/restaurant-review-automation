@@ -245,6 +245,14 @@ struct ShiftQualityPanel: View {
             group("Working well", shift.strengths, limit: 3, color: .cavnarGreen)
             group("Holding it back", shift.weaknesses, limit: 4, color: .cavnarAmber)
             group("Not known", shift.blindSpots, limit: 2, color: .cavnarInk3)
+            // Anything true of the whole week was hoisted into the summary,
+            // so a shift with nothing left simply ran like the rest of it.
+            if shift.nothingSpecific == true {
+                Text("Nothing specific to this shift — it ran like the rest of the week. See \"Why this schedule?\" below.")
+                    .font(.cavnarBody(14))
+                    .foregroundStyle(Color.cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if let capped = shift.cappedBy {
                 Text("Capped by \(capped.replacingOccurrences(of: "_", with: " ")) — a shift is never better than its weakest critical part.")
                     .font(.cavnarBody(13.5))

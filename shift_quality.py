@@ -966,8 +966,15 @@ def evaluate_shift(ctx: ShiftContext, weights: dict = None) -> dict:
             capped_by = d.key
     score = max(0, min(SCORE_MAX, score))
 
+    # Weaknesses are ordered by how much each one actually costs the shift —
+    # how far under it is, times how much it counts — rather than by score
+    # alone. Training balance at 0 on a weight of 7 is a smaller problem
+    # than coverage at 50 on a weight of 20, and score-first ordering put
+    # the lighter one on top and pushed the coverage gap off the end of the
+    # summary entirely.
     strengths = [s for d in sorted(applied, key=lambda x: -x.weight) for s in d.strengths]
-    weaknesses = [w for d in sorted(applied, key=lambda x: (x.score, -x.weight))
+    weaknesses = [w for d in sorted(applied,
+                                    key=lambda x: -((SCORE_MAX - x.score) * x.weight))
                   for w in d.weaknesses]
     blind = [b for d in applied for b in d.blind_spots] + list(ctx.notes)
 
@@ -1026,6 +1033,11 @@ def evaluate_schedule(contexts: list, weights: dict = None,
     divisor = sum(DEMAND_WEIGHT.get(s["profile"]["demand"], 1.0) for s in scored) or 1.0
     overall = int(round(weighted / divisor))
 
+    # Strip what is true of the week out of the individual shifts FIRST, so
+    # the week-level lists below are built from what is left. Two overlapping
+    # summaries is one too many, and the shift sections are what get read.
+    hoisted = _hoist_common_lines(scored)
+
     return {
         "checked": True,
         "score": overall,
@@ -1040,11 +1052,69 @@ def evaluate_schedule(contexts: list, weights: dict = None,
         ],
         "worst": min(scored, key=lambda s: s["score"])["headline"] if scored else None,
         "best": max(scored, key=lambda s: s["score"])["headline"] if scored else None,
-        "strengths": _top_reasons(scored, "strengths"),
-        "weaknesses": _top_reasons(scored, "weaknesses"),
+        "strengths": _week_reasons(hoisted, scored, "strengths"),
+        "weaknesses": _week_reasons(hoisted, scored, "weaknesses"),
         "recommendations": recommendations(scored),
         "confidence": confidence(shifts, signals or {}),
     }
+
+
+# A line true of most of the week is a fact about the WEEK, and printing it
+# inside every shift's own explanation is how seven shifts end up reading
+# like the same paragraph seven times. Both figures are deliberately blunt:
+# more than half the week, and never fewer than three shifts, so a two-shift
+# coincidence stays where it belongs.
+COMMON_SHARE = 0.6
+COMMON_MIN_SHIFTS = 3
+
+
+def _hoist_common_lines(scored: list) -> dict:
+    """Move what is true across the week out of the individual shifts.
+
+    Returns the hoisted lines and strips them from each shift in place, so a
+    shift's own section is left saying only what is different about it. The
+    three most repeated offenders in practice are a fully staffed roster, a
+    role sitting the same distance under its target every night, and a
+    fatigue warning about somebody who works every day — all of them
+    genuinely week-level, and all of them previously printed seven times.
+    """
+    if len(scored) < COMMON_MIN_SHIFTS:
+        return {"strengths": [], "weaknesses": [], "blind_spots": []}
+
+    bar = max(COMMON_MIN_SHIFTS, int(round(len(scored) * COMMON_SHARE)))
+    out = {}
+    for field_name in ("strengths", "weaknesses", "blind_spots"):
+        counts, first_at = {}, {}
+        for shift in scored:
+            for line in shift.get(field_name) or []:
+                counts[line] = counts.get(line, 0) + 1
+                # Ties have to break on something stable. A set's iteration
+                # order is not: Python randomises string hashing per process,
+                # so the list that survives truncation below differed on
+                # every page load and a manager refreshing the page watched
+                # the findings reshuffle. First appearance is both stable and
+                # meaningful — each shift emits its worst dimension first.
+                first_at.setdefault(line, len(first_at))
+        common = [line for line, n in counts.items() if n >= bar]
+        # A line hoisted from EVERY shift carries no count. It is printed
+        # under a week-level heading, which already says what it is, and
+        # "Pat works 7 days in a row this week — every shift this week" is
+        # a sentence arguing with itself. A partial hoist keeps its count,
+        # because "5 of 7" is the whole point of that line.
+        out[field_name] = [
+            line if counts[line] == len(scored)
+            else f"{line} — {counts[line]} of {len(scored)} shifts"
+            for line in sorted(common, key=lambda x: (-counts[x], first_at[x]))
+        ]
+        hoisted = set(common)
+        for shift in scored:
+            shift[field_name] = [x for x in (shift.get(field_name) or [])
+                                 if x not in hoisted]
+
+    for shift in scored:
+        if not shift["strengths"] and not shift["weaknesses"]:
+            shift["nothing_specific"] = True
+    return out
 
 
 def _rollup(scored: list) -> list:
@@ -1073,6 +1143,21 @@ def _rollup(scored: list) -> list:
     return out
 
 
+def _week_reasons(hoisted: dict, scored: list, field_name: str, limit: int = 5) -> list:
+    """The week's own lines: what held across it, then what stood out.
+
+    The hoisted lines come first because they are the pattern — the thing no
+    single shift row can tell a manager. Whatever room is left goes to the
+    most notable remaining line, so a week with no pattern still says
+    something specific rather than nothing at all.
+    """
+    lines = list(hoisted.get(field_name) or [])[:limit]
+    if len(lines) < limit:
+        lines += [x for x in _top_reasons(scored, field_name, limit - len(lines))
+                  if x not in lines]
+    return lines
+
+
 def _top_reasons(scored: list, field_name: str, limit: int = 4) -> list:
     """The reasons that recur ACROSS shifts, most common first.
 
@@ -1090,7 +1175,10 @@ def _top_reasons(scored: list, field_name: str, limit: int = 4) -> list:
         for line in shift.get(field_name) or []:
             counts[line] = counts.get(line, 0) + 1
             first_seen.setdefault(line, f"{shift['day']} {shift['daypart']}".strip())
-    recurring = sorted([kv for kv in counts.items() if kv[1] > 1], key=lambda kv: -kv[1])
+    # Insertion order is the tiebreak, for the same reason as above.
+    order = {line: i for i, line in enumerate(counts)}
+    recurring = sorted([kv for kv in counts.items() if kv[1] > 1],
+                       key=lambda kv: (-kv[1], order[kv[0]]))
     if recurring:
         return [f"{line} — {n} shifts" for line, n in recurring[:limit]]
     worst = min(scored, key=lambda s: s["score"]) if scored else None
