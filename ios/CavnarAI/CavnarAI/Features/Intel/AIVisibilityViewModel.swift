@@ -5,8 +5,31 @@ struct AIVisibilityQuery: Decodable, Identifiable {
     let query: String
     let answer: String
     let appeared: Bool
+    // What kind of question this is. A branded "tell me about X" is not
+    // evidence that an open search would surface you, and blending the two
+    // into one number answered neither question.
+    let kind: String?
+    // The pages the answer was grounded in. Fetched on every run since the
+    // prompt stopped suppressing citations, returned in the payload, and
+    // decoded by nothing — so every answer on screen was exactly as
+    // unverifiable as before that fix.
+    let sources: [String]?
+    // Competitors of this restaurant that the same answer named.
+    let competitorsNamed: [String]?
 
     var id: String { query }
+
+    enum CodingKeys: String, CodingKey {
+        case query, answer, appeared, kind, sources
+        case competitorsNamed = "competitors_named"
+    }
+}
+
+struct CompetitorAppearance: Decodable, Identifiable {
+    let name: String
+    let queries: Int
+    let share: Int
+    var id: String { name }
 }
 
 struct AIVisibilityRun: Decodable, Identifiable {
@@ -74,6 +97,16 @@ struct AIVisibilityResult: Decodable {
     let claimKinds: [String: String]?
     let checklist: [AIVisibilityChecklistItem]?
     let gbpConnected: Bool?
+    // Which AI system was actually asked. One vendor is sampled; the
+    // interface used to call the result "AI search" and the roadmap named
+    // three platforms that are never queried.
+    let platform: String?
+    let model: String?
+    // Branded recall, kept apart from discovery.
+    let brandedScore: Int?
+    let brandedQueries: Int?
+    // Which competitors surfaced in the same answers.
+    let competitorAppearances: [CompetitorAppearance]?
 
     /// True only when every question came back AND we know the city. Any
     /// other state means the score is not a measurement of this restaurant.
@@ -87,7 +120,7 @@ struct AIVisibilityResult: Decodable {
             return "We don't have a city for this restaurant, so we can't tell your listing apart from another location with the same name. Add your Google Place ID in Account."
         }
         if aiScore == nil {
-            return "AI search didn't answer this time. This isn't a reading of your visibility — try again shortly."
+            return "\(platform ?? "AI search") didn't answer this time. This isn't a reading of your visibility — try again shortly."
         }
         if partial == true, let a = answeredQueries, let t = totalQueries {
             return "Only \(a) of \(t) questions came back, so this is an estimate rather than a measurement."
@@ -128,6 +161,10 @@ struct AIVisibilityResult: Decodable {
         case setupTotal = "setup_total"
         case claimKinds = "claim_kinds"
         case gbpConnected = "gbp_connected"
+        case platform, model
+        case brandedScore = "branded_score"
+        case brandedQueries = "branded_queries"
+        case competitorAppearances = "competitor_appearances"
         case socialPosts30d = "social_posts_30d"
         case reviewTotal = "review_total"
         case respRate = "resp_rate"

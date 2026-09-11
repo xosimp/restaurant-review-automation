@@ -458,7 +458,7 @@ def topic_heatmap_api(current_user):
         data = get_topic_heatmap(current_user["restaurant_id"], days=days)
         return jsonify(ok=True, data=data)
     except Exception as e:
-        return jsonify(ok=False, error=str(e))
+        return jsonify(ok=False, error=_safe_err(e))
 
 @client_bp.route("/api/changelog")
 @login_required
@@ -623,7 +623,7 @@ def response_performance_api(current_user):
         data = get_response_performance(current_user["restaurant_id"], days=days)
         return jsonify(ok=True, data=data)
     except Exception as e:
-        return jsonify(ok=False, error=str(e))
+        return jsonify(ok=False, error=_safe_err(e))
 
 @client_bp.route("/api/sentiment-trend")
 @login_required
@@ -633,7 +633,7 @@ def sentiment_trend_api(current_user):
         data = _gst(current_user["restaurant_id"], weeks=8)
         return jsonify(weeks=data)
     except Exception as e:
-        return jsonify(weeks=[], error=str(e))
+        return jsonify(weeks=[], error=_safe_err(e))
 
 @client_bp.route("/api/review-insight")
 @login_required
@@ -884,7 +884,7 @@ def mkt_stats_api(current_user):
         conn.close()
         return jsonify(ok=True, generated=gen, published=pub, this_month=month)
     except Exception as e:
-        return jsonify(ok=False, error=str(e))
+        return jsonify(ok=False, error=_safe_err(e))
 
 @client_bp.route("/api/mkt-performance")
 @login_required
@@ -948,7 +948,7 @@ def mkt_performance_api(current_user):
             top_post=top_post,
         )
     except Exception as e:
-        return jsonify(ok=False, error=str(e))
+        return jsonify(ok=False, error=_safe_err(e))
 
 def _parse_conversation_id(raw):
     """A conversation id from a request body: a positive int, or None when
@@ -1530,7 +1530,7 @@ def marketing_media_api(current_user):
     try:
         stored = store_image(rid, upload.read(), upload.mimetype or "")
     except MediaError as e:
-        return jsonify(ok=False, error=str(e)), 400
+        return jsonify(ok=False, error=_safe_err(e)), 400
     except Exception:
         return jsonify(ok=False, error="Couldn't process that photo."), 500
     return jsonify(ok=True, media_id=stored["id"], token=stored["token"],
@@ -1852,7 +1852,7 @@ def labor_trend_api(current_user):
         resp.headers['Cache-Control'] = 'no-store'
         return resp
     except Exception as e:
-        return jsonify(weeks=[], error=str(e))
+        return jsonify(weeks=[], error=_safe_err(e))
 
 @client_bp.route("/api/labor-gap")
 @login_required
@@ -1864,7 +1864,7 @@ def labor_gap_api(current_user):
         return jsonify(gap)
     except Exception as e:
         import traceback; traceback.print_exc()
-        return jsonify(ok=False, error=str(e), over_target=False, monthly_gap=0,
+        return jsonify(ok=False, error=_safe_err(e), over_target=False, monthly_gap=0,
                       current_pct=0, target_pct=30)
 
 def _build_schedule_result(restaurant_id):
@@ -3144,7 +3144,7 @@ def download_schedule(current_user):
         )
     except Exception as e:
         import traceback; traceback.print_exc()
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_safe_err(e)), 500
 
 @client_bp.route("/api/billing-info")
 @login_required
@@ -3218,7 +3218,7 @@ def billing_info(current_user):
         )
     except Exception as e:
         print(f"Stripe billing info error: {e}")
-        return jsonify(ok=False, reason="stripe_error", error=str(e))
+        return jsonify(ok=False, reason="stripe_error", error=_safe_err(e))
 
 def _normalize_phone(raw):
     import re
@@ -4039,10 +4039,22 @@ def _do_ai_visibility(rid):
 # window buys nothing and costs three sonar queries. There was no cache at all
 # — only a burst limit, which caps nine queries a minute rather than the month
 # (the same distinction ai_utils makes about rate limits versus budgets).
+# The one AI system this module actually queries. Everything the interface
+# says about "AI search" is a statement about this vendor and this model,
+# and both travel with the payload so no surface has to guess.
+AIVIS_PLATFORM = "Perplexity"
+AIVIS_MODEL = os.getenv("AI_VISIBILITY_MODEL", "sonar")
+
 _AIVIS_CACHE_SECS = int(os.getenv("AI_VISIBILITY_CACHE_SECS", "21600"))  # 6 hours
 _aivis_cache = {}
 
 
+# Cached per process because a restaurant's address does not normally
+# change and this is a billed Places call on every check. It never expired,
+# though, so a restaurant that relocated or had its Place ID corrected kept
+# the old city until a redeploy — and the city gates every appearance match,
+# so a wrong one silently scores zero forever.
+_CITY_CACHE_SECS = 86400
 _city_cache = {}
 
 
@@ -4054,8 +4066,9 @@ def _city_from_place_id(place_id: str) -> str:
     """
     if not place_id:
         return ""
-    if place_id in _city_cache:
-        return _city_cache[place_id]
+    _hit = _city_cache.get(place_id)
+    if _hit and (datetime.utcnow() - _hit[0]).total_seconds() < _CITY_CACHE_SECS:
+        return _hit[1]
     city = ""
     try:
         import requests as _req
@@ -4075,7 +4088,7 @@ def _city_from_place_id(place_id: str) -> str:
                         city = comp.get("long_name") or ""
     except Exception as e:
         print(f"[aivis] city lookup failed for {place_id}: {e}")
-    _city_cache[place_id] = city
+    _city_cache[place_id] = (datetime.utcnow(), city)
     return city
 
 
@@ -4162,13 +4175,30 @@ def _do_ai_visibility_inner(rid, force=False):
         # 100 — and a single query flipping moved it 33 points. Perplexity
         # is non-deterministic, so that flip happens on its own. Six halves
         # the quantum and widens the angles a guest might actually ask from.
+        # Every query used to be a superlative local-discovery question —
+        # "best/top restaurants in X" in six shapes. A model answering those
+        # leans on aggregator listicles and high-review-count venues, so a
+        # small independent scored zero largely because of how the questions
+        # were written, and the roadmap then told them reviews would fix it.
+        #
+        # Two changes. The intents now spread across discovery, cuisine,
+        # occasion, and practical questions a guest actually asks. And each
+        # carries a kind: BRANDED asks about this restaurant by name, which
+        # is a different question from whether it surfaces in an open
+        # search, and blending the two into one number answered neither.
         queries = [
-            vibe_query or (name + " restaurant in " + city_full),
-            "Top restaurants in " + city_full,
-            q3,
-            "Where should I eat in " + city_full + " tonight?",
-            "Best " + cuisine.lower() + " restaurants near " + city_full,
-            "Highly rated local restaurants in " + city_full,
+            {"q": vibe_query or ("Where can I find good " + cuisine.lower() + " in " + city_full + "?"),
+             "kind": "cuisine"},
+            {"q": "Top restaurants in " + city_full, "kind": "discovery"},
+            {"q": q3, "kind": "occasion"},
+            {"q": "Where should I eat in " + city_full + " tonight?", "kind": "discovery"},
+            {"q": "Best " + cuisine.lower() + " restaurants near " + city_full, "kind": "cuisine"},
+            {"q": "Highly rated local restaurants in " + city_full, "kind": "discovery"},
+            # Practical intent — a guest who already has a shortlist.
+            {"q": "Which restaurants in " + city_full + " are good for a group?", "kind": "practical"},
+            # Branded recall: does the system know this restaurant at all?
+            # Scored separately; it is not evidence of discoverability.
+            {"q": "Tell me about " + name + " in " + city_full, "kind": "branded"},
         ]
     else:
         # cuisine falls back to the literal word "restaurant" when known_for
@@ -4181,9 +4211,11 @@ def _do_ai_visibility_inner(rid, force=False):
         # a real, non-fallback value.
         has_cuisine = bool(known_for)
         queries = [
-            (name + " restaurant") if name else "restaurant near me",
-            ("Top local " + cuisine + " restaurants") if has_cuisine else "Top local restaurants",
-            ("Best " + cuisine + " restaurant near me") if has_cuisine else "Best restaurant near me",
+            {"q": (name + " restaurant") if name else "restaurant near me", "kind": "branded"},
+            {"q": ("Top local " + cuisine + " restaurants") if has_cuisine else "Top local restaurants",
+             "kind": "discovery"},
+            {"q": ("Best " + cuisine + " restaurant near me") if has_cuisine else "Best restaurant near me",
+             "kind": "cuisine"},
         ]
 
     import requests as _pplx_req
@@ -4196,6 +4228,39 @@ def _do_ai_visibility_inner(rid, force=False):
         return re.sub(r"[^a-z0-9 ]", "", (s or "").lower().replace("’", "").replace("’", ""))
 
     norm_name = _norm(name)
+
+    # The competitor set this restaurant already has on file, so an answer
+    # naming one of them is recorded as such. Read once per run.
+    def _known_competitors():
+        try:
+            import json as _jc
+            blob = getattr(r, "competitor_intel", None)
+            if not blob:
+                return []
+            data = _jc.loads(blob) if isinstance(blob, str) else blob
+            return [c.get("name") for c in (data.get("competitors") or []) if c.get("name")]
+        except Exception:
+            return []
+
+    _competitor_names = _known_competitors()
+
+    def _competitors_in(answer):
+        """Which of this restaurant's known competitors the answer named.
+
+        Whole-phrase, same discipline as _mentions_this_restaurant — a
+        substring test would match "Mia" inside "Gia Mia".
+        """
+        if not answer or not _competitor_names:
+            return []
+        na = _norm(answer)
+        out = []
+        for cname in _competitor_names:
+            nc = _norm(cname)
+            if not nc or len(nc) < 4:
+                continue
+            if re.search(r"(?:^|\s)" + re.escape(nc) + r"(?:\s|$)", na):
+                out.append(cname)
+        return out
     norm_city = _norm(city) if city else ""
 
     def _mentions_this_restaurant(answer):
@@ -4245,9 +4310,9 @@ def _do_ai_visibility_inner(rid, force=False):
         re.compile(r"^Based on (?:the |my )?(?:search results?|available (?:information|sources?|data)|results)[,.]\s*", re.I),
         re.compile(r"^According to (?:the |my )?(?:search results?|available (?:information|sources?|data)|sources?)[,.]\s*", re.I),
         re.compile(r"^From (?:the |my )?(?:search results?|available (?:information|sources?|data)|results)[,.]\s*", re.I),
-        re.compile(r"^The (?:search )?results? (?:show|indicate|suggest|reveal)s?\s+", re.I),
+
         re.compile(r"^(?:Looking at|Reviewing) (?:the )?(?:search )?results?[,.]\s*", re.I),
-        re.compile(r"^I (?:found|can see|notice|see) that\s+", re.I),
+
         re.compile(r"^While .{5,80} is (?:a suburb|located|situated|part of)[^.]+\.\s*", re.I),
         re.compile(r"^Note that\s+", re.I),
     ]
@@ -4282,13 +4347,15 @@ def _do_ai_visibility_inner(rid, force=False):
     # time. One retry after a short delay (letting whatever per-second
     # window the limit uses clear) recovers those without giving up the
     # speed of parallelizing the common case where the limit isn't hit.
-    def _run_query(q, _retry=True):
+    def _run_query(spec, _retry=True):
+        q = spec["q"] if isinstance(spec, dict) else spec
+        kind = spec.get("kind", "discovery") if isinstance(spec, dict) else "discovery"
         try:
             resp = _pplx_req.post(
                 "https://api.perplexity.ai/chat/completions",
                 headers={"Authorization": f"Bearer {_pplx_key}", "Content-Type": "application/json"},
                 json={
-                    "model": "sonar",
+                    "model": AIVIS_MODEL,
                     # Citations are no longer suppressed. Perplexity's whole
                     # value here is that its claims are grounded, and the old
                     # prompt asked it to strip exactly that — leaving an
@@ -4324,14 +4391,15 @@ def _do_ai_visibility_inner(rid, force=False):
                 pass
             if not answer and _retry:
                 _pplx_time.sleep(2)
-                return _run_query(q, _retry=False)
+                return _run_query(spec, _retry=False)
             if not answer:
                 # Perplexity did not answer. That is an outage on our side,
                 # not evidence the restaurant is invisible — scoring it zero
                 # is how a rate limit became a permanent dip in the owner's
                 # visibility trend.
-                return {"query": q, "answer": "Could not fetch answer.", "appeared": False,
-                        "ok": False, "sources": []}
+                return {"query": q, "kind": kind, "answer": "Could not fetch answer.",
+                        "appeared": False, "ok": False, "sources": [],
+                        "competitors_named": []}
             appeared = _mentions_this_restaurant(answer)
             # Was answer[:400] — the system prompt already asks for "under
             # 80 words" (~440 chars including spaces), so a 400-char cap
@@ -4341,14 +4409,21 @@ def _do_ai_visibility_inner(rid, force=False):
             # on the API call above already bounds the raw response size —
             # this extra truncation was redundant on top of that, not a
             # real safety net.
-            return {"query": q, "answer": _clean_ai_answer(answer), "appeared": appeared,
-                    "ok": True, "sources": sources}
+            # The answers ARE ranked lists of restaurants, and the
+            # competitor set is already validated with Place IDs two modules
+            # away. Nothing cross-referenced them, so the one comparison an
+            # owner most wants — did my competitors come up instead of me —
+            # was a pass over data already in memory that nobody made.
+            return {"query": q, "kind": kind, "answer": _clean_ai_answer(answer),
+                    "appeared": appeared, "ok": True, "sources": sources,
+                    "competitors_named": _competitors_in(answer)}
         except Exception:
             if _retry:
                 _pplx_time.sleep(2)
-                return _run_query(q, _retry=False)
-            return {"query": q, "answer": "Could not fetch answer.", "appeared": False,
-                    "ok": False, "sources": []}
+                return _run_query(spec, _retry=False)
+            return {"query": q, "kind": kind, "answer": "Could not fetch answer.",
+                    "appeared": False, "ok": False, "sources": [],
+                    "competitors_named": []}
 
     # Run all queries in parallel, but staggered — caps total time at ~10s
     # instead of 30s+, while avoiding the true root cause of the rate-limit
@@ -4369,10 +4444,32 @@ def _do_ai_visibility_inner(rid, force=False):
             try:
                 query_results[i] = _fut.result()
             except Exception:
-                query_results[i] = {"query": queries[i], "answer": "Could not fetch answer.",
-                                    "appeared": False, "ok": False, "sources": []}
+                query_results[i] = {"query": queries[i]["q"], "kind": queries[i].get("kind"),
+                                    "answer": "Could not fetch answer.", "appeared": False,
+                                    "ok": False, "sources": [], "competitors_named": []}
     answered = [r for r in query_results if r and r.get("ok")]
-    appeared_count = sum(1 for r in answered if r.get("appeared"))
+    # Branded recall — "tell me about X" — is not evidence that a guest
+    # searching openly would find you. It was being counted in the same
+    # number as discovery, which answered neither question. Scored apart.
+    discovery = [r for r in answered if r.get("kind") != "branded"]
+    branded = [r for r in answered if r.get("kind") == "branded"]
+    appeared_count = sum(1 for r in discovery if r.get("appeared"))
+    branded_appeared = sum(1 for r in branded if r.get("appeared"))
+    branded_score = round(branded_appeared / len(branded) * 100) if branded else None
+
+    # Which competitors came up across this run, and how often. The answers
+    # are ranked restaurant lists; this is the comparison the product goal
+    # asks for and nothing was doing.
+    from collections import Counter as _Counter
+    _comp_hits = _Counter()
+    for _r in answered:
+        for _c in (_r.get("competitors_named") or []):
+            _comp_hits[_c] += 1
+    competitor_appearances = [
+        {"name": n, "queries": c,
+         "share": round(c / len(discovery) * 100) if discovery else 0}
+        for n, c in _comp_hits.most_common(8)
+    ]
 
     # GBP completeness score — 10 items x 10 pts = 100
     # Items 1-6: checkable from our own DB (no GMB OAuth needed)
@@ -4392,35 +4489,35 @@ def _do_ai_visibility_inner(rid, force=False):
 
     # 1. Google Place ID — lets AI tools index the right location
     if bool(r.google_place_id):
-        checklist.append({"label": "Google Place ID connected", "done": True, "kind": "setup", "pts": 10,
+        checklist.append({"label": "Google Place ID connected", "effort": "minutes", "why_it_matters": "lets us read your listing at all", "done": True, "kind": "setup", "pts": 10,
                           "action": "Done — your listing is linked", "needs_gmb": False})
     else:
-        checklist.append({"label": "Add your Google Place ID", "done": False, "kind": "setup", "pts": 10,
+        checklist.append({"label": "Add your Google Place ID", "effort": "minutes", "why_it_matters": "lets us read your listing at all", "done": False, "kind": "setup", "pts": 10,
                           "action": "Go to Account → paste your Google Place ID so we can read your listing",
                           "needs_gmb": False})
 
     # 2. Yelp profile linked — Perplexity and ChatGPT pull heavily from Yelp
     if bool(r.yelp_business_id):
-        checklist.append({"label": "Yelp profile linked", "done": True, "kind": "setup", "pts": 10,
+        checklist.append({"label": "Yelp profile linked", "effort": "minutes", "why_it_matters": "lets us read your Yelp listing", "done": True, "kind": "setup", "pts": 10,
                           "action": "Done — your Yelp listing is linked", "needs_gmb": False})
     else:
-        checklist.append({"label": "Link your Yelp business profile", "done": False, "kind": "setup", "pts": 10,
+        checklist.append({"label": "Link your Yelp business profile", "effort": "minutes", "why_it_matters": "lets us read your Yelp listing", "done": False, "kind": "setup", "pts": 10,
                           "action": "Go to Account → add your Yelp business ID (find it in your Yelp URL)",
                           "needs_gmb": False})
 
     # 3. Menu URL — admin sets this; silently included if present, hidden if not
     if bool(r.menu_url):
-        checklist.append({"label": "Menu URL added", "done": True, "kind": "setup", "pts": 10,
+        checklist.append({"label": "Menu URL added", "effort": "minutes", "why_it_matters": "publishes your menu at a fixed address", "done": True, "kind": "setup", "pts": 10,
                           "action": "Done — your menu is published at a public URL", "needs_gmb": False})
 
     # 4. Restaurant profile — vibe + known_for + neighborhood power all AI queries
     has_full_profile = bool(r.neighborhood and r.vibe and r.known_for)
     if has_full_profile:
-        checklist.append({"label": "Restaurant profile fully filled in", "done": True, "kind": "setup", "pts": 10,
+        checklist.append({"label": "Restaurant profile fully filled in", "effort": "minutes", "why_it_matters": "shapes the questions we ask on your behalf", "done": True, "kind": "setup", "pts": 10,
                           "action": "Done — neighborhood, vibe, and specialties all set", "needs_gmb": False})
     else:
         missing = [f for f, v in [("neighborhood", r.neighborhood), ("vibe", r.vibe), ("known for", r.known_for)] if not v]
-        checklist.append({"label": "Complete restaurant profile (" + ", ".join(missing) + " missing)", "done": False, "kind": "setup", "pts": 10,
+        checklist.append({"label": "Complete restaurant profile (" + ", ".join(missing) + " missing)", "effort": "minutes", "why_it_matters": "shapes the questions we ask on your behalf", "done": False, "kind": "setup", "pts": 10,
                           "action": "Go to Account → fill in neighborhood, vibe, and what you're known for",
                           "needs_gmb": False})
 
@@ -4429,78 +4526,78 @@ def _do_ai_visibility_inner(rid, force=False):
     resp_rate = rstats.get("response_rate", 0) if rstats else 0
     review_total = rstats.get("total", 0) if rstats else 0
     if review_total >= 50:
-        checklist.append({"label": "50+ Google reviews", "done": True, "kind": "presence", "pts": 10,
+        checklist.append({"label": "50+ Google reviews", "effort": "months", "why_it_matters": "the slowest signal to build and the hardest to fake", "done": True, "kind": "presence", "pts": 10,
                           "action": "Done — 50+ reviews is a strong public signal", "needs_gmb": False})
     elif review_total >= 20:
-        checklist.append({"label": "Build to 50+ Google reviews (" + str(review_total) + " so far)", "done": False, "kind": "presence", "pts": 10,
+        checklist.append({"label": "Build to 50+ Google reviews (" + str(review_total) + " so far)", "effort": "months", "why_it_matters": "the slowest signal to build and the hardest to fake", "done": False, "kind": "presence", "pts": 10,
                           "action": "Send review requests to recent customers — more reviews is a stronger public signal",
                           "needs_gmb": False})
     else:
-        checklist.append({"label": "Build to 50+ Google reviews (" + str(review_total) + " so far)", "done": False, "kind": "presence", "pts": 10,
+        checklist.append({"label": "Build to 50+ Google reviews (" + str(review_total) + " so far)", "effort": "months", "why_it_matters": "the slowest signal to build and the hardest to fake", "done": False, "kind": "presence", "pts": 10,
                           "action": "Send review requests after every visit — review volume is the slowest signal to build",
                           "needs_gmb": False})
 
     # 6. Review response rate — active engagement signals a healthy business to AI tools
     if resp_rate >= 75:
-        checklist.append({"label": "Excellent review response rate (" + str(resp_rate) + "%)", "done": True, "kind": "presence", "pts": 10,
+        checklist.append({"label": "Excellent review response rate (" + str(resp_rate) + "%)", "effort": "weeks", "why_it_matters": "visible on your listing to anyone reading it", "done": True, "kind": "presence", "pts": 10,
                           "action": "Done — replies are visible on your public listing", "needs_gmb": False})
     elif resp_rate >= 40:
-        checklist.append({"label": "Increase response rate to 75%+ (currently " + str(resp_rate) + "%)", "done": False, "kind": "presence", "pts": 10,
+        checklist.append({"label": "Increase response rate to 75%+ (currently " + str(resp_rate) + "%)", "effort": "weeks", "why_it_matters": "visible on your listing to anyone reading it", "done": False, "kind": "presence", "pts": 10,
                           "action": "Use the Reviews tab to draft and post responses — replies show on your public listing",
                           "needs_gmb": False})
     else:
-        checklist.append({"label": "Start responding to Google reviews (currently " + str(resp_rate) + "%)", "done": False, "kind": "presence", "pts": 10,
+        checklist.append({"label": "Start responding to Google reviews (currently " + str(resp_rate) + "%)", "effort": "months", "why_it_matters": "the slowest signal to build and the hardest to fake", "done": False, "kind": "presence", "pts": 10,
                           "action": "Go to Reviews → use AI-drafted responses to reply — aim for 75%+ response rate",
                           "needs_gmb": False})
 
     # 7. GBP OAuth connected — unlocks real-time profile data and future auto-posting
     if gbp_connected:
-        checklist.append({"label": "Google Business Profile connected", "done": True, "kind": "setup", "pts": 10,
+        checklist.append({"label": "Google Business Profile connected", "effort": "minutes", "why_it_matters": "unlocks live listing data and Google Posts", "done": True, "kind": "setup", "pts": 10,
                           "action": "Done — real-time GBP data is active", "needs_gmb": False})
     else:
-        checklist.append({"label": "Connect Google Business Profile (OAuth)", "done": False, "kind": "setup", "pts": 10,
+        checklist.append({"label": "Connect Google Business Profile (OAuth)", "effort": "minutes", "why_it_matters": "unlocks live listing data and Google Posts", "done": False, "kind": "setup", "pts": 10,
                           "action": "Go to Account → Connect GBP to unlock live profile editing and Google Posts",
                           "needs_gmb": True})
 
     # 8. Business description — keyword-rich descriptions are indexed by every AI search tool
     desc = gbp_data.get("description", "")
     if desc and len(desc) >= 150:
-        checklist.append({"label": "Business description written (" + str(len(desc)) + " chars)", "done": True, "kind": "presence", "pts": 10,
+        checklist.append({"label": "Business description written (" + str(len(desc)) + " chars)", "effort": "minutes", "why_it_matters": "the text a reader sees under your name", "done": True, "kind": "presence", "pts": 10,
                           "action": "Done — your description is published on your listing", "needs_gmb": False})
     elif desc:
-        checklist.append({"label": "Expand GBP description to 150+ chars (currently " + str(len(desc)) + ")", "done": False, "kind": "presence", "pts": 10,
+        checklist.append({"label": "Expand GBP description to 150+ chars (currently " + str(len(desc)) + ")", "effort": "minutes", "why_it_matters": "unlocks live listing data and Google Posts", "done": False, "kind": "presence", "pts": 10,
                           "action": "In Google Business Profile → Info → Description: add cuisine type, atmosphere, and signature dishes",
                           "needs_gmb": True})
     else:
-        checklist.append({"label": "Write a keyword-rich GBP business description", "done": False, "kind": "presence", "pts": 10,
+        checklist.append({"label": "Write a keyword-rich GBP business description", "effort": "minutes", "why_it_matters": "unlocks live listing data and Google Posts", "done": False, "kind": "presence", "pts": 10,
                           "action": "In Google Business Profile → Info → Description: mention cuisine, ambiance, and top dishes (150+ chars)",
                           "needs_gmb": True})
 
     # 9. Phone number in GBP — basic trust signal; missing phone = incomplete listing
     has_phone = bool(gbp_data.get("phone"))
     if gbp_connected and has_phone:
-        checklist.append({"label": "Phone number in GBP", "done": True, "kind": "presence", "pts": 10,
+        checklist.append({"label": "Phone number in GBP", "effort": "minutes", "why_it_matters": "a listing without one looks abandoned", "done": True, "kind": "presence", "pts": 10,
                           "action": "Done", "needs_gmb": False})
     elif gbp_connected and not has_phone:
-        checklist.append({"label": "Add phone number to GBP", "done": False, "kind": "presence", "pts": 10,
+        checklist.append({"label": "Add phone number to GBP", "effort": "minutes", "why_it_matters": "unlocks live listing data and Google Posts", "done": False, "kind": "presence", "pts": 10,
                           "action": "In Google Business Profile → Info → Phone: add your primary number",
                           "needs_gmb": False})
     else:
-        checklist.append({"label": "Add phone number to GBP", "done": False, "kind": "presence", "pts": 10,
+        checklist.append({"label": "Add phone number to GBP", "effort": "minutes", "why_it_matters": "unlocks live listing data and Google Posts", "done": False, "kind": "presence", "pts": 10,
                           "action": "In Google Business Profile → Info → Phone: add your primary number",
                           "needs_gmb": True})
 
     # 10. Website linked in GBP — AI tools follow the website link to gather more context
     has_website = bool(gbp_data.get("website"))
     if gbp_connected and has_website:
-        checklist.append({"label": "Website linked in GBP", "done": True, "kind": "presence", "pts": 10,
+        checklist.append({"label": "Website linked in GBP", "effort": "minutes", "why_it_matters": "the one link you control end to end", "done": True, "kind": "presence", "pts": 10,
                           "action": "Done — AI tools crawl your website for menu and about content", "needs_gmb": False})
     elif gbp_connected and not has_website:
-        checklist.append({"label": "Add website URL to GBP", "done": False, "kind": "presence", "pts": 10,
+        checklist.append({"label": "Add website URL to GBP", "effort": "minutes", "why_it_matters": "unlocks live listing data and Google Posts", "done": False, "kind": "presence", "pts": 10,
                           "action": "In Google Business Profile → Info → Website: add your restaurant's website",
                           "needs_gmb": False})
     else:
-        checklist.append({"label": "Add website URL to GBP", "done": False, "kind": "presence", "pts": 10,
+        checklist.append({"label": "Add website URL to GBP", "effort": "minutes", "why_it_matters": "unlocks live listing data and Google Posts", "done": False, "kind": "presence", "pts": 10,
                           "action": "In Google Business Profile → Info → Website: add your restaurant's website",
                           "needs_gmb": True})
 
@@ -4511,14 +4608,14 @@ def _do_ai_visibility_inner(rid, force=False):
     # regularHours alongside the fields it already fetched (gmb.py).
     has_hours = bool(gbp_data.get("has_hours"))
     if gbp_connected and has_hours:
-        checklist.append({"label": "Hours listed in GBP", "done": True, "kind": "presence", "pts": 10,
+        checklist.append({"label": "Hours listed in GBP", "effort": "minutes", "why_it_matters": "the single most-read field on a listing", "done": True, "kind": "presence", "pts": 10,
                           "action": "Done — AI tools can answer \"is it open now\" directly", "needs_gmb": False})
     elif gbp_connected and not has_hours:
-        checklist.append({"label": "Add hours to GBP", "done": False, "kind": "presence", "pts": 10,
+        checklist.append({"label": "Add hours to GBP", "effort": "minutes", "why_it_matters": "unlocks live listing data and Google Posts", "done": False, "kind": "presence", "pts": 10,
                           "action": "In Google Business Profile → Info → Hours: set your regular hours",
                           "needs_gmb": False})
     else:
-        checklist.append({"label": "Add hours to GBP", "done": False, "kind": "presence", "pts": 10,
+        checklist.append({"label": "Add hours to GBP", "effort": "minutes", "why_it_matters": "unlocks live listing data and Google Posts", "done": False, "kind": "presence", "pts": 10,
                           "action": "In Google Business Profile → Info → Hours: set your regular hours",
                           "needs_gmb": True})
 
@@ -4535,14 +4632,14 @@ def _do_ai_visibility_inner(rid, force=False):
     ).fetchone()[0] or 0
     _rconn.close()
     if recent_reviews >= 3:
-        checklist.append({"label": "Active review stream (" + str(recent_reviews) + " in last 30 days)", "done": True, "kind": "presence", "pts": 10,
+        checklist.append({"label": "Active review stream (" + str(recent_reviews) + " in last 30 days)", "effort": "weeks", "why_it_matters": "recency, separate from total volume", "done": True, "kind": "presence", "pts": 10,
                           "action": "Done — a steady, current review stream", "needs_gmb": False})
     elif recent_reviews >= 1:
-        checklist.append({"label": "Build a steadier review stream (" + str(recent_reviews) + " in last 30 days)", "done": False, "kind": "presence", "pts": 10,
+        checklist.append({"label": "Build a steadier review stream (" + str(recent_reviews) + " in last 30 days)", "effort": "weeks", "why_it_matters": "recency, separate from total volume", "done": False, "kind": "presence", "pts": 10,
                           "action": "Send review requests regularly — a handful of new reviews each month keeps the stream current",
                           "needs_gmb": False})
     else:
-        checklist.append({"label": "No reviews in the last 30 days", "done": False, "kind": "presence", "pts": 10,
+        checklist.append({"label": "No reviews in the last 30 days", "effort": "weeks", "why_it_matters": "recency, separate from total volume", "done": False, "kind": "presence", "pts": 10,
                           "action": "Send review requests to recent customers — recency is its own signal, separate from total volume",
                           "needs_gmb": False})
 
@@ -4572,9 +4669,10 @@ def _do_ai_visibility_inner(rid, force=False):
     # restaurant's standing anywhere.
     # An item with no kind is a bug, not a category. Defaulting it into
     # either bucket hides the mistake; naming it makes the next one obvious.
-    _untagged = [i["label"] for i in checklist if i.get("kind") not in ("presence", "setup")]
+    _untagged = [i["label"] for i in checklist
+                 if i.get("kind") not in ("presence", "setup") or not i.get("effort")]
     if _untagged:
-        print(f"[aivis] checklist items with no kind: {_untagged}")
+        print(f"[aivis] checklist items missing kind or effort: {_untagged}")
         try:
             import ops as _ops_aiv
             _ops_aiv.capture(RuntimeError(f"untagged AI-visibility checklist items: {_untagged}"),
@@ -4615,7 +4713,7 @@ def _do_ai_visibility_inner(rid, force=False):
     # throttled query used to drag the score down and then be written into
     # ai_visibility_runs, where it became a "declining visibility" data point
     # the owner reads as real.
-    ai_score = round((appeared_count / len(answered)) * 100) if answered else None
+    ai_score = round((appeared_count / len(discovery)) * 100) if discovery else None
 
     # A point estimate from a handful of non-deterministic queries is not a
     # measurement, and drawing it as one is how ordinary model variance
@@ -4624,9 +4722,9 @@ def _do_ai_visibility_inner(rid, force=False):
     # on a proportion from a small sample and degrades sensibly at 0 and
     # 100 where a naive interval does not.
     ai_score_low = ai_score_high = None
-    if answered:
+    if discovery:
         import math as _math
-        _n = len(answered)
+        _n = len(discovery)
         _p = appeared_count / _n
         _z = 1.645  # 90%
         _d = 1 + _z * _z / _n
@@ -4636,16 +4734,26 @@ def _do_ai_visibility_inner(rid, force=False):
         ai_score_high = min(100, round((_c + _m) * 100))
 
     try:
-        from models import record_ai_visibility_run
+        from models import record_ai_visibility_run, record_ai_visibility_queries
         # A partial run is not a measurement. Show it, don't record it.
         if ai_score is not None and len(answered) == len(queries):
-            record_ai_visibility_run(rid, ai_score, gbp_score,
-                                     answered=len(answered), appeared=appeared_count)
-    except Exception:
-        pass
+            _run_id = record_ai_visibility_run(
+                rid, ai_score, gbp_score,
+                answered=len(discovery), appeared=appeared_count)
+            # What was asked, what came back, and what grounded it. The runs
+            # table held a score and nothing else, so a change could never be
+            # explained — while the drop alert told the owner to open Intel
+            # and see which questions changed.
+            record_ai_visibility_queries(_run_id, rid, query_results)
+    except Exception as _he:
+        print(f"[aivis] history write failed for rid={rid}: {_he}")
 
     _payload = {
         "ok": True,
+        # Which system was asked, and with what model. A score from one
+        # vendor was being presented as "AI search" generally.
+        "platform": AIVIS_PLATFORM,
+        "model": AIVIS_MODEL,
         "restaurant_name": name,
         "neighborhood": neighborhood,
         "queries": query_results,
@@ -4654,8 +4762,14 @@ def _do_ai_visibility_inner(rid, force=False):
         # answered_queries is what ai_score is actually out of. When it is
         # below total_queries the run is partial: show the score as an
         # estimate, not a measurement, and say why.
-        "answered_queries": len(answered),
+        "answered_queries": len(discovery),
         "partial": len(answered) < len(queries),
+        # Branded recall, kept separate from discovery. None when no branded
+        # question was asked or answered.
+        "branded_score": branded_score,
+        "branded_queries": len(branded),
+        # Which competitors surfaced in the same answers, and in how many.
+        "competitor_appearances": competitor_appearances,
         # No city on the profile means two locations of the same brand are
         # indistinguishable in an answer, so appearance cannot be judged at
         # all. Surface that rather than silently scoring 0.
@@ -4685,6 +4799,8 @@ def _do_ai_visibility_inner(rid, force=False):
             "ai_score_low": "estimate",
             "ai_score_high": "estimate",
             "presence_score": "measured",
+            "branded_score": "measured",
+            "competitor_appearances": "measured",
             "setup_done": "configuration",
         },
         "checklist": checklist,
@@ -4766,7 +4882,7 @@ def webhook_save(current_user):
     try:
         secret = save_webhook(current_user["restaurant_id"], url, events)
     except InvalidWebhookURL as e:
-        return jsonify(ok=False, error=str(e))
+        return jsonify(ok=False, error=_safe_err(e))
     return jsonify(ok=True, secret=secret)
 
 @client_bp.route("/api/webhook", methods=["DELETE"])

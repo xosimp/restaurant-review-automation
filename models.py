@@ -4447,6 +4447,111 @@ def competitor_movement(restaurant_id: int, days: int = 60, db_path: str = DB_PA
     return out
 
 
+def init_ai_visibility_queries(db_path: str = DB_PATH):
+    conn = get_conn(db_path)
+    conn.execute("""CREATE TABLE IF NOT EXISTS ai_visibility_query_runs (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id        INTEGER NOT NULL,
+        restaurant_id INTEGER NOT NULL,
+        query         TEXT    NOT NULL,
+        query_kind    TEXT,
+        appeared      INTEGER NOT NULL DEFAULT 0,
+        answer        TEXT,
+        sources       TEXT,
+        competitors_named TEXT,
+        created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+    )""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_aivq_run ON ai_visibility_query_runs(run_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_aivq_rest ON ai_visibility_query_runs(restaurant_id, created_at)")
+    conn.commit()
+    conn.close()
+
+
+def record_ai_visibility_queries(run_id: int, restaurant_id: int, queries: list,
+                                 db_path: str = DB_PATH):
+    """Persist what a run actually asked and what came back.
+
+    ai_visibility_runs stored a score and nothing else, so when the number
+    moved nothing could say why — while the drop alert told the owner to
+    "open Intel to see which questions changed". The questions had never
+    been written down. Citations were fetched on every run and thrown away
+    with them.
+    """
+    if not run_id or not queries:
+        return
+    init_ai_visibility_queries(db_path)
+    import json as _j
+    conn = get_conn(db_path)
+    try:
+        for q in queries:
+            conn.execute(
+                "INSERT INTO ai_visibility_query_runs (run_id, restaurant_id, query, "
+                "query_kind, appeared, answer, sources, competitors_named) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (run_id, restaurant_id, q.get("query", ""), q.get("kind"),
+                 1 if q.get("appeared") else 0, (q.get("answer") or "")[:2000],
+                 _j.dumps(q.get("sources") or []),
+                 _j.dumps(q.get("competitors_named") or [])))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def ai_visibility_query_diff(restaurant_id: int, db_path: str = DB_PATH) -> dict:
+    """Which questions changed between the last two complete runs.
+
+    This is what the drop alert has always pointed the owner at and what
+    nothing could produce.
+    """
+    init_ai_visibility_queries(db_path)
+    conn = get_conn(db_path)
+    runs = conn.execute(
+        "SELECT DISTINCT run_id, MAX(created_at) AS at FROM ai_visibility_query_runs "
+        "WHERE restaurant_id=? GROUP BY run_id ORDER BY at DESC LIMIT 2",
+        (restaurant_id,)).fetchall()
+    if len(runs) < 2:
+        conn.close()
+        return {"ok": False, "reason": "needs two completed checks to compare"}
+    now_id, prev_id = runs[0]["run_id"], runs[1]["run_id"]
+
+    def _rows(rid):
+        return {r["query"]: bool(r["appeared"]) for r in conn.execute(
+            "SELECT query, appeared FROM ai_visibility_query_runs WHERE run_id=?", (rid,))}
+    now, prev = _rows(now_id), _rows(prev_id)
+    conn.close()
+    lost = sorted(q for q in now if prev.get(q) and not now[q])
+    gained = sorted(q for q in now if now[q] and not prev.get(q))
+    held = sorted(q for q in now if now[q] and prev.get(q))
+    return {"ok": True, "lost": lost, "gained": gained, "held": held,
+            "compared": len(set(now) & set(prev))}
+
+
+def ai_visibility_sources(restaurant_id: int, limit: int = 20, db_path: str = DB_PATH) -> list:
+    """The citation URLs the most recent run's answers were grounded in."""
+    init_ai_visibility_queries(db_path)
+    import json as _j
+    conn = get_conn(db_path)
+    row = conn.execute(
+        "SELECT run_id FROM ai_visibility_query_runs WHERE restaurant_id=? "
+        "ORDER BY created_at DESC LIMIT 1", (restaurant_id,)).fetchone()
+    if not row:
+        conn.close()
+        return []
+    rows = conn.execute(
+        "SELECT sources FROM ai_visibility_query_runs WHERE run_id=?", (row["run_id"],)).fetchall()
+    conn.close()
+    out, seen = [], set()
+    for r in rows:
+        try:
+            for u in _j.loads(r["sources"] or "[]"):
+                if u and u not in seen:
+                    seen.add(u)
+                    out.append(u)
+        except Exception:
+            continue
+    return out[:limit]
+
+
 def record_ai_visibility_run(restaurant_id: int, ai_score: int, gbp_score: int = None,
                              answered: int = None, appeared: int = None,
                              db_path: str = DB_PATH):
@@ -4458,11 +4563,12 @@ def record_ai_visibility_run(restaurant_id: int, ai_score: int, gbp_score: int =
     """
     conn = get_conn(db_path)
     try:
-        conn.execute(
+        cur = conn.execute(
             "INSERT INTO ai_visibility_runs (restaurant_id, ai_score, gbp_score, answered, appeared) "
             "VALUES (?,?,?,?,?)",
             (restaurant_id, ai_score, gbp_score, answered, appeared))
         conn.commit()
+        return cur.lastrowid
     finally:
         conn.close()
 

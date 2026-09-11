@@ -210,7 +210,8 @@ struct AIVisibilitySection: View {
                 heroStat(
                     value: scoreText,
                     tone: measured ? aiScoreTone(result.aiScore ?? 0) : Color.cavnarInk3,
-                    label: "AI APPEARANCE",
+                    // Named, not "AI". One system is asked.
+                    label: (result.platform ?? "AI").uppercased(),
                     sub: measured ? aiScoreLabel(result.aiScore ?? 0) : "Not measured"
                 )
                 Rectangle().fill(Color.cavnarEmber.opacity(0.3)).frame(width: 1).padding(.vertical, 6)
@@ -366,9 +367,11 @@ struct AIVisibilitySection: View {
     }
 
     private func aiScoreLabel(_ score: Int) -> String {
-        if score >= 67 { return "Strong AI presence" }
-        if score >= 34 { return "Moderate presence" }
-        return "Not yet indexed by AI search"
+        // Was "Not yet indexed by AI search", which is a claim about every
+        // AI system from a sample of one.
+        if score >= 67 { return "Comes up often" }
+        if score >= 34 { return "Comes up sometimes" }
+        return "Doesn't come up yet"
     }
 
     // Same breakpoints as aiScoreLabel above (34/67) — was a flat
@@ -610,7 +613,7 @@ struct AIVisibilitySection: View {
 
     private func reviewsWhy(_ result: AIVisibilityResult) -> String {
         let total = result.reviewTotal ?? 0
-        return "You have \(total) review\(total == 1 ? "" : "s") right now. AI search tools rank restaurants by review volume and recency — the more you have, the more AI systems trust you."
+        return "You have \(total) review\(total == 1 ? "" : "s") right now. Review count and recency are the most visible public signal about your restaurant, and the one you can move fastest."
     }
 
     private func responseDetail(_ result: AIVisibilityResult, done: Bool) -> String {
@@ -622,7 +625,7 @@ struct AIVisibilitySection: View {
 
     private func responseWhy(_ result: AIVisibilityResult) -> String {
         let rate = Int((result.respRate ?? 0).rounded())
-        return "You're currently responding to \(rate)% of your reviews. Response rate signals to Google that your listing is actively managed — active listings rank higher in local search and are more likely to be cited by AI tools that pull from Google data."
+        return "You're currently responding to \(rate)% of your reviews. Replies are published on your public listing, so a guest reading it sees an owner who answers."
     }
 
     private func gbpDetail(_ result: AIVisibilityResult, checklist: [AIVisibilityChecklistItem]) -> String {
@@ -633,7 +636,12 @@ struct AIVisibilitySection: View {
     }
 
     private func gbpWhy(_ result: AIVisibilityResult) -> String {
-        "Your Google Business Profile is \(result.gbpScore ?? 0)% complete. Perplexity, ChatGPT, and Google AI all pull directly from GBP data — hours, photos, menu, description. A complete profile is the single fastest way to become indexable by AI search."
+        // Was "Your Google Business Profile is X% complete", naming three
+        // AI platforms this module never queries and asserting how each one
+        // sources its answers. It also read gbpScore, which after the
+        // presence/setup split covers review volume and response rate as
+        // well as the GBP fields — so the label was wrong twice over.
+        "Your public listing and review record score \(result.presenceScore ?? result.gbpScore ?? 0)%. This covers what someone finds when they look you up: your description, hours, phone, website, and how many recent reviews you have."
     }
 
     private func socialDetail(_ result: AIVisibilityResult, done: Bool) -> String {
@@ -645,7 +653,7 @@ struct AIVisibilitySection: View {
 
     private func socialWhy(_ result: AIVisibilityResult) -> String {
         let posts = result.socialPosts30d ?? 0
-        return "You've logged \(posts) marketing piece\(posts == 1 ? "" : "s") this month. Food blogs and social content get indexed by search engines, which AI tools then pull from — regular posts with your restaurant name, neighborhood, and cuisine type build the online footprint AI needs to find you."
+        return "You've logged \(posts) marketing piece\(posts == 1 ? "" : "s") this month. Posts that name your restaurant, neighbourhood and cuisine give search engines more text about you to index."
     }
 
     /// Was a fully bordered/backgrounded box per card, each with its own
@@ -751,6 +759,29 @@ private struct QueryResultRow: View {
                     .foregroundStyle(Color.cavnarInk3)
                     .lineLimit(1)
                     .truncationMode(.tail)
+                // What the answer was grounded in, and which of your
+                // competitors it named. Both came back on every run and
+                // were decoded by nothing, so an answer on screen was as
+                // unverifiable as one with citations suppressed.
+                HStack(spacing: 6) {
+                    if let n = q.sources?.count, n > 0 {
+                        Label("\(n) source\(n == 1 ? "" : "s")", systemImage: "link")
+                            .font(.cavnarBody(12))
+                            .foregroundStyle(Color.cavnarInk3)
+                    }
+                    if let comps = q.competitorsNamed, !comps.isEmpty {
+                        Text("named " + comps.prefix(2).joined(separator: ", ")
+                             + (comps.count > 2 ? " +\(comps.count - 2)" : ""))
+                            .font(.cavnarBody(12))
+                            .foregroundStyle(Color.cavnarAmber)
+                            .lineLimit(1)
+                    }
+                    if q.kind == "branded" {
+                        Text("asked about you by name")
+                            .font(.cavnarBody(12))
+                            .foregroundStyle(Color.cavnarInk3)
+                    }
+                }
             }
             Spacer(minLength: 8)
             badge

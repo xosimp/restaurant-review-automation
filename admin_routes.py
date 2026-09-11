@@ -207,7 +207,7 @@ def create_client(current_user):
         return jsonify(ok=True, restaurant_id=rid, envelope_id=envelope_id, docusign_skipped=docusign_skipped)
     except Exception as e:
         import traceback; traceback.print_exc()
-        return jsonify(ok=False, error=str(e))
+        return jsonify(ok=False, error=_safe_err(e))
 
 @admin_bp.route("/admin/deactivate-client/<int:user_id>", methods=["POST"])
 @admin_required
@@ -257,7 +257,7 @@ def set_user_role_route(current_user):
     try:
         set_user_role(user_id, role)
     except Exception as e:
-        return jsonify(ok=False, error=str(e))
+        return jsonify(ok=False, error=_safe_err(e))
     return jsonify(ok=True)
 
 
@@ -393,7 +393,7 @@ def discover_menu_items_route(restaurant_id, current_user):
     try:
         return jsonify(ok=True, **inventory_ledger.discover_menu_items(restaurant_id))
     except Exception as e:
-        return jsonify(ok=False, error=str(e))
+        return jsonify(ok=False, error=_safe_err(e))
 
 
 @admin_bp.route("/admin/inventory/menu-items/<int:restaurant_id>", methods=["POST"])
@@ -507,7 +507,7 @@ def resync_depletion_route(restaurant_id, current_user):
     try:
         return jsonify(ok=True, **inventory_ledger.compute_daily_depletion(restaurant_id, business_date))
     except Exception as e:
-        return jsonify(ok=False, error=str(e))
+        return jsonify(ok=False, error=_safe_err(e))
 
 
 @admin_bp.route("/admin/staff-availability/<int:restaurant_id>", methods=["GET"])
@@ -741,7 +741,7 @@ def save_client_settings(restaurant_id, current_user):
         log_event(restaurant_id, "admin_settings_update", {"by": current_user.get("username", "admin")})
         return jsonify(ok=True)
     except Exception as e:
-        return jsonify(ok=False, error=str(e))
+        return jsonify(ok=False, error=_safe_err(e))
 
 @admin_bp.route("/admin/reset-password/<int:user_id>", methods=["POST"])
 @admin_required
@@ -864,7 +864,7 @@ def resend_contract(restaurant_id, current_user):
         return jsonify(ok=True)
     except Exception as e:
         print(f"Resend contract error: {e}")
-        return jsonify(ok=False, error=str(e))
+        return jsonify(ok=False, error=_safe_err(e))
 
 @admin_bp.route("/admin/resend-payment/<int:restaurant_id>", methods=["POST"])
 @admin_required
@@ -898,7 +898,7 @@ def resend_payment(restaurant_id, current_user):
         return jsonify(ok=True)
     except Exception as e:
         print(f"Resend payment error: {e}")
-        return jsonify(ok=False, error=str(e))
+        return jsonify(ok=False, error=_safe_err(e))
 
 @admin_bp.route("/admin/seed-reviews/<int:restaurant_id>", methods=["POST"])
 @admin_required
@@ -1002,7 +1002,7 @@ def reseed_demo_data(restaurant_id, current_user):
         _refresh_gia_mia_reviews(restaurant_id)
         return jsonify(ok=True)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_safe_err(e)), 500
 
 @admin_bp.route("/admin/ai-usage/<int:restaurant_id>")
 @admin_required
@@ -1462,7 +1462,7 @@ def inv_trend_api(current_user):
 
         return jsonify(weeks=weeks)
     except Exception as e:
-        return jsonify(weeks=[], error=str(e))
+        return jsonify(weeks=[], error=_safe_err(e))
 
 @admin_bp.route("/admin/upload-menu-pdf/<int:restaurant_id>", methods=["POST"])
 @admin_required
@@ -1486,7 +1486,7 @@ def upload_menu_pdf(restaurant_id, current_user):
         update_restaurant(restaurant_id, {"menu_notes": menu_notes})
         return jsonify(ok=True, menu_notes=menu_notes)
     except Exception as e:
-        return jsonify(ok=False, error=str(e))
+        return jsonify(ok=False, error=_safe_err(e))
 
 
 @admin_bp.route("/admin/fetch-menu-from-url/<int:restaurant_id>", methods=["POST"])
@@ -1507,7 +1507,7 @@ def fetch_menu_from_url_route(restaurant_id, current_user):
         update_restaurant(restaurant_id, {"menu_url": url, "menu_notes": menu_items})
         return jsonify(ok=True, menu_notes=menu_items)
     except Exception as e:
-        return jsonify(ok=False, error=str(e))
+        return jsonify(ok=False, error=_safe_err(e))
 
 
 @admin_bp.route("/admin/refresh-menu-notes/<int:restaurant_id>", methods=["POST"])
@@ -1539,7 +1539,7 @@ def refresh_menu_notes(restaurant_id, current_user):
         return jsonify(ok=True, menu_notes=merged,
                        message="\u2713 Updated from Google Places" + (" — menu URL found, dishes extracted" if has_url else ""))
     except Exception as e:
-        return jsonify(ok=False, error=str(e))
+        return jsonify(ok=False, error=_safe_err(e))
 
 
 @admin_bp.route("/admin/resend-welcome/<int:restaurant_id>", methods=["POST"])
@@ -1593,7 +1593,7 @@ def resend_welcome_email(restaurant_id, current_user):
 
     except Exception as e:
         print(f"[resend-welcome] error: {e}")
-        return jsonify(ok=False, error=str(e))
+        return jsonify(ok=False, error=_safe_err(e))
 
 
 @admin_bp.route("/admin/test-digest/<int:restaurant_id>", methods=["POST"])
@@ -1620,7 +1620,7 @@ def test_digest(restaurant_id, current_user):
         except Exception: pass
         return jsonify(ok=True, email=owner_email)
     except Exception as e:
-        return jsonify(ok=False, error=str(e))
+        return jsonify(ok=False, error=_safe_err(e))
 
 @admin_bp.route("/admin/test-urgent/<int:restaurant_id>", methods=["POST"])
 @admin_required
@@ -1639,7 +1639,7 @@ def test_urgent(restaurant_id, current_user):
         )
         return jsonify(ok=True, email=owner_email)
     except Exception as e:
-        return jsonify(ok=False, error=str(e))
+        return jsonify(ok=False, error=_safe_err(e))
 
 @admin_bp.route("/admin/refresh-ig-token/<int:restaurant_id>", methods=["POST"])
 @admin_required
@@ -1686,7 +1686,7 @@ def refresh_ig_token(restaurant_id, current_user):
         print(f"IG/FB tokens refreshed for restaurant {restaurant_id}, expires {new_expires}")
         return jsonify(ok=True, expires=new_expires)
     except Exception as e:
-        return jsonify(ok=False, error=str(e))
+        return jsonify(ok=False, error=_safe_err(e))
 
 
 
@@ -1710,6 +1710,11 @@ def competitor_intel_api(current_user):
 # Tracked in ops.async_jobs (a table), not a module dict — see
 # ops.start_async_job for why.
 import ops as _ops
+
+# Exception text handed to a client, with credentials stripped — a requests
+# error carries the failing URL, and a Places URL carries key= in its query
+# string. See ai_guard.safe_error.
+from ai_guard import safe_error as _safe_err
 
 
 def _run_competitor_job(job_id, restaurant_id):
@@ -1804,7 +1809,7 @@ def send_referral(current_user):
         except Exception: pass
         return jsonify(ok=True)
     except Exception as e:
-        return jsonify(ok=False, error=str(e))
+        return jsonify(ok=False, error=_safe_err(e))
 
 
 @admin_bp.route("/api/admin/seed-labor-history", methods=["POST"])

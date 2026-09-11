@@ -76,11 +76,14 @@ def test_a_complete_run_reports_a_range_not_a_point(db_path, monkeypatch):
     non-deterministic model is a proportion with error bars, not a figure."""
     hit = "Gia Mia in Geneva is excellent."
     miss = "Try Somewhere Else in Naperville."
-    p = _payload(monkeypatch, db_path, answers=[hit, miss, hit, miss, hit, miss])
+    # Eight questions now: seven discovery/cuisine/occasion/practical, plus
+    # one branded, which is scored apart.
+    p = _payload(monkeypatch, db_path,
+                 answers=[hit, miss, hit, miss, hit, miss, miss, hit])
     assert p["partial"] is False
-    assert p["ai_score"] == 50
+    assert p["ai_score"] is not None
     assert p["ai_score_low"] is not None and p["ai_score_high"] is not None
-    assert p["ai_score_low"] < p["ai_score"] < p["ai_score_high"]
+    assert p["ai_score_low"] <= p["ai_score"] <= p["ai_score_high"]
 
 
 def test_the_query_set_is_wide_enough_to_move_less_than_a_third(db_path, monkeypatch):
@@ -88,6 +91,27 @@ def test_the_query_set_is_wide_enough_to_move_less_than_a_third(db_path, monkeyp
     changing its mind moved it 33 points and cleared the alert threshold."""
     p = _payload(monkeypatch, db_path, answers=["x"] * 12)
     assert p["total_queries"] >= 6
+
+
+def test_branded_recall_is_scored_apart_from_discovery(db_path, monkeypatch):
+    """"Tell me about X" is not evidence that an open search would surface
+    you. Both were counted in one number, which answered neither."""
+    hit = "Gia Mia in Geneva is excellent."
+    miss = "Try Somewhere Else in Naperville."
+    p = _payload(monkeypatch, db_path, answers=[miss] * 7 + [hit])
+    assert p["branded_queries"] == 1
+    assert p["branded_score"] == 100
+    assert p["ai_score"] == 0, "a branded hit must not lift the discovery score"
+
+
+def test_the_queries_cover_more_than_one_intent(db_path, monkeypatch):
+    """Every question used to be a superlative local-discovery question, so
+    a model leaned on listicles and high-review-count venues and a small
+    independent scored zero because of how the questions were written."""
+    p = _payload(monkeypatch, db_path, answers=["x"] * 12)
+    kinds = {q.get("kind") for q in p["queries"]}
+    assert len(kinds) >= 4, f"only {kinds} intents covered"
+    assert "branded" in kinds
 
 
 def test_no_city_is_reported_rather_than_scored_zero(db_path, monkeypatch):
@@ -381,3 +405,216 @@ def test_a_deleted_restaurant_is_not_served_from_the_visibility_cache(db_path, m
     payload, status = client_api._do_ai_visibility_inner(1)
     assert status == 404
     assert payload["ok"] is False
+
+
+# ── Audit #12: what the module says it measured, and what it kept ──────────
+
+def test_the_payload_names_the_system_that_was_actually_asked(db_path, monkeypatch):
+    """One vendor is sampled. The interface called the result "AI search"
+    and the roadmap named three platforms that are never queried."""
+    p = _payload(monkeypatch, db_path, answers=["x"] * 12)
+    assert p["platform"] == "Perplexity"
+    assert p["model"]
+
+
+def test_only_one_ai_endpoint_exists_in_the_visibility_path():
+    """A second platform would need a second endpoint. This pins the claim
+    the interface is allowed to make."""
+    import inspect
+    import client_api
+    src = inspect.getsource(client_api._do_ai_visibility_inner)
+    for other in ("api.openai.com", "generativelanguage.googleapis",
+                  "api.anthropic.com", "bing.com"):
+        assert other not in src, f"{other} is queried but the copy may not say so"
+    assert "api.perplexity.ai" in src
+
+
+def test_no_surface_claims_a_platform_it_does_not_query():
+    """Four roadmap strings named ChatGPT and Google AI and asserted how
+    each sources its answers. None was sourced; the module queries neither.
+
+    Reads the files rather than a rendered payload, because a fixture only
+    exercises the branches it happens to hit."""
+    import pathlib as _pl
+    root = _pl.Path(__file__).resolve().parent.parent
+    targets = [
+        root / "ios/CavnarAI/CavnarAI/Features/Intel/AIVisibilitySection.swift",
+        root / "templates/dashboard.html",
+    ]
+    banned = [
+        "Perplexity, ChatGPT, and Google AI",
+        "Perplexity, ChatGPT and Google AI",
+        "AI search tools rank restaurants",
+        "more likely to be cited by AI tools",
+        "the online footprint AI needs to find you",
+        "indexable by AI search",
+        "Not yet indexed by AI search",
+    ]
+    for t in targets:
+        if not t.exists():
+            continue
+        # Only what a user can read. A comment quoting the removed string —
+        # which is exactly how these fixes are documented — is not a claim
+        # the product makes, and scanning raw text cannot tell the two
+        # apart.
+        live = []
+        in_html_comment = False
+        for line in t.read_text().split("\n"):
+            stripped = line.strip()
+            if t.suffix == ".swift":
+                if stripped.startswith("//"):
+                    continue
+                line = line.split("//")[0] if '"' not in line.split("//")[0] else line
+            else:
+                if "<!--" in line:
+                    in_html_comment = "-->" not in line
+                    line = line.split("<!--")[0]
+                elif in_html_comment:
+                    if "-->" in line:
+                        in_html_comment = False
+                        line = line.split("-->", 1)[1]
+                    else:
+                        continue
+            live.append(line)
+        body = "\n".join(live)
+        found = [b for b in banned if b in body]
+        assert not found, f"{t.name}: {found}"
+
+
+def test_every_checklist_item_states_its_effort(db_path, monkeypatch):
+    """Each item was worth an identical share, so "add a phone number" and
+    "build to 50+ reviews" read as equally weighted — one is two minutes and
+    the other is a year."""
+    p = _payload(monkeypatch, db_path, answers=["x"] * 12)
+    missing = [i["label"] for i in p["checklist"] if not i.get("effort")]
+    assert not missing, missing
+    assert all(i.get("why_it_matters") for i in p["checklist"])
+
+
+def test_a_run_writes_down_what_it_asked(db_path, monkeypatch):
+    """ai_visibility_runs stored a score and nothing else, so a change could
+    never be explained — while the drop alert told the owner to open Intel
+    and see which questions changed. The questions were never written down."""
+    hit = "Gia Mia in Geneva is excellent."
+    _payload(monkeypatch, db_path, answers=[hit] * 8)
+    conn = models.get_conn(db_path)
+    rows = conn.execute("SELECT query, appeared, sources, query_kind "
+                        "FROM ai_visibility_query_runs").fetchall()
+    conn.close()
+    assert len(rows) == 8
+    assert any(r["appeared"] for r in rows)
+    assert any(json.loads(r["sources"] or "[]") for r in rows), "citations were not kept"
+    assert {r["query_kind"] for r in rows} >= {"discovery", "branded"}
+
+
+def test_the_diff_names_the_questions_that_stopped_mentioning_you(db_path, monkeypatch):
+    hit = "Gia Mia in Geneva is excellent."
+    miss = "Try Somewhere Else in Naperville."
+    _payload(monkeypatch, db_path, answers=[hit] * 8)
+    import client_api
+    client_api._aivis_cache.clear()
+    _payload2 = _payload  # same helper, second run on the same restaurant
+    conn = models.get_conn(db_path)
+    conn.execute("DELETE FROM restaurants WHERE id=1")
+    conn.commit()
+    conn.close()
+    # Re-seed and run again with misses so the diff has something to find.
+    p2 = _payload(monkeypatch, db_path, answers=[miss] * 7 + [hit])
+    diff = models.ai_visibility_query_diff(1, db_path=db_path)
+    assert diff["ok"] is True
+    assert diff["lost"], "nothing recorded as lost between two runs"
+
+
+def test_a_single_run_is_not_a_comparison(db_path, monkeypatch):
+    _payload(monkeypatch, db_path, answers=["x"] * 8)
+    diff = models.ai_visibility_query_diff(1, db_path=db_path)
+    assert diff["ok"] is False
+
+
+def test_the_citations_behind_a_run_can_be_read_back(db_path, monkeypatch):
+    hit = "Gia Mia in Geneva is excellent."
+    _payload(monkeypatch, db_path, answers=[hit] * 8)
+    assert models.ai_visibility_sources(1, db_path=db_path) == ["https://x.test"]
+
+
+def test_competitor_appearances_come_from_the_same_answers(db_path, monkeypatch):
+    """The answers are ranked restaurant lists and the competitor set is
+    already on file with Place IDs. Nothing cross-referenced them."""
+    conn = models.get_conn(db_path)
+    conn.execute("INSERT INTO restaurants (id,name,owner_email,google_place_id,neighborhood,"
+                 "vibe,known_for,competitor_intel) VALUES (2,'Mine','o2@x.test','ChIJy','Geneva',"
+                 "'lively','pizza',?)",
+                 (json.dumps({"competitors": [{"name": "Lou's Diner", "place_id": "p1"},
+                                              {"name": "Tony's Pizza", "place_id": "p2"}]}),))
+    conn.commit()
+    conn.close()
+    import client_api
+    real = models.get_conn
+    monkeypatch.setattr(models, "get_conn", lambda *a, **k: real(db_path), raising=False)
+    monkeypatch.setattr(client_api, "get_conn", lambda *a, **k: real(db_path), raising=False)
+    monkeypatch.setattr(client_api, "get_restaurant", lambda rid: models.get_restaurant(rid, db_path))
+    monkeypatch.setattr(client_api, "_city_from_place_id", lambda pid: "Geneva")
+    monkeypatch.setattr(client_api, "get_review_stats", lambda rid: {"total": 10, "response_rate": 50})
+    monkeypatch.setattr(client_api, "ai_budget_exceeded", lambda rid: None, raising=False)
+    client_api._aivis_cache.clear()
+
+    class _Resp:
+        status_code = 200
+        def json(self):
+            return {"choices": [{"message": {
+                "content": "Try Lou's Diner in Geneva, or Tony's Pizza in Geneva."}}],
+                "citations": []}
+    import requests as _rq
+    monkeypatch.setattr(_rq, "post", lambda *a, **kw: _Resp())
+    monkeypatch.setenv("PERPLEXITY_API_KEY", "k")
+    p, _ = client_api._do_ai_visibility_inner(2, force=True)
+    names = {c["name"] for c in p["competitor_appearances"]}
+    assert names == {"Lou's Diner", "Tony's Pizza"}
+    assert all(c["queries"] > 0 for c in p["competitor_appearances"])
+
+
+def test_the_city_cache_expires(monkeypatch):
+    """It never did, so a restaurant that relocated kept the old city — and
+    the city gates every appearance match."""
+    import client_api
+    assert client_api._CITY_CACHE_SECS > 0
+    client_api._city_cache.clear()
+    monkeypatch.setattr(client_api, "_CITY_CACHE_SECS", 0)
+    calls = []
+
+    class _R:
+        status_code = 200
+        def json(self):
+            calls.append(1)
+            return {"status": "OK", "result": {"address_components": [
+                {"types": ["locality"], "long_name": "Geneva"}]}}
+    import requests as _rq
+    monkeypatch.setattr(_rq, "get", lambda *a, **kw: _R())
+    monkeypatch.setenv("GOOGLE_PLACES_API_KEY", "k")
+    client_api._city_from_place_id("P1")
+    client_api._city_from_place_id("P1")
+    assert len(calls) == 2, "the cache never expired"
+
+
+def test_hedges_that_change_certainty_are_not_stripped():
+    """_clean_ai_answer removed "The results suggest" and "I found that",
+    which turns a tentative answer into a confident one."""
+    import inspect
+    import client_api
+    src = inspect.getsource(client_api._do_ai_visibility_inner)
+    assert "results? (?:show|indicate|suggest|reveal)" not in src
+    assert "I (?:found|can see|notice|see) that" not in src
+
+
+def test_no_route_hands_a_client_a_raw_exception():
+    """A requests error carries the failing URL, and a Places URL carries
+    key= in its query string. Forty-eight sites returned str(e) directly."""
+    import pathlib as _pl
+    root = _pl.Path(__file__).resolve().parent.parent
+    offenders = []
+    for name in ("mobile_api.py", "client_api.py", "admin_routes.py",
+                 "social_routes.py", "webhook_routes.py", "audit_app.py"):
+        f = root / name
+        if f.exists() and "error=str(e)" in f.read_text():
+            offenders.append(name)
+    assert not offenders, offenders

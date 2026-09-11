@@ -717,6 +717,7 @@ try:
     from models import init_staff_notes as _isn, init_staff_availability as _isa
     from models import init_two_fa_backup_codes as _i2fabc
     from models import init_competitor_snapshots as _ics
+    from models import init_ai_visibility_queries as _iavq
     from auth import init_auth as _init_auth
     from webhooks import init_webhooks as _iwh
     from guest_marketing import init_guest_marketing as _igm
@@ -733,6 +734,7 @@ try:
     _ipush()
     _i2fabc()
     _ics()
+    _iavq()
     from sales_audits import init_sales_audits as _isa2, ensure_first_audit as _efa
     _isa2()
     _efa()

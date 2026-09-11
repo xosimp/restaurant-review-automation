@@ -1042,7 +1042,7 @@ def mobile_response_performance(current_user):
         data = get_response_performance(current_user["restaurant_id"], days=days)
         return jsonify(ok=True, data=data)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_safe_err(e)), 500
 
 
 @mobile_bp.route("/reviews/topic-heatmap")
@@ -1056,7 +1056,7 @@ def mobile_topic_heatmap(current_user):
         data = get_topic_heatmap(current_user["restaurant_id"], days=days)
         return jsonify(ok=True, data=data)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_safe_err(e)), 500
 
 
 @mobile_bp.route("/reviews/sentiment-trend")
@@ -1067,7 +1067,7 @@ def mobile_sentiment_trend(current_user):
         data = get_sentiment_trend(current_user["restaurant_id"], weeks=8)
         return jsonify(ok=True, weeks=data)
     except Exception as e:
-        return jsonify(ok=False, weeks=[], error=str(e)), 500
+        return jsonify(ok=False, weeks=[], error=_safe_err(e)), 500
 
 
 @mobile_bp.route("/reviews/insight")
@@ -1739,7 +1739,7 @@ def mobile_food_cost_analytics(current_user):
             last_updated=analysis.get("last_updated", ""),
         )
     except Exception as e:
-        return jsonify(ok=False, error=str(e), insight="Analysis unavailable — check back shortly.",
+        return jsonify(ok=False, error=_safe_err(e), insight="Analysis unavailable — check back shortly.",
                        insight_intro="Analysis unavailable — check back shortly.",
                        insight_recommendations=[], insight_forecast=None,
                        waste_items=[], overstock=[], critical_low=[], reorder_soon=[],
@@ -1799,7 +1799,7 @@ def mobile_food_cost_trend(current_user):
 
         return jsonify(ok=True, weeks=weeks)
     except Exception as e:
-        return jsonify(ok=False, weeks=[], error=str(e)), 500
+        return jsonify(ok=False, weeks=[], error=_safe_err(e)), 500
 
 
 # ── Restaurant switcher ───────────────────────────────────────────────────
@@ -2120,7 +2120,7 @@ def mobile_labor_trend(current_user):
             })
         return jsonify(ok=True, weeks=weeks)
     except Exception as e:
-        return jsonify(ok=False, weeks=[], error=str(e)), 500
+        return jsonify(ok=False, weeks=[], error=_safe_err(e)), 500
 
 
 @mobile_bp.route("/labor/gap")
@@ -2132,7 +2132,7 @@ def mobile_labor_gap(current_user):
         gap = calculate_monthly_gap(analysis)
         return jsonify(ok=True, **gap)
     except Exception as e:
-        return jsonify(ok=False, error=str(e), over_target=False, monthly_gap=0,
+        return jsonify(ok=False, error=_safe_err(e), over_target=False, monthly_gap=0,
                        current_pct=0, target_pct=30), 500
 
 
@@ -2187,7 +2187,7 @@ def mobile_labor_insight(current_user):
     except Exception as e:
         return jsonify(ok=False, insight="Analysis unavailable — check back shortly.",
                        insight_intro="Analysis unavailable — check back shortly.",
-                       insight_recommendations=[], insight_forecast=None, error=str(e)), 500
+                       insight_recommendations=[], insight_forecast=None, error=_safe_err(e)), 500
 
 
 @mobile_bp.route("/labor/generate-schedule", methods=["POST"])
@@ -2229,7 +2229,7 @@ def mobile_schedule_status(job_id, current_user):
         result["status"] = job["status"]
         return jsonify(**result)
     except Exception as e:
-        return jsonify(ok=False, status="error", error=str(e)), 500
+        return jsonify(ok=False, status="error", error=_safe_err(e)), 500
 
 
 @mobile_bp.route("/labor/schedule-history")
@@ -2243,7 +2243,7 @@ def mobile_schedule_history(current_user):
         history = get_schedule_history(current_user["restaurant_id"])
         return jsonify(ok=True, history=history)
     except Exception as e:
-        return jsonify(ok=False, history=[], error=str(e)), 500
+        return jsonify(ok=False, history=[], error=_safe_err(e)), 500
 
 
 @mobile_bp.route("/labor/schedule-history/<int:history_id>")
@@ -2693,7 +2693,7 @@ def mobile_marketing_performance(current_user):
             top_post=top_post,
         )
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_safe_err(e)), 500
 
 
 @mobile_bp.route("/marketing/recent-topics")
@@ -2764,7 +2764,7 @@ def mobile_upload_media(current_user):
     try:
         stored = store_image(rid, raw, mime)
     except MediaError as e:
-        return jsonify(ok=False, error=str(e)), 400
+        return jsonify(ok=False, error=_safe_err(e)), 400
     except Exception:
         return jsonify(ok=False, error="Couldn't process that photo."), 500
 
@@ -3154,7 +3154,7 @@ def mobile_refresh_competitors_status(job_id, current_user):
         result["status"] = job["status"]
         return jsonify(**result)
     except Exception as e:
-        return jsonify(ok=False, status="error", error=str(e)), 500
+        return jsonify(ok=False, status="error", error=_safe_err(e)), 500
 
 
 @mobile_bp.route("/intel/search-places")
@@ -3915,7 +3915,7 @@ def mobile_send_test_digest(current_user):
         except Exception: pass
         return jsonify(ok=True, email=to_email)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_safe_err(e)), 500
 
 
 @mobile_bp.route("/account/email-history")
@@ -3980,7 +3980,7 @@ def mobile_export_data(current_user):
         _log_account_event(rid, "data_exported", current_user, detail=", ".join(scopes))
         return jsonify(ok=True, email=to_email, scopes=scopes)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_safe_err(e)), 500
 
 
 @mobile_bp.route("/account/alert-settings", methods=["POST"])
@@ -4372,7 +4372,7 @@ def mobile_topic_weeks(current_user):
     try:
         return jsonify(ok=True, data=get_topic_weeks(current_user["restaurant_id"], weeks=8))
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_safe_err(e)), 500
 
 
 @mobile_bp.route("/labor/daily")
@@ -4382,7 +4382,7 @@ def mobile_labor_daily(current_user):
     try:
         return jsonify(ok=True, days=get_labor_daily(current_user["restaurant_id"], days=14))
     except Exception as e:
-        return jsonify(ok=False, days=[], error=str(e)), 500
+        return jsonify(ok=False, days=[], error=_safe_err(e)), 500
 
 
 @mobile_bp.route("/intel/ai-visibility/history")
@@ -4392,7 +4392,7 @@ def mobile_ai_visibility_history(current_user):
     try:
         return jsonify(ok=True, runs=get_ai_visibility_history(current_user["restaurant_id"], limit=10))
     except Exception as e:
-        return jsonify(ok=False, runs=[], error=str(e)), 500
+        return jsonify(ok=False, runs=[], error=_safe_err(e)), 500
 
 
 

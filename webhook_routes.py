@@ -10,6 +10,11 @@ from models import get_conn, get_restaurant, update_restaurant, log_email
 from auth import admin_required
 from emails import send_payment_email, send_welcome_email
 
+# Exception text handed to a client, with credentials stripped — a requests
+# error carries the failing URL, and a Places URL carries key= in its query
+# string. See ai_guard.safe_error.
+from ai_guard import safe_error as _safe_err
+
 
 def _html_doc(fragment, bg="#f7f4ef"):
     """Wrap a bare fragment in a real HTML document so its background fills
@@ -279,7 +284,7 @@ def stripe_webhook():
         )
     except Exception as e:
         print(f"Webhook error: {e}")
-        return jsonify(error=str(e)), 400
+        return jsonify(error=_safe_err(e)), 400
 
     # Every verified event is kept — the admin console's Billing page reads
     # this as payment history (see admin_events.py).

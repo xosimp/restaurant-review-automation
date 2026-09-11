@@ -27,7 +27,9 @@ def fetch_google(place_id: str, restaurant_id: int) -> list[Review]:
         resp = requests.get(url, params=params, timeout=10)
         resp.raise_for_status()
     except Exception as e:
-        _meter_places(restaurant_id, "review_fetch", "details", status="error", error=str(e)[:200])
+        from ai_guard import safe_error as _se
+        _meter_places(restaurant_id, "review_fetch", "details", status="error",
+                      error=_se(e)[:200])
         raise
     _meter_places(restaurant_id, "review_fetch", "details")
     raw = resp.json().get("result", {}).get("reviews", [])

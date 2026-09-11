@@ -962,6 +962,30 @@ def health_bypasses_quiet_hours(restaurant_id: int, db_path: str = DB_PATH) -> b
         return False
 
 
+def _lost_query_lines(restaurant_id: int, db_path: str = DB_PATH) -> list:
+    """The actual questions that stopped mentioning this restaurant.
+
+    The alert has always said "open Intel to see which questions changed",
+    and nothing could produce that — ai_visibility_runs stored a score and
+    no questions, so the previous run's were never written down. They are
+    now, so the alert can say it in the alert.
+    """
+    try:
+        from models import ai_visibility_query_diff
+        diff = ai_visibility_query_diff(restaurant_id, db_path)
+    except Exception:
+        return []
+    if not diff.get("ok") or not diff.get("lost"):
+        return []
+    import html as _h
+    qs = [_h.escape(q) for q in diff["lost"][:3]]
+    more = len(diff["lost"]) - len(qs)
+    line = "These stopped mentioning you: " + "; ".join(f"<em>{q}</em>" for q in qs)
+    if more > 0:
+        line += f" (and {more} more)"
+    return [line + "."]
+
+
 # A visibility score is appearances over a handful of questions answered by
 # a non-deterministic model. The alert threshold used to be 15 points on a
 # three-question run, where the score could only be 0, 33, 67 or 100 — so
@@ -1073,11 +1097,12 @@ def check_extra_daily_alerts(db_path: str = DB_PATH):
                           f"Cavnar AI: {name}'s AI visibility fell from {prev_s}% to {now_s}% "
                           f"({moved} fewer of the questions we ask mentioned you).",
                           f"AI visibility dropped — {name}",
-                          [f"Your AI visibility went from <strong>{prev_s}%</strong> to "
+                          [f"Your visibility in Perplexity went from <strong>{prev_s}%</strong> to "
                            f"<strong>{now_s}%</strong> since the last check.",
-                           f"That is {moved} fewer of the questions we ask AI search that mentioned you.",
-                           "These questions are answered by a model that varies run to run, so a small "
-                           "move is normal. This one was large enough to be worth a look.",
-                           "Open Intel → AI Visibility to see which questions changed."])
+                           f"That is {moved} fewer of the questions we ask that mentioned you.",
+                           *_lost_query_lines(rid, db_path),
+                           "Perplexity varies run to run, so a small move is normal. This one was "
+                           "large enough to be worth a look.",
+                           "Open Intel → AI Visibility for the full picture."])
             except Exception as e:
                 print(f"[notify] ai visibility check error rid={rid}: {e}")

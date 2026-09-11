@@ -9,6 +9,11 @@ from models import get_conn, get_restaurant, update_restaurant
 from auth import login_required, admin_required
 from meta_api import graph_url, oauth_dialog_url
 
+# Exception text handed to a client, with credentials stripped — a requests
+# error carries the failing URL, and a Places URL carries key= in its query
+# string. See ai_guard.safe_error.
+from ai_guard import safe_error as _safe_err
+
 social_bp = Blueprint('social', __name__)
 
 @social_bp.route("/instagram/connect")
@@ -390,7 +395,7 @@ def post_insights(current_user):
         result = refresh_post_metrics(current_user["restaurant_id"])
         return jsonify(**result)
     except Exception as e:
-        return jsonify(ok=False, error=str(e))
+        return jsonify(ok=False, error=_safe_err(e))
 
 @social_bp.route("/api/post-to-facebook", methods=["POST"])
 @login_required

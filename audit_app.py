@@ -818,7 +818,8 @@ def send():
             return jsonify(ok=True)
         return jsonify(ok=False, error="Email failed — check your RESEND_API_KEY")
     except Exception as e:
-        return jsonify(ok=False, error=str(e))
+        from ai_guard import safe_error as _se
+        return jsonify(ok=False, error=_se(e))
 
 @app.route("/download", methods=["POST"])
 def download():

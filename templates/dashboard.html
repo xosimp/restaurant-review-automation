@@ -3466,7 +3466,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       <div class="in2-sec" id="aiv-action-plan">
         <div class="hd"><div><div class="hb-kicker">Your AI visibility roadmap</div><h2>What gets you into AI answers</h2><div class="sub">Ranked for this restaurant — the gaps you still have come first.</div></div><div class="r"><span class="hb-kicker" id="aiv-roadmap-pts"></span></div></div>
         <div class="in2-road" id="aiv-roadmap-cards"></div>
-        <div class="in2-note" id="aiv-roadmap-footer" style="display:none"><b>What happens when you improve this?</b> AI search tools like Perplexity, ChatGPT and Google AI pull from the same sources — Google reviews, Yelp, food blogs and online directories. Every review you get, every response you post and every complete profile field makes you more likely to appear when someone asks AI where to eat. Most independent restaurants aren't there yet. The ones that are get there through consistency.</div>
+        <div class="in2-note" id="aiv-roadmap-footer" style="display:none"><b>What happens when you improve this?</b> We check one AI search system — Perplexity — by asking it the kinds of questions a guest would, and seeing whether you come up. What it answers from is Perplexity's business, not something we can see. What we can tell you is that these items are the public record of your restaurant: your reviews, your replies, and the fields on your Google listing. Most independent restaurants have gaps here. Closing them is the part that's in your hands.</div>
       </div>
       <div id="aiv-checklist" style="display:none"></div>
     </div>
@@ -7958,8 +7958,11 @@ function renderAIVisibility(d) {
     } else { countUp(scoreEl, ai, 1400, '', '%', 0); }
   }
   if (scoreLbl) {
-    scoreLbl.textContent = !measured ? 'not measured'
-      : (ai >= 67 ? 'strong presence' : (ai >= 34 ? 'moderate presence' : 'not yet indexed'));
+    // Was 'not yet indexed', a claim about every AI system from a
+    // sample of one. The system asked is named alongside it.
+    var plat = d.platform || 'AI search';
+    scoreLbl.textContent = !measured ? ('not measured · ' + plat)
+      : ((ai >= 67 ? 'comes up often' : (ai >= 34 ? 'comes up sometimes' : "doesn't come up yet")) + ' · ' + plat);
   }
   var tone = function(v,hi,mid){return v>=hi?'good':(v>=mid?'warn':'bad');};
   var chipAi=document.getElementById('in2-chip-ai'), chipAiN=document.getElementById('in2-chip-ai-n');
@@ -7973,13 +7976,13 @@ function renderAIVisibility(d) {
     if (d.location_known === false) {
       note = "<b>Can't be measured yet</b> — we don't have a city for this restaurant, so we can't tell your listing apart from another location with the same name. Add your Google Place ID in Account.";
     } else if (!hasScore) {
-      note = "<b>AI search didn't answer this time</b> — this is not a reading of your visibility. Try again shortly.";
+      note = '<b>' + (d.platform || 'AI search') + " didn't answer this time</b> — this is not a reading of your visibility. Try again shortly.";
     } else if (d.partial) {
       note = '<b>Partial check</b> — only ' + (d.answered_queries||0) + ' of ' + (d.total_queries||0) + ' questions came back, so this is an estimate rather than a measurement.';
     } else if (d.city_source === 'profile') {
       note = "<b>Heads up</b> — the city in these questions comes from your profile text, not from your Google listing. Add a Google Place ID for a firmer match.";
     } else if (ai === 0) {
-      note = '<b>Not yet appearing in AI search</b> — normal for independent restaurants this early. More reviews, a complete Google Business Profile and online mentions are what get you there. That is exactly what this platform drives.';
+      note = '<b>Not coming up in ' + (d.platform || 'AI search') + ' yet</b> — normal for independent restaurants this early. This is one system, asked ' + (d.answered_queries||0) + ' ways. More reviews and a complete Google listing are the parts you control.';
     } else if (d.setup_total) {
       note = (d.setup_done||0) + ' of ' + d.setup_total + ' Cavnar connections set up. These help us read your listing; they do not change what AI search sees.';
     }
@@ -8054,19 +8057,19 @@ function renderAIVisibility(d) {
   var reviewTotal = d.review_total || 0, respRate = Math.round(d.resp_rate || 0);
   var cards = [
     { svg: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M8 1.5l1.65 3.35 3.7.54-2.68 2.6.63 3.68L8 9.77l-3.3 1.9.63-3.68L2.65 5.39l3.7-.54L8 1.5z" fill="currentColor"/></svg>', color: 'var(--hb-warn)', title: 'Get more Google reviews',
-      why: 'You have ' + reviewTotal + ' review' + (reviewTotal === 1 ? '' : 's') + ' right now. AI search tools rank restaurants by review volume and recency — the more you have, the more AI systems trust you.',
+      why: 'You have ' + reviewTotal + ' review' + (reviewTotal === 1 ? '' : 's') + ' right now. Review count and recency are the most visible public signal about your restaurant, and the one you can move fastest.',
       action: 'Send a review request', actionFn: "switchTab('reviews', document.getElementById('tab-reviews')); setTimeout(function(){ var c=document.getElementById('rr-card'); if(c){ c.scrollIntoView({behavior:'smooth',block:'start'}); } var e=document.getElementById('rr-email'); if(e) e.focus(); }, 150);",
       impact: 'Highest impact', done: reviewsDone, detail: reviewsDone ? (reviewTotal + ' reviews — past the 50-review AI threshold') : (reviewTotal + ' of 50 reviews — ' + Math.max(50 - reviewTotal, 0) + ' more to go') },
     { svg: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M2 3.5A1.5 1.5 0 013.5 2h9A1.5 1.5 0 0114 3.5V10a1.5 1.5 0 01-1.5 1.5H6.2l-3.2 2V3.5z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>', color: 'var(--hb-good)', title: 'Respond to every review',
-      why: "You're currently responding to " + respRate + '% of your reviews. Response rate signals to Google that your listing is actively managed — active listings rank higher in local search and are more likely to be cited by AI tools that pull from Google data.',
+      why: "You're currently responding to " + respRate + '% of your reviews. Replies are published on your public listing, so a guest reading it sees an owner who answers.',
       action: 'Go to review queue', actionFn: "document.getElementById('tab-reviews') && document.getElementById('tab-reviews').click()",
       impact: 'High impact', done: responseDone, detail: responseDone ? (respRate + '% response rate — excellent') : (respRate + '% response rate — ' + Math.max(75 - respRate, 0) + '% more gets you to 75%') },
     { svg: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="6.5" r="2" stroke="currentColor" stroke-width="1.4"/><path d="M8 2C5.79 2 4 3.79 4 6c0 3.5 4 9 4 9s4-5.5 4-9c0-2.21-1.79-4-4-4z" stroke="currentColor" stroke-width="1.4"/></svg>', color: '#b7791f', title: 'Complete your Google Business Profile',
-      why: 'Your Google Business Profile is ' + gbp + '% complete. Perplexity, ChatGPT and Google AI all pull directly from GBP data — hours, photos, menu, description. A complete profile is the single fastest way to become indexable by AI search.',
+      why: 'Your public listing and review record score ' + gbp + '%. This covers what someone finds when they look you up: your description, hours, phone, website, and how many recent reviews you have.',
       action: 'Open GBP settings', actionFn: "switchTab('account', document.getElementById('tab-account'))",
       impact: 'Fast win', done: gbpDone, detail: missingGbpCount > 0 ? (gbp + '% complete — ' + missingGbpCount + ' item' + (missingGbpCount === 1 ? '' : 's') + ' left') : (gbp + '% complete') },
     { svg: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M2.5 6h2.8l5.2-3v10L5.3 10H2.5A1 1 0 011.5 9V7a1 1 0 011-1z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M5.3 10v3.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>', color: 'var(--ember)', title: 'Post consistently on social',
-      why: "You've logged " + socialPosts + ' marketing piece' + (socialPosts === 1 ? '' : 's') + ' this month. Food blogs and social content get indexed by search engines, which AI tools then pull from — regular posts with your restaurant name, neighborhood and cuisine type build the online footprint AI needs to find you.',
+      why: "You've logged " + socialPosts + ' marketing piece' + (socialPosts === 1 ? '' : 's') + ' this month. Posts that name your restaurant, neighbourhood and cuisine give search engines more text about you to index.',
       action: 'Go to marketing', actionFn: "document.getElementById('tab-marketing') && document.getElementById('tab-marketing').click()",
       impact: 'Long-term', done: socialDone, detail: socialDone ? (socialPosts + ' posts this month — great pace') : (socialPosts === 0 ? 'No marketing pieces logged this month yet' : (socialPosts + ' post' + (socialPosts === 1 ? '' : 's') + ' this month — aim for 8+')) }
   ];
