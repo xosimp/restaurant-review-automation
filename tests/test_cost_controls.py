@@ -194,7 +194,12 @@ def test_every_growing_ledger_has_a_retention_window():
     """Seven tables grew forever. Naming them here means a new one is a
     deliberate decision rather than an oversight."""
     for table in ("ai_usage", "job_runs", "job_failures", "push_deliveries",
-                  "webhook_deliveries", "alert_log", "email_log"):
+                  "webhook_deliveries", "alert_log", "email_log",
+                  # Added by the Intel audits. Eight rows per visibility run
+                  # and one per competitor per weekly analysis, both
+                  # initially registered nowhere.
+                  "ai_visibility_query_runs", "competitor_snapshots",
+                  "ai_visibility_runs"):
         assert table in ops._RETENTION_DAYS, f"{table} still grows without bound"
         assert table in ops._RETENTION_COLUMN, f"{table} has no timestamp column mapped"
 

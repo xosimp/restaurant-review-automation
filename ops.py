@@ -425,6 +425,14 @@ _RETENTION_DAYS = {
     "webhook_deliveries":  int(os.getenv("RETAIN_WEBHOOK_DELIVERIES_DAYS", "60")),
     "alert_log":           int(os.getenv("RETAIN_ALERT_LOG_DAYS", "180")),
     "email_log":           int(os.getenv("RETAIN_EMAIL_LOG_DAYS", "365")),
+    # Added by audits #11 and #12 and initially registered nowhere, which is
+    # exactly the oversight audit #7 built this registry to make impossible.
+    # Eight rows per visibility run, weekly per full-tier client plus every
+    # manual check; one row per competitor per weekly analysis. Both are
+    # kept long enough to show a real trend and no longer.
+    "ai_visibility_query_runs": int(os.getenv("RETAIN_AIVIS_QUERIES_DAYS", "365")),
+    "competitor_snapshots":     int(os.getenv("RETAIN_COMPETITOR_SNAPSHOTS_DAYS", "365")),
+    "ai_visibility_runs":       int(os.getenv("RETAIN_AIVIS_RUNS_DAYS", "730")),
 }
 
 # Each table's own timestamp column — they do not agree on a name.
@@ -432,6 +440,8 @@ _RETENTION_COLUMN = {
     "ai_usage": "created_at", "job_runs": "started_at", "job_failures": "created_at",
     "push_deliveries": "created_at", "webhook_deliveries": "created_at",
     "alert_log": "fired_at", "email_log": "sent_at",
+    "ai_visibility_query_runs": "created_at", "competitor_snapshots": "captured_at",
+    "ai_visibility_runs": "created_at",
 }
 
 

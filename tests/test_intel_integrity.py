@@ -491,6 +491,25 @@ def test_every_checklist_item_states_its_effort(db_path, monkeypatch):
     assert all(i.get("why_it_matters") for i in p["checklist"])
 
 
+def test_every_checklist_BRANCH_states_its_effort():
+    """One fixture only renders the branches its own numbers reach — a
+    restaurant with ten reviews never renders the "50+ reviews" item, so
+    stripping that branch's effort tag left the suite green. Count against
+    the source so every branch is covered."""
+    import inspect
+    import client_api
+    src = inspect.getsource(client_api._do_ai_visibility_inner)
+    appends = src.count("checklist.append({")
+    tagged = src.count('"effort":')
+    assert appends > 0
+    assert tagged == appends, f"{appends - tagged} checklist branch(es) state no effort"
+    assert src.count('"why_it_matters":') == appends
+    # "kind" is deliberately not counted here — the query specs use the same
+    # key, so the count is not comparable. Checklist kinds are covered by
+    # test_presence_and_setup_are_scored_separately, which asserts against
+    # the rendered items.
+
+
 def test_a_run_writes_down_what_it_asked(db_path, monkeypatch):
     """ai_visibility_runs stored a score and nothing else, so a change could
     never be explained — while the drop alert told the owner to open Intel
@@ -573,6 +592,14 @@ def test_competitor_appearances_come_from_the_same_answers(db_path, monkeypatch)
     assert all(c["queries"] > 0 for c in p["competitor_appearances"])
 
 
+def test_the_city_cache_ttl_is_actually_bounded():
+    """The mechanism test below monkeypatches the TTL, so it passes whatever
+    the real constant is — including the effectively-infinite value the bug
+    had. Pin the real number."""
+    import client_api
+    assert 0 < client_api._CITY_CACHE_SECS <= 7 * 86400
+
+
 def test_the_city_cache_expires(monkeypatch):
     """It never did, so a restaurant that relocated kept the old city — and
     the city gates every appearance match."""
@@ -618,3 +645,25 @@ def test_no_route_hands_a_client_a_raw_exception():
         if f.exists() and "error=str(e)" in f.read_text():
             offenders.append(name)
     assert not offenders, offenders
+
+
+def test_the_new_ledgers_are_registered_for_retention():
+    """Audit #7 built a retention registry so a new growing table is a
+    deliberate decision rather than an oversight. Audits #11 and #12 each
+    added one and registered neither."""
+    import ops
+    for t in ("ai_visibility_query_runs", "competitor_snapshots", "ai_visibility_runs"):
+        assert t in ops._RETENTION_DAYS, t
+        assert t in ops._RETENTION_COLUMN, t
+
+
+def test_every_number_the_payload_computes_reaches_a_surface():
+    """Three audits running, and the recurring failure is the same one: a
+    figure computed with a comment explaining why it matters, returned in
+    the payload, and decoded by nothing. Pin the ones that exist now."""
+    import pathlib as _pl
+    root = _pl.Path(__file__).resolve().parent.parent
+    swift = (root / "ios/CavnarAI/CavnarAI/Features/Intel/AIVisibilitySection.swift").read_text()
+    for field in ("brandedScore", "competitorAppearances", "setupDone",
+                  "scoreCaveat", "aiScoreLow", "platform"):
+        assert field in swift, f"{field} is decoded but never rendered"

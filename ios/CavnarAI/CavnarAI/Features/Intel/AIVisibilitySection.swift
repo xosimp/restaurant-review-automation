@@ -254,6 +254,28 @@ struct AIVisibilitySection: View {
                     .foregroundStyle(Color.cavnarInk3)
                     .padding(.top, 10)
             }
+            // Branded recall and competitor appearance, both decoded and
+            // neither rendered — the exact pattern these audits keep
+            // finding. A number computed and never shown is a number
+            // nobody can act on.
+            if let b = result.brandedScore, (result.brandedQueries ?? 0) > 0 {
+                Text(b >= 50
+                     ? "Asked about you by name, \(result.platform ?? "it") knows who you are."
+                     : "Asked about you by name, \(result.platform ?? "it") didn't recognise you. That's separate from whether you come up in an open search.")
+                    .font(.cavnarBody(13))
+                    .foregroundStyle(Color.cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 8)
+            }
+            if let comps = result.competitorAppearances, !comps.isEmpty {
+                Text("Also named in these answers: "
+                     + comps.prefix(3).map { "\($0.name) (\($0.queries))" }.joined(separator: ", ")
+                     + (comps.count > 3 ? " and \(comps.count - 3) more" : ""))
+                    .font(.cavnarBody(13))
+                    .foregroundStyle(Color.cavnarInk2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 8)
+            }
             if let done = result.setupDone, let total = result.setupTotal, total > 0 {
                 Text("\(done) of \(total) Cavnar connections set up. These help us read your listing; they don't change what AI search sees.")
                     .font(.cavnarBody(12.5))
