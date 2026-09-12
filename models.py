@@ -4404,6 +4404,59 @@ def update_schedule_history_rows(restaurant_id: int, schedule_csv: str,
         conn.close()
 
 
+_HISTORY_BAND_LEAD = {"excellent": "Excellent week", "good": "Solid week",
+                      "fair": "A few soft spots", "weak": "Needs attention"}
+
+
+def _history_summary_line(quality: dict, hours_scheduled, hours_budget, edited_at) -> tuple:
+    """One honest line for a Schedule History row.
+
+    Built only from what the Shift Quality Engine (shift_quality.evaluate_
+    schedule) and the hours themselves actually established for THIS week —
+    never a generic claim ("no leadership issues") the engine didn't make.
+    weaknesses/strengths are the engine's own week-level sentences (already
+    human-readable — see shift_quality._week_reasons), so the most notable
+    one is used verbatim rather than re-summarized into something new that
+    could drift from what it actually found. Returns (line, tone) where
+    tone is 'good' | 'warn' | 'info' for the row's status dot.
+    """
+    q = quality or {}
+    if not q.get("checked"):
+        # No quality read on this week (engine failed, or the row predates
+        # this feature) — hours are the one thing always known.
+        if hours_budget and hours_scheduled:
+            diff = round(hours_budget - hours_scheduled, 1)
+            if abs(diff) < 0.5:
+                return "On budget", "info"
+            if diff > 0:
+                return "%s hrs under budget" % _fmt_hrs_hs(diff), "good"
+            return "%s hrs over budget" % _fmt_hrs_hs(-diff), "warn"
+        return "Not yet scored", "info"
+
+    band = q.get("band") or ""
+    lead = _HISTORY_BAND_LEAD.get(band, "Scored")
+    tone = "good" if band in ("excellent", "good") else "warn"
+    weaknesses = q.get("weaknesses") or []
+    strengths = q.get("strengths") or []
+    detail = None
+    if weaknesses:
+        detail = weaknesses[0]
+        tone = "warn"
+    elif strengths:
+        detail = strengths[0]
+    line = lead + (" · " + detail if detail else "")
+    if len(line) > 110:
+        line = line[:107].rstrip() + "…"
+    if edited_at:
+        line = "Manually edited · " + line
+    return line, tone
+
+
+def _fmt_hrs_hs(n) -> str:
+    n = round(float(n), 1)
+    return str(int(n)) if n == int(n) else str(n)
+
+
 def get_schedule_history(restaurant_id: int, limit: int = 300, db_path: str = DB_PATH) -> list:
     """Summary rows only (no schedule_csv) for the history list screen —
     keeps the list payload light; fetch the full record via
@@ -4413,7 +4466,7 @@ def get_schedule_history(restaurant_id: int, limit: int = 300, db_path: str = DB
         _ensure_history_columns(conn)
         rows = conn.execute("""
             SELECT id, generated_at, week_start, week_end, hours_scheduled,
-                   hours_budget, labor_target, quality_json, edited_at
+                   hours_budget, labor_target, quality_json, edited_at, edited_by
             FROM schedule_history WHERE restaurant_id=?
             ORDER BY generated_at DESC, id DESC LIMIT ?
         """, (restaurant_id, limit)).fetchall()
@@ -4434,6 +4487,8 @@ def get_schedule_history(restaurant_id: int, limit: int = 300, db_path: str = DB
         d["quality_score"] = (q or {}).get("score")
         d["quality_band"] = (q or {}).get("band")
         d["confidence"] = ((q or {}).get("confidence") or {}).get("level")
+        d["summary_line"], d["summary_tone"] = _history_summary_line(
+            q, d.get("hours_scheduled"), d.get("hours_budget"), d.get("edited_at"))
         out.append(d)
     return out
 

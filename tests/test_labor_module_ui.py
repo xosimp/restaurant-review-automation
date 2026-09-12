@@ -217,7 +217,11 @@ def test_labor_body_text_below_the_consultant_box_was_actually_enlarged():
     assert size_of(".lb2-sg .v") >= 32
     assert size_of(".lb2-money .x") >= 17
     assert size_of(".lb2-events li") >= 15
-    assert size_of(".lb2-hist .row") >= 15
+    # The History row was later redesigned from one flat font-size into a
+    # real hierarchy (see test_schedule_history_redesign.py) — the week
+    # range stays at this same 15px floor, and only the metadata around it
+    # (the AI summary line, generated-time, hours) sits smaller.
+    assert size_of(".lb2-hist .rtop b") >= 15
 
 
 def test_only_one_availability_toggle_button_remains():

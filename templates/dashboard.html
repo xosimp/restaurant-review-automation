@@ -2071,14 +2071,43 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .lb2-subsection-title{font-family:'Clash Display',sans-serif;font-size:17px;font-weight:500;color:var(--ink)}
 .lb2-subsection-chip{font-family:'Apfel Grotezk',sans-serif;font-size:13px;font-weight:500;color:var(--ink3);margin-left:4px}
 .lb2-subsection-toggle{font-size:14.5px;font-weight:700}
-.lb2-hist{display:flex;flex-direction:column;margin-top:8px}
-.lb2-hist .row{display:flex;align-items:center;gap:14px;padding:11px 0;border-top:1px solid var(--hb-line2);font-size:15px;color:var(--ink2)}
+/* Schedule History — a scannable activity timeline, not a card grid.
+   Row-based on purpose: an owner browsing fifty past weeks needs aligned
+   columns and one glance per row, not fifty tiles. Structure comes from a
+   hairline divider, a soft hover/selected tint and a left accent bar —
+   never a border-per-row box, heavy shadow or gradient. */
+.lb2-hist{display:flex;flex-direction:column;margin-top:6px}
+.lb2-hist .row{display:grid;grid-template-columns:1fr auto auto;align-items:center;gap:16px;padding:11px 12px;margin:0 -12px;border-radius:9px;border-top:1px solid var(--hb-line2);cursor:pointer;transition:background-color .15s ease,box-shadow .15s ease}
 .lb2-hist .row:first-child{border-top:none}
-.lb2-hist .row b{color:var(--ink);font-weight:600;font-family:'Space Grotesk',sans-serif}
-.lb2-hist .row .m{flex:1;min-width:0}
-.lb2-hist .row .n{font-size:14px;color:var(--ink3)}
-.lb2-hist .row .n.good{color:var(--hb-good)}.lb2-hist .row .n.bad{color:var(--hb-bad)}
-.lb2-hist .row .a{display:flex;gap:6px}
+.lb2-hist .row:hover{background:var(--hb-tint)}
+.lb2-hist .row.selected{background:var(--hb-tint2);box-shadow:inset 3px 0 0 var(--ember)}
+.lb2-hist .row:focus-visible{outline:none;box-shadow:0 0 0 2px var(--cb-ring-gap,var(--paper)),0 0 0 4px var(--cb-accent,var(--ember))}
+.lb2-hist .row.selected:focus-visible{box-shadow:inset 3px 0 0 var(--ember),0 0 0 2px var(--cb-ring-gap,var(--paper)),0 0 0 4px var(--cb-accent,var(--ember))}
+.lb2-hist .rmain{min-width:0}
+.lb2-hist .rtop{display:flex;align-items:baseline;gap:8px}
+.lb2-hist .rtop b{color:var(--ink);font-weight:600;font-family:'Space Grotesk',sans-serif;font-size:15px;white-space:nowrap}
+.lb2-hist .rgen{font-size:12px;color:var(--ink3);margin-left:auto;padding-left:10px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.lb2-hist .rline{display:flex;align-items:center;gap:7px;margin-top:3px;font-size:12.5px;color:var(--ink3);overflow:hidden}
+.lb2-hist .rline .rtxt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lb2-hist .rline .dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+.lb2-hist .rline .dot.good{background:var(--hb-good)}
+.lb2-hist .rline .dot.warn{background:var(--hb-warn)}
+.lb2-hist .rline .dot.info{background:#6aabff}
+.lb2-hist .badge{font-size:10.5px;font-weight:700;letter-spacing:.02em;padding:2px 7px;border-radius:999px;white-space:nowrap;flex-shrink:0}
+.lb2-hist .badge.ai{background:rgba(106,171,255,.14);color:#6aabff}
+.lb2-hist .badge.edited{background:rgba(239,159,39,.16);color:#ef9f27}
+.lb2-hist .rside{display:flex;align-items:center;gap:10px}
+.lb2-hist .qpill{font-family:'Space Grotesk',sans-serif;font-size:12.5px;font-weight:700;padding:3px 9px;border-radius:999px;white-space:nowrap}
+.lb2-hist .qpill.good{background:rgba(74,173,122,.14);color:var(--hb-good)}
+.lb2-hist .qpill.warn{background:rgba(224,85,85,.14);color:var(--hb-bad)}
+.lb2-hist .qpill.fair{background:rgba(239,159,39,.16);color:#ef9f27}
+.lb2-hist .rhrs{font-family:'Space Grotesk',sans-serif;font-size:12.5px;color:var(--ink3);white-space:nowrap}
+.lb2-hist .ractions{display:flex;gap:2px;opacity:.55;transition:opacity .15s ease}
+.lb2-hist .row:hover .ractions,.lb2-hist .row:focus-within .ractions{opacity:1}
+.lb2-hist .rskel{display:grid;grid-template-columns:1fr auto;gap:16px;align-items:center;padding:11px 12px;border-top:1px solid var(--hb-line2)}
+.lb2-hist .rskel:first-child{border-top:none}
+@media (max-width:640px){.lb2-hist .row{grid-template-columns:1fr auto}.lb2-hist .rgen{display:none}.lb2-hist .ractions{opacity:1}}
+#sched-history-more{padding:12px 0 2px;text-align:center}
 #sched-history-detail{margin-top:14px;padding:14px 16px;border-radius:10px;background:var(--hb-tint)}
 .lb2-daterange{font-size:14px;font-weight:600;color:var(--ink3);display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:10px 0 12px}
 .lb2-daterange .sep{color:var(--ink3);opacity:.5}
@@ -2508,7 +2537,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 
 
     <div class="hb-sh"><div><div class="k">History</div><h2>Schedules you've built<small><span id="sched-history-count"></span></small></h2></div></div>
-    <div id="sched-history-list" class="lb2-hist"><div class="hb-empty">Loading…</div></div>
+    <div id="sched-history-list" class="lb2-hist"><div class="rskel"><div><div class="hb-skel" style="width:150px;height:14px;margin-bottom:8px"></div><div class="hb-skel" style="width:220px;height:11px"></div></div><div class="hb-skel" style="width:56px;height:22px;border-radius:999px"></div></div><div class="rskel"><div><div class="hb-skel" style="width:150px;height:14px;margin-bottom:8px"></div><div class="hb-skel" style="width:200px;height:11px"></div></div><div class="hb-skel" style="width:56px;height:22px;border-radius:999px"></div></div></div>
     <div id="sched-history-detail" style="display:none"></div>
   </div>
 
@@ -11233,39 +11262,97 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       list.innerHTML=st.map(function(x){var seen=!!x.viewed_at;return '<div style="display:flex;justify-content:space-between;gap:8px;padding:4px 0;border-top:1px solid rgba(255,255,255,.06)"><span>'+esc(x.employee_name)+'</span><span style="color:'+(seen?'#6fcf97':'rgba(255,255,255,.4)')+'">'+(seen?'Opened '+ago(x.viewed_at)+(x.view_count>1?' · '+x.view_count+'×':''):'Not opened yet')+'</span></div>';}).join('');
     });
   };
+  // ── Schedule History — activity timeline, not cards ─────────────────────
+  // Rendered in pages of SCHED_HIST_PAGE rather than all at once: the API
+  // can return up to 300 weeks, and building/painting 300 rows' worth of
+  // markup up front is wasted work when an owner almost never scrolls past
+  // the first screen of them. cavnarWhenVisible (the same scroll-reveal
+  // helper the chart primitives use) mounts a sentinel row at the bottom of
+  // whatever is currently rendered and appends the next page only once that
+  // sentinel actually scrolls into view — so the DOM only ever holds as
+  // many rows as have genuinely been looked at, however many hundred exist.
+  var _schedHistAll=[],_schedHistShown=0,SCHED_HIST_PAGE=25;
+  var _SH_ICON_EYE='<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M1 8s2.5-4.5 7-4.5S15 8 15 8s-2.5 4.5-7 4.5S1 8 1 8Z"/><circle cx="8" cy="8" r="2.1"/></svg>';
+  var _SH_ICON_CSV='<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8m0 0-3-3m3 3 3-3"/><path d="M2.5 11.5V13a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1v-1.5"/></svg>';
+  var _SH_ICON_TRASH='<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4.5h10M6.5 4.5V3a1 1 0 0 1 1-1h1a1 1 0 0 1 1 1v1.5M4.5 4.5 5 13a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1l.5-8.5"/><path d="M6.7 7v4M9.3 7v4"/></svg>';
+  function _schedHistSkeletonHtml(n){
+    var s='';
+    for(var i=0;i<n;i++)s+='<div class="rskel"><div><div class="hb-skel" style="width:150px;height:14px;margin-bottom:8px"></div><div class="hb-skel" style="width:'+(180+i*20)+'px;height:11px"></div></div><div class="hb-skel" style="width:56px;height:22px;border-radius:999px"></div></div>';
+    return s;
+  }
+  // One honest line and a status dot travel with every row already (see
+  // models._history_summary_line) — built from the Shift Quality Engine's
+  // own findings for that week, never invented copy.
+  function _schedHistRowHtml(r){
+    var hs=+r.hours_scheduled||0;
+    var M=window.CavnarCharts?CavnarCharts.mdy:function(x){return x;};
+    var band=r.quality_band;
+    var qtone=(band==='excellent'||band==='good')?'good':(band==='fair'?'fair':(band?'warn':''));
+    var q=r.quality_score?'<span class="qpill '+qtone+'" title="Shift Quality'+(r.confidence?' · '+esc(r.confidence)+' confidence':'')+'">'+r.quality_score+'</span>':'';
+    var badge=r.edited_at?'<span class="badge edited" title="'+(r.edited_by?'Edited by '+esc(r.edited_by):'Manually edited')+'">Edited</span>':'<span class="badge ai" title="Generated by Cavnar AI">AI</span>';
+    var tone=r.summary_tone||'info';
+    var week=esc(M(r.week_start||''))+(r.week_end?' – '+esc(M(r.week_end)):'');
+    return '<div class="row" tabindex="0" role="button" data-id="'+r.id+'" aria-label="View schedule for week of '+week+'"'
+      +' onclick="viewScheduleHistory('+r.id+',this.querySelector(\'.ric-view\'))"'
+      +' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();viewScheduleHistory('+r.id+',this.querySelector(\'.ric-view\'));}">'
+      +'<div class="rmain"><div class="rtop"><b>'+week+'</b>'+badge+'<span class="rgen">'+ago(r.generated_at)+'</span></div>'
+      +'<div class="rline"><span class="dot '+tone+'"></span><span class="rtxt">'+esc(r.summary_line||'')+'</span></div></div>'
+      +'<div class="rside">'+q+'<span class="rhrs">'+Math.round(hs)+'h</span></div>'
+      +'<div class="ractions">'
+      +'<button class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm ric-view" title="View" aria-label="View" onclick="event.stopPropagation();viewScheduleHistory('+r.id+',this)">'+_SH_ICON_EYE+'</button>'
+      +'<button class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" title="Download CSV" aria-label="Download CSV" onclick="event.stopPropagation();downloadHistoryCsv('+r.id+')">'+_SH_ICON_CSV+'</button>'
+      +'<button class="cbtn cbtn-icon cbtn-text cbtn-danger cbtn-sm" title="Delete" aria-label="Delete" onclick="event.stopPropagation();deleteScheduleHistory('+r.id+',this)">'+_SH_ICON_TRASH+'</button>'
+      +'</div></div>';
+  }
+  function _schedHistMarkSelected(){
+    var rows=document.querySelectorAll('#sched-history-list .row');
+    for(var i=0;i<rows.length;i++)rows[i].classList.toggle('selected',+rows[i].getAttribute('data-id')===window._schedHistOpenId);
+  }
+  function _schedHistRenderMore(){
+    var el=document.getElementById('sched-history-list');if(!el)return;
+    var moreEl=document.getElementById('sched-history-more');if(moreEl)moreEl.remove();
+    var next=Math.min(_schedHistShown+SCHED_HIST_PAGE,_schedHistAll.length);
+    el.insertAdjacentHTML('beforeend',_schedHistAll.slice(_schedHistShown,next).map(_schedHistRowHtml).join(''));
+    _schedHistShown=next;
+    if(window._schedHistOpenId)_schedHistMarkSelected();
+    if(_schedHistShown<_schedHistAll.length){
+      el.insertAdjacentHTML('beforeend','<div id="sched-history-more"><span class="hb-empty" style="padding:0">Loading more…</span></div>');
+      cavnarWhenVisible(document.getElementById('sched-history-more'),_schedHistRenderMore);
+    }
+  }
   window.loadScheduleHistory=function(){
     var el=document.getElementById('sched-history-list');if(!el)return;
+    el.innerHTML=_schedHistSkeletonHtml(4);
     jget('/api/labor/schedule-history',function(d){
-      var h=(d.ok&&d.history)||[];
-      var cnt=document.getElementById('sched-history-count');if(cnt)cnt.textContent=h.length?h.length+' generated':'';
-      if(!h.length){el.textContent='No schedules generated yet — the first one you generate is kept here.';return;}
-      el.innerHTML=h.slice(0,12).map(function(r){var hs=+r.hours_scheduled||0,hb=+r.hours_budget||0;var note=hb&&hs?(hs<hb?Math.round(hb-hs)+' hrs under budget':(hs>hb?Math.round(hs-hb)+' hrs over budget':'on budget')):'';var tone=hb&&hs?(hs<=hb?'good':'bad'):'';var M=window.CavnarCharts?CavnarCharts.mdy:function(x){return x;};
-        // The Shift Quality score travels with the list now, so a week can
-        // be compared against the ones before it. It used to live only in
-        // the async job result, which is deleted the first time it is
-        // polled — so the headline number an owner is asked to trust could
-        // never be looked at twice and there was no trend to see.
-        var q=r.quality_score?'<span class="n '+(r.quality_score>=78?'good':(r.quality_score>=65?'':'bad'))+'" title="Shift Quality'+(r.confidence?' · '+esc(r.confidence)+' confidence':'')+'">'+r.quality_score+'/100</span>':'';
-        var ed=r.edited_at?' · <span class="n">edited</span>':'';
-        return '<div class="row"><b>'+esc(M(r.week_start||''))+'</b><span class="m">'+(r.week_end?'through <span class="hb-num">'+esc(M(r.week_end))+'</span> · ':'')+'<span class="hb-num">'+Math.round(hs)+'</span> hrs scheduled'+(note?' · <span class="n '+tone+'">'+note+'</span>':'')+(q?' · '+q:'')+ed+'</span><span class="n hb-num">'+ago(r.generated_at)+'</span><span class="a"><button class="cbtn cbtn-secondary" onclick="viewScheduleHistory('+r.id+',this)">View</button><button class="cbtn cbtn-secondary" onclick="downloadHistoryCsv('+r.id+')">CSV</button><button class="hb-x" style="opacity:1" title="Delete" onclick="deleteScheduleHistory('+r.id+',this)">✕</button></span></div>';}).join('');
+      _schedHistAll=(d.ok&&d.history)||[];
+      _schedHistShown=0;
+      var cnt=document.getElementById('sched-history-count');if(cnt)cnt.textContent=_schedHistAll.length?_schedHistAll.length+' generated':'';
+      if(!_schedHistAll.length){el.innerHTML='<div class="hb-empty">No schedules generated yet — the first one you generate is kept here.</div>';return;}
+      el.innerHTML='';
+      _schedHistRenderMore();
     });
   };
   window.viewScheduleHistory=function(id,btn){
     var box=document.getElementById('sched-history-detail');if(!box)return;
     var done=busy(btn,'…');
+    window._schedHistOpenId=id;_schedHistMarkSelected();
     jget('/api/labor/schedule-history/'+id,function(d){
       done();if(!d.ok){toast(d.error||'Could not load','error');return;}
       var rows=d.preview_rows||[];
       var csv=d.schedule_csv||'';
-      var html='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:10px"><div style="font-size:15px;font-weight:600;color:var(--ink)">Week of '+esc(d.week_start||'')+' · '+rows.length+' shifts</div><div style="display:flex;gap:10px"><button onclick="downloadHistoryCsv('+id+')" class="cbtn cbtn-secondary">Download CSV</button><button onclick="document.getElementById(\'sched-history-detail\').style.display=\'none\'" class="cbtn cbtn-secondary">Close ✕</button></div></div>';
+      var html='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:10px"><div style="font-size:15px;font-weight:600;color:var(--ink)">Week of '+esc(d.week_start||'')+' · '+rows.length+' shifts</div><div style="display:flex;gap:10px"><button onclick="downloadHistoryCsv('+id+')" class="cbtn cbtn-secondary">Download CSV</button><button onclick="closeScheduleHistoryDetail()" class="cbtn cbtn-secondary">Close ✕</button></div></div>';
       html+='<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13.5px"><tr style="color:var(--ink3);text-transform:uppercase;font-size:13px;letter-spacing:.06em"><th style="text-align:left;padding:6px 8px">Day</th><th style="text-align:left;padding:6px 8px">Employee</th><th style="text-align:left;padding:6px 8px">Role</th><th style="text-align:left;padding:6px 8px">Shift</th><th style="text-align:right;padding:6px 8px">Hrs</th></tr>';
       html+=rows.map(function(r){return '<tr style="border-top:1px solid var(--paper3)"><td style="padding:6px 8px;color:var(--ink)">'+esc(r.day||r.date||'')+'</td><td style="padding:6px 8px;color:var(--ink)">'+esc(r.employee||'')+'</td><td style="padding:6px 8px;color:var(--ink3)">'+esc(r.role||'')+'</td><td style="padding:6px 8px;color:var(--ink3);white-space:nowrap">'+esc(r.shift_start||'')+'–'+esc(r.shift_end||'')+'</td><td style="padding:6px 8px;text-align:right;font-family:\'Space Grotesk\',sans-serif">'+esc(r.scheduled_hours||'')+'</td></tr>';}).join('')+'</table></div>';
       box.innerHTML=html;box.style.display='block';window._schedHistCsv=window._schedHistCsv||{};window._schedHistCsv[id]={csv:csv,week:d.week_start||''};
       box.scrollIntoView({behavior:'smooth',block:'nearest'});
     });
   };
+  window.closeScheduleHistoryDetail=function(){
+    var box=document.getElementById('sched-history-detail');if(box){box.style.display='none';box.innerHTML='';}
+    window._schedHistOpenId=null;_schedHistMarkSelected();
+  };
   window.downloadHistoryCsv=function(id){var e=(window._schedHistCsv||{})[id];if(!e||!e.csv){toast('No CSV stored for this week','error');return;}var blob=new Blob([e.csv],{type:'text/csv'});var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='schedule-'+(e.week||id)+'.csv';document.body.appendChild(a);a.click();document.body.removeChild(a);};
-  window.deleteScheduleHistory=function(id,btn){if(!confirm('Delete this schedule from history?'))return;var done=busy(btn,'…');jsend('/api/labor/schedule-history/'+id,{},function(d){done();if(d.ok){toast('Deleted','success');loadScheduleHistory();var box=document.getElementById('sched-history-detail');if(box)box.style.display='none';}else toast(d.error||'Could not delete','error');},'DELETE');};
+  window.deleteScheduleHistory=function(id,btn){if(!confirm('Delete this schedule from history?'))return;var done=busy(btn,'…');jsend('/api/labor/schedule-history/'+id,{},function(d){done();if(d.ok){toast('Deleted','success');loadScheduleHistory();if(window._schedHistOpenId===id)closeScheduleHistoryDetail();}else toast(d.error||'Could not delete','error');},'DELETE');};
 
   // ── Reviews ──
   window.retractR=function(id,btn){
