@@ -93,18 +93,18 @@ def test_week_radar_number_matches_its_sibling_stat_sizes():
 
 def test_overtime_card_border_is_not_the_overstaffed_orange():
     s = _src()
-    i = s.index('Overtime alerts')
+    i = s.index('>Overtime alerts<')  # the heading markup, not the CSS comment above it
     card = s[i:i + 400]
-    m = re.search(r'class="dark-hero-card" style="border:1px solid (rgba\([\d,.]+\))', card)
+    m = re.search(r'class="dark-hero-card[^"]*" style="border:1px solid (rgba\([\d,.]+\))', card)
     assert m, "couldn't find the overtime alerts card border"
     assert m.group(1) != "rgba(200,75,47,.45)", \
         "overtime alerts should not share the overstaffed card's orange border"
+    assert "ot-hero-card" in card, "overtime card should carry its own background-override class"
 
 
 def test_overtime_at_risk_hour_figure_and_badge_are_red_not_orange():
-    body = _fn("renderWeekRadar")  # sanity: helper still works below on a real fn
     s = _src()
-    i = s.index("Overtime alerts")
+    i = s.index(">Overtime alerts<")  # the heading markup, not the CSS comment above it
     j = s.index("{% endfor %}", i)
     block = s[i:j]
     assert "#ff8a65" not in block, "overtime block still uses the overstaffed orange somewhere"

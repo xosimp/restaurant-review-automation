@@ -211,6 +211,12 @@ html[data-theme="dark"] body{color:var(--ink)}
    page background; dark mode keeps the original black gradient look. */
 .dark-hero-card{background:linear-gradient(160deg,var(--paper2) 0%,var(--paper3) 100%)}
 [data-theme="dark"] .dark-hero-card{background:linear-gradient(135deg,#1a0f0a 0%,#120c08 60%,#0e0a06 100%)!important}
+/* Overtime alerts shares .dark-hero-card's shape/border-radius machinery
+   but needs its own background — sharing the Overstaffed card's orange
+   gradient made the two read as the same table at a glance despite the
+   red border and red figures. More specific than .dark-hero-card alone,
+   so it wins regardless of source order. */
+[data-theme="dark"] .dark-hero-card.ot-hero-card{background:linear-gradient(135deg,#210a0a 0%,#170808 60%,#0e0505 100%)!important}
 /* AI insight/brief callouts — quieted deliberately (was the same busy
    ember gradient as every tool card around it, competing for attention it
    doesn't need as passive commentary). Applies everywhere this class is
@@ -1361,8 +1367,11 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     // childList mutation, so neither MutationObserver on the page wakes up
     // 60 times a second while this runs. Start after fonts and first paint
     // so the numeral face never swaps mid-count.
-    var start=null,dur=2200,last=-1;
-    function step(ts){if(!start)start=ts;var p=Math.min((ts-start)/dur,1),e=1-Math.pow(1-p,4),v=Math.round(target*e);if(v!==last){last=v;node.nodeValue=prefix+v.toLocaleString();}if(p<1)requestAnimationFrame(step);else{node.nodeValue=final;}}
+    var start=null,dur=2200,last=-1,lastTs=null;
+    // Gap-fold: an OS-occluded tab stops delivering rAF and resumes later —
+    // without this, wall-clock elapsed on the next tick jumps the count
+    // straight toward its end value instead of finishing the tween.
+    function step(ts){if(!start){start=ts;lastTs=ts;}var gap=ts-lastTs;if(gap>100)start+=gap;lastTs=ts;var p=Math.min((ts-start)/dur,1),e=1-Math.pow(1-p,4),v=Math.round(target*e);if(v!==last){last=v;node.nodeValue=prefix+v.toLocaleString();}if(p<1)requestAnimationFrame(step);else{node.nodeValue=final;}}
     var go=function(){requestAnimationFrame(function(){requestAnimationFrame(step);});};
     if(document.fonts&&document.fonts.ready)document.fonts.ready.then(go,go);else go();
   }
@@ -1985,7 +1994,17 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .lb2-hero .delta.good{color:var(--hb-good)}.lb2-hero .delta.bad{color:var(--hb-bad)}
 .lb2-hero .delta span{color:var(--ink3);font-weight:400}
 .lb2-hero svg{display:block;width:100%;height:190px;margin-top:6px;overflow:visible;cursor:crosshair}
-#lb2-hero-chart{position:relative}
+/* .lb2-callout's top:X% is computed straight off LB2_H pixel coordinates
+   (see _laborCallout) and can sit as high as top:2% before its own
+   translateY(-100%) flips it above its anchor point — so with only the
+   svg's 6px margin-top separating this container from the "% of sales"
+   number above it, a peak/worst-day callout bubble could reach up far
+   enough to crowd that number. This margin is on the container, outside
+   the box the callout's percentages resolve against, so it doesn't shift
+   the callout's own math relative to its data point — it just gives the
+   whole chart block (and whatever the callout draws above it) more room
+   below the header. */
+#lb2-hero-chart{position:relative;margin-top:24px}
 .lb2-callout{position:absolute;transform:translate(-50%,-100%);max-width:200px;background:var(--surface);border:1px solid var(--hb-line);border-radius:8px;padding:6px 10px;font-size:12px;font-weight:600;color:var(--ink2);line-height:1.35;box-shadow:0 8px 20px rgba(0,0,0,.16);display:flex;align-items:flex-start;gap:6px;opacity:0;animation:hbFillIn .6s ease 2.6s forwards;pointer-events:none;z-index:2;white-space:normal}
 .lb2-callout .dot{width:6px;height:6px;border-radius:50%;background:var(--hb-bad);flex-shrink:0;margin-top:4px;box-shadow:0 0 6px var(--hb-bad)}
 .lb2-hoverdot{position:absolute;width:9px;height:9px;margin:-4.5px 0 0 -4.5px;border-radius:50%;border:2px solid var(--surface);box-shadow:0 0 0 1px rgba(0,0,0,.1),0 2px 6px rgba(0,0,0,.25);pointer-events:none;z-index:3;transition:left .07s linear,top .07s linear}
@@ -2062,7 +2081,11 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .lb2-events li:first-child{border-top:none;padding-top:0}
 .lb2-events b{color:var(--ink);font-weight:600}
 .lb2-events .d{width:8px;height:8px;border-radius:50%;background:var(--ember);box-shadow:0 0 8px var(--ember);margin-top:7px;flex-shrink:0}
-.lb2-avail{margin-top:10px;padding:14px 16px;border-radius:10px;background:var(--hb-tint)}
+/* Was a flat var(--hb-tint) wash — a single-opacity ember tint with no
+   border reads as an undefined brown stain rather than a card. The
+   gradient + hairline border is the same "branded panel" recipe as
+   .cal-card elsewhere in the app. */
+.lb2-avail{margin-top:10px;padding:14px 16px;border-radius:10px;background:linear-gradient(160deg,rgba(200,75,47,.10) 0%,rgba(200,75,47,.03) 100%);border:1px solid rgba(200,75,47,.2)}
 .lb2-avail input[type=text]{background:var(--hb-field)!important;border-color:var(--hb-line)!important;color:var(--ink)!important}
 /* Employee Availability / Operational Score headers — these were a 10px
    uppercase kicker, the smallest text on the page, for what is actually a
@@ -2235,8 +2258,12 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       // own tiny tween that keeps calling _fmtK() as the value ramps up
       // rather than count up through unformatted numbers then snap to k.
       (function(){
-        var dur=900,start=null,done=false;
-        function tick(ts){if(!start)start=ts;var p=Math.min((ts-start)/dur,1),e=1-Math.pow(1-p,3);totalEl.textContent=_fmtK(total*e);if(p<1)requestAnimationFrame(tick);else{done=true;totalEl.textContent=_fmtK(total);}}
+        var dur=900,start=null,last=null,done=false;
+        // Same gap-fold as countUp() in the shared script below — a tab the
+        // OS occludes mid-scroll stops delivering rAF, and the wall-clock
+        // elapsed on the next tick would otherwise snap this straight to
+        // its near-final value instead of finishing the tween smoothly.
+        function tick(ts){if(!start){start=ts;last=ts;}var gap=ts-last;if(gap>100)start+=gap;last=ts;var p=Math.min((ts-start)/dur,1),e=1-Math.pow(1-p,3);totalEl.textContent=_fmtK(total*e);if(p<1)requestAnimationFrame(tick);else{done=true;totalEl.textContent=_fmtK(total);}}
         var _rm=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
         if(_rm){totalEl.textContent=_fmtK(total);return;}
         cavnarWhenVisible(svgEl,function(){
@@ -2618,11 +2645,13 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     </div>
     <div style="display:flex;flex-direction:column;">
       {% if labor.overtime_risk %}
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-        <span style="width:8px;height:8px;border-radius:50%;background:#ff5a5a;flex-shrink:0"></span>
-        <span style="font-size:16px;font-weight:700;color:var(--ink);letter-spacing:-.01em">Overtime alerts</span>
+      <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:4px">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:0">
+          <span style="width:8px;height:8px;border-radius:50%;background:#ff5a5a;flex-shrink:0"></span>
+          <span style="font-size:16px;font-weight:700;color:var(--ink);letter-spacing:-.01em">Overtime alerts</span>
+        </div>
       </div>
-      <div class="dark-hero-card" style="border:1px solid rgba(255,90,90,.45);border-radius:12px;overflow:hidden">
+      <div class="dark-hero-card ot-hero-card" style="border:1px solid rgba(255,90,90,.45);border-radius:12px;overflow:hidden">
         {% for emp in labor.overtime_risk %}
         {% set two_wk = labor.employee_hours.get(emp.employee, {}).get("actual", 0)|round(1) %}
         {% set _emp_key = emp.employee.lower().strip().rstrip('.') %}
@@ -9746,9 +9775,21 @@ function countUp(el, target, duration, prefix, suffix, decimals) {
   prefix = prefix || '';
   suffix = suffix || '';
   decimals = decimals || 0;
-  var startTime = null;
+  var startTime = null, lastTick = null;
   function tick(now) {
-    if (!startTime) startTime = now;
+    if (!startTime) { startTime = now; lastTick = now; }
+    // A tab the OS marks occluded mid-scroll (confirmed via document.hidden
+    // flipping true here, not assumed) stops delivering rAF entirely, then
+    // resumes — the next tick's timestamp lands however long that lasted
+    // after the previous one. Read as wall-clock elapsed, that snaps the
+    // count straight to wherever "real" elapsed time says it should be,
+    // which is the stuck-then-jumps look. Folding any gap bigger than a
+    // couple of frames back into startTime keeps the animation running
+    // for about as long as the duration argument says, regardless of how
+    // long the tab sat hidden.
+    var gap = now - lastTick;
+    if (gap > 100) startTime += gap;
+    lastTick = now;
     var elapsed = now - startTime;
     var progress = Math.min(elapsed / duration, 1);
     var ease = 1 - Math.pow(1 - progress, 3);
@@ -9761,9 +9802,12 @@ function countUp(el, target, duration, prefix, suffix, decimals) {
 }
 function countUpMoney(el, target, duration) {
   if (!el) return;
-  var startTime = null;
+  var startTime = null, lastTick = null;
   function tick(now) {
-    if (!startTime) startTime = now;
+    if (!startTime) { startTime = now; lastTick = now; }
+    var gap = now - lastTick;  // see countUp() above for why this exists
+    if (gap > 100) startTime += gap;
+    lastTick = now;
     var elapsed = now - startTime;
     var progress = Math.min(elapsed / duration, 1);
     var ease = 1 - Math.pow(1 - progress, 3);
