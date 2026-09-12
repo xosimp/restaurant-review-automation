@@ -1263,7 +1263,7 @@ TOOLS = [
         "module": "module_labor",
         "spec": {
             "name": "generate_schedule",
-            "description": "Propose building an optimised schedule for next week. Takes a minute and replaces the current draft, so the owner confirms first.",
+            "description": "Propose building an optimized schedule for next week. Takes a minute and replaces the current draft, so the owner confirms first.",
             "input_schema": {"type": "object", "properties": {}},
         },
     },

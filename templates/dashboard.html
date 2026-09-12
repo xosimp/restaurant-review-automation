@@ -1141,6 +1141,15 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 .hb-h1 .hb-head{color:var(--ink3)}
 .hb-h1 .hb-head.bad{color:var(--hb-bad)}.hb-h1 .hb-head.warn{color:var(--hb-warn)}.hb-h1 .hb-head.good{color:var(--hb-good)}.hb-h1 .hb-head.neutral{color:var(--ink2)}
 .hb-sub{font-size:13px;color:var(--ink3);display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+/* Shared section-header row (Inbox, Schedule, History, ...) — this had no
+   rule of its own at all, so "optimized to your X% target..." rendered
+   glued directly onto the h2 text before it with no gap and whatever size
+   a bare <small> happens to inherit, rather than the kicker+title+subtitle
+   hierarchy every other section on the page actually uses. */
+.hb-sh{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap;margin-top:34px;padding-top:22px;border-top:1px solid var(--hb-line)}
+.hb-sh .k{font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember)}
+.hb-sh h2{font-family:'Clash Display',sans-serif;font-size:22px;font-weight:500;color:var(--ink);margin-top:5px;display:flex;align-items:baseline;flex-wrap:wrap;gap:10px}
+.hb-sh h2 small{font-family:'Apfel Grotezk',sans-serif;font-size:14px;font-weight:400;color:var(--ink3)}
 .hb-sub .sep{color:var(--ink3);opacity:.5}
 .hb-refresh{background:none;border:none;color:var(--ink3);font-family:inherit;font-size:12px;cursor:pointer;padding:0;display:inline-flex;gap:5px;align-items:center}
 .hb-refresh:hover{color:var(--ember)}
@@ -2111,6 +2120,13 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .lb2-events .d{width:8px;height:8px;border-radius:50%;background:var(--ember);box-shadow:0 0 8px var(--ember);margin-top:7px;flex-shrink:0}
 .lb2-avail{margin-top:10px;padding:14px 16px;border-radius:10px;background:var(--hb-tint)}
 .lb2-avail input[type=text]{background:var(--hb-field)!important;border-color:var(--hb-line)!important;color:var(--ink)!important}
+/* Employee Availability / Operational Score headers — these were a 10px
+   uppercase kicker, the smallest text on the page, for what is actually a
+   section title on par with "Schedule" and "History" above them. */
+.lb2-subsection{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px;flex-wrap:wrap}
+.lb2-subsection-title{font-family:'Clash Display',sans-serif;font-size:17px;font-weight:500;color:var(--ink)}
+.lb2-subsection-chip{font-family:'Apfel Grotezk',sans-serif;font-size:13px;font-weight:500;color:var(--ink3);margin-left:4px}
+.lb2-subsection-toggle{font-size:14.5px;font-weight:700;color:var(--ember);background:none;border:none;cursor:pointer;padding:0}
 .lb2-hist{display:flex;flex-direction:column;margin-top:8px}
 .lb2-hist .row{display:flex;align-items:center;gap:14px;padding:11px 0;border-top:1px solid var(--hb-line2);font-size:15px;color:var(--ink2)}
 .lb2-hist .row:first-child{border-top:none}
@@ -2193,7 +2209,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     <div class="lb2-sg"><div class="k"><span>Vs industry</span><i class="{% if _lp <= _lt %}good{% elif _lp <= _lt + 3 %}warn{% else %}bad{% endif %}">{% if _lp <= _lt - 3 %}excellent{% elif _lp <= _lt %}on target{% elif _lp <= _lt + 3 %}slightly over{% elif _lp <= _lt + 8 %}above target{% else %}needs attention{% endif %}</i></div><div class="v"><span class="hb-num stat-n">{{ _lp }}</span><small>% vs 33–36% full-service average</small></div>
       <div class="lb2-bench"><div class="scale"><span style="left:0;transform:none">0%</span><span style="left:{{ [(_lt/50*100), 96]|min|int }}%;color:var(--hb-good)">{{ _lt|int }}% target</span><span style="left:70%;color:var(--hb-bad)">35%</span><span style="right:0;left:auto;transform:none">50%</span></div><div class="bar"><div class="fill {{ 'good' if _lp <= _lt else ('bad' if _lp > _lt + 8 else '') }}" style="width:{{ [(_lp/50*100), 100]|min|int }}%"></div><div class="tick t" style="left:{{ [(_lt/50*100), 100]|min|int }}%"></div><div class="tick h" style="left:70%"></div></div></div>
       <div class="lb2-money">
-        {% if savings_breakdown.labor_monthly > 0 %}<div><div class="l">If optimised / mo</div><div class="x good stat-n">${{ savings_breakdown.labor_monthly|format_num }}</div></div><div><div class="l">Per year</div><div class="x good stat-n">${{ savings_breakdown.labor_annual|format_num }}</div></div>
+        {% if savings_breakdown.labor_monthly > 0 %}<div><div class="l">If optimized / mo</div><div class="x good stat-n">${{ savings_breakdown.labor_monthly|format_num }}</div></div><div><div class="l">Per year</div><div class="x good stat-n">${{ savings_breakdown.labor_annual|format_num }}</div></div>
         {% else %}<div><div class="l">Vs 32% avg / mo</div><div class="x good stat-n">${{ savings_breakdown.labor_vs_industry_monthly|format_num }}</div></div><div><div class="l">Per year</div><div class="x good stat-n">${{ savings_breakdown.labor_vs_industry_annual|format_num }}</div></div>{% endif %}
         <div><div class="l">Overtime premium</div><div class="x stat-n {{ 'bad' if savings_breakdown.labor_overtime > 0 }}">{% if savings_breakdown.labor_overtime > 0 %}${{ savings_breakdown.labor_overtime|format_num }}{% else %}—{% endif %}</div></div>
       </div>
@@ -2257,11 +2273,11 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       var isLast=i===_roleData.length-1;
       lhtml+='<div style="display:flex;align-items:center;gap:10px;padding:7px 0;'+(isLast?'':'border-bottom:1px solid var(--hb-line2)')+'">';
       lhtml+='<span style="width:9px;height:9px;border-radius:50%;background:'+col+';flex-shrink:0;box-shadow:0 0 7px '+col+'99"></span>';
-      lhtml+='<span style="font-size:12px;font-weight:600;color:var(--ink);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+d.name+'</span>';
-      lhtml+='<span style="font-family:Space Grotesk,sans-serif;font-size:12px;font-weight:700;color:'+col+';width:38px;text-align:right">'+d.pct+'%</span>';
-      lhtml+='<span style="font-size:11px;color:var(--ink3);width:38px;text-align:right">'+_fmtHours(d.hours)+'h</span>';
-      lhtml+='<span style="font-size:11px;color:var(--ink3);width:22px;text-align:right">'+d.hc+'</span>';
-      lhtml+='<span style="font-family:Space Grotesk,sans-serif;font-size:11px;color:var(--ink2);width:56px;text-align:right">$'+_fmtComma(d.cost)+'</span>';
+      lhtml+='<span style="font-size:14.5px;font-weight:600;color:var(--ink);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+d.name+'</span>';
+      lhtml+='<span style="font-family:Space Grotesk,sans-serif;font-size:14.5px;font-weight:700;color:'+col+';width:44px;text-align:right">'+d.pct+'%</span>';
+      lhtml+='<span style="font-size:13px;color:var(--ink3);width:42px;text-align:right">'+_fmtHours(d.hours)+'h</span>';
+      lhtml+='<span style="font-size:13px;color:var(--ink3);width:26px;text-align:right">'+d.hc+'</span>';
+      lhtml+='<span style="font-family:Space Grotesk,sans-serif;font-size:13px;color:var(--ink2);width:62px;text-align:right">$'+_fmtComma(d.cost)+'</span>';
       lhtml+='</div>';
     }
     if(legend)legend.innerHTML=lhtml;
@@ -2269,13 +2285,12 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
   </script>
 
   <div class="lb2-sched">
-    <div class="hb-sh" style="margin-top:0"><div><div class="k">Schedule</div><h2>Next week, built by Cavnar<small>optimised to your {{ _lt|int }}% target and every staff constraint</small></h2></div></div>
-    <div class="lb2-actions">
+    <div class="hb-sh" style="margin-top:0"><div><div class="k">Schedule</div><h2>Next week, built by Cavnar<small>optimized to your {{ _lt|int }}% target and every staff constraint</small></h2></div><div class="lb2-actions" style="margin-top:0">
       {% if labor.is_live %}<button onclick="generateSchedule(this)" id="gen-sched-btn" class="btn-primary">Generate optimized schedule</button>{% endif %}
       {% if not restaurant.toast_restaurant_guid %}
       <label class="btn-primary" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer">{% if labor.is_live %}Update shifts CSV{% else %}Upload shifts CSV{% endif %}<input type="file" accept=".csv" style="display:none" id="shifts-inline-input" onchange="clientUpload('shifts', this)"></label>
       {% endif %}
-    </div>
+    </div></div>
   <!-- Schedule download tooltip -->
   <div id="schedule-tooltip" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;z-index:999;background:rgba(14,12,10,0.6);align-items:center;justify-content:center">
     <div style="background:var(--ink);border-radius:12px;padding:28px 32px;max-width:420px;width:90%;position:relative;border:1px solid #3d3530">
@@ -2407,38 +2422,38 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     {% endif %}
   <!-- Employee Availability Manager -->
   <div style="margin-bottom:14px">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-      <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ink3)">Employee Availability</div>
-      <button onclick="toggleAvailPanel()" style="font-size:11px;color:var(--ember);background:none;border:none;cursor:pointer;font-weight:600;padding:0" id="avail-toggle-btn">Manage ↓</button>
+    <div class="lb2-subsection">
+      <div class="lb2-subsection-title">Employee Availability</div>
+      <button onclick="toggleAvailPanel()" class="lb2-subsection-toggle" id="avail-toggle-btn">Manage ↓</button>
     </div>
     <div id="avail-panel" style="display:none">
       <div class="lb2-avail">
-        <div style="font-size:12px;color:var(--ink3);margin-bottom:12px">Set which days each employee is available. The AI will never schedule someone on their unavailable days — this has the same priority as staff constraints.</div>
+        <div style="font-size:15px;color:var(--ink3);margin-bottom:12px">Set which days each employee is available. The AI will never schedule someone on their unavailable days — this has the same priority as staff constraints.</div>
         <!-- Add new entry -->
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;align-items:flex-end">
           <div>
-            <div style="font-size:10px;font-weight:600;color:var(--ink3);margin-bottom:4px">Employee name</div>
-            <input id="av-name" type="text" placeholder="e.g. Jake M." style="font-size:12px;padding:6px 10px;border:1px solid var(--paper3);border-radius:6px;width:160px;background:var(--surface);color:var(--ink);font-family:inherit">
+            <div style="font-size:12.5px;font-weight:600;color:var(--ink3);margin-bottom:4px">Employee name</div>
+            <input id="av-name" type="text" placeholder="e.g. Jake M." style="font-size:15px;padding:6px 10px;border:1px solid var(--paper3);border-radius:6px;width:160px;background:var(--surface);color:var(--ink);font-family:inherit">
           </div>
           <div>
-            <div style="font-size:10px;font-weight:600;color:var(--ink3);margin-bottom:4px">Available days</div>
+            <div style="font-size:12.5px;font-weight:600;color:var(--ink3);margin-bottom:4px">Available days</div>
             <div style="display:flex;gap:4px;flex-wrap:wrap" id="av-days-available">
               {% for day in ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'] %}
-              <label style="display:flex;align-items:center;gap:3px;font-size:11px;cursor:pointer;padding:4px 7px;border:1px solid var(--paper3);border-radius:5px;user-select:none">
+              <label style="display:flex;align-items:center;gap:3px;font-size:13.5px;cursor:pointer;padding:4px 7px;border:1px solid var(--paper3);border-radius:5px;user-select:none">
                 <input type="checkbox" value="{{day}}" style="margin:0"> {{day}}
               </label>
               {% endfor %}
             </div>
           </div>
           <div>
-            <div style="font-size:10px;font-weight:600;color:var(--ink3);margin-bottom:4px">Notes (optional)</div>
-            <input id="av-notes" type="text" placeholder="e.g. student, no mornings" style="font-size:12px;padding:6px 10px;border:1px solid var(--paper3);border-radius:6px;width:200px;background:var(--surface);color:var(--ink);font-family:inherit">
+            <div style="font-size:12.5px;font-weight:600;color:var(--ink3);margin-bottom:4px">Notes (optional)</div>
+            <input id="av-notes" type="text" placeholder="e.g. student, no mornings" style="font-size:15px;padding:6px 10px;border:1px solid var(--paper3);border-radius:6px;width:200px;background:var(--surface);color:var(--ink);font-family:inherit">
           </div>
-          <button onclick="saveAvailability()" class="btn-primary" style="padding:7px 16px;font-size:12px;flex-shrink:0">Save</button>
+          <button onclick="saveAvailability()" class="btn-primary" style="padding:7px 16px;font-size:15px;flex-shrink:0">Save</button>
         </div>
         <!-- Saved entries -->
         <div id="avail-list" style="display:flex;flex-direction:column;gap:6px">
-          <div style="font-size:11px;color:var(--ink3);font-style:italic">Loading availability…</div>
+          <div style="font-size:13.5px;color:var(--ink3);font-style:italic">Loading availability…</div>
         </div>
       </div>
     </div>
@@ -2448,65 +2463,65 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
        The scheduler already knows who is available; this is what tells it not
        to put the two weakest people together on a Saturday. -->
   <div style="margin-bottom:14px">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-      <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ink3)">Operational Score <span id="team-coverage-chip" style="letter-spacing:0;text-transform:none;font-weight:600;color:var(--ink3)"></span></div>
-      <button onclick="toggleTeamPanel()" style="font-size:11px;color:var(--ember);background:none;border:none;cursor:pointer;font-weight:600;padding:0" id="team-toggle-btn">Rate your team ↓</button>
+    <div class="lb2-subsection">
+      <div class="lb2-subsection-title">Operational Score <span id="team-coverage-chip" class="lb2-subsection-chip"></span></div>
+      <button onclick="toggleTeamPanel()" class="lb2-subsection-toggle" id="team-toggle-btn">Rate your team ↓</button>
     </div>
     <div id="team-panel" style="display:none">
       <div class="lb2-avail">
-        <div style="font-size:12px;color:var(--ink3);margin-bottom:12px">Rate each person 1 to 5 — 1 very weak, 3 average, 5 excellent. The scheduler uses this to balance who works together, never to bench anybody. Nothing changes in your schedules until somebody is rated.</div>
+        <div style="font-size:15px;color:var(--ink3);margin-bottom:12px">Rate each person 1 to 5 — 1 very weak, 3 average, 5 excellent. The scheduler uses this to balance who works together, never to bench anybody. Nothing changes in your schedules until somebody is rated.</div>
         <div id="team-list" style="display:flex;flex-direction:column;gap:6px">
-          <div style="font-size:11px;color:var(--ink3);font-style:italic">Loading your team…</div>
+          <div style="font-size:13.5px;color:var(--ink3);font-style:italic">Loading your team…</div>
         </div>
 
         <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--paper3)">
-          <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ink3);margin-bottom:6px">Shift strength targets</div>
-          <div style="font-size:12px;color:var(--ink3);margin-bottom:10px">The combined score of everyone in a role on one shift. Two people at 5 make 10 — so do a 5, a 3 and a 2, which is a weaker team, and the scheduler prefers fewer stronger people when both clear the bar. Leave a role blank for no target.</div>
+          <div style="font-size:12.5px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ink3);margin-bottom:6px">Shift strength targets</div>
+          <div style="font-size:15px;color:var(--ink3);margin-bottom:10px">The combined score of everyone in a role on one shift. Two people at 5 make 10 — so do a 5, a 3 and a 2, which is a weaker team, and the scheduler prefers fewer stronger people when both clear the bar. Leave a role blank for no target.</div>
           <div id="team-thresholds" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end"></div>
           <div id="team-threshold-warnings" style="margin-top:8px"></div>
 
-          <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ink3);margin:16px 0 6px">Shift leader requirements</div>
-          <div style="font-size:12px;color:var(--ink3);margin-bottom:10px">Stricter than a target: this names one person who has to be on that shift.</div>
+          <div style="font-size:12.5px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ink3);margin:16px 0 6px">Shift leader requirements</div>
+          <div style="font-size:15px;color:var(--ink3);margin-bottom:10px">Stricter than a target: this names one person who has to be on that shift.</div>
           <div id="team-rules" style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px"></div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
             <div>
-              <div style="font-size:10px;font-weight:600;color:var(--ink3);margin-bottom:4px">Role</div>
-              <select id="lr-role" style="font-size:12px;padding:6px 10px;border:1px solid var(--paper3);border-radius:6px;background:var(--surface);color:var(--ink);font-family:inherit"></select>
+              <div style="font-size:12.5px;font-weight:600;color:var(--ink3);margin-bottom:4px">Role</div>
+              <select id="lr-role" style="font-size:15px;padding:6px 10px;border:1px solid var(--paper3);border-radius:6px;background:var(--surface);color:var(--ink);font-family:inherit"></select>
             </div>
             <div>
-              <div style="font-size:10px;font-weight:600;color:var(--ink3);margin-bottom:4px">Days <span style="font-weight:400">(none = every day)</span></div>
+              <div style="font-size:12.5px;font-weight:600;color:var(--ink3);margin-bottom:4px">Days <span style="font-weight:400">(none = every day)</span></div>
               <div style="display:flex;gap:4px;flex-wrap:wrap" id="lr-days">
                 {% for day in ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'] %}
-                <label style="display:flex;align-items:center;gap:3px;font-size:11px;cursor:pointer;padding:4px 7px;border:1px solid var(--paper3);border-radius:5px;user-select:none">
+                <label style="display:flex;align-items:center;gap:3px;font-size:13.5px;cursor:pointer;padding:4px 7px;border:1px solid var(--paper3);border-radius:5px;user-select:none">
                   <input type="checkbox" value="{{day}}" style="margin:0"> {{day}}
                 </label>
                 {% endfor %}
               </div>
             </div>
             <div>
-              <div style="font-size:10px;font-weight:600;color:var(--ink3);margin-bottom:4px">Time of day</div>
-              <select id="lr-daypart" style="font-size:12px;padding:6px 10px;border:1px solid var(--paper3);border-radius:6px;background:var(--surface);color:var(--ink);font-family:inherit">
+              <div style="font-size:12.5px;font-weight:600;color:var(--ink3);margin-bottom:4px">Time of day</div>
+              <select id="lr-daypart" style="font-size:15px;padding:6px 10px;border:1px solid var(--paper3);border-radius:6px;background:var(--surface);color:var(--ink);font-family:inherit">
                 <option value="">Any</option><option value="morning">Morning</option><option value="night">Night</option>
               </select>
             </div>
             <div>
-              <div style="font-size:10px;font-weight:600;color:var(--ink3);margin-bottom:4px">Minimum score</div>
-              <select id="lr-min" style="font-size:12px;padding:6px 10px;border:1px solid var(--paper3);border-radius:6px;background:var(--surface);color:var(--ink);font-family:inherit">
+              <div style="font-size:12.5px;font-weight:600;color:var(--ink3);margin-bottom:4px">Minimum score</div>
+              <select id="lr-min" style="font-size:15px;padding:6px 10px;border:1px solid var(--paper3);border-radius:6px;background:var(--surface);color:var(--ink);font-family:inherit">
                 <option value="5">5</option><option value="4">4</option><option value="3">3</option><option value="2">2</option><option value="1">1</option>
               </select>
             </div>
             <div>
-              <div style="font-size:10px;font-weight:600;color:var(--ink3);margin-bottom:4px">How many</div>
-              <select id="lr-count" style="font-size:12px;padding:6px 10px;border:1px solid var(--paper3);border-radius:6px;background:var(--surface);color:var(--ink);font-family:inherit">
+              <div style="font-size:12.5px;font-weight:600;color:var(--ink3);margin-bottom:4px">How many</div>
+              <select id="lr-count" style="font-size:15px;padding:6px 10px;border:1px solid var(--paper3);border-radius:6px;background:var(--surface);color:var(--ink);font-family:inherit">
                 <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option>
               </select>
             </div>
-            <button onclick="addLeaderRule()" class="hb-btn" style="padding:7px 14px;font-size:12px;flex-shrink:0">Add requirement</button>
+            <button onclick="addLeaderRule()" class="hb-btn" style="padding:7px 14px;font-size:15px;flex-shrink:0">Add requirement</button>
           </div>
 
           <div style="margin-top:14px">
-            <button onclick="saveTeamTargets(this)" class="btn-primary" style="padding:7px 16px;font-size:12px">Save targets</button>
-            <span id="team-save-note" style="font-size:11px;color:var(--ink3);margin-left:10px"></span>
+            <button onclick="saveTeamTargets(this)" class="btn-primary" style="padding:7px 16px;font-size:15px">Save targets</button>
+            <span id="team-save-note" style="font-size:13.5px;color:var(--ink3);margin-left:10px"></span>
           </div>
         </div>
 
@@ -2514,24 +2529,24 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
              jobs, and one global threshold flattens them into one. -->
         <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--paper3)">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
-            <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ink3)">Shift profiles</div>
-            <span id="sp-source" style="font-size:11px;color:var(--ink3)"></span>
+            <div style="font-size:12.5px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ink3)">Shift profiles</div>
+            <span id="sp-source" style="font-size:13.5px;color:var(--ink3)"></span>
           </div>
-          <div style="font-size:12px;color:var(--ink3);margin:6px 0 10px">Each shift is scored 0&ndash;100 on coverage, operational strength, leadership, experience, training balance, demand match and labor efficiency. A profile sets the bar for the shifts it names.</div>
+          <div style="font-size:15px;color:var(--ink3);margin:6px 0 10px">Each shift is scored 0&ndash;100 on coverage, operational strength, leadership, experience, training balance, demand match and labor efficiency. A profile sets the bar for the shifts it names.</div>
           <div id="sp-list" style="display:flex;flex-direction:column;gap:6px"></div>
-          <button onclick="newShiftProfile()" class="hb-btn" style="margin-top:10px;padding:6px 14px;font-size:12px">Add a profile</button>
+          <button onclick="newShiftProfile()" class="hb-btn" style="margin-top:10px;padding:6px 14px;font-size:15px">Add a profile</button>
         </div>
 
         <!-- What counts most. Sensible defaults, and an owner who disagrees
              can say so rather than arguing with a number they cannot move. -->
         <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--paper3)">
-          <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ink3);margin-bottom:6px">What counts most</div>
-          <div style="font-size:12px;color:var(--ink3);margin-bottom:10px">How much each dimension moves the overall score. Set one to zero to take it out of the reckoning entirely.</div>
+          <div style="font-size:12.5px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ink3);margin-bottom:6px">What counts most</div>
+          <div style="font-size:15px;color:var(--ink3);margin-bottom:10px">How much each dimension moves the overall score. Set one to zero to take it out of the reckoning entirely.</div>
           <div id="sp-weights" style="display:flex;flex-direction:column;gap:7px"></div>
           <div style="margin-top:12px">
-            <button onclick="saveQualityWeights(this)" class="btn-primary" style="padding:7px 16px;font-size:12px">Save weighting</button>
-            <button onclick="resetQualityWeights()" class="hb-btn" style="padding:7px 14px;font-size:12px;margin-left:6px">Back to defaults</button>
-            <span id="sp-weights-note" style="font-size:11px;color:var(--ink3);margin-left:10px"></span>
+            <button onclick="saveQualityWeights(this)" class="btn-primary" style="padding:7px 16px;font-size:15px">Save weighting</button>
+            <button onclick="resetQualityWeights()" class="hb-btn" style="padding:7px 14px;font-size:15px;margin-left:6px">Back to defaults</button>
+            <span id="sp-weights-note" style="font-size:13.5px;color:var(--ink3);margin-left:10px"></span>
           </div>
         </div>
       </div>
@@ -6272,7 +6287,7 @@ function renderWeekRadar(){
   for(var i=0;i<7;i++){var v=vals[i]==null?target:vals[i];var p=pt(i,rad(v));poly+=(i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1)+' ';if(vals[i]!=null&&vals[i]>worstV){worstV=vals[i];worst=i;}}
   s+='<path class="hb-fill" d="'+poly+'Z" fill="url(#lbRadG)"/><path class="hb-glow" d="'+poly+'Z" fill="none" stroke="#e8956a" stroke-opacity=".6" stroke-width="5" filter="url(#lbRadF)"/><path class="hb-draw" d="'+poly+'Z" fill="none" stroke="#e8956a" stroke-width="2"/>';
   for(var i=0;i<7;i++){if(vals[i]==null)continue;var p=pt(i,rad(vals[i]));var over=vals[i]>target;s+='<circle class="hb-dot" cx="'+p[0].toFixed(1)+'" cy="'+p[1].toFixed(1)+'" r="'+(over?4.5:3.2)+'" fill="'+(over?'#e05555':'#e8956a')+'" stroke="#fff" stroke-opacity=".9" stroke-width="1.2" style="animation-delay:'+(1.2+i*0.12).toFixed(2)+'s"/>';
-    var lp=pt(i,R+16);s+='<text x="'+lp[0].toFixed(1)+'" y="'+(lp[1]+4).toFixed(1)+'" text-anchor="middle" font-size="10.5" font-family="Space Grotesk, sans-serif" fill="'+(over?'#e05555':'currentColor')+'" fill-opacity="'+(over?'1':'.75')+'">'+short[i]+' '+vals[i]+'%</text>';}
+    var lp=pt(i,R+16);s+='<text x="'+lp[0].toFixed(1)+'" y="'+(lp[1]+4).toFixed(1)+'" text-anchor="middle" font-size="13" font-weight="600" font-family="Space Grotesk, sans-serif" fill="'+(over?'#e05555':'currentColor')+'" fill-opacity="'+(over?'1':'.85')+'">'+short[i]+' '+vals[i]+'%</text>';}
   el.innerHTML=s+'</svg>';el.style.color='var(--ink3)';
   var n=document.getElementById('lb2-radar-n'),cap=document.getElementById('lb2-radar-cap'),flag=document.getElementById('lb2-radar-flag');
   if(worst>=0){if(n){if(!n.dataset.animated){n.dataset.animated='1';countUp(n,worstV,900,'','%',1);
@@ -7188,7 +7203,7 @@ function renderProfileList() {
   var el = document.getElementById('sp-list');
   if (!el) return;
   if (!_profiles.length) {
-    el.innerHTML = '<div style="font-size:11px;color:var(--ink3);font-style:italic">No profiles yet.</div>';
+    el.innerHTML = '<div style="font-size:13.5px;color:var(--ink3);font-style:italic">No profiles yet.</div>';
     return;
   }
   var html = '', i;
@@ -7202,18 +7217,18 @@ function renderProfileList() {
     if (p.training_allowed) bits.push('training allowed');
     html += '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 12px;'
       + 'background:var(--paper);border:1px solid var(--paper3);border-radius:6px;flex-wrap:wrap">'
-      + '<div><div style="font-size:13px;font-weight:600;color:var(--ink)">' + _escHtml(p.label || p.key) + '</div>'
-      + '<div style="font-size:11px;color:var(--ink3)">' + _escHtml(bits.join(' \u00B7 ')) + '</div></div>'
+      + '<div><div style="font-size:15.5px;font-weight:600;color:var(--ink)">' + _escHtml(p.label || p.key) + '</div>'
+      + '<div style="font-size:13.5px;color:var(--ink3)">' + _escHtml(bits.join(' \u00B7 ')) + '</div></div>'
       + '<div style="display:flex;gap:6px">'
-      + '<button type="button" data-profile-edit="' + _escAttr(p.key) + '" style="font-family:inherit;font-size:11px;color:var(--ember);background:none;border:none;cursor:pointer;font-weight:600">Edit</button>'
-      + '<button type="button" data-profile-delete="' + _escAttr(p.key) + '" style="font-family:inherit;font-size:11px;color:var(--ink3);background:none;border:none;cursor:pointer">Remove</button>'
+      + '<button type="button" data-profile-edit="' + _escAttr(p.key) + '" style="font-family:inherit;font-size:13.5px;color:var(--ember);background:none;border:none;cursor:pointer;font-weight:600">Edit</button>'
+      + '<button type="button" data-profile-delete="' + _escAttr(p.key) + '" style="font-family:inherit;font-size:13.5px;color:var(--ink3);background:none;border:none;cursor:pointer">Remove</button>'
       + '</div></div>';
   }
   el.innerHTML = html;
 }
 
 function _profileEditor(p, index) {
-  var f = 'font-size:12px;padding:6px 9px;border:1px solid var(--paper3);border-radius:6px;background:var(--surface);color:var(--ink);font-family:inherit';
+  var f = 'font-size:15px;padding:6px 9px;border:1px solid var(--paper3);border-radius:6px;background:var(--surface);color:var(--ink);font-family:inherit';
   var html = '<div style="padding:12px;background:var(--paper);border:1px solid var(--ember);border-radius:8px">'
     + '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">'
     + _spField('Name', '<input id="sp-label" type="text" value="' + _escAttr(p.label || '') + '" style="' + f + ';width:170px">')
@@ -7226,23 +7241,23 @@ function _profileEditor(p, index) {
     + '</div>'
     + '<div style="margin-top:10px">' + _spDayChecks(p.days || []) + '</div>'
     + '<div style="margin-top:10px;display:flex;gap:16px;flex-wrap:wrap;align-items:center">'
-    + '<label style="font-size:12px;color:var(--ink2);display:flex;gap:6px;align-items:center;cursor:pointer">'
+    + '<label style="font-size:15px;color:var(--ink2);display:flex;gap:6px;align-items:center;cursor:pointer">'
     + '<input id="sp-leader" type="checkbox"' + (p.requires_leader ? ' checked' : '') + '> Needs somebody who can run it</label>'
-    + '<label style="font-size:12px;color:var(--ink2);display:flex;gap:6px;align-items:center">Minimum score '
+    + '<label style="font-size:15px;color:var(--ink2);display:flex;gap:6px;align-items:center">Minimum score '
     + '<input id="sp-leader-score" type="number" min="1" max="5" step="0.5" value="' + (p.leader_min_score || 4) + '" style="' + f + ';width:62px;text-align:center"></label>'
-    + '<label style="font-size:12px;color:var(--ink2);display:flex;gap:6px;align-items:center;cursor:pointer">'
+    + '<label style="font-size:15px;color:var(--ink2);display:flex;gap:6px;align-items:center;cursor:pointer">'
     + '<input id="sp-training" type="checkbox"' + (p.training_allowed ? ' checked' : '') + '> Training shift</label>'
     + '</div>'
     + _spRoleGrid(p)
     + '<div style="margin-top:12px">'
-    + '<button type="button" data-profile-save="' + _escAttr(p.key) + '" class="btn-primary" style="padding:6px 14px;font-size:12px">Save profile</button>'
-    + '<button type="button" data-profile-cancel="1" class="hb-btn" style="padding:6px 14px;font-size:12px;margin-left:6px">Cancel</button>'
+    + '<button type="button" data-profile-save="' + _escAttr(p.key) + '" class="btn-primary" style="padding:6px 14px;font-size:15px">Save profile</button>'
+    + '<button type="button" data-profile-cancel="1" class="hb-btn" style="padding:6px 14px;font-size:15px;margin-left:6px">Cancel</button>'
     + '</div></div>';
   return html;
 }
 
 function _spField(label, control) {
-  return '<div><div style="font-size:10px;font-weight:600;color:var(--ink3);margin-bottom:4px">'
+  return '<div><div style="font-size:12.5px;font-weight:600;color:var(--ink3);margin-bottom:4px">'
     + _escHtml(label) + '</div>' + control + '</div>';
 }
 
@@ -7261,11 +7276,11 @@ function _spDemandOptions(current) {
 }
 
 function _spDayChecks(days) {
-  var out = '<div style="font-size:10px;font-weight:600;color:var(--ink3);margin-bottom:4px">Days <span style="font-weight:400">(none = every day)</span></div>'
+  var out = '<div style="font-size:12.5px;font-weight:600;color:var(--ink3);margin-bottom:4px">Days <span style="font-weight:400">(none = every day)</span></div>'
           + '<div id="sp-days" style="display:flex;gap:4px;flex-wrap:wrap">', i;
   for (i = 0; i < _DAY_NAMES.length; i++) {
     var on = days.indexOf(_DAY_NAMES[i]) !== -1;
-    out += '<label style="display:flex;align-items:center;gap:3px;font-size:11px;cursor:pointer;padding:4px 7px;'
+    out += '<label style="display:flex;align-items:center;gap:3px;font-size:13.5px;cursor:pointer;padding:4px 7px;'
         + 'border:1px solid var(--paper3);border-radius:5px;user-select:none">'
         + '<input type="checkbox" value="' + _DAY_NAMES[i] + '"' + (on ? ' checked' : '') + ' style="margin:0"> '
         + _DAY_NAMES[i].slice(0, 3) + '</label>';
@@ -7277,8 +7292,8 @@ function _spDayChecks(days) {
 // from above still applies, which is why these are never pre-filled from it.
 function _spRoleGrid(p) {
   if (!_teamRoles.length) return '';
-  var f = 'font-size:12px;padding:5px 7px;border:1px solid var(--paper3);border-radius:6px;background:var(--surface);color:var(--ink);font-family:inherit;width:66px;text-align:center';
-  var out = '<div style="margin-top:12px"><div style="font-size:10px;font-weight:600;color:var(--ink3);margin-bottom:4px">'
+  var f = 'font-size:15px;padding:5px 7px;border:1px solid var(--paper3);border-radius:6px;background:var(--surface);color:var(--ink);font-family:inherit;width:66px;text-align:center';
+  var out = '<div style="margin-top:12px"><div style="font-size:12.5px;font-weight:600;color:var(--ink3);margin-bottom:4px">'
           + 'Per role on this shift <span style="font-weight:400">(blank keeps your overall target)</span></div>'
           + '<div id="sp-roles" style="display:flex;gap:12px;flex-wrap:wrap">', i;
   for (i = 0; i < _teamRoles.length; i++) {
@@ -7286,7 +7301,7 @@ function _spRoleGrid(p) {
     var strength = (p.min_strength || {})[role];
     var positions = (p.critical_positions || {})[role];
     out += '<div data-sp-role="' + _escAttr(role) + '">'
-      + '<div style="font-size:11px;color:var(--ink2);margin-bottom:3px">' + _escHtml(role) + '</div>'
+      + '<div style="font-size:13.5px;color:var(--ink2);margin-bottom:3px">' + _escHtml(role) + '</div>'
       + '<div style="display:flex;gap:4px">'
       + '<input data-sp-strength="1" type="number" min="0" placeholder="str" value="'
       + (strength === undefined ? '' : strength) + '" style="' + f + '">'
@@ -7368,9 +7383,9 @@ function renderWeightList() {
     var value = _profileWeights[d.key];
     if (value === undefined) value = _defaultWeights[d.key] || 0;
     html += '<div style="display:flex;align-items:center;gap:10px">'
-      + '<span style="flex:0 0 140px;font-size:12.5px;color:var(--ink2)">' + _escHtml(d.label) + '</span>'
+      + '<span style="flex:0 0 140px;font-size:14.5px;color:var(--ink2)">' + _escHtml(d.label) + '</span>'
       + '<input data-weight-key="' + _escAttr(d.key) + '" type="range" min="0" max="40" step="1" value="' + value + '" style="flex:1;accent-color:var(--ember)">'
-      + '<span data-weight-out="' + _escAttr(d.key) + '" style="flex:0 0 30px;text-align:right;font-family:Space Grotesk,sans-serif;font-size:12.5px;font-weight:700;color:var(--ink)">' + value + '</span>'
+      + '<span data-weight-out="' + _escAttr(d.key) + '" style="flex:0 0 30px;text-align:right;font-family:Space Grotesk,sans-serif;font-size:14.5px;font-weight:700;color:var(--ink)">' + value + '</span>'
       + '</div>';
   }
   el.innerHTML = html;
@@ -8030,7 +8045,7 @@ function loadAvailability() {
   if (!list) return;
   fetch('/admin/staff-availability/' + _restaurantId).then(function(r){return r.json();}).then(function(d){
     if (!d.ok || !d.availability || !d.availability.length) {
-      list.innerHTML = '<div style="font-size:11px;color:var(--ink3);font-style:italic">No availability set yet — add employees above.</div>';
+      list.innerHTML = '<div style="font-size:13.5px;color:var(--ink3);font-style:italic">No availability set yet — add employees above.</div>';
       return;
     }
     var html = '';
@@ -8039,17 +8054,17 @@ function loadAvailability() {
       var avDays = JSON.parse(av.available_days || '[]');
       var unDays = JSON.parse(av.unavailable_days || '[]');
       html += '<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--paper);border:1px solid var(--paper3);border-radius:6px;gap:12px;flex-wrap:wrap">';
-      html += '<div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:600;color:var(--ink)">' + av.employee_name + '</div>';
-      if (avDays.length) html += '<div style="font-size:10px;color:#2d6a4f;margin-top:2px">✓ Available: ' + avDays.join(', ') + '</div>';
-      if (unDays.length) html += '<div style="font-size:10px;color:#c0392b;margin-top:1px">✗ Not available: ' + unDays.join(', ') + '</div>';
-      if (av.notes) html += '<div style="font-size:10px;color:var(--ink3);margin-top:1px">' + av.notes + '</div>';
+      html += '<div style="flex:1;min-width:0"><div style="font-size:15px;font-weight:600;color:var(--ink)">' + av.employee_name + '</div>';
+      if (avDays.length) html += '<div style="font-size:12.5px;color:#2d6a4f;margin-top:2px">✓ Available: ' + avDays.join(', ') + '</div>';
+      if (unDays.length) html += '<div style="font-size:12.5px;color:#c0392b;margin-top:1px">✗ Not available: ' + unDays.join(', ') + '</div>';
+      if (av.notes) html += '<div style="font-size:12.5px;color:var(--ink3);margin-top:1px">' + av.notes + '</div>';
       html += '</div>';
       html += '<button aria-label="Close" onclick="deleteAvailability(\'' + av.employee_name.replace(/'/g,'\\\'') + '\')" style="background:none;border:none;cursor:pointer;color:var(--ink3);font-size:18px;padding:0 4px;line-height:1" title="Remove">&#x2715;</button>';
       html += '</div>';
     }
     list.innerHTML = html;
   }).catch(function(){
-    list.innerHTML = '<div style="font-size:11px;color:var(--ink3)">Could not load availability.</div>';
+    list.innerHTML = '<div style="font-size:13.5px;color:var(--ink3)">Could not load availability.</div>';
   });
 }
 function saveAvailability() {
@@ -8155,7 +8170,7 @@ function renderTeamList() {
   var list = document.getElementById('team-list');
   if (!list) return;
   if (!_teamRows.length) {
-    list.innerHTML = '<div style="font-size:11px;color:var(--ink3);font-style:italic">No staff on file yet.</div>';
+    list.innerHTML = '<div style="font-size:13.5px;color:var(--ink3);font-style:italic">No staff on file yet.</div>';
     return;
   }
   var html = '';
@@ -8165,13 +8180,13 @@ function renderTeamList() {
     if (m.role) sub.push(_escHtml(m.role));
     if (m.score) sub.push(_escHtml(_TEAM_LABELS[m.score] || ''));
     html += '<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--paper);border:1px solid var(--paper3);border-radius:6px;gap:12px;flex-wrap:wrap">';
-    html += '<div><div style="font-size:13px;font-weight:600;color:var(--ink)">' + _escHtml(m.name) + '</div>';
-    html += '<div style="font-size:11px;color:var(--ink3)">' + sub.join(' · ') + '</div></div>';
+    html += '<div><div style="font-size:15.5px;font-weight:600;color:var(--ink)">' + _escHtml(m.name) + '</div>';
+    html += '<div style="font-size:13.5px;color:var(--ink3)">' + sub.join(' · ') + '</div></div>';
     html += '<div style="display:flex;align-items:center;gap:12px">';
     html += '<div style="display:flex;gap:4px" data-team-idx="' + i + '">';
     for (var v = 1; v <= 5; v++) {
       var on = m.score === v;
-      html += '<button type="button" data-score="' + v + '" style="font-family:inherit;font-size:13px;font-weight:700;width:34px;height:30px;cursor:pointer;border-radius:6px;border:1px solid ' + (on ? 'transparent' : 'var(--paper3)') + ';background:' + (on ? _scoreColor(v) : 'var(--surface)') + ';color:' + (on ? '#fff' : 'var(--ink2)') + '">' + v + '</button>';
+      html += '<button type="button" data-score="' + v + '" style="font-family:inherit;font-size:15.5px;font-weight:700;width:34px;height:30px;cursor:pointer;border-radius:6px;border:1px solid ' + (on ? 'transparent' : 'var(--paper3)') + ';background:' + (on ? _scoreColor(v) : 'var(--surface)') + ';color:' + (on ? '#fff' : 'var(--ink2)') + '">' + v + '</button>';
     }
     html += '</div>';
     // Authorised to close. Registered in the capability layer from day one
@@ -8180,7 +8195,7 @@ function renderTeamList() {
     // rated 3 never qualified, and "every closing shift needs somebody
     // authorised to close" could not be satisfied at all.
     html += '<label title="Authorised to close" style="display:flex;align-items:center;gap:5px;'
-         + 'font-size:12px;color:' + (m.can_close ? '#6fcf97' : 'var(--ink3)') + ';cursor:pointer;'
+         + 'font-size:15px;color:' + (m.can_close ? '#6fcf97' : 'var(--ink3)') + ';cursor:pointer;'
          + 'white-space:nowrap;user-select:none">'
          + '<input type="checkbox" data-team-close="' + i + '"' + (m.can_close ? ' checked' : '')
          + ' style="margin:0">closer</label>';
@@ -8268,7 +8283,7 @@ function renderTeamThresholds() {
   var wrap = document.getElementById('team-thresholds');
   if (!wrap) return;
   if (!_teamRoles.length) {
-    wrap.innerHTML = '<div style="font-size:11px;color:var(--ink3);font-style:italic">Roles appear once your shift data carries them.</div>';
+    wrap.innerHTML = '<div style="font-size:13.5px;color:var(--ink3);font-style:italic">Roles appear once your shift data carries them.</div>';
     return;
   }
   var html = '';
@@ -8276,9 +8291,9 @@ function renderTeamThresholds() {
     var role = _teamRoles[i];
     var current = _thresholdFor(role);
     var best = _reachable(role);
-    html += '<div><div style="font-size:10px;font-weight:600;color:var(--ink3);margin-bottom:4px">' + _escHtml(role);
+    html += '<div><div style="font-size:12.5px;font-weight:600;color:var(--ink3);margin-bottom:4px">' + _escHtml(role);
     if (best !== null) html += ' <span style="font-weight:400">max ' + best + '</span>';
-    html += '</div><input type="number" min="0" step="1" data-role-threshold="' + i + '" value="' + (current === null ? '' : current) + '" placeholder="—" style="font-size:13px;font-weight:700;padding:6px 8px;width:74px;text-align:center;border:1px solid var(--paper3);border-radius:6px;background:var(--surface);color:var(--ink);font-family:inherit"></div>';
+    html += '</div><input type="number" min="0" step="1" data-role-threshold="' + i + '" value="' + (current === null ? '' : current) + '" placeholder="—" style="font-size:15.5px;font-weight:700;padding:6px 8px;width:74px;text-align:center;border:1px solid var(--paper3);border-radius:6px;background:var(--surface);color:var(--ink);font-family:inherit"></div>';
   }
   wrap.innerHTML = html;
 }
@@ -8315,14 +8330,14 @@ function renderTeamRules() {
   }
   if (!wrap) return;
   if (!_teamRules.length) {
-    wrap.innerHTML = '<div style="font-size:11px;color:var(--ink3);font-style:italic">No requirements yet.</div>';
+    wrap.innerHTML = '<div style="font-size:13.5px;color:var(--ink3);font-style:italic">No requirements yet.</div>';
     return;
   }
   var html = '';
   for (var i = 0; i < _teamRules.length; i++) {
     html += '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 12px;background:var(--paper);border:1px solid var(--paper3);border-radius:6px">';
-    html += '<span style="font-size:12px;color:var(--ink2)">' + _escHtml(_ruleSentence(_teamRules[i])) + '</span>';
-    html += '<button type="button" data-rule-remove="' + i + '" style="font-family:inherit;font-size:11px;color:var(--ink3);background:none;border:none;cursor:pointer;padding:0 2px">Remove</button></div>';
+    html += '<span style="font-size:15px;color:var(--ink2)">' + _escHtml(_ruleSentence(_teamRules[i])) + '</span>';
+    html += '<button type="button" data-rule-remove="' + i + '" style="font-family:inherit;font-size:13.5px;color:var(--ink3);background:none;border:none;cursor:pointer;padding:0 2px">Remove</button></div>';
   }
   wrap.innerHTML = html;
 }
@@ -11227,9 +11242,9 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       done();if(!d.ok){toast(d.error||'Could not load','error');return;}
       var rows=d.preview_rows||[];
       var csv=d.schedule_csv||'';
-      var html='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px"><div style="font-size:12px;font-weight:600;color:var(--ink)">Week of '+esc(d.week_start||'')+' · '+rows.length+' shifts</div><div style="display:flex;gap:10px"><button onclick="downloadHistoryCsv('+id+')" class="btn-secondary" style="font-size:11px;padding:4px 10px">Download CSV</button><button onclick="document.getElementById(\'sched-history-detail\').style.display=\'none\'" class="btn-secondary" style="font-size:11px;padding:4px 10px">Close</button></div></div>';
-      html+='<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11px"><tr style="color:var(--ink3);text-transform:uppercase;font-size:10px;letter-spacing:.06em"><th style="text-align:left;padding:4px 6px">Day</th><th style="text-align:left;padding:4px 6px">Employee</th><th style="text-align:left;padding:4px 6px">Role</th><th style="text-align:left;padding:4px 6px">Shift</th><th style="text-align:right;padding:4px 6px">Hrs</th></tr>';
-      html+=rows.map(function(r){return '<tr style="border-top:1px solid var(--paper3)"><td style="padding:4px 6px;color:var(--ink)">'+esc(r.day||r.date||'')+'</td><td style="padding:4px 6px;color:var(--ink)">'+esc(r.employee||'')+'</td><td style="padding:4px 6px;color:var(--ink3)">'+esc(r.role||'')+'</td><td style="padding:4px 6px;color:var(--ink3);white-space:nowrap">'+esc(r.shift_start||'')+'–'+esc(r.shift_end||'')+'</td><td style="padding:4px 6px;text-align:right;font-family:\'Space Grotesk\',sans-serif">'+esc(r.scheduled_hours||'')+'</td></tr>';}).join('')+'</table></div>';
+      var html='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:10px"><div style="font-size:15px;font-weight:600;color:var(--ink)">Week of '+esc(d.week_start||'')+' · '+rows.length+' shifts</div><div style="display:flex;gap:10px"><button onclick="downloadHistoryCsv('+id+')" class="btn-secondary" style="font-size:13.5px;padding:6px 14px">Download CSV</button><button onclick="document.getElementById(\'sched-history-detail\').style.display=\'none\'" class="btn-secondary" style="font-size:13.5px;font-weight:700;padding:6px 14px">Close ✕</button></div></div>';
+      html+='<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13.5px"><tr style="color:var(--ink3);text-transform:uppercase;font-size:13px;letter-spacing:.06em"><th style="text-align:left;padding:6px 8px">Day</th><th style="text-align:left;padding:6px 8px">Employee</th><th style="text-align:left;padding:6px 8px">Role</th><th style="text-align:left;padding:6px 8px">Shift</th><th style="text-align:right;padding:6px 8px">Hrs</th></tr>';
+      html+=rows.map(function(r){return '<tr style="border-top:1px solid var(--paper3)"><td style="padding:6px 8px;color:var(--ink)">'+esc(r.day||r.date||'')+'</td><td style="padding:6px 8px;color:var(--ink)">'+esc(r.employee||'')+'</td><td style="padding:6px 8px;color:var(--ink3)">'+esc(r.role||'')+'</td><td style="padding:6px 8px;color:var(--ink3);white-space:nowrap">'+esc(r.shift_start||'')+'–'+esc(r.shift_end||'')+'</td><td style="padding:6px 8px;text-align:right;font-family:\'Space Grotesk\',sans-serif">'+esc(r.scheduled_hours||'')+'</td></tr>';}).join('')+'</table></div>';
       box.innerHTML=html;box.style.display='block';window._schedHistCsv=window._schedHistCsv||{};window._schedHistCsv[id]={csv:csv,week:d.week_start||''};
       box.scrollIntoView({behavior:'smooth',block:'nearest'});
     });

@@ -267,6 +267,7 @@ def test_insight_sections_carry_their_claim_kind():
         "insight_intro": "inferred",
         "insight_recommendations": "suggestion",
         "insight_forecast": "forecast",
+        "insight_unverified": "unverified",
     }
     assert out["insight_forecast"] == "busier next week"
 

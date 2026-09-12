@@ -327,12 +327,24 @@ def retract(rid, current_user):
 
 def parse_insight_sections(text):
     """Splits free-form AI consultant prose into (intro, recommendations,
-    forecast) — the one place this parsing happens, shared by
+    forecast, unverified) — the one place this parsing happens, shared by
     format_insight_html() (web, renders as HTML) and the mobile insight
-    routes (return the same three fields as JSON for native rendering)."""
+    routes (return the same fields as JSON for native rendering)."""
     import re as _re
     if not text:
-        return "Analysis unavailable.", [], None
+        return "Analysis unavailable.", [], None, None
+
+    # Pull out a trailing "UNVERIFIED: ..." line before anything else.
+    # ai_guard.verify_figures() appends this (via labor.py / competitor.py)
+    # when the model stated a figure not backed by the numbers it was
+    # given — it's a caveat about the passage as a whole, not a fourth
+    # recommendation. Left in place, the numbered-recs split below has no
+    # way to tell the difference and renders it as recommendation "4.".
+    unverified = None
+    umatch = _re.search(r'(?is)\n*unverified:\s*(.+)$', text)
+    if umatch:
+        unverified = umatch.group(1).strip().rstrip('.') or None
+        text = text[:umatch.start()].strip()
 
     # Pull out a trailing "FORECAST: ..." line before any other parsing, so
     # it's identified regardless of which branch below handles the rest.
@@ -373,7 +385,7 @@ def parse_insight_sections(text):
             # No structured recommendations found — hand back the whole
             # (forecast-stripped) text untouched, preserving original line
             # breaks for callers that care (the web's pre-wrap rendering).
-            return text, [], forecast
+            return text, [], forecast, unverified
         intro = ' '.join(para_lines).strip()
         recs = rec_lines
 
@@ -382,13 +394,13 @@ def parse_insight_sections(text):
         clean = _re.sub(r'^[\d.\-)]+\s*', '', rec).strip()
         if clean:
             clean_recs.append(clean)
-    return intro, clean_recs, forecast
+    return intro, clean_recs, forecast, unverified
 
 
 def format_insight_html(text):
     if not text:
         return 'Analysis unavailable.'
-    intro, recs, forecast = parse_insight_sections(text)
+    intro, recs, forecast, unverified = parse_insight_sections(text)
 
     forecast_html = ''
     if forecast:
@@ -400,13 +412,28 @@ def format_insight_html(text):
             '<div style="font-style:italic;line-height:1.6">' + forecast + '</div></div>'
         )
 
+    # A caveat about the passage as a whole (a figure the model stated that
+    # its own input didn't back up) — never a numbered recommendation, and
+    # deliberately not styled like one, so it can't be mistaken for a
+    # suggestion to act on.
+    unverified_html = ''
+    if unverified:
+        unverified_html = (
+            '<div style="margin-top:10px;padding:10px 12px;background:rgba(184,127,31,.08);'
+            'border-left:2px solid var(--amber);border-radius:0 6px 6px 0">'
+            '<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;'
+            'color:var(--amber);margin-bottom:4px">⚠ Unverified</div>'
+            '<div style="line-height:1.6;color:var(--ink2)">Could not confirm ' + unverified
+            + ' against your actual numbers.</div></div>'
+        )
+
     if not recs:
-        return '<p style="margin:0;line-height:1.7">' + intro + '</p>' + forecast_html
+        return '<p style="margin:0;line-height:1.7">' + intro + '</p>' + forecast_html + unverified_html
 
     html = ''
     if intro:
         html += '<p style="margin:0 0 10px 0;line-height:1.7">' + intro + '</p>'
-    html += '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#c84b2f;margin-bottom:8px">Recommendations</div>'
+    html += '<div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#c84b2f;margin-bottom:8px">Recommendations</div>'
     num = 1
     for clean in recs:
         html += ('<div style="display:flex;gap:10px;margin-bottom:8px;align-items:flex-start">'
@@ -414,7 +441,7 @@ def format_insight_html(text):
             + str(num) +
             '</span><span style="line-height:1.6;color:#b7791f;font-weight:500">' + clean + '</span></div>')
         num += 1
-    return html + forecast_html
+    return html + forecast_html + unverified_html
 
 def _do_review_stats(restaurant_id):
     from models import get_review_stats as _grs, get_restaurant as _gr

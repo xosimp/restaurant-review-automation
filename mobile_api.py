@@ -2145,7 +2145,7 @@ def _insight_json(insight_text):
     insight string — the same parsing client_api.format_insight_html() uses
     to build the web's HTML, just handed back as JSON so the iOS app can
     render its own native equivalent instead of a plain text blob."""
-    intro, recs, forecast = _capi.parse_insight_sections(insight_text)
+    intro, recs, forecast, unverified = _capi.parse_insight_sections(insight_text)
     # What KIND of claim each part is. A measured fact, the model's read of
     # it, a guess about next week and a suggestion all rendered as the same
     # prose in the same weight, so a reader had no way to tell "your 30-day
@@ -2156,10 +2156,12 @@ def _insight_json(insight_text):
         "insight_intro": intro,
         "insight_recommendations": recs,
         "insight_forecast": forecast,
+        "insight_unverified": unverified,
         "claim_kinds": {
             "insight_intro": "inferred",
             "insight_recommendations": "suggestion",
             "insight_forecast": "forecast",
+            "insight_unverified": "unverified",
         },
     }
 
