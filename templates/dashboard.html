@@ -8,8 +8,8 @@
 <link rel="icon" type="image/x-icon" href="/favicon.ico">
 <link rel="icon" type="image/png" href="/favicon.png">
 <link rel="shortcut icon" href="/favicon.ico">
-<meta name="theme-color" content="#0e0c0a">
-<script>(function(){var _v=localStorage.getItem('cavnar_theme');var d=_v===null?true:_v==='dark';if(d)document.documentElement.setAttribute('data-theme','dark');document.documentElement.style.background=d?'radial-gradient(ellipse 100% 55% at 50% 0%,rgba(200,75,47,.45) 0%,rgba(200,75,47,.18) 40%,transparent 70%),linear-gradient(180deg,#0a0806 0%,#0e0c0a 100%)':'radial-gradient(ellipse 100% 55% at 50% 0%,rgba(200,75,47,.32) 0%,rgba(200,75,47,.10) 45%,transparent 70%),linear-gradient(180deg,#f7f4ef 0%,#faf7f2 100%)';}());</script>
+<meta name="theme-color" content="#0c0c0c">
+<script>(function(){var _v=localStorage.getItem('cavnar_theme');var d=_v===null?true:_v==='dark';if(d)document.documentElement.setAttribute('data-theme','dark');document.documentElement.style.background=d?'radial-gradient(ellipse 100% 55% at 50% 0%,rgba(200,75,47,.45) 0%,rgba(200,75,47,.18) 40%,transparent 70%),linear-gradient(180deg,#0c0c0c 0%,#0c0c0c 100%)':'radial-gradient(ellipse 100% 55% at 50% 0%,rgba(200,75,47,.32) 0%,rgba(200,75,47,.10) 45%,transparent 70%),linear-gradient(180deg,#f7f4ef 0%,#faf7f2 100%)';}());</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Bricolage+Grotesque:opsz,wght@12..96,700&display=block" rel="stylesheet">
@@ -25,7 +25,7 @@
   --ember:#e06444;--ember2:#e8956a;
   --green:#4ead7a;--green-bg:#0c2318;--red:#e05555;--red-bg:#2a1010;
   --amber:#d4a030;--amber-bg:#251d08;--blue:#6aabff;--blue-bg:#0a1828;
-  --surface:#201d19;--hdr-bg:#0f0d0b
+  --surface:#201d19;--hdr-bg:#0c0c0c
 }
 html[data-theme="dark"]{background:#0c0c0c!important;background-image:none!important}
 html[data-theme="dark"] body{color:var(--ink)}
@@ -69,7 +69,7 @@ html[data-theme="dark"] body{color:var(--ink)}
 [data-theme="dark"] .stat.hi{background:var(--red-bg)!important;border-color:#4a1c1c!important}
 [data-theme="dark"] .stat.warn{background:var(--amber-bg)!important;border-color:#4a3808!important}
 /* AI insight box — must NOT use --ink which is now cream */
-[data-theme="dark"] .insight{background:#0f0d0b!important;border:1px solid #2a2520}
+[data-theme="dark"] .insight{background:#0c0c0c!important;border:1px solid #2a2520}
 [data-theme="dark"] .insight .insight-text{color:rgba(240,235,224,.82)!important}
 [data-theme="dark"] .insight-lbl{color:var(--ink3)!important}
 /* Toolbar & filters */
@@ -104,7 +104,7 @@ html[data-theme="dark"] body{color:var(--ink)}
 [data-theme="dark"] .calc-tip-light .tip-icon{color:rgba(240,235,224,.55)!important}
 [data-theme="dark"] .calc-tip-light:hover .tip-icon{color:rgba(240,235,224,.95)!important}
 /* Labor panel */
-[data-theme="dark"] #labor-gap-banner{background:#0f0d0b!important}
+[data-theme="dark"] #labor-gap-banner{background:#0c0c0c!important}
 [data-theme="dark"] #labor-gap-banner [style*="color:var(--paper)"]{color:var(--ink)!important}
 [data-theme="dark"] #panel-labor .card:not(#labor-bench-card):not(#role-cost-card){background:#252118!important}
 [data-theme="dark"] #labor-bench-card[style*="#f5d5d5"]{background:linear-gradient(to right,#2a1010,#252118)!important}
@@ -201,7 +201,7 @@ html[data-theme="dark"] body{color:var(--ink)}
 /* Sign out hover */
 [data-theme="dark"] .logout-btn:hover{color:var(--ink)!important;border-color:var(--ink2)!important}
 /* Consultant hero card */
-[data-theme="dark"] .acct-hero-card{background:#0f0d0b!important}
+[data-theme="dark"] .acct-hero-card{background:#0c0c0c!important}
 /* Header logo */
 [data-theme="dark"] .hdr-logo{color:#f0ebe0!important}
 [data-theme="dark"] .hdr-logo em{color:var(--ember2)!important}
@@ -1162,6 +1162,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(255,255,255,.8),rgba(255,255,255,.45))}
 .hb-chip:hover{transform:translateY(-1px);box-shadow:0 0 24px rgba(200,75,47,.28)}
 .hb-chip .v{font-family:'Space Grotesk',sans-serif;font-size:14px;font-weight:700;letter-spacing:-.01em}
+.hb-chip .v .stat-n{font-size:14px}
 .hb-chip .l{font-size:11.5px;font-weight:600;color:var(--ink2)}
 .hb-chip .dot{position:relative;width:8px;height:8px;flex-shrink:0}
 .hb-chip .dot i{position:absolute;inset:0;border-radius:50%;background:var(--ember);box-shadow:0 0 6px var(--ember)}
@@ -2106,7 +2107,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .lb2-range button{background:none;border:none;border-radius:999px;padding:5px 11px;font-family:'Space Grotesk',sans-serif;font-size:12px;font-weight:600;color:var(--ink3);cursor:pointer}
 .lb2-range button.on{background-color:var(--hb-tint2);color:var(--ember)}
 /* schedule tools */
-.lb2-sched{margin-top:34px;padding-top:22px;border-top:1px solid var(--hb-line)}
+.lb2-sched{margin-top:34px}
 .lb2-preview{border-radius:12px;background:var(--hb-tint);overflow:hidden;margin-top:14px}
 .lb2-preview [style*="rgba(255,255,255,.88)"]{color:var(--ink)!important}
 .lb2-preview [style*="color:#c0b8b0"],.lb2-preview [style*="rgba(255,255,255,.75)"],.lb2-preview [style*="rgba(255,255,255,.4)"]{color:var(--ink2)!important}
@@ -2285,12 +2286,12 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
   </script>
 
   <div class="lb2-sched">
-    <div class="hb-sh" style="margin-top:0"><div><div class="k">Schedule</div><h2>Next week, built by Cavnar<small>optimized to your {{ _lt|int }}% target and every staff constraint</small></h2></div><div class="lb2-actions" style="margin-top:0">
+    <div class="hb-sh" style="margin-top:0"><div><div class="k">Schedule</div><h2>Next week, built by Cavnar AI<small>optimized to your {{ _lt|int }}% target and every staff constraint</small></h2><div class="lb2-actions">
       {% if labor.is_live %}<button onclick="generateSchedule(this)" id="gen-sched-btn" class="btn-primary">Generate optimized schedule</button>{% endif %}
       {% if not restaurant.toast_restaurant_guid %}
       <label class="btn-primary" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer">{% if labor.is_live %}Update shifts CSV{% else %}Upload shifts CSV{% endif %}<input type="file" accept=".csv" style="display:none" id="shifts-inline-input" onchange="clientUpload('shifts', this)"></label>
       {% endif %}
-    </div></div>
+    </div></div></div>
   <!-- Schedule download tooltip -->
   <div id="schedule-tooltip" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;z-index:999;background:rgba(14,12,10,0.6);align-items:center;justify-content:center">
     <div style="background:var(--ink);border-radius:12px;padding:28px 32px;max-width:420px;width:90%;position:relative;border:1px solid #3d3530">
@@ -2565,10 +2566,10 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:4px">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:0">
           <span style="width:8px;height:8px;border-radius:50%;background:#ff8a65;flex-shrink:0"></span>
-          <span style="font-size:14px;font-weight:700;color:var(--ink);letter-spacing:-.01em">Overstaffed days <span style="font-weight:500;color:var(--ink3)">— where the money is going</span></span>
+          <span style="font-size:16px;font-weight:700;color:var(--ink);letter-spacing:-.01em">Overstaffed days <span style="font-weight:500;color:var(--ink3)">— where the money is going</span></span>
         </div>
         {% if labor.overstaffed_days|length > 10 %}
-        <button onclick="toggleRows('overstaffed-tbody','overstaffed-toggle',{{labor.overstaffed_days|length}})" id="overstaffed-toggle" style="font-size:10px;color:var(--ember);background:none;border:none;cursor:pointer;font-weight:600;padding:0;white-space:nowrap">Show all {{labor.overstaffed_days|length}} ↓</button>
+        <button onclick="toggleRows('overstaffed-tbody','overstaffed-toggle',{{labor.overstaffed_days|length}})" id="overstaffed-toggle" style="font-size:12.5px;color:var(--ember);background:none;border:none;cursor:pointer;font-weight:600;padding:0;white-space:nowrap">Show all {{labor.overstaffed_days|length}} ↓</button>
         {% endif %}
       </div>
       <div class="dark-hero-card" style="border:1px solid rgba(200,75,47,.45);border-radius:12px;overflow:hidden">
@@ -2579,11 +2580,11 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
         {% set bar_w = [(d.labor_pct / 50 * 100), 100]|min|round(0)|int %}
         <div data-row class="{% if loop.index > 10 %}collapsible-row overstaffed-extra{% endif %}" style="display:flex;align-items:center;gap:14px;padding:12px 18px;{% if loop.index > 10 %}display:none;{% endif %}{% if not loop.last %}border-bottom:1px solid rgba(255,255,255,.06);{% endif %}{% if is_top_cost %}background:rgba(200,75,47,.1);{% endif %}">
           <div style="min-width:60px">
-            <div style="font-family:'Space Grotesk',sans-serif;font-size:10px;color:rgba(255,255,255,.4)">{{d.date}}</div>
-            <div style="font-size:13px;font-weight:600;color:rgba(255,255,255,.88)">{{d.day}}{% if is_top_cost %}<span style="display:block;font-size:9px;font-weight:700;color:#ff8a65;margin-top:2px">most expensive</span>{% endif %}</div>
+            <div style="font-family:'Space Grotesk',sans-serif;font-size:12.5px;color:rgba(255,255,255,.4)">{{d.date}}</div>
+            <div style="font-size:15.5px;font-weight:600;color:rgba(255,255,255,.88)">{{d.day}}{% if is_top_cost %}<span style="display:block;font-size:13.5px;font-weight:700;color:#ff8a65;margin-top:2px">most expensive</span>{% endif %}</div>
           </div>
           <div style="flex:1;min-width:0">
-            <div style="display:flex;justify-content:space-between;gap:8px;font-size:11px;color:rgba(255,255,255,.55);margin-bottom:4px">
+            <div style="display:flex;justify-content:space-between;gap:8px;font-size:13.5px;color:rgba(255,255,255,.55);margin-bottom:4px">
               <span><span style="font-family:'Space Grotesk',sans-serif">${{d.sales|int|format_num}}</span> sales · <span style="font-family:'Space Grotesk',sans-serif">${{d.labor_cost|format_num}}</span> labor</span>
               <span style="font-family:'Space Grotesk',sans-serif;font-weight:700;white-space:nowrap;color:{% if diff > 0 %}#ff8a65{% else %}#6fcf97{% endif %}">{% if diff > 0 %}+{{diff}}% over{% else %}{{diff}}% under ✓{% endif %}</span>
             </div>
@@ -2593,7 +2594,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
           </div>
         </div>
         {% else %}
-        <div style="padding:16px 18px;color:rgba(255,255,255,.4);font-style:italic;font-size:12px">No overstaffed days — great work!</div>
+        <div style="padding:16px 18px;color:rgba(255,255,255,.4);font-style:italic;font-size:14.5px">No overstaffed days — great work!</div>
         {% endfor %}
         </div>
       </div>
@@ -2601,10 +2602,10 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       <div style="display:flex;align-items:baseline;justify-content:space-between;margin-top:16px;margin-bottom:4px">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:0">
           <span style="width:8px;height:8px;border-radius:50%;background:#ffc266;flex-shrink:0"></span>
-          <span style="font-size:14px;font-weight:700;color:var(--ink);letter-spacing:-.01em">Under target on a strong day <span style="font-weight:500;color:var(--ink3)">— worth a look</span></span>
+          <span style="font-size:16px;font-weight:700;color:var(--ink);letter-spacing:-.01em">Under target on a strong day <span style="font-weight:500;color:var(--ink3)">— worth a look</span></span>
         </div>
         {% if labor.understaffed_days|length > 10 %}
-        <button onclick="toggleRows('understaffed-tbody','understaffed-toggle',{{labor.understaffed_days|length}})" id="understaffed-toggle" style="font-size:10px;color:var(--ember);background:none;border:none;cursor:pointer;font-weight:600;padding:0;white-space:nowrap">Show all {{labor.understaffed_days|length}} ↓</button>
+        <button onclick="toggleRows('understaffed-tbody','understaffed-toggle',{{labor.understaffed_days|length}})" id="understaffed-toggle" style="font-size:12.5px;color:var(--ember);background:none;border:none;cursor:pointer;font-weight:600;padding:0;white-space:nowrap">Show all {{labor.understaffed_days|length}} ↓</button>
         {% endif %}
       </div>
       <div style="background:linear-gradient(135deg,#1a1409 0%,#141009 60%,#0e0a06 100%);border:1px solid rgba(239,159,39,.45);border-radius:12px;overflow:hidden">
@@ -2612,23 +2613,23 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
         {% for d in labor.understaffed_days %}
         <div data-row style="display:flex;align-items:center;gap:12px;padding:12px 18px;{% if loop.index > 10 %}display:none;{% endif %}{% if not loop.last %}border-bottom:1px solid rgba(255,255,255,.06);{% endif %}">
           <div style="min-width:60px">
-            <div style="font-family:'Space Grotesk',sans-serif;font-size:10px;color:rgba(255,255,255,.4)">{{d.date}}</div>
-            <div style="font-size:13px;font-weight:600;color:rgba(255,255,255,.88)">{{d.day}}</div>
+            <div style="font-family:'Space Grotesk',sans-serif;font-size:12.5px;color:rgba(255,255,255,.4)">{{d.date}}</div>
+            <div style="font-size:15.5px;font-weight:600;color:rgba(255,255,255,.88)">{{d.day}}</div>
           </div>
           <div style="flex:1;min-width:0">
-            <div style="display:flex;justify-content:space-between;gap:8px;font-size:11px;color:rgba(255,255,255,.55);margin-bottom:2px">
-              <span style="font-family:'Space Grotesk',sans-serif;font-size:13px;font-weight:700;color:#ffc266">${{d.sales|int|format_num}}</span>
-              <span style="font-size:10px;font-weight:700;background:rgba(239,159,39,.2);color:#ffc266;padding:2px 8px;border-radius:10px;white-space:nowrap">{{d.labor_pct}}% ⚠</span>
+            <div style="display:flex;justify-content:space-between;gap:8px;font-size:13.5px;color:rgba(255,255,255,.55);margin-bottom:2px">
+              <span style="font-family:'Space Grotesk',sans-serif;font-size:15.5px;font-weight:700;color:#ffc266">${{d.sales|int|format_num}}</span>
+              <span style="font-size:12.5px;font-weight:700;background:rgba(239,159,39,.2);color:#ffc266;padding:2px 8px;border-radius:10px;white-space:nowrap">{{d.labor_pct}}% ⚠</span>
             </div>
-            <div style="font-size:10px;color:rgba(255,255,255,.45)">Strong sales day — lean staffing may have left revenue on the table</div>
+            <div style="font-size:12.5px;color:rgba(255,255,255,.45)">Strong sales day — lean staffing may have left revenue on the table</div>
           </div>
         </div>
         {% else %}
-        <div style="padding:16px 18px;color:rgba(255,255,255,.4);font-style:italic;font-size:12px">No understaffed days flagged — great balance this period</div>
+        <div style="padding:16px 18px;color:rgba(255,255,255,.4);font-style:italic;font-size:14.5px">No understaffed days flagged — great balance this period</div>
         {% endfor %}
         </div>
         {% if labor.understaffed_days %}
-        <div style="padding:10px 18px;font-size:11px;color:#ffc266;background:rgba(239,159,39,.08);border-top:1px solid rgba(239,159,39,.15)">
+        <div style="padding:10px 18px;font-size:13.5px;color:#ffc266;background:rgba(239,159,39,.08);border-top:1px solid rgba(239,159,39,.15)">
           💡 Consider adding 1–2 staff on: {% for d in labor.understaffed_days[:5] %}<strong>{{d.date}}</strong>{% if not loop.last %}, {% endif %}{% endfor %}{% if labor.understaffed_days|length > 10 %} +{{labor.understaffed_days|length - 5}} more{% endif %}.
         </div>
         {% endif %}
@@ -2638,7 +2639,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       {% if labor.overtime_risk %}
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
         <span style="width:8px;height:8px;border-radius:50%;background:#ff5a5a;flex-shrink:0"></span>
-        <span style="font-size:14px;font-weight:700;color:var(--ink);letter-spacing:-.01em">Overtime alerts</span>
+        <span style="font-size:16px;font-weight:700;color:var(--ink);letter-spacing:-.01em">Overtime alerts</span>
       </div>
       <div class="dark-hero-card" style="border:1px solid rgba(200,75,47,.45);border-radius:12px;overflow:hidden">
         {% for emp in labor.overtime_risk %}
@@ -2649,17 +2650,17 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
         {% set has_ot_allowance = emp_constraint and ('overtime' in _ec or 'extra hours' in _ec or ' ot ' in (' ' + _ec + ' ') or _ec.startswith('ot ') or _ec.endswith(' ot')) %}
         <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 18px;{% if not loop.last %}border-bottom:1px solid rgba(255,255,255,.06);{% endif %}{% if emp.status == "overtime" and emp.hours >= 55 and not has_ot_allowance %}background:rgba(192,57,43,.1);{% elif has_ot_allowance %}background:rgba(45,106,79,.08);{% endif %}">
           <div>
-            <div style="font-size:13px;font-weight:600;color:rgba(255,255,255,.88)">{{emp.employee}}{% if has_ot_allowance %} <span style="font-size:9px;background:rgba(45,106,79,.25);color:#6fcf97;padding:2px 6px;border-radius:8px;font-weight:600;margin-left:4px">constraint</span>{% endif %}</div>
-            <div style="font-size:10px;color:rgba(255,255,255,.4);margin-top:2px">Week of <span style="font-family:'Space Grotesk',sans-serif">{{emp.week}}</span> · <span style="font-family:'Space Grotesk',sans-serif">{{two_wk}}h</span> 2-wk total</div>
+            <div style="font-size:15.5px;font-weight:600;color:rgba(255,255,255,.88)">{{emp.employee}}{% if has_ot_allowance %} <span style="font-size:13.5px;background:rgba(45,106,79,.25);color:#6fcf97;padding:2px 6px;border-radius:8px;font-weight:600;margin-left:4px">constraint</span>{% endif %}</div>
+            <div style="font-size:12.5px;color:rgba(255,255,255,.4);margin-top:2px">Week of <span style="font-family:'Space Grotesk',sans-serif">{{emp.week}}</span> · <span style="font-family:'Space Grotesk',sans-serif">{{two_wk}}h</span> 2-wk total</div>
           </div>
           <div style="text-align:right">
-            <div style="font-family:'Space Grotesk',sans-serif;font-size:16px;font-weight:700;color:{% if emp.hours >= 55 and not has_ot_allowance %}#ff8a65{% else %}rgba(255,255,255,.88){% endif %}">{{emp.hours}}h</div>
+            <div style="font-family:'Space Grotesk',sans-serif;font-size:18px;font-weight:700;color:{% if emp.hours >= 55 and not has_ot_allowance %}#ff8a65{% else %}rgba(255,255,255,.88){% endif %}">{{emp.hours}}h</div>
             {% if has_ot_allowance %}
-              <span style="font-size:9px;font-weight:700;color:#6fcf97;white-space:nowrap">✓ OT allowed</span>
+              <span style="font-size:13.5px;font-weight:700;color:#6fcf97;white-space:nowrap">✓ OT allowed</span>
             {% elif emp.status == "overtime" %}
-              <span style="font-size:9px;font-weight:700;color:#ff8a65;white-space:nowrap">Overtime — review pay</span>
+              <span style="font-size:13.5px;font-weight:700;color:#ff8a65;white-space:nowrap">Overtime — review pay</span>
             {% else %}
-              <span style="font-size:9px;font-weight:700;color:#ef9f27;white-space:nowrap">⚠ Approaching 40h</span>
+              <span style="font-size:13.5px;font-weight:700;color:#ef9f27;white-space:nowrap">⚠ Approaching 40h</span>
             {% endif %}
           </div>
         </div>
@@ -7908,16 +7909,18 @@ function generateSchedule(btn) {
   btn.style.background = '';
   btn.style.color = '';
   var _schedStart = Date.now();
-  var _spinner = '<span style="display:inline-block;width:13px;height:13px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;vertical-align:middle;animation:spin .7s linear infinite"></span>';
+  var _spinner = '<canvas class="hb-orb" data-orb-state="working" width="14" height="14" style="width:14px;height:14px;vertical-align:middle"></canvas>';
   btn.innerHTML = 'Generating… ' + _spinner;
   // "Building the Week" — shifts fill a 7-day grid while an ember dash
-  // travels the header, right under the button that started it (removed
-  // again by _schedReset / _schedHandleResult).
+  // travels the header, right under the button row that started it (removed
+  // again by _schedReset / _schedHandleResult). Inserted after the whole
+  // .lb2-actions row, not the button itself — as a flex sibling of the
+  // button it got squeezed into the row instead of rendering full-width.
   var _oldWk = document.getElementById('sched-week'); if (_oldWk) _oldWk.remove();
   var _wk = document.createElement('div'); _wk.id = 'sched-week'; _wk.style.cssText = 'margin-top:14px';
   _wk.innerHTML = cavnarWeekHtml("Building next week's schedule")
     + '<div id="sched-steps" style="max-width:340px;margin:10px auto 0;text-align:left"></div>';
-  btn.insertAdjacentElement('afterend', _wk);
+  (btn.closest('.lb2-actions') || btn).insertAdjacentElement('afterend', _wk);
   startScheduleSteps(_schedStart);
 
   // Update elapsed time every 5s so owner knows it's working

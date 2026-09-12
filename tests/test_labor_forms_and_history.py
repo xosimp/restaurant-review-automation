@@ -76,13 +76,17 @@ def test_hb_sh_has_a_real_css_rule():
     assert m and int(re.search(r"font-size:(\d+)px", m.group(1)).group(1)) >= 14
 
 
-def test_schedule_buttons_sit_in_the_header_row_not_below_it():
+def test_schedule_buttons_sit_below_the_heading_not_beside_it():
+    """Reversed from an earlier round: the buttons lived beside the heading
+    as the header row's second flex child, but that squeezed the "Building
+    the Week" animation into the same flex row once Generate fired. They
+    now sit directly under the subtitle instead."""
     s = _src()
     i = s.index('<div class="k">Schedule</div>')
-    row_end = s.index("</h2></div>", i)
-    row = s[i:s.index("</div></div>", row_end) + len("</div></div>")]
-    assert 'class="lb2-actions"' in row, \
-        "Generate/Update should be the header row's second flex child, matching Inbox's own pattern"
+    h2_end = s.index('</h2>', i) + len('</h2>')
+    after = s[h2_end:h2_end + 40]
+    assert after.startswith('<div class="lb2-actions">'), \
+        "Generate/Update should sit right under the heading text, not beside it in the header row"
 
 
 def test_optimized_is_spelled_the_american_way_everywhere_its_shown():
