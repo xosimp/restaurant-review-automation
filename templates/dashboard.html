@@ -4451,12 +4451,18 @@ function _askSevColor(sev) {
   return 'var(--ink3)';
 }
 
-// Fetched once per page load. A failure leaves the old empty state rather
-// than blocking the panel — the opening must never be why Ask won't open.
+// Re-fetched when it goes stale rather than held for the life of the tab.
+// It was cached once per page load, so an owner who answered the review it
+// was warning about and reopened the panel was told about it again. The
+// call costs no model tokens and a handful of milliseconds.
+var _askOpeningAt = 0;
+var ASK_OPENING_TTL_MS = 5 * 60 * 1000;
+// A failure leaves the old state rather than blocking the panel — the
+// opening must never be why Ask won't open.
 window._askLoadOpening = function(then) {
-  if (_askOpening) { if (then) then(); return; }
+  if (_askOpening && (Date.now() - _askOpeningAt) < ASK_OPENING_TTL_MS) { if (then) then(); return; }
   fetch('/api/ask-cavnar/opening').then(function(r){ return r.json(); }).then(function(d){
-    if (d && d.ok) _askOpening = d;
+    if (d && d.ok) { _askOpening = d; _askOpeningAt = Date.now(); }
   }).catch(function(){}).then(function(){ if (then) then(); });
 };
 

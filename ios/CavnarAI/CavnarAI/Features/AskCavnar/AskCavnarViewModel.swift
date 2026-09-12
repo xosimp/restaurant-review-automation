@@ -281,14 +281,22 @@ final class AskCavnarViewModel {
     /// situation-aware ones from real signals and only the Home tab used
     /// them. No model call: this is the first thing an owner sees, so it has
     /// to be instant, and every line is measured rather than written.
-    func loadOpening() async {
+    /// Re-fetched once it goes stale, not held for the life of the process.
+    /// An owner who answered the review this was warning about and came back
+    /// to the tab was otherwise told about it again.
+    func loadOpening(force: Bool = false) async {
+        if !force, let loaded = openingLoadedAt,
+           Date().timeIntervalSince(loaded) < Self.openingTTL { return }
         if let response: AskOpening = try? await client.send(
             "/mobile/api/ask-cavnar/opening", hapticOnError: false), response.ok {
             opening = response
+            openingLoadedAt = Date()
         }
     }
 
     var opening: AskOpening?
+    private var openingLoadedAt: Date?
+    private static let openingTTL: TimeInterval = 5 * 60
 
     func refreshConversations() async {
         isLoadingConversations = true

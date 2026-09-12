@@ -409,3 +409,59 @@ def test_the_web_route_is_the_same_endpoint_the_app_uses(db_path, monkeypatch):
     src = _source("client_api.py")
     block = src[src.index('@client_bp.route("/api/ask-cavnar/opening")'):][:400]
     assert "_m(" in block, "the web route must delegate, not reimplement"
+
+
+# ── what the re-audit found ──────────────────────────────────────────────
+
+def test_the_owner_can_have_a_note_dropped(db_path):
+    """Memory that can only be written to is memory the owner cannot correct.
+    Found by the re-audit: nothing on either surface could delete one."""
+    rid = _restaurant(db_path)
+    models.remember_ask_fact(rid, "Wants labor under 26% by December", db_path=db_path)
+    out = tools._forget(rid, "Wants labor under 26% by December")
+    assert out["forgotten"]
+    assert models.get_ask_memory(rid, db_path=db_path) == []
+
+
+def test_a_note_can_be_dropped_without_quoting_it_word_for_word(db_path):
+    rid = _restaurant(db_path)
+    models.remember_ask_fact(rid, "Wants labor under 26% by December", db_path=db_path)
+    assert tools._forget(rid, "labor under 26%")["forgotten"] == \
+        "Wants labor under 26% by December"
+
+
+def test_dropping_a_note_that_was_never_there_says_what_is_there(db_path):
+    rid = _restaurant(db_path)
+    models.remember_ask_fact(rid, "Closes Mondays", db_path=db_path)
+    out = tools._forget(rid, "hires only veterans")
+    assert "error" in out and out["remembered"] == ["Closes Mondays"]
+    assert len(models.get_ask_memory(rid, db_path=db_path)) == 1
+
+
+def test_forget_cannot_reach_another_restaurants_notes(db_path):
+    rid_a = _restaurant(db_path)
+    rid_b = _restaurant(db_path, name="Other Place", owner_email="other@x.test")
+    models.remember_ask_fact(rid_a, "Closes Mondays", db_path=db_path)
+    assert "error" in tools._forget(rid_b, "Closes Mondays")
+    assert len(models.get_ask_memory(rid_a, db_path=db_path)) == 1
+
+
+def test_a_window_the_model_phrased_badly_still_reads_alerts(db_path):
+    """Found by the re-audit: days="abc" raised, and the caught error read to
+    the owner as though nothing had fired."""
+    rid = _restaurant(db_path)
+    _alert(db_path, rid, alert_type="labor_over_target", days_ago=0)
+    for bad in ("abc", None, "", 0, -5, 3.7, "7", 10000):
+        out = tools._read_alerts(rid, days=bad)
+        assert out["alerts"], "days=%r lost a real alert" % bad
+
+
+def test_the_briefing_is_not_held_for_the_life_of_the_session():
+    """Found by the re-audit: both surfaces cached the opening once, so an
+    owner who acted on an item was warned about it again on their return."""
+    web = _source("templates", "dashboard.html")
+    assert "ASK_OPENING_TTL_MS" in web
+    assert "_askOpeningAt" in web
+    swift = _source("ios", "CavnarAI", "CavnarAI", "Features", "AskCavnar",
+                    "AskCavnarViewModel.swift")
+    assert "openingTTL" in swift and "openingLoadedAt" in swift

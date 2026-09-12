@@ -152,7 +152,13 @@ struct AskCavnarView: View {
             .navigationDestination(isPresented: $showingHistory) {
                 AskCavnarHistoryView(viewModel: viewModel)
             }
-            .task { await viewModel.loadInitialIfNeeded() }
+            .task {
+                await viewModel.loadInitialIfNeeded()
+                // Runs on every appear; the view model's own TTL decides
+                // whether that costs a request, so returning to the tab
+                // after acting on something shows the briefing without it.
+                await viewModel.loadOpening()
+            }
         }
     }
 

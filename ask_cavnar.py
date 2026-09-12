@@ -710,6 +710,7 @@ _TOOL_LABELS = {
     "read_team": "Looking at your team",
     "read_alerts": "Checking what needs you",
     "remember": "Making a note of that",
+    "forget": "Dropping that note",
     "read_menu_margins": "Working out your menu margins",
     "read_order_draft": "Checking this week's order",
     "read_schedule": "Looking at your schedule",

@@ -219,6 +219,21 @@ def _read_team(restaurant_id):
     }
 
 
+def _days(value, default=7, ceiling=90):
+    """A window in days from whatever the model sent.
+
+    It sends "7", 7.0 and occasionally "last week". A bad value used to
+    surface as "could not read read_alerts", which reads to the owner as
+    though nothing had fired.
+    """
+    if value in (None, "", 0):
+        return default          # no preference stated, not "the last zero days"
+    try:
+        return max(1, min(int(float(value)), ceiling))
+    except (TypeError, ValueError):
+        return default
+
+
 def _read_alerts(restaurant_id, days=7):
     """What has fired for this owner, and what is still outstanding."""
     from models import get_conn
@@ -231,7 +246,7 @@ def _read_alerts(restaurant_id, days=7):
                FROM alert_log a LEFT JOIN reviews rv ON rv.id = a.review_id
                WHERE a.restaurant_id=? AND julianday(a.fired_at) >= julianday('now', ?)
                ORDER BY a.id DESC LIMIT ?""",
-            (restaurant_id, f"-{max(1, min(int(days or 7), 90))} days", _MAX_ROWS)).fetchall()
+            (restaurant_id, f"-{_days(days)} days", _MAX_ROWS)).fetchall()
     finally:
         conn.close()
     out = []
@@ -257,6 +272,30 @@ def _remember(restaurant_id, fact, kind="context"):
         return {"remembered": saved["fact"]}
     except ValueError as e:
         return {"error": str(e)}
+
+
+def _forget(restaurant_id, fact):
+    """Drop one remembered fact.
+
+    Memory that can only be written to is memory the owner cannot correct.
+    The facts are already in the snapshot, so the model can read them back
+    and match one the owner names; this is the other half.
+    """
+    from models import forget_ask_fact, get_ask_memory
+    text = (fact or "").strip()
+    if not text:
+        return {"error": "name the note to drop"}
+    if forget_ask_fact(restaurant_id, text):
+        return {"forgotten": text}
+    # Matched loosely so "forget the thing about December" lands, rather
+    # than the owner having to quote their own note back word for word.
+    lowered = text.lower()
+    for f in get_ask_memory(restaurant_id):
+        stored = f["fact"]
+        if lowered in stored.lower() or stored.lower() in lowered:
+            forget_ask_fact(restaurant_id, stored)
+            return {"forgotten": stored}
+    return {"error": "no note like that", "remembered": [f["fact"] for f in get_ask_memory(restaurant_id)]}
 
 
 def _read_staff_availability(restaurant_id):
@@ -809,6 +848,21 @@ TOOLS = [
             "input_schema": {"type": "object", "properties": {
                 "fact": {"type": "string", "description": "One short sentence."},
                 "kind": {"type": "string", "enum": ["goal", "context", "preference", "followup"]},
+            }, "required": ["fact"]},
+        },
+    },
+    {
+        "kind": "read",
+        "fn": _forget,
+        "module": None,
+        "spec": {
+            "name": "forget",
+            "description": ("Drop a note you previously recorded about this owner. Call this "
+                            "whenever they say something is no longer true, was wrong, or ask "
+                            "you to forget it. The notes you are holding are listed in your "
+                            "context — quote the one they mean."),
+            "input_schema": {"type": "object", "properties": {
+                "fact": {"type": "string", "description": "The note to drop, as close to stored wording as you can."},
             }, "required": ["fact"]},
         },
     },
