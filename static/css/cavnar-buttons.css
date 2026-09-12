@@ -1,0 +1,175 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   Cavnar AI — button system
+   ───────────────────────────────────────────────────────────────────────────
+   One component, .cbtn, plus variants and sizes. Every button in the client
+   web app (dashboard, sign-in, 2FA, password reset, guest opt-in, staff
+   availability) is built from these classes; the older .btn / .btn-primary /
+   .btn-secondary / .hb-btn / .btn-approve / .btn-skip / .btn-blue /
+   .btn-link-* families were folded into it and no longer exist.
+
+   Markup
+     <button class="cbtn cbtn-primary">Generate schedule</button>
+     <button class="cbtn">Cancel</button>                (secondary is the default)
+     <button class="cbtn cbtn-text cbtn-inline">Show all ↓</button>
+
+   Variants   cbtn-primary   the one dominant action in a view (ember)
+              cbtn-secondary the default — quiet surface + hairline
+              cbtn-text      text only, ember; tints on hover
+              cbtn-soft      tonal ember chip for gentle emphasis
+              cbtn-danger    destructive; add cbtn-ghost for the outline form,
+                             or combine with cbtn-text for a red text button
+              cbtn-success   confirm / approve (green)
+              cbtn-glass     translucent white, for buttons sitting on dark
+                             hero cards regardless of theme
+              cbtn-instagram / cbtn-facebook / cbtn-google — platform brand
+                             colours, the only non-ember fills allowed
+   Sizes      cbtn-sm 30px · (default) 36px · cbtn-lg 42px
+   Modifiers  cbtn-icon (square, icon only) · cbtn-round · cbtn-block (full
+              width) · cbtn-inline (sits in running text or a table row, no
+              fixed height) · cbtn-close (the ✕ in a modal's top-right corner)
+              · cbtn-muted (text variant in the quiet ink) · cbtn-link
+              (underlined, inside a sentence) · cbtn-done (a finished action
+              that stays visible but isn't clickable)
+   States     :hover  :active  :focus-visible  :disabled
+              [aria-busy="true"] — set by cbtnBusy(btn, label) in
+              dashboard.html, which swaps in the Cavnar orb, disables the
+              button so it can't double-submit, and returns a restore fn.
+   Layout     .cbtn-row groups actions with a consistent 10px gap.
+
+   Tokens fall back to the brand palette so the sheet also works on the
+   standalone pages that don't define the dashboard's CSS variables.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+:root{
+  --cb-font:'Apfel Grotezk',-apple-system,BlinkMacSystemFont,'Helvetica Neue',sans-serif;
+  --cb-radius:9px;--cb-radius-sm:8px;--cb-radius-lg:11px;
+  --cb-ink:var(--ink,#0e0c0a);--cb-ink3:var(--ink3,#7a736a);
+  --cb-accent:var(--ember,#c84b2f);--cb-accent-ink:#ffffff;
+  --cb-red:var(--red,#c0392b);--cb-green:var(--green,#2d6a4f);
+  --cb-surface:#ffffff;
+  --cb-line:rgba(14,12,10,.14);--cb-line-strong:rgba(14,12,10,.26);
+  --cb-tint:rgba(200,75,47,.07);--cb-tint2:rgba(200,75,47,.14);--cb-tint-ink:var(--ember,#c84b2f);
+  --cb-red-tint:rgba(192,57,43,.08);--cb-green-tint:rgba(45,106,79,.10);
+  --cb-shadow:0 1px 2px rgba(14,12,10,.10);--cb-shadow-hover:0 3px 10px rgba(14,12,10,.12);
+  --cb-glow:0 0 18px rgba(200,75,47,.26);--cb-glow-hover:0 4px 18px rgba(200,75,47,.36);
+  --cb-ring-gap:var(--paper,#f7f4ef);
+}
+[data-theme="dark"]{
+  /* The iOS dark ember (#D4583A). Replaces the old #923020 !important override
+     that made dark-mode primaries muddier than every other ember on the page. */
+  --cb-accent:#d4583a;
+  --cb-surface:rgba(255,255,255,.05);
+  --cb-line:rgba(240,235,224,.16);--cb-line-strong:rgba(240,235,224,.30);
+  --cb-tint:rgba(224,100,68,.10);--cb-tint2:rgba(224,100,68,.18);--cb-tint-ink:var(--ember,#e06444);
+  --cb-red-tint:rgba(224,85,85,.12);--cb-green-tint:rgba(78,173,122,.14);
+  --cb-shadow:0 1px 2px rgba(0,0,0,.35);--cb-shadow-hover:0 4px 12px rgba(0,0,0,.40);
+  --cb-glow:0 0 18px rgba(212,88,58,.30);--cb-glow-hover:0 6px 22px rgba(212,88,58,.42);
+  --cb-ring-gap:var(--paper,#1a1714);
+}
+
+/* ── base (secondary look) ────────────────────────────────────────────────── */
+.cbtn{
+  position:relative;display:inline-flex;align-items:center;justify-content:center;gap:7px;
+  box-sizing:border-box;height:36px;padding:0 16px;margin:0;
+  border-radius:var(--cb-radius);border:1px solid var(--cb-line);
+  background-color:var(--cb-surface);background-image:none;color:var(--cb-ink);
+  font-family:var(--cb-font);font-size:13.5px;font-weight:600;line-height:1;letter-spacing:.005em;
+  white-space:nowrap;text-decoration:none;text-align:center;vertical-align:middle;
+  box-shadow:var(--cb-shadow);cursor:pointer;
+  user-select:none;-webkit-user-select:none;-webkit-tap-highlight-color:transparent;
+  -webkit-appearance:none;appearance:none;
+  transition:background-color .15s ease,border-color .15s ease,color .15s ease,box-shadow .15s ease,transform .12s ease,opacity .15s ease,filter .15s ease;
+}
+.cbtn>svg{flex-shrink:0;display:block}
+.cbtn>canvas{display:block;flex-shrink:0}
+.cbtn:hover{background-color:var(--cb-tint);border-color:var(--cb-line-strong);box-shadow:var(--cb-shadow-hover);transform:translateY(-1px)}
+.cbtn:active{transform:translateY(0) scale(.98);transition-duration:.05s;box-shadow:var(--cb-shadow)}
+.cbtn:focus{outline:none}
+.cbtn:focus-visible{outline:none;box-shadow:0 0 0 2px var(--cb-ring-gap),0 0 0 4px var(--cb-accent)}
+.cbtn:disabled,.cbtn[aria-disabled="true"]{opacity:.55;cursor:not-allowed;transform:none!important;filter:none!important;box-shadow:none!important}
+.cbtn[aria-busy="true"]{cursor:progress;pointer-events:none;opacity:1}
+.cbtn[aria-busy="true"]>canvas{width:16px;height:16px}
+
+/* ── variants ─────────────────────────────────────────────────────────────── */
+.cbtn-secondary{background-color:var(--cb-surface);border-color:var(--cb-line);color:var(--cb-ink);box-shadow:var(--cb-shadow)}
+.cbtn-primary{
+  background-color:var(--cb-accent);
+  background-image:linear-gradient(180deg,rgba(255,255,255,.14),rgba(255,255,255,0) 55%);
+  border-color:rgba(0,0,0,.10);color:var(--cb-accent-ink);text-shadow:0 1px 0 rgba(0,0,0,.12);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.16),var(--cb-shadow),var(--cb-glow);
+}
+.cbtn-primary:hover{
+  background-color:var(--cb-accent);border-color:rgba(0,0,0,.10);
+  background-image:linear-gradient(180deg,rgba(255,255,255,.24),rgba(255,255,255,.05) 55%);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.22),var(--cb-shadow-hover),var(--cb-glow-hover);
+}
+.cbtn-primary:active{
+  background-image:linear-gradient(180deg,rgba(0,0,0,.10),rgba(0,0,0,.10));
+  box-shadow:inset 0 1px 2px rgba(0,0,0,.22),var(--cb-glow);
+}
+
+.cbtn-text{background-color:transparent;border-color:transparent;color:var(--cb-tint-ink);box-shadow:none;padding:0 8px}
+.cbtn-text:hover{background-color:var(--cb-tint);border-color:transparent;box-shadow:none;transform:none}
+.cbtn-text:active{background-color:var(--cb-tint2)}
+.cbtn-text.cbtn-muted{color:var(--cb-ink3)}
+.cbtn-text.cbtn-muted:hover{color:var(--cb-ink)}
+
+.cbtn-soft{background-color:var(--cb-tint2);border-color:transparent;color:var(--cb-tint-ink);box-shadow:none}
+.cbtn-soft:hover{background-color:var(--cb-tint2);border-color:transparent;filter:brightness(1.06);box-shadow:var(--cb-shadow)}
+
+.cbtn-danger{background-color:var(--cb-red);border-color:rgba(0,0,0,.10);color:#fff;box-shadow:var(--cb-shadow)}
+.cbtn-danger:hover{background-color:var(--cb-red);border-color:rgba(0,0,0,.10);filter:brightness(1.07);box-shadow:var(--cb-shadow-hover)}
+.cbtn-danger.cbtn-ghost{background-color:transparent;border-color:var(--cb-red);color:var(--cb-red);box-shadow:none;filter:none}
+.cbtn-danger.cbtn-ghost:hover{background-color:var(--cb-red-tint);border-color:var(--cb-red)}
+.cbtn-text.cbtn-danger{background-color:transparent;border-color:transparent;color:var(--cb-red);box-shadow:none;filter:none}
+.cbtn-text.cbtn-danger:hover{background-color:var(--cb-red-tint);border-color:transparent;transform:none}
+
+.cbtn-success{background-color:var(--cb-green);border-color:rgba(0,0,0,.10);color:#fff;box-shadow:var(--cb-shadow)}
+.cbtn-success:hover{background-color:var(--cb-green);border-color:rgba(0,0,0,.10);filter:brightness(1.07);box-shadow:var(--cb-shadow-hover)}
+.cbtn-success.cbtn-ghost{background-color:var(--cb-green-tint);border-color:transparent;color:var(--cb-green);box-shadow:none;filter:none}
+.cbtn-success.cbtn-ghost:hover{background-color:var(--cb-green-tint);border-color:transparent}
+
+.cbtn-glass{background-color:rgba(255,255,255,.08);border-color:rgba(255,255,255,.14);color:rgba(255,255,255,.88);box-shadow:none}
+.cbtn-glass:hover{background-color:rgba(255,255,255,.15);border-color:rgba(255,255,255,.22);box-shadow:none}
+
+.cbtn-instagram{background-color:#dc2743;background-image:linear-gradient(45deg,#f09433 0%,#e6683c 25%,#dc2743 50%,#cc2366 75%,#bc1888 100%);border-color:transparent;color:#fff}
+.cbtn-facebook{background-color:#1877f2;background-image:none;border-color:transparent;color:#fff}
+.cbtn-google{background-color:#4285f4;background-image:none;border-color:transparent;color:#fff}
+.cbtn-instagram:hover,.cbtn-facebook:hover,.cbtn-google:hover{filter:brightness(1.07);border-color:transparent}
+.cbtn-instagram:hover{background-image:linear-gradient(45deg,#f09433 0%,#e6683c 25%,#dc2743 50%,#cc2366 75%,#bc1888 100%)}
+.cbtn-facebook:hover{background-color:#1877f2}
+.cbtn-google:hover{background-color:#4285f4}
+
+.cbtn-done{cursor:default;transform:none!important;box-shadow:none!important;filter:none!important}
+
+/* ── sizes & shapes ───────────────────────────────────────────────────────── */
+.cbtn-sm{height:30px;padding:0 12px;font-size:12.5px;gap:6px;border-radius:var(--cb-radius-sm)}
+.cbtn-lg{height:42px;padding:0 22px;font-size:15px;gap:8px;border-radius:var(--cb-radius-lg)}
+.cbtn-text.cbtn-sm{padding:0 6px}
+.cbtn-text.cbtn-lg{padding:0 10px}
+.cbtn-icon{width:36px;padding:0}
+.cbtn-icon.cbtn-sm{width:30px}
+.cbtn-icon.cbtn-lg{width:42px}
+.cbtn-round{border-radius:999px}
+.cbtn-block{display:flex;width:100%}
+/* In a sentence or a table row: no fixed height, sits on the text baseline,
+   and the hover tint hugs the words without shifting anything around it. */
+.cbtn-inline{height:auto;padding:2px 5px;margin:-2px -5px;border-radius:5px;vertical-align:baseline;line-height:1.25}
+.cbtn-inline.cbtn-sm{padding:2px 4px;margin:-2px -4px}
+.cbtn-link{text-decoration:underline;text-underline-offset:2px}
+.cbtn-close{position:absolute;top:10px;right:12px;width:30px;height:30px;padding:0;font-size:17px;line-height:1;color:var(--cb-ink3);background-color:transparent;border-color:transparent;box-shadow:none}
+.cbtn-close:hover{color:var(--cb-ink);background-color:var(--cb-tint);transform:none}
+
+/* ── groups ───────────────────────────────────────────────────────────────── */
+.cbtn-row{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+.cbtn-row-end{justify-content:flex-end}
+
+/* ── responsive & motion ──────────────────────────────────────────────────── */
+@media (max-width:640px){
+  .cbtn:not(.cbtn-inline):not(.cbtn-close):not(.cbtn-icon){min-height:40px}
+  .cbtn-sm:not(.cbtn-inline):not(.cbtn-close):not(.cbtn-icon){min-height:36px}
+  .cbtn-row>.cbtn:not(.cbtn-inline):not(.cbtn-icon){flex:1 1 auto}
+}
+@media (prefers-reduced-motion:reduce){
+  .cbtn,.cbtn:hover,.cbtn:active{transform:none;transition:none}
+}

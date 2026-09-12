@@ -14,6 +14,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Bricolage+Grotesque:opsz,wght@12..96,700&display=block" rel="stylesheet">
 <link rel="stylesheet" href="/static/fonts/cavnar-fonts.css">
+<link rel="stylesheet" href="/static/css/cavnar-buttons.css">
 {% if restaurant.brand_color %}<style>:root{--ember:{{ restaurant.brand_color | e }};--ember2:{{ restaurant.brand_color | e }}cc}</style>{% endif %}
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -149,8 +150,6 @@ html[data-theme="dark"] body{color:var(--ink)}
 [data-theme="dark"] .ct-label{color:var(--ink)!important}
 [data-theme="dark"] .topic-input{background:var(--surface)!important;color:var(--ink)!important;border-color:var(--paper3)!important}
 [data-theme="dark"] .output-box{background:var(--surface)!important;color:var(--ink2)!important;border-color:rgba(200,75,47,.32)!important;box-shadow:0 10px 28px rgba(200,75,47,.18),0 1px 3px rgba(0,0,0,.3)!important}
-[data-theme="dark"] .btn-secondary{background:var(--surface)!important;color:var(--ink2)!important;border-color:var(--paper3)!important}
-[data-theme="dark"] .btn-secondary:hover{background:var(--paper2)!important}
 [data-theme="dark"] #panel-marketing [style*="background:white"]{background:var(--surface)!important}
 [data-theme="dark"] .cal-card{background:linear-gradient(160deg,rgba(200,75,47,.14) 0%,rgba(200,75,47,.04) 100%)!important;border-color:rgba(200,75,47,.28)!important;color:var(--ink2)!important}
 [data-theme="dark"] .cal-day{background:var(--surface)!important;border-color:var(--paper3)!important}
@@ -160,8 +159,6 @@ html[data-theme="dark"] body{color:var(--ink)}
 [data-theme="dark"] .tbl td{border-color:var(--paper3)!important;color:var(--ink2)!important}
 [data-theme="dark"] .tbl tr:hover td{background:#3a3228!important}
 /* Orange buttons — muted in dark mode (--ember is #e06444, too bright) */
-[data-theme="dark"] .btn-primary{background:#923020!important}
-[data-theme="dark"] .btn-primary:hover{background:#7a2818!important;box-shadow:0 4px 10px rgba(146,48,32,.22)!important}
 .rv-tab-active{background:var(--ember)!important;color:#fff!important}
 [data-theme="dark"] .rv-tab-active{background:#923020!important}
 #rv-tab-inbox:not(.rv-tab-active),#rv-tab-analytics:not(.rv-tab-active){background:transparent!important;color:var(--ink3)!important}
@@ -169,11 +166,8 @@ html[data-theme="dark"] body{color:var(--ink)}
 #fc-tab-tracker:not(.rv-tab-active),#fc-tab-analytics:not(.rv-tab-active){background:transparent!important;color:var(--ink3)!important}
 #fc-table input{-webkit-appearance:none!important;appearance:none!important;background:transparent!important;border:none!important;box-shadow:none!important;outline:none!important}
 #fc-table input::-webkit-inner-spin-button,#fc-table input::-webkit-outer-spin-button{-webkit-appearance:none!important;margin:0}
-[data-theme="dark"] .btn-link-ember{background:#923020!important}
-[data-theme="dark"] .btn-link-ember:hover{background:#7a2818!important;box-shadow:0 2px 8px rgba(146,48,32,.2)!important}
 [data-theme="dark"] button[style*="background:#c84b2f"],
 [data-theme="dark"] label[style*="background:#c84b2f"]{background:#923020!important}
-[data-theme="dark"] #wh-save-btn{background:#923020!important}
 [data-theme="dark"] .hm-days-btn[style*="background:var(--ember)"]{background:#923020!important;border-color:#923020!important}
 /* Popovers — all built with inline background:white */
 [data-theme="dark"] #notif-panel,
@@ -188,8 +182,6 @@ html[data-theme="dark"] body{color:var(--ink)}
 [data-theme="dark"] .card-author{color:var(--ink)!important}
 [data-theme="dark"] .ubanner{background:var(--red-bg)!important;border-top-color:#4a1c1c!important}
 /* Skip / secondary buttons */
-[data-theme="dark"] .btn-skip{background:transparent!important;color:var(--ink3)!important;border-color:var(--paper3)!important}
-[data-theme="dark"] .btn-skip:hover{background:var(--paper2)!important}
 /* ROI banner */
 [data-theme="dark"] #global-savings-banner{background:linear-gradient(135deg,#0e180e,#111c11)!important}
 /* Review request card */
@@ -347,14 +339,6 @@ html{background:linear-gradient(160deg,#edddd0 0%,#f2ece4 30%,#ede8df 65%,#e8e0d
 .draft-lbl{font-size:9px;font-weight:500;color:var(--ink3);text-transform:uppercase;letter-spacing:.07em;margin-bottom:4px}
 .draft-txt{font-size:12px;color:var(--ink);line-height:1.55;font-style:italic}
 .draft-actions{display:flex;gap:6px;margin-top:7px}
-.btn{padding:6px 14px;border-radius:6px;border:none;font-family:'Apfel Grotezk',sans-serif;font-size:11px;font-weight:600;cursor:pointer;transition:background .15s,box-shadow .15s,transform .15s;display:inline-flex;align-items:center;gap:4px}
-.btn-approve{background:var(--green);color:white}
-.btn-approve:hover{background:#1f5c40;box-shadow:0 2px 8px rgba(31,92,64,.15);transform:translateY(-1px)}
-.btn-approve:active{transform:scale(.97)}
-.btn-skip{background:transparent;color:var(--ink3);border:1px solid var(--paper3)}
-.btn-skip:hover{background:var(--paper2);box-shadow:0 2px 8px rgba(14,12,10,.08);transform:translateY(-1px)}
-.btn-skip:active{transform:scale(.97)}
-.btn-approved{background:var(--green-bg);color:var(--green);border:1px solid #b7dfca;cursor:default}
 .toolbar{display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap}
 .search-wrap{position:relative;max-width:260px}
 .search-ico{position:absolute;left:9px;top:50%;transform:translateY(-50%);color:var(--ink3);pointer-events:none;width:12px;height:12px}
@@ -476,8 +460,8 @@ svg.cm-hearth{width:56px;height:56px;overflow:visible}
 @keyframes cmHearthBreath{0%,25%{fill:var(--paper3)}55%,75%{fill:#a8563e}100%{fill:var(--paper3)}}
 .cm-hearth .cm-hdot{fill:var(--paper3);animation:cmHearthBreath 5s ease-in-out infinite;transition:fill .4s}
 .cm-hearth .cm-hglow{fill:rgba(212,88,58,.4);filter:blur(5px);opacity:0;transition:opacity .4s}
-.empty-state:has(button:hover) .cm-hearth .cm-hdot,.empty-state:has(.btn-primary:hover) .cm-hearth .cm-hdot{animation:none;fill:#e8956a}
-.empty-state:has(button:hover) .cm-hearth .cm-hglow,.empty-state:has(.btn-primary:hover) .cm-hearth .cm-hglow{opacity:1}
+.empty-state:has(button:hover) .cm-hearth .cm-hdot,.empty-state:has(.cbtn-primary:hover) .cm-hearth .cm-hdot{animation:none;fill:#e8956a}
+.empty-state:has(button:hover) .cm-hearth .cm-hglow,.empty-state:has(.cbtn-primary:hover) .cm-hearth .cm-hglow{opacity:1}
 .empty-state svg.cm-hearth{width:56px;height:56px;stroke:none;margin-bottom:14px}
 .empty-state-sm svg.cm-hearth{width:30px;height:30px;stroke:none;opacity:1;margin-bottom:8px}
 @media (prefers-reduced-motion:reduce){[class*="cm-"],[class*="cm-"] *{animation-duration:.001s!important;animation-iteration-count:1!important;transition-duration:.001s!important}}
@@ -504,8 +488,6 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none}
 #congrats-inner p{color:#c8bfb0;font-size:13px;line-height:1.7;margin:0 0 10px}
 #congrats-inner .c-stat{background:rgba(255,255,255,.06);border-radius:8px;padding:10px 14px;margin:8px 0;font-size:12px;color:#f0ebe0;text-align:left}
 #congrats-inner .c-stat strong{color:var(--ember)}
-#congrats-close{margin-top:20px;background:var(--ember);color:white;border:none;border-radius:8px;padding:10px 28px;font-size:13px;font-weight:700;cursor:pointer;width:100%}
-#congrats-close:hover{opacity:.9}
 .stat-flash-green{animation:flashGreen 1.8s ease forwards;}
 .two-col{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px}
 .tbl{width:100%;border-collapse:collapse;font-size:12px}
@@ -565,24 +547,18 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none}
 .cal-day{background:white;border:1px solid var(--paper3);border-radius:8px;padding:8px 6px;font-size:10px}
 .cal-day-name{font-weight:700;font-size:14px;color:var(--ink);margin-bottom:6px}
 .cal-platform{font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink3);margin-bottom:2px}
-.btn-primary{background:var(--ember);color:white;padding:0 16px;height:34px;display:inline-flex;align-items:center;border-radius:var(--r);font-family:'Apfel Grotezk',sans-serif;font-size:11px;font-weight:600;border:none;cursor:pointer;transition:background .15s,box-shadow .15s,transform .15s}
-.btn-primary:hover{background:#a83d25;box-shadow:0 2px 8px rgba(200,75,47,.18);transform:translateY(-1px)}
-.btn-primary:active{transform:scale(.97)}
 /* Uniform AI/loading indicator — a thin bar with an ember highlight sliding
    across it, side to side. Use this everywhere instead of "…" text or a
    spinner for any quick (few-second) AI/async action. -on-accent variant is
-   for placing on top of an already-ember-filled button (e.g. btn-primary),
+   for placing on top of an already-ember-filled button (e.g. cbtn-primary),
    where the default ember-on-transparent version would have no contrast. */
 .pulse-bar-track{position:relative;height:3px;border-radius:2px;background:rgba(200,75,47,.12);overflow:hidden}
 .pulse-bar{position:absolute;top:0;height:100%;width:30%;background:linear-gradient(90deg,transparent,var(--ember),transparent);animation:pulseBarSlide 1.4s linear infinite}
 .pulse-bar-track-on-accent{position:relative;height:3px;border-radius:2px;background:rgba(255,255,255,.3);overflow:hidden}
 .pulse-bar-on-accent{position:absolute;top:0;height:100%;width:30%;background:linear-gradient(90deg,transparent,#fff,transparent);animation:pulseBarSlide 1.4s linear infinite}
 @keyframes pulseBarSlide{0%{left:-30%}100%{left:130%}}
-/* Ask Cavnar's true branded accent — btn-primary itself darkens to #923020
-   in dark mode (see the [data-theme="dark"] .btn-primary rule below), but
-   that only fires on <button> background via the button[style*=...]
-   selector; this class covers the chat bubbles (plain divs) and icon
-   fills too, so everything in the panel matches the same branded shade. */
+/* Ask Cavnar's branded accent for the chat bubbles (plain divs) and icon
+   fills — the panel's buttons themselves are .cbtn (static/css/cavnar-buttons.css). */
 .ask-cavnar-accent-bg{background:#c84b2f}
 [data-theme="dark"] .ask-cavnar-accent-bg{background:#923020!important}
 /* ── Ask Cavnar (ask-*) — the iOS Ask screen, floating. Dark-first, theme-aware. */
@@ -650,36 +626,6 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none}
 
 .ask-cavnar-accent-fill{fill:#c84b2f}
 [data-theme="dark"] .ask-cavnar-accent-fill{fill:#923020!important}
-/* Platform-brand buttons (Post to Instagram/Facebook) — need to win over
-   the dark-mode .btn-primary override below, which forces ember via
-   !important; matching its specificity ([data-theme=dark] .btn-primary,
-   i.e. attribute+class) and declaring these after it in source order
-   is what makes them actually render brand-colored instead of ember. */
-.btn-instagram,[data-theme="dark"] .btn-instagram{background:linear-gradient(45deg,#f09433 0%,#e6683c 25%,#dc2743 50%,#cc2366 75%,#bc1888 100%)!important}
-.btn-instagram:hover,[data-theme="dark"] .btn-instagram:hover{filter:brightness(1.08);box-shadow:0 2px 8px rgba(220,39,67,.3)!important}
-.btn-facebook,[data-theme="dark"] .btn-facebook{background:#1877f2!important}
-.btn-facebook:hover,[data-theme="dark"] .btn-facebook:hover{background:#125fc4!important;box-shadow:0 2px 8px rgba(24,119,242,.3)!important}
-.btn-secondary{background:white;color:var(--ink2);border:1px solid var(--paper3);padding:8px 16px;border-radius:var(--r);font-family:'Apfel Grotezk',sans-serif;font-size:11px;font-weight:500;cursor:pointer;transition:background .15s,box-shadow .15s,transform .15s}
-.btn-secondary:hover{background:var(--paper2);box-shadow:0 2px 10px rgba(14,12,10,.1);transform:translateY(-1px)}
-.btn-secondary:active{transform:scale(.97)}
-/* Blue action buttons (Send request, Save to Google) */
-.btn-blue{background:#1a56cc;color:white;border:none;border-radius:6px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;transition:background .15s,box-shadow .15s,transform .15s;display:inline-flex;align-items:center;gap:5px}
-.btn-blue:hover{background:#1344a8;box-shadow:0 2px 8px rgba(26,86,204,.16);transform:translateY(-1px)}
-.btn-blue:active{transform:scale(.97)}
-/* Link-buttons (<a> tags styled as buttons) */
-.btn-link-ember{display:inline-flex;align-items:center;gap:6px;background:var(--ember);color:white;padding:8px 16px;border-radius:6px;text-decoration:none;font-size:12px;font-weight:600;transition:background .15s,box-shadow .15s,transform .15s}
-.btn-link-ember:hover{background:#a83d25;box-shadow:0 4px 14px rgba(200,75,47,.32);transform:translateY(-1px)}
-.btn-link-ember:active{transform:scale(.97)}
-.btn-link-navy{display:inline-flex;align-items:center;gap:6px;background:#1e3a52;color:#a8cfe0;padding:8px 16px;border-radius:6px;text-decoration:none;font-size:12px;font-weight:600;transition:background .15s,box-shadow .15s,transform .15s}
-.btn-link-navy:hover{background:#162e42;box-shadow:0 4px 14px rgba(30,58,82,.32);transform:translateY(-1px)}
-.btn-link-navy:active{transform:scale(.97)}
-.btn-link-status{display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,.12);color:#c4bfb8;padding:8px 14px;border-radius:6px;text-decoration:none;font-size:12px;font-weight:600;transition:background .15s,transform .15s;border:1px solid rgba(255,255,255,.1)}
-.btn-link-status:hover{background:rgba(255,255,255,.2);transform:translateY(-1px)}
-[data-theme="dark"] .btn-link-status{background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.08);color:var(--ink3)}
-/* Universal lift for ALL remaining solid inline buttons not covered by a class */
-button:not(.tab):not(.logout-btn):not(.btn):not(.btn-primary):not(.btn-secondary):not(.btn-approve):not(.btn-skip):not(.btn-blue):not(.btn-purple):not(.btn-teal):not([style*="background:none"]):not([style*="background: none"]){transition:background .15s,box-shadow .15s,transform .15s}
-button:not(.tab):not(.logout-btn):not([disabled]):hover{transform:translateY(-1px)}
-button:not(.tab):not(.logout-btn):not([disabled]):active{transform:scale(.97)}
 .toast{position:fixed;bottom:20px;right:20px;padding:9px 16px 9px 13px;border-radius:7px;font-size:12px;font-weight:500;z-index:999;opacity:0;pointer-events:none;border-left:3px solid transparent;background:var(--ink);color:var(--paper);border-left-color:rgba(255,255,255,.18)}
 .toast.toast-success{background:var(--green-bg);color:#166534;border-left-color:var(--green)}
 .toast.toast-error{background:var(--red-bg);color:#991b1b;border-left-color:var(--red)}
@@ -1049,7 +995,7 @@ document.documentElement.classList.add('pjs-loading');
         <span id="notif-badge" style="display:none;position:absolute;top:2px;right:2px;width:7px;height:7px;border-radius:50%;background:#c84b2f;border:1.5px solid white"></span>
       </button>
       <div id="notif-panel" style="display:none;position:absolute;right:0;top:calc(100% + 8px);width:280px;background:white;border:1px solid var(--paper3);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);z-index:999;overflow:hidden">
-        <div style="padding:10px 14px;border-bottom:1px solid var(--paper3);display:flex;align-items:center;justify-content:space-between"><span style="font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3)">Recent alerts</span><button aria-label="Close" onclick="document.getElementById('notif-panel').style.display='none'" style="background:none;border:none;cursor:pointer;color:var(--ink3);font-size:15px;line-height:1;padding:0">✕</button></div>
+        <div style="padding:10px 14px;border-bottom:1px solid var(--paper3);display:flex;align-items:center;justify-content:space-between"><span style="font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3)">Recent alerts</span><button class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" aria-label="Close" onclick="document.getElementById('notif-panel').style.display='none'">✕</button></div>
         <div id="notif-list" style="max-height:280px;overflow-y:auto;padding:4px 0">
           <div style="padding:12px 14px;font-size:12px;color:var(--ink3)">Loading…</div>
         </div>
@@ -1064,7 +1010,7 @@ document.documentElement.classList.add('pjs-loading');
       <div id="changelog-panel" style="display:none;position:absolute;right:0;top:calc(100% + 8px);width:320px;background:white;border:1px solid var(--paper3);border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,.15);z-index:1001;overflow:hidden">
         <div style="padding:12px 16px;border-bottom:1px solid var(--paper3);display:flex;align-items:center;justify-content:space-between">
           <div style="font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3)">What's new</div>
-          <button aria-label="Close" onclick="document.getElementById('changelog-panel').style.display='none'" style="background:none;border:none;cursor:pointer;color:var(--ink3);font-size:15px;line-height:1;padding:0">✕</button>
+          <button class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" aria-label="Close" onclick="document.getElementById('changelog-panel').style.display='none'">✕</button>
         </div>
         <div id="changelog-list" style="max-height:340px;overflow-y:auto;padding:8px 0">
           <div style="padding:14px 16px;font-size:12px;color:var(--ink3)">Loading…</div>
@@ -1209,13 +1155,6 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-row .t{flex:1;min-width:0;font-size:15px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .hb-row .no{font-family:'Space Grotesk',sans-serif;font-size:18px;font-weight:600;color:var(--ember);width:26px;flex-shrink:0}
 .hb-row .m{font-size:12px;color:var(--ink3);white-space:nowrap}
-.hb-btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:32px;padding:0 13px;border-radius:7px;border:1px solid var(--hb-line);background:transparent;color:var(--ink);font-family:'Apfel Grotezk',sans-serif;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;transition:background .12s ease,transform .12s ease}
-.hb-btn:hover{background:var(--hb-tint);transform:translateY(-1px)}
-.hb-btn.p{background:var(--ember);border-color:var(--ember);color:#fff;box-shadow:0 0 16px rgba(200,75,47,.28)}
-.hb-btn.p:hover{background:#a83d25}
-.hb-btn:disabled{opacity:.6;cursor:default;transform:none}
-.hb-link{background:none;border:none;color:var(--ember);font-family:inherit;font-size:12px;font-weight:600;cursor:pointer;padding:0;white-space:nowrap}
-.hb-link:hover{text-decoration:underline}
 .hb-x{background:none;border:none;color:var(--ink3);font-size:14px;cursor:pointer;padding:2px 6px;border-radius:4px;opacity:0;transition:opacity .12s}
 .hb-row:hover .hb-x{opacity:1}.hb-x:hover{color:var(--ember);background:var(--hb-tint)}
 .hb-clear{display:flex;align-items:center;gap:12px;padding:10px 0;color:var(--ink2);font-size:14px}
@@ -1573,11 +1512,11 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
         rw.length>1?glowLine(rw.map(function(w){return w.avg;}),320,86,EMBER2,{pad:6,floor:Math.min.apply(null,rw.map(function(w){return w.avg;}))-0.3,ceil:5}):'<div class="hb-empty" style="height:86px">Trend appears after a few weeks of reviews.</div>',
         rw.length?'weekly average · '+rw.length+' weeks':'',sec(r,2)));}
     if(snaps.labor){var l=snaps.labor;
-      if(l.sample)tiles.push(tile('labor','Labor','sample','<span class="hb-num">—</span>','<div class="ph"><button class="hb-btn" onclick="event.stopPropagation();hbOpen(\'labor\')">Add your shifts</button></div>','Lights up with your first shift export or Toast sync.','',true));
+      if(l.sample)tiles.push(tile('labor','Labor','sample','<span class="hb-num">—</span>','<div class="ph"><button class="cbtn cbtn-secondary cbtn-sm" onclick="event.stopPropagation();hbOpen(\'labor\')">Add your shifts</button></div>','Lights up with your first shift export or Toast sync.','',true));
       else{var ld=ch.labor_days||[];tiles.push(tile('labor','Labor · by day',l.state==='bad'?'over target':l.state==='warn'?'watch':'on target','<span class="hb-num">'+esc(l.value)+'</span><small>% of sales</small>'+(l.delta&&l.delta.value.indexOf('pts')>-1?'<span class="dl hb-num '+(l.delta.good?'good':'bad')+'">'+esc(l.delta.value)+'</span>':''),
         ld.length?'<div style="color:var(--ink3)">'+bars(ld.map(function(x){return {v:x.pct,l:x.day};}),320,86,EMBER2,{target:ch.labor_target})+'</div>':'<div class="hb-empty" style="height:86px">Day-of-week view needs a fuller export.</div>','labor % by weekday',sec(l,2,'Target')));}}
     if(snaps.inventory){var inv=snaps.inventory;
-      if(inv.sample)tiles.push(tile('inventory','Food cost','sample','<span class="hb-num">—</span>','<div class="ph"><button class="hb-btn" onclick="event.stopPropagation();hbOpen(\'inventory\')">Add inventory</button></div>','Lights up after a first count or Toast depletion.','',true));
+      if(inv.sample)tiles.push(tile('inventory','Food cost','sample','<span class="hb-num">—</span>','<div class="ph"><button class="cbtn cbtn-secondary cbtn-sm" onclick="event.stopPropagation();hbOpen(\'inventory\')">Add inventory</button></div>','Lights up after a first count or Toast depletion.','',true));
       else{var ws=ch.waste||[];tiles.push(tile('inventory','Waste · last week',inv.state==='bad'?'needs action':inv.state==='warn'?'watch':'','<span class="hb-num">'+esc(inv.value)+'</span><small>recoverable / mo</small>',
         ws.length?'<div style="color:var(--ink3)">'+bars(ws.map(function(x){return {v:x.cost,l:String(x.item||'').split(' ')[0],full:x.item};}),320,86,EMBER2,{labelsOutside:true})+'</div>':'<div class="hb-empty" style="height:86px">No waste flagged this week.</div>','$ wasted by item',sec(inv,2)));}}
     if(tiles.length<3&&snaps.reviews&&(ch.rating||[]).length>1){var rw2=ch.rating;tiles.push(tile('reviews','Reviews · per week','','<span class="hb-num">'+rw2[rw2.length-1].total+'</span><small>this week</small>','<div style="color:var(--ink3)">'+stacked(rw2.slice(-8),320,86)+'</div>','<span style="color:'+GREEN+'">■</span> positive &nbsp; <span style="color:'+RED+'">■</span> negative',''));}
@@ -1587,15 +1526,15 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
   // ── action lines ──────────────────────────────────────────────────────────
   function renderActions(d){
     var items=d.attention||[],recs=d.recommendations||[],hid=d.dismissed||[],sg=d.ask_suggestions||[];
-    var h='<div class="hb-act"><div><h3><span>Needs attention</span>'+(items.length>3?'<button class="hb-link" onclick="hbOpen(\'alerts\')">+'+(items.length-3)+' more</button>':'')+'</h3>';
+    var h='<div class="hb-act"><div><h3><span>Needs attention</span>'+(items.length>3?'<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="hbOpen(\'alerts\')">+'+(items.length-3)+' more</button>':'')+'</h3>';
     if(!items.length)h+='<div class="hb-clear"><span class="ok"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span><span>All clear — Cavnar is watching.</span></div>';
-    for(var i=0;i<Math.min(items.length,3);i++){var a=items[i];h+='<div class="hb-row '+esc(a.severity)+'"><span class="d"></span><span class="t" title="'+esc(a.detail||'')+'">'+num(a.title)+'</span><span class="m">'+esc(MODLABEL[a.module]||'')+'</span><button class="hb-btn'+(a.severity==='critical'||a.action.kind==='publish_replies'?' p':'')+'" onclick="hbAct(\''+esc(a.action.kind)+'\',\''+esc(a.action.module||'')+'\',this)">'+esc(a.action.label)+'</button></div>';}
-    h+='<h3 style="margin-top:26px"><span>Cavnar recommends</span>'+(hid.length?'<button class="hb-link" onclick="hbDismiss(\''+esc(hid[0].key).replace(/'/g,'\\\'')+'\',true)">restore hidden</button>':'')+'</h3>';
+    for(var i=0;i<Math.min(items.length,3);i++){var a=items[i];h+='<div class="hb-row '+esc(a.severity)+'"><span class="d"></span><span class="t" title="'+esc(a.detail||'')+'">'+num(a.title)+'</span><span class="m">'+esc(MODLABEL[a.module]||'')+'</span><button class="cbtn '+(a.severity==='critical'||a.action.kind==='publish_replies'?'cbtn-primary':'cbtn-secondary')+' cbtn-sm" onclick="hbAct(\''+esc(a.action.kind)+'\',\''+esc(a.action.module||'')+'\',this)">'+esc(a.action.label)+'</button></div>';}
+    h+='<h3 style="margin-top:26px"><span>Cavnar recommends</span>'+(hid.length?'<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="hbDismiss(\''+esc(hid[0].key).replace(/'/g,'\\\'')+'\',true)">restore hidden</button>':'')+'</h3>';
     if(!recs.length)h+='<div class="hb-empty">Nothing to recommend yet — that changes as your data grows.</div>';
-    for(var j=0;j<Math.min(recs.length,3);j++){var r=recs[j];h+='<div class="hb-row"><span class="no hb-num">0'+(j+1)+'</span><span class="t" title="'+esc(r.why||'')+'">'+num(r.title)+'</span><span class="m hb-num">'+esc((r.evidence||'').split(' · ')[0].slice(0,42))+'</span><button class="hb-link" onclick="hbOpen(\''+esc(r.module)+'\')">'+esc(MODLABEL[r.module]||r.action_label)+' →</button><button class="hb-x" title="Hide for two weeks" aria-label="Hide" onclick="hbDismiss(\''+esc(r.key).replace(/'/g,'\\\'')+'\')">✕</button></div>';}
-    h+='</div><div><h3><span>Ask Cavnar AI</span></h3><div class="hb-ask"><input id="hb-ask-in" type="text" placeholder="Why did labor go up this week?" aria-label="Ask Cavnar AI"><button type="button" class="hb-btn p" data-ask-submit="1">Ask</button></div>';
+    for(var j=0;j<Math.min(recs.length,3);j++){var r=recs[j];h+='<div class="hb-row"><span class="no hb-num">0'+(j+1)+'</span><span class="t" title="'+esc(r.why||'')+'">'+num(r.title)+'</span><span class="m hb-num">'+esc((r.evidence||'').split(' · ')[0].slice(0,42))+'</span><button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="hbOpen(\''+esc(r.module)+'\')">'+esc(MODLABEL[r.module]||r.action_label)+' →</button><button class="hb-x" title="Hide for two weeks" aria-label="Hide" onclick="hbDismiss(\''+esc(r.key).replace(/'/g,'\\\'')+'\')">✕</button></div>';}
+    h+='</div><div><h3><span>Ask Cavnar AI</span></h3><div class="hb-ask"><input id="hb-ask-in" type="text" placeholder="Why did labor go up this week?" aria-label="Ask Cavnar AI"><button type="button" class="cbtn cbtn-primary cbtn-sm" data-ask-submit="1">Ask</button></div>';
     if(sg.length){h+='<div class="hb-sugg">';for(var s=0;s<Math.min(sg.length,3);s++){h+='<button type="button" data-ask="'+esc(sg[s])+'">'+esc(sg[s])+'</button>';}h+='</div>';}
-    h+='<div id="hb-ask-out" class="hb-askout" hidden aria-live="polite"></div><div class="hb-askfoot"><button type="button" class="hb-link" data-ask-full="1">Open the full chat →</button></div>';
+    h+='<div id="hb-ask-out" class="hb-askout" hidden aria-live="polite"></div><div class="hb-askfoot"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-ask-full="1">Open the full chat →</button></div>';
     var qa=(d.quick_actions||[]).filter(function(q){return q.kind!=='ask'&&q.kind!=='publish_replies'&&q.key!=='urgent';});
     if(qa.length){h+='<h3 style="margin-top:26px"><span>Shortcuts</span></h3><div class="hb-sugg" style="margin-top:0">';for(var q=0;q<Math.min(qa.length,4);q++){h+='<button onclick="hbAct(\''+esc(qa[q].kind)+'\',\''+esc(qa[q].module||'')+'\',this)">'+esc(qa[q].label)+'</button>';}h+='</div>';}
     return h+'</div></div>';
@@ -1637,12 +1576,12 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       h+='<td class="r hb-num">'+(rv.awaiting||'<span class="dim">0</span>')+'</td>';
       h+='<td class="r hb-num hide-m">'+(r.labor?r.labor.pct.toFixed(1)+'%'+(r.labor.over>3?' <span class="up">+'+r.labor.over.toFixed(1)+'</span>':r.labor.over<=0?' <span class="ok">✓</span>':''):'<span class="dim">sample</span>')+'</td>';
       h+='<td class="r hb-num hide-m">'+(r.inventory?'$'+Math.round(r.inventory.recoverable).toLocaleString()+'/mo'+(r.inventory.critical_low?' <span class="up">'+r.inventory.critical_low+' low</span>':''):'<span class="dim">sample</span>')+'</td>';
-      h+='<td class="r hb-num hide-m dim">'+ago(r.last_active)+'</td><td class="r"><span class="hb-link">Open →</span></td></tr>';}
+      h+='<td class="r hb-num hide-m dim">'+ago(r.last_active)+'</td><td class="r"><span class="cbtn cbtn-text cbtn-inline cbtn-sm">Open →</span></td></tr>';}
     h+='</tbody></table></div>';
     var at=g.attention||[];
     h+='<div class="hb-act" style="grid-template-columns:1fr"><div><h3><span>Needs attention · all locations</span></h3>';
     if(!at.length)h+='<div class="hb-clear"><span class="ok">✓</span><span>Nothing needs you at any location.</span></div>';
-    for(var a=0;a<Math.min(at.length,6);a++){var x=at[a];h+='<div class="hb-row '+esc(x.severity)+'"><span class="d"></span><span class="t">'+num(x.text)+'</span><span class="m">'+esc(x.location)+'</span><button class="hb-btn'+(x.severity==='critical'?' p':'')+'" onclick="hbSwitchLoc('+x.restaurant_id+',\''+esc(x.location)+'\')">Open</button></div>';}
+    for(var a=0;a<Math.min(at.length,6);a++){var x=at[a];h+='<div class="hb-row '+esc(x.severity)+'"><span class="d"></span><span class="t">'+num(x.text)+'</span><span class="m">'+esc(x.location)+'</span><button class="cbtn '+(x.severity==='critical'?'cbtn-primary':'cbtn-secondary')+' cbtn-sm" onclick="hbSwitchLoc('+x.restaurant_id+',\''+esc(x.location)+'\')">Open</button></div>';}
     h+='</div></div>';
     var body=document.getElementById('hb-body');if(body)body.innerHTML='<div class="hb-fade">'+h+'</div>';
   }
@@ -1651,9 +1590,9 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     var url=(_hbScope==='group'?'/api/home/brief/group':'/api/home/brief')+(fresh?'?fresh=1':'');
     fetch(url,{credentials:'same-origin'}).then(function(r){return r.json();}).then(function(d){
       _hbLoading=false;
-      if(!d||!d.ok){if(_hbScope==='group'){_hbScope='location';hbLoad(fresh);if(typeof toast==='function')toast((d&&d.error)||'Couldn\'t load all locations','error');return;}var b=document.getElementById('hb-body');if(b)b.innerHTML='<div class="hb-err"><span>'+esc((d&&d.error)||'Couldn\'t build your brief right now.')+'</span><button class="hb-btn" onclick="hbLoad(true)">Try again</button></div>';if(d&&d.session_expired)location.reload();return;}
+      if(!d||!d.ok){if(_hbScope==='group'){_hbScope='location';hbLoad(fresh);if(typeof toast==='function')toast((d&&d.error)||'Couldn\'t load all locations','error');return;}var b=document.getElementById('hb-body');if(b)b.innerHTML='<div class="hb-err"><span>'+esc((d&&d.error)||'Couldn\'t build your brief right now.')+'</span><button class="cbtn cbtn-secondary cbtn-sm" onclick="hbLoad(true)">Try again</button></div>';if(d&&d.session_expired)location.reload();return;}
       _hbLoadedAt=Date.now();if(d.scope==='group')renderGroup(d);else render(d);
-    }).catch(function(){_hbLoading=false;var b=document.getElementById('hb-body');if(b)b.innerHTML='<div class="hb-err"><span>Couldn\'t reach Cavnar — check your connection.</span><button class="hb-btn" onclick="hbLoad(true)">Try again</button></div>';});
+    }).catch(function(){_hbLoading=false;var b=document.getElementById('hb-body');if(b)b.innerHTML='<div class="hb-err"><span>Couldn\'t reach Cavnar — check your connection.</span><button class="cbtn cbtn-secondary cbtn-sm" onclick="hbLoad(true)">Try again</button></div>';});
   };
   window.hbRefresh=function(){if(!_hbLoadedAt||Date.now()-_hbLoadedAt>5*60*1000)hbLoad(false);};
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',function(){hbLoad(false);});else hbLoad(false);
@@ -1776,13 +1715,6 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 #panel-reviews .draft-lbl{font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember)!important;margin-bottom:6px}
 #panel-reviews .draft-txt{font-size:13.5px;color:var(--ink)!important;line-height:1.6;font-style:normal}
 #panel-reviews .draft-actions{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center}
-#panel-reviews .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:32px;padding:0 13px;border-radius:7px;border:1px solid var(--hb-line);background:transparent;color:var(--ink);font-family:'Apfel Grotezk',sans-serif;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;transition:background .12s ease,transform .12s ease}
-#panel-reviews .btn:hover{background:var(--hb-tint);transform:translateY(-1px)}
-#panel-reviews .btn-approve{background:var(--ember)!important;border-color:var(--ember)!important;color:#fff!important;box-shadow:0 0 16px rgba(200,75,47,.28)}
-#panel-reviews .btn-approve:hover{background:#a83d25!important}
-#panel-reviews .btn-skip{background:transparent!important;color:var(--ink2)!important;border-color:var(--hb-line)!important}
-#panel-reviews .btn-skip:hover{background:var(--hb-tint)!important}
-#panel-reviews .btn-approved{background:var(--green-bg)!important;color:var(--hb-good)!important;border-color:transparent!important;cursor:default;transform:none!important}
 #panel-reviews .response-editor textarea{width:100%;padding:10px 12px;border:1px solid var(--hb-line);border-radius:8px;font-family:'Apfel Grotezk',sans-serif;font-size:13px;color:var(--ink);background:var(--hb-field);resize:vertical;min-height:90px;outline:none}
 #panel-reviews .response-editor textarea:focus{border-color:var(--ember);box-shadow:0 0 0 3px rgba(200,75,47,.14)}
 .rv2-status{font-size:11px;font-weight:600;padding:3px 9px;border-radius:999px}
@@ -1818,7 +1750,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
   </div>
 
 
-  <div id="new-reviews-banner" style="display:none" onclick="window.location.reload()"><span id="new-reviews-text"></span><span class="hb-link">Refresh →</span></div>
+  <div id="new-reviews-banner" style="display:none" onclick="window.location.reload()"><span id="new-reviews-text"></span><span class="cbtn cbtn-text cbtn-inline cbtn-sm">Refresh →</span></div>
 
   <div id="rv-inbox-header"></div>
   <div id="rv-panel-analytics">
@@ -1837,7 +1769,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
   </div>
 
   <div id="rv-inbox-reviews" class="rv2-inbox">
-    <div class="hb-sh" style="margin-top:0"><div><div class="k">Inbox</div><h2>Every review, with a reply ready<small><span class="count-lbl" style="margin-left:0">{{ reviews|length }} review{{ 's' if reviews|length != 1 }}</span></small></h2></div><div style="display:flex;gap:8px"><button class="hb-btn" onclick="document.getElementById('rr-modal').style.display='flex'">+ Request a review</button><button class="hb-btn" onclick="exportReviews()">Export CSV</button></div></div>
+    <div class="hb-sh" style="margin-top:0"><div><div class="k">Inbox</div><h2>Every review, with a reply ready<small><span class="count-lbl" style="margin-left:0">{{ reviews|length }} review{{ 's' if reviews|length != 1 }}</span></small></h2></div><div style="display:flex;gap:8px"><button class="cbtn cbtn-secondary" onclick="document.getElementById('rr-modal').style.display='flex'">+ Request a review</button><button class="cbtn cbtn-secondary" onclick="exportReviews()">Export CSV</button></div></div>
     <div class="toolbar">
       <div class="search-wrap"><svg class="search-ico" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><input class="search-input" id="rsearch" aria-label="Search reviews" placeholder="Search name, keyword, rating, platform…" value="{{ rsearch }}" oninput="debouncedFilter()" onkeydown="if(event.key==='Escape'){this.value='';filterReviews();}"></div>
       <div class="filter-pills">
@@ -1866,29 +1798,29 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
         <div class="draft-actions" id="draft-actions-{{ r.id }}">
           {% if r.response_status=='posted' %}
             <span class="rv2-status live">✓ Live on {{ r.platform|title }}</span>
-            {% if r.platform=='google' %}<button class="btn btn-skip" onclick="retractR({{ r.id }},this)">Retract</button>{% endif %}
+            {% if r.platform=='google' %}<button class="cbtn cbtn-secondary cbtn-sm" onclick="retractR({{ r.id }},this)">Retract</button>{% endif %}
           {% elif r.response_status=='approved' %}
             <span class="rv2-status ok">✓ Approved</span>
             <span style="font-size:11.5px;color:var(--ink3)">{% if r.platform=='google' %}Posting to Google{% else %}Copy and post to {{ r.platform|title }}{% endif %}</span>
-            <button class="btn btn-skip" onclick="skipR({{ r.id }})">Edit</button>
-            {% if r.platform != 'google' %}<button class="btn" onclick="markPosted({{ r.id }},this)">Mark as posted</button>{% endif %}
+            <button class="cbtn cbtn-secondary cbtn-sm" onclick="skipR({{ r.id }})">Edit</button>
+            {% if r.platform != 'google' %}<button class="cbtn cbtn-soft cbtn-sm" onclick="markPosted({{ r.id }},this)">Mark as posted</button>{% endif %}
           {% elif r.response_status=='skipped' %}
-            <button class="btn btn-approve" onclick="approveR({{ r.id }})">✓ Approve</button>
-            <button class="btn btn-skip" onclick="openEditor({{ r.id }})">Edit</button>
-            <button class="btn btn-skip" onclick="regenDraft({{ r.id }})">↻ Regenerate</button>
+            <button class="cbtn cbtn-success cbtn-sm" onclick="approveR({{ r.id }})">✓ Approve</button>
+            <button class="cbtn cbtn-secondary cbtn-sm" onclick="openEditor({{ r.id }})">Edit</button>
+            <button class="cbtn cbtn-secondary cbtn-sm" onclick="regenDraft({{ r.id }})">↻ Regenerate</button>
           {% else %}
-            <button class="btn btn-approve" onclick="approveR({{ r.id }})">✓ Approve</button>
-            <button class="btn btn-skip" onclick="skipR({{ r.id }})">Skip</button>
+            <button class="cbtn cbtn-success cbtn-sm" onclick="approveR({{ r.id }})">✓ Approve</button>
+            <button class="cbtn cbtn-secondary cbtn-sm" onclick="skipR({{ r.id }})">Skip</button>
           {% endif %}
         </div>
         <div class="response-editor" id="editor-{{ r.id }}" style="display:none;margin-top:10px">
           <textarea id="editor-text-{{ r.id }}" placeholder="Write your own response…">{{ r.draft_response|e }}</textarea>
           <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center">
-            <button class="btn btn-approve" onclick="saveDraft({{ r.id }})">Save &amp; approve</button>
-            <button class="btn btn-skip" onclick="regenDraft({{ r.id }})">↻ Regenerate</button>
-            <button class="btn btn-skip" data-tmpl-btn="1" onclick="toggleTmplPicker({{ r.id }},this)">Templates ▾</button>
-            <button class="btn btn-skip" onclick="closeEditor({{ r.id }})">Cancel</button>
-            <button class="hb-link" onclick="saveAsTemplate({{ r.id }})">Save as template</button>
+            <button class="cbtn cbtn-success cbtn-sm" onclick="saveDraft({{ r.id }})">Save &amp; approve</button>
+            <button class="cbtn cbtn-secondary cbtn-sm" onclick="regenDraft({{ r.id }})">↻ Regenerate</button>
+            <button class="cbtn cbtn-secondary cbtn-sm" data-tmpl-btn="1" onclick="toggleTmplPicker({{ r.id }},this)">Templates ▾</button>
+            <button class="cbtn cbtn-secondary cbtn-sm" onclick="closeEditor({{ r.id }})">Cancel</button>
+            <button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="saveAsTemplate({{ r.id }})">Save as template</button>
           </div>
         </div>
       </div>
@@ -1896,17 +1828,17 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       <div class="draft-box" id="draft-box-{{ r.id }}">
         <div class="draft-lbl">No reply drafted yet</div>
         <div class="draft-actions" id="draft-actions-{{ r.id }}" style="margin-top:6px">
-          <button class="btn btn-approve" onclick="regenDraft({{ r.id }})">Draft a reply</button>
-          <button class="btn btn-skip" onclick="openEditor({{ r.id }})">Write my own</button>
-          <button class="btn btn-skip" data-tmpl-btn="1" onclick="toggleTmplPicker({{ r.id }},this)">Templates ▾</button>
+          <button class="cbtn cbtn-success cbtn-sm" onclick="regenDraft({{ r.id }})">Draft a reply</button>
+          <button class="cbtn cbtn-secondary cbtn-sm" onclick="openEditor({{ r.id }})">Write my own</button>
+          <button class="cbtn cbtn-secondary cbtn-sm" data-tmpl-btn="1" onclick="toggleTmplPicker({{ r.id }},this)">Templates ▾</button>
         </div>
         <div class="response-editor" id="editor-{{ r.id }}" style="display:none;margin-top:10px">
           <textarea id="editor-text-{{ r.id }}" placeholder="Write your response here…"></textarea>
           <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center">
-            <button class="btn btn-approve" onclick="saveDraft({{ r.id }})">Save &amp; approve</button>
-            <button class="btn btn-skip" data-tmpl-btn="1" onclick="toggleTmplPicker({{ r.id }},this)">Templates ▾</button>
-            <button class="btn btn-skip" onclick="closeEditor({{ r.id }})">Cancel</button>
-            <button class="hb-link" onclick="saveAsTemplate({{ r.id }})">Save as template</button>
+            <button class="cbtn cbtn-success cbtn-sm" onclick="saveDraft({{ r.id }})">Save &amp; approve</button>
+            <button class="cbtn cbtn-secondary cbtn-sm" data-tmpl-btn="1" onclick="toggleTmplPicker({{ r.id }},this)">Templates ▾</button>
+            <button class="cbtn cbtn-secondary cbtn-sm" onclick="closeEditor({{ r.id }})">Cancel</button>
+            <button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="saveAsTemplate({{ r.id }})">Save as template</button>
           </div>
         </div>
       </div>
@@ -1915,7 +1847,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     {% endfor %}
     </div>
     {% else %}
-    <div class="rv2-empty"><b>No reviews match this filter</b>Try clearing the filters or the search term.<div style="margin-top:12px"><button class="hb-btn" onclick="clearFilters()">Clear filters</button></div></div>
+    <div class="rv2-empty"><b>No reviews match this filter</b>Try clearing the filters or the search term.<div style="margin-top:12px"><button class="cbtn cbtn-secondary" onclick="clearFilters()">Clear filters</button></div></div>
     {% endif %}
   </div>
 </div>
@@ -1952,7 +1884,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 <!-- Review request modal -->
 <div id="rr-modal" style="display:none;position:fixed;inset:0;z-index:10000;background:rgba(14,12,10,.72);align-items:center;justify-content:center" onclick="if(event.target===this)this.style.display='none'">
   <div style="background:var(--paper);border-radius:14px;padding:32px;max-width:460px;width:90%;position:relative;border:1.5px solid var(--ember);box-shadow:0 8px 40px rgba(0,0,0,.45)">
-    <button aria-label="Close" onclick="document.getElementById('rr-modal').style.display='none'" style="position:absolute;top:12px;right:14px;background:none;border:none;font-size:18px;cursor:pointer;color:var(--ink3);line-height:1">&#x2715;</button>
+    <button class="cbtn cbtn-close" aria-label="Close" onclick="document.getElementById('rr-modal').style.display='none'">&#x2715;</button>
     <div style="font-family:'Clash Display',sans-serif;font-size:22px;color:var(--ink);margin-bottom:4px">Request a review</div>
     <div style="font-size:12px;color:var(--ink3);margin-bottom:20px">Send a customer a direct link to leave a Google review — takes 60 seconds for them.</div>
     <div style="display:flex;flex-direction:column;gap:10px">
@@ -1968,14 +1900,14 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       </label>
     </div>
     <div style="font-size:11px;color:var(--ink3);margin:10px 0 4px">Sent this month: <strong id="rr-sent-mo">—</strong> &nbsp;·&nbsp; All time: <strong id="rr-sent-total">—</strong></div>
-    <button onclick="sendReviewRequest(this)" class="btn-primary" style="width:100%;padding:11px;margin-top:14px;font-size:13px">Send request<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:6px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+    <button onclick="sendReviewRequest(this)" class="cbtn cbtn-primary cbtn-lg cbtn-block" style="margin-top:14px">Send request<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
   </div>
 </div>
 
 <!-- 2FA setup modal — lives at body level so position:fixed covers full viewport -->
 <div id="twofa-modal" style="display:none;position:fixed;inset:0;z-index:10000;background:rgba(14,12,10,0.72);align-items:center;justify-content:center">
   <div style="background:var(--paper);border-radius:14px;padding:32px;max-width:420px;width:90%;position:relative;border:1.5px solid var(--ember);box-shadow:0 8px 16px rgba(14,12,10,.6),0 24px 64px rgba(14,12,10,.55),0 0 0 1px rgba(200,75,47,.18)">
-    <button aria-label="Close" onclick="document.getElementById('twofa-modal').style.display='none'" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:18px;cursor:pointer;color:var(--ink3)">&#x2715;</button>
+    <button class="cbtn cbtn-close" aria-label="Close" onclick="document.getElementById('twofa-modal').style.display='none'">&#x2715;</button>
     <!-- Step 1: Intro -->
     <div id="twofa-step1">
       <div style="font-size:18px;font-weight:700;color:var(--ink);margin-bottom:8px">Enable two-factor authentication</div>
@@ -1991,7 +1923,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="radio" name="twofa-method" value="email" checked> Email me the code</label>
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="radio" name="twofa-method" value="sms"> Text me the code</label>
       </div>
-      <button onclick="twoFAStep2(this)" id="twofa-send-btn" class="btn-primary" style="width:100%;padding:11px;transition:opacity .15s">Send me a test code<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      <button onclick="twoFAStep2(this)" id="twofa-send-btn" class="cbtn cbtn-primary cbtn-lg cbtn-block">Send me a test code<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
     </div>
     <!-- Step 2: Verify -->
     <div id="twofa-step2" style="display:none">
@@ -2006,8 +1938,8 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
         <input type="text" maxlength="1" class="twofa-setup-digit" inputmode="numeric" style="width:46px;height:54px;text-align:center;font-size:24px;font-weight:700;border:2px solid #e0dbd0;border-radius:8px;font-family:monospace;outline:none">
       </div>
       <div id="twofa-setup-error" style="display:none;color:var(--red);font-size:12px;text-align:center;margin-bottom:12px"></div>
-      <button onclick="twoFAVerify()" class="btn-primary" style="width:100%;padding:11px;margin-bottom:10px">Verify &amp; enable 2FA</button>
-      <button onclick="twoFAStep2()" class="btn-secondary" style="width:100%;padding:9px;font-size:12px">Resend code</button>
+      <button onclick="twoFAVerify()" class="cbtn cbtn-primary cbtn-lg cbtn-block" style="margin-bottom:10px">Verify &amp; enable 2FA</button>
+      <button onclick="twoFAStep2()" class="cbtn cbtn-secondary cbtn-lg cbtn-block">Resend code</button>
     </div>
     <!-- Step 3: Success -->
     <div id="twofa-step3" style="display:none;text-align:center">
@@ -2017,16 +1949,16 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
         <div style="font-size:12px;font-weight:600;color:var(--ink);margin-bottom:4px">Save these backup codes</div>
         <div style="font-size:11px;color:var(--ink3);margin-bottom:8px">Each works once if you ever can't get a code. They won't be shown again.</div>
         <div id="twofa-backup-list" style="padding:10px 12px;background:#f7f4ef;border:1px dashed var(--ember);border-radius:8px;font-family:'Space Grotesk',sans-serif;font-size:12px;line-height:1.9;letter-spacing:.04em;color:var(--ink)"></div>
-        <button onclick="copyBackupCodes(this)" class="btn-secondary" style="font-size:11px;padding:4px 10px;margin-top:8px">Copy codes</button>
+        <button onclick="copyBackupCodes(this)" class="cbtn cbtn-secondary cbtn-sm" style="margin-top:8px">Copy codes</button>
       </div>
       <p style="font-size:13px;color:var(--ink3);margin-bottom:24px;line-height:1.6">Your account is protected. You&rsquo;ll receive a verification code by email each time you sign in from a new device.</p>
-      <button onclick="document.getElementById('twofa-modal').style.display='none';location.reload();" class="btn-primary" style="padding:10px 28px">Done</button>
+      <button onclick="document.getElementById('twofa-modal').style.display='none';location.reload();" class="cbtn cbtn-primary cbtn-lg">Done</button>
     </div>
   </div>
 </div>
 
 <!-- Congratulations modal — fires once when 100% response rate achieved -->
-<div id="congrats-modal"><div id="congrats-inner"><div class="c-ember"></div><div class="c-sub">🎉 100% Response Rate Achieved</div><h2>You're in the top tier.</h2><p>Every single review on your dashboard now has a response. That's rare — and it matters more than most owners realize.</p><div class="c-stat"><strong>35% higher return rates</strong> — guests who see responses come back more often</div><div class="c-stat"><strong>5–9% revenue lift</strong> per star gained — Harvard Business School research on independent restaurants</div><div class="c-stat"><strong>$125k+/yr</strong> in additional revenue possible from a 3.1% sales lift at a casual dining unit</div><p style="margin-top:12px;font-size:12px;color:#a09080">This won't appear again. Keep responding to new reviews to maintain your edge.</p><button id="congrats-close" onclick="document.getElementById('congrats-modal').classList.remove('show')">Got it — keep it up ✓</button></div></div>
+<div id="congrats-modal"><div id="congrats-inner"><div class="c-ember"></div><div class="c-sub">🎉 100% Response Rate Achieved</div><h2>You're in the top tier.</h2><p>Every single review on your dashboard now has a response. That's rare — and it matters more than most owners realize.</p><div class="c-stat"><strong>35% higher return rates</strong> — guests who see responses come back more often</div><div class="c-stat"><strong>5–9% revenue lift</strong> per star gained — Harvard Business School research on independent restaurants</div><div class="c-stat"><strong>$125k+/yr</strong> in additional revenue possible from a 3.1% sales lift at a casual dining unit</div><p style="margin-top:12px;font-size:12px;color:#a09080">This won't appear again. Keep responding to new reviews to maintain your edge.</p><button id="congrats-close" class="cbtn cbtn-primary cbtn-lg cbtn-block" style="margin-top:20px" onclick="document.getElementById('congrats-modal').classList.remove('show')">Got it — keep it up ✓</button></div></div>
 
 <!-- LABOR -->
 <div class="panel {{'active' if not mod_reviews and mod_labor}}" id="panel-labor" style="max-width:100%;padding:0;min-height:100%;position:relative">
@@ -2036,10 +1968,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 #panel-labor{--hb-line:rgba(14,12,10,.12);--hb-line2:rgba(14,12,10,.07);--hb-tint:rgba(200,75,47,.06);--hb-tint2:rgba(200,75,47,.12);--hb-good:var(--green);--hb-warn:var(--amber);--hb-bad:var(--red);--hb-field:rgba(255,255,255,.55)}
 [data-theme="dark"] #panel-labor{--hb-line:rgba(240,235,224,.14);--hb-line2:rgba(240,235,224,.07);--hb-tint:rgba(224,100,68,.09);--hb-tint2:rgba(224,100,68,.16);--hb-field:rgba(255,255,255,.05)}
 #panel-labor .hb-chip .v{display:inline-flex;align-items:baseline;gap:2px}
-.lb2-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;align-items:center}
-.lb2-actions .btn-primary{height:36px;padding:0 16px;border-radius:8px;font-size:12.5px;box-shadow:0 0 16px rgba(200,75,47,.28)}
-.lb2-actions label.btn-primary{background:transparent;color:var(--ink);border:1px solid var(--hb-line);box-shadow:none}
-.lb2-actions label.btn-primary:hover{background:var(--hb-tint)}
+.lb2-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px;align-items:center}
 .lb2-hero{margin-top:30px}
 .lb2-hero .hd{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap}
 .lb2-hero .big{font-family:'Space Grotesk',sans-serif;font-size:clamp(40px,4.6vw,58px);font-weight:600;letter-spacing:-.03em;line-height:1;color:var(--ink);display:flex;align-items:baseline;gap:10px}
@@ -2127,7 +2056,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .lb2-subsection{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px;flex-wrap:wrap}
 .lb2-subsection-title{font-family:'Clash Display',sans-serif;font-size:17px;font-weight:500;color:var(--ink)}
 .lb2-subsection-chip{font-family:'Apfel Grotezk',sans-serif;font-size:13px;font-weight:500;color:var(--ink3);margin-left:4px}
-.lb2-subsection-toggle{font-size:14.5px;font-weight:700;color:var(--ember);background:none;border:none;cursor:pointer;padding:0}
+.lb2-subsection-toggle{font-size:14.5px;font-weight:700}
 .lb2-hist{display:flex;flex-direction:column;margin-top:8px}
 .lb2-hist .row{display:flex;align-items:center;gap:14px;padding:11px 0;border-top:1px solid var(--hb-line2);font-size:15px;color:var(--ink2)}
 .lb2-hist .row:first-child{border-top:none}
@@ -2274,7 +2203,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       var isLast=i===_roleData.length-1;
       lhtml+='<div style="display:flex;align-items:center;gap:10px;padding:7px 0;'+(isLast?'':'border-bottom:1px solid var(--hb-line2)')+'">';
       lhtml+='<span style="width:9px;height:9px;border-radius:50%;background:'+col+';flex-shrink:0;box-shadow:0 0 7px '+col+'99"></span>';
-      lhtml+='<span style="font-size:14.5px;font-weight:600;color:var(--ink);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+d.name+'</span>';
+      lhtml+='<span title="'+_escHtml(d.name)+'" style="font-size:14.5px;font-weight:600;color:var(--ink);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+d.name+'</span>';
       lhtml+='<span style="font-family:Space Grotesk,sans-serif;font-size:14.5px;font-weight:700;color:'+col+';width:44px;text-align:right">'+d.pct+'%</span>';
       lhtml+='<span style="font-size:13px;color:var(--ink3);width:42px;text-align:right">'+_fmtHours(d.hours)+'h</span>';
       lhtml+='<span style="font-size:13px;color:var(--ink3);width:26px;text-align:right">'+d.hc+'</span>';
@@ -2287,15 +2216,15 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 
   <div class="lb2-sched">
     <div class="hb-sh" style="margin-top:0"><div><div class="k">Schedule</div><h2>Next week, built by Cavnar AI<small>optimized to your {{ _lt|int }}% target and every staff constraint</small></h2><div class="lb2-actions">
-      {% if labor.is_live %}<button onclick="generateSchedule(this)" id="gen-sched-btn" class="btn-primary">Generate optimized schedule</button>{% endif %}
+      {% if labor.is_live %}<button onclick="generateSchedule(this)" id="gen-sched-btn" class="cbtn cbtn-primary">Generate optimized schedule</button>{% endif %}
       {% if not restaurant.toast_restaurant_guid %}
-      <label class="btn-primary" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer">{% if labor.is_live %}Update shifts CSV{% else %}Upload shifts CSV{% endif %}<input type="file" accept=".csv" style="display:none" id="shifts-inline-input" onchange="clientUpload('shifts', this)"></label>
+      <label class="cbtn cbtn-secondary">{% if labor.is_live %}Update shifts CSV{% else %}Upload shifts CSV{% endif %}<input type="file" accept=".csv" style="display:none" id="shifts-inline-input" onchange="clientUpload('shifts', this)"></label>
       {% endif %}
     </div></div></div>
   <!-- Schedule download tooltip -->
   <div id="schedule-tooltip" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;z-index:999;background:rgba(14,12,10,0.6);align-items:center;justify-content:center">
     <div style="background:var(--ink);border-radius:12px;padding:28px 32px;max-width:420px;width:90%;position:relative;border:1px solid #3d3530">
-      <button aria-label="Close" onclick="document.getElementById('schedule-tooltip').style.display='none'" style="position:absolute;top:12px;right:16px;background:none;border:none;color:var(--ink3);font-size:18px;cursor:pointer;line-height:1">✕</button>
+      <button class="cbtn cbtn-close" aria-label="Close" onclick="document.getElementById('schedule-tooltip').style.display='none'">✕</button>
       <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember);margin-bottom:12px">Schedule optimized</div>
       <div style="font-size:14px;color:var(--paper);font-weight:600;margin-bottom:8px">Your CSV is downloading now</div>
       <div style="font-size:12px;color:#c0b8b0;line-height:1.7;margin-bottom:16px">
@@ -2307,7 +2236,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
         <div style="font-size:13px;color:#6fcf97;font-weight:700">~${{(labor.potential_savings * 4.33)|int|format_num}}/mo saved</div>
         <div style="font-size:11px;color:#8a8078;margin-top:2px">if schedule adjustments are applied</div>
       </div>
-      <button onclick="document.getElementById('schedule-tooltip').style.display='none'" class="btn-primary" style="width:100%;padding:10px;font-size:13px">Got it — open the CSV ✓</button>
+      <button onclick="document.getElementById('schedule-tooltip').style.display='none'" class="cbtn cbtn-primary cbtn-lg cbtn-block">Got it — open the CSV ✓</button>
     </div>
   </div>
 
@@ -2320,9 +2249,9 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
           <div id="sched-week-label" style="font-size:14px;font-weight:700;color:rgba(255,255,255,.88)">Week of —</div>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button onclick="downloadScheduleFromPreview()" class="btn-primary" style="background:#2d6a4f;font-size:12px;padding:7px 16px" onmouseover="this.style.background='#235c42';this.style.boxShadow='0 4px 14px rgba(45,106,79,.38)';this.style.transform='translateY(-1px)'" onmouseout="this.style.background='#2d6a4f';this.style.boxShadow='none';this.style.transform=''" onmousedown="this.style.transform='scale(.97)'" onmouseup="this.style.transform='translateY(-1px)'">Download CSV</button>
-          <button onclick="openPublishSchedule()" class="btn-primary" style="background:rgba(200,75,47,.85);font-size:12px;padding:7px 16px">Send to staff</button>
-          <button onclick="document.getElementById('schedule-preview-panel').style.display='none'" style="background:rgba(255,255,255,.08);color:rgba(255,255,255,.8);border:none;border-radius:var(--r);padding:7px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;transition:background .15s,box-shadow .15s,transform .15s" onmouseover="this.style.background='rgba(255,255,255,.16)';this.style.transform='translateY(-1px)'" onmouseout="this.style.background='rgba(255,255,255,.08)';this.style.transform=''" onmousedown="this.style.transform='scale(.97)'" onmouseup="this.style.transform='translateY(-1px)'">Close</button>
+          <button onclick="downloadScheduleFromPreview()" class="cbtn cbtn-success" onmousedown="this.style.transform='scale(.97)'" onmouseup="this.style.transform='translateY(-1px)'">Download CSV</button>
+          <button onclick="openPublishSchedule()" class="cbtn cbtn-primary">Send to staff</button>
+          <button class="cbtn cbtn-glass cbtn-sm" onclick="document.getElementById('schedule-preview-panel').style.display='none'" onmousedown="this.style.transform='scale(.97)'" onmouseup="this.style.transform='translateY(-1px)'">Close</button>
         </div>
       </div>
 
@@ -2331,7 +2260,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
         <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ember2);margin-bottom:8px">Send this schedule to your staff</div>
         <div id="ps-contacts" style="font-size:12px;color:rgba(255,255,255,.4)">Loading staff…</div>
         <div id="ps-actions" style="margin-top:10px;display:none">
-          <button onclick="publishScheduleNow()" id="ps-send-btn" class="btn-primary" style="background:#2d6a4f;font-size:12px;padding:7px 16px">Send now</button>
+          <button onclick="publishScheduleNow()" id="ps-send-btn" class="cbtn cbtn-success">Send now</button>
           <span id="ps-result" style="font-size:12px;margin-left:10px"></span>
         </div>
         <div id="ps-seen" style="display:none;margin-top:12px;border-top:1px solid rgba(255,255,255,.08);padding-top:10px">
@@ -2382,7 +2311,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
         <div id="sq-warnings" style="margin-top:10px"></div>
         <div id="sq-shifts" style="margin-top:16px"></div>
         <div style="margin-top:12px">
-          <button type="button" onclick="toggleQualityReasoning()" id="sq-why-btn" style="font-family:inherit;font-size:14.5px;font-weight:700;color:var(--ember);background:none;border:none;cursor:pointer;padding:0">Why this schedule? &#9662;</button>
+          <button class="cbtn cbtn-text cbtn-inline cbtn-lg" type="button" onclick="toggleQualityReasoning()" id="sq-why-btn">Why this schedule? &#9662;</button>
           <div id="sq-reasoning" style="display:none;margin-top:10px"></div>
         </div>
       </div>
@@ -2425,7 +2354,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
   <div style="margin-bottom:14px">
     <div class="lb2-subsection">
       <div class="lb2-subsection-title">Employee Availability</div>
-      <button onclick="toggleAvailPanel()" class="lb2-subsection-toggle" id="avail-toggle-btn">Manage ↓</button>
+      <button onclick="toggleAvailPanel()" class="cbtn cbtn-text cbtn-inline lb2-subsection-toggle" id="avail-toggle-btn">Manage ↓</button>
     </div>
     <div id="avail-panel" style="display:none">
       <div class="lb2-avail">
@@ -2450,7 +2379,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
             <div style="font-size:12.5px;font-weight:600;color:var(--ink3);margin-bottom:4px">Notes (optional)</div>
             <input id="av-notes" type="text" placeholder="e.g. student, no mornings" style="font-size:15px;padding:6px 10px;border:1px solid var(--paper3);border-radius:6px;width:200px;background:var(--surface);color:var(--ink);font-family:inherit">
           </div>
-          <button onclick="saveAvailability()" class="btn-primary" style="padding:7px 16px;font-size:15px;flex-shrink:0">Save</button>
+          <button onclick="saveAvailability()" class="cbtn cbtn-primary" style="flex-shrink:0">Save</button>
         </div>
         <!-- Saved entries -->
         <div id="avail-list" style="display:flex;flex-direction:column;gap:6px">
@@ -2466,7 +2395,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
   <div style="margin-bottom:14px">
     <div class="lb2-subsection">
       <div class="lb2-subsection-title">Operational Score <span id="team-coverage-chip" class="lb2-subsection-chip"></span></div>
-      <button onclick="toggleTeamPanel()" class="lb2-subsection-toggle" id="team-toggle-btn">Rate your team ↓</button>
+      <button onclick="toggleTeamPanel()" class="cbtn cbtn-text cbtn-inline lb2-subsection-toggle" id="team-toggle-btn">Rate your team ↓</button>
     </div>
     <div id="team-panel" style="display:none">
       <div class="lb2-avail">
@@ -2517,11 +2446,11 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
                 <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option>
               </select>
             </div>
-            <button onclick="addLeaderRule()" class="hb-btn" style="padding:7px 14px;font-size:15px;flex-shrink:0">Add requirement</button>
+            <button onclick="addLeaderRule()" class="cbtn cbtn-secondary" style="flex-shrink:0">Add requirement</button>
           </div>
 
           <div style="margin-top:14px">
-            <button onclick="saveTeamTargets(this)" class="btn-primary" style="padding:7px 16px;font-size:15px">Save targets</button>
+            <button onclick="saveTeamTargets(this)" class="cbtn cbtn-primary">Save targets</button>
             <span id="team-save-note" style="font-size:13.5px;color:var(--ink3);margin-left:10px"></span>
           </div>
         </div>
@@ -2535,7 +2464,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
           </div>
           <div style="font-size:15px;color:var(--ink3);margin:6px 0 10px">Each shift is scored 0&ndash;100 on coverage, operational strength, leadership, experience, training balance, demand match and labor efficiency. A profile sets the bar for the shifts it names.</div>
           <div id="sp-list" style="display:flex;flex-direction:column;gap:6px"></div>
-          <button onclick="newShiftProfile()" class="hb-btn" style="margin-top:10px;padding:6px 14px;font-size:15px">Add a profile</button>
+          <button onclick="newShiftProfile()" class="cbtn cbtn-secondary" style="margin-top:10px">Add a profile</button>
         </div>
 
         <!-- What counts most. Sensible defaults, and an owner who disagrees
@@ -2545,8 +2474,8 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
           <div style="font-size:15px;color:var(--ink3);margin-bottom:10px">How much each dimension moves the overall score. Set one to zero to take it out of the reckoning entirely.</div>
           <div id="sp-weights" style="display:flex;flex-direction:column;gap:7px"></div>
           <div style="margin-top:12px">
-            <button onclick="saveQualityWeights(this)" class="btn-primary" style="padding:7px 16px;font-size:15px">Save weighting</button>
-            <button onclick="resetQualityWeights()" class="hb-btn" style="padding:7px 14px;font-size:15px;margin-left:6px">Back to defaults</button>
+            <button onclick="saveQualityWeights(this)" class="cbtn cbtn-primary">Save weighting</button>
+            <button onclick="resetQualityWeights()" class="cbtn cbtn-secondary" style="margin-left:6px">Back to defaults</button>
             <span id="sp-weights-note" style="font-size:13.5px;color:var(--ink3);margin-left:10px"></span>
           </div>
         </div>
@@ -2569,7 +2498,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
           <span style="font-size:16px;font-weight:700;color:var(--ink);letter-spacing:-.01em">Overstaffed days <span style="font-weight:500;color:var(--ink3)">— where the money is going</span></span>
         </div>
         {% if labor.overstaffed_days|length > 10 %}
-        <button onclick="toggleRows('overstaffed-tbody','overstaffed-toggle',{{labor.overstaffed_days|length}})" id="overstaffed-toggle" style="font-size:12.5px;color:var(--ember);background:none;border:none;cursor:pointer;font-weight:600;padding:0;white-space:nowrap">Show all {{labor.overstaffed_days|length}} ↓</button>
+        <button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="toggleRows('overstaffed-tbody','overstaffed-toggle',{{labor.overstaffed_days|length}})" id="overstaffed-toggle" style="white-space:nowrap">Show all {{labor.overstaffed_days|length}} ↓</button>
         {% endif %}
       </div>
       <div class="dark-hero-card" style="border:1px solid rgba(200,75,47,.45);border-radius:12px;overflow:hidden">
@@ -2605,7 +2534,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
           <span style="font-size:16px;font-weight:700;color:var(--ink);letter-spacing:-.01em">Under target on a strong day <span style="font-weight:500;color:var(--ink3)">— worth a look</span></span>
         </div>
         {% if labor.understaffed_days|length > 10 %}
-        <button onclick="toggleRows('understaffed-tbody','understaffed-toggle',{{labor.understaffed_days|length}})" id="understaffed-toggle" style="font-size:12.5px;color:var(--ember);background:none;border:none;cursor:pointer;font-weight:600;padding:0;white-space:nowrap">Show all {{labor.understaffed_days|length}} ↓</button>
+        <button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="toggleRows('understaffed-tbody','understaffed-toggle',{{labor.understaffed_days|length}})" id="understaffed-toggle" style="white-space:nowrap">Show all {{labor.understaffed_days|length}} ↓</button>
         {% endif %}
       </div>
       <div style="background:linear-gradient(135deg,#1a1409 0%,#141009 60%,#0e0a06 100%);border:1px solid rgba(239,159,39,.45);border-radius:12px;overflow:hidden">
@@ -2775,7 +2704,6 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .fc2-table .rm:hover{color:var(--ember)}
 .fc2-submit{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:16px;flex-wrap:wrap}
 .fc2-submit .l{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-.fc2-submit .btn-primary{height:36px;padding:0 18px;border-radius:8px;font-size:12.5px;box-shadow:0 0 16px rgba(200,75,47,.28)}
 #fc-submit-pill{flex-direction:column;align-items:flex-start;justify-content:center;gap:1px;height:36px;padding:0 14px;background:rgba(78,173,122,.12);border:1px solid rgba(78,173,122,.3);border-radius:8px}
 #fc-pill-line1{font-size:11px;font-weight:700;color:var(--hb-good);line-height:1.3;white-space:nowrap}
 #fc-pill-line2{font-size:9px;color:var(--ink3);letter-spacing:.02em;line-height:1.3;white-space:nowrap}
@@ -2814,10 +2742,10 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       <div class="hb-sub"><span><span class="hb-num">${{ inv.total_waste_cost_week|int|format_num }}</span> waste this week</span><span class="sep">·</span><span><span class="hb-num">${{ inv.monthly_waste_projection|int|format_num }}</span> projected / mo</span><span class="sep">·</span><span><span class="hb-num">{{ inv.waste_rate_pct }}%</span> of purchases vs a <span class="hb-num">4–5%</span> target</span><span class="sep">·</span><span><span class="hb-num">{{ inv.total_items }}</span> items tracked</span><span class="sep">·</span><span>updated <span class="hb-num">{{ inv.last_updated }}</span></span></div>
       <div class="hb-sub" style="margin-top:4px">{% if inv.is_live %}{% if inv.recoverable_monthly > 0 %}About ${{ inv.recoverable_monthly|int|format_num }} a month is recoverable with tighter ordering — ${{ inv.annual_recoverable|int|format_num }} a year.{% else %}Nothing is leaking this week — ordering looks calibrated.{% endif %}{% else %}Everything below is a sample until your first count lands.{% endif %}</div>
       <div class="lb2-actions">
-        <label class="btn-primary" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer">{% if inv.is_live %}Update inventory CSV{% else %}Upload inventory CSV{% endif %}<input type="file" accept=".csv" style="display:none" id="inventory-inline-input" onchange="clientUpload('inventory', this)"></label>
-        <button class="hb-btn" onclick="fc2Jump('fc2-tracker')">Submit this week's prices</button>
-        <button class="hb-btn" onclick="fc2Jump('fc2-tools');loadOrderDraft()">Send order</button>
-        <button class="hb-btn" onclick="fc2Jump('fc2-tools');loadMenuMargins()">Menu margins</button>
+        <label class="cbtn cbtn-secondary">{% if inv.is_live %}Update inventory CSV{% else %}Upload inventory CSV{% endif %}<input type="file" accept=".csv" style="display:none" id="inventory-inline-input" onchange="clientUpload('inventory', this)"></label>
+        <button class="cbtn cbtn-secondary" onclick="fc2Jump('fc2-tracker')">Submit this week's prices</button>
+        <button class="cbtn cbtn-secondary" onclick="fc2Jump('fc2-tools');loadOrderDraft()">Send order</button>
+        <button class="cbtn cbtn-secondary" onclick="fc2Jump('fc2-tools');loadMenuMargins()">Menu margins</button>
       </div>
       <span id="inventory-inline-result" style="font-size:12px;color:var(--hb-good);display:none;margin-top:8px"></span>
     </div>
@@ -2932,14 +2860,14 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       </table>
       <div class="fc2-submit">
         <div class="l">
-          <button onclick="submitFoodCostCount()" class="btn-primary">Submit this week's prices</button>
+          <button onclick="submitFoodCostCount()" class="cbtn cbtn-primary">Submit this week's prices</button>
           <div id="fc-submit-pill" style="display:{% if food_cost_data and food_cost_data.current and food_cost_data.current.submitted_at %}inline-flex{% else %}none{% endif %}">
             <div id="fc-pill-line1">&#10003; Saved {% if food_cost_data and food_cost_data.current and food_cost_data.current.submitted_at %}{% set _sa=food_cost_data.current.submitted_at %}{{ _sa[5:7]|int }}/{{ _sa[8:10]|int }}/{{ _sa[2:4] }}{% endif %}</div>
             <div id="fc-pill-line2">{% if food_cost_data and food_cost_data.previous and food_cost_data.previous.submitted_at %}{% set _pa=food_cost_data.previous.submitted_at %}Last saved: {{ _pa[5:7]|int }}/{{ _pa[8:10]|int }}/{{ _pa[2:4] }}{% elif food_cost_data and food_cost_data.current and food_cost_data.current.submitted_at %}First submission{% endif %}</div>
           </div>
           <script>var _fcPrevSaved='{{food_cost_data.current.submitted_at if food_cost_data and food_cost_data.current and food_cost_data.current.submitted_at else ""}}';</script>
         </div>
-        <button onclick="addCustomFoodItem()" class="hb-btn"><span style="font-size:16px;line-height:1">+</span> Add custom item</button>
+        <button onclick="addCustomFoodItem()" class="cbtn cbtn-secondary"><span style="font-size:16px;line-height:1">+</span> Add custom item</button>
       </div>
     </div>
   </div>
@@ -2947,8 +2875,8 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
   <div class="fc2-sec" id="fc2-tools">
     <div class="hd"><div><div class="hb-kicker">Tools</div><h2>Margins and ordering</h2><div class="sub">Plate cost and margin for every priced dish, and this week's suggested order emailed to each supplier.</div></div></div>
     <div class="fc2-tools">
-      <div class="fc2-tool"><div class="ch"><span>Menu margins</span><button onclick="loadMenuMargins()" class="hb-btn" style="height:28px;padding:0 11px;font-size:11.5px">Load</button></div><div class="bd" id="mm-body">See plate cost and margin for every priced dish.</div></div>
-      <div class="fc2-tool"><div class="ch"><span>Send order to suppliers</span><button onclick="loadOrderDraft()" class="hb-btn" style="height:28px;padding:0 11px;font-size:11.5px">Load</button></div><div class="bd" id="so-body">Email this week's suggested order to each supplier.</div></div>
+      <div class="fc2-tool"><div class="ch"><span>Menu margins</span><button onclick="loadMenuMargins()" class="cbtn cbtn-secondary cbtn-sm">Load</button></div><div class="bd" id="mm-body">See plate cost and margin for every priced dish.</div></div>
+      <div class="fc2-tool"><div class="ch"><span>Send order to suppliers</span><button onclick="loadOrderDraft()" class="cbtn cbtn-secondary cbtn-sm">Load</button></div><div class="bd" id="so-body">Email this week's suggested order to each supplier.</div></div>
     </div>
     <div id="po-history" class="fc2-po"></div>
   </div>
@@ -3047,7 +2975,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       var html = '';
       groups.forEach(function(g){
         html += '<div class="g"><div><b>'+_mmEsc(g.supplier_name||g.supplier_email)+'</b><span>'+g.items.length+' item'+(g.items.length!==1?'s':'')+'</span></div>';
-        html += '<button onclick="sendSupplierOrder(\''+_mmEsc(g.supplier_email)+'\',this)" class="hb-btn p" style="height:28px;padding:0 11px;font-size:11.5px">Send ($'+(g.total_cost||0).toFixed(0)+')</button></div>';
+        html += '<button onclick="sendSupplierOrder(\''+_mmEsc(g.supplier_email)+'\',this)" class="cbtn cbtn-primary cbtn-sm">Send ($'+(g.total_cost||0).toFixed(0)+')</button></div>';
       });
       el.innerHTML = html;
       loadPurchaseOrders();
@@ -3069,7 +2997,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       var html = '<div class="hb-kicker">Recent purchase orders</div>';
       d.orders.slice(0,8).forEach(function(po){
         html += '<div class="row"><div><b>'+_mmEsc(po.po_number)+'</b> · '+_mmEsc(po.supplier_name||po.supplier_email)+'</div>';
-        html += '<button onclick="receivePO('+po.id+',this)" class="hb-btn" style="height:26px;padding:0 10px;font-size:11px">Mark received</button></div>';
+        html += '<button onclick="receivePO('+po.id+',this)" class="cbtn cbtn-secondary cbtn-sm">Mark received</button></div>';
       });
       el.innerHTML = html;
     }).catch(function(){});
@@ -3123,7 +3051,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 
   <div style="font-size:11px;color:var(--ink3);margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
     <span>Pick a content type, add a topic, hit Generate. The AI writes in {{restaurant.name}}'s voice.</span>
-    <button onclick="openBrandVoice()" style="background:none;border:none;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;color:var(--ember);font-size:11px;font-weight:600;padding:0">Update brand voice<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+    <button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="openBrandVoice()">Update brand voice<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
   </div>
   <div class="slabel">Content type</div>
   <div class="ct-grid">{% for ct in ctypes %}
@@ -3137,7 +3065,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
   </div>
   <div class="topic-row">
     <input class="topic-input" id="mktopic" placeholder="Topic or occasion — e.g. new spring menu, Sunday brunch special…">
-    <button class="btn-primary" onclick="genContent()">Generate <span style="font-size:15px;margin-left:6px">↺</span></button>
+    <button class="cbtn cbtn-primary" onclick="genContent()">Generate <span style="font-size:15px;margin-left:6px">↺</span></button>
   </div>
   <div style="position:relative">
     <div class="output-box" id="mkoutput" contenteditable="true" style="outline:none;cursor:text;padding-bottom:22px" title="Click to edit before posting" oninput="updateCharCount()"><span contenteditable="false" style="color:var(--ink3);font-style:italic;pointer-events:none;user-select:none">Select a type and click Generate.</span></div>
@@ -3150,8 +3078,8 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     <div id="mkt-photo-row" style="display:none;align-items:center;gap:10px;flex:1;min-width:240px">
       <img id="mkt-photo-thumb" alt="" style="display:none;width:52px;height:52px;object-fit:cover;border-radius:8px;border:1px solid var(--paper3)">
       <input type="file" id="mkt-photo-input" accept="image/*" style="display:none" onchange="uploadMktPhoto(this)">
-      <button class="btn-secondary" style="font-size:11px;padding:6px 12px" onclick="document.getElementById('mkt-photo-input').click()" id="mkt-photo-btn">Add a photo</button>
-      <button class="btn-secondary" style="font-size:11px;padding:6px 12px;display:none" onclick="clearMktPhoto()" id="mkt-photo-clear">Remove</button>
+      <button class="cbtn cbtn-secondary cbtn-sm" onclick="document.getElementById('mkt-photo-input').click()" id="mkt-photo-btn">Add a photo</button>
+      <button class="cbtn cbtn-secondary cbtn-sm" style="display:none" onclick="clearMktPhoto()" id="mkt-photo-clear">Remove</button>
       <span id="mkt-photo-status" style="font-size:11px;color:var(--ink3)"></span>
     </div>
     <div id="gg-cta-row" style="display:none;gap:6px;flex:1;min-width:260px">
@@ -3166,14 +3094,14 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       </select>
       <input type="text" id="gg-cta-url" class="topic-input" placeholder="Link for the button" style="flex:1;min-width:150px">
     </div>
-    <button class="btn-primary" onclick="navigator.clipboard.writeText(document.getElementById('mkoutput').innerText||document.getElementById('mkoutput').textContent).then(function(){toast('Copied','success');})">Copy</button>
-    <button class="btn-primary" onclick="genContent()">Regenerate <span style="font-size:15px;margin-left:6px">↺</span></button>
-    <button class="btn-secondary" style="padding:8px 14px;font-size:12px" onclick="openMktPreview()">Preview</button>
-    <button class="btn-secondary" style="padding:8px 14px;font-size:12px" onclick="saveMktDraft()" id="mkt-save-draft-btn">Save draft</button>
-    <button class="btn-secondary" style="padding:8px 14px;font-size:12px" onclick="openMktSchedule()">Schedule</button>
-    <button class="btn-primary btn-instagram" id="ig-post-btn" onclick="postToInstagram()" style="display:none"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="white" style="vertical-align:-2px;margin-right:5px"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/></svg>Post to Instagram</button>
-    <button class="btn-primary" id="gg-post-btn" onclick="postToGoogle()" style="display:none;background:#4285f4"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="white" style="vertical-align:-2px;margin-right:5px"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3a3 3 0 110 6 3 3 0 010-6zm0 14.2a7.2 7.2 0 01-6-3.22c.03-1.99 4-3.08 6-3.08s5.97 1.09 6 3.08a7.2 7.2 0 01-6 3.22z"/></svg>Post to Google</button>
-    <button class="btn-primary btn-facebook" id="fb-post-btn" onclick="postToFacebook()" style="display:none"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="white" style="vertical-align:-2px;margin-right:5px"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>Post to Facebook</button>
+    <button class="cbtn cbtn-primary" onclick="navigator.clipboard.writeText(document.getElementById('mkoutput').innerText||document.getElementById('mkoutput').textContent).then(function(){toast('Copied','success');})">Copy</button>
+    <button class="cbtn cbtn-primary" onclick="genContent()">Regenerate <span style="font-size:15px;margin-left:6px">↺</span></button>
+    <button class="cbtn cbtn-secondary" onclick="openMktPreview()">Preview</button>
+    <button class="cbtn cbtn-secondary" onclick="saveMktDraft()" id="mkt-save-draft-btn">Save draft</button>
+    <button class="cbtn cbtn-secondary" onclick="openMktSchedule()">Schedule</button>
+    <button class="cbtn cbtn-primary cbtn-instagram" id="ig-post-btn" onclick="postToInstagram()" style="display:none"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="white" style="vertical-align:-2px;margin-right:5px"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/></svg>Post to Instagram</button>
+    <button class="cbtn cbtn-google" id="gg-post-btn" onclick="postToGoogle()" style="display:none"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="white" style="vertical-align:-2px;margin-right:5px"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3a3 3 0 110 6 3 3 0 010-6zm0 14.2a7.2 7.2 0 01-6-3.22c.03-1.99 4-3.08 6-3.08s5.97 1.09 6 3.08a7.2 7.2 0 01-6 3.22z"/></svg>Post to Google</button>
+    <button class="cbtn cbtn-primary cbtn-facebook" id="fb-post-btn" onclick="postToFacebook()" style="display:none"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="white" style="vertical-align:-2px;margin-right:5px"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>Post to Facebook</button>
     <span id="output-hint" style="display:none;font-size:10px;color:var(--ink3);margin-left:4px">✏ Edit above before posting</span>
   </div>
 
@@ -3184,8 +3112,8 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
         <div style="font-size:13px;font-weight:700;color:var(--ink)">Content Calendar</div>
       </div>
       <div style="display:flex;gap:6px">
-        <button class="btn-primary" style="font-size:10px;padding:5px 10px" onclick="loadCal()">Generate week <span style="font-size:15px;margin-left:6px">↺</span></button>
-        <button class="btn-primary" id="cal-download-btn" onclick="downloadCal()" style="font-size:10px;padding:5px 10px;display:none">Download CSV<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M5.5 6.5l2.5 3 2.5-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        <button class="cbtn cbtn-primary cbtn-sm" onclick="loadCal()">Generate week <span style="font-size:15px;margin-left:6px">↺</span></button>
+        <button class="cbtn cbtn-primary cbtn-sm" id="cal-download-btn" onclick="downloadCal()" style="display:none">Download CSV<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M5.5 6.5l2.5 3 2.5-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
       </div>
     </div>
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;padding-left:4px">
@@ -3204,7 +3132,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
       <code id="guest-join-link" style="flex:1;min-width:220px;font-size:11px;color:var(--ink);background:var(--paper2);border:1px solid var(--paper3);border-radius:6px;padding:8px 10px;word-break:break-all">{{request.url_root.rstrip('/')}}/join/{{restaurant.id}}</code>
-      <button onclick="copyGuestJoinLink()" class="btn-secondary" style="font-size:11px;padding:6px 12px" id="guest-copy-btn">Copy link</button>
+      <button onclick="copyGuestJoinLink()" class="cbtn cbtn-secondary cbtn-sm" id="guest-copy-btn">Copy link</button>
     </div>
 
     <div style="display:flex;gap:14px;align-items:center;margin-bottom:14px;padding:12px;background:var(--paper2);border-radius:8px;flex-wrap:wrap">
@@ -3213,7 +3141,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
         <div style="font-size:12px;color:var(--ink);font-weight:600;margin-bottom:2px">Print this where guests can scan it</div>
         <div style="font-size:11px;color:var(--ink3);line-height:1.5">A QR code on a screen doesn't help anyone — download it and put it on a table tent, receipt, or menu insert.</div>
       </div>
-      <a href="/api/guest-qr?download=1" download="guest-text-club-qr.png" class="btn-secondary" style="font-size:11px;padding:6px 12px;text-decoration:none;flex-shrink:0">Download QR code</a>
+      <a href="/api/guest-qr?download=1" download="guest-text-club-qr.png" class="cbtn cbtn-secondary cbtn-sm" style="flex-shrink:0">Download QR code</a>
     </div>
 
     {% set _pos = (restaurant.pos_system or '')|lower %}
@@ -3237,7 +3165,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--paper3)">
       <div id="guest-contacts-summary" style="font-size:12px;color:var(--ink3)">Loading&hellip;</div>
-      <button onclick="openGuestContactsModal()" style="background:none;border:none;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;font-size:11px;font-weight:600;color:var(--ember);padding:0;display:flex;align-items:center;gap:3px">Manage<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      <button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="openGuestContactsModal()">Manage<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
     </div>
 
     <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);margin-bottom:8px">Send a campaign</div>
@@ -3252,7 +3180,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
            in, never an AUDIENCE it was sent to. -->
       <select id="guest-campaign-segment" class="topic-input" style="flex:1;min-width:180px" onchange="renderSegmentHelp()"></select>
       <input type="text" id="guest-campaign-topic" class="topic-input" placeholder="Optional details (e.g. half-price wine Wednesdays)" style="flex:2;min-width:200px">
-      <button onclick="generateGuestCampaign()" class="btn-primary" style="padding:8px 14px;font-size:12px" id="guest-generate-btn">Generate</button>
+      <button onclick="generateGuestCampaign()" class="cbtn cbtn-primary" id="guest-generate-btn">Generate</button>
     </div>
     <div id="guest-segment-help" style="font-size:11px;color:var(--ink3);line-height:1.55;margin-bottom:10px"></div>
     <!-- draft_campaign_message's own prompt forbids links, so a text could
@@ -3261,7 +3189,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     <input type="text" id="guest-campaign-link" class="topic-input" placeholder="Link to track (optional) — e.g. your menu or booking page" style="width:100%;box-sizing:border-box;margin-bottom:10px">
     <textarea id="guest-campaign-message" rows="3" placeholder="Generated message will appear here — edit before sending" maxlength="300" style="width:100%;padding:10px 12px;border:1px solid var(--paper3);border-radius:8px;font-family:'Apfel Grotezk',sans-serif;font-size:13px;color:var(--ink);background:var(--paper2);outline:none;resize:vertical;margin-bottom:10px;box-sizing:border-box"></textarea>
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-      <button onclick="sendGuestCampaign()" class="btn-primary" style="padding:8px 14px;font-size:12px" id="guest-send-btn">Send to this audience</button>
+      <button onclick="sendGuestCampaign()" class="cbtn cbtn-primary" id="guest-send-btn">Send to this audience</button>
       <span id="guest-campaign-status" style="font-size:12px;display:none"></span>
     </div>
 
@@ -3287,7 +3215,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     <input type="text" id="guest-newsletter-subject" class="topic-input" placeholder="Subject (optional — taken from the generated copy if blank)" style="width:100%;box-sizing:border-box;margin-bottom:10px">
     <textarea id="guest-newsletter-body" rows="5" placeholder="Newsletter text" style="width:100%;padding:10px 12px;border:1px solid var(--paper3);border-radius:8px;font-family:'Apfel Grotezk',sans-serif;font-size:13px;color:var(--ink);background:var(--paper2);outline:none;resize:vertical;margin-bottom:10px;box-sizing:border-box"></textarea>
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-      <button onclick="sendGuestNewsletter()" class="btn-primary" style="padding:8px 14px;font-size:12px" id="guest-newsletter-btn">Send to subscribers</button>
+      <button onclick="sendGuestNewsletter()" class="cbtn cbtn-primary" id="guest-newsletter-btn">Send to subscribers</button>
       <span id="guest-newsletter-status" style="font-size:12px;display:none"></span>
     </div>
   </div>
@@ -3297,7 +3225,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
   <div class="data-panel" style="margin-top:20px;padding:16px 20px;white-space:normal">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;padding-left:4px">
       <div style="font-size:13px;font-weight:700;color:var(--ink)">Saved drafts</div>
-      <button class="btn-primary" style="font-size:10px;padding:5px 10px" onclick="loadMktDrafts()">Refresh</button>
+      <button class="cbtn cbtn-primary cbtn-sm" onclick="loadMktDrafts()">Refresh</button>
     </div>
     <div id="mkt-drafts-list" style="padding:0 4px"><div class="no-data" style="padding:14px 0;font-size:12px;color:var(--ink3);font-style:italic">Nothing saved yet.</div></div>
   </div>
@@ -3396,7 +3324,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     <div style="background:var(--paper);border:1px solid var(--paper3);border-radius:12px;max-width:460px;width:100%;max-height:85vh;overflow:auto;padding:22px 24px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
         <div style="font-size:14px;font-weight:700;color:var(--ink)">Preview</div>
-        <button onclick="closeMktPreview()" style="background:none;border:none;cursor:pointer;color:var(--ink3);font-size:18px;line-height:1;padding:0">&times;</button>
+        <button class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" onclick="closeMktPreview()">&times;</button>
       </div>
       <div id="mkt-preview-body"></div>
     </div>
@@ -3408,7 +3336,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     <div style="background:var(--paper);border:1px solid var(--paper3);border-radius:12px;max-width:420px;width:100%;padding:22px 24px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
         <div style="font-size:14px;font-weight:700;color:var(--ink)">Schedule this post</div>
-        <button onclick="closeMktSchedule()" style="background:none;border:none;cursor:pointer;color:var(--ink3);font-size:18px;line-height:1;padding:0">&times;</button>
+        <button class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" onclick="closeMktSchedule()">&times;</button>
       </div>
       <p style="font-size:11.5px;color:var(--ink3);line-height:1.6;margin:0 0 16px">Cavnar AI publishes it for you. Times are your restaurant's own clock.</p>
       <div class="slabel" style="margin-bottom:4px">Where</div>
@@ -3416,8 +3344,8 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       <div class="slabel" style="margin-bottom:4px">When</div>
       <input type="datetime-local" id="mkt-schedule-when" class="topic-input" style="width:100%;box-sizing:border-box">
       <div style="display:flex;align-items:center;gap:10px;margin-top:18px">
-        <button class="btn-primary" onclick="confirmMktSchedule()" style="padding:8px 16px;font-size:12px">Schedule it</button>
-        <button class="btn-secondary" onclick="closeMktSchedule()" style="padding:8px 16px;font-size:12px">Cancel</button>
+        <button class="cbtn cbtn-primary" onclick="confirmMktSchedule()">Schedule it</button>
+        <button class="cbtn cbtn-secondary" onclick="closeMktSchedule()">Cancel</button>
         <span id="mkt-schedule-status" style="font-size:12px;color:var(--red);display:none"></span>
       </div>
     </div>
@@ -3430,7 +3358,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     <div style="background:var(--paper);border:1px solid var(--paper3);border-radius:12px;max-width:520px;width:100%;max-height:85vh;overflow:auto;padding:22px 24px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
         <div style="font-size:14px;font-weight:700;color:var(--ink)">Brand voice</div>
-        <button onclick="closeBrandVoice()" style="background:none;border:none;cursor:pointer;color:var(--ink3);font-size:18px;line-height:1;padding:0">&times;</button>
+        <button class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" onclick="closeBrandVoice()">&times;</button>
       </div>
       <p style="font-size:11.5px;color:var(--ink3);line-height:1.6;margin:0 0 16px">Every caption, email, text and review reply is written from these fields. Changes apply to the next thing you generate.</p>
 
@@ -3452,8 +3380,8 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
           <input type="text" id="bv-signoff" class="topic-input" style="width:100%;box-sizing:border-box" placeholder="e.g. Maria &amp; the team"></div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;margin-top:18px">
-        <button class="btn-primary" id="bv-save-btn" onclick="saveBrandVoice()" style="padding:8px 16px;font-size:12px">Save</button>
-        <button class="btn-secondary" onclick="closeBrandVoice()" style="padding:8px 16px;font-size:12px">Cancel</button>
+        <button class="cbtn cbtn-primary" id="bv-save-btn" onclick="saveBrandVoice()">Save</button>
+        <button class="cbtn cbtn-secondary" onclick="closeBrandVoice()">Cancel</button>
         <span id="bv-status" style="font-size:12px;color:var(--ink3);display:none"></span>
       </div>
     </div>
@@ -3604,9 +3532,9 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       <div class="hb-sub">{% if _cd %}<span><span class="hb-num">{{ comp_count }}</span> competitor{{ '' if comp_count == 1 else 's' }} tracked</span><span class="sep">·</span><span>market average <span class="hb-num">{{ avg_comp_rating }}★</span></span>{% if own is not none %}<span class="sep">·</span><span>you're at <span class="hb-num">{{ own }}★</span>{% if own_vs_avg is not none and own_vs_avg != 0 %} (<span class="hb-num">{{ '+' if own_vs_avg > 0 }}{{ own_vs_avg }}</span>){% endif %}</span>{% endif %}{% if _upd %}<span class="sep">·</span><span id="intel-updated-label">updated <span class="hb-num">{{ _upd|format_date }}</span></span><span id="intel-stale-badge" class="in2-stale" style="display:none">consider refreshing</span>{% endif %}{% else %}<span>Ratings, review volume and reputation for the restaurants around you, plus whether AI search knows you exist.</span>{% endif %}</div>
       <div class="hb-sub" style="margin-top:4px"><span>{% if _cd and recs %}<span class="hb-num">{{ recs|length }}</span> action{{ '' if recs|length == 1 else 's' }} in Cavnar's read below. AI visibility runs on demand — about ten seconds.{% elif _cd %}AI visibility runs on demand — about ten seconds.{% else %}The first pull takes about thirty seconds.{% endif %}</span></div>
       <div class="lb2-actions">
-        {% if _cd %}<button onclick="refreshCompetitorIntel(this)" class="btn-primary">Refresh competitors</button>{% else %}<button onclick="refreshCompetitorIntel(this)" class="btn-primary">Fetch competitor data</button>{% endif %}
-        <button class="hb-btn" onclick="in2Jump('in2-neighbors');var s=document.getElementById('intel-search');if(s)s.focus()">Track a competitor</button>
-        <button class="hb-btn" onclick="in2Jump('in2-aiv');runAIVisibility(document.getElementById('aiv-run-btn'))">Check AI visibility</button>
+        {% if _cd %}<button onclick="refreshCompetitorIntel(this)" class="cbtn cbtn-primary">Refresh competitors</button>{% else %}<button onclick="refreshCompetitorIntel(this)" class="cbtn cbtn-primary">Fetch competitor data</button>{% endif %}
+        <button class="cbtn cbtn-secondary" onclick="in2Jump('in2-neighbors');var s=document.getElementById('intel-search');if(s)s.focus()">Track a competitor</button>
+        <button class="cbtn cbtn-secondary" onclick="in2Jump('in2-aiv');runAIVisibility(document.getElementById('aiv-run-btn'))">Check AI visibility</button>
       </div>
     </div>
     <div class="hb-pulse">
@@ -3650,7 +3578,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     <svg class="cm-hearth" viewBox="0 0 120 120" aria-hidden="true" style="width:72px;height:72px"><path class="cm-hring" d="M99.5,45 V44.5 A24,24 0 0 0 75.5,20.5 H44.5 A24,24 0 0 0 20.5,44.5 V75.5 A24,24 0 0 0 44.5,99.5 H75.5 A24,24 0 0 0 99.5,75.5 V75" stroke-width="19"/><circle class="cm-hglow" cx="99.5" cy="60" r="22"/><circle class="cm-hdot" cx="99.5" cy="60" r="10"/></svg>
     <h2>No competitor data yet</h2>
     <p>See how your ratings, review volume and reputation stack up against the restaurants around you. Takes about thirty seconds.</p>
-    <button onclick="refreshCompetitorIntel(this)" class="btn-primary" style="padding:9px 22px">Fetch competitor data</button>
+    <button onclick="refreshCompetitorIntel(this)" class="cbtn cbtn-primary cbtn-lg">Fetch competitor data</button>
   </div>
   {% endif %}
 
@@ -3661,7 +3589,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       <div class="t"><div class="hb-kicker">AI search presence</div><h2>Is {{ restaurant.name }} visible to AI search?</h2>
         <p>More guests are asking AI where to eat before they ever open Maps. This runs real queries through Perplexity's live web search — the same public web, reviews and Google Business Profile data ChatGPT and Google AI read — and shows whether you came up.</p>
         <div class="meta">Three local queries · about ten seconds · Perplexity live search<span id="in2-last-run"></span></div></div>
-      <button onclick="runAIVisibility(this)" id="aiv-run-btn" class="btn-primary" style="padding:10px 22px;white-space:nowrap">Check AI visibility</button>
+      <button onclick="runAIVisibility(this)" id="aiv-run-btn" class="cbtn cbtn-primary cbtn-lg" style="white-space:nowrap">Check AI visibility</button>
     </div>
     <div class="in2-pre" id="aiv-loading" style="display:none;justify-content:center;text-align:center;flex-direction:column;gap:6px">
       <div id="aiv-radar"></div>
@@ -3695,7 +3623,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
   <!-- ── Nearby competitors ── -->
   <div class="in2-sec" id="in2-neighbors">
     <div class="hd"><div><div class="hb-kicker">Nearby competitors</div><h2>Who you're up against</h2><div class="sub">Google ratings and the reviews behind them. Track a specific place and it joins every refresh.</div></div>
-      {% if _cd %}<div class="r"><button onclick="refreshCompetitorIntel(this)" class="hb-btn">Refresh</button></div>{% endif %}</div>
+      {% if _cd %}<div class="r"><button onclick="refreshCompetitorIntel(this)" class="cbtn cbtn-secondary">Refresh</button></div>{% endif %}</div>
     <div class="in2-search"><input id="intel-search" placeholder="Track a competitor — search by name, e.g. the wine bar on Main" oninput="intelSearchInput()" autocomplete="off"><div id="intel-search-results" class="res"></div></div>
     {% if _cd %}
     <div class="in2-comp" id="comp-cards-static">
@@ -3743,9 +3671,9 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
         <div class="acct-name" style="font-family:'Clash Display',sans-serif;font-size:20px;color:var(--ink);margin-bottom:3px">Will Cavnar</div>
         <div style="font-size:12px;color:var(--ink3);margin-bottom:14px">Founder, Cavnar AI &middot; Your dedicated restaurant intelligence consultant</div>
         <div style="display:flex;gap:10px;flex-wrap:wrap">
-          <a href="mailto:will@cavnar.ai" class="btn-link-ember">&#9993; Email Will</a>
-          <a href="https://calendly.com/will-cavnar/30min" target="_blank" class="btn-link-navy">&#128197; Book a call</a>
-          <a href="https://status.cavnar.ai" target="_blank" class="btn-link-status">
+          <a href="mailto:will@cavnar.ai" class="cbtn cbtn-primary">&#9993; Email Will</a>
+          <a href="https://calendly.com/will-cavnar/30min" target="_blank" class="cbtn cbtn-secondary">&#128197; Book a call</a>
+          <a href="https://status.cavnar.ai" target="_blank" class="cbtn cbtn-secondary">
             <span id="acct-status-dot" style="width:7px;height:7px;border-radius:50%;background:#22c55e;flex-shrink:0"></span> System Status
           </a>
         </div>
@@ -3767,7 +3695,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
   <div class="acct-card" style="padding:18px 22px;margin-bottom:14px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
       <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3)">Your Restaurant Profile</div>
-      <button onclick="toggleProfileEdit()" id="profile-edit-btn" class="btn-primary" style="font-size:11px;padding:5px 12px">Edit profile</button>
+      <button onclick="toggleProfileEdit()" id="profile-edit-btn" class="cbtn cbtn-primary cbtn-sm">Edit profile</button>
       <a href="mailto:will@cavnar.ai?subject=Profile update for {{restaurant.name}}" style="display:none" id="profile-request-link">Request an update<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:0" class="profile-grid">
@@ -3849,8 +3777,8 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
         <div><div style="font-size:11px;color:var(--ink3);margin-bottom:3px">Menu &amp; current specials</div><textarea id="pe-menu" rows="2" style="width:100%;box-sizing:border-box;padding:7px 9px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;background:var(--paper);color:var(--ink);outline:none" placeholder="Signature dishes and what's running now">{{restaurant.menu_notes or ''}}</textarea></div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;margin-top:14px;flex-wrap:wrap">
-        <button class="btn-primary" id="pe-save" onclick="saveProfile()" style="padding:7px 16px;font-size:12px">Save changes</button>
-        <button class="btn-secondary" onclick="toggleProfileEdit()" style="padding:7px 16px;font-size:12px">Cancel</button>
+        <button class="cbtn cbtn-primary" id="pe-save" onclick="saveProfile()">Save changes</button>
+        <button class="cbtn cbtn-secondary" onclick="toggleProfileEdit()">Cancel</button>
         <span style="font-size:11px;color:var(--ink3)">Restaurant name, location, atmosphere and "known for" are set by Will &mdash; <a href="mailto:will@cavnar.ai?subject=Profile update for {{restaurant.name}}" style="color:var(--ember)">request an update</a>.</span>
       </div>
     </div>
@@ -3868,7 +3796,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
         <tr>
           <td style="color:var(--ink3);padding:4px 0;width:70px;font-size:12px;white-space:nowrap">Email:</td>
           <td style="font-weight:500;font-size:12px;width:100%;padding-left:8px" id="acct-email-display">{{restaurant.owner_email}}</td>
-          <td style="text-align:right;padding:4px 0;white-space:nowrap"><button onclick="document.getElementById('email-modal').style.display='flex'" style="background:none;border:none;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;font-size:11px;font-weight:600;color:var(--ember);padding:0;display:flex;align-items:center;gap:3px">Update<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button></td>
+          <td style="text-align:right;padding:4px 0;white-space:nowrap"><button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="document.getElementById('email-modal').style.display='flex'">Update<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button></td>
         </tr>
         <tr><td style="color:var(--ink3);padding:4px 0;font-size:12px;white-space:nowrap">Username:</td><td style="font-weight:500;font-size:12px;padding-left:8px" colspan="2">{{current_user.username}}</td></tr>
       </table>
@@ -3901,10 +3829,10 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
           {% if restaurant.two_fa_enabled %}
           <div style="display:flex;align-items:center;gap:8px">
             <span style="font-size:10px;font-weight:700;color:#2d6a4f;background:#eaf4ee;padding:2px 8px;border-radius:10px">&#10003; On</span>
-            <button onclick="toggle2FA(false)" class="btn-secondary" style="font-size:11px;padding:4px 10px">Disable</button>
+            <button onclick="toggle2FA(false)" class="cbtn cbtn-secondary cbtn-sm">Disable</button>
           </div>
           {% else %}
-          <button onclick="document.getElementById('twofa-modal').style.display='flex'" class="btn-primary" style="font-size:11px;padding:5px 12px">Enable<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+          <button onclick="document.getElementById('twofa-modal').style.display='flex'" class="cbtn cbtn-primary cbtn-sm">Enable<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
           {% endif %}
         </div>
         <!-- Sign-in notifications -->
@@ -3925,13 +3853,13 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
         <div>
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
             <div style="font-size:12px;font-weight:600;color:var(--ink);padding-bottom:5px;border-bottom:1px solid var(--ember)">Active sessions</div>
-            <button onclick="revokeOtherSessions(this)" id="revoke-sessions-btn" class="btn-primary" style="font-size:11px;padding:5px 12px;transition:background .2s">Sign out all other devices</button>
+            <button onclick="revokeOtherSessions(this)" id="revoke-sessions-btn" class="cbtn cbtn-primary cbtn-sm">Sign out all other devices</button>
           </div>
           <div id="sessions-list" style="font-size:11px;color:var(--ink3)">Loading&hellip;</div>
         </div>
         <!-- Change password link — inside security section -->
         <div style="padding-top:10px;margin-top:2px">
-          <button onclick="document.getElementById('pw-modal').style.display='flex'" style="background:none;border:none;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;font-size:12px;font-weight:600;color:var(--ember);padding:0;display:flex;align-items:center;gap:4px">Change password<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+          <button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="document.getElementById('pw-modal').style.display='flex'">Change password<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
         <!-- iOS parity: checkup, backup codes, trusted devices, recovery email, sign-in history, activity -->
         <div style="border-top:1px solid var(--paper3);margin-top:12px;padding-top:12px">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
@@ -3945,14 +3873,14 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
         <div style="border-top:1px solid var(--paper3);margin-top:12px;padding-top:12px">
           <div style="display:flex;align-items:center;justify-content:space-between">
             <div><div style="font-size:12px;font-weight:600;color:var(--ink)">Backup codes</div><div style="font-size:11px;color:var(--ink3)"><span id="bc-remaining">&hellip;</span> unused &middot; one-time codes if you lose access to your email or phone</div></div>
-            <button onclick="regenBackupCodes(this)" class="btn-secondary" style="font-size:11px;padding:4px 10px">Regenerate</button>
+            <button onclick="regenBackupCodes(this)" class="cbtn cbtn-secondary cbtn-sm">Regenerate</button>
           </div>
           <div id="bc-codes" style="display:none;margin-top:8px;padding:10px 12px;background:var(--paper);border:1px dashed var(--ember);border-radius:8px;font-family:'Space Grotesk',sans-serif;font-size:12px;line-height:1.9;letter-spacing:.04em"></div>
         </div>
         <div style="border-top:1px solid var(--paper3);margin-top:12px;padding-top:12px">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
             <div><div style="font-size:12px;font-weight:600;color:var(--ink)">Trusted devices</div><div style="font-size:11px;color:var(--ink3)">Skip the code on these for 30 days</div></div>
-            <button onclick="forgetAllTrusted(this)" class="btn-secondary" style="font-size:11px;padding:4px 10px">Forget all</button>
+            <button onclick="forgetAllTrusted(this)" class="cbtn cbtn-secondary cbtn-sm">Forget all</button>
           </div>
           <div id="trusted-list" style="font-size:11px;color:var(--ink3)">Loading&hellip;</div>
         </div>
@@ -3962,16 +3890,16 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
           <div style="font-size:11px;color:var(--ink3)" id="rec-status">Loading&hellip;</div>
           <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
             <input id="rec-email" type="email" placeholder="A second address you can always reach"  style="flex:1;min-width:180px;padding:7px 9px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;background:var(--paper);color:var(--ink)">
-            <button onclick="recSend(this)" class="btn-secondary" style="font-size:11px;padding:4px 10px">Send code</button>
+            <button onclick="recSend(this)" class="cbtn cbtn-secondary cbtn-sm">Send code</button>
           </div>
           <div id="rec-verify" style="display:none;gap:6px;margin-top:8px">
             <input id="rec-code" inputmode="numeric" maxlength="6" placeholder="6-digit code" style="width:120px;padding:7px 9px;border:1px solid var(--paper3);border-radius:7px;font-family:'Space Grotesk',sans-serif;font-size:12px;background:var(--paper);color:var(--ink)">
-            <button onclick="recVerify(this)" class="btn-primary" style="font-size:11px;padding:4px 10px">Verify</button>
+            <button onclick="recVerify(this)" class="cbtn cbtn-primary cbtn-sm">Verify</button>
           </div>
         </div>
         <div style="border-top:1px solid var(--paper3);margin-top:12px;padding-top:10px;display:flex;gap:16px;flex-wrap:wrap">
-          <button style="background:none;border:none;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;font-size:11px;font-weight:600;color:var(--ember);padding:0" onclick="toggleSec('login-history')">Sign-in history &#9662;</button>
-          <button style="background:none;border:none;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;font-size:11px;font-weight:600;color:var(--ember);padding:0" onclick="toggleSec('activity-log')">Account activity &#9662;</button>
+          <button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="toggleSec('login-history')">Sign-in history &#9662;</button>
+          <button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="toggleSec('activity-log')">Account activity &#9662;</button>
         </div>
         <div id="login-history" style="display:none;margin-top:8px;font-size:11px;color:var(--ink3)"></div>
         <div id="activity-log" style="display:none;margin-top:8px;font-size:11px;color:var(--ink3)"></div>
@@ -4004,9 +3932,9 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
           {% endif %}
         </div>
         {% if restaurant.gmb_refresh_token %}
-        <button onclick="gmbDisconnect()" style="font-size:11px;padding:4px 10px;flex-shrink:0;background:none;border:1px solid var(--red);border-radius:6px;color:var(--red);font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif">Disconnect</button>
+        <button class="cbtn cbtn-danger cbtn-ghost cbtn-sm" onclick="gmbDisconnect()" style="flex-shrink:0">Disconnect</button>
         {% else %}
-        <button onclick="gmbConnect()" class="btn btn-approve" style="font-size:11px;padding:5px 12px;flex-shrink:0">Connect<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        <button onclick="gmbConnect()" class="cbtn cbtn-success cbtn-sm" style="flex-shrink:0">Connect<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
         {% endif %}
       </div>
       <!-- Instagram / Facebook -->
@@ -4027,9 +3955,9 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
           {% endif %}
         </div>
         {% if restaurant.ig_token %}
-        <button onclick="disconnectInstagram(this)" style="font-size:11px;padding:4px 10px;flex-shrink:0;background:none;border:1px solid var(--red);border-radius:6px;color:var(--red);font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif">Disconnect</button>
+        <button class="cbtn cbtn-danger cbtn-ghost cbtn-sm" onclick="disconnectInstagram(this)" style="flex-shrink:0">Disconnect</button>
         {% else %}
-        <button onclick="igConnect()" class="btn btn-approve" style="font-size:11px;padding:5px 12px;flex-shrink:0">Connect<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        <button onclick="igConnect()" class="cbtn cbtn-success cbtn-sm" style="flex-shrink:0">Connect<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
         {% endif %}
       </div>
       <!-- Toast POS -->
@@ -4062,15 +3990,15 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
         </div>
         <div style="display:flex;gap:6px;flex-shrink:0">
           {% if restaurant.toast_restaurant_guid and not restaurant.toast_sync_error %}
-          <button onclick="toastSyncNow(this)" class="btn btn-approve" style="font-size:11px;padding:4px 10px;flex-shrink:0">↻ Sync</button>
-          <button onclick="toastDisconnect(this)" style="font-size:11px;padding:4px 10px;flex-shrink:0;background:none;border:1px solid var(--red);border-radius:6px;color:var(--red);font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif">Disconnect</button>
+          <button onclick="toastSyncNow(this)" class="cbtn cbtn-success cbtn-sm" style="flex-shrink:0">↻ Sync</button>
+          <button class="cbtn cbtn-danger cbtn-ghost cbtn-sm" onclick="toastDisconnect(this)" style="flex-shrink:0">Disconnect</button>
           {% elif restaurant.toast_restaurant_guid and restaurant.toast_sync_error %}
           <!-- Retrying a sync fixes nothing when the root cause is the
                credentials themselves — offer re-entering them instead. -->
-          <button onclick="openToastClientModal()" class="btn btn-approve" style="font-size:11px;padding:5px 12px;flex-shrink:0">Reconnect</button>
-          <button onclick="toastDisconnect(this)" style="font-size:11px;padding:4px 10px;flex-shrink:0;background:none;border:1px solid var(--red);border-radius:6px;color:var(--red);font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif">Disconnect</button>
+          <button onclick="openToastClientModal()" class="cbtn cbtn-success cbtn-sm" style="flex-shrink:0">Reconnect</button>
+          <button class="cbtn cbtn-danger cbtn-ghost cbtn-sm" onclick="toastDisconnect(this)" style="flex-shrink:0">Disconnect</button>
           {% else %}
-          <button onclick="openToastClientModal()" class="btn btn-approve" style="font-size:11px;padding:5px 12px;flex-shrink:0">Connect<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+          <button onclick="openToastClientModal()" class="cbtn cbtn-success cbtn-sm" style="flex-shrink:0">Connect<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
           {% endif %}
         </div>
       </div>
@@ -4105,15 +4033,15 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
         </div>
         <div style="display:flex;gap:6px;flex-shrink:0">
           {% if restaurant.square_location_id and not restaurant.square_sync_error %}
-          <button onclick="squareSyncNow(this)" class="btn btn-approve" style="font-size:11px;padding:4px 10px;flex-shrink:0">↻ Sync</button>
-          <button onclick="squareDisconnect(this)" style="font-size:11px;padding:4px 10px;flex-shrink:0;background:none;border:1px solid var(--red);border-radius:6px;color:var(--red);font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif">Disconnect</button>
+          <button onclick="squareSyncNow(this)" class="cbtn cbtn-success cbtn-sm" style="flex-shrink:0">↻ Sync</button>
+          <button class="cbtn cbtn-danger cbtn-ghost cbtn-sm" onclick="squareDisconnect(this)" style="flex-shrink:0">Disconnect</button>
           {% elif restaurant.square_location_id and restaurant.square_sync_error %}
           <!-- Retrying a sync fixes nothing when the root cause is the
                credentials themselves — offer re-entering them instead. -->
-          <button onclick="openSquareModal()" class="btn btn-approve" style="font-size:11px;padding:5px 12px;flex-shrink:0">Reconnect</button>
-          <button onclick="squareDisconnect(this)" style="font-size:11px;padding:4px 10px;flex-shrink:0;background:none;border:1px solid var(--red);border-radius:6px;color:var(--red);font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif">Disconnect</button>
+          <button onclick="openSquareModal()" class="cbtn cbtn-success cbtn-sm" style="flex-shrink:0">Reconnect</button>
+          <button class="cbtn cbtn-danger cbtn-ghost cbtn-sm" onclick="squareDisconnect(this)" style="flex-shrink:0">Disconnect</button>
           {% else %}
-          <button onclick="openSquareModal()" class="btn btn-approve" style="font-size:11px;padding:5px 12px;flex-shrink:0">Connect<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+          <button onclick="openSquareModal()" class="cbtn cbtn-success cbtn-sm" style="flex-shrink:0">Connect<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
           {% endif %}
         </div>
       </div>
@@ -4148,15 +4076,15 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
         </div>
         <div style="display:flex;gap:6px;flex-shrink:0">
           {% if restaurant.clover_merchant_id and not restaurant.clover_sync_error %}
-          <button onclick="cloverSyncNow(this)" class="btn btn-approve" style="font-size:11px;padding:4px 10px;flex-shrink:0">↻ Sync</button>
-          <button onclick="cloverDisconnect(this)" style="font-size:11px;padding:4px 10px;flex-shrink:0;background:none;border:1px solid var(--red);border-radius:6px;color:var(--red);font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif">Disconnect</button>
+          <button onclick="cloverSyncNow(this)" class="cbtn cbtn-success cbtn-sm" style="flex-shrink:0">↻ Sync</button>
+          <button class="cbtn cbtn-danger cbtn-ghost cbtn-sm" onclick="cloverDisconnect(this)" style="flex-shrink:0">Disconnect</button>
           {% elif restaurant.clover_merchant_id and restaurant.clover_sync_error %}
           <!-- Retrying a sync fixes nothing when the root cause is the
                credentials themselves — offer re-entering them instead. -->
-          <button onclick="openCloverModal()" class="btn btn-approve" style="font-size:11px;padding:5px 12px;flex-shrink:0">Reconnect</button>
-          <button onclick="cloverDisconnect(this)" style="font-size:11px;padding:4px 10px;flex-shrink:0;background:none;border:1px solid var(--red);border-radius:6px;color:var(--red);font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif">Disconnect</button>
+          <button onclick="openCloverModal()" class="cbtn cbtn-success cbtn-sm" style="flex-shrink:0">Reconnect</button>
+          <button class="cbtn cbtn-danger cbtn-ghost cbtn-sm" onclick="cloverDisconnect(this)" style="flex-shrink:0">Disconnect</button>
           {% else %}
-          <button onclick="openCloverModal()" class="btn btn-approve" style="font-size:11px;padding:5px 12px;flex-shrink:0">Connect<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+          <button onclick="openCloverModal()" class="cbtn cbtn-success cbtn-sm" style="flex-shrink:0">Connect<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
           {% endif %}
         </div>
       </div>
@@ -4165,7 +4093,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       <div style="margin-top:18px;padding-top:16px;border-top:1px solid var(--paper3)">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
           <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3)">Alert Contacts</div>
-          <button onclick="openAlertsModal()" style="background:none;border:none;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;font-size:11px;font-weight:600;color:var(--ember);padding:0;display:flex;align-items:center;gap:3px">Manage<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+          <button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="openAlertsModal()">Manage<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
         </div>
         <div id="alerts-contacts-summary" style="font-size:12px;color:var(--ink3)">Loading&hellip;</div>
         <div id="alerts-types-summary" style="font-size:11px;color:var(--ink3);margin-top:6px"></div>
@@ -4204,12 +4132,12 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     <div style="padding-right:24px;border-right:1px solid var(--paper3)">
       <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Team</div>
       <div style="font-size:11px;color:var(--ink3)" style="font-size:12px;color:var(--ink3);margin-bottom:10px;line-height:1.5">Who has access to this restaurant. Each teammate gets their own login; the account owner can remove access any time.</div>
-      <div id="team-list" style="font-size:11px;color:var(--ink3)">Loading&hellip;</div>
+      <div id="acct-team-list" style="font-size:11px;color:var(--ink3)">Loading&hellip;</div>
       {% if current_user.role != 'member' %}
       <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">
         <input id="team-name" placeholder="Name" style="flex:1;min-width:110px;padding:7px 9px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;background:var(--paper);color:var(--ink)">
         <input id="team-email" type="email" placeholder="Email" style="flex:1.4;min-width:150px;padding:7px 9px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;background:var(--paper);color:var(--ink)">
-        <button onclick="inviteTeam(this)" class="btn-primary" style="font-size:11px;padding:5px 12px">Add teammate</button>
+        <button onclick="inviteTeam(this)" class="cbtn cbtn-primary cbtn-sm">Add teammate</button>
       </div>
       <div style="font-size:11px;color:var(--ink3)" style="font-size:11px;color:var(--ink3);margin-top:6px">They get a temporary password by email.</div>
       {% endif %}
@@ -4223,11 +4151,11 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
         {% if mod_inventory %}<label style="display:flex;gap:5px;align-items:center;cursor:pointer"><input type="checkbox" class="exp-scope" value="food_cost"> Food cost</label>{% endif %}
         <label style="display:flex;gap:5px;align-items:center;cursor:pointer"><input type="checkbox" class="exp-scope" value="settings"> Settings</label>
       </div>
-      <button onclick="exportData(this)" class="btn-primary" style="font-size:11px;padding:5px 12px">Email me my data</button>
+      <button onclick="exportData(this)" class="cbtn cbtn-primary cbtn-sm">Email me my data</button>
       <div style="border-top:1px solid var(--paper3);margin-top:16px;padding-top:14px">
         <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Report a bug</div>
         <textarea id="bug-msg" rows="2" placeholder="What happened, and where?" style="width:100%;box-sizing:border-box;padding:7px 9px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;background:var(--paper);color:var(--ink);resize:vertical"></textarea>
-        <button onclick="reportBug(this)" class="btn-secondary" style="font-size:11px;padding:5px 12px;margin-top:8px">Send report</button>
+        <button onclick="reportBug(this)" class="cbtn cbtn-secondary cbtn-sm" style="margin-top:8px">Send report</button>
       </div>
     </div>
   </div>
@@ -4245,7 +4173,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
         </div>
         <textarea id="referral-note" rows="2" placeholder="Optional personal note&hellip;" style="padding:7px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;outline:none;resize:vertical"></textarea>
         <div style="display:flex;align-items:center;gap:8px">
-          <button onclick="sendReferral()" class="btn-primary" style="padding:7px 16px">Send referral</button>
+          <button onclick="sendReferral()" class="cbtn cbtn-primary">Send referral</button>
           <span id="referral-status" style="font-size:11px;display:none"></span>
         </div>
       </div>
@@ -4254,7 +4182,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     <div style="border-left:1px solid var(--paper3);padding-left:24px">
       <div style="font-size:13px;font-weight:700;color:var(--ink);margin-bottom:3px">Need anything?</div>
       <div style="font-size:12px;color:var(--ink3);margin-bottom:16px;line-height:1.5">Questions, data requests, or something not working &mdash; reach out directly. Same-day response, always.</div>
-      <a href="mailto:will@cavnar.ai" class="btn-link-ember" style="padding:8px 18px;font-size:13px">Email Will<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
+      <a href="mailto:will@cavnar.ai" class="cbtn cbtn-primary">Email Will<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
     </div>
   </div>
 
@@ -4282,7 +4210,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
         <label for="as-auto-paused" style="font-size:12px;cursor:pointer">Pause it for now</label>
         <input type="checkbox" id="as-auto-paused" style="accent-color:var(--ember)">
       </div>
-      <button onclick="saveAutoApprove()" style="margin-top:8px;background:var(--ember);color:#fff;border:none;border-radius:6px;padding:7px 14px;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer">Save rule</button>
+      <button class="cbtn cbtn-primary cbtn-sm" onclick="saveAutoApprove()" style="margin-top:8px">Save rule</button>
       <span id="as-auto-status" style="font-size:11.5px;color:var(--ink3);margin-left:10px"></span>
     </div>
 
@@ -4292,7 +4220,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       <div id="as-hours-grid" style="display:grid;grid-template-columns:auto 1fr 1fr;gap:6px 10px;align-items:center;margin-bottom:10px"></div>
       <label for="as-closures" style="font-size:11.5px;color:var(--ink3);display:block;margin-bottom:4px">Closure dates (YYYY-MM-DD, comma separated)</label>
       <input type="text" id="as-closures" placeholder="2026-12-25, 2027-01-01" style="font-family:inherit;font-size:12px;padding:5px 8px;border:1px solid var(--paper3);border-radius:6px;background:var(--paper1);color:var(--ink);width:100%;box-sizing:border-box">
-      <button onclick="saveAccountHours()" style="margin-top:10px;background:var(--ember);color:#fff;border:none;border-radius:6px;padding:7px 14px;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer">Save hours</button>
+      <button class="cbtn cbtn-primary cbtn-sm" onclick="saveAccountHours()" style="margin-top:10px">Save hours</button>
       <span id="as-hours-status" style="font-size:11.5px;color:var(--ink3);margin-left:10px"></span>
     </div>
 
@@ -4324,7 +4252,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
   <div class="acct-card" style="padding:18px 22px;margin-bottom:14px" id="email-history-card">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
       <div class="acct-card-title">Email history</div>
-      <button onclick="sendTestDigest(this)" class="btn" style="background:rgba(200,75,47,.14);color:#e8956a;border:1px solid rgba(200,75,47,.32);font-size:11px;padding:5px 12px">Send me a preview digest</button>
+      <button onclick="sendTestDigest(this)" class="cbtn cbtn-soft cbtn-sm">Send me a preview digest</button>
     </div>
     <div class="acct-card-sub">Everything Cavnar AI has sent for you, and whether it landed.</div>
     <div id="eh-body" style="margin-top:12px;font-size:12px;color:var(--ink3)">Loading…</div>
@@ -4381,18 +4309,18 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     <div id="webhook-config" style="display:none">
       <div id="wh-disabled-banner" style="display:none;background:var(--red-bg);border:1px solid var(--red);border-radius:6px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:var(--red)">
         <div style="font-weight:600;margin-bottom:4px" id="wh-disabled-reason"></div>
-        <div>This webhook stopped delivering and was automatically disabled. Fix the endpoint, then <button onclick="reactivateWebhook()" style="background:none;border:none;padding:0;color:var(--red);font-weight:700;text-decoration:underline;cursor:pointer;font-family:inherit;font-size:inherit">reactivate it</button>.</div>
+        <div>This webhook stopped delivering and was automatically disabled. Fix the endpoint, then <button class="cbtn cbtn-text cbtn-inline cbtn-danger cbtn-link cbtn-sm" onclick="reactivateWebhook()">reactivate it</button>.</div>
       </div>
       <div style="background:var(--paper2);border:1px solid var(--paper3);border-radius:6px;padding:10px 12px;margin-bottom:12px">
         <div style="font-size:11px;color:var(--ink3);margin-bottom:4px">Signing secret</div>
         <div style="display:flex;align-items:center;gap:8px">
           <code id="webhook-secret" style="font-size:11px;color:var(--ink);font-family:monospace;word-break:break-all;flex:1"></code>
-          <button onclick="copyWebhookSecret()" class="btn-secondary" style="font-size:10px;padding:3px 8px;white-space:nowrap" id="wh-copy-btn">Copy</button>
+          <button onclick="copyWebhookSecret()" class="cbtn cbtn-secondary cbtn-sm" style="white-space:nowrap" id="wh-copy-btn">Copy</button>
         </div>
       </div>
       <div style="font-size:11px;color:var(--ink3);margin-bottom:6px">Last delivery: <span id="webhook-last-status">—</span></div>
       <div style="margin-bottom:6px">
-        <button type="button" onclick="toggleWhHistory()" style="background:none;border:none;padding:0;font-size:11px;color:var(--ember);font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif">Delivery history <span id="wh-history-arrow" style="font-size:9px">▾</span></button>
+        <button class="cbtn cbtn-text cbtn-inline cbtn-sm" type="button" onclick="toggleWhHistory()">Delivery history <span id="wh-history-arrow" style="font-size:9px">▾</span></button>
       </div>
       <div id="wh-history-panel" style="display:none;margin-bottom:10px;max-height:220px;overflow-y:auto;border:1px solid var(--paper3);border-radius:6px">
         <table style="width:100%;border-collapse:collapse;font-size:11px">
@@ -4412,7 +4340,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     </div>
 
     <div style="margin-bottom:14px">
-      <button type="button" onclick="toggleEvtPanel()" style="display:inline-flex;align-items:center;gap:6px;background:none;border:1px solid var(--paper3);border-radius:6px;padding:5px 10px;font-size:12px;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;color:var(--ink2)">
+      <button class="cbtn cbtn-secondary cbtn-sm" type="button" onclick="toggleEvtPanel()">
         Events &nbsp;<span id="evt-count-label" style="color:var(--ink3);font-weight:400">3 selected</span><span id="evt-arrow" style="font-size:9px;color:var(--ink3);margin-left:2px">▾</span>
       </button>
       <div id="evt-panel" style="display:none;margin-top:10px;padding:14px 16px;background:var(--paper1);border:1px solid var(--paper3);border-radius:8px">
@@ -4456,9 +4384,9 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     </div>
 
     <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <button onclick="saveWebhook()" class="btn-primary" style="padding:8px 14px;font-size:12px" id="wh-save-btn">Save webhook</button>
-      <button onclick="testWebhook()" id="wh-test-btn" class="btn-secondary" style="padding:8px 14px;font-size:12px;display:none">Send test</button>
-      <button onclick="deleteWebhook()" id="wh-delete-btn" style="padding:8px 14px;background:none;border:1px solid var(--red);color:var(--red);border-radius:6px;font-size:12px;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;display:none">Remove</button>
+      <button onclick="saveWebhook()" class="cbtn cbtn-primary" id="wh-save-btn">Save webhook</button>
+      <button onclick="testWebhook()" id="wh-test-btn" class="cbtn cbtn-secondary" style="display:none">Send test</button>
+      <button class="cbtn cbtn-danger cbtn-ghost cbtn-sm" onclick="deleteWebhook()" id="wh-delete-btn" style="display:none">Remove</button>
     </div>
     <div id="wh-status" style="font-size:12px;margin-top:8px;display:none"></div>
   </div>
@@ -4653,11 +4581,11 @@ function _appendAskCavnarProposal(p) {
   var row = document.createElement('div');
   row.className = 'r';
   var confirm = document.createElement('button');
-  confirm.className = 'hb-btn p';
+  confirm.className = 'cbtn cbtn-primary cbtn-sm';
   confirm.textContent = 'Confirm';
   confirm.onclick = function() { _runAskCavnarProposal(p, card, confirm); };
   var dismiss = document.createElement('button');
-  dismiss.className = 'hb-btn';
+  dismiss.className = 'cbtn cbtn-secondary cbtn-sm';
   dismiss.textContent = 'Not now';
   dismiss.onclick = function() {
     _recordAskCavnarAction(p, 'dismissed');
@@ -4806,8 +4734,8 @@ function regenDraft(id) {
         if (txtEl) txtEl.textContent = data.draft;
         if (editorEl) editorEl.value = data.draft;
         actionsEl.innerHTML =
-          '<button class="btn btn-approve" onclick="approveR('+id+')">✓ Approve</button>' +
-          '<button class="btn btn-skip" onclick="skipR('+id+')">Skip</button>';
+          '<button class="cbtn cbtn-success cbtn-sm" onclick="approveR('+id+')">✓ Approve</button>' +
+          '<button class="cbtn cbtn-secondary cbtn-sm" onclick="skipR('+id+')">Skip</button>';
         actionsEl.style.display='flex';
         document.getElementById('editor-'+id).style.display='none';
       } else if (boxEl) {
@@ -4816,27 +4744,27 @@ function regenDraft(id) {
           '<div class="draft-lbl">Suggested response</div>' +
           '<div class="draft-txt" id="draft-txt-'+id+'">'+data.draft+'</div>' +
           '<div class="draft-actions" id="draft-actions-'+id+'">' +
-            '<button class="btn btn-approve" onclick="approveR('+id+')">✓ Approve</button>' +
-            '<button class="btn btn-skip" onclick="skipR('+id+')">Skip</button>' +
+            '<button class="cbtn cbtn-success cbtn-sm" onclick="approveR('+id+')">✓ Approve</button>' +
+            '<button class="cbtn cbtn-secondary cbtn-sm" onclick="skipR('+id+')">Skip</button>' +
           '</div>' +
           '<div class="response-editor" id="editor-'+id+'" style="display:none;margin-top:10px">' +
             '<textarea id="editor-text-'+id+'" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:\'Apfel Grotezk\',sans-serif;font-size:12px;color:var(--ink);background:white;resize:vertical;min-height:90px;outline:none">'+data.draft+'</textarea>' +
             '<div style="display:flex;gap:6px;margin-top:6px">' +
-              '<button class="btn btn-approve" onclick="saveDraft('+id+')">Save & approve</button>' +
-              '<button class="btn btn-skip" onclick="regenDraft('+id+')">↻ Regenerate AI draft</button>' +
-              '<button class="btn btn-skip" onclick="closeEditor('+id+')">Cancel</button>' +
+              '<button class="cbtn cbtn-success cbtn-sm" onclick="saveDraft('+id+')">Save & approve</button>' +
+              '<button class="cbtn cbtn-secondary cbtn-sm" onclick="regenDraft('+id+')">↻ Regenerate AI draft</button>' +
+              '<button class="cbtn cbtn-secondary cbtn-sm" onclick="closeEditor('+id+')">Cancel</button>' +
             '</div>' +
           '</div>';
       }
       toast('New draft generated','success');
     } else {
       if (txtEl) txtEl.textContent = 'Error generating — try again';
-      else if (boxEl) boxEl.innerHTML = '<div class="draft-lbl" style="color:var(--ink3)">Error generating — try again</div><div class="draft-actions" style="margin-top:8px"><button class="btn btn-approve" onclick="regenDraft('+id+')">Generate AI response</button></div>';
+      else if (boxEl) boxEl.innerHTML = '<div class="draft-lbl" style="color:var(--ink3)">Error generating — try again</div><div class="draft-actions" style="margin-top:8px"><button class="cbtn cbtn-success cbtn-sm" onclick="regenDraft('+id+')">Generate AI response</button></div>';
       toast('Error: ' + (data.error||'unknown'),'error');
     }
   }).catch(function(err){
     if (txtEl) txtEl.textContent = 'Error generating — try again';
-    else if (boxEl) boxEl.innerHTML = '<div class="draft-lbl" style="color:var(--ink3)">Error — try again</div><div class="draft-actions" style="margin-top:8px"><button class="btn btn-approve" onclick="regenDraft('+id+')">Generate AI response</button></div>';
+    else if (boxEl) boxEl.innerHTML = '<div class="draft-lbl" style="color:var(--ink3)">Error — try again</div><div class="draft-actions" style="margin-top:8px"><button class="cbtn cbtn-success cbtn-sm" onclick="regenDraft('+id+')">Generate AI response</button></div>';
     toast(err.message||'Network error — try again','error');
   });
 }
@@ -4855,7 +4783,7 @@ function saveDraft(id) {
         if (txtEl) txtEl.textContent = draft;
         document.getElementById('editor-'+id).style.display='none';
         document.getElementById('draft-actions-'+id).innerHTML =
-          '<span class="btn btn-approved">✓ Approved</span>';
+          '<span class="cbtn cbtn-success cbtn-ghost cbtn-done cbtn-sm">✓ Approved</span>';
         document.getElementById('draft-actions-'+id).style.display='flex';
       } else { toast('Approve failed — try again','error'); }
     }).catch(function(){ toast('Network error — try again','error'); });
@@ -5412,7 +5340,7 @@ function filterByTopic(category){
   var label=category.replace(/_/g,' ');
   var isDark=document.documentElement.getAttribute('data-theme')==='dark';
   banner.style.cssText='background:'+(isDark?'#1a1200':'#fff3e0')+';border:1px solid '+(isDark?'#8a6000':'#ef9f27')+';border-radius:8px;padding:8px 14px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;font-size:12px;color:'+(isDark?'#d4a030':'#7a4f00');
-  banner.innerHTML='<span>📂 Showing reviews tagged <strong>'+label+'</strong></span><button onclick="clearTopicFilter()" style="background:none;border:none;cursor:pointer;font-size:12px;color:'+(isDark?'#d4a030':'#7a4f00')+';font-weight:700;padding:0 4px">✕ Clear</button>';
+  banner.innerHTML='<span>📂 Showing reviews tagged <strong>'+label+'</strong></span><button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="clearTopicFilter()">✕ Clear</button>';
   var toolbar=document.querySelector('.toolbar');
   if(toolbar) toolbar.parentNode.insertBefore(banner, toolbar);
   filterReviews();
@@ -6123,7 +6051,7 @@ function maybeShowCongrats(rrate){
 }
 function updateResponseRateBar(){ updateReviewStats(); }
 function approveR(id){
-  var _appBtn=document.querySelector('#rc-'+id+' .btn-approve');
+  var _appBtn=document.querySelector('#rc-'+id+' .cbtn-success');
   if(_appBtn){_appBtn.style.animation='btnPress .22s ease';setTimeout(function(){if(_appBtn)_appBtn.style.animation='';},240);}
   fetch('/approve/'+id,{method:'POST'}).then(function(r){return r.json();}).then(function(d){
   if(d.ok){
@@ -6139,15 +6067,15 @@ function approveR(id){
     } else {
       var _plat = document.getElementById('rc-'+id) ? document.getElementById('rc-'+id).dataset.platform : '';
       var _markBtn = _plat === 'yelp'
-        ? '<button class="btn" style="background:#e8f0fe;color:#1a56cc;border:1px solid #c5d8f8;font-size:11px;margin-left:6px" onclick="markPosted('+id+',this)">📋 Copy &amp; open Yelp</button>'
-        : '<button class="btn" style="background:#e8f0fe;color:#1a56cc;border:1px solid #c5d8f8;font-size:11px;margin-left:6px" onclick="markPosted('+id+',this)">Mark as posted</button>';
+        ? '<button class="cbtn cbtn-soft cbtn-sm" style="margin-left:6px" onclick="markPosted('+id+',this)">📋 Copy &amp; open Yelp</button>'
+        : '<button class="cbtn cbtn-soft cbtn-sm" style="margin-left:6px" onclick="markPosted('+id+',this)">Mark as posted</button>';
       var platform = card.dataset.platform || 'google';
       if(platform === 'google'){
         document.querySelector('#rc-'+id+' .draft-actions').innerHTML=
-          '<span class="btn btn-approved">✓ Approved</span>' +
+          '<span class="cbtn cbtn-success cbtn-ghost cbtn-done cbtn-sm">✓ Approved</span>' +
           '<span style="font-size:11px;color:var(--ink3);margin-left:6px">Saved — will post to Google when GBP is connected</span>';
       } else {
-        document.querySelector('#rc-'+id+' .draft-actions').innerHTML='<span class="btn btn-approved">✓ Approved</span>'+_markBtn;
+        document.querySelector('#rc-'+id+' .draft-actions').innerHTML='<span class="cbtn cbtn-success cbtn-ghost cbtn-done cbtn-sm">✓ Approved</span>'+_markBtn;
       }
       updateReviewStats();
       toast('Response approved' + (platform === 'google' ? ' and saved ✓' : ' — copy and post to ' + platform + ' manually'),'success');
@@ -6184,9 +6112,9 @@ function skipR(id){
       var actions = document.getElementById('draft-actions-'+id);
       if(actions) {
         actions.innerHTML =
-          '<button class="btn btn-approve" onclick="approveR('+id+')">✓ Approve</button>' +
-          '<button class="btn btn-skip" onclick="openEditor('+id+')">Edit response</button>' +
-          '<button class="btn btn-skip" onclick="regenDraft('+id+')">↻ Regenerate</button>';
+          '<button class="cbtn cbtn-success cbtn-sm" onclick="approveR('+id+')">✓ Approve</button>' +
+          '<button class="cbtn cbtn-secondary cbtn-sm" onclick="openEditor('+id+')">Edit response</button>' +
+          '<button class="cbtn cbtn-secondary cbtn-sm" onclick="regenDraft('+id+')">↻ Regenerate</button>';
         actions.style.display='flex';
       }
       toast('Skipped — edit or regenerate below');
@@ -6476,9 +6404,9 @@ function loadMktDrafts(){
         + '</div>'
         + '<div style="font-size:12px;color:var(--ink3);line-height:1.5;margin-top:3px;max-height:38px;overflow:hidden">' + _escHtml(x.body) + '</div>'
         + '<div style="display:flex;gap:14px;margin-top:6px">'
-        + '<button onclick="useMktDraft(' + x.id + ')" style="background:none;border:none;cursor:pointer;font-family:\'Apfel Grotezk\',sans-serif;font-size:11px;font-weight:600;color:var(--ember);padding:0">Open</button>'
-        + (approved ? '' : '<button onclick="approveMktDraft(' + x.id + ')" style="background:none;border:none;cursor:pointer;font-family:\'Apfel Grotezk\',sans-serif;font-size:11px;font-weight:600;color:var(--ember);padding:0">Approve</button>')
-        + '<button onclick="deleteMktDraft(' + x.id + ')" style="background:none;border:none;cursor:pointer;font-family:\'Apfel Grotezk\',sans-serif;font-size:11px;font-weight:600;color:var(--red);padding:0">Delete</button>'
+        + '<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="useMktDraft(' + x.id + ')">Open</button>'
+        + (approved ? '' : '<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="approveMktDraft(' + x.id + ')">Approve</button>')
+        + '<button class="cbtn cbtn-text cbtn-inline cbtn-danger cbtn-sm" onclick="deleteMktDraft(' + x.id + ')">Delete</button>'
         + '</div></div>';
     }
     list.innerHTML = html;
@@ -6573,7 +6501,7 @@ function loadMktQueue(){
         + '<div style="font-size:11px;color:var(--ink3);margin-top:2px">' + _escHtml(p.platform) + '</div>'
         + '<div style="font-size:13px;color:var(--ink);line-height:1.55;margin-top:6px;max-height:60px;overflow:hidden">' + _escHtml(p.body) + '</div>'
         + (p.error ? '<div style="font-size:11px;color:var(--red);margin-top:5px">' + _escHtml(p.error) + '</div>' : '')
-        + (p.status === 'scheduled' ? '<button onclick="cancelMktScheduled(' + p.id + ')" style="background:none;border:none;cursor:pointer;font-family:\'Apfel Grotezk\',sans-serif;font-size:11px;font-weight:600;color:var(--ember);padding:6px 0 0">Cancel this post</button>' : '')
+        + (p.status === 'scheduled' ? '<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="cancelMktScheduled(' + p.id + ')">Cancel this post</button>' : '')
         + '</div>';
     }
     list.innerHTML = html;
@@ -7221,8 +7149,8 @@ function renderProfileList() {
       + '<div><div style="font-size:15.5px;font-weight:600;color:var(--ink)">' + _escHtml(p.label || p.key) + '</div>'
       + '<div style="font-size:13.5px;color:var(--ink3)">' + _escHtml(bits.join(' \u00B7 ')) + '</div></div>'
       + '<div style="display:flex;gap:6px">'
-      + '<button type="button" data-profile-edit="' + _escAttr(p.key) + '" style="font-family:inherit;font-size:13.5px;color:var(--ember);background:none;border:none;cursor:pointer;font-weight:600">Edit</button>'
-      + '<button type="button" data-profile-delete="' + _escAttr(p.key) + '" style="font-family:inherit;font-size:13.5px;color:var(--ink3);background:none;border:none;cursor:pointer">Remove</button>'
+      + '<button class="cbtn cbtn-text cbtn-inline" type="button" data-profile-edit="' + _escAttr(p.key) + '">Edit</button>'
+      + '<button class="cbtn cbtn-text cbtn-inline cbtn-muted" type="button" data-profile-delete="' + _escAttr(p.key) + '">Remove</button>'
       + '</div></div>';
   }
   el.innerHTML = html;
@@ -7251,8 +7179,8 @@ function _profileEditor(p, index) {
     + '</div>'
     + _spRoleGrid(p)
     + '<div style="margin-top:12px">'
-    + '<button type="button" data-profile-save="' + _escAttr(p.key) + '" class="btn-primary" style="padding:6px 14px;font-size:15px">Save profile</button>'
-    + '<button type="button" data-profile-cancel="1" class="hb-btn" style="padding:6px 14px;font-size:15px;margin-left:6px">Cancel</button>'
+    + '<button type="button" data-profile-save="' + _escAttr(p.key) + '" class="cbtn cbtn-primary">Save profile</button>'
+    + '<button type="button" data-profile-cancel="1" class="cbtn cbtn-secondary" style="margin-left:6px">Cancel</button>'
     + '</div></div>';
   return html;
 }
@@ -8062,7 +7990,7 @@ function loadAvailability() {
       if (unDays.length) html += '<div style="font-size:12.5px;color:#c0392b;margin-top:1px">✗ Not available: ' + unDays.join(', ') + '</div>';
       if (av.notes) html += '<div style="font-size:12.5px;color:var(--ink3);margin-top:1px">' + av.notes + '</div>';
       html += '</div>';
-      html += '<button aria-label="Close" onclick="deleteAvailability(\'' + av.employee_name.replace(/'/g,'\\\'') + '\')" style="background:none;border:none;cursor:pointer;color:var(--ink3);font-size:18px;padding:0 4px;line-height:1" title="Remove">&#x2715;</button>';
+      html += '<button class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" aria-label="Close" onclick="deleteAvailability(\'' + av.employee_name.replace(/'/g,'\\\'') + '\')" title="Remove">&#x2715;</button>';
       html += '</div>';
     }
     list.innerHTML = html;
@@ -8340,7 +8268,7 @@ function renderTeamRules() {
   for (var i = 0; i < _teamRules.length; i++) {
     html += '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 12px;background:var(--paper);border:1px solid var(--paper3);border-radius:6px">';
     html += '<span style="font-size:15px;color:var(--ink2)">' + _escHtml(_ruleSentence(_teamRules[i])) + '</span>';
-    html += '<button type="button" data-rule-remove="' + i + '" style="font-family:inherit;font-size:13.5px;color:var(--ink3);background:none;border:none;cursor:pointer;padding:0 2px">Remove</button></div>';
+    html += '<button class="cbtn cbtn-text cbtn-inline cbtn-muted" type="button" data-rule-remove="' + i + '">Remove</button></div>';
   }
   wrap.innerHTML = html;
 }
@@ -8559,7 +8487,7 @@ function genContent(fromCalendar){
   if(_genInFlight)return;
   var topic=document.getElementById('mktopic').value.trim();
   if(!topic){toast('Enter a topic','warning');return;}
-  var btn=document.querySelector('.btn-primary[onclick*="genContent"]');
+  var btn=document.querySelector('.cbtn-primary[onclick*="genContent"]');
   var box=document.getElementById('mkoutput');
   _genInFlight=true;
   if(btn){btn.disabled=true;btn.style.opacity='0.6';}
@@ -8702,7 +8630,7 @@ function renderCal(ideas){
       html += '<div class="cal-day-name" style="display:flex;align-items:center;justify-content:space-between">'+i.day+dateLabel+'</div>';
       html += '<div class="cal-platform" style="font-size:11px;font-weight:600;color:'+pColor+';margin:2px 0 8px;padding:2px 8px;background:'+pColor+'18;border-radius:10px;display:inline-block">'+( i.platform||'')+'</div>';
       html += '<div style="font-size:13px;line-height:1.55;margin-top:2px;flex:1">'+( i.angle||'')+'</div>';
-      html += '<button data-idx="'+idx+'" onclick="generateFromCalIdx(this.dataset.idx)" class="btn-primary" style="margin-top:12px;padding:6px 12px;font-size:11px;width:100%">Generate<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>';
+      html += '<button data-idx="'+idx+'" onclick="generateFromCalIdx(this.dataset.idx)" class="cbtn cbtn-primary cbtn-sm cbtn-block" style="margin-top:12px">Generate<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>';
       html += '</div>';
     }
     g.innerHTML=html;
@@ -9190,7 +9118,7 @@ function twoFAVerify(){
   var code='';digits.forEach(function(d){code+=d.value;});
   var err=document.getElementById('twofa-setup-error');
   if(code.length<6){err.textContent='Enter all 6 digits';err.style.display='block';return;}
-  var btn=document.querySelector('#twofa-step2 .btn-primary');
+  var btn=document.querySelector('#twofa-step2 .cbtn-primary');
   if(btn){btn.textContent='Verifying\u2026';btn.disabled=true;}
   fetch('/api/account/2fa/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:code,method:_twoFAMethod()})})
     .then(function(r){return r.json();}).then(function(d){
@@ -9532,7 +9460,7 @@ function renderAIVisibility(d) {
   var html = '';
   for (var k = 0; k < cards.length; k++) {
     var c = cards[k];
-    html += '<div class="row' + (c.done ? ' done' : '') + '" style="--rc:' + c.color + '"><div class="ic">' + c.svg + '</div><div class="t"><div class="tt"><b>' + c.title + '</b>' + (c.done ? '<span class="im done">&#10003; done</span>' : '<span class="im">' + c.impact + '</span>') + '</div><div class="d">' + c.detail + '</div><div class="why" id="aiv-why-' + k + '">' + c.why + '</div><div class="ac">' + (c.done ? '' : '<button class="hb-btn p" style="height:28px;padding:0 12px;font-size:11.5px" onclick="' + c.actionFn.replace(/"/g, '&quot;') + '">' + c.action + '</button>') + '<button class="wl" onclick="toggleAivWhy(' + k + ',this)">Why this matters</button></div></div></div>';
+    html += '<div class="row' + (c.done ? ' done' : '') + '" style="--rc:' + c.color + '"><div class="ic">' + c.svg + '</div><div class="t"><div class="tt"><b>' + c.title + '</b>' + (c.done ? '<span class="im done">&#10003; done</span>' : '<span class="im">' + c.impact + '</span>') + '</div><div class="d">' + c.detail + '</div><div class="why" id="aiv-why-' + k + '">' + c.why + '</div><div class="ac">' + (c.done ? '' : '<button class="cbtn cbtn-primary cbtn-sm" onclick="' + c.actionFn.replace(/"/g, '&quot;') + '">' + c.action + '</button>') + '<button class="wl" onclick="toggleAivWhy(' + k + ',this)">Why this matters</button></div></div></div>';
   }
   roadmapEl.innerHTML = html;
   if (footerEl) footerEl.style.display = 'block';
@@ -9708,6 +9636,22 @@ function typewriterEffect(el, html) {
     if (!item.w.trim()) { nextTw(); } else { setTimeout(nextTw, twDelay); }
   }
   nextTw();
+}
+// Busy state for any .cbtn: swaps in the Cavnar orb, disables the button so a
+// double-click can't double-submit, and returns a function that restores it.
+function cbtnBusy(btn, label) {
+  if (!btn || btn.getAttribute('aria-busy') === 'true') return function () {};
+  var was = btn.innerHTML, wasDisabled = btn.disabled, wasMin = btn.style.minWidth;
+  btn.style.minWidth = Math.ceil(btn.getBoundingClientRect().width) + 'px';
+  btn.setAttribute('aria-busy', 'true');
+  btn.disabled = true;
+  btn.innerHTML = '<canvas class="hb-orb" data-orb-state="working" width="16" height="16" style="width:16px;height:16px"></canvas>' + (label ? '<span>' + _escHtml(label) + '</span>' : '');
+  return function () {
+    btn.removeAttribute('aria-busy');
+    btn.disabled = wasDisabled;
+    btn.innerHTML = was;
+    btn.style.minWidth = wasMin;
+  };
 }
 function countUp(el, target, duration, prefix, suffix, decimals) {
   if (!el) return;
@@ -10383,8 +10327,8 @@ function _loadGuestContactsList() {
         + '<div style="font-size:10.5px;color:var(--ink3);margin-top:1px">' + visitLabel + '</div>'
         + '</div>'
         + '<div style="display:flex;gap:10px;flex-shrink:0;align-items:center">'
-        + '<button onclick="markGuestVisit(' + c.id + ',this)" style="background:none;border:none;cursor:pointer;color:var(--ember);font-size:11px;font-weight:600;font-family:\'Apfel Grotezk\',sans-serif">Mark visit</button>'
-        + '<button onclick="deleteGuestContactRow(' + c.id + ')" style="background:none;border:none;cursor:pointer;color:var(--red);font-size:11px;font-weight:600;font-family:\'Apfel Grotezk\',sans-serif">Remove</button>'
+        + '<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="markGuestVisit(' + c.id + ',this)">Mark visit</button>'
+        + '<button class="cbtn cbtn-text cbtn-inline cbtn-danger cbtn-sm" onclick="deleteGuestContactRow(' + c.id + ')">Remove</button>'
         + '</div>'
         + '</div>';
     }
@@ -10694,7 +10638,7 @@ document.addEventListener('click', function(e) {
 <!-- Toast POS connect modal -->
 <div id="toast-client-modal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(14,12,10,0.7);align-items:center;justify-content:center" onclick="if(event.target===this)closeToastClientModal()">
   <div style="background:var(--paper);border-radius:14px;padding:28px 32px;max-width:460px;width:90%;position:relative;border:1.5px solid var(--ember);box-shadow:0 8px 16px rgba(14,12,10,.6),0 24px 64px rgba(14,12,10,.55),0 0 0 1px rgba(200,75,47,.18)">
-    <button aria-label="Close" onclick="closeToastClientModal()" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:18px;cursor:pointer;color:var(--ink3);line-height:1">&#x2715;</button>
+    <button class="cbtn cbtn-close" aria-label="Close" onclick="closeToastClientModal()">&#x2715;</button>
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
       <span style="font-size:22px">🍞</span>
       <div style="font-size:16px;font-weight:700;color:var(--ink)">Connect Toast POS</div>
@@ -10717,8 +10661,8 @@ document.addEventListener('click', function(e) {
       </div>
     </div>
     <div style="display:flex;gap:8px">
-      <button id="toast-modal-save-btn" onclick="toastSaveCredentials(this)" class="btn-primary" style="padding:9px 18px;font-size:13px">Test &amp; Connect</button>
-      <button onclick="closeToastClientModal()" class="btn btn-skip" style="padding:9px 14px;font-size:12px">Cancel</button>
+      <button id="toast-modal-save-btn" onclick="toastSaveCredentials(this)" class="cbtn cbtn-primary cbtn-lg">Test &amp; Connect</button>
+      <button onclick="closeToastClientModal()" class="cbtn cbtn-secondary cbtn-sm">Cancel</button>
     </div>
     <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--paper3);font-size:11px;color:var(--ink3);line-height:1.6">
       <strong style="color:var(--ink2)">Where to find these:</strong> Toast Admin → Integrations → API Access → create a credential set with <em>Labor</em> and <em>Orders</em> permissions. Copy the Client ID, Secret, and Location GUID here.
@@ -10729,7 +10673,7 @@ document.addEventListener('click', function(e) {
 <!-- Square Modal -->
 <div id="square-modal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(14,12,10,0.7);align-items:center;justify-content:center" onclick="if(event.target===this)closeSquareModal()">
   <div style="background:var(--paper);border-radius:14px;padding:28px 32px;max-width:460px;width:90%;position:relative;border:1.5px solid var(--ember);box-shadow:0 8px 16px rgba(14,12,10,.6),0 24px 64px rgba(14,12,10,.55),0 0 0 1px rgba(200,75,47,.18)">
-    <button aria-label="Close" onclick="closeSquareModal()" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:18px;cursor:pointer;color:var(--ink3);line-height:1">&#x2715;</button>
+    <button class="cbtn cbtn-close" aria-label="Close" onclick="closeSquareModal()">&#x2715;</button>
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
       <span style="font-size:22px">&#9632;</span>
       <div style="font-size:16px;font-weight:700;color:var(--ink)">Connect Square POS</div>
@@ -10749,8 +10693,8 @@ document.addEventListener('click', function(e) {
       </div>
     </div>
     <div style="display:flex;gap:8px">
-      <button id="square-save-btn" onclick="squareSaveCredentials(this)" class="btn-primary" style="padding:9px 18px;font-size:13px">Test &amp; Connect</button>
-      <button onclick="closeSquareModal()" class="btn btn-skip" style="padding:9px 14px;font-size:12px">Cancel</button>
+      <button id="square-save-btn" onclick="squareSaveCredentials(this)" class="cbtn cbtn-primary cbtn-lg">Test &amp; Connect</button>
+      <button onclick="closeSquareModal()" class="cbtn cbtn-secondary cbtn-sm">Cancel</button>
     </div>
   </div>
 </div>
@@ -10758,7 +10702,7 @@ document.addEventListener('click', function(e) {
 <!-- Clover Modal -->
 <div id="clover-modal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(14,12,10,0.7);align-items:center;justify-content:center" onclick="if(event.target===this)closeCloverModal()">
   <div style="background:var(--paper);border-radius:14px;padding:28px 32px;max-width:460px;width:90%;position:relative;border:1.5px solid var(--ember);box-shadow:0 8px 16px rgba(14,12,10,.6),0 24px 64px rgba(14,12,10,.55),0 0 0 1px rgba(200,75,47,.18)">
-    <button aria-label="Close" onclick="closeCloverModal()" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:18px;cursor:pointer;color:var(--ink3);line-height:1">&#x2715;</button>
+    <button class="cbtn cbtn-close" aria-label="Close" onclick="closeCloverModal()">&#x2715;</button>
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
       <span style="font-size:22px">&#9827;</span>
       <div style="font-size:16px;font-weight:700;color:var(--ink)">Connect Clover POS</div>
@@ -10778,8 +10722,8 @@ document.addEventListener('click', function(e) {
       </div>
     </div>
     <div style="display:flex;gap:8px">
-      <button id="clover-save-btn" onclick="cloverSaveCredentials(this)" class="btn-primary" style="padding:9px 18px;font-size:13px">Test &amp; Connect</button>
-      <button onclick="closeCloverModal()" class="btn btn-skip" style="padding:9px 14px;font-size:12px">Cancel</button>
+      <button id="clover-save-btn" onclick="cloverSaveCredentials(this)" class="cbtn cbtn-primary cbtn-lg">Test &amp; Connect</button>
+      <button onclick="closeCloverModal()" class="cbtn cbtn-secondary cbtn-sm">Cancel</button>
     </div>
   </div>
 </div>
@@ -10789,7 +10733,7 @@ document.addEventListener('click', function(e) {
   <div style="background:var(--paper);border-radius:14px;padding:28px;max-width:520px;width:94%;position:relative;border:1.5px solid var(--ember);box-shadow:0 8px 16px rgba(14,12,10,.6),0 24px 64px rgba(14,12,10,.55);max-height:90vh;overflow-y:auto">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
       <div style="font-size:16px;font-weight:700;color:var(--ink)">Alert Settings</div>
-      <button onclick="closeAlertsModal()" style="background:none;border:none;cursor:pointer;color:var(--ink3);font-size:18px;line-height:1;padding:0">&times;</button>
+      <button class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" onclick="closeAlertsModal()">&times;</button>
     </div>
 
     <!-- Contact 1 -->
@@ -10916,7 +10860,7 @@ document.addEventListener('click', function(e) {
 
     <div style="display:flex;align-items:center;justify-content:space-between">
       <span id="alerts-save-msg" style="font-size:12px;display:none"></span>
-      <button onclick="saveAlertSettings()" class="btn-primary" style="margin-left:auto;padding:8px 22px">Save alerts</button>
+      <button onclick="saveAlertSettings()" class="cbtn cbtn-primary" style="margin-left:auto">Save alerts</button>
     </div>
   </div>
 </div>
@@ -10925,13 +10869,13 @@ document.addEventListener('click', function(e) {
   <div style="background:var(--paper);border-radius:14px;padding:28px;max-width:480px;width:94%;position:relative;border:1.5px solid var(--ember);box-shadow:0 8px 16px rgba(14,12,10,.6),0 24px 64px rgba(14,12,10,.55);max-height:85vh;overflow-y:auto">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
       <div style="font-size:16px;font-weight:700;color:var(--ink)">Guest contacts</div>
-      <button aria-label="Close" onclick="closeGuestContactsModal()" style="background:none;border:none;cursor:pointer;color:var(--ink3);font-size:18px;line-height:1;padding:0">&times;</button>
+      <button class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" aria-label="Close" onclick="closeGuestContactsModal()">&times;</button>
     </div>
     <p style="font-size:11px;color:var(--ink3);line-height:1.6;margin:0 0 14px">Add a number here for your own reference — it will show in this list, but can't receive texts until that guest opts in themselves at your join link. Tap "Mark visit" after serving a consented guest and they'll automatically get a review-request text a few hours later — joining via your link already does this for you.</p>
     <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">
       <input type="text" id="guest-add-name" placeholder="Name" style="flex:1;min-width:120px;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
       <input type="tel" id="guest-add-phone" placeholder="Phone number" style="flex:1;min-width:140px;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
-      <button onclick="addGuestContact()" class="btn-primary" style="padding:8px 14px;font-size:12px">Add</button>
+      <button onclick="addGuestContact()" class="cbtn cbtn-primary">Add</button>
     </div>
     <div id="guest-contacts-list" style="display:flex;flex-direction:column;gap:2px">Loading&hellip;</div>
   </div>
@@ -10939,13 +10883,13 @@ document.addEventListener('click', function(e) {
 
 <div id="pw-modal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(14,12,10,0.7);align-items:center;justify-content:center">
   <div style="background:var(--paper);border-radius:14px;padding:28px;max-width:380px;width:90%;position:relative;border:1.5px solid var(--ember);box-shadow:0 8px 16px rgba(14,12,10,.6),0 24px 64px rgba(14,12,10,.55),0 0 0 1px rgba(200,75,47,.18)">
-    <button aria-label="Close" onclick="closePwModal()" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:18px;cursor:pointer;color:var(--ink3)">&#x2715;</button>
+    <button class="cbtn cbtn-close" aria-label="Close" onclick="closePwModal()">&#x2715;</button>
     <div style="font-size:16px;font-weight:700;color:var(--ink);margin-bottom:16px">Change password</div>
     <div style="display:flex;flex-direction:column;gap:10px">
       <input class="form-input" type="password" id="pw-current" placeholder="Current password" style="font-size:13px">
       <input class="form-input" type="password" id="pw-new" placeholder="New password (min 8 chars)" style="font-size:13px">
       <input class="form-input" type="password" id="pw-confirm" placeholder="Confirm new password" style="font-size:13px">
-      <button class="btn-primary" onclick="changePassword()" style="font-size:13px;padding:9px 16px;width:100%">Update password</button>
+      <button class="cbtn cbtn-primary cbtn-lg cbtn-block" onclick="changePassword()">Update password</button>
       <div id="pw-status" style="font-size:12px;text-align:center;display:none"></div>
     </div>
   </div>
@@ -10953,13 +10897,13 @@ document.addEventListener('click', function(e) {
 <!-- Update email modal — body level -->
 <div id="email-modal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(14,12,10,0.7);align-items:center;justify-content:center">
   <div style="background:var(--paper);border-radius:14px;padding:28px;max-width:380px;width:90%;position:relative;border:1.5px solid var(--ember);box-shadow:0 8px 16px rgba(14,12,10,.6),0 24px 64px rgba(14,12,10,.55),0 0 0 1px rgba(200,75,47,.18)">
-    <button aria-label="Close" onclick="closeEmailModal()" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:18px;cursor:pointer;color:var(--ink3)">&#x2715;</button>
+    <button class="cbtn cbtn-close" aria-label="Close" onclick="closeEmailModal()">&#x2715;</button>
     <div style="font-size:16px;font-weight:700;color:var(--ink);margin-bottom:4px">Update email</div>
     <div style="font-size:12px;color:var(--ink3);margin-bottom:16px">Enter your current password to confirm the change.</div>
     <div style="display:flex;flex-direction:column;gap:10px">
       <input class="form-input" type="email" id="email-new" placeholder="New email address" style="font-size:13px">
       <input class="form-input" type="password" id="email-pw" placeholder="Current password" style="font-size:13px">
-      <button class="btn-primary" onclick="updateEmail()" style="font-size:13px;padding:9px 16px;width:100%">Update email</button>
+      <button class="cbtn cbtn-primary cbtn-lg cbtn-block" onclick="updateEmail()">Update email</button>
       <div id="email-status" style="font-size:12px;text-align:center;display:none"></div>
     </div>
   </div>
@@ -10976,7 +10920,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
   function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
   function jget(url,cb){fetch(url).then(function(r){return r.json();}).then(cb).catch(function(){cb({ok:false});});}
   function jsend(url,body,cb,method){fetch(url,{method:method||'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})}).then(function(r){return r.json();}).then(cb).catch(function(){cb({ok:false,error:'Network error'});});}
-  function busy(btn,label){if(!btn)return function(){};var was=btn.textContent;btn.disabled=true;btn.textContent=label||'Working…';return function(){btn.disabled=false;btn.textContent=was;};}
+  function busy(btn,label){return cbtnBusy(btn,label||'Working…');}
   function ago(iso){if(!iso)return '';var t=Date.parse(String(iso).replace(' ','T'));if(isNaN(t))return iso;var m=Math.round((Date.now()-t)/60000);if(m<1)return 'just now';if(m<60)return m+'m ago';var h=Math.round(m/60);if(h<24)return h+'h ago';var d=Math.round(h/24);if(d<30)return d+'d ago';return new Date(t).toLocaleDateString();}
   function fmtDate(iso){if(!iso)return '';var t=Date.parse(String(iso).replace(' ','T'));return isNaN(t)?iso:new Date(t).toLocaleDateString(undefined,{month:'short',day:'numeric'});}
   function has(id){return !!document.getElementById(id);}
@@ -11009,7 +10953,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     var bar=document.getElementById('sec-bar');if(bar)bar.style.width=score+'%';
     var el=document.getElementById('sec-items');if(el)el.innerHTML=html;
     var rs=document.getElementById('rec-status');
-    if(rs){rs.innerHTML=d.recovery_email?('<span style="color:var(--green)">✓</span> '+esc(d.recovery_email)+' <button onclick="recRemove(this)" style="background:none;border:none;cursor:pointer;color:var(--ink3);font-size:11px;text-decoration:underline;padding:0 0 0 6px;font-family:inherit">Remove</button>'):'Not set — a second address that can always get you back in.';}
+    if(rs){rs.innerHTML=d.recovery_email?('<span style="color:var(--green)">✓</span> '+esc(d.recovery_email)+' <button class="cbtn cbtn-text cbtn-inline cbtn-muted cbtn-link cbtn-sm" onclick="recRemove(this)">Remove</button>'):'Not set — a second address that can always get you back in.';}
   }
   window.loadSecurityExtras=function(){
     if(!has('sec-items'))return;
@@ -11018,7 +10962,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     if(has('trusted-list'))jget('/api/account/2fa/trusted-devices',function(d){
       var el=document.getElementById('trusted-list');if(!el)return;
       if(!d.ok||!d.devices||!d.devices.length){el.textContent='No trusted devices yet — tick "Remember device" at sign-in to add one.';return;}
-      el.innerHTML=d.devices.map(function(x){return '<div style="display:flex;justify-content:space-between;gap:8px;padding:4px 0;border-top:1px solid var(--paper3)"><span style="color:var(--ink)">'+esc(x.label||'Device')+'</span><span>'+(x.last_used_at?'used '+ago(x.last_used_at):'added '+ago(x.created_at))+' <button onclick="revokeTrusted('+x.id+',this)" style="background:none;border:none;cursor:pointer;color:var(--ember);font-size:11px;padding:0 0 0 6px;font-family:inherit">Forget</button></span></div>';}).join('');
+      el.innerHTML=d.devices.map(function(x){return '<div style="display:flex;justify-content:space-between;gap:8px;padding:4px 0;border-top:1px solid var(--paper3)"><span style="color:var(--ink)">'+esc(x.label||'Device')+'</span><span>'+(x.last_used_at?'used '+ago(x.last_used_at):'added '+ago(x.created_at))+' <button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="revokeTrusted('+x.id+',this)">Forget</button></span></div>';}).join('');
     });
     if(has('login-history'))jget('/api/account/login-history',function(d){
       var el=document.getElementById('login-history');if(!el)return;
@@ -11048,12 +10992,12 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
 
   // ── Team / export / bug ──
   window.loadTeam=function(){
-    var el=document.getElementById('team-list');if(!el)return;
+    var el=document.getElementById('acct-team-list');if(!el)return;
     jget('/api/account/team',function(d){
       if(!d.ok){el.textContent='Could not load your team.';return;}
       el.innerHTML=(d.members||[]).map(function(m){
         var role=m.role==='member'?'Teammate':(m.role==='owner'?'Owner':'Account owner');
-        var right=m.is_you?'<span style="color:var(--ink3)">you</span>':((window._cuRole!=='member')?'<button onclick="revokeTeam('+m.id+',this)" style="background:none;border:none;cursor:pointer;color:var(--ember);font-size:11px;padding:0;font-family:inherit">Remove</button>':'');
+        var right=m.is_you?'<span style="color:var(--ink3)">you</span>':((window._cuRole!=='member')?'<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="revokeTeam('+m.id+',this)">Remove</button>':'');
         return '<div style="display:flex;justify-content:space-between;gap:8px;padding:5px 0;border-top:1px solid var(--paper3)"><span><span style="color:var(--ink);font-weight:600">'+esc(m.username)+'</span> <span style="color:var(--ink3)">· '+esc(m.email||'')+' · '+role+(m.last_login?' · last in '+ago(m.last_login):' · never signed in')+'</span></span>'+right+'</div>';
       }).join('')||'Just you so far.';
     });
@@ -11097,7 +11041,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       if(!d.ok)return;
       var list=d.conversations||[];
       if(!list.length){box.innerHTML='<div style="padding:10px 14px;font-size:12px;color:var(--ink3)">No chats yet.</div>';return;}
-      box.innerHTML=list.map(function(c){var on=c.id===window._askConversationId;return '<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--paper3);background:'+(on?'rgba(200,75,47,.08)':'transparent')+'"><button onclick="askOpenConversation('+c.id+')" style="flex:1;text-align:left;background:none;border:none;cursor:pointer;font-family:inherit;font-size:12px;color:var(--ink);padding:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(c.title||'Untitled chat')+'<span style="display:block;font-size:10px;color:var(--ink3)">'+ago(c.updated_at||c.created_at)+(c.message_count?' · '+c.message_count+' messages':'')+'</span></button><button onclick="askDeleteConversation('+c.id+')" title="Delete" style="background:none;border:none;cursor:pointer;color:var(--ink3);font-size:13px;padding:0">✕</button></div>';}).join('');
+      box.innerHTML=list.map(function(c){var on=c.id===window._askConversationId;return '<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--paper3);background:'+(on?'rgba(200,75,47,.08)':'transparent')+'"><button onclick="askOpenConversation('+c.id+')" style="flex:1;text-align:left;background:none;border:none;cursor:pointer;font-family:inherit;font-size:12px;color:var(--ink);padding:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(c.title||'Untitled chat')+'<span style="display:block;font-size:10px;color:var(--ink3)">'+ago(c.updated_at||c.created_at)+(c.message_count?' · '+c.message_count+' messages':'')+'</span></button><button class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" onclick="askDeleteConversation('+c.id+')" title="Delete">✕</button></div>';}).join('');
     });
   };
   window.askToggleHistory=function(){var box=document.getElementById('ask-cavnar-history');if(!box)return;var open=box.style.display==='none';box.style.display=open?'block':'none';if(open)askRefreshConversations(true);};
@@ -11138,7 +11082,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
         if(!d.ok){box.innerHTML='<div class="it"><div class="m" style="color:var(--ember)">'+esc(d.error||'Search failed')+'</div></div>';return;}
         var res=d.results||[];
         if(!res.length){box.innerHTML='<div class="it"><div class="m">No matches — try the name as it appears on Google.</div></div>';return;}
-        box.innerHTML=res.slice(0,6).map(function(r){return '<div class="it"><div style="flex:1;min-width:0"><div class="n">'+esc(r.name)+'</div><div class="m">'+esc(r.address||'')+(r.rating?' · '+r.rating+'★ ('+(r.review_count||0)+')':'')+'</div></div><button onclick="intelAdd(\''+esc(r.place_id)+'\',this)" class="hb-btn p" style="height:28px;padding:0 12px;font-size:11.5px;white-space:nowrap">Track</button></div>';}).join('');
+        box.innerHTML=res.slice(0,6).map(function(r){return '<div class="it"><div style="flex:1;min-width:0"><div class="n">'+esc(r.name)+'</div><div class="m">'+esc(r.address||'')+(r.rating?' · '+r.rating+'★ ('+(r.review_count||0)+')':'')+'</div></div><button onclick="intelAdd(\''+esc(r.place_id)+'\',this)" class="cbtn cbtn-primary cbtn-sm" style="white-space:nowrap">Track</button></div>';}).join('');
       });
     },350);
   };
@@ -11235,7 +11179,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
         // never be looked at twice and there was no trend to see.
         var q=r.quality_score?'<span class="n '+(r.quality_score>=78?'good':(r.quality_score>=65?'':'bad'))+'" title="Shift Quality'+(r.confidence?' · '+esc(r.confidence)+' confidence':'')+'">'+r.quality_score+'/100</span>':'';
         var ed=r.edited_at?' · <span class="n">edited</span>':'';
-        return '<div class="row"><b>'+esc(M(r.week_start||''))+'</b><span class="m">'+(r.week_end?'through <span class="hb-num">'+esc(M(r.week_end))+'</span> · ':'')+'<span class="hb-num">'+Math.round(hs)+'</span> hrs scheduled'+(note?' · <span class="n '+tone+'">'+note+'</span>':'')+(q?' · '+q:'')+ed+'</span><span class="n hb-num">'+ago(r.generated_at)+'</span><span class="a"><button class="hb-btn" onclick="viewScheduleHistory('+r.id+',this)">View</button><button class="hb-btn" onclick="downloadHistoryCsv('+r.id+')">CSV</button><button class="hb-x" style="opacity:1" title="Delete" onclick="deleteScheduleHistory('+r.id+',this)">✕</button></span></div>';}).join('');
+        return '<div class="row"><b>'+esc(M(r.week_start||''))+'</b><span class="m">'+(r.week_end?'through <span class="hb-num">'+esc(M(r.week_end))+'</span> · ':'')+'<span class="hb-num">'+Math.round(hs)+'</span> hrs scheduled'+(note?' · <span class="n '+tone+'">'+note+'</span>':'')+(q?' · '+q:'')+ed+'</span><span class="n hb-num">'+ago(r.generated_at)+'</span><span class="a"><button class="cbtn cbtn-secondary" onclick="viewScheduleHistory('+r.id+',this)">View</button><button class="cbtn cbtn-secondary" onclick="downloadHistoryCsv('+r.id+')">CSV</button><button class="hb-x" style="opacity:1" title="Delete" onclick="deleteScheduleHistory('+r.id+',this)">✕</button></span></div>';}).join('');
     });
   };
   window.viewScheduleHistory=function(id,btn){
@@ -11245,7 +11189,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       done();if(!d.ok){toast(d.error||'Could not load','error');return;}
       var rows=d.preview_rows||[];
       var csv=d.schedule_csv||'';
-      var html='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:10px"><div style="font-size:15px;font-weight:600;color:var(--ink)">Week of '+esc(d.week_start||'')+' · '+rows.length+' shifts</div><div style="display:flex;gap:10px"><button onclick="downloadHistoryCsv('+id+')" class="btn-secondary" style="font-size:13.5px;padding:6px 14px">Download CSV</button><button onclick="document.getElementById(\'sched-history-detail\').style.display=\'none\'" class="btn-secondary" style="font-size:13.5px;font-weight:700;padding:6px 14px">Close ✕</button></div></div>';
+      var html='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:10px"><div style="font-size:15px;font-weight:600;color:var(--ink)">Week of '+esc(d.week_start||'')+' · '+rows.length+' shifts</div><div style="display:flex;gap:10px"><button onclick="downloadHistoryCsv('+id+')" class="cbtn cbtn-secondary">Download CSV</button><button onclick="document.getElementById(\'sched-history-detail\').style.display=\'none\'" class="cbtn cbtn-secondary">Close ✕</button></div></div>';
       html+='<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13.5px"><tr style="color:var(--ink3);text-transform:uppercase;font-size:13px;letter-spacing:.06em"><th style="text-align:left;padding:6px 8px">Day</th><th style="text-align:left;padding:6px 8px">Employee</th><th style="text-align:left;padding:6px 8px">Role</th><th style="text-align:left;padding:6px 8px">Shift</th><th style="text-align:right;padding:6px 8px">Hrs</th></tr>';
       html+=rows.map(function(r){return '<tr style="border-top:1px solid var(--paper3)"><td style="padding:6px 8px;color:var(--ink)">'+esc(r.day||r.date||'')+'</td><td style="padding:6px 8px;color:var(--ink)">'+esc(r.employee||'')+'</td><td style="padding:6px 8px;color:var(--ink3)">'+esc(r.role||'')+'</td><td style="padding:6px 8px;color:var(--ink3);white-space:nowrap">'+esc(r.shift_start||'')+'–'+esc(r.shift_end||'')+'</td><td style="padding:6px 8px;text-align:right;font-family:\'Space Grotesk\',sans-serif">'+esc(r.scheduled_hours||'')+'</td></tr>';}).join('')+'</table></div>';
       box.innerHTML=html;box.style.display='block';window._schedHistCsv=window._schedHistCsv||{};window._schedHistCsv[id]={csv:csv,week:d.week_start||''};

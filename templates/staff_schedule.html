@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
 <title>{{ employee_name }} — schedule</title>
+<link rel="stylesheet" href="/static/css/cavnar-buttons.css">
 <style>
   :root{
     --paper:#0c0c0c; --card:#151515; --line:#262626;
@@ -44,8 +45,6 @@
   .day input:focus-visible + span{outline:2px solid var(--ember2);outline-offset:2px}
   .avail-input{width:100%;box-sizing:border-box;padding:10px 12px;border-radius:9px;border:1px solid var(--line);
         background:#101010;color:var(--ink);font-size:14px;font-family:inherit;margin-bottom:12px}
-  .avail button{width:100%;padding:12px;border:none;border-radius:9px;background:var(--ember);
-                color:#fff;font-size:15px;font-weight:700;font-family:inherit;cursor:pointer}
   .saved{margin-top:10px;font-size:13.5px;color:#4ead7a;font-weight:600;text-align:center}
   footer{margin-top:32px;color:var(--ink3);font-size:12px;line-height:1.6;text-align:center}
 </style>
@@ -83,7 +82,7 @@
       {% endfor %}
     </div>
     <input class="avail-input" type="text" name="note" maxlength="300" placeholder="Anything else? (optional)">
-    <button type="submit">Save my availability</button>
+    <button type="submit" class="cbtn cbtn-primary cbtn-lg cbtn-block">Save my availability</button>
     {% if saved %}<div class="saved">Saved — thanks, your manager has it.</div>{% endif %}
   </form>
 

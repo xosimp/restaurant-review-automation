@@ -22,6 +22,7 @@
 <link rel="shortcut icon" href="/favicon.ico">
 <meta name="theme-color" content="#0e0c0a">
 <link rel="stylesheet" href="/static/fonts/cavnar-fonts.css">
+<link rel="stylesheet" href="/static/css/cavnar-buttons.css">
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 *:focus-visible{outline:2px solid var(--ember);outline-offset:2px;border-radius:3px}
@@ -70,9 +71,7 @@ body::after{
   from{opacity:0;transform:translateY(8px)}
   to{opacity:1;transform:translateY(0)}
 }
-@keyframes btnPress{
-  0%,100%{transform:scale(1)}
-  40%{transform:scale(.97)}
+40%{transform:scale(.97)}
 }
 
 .card{
@@ -168,28 +167,6 @@ input:focus{
   box-shadow:0 0 0 3px rgba(200,75,47,.13);
 }
 
-.btn{
-  width:100%;
-  padding:12px;
-  background:var(--ember);
-  color:white;
-  border:none;
-  border-radius:var(--r);
-  font-family:'Apfel Grotezk',sans-serif;
-  font-size:13px;
-  font-weight:600;
-  letter-spacing:.06em;
-  text-transform:uppercase;
-  cursor:pointer;
-  transition:background .15s, box-shadow .15s;
-  margin-top:8px;
-}
-.btn:hover{
-  background:#b8401f;
-  box-shadow:0 4px 16px rgba(200,75,47,.35);
-}
-.btn:active{animation:btnPress .18s ease}
-
 .error{
   background:#fdf0ef;
   border:1px solid #f5c6c2;
@@ -235,7 +212,7 @@ input:focus{
         <label>Password</label>
         <input type="password" name="password" placeholder="••••••••" required>
       </div>
-      <button class="btn" type="submit">Sign in</button>
+      <button class="cbtn cbtn-primary cbtn-lg cbtn-block" type="submit" style="margin-top:8px">Sign in</button>
     </form>
 
     {% if google_sso_enabled %}

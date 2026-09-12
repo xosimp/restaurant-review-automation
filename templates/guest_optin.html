@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{{restaurant_name}} — Text Club</title>
 <link rel="stylesheet" href="/static/fonts/cavnar-fonts.css">
+<link rel="stylesheet" href="/static/css/cavnar-buttons.css">
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{--ink:#0e0c0a;--ink2:#3a3530;--ink3:#7a736a;--paper:#f7f4ef;--paper2:#edeae3;--paper3:#e0dbd0;--ember:#c84b2f;--r:10px}
@@ -19,9 +20,6 @@ input[type="text"],input[type="tel"],input[type="email"]{width:100%;padding:11px
 input:focus{border-color:var(--ember)}
 .consent{display:flex;gap:10px;align-items:flex-start;margin-bottom:20px;font-size:11.5px;color:var(--ink3);line-height:1.5}
 .consent input{margin-top:3px;flex-shrink:0;accent-color:var(--ember)}
-.btn{width:100%;padding:13px;background:var(--ember);color:white;border:none;border-radius:8px;font-family:'Apfel Grotezk',sans-serif;font-size:14px;font-weight:700;cursor:pointer}
-.btn:hover{background:#a83d25}
-.btn:disabled{opacity:.6;cursor:default}
 #status{margin-top:14px;font-size:13px;text-align:center;display:none}
 #status.ok{color:#2d6a4f}
 #status.err{color:#c0392b}
@@ -56,7 +54,7 @@ input:focus{border-color:var(--ember)}
           I agree to receive recurring marketing text messages from {{restaurant_name}} at the number provided. Consent is not a condition of purchase. Message and data rates may apply. Reply STOP to unsubscribe, HELP for help.
         </label>
       </div>
-      <button type="submit" class="btn" id="submit-btn">Join the text club</button>
+      <button type="submit" class="cbtn cbtn-primary cbtn-lg cbtn-block" id="submit-btn">Join the text club</button>
     </form>
     <div id="status"></div>
   </div>

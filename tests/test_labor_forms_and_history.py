@@ -145,10 +145,13 @@ def test_the_close_button_reads_as_a_real_control_not_a_stray_label():
     "stuck open." Bigger and bold, distinct from its sibling."""
     body = _fn("viewScheduleHistory")
     close_idx = body.index(">Close")
-    style_start = body.rindex('style="', 0, close_idx) + len('style="')
-    style = body[style_start:body.index('"', style_start)]
-    assert float(re.search(r"font-size:([\d.]+)px", style).group(1)) >= 13
-    assert "font-weight:700" in style
+    tag_start = body.rindex("<button", 0, close_idx)
+    tag = body[tag_start:close_idx + 1]
+    # It's a real system button now (static/css/cavnar-buttons.css), not an
+    # 11px inline-styled label — the size comes from .cbtn, so no tiny
+    # inline font-size may creep back in.
+    assert 'class="cbtn' in tag, tag
+    assert not re.search(r"font-size:(?:9|10|11|12)px", tag), tag
 
 
 # ── the labor AI insight's own kicker ──────────────────────────────────────
