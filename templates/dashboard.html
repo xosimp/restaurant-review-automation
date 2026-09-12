@@ -20,7 +20,7 @@
 :root{--ink:#0e0c0a;--ink2:#3a3530;--ink3:#7a736a;--paper:#f7f4ef;--paper2:#edeae3;--paper3:#e0dbd0;--ember:#c84b2f;--ember2:#e8956a;--green:#2d6a4f;--green-bg:#eaf4ee;--red:#c0392b;--red-bg:#fdf0ef;--amber:#b7791f;--amber-bg:#fef9ec;--blue:#1a56cc;--blue-bg:#e8f0fe;--r:8px;--surface:#ffffff;--hdr-bg:var(--ink)}
 /* ── DARK MODE ──────────────────────────────────────────────────────────────── */
 [data-theme="dark"]{
-  --ink:#f0ebe0;--ink2:#c4bdb4;--ink3:#9e9790;
+  --ink:#f0ebe0;--ink2:#c4bdb4;--ink3:#cdbfa9;
   --paper:#1a1714;--paper2:#231f1b;--paper3:#4a4038;
   --ember:#e06444;--ember2:#e8956a;
   --green:#4ead7a;--green-bg:#0c2318;--red:#e05555;--red-bg:#2a1010;
@@ -1137,7 +1137,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 .hb-num,.hb-num *{font-family:'Space Grotesk',sans-serif!important;font-variant-numeric:tabular-nums}
 .hb-kicker{font-size:10.5px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--ember)}
 .hb-h1{font-family:'Clash Display',sans-serif;font-weight:500;font-size:clamp(30px,3.2vw,40px);line-height:1.04;letter-spacing:-.012em;color:var(--ink);margin:8px 0 8px;text-wrap:balance}
-.hb-h1 .hb-head{color:var(--ink3)}
+.hb-h1 .hb-head{color:var(--ink3);margin-left:.28em}
 .hb-h1 .hb-head.bad{color:var(--hb-bad)}.hb-h1 .hb-head.warn{color:var(--hb-warn)}.hb-h1 .hb-head.good{color:var(--hb-good)}.hb-h1 .hb-head.neutral{color:var(--ink2)}
 .hb-sub{font-size:13px;color:var(--ink3);display:flex;gap:6px;align-items:center;flex-wrap:wrap}
 .hb-sub .sep{color:var(--ink3);opacity:.5}
@@ -2077,6 +2077,12 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .lb2-hist .row .n.good{color:var(--hb-good)}.lb2-hist .row .n.bad{color:var(--hb-bad)}
 .lb2-hist .row .a{display:flex;gap:6px}
 #sched-history-detail{margin-top:14px;padding:14px 16px;border-radius:10px;background:var(--hb-tint)}
+.lb2-daterange{font-size:14px;font-weight:600;color:var(--ink3);display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:10px 0 12px}
+.lb2-daterange .sep{color:var(--ink3);opacity:.5}
+.lb2-bignums{display:flex;gap:36px;align-items:flex-end;flex-wrap:wrap;margin-bottom:8px}
+.lb2-bn{display:flex;flex-direction:column;gap:4px}
+.lb2-bn .l{font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3)}
+.lb2-bn .hb-num{font-size:34px;font-weight:600;line-height:1;color:var(--ink)}
 #panel-labor .two-col{margin-top:34px;padding-top:22px;border-top:1px solid var(--hb-line);display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:24px}
 @media (max-width:1000px){.lb2-sig{grid-template-columns:1fr}.lb2-sg{border-right:none;margin-right:0;padding:0 0 18px;border-bottom:1px solid var(--hb-line2);margin-bottom:18px}.lb2-sg:last-child{border-bottom:none;margin-bottom:0}#panel-labor .two-col{grid-template-columns:1fr}}
 @media (max-width:680px){.lb2-hero svg{height:140px}.lb2-money{grid-template-columns:1fr 1fr}}
@@ -2094,10 +2100,12 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
   {% else %}{% set _head = 'On target' %}{% set _tone = 'good' %}{% endif %}
   <div class="hb-top">
     <div style="min-width:0;flex:1">
-      <div class="hb-kicker">Labor · {{ now_mdy }} · {{ restaurant.name }}</div>
       <h1 class="hb-h1">Labor. <span class="hb-head {{ _tone }}">{{ _head }}</span></h1>
-      <div class="hb-sub"><span><span class="hb-num">${{ labor.total_sales|int|format_num }}</span> sales</span><span class="sep">·</span><span><span class="hb-num">${{ labor.total_labor_cost|int|format_num }}</span> labor</span><span class="sep">·</span><span><span class="hb-num" id="labor-period">{{ _days }}-day window</span></span><span class="sep">·</span><span>target <span class="hb-num">{{ _lt|int }}%</span></span>{% if not labor.is_live %}<span class="sep">·</span><span>sample data</span>{% endif %}</div>
-      <div id="gap-dollar" class="hb-sub" style="margin-top:4px">{% if _lp > _lt %}Labor is at {{ _lp }}% against a {{ _lt|int }}% target — working out the monthly gap…{% else %}Labor is on target at {{ _lp }}%.{% endif %}</div>
+      <div class="lb2-daterange"><span id="labor-period" class="hb-num">{{ _days }}-day window</span><span class="sep">·</span><span>target <span class="hb-num">{{ _lt|int }}%</span></span>{% if not labor.is_live %}<span class="sep">·</span><span>sample data</span>{% endif %}</div>
+      <div class="lb2-bignums">
+        <div class="lb2-bn"><span class="l">Sales</span><span class="hb-num">${{ labor.total_sales|int|format_num }}</span></div>
+        <div class="lb2-bn"><span class="l">Labor</span><span class="hb-num">${{ labor.total_labor_cost|int|format_num }}</span></div>
+      </div>
       {# Everything labor.py knows is incomplete about this upload. It has
          computed these for a while and no surface showed them, so a
          percentage covering four of fourteen days looked exactly like one
@@ -2117,7 +2125,6 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
         {% if not restaurant.toast_restaurant_guid %}
         <label class="btn-primary" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer">{% if labor.is_live %}Update shifts CSV{% else %}Upload shifts CSV{% endif %}<input type="file" accept=".csv" style="display:none" id="shifts-inline-input" onchange="clientUpload('shifts', this)"></label>
         {% endif %}
-        <button class="hb-btn" onclick="toggleAvailPanel()" id="avail-toggle-btn">Manage availability ↓</button>
       </div>
       <span id="labor-gap-banner" hidden></span>
     </div>
@@ -3656,7 +3663,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       </div>
       <div style="flex:1">
         <div class="acct-name" style="font-family:'Clash Display',sans-serif;font-size:20px;color:var(--ink);margin-bottom:3px">Will Cavnar</div>
-        <div style="font-size:12px;color:#7a736a;margin-bottom:14px">Founder, Cavnar AI &middot; Your dedicated restaurant intelligence consultant</div>
+        <div style="font-size:12px;color:var(--ink3);margin-bottom:14px">Founder, Cavnar AI &middot; Your dedicated restaurant intelligence consultant</div>
         <div style="display:flex;gap:10px;flex-wrap:wrap">
           <a href="mailto:will@cavnar.ai" class="btn-link-ember">&#9993; Email Will</a>
           <a href="https://calendly.com/will-cavnar/30min" target="_blank" class="btn-link-navy">&#128197; Book a call</a>
