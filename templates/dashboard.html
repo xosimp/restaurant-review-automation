@@ -1217,6 +1217,14 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 @keyframes hbIn{from{opacity:0}to{opacity:1}}
 .hb-err{padding:14px 0;color:var(--hb-bad);font-size:13px;display:flex;justify-content:space-between;gap:12px;align-items:center;border-top:1px solid var(--hb-line);border-bottom:1px solid var(--hb-line)}
 @media (prefers-reduced-motion:reduce){.hb-draw,.hb-fill,.hb-glow,.hb-dot,.hb-hot,.hb-bar,.hb-skel:after,.hb-fade,.hb-chip .dot b{animation:none!important;stroke-dashoffset:0;opacity:1;transform:none}.lb2-callout{animation:none!important;opacity:1}}
+/* These used to play the instant a chart's data loaded — invisible if the
+   chart was any distance below the fold, since the reveal was long over
+   before a scroll ever reached it. Held paused (frozen at each animation's
+   own pre-first-keyframe state, which for these is the invisible starting
+   point anyway) until cavnarMotionInit's MutationObserver hook adds
+   cm-inview to the chart's <svg> on scroll — see cavnarWhenVisible. */
+.hb-draw,.hb-fill,.hb-glow,.hb-dot,.hb-hot,.hb-bar{animation-play-state:paused}
+.cm-inview .hb-draw,.cm-inview .hb-fill,.cm-inview .hb-glow,.cm-inview .hb-dot,.cm-inview .hb-hot,.cm-inview .hb-bar{animation-play-state:running}
 .hb-xl{display:flex;margin-top:2px}
 .hb-xl span{flex:1;min-width:0;text-align:center;font-family:'Space Grotesk',sans-serif;font-size:10px;color:var(--ink3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 2px}
 .hb-sub .chg .hb-num{font-size:15px;font-weight:700;color:var(--ember)}
@@ -2005,6 +2013,12 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .lb2-sg .k i.good{color:var(--hb-good)}.lb2-sg .k i.warn{color:var(--hb-warn)}.lb2-sg .k i.bad{color:var(--hb-bad)}
 .lb2-sg .v{font-family:'Space Grotesk',sans-serif;font-size:32px;font-weight:600;letter-spacing:-.025em;line-height:1;color:var(--ink);margin:8px 0 2px;display:flex;align-items:baseline;gap:8px}
 .lb2-sg .v small{font-family:'Apfel Grotezk',sans-serif;font-size:14px;font-weight:400;letter-spacing:0;color:var(--ink3)}
+/* The week radar's own headline number is the only one of the three
+   .lb2-sg panels without .stat-n (it needs its own countUp trigger, not
+   animateStatNums' generic one — see renderWeekRadar), so it fell through
+   to .lb2-sg .v's inherited 32px/600 instead of matching its two siblings
+   ($19k total, the vs-industry %) at .stat-n's 26px/700. */
+.lb2-sg .v #lb2-radar-n{font-size:26px;font-weight:700}
 .lb2-sg .cap{font-size:13.5px;color:var(--ink3);margin-top:6px;display:flex;justify-content:space-between;gap:10px}
 .lb2-radar{display:block;width:100%;height:210px;margin-top:6px;overflow:visible}
 /* Side-by-side put a 150px ring next to whatever the 3-column grid left
@@ -2178,7 +2192,14 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       cumOffset+=segLen+gap;
     }
     svgEl.innerHTML=circles;
-    requestAnimationFrame(function(){requestAnimationFrame(function(){var segs=svgEl.querySelectorAll('.cm-seg');for(var s=0;s<segs.length;s++){segs[s].style.strokeDasharray=segs[s].getAttribute('data-da');}});});
+    // The sweep used to fire the instant the data loaded, which on a chart
+    // this far down the page meant it was long over before anyone scrolled
+    // to it. cavnarWhenVisible holds it at its zero-length resting state
+    // (already baked into the dasharray above) until the donut is actually
+    // on screen.
+    cavnarWhenVisible(svgEl,function(){
+      requestAnimationFrame(function(){requestAnimationFrame(function(){var segs=svgEl.querySelectorAll('.cm-seg');for(var s=0;s<segs.length;s++){segs[s].style.strokeDasharray=segs[s].getAttribute('data-da');}});});
+    });
     if(totalEl){
       // countUp/countUpMoney assume plain-number or "$1,234" formatting —
       // this label is deliberately abbreviated ("$19k"), so it gets its
@@ -2189,11 +2210,13 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
         function tick(ts){if(!start)start=ts;var p=Math.min((ts-start)/dur,1),e=1-Math.pow(1-p,3);totalEl.textContent=_fmtK(total*e);if(p<1)requestAnimationFrame(tick);else{done=true;totalEl.textContent=_fmtK(total);}}
         var _rm=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
         if(_rm){totalEl.textContent=_fmtK(total);return;}
-        requestAnimationFrame(tick);
-        // Same rAF-can-be-paused-in-a-background-tab concern as the radar
-        // number above — this label starts blank, not at the real total,
-        // so force it in if the tween never got a chance to finish.
-        setTimeout(function(){if(!done)totalEl.textContent=_fmtK(total);},1100);
+        cavnarWhenVisible(svgEl,function(){
+          requestAnimationFrame(tick);
+          // Same rAF-can-be-paused-in-a-background-tab concern as the radar
+          // number above — this label starts blank, not at the real total,
+          // so force it in if the tween never got a chance to finish.
+          setTimeout(function(){if(!done)totalEl.textContent=_fmtK(total);},1100);
+        });
       })();
     }
     var lhtml='';
@@ -2203,7 +2226,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       var isLast=i===_roleData.length-1;
       lhtml+='<div style="display:flex;align-items:center;gap:10px;padding:7px 0;'+(isLast?'':'border-bottom:1px solid var(--hb-line2)')+'">';
       lhtml+='<span style="width:9px;height:9px;border-radius:50%;background:'+col+';flex-shrink:0;box-shadow:0 0 7px '+col+'99"></span>';
-      lhtml+='<span title="'+_escHtml(d.name)+'" style="font-size:14.5px;font-weight:600;color:var(--ink);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+d.name+'</span>';
+      lhtml+='<span title="'+_escHtml(d.name)+'" style="font-size:14.5px;font-weight:600;color:var(--ink);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer">'+d.name+'</span>';
       lhtml+='<span style="font-family:Space Grotesk,sans-serif;font-size:14.5px;font-weight:700;color:'+col+';width:44px;text-align:right">'+d.pct+'%</span>';
       lhtml+='<span style="font-size:13px;color:var(--ink3);width:42px;text-align:right">'+_fmtHours(d.hours)+'h</span>';
       lhtml+='<span style="font-size:13px;color:var(--ink3);width:26px;text-align:right">'+d.hc+'</span>';
@@ -2351,7 +2374,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     </ul>
     {% endif %}
   <!-- Employee Availability Manager -->
-  <div style="margin-bottom:14px">
+  <div style="margin-top:16px;margin-bottom:16px">
     <div class="lb2-subsection">
       <div class="lb2-subsection-title">Employee Availability</div>
       <button onclick="toggleAvailPanel()" class="cbtn cbtn-text cbtn-inline lb2-subsection-toggle" id="avail-toggle-btn">Manage ↓</button>
@@ -2392,7 +2415,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
   <!-- Operational Score — how strong each person is, 1 to 5, set by the owner.
        The scheduler already knows who is available; this is what tells it not
        to put the two weakest people together on a Saturday. -->
-  <div style="margin-bottom:14px">
+  <div style="margin-bottom:16px">
     <div class="lb2-subsection">
       <div class="lb2-subsection-title">Operational Score <span id="team-coverage-chip" class="lb2-subsection-chip"></span></div>
       <button onclick="toggleTeamPanel()" class="cbtn cbtn-text cbtn-inline lb2-subsection-toggle" id="team-toggle-btn">Rate your team ↓</button>
@@ -2570,7 +2593,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
         <span style="width:8px;height:8px;border-radius:50%;background:#ff5a5a;flex-shrink:0"></span>
         <span style="font-size:16px;font-weight:700;color:var(--ink);letter-spacing:-.01em">Overtime alerts</span>
       </div>
-      <div class="dark-hero-card" style="border:1px solid rgba(200,75,47,.45);border-radius:12px;overflow:hidden">
+      <div class="dark-hero-card" style="border:1px solid rgba(255,90,90,.45);border-radius:12px;overflow:hidden">
         {% for emp in labor.overtime_risk %}
         {% set two_wk = labor.employee_hours.get(emp.employee, {}).get("actual", 0)|round(1) %}
         {% set _emp_key = emp.employee.lower().strip().rstrip('.') %}
@@ -2583,11 +2606,11 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
             <div style="font-size:12.5px;color:rgba(255,255,255,.4);margin-top:2px">Week of <span style="font-family:'Space Grotesk',sans-serif">{{emp.week}}</span> · <span style="font-family:'Space Grotesk',sans-serif">{{two_wk}}h</span> 2-wk total</div>
           </div>
           <div style="text-align:right">
-            <div style="font-family:'Space Grotesk',sans-serif;font-size:18px;font-weight:700;color:{% if emp.hours >= 55 and not has_ot_allowance %}#ff8a65{% else %}rgba(255,255,255,.88){% endif %}">{{emp.hours}}h</div>
+            <div style="font-family:'Space Grotesk',sans-serif;font-size:18px;font-weight:700;color:{% if emp.hours >= 55 and not has_ot_allowance %}#ff5a5a{% else %}rgba(255,255,255,.88){% endif %}">{{emp.hours}}h</div>
             {% if has_ot_allowance %}
               <span style="font-size:13.5px;font-weight:700;color:#6fcf97;white-space:nowrap">✓ OT allowed</span>
             {% elif emp.status == "overtime" %}
-              <span style="font-size:13.5px;font-weight:700;color:#ff8a65;white-space:nowrap">Overtime — review pay</span>
+              <span style="font-size:13.5px;font-weight:700;color:#ff5a5a;white-space:nowrap">Overtime — review pay</span>
             {% else %}
               <span style="font-size:13.5px;font-weight:700;color:#ef9f27;white-space:nowrap">⚠ Approaching 40h</span>
             {% endif %}
@@ -4846,7 +4869,36 @@ function _cmRegister(el){if(!el||_cmLive.indexOf(el)>=0)return;el._cmT0=performa
 function _cmTick(now){for(var i=_cmLive.length-1;i>=0;i--){var el=_cmLive[i];if(!el.isConnected){_cmLive.splice(i,1);continue;}if(el.classList.contains('cm-compose'))_cmComposeFrame(el,now);else _cmCycleFrame(el,now);}if(_cmLive.length){requestAnimationFrame(_cmTick);}else{_cmRunning=false;}}
 function _cmComposeFrame(el,now){var t=(now-el._cmT0)/1000;var ws=el._cmW||(el._cmW=(el.getAttribute('data-w')||'1,.82,.93,.6').split(',').map(parseFloat));var grow=.85,hold=1.1,fade=.3,n=ws.length,cycle=n*grow+hold+fade,local=t%cycle;var lines=el._cmLines||(el._cmLines=el.querySelectorAll('.cm-l'));var caret=el._cmCaret||(el._cmCaret=el.querySelector('.cm-caret'));var W=el.clientWidth;if(!W||!lines.length)return;var active=Math.min(Math.floor(local/grow),n-1),holding=local>=n*grow;for(var i=0;i<n;i++){var x=Math.min(Math.max((local-i*grow)/grow,0),1),p=1-Math.pow(1-x,3);lines[i].style.width=Math.max(2,W*ws[i]*p)+'px';}var fo=Math.min(Math.max((local-(n*grow+hold))/fade,0),1);el.style.opacity=1-fo;if(caret){var xa=Math.min(Math.max((local-active*grow)/grow,0),1),pa=1-Math.pow(1-xa,3);caret.style.left=(W*ws[active]*pa+3)+'px';caret.style.top=(lines[active].offsetTop-2.5)+'px';caret.style.opacity=(!holding||(t%0.7<0.38))?1:0;}}
 function _cmCycleFrame(el,now){var cyc=parseFloat(el.getAttribute('data-cycle')||'0');if(!cyc)return;if(el._cmNext===undefined)el._cmNext=now+cyc*1000;if(now>=el._cmNext){el._cmNext=now+cyc*1000;el.classList.remove('cm-run');void el.offsetWidth;el.classList.add('cm-run');}}
-function cavnarMotionInit(root){root=root||document;var els=root.querySelectorAll?root.querySelectorAll('.cm-compose,[data-cycle]'):[];for(var i=0;i<els.length;i++)_cmRegister(els[i]);if(root.matches&&root.matches('.cm-compose,[data-cycle]'))_cmRegister(root);}
+function cavnarMotionInit(root){root=root||document;var els=root.querySelectorAll?root.querySelectorAll('.cm-compose,[data-cycle]'):[];for(var i=0;i<els.length;i++)_cmRegister(els[i]);if(root.matches&&root.matches('.cm-compose,[data-cycle]'))_cmRegister(root);_cmChartReveal(root);}
+// Fires fn once el scrolls into view (no IntersectionObserver support —
+// fire immediately rather than never animate at all). Used both directly
+// (donut sweep, radar count-up, animateStatNums, animateBars) and via
+// _cmChartReveal below for the CSS-autoplay chart primitives.
+function cavnarWhenVisible(el,fn){
+  if(!el||!window.IntersectionObserver){fn();return;}
+  var obs=new IntersectionObserver(function(entries){
+    for(var i=0;i<entries.length;i++){if(entries[i].isIntersecting){obs.disconnect();fn();return;}}
+  },{threshold:0.15});
+  obs.observe(el);
+}
+// A chart (glowLine/bars/stacked's hb-draw/-fill/-glow/-dot/-hot/-bar) used
+// to draw itself in the instant it was inserted, off-screen or not — the
+// same auto-mount idea as cavnarMountOrbs, but here it holds the chart's
+// <svg> at animation-play-state:paused (see the CSS) until the svg is
+// actually scrolled into view, then lets it run.
+function _cmChartReveal(root){
+  if(!root.querySelectorAll)return;
+  var sel='.hb-draw,.hb-fill,.hb-glow,.hb-dot,.hb-hot,.hb-bar';
+  var found=root.querySelectorAll(sel),list=[],i;
+  for(i=0;i<found.length;i++)list.push(found[i]);
+  if(root.matches&&root.matches(sel))list.push(root);
+  for(i=0;i<list.length;i++){
+    var target=list[i].closest?(list[i].closest('svg')||list[i].parentNode):list[i].parentNode;
+    if(!target||target.nodeType!==1||target.dataset.cmWatched)continue;
+    target.dataset.cmWatched='1';
+    (function(t){cavnarWhenVisible(t,function(){t.classList.add('cm-inview');});})(target);
+  }
+}
 document.addEventListener('DOMContentLoaded',function(){cavnarMotionInit(document);if(window.MutationObserver){new MutationObserver(function(muts){for(var m=0;m<muts.length;m++){var added=muts[m].addedNodes;for(var a=0;a<added.length;a++){if(added[a].nodeType===1)cavnarMotionInit(added[a]);}}}).observe(document.body,{childList:true,subtree:true});}});
 function disconnectInstagram(btn){
   if(btn){btn.textContent='Disconnecting…';btn.style.opacity='0.6';btn.disabled=true;}
@@ -6219,13 +6271,20 @@ function renderWeekRadar(){
     var lp=pt(i,R+16);s+='<text x="'+lp[0].toFixed(1)+'" y="'+(lp[1]+4).toFixed(1)+'" text-anchor="middle" font-size="13" font-weight="600" font-family="Space Grotesk, sans-serif" fill="'+(over?'#e05555':'currentColor')+'" fill-opacity="'+(over?'1':'.85')+'">'+short[i]+' '+vals[i]+'%</text>';}
   el.innerHTML=s+'</svg>';el.style.color='var(--ink3)';
   var n=document.getElementById('lb2-radar-n'),cap=document.getElementById('lb2-radar-cap'),flag=document.getElementById('lb2-radar-flag');
-  if(worst>=0){if(n){if(!n.dataset.animated){n.dataset.animated='1';countUp(n,worstV,900,'','%',1);
-    // countUp is requestAnimationFrame-driven, which a backgrounded tab can
-    // pause indefinitely — this number started at a bare "—", not the real
-    // value, so unlike the rest of the page's numbers there's nothing
-    // correct already showing while it waits. Force the true value in if
-    // the tween hasn't finished on its own shortly after it should have.
-    setTimeout(function(){if(n.textContent.indexOf(String(worstV))<0)n.textContent=worstV+'%';},1100);
+  if(worst>=0){if(n){if(!n.dataset.animated){n.dataset.animated='1';
+    // The radar chart itself waits for scroll via cavnarMotionInit's
+    // MutationObserver hook (cm-inview on the svg this innerHTML just
+    // inserted) — this number needs the same wait since it's a plain
+    // .hb-num, not a .stat-n animateStatNums already gates.
+    cavnarWhenVisible(el,function(){
+      countUp(n,worstV,900,'','%',1);
+      // countUp is requestAnimationFrame-driven, which a backgrounded tab can
+      // pause indefinitely — this number started at a bare "—", not the real
+      // value, so unlike the rest of the page's numbers there's nothing
+      // correct already showing while it waits. Force the true value in if
+      // the tween hasn't finished on its own shortly after it should have.
+      setTimeout(function(){if(n.textContent.indexOf(String(worstV))<0)n.textContent=worstV+'%';},1100);
+    });
     }else n.textContent=worstV+'%';}if(cap)cap.textContent=short[worst]+' runs heaviest';if(flag)flag.textContent=worstV>target?'over target':'within target';}
 }
 var _gbpReload=!!sessionStorage.getItem('_gbpReload');if(_gbpReload)sessionStorage.removeItem('_gbpReload');
@@ -9703,8 +9762,15 @@ function animateStatNums(panelId) {
     var num = parseFloat(cleaned);
     if (isNaN(num)) continue;
     var dec = (cleaned.indexOf('.') !== -1) ? 1 : 0;
-    if (isMoney) countUpMoney(el, num, 900);
-    else countUp(el, num, 900, '', isPct ? '%' : '', dec);
+    // A number this far down the page used to count up before anyone
+    // scrolled to it — wait until it's actually on screen. Already-visible
+    // ones (the common case, right after a tab switch) fire immediately.
+    (function(el, num, isMoney, isPct, dec) {
+      cavnarWhenVisible(el, function() {
+        if (isMoney) countUpMoney(el, num, 900);
+        else countUp(el, num, 900, '', isPct ? '%' : '', dec);
+      });
+    })(el, num, isMoney, isPct, dec);
   }
 }
 function animateBars(panelId) {
@@ -9719,7 +9785,9 @@ function animateBars(panelId) {
       if (bar._animBarTimer) { clearTimeout(bar._animBarTimer); }
       var target = bar.dataset.w || '0';
       bar.style.width = '0%';
-      bar._animBarTimer = setTimeout(function() { bar.style.width = target + '%'; bar._animBarTimer = null; }, 80 + idx * 65);
+      cavnarWhenVisible(bar, function() {
+        bar._animBarTimer = setTimeout(function() { bar.style.width = target + '%'; bar._animBarTimer = null; }, 80 + idx * 65);
+      });
     })(bars[bi], bi);
   }
 }
