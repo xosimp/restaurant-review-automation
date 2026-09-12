@@ -4445,8 +4445,14 @@ def _history_summary_line(quality: dict, hours_scheduled, hours_budget, edited_a
     elif strengths:
         detail = strengths[0]
     line = lead + (" · " + detail if detail else "")
-    if len(line) > 110:
-        line = line[:107].rstrip() + "…"
+    # The row used to hard-wrap to one line (CSS text-overflow:ellipsis),
+    # so anything past ~110 chars got clipped twice over — once here, then
+    # again by the browser mid-word. The row wraps to a second line now, so
+    # this cap only exists to stop a truly pathological string; the engine's
+    # own week-level sentences (see shift_quality._hoist_common_lines) are
+    # routinely 110-160 chars and are meant to read in full.
+    if len(line) > 220:
+        line = line[:217].rstrip() + "…"
     if edited_at:
         line = "Manually edited · " + line
     return line, tone

@@ -419,10 +419,10 @@ html:not([data-theme="dark"]) .empty-state-sm.on-dark .es-sub{color:var(--ink3)}
 .cm-radar .cm-blip{transform-box:fill-box;transform-origin:center;animation:cmBlip 6s ease-out infinite}
 /* 06 Building the Week — [data-cycle] elements get .cm-run re-applied every cycle by _cmCycleFrame() */
 @keyframes cmBlock{from{transform:translateX(-14px);opacity:0}to{transform:translateX(0);opacity:1}}
-@keyframes cmDash{to{stroke-dashoffset:-200}}
+@keyframes cmDash{to{stroke-dashoffset:-370}}
 .cm-week .cm-blk{opacity:0}
 .cm-week.cm-run .cm-blk{animation:cmBlock .5s cubic-bezier(.2,.9,.3,1) forwards}
-.cm-week .cm-dash{stroke:#e8956a;stroke-width:2;stroke-dasharray:18 182;stroke-linecap:round;animation:cmDash 2.4s linear infinite}
+.cm-week .cm-dash{stroke:#e8956a;stroke-width:2;stroke-dasharray:33 337;stroke-linecap:round;animation:cmDash 2.4s linear infinite}
 /* 07 Counting the Pantry */
 @keyframes cmBar{to{transform:scaleX(1)}}
 @keyframes cmSheen{0%{transform:translateX(-120%)}100%{transform:translateX(560%)}}
@@ -2100,7 +2100,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
    hairline divider, a soft hover/selected tint and a left accent bar —
    never a border-per-row box, heavy shadow or gradient. */
 .lb2-hist{display:flex;flex-direction:column;margin-top:6px}
-.lb2-hist .row{display:grid;grid-template-columns:1fr auto auto;align-items:center;gap:16px;padding:11px 12px;margin:0 -12px;border-radius:9px;border-top:1px solid var(--hb-line2);cursor:pointer;transition:background-color .15s ease,box-shadow .15s ease}
+.lb2-hist .row{display:grid;grid-template-columns:1fr auto auto auto;align-items:center;gap:16px;padding:11px 12px;margin:0 -12px;border-radius:9px;border-top:1px solid var(--hb-line2);cursor:pointer;transition:background-color .15s ease,box-shadow .15s ease}
 .lb2-hist .row:first-child{border-top:none}
 .lb2-hist .row:hover{background:var(--hb-tint)}
 .lb2-hist .row.selected{background:var(--hb-tint2);box-shadow:inset 3px 0 0 var(--ember)}
@@ -2109,15 +2109,24 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .lb2-hist .rmain{min-width:0}
 .lb2-hist .rtop{display:flex;align-items:baseline;gap:8px}
 .lb2-hist .rtop b{color:var(--ink);font-weight:600;font-family:'Space Grotesk',sans-serif;font-size:15px;white-space:nowrap}
-.lb2-hist .rgen{font-size:12px;color:var(--ink3);margin-left:auto;padding-left:10px;white-space:nowrap;font-variant-numeric:tabular-nums}
-.lb2-hist .rline{display:flex;align-items:center;gap:7px;margin-top:3px;font-size:12.5px;color:var(--ink3);overflow:hidden}
-.lb2-hist .rline .rtxt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.lb2-hist .rline .dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+/* .rgen used to live inline inside .rtop, so it sat pinned to the row's
+   top line while its siblings (.rside, .ractions) are separate grid
+   columns centered against the full, two-line-tall .row via .row's own
+   align-items:center — leaving the timestamp visibly higher than
+   everything next to it. It's its own grid column now so the same
+   centering applies to it too. */
+.lb2-hist .rgen{font-size:12px;color:var(--ink3);white-space:nowrap;font-variant-numeric:tabular-nums}
+.lb2-hist .rline{display:flex;align-items:flex-start;gap:7px;margin-top:3px;font-size:12.5px;color:var(--ink3)}
+/* No more overflow:hidden/ellipsis/nowrap here — a clipped "…" on top of
+   the AI summary's own honest truncation (models._history_summary_line)
+   was hiding real sentence endings the row had room to show. It wraps
+   to a second line instead now. */
+.lb2-hist .rline .rtxt{white-space:normal}
+.lb2-hist .rline .dot{width:6px;height:6px;border-radius:50%;flex-shrink:0;margin-top:5px}
 .lb2-hist .rline .dot.good{background:var(--hb-good)}
 .lb2-hist .rline .dot.warn{background:var(--hb-warn)}
 .lb2-hist .rline .dot.info{background:#6aabff}
 .lb2-hist .badge{font-size:10.5px;font-weight:700;letter-spacing:.02em;padding:2px 7px;border-radius:999px;white-space:nowrap;flex-shrink:0}
-.lb2-hist .badge.ai{background:rgba(106,171,255,.14);color:#6aabff}
 .lb2-hist .badge.edited{background:rgba(239,159,39,.16);color:#ef9f27}
 .lb2-hist .rside{display:flex;align-items:center;gap:10px}
 .lb2-hist .qpill{font-family:'Space Grotesk',sans-serif;font-size:12.5px;font-weight:700;padding:3px 9px;border-radius:999px;white-space:nowrap}
@@ -2129,9 +2138,12 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .lb2-hist .row:hover .ractions,.lb2-hist .row:focus-within .ractions{opacity:1}
 .lb2-hist .rskel{display:grid;grid-template-columns:1fr auto;gap:16px;align-items:center;padding:11px 12px;border-top:1px solid var(--hb-line2)}
 .lb2-hist .rskel:first-child{border-top:none}
-@media (max-width:640px){.lb2-hist .row{grid-template-columns:1fr auto}.lb2-hist .rgen{display:none}.lb2-hist .ractions{opacity:1}}
+@media (max-width:640px){.lb2-hist .row{grid-template-columns:1fr auto auto}.lb2-hist .rgen{display:none}.lb2-hist .ractions{opacity:1}}
 #sched-history-more{padding:12px 0 2px;text-align:center}
-#sched-history-detail{margin-top:14px;padding:14px 16px;border-radius:10px;background:var(--hb-tint)}
+/* Same branded gradient+border recipe as .cal-card/.lb2-avail — a flat
+   var(--hb-tint) wash here read as an undefined smear, not a branded
+   panel, same bug as the availability panel. */
+#sched-history-detail{margin-top:14px;padding:14px 16px;border-radius:10px;background:linear-gradient(160deg,rgba(200,75,47,.10) 0%,rgba(200,75,47,.03) 100%);border:1px solid rgba(200,75,47,.2)}
 .lb2-daterange{font-size:14px;font-weight:600;color:var(--ink3);display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:10px 0 12px}
 .lb2-daterange .sep{color:var(--ink3);opacity:.5}
 .lb2-bignums{display:flex;flex-direction:column;gap:10px;margin-bottom:10px}
@@ -2329,22 +2341,25 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button onclick="downloadScheduleFromPreview()" class="cbtn cbtn-success" onmousedown="this.style.transform='scale(.97)'" onmouseup="this.style.transform='translateY(-1px)'">Download CSV</button>
-          <button onclick="openPublishSchedule()" class="cbtn cbtn-primary">Send to staff</button>
-          <button class="cbtn cbtn-glass cbtn-sm" onclick="document.getElementById('schedule-preview-panel').style.display='none'" onmousedown="this.style.transform='scale(.97)'" onmouseup="this.style.transform='translateY(-1px)'">Close</button>
+          <button onclick="togglePublishSchedule()" id="ps-toggle-btn" class="cbtn cbtn-primary">Send to staff</button>
+          <button class="cbtn cbtn-glass" onclick="document.getElementById('schedule-preview-panel').style.display='none'" onmousedown="this.style.transform='scale(.97)'" onmouseup="this.style.transform='translateY(-1px)'">Close</button>
         </div>
       </div>
 
       <!-- Publish schedule to staff -->
       <div id="publish-sched-panel" style="display:none;padding:14px 20px;border-bottom:1px solid rgba(255,255,255,.08);background:rgba(200,75,47,.05)">
-        <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ember2);margin-bottom:8px">Send this schedule to your staff</div>
-        <div id="ps-contacts" style="font-size:12px;color:rgba(255,255,255,.4)">Loading staff…</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px">
+          <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ember2)">Send this schedule to your staff</div>
+          <button class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" title="Collapse" aria-label="Collapse" onclick="togglePublishSchedule()">✕</button>
+        </div>
+        <div id="ps-contacts" style="font-size:14px;color:rgba(255,255,255,.55)">Loading staff…</div>
         <div id="ps-actions" style="margin-top:10px;display:none">
           <button onclick="publishScheduleNow()" id="ps-send-btn" class="cbtn cbtn-success">Send now</button>
-          <span id="ps-result" style="font-size:12px;margin-left:10px"></span>
+          <span id="ps-result" style="font-size:13.5px;margin-left:10px"></span>
         </div>
         <div id="ps-seen" style="display:none;margin-top:12px;border-top:1px solid rgba(255,255,255,.08);padding-top:10px">
           <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ember2);margin-bottom:6px">Who's seen it</div>
-          <div id="ps-seen-list" style="font-size:12px;color:rgba(255,255,255,.75)"></div>
+          <div id="ps-seen-list" style="font-size:13.5px;color:rgba(255,255,255,.75)"></div>
         </div>
       </div>
 
@@ -4908,7 +4923,11 @@ function cavnarSealSvg(size,opts){opts=opts||{};var ring=opts.ring||'currentColo
 function cavnarHearthSvg(){return '<svg class="cm-hearth" viewBox="0 0 120 120" aria-hidden="true"><path class="cm-hring" d="'+CM_RING+'" stroke-width="19"/><circle class="cm-hglow" cx="99.5" cy="60" r="22"/><circle class="cm-hdot" cx="99.5" cy="60" r="10"/></svg>';}
 function cavnarComposingHtml(widths,lineH,gap,style){widths=widths||[1,.82,.93,.6];lineH=lineH||8;gap=gap||10;var h='';for(var i=0;i<widths.length;i++){h+='<div class="cm-l" style="height:'+lineH+'px;margin-bottom:'+(i<widths.length-1?gap:0)+'px"></div>';}return '<div class="cm-compose" data-w="'+widths.join(',')+'" style="'+(style||'')+'">'+h+'<div class="cm-caret" style="height:'+(lineH+5)+'px"></div></div>';}
 function cavnarRadarHtml(caption,size){size=size||170;var blips=[[152,77,.6],[70,135,1.9],[160,145,3.1],[82,67,4.2]],b='';for(var i=0;i<blips.length;i++){b+='<g class="cm-blip" style="animation-delay:'+blips[i][2]+'s"><circle cx="'+blips[i][0]+'" cy="'+blips[i][1]+'" r="9" fill="rgba(212,88,58,.25)"/><circle cx="'+blips[i][0]+'" cy="'+blips[i][1]+'" r="4.5" fill="#E8956A"/></g>';}return '<div class="cm-radar" style="text-align:center"><svg width="'+size+'" height="'+size+'" viewBox="0 0 220 220" style="overflow:visible"><circle cx="110" cy="110" r="80" fill="none" stroke="var(--paper3)" stroke-opacity=".55"/><circle cx="110" cy="110" r="50" fill="none" stroke="var(--paper3)" stroke-opacity=".55"/><circle cx="110" cy="110" r="20" fill="none" stroke="var(--paper3)"/><line x1="30" y1="110" x2="190" y2="110" stroke="var(--paper3)" stroke-opacity=".45"/><line x1="110" y1="30" x2="110" y2="190" stroke="var(--paper3)" stroke-opacity=".45"/><circle class="cm-rip" cx="110" cy="110"/><circle class="cm-rip" cx="110" cy="110" style="animation-delay:1s"/><circle class="cm-rip" cx="110" cy="110" style="animation-delay:2s"/>'+b+'<rect x="104" y="104" width="12" height="12" fill="var(--ink)"/></svg>'+(caption?'<div class="cm-cap">'+caption+'</div>':'')+'</div>';}
-function cavnarWeekHtml(caption){var blocks=[[0,0],[0,1],[0,3],[0,5],[0,6],[1,1],[1,2],[1,4],[1,5],[2,0],[2,2],[2,3],[2,6],[2,4,1],[3,6,1],[3,1],[3,3,1]],h='',days=['S','M','T','W','T','F','S'],d='';for(var i=0;i<7;i++){d+='<text x="'+(30+i*32)+'" y="40" font-family="Space Grotesk,sans-serif" font-size="10" fill="var(--ink3)">'+days[i]+'</text>';}for(var j=0;j<blocks.length;j++){var bl=blocks[j];h+='<rect class="cm-blk" style="animation-delay:'+(0.2+j*0.16).toFixed(2)+'s" x="'+(26+bl[1]*32)+'" y="'+(52+bl[0]*26)+'" width="22" height="18" rx="4" fill="'+(bl[2]?'var(--ember)':'rgba(122,115,106,.45)')+'"/>';}return '<div class="cm-week cm-run" data-cycle="5.5" style="text-align:center"><svg width="270" height="170" viewBox="0 0 270 170" style="overflow:visible;max-width:100%"><line x1="24" y1="18" x2="246" y2="18" stroke="var(--paper3)" stroke-width="1.5"/><line class="cm-dash" x1="24" y1="18" x2="246" y2="18"/>'+d+h+(caption?'<text x="26" y="163" font-family="Space Grotesk,sans-serif" font-size="9.5" font-weight="600" letter-spacing="1" fill="var(--ink3)">'+caption.toUpperCase()+'</text>':'')+'</svg></div>';}
+// Widened ~1.85x horizontally (day columns 32->59px) from its original
+// 270px-wide canvas — it used to render at a fraction of the schedule
+// panel's actual width, looking cramped next to the rest of the card.
+// Only the x-axis is scaled; row height/spacing is unchanged.
+function cavnarWeekHtml(caption){var blocks=[[0,0],[0,1],[0,3],[0,5],[0,6],[1,1],[1,2],[1,4],[1,5],[2,0],[2,2],[2,3],[2,6],[2,4,1],[3,6,1],[3,1],[3,3,1]],h='',days=['S','M','T','W','T','F','S'],d='';for(var i=0;i<7;i++){d+='<text x="'+(55+i*59)+'" y="40" font-family="Space Grotesk,sans-serif" font-size="11" fill="var(--ink3)">'+days[i]+'</text>';}for(var j=0;j<blocks.length;j++){var bl=blocks[j];h+='<rect class="cm-blk" style="animation-delay:'+(0.2+j*0.16).toFixed(2)+'s" x="'+(48+bl[1]*59)+'" y="'+(52+bl[0]*26)+'" width="41" height="18" rx="4" fill="'+(bl[2]?'var(--ember)':'rgba(122,115,106,.45)')+'"/>';}return '<div class="cm-week cm-run" data-cycle="5.5" style="text-align:center"><svg width="500" height="170" viewBox="0 0 500 170" style="overflow:visible;max-width:100%"><line x1="44" y1="18" x2="455" y2="18" stroke="var(--paper3)" stroke-width="1.5"/><line class="cm-dash" x1="44" y1="18" x2="455" y2="18"/>'+d+h+(caption?'<text x="48" y="163" font-family="Space Grotesk,sans-serif" font-size="10.5" font-weight="600" letter-spacing="1" fill="var(--ink3)">'+caption.toUpperCase()+'</text>':'')+'</svg></div>';}
 function cavnarLedgerHtml(){var rows=[['PRODUCE',132],['PROTEIN',150],['DAIRY',88],['DRY',110],['BAR',60,1]],h='';for(var i=0;i<rows.length;i++){var y=21+i*26;h+='<text x="20" y="'+(y+9)+'" font-family="Space Grotesk,sans-serif" font-size="10" letter-spacing="1" fill="var(--ink3)">'+rows[i][0]+'</text><rect x="90" y="'+y+'" width="150" height="10" rx="5" fill="rgba(122,115,106,.18)"/><rect class="cm-bar" style="animation-delay:'+(0.2+i*0.3)+'s" x="90" y="'+y+'" width="'+rows[i][1]+'" height="10" rx="5" fill="'+(rows[i][2]?'var(--ember)':'rgba(122,115,106,.5)')+'"/>';}return '<div class="cm-ledger cm-run" data-cycle="5.5"><svg width="270" height="150" viewBox="0 0 270 150" style="overflow:visible;max-width:100%"><defs><clipPath id="cm-ledger-clip"><rect x="90" y="14" width="160" height="128"/></clipPath><linearGradient id="cmg-sheen" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#F0EBE0" stop-opacity="0"/><stop offset=".5" stop-color="#F0EBE0" stop-opacity=".14"/><stop offset="1" stop-color="#F0EBE0" stop-opacity="0"/></linearGradient></defs>'+h+'<g clip-path="url(#cm-ledger-clip)"><rect class="cm-sheen" x="90" y="14" width="34" height="140" fill="url(#cmg-sheen)"/></g></svg></div>';}
 function cavnarPostedHtml(label){return '<div class="cm-posted" style="display:inline-block;text-align:center"><svg width="220" height="64" viewBox="0 0 220 64" style="overflow:visible"><rect x="0" y="12" width="56" height="40" rx="10" fill="var(--paper2)" stroke="var(--paper3)"/><line x1="12" y1="26" x2="42" y2="26" stroke="var(--ink3)" stroke-opacity=".5" stroke-width="2.5" stroke-linecap="round"/><line x1="12" y1="32" x2="32" y2="32" stroke="var(--ink3)" stroke-opacity=".5" stroke-width="2.5" stroke-linecap="round"/><line x1="12" y1="38" x2="38" y2="38" stroke="var(--ink3)" stroke-opacity=".5" stroke-width="2.5" stroke-linecap="round"/><line x1="56" y1="32" x2="166" y2="32" stroke="var(--paper3)" stroke-width="2"/><line class="cm-trail" pathLength="100" x1="56" y1="32" x2="166" y2="32"/><g class="cm-pdot"><circle cx="56" cy="32" r="11" fill="rgba(212,88,58,.3)"/><circle cx="56" cy="32" r="5" fill="#E8956A"/></g><circle class="cm-cring" cx="186" cy="32" r="20"/><path class="cm-check" pathLength="100" d="M176,32 l7,7 l13,-14"/></svg><div class="cm-cap cm-plabel">'+label+'</div></div>';}
 function cavnarHandshakeHtml(state,glyph,caption,id){var ok=state==='failed'?'<path d="M130.5,45.5 l9,9 M139.5,45.5 l-9,9" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/>':'<path d="M129.5,50 l4,4 l7,-8" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>';return '<div class="cm-hs is-'+state+'"'+(id?' id="'+id+'"':'')+' style="text-align:center"><svg width="270" height="100" viewBox="0 0 270 100" style="overflow:visible;max-width:100%"><line class="cm-dashl" x1="76" y1="50" x2="194" y2="50"/><line class="cm-solid" x1="76" y1="50" x2="194" y2="50"/><rect class="cm-tile" x="20" y="24" width="52" height="52" rx="14"/><g transform="translate(29,33) scale(.283)"><path d="'+CM_RING+'" fill="none" stroke="var(--ink)" stroke-width="19"/><circle cx="99.5" cy="60" r="11" fill="#E8956A"/></g><rect class="cm-tile" x="198" y="24" width="52" height="52" rx="14"/><g transform="translate(212,38)">'+glyph+'</g><g class="cm-ok"><circle cx="135" cy="50" r="11" fill="var(--ember)"/>'+ok+'</g></svg>'+(caption?'<div class="cm-cap">'+caption+'</div>':'')+'</div>';}
@@ -6343,7 +6362,7 @@ function renderWeekRadar(){
       // the tween hasn't finished on its own shortly after it should have.
       setTimeout(function(){if(n.textContent.indexOf(String(worstV))<0)n.textContent=worstV+'%';},1100);
     });
-    }else n.textContent=worstV+'%';}if(cap)cap.textContent=short[worst]+' runs heaviest';if(flag)flag.textContent=worstV>target?'over target':'within target';}
+    }else n.textContent=worstV+'%';}if(cap)cap.textContent=short[worst]+' runs heaviest';if(flag){var _over=worstV>target;flag.textContent=_over?'over target':'within target';flag.className=_over?'bad':'';}}
 }
 var _gbpReload=!!sessionStorage.getItem('_gbpReload');if(_gbpReload)sessionStorage.removeItem('_gbpReload');
 var laborLoaded=false,invLoaded=false,reviewInsightLoaded=false,sentimentTrendLoaded=false,mktLoaded=false,homeInsightLoaded=false,mktPerfLoaded=false;
@@ -7214,6 +7233,14 @@ function _schedHandleResult(data) {
 
   if (panel) panel.style.display = 'block';
   if (panel) panel.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+
+  // The server already saved this run to schedule_history the moment it
+  // finished generating (see client_api.py's save_schedule_history call) —
+  // it was never lost when the preview got closed. But the on-screen
+  // history list had no reason to know a new row existed until the page
+  // was reloaded, which made "Close" look like it deleted the schedule.
+  // Refreshing it here means the row is right there the moment it's saved.
+  if (typeof loadScheduleHistory === 'function') loadScheduleHistory();
 }
 
 // ── Shift profiles and weighting ────────────────────────────────────────────
@@ -8023,6 +8050,16 @@ function generateSchedule(btn) {
 
 function _psEsc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 
+// Toggles the email-contacts drawer open/closed. Previously "Send to
+// staff" only ever opened it (openPublishSchedule) with nothing wired to
+// close it again short of hitting the outer "Close", which threw away the
+// whole generated schedule instead of just collapsing this one section.
+function togglePublishSchedule(){
+  var panel = document.getElementById('publish-sched-panel');
+  if (panel.style.display === 'block') { panel.style.display = 'none'; return; }
+  openPublishSchedule();
+}
+
 function openPublishSchedule(){
   var panel = document.getElementById('publish-sched-panel');
   panel.style.display = 'block';
@@ -8035,9 +8072,9 @@ function openPublishSchedule(){
     }
     var html = '';
     d.contacts.forEach(function(c){
-      html += '<div style="display:flex;align-items:center;gap:8px;padding:5px 0">';
-      html += '<div style="width:110px;font-size:12px;color:rgba(255,255,255,.75);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+_psEsc(c.employee_name)+'</div>';
-      html += '<input type="email" placeholder="email address" value="'+_psEsc(c.email)+'" data-name="'+_psEsc(c.employee_name)+'" onchange="savePsContact(this)" style="flex:1;background:#101010;border:1px solid var(--paper3);border-radius:5px;color:var(--ink);padding:5px 8px;font-size:11.5px">';
+      html += '<div style="display:flex;align-items:center;gap:10px;padding:6px 0">';
+      html += '<div style="width:130px;font-size:14px;color:rgba(255,255,255,.8);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+_psEsc(c.employee_name)+'</div>';
+      html += '<input type="email" placeholder="email address" value="'+_psEsc(c.email)+'" data-name="'+_psEsc(c.employee_name)+'" onchange="savePsContact(this)" style="flex:1;background:#101010;border:1px solid var(--paper3);border-radius:6px;color:var(--ink);padding:8px 10px;font-size:14px">';
       html += '</div>';
     });
     body.innerHTML = html;
@@ -9142,7 +9179,14 @@ function _laborCallout(pts,vals,target,trend,min,rng){
   for(var i=0;i<vals.length;i++){if(vals[i]>worstV){worstV=vals[i];worstI=i;}}
   if(worstI<0)return '';
   var xy=_lb2xy(worstI,vals.length,vals[worstI],min,rng);
-  var leftPct=Math.max(6,Math.min(94,xy[0]/LB2_W*100)).toFixed(2);
+  // The bubble is a fixed 200px wide (max-width above) but centered on its
+  // anchor via translate(-50%,-100%), so a 6% floor allowed a worst day
+  // early in the period to push its left edge past the chart's own inset —
+  // visibly hanging further left than the "% of sales" figure above it
+  // instead of lining up under it. 12/88 keeps its edges inside the chart
+  // at the widths this panel actually renders at (~700-1000px, capped by
+  // .panel's max-width:1080px), with a little margin to spare.
+  var leftPct=Math.max(12,Math.min(88,xy[0]/LB2_W*100)).toFixed(2);
   var topPct=Math.max(2,xy[1]/LB2_H*100-4).toFixed(2);
   var day=_laborWeekday(pts[worstI].label)||'That day';
   var text=day+' peaked at '+worstV.toFixed(1)+'% — '+(worstV-target).toFixed(1)+' pts over target';
@@ -11333,14 +11377,15 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     var band=r.quality_band;
     var qtone=(band==='excellent'||band==='good')?'good':(band==='fair'?'fair':(band?'warn':''));
     var q=r.quality_score?'<span class="qpill '+qtone+'" title="Shift Quality'+(r.confidence?' · '+esc(r.confidence)+' confidence':'')+'">'+r.quality_score+'</span>':'';
-    var badge=r.edited_at?'<span class="badge edited" title="'+(r.edited_by?'Edited by '+esc(r.edited_by):'Manually edited')+'">Edited</span>':'<span class="badge ai" title="Generated by Cavnar AI">AI</span>';
+    var badge=r.edited_at?'<span class="badge edited" title="'+(r.edited_by?'Edited by '+esc(r.edited_by):'Manually edited')+'">Edited</span>':'';
     var tone=r.summary_tone||'info';
     var week=esc(M(r.week_start||''))+(r.week_end?' – '+esc(M(r.week_end)):'');
     return '<div class="row" tabindex="0" role="button" data-id="'+r.id+'" aria-label="View schedule for week of '+week+'"'
       +' onclick="viewScheduleHistory('+r.id+',this.querySelector(\'.ric-view\'))"'
       +' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();viewScheduleHistory('+r.id+',this.querySelector(\'.ric-view\'));}">'
-      +'<div class="rmain"><div class="rtop"><b>'+week+'</b>'+badge+'<span class="rgen">'+ago(r.generated_at)+'</span></div>'
+      +'<div class="rmain"><div class="rtop"><b>'+week+'</b>'+badge+'</div>'
       +'<div class="rline"><span class="dot '+tone+'"></span><span class="rtxt">'+esc(r.summary_line||'')+'</span></div></div>'
+      +'<span class="rgen">'+ago(r.generated_at)+'</span>'
       +'<div class="rside">'+q+'<span class="rhrs">'+Math.round(hs)+'h</span></div>'
       +'<div class="ractions">'
       +'<button class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm ric-view" title="View" aria-label="View" onclick="event.stopPropagation();viewScheduleHistory('+r.id+',this)">'+_SH_ICON_EYE+'</button>'
