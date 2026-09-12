@@ -17,6 +17,13 @@ the feature they trigger; the labor figure had no percent-of-sales next to
 it; the consultant tag was missing "AI"; and everything below it read
 smaller than everywhere else the same pass had already enlarged.
 
+Round three: none of the page's numbers animated in on load — they'd all
+been left off the .stat-n mechanism the rest of the app already uses; the
+"Vs industry" label read "excellent" in the same ember color the page
+uses for "needs attention"; and the role-cost donut's legend had nowhere
+near enough width next to a fixed 150px ring inside a squeezed 3-column
+grid cell, so it overflowed rather than displaying.
+
 Asserted against the template source, same approach as
 test_frontend_rules.py — there is no request that renders this panel's
 markup back as a payload worth diffing; the markup itself is the surface.
@@ -163,7 +170,7 @@ def test_the_labor_number_carries_its_own_pct_colored_against_target():
     glance rather than making the owner do the division themselves."""
     panel = _labor_panel()
     m = re.search(
-        r'<span class="l">Labor</span>.*?class="hb-num pct '
+        r'<span class="l">Labor</span>.*?class="hb-num pct[^"]*'
         r"\{\{ 'good' if _lp <= _lt else 'bad' \}\}\">\{\{ _lp \}\}%</span>",
         panel,
     )
@@ -224,3 +231,70 @@ def test_only_one_availability_toggle_button_remains():
     idx = panel.index('id="avail-toggle-btn"')
     nearby = panel[max(0, idx - 300):idx]
     assert "Employee Availability" in nearby
+
+
+# ── Round 3: numbers that don't animate, a mis-toned label, an overflowing
+# legend ─────────────────────────────────────────────────────────────────
+
+def test_the_headline_numbers_are_opted_into_the_count_up_mechanism():
+    """.stat-n is the app-wide convention (animateStatNums, already wired
+    to fire on every tab switch) — the numbers just never carried the
+    class. Each of these is a distinct, real span, not one regex loosely
+    matching six different things."""
+    panel = _labor_panel()
+    expected = [
+        r'<span class="hb-num stat-n">\$\{\{ labor\.total_sales\|int\|format_num \}\}</span>',
+        r'<span class="hb-num stat-n">\$\{\{ labor\.total_labor_cost\|int\|format_num \}\}</span>',
+        r'class="hb-num pct stat-n[^"]*">\{\{ _lp \}\}%</span>',
+        r'<span class="hb-num stat-n">\{\{ _lt\|int \}\}%</span>',
+        r'<span class="hb-num stat-n">\{\{ labor\.overstaffed_days\|length \}\}</span>',
+        r'<span class="hb-num stat-n">\{\{ _ot \}\}</span>',
+        r'<span id="lb2-hero-n" class="hb-num stat-n">\{\{ _lp \}\}</span>',
+        r'<span class="hb-num stat-n">\{\{ labor\.role_summary\|length if labor\.role_summary else 0 \}\}</span>',
+    ]
+    for pattern in expected:
+        assert re.search(pattern, panel), "not opted into count-up: " + pattern
+    # both the "if optimised" and the "vs industry average" branches carry
+    # a pair each — only one branch renders per request, but both exist
+    # in the template source
+    assert panel.count('class="x good stat-n"') == 4
+    assert 'class="x stat-n {{' in panel  # overtime premium, tone varies
+
+
+def test_the_async_populated_numbers_dont_depend_on_animation_frames_firing():
+    """The week-radar heaviest-day % and the donut's center total both
+    start blank/placeholder, not at their real value — unlike every
+    number above, a paused requestAnimationFrame (a backgrounded tab is
+    the standard case) would leave them wrong forever without this."""
+    s = _src()
+    assert s.count("if(!done)totalEl.textContent=_fmtK(total);") == 1
+    assert "setTimeout(function(){if(n.textContent.indexOf(String(worstV))<0)" in s
+
+
+def test_vs_industry_is_toned_by_whether_its_actually_good():
+    """It read "excellent" in the same color the page uses for "needs
+    attention" — the label carries no information if it's one flat color
+    regardless of which word it is."""
+    panel = _labor_panel()
+    m = re.search(
+        r"<i class=\"\{% if _lp <= _lt %\}good\{% elif _lp <= _lt \+ 3 %\}warn\{% else %\}bad\{% endif %\}\">"
+        r"\{% if _lp <= _lt - 3 %\}excellent\{% elif _lp <= _lt %\}on target\{% elif _lp <= _lt \+ 3 %\}slightly over"
+        r"\{% elif _lp <= _lt \+ 8 %\}above target\{% else %\}needs attention\{% endif %\}</i>",
+        panel,
+    )
+    assert m, "Vs industry's <i> label has no tone class"
+    css = _src()
+    assert ".lb2-sg .k i.good{color:var(--hb-good)}" in css
+    assert ".lb2-sg .k i.bad{color:var(--hb-bad)}" in css
+
+
+def test_the_role_donut_legend_gets_the_tiles_full_width():
+    """Side by side with a fixed 150px ring, a 3-column grid cell left the
+    legend ~130px for a name plus three numeric columns — it overflowed
+    its box rather than displaying. Stacked, the legend gets the whole
+    tile's width instead of splitting it with the ring."""
+    css = _src()
+    m = re.search(r"\.lb2-donut\{([^}]*)\}", css)
+    assert m and "flex-direction:column" in m.group(1)
+    m2 = re.search(r"#role-donut-legend\{([^}]*)\}", css)
+    assert m2 and "align-self:stretch" in m2.group(1)

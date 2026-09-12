@@ -2062,18 +2062,24 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .lb2-sg{padding:0 26px 0 0;margin-right:26px;border-right:1px solid var(--hb-line2);min-width:0}
 .lb2-sg:last-child{border-right:none;margin-right:0;padding-right:0}
 .lb2-sg .k{font-size:12.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);display:flex;justify-content:space-between;align-items:center;gap:8px}
-.lb2-sg .k i{font-style:normal;color:var(--ember);font-weight:700;letter-spacing:.06em;font-size:12px}
+.lb2-sg .k i{font-style:normal;font-weight:700;letter-spacing:.06em;font-size:12px;color:var(--ember)}
+.lb2-sg .k i.good{color:var(--hb-good)}.lb2-sg .k i.warn{color:var(--hb-warn)}.lb2-sg .k i.bad{color:var(--hb-bad)}
 .lb2-sg .v{font-family:'Space Grotesk',sans-serif;font-size:32px;font-weight:600;letter-spacing:-.025em;line-height:1;color:var(--ink);margin:8px 0 2px;display:flex;align-items:baseline;gap:8px}
 .lb2-sg .v small{font-family:'Apfel Grotezk',sans-serif;font-size:14px;font-weight:400;letter-spacing:0;color:var(--ink3)}
 .lb2-sg .cap{font-size:13.5px;color:var(--ink3);margin-top:6px;display:flex;justify-content:space-between;gap:10px}
 .lb2-radar{display:block;width:100%;height:210px;margin-top:6px;overflow:visible}
-.lb2-donut{display:flex;align-items:center;gap:18px;margin-top:6px}
+/* Side-by-side put a 150px ring next to whatever the 3-column grid left
+   over for this tile — often under 140px, not enough room for a name plus
+   three numeric columns, so the legend rows overflowed their box and read
+   as missing/garbled rather than just tight. Stacked, the legend gets the
+   tile's full width instead of sharing it with the ring. */
+.lb2-donut{display:flex;flex-direction:column;align-items:center;gap:14px;margin-top:10px}
 .lb2-donut .ring{position:relative;flex-shrink:0;width:150px;height:150px}
 .lb2-donut .ring svg{width:150px;height:150px}
 .lb2-donut .tot{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;pointer-events:none}
 .lb2-donut .tot div:first-child{font-family:'Space Grotesk',sans-serif;font-size:19px;font-weight:700;color:var(--ink);line-height:1}
 .lb2-donut .tot div:last-child{font-size:10.5px;font-weight:700;letter-spacing:.08em;color:var(--ink3);margin-top:3px;text-transform:uppercase}
-#role-donut-legend{flex:1;min-width:0;font-size:14px}
+#role-donut-legend{align-self:stretch;min-width:0;font-size:14px}
 .lb2-bench{margin-top:14px}
 .lb2-bench .scale{position:relative;height:18px;font-size:12px;color:var(--ink3);font-family:'Space Grotesk',sans-serif}
 .lb2-bench .scale span{position:absolute;transform:translateX(-50%);white-space:nowrap}
@@ -2143,8 +2149,8 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       <h1 class="hb-h1">Labor. <span class="hb-head {{ _tone }}">{{ _head }}</span></h1>
       <div class="lb2-daterange"><span id="labor-period" class="hb-num">{{ _days }}-day window</span>{% if not labor.is_live %}<span class="sep">·</span><span>sample data</span>{% endif %}</div>
       <div class="lb2-bignums">
-        <div class="lb2-bn"><span class="l">Sales</span><span class="row"><span class="hb-num">${{ labor.total_sales|int|format_num }}</span></span></div>
-        <div class="lb2-bn"><span class="l">Labor</span><span class="row"><span class="hb-num">${{ labor.total_labor_cost|int|format_num }}</span><span class="hb-num pct {{ 'good' if _lp <= _lt else 'bad' }}">{{ _lp }}%</span></span></div>
+        <div class="lb2-bn"><span class="l">Sales</span><span class="row"><span class="hb-num stat-n">${{ labor.total_sales|int|format_num }}</span></span></div>
+        <div class="lb2-bn"><span class="l">Labor</span><span class="row"><span class="hb-num stat-n">${{ labor.total_labor_cost|int|format_num }}</span><span class="hb-num pct stat-n {{ 'good' if _lp <= _lt else 'bad' }}">{{ _lp }}%</span></span></div>
       </div>
       {# Everything labor.py knows is incomplete about this upload. It has
          computed these for a while and no surface showed them, so a
@@ -2164,16 +2170,16 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     </div>
     <div class="hb-pulse">
       <span class="hb-chip {{ 'bad' if _over > 3 else ('warn' if _over > 0 else 'good') }}"><span class="dot"><b></b><i></i></span><span class="v"><span id="gap-current-pct" class="hb-num">{{ _lp }}%</span></span><span class="l">labor</span></span>
-      <span class="hb-chip good"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num">{{ _lt|int }}%</span></span><span class="l">target</span></span>
-      <span class="hb-chip {{ 'warn' if labor.overstaffed_days|length else 'good' }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num">{{ labor.overstaffed_days|length }}</span></span><span class="l">overstaffed days</span></span>
-      <span class="hb-chip {{ 'bad' if _ot else 'good' }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num">{{ _ot }}</span></span><span class="l">in overtime</span></span>
+      <span class="hb-chip good"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num stat-n">{{ _lt|int }}%</span></span><span class="l">target</span></span>
+      <span class="hb-chip {{ 'warn' if labor.overstaffed_days|length else 'good' }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num stat-n">{{ labor.overstaffed_days|length }}</span></span><span class="l">overstaffed days</span></span>
+      <span class="hb-chip {{ 'bad' if _ot else 'good' }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num stat-n">{{ _ot }}</span></span><span class="l">in overtime</span></span>
       <span class="hb-chip {{ 'bad' if _lp > _lt else 'good' }}"><span class="dot"><b></b><i></i></span><span class="v"><span id="gap-amount" class="hb-num">—</span></span><span class="l">monthly gap</span></span>
     </div>
   </div>
 
   <div id="lb-panel-schedule">
   <section class="lb2-hero" aria-label="Labor ribbon">
-    <div class="hd"><div><div class="hb-kicker" id="lb2-hero-kicker">Labor ribbon · daily labor %</div><div class="big"><span id="lb2-hero-n" class="hb-num">{{ _lp }}</span><small>% of sales · {{ 'last ' ~ _days ~ ' days' if _days else 'this period' }}</small></div><div class="delta" id="lb2-hero-delta">{% if labor.trend_delta is not none and labor.trend_delta != 0 %}<span class="hb-num">{{ '+' if labor.trend_delta > 0 }}{{ labor.trend_delta|round(1) }} pts</span> <span>vs the previous period</span>{% endif %}</div></div><div class="lb2-range" id="lb2-hero-range"><button class="on" onclick="switchPerfTab('daily')" id="perf-tab-dow">Daily</button><button onclick="switchPerfTab('trend')" id="perf-tab-trend">8 weeks</button></div></div>
+    <div class="hd"><div><div class="hb-kicker" id="lb2-hero-kicker">Labor ribbon · daily labor %</div><div class="big"><span id="lb2-hero-n" class="hb-num stat-n">{{ _lp }}</span><small>% of sales · {{ 'last ' ~ _days ~ ' days' if _days else 'this period' }}</small></div><div class="delta" id="lb2-hero-delta">{% if labor.trend_delta is not none and labor.trend_delta != 0 %}<span class="hb-num">{{ '+' if labor.trend_delta > 0 }}{{ labor.trend_delta|round(1) }} pts</span> <span>vs the previous period</span>{% endif %}</div></div><div class="lb2-range" id="lb2-hero-range"><button class="on" onclick="switchPerfTab('daily')" id="perf-tab-dow">Daily</button><button onclick="switchPerfTab('trend')" id="perf-tab-trend">8 weeks</button></div></div>
     <div id="lb2-hero-chart"><div class="hb-load" style="height:190px;justify-content:center"><canvas class="hb-orb" data-orb-state="working" width="44" height="44"></canvas></div></div>
     <span id="perf-period-label" hidden></span>
   </section>
@@ -2181,15 +2187,15 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 
   <div class="lb2-sig" id="lb-panel-analytics">
     <div class="lb2-sg"><div class="k"><span>Week radar · by weekday</span><i id="lb2-radar-flag"></i></div><div class="v"><span id="lb2-radar-n" class="hb-num">—</span><small id="lb2-radar-cap">heaviest day</small></div><div id="lb2-radar"><div class="hb-load" style="height:210px;justify-content:center"><canvas class="hb-orb" data-orb-state="working" width="28" height="28"></canvas></div></div><div class="cap"><span>labor % per weekday · dashed ring = target</span></div></div>
-    <div class="lb2-sg"><div class="k"><span>Cost by role</span></div><div class="v"><span class="hb-num">{{ labor.role_summary|length if labor.role_summary else 0 }}</span><small>roles · {{ labor.date_range.start|format_date if labor.date_range and labor.date_range.start }} – {{ labor.date_range.end|format_date if labor.date_range and labor.date_range.end }}</small></div>
+    <div class="lb2-sg"><div class="k"><span>Cost by role</span></div><div class="v"><span class="hb-num stat-n">{{ labor.role_summary|length if labor.role_summary else 0 }}</span><small>roles · {{ labor.date_range.start|format_date if labor.date_range and labor.date_range.start }} – {{ labor.date_range.end|format_date if labor.date_range and labor.date_range.end }}</small></div>
       {% if labor.role_summary %}<div class="lb2-donut"><div class="ring"><svg id="role-donut-svg" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg"></svg><div class="tot"><div id="role-donut-total"></div><div>total</div></div></div><div id="role-donut-legend"></div></div>{% else %}<div class="hb-empty" style="height:150px;display:flex;align-items:center">Role breakdown appears once shifts carry a role.</div>{% endif %}
       <div class="cap"><span>share of labor cost · hours · headcount</span></div></div>
-    <div class="lb2-sg"><div class="k"><span>Vs industry</span><i>{% if _lp <= _lt - 3 %}excellent{% elif _lp <= _lt %}on target{% elif _lp <= _lt + 3 %}slightly over{% elif _lp <= _lt + 8 %}above target{% else %}needs attention{% endif %}</i></div><div class="v"><span class="hb-num">{{ _lp }}</span><small>% vs 33–36% full-service average</small></div>
+    <div class="lb2-sg"><div class="k"><span>Vs industry</span><i class="{% if _lp <= _lt %}good{% elif _lp <= _lt + 3 %}warn{% else %}bad{% endif %}">{% if _lp <= _lt - 3 %}excellent{% elif _lp <= _lt %}on target{% elif _lp <= _lt + 3 %}slightly over{% elif _lp <= _lt + 8 %}above target{% else %}needs attention{% endif %}</i></div><div class="v"><span class="hb-num stat-n">{{ _lp }}</span><small>% vs 33–36% full-service average</small></div>
       <div class="lb2-bench"><div class="scale"><span style="left:0;transform:none">0%</span><span style="left:{{ [(_lt/50*100), 96]|min|int }}%;color:var(--hb-good)">{{ _lt|int }}% target</span><span style="left:70%;color:var(--hb-bad)">35%</span><span style="right:0;left:auto;transform:none">50%</span></div><div class="bar"><div class="fill {{ 'good' if _lp <= _lt else ('bad' if _lp > _lt + 8 else '') }}" style="width:{{ [(_lp/50*100), 100]|min|int }}%"></div><div class="tick t" style="left:{{ [(_lt/50*100), 100]|min|int }}%"></div><div class="tick h" style="left:70%"></div></div></div>
       <div class="lb2-money">
-        {% if savings_breakdown.labor_monthly > 0 %}<div><div class="l">If optimised / mo</div><div class="x good">${{ savings_breakdown.labor_monthly|format_num }}</div></div><div><div class="l">Per year</div><div class="x good">${{ savings_breakdown.labor_annual|format_num }}</div></div>
-        {% else %}<div><div class="l">Vs 32% avg / mo</div><div class="x good">${{ savings_breakdown.labor_vs_industry_monthly|format_num }}</div></div><div><div class="l">Per year</div><div class="x good">${{ savings_breakdown.labor_vs_industry_annual|format_num }}</div></div>{% endif %}
-        <div><div class="l">Overtime premium</div><div class="x {{ 'bad' if savings_breakdown.labor_overtime > 0 }}">{% if savings_breakdown.labor_overtime > 0 %}${{ savings_breakdown.labor_overtime|format_num }}{% else %}—{% endif %}</div></div>
+        {% if savings_breakdown.labor_monthly > 0 %}<div><div class="l">If optimised / mo</div><div class="x good stat-n">${{ savings_breakdown.labor_monthly|format_num }}</div></div><div><div class="l">Per year</div><div class="x good stat-n">${{ savings_breakdown.labor_annual|format_num }}</div></div>
+        {% else %}<div><div class="l">Vs 32% avg / mo</div><div class="x good stat-n">${{ savings_breakdown.labor_vs_industry_monthly|format_num }}</div></div><div><div class="l">Per year</div><div class="x good stat-n">${{ savings_breakdown.labor_vs_industry_annual|format_num }}</div></div>{% endif %}
+        <div><div class="l">Overtime premium</div><div class="x stat-n {{ 'bad' if savings_breakdown.labor_overtime > 0 }}">{% if savings_breakdown.labor_overtime > 0 %}${{ savings_breakdown.labor_overtime|format_num }}{% else %}—{% endif %}</div></div>
       </div>
       <div class="cap"><span>weekly overspend × 4.33 · overtime at 0.5× on hours over 40</span></div></div>
   </div>
@@ -2227,7 +2233,23 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     }
     svgEl.innerHTML=circles;
     requestAnimationFrame(function(){requestAnimationFrame(function(){var segs=svgEl.querySelectorAll('.cm-seg');for(var s=0;s<segs.length;s++){segs[s].style.strokeDasharray=segs[s].getAttribute('data-da');}});});
-    if(totalEl)totalEl.textContent=_fmtK(total);
+    if(totalEl){
+      // countUp/countUpMoney assume plain-number or "$1,234" formatting —
+      // this label is deliberately abbreviated ("$19k"), so it gets its
+      // own tiny tween that keeps calling _fmtK() as the value ramps up
+      // rather than count up through unformatted numbers then snap to k.
+      (function(){
+        var dur=900,start=null,done=false;
+        function tick(ts){if(!start)start=ts;var p=Math.min((ts-start)/dur,1),e=1-Math.pow(1-p,3);totalEl.textContent=_fmtK(total*e);if(p<1)requestAnimationFrame(tick);else{done=true;totalEl.textContent=_fmtK(total);}}
+        var _rm=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        if(_rm){totalEl.textContent=_fmtK(total);return;}
+        requestAnimationFrame(tick);
+        // Same rAF-can-be-paused-in-a-background-tab concern as the radar
+        // number above — this label starts blank, not at the real total,
+        // so force it in if the tween never got a chance to finish.
+        setTimeout(function(){if(!done)totalEl.textContent=_fmtK(total);},1100);
+      })();
+    }
     var lhtml='';
     for(var i=0;i<_roleData.length;i++){
       var d=_roleData[i];
@@ -6253,7 +6275,14 @@ function renderWeekRadar(){
     var lp=pt(i,R+16);s+='<text x="'+lp[0].toFixed(1)+'" y="'+(lp[1]+4).toFixed(1)+'" text-anchor="middle" font-size="10.5" font-family="Space Grotesk, sans-serif" fill="'+(over?'#e05555':'currentColor')+'" fill-opacity="'+(over?'1':'.75')+'">'+short[i]+' '+vals[i]+'%</text>';}
   el.innerHTML=s+'</svg>';el.style.color='var(--ink3)';
   var n=document.getElementById('lb2-radar-n'),cap=document.getElementById('lb2-radar-cap'),flag=document.getElementById('lb2-radar-flag');
-  if(worst>=0){if(n)n.textContent=worstV+'%';if(cap)cap.textContent=short[worst]+' runs heaviest';if(flag)flag.textContent=worstV>target?'over target':'within target';}
+  if(worst>=0){if(n){if(!n.dataset.animated){n.dataset.animated='1';countUp(n,worstV,900,'','%',1);
+    // countUp is requestAnimationFrame-driven, which a backgrounded tab can
+    // pause indefinitely — this number started at a bare "—", not the real
+    // value, so unlike the rest of the page's numbers there's nothing
+    // correct already showing while it waits. Force the true value in if
+    // the tween hasn't finished on its own shortly after it should have.
+    setTimeout(function(){if(n.textContent.indexOf(String(worstV))<0)n.textContent=worstV+'%';},1100);
+    }else n.textContent=worstV+'%';}if(cap)cap.textContent=short[worst]+' runs heaviest';if(flag)flag.textContent=worstV>target?'over target':'within target';}
 }
 var _gbpReload=!!sessionStorage.getItem('_gbpReload');if(_gbpReload)sessionStorage.removeItem('_gbpReload');
 var laborLoaded=false,invLoaded=false,reviewInsightLoaded=false,sentimentTrendLoaded=false,mktLoaded=false,homeInsightLoaded=false,mktPerfLoaded=false;
