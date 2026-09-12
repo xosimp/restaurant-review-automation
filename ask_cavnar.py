@@ -62,7 +62,25 @@ def _identity_context(restaurant):
     from marketing import get_upcoming_holidays
 
     now = restaurant_now(restaurant, naive=True)
-    lines = ["TODAY", f"- Today's date: {now.strftime('%A, %B %d, %Y')}"]
+    lines = ["TODAY", f"- Today's date: {now.strftime('%A, %B %d, %Y')}",
+             f"- Local time: {now.strftime('%-I:%M%p').lower()}"]
+
+    # Which restaurant this conversation is actually about. An owner with
+    # several sites got no indication which one an answer described, and no
+    # way to know the assistant could not see the others.
+    where = restaurant.location_name or restaurant.name
+    if restaurant.location_group:
+        siblings = _sibling_locations(restaurant)
+        if siblings:
+            lines.append(
+                f"- You are looking at {where}, one of {len(siblings) + 1} locations in "
+                f"{restaurant.location_group}: {', '.join(siblings)}. Every number below is "
+                f"{where} only — say so if the owner asks about another site or about the "
+                "group as a whole, because you cannot see those from here.")
+        else:
+            lines.append(f"- You are looking at {where} ({restaurant.location_group}).")
+    elif restaurant.location_name:
+        lines.append(f"- You are looking at {where}.")
 
     try:
         upcoming = get_upcoming_holidays(now)
@@ -76,6 +94,28 @@ def _identity_context(restaurant):
         pass
 
     return "\n".join(lines) + "\n"
+
+
+def _sibling_locations(restaurant):
+    """The other locations in this restaurant's group, by name.
+
+    Scoped by location_group AND owner_email, which is how the rest of the
+    codebase defines that tenancy boundary (see webhook_routes and
+    admin_routes' location_group_conflict). Names only — the assistant is
+    told they exist and that it cannot see their numbers, which is more
+    useful than silence and safer than reaching across.
+    """
+    try:
+        from models import get_conn
+        conn = get_conn()
+        rows = conn.execute(
+            "SELECT COALESCE(location_name, name) AS label FROM restaurants "
+            "WHERE location_group=? AND owner_email=? AND id<>? ORDER BY label",
+            (restaurant.location_group, restaurant.owner_email, restaurant.id)).fetchall()
+        conn.close()
+        return [r["label"] for r in rows if r["label"]]
+    except Exception:
+        return []
 
 
 def _profile_context(restaurant):
@@ -199,14 +239,72 @@ def _labor_context(restaurant_id):
         return "LABOR\n- No real shift data uploaded yet — the owner needs to upload a shifts CSV. (The Labor tab currently shows sample placeholder data, not this restaurant's real numbers.)\n"
     target = a.get("labor_target", 30.0)
     over_under = "over" if a["overall_labor_pct"] > target else ("under" if a["overall_labor_pct"] < target else "at")
-    return (
-        "LABOR\n"
-        f"- Overall labor cost: {a['overall_labor_pct']}% of sales ({over_under} this restaurant's {target}% target)\n"
-        f"- Total labor cost this period: ${a['total_labor_cost']:,.0f} on ${a['total_sales']:,.0f} in sales\n"
-        f"- Estimated monthly savings available from optimized scheduling: ${a.get('potential_savings_monthly', 0):,.0f} (gap above target over the {a.get('period_days', 0)} days synced, per month)\n"
-        f"- Overstaffed days this period: {len(a.get('overstaffed_days') or [])}\n"
-        f"- Understaffed days this period: {len(a.get('understaffed_days') or [])}\n"
-    )
+    rng = a.get("date_range") or {}
+    lines = [
+        "LABOR",
+        f"- Overall labor cost: {a['overall_labor_pct']}% of sales ({over_under} this restaurant's {target}% target)",
+        f"- Total labor cost this period: ${a['total_labor_cost']:,.0f} on ${a['total_sales']:,.0f} in sales",
+        f"- Estimated monthly savings available from optimized scheduling: "
+        f"${a.get('potential_savings_monthly', 0):,.0f} (gap above target over the "
+        f"{a.get('period_days', 0)} days synced, per month)",
+        f"- Overstaffed days this period: {len(a.get('overstaffed_days') or [])}",
+        f"- Understaffed days this period: {len(a.get('understaffed_days') or [])}",
+    ]
+    # How old these numbers are. Without it neither the owner nor the model
+    # could tell whether "your labor is 31%" described this morning or a
+    # sync that stopped three weeks ago, and both would state it the same way.
+    if rng.get("start") and rng.get("end"):
+        lines.append(f"- These cover {rng['start']} to {rng['end']}{_staleness(rng['end'])}")
+    lines.extend(_recent_days_lines(restaurant_id))
+    return "\n".join(lines) + "\n"
+
+
+def _staleness(last_date):
+    """" — as of today", or how far behind the data has fallen."""
+    from datetime import date, datetime as _dt
+    try:
+        last = _dt.strptime(str(last_date)[:10], "%Y-%m-%d").date()
+    except (ValueError, TypeError):
+        return ""
+    days = (date.today() - last).days
+    if days <= 0:
+        return " — through today"
+    if days == 1:
+        return " — through yesterday"
+    if days <= 7:
+        return f" — the last day of data is {days} days ago"
+    return f" — NOTE: the last day of data is {days} days ago, so these are not current"
+
+
+def _recent_days_lines(restaurant_id):
+    """The last few days on their own, so "how is today going" has an answer.
+
+    The section above is a period aggregate, which cannot answer the most
+    natural question an owner opens with. Reads labor_daily_history, the
+    same table Home's ribbon uses, so the two can never disagree.
+    """
+    from models import get_conn
+    try:
+        conn = get_conn()
+        rows = conn.execute(
+            "SELECT date, day_of_week, sales, labor_pct, total_hours FROM labor_daily_history "
+            "WHERE restaurant_id=? AND sales IS NOT NULL AND sales > 0 "
+            "ORDER BY date DESC LIMIT 3", (restaurant_id,)).fetchall()
+        conn.close()
+    except Exception:
+        return []
+    if not rows:
+        return []
+    # These come from a different table than the shift analysis above and can
+    # be much older than it. Saying "most recent days" without saying how
+    # recent invited the model to answer "how is today going" with a figure
+    # from last year.
+    out = [f"- Most recent days with recorded sales{_staleness(rows[0]['date'])}:"]
+    for r in rows:
+        out.append(f"    {r['day_of_week']} {r['date']}: ${float(r['sales'] or 0):,.0f} sales, "
+                   f"{float(r['labor_pct'] or 0):.1f}% labor, "
+                   f"{float(r['total_hours'] or 0):.0f} hours")
+    return out
 
 
 def _inventory_context(restaurant_id):
@@ -329,6 +427,76 @@ def _intel_context(restaurant_id):
     return "\n".join(lines) + "\n"
 
 
+def _alerts_context(restaurant_id):
+    """What has actually fired for this owner in the last week.
+
+    The one thing an owner most wants explained was the one thing the
+    assistant could neither see nor fetch: there was no alerts section and
+    no alerts tool. Unresolved first, because a one-star review that has
+    already been answered is history and one that has not is today's
+    problem.
+    """
+    from models import get_conn
+    from client_api import _NOTIFICATION_LABELS
+    try:
+        conn = get_conn()
+        rows = conn.execute(
+            """SELECT a.alert_type, a.fired_at, rv.response_status
+               FROM alert_log a LEFT JOIN reviews rv ON rv.id = a.review_id
+               WHERE a.restaurant_id=? AND julianday(a.fired_at) >= julianday('now','-7 days')
+               ORDER BY a.id DESC LIMIT 12""", (restaurant_id,)).fetchall()
+        conn.close()
+    except Exception:
+        return ""
+    if not rows:
+        return "ALERTS\n- Nothing has fired in the last 7 days.\n"
+
+    open_items, handled = [], 0
+    seen = set()
+    for r in rows:
+        label = _NOTIFICATION_LABELS.get(r["alert_type"], r["alert_type"])
+        if r["response_status"] in ("posted", "approved", "skipped"):
+            handled += 1
+            continue
+        key = (r["alert_type"], (r["fired_at"] or "")[:10])
+        if key in seen:
+            continue
+        seen.add(key)
+        open_items.append(f"{label} ({(r['fired_at'] or '')[:10]})")
+
+    lines = ["ALERTS (last 7 days)"]
+    if open_items:
+        lines.append(f"- Still needing action ({len(open_items)}): {', '.join(open_items[:6])}")
+    else:
+        lines.append("- Nothing outstanding — everything that fired has been handled.")
+    if handled:
+        lines.append(f"- Already handled since firing: {handled}")
+    return "\n".join(lines) + "\n"
+
+
+def _memory_context(restaurant_id):
+    """What this owner has told the assistant in previous conversations.
+
+    The transcript is scoped to one conversation, so without this a new chat
+    starts blank and the owner explains themselves again — the exact thing
+    the assistant exists to stop. Nothing lands here automatically; the
+    model records a fact deliberately, which keeps this short enough to read
+    and honest enough to trust.
+    """
+    from models import get_ask_memory
+    facts = get_ask_memory(restaurant_id)
+    if not facts:
+        return ""
+    lines = ["WHAT THIS OWNER HAS TOLD YOU BEFORE",
+             "- These came from earlier conversations, not from the data. Use them to "
+             "skip questions they have already answered; never present one as a fact "
+             "you measured."]
+    for f in facts:
+        when = (f.get("created_at") or "")[:10]
+        lines.append(f"- {f['fact']}" + (f" (said {when})" if when else ""))
+    return "\n".join(lines) + "\n"
+
+
 _CONTEXT_BUILDERS = (
     ("module_reviews", _reviews_context),
     ("module_labor", _labor_context),
@@ -346,6 +514,15 @@ def build_context(restaurant):
     described as empty — that keeps the model from being asked to reason
     about data that was never going to exist for this client."""
     parts = [_identity_context(restaurant), _profile_context(restaurant)]
+    # Neither of these belongs to a module — one is what has fired for this
+    # owner, the other is what they have already told the assistant.
+    for always in (_memory_context, _alerts_context):
+        try:
+            section = always(restaurant.id)
+            if section:
+                parts.append(section)
+        except Exception:
+            pass
     for attr, builder in _CONTEXT_BUILDERS:
         if not getattr(restaurant, attr, 0):
             continue
@@ -530,6 +707,9 @@ ORB_STATES = ("connecting", "solving", "searching", "working", "shaping",
 # doing, not a function name.
 _TOOL_LABELS = {
     "read_reviews": "Reading your reviews",
+    "read_team": "Looking at your team",
+    "read_alerts": "Checking what needs you",
+    "remember": "Making a note of that",
     "read_menu_margins": "Working out your menu margins",
     "read_order_draft": "Checking this week's order",
     "read_schedule": "Looking at your schedule",

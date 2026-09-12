@@ -721,6 +721,7 @@ try:
     from models import init_staff_capabilities as _isc
     from models import init_shift_profiles as _isp
     from models import init_capability_changes as _icc
+    from models import init_ask_memory as _iam
     from auth import init_auth as _init_auth
     from webhooks import init_webhooks as _iwh
     from guest_marketing import init_guest_marketing as _igm
@@ -741,6 +742,7 @@ try:
     _isc()
     _isp()
     _icc()
+    _iam()
     # A previous process may have been killed mid-generation, leaving a job
     # pending forever and a client polling an answer that will never come.
     try:

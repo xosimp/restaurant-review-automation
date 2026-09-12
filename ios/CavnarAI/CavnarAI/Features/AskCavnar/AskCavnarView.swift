@@ -202,6 +202,69 @@ struct AskCavnarView: View {
 
     /// The same glass chip as every toolbar icon in the app — the header
     /// here stands in for a navigation bar, so its controls match one.
+    /// The questions actually worth asking right now, falling back to the
+    /// static three only when the opening could not be fetched.
+    private var activeSuggestions: [String] {
+        let live = viewModel.opening?.suggestions ?? []
+        return live.isEmpty ? suggestedQuestions : live
+    }
+
+    private func briefing(_ opening: AskOpening, headline: String) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(headline)
+                .font(.cavnarHeadline(21))
+                .foregroundStyle(Color.cavnarInk)
+                .fixedSize(horizontal: false, vertical: true)
+            if let subtitle = briefingSubtitle(opening) {
+                Text(subtitle)
+                    .font(.cavnarBody(13))
+                    .foregroundStyle(Color.cavnarInk3)
+                    .padding(.top, 3)
+            }
+            ForEach(Array((opening.briefing ?? []).enumerated()), id: \.element.id) { index, item in
+                if index > 0 {
+                    Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1)
+                }
+                HStack(alignment: .top, spacing: 10) {
+                    Circle()
+                        .fill(severityTone(item.severity))
+                        .frame(width: 7, height: 7)
+                        .padding(.top, 6)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(item.title ?? "")
+                            .font(.cavnarBody(14.5, weight: 600))
+                            .foregroundStyle(Color.cavnarInk)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if let detail = item.detail, !detail.isEmpty {
+                            Text(detail)
+                                .font(.cavnarBody(13.5))
+                                .foregroundStyle(Color.cavnarInk3)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.vertical, 10)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.top, 8)
+    }
+
+    private func briefingSubtitle(_ opening: AskOpening) -> String? {
+        let parts = [opening.restaurant, opening.sinceLabel].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    private func severityTone(_ severity: String?) -> Color {
+        switch severity {
+        case "critical": return .cavnarRed
+        case "important": return .cavnarAmber
+        case "good": return .cavnarGreen
+        default: return .cavnarInk3
+        }
+    }
+
     private func headerChip(_ systemImage: String, label: String, action: @escaping () -> Void) -> some View {
         Button {
             Haptic.light()
@@ -216,25 +279,39 @@ struct AskCavnarView: View {
         .accessibilityLabel(label)
     }
 
+    /// What the screen says before the owner types anything.
+    ///
+    /// It used to be a badge, "Ask me anything" and three hardcoded
+    /// questions that never changed. The briefing and the questions now come
+    /// from the same signals the Home tab reads, so the first thing an owner
+    /// sees is their own business rather than an invitation to explain it.
     private var emptyState: some View {
         VStack(spacing: 18) {
-            GlowBadge(systemImage: "sparkles", size: 64)
-                .padding(.top, 20)
-
-            VStack(spacing: 6) {
-                Text("Ask me anything")
-                    .font(.cavnarHeadline(21.5))
-                    .foregroundStyle(Color.cavnarInk)
-                Text("Your numbers, or general advice on running the place — I'll pull in your real data whenever it's relevant.")
-                    .font(.cavnarBody(14.5))
-                    .foregroundStyle(Color.cavnarInk3)
-                    .multilineTextAlignment(.center)
-                    .lineSpacing(3)
-                    .padding(.horizontal, 24)
+            if let opening = viewModel.opening, let headline = opening.headline {
+                briefing(opening, headline: headline)
+            } else {
+                GlowBadge(systemImage: "sparkles", size: 64)
+                    .padding(.top, 20)
+                VStack(spacing: 6) {
+                    Text("Ask me anything")
+                        .font(.cavnarHeadline(21.5))
+                        .foregroundStyle(Color.cavnarInk)
+                    Text("Your numbers, or general advice on running the place — I'll pull in your real data whenever it's relevant.")
+                        .font(.cavnarBody(14.5))
+                        .foregroundStyle(Color.cavnarInk3)
+                        .multilineTextAlignment(.center)
+                        .lineSpacing(3)
+                        .padding(.horizontal, 24)
+                }
             }
 
-            VStack(spacing: 8) {
-                ForEach(suggestedQuestions, id: \.self) { question in
+            VStack(alignment: .leading, spacing: 8) {
+                Text("START HERE")
+                    .font(.cavnarBody(11, weight: 700))
+                    .tracking(1.4)
+                    .foregroundStyle(Color.cavnarInk3)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                ForEach(activeSuggestions, id: \.self) { question in
                     Button {
                         Haptic.light()
                         viewModel.question = question

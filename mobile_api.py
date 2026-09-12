@@ -5049,3 +5049,91 @@ def mobile_capability_changes(current_user):
                                                       limit=100)), 200
     except Exception as e:
         return jsonify(ok=False, error=_safe_err(e), changes=[]), 500
+
+
+@mobile_bp.route("/ask-cavnar/opening")
+@mobile_login_required
+def mobile_ask_opening(current_user):
+    """What the assistant says before the owner types anything.
+
+    Two things were already being computed and thrown away. home_brief
+    builds situation-aware questions from real signals — reviews changed
+    this month and the top issue by name, labor over or under target, food
+    cost opportunities — and only the Home tab used them, while both Ask
+    surfaces hardcoded the same three strings that never changed. And the
+    attention items that make a real briefing were sitting in the same
+    payload.
+
+    Deliberately no model call. This is the first thing an owner sees, it
+    has to be instant, and every line here is measured rather than written —
+    which also means it cannot invent anything.
+    """
+    import home_brief
+    rid = current_user["restaurant_id"]
+    try:
+        payload, status = home_brief.build_home_brief(current_user)
+        if status != 200:
+            return jsonify(ok=True, briefing=[], suggestions=_FALLBACK_ASK_SUGGESTIONS,
+                           headline=None), 200
+
+        attention = payload.get("attention") or []
+        order = {"critical": 0, "important": 1, "watch": 2}
+        attention = sorted(attention, key=lambda a: order.get(a.get("severity"), 3))
+        briefing = [{"severity": a.get("severity"), "title": a.get("title"),
+                     "detail": a.get("detail"), "module": a.get("module")}
+                    for a in attention[:4]]
+
+        # A win is worth one line when there is one. An owner who only ever
+        # opens this to a list of problems stops opening it.
+        wins = payload.get("wins") or []
+        if wins and len(briefing) < 4:
+            w = wins[0]
+            briefing.append({"severity": "good", "title": w.get("title"),
+                             "detail": w.get("detail"), "module": w.get("module")})
+
+        suggestions = payload.get("ask_suggestions") or _FALLBACK_ASK_SUGGESTIONS
+        changes = payload.get("changes") or {}
+        return jsonify(
+            ok=True,
+            briefing=briefing,
+            suggestions=suggestions[:5],
+            headline=_opening_headline(payload, briefing),
+            since_label=changes.get("since_label"),
+            changes=[c.get("label") for c in (changes.get("items") or [])[:3] if c.get("label")],
+            greeting_name=payload.get("greeting_name"),
+            restaurant=(payload.get("context") or {}).get("restaurant_name"),
+            location=(payload.get("context") or {}).get("location_name"),
+        ), 200
+    except Exception as e:
+        # The opening must never be the reason Ask fails to open.
+        try:
+            import ops
+            ops.capture(e, job="ask_opening", context=f"restaurant_id={rid}")
+        except Exception:
+            pass
+        return jsonify(ok=True, briefing=[], suggestions=_FALLBACK_ASK_SUGGESTIONS,
+                       headline=None), 200
+
+
+# Only used when the brief cannot be built — a brand new restaurant with
+# nothing to say yet, or a failure. Never the normal path.
+_FALLBACK_ASK_SUGGESTIONS = [
+    "What should I focus on today?",
+    "How are my reviews doing?",
+    "How do I get my labor cost down?",
+]
+
+
+def _opening_headline(payload, briefing):
+    """One line naming the state of the business, in the owner's terms."""
+    critical = sum(1 for b in briefing if b.get("severity") == "critical")
+    important = sum(1 for b in briefing if b.get("severity") == "important")
+    if critical:
+        return f"{critical} thing{'' if critical == 1 else 's'} needs you today."
+    if important:
+        return f"Nothing urgent. {important} worth a look."
+    if briefing:
+        return "Quiet morning — nothing urgent."
+    if (payload.get("empty_state") or {}).get("active"):
+        return "Not much to go on yet — connect your data and I can be useful."
+    return "All clear. Ask me anything."

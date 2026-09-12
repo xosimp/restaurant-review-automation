@@ -120,24 +120,143 @@ def _read_schedule(restaurant_id):
     from labor import employees_in_schedule
     conn = get_conn()
     try:
+        from models import _ensure_history_columns
+        _ensure_history_columns(conn)
         row = conn.execute(
-            "SELECT id, week_start, week_end, hours_scheduled, hours_budget, schedule_csv "
-            "FROM schedule_history WHERE restaurant_id=? ORDER BY id DESC LIMIT 1",
+            "SELECT id, week_start, week_end, hours_scheduled, hours_budget, "
+            "schedule_csv, quality_json, edited_at FROM schedule_history "
+            "WHERE restaurant_id=? ORDER BY id DESC LIMIT 1",
             (restaurant_id,)).fetchone()
     finally:
         conn.close()
     if not row:
         return {"exists": False}
-    return {
+    out = {
         "exists": True,
         "schedule_id": row["id"],
         "week_start": row["week_start"],
         "week_end": row["week_end"],
         "hours_scheduled": row["hours_scheduled"],
         "hours_budget": row["hours_budget"],
+        "edited_by_manager": bool(row["edited_at"]),
         "employees": employees_in_schedule(row["schedule_csv"] or ""),
         "share_status": get_schedule_share_status(restaurant_id, row["id"]),
     }
+    # The Shift Quality evaluation, which the owner can already read on the
+    # Labor tab. Without it an owner who saw "Saturday scored 44" and asked
+    # why got a worse answer here than the panel had already given them.
+    # Trimmed to the verdict and the problems — the full evaluation carries
+    # eleven dimensions per shift and would crowd out everything else.
+    try:
+        import json as _j
+        q = _j.loads(row["quality_json"]) if row["quality_json"] else None
+    except Exception:
+        q = None
+    if q and q.get("checked"):
+        out["quality"] = {
+            "score": q.get("score"), "band": q.get("band"),
+            "confidence": (q.get("confidence") or {}).get("level"),
+            "confidence_reasons": (q.get("confidence") or {}).get("reasons") or [],
+            "strengths": q.get("strengths") or [],
+            "weaknesses": q.get("weaknesses") or [],
+            "recommendations": q.get("recommendations") or [],
+            "below_target": q.get("below_profile") or [],
+            "shifts": [{"day": sh.get("day"), "daypart": sh.get("daypart"),
+                        "score": sh.get("score"),
+                        "profile": (sh.get("profile") or {}).get("label"),
+                        "meets_target": sh.get("meets_profile"),
+                        "weaknesses": sh.get("weaknesses") or []}
+                       for sh in (q.get("shifts") or []) if sh.get("scored")],
+        }
+    return out
+
+
+def _read_team(restaurant_id):
+    """Everyone on the roster with their Operational Score, who can close,
+    and the targets and leader rules the scheduler is held to.
+
+    None of this was reachable before, so the assistant could not answer
+    "who are my strongest bartenders" or "why is Saturday weak" from the
+    engine that computes exactly that.
+    """
+    from models import (get_capabilities, capability_coverage, SCORE_LABELS,
+                        get_role_strength_thresholds, get_shift_leader_rules)
+    from labor import load_shifts_for_restaurant, analyse_shifts_for_restaurant
+    analysis = analyse_shifts_for_restaurant(restaurant_id) or {}
+    if not analysis.get("is_live"):
+        return {"rated": False,
+                "note": "No shift data uploaded yet, so there is no roster to rate."}
+    seen = {}
+    for sh in load_shifts_for_restaurant(restaurant_id) or []:
+        name = (sh.get("employee") or "").strip()
+        if not name:
+            continue
+        e = seen.setdefault(name, {"name": name, "role": None, "shifts": 0, "last": ""})
+        e["shifts"] += 1
+        d = sh.get("date") or ""
+        if d >= e["last"]:
+            e["last"] = d
+            e["role"] = (sh.get("role") or "").strip() or e["role"]
+    caps = get_capabilities(restaurant_id)
+    team = []
+    for name, e in seen.items():
+        overall = (caps.get(name) or {}).get("overall") or {}
+        closer = (caps.get(name) or {}).get("can_close") or {}
+        team.append({"name": name, "role": e["role"], "shifts_worked": e["shifts"],
+                     "score": overall.get("score"),
+                     "score_label": SCORE_LABELS.get(overall.get("score")),
+                     "can_close": bool(closer.get("flag")),
+                     "notes": overall.get("notes")})
+    team.sort(key=lambda t: (-(t["score"] or 0), t["name"]))
+    return {
+        "rated": True,
+        "team": team[:_MAX_ROWS],
+        "coverage": capability_coverage(restaurant_id, [t["name"] for t in team]),
+        "role_targets": get_role_strength_thresholds(restaurant_id),
+        "leader_rules": get_shift_leader_rules(restaurant_id),
+        "scale": "1 very weak, 2 below average, 3 average, 4 strong, 5 excellent. "
+                 "A target is the scores of everyone in that role on one shift, added up.",
+    }
+
+
+def _read_alerts(restaurant_id, days=7):
+    """What has fired for this owner, and what is still outstanding."""
+    from models import get_conn
+    from client_api import _NOTIFICATION_LABELS, _NOTIFICATION_MODULE
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            """SELECT a.alert_type, a.fired_at, a.review_id, rv.rating, rv.author,
+                      rv.response_status
+               FROM alert_log a LEFT JOIN reviews rv ON rv.id = a.review_id
+               WHERE a.restaurant_id=? AND julianday(a.fired_at) >= julianday('now', ?)
+               ORDER BY a.id DESC LIMIT ?""",
+            (restaurant_id, f"-{max(1, min(int(days or 7), 90))} days", _MAX_ROWS)).fetchall()
+    finally:
+        conn.close()
+    out = []
+    for r in rows:
+        out.append({
+            "type": r["alert_type"],
+            "label": _NOTIFICATION_LABELS.get(r["alert_type"], r["alert_type"]),
+            "module": _NOTIFICATION_MODULE.get(r["alert_type"], "reviews"),
+            "fired_at": r["fired_at"],
+            "review_id": r["review_id"],
+            "review_rating": r["rating"],
+            "review_author": r["author"],
+            "handled": r["response_status"] in ("posted", "approved", "skipped"),
+        })
+    return {"alerts": out, "outstanding": sum(1 for a in out if not a["handled"])}
+
+
+def _remember(restaurant_id, fact, kind="context"):
+    """Record something the owner said that should survive this conversation."""
+    from models import remember_ask_fact
+    try:
+        saved = remember_ask_fact(restaurant_id, fact, kind=kind, source="Ask Cavnar")
+        return {"remembered": saved["fact"]}
+    except ValueError as e:
+        return {"error": str(e)}
 
 
 def _read_staff_availability(restaurant_id):
@@ -636,8 +755,61 @@ TOOLS = [
         "module": "module_labor",
         "spec": {
             "name": "read_schedule",
-            "description": "The latest generated staff schedule: week, hours vs budget, who is on it, and who has opened their link.",
+            "description": ("The latest generated staff schedule: week, hours vs budget, who is on "
+                            "it, who has opened their link, whether a manager edited it, and its "
+                            "Shift Quality evaluation — the overall score, the score and profile "
+                            "for every shift, which shifts fell under their target and why, and "
+                            "how confident the engine was. Use this for any question about how "
+                            "good a schedule is, not just who is on it."),
             "input_schema": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "kind": "read",
+        "fn": _read_team,
+        "module": "module_labor",
+        "spec": {
+            "name": "read_team",
+            "description": ("Everyone on the roster with their Operational Score (1 weakest to 5 "
+                            "strongest, set by the owner), whether they are authorised to close, "
+                            "how many shifts they have worked, plus the per-role strength targets "
+                            "and shift leader rules the scheduler is held to. Use this for "
+                            "questions about who is strong or weak, who can close, who is still "
+                            "unrated, and why a shift scored the way it did."),
+            "input_schema": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "kind": "read",
+        "fn": _read_alerts,
+        "module": None,
+        "spec": {
+            "name": "read_alerts",
+            "description": ("Alerts that have fired for this restaurant and whether each one has "
+                            "been handled — one-star reviews, health mentions, negative spikes, "
+                            "labor over target. Use this whenever the owner asks what needs their "
+                            "attention, what happened overnight, or about a specific alert."),
+            "input_schema": {"type": "object", "properties": {
+                "days": {"type": "integer", "description": "How far back to look. Default 7."}}},
+        },
+    },
+    {
+        "kind": "read",
+        "fn": _remember,
+        "module": None,
+        "spec": {
+            "name": "remember",
+            "description": ("Record one durable fact about this owner or their plans, so it "
+                            "survives into future conversations — they are hiring, they are "
+                            "pushing on food cost, football season starts next month, they want "
+                            "labor under 26%. Call this when the owner tells you something that "
+                            "should change how you answer NEXT week, not something that is "
+                            "already in the data. Keep it to one short sentence in their own "
+                            "terms. Do not record trivia, and do not record the same thing twice."),
+            "input_schema": {"type": "object", "properties": {
+                "fact": {"type": "string", "description": "One short sentence."},
+                "kind": {"type": "string", "enum": ["goal", "context", "preference", "followup"]},
+            }, "required": ["fact"]},
         },
     },
     {

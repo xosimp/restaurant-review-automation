@@ -6651,6 +6651,12 @@ def labor_capability_changes(current_user):
     return _m("mobile_capability_changes")(current_user)
 
 
+@client_bp.route("/api/ask-cavnar/opening")
+@login_required
+def ask_cavnar_opening(current_user):
+    return _m("mobile_ask_opening")(current_user)
+
+
 @client_bp.route("/api/intel/movement")
 @login_required
 def intel_movement(current_user):

@@ -3632,6 +3632,96 @@ def init_shift_profiles(db_path: str = DB_PATH):
     conn.close()
 
 
+# ── What the assistant remembers between conversations ─────────────────────
+#
+# The transcript is not memory. History is scoped to one conversation id, so
+# a new chat starts blank — an owner who said on Tuesday that they are hiring
+# two bartenders and want labor down had to say it again on Wednesday, which
+# is exactly the "stop making me explain my restaurant" problem.
+#
+# Deliberately small and deliberately written rather than inferred. The model
+# calls a tool to record a fact; nothing is harvested automatically, because a
+# memory that fills itself becomes a second prompt nobody reviewed.
+ASK_MEMORY_LIMIT = 12
+ASK_MEMORY_MAX_LENGTH = 240
+
+
+def init_ask_memory(db_path: str = DB_PATH):
+    conn = get_conn(db_path)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS ask_memory (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id INTEGER NOT NULL REFERENCES restaurants(id),
+            fact          TEXT    NOT NULL,
+            kind          TEXT,             -- goal | context | preference | followup
+            source        TEXT,             -- where it came from, for the owner to judge
+            user_id       INTEGER,
+            created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(restaurant_id, fact)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_ask_memory_rest "
+                 "ON ask_memory(restaurant_id, created_at)")
+    conn.commit()
+    conn.close()
+
+
+def remember_ask_fact(restaurant_id: int, fact: str, kind: str = "context",
+                      source: str = None, user_id: int = None,
+                      db_path: str = DB_PATH) -> dict:
+    """Record one durable fact about this owner. Idempotent on the text.
+
+    Oldest facts fall off past ASK_MEMORY_LIMIT rather than growing without
+    bound — a memory that only ever accumulates ends up costing every
+    subsequent question more and telling the model less.
+    """
+    text = (fact or "").strip()[:ASK_MEMORY_MAX_LENGTH]
+    if not text:
+        raise ValueError("a fact needs some text")
+    init_ask_memory(db_path)
+    conn = get_conn(db_path)
+    try:
+        conn.execute(
+            "INSERT INTO ask_memory (restaurant_id, fact, kind, source, user_id) "
+            "VALUES (?,?,?,?,?) ON CONFLICT(restaurant_id, fact) DO UPDATE SET "
+            "kind=excluded.kind, source=excluded.source, created_at=datetime('now')",
+            (restaurant_id, text, (kind or "context")[:20], (source or "")[:160] or None, user_id))
+        conn.execute(
+            "DELETE FROM ask_memory WHERE restaurant_id=? AND id NOT IN "
+            "(SELECT id FROM ask_memory WHERE restaurant_id=? ORDER BY created_at DESC, id DESC LIMIT ?)",
+            (restaurant_id, restaurant_id, ASK_MEMORY_LIMIT))
+        conn.commit()
+    finally:
+        conn.close()
+    return {"fact": text, "kind": kind or "context"}
+
+
+def get_ask_memory(restaurant_id: int, db_path: str = DB_PATH) -> list:
+    try:
+        init_ask_memory(db_path)
+        conn = get_conn(db_path)
+        rows = conn.execute(
+            "SELECT fact, kind, source, created_at FROM ask_memory WHERE restaurant_id=? "
+            "ORDER BY created_at DESC, id DESC LIMIT ?",
+            (restaurant_id, ASK_MEMORY_LIMIT)).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
+
+
+def forget_ask_fact(restaurant_id: int, fact: str, db_path: str = DB_PATH) -> bool:
+    init_ask_memory(db_path)
+    conn = get_conn(db_path)
+    try:
+        cur = conn.execute("DELETE FROM ask_memory WHERE restaurant_id=? AND fact=?",
+                           (restaurant_id, (fact or "").strip()))
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
 def init_capability_changes(db_path: str = DB_PATH):
     """Who changed a target, when, and what it was before.
 

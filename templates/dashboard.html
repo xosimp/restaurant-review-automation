@@ -611,6 +611,15 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none}
 .ask-badge.s svg{width:15px;height:15px}
 .ask-empty h3{font-family:'Clash Display',sans-serif;font-weight:500;font-size:21px;color:var(--ink);margin:16px 0 6px}
 .ask-empty p{font-size:13.5px;line-height:1.55;color:var(--ink3);margin:0 12px 14px;max-width:36ch}
+.ask-brief{width:100%;text-align:left;margin:0 0 16px}
+.ask-brief .hl{font-family:'Clash Display',sans-serif;font-weight:500;font-size:19px;color:var(--ink);margin:0 0 3px;line-height:1.25}
+.ask-brief .sub{font-size:12.5px;color:var(--ink3);margin:0 0 12px}
+.ask-brief .row{display:flex;gap:10px;align-items:flex-start;padding:9px 0;border-top:1px solid var(--paper3)}
+.ask-brief .row:first-of-type{border-top:0}
+.ask-brief .dot{flex:0 0 7px;width:7px;height:7px;border-radius:50%;margin-top:6px}
+.ask-brief .t{font-size:13.5px;font-weight:600;color:var(--ink);line-height:1.4}
+.ask-brief .d{font-size:12.5px;color:var(--ink3);line-height:1.5;margin-top:1px}
+.ask-brief .lbl{font-size:10px;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;color:var(--ink3);margin:0 0 8px}
 .ask-sugg{width:100%;display:flex;flex-direction:column;gap:8px}
 .ask-sugg button{display:flex;align-items:center;gap:9px;width:100%;text-align:left;padding:11px 14px;border-radius:12px;background:rgba(200,75,47,.10);border:1px solid rgba(200,75,47,.25);color:#e8956a;font-family:'Apfel Grotezk',sans-serif;font-size:13.5px;font-weight:600;cursor:pointer;transition:background .15s,transform .15s}
 .ask-sugg button svg{width:13px;height:13px;flex-shrink:0}
@@ -4397,11 +4406,60 @@ function _askEsc(t){return String(t==null?'':t).replace(/&/g,'&amp;').replace(/<
 // Bold and bullets only — the same light markdown pass the Home inline ask uses.
 function _askMd(t){return _askEsc(t).replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/^#{1,6}\s+/gm,'').replace(/^\s*[-*]\s+/gm,'• ').replace(/(^|[^*])\*(?!\*)([^*\n]+)\*(?!\*)/g,'$1$2').replace(/\*\*/g,'').replace(/\n{3,}/g,'\n\n');}
 function _askIsDark(){return document.documentElement.getAttribute('data-theme')==='dark';}
+// What the panel shows before the owner types.
+//
+// It used to say "Ask me anything" over three hardcoded questions that were
+// identical on both surfaces and never changed — while home_brief was
+// already computing situation-aware ones from real signals and only the
+// Home tab used them. The briefing comes from the same payload, so this is
+// measured rather than written and costs no model call.
+var _askOpening = null;
+
 window._askEmptyHtml = function() {
-  var qs = ['How are my reviews doing?', 'What upcoming holidays should I focus on?', 'How do I get my labor cost down?'];
-  return '<div class="ask-empty"><div class="ask-badge">' + ASK_SPARK + '</div><h3>Ask me anything</h3><p>Your numbers, or general advice on running the place — I\'ll pull in your real data whenever it\'s relevant.</p><div class="ask-sugg">'
-    + qs.map(function(q){ return '<button type="button" onclick="askSuggest(this)">' + ASK_SPARK + '<span>' + _askEsc(q) + '</span></button>'; }).join('') + '</div></div>';
+  var o = _askOpening;
+  var qs = (o && o.suggestions && o.suggestions.length) ? o.suggestions
+    : ['What should I focus on today?', 'How are my reviews doing?', 'How do I get my labor cost down?'];
+  var html = '<div class="ask-empty">';
+  if (o && o.headline) {
+    html += '<div class="ask-brief"><div class="hl">' + _askEsc(o.headline) + '</div>';
+    var sub = [];
+    if (o.restaurant) sub.push(o.restaurant);
+    if (o.since_label) sub.push(o.since_label);
+    if (sub.length) html += '<div class="sub">' + _askEsc(sub.join(' · ')) + '</div>';
+    var items = o.briefing || [], i;
+    for (i = 0; i < items.length; i++) {
+      html += '<div class="row"><span class="dot" style="background:' + _askSevColor(items[i].severity) + '"></span>'
+           + '<span><span class="t">' + _askEsc(items[i].title || '') + '</span>'
+           + (items[i].detail ? '<span class="d">' + _askEsc(items[i].detail) + '</span>' : '')
+           + '</span></div>';
+    }
+    html += '</div>';
+  } else {
+    html += '<div class="ask-badge">' + ASK_SPARK + '</div><h3>Ask me anything</h3>'
+         + '<p>Your numbers, or general advice on running the place — I\'ll pull in your real data whenever it\'s relevant.</p>';
+  }
+  html += '<div class="lbl" style="width:100%;text-align:left">Start here</div><div class="ask-sugg">'
+       + qs.map(function(q){ return '<button type="button" onclick="askSuggest(this)">' + ASK_SPARK + '<span>' + _askEsc(q) + '</span></button>'; }).join('')
+       + '</div></div>';
+  return html;
 };
+
+function _askSevColor(sev) {
+  if (sev === 'critical') return '#eb5757';
+  if (sev === 'important') return '#f2994a';
+  if (sev === 'good') return '#6fcf97';
+  return 'var(--ink3)';
+}
+
+// Fetched once per page load. A failure leaves the old empty state rather
+// than blocking the panel — the opening must never be why Ask won't open.
+window._askLoadOpening = function(then) {
+  if (_askOpening) { if (then) then(); return; }
+  fetch('/api/ask-cavnar/opening').then(function(r){ return r.json(); }).then(function(d){
+    if (d && d.ok) _askOpening = d;
+  }).catch(function(){}).then(function(){ if (then) then(); });
+};
+
 window.askSuggest = function(btn) {
   var input = document.getElementById('ask-cavnar-input');
   if (!input) return;
@@ -4426,7 +4484,15 @@ window.toggleAskCavnar = function() {
       _askCavnarHeaderOrb = CavnarOrb.mount(document.getElementById('ask-cavnar-header-orb'), 'breathing', {size: 40, dark: _askIsDark()});
     }
     var box = document.getElementById('ask-cavnar-messages');
-    if (box && !box.children.length) box.innerHTML = _askEmptyHtml();
+    if (box && !box.children.length) {
+      // Paint the old state immediately so the panel never opens blank,
+      // then swap in the briefing the moment it lands.
+      box.innerHTML = _askEmptyHtml();
+      _askLoadOpening(function () {
+        var b = document.getElementById('ask-cavnar-messages');
+        if (b && b.querySelector('.ask-empty') && b.children.length === 1) b.innerHTML = _askEmptyHtml();
+      });
+    }
     var input = document.getElementById('ask-cavnar-input');
     if (input) input.focus();
   }

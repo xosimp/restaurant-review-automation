@@ -271,7 +271,24 @@ final class AskCavnarViewModel {
         guard !hasLoadedInitial else { return }
         hasLoadedInitial = true
         await refreshConversations()
+        await loadOpening()
     }
+
+    /// What the screen says before the owner types anything.
+    ///
+    /// It used to be three hardcoded questions, identical to the web's and
+    /// never changing — while the platform was already computing
+    /// situation-aware ones from real signals and only the Home tab used
+    /// them. No model call: this is the first thing an owner sees, so it has
+    /// to be instant, and every line is measured rather than written.
+    func loadOpening() async {
+        if let response: AskOpening = try? await client.send(
+            "/mobile/api/ask-cavnar/opening", hapticOnError: false), response.ok {
+            opening = response
+        }
+    }
+
+    var opening: AskOpening?
 
     func refreshConversations() async {
         isLoadingConversations = true
@@ -535,5 +552,29 @@ final class AskCavnarViewModel {
             ? "I didn't get an answer back that time — mind asking again?"
             : cleaned
         messages.append(ChatMessage(text: display, isUser: false, wasTruncated: truncated, proposals: proposals))
+    }
+}
+
+
+/// The assistant's opening: what needs the owner today, and the questions
+/// worth asking given the state of the business right now.
+struct AskOpening: Codable, Equatable {
+    struct Item: Codable, Equatable, Identifiable {
+        let severity: String?
+        let title: String?
+        let detail: String?
+        let module: String?
+        var id: String { (title ?? "") + (detail ?? "") }
+    }
+    let ok: Bool
+    let headline: String?
+    let briefing: [Item]?
+    let suggestions: [String]?
+    let restaurant: String?
+    let sinceLabel: String?
+
+    enum CodingKeys: String, CodingKey {
+        case ok, headline, briefing, suggestions, restaurant
+        case sinceLabel = "since_label"
     }
 }
