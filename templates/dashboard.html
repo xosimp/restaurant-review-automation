@@ -1171,7 +1171,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-hero .delta span{color:var(--ink3);font-weight:400}
 .hb-range{display:flex;gap:2px}
 .hb-range button{background:none;border:none;border-radius:999px;padding:5px 11px;font-family:'Space Grotesk',sans-serif;font-size:12px;font-weight:600;color:var(--ink3);cursor:pointer}
-.hb-range button.on{background:var(--hb-tint2);color:var(--ember)}
+.hb-range button.on{background-color:var(--hb-tint2);color:var(--ember)}
 .hb-hero svg{display:block;width:100%;height:190px;margin-top:6px;overflow:visible}
 .hb-hero .ax{display:flex;justify-content:space-between;font-size:11px;color:var(--ink3);margin-top:4px}
 /* signals row */
@@ -1267,7 +1267,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-fade{animation:hbIn .32s ease both}
 @keyframes hbIn{from{opacity:0}to{opacity:1}}
 .hb-err{padding:14px 0;color:var(--hb-bad);font-size:13px;display:flex;justify-content:space-between;gap:12px;align-items:center;border-top:1px solid var(--hb-line);border-bottom:1px solid var(--hb-line)}
-@media (prefers-reduced-motion:reduce){.hb-draw,.hb-fill,.hb-glow,.hb-dot,.hb-hot,.hb-bar,.hb-skel:after,.hb-fade,.hb-chip .dot b{animation:none!important;stroke-dashoffset:0;opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){.hb-draw,.hb-fill,.hb-glow,.hb-dot,.hb-hot,.hb-bar,.hb-skel:after,.hb-fade,.hb-chip .dot b{animation:none!important;stroke-dashoffset:0;opacity:1;transform:none}.lb2-callout{animation:none!important;opacity:1}}
 .hb-xl{display:flex;margin-top:2px}
 .hb-xl span{flex:1;min-width:0;text-align:center;font-family:'Space Grotesk',sans-serif;font-size:10px;color:var(--ink3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 2px}
 .hb-sub .chg .hb-num{font-size:15px;font-weight:700;color:var(--ember)}
@@ -1332,13 +1332,33 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     var line=smooth(pts),last=pts[pts.length-1],first=pts[0];
     var anim=reduced()?'':' class="hb-draw"';
     var s='<svg viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none" aria-hidden="true">'+glowDefs(id,col);
-    if(opts.target!=null){var ty=h-pad-((opts.target-min)/rng)*(h-2*pad-8)-4;s+='<line x1="0" y1="'+ty.toFixed(1)+'" x2="'+w+'" y2="'+ty.toFixed(1)+'" stroke="'+col+'" stroke-opacity=".45" stroke-dasharray="4 5"/><text x="'+(w-4)+'" y="'+(ty-5).toFixed(1)+'" text-anchor="end" font-size="10" font-family="Space Grotesk, sans-serif" fill="'+col+'" fill-opacity=".8">'+(opts.targetLabel||('target '+opts.target+'%'))+'</text>';}
-    s+='<path class="hb-fill" d="'+line+' L'+last[0].toFixed(1)+' '+h+' L'+first[0].toFixed(1)+' '+h+' Z" fill="url(#'+id+'g)"/>';
+    var hasTarget=opts.target!=null,ty=0;
+    if(hasTarget){
+      ty=h-pad-((opts.target-min)/rng)*(h-2*pad-8)-4;
+      s+='<line x1="0" y1="'+ty.toFixed(1)+'" x2="'+w+'" y2="'+ty.toFixed(1)+'" stroke="'+col+'" stroke-opacity=".45" stroke-dasharray="4 5"/><text x="'+(w-4)+'" y="'+(ty-5).toFixed(1)+'" text-anchor="end" font-size="10" font-family="Space Grotesk, sans-serif" fill="'+col+'" fill-opacity=".8">'+(opts.targetLabel||('target '+opts.target+'%'))+'</text>';
+    }
+    var fillD=line+' L'+last[0].toFixed(1)+' '+h+' L'+first[0].toFixed(1)+' '+h+' Z';
+    if(hasTarget){
+      // The fill was one flat color regardless of where the curve sat
+      // against target — the same red already used for the over-target
+      // dots below never reached the area under them. Two copies of the
+      // identical fill shape, each clipped to one side of the target
+      // row, paint the area red exactly where (and only where) the curve
+      // is actually over target — clipped at the target line itself, not
+      // per data point, so it stays correct regardless of curve shape.
+      s+='<defs><linearGradient id="'+id+'r" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="'+RED+'" stop-opacity=".5"/><stop offset="1" stop-color="'+RED+'" stop-opacity="0"/></linearGradient>'
+        +'<clipPath id="'+id+'cb"><rect x="0" y="'+ty.toFixed(1)+'" width="'+w+'" height="'+(h-ty).toFixed(1)+'"/></clipPath>'
+        +'<clipPath id="'+id+'ca"><rect x="0" y="0" width="'+w+'" height="'+ty.toFixed(1)+'"/></clipPath></defs>';
+      s+='<path class="hb-fill" d="'+fillD+'" fill="url(#'+id+'g)" clip-path="url(#'+id+'cb)"/>';
+      s+='<path class="hb-fill" d="'+fillD+'" fill="url(#'+id+'r)" clip-path="url(#'+id+'ca)"/>';
+    } else {
+      s+='<path class="hb-fill" d="'+fillD+'" fill="url(#'+id+'g)"/>';
+    }
     s+='<path class="hb-glow" d="'+line+'" fill="none" stroke="'+col+'" stroke-opacity=".55" stroke-width="6" filter="url(#'+id+'f)" stroke-linecap="round"/>';
     s+='<path'+anim+' d="'+line+'" fill="none" stroke="'+col+'" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>';
     s+='<circle class="hb-hot" cx="'+last[0].toFixed(1)+'" cy="'+last[1].toFixed(1)+'" r="14" fill="url(#'+id+'h)" style="transform-box:fill-box;transform-origin:center"/>';
     s+='<circle class="hb-dot" cx="'+last[0].toFixed(1)+'" cy="'+last[1].toFixed(1)+'" r="4" fill="'+col+'" stroke="#fff" stroke-opacity=".9" stroke-width="1.5"/>';
-    if(opts.target!=null){for(var q=0;q<pts.length;q++){if(vals[q]>opts.target){s+='<circle class="hb-dot" cx="'+pts[q][0].toFixed(1)+'" cy="'+pts[q][1].toFixed(1)+'" r="9" fill="#e05555" fill-opacity=".22" style="animation-delay:'+(1.2+q*0.08).toFixed(2)+'s"/><circle class="hb-dot" cx="'+pts[q][0].toFixed(1)+'" cy="'+pts[q][1].toFixed(1)+'" r="3.2" fill="#e05555" style="animation-delay:'+(1.2+q*0.08).toFixed(2)+'s"/>';}}}
+    if(hasTarget){for(var q=0;q<pts.length;q++){if(vals[q]>opts.target){s+='<circle class="hb-dot" cx="'+pts[q][0].toFixed(1)+'" cy="'+pts[q][1].toFixed(1)+'" r="9" fill="#e05555" fill-opacity=".22" style="animation-delay:'+(1.2+q*0.08).toFixed(2)+'s"/><circle class="hb-dot" cx="'+pts[q][0].toFixed(1)+'" cy="'+pts[q][1].toFixed(1)+'" r="3.2" fill="#e05555" style="animation-delay:'+(1.2+q*0.08).toFixed(2)+'s"/>';}}}
     return s+'</svg>';
   }
   // Bars with an optional target rule; bars over target glow red. Text uses currentColor (the tile sets it).
@@ -1684,7 +1704,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .rv2-sg .cap{font-size:11.5px;color:var(--ink3);margin-top:6px;display:flex;justify-content:space-between;gap:10px}
 .rv2-days{display:flex;gap:2px}
 .rv2-days button{background:none;border:none;border-radius:999px;padding:3px 9px;font-family:'Space Grotesk',sans-serif;font-size:11px;font-weight:600;color:var(--ink3);cursor:pointer;letter-spacing:0;text-transform:none}
-.rv2-days button.on{background:var(--hb-tint2);color:var(--ember)}
+.rv2-days button.on{background-color:var(--hb-tint2);color:var(--ember)}
 .rv2-perf{display:flex;flex-direction:column;gap:8px;margin-top:12px}
 .rv2-perf .row{display:grid;grid-template-columns:110px 1fr 54px;gap:10px;align-items:center;font-size:12px;color:var(--ink2)}
 .rv2-perf .bar{height:10px;border-radius:5px;background:var(--hb-line2);overflow:hidden}
@@ -2017,7 +2037,23 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .lb2-hero .delta{font-size:13px;font-weight:600;color:var(--ink2);margin-top:6px}
 .lb2-hero .delta.good{color:var(--hb-good)}.lb2-hero .delta.bad{color:var(--hb-bad)}
 .lb2-hero .delta span{color:var(--ink3);font-weight:400}
-.lb2-hero svg{display:block;width:100%;height:190px;margin-top:6px;overflow:visible}
+.lb2-hero svg{display:block;width:100%;height:190px;margin-top:6px;overflow:visible;cursor:crosshair}
+#lb2-hero-chart{position:relative}
+.lb2-callout{position:absolute;transform:translate(-50%,-100%);max-width:200px;background:var(--surface);border:1px solid var(--hb-line);border-radius:8px;padding:6px 10px;font-size:12px;font-weight:600;color:var(--ink2);line-height:1.35;box-shadow:0 8px 20px rgba(0,0,0,.16);display:flex;align-items:flex-start;gap:6px;opacity:0;animation:hbFillIn .6s ease 2.6s forwards;pointer-events:none;z-index:2;white-space:normal}
+.lb2-callout .dot{width:6px;height:6px;border-radius:50%;background:var(--hb-bad);flex-shrink:0;margin-top:4px;box-shadow:0 0 6px var(--hb-bad)}
+.lb2-hoverdot{position:absolute;width:9px;height:9px;margin:-4.5px 0 0 -4.5px;border-radius:50%;border:2px solid var(--surface);box-shadow:0 0 0 1px rgba(0,0,0,.1),0 2px 6px rgba(0,0,0,.25);pointer-events:none;z-index:3;transition:left .07s linear,top .07s linear}
+.lb2-hoverdot[hidden]{display:none}
+.lb2-tip{position:absolute;top:0;transform:translate(-50%,-115%);background:var(--surface);border:1px solid var(--hb-line);border-radius:10px;padding:9px 12px;min-width:148px;box-shadow:0 12px 28px rgba(0,0,0,.2);pointer-events:none;z-index:4;transition:left .07s linear}
+.lb2-tip.right{transform:translate(-85%,-115%)}
+.lb2-tip[hidden]{display:none}
+.lb2-tip-d{font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3);margin-bottom:4px}
+.lb2-tip-pct{font-family:'Space Grotesk',sans-serif;font-size:19px;font-weight:700;color:var(--hb-good);line-height:1}
+.lb2-tip-pct.bad{color:var(--hb-bad)}
+.lb2-tip-pct span{display:block;font-family:'Apfel Grotezk',sans-serif;font-size:11px;font-weight:500;color:var(--ink3);margin-top:2px}
+.lb2-tip-row{display:flex;justify-content:space-between;gap:16px;font-size:12px;color:var(--ink3);padding-top:5px;margin-top:5px;border-top:1px solid var(--hb-line2)}
+.lb2-tip-row:first-of-type{border-top:none;margin-top:6px;padding-top:0}
+.lb2-tip-row b{font-family:'Space Grotesk',sans-serif;color:var(--ink);font-weight:600}
+@media (max-width:680px){.lb2-callout{display:none}}
 .lb2-hero .ax{display:flex;justify-content:space-between;font-size:11px;color:var(--ink3);margin-top:4px}
 .lb2-ai{margin-top:16px;padding:16px 20px;border-radius:10px;background:var(--hb-tint);font-size:16px;line-height:1.65;color:var(--ink2)}
 .lb2-ai .tag{font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);margin-bottom:7px}
@@ -2053,7 +2089,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .lb2-money .x.good{color:var(--hb-good)}.lb2-money .x.bad{color:var(--hb-bad)}
 .lb2-range{display:flex;gap:2px}
 .lb2-range button{background:none;border:none;border-radius:999px;padding:5px 11px;font-family:'Space Grotesk',sans-serif;font-size:12px;font-weight:600;color:var(--ink3);cursor:pointer}
-.lb2-range button.on{background:var(--hb-tint2);color:var(--ember)}
+.lb2-range button.on{background-color:var(--hb-tint2);color:var(--ember)}
 /* schedule tools */
 .lb2-sched{margin-top:34px;padding-top:22px;border-top:1px solid var(--hb-line)}
 .lb2-preview{border-radius:12px;background:var(--hb-tint);overflow:hidden;margin-top:14px}
@@ -5539,8 +5575,6 @@ function clearFilters(){
     if (thumb) thumb.style.transform = isDark ? 'translateX(20px)' : 'none';
     var activeTab = (document.querySelector('.tab.active')||{}).id||'';
     setPageBg(activeTab.replace('tab-','') || 'home');
-    var _pt=document.getElementById('perf-tab-trend');
-    if(_pt)_pt.style.background=_perfActiveColor();
   });
 })();
 
@@ -8990,8 +9024,74 @@ function loadLaborTrend(force){
 }
 function _laborDaily(){
   var bd=window.laborByDay||{},keys=Object.keys(bd).sort(),out=[];
-  for(var i=0;i<keys.length;i++){var d=bd[keys[i]]||{},sv=+d.sales||0,c=+d.labor_cost||0;if(sv>0&&keys[i])out.push({label:keys[i],pct:Math.round(c/sv*1000)/10});}
+  for(var i=0;i<keys.length;i++){var d=bd[keys[i]]||{},sv=+d.sales||0,c=+d.labor_cost||0;if(sv>0&&keys[i])out.push({label:keys[i],pct:Math.round(c/sv*1000)/10,sales:sv,labor_cost:c,actual:+d.actual||0});}
   return out;
+}
+var _WD=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+function _laborWeekday(iso){var d=new Date(iso+'T00:00:00');return isNaN(d)?'':_WD[d.getDay()];}
+// Same box the SVG in glowLine draws to (w=1000,h=190,pad=10) — kept in sync
+// here so the hover layer and the "worst day" callout land on the exact
+// point the curve is actually drawn at, not an approximation of it.
+var LB2_W=1000,LB2_H=190,LB2_PAD=10;
+function _lb2xy(i,n,val,min,rng){
+  var x=LB2_PAD+i*(LB2_W-2*LB2_PAD)/(n-1);
+  var y=LB2_H-LB2_PAD-((val-min)/rng)*(LB2_H-2*LB2_PAD-8)-4;
+  return [x,y];
+}
+// The one callout worth putting directly on the chart: the single worst
+// day this period, named and quantified, so a glance at the ribbon answers
+// "where's the spike" without opening the AI read below it. Every word
+// here comes from the same _laborDaily()/trend numbers already on screen —
+// nothing is invented, and a period with nothing over target gets no
+// callout rather than a manufactured one.
+function _laborCallout(pts,vals,target,trend,min,rng){
+  if(trend||pts.length<3)return '';
+  var worstI=-1,worstV=target;
+  for(var i=0;i<vals.length;i++){if(vals[i]>worstV){worstV=vals[i];worstI=i;}}
+  if(worstI<0)return '';
+  var xy=_lb2xy(worstI,vals.length,vals[worstI],min,rng);
+  var leftPct=Math.max(6,Math.min(94,xy[0]/LB2_W*100)).toFixed(2);
+  var topPct=Math.max(2,xy[1]/LB2_H*100-4).toFixed(2);
+  var day=_laborWeekday(pts[worstI].label)||'That day';
+  var text=day+' peaked at '+worstV.toFixed(1)+'% — '+(worstV-target).toFixed(1)+' pts over target';
+  return '<div class="lb2-callout" style="left:'+leftPct+'%;top:'+topPct+'%"><span class="dot"></span>'+CavnarCharts.esc(text)+'</div>';
+}
+var _lb2HoverBound=null;
+function _wireLaborHover(container,pts,vals,target,trend,min,rng){
+  var svg=container.querySelector('svg');
+  var tip=document.getElementById('lb2-chart-tip');
+  var dot=document.getElementById('lb2-chart-hoverdot');
+  if(!svg||!tip||!dot)return;
+  var n=vals.length,C=CavnarCharts;
+  function idxAt(clientX){
+    var r=svg.getBoundingClientRect();if(!r.width)return 0;
+    var frac=Math.max(0,Math.min(1,(clientX-r.left)/r.width));
+    var raw=(frac*LB2_W-LB2_PAD)/(LB2_W-2*LB2_PAD)*(n-1);
+    return Math.max(0,Math.min(n-1,Math.round(raw)));
+  }
+  function move(clientX){
+    var i=idxAt(clientX),p=pts[i],pct=vals[i],xy=_lb2xy(i,n,pct,min,rng),over=pct>target;
+    var xPct=(xy[0]/LB2_W*100).toFixed(2),yPct=(xy[1]/LB2_H*100).toFixed(2);
+    dot.style.left=xPct+'%';dot.style.top=yPct+'%';dot.style.background=over?'#e05555':'#e8956a';dot.hidden=false;
+    var dateLine=trend?C.esc(p.label):(_laborWeekday(p.label)+' '+C.mdy(p.label));
+    var html='<div class="lb2-tip-d">'+dateLine+'</div><div class="lb2-tip-pct '+(over?'bad':'good')+'">'+pct.toFixed(1)+'%<span>'+(over?(pct-target).toFixed(1)+' over target':'at or under target')+'</span></div>';
+    if(p.sales)html+='<div class="lb2-tip-row"><span>Sales</span><b>$'+Math.round(p.sales).toLocaleString()+'</b></div>';
+    if(p.labor_cost)html+='<div class="lb2-tip-row"><span>Labor cost</span><b>$'+Math.round(p.labor_cost).toLocaleString()+'</b></div>';
+    if(p.actual)html+='<div class="lb2-tip-row"><span>Hours</span><b>'+Math.round(p.actual)+'h</b></div>';
+    tip.innerHTML=html;
+    tip.style.left=xPct+'%';
+    tip.classList.toggle('right',xy[0]>LB2_W*0.62);
+    tip.hidden=false;
+  }
+  function hide(){tip.hidden=true;dot.hidden=true;}
+  if(_lb2HoverBound){svg.removeEventListener('mousemove',_lb2HoverBound.move);svg.removeEventListener('mouseleave',_lb2HoverBound.hide);svg.removeEventListener('touchmove',_lb2HoverBound.touch);}
+  var onMove=function(e){move(e.clientX);};
+  var onTouch=function(e){if(e.touches&&e.touches[0]){move(e.touches[0].clientX);e.preventDefault();}};
+  svg.addEventListener('mousemove',onMove);
+  svg.addEventListener('mouseleave',hide);
+  svg.addEventListener('touchmove',onTouch,{passive:false});
+  svg.addEventListener('touchend',hide);
+  _lb2HoverBound={move:onMove,hide:hide,touch:onTouch};
 }
 function renderLaborHero(){
   var el=document.getElementById('lb2-hero-chart');if(!el||!window.CavnarCharts)return;
@@ -9000,8 +9100,13 @@ function renderLaborHero(){
   var kick=document.getElementById('lb2-hero-kicker');if(kick)kick.textContent=trend?'Labor % · last 8 weeks':'Labor ribbon · daily labor %';
   if(pts.length<2){el.innerHTML='<div class="hb-empty" style="height:190px;display:flex;align-items:center">'+(trend?'The weekly trend appears after a couple of periods.':'Daily labor % appears once shifts and sales are in.')+'</div>';return;}
   var vals=pts.map(function(p){return p.pct;});
-  var lo=Math.min(Math.min.apply(null,vals),target)-3,hi=Math.max(Math.max.apply(null,vals),target)+3;
-  el.innerHTML=C.glowLine(vals,1000,190,'#e8956a',{pad:10,floor:lo,ceil:hi,target:target})+'<div class="ax hb-num"><span>'+(trend?C.esc(pts[0].label):C.mdy(pts[0].label))+'</span><span>'+(trend?C.esc(pts[pts.length-1].label):C.mdy(pts[pts.length-1].label))+'</span></div>';
+  var lo=Math.min(Math.min.apply(null,vals),target)-3,hi=Math.max(Math.max.apply(null,vals),target)+3,rng=(hi-lo)||1;
+  el.innerHTML=C.glowLine(vals,LB2_W,LB2_H,'#e8956a',{pad:LB2_PAD,floor:lo,ceil:hi,target:target})
+    +_laborCallout(pts,vals,target,trend,lo,rng)
+    +'<div class="lb2-tip" id="lb2-chart-tip" hidden></div>'
+    +'<div class="lb2-hoverdot" id="lb2-chart-hoverdot" hidden></div>'
+    +'<div class="ax hb-num"><span>'+(trend?C.esc(pts[0].label):C.mdy(pts[0].label))+'</span><span>'+(trend?C.esc(pts[pts.length-1].label):C.mdy(pts[pts.length-1].label))+'</span></div>';
+  _wireLaborHover(el,pts,vals,target,trend,lo,rng);
 }
 function renderPerfChart(){renderLaborHero();}
 function exportReviews(){window.location='/api/export-reviews';}
