@@ -2105,7 +2105,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
   <div class="hb-top">
     <div style="min-width:300px;flex:1 1 460px">
       <h1 class="hb-h1">Labor. <span class="hb-head {{ _tone }}">{{ _head }}</span></h1>
-      <div class="lb2-daterange"><span id="labor-period" class="hb-num">{{ _days }}-day window</span><span class="sep">·</span><span>target <span class="hb-num">{{ _lt|int }}%</span></span>{% if not labor.is_live %}<span class="sep">·</span><span>sample data</span>{% endif %}</div>
+      <div class="lb2-daterange"><span id="labor-period" class="hb-num">{{ _days }}-day window</span>{% if not labor.is_live %}<span class="sep">·</span><span>sample data</span>{% endif %}</div>
       <div class="lb2-bignums">
         <div class="lb2-bn"><span class="l">Sales</span><span class="row"><span class="hb-num">${{ labor.total_sales|int|format_num }}</span></span></div>
         <div class="lb2-bn"><span class="l">Labor</span><span class="row"><span class="hb-num">${{ labor.total_labor_cost|int|format_num }}</span><span class="hb-num pct {{ 'good' if _lp <= _lt else 'bad' }}">{{ _lp }}%</span></span></div>

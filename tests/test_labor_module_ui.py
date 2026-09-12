@@ -97,6 +97,19 @@ def test_the_schedule_and_upload_buttons_moved_off_the_header():
     )
 
 
+def test_the_date_range_no_longer_repeats_the_target_next_to_it():
+    """The target already has its own stat chip a few inches to the
+    right ("26% target") — restating it in the date-range line too was
+    redundant. The chip stays; only the inline repeat is gone."""
+    panel = _labor_panel()
+    m = re.search(r'<div class="lb2-daterange">(.*?)</div>', panel)
+    assert m, "couldn't find the date-range row"
+    assert "target" not in m.group(1).lower()
+    assert 'id="labor-period"' in m.group(1)
+    # the stat chip still carries it, further along in the header
+    assert re.search(r'<span class="l">target</span>', panel)
+
+
 def test_the_stale_gap_paragraph_is_gone():
     panel = _labor_panel()
     assert 'id="gap-dollar"' not in panel
