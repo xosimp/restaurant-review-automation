@@ -178,18 +178,63 @@ def test_staff_contact_rows_use_a_readable_font_size_not_11px():
     assert "font-size:14px" in body
 
 
-# ── "What counts most" sliders — the native track/number read as bright
-# white against the dark theme; both swap to the same warm cream/sand
-# already used everywhere else literal white shows through in dark mode ──
+# ── "What counts most" sliders. First pass relied on the native track
+# plus accent-color: the UA centered its default thumb against its own
+# default track height rather than the 4px one asked for (so the thumb
+# sat visibly low), and Safari left a leftover native-white segment past
+# the accent fill. Second pass: a fully custom control — appearance:none
+# on track and thumb, filled portion painted as an explicit gradient kept
+# in sync with the value, darker (not airy-cream) sand for the groove,
+# and the brand's own deep ember for the fill, not the lighter dark-theme
+# accent shade.
 
-def test_the_weighting_sliders_and_their_numbers_carry_the_sand_classes():
-    body = _fn("renderWeightList")
-    assert 'class="qw-slider"' in body
-    assert 'class="qw-num"' in body
-
-
-def test_dark_mode_swaps_the_slider_track_and_number_to_sand_not_white():
+def test_the_slider_is_a_fully_custom_control_not_native_accent_color():
     css = _src()
-    assert '[data-theme="dark"] .qw-num{color:#ddd0b8' in css
-    assert '[data-theme="dark"] .qw-slider::-webkit-slider-runnable-track{background:#ddd0b8}' in css
-    assert '[data-theme="dark"] .qw-slider::-moz-range-track{background:#ddd0b8}' in css
+    assert ".qw-slider{-webkit-appearance:none" in css
+    assert ".qw-slider::-webkit-slider-thumb{-webkit-appearance:none" in css
+    assert ".qw-slider::-moz-range-thumb{" in css
+    assert ".qw-slider{accent-color:var(--ember)}" not in css
+
+
+def test_the_fill_and_track_are_theme_tokens_not_inline_hex():
+    css = _src()
+    assert "--qw-fill:#c84b2f;--qw-track:#cbb896" in css.replace(" ", "")
+    assert "--qw-track:#5c4f3a" in css.replace(" ", "")
+    # The fill (the "dark branded orange") is deliberately NOT redefined in
+    # the dark block — it should read as the same brand ember in both
+    # themes, not the lighter accent shade dark mode uses for --ember.
+    dark_block = css[css.index('[data-theme="dark"]{'):css.index("}", css.index('[data-theme="dark"]{'))]
+    assert "--qw-fill" not in dark_block
+
+
+def test_the_thumb_is_centered_on_the_custom_track_height():
+    css = _src()
+    # A track this thin needs a matching negative thumb margin or the UA's
+    # own thumb — sized for its own default track — sits visibly low.
+    m = re.search(r"\.qw-slider\{[^}]*height:(\d+)px", css)
+    assert m
+    track_h = int(m.group(1))
+    thumb = re.search(r"\.qw-slider::-webkit-slider-thumb\{([^}]*)\}", css).group(1)
+    th_h = int(re.search(r"height:(\d+)px", thumb).group(1))
+    th_margin = int(re.search(r"margin-top:(-?\d+)px", thumb).group(1))
+    assert th_margin == -(th_h - track_h) // 2
+
+
+def test_the_fill_gradient_is_computed_once_and_reused_live():
+    grad_fn = _fn("_qwGradient")
+    assert "var(--qw-fill)" in grad_fn and "var(--qw-track)" in grad_fn
+    # Rendered once at build time...
+    render_body = _fn("renderWeightList")
+    assert "_qwGradient(value, 0, 40)" in render_body
+    # ...and kept in sync as the user drags, not just at load.
+    s = _src()
+    i = s.index("document.addEventListener('input', function (ev) {")
+    j = s.index("});", i)
+    listener = s[i:j]
+    assert "_qwGradient(" in listener
+
+
+def test_dark_mode_darkens_the_number_not_the_airy_cream_used_elsewhere():
+    css = _src()
+    assert '[data-theme="dark"] .qw-num{color:#a68a5e' in css
+    assert '[data-theme="dark"] .qw-num{color:#ddd0b8' not in css

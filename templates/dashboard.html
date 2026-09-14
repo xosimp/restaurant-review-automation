@@ -18,7 +18,7 @@
 {% if restaurant.brand_color %}<style>:root{--ember:{{ restaurant.brand_color | e }};--ember2:{{ restaurant.brand_color | e }}cc}</style>{% endif %}
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-:root{--ink:#0e0c0a;--ink2:#3a3530;--ink3:#7a736a;--paper:#f7f4ef;--paper2:#edeae3;--paper3:#e0dbd0;--ember:#c84b2f;--ember2:#e8956a;--green:#2d6a4f;--green-bg:#eaf4ee;--red:#c0392b;--red-bg:#fdf0ef;--amber:#b7791f;--amber-bg:#fef9ec;--blue:#1a56cc;--blue-bg:#e8f0fe;--r:8px;--surface:#ffffff;--hdr-bg:var(--ink)}
+:root{--ink:#0e0c0a;--ink2:#3a3530;--ink3:#7a736a;--paper:#f7f4ef;--paper2:#edeae3;--paper3:#e0dbd0;--ember:#c84b2f;--ember2:#e8956a;--green:#2d6a4f;--green-bg:#eaf4ee;--red:#c0392b;--red-bg:#fdf0ef;--amber:#b7791f;--amber-bg:#fef9ec;--blue:#1a56cc;--blue-bg:#e8f0fe;--r:8px;--surface:#ffffff;--hdr-bg:var(--ink);--qw-fill:#c84b2f;--qw-track:#cbb896}
 /* ── DARK MODE ──────────────────────────────────────────────────────────────── */
 [data-theme="dark"]{
   --ink:#f0ebe0;--ink2:#c4bdb4;--ink3:#cdbfa9;
@@ -26,7 +26,7 @@
   --ember:#e06444;--ember2:#e8956a;
   --green:#4ead7a;--green-bg:#0c2318;--red:#e05555;--red-bg:#2a1010;
   --amber:#d4a030;--amber-bg:#251d08;--blue:#6aabff;--blue-bg:#0a1828;
-  --surface:#201d19;--hdr-bg:#0c0c0c
+  --surface:#201d19;--hdr-bg:#0c0c0c;--qw-track:#5c4f3a
 }
 html[data-theme="dark"]{background:#0c0c0c!important;background-image:none!important}
 html[data-theme="dark"] body{color:var(--ink)}
@@ -52,19 +52,20 @@ html[data-theme="dark"] body{color:var(--ink)}
 [data-theme="dark"] [style*="color:white"]{color:#ddd0b8!important}
 [data-theme="dark"] [style*="color: white"]{color:#ddd0b8!important}
 [data-theme="dark"] .avatar{color:#ddd0b8!important}
-/* "What counts most" weighting sliders — a plain range input's native
-   track renders as a bright light-gray/white groove no matter the page
-   theme, which read as jarring bare-white bars against the dark surface
-   here. The filled portion (accent-color) stays ember; only the empty
-   groove and the value label swap to the same warm cream/sand used
-   everywhere else white would otherwise show through in dark mode. */
+/* "What counts most" weighting sliders — relying on the native track plus
+   accent-color left the thumb off-center (the UA centers its default thumb
+   against ITS OWN default track height, not the 4px one we asked for) and,
+   in Safari, a leftover native-white segment past the accent fill. Fully
+   custom control instead: appearance:none on both track and thumb, the
+   filled portion painted as an explicit gradient kept in sync with the
+   value by updateQwSliderFill() (JS), a fixed thumb size with the margin
+   worked out for the track's own height so it's centered in every browser. */
 .qw-num{font-family:'Space Grotesk',sans-serif;font-weight:700;color:var(--ink)}
-.qw-slider{accent-color:var(--ember)}
-.qw-slider::-webkit-slider-runnable-track{height:4px;border-radius:2px}
-.qw-slider::-moz-range-track{height:4px;border-radius:2px}
-[data-theme="dark"] .qw-num{color:#ddd0b8!important}
-[data-theme="dark"] .qw-slider::-webkit-slider-runnable-track{background:#ddd0b8}
-[data-theme="dark"] .qw-slider::-moz-range-track{background:#ddd0b8}
+[data-theme="dark"] .qw-num{color:#a68a5e!important}
+.qw-slider{-webkit-appearance:none;appearance:none;width:100%;height:6px;border-radius:3px;outline:none;cursor:pointer;background:var(--qw-track);vertical-align:middle}
+.qw-slider::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;border-radius:50%;background:var(--qw-fill);border:none;cursor:pointer;margin-top:-5px}
+.qw-slider::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:var(--qw-fill);border:none;cursor:pointer}
+.qw-slider::-moz-range-track{height:6px;border-radius:3px;background:var(--qw-track)}
 /* Header & tabs must explicitly override the var(--ink) background (--ink is light in dark mode) */
 [data-theme="dark"] .hdr{background:var(--hdr-bg)!important}
 [data-theme="dark"] .tabs{background:#0c0c0c!important;border-top-color:#0c0c0c!important}
@@ -7473,6 +7474,20 @@ function deleteShiftProfile(key) {
     .catch(function () { });
 }
 
+// Native range inputs have no cross-browser way to paint "filled so far"
+// vs "still empty" as two colors — accent-color leaves the unfilled part
+// to the UA's own track rendering, which is what looked wrong here. This
+// paints both halves explicitly as a gradient split at the value's own
+// percentage, using the same --qw-fill/--qw-track tokens the CSS defines
+// (so it stays correct across themes without this function knowing which
+// theme is active).
+function _qwGradient(value, min, max) {
+  var pct = max > min ? ((value - min) / (max - min)) * 100 : 0;
+  if (pct < 0) pct = 0; else if (pct > 100) pct = 100;
+  return 'linear-gradient(to right,var(--qw-fill) 0%,var(--qw-fill) ' + pct
+    + '%,var(--qw-track) ' + pct + '%,var(--qw-track) 100%)';
+}
+
 function renderWeightList() {
   var el = document.getElementById('sp-weights');
   if (!el) return;
@@ -7483,7 +7498,7 @@ function renderWeightList() {
     if (value === undefined) value = _defaultWeights[d.key] || 0;
     html += '<div style="display:flex;align-items:center;gap:10px">'
       + '<span style="flex:0 0 140px;font-size:14.5px;color:var(--ink2)">' + _escHtml(d.label) + '</span>'
-      + '<input data-weight-key="' + _escAttr(d.key) + '" type="range" min="0" max="40" step="1" value="' + value + '" class="qw-slider" style="flex:1">'
+      + '<input data-weight-key="' + _escAttr(d.key) + '" type="range" min="0" max="40" step="1" value="' + value + '" class="qw-slider" style="flex:1;background:' + _qwGradient(value, 0, 40) + '">'
       + '<span data-weight-out="' + _escAttr(d.key) + '" class="qw-num" style="flex:0 0 30px;text-align:right;font-size:14.5px">' + value + '</span>'
       + '</div>';
   }
@@ -7524,6 +7539,7 @@ document.addEventListener('input', function (ev) {
   if (!key) return;
   var out = document.querySelector('[data-weight-out="' + key + '"]');
   if (out) out.textContent = el.value;
+  el.style.background = _qwGradient(parseFloat(el.value), parseFloat(el.min) || 0, parseFloat(el.max) || 100);
 });
 
 document.addEventListener('click', function (ev) {
