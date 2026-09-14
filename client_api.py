@@ -6648,6 +6648,48 @@ def labor_team_thresholds(current_user):
     return _m("mobile_set_thresholds")(current_user)
 
 
+@client_bp.route("/api/team/inbox")
+@login_required
+def team_inbox(current_user):
+    return _m("mobile_team_inbox")(current_user)
+
+
+@client_bp.route("/api/team/messages/<int:other_id>")
+@login_required
+def team_thread(current_user, other_id):
+    return _m("mobile_team_thread")(other_id, current_user)
+
+
+@client_bp.route("/api/team/messages", methods=["POST"])
+@login_required
+def team_send_message(current_user):
+    return _m("mobile_send_team_message")(current_user)
+
+
+@client_bp.route("/api/tasks")
+@login_required
+def tasks_today(current_user):
+    return _m("mobile_get_tasks")(current_user)
+
+
+@client_bp.route("/api/tasks/complete", methods=["POST"])
+@login_required
+def tasks_complete(current_user):
+    return _m("mobile_set_task_complete")(current_user)
+
+
+@client_bp.route("/api/tasks/templates", methods=["POST"])
+@login_required
+def tasks_add_template(current_user):
+    return _m("mobile_add_task_template")(current_user)
+
+
+@client_bp.route("/api/tasks/templates/remove", methods=["POST"])
+@login_required
+def tasks_remove_template(current_user):
+    return _m("mobile_remove_task_template")(current_user)
+
+
 @client_bp.route("/api/labor/schedule/score", methods=["POST"])
 @login_required
 def labor_schedule_score(current_user):

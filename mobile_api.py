@@ -3419,6 +3419,130 @@ def mobile_set_thresholds(current_user):
         return jsonify(ok=False, error=_safe_err(e)), 500
 
 
+# ── Team messages (manager DMs) ─────────────────────────────────────────────
+# Open to any active login on the restaurant — regular-hour staff never get
+# a login in this product, so every account already IS a manager/owner.
+
+@mobile_bp.route("/team/inbox")
+@mobile_login_required
+def mobile_team_inbox(current_user):
+    from models import get_team_inbox, count_unread_team_messages
+    rid = current_user["restaurant_id"]
+    try:
+        return jsonify(ok=True, teammates=get_team_inbox(rid, current_user["id"]),
+                       unread_total=count_unread_team_messages(rid, current_user["id"])), 200
+    except Exception as e:
+        return jsonify(ok=False, error=_safe_err(e)), 500
+
+
+@mobile_bp.route("/team/messages/<int:other_id>")
+@mobile_login_required
+def mobile_team_thread(other_id, current_user):
+    """One thread. Reading it marks the other person's messages read —
+    the same "opening it is acknowledging it" behavior any chat app has."""
+    from models import get_team_conversation, mark_team_messages_read
+    rid = current_user["restaurant_id"]
+    try:
+        messages = get_team_conversation(rid, current_user["id"], other_id)
+        mark_team_messages_read(rid, current_user["id"], other_id)
+        return jsonify(ok=True, messages=messages, my_id=current_user["id"]), 200
+    except Exception as e:
+        return jsonify(ok=False, error=_safe_err(e)), 500
+
+
+@mobile_bp.route("/team/messages", methods=["POST"])
+@mobile_login_required
+def mobile_send_team_message(current_user):
+    from models import send_team_message, TeamMessageError
+    data = request.get_json(silent=True) or {}
+    rid = current_user["restaurant_id"]
+    try:
+        recipient_id = int(data.get("recipient_id"))
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error="recipient_id required"), 400
+    try:
+        msg = send_team_message(rid, current_user["id"], recipient_id, data.get("body") or "")
+        return jsonify(ok=True, message=msg), 200
+    except TeamMessageError as tme:
+        return jsonify(ok=False, error=str(tme)), 400
+    except Exception as e:
+        return jsonify(ok=False, error=_safe_err(e)), 500
+
+
+# ── Daily task checklists ───────────────────────────────────────────────────
+
+@mobile_bp.route("/tasks")
+@mobile_login_required
+def mobile_get_tasks(current_user):
+    from models import get_todays_tasks
+    role = (request.args.get("role") or "").strip()
+    if not role:
+        return jsonify(ok=False, error="role required"), 400
+    date = (request.args.get("date") or "").strip() or None
+    try:
+        return jsonify(ok=True, role=role, tasks=get_todays_tasks(
+            current_user["restaurant_id"], role, task_date=date)), 200
+    except Exception as e:
+        return jsonify(ok=False, error=_safe_err(e)), 500
+
+
+@mobile_bp.route("/tasks/complete", methods=["POST"])
+@mobile_login_required
+def mobile_set_task_complete(current_user):
+    """Checking a task off needs no special permission — anyone signed in
+    is trusted to mark their own morning list done, same as the rating
+    control's default-open stance in _may_manage_team."""
+    from models import set_task_completion
+    data = request.get_json(silent=True) or {}
+    rid = current_user["restaurant_id"]
+    try:
+        template_id = int(data.get("template_id"))
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error="template_id required"), 400
+    task_date = (data.get("task_date") or "").strip()
+    if not task_date:
+        return jsonify(ok=False, error="task_date required"), 400
+    who = current_user.get("username") or current_user.get("email")
+    ok = set_task_completion(rid, template_id, task_date, bool(data.get("done")), completed_by=who)
+    if not ok:
+        return jsonify(ok=False, error="Not found"), 404
+    return jsonify(ok=True), 200
+
+
+@mobile_bp.route("/tasks/templates", methods=["POST"])
+@mobile_login_required
+def mobile_add_task_template(current_user):
+    if not _may_manage_team(current_user):
+        return _refuse_team_write()
+    from models import add_task_template, TaskTemplateError
+    data = request.get_json(silent=True) or {}
+    try:
+        out = add_task_template(current_user["restaurant_id"],
+                                data.get("role") or "", data.get("label") or "")
+        return jsonify(ok=True, **out), 200
+    except TaskTemplateError as tte:
+        return jsonify(ok=False, error=str(tte)), 400
+    except Exception as e:
+        return jsonify(ok=False, error=_safe_err(e)), 500
+
+
+@mobile_bp.route("/tasks/templates/remove", methods=["POST"])
+@mobile_login_required
+def mobile_remove_task_template(current_user):
+    if not _may_manage_team(current_user):
+        return _refuse_team_write()
+    from models import remove_task_template
+    data = request.get_json(silent=True) or {}
+    try:
+        template_id = int(data.get("template_id"))
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error="template_id required"), 400
+    removed = remove_task_template(current_user["restaurant_id"], template_id)
+    if not removed:
+        return jsonify(ok=False, error="Not found"), 404
+    return jsonify(ok=True), 200
+
+
 @mobile_bp.route("/intel/movement")
 @mobile_login_required
 def mobile_intel_movement(current_user):

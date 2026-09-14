@@ -29,8 +29,9 @@ LEGACY = re.compile(r"(^|[^c-])btn-(primary|secondary|approve|skip|approved|blue
 # Interactive elements that are intentionally not system buttons.
 EXEMPT_CLASSES = {"tab", "rm", "hb-refresh", "hb-chip", "hb-x", "hb-loc", "hm-days-btn", "fpill", "rv2-x",
                   "ask-chip", "ask-send", "faq-q", "rv2-topic", "more", "on", "rv-tab-active", "mtab"}
-EXEMPT_IDS = {"loc-switcher-btn", "notif-btn", "changelog-btn", "mkt-tab-content-btn", "mkt-tab-queue-btn",
-              "mkt-tab-analytics-btn", "sched-toggle-label", "perf-tab-dow", "perf-tab-trend", "ask-cavnar-fab"}
+EXEMPT_IDS = {"loc-switcher-btn", "notif-btn", "changelog-btn", "team-msg-btn", "mkt-tab-content-btn",
+              "mkt-tab-queue-btn", "mkt-tab-analytics-btn", "sched-toggle-label", "perf-tab-dow",
+              "perf-tab-trend", "ask-cavnar-fab"}
 EXEMPT_ATTRS = ("data-ask=", "data-score=", "data-quality-shift=", 'role="listitem"', 'role="tab"')
 EXEMPT_ONCLICK = ("switchLocation(", "hbRange(", "hbAct(", "askSuggest(", "askOpenConversation(")
 

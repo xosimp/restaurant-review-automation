@@ -3313,6 +3313,307 @@ def init_staff_availability(db_path: str = DB_PATH):
     conn.commit()
     conn.close()
 
+# ── Team messages (manager DMs) ─────────────────────────────────────────────
+#
+# Scoped to the people who actually have a login — this product only ever
+# creates an account for an owner or someone they invite (auth.invite_team_
+# member), so "everyone with a login" and "the managers" are the same set.
+# 1:1 only for v1, matching what was actually asked for ("himself and the
+# other managers... message eachother in DMs"); group/role channels are a
+# 7shifts feature nobody here requested yet.
+
+def init_team_messages(db_path: str = DB_PATH):
+    conn = get_conn(db_path)
+    conn.execute("""CREATE TABLE IF NOT EXISTS team_messages (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        restaurant_id  INTEGER NOT NULL REFERENCES restaurants(id),
+        sender_id      INTEGER NOT NULL REFERENCES users(id),
+        recipient_id   INTEGER NOT NULL REFERENCES users(id),
+        body           TEXT    NOT NULL,
+        read_at        TEXT,
+        created_at     TEXT    NOT NULL DEFAULT (datetime('now'))
+    )""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_team_msg_thread ON "
+                 "team_messages(restaurant_id, sender_id, recipient_id, created_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_team_msg_inbox ON "
+                 "team_messages(restaurant_id, recipient_id, read_at)")
+    conn.commit()
+    conn.close()
+
+
+class TeamMessageError(ValueError):
+    """A DM that would be meaningless or would cross a tenant boundary."""
+
+
+def send_team_message(restaurant_id: int, sender_id: int, recipient_id: int,
+                      body: str, db_path: str = DB_PATH) -> dict:
+    """Send one DM. Both accounts must be active logins on THIS restaurant —
+    recipient_id is never trusted as someone else's teammate, the same
+    cross-tenant care add_recipe_ingredient takes with menu items."""
+    clean = (body or "").strip()[:2000]
+    if not clean:
+        raise TeamMessageError("a message can't be empty")
+    if recipient_id == sender_id:
+        raise TeamMessageError("you can't message yourself")
+    init_team_messages(db_path)
+    conn = get_conn(db_path)
+    try:
+        valid = conn.execute(
+            "SELECT id FROM users WHERE id IN (?,?) AND restaurant_id=? AND is_active=1",
+            (sender_id, recipient_id, restaurant_id)).fetchall()
+        if len(valid) != 2:
+            raise TeamMessageError("that teammate isn't on this restaurant's team")
+        cur = conn.execute(
+            "INSERT INTO team_messages (restaurant_id, sender_id, recipient_id, body) "
+            "VALUES (?,?,?,?)", (restaurant_id, sender_id, recipient_id, clean))
+        conn.commit()
+        row = conn.execute(
+            "SELECT id, sender_id, recipient_id, body, read_at, created_at "
+            "FROM team_messages WHERE id=?", (cur.lastrowid,)).fetchone()
+    finally:
+        conn.close()
+    return dict(row)
+
+
+def get_team_conversation(restaurant_id: int, user_a: int, user_b: int,
+                          limit: int = 200, db_path: str = DB_PATH) -> list:
+    """One thread, oldest first (how a chat reads), scoped so neither side
+    can read a conversation it isn't part of."""
+    init_team_messages(db_path)
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("""
+            SELECT id, sender_id, recipient_id, body, read_at, created_at
+            FROM team_messages
+            WHERE restaurant_id=?
+              AND ((sender_id=? AND recipient_id=?) OR (sender_id=? AND recipient_id=?))
+            ORDER BY created_at DESC, id DESC LIMIT ?
+        """, (restaurant_id, user_a, user_b, user_b, user_a, limit)).fetchall()
+    finally:
+        conn.close()
+    return [dict(r) for r in reversed(rows)]
+
+
+def mark_team_messages_read(restaurant_id: int, reader_id: int, other_id: int,
+                            db_path: str = DB_PATH) -> int:
+    """Marks everything OTHER sent TO reader as read. Never touches the
+    reader's own sent messages — those are read by definition."""
+    init_team_messages(db_path)
+    conn = get_conn(db_path)
+    try:
+        cur = conn.execute(
+            "UPDATE team_messages SET read_at=datetime('now') "
+            "WHERE restaurant_id=? AND sender_id=? AND recipient_id=? AND read_at IS NULL",
+            (restaurant_id, other_id, reader_id))
+        conn.commit()
+        return cur.rowcount
+    finally:
+        conn.close()
+
+
+def get_team_inbox(restaurant_id: int, user_id: int, db_path: str = DB_PATH) -> list:
+    """Every other active login on this restaurant — not just people already
+    messaged — each with their last exchange (if any) and how many of their
+    messages are still unread. A 2-5 person team is small enough that
+    showing the whole roster beats maintaining a separate "conversations
+    I've started" list."""
+    init_team_messages(db_path)
+    from auth import get_team_members
+    mates = [m for m in get_team_members(restaurant_id, db_path=db_path) if m["id"] != user_id]
+    conn = get_conn(db_path)
+    try:
+        out = []
+        for m in mates:
+            last = conn.execute("""
+                SELECT body, sender_id, created_at FROM team_messages
+                WHERE restaurant_id=? AND ((sender_id=? AND recipient_id=?) OR (sender_id=? AND recipient_id=?))
+                ORDER BY created_at DESC, id DESC LIMIT 1
+            """, (restaurant_id, user_id, m["id"], m["id"], user_id)).fetchone()
+            unread = conn.execute(
+                "SELECT COUNT(*) AS n FROM team_messages "
+                "WHERE restaurant_id=? AND sender_id=? AND recipient_id=? AND read_at IS NULL",
+                (restaurant_id, m["id"], user_id)).fetchone()
+            out.append({
+                "user_id": m["id"], "username": m["username"], "role": m["role"],
+                "last_message": last["body"] if last else None,
+                "last_from_me": bool(last and last["sender_id"] == user_id),
+                "last_at": last["created_at"] if last else None,
+                "unread": unread["n"],
+            })
+        # Most recent activity first; teammates never messaged sort to the
+        # bottom by name rather than jumbling in at an arbitrary position.
+        # Two stable sorts: username breaks ties, then last_at (descending)
+        # decides order — "" (never messaged) sorts after every real
+        # timestamp, so those teammates land at the bottom on their own.
+        out.sort(key=lambda x: x["username"])
+        out.sort(key=lambda x: x["last_at"] or "", reverse=True)
+        return out
+    finally:
+        conn.close()
+
+
+def count_unread_team_messages(restaurant_id: int, user_id: int, db_path: str = DB_PATH) -> int:
+    init_team_messages(db_path)
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM team_messages "
+            "WHERE restaurant_id=? AND recipient_id=? AND read_at IS NULL",
+            (restaurant_id, user_id)).fetchone()
+        return row["n"]
+    finally:
+        conn.close()
+
+
+# ── Daily task checklists ───────────────────────────────────────────────────
+#
+# One template per recurring duty, scoped to a role ("Wipe down the bar" —
+# Bartender). Completion is a separate row keyed by (template, date), so
+# "done" resets on its own at midnight with no cron job clearing anything —
+# tomorrow's date just has no completion row yet.
+
+def init_task_management(db_path: str = DB_PATH):
+    conn = get_conn(db_path)
+    conn.execute("""CREATE TABLE IF NOT EXISTS task_templates (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        restaurant_id  INTEGER NOT NULL REFERENCES restaurants(id),
+        role           TEXT    NOT NULL,
+        label          TEXT    NOT NULL,
+        sort_order     INTEGER NOT NULL DEFAULT 0,
+        is_active      INTEGER NOT NULL DEFAULT 1,
+        created_at     TEXT    NOT NULL DEFAULT (datetime('now'))
+    )""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS task_completions (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        restaurant_id  INTEGER NOT NULL REFERENCES restaurants(id),
+        template_id    INTEGER NOT NULL REFERENCES task_templates(id),
+        task_date      TEXT    NOT NULL,
+        completed_by   TEXT,
+        completed_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(template_id, task_date)
+    )""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_task_tpl_role ON "
+                 "task_templates(restaurant_id, role, is_active)")
+    conn.commit()
+    conn.close()
+
+
+class TaskTemplateError(ValueError):
+    """A task-template add that would store something meaningless."""
+
+
+def add_task_template(restaurant_id: int, role: str, label: str,
+                      db_path: str = DB_PATH) -> dict:
+    role = (role or "").strip()[:60]
+    label = (label or "").strip()[:200]
+    if not role or not label:
+        raise TaskTemplateError("a role and a task description are both required")
+    init_task_management(db_path)
+    conn = get_conn(db_path)
+    try:
+        nxt = conn.execute(
+            "SELECT COALESCE(MAX(sort_order),-1)+1 AS n FROM task_templates "
+            "WHERE restaurant_id=? AND role=?", (restaurant_id, role)).fetchone()["n"]
+        cur = conn.execute(
+            "INSERT INTO task_templates (restaurant_id, role, label, sort_order) "
+            "VALUES (?,?,?,?)", (restaurant_id, role, label, nxt))
+        conn.commit()
+        return {"id": cur.lastrowid, "role": role, "label": label, "sort_order": nxt}
+    finally:
+        conn.close()
+
+
+def remove_task_template(restaurant_id: int, template_id: int, db_path: str = DB_PATH) -> bool:
+    """Soft-delete — history of who completed it on which past days stays
+    intact in task_completions, same reasoning as deactivate_ingredient."""
+    init_task_management(db_path)
+    conn = get_conn(db_path)
+    try:
+        cur = conn.execute(
+            "UPDATE task_templates SET is_active=0 WHERE id=? AND restaurant_id=?",
+            (template_id, restaurant_id))
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def get_task_templates(restaurant_id: int, role: str = None, db_path: str = DB_PATH) -> list:
+    init_task_management(db_path)
+    conn = get_conn(db_path)
+    try:
+        sql = ("SELECT id, role, label, sort_order FROM task_templates "
+               "WHERE restaurant_id=? AND is_active=1")
+        args = [restaurant_id]
+        if role:
+            sql += " AND role=?"
+            args.append(role)
+        sql += " ORDER BY role, sort_order, id"
+        rows = conn.execute(sql, tuple(args)).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def get_todays_tasks(restaurant_id: int, role: str, task_date: str = None,
+                     db_path: str = DB_PATH) -> list:
+    """Every active template for this role, each flagged with whether
+    today's (or the given date's) completion row exists."""
+    from datetime import date as _date
+    task_date = task_date or _date.today().isoformat()
+    init_task_management(db_path)
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("""
+            SELECT t.id, t.role, t.label, t.sort_order,
+                   c.completed_by, c.completed_at
+            FROM task_templates t
+            LEFT JOIN task_completions c
+              ON c.template_id = t.id AND c.task_date = ?
+            WHERE t.restaurant_id=? AND t.role=? AND t.is_active=1
+            ORDER BY t.sort_order, t.id
+        """, (task_date, restaurant_id, role)).fetchall()
+        return [{
+            "id": r["id"], "role": r["role"], "label": r["label"],
+            "done": r["completed_at"] is not None,
+            "completed_by": r["completed_by"], "completed_at": r["completed_at"],
+        } for r in rows]
+    finally:
+        conn.close()
+
+
+def set_task_completion(restaurant_id: int, template_id: int, task_date: str,
+                        done: bool, completed_by: str = None,
+                        db_path: str = DB_PATH) -> bool:
+    """Checks or unchecks one task for one day. Scoped through the
+    template's own restaurant_id — task_completions carries restaurant_id
+    too, redundantly, purely so a completions-only query never needs a
+    join to stay tenant-scoped."""
+    init_task_management(db_path)
+    conn = get_conn(db_path)
+    try:
+        owner = conn.execute(
+            "SELECT id FROM task_templates WHERE id=? AND restaurant_id=?",
+            (template_id, restaurant_id)).fetchone()
+        if not owner:
+            return False
+        if done:
+            conn.execute("""
+                INSERT INTO task_completions (restaurant_id, template_id, task_date, completed_by, completed_at)
+                VALUES (?,?,?,?,datetime('now'))
+                ON CONFLICT(template_id, task_date) DO UPDATE SET
+                    completed_by=excluded.completed_by, completed_at=excluded.completed_at
+            """, (restaurant_id, template_id, task_date, (completed_by or "").strip()[:120] or None))
+        else:
+            conn.execute(
+                "DELETE FROM task_completions WHERE template_id=? AND task_date=?",
+                (template_id, task_date))
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
 # ── Employee capability layer ─────────────────────────────────────────────
 #
 # The thing an owner asked for was "does the AI know how good each employee
