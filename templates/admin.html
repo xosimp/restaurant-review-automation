@@ -407,7 +407,8 @@ async function clientsView(){
       {h:'Push', key:'pu', val:r=>r.push.failed_7d+r.push.disabled, cell:r=>(r.push.failed_7d||r.push.disabled)?`<span class="b bad nodot">${r.push.failed_7d} failed${r.push.disabled?' · '+r.push.disabled+' dead':''}</span>`:`<span class="dim num">${r.push.devices} device${r.push.devices===1?'':'s'}</span>`},
       {h:'Last active', key:'last', val:r=>parseTs(r.last_active)?.getTime()||0, cell:r=>`<span class="num">${ago(r.last_active)}</span>`},
       {h:'Joined', key:'joined', val:r=>parseTs(r.created_at)?.getTime()||0, cell:r=>`<span class="num">${fmtD(r.created_at)}</span>`},
-      {h:'Attn', key:'attn', r:true, val:r=>r.issues.length, cell:r=>r.issues.length?`<span class="b ${r.issues.some(i=>i.severity==='critical')?'bad':'warn'} nodot">${r.issues.length}</span>`:''}
+      {h:'Attn', key:'attn', r:true, val:r=>r.issues.length, cell:r=>r.issues.length?`<span class="b ${r.issues.some(i=>i.severity==='critical')?'bad':'warn'} nodot">${r.issues.length}</span>`:''},
+      {h:'', w:'76px', cell:r=>`<a class="btn s" href="/admin/client-settings/${r.id}" onclick="event.stopPropagation()">Settings</a>`}
     ], rows, {id:'clients-t', sort:'attn', link:r=>'client/'+r.id, empty:'No clients match.'})}`;
 }
 
@@ -432,7 +433,8 @@ async function locations(){
         {h:'Reviews', cell:r=>`<span class="num">${ago(r.freshness.reviews)}</span>`},{h:'POS', cell:r=>`<span class="num">${ago(r.freshness.pos)}</span>`},{h:'Inventory', cell:r=>`<span class="num">${ago(r.freshness.inventory)}</span>`},
         {h:'AI 30d', r:true, cell:r=>`<span class="num">${fmtN(r.ai.calls_30d)}</span>`},{h:'Alerts 7d', r:true, cell:r=>`<span class="num">${fmtN(r.alerts_7d)}</span>`},
         {h:'Issues', wrap:true, cell:r=>r.issues.length?r.issues.slice(0,3).map(i=>`<span class="chip ${i.severity==='critical'?'bad':'warn'}">${esc(i.title)}</span>`).join('')+(r.issues.length>3?`<span class="dim">+${r.issues.length-3}</span>`:''):'<span class="dim">—</span>'},
-        {h:'Last active', cell:r=>`<span class="num">${ago(r.last_active)}</span>`}
+        {h:'Last active', cell:r=>`<span class="num">${ago(r.last_active)}</span>`},
+        {h:'', w:'76px', cell:r=>`<a class="btn s" href="/admin/client-settings/${r.id}" onclick="event.stopPropagation()">Settings</a>`}
       ], b.locs, {id:'loc-'+b.brand.replace(/\W/g,'_'), link:r=>'client/'+r.id})}</div>
     </div>`; }).join('')||'<div class="empty">No restaurants yet.</div>'}`;
 }

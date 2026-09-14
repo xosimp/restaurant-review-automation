@@ -192,3 +192,25 @@ def test_demo_flag_route_and_console_default(monkeypatch, rid):
     assert "_showDemo = true" in html
     src = open("hosted_dashboard.py").read()
     assert "UPDATE restaurants SET is_demo=1" not in src
+
+
+# ── Client Settings was only ever reachable by clicking into a specific
+# client's detail page first (three-plus clicks and a hunt through a
+# 14-column table) — a direct link on both list views cuts that to one. ──
+
+def test_client_settings_is_one_click_from_the_clients_list():
+    html = open("templates/admin.html").read()
+    i = html.index("async function clientsView()")
+    j = html.index("\n}", i)
+    body = html[i:j]
+    assert "/admin/client-settings/${r.id}" in body
+    assert "onclick=\"event.stopPropagation()\"" in body
+
+
+def test_client_settings_is_one_click_from_the_locations_list():
+    html = open("templates/admin.html").read()
+    i = html.index("async function locations()")
+    j = html.index("\n}", i)
+    body = html[i:j]
+    assert "/admin/client-settings/${r.id}" in body
+    assert "onclick=\"event.stopPropagation()\"" in body
