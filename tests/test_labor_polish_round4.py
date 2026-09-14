@@ -176,3 +176,20 @@ def test_staff_contact_rows_use_a_readable_font_size_not_11px():
     assert "font-size:12px" not in body
     assert "font-size:11.5px" not in body
     assert "font-size:14px" in body
+
+
+# ── "What counts most" sliders — the native track/number read as bright
+# white against the dark theme; both swap to the same warm cream/sand
+# already used everywhere else literal white shows through in dark mode ──
+
+def test_the_weighting_sliders_and_their_numbers_carry_the_sand_classes():
+    body = _fn("renderWeightList")
+    assert 'class="qw-slider"' in body
+    assert 'class="qw-num"' in body
+
+
+def test_dark_mode_swaps_the_slider_track_and_number_to_sand_not_white():
+    css = _src()
+    assert '[data-theme="dark"] .qw-num{color:#ddd0b8' in css
+    assert '[data-theme="dark"] .qw-slider::-webkit-slider-runnable-track{background:#ddd0b8}' in css
+    assert '[data-theme="dark"] .qw-slider::-moz-range-track{background:#ddd0b8}' in css

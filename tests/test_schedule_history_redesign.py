@@ -206,6 +206,17 @@ def test_empty_state_is_wrapped_in_the_shared_empty_component():
     assert "No schedules generated yet" in body
 
 
+# ── the expanded schedule's days are visually distinguishable ──────────────
+
+def test_only_the_first_shift_of_each_day_gets_the_branded_bigger_treatment():
+    # Every shift on the same day repeats that day's name — styling every
+    # occurrence made the whole column read as one flat block of identical
+    # text, so only the first row of a new day is called out.
+    body = _fn("viewScheduleHistory")
+    assert "isNewDay=day!==lastDay" in body.replace(" ", "")
+    assert "color:var(--ember);font-weight:700;font-size:15px" in body
+
+
 def test_selected_row_tracking_survives_close_and_delete():
     s = _src()
     assert "window.closeScheduleHistoryDetail=function(){" in s

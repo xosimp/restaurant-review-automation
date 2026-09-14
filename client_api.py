@@ -6630,6 +6630,18 @@ def labor_team_rating(current_user):
     return _m("mobile_set_rating")(current_user)
 
 
+@client_bp.route("/api/labor/team/add", methods=["POST"])
+@login_required
+def labor_team_add(current_user):
+    return _m("mobile_add_team_member")(current_user)
+
+
+@client_bp.route("/api/labor/team/remove", methods=["POST"])
+@login_required
+def labor_team_remove(current_user):
+    return _m("mobile_remove_team_member")(current_user)
+
+
 @client_bp.route("/api/labor/team/thresholds", methods=["POST"])
 @login_required
 def labor_team_thresholds(current_user):

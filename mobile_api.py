@@ -3201,16 +3201,41 @@ def mobile_labor_team(current_user):
     """
     from models import (get_capabilities, capability_coverage, CAPABILITY_ATTRIBUTES,
                         SCORE_LABELS, SCORE_MIN, SCORE_MAX,
-                        get_role_strength_thresholds, get_shift_leader_rules)
+                        get_role_strength_thresholds, get_shift_leader_rules,
+                        get_manual_team_members)
     from labor import load_shifts_for_restaurant, analyse_shifts_for_restaurant
     rid = current_user["restaurant_id"]
     try:
         analysis = analyse_shifts_for_restaurant(rid)
+        manual = get_manual_team_members(rid)
         if not analysis.get("is_live"):
-            return jsonify(ok=True, is_live=False, team=[], coverage=None,
+            # No shift CSV connected yet doesn't mean no roster — an owner
+            # who hasn't hooked up Back Office/RPower (or is waiting on
+            # approval for it) can still hand-type their team and start
+            # rating them today.
+            caps = get_capabilities(rid)
+            team = []
+            for m in manual:
+                c = (caps.get(m["name"]) or {}).get("overall") or {}
+                closer = (caps.get(m["name"]) or {}).get("can_close") or {}
+                team.append({
+                    "name": m["name"], "role": m["role"], "shifts": 0,
+                    "score": c.get("score"),
+                    "can_close": bool(closer.get("flag")),
+                    "score_label": SCORE_LABELS.get(c.get("score")) if c.get("score") else None,
+                    "notes": c.get("notes"),
+                    "updated_by": c.get("updated_by"),
+                    "updated_at": c.get("updated_at"),
+                    "is_manual": True,
+                })
+            team.sort(key=lambda t: (t["score"] is not None, t["name"]))
+            return jsonify(ok=True, is_live=False, team=team,
+                           coverage=(capability_coverage(rid, [t["name"] for t in team])
+                                    if team else None),
                            thresholds={}, leader_rules=[],
-                           note="Upload your shifts CSV under Account and your team will "
-                                "appear here to rate."), 200
+                           note=None if team else
+                                "Upload your shifts CSV under Account, or add your team by "
+                                "hand below, and they'll appear here to rate."), 200
         shifts = load_shifts_for_restaurant(rid)
         # Most recent role each person worked, and how many shifts — enough
         # to order the list usefully without inventing a roster.
@@ -3225,6 +3250,11 @@ def mobile_labor_team(current_user):
             if d >= e["last"]:
                 e["last"] = d
                 e["role"] = (sh.get("role") or "").strip() or e["role"]
+
+        shift_names = set(seen.keys())
+        for m in manual:
+            if m["name"] not in seen:
+                seen[m["name"]] = {"name": m["name"], "role": m["role"], "shifts": 0, "last": ""}
 
         caps = get_capabilities(rid)
         team = []
@@ -3243,6 +3273,11 @@ def mobile_labor_team(current_user):
                 "notes": c.get("notes"),
                 "updated_by": c.get("updated_by"),
                 "updated_at": c.get("updated_at"),
+                # A hand-typed name with no worked shifts behind it can be
+                # removed outright; someone with real shift history stays
+                # on the roster no matter what — removing them would only
+                # hide that history, never actually clear it.
+                "is_manual": n not in shift_names,
             })
         # Unrated first — that is the work in front of the owner.
         team.sort(key=lambda t: (t["score"] is not None, -t["shifts"], t["name"]))
@@ -3290,6 +3325,52 @@ def mobile_set_rating(current_user):
         return jsonify(ok=False, error=str(ce)), 400
     except Exception as e:
         return jsonify(ok=False, error=_safe_err(e)), 500
+
+
+@mobile_bp.route("/labor/team/add", methods=["POST"])
+@mobile_login_required
+def mobile_add_team_member(current_user):
+    """Add someone to the roster by hand, outside of shift data."""
+    if not _may_manage_team(current_user):
+        return _refuse_team_write()
+    from models import add_manual_team_member, ManualTeamMemberError, record_capability_change
+    data = request.get_json(silent=True) or {}
+    rid = current_user["restaurant_id"]
+    who = current_user.get("username") or current_user.get("email")
+    try:
+        out = add_manual_team_member(
+            rid, employee_name=data.get("employee_name") or data.get("name") or "",
+            role=data.get("role"), added_by=who)
+        record_capability_change(rid, "team_member_added", subject=out["employee_name"],
+                                 before=None, after=out, changed_by=who)
+        return jsonify(ok=True, **out), 200
+    except ManualTeamMemberError as mte:
+        return jsonify(ok=False, error=str(mte)), 400
+    except Exception as e:
+        return jsonify(ok=False, error=_safe_err(e)), 500
+
+
+@mobile_bp.route("/labor/team/remove", methods=["POST"])
+@mobile_login_required
+def mobile_remove_team_member(current_user):
+    """Remove a hand-entered roster row. Only ever touches manual entries —
+    see remove_manual_team_member; someone with real shift history behind
+    them can't be removed this way."""
+    if not _may_manage_team(current_user):
+        return _refuse_team_write()
+    from models import remove_manual_team_member, record_capability_change
+    data = request.get_json(silent=True) or {}
+    rid = current_user["restaurant_id"]
+    who = current_user.get("username") or current_user.get("email")
+    name = data.get("employee_name") or data.get("name") or ""
+    removed = remove_manual_team_member(rid, name)
+    if not removed:
+        return jsonify(ok=False, error="Not a manually-added teammate — nothing to remove. "
+                                       "Someone with shift history on file can't be removed "
+                                       "here."), 400
+    record_capability_change(rid, "team_member_removed", subject=name,
+                             before=name, after=None, changed_by=who)
+    return jsonify(ok=True, employee_name=name), 200
 
 
 @mobile_bp.route("/labor/team/thresholds", methods=["POST"])

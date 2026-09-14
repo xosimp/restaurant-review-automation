@@ -3546,6 +3546,90 @@ def capability_coverage(restaurant_id: int, roster: list, db_path: str = DB_PATH
     }
 
 
+def init_manual_team_members(db_path: str = DB_PATH):
+    conn = get_conn(db_path)
+    conn.execute("""CREATE TABLE IF NOT EXISTS manual_team_members (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        restaurant_id  INTEGER NOT NULL REFERENCES restaurants(id),
+        employee_name  TEXT    NOT NULL,
+        role           TEXT,
+        added_by       TEXT,
+        created_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(restaurant_id, employee_name)
+    )""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_manual_team_rest "
+                 "ON manual_team_members(restaurant_id)")
+    conn.commit()
+    conn.close()
+
+
+class ManualTeamMemberError(ValueError):
+    """A manual roster add/remove that would store something meaningless."""
+
+
+def add_manual_team_member(restaurant_id: int, employee_name: str, role: str = None,
+                           added_by: str = None, db_path: str = DB_PATH) -> dict:
+    """Add (or update the role on) someone the owner types in by hand.
+
+    This exists because the roster is normally built entirely from shift
+    CSV rows (see mobile_labor_team) — an owner with no POS/back-office
+    hookup yet, or a brand-new hire who hasn't worked a shift, would
+    otherwise have no way to rate someone in the Operational Score panel
+    at all. A manual entry is keyed the same way a shift-derived one is
+    (restaurant_id, employee_name), so rating it with set_capability()
+    works identically, and if the same name later shows up in real shift
+    data the two rows collapse into one person rather than duplicating.
+    """
+    name = (employee_name or "").strip()[:120]
+    if not name:
+        raise ManualTeamMemberError("an employee name is required")
+    clean_role = (role or "").strip()[:60] or None
+    init_manual_team_members(db_path)
+    conn = get_conn(db_path)
+    try:
+        conn.execute("""
+            INSERT INTO manual_team_members (restaurant_id, employee_name, role, added_by, created_at)
+            VALUES (?,?,?,?,datetime('now'))
+            ON CONFLICT(restaurant_id, employee_name) DO UPDATE SET
+                role=excluded.role, added_by=excluded.added_by
+        """, (restaurant_id, name, clean_role, (added_by or "").strip()[:120] or None))
+        conn.commit()
+    finally:
+        conn.close()
+    return {"employee_name": name, "role": clean_role}
+
+
+def remove_manual_team_member(restaurant_id: int, employee_name: str, db_path: str = DB_PATH) -> bool:
+    """Remove a hand-entered roster row. Never touches shift-derived rows —
+    those represent real worked shifts and aren't this table's business."""
+    name = (employee_name or "").strip()
+    if not name:
+        return False
+    init_manual_team_members(db_path)
+    conn = get_conn(db_path)
+    try:
+        cur = conn.execute(
+            "DELETE FROM manual_team_members WHERE restaurant_id=? AND employee_name=?",
+            (restaurant_id, name))
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def get_manual_team_members(restaurant_id: int, db_path: str = DB_PATH) -> list:
+    init_manual_team_members(db_path)
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT employee_name, role FROM manual_team_members "
+            "WHERE restaurant_id=? ORDER BY employee_name COLLATE NOCASE",
+            (restaurant_id,)).fetchall()
+    finally:
+        conn.close()
+    return [{"name": r["employee_name"], "role": r["role"]} for r in rows]
+
+
 def get_role_strength_thresholds(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     """{role: minimum combined score}. Empty when unconfigured."""
     import json as _j

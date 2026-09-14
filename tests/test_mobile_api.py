@@ -3944,9 +3944,88 @@ def test_a_negative_threshold_is_refused(client, db_path):
 def test_the_team_routes_need_a_login(client):
     for path, method in (("/mobile/api/labor/team", "get"),
                          ("/mobile/api/labor/team/rating", "post"),
-                         ("/mobile/api/labor/team/thresholds", "post")):
+                         ("/mobile/api/labor/team/thresholds", "post"),
+                         ("/mobile/api/labor/team/add", "post"),
+                         ("/mobile/api/labor/team/remove", "post")):
         resp = getattr(client, method)(path, json={})
         assert resp.status_code in (401, 403), path
+
+
+# ── Manual roster entries ───────────────────────────────────────────────────
+
+def test_a_manually_added_teammate_appears_in_the_team_list(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    _team_shifts(monkeypatch, [])
+    add = client.post("/mobile/api/labor/team/add",
+                      json={"employee_name": "Jordan", "role": "Busser"},
+                      headers=_auth_headers(token)).get_json()
+    assert add["ok"] is True
+
+    body = client.get("/mobile/api/labor/team", headers=_auth_headers(token)).get_json()
+    by_name = {m["name"]: m for m in body["team"]}
+    assert by_name["Jordan"]["role"] == "Busser"
+    assert by_name["Jordan"]["is_manual"] is True
+
+
+def test_a_manual_teammate_shows_up_even_with_no_shift_data_connected(client, db_path, monkeypatch):
+    """The whole point: an owner without Back Office/RPower hooked up yet
+    isn't blocked from building a roster and rating it."""
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    import labor
+    monkeypatch.setattr(labor, "analyse_shifts_for_restaurant", lambda *a, **k: {"is_live": False})
+    client.post("/mobile/api/labor/team/add", json={"employee_name": "Jordan"},
+               headers=_auth_headers(token))
+
+    body = client.get("/mobile/api/labor/team", headers=_auth_headers(token)).get_json()
+    assert body["is_live"] is False
+    assert [m["name"] for m in body["team"]] == ["Jordan"]
+    assert body["team"][0]["is_manual"] is True
+
+
+def test_a_teammate_with_real_shift_history_is_not_flagged_manual(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    _team_shifts(monkeypatch, [{"date": "2026-09-12", "employee": "Sam",
+                                "role": "Bartender", "shift_start": "5:00pm"}])
+    body = client.get("/mobile/api/labor/team", headers=_auth_headers(token)).get_json()
+    assert body["team"][0]["is_manual"] is False
+
+
+def test_removing_a_manual_teammate_takes_them_off_the_list(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    _team_shifts(monkeypatch, [])
+    client.post("/mobile/api/labor/team/add", json={"employee_name": "Jordan"},
+               headers=_auth_headers(token))
+    resp = client.post("/mobile/api/labor/team/remove", json={"employee_name": "Jordan"},
+                       headers=_auth_headers(token))
+    assert resp.get_json()["ok"] is True
+    body = client.get("/mobile/api/labor/team", headers=_auth_headers(token)).get_json()
+    assert body["team"] == []
+
+
+def test_a_shift_derived_teammate_cannot_be_removed_this_way(client, db_path, monkeypatch):
+    """Someone with real worked shifts behind them isn't this table's
+    business — removing them here would only hide history, never clear it."""
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    _team_shifts(monkeypatch, [{"date": "2026-09-12", "employee": "Sam",
+                                "role": "Bartender", "shift_start": "5:00pm"}])
+    resp = client.post("/mobile/api/labor/team/remove", json={"employee_name": "Sam"},
+                       headers=_auth_headers(token))
+    assert resp.status_code == 400
+    body = client.get("/mobile/api/labor/team", headers=_auth_headers(token)).get_json()
+    assert body["team"][0]["name"] == "Sam"
+
+
+def test_adding_a_blank_name_is_refused(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    resp = client.post("/mobile/api/labor/team/add", json={"employee_name": "   "},
+                       headers=_auth_headers(token))
+    assert resp.status_code == 400
 
 
 # ── Shift Quality Engine routes ───────────────────────────────────────────

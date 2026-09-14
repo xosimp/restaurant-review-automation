@@ -11,10 +11,11 @@ import pytest
 
 import labor
 import models
-from models import (CAPABILITY_ATTRIBUTES, CapabilityError, capability_coverage,
-                    get_capabilities, get_operational_scores,
+from models import (CAPABILITY_ATTRIBUTES, CapabilityError, ManualTeamMemberError,
+                    add_manual_team_member, capability_coverage,
+                    get_capabilities, get_manual_team_members, get_operational_scores,
                     get_role_strength_thresholds, get_shift_leader_rules,
-                    set_capability, validate_strength_thresholds)
+                    remove_manual_team_member, set_capability, validate_strength_thresholds)
 
 
 @pytest.fixture(autouse=True)
@@ -545,3 +546,78 @@ def test_the_web_dashboard_has_the_rating_panel():
 def test_the_web_rating_control_clears_on_a_second_tap():
     html = _no_comments(_source("templates", "dashboard.html"))
     assert "(m.score === score) ? null : score" in html
+
+
+# ── Manual roster entries — added by hand, outside of shift data ───────────
+#
+# The roster is normally built entirely from shift CSV rows: an owner
+# without a POS/back-office hookup yet, or a brand-new hire who hasn't
+# worked a shift, had no way to appear in the Operational Score panel at
+# all. These let the owner type someone in directly.
+
+def test_a_manual_member_can_be_added_and_is_listed(db_path):
+    _restaurant(db_path)
+    out = add_manual_team_member(1, "Jordan", role="Busser", db_path=db_path)
+    assert out == {"employee_name": "Jordan", "role": "Busser"}
+    rows = get_manual_team_members(1, db_path=db_path)
+    assert rows == [{"name": "Jordan", "role": "Busser"}]
+
+
+def test_adding_the_same_name_twice_updates_the_role_not_a_duplicate(db_path):
+    _restaurant(db_path)
+    add_manual_team_member(1, "Jordan", role="Busser", db_path=db_path)
+    add_manual_team_member(1, "Jordan", role="Server", db_path=db_path)
+    rows = get_manual_team_members(1, db_path=db_path)
+    assert len(rows) == 1
+    assert rows[0]["role"] == "Server"
+
+
+def test_a_blank_name_is_refused(db_path):
+    _restaurant(db_path)
+    with pytest.raises(ManualTeamMemberError):
+        add_manual_team_member(1, "   ", db_path=db_path)
+
+
+def test_a_manual_member_can_be_rated_the_same_way_as_anyone_else(db_path):
+    _restaurant(db_path)
+    add_manual_team_member(1, "Jordan", role="Busser", db_path=db_path)
+    set_capability(1, "Jordan", score=4, db_path=db_path)
+    assert get_operational_scores(1, db_path=db_path) == {"Jordan": 4}
+
+
+def test_removing_a_manual_member_takes_them_off_the_roster(db_path):
+    _restaurant(db_path)
+    add_manual_team_member(1, "Jordan", db_path=db_path)
+    assert remove_manual_team_member(1, "Jordan", db_path=db_path) is True
+    assert get_manual_team_members(1, db_path=db_path) == []
+
+
+def test_removing_someone_never_added_reports_nothing_to_remove(db_path):
+    _restaurant(db_path)
+    assert remove_manual_team_member(1, "Nobody", db_path=db_path) is False
+
+
+def test_manual_rosters_are_scoped_per_restaurant(db_path):
+    _restaurant(db_path, rid=1)
+    _restaurant(db_path, rid=2)
+    add_manual_team_member(1, "Jordan", db_path=db_path)
+    assert get_manual_team_members(2, db_path=db_path) == []
+    # Restaurant 2 can't remove restaurant 1's row either.
+    assert remove_manual_team_member(2, "Jordan", db_path=db_path) is False
+    assert get_manual_team_members(1, db_path=db_path) == [{"name": "Jordan", "role": None}]
+
+
+# ── The web panel's add/remove controls ─────────────────────────────────────
+
+def test_the_web_team_panel_has_add_and_remove_controls():
+    html = _no_comments(_source("templates", "dashboard.html"))
+    assert 'id="team-add-name"' in html and 'id="team-add-role"' in html
+    assert "addTeamMember()" in html
+    assert "'/api/labor/team/add'" in html
+    assert "'/api/labor/team/remove'" in html
+    assert "data-team-remove" in html
+
+
+def test_the_remove_control_is_only_rendered_for_manual_rows():
+    html = _no_comments(_source("templates", "dashboard.html"))
+    assert "if (m.is_manual) {" in html

@@ -52,6 +52,19 @@ html[data-theme="dark"] body{color:var(--ink)}
 [data-theme="dark"] [style*="color:white"]{color:#ddd0b8!important}
 [data-theme="dark"] [style*="color: white"]{color:#ddd0b8!important}
 [data-theme="dark"] .avatar{color:#ddd0b8!important}
+/* "What counts most" weighting sliders — a plain range input's native
+   track renders as a bright light-gray/white groove no matter the page
+   theme, which read as jarring bare-white bars against the dark surface
+   here. The filled portion (accent-color) stays ember; only the empty
+   groove and the value label swap to the same warm cream/sand used
+   everywhere else white would otherwise show through in dark mode. */
+.qw-num{font-family:'Space Grotesk',sans-serif;font-weight:700;color:var(--ink)}
+.qw-slider{accent-color:var(--ember)}
+.qw-slider::-webkit-slider-runnable-track{height:4px;border-radius:2px}
+.qw-slider::-moz-range-track{height:4px;border-radius:2px}
+[data-theme="dark"] .qw-num{color:#ddd0b8!important}
+[data-theme="dark"] .qw-slider::-webkit-slider-runnable-track{background:#ddd0b8}
+[data-theme="dark"] .qw-slider::-moz-range-track{background:#ddd0b8}
 /* Header & tabs must explicitly override the var(--ink) background (--ink is light in dark mode) */
 [data-theme="dark"] .hdr{background:var(--hdr-bg)!important}
 [data-theme="dark"] .tabs{background:#0c0c0c!important;border-top-color:#0c0c0c!important}
@@ -2497,6 +2510,19 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
         <div id="team-list" style="display:flex;flex-direction:column;gap:6px">
           <div style="font-size:13.5px;color:var(--ink3);font-style:italic">Loading your team…</div>
         </div>
+
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-top:10px">
+          <div>
+            <div style="font-size:12.5px;font-weight:600;color:var(--ink3);margin-bottom:4px">Name</div>
+            <input id="team-add-name" type="text" placeholder="Employee name" style="font-size:15px;padding:6px 10px;border:1px solid var(--paper3);border-radius:6px;background:var(--surface);color:var(--ink);font-family:inherit;width:180px">
+          </div>
+          <div>
+            <div style="font-size:12.5px;font-weight:600;color:var(--ink3);margin-bottom:4px">Role <span style="font-weight:400">(optional)</span></div>
+            <input id="team-add-role" type="text" placeholder="e.g. Server" style="font-size:15px;padding:6px 10px;border:1px solid var(--paper3);border-radius:6px;background:var(--surface);color:var(--ink);font-family:inherit;width:150px">
+          </div>
+          <button type="button" onclick="addTeamMember()" class="cbtn cbtn-soft cbtn-sm">+ Add employee</button>
+        </div>
+        <div id="team-add-error" style="font-size:12.5px;color:var(--red);margin-top:6px"></div>
 
         <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--paper3)">
           <div style="font-size:12.5px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ink3);margin-bottom:6px">Shift strength targets</div>
@@ -7457,8 +7483,8 @@ function renderWeightList() {
     if (value === undefined) value = _defaultWeights[d.key] || 0;
     html += '<div style="display:flex;align-items:center;gap:10px">'
       + '<span style="flex:0 0 140px;font-size:14.5px;color:var(--ink2)">' + _escHtml(d.label) + '</span>'
-      + '<input data-weight-key="' + _escAttr(d.key) + '" type="range" min="0" max="40" step="1" value="' + value + '" style="flex:1;accent-color:var(--ember)">'
-      + '<span data-weight-out="' + _escAttr(d.key) + '" style="flex:0 0 30px;text-align:right;font-family:Space Grotesk,sans-serif;font-size:14.5px;font-weight:700;color:var(--ink)">' + value + '</span>'
+      + '<input data-weight-key="' + _escAttr(d.key) + '" type="range" min="0" max="40" step="1" value="' + value + '" class="qw-slider" style="flex:1">'
+      + '<span data-weight-out="' + _escAttr(d.key) + '" class="qw-num" style="flex:0 0 30px;text-align:right;font-size:14.5px">' + value + '</span>'
       + '</div>';
   }
   el.innerHTML = html;
@@ -8284,6 +8310,14 @@ function renderTeamList() {
          + 'white-space:nowrap;user-select:none">'
          + '<input type="checkbox" data-team-close="' + i + '"' + (m.can_close ? ' checked' : '')
          + ' style="margin:0">closer</label>';
+    // Only a hand-typed name with no shift history behind it is removable —
+    // the server enforces this too, but hiding the control for a real,
+    // shift-derived employee avoids a confusing "nothing to remove" error.
+    if (m.is_manual) {
+      html += '<button type="button" class="cbtn cbtn-icon cbtn-text cbtn-danger cbtn-sm" '
+           + 'data-team-remove="' + i + '" title="Remove ' + _escAttr(m.name) + '" '
+           + 'aria-label="Remove ' + _escAttr(m.name) + '">✕</button>';
+    }
     html += '</div></div>';
   }
   list.innerHTML = html;
@@ -8362,6 +8396,50 @@ function setTeamCloser(idx, on) {
   }).then(function (r) { return r.json(); }).then(function (d) {
     if (!d.ok) { m.can_close = previous; renderTeamList(); }
   }).catch(function () { m.can_close = previous; renderTeamList(); });
+}
+
+// A second delegated listener, separate from the score-buttons one above —
+// the remove button doesn't sit inside a [data-team-idx] holder, so it
+// reads its index straight off the button itself.
+document.addEventListener('click', function (ev) {
+  var btn = ev.target;
+  if (!btn || btn.tagName !== 'BUTTON') return;
+  var idx = btn.getAttribute('data-team-remove');
+  if (idx === null) return;
+  removeTeamMember(parseInt(idx, 10));
+});
+
+function removeTeamMember(idx) {
+  var m = _teamRows[idx];
+  if (!m) return;
+  if (!window.confirm('Remove ' + m.name + ' from your team? This only removes the ' +
+      'hand-entered name — anyone with real shift history stays on the roster.')) return;
+  fetch('/api/labor/team/remove', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json', 'X-CSRFToken': '{{csrf_token}}'},
+    body: JSON.stringify({employee_name: m.name})
+  }).then(function (r) { return r.json(); }).then(function (d) {
+    if (d.ok) loadTeamPanel();
+  });
+}
+
+function addTeamMember() {
+  var nameEl = document.getElementById('team-add-name');
+  var roleEl = document.getElementById('team-add-role');
+  var errEl = document.getElementById('team-add-error');
+  var name = (nameEl && nameEl.value || '').replace(/^\s+|\s+$/g, '');
+  if (errEl) errEl.textContent = '';
+  if (!name) { if (errEl) errEl.textContent = 'Enter a name first.'; return; }
+  fetch('/api/labor/team/add', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json', 'X-CSRFToken': '{{csrf_token}}'},
+    body: JSON.stringify({employee_name: name, role: roleEl ? roleEl.value : ''})
+  }).then(function (r) { return r.json(); }).then(function (d) {
+    if (!d.ok) { if (errEl) errEl.textContent = d.error || 'Could not add that person.'; return; }
+    if (nameEl) nameEl.value = '';
+    if (roleEl) roleEl.value = '';
+    loadTeamPanel();
+  }).catch(function () { if (errEl) errEl.textContent = 'Could not add that person.'; });
 }
 
 function renderTeamThresholds() {
@@ -11431,7 +11509,20 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       var csv=d.schedule_csv||'';
       var html='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:10px"><div style="font-size:15px;font-weight:600;color:var(--ink)">Week of '+esc(d.week_start||'')+' · '+rows.length+' shifts</div><div style="display:flex;gap:10px"><button onclick="downloadHistoryCsv('+id+')" class="cbtn cbtn-secondary">Download CSV</button><button onclick="closeScheduleHistoryDetail()" class="cbtn cbtn-secondary">Close ✕</button></div></div>';
       html+='<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13.5px"><tr style="color:var(--ink3);text-transform:uppercase;font-size:13px;letter-spacing:.06em"><th style="text-align:left;padding:6px 8px">Day</th><th style="text-align:left;padding:6px 8px">Employee</th><th style="text-align:left;padding:6px 8px">Role</th><th style="text-align:left;padding:6px 8px">Shift</th><th style="text-align:right;padding:6px 8px">Hrs</th></tr>';
-      html+=rows.map(function(r){return '<tr style="border-top:1px solid var(--paper3)"><td style="padding:6px 8px;color:var(--ink)">'+esc(r.day||r.date||'')+'</td><td style="padding:6px 8px;color:var(--ink)">'+esc(r.employee||'')+'</td><td style="padding:6px 8px;color:var(--ink3)">'+esc(r.role||'')+'</td><td style="padding:6px 8px;color:var(--ink3);white-space:nowrap">'+esc(r.shift_start||'')+'–'+esc(r.shift_end||'')+'</td><td style="padding:6px 8px;text-align:right;font-family:\'Space Grotesk\',sans-serif">'+esc(r.scheduled_hours||'')+'</td></tr>';}).join('')+'</table></div>';
+      var lastDay='';
+      html+=rows.map(function(r){
+        var day=r.day||r.date||'';
+        // Only the FIRST row of each day gets the branded, bigger treatment
+        // — every other shift that same day repeats the same day string,
+        // and styling all of them made the whole column read as one flat
+        // block of identical text with no way to tell one day from the next.
+        var isNewDay=day!==lastDay;
+        lastDay=day;
+        var dayStyle=isNewDay
+          ?'padding:6px 8px;color:var(--ember);font-weight:700;font-size:15px'
+          :'padding:6px 8px;color:var(--ink3)';
+        return '<tr style="border-top:1px solid var(--paper3)"><td style="'+dayStyle+'">'+esc(day)+'</td><td style="padding:6px 8px;color:var(--ink)">'+esc(r.employee||'')+'</td><td style="padding:6px 8px;color:var(--ink3)">'+esc(r.role||'')+'</td><td style="padding:6px 8px;color:var(--ink3);white-space:nowrap">'+esc(r.shift_start||'')+'–'+esc(r.shift_end||'')+'</td><td style="padding:6px 8px;text-align:right;font-family:\'Space Grotesk\',sans-serif">'+esc(r.scheduled_hours||'')+'</td></tr>';
+      }).join('')+'</table></div>';
       box.innerHTML=html;box.style.display='block';window._schedHistCsv=window._schedHistCsv||{};window._schedHistCsv[id]={csv:csv,week:d.week_start||''};
       box.scrollIntoView({behavior:'smooth',block:'nearest'});
     });
