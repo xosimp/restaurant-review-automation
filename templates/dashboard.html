@@ -2526,12 +2526,12 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
         <div id="team-add-error" style="font-size:12.5px;color:var(--red);margin-top:6px"></div>
 
         <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--paper3)">
-          <div style="font-size:12.5px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ink3);margin-bottom:6px">Shift strength targets</div>
+          <div style="font-size:15px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ember);margin-bottom:6px">Shift strength targets</div>
           <div style="font-size:15px;color:var(--ink3);margin-bottom:10px">The combined score of everyone in a role on one shift. Two people at 5 make 10 — so do a 5, a 3 and a 2, which is a weaker team, and the scheduler prefers fewer stronger people when both clear the bar. Leave a role blank for no target.</div>
           <div id="team-thresholds" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end"></div>
           <div id="team-threshold-warnings" style="margin-top:8px"></div>
 
-          <div style="font-size:12.5px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ink3);margin:16px 0 6px">Shift leader requirements</div>
+          <div style="font-size:15px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ember);margin:16px 0 6px">Shift leader requirements</div>
           <div style="font-size:15px;color:var(--ink3);margin-bottom:10px">Stricter than a target: this names one person who has to be on that shift.</div>
           <div id="team-rules" style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px"></div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
@@ -2580,7 +2580,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
              jobs, and one global threshold flattens them into one. -->
         <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--paper3)">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
-            <div style="font-size:12.5px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ink3)">Shift profiles</div>
+            <div style="font-size:15px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ember)">Shift profiles</div>
             <span id="sp-source" style="font-size:13.5px;color:var(--ink3)"></span>
           </div>
           <div style="font-size:15px;color:var(--ink3);margin:6px 0 10px">Each shift is scored 0&ndash;100 on coverage, operational strength, leadership, experience, training balance, demand match and labor efficiency. A profile sets the bar for the shifts it names.</div>
@@ -8279,6 +8279,14 @@ function _rolesFromTeam(rows) {
   for (var i = 0; i < rows.length; i++) {
     var r = (rows[i].role || '').replace(/^\s+|\s+$/g, '');
     if (r && !seen[r.toLowerCase()]) { seen[r.toLowerCase()] = 1; out.push(r); }
+  }
+  // Always offered, even before anyone actually holds the title — a shift
+  // leader rule or strength target naming a Manager or Shift Supervisor has
+  // to be settable before the first person is hired or rated into it, not
+  // only after they show up in shift data.
+  var always = ['Manager', 'Shift Supervisor'], j;
+  for (j = 0; j < always.length; j++) {
+    if (!seen[always[j].toLowerCase()]) { seen[always[j].toLowerCase()] = 1; out.push(always[j]); }
   }
   out.sort();
   return out;

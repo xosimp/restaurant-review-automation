@@ -238,3 +238,46 @@ def test_dark_mode_darkens_the_number_not_the_airy_cream_used_elsewhere():
     css = _src()
     assert '[data-theme="dark"] .qw-num{color:#a68a5e' in css
     assert '[data-theme="dark"] .qw-num{color:#ddd0b8' not in css
+
+
+# ── section-eyebrow headings — three of these read the exact same size and
+# muted color as the description sentences under them, so nothing on the
+# panel stood out as a heading at all. Branded ember, a bit bigger. ────────
+
+def test_the_three_eyebrow_headings_are_bigger_and_branded_not_muted_ink3():
+    s = _src()
+    for label in ("Shift strength targets", "Shift leader requirements", "Shift profiles"):
+        i = s.index(">" + label + "<")
+        style_start = s.rindex('style="', 0, i)
+        style = s[style_start:i]
+        assert "color:var(--ember)" in style, label
+        assert "font-size:15px" in style, label
+        assert "color:var(--ink3)" not in style, label
+
+
+def test_what_counts_most_heading_is_left_untouched():
+    # Not part of this round's ask — only the three headings above changed.
+    s = _src()
+    i = s.index(">What counts most<")
+    style_start = s.rindex('style="', 0, i)
+    style = s[style_start:i]
+    assert "color:var(--ink3)" in style
+    assert "font-size:12.5px" in style
+
+
+# ── Manager and Shift Supervisor are always selectable roles ───────────────
+#
+# Roles are otherwise derived purely from shift/manual data — there's no
+# master role table — but a shift-leader rule or strength target naming a
+# Manager has to be settable before anyone is hired or rated into the role.
+
+def test_manager_and_shift_supervisor_are_always_offered():
+    body = _fn("_rolesFromTeam")
+    assert "'Manager', 'Shift Supervisor'" in body.replace('"', "'")
+
+
+def test_an_existing_role_from_real_data_is_not_duplicated():
+    # If shift data already carries "manager" (any case), the always-offered
+    # canonical entry must not add a second, differently-cased copy.
+    body = _fn("_rolesFromTeam")
+    assert "seen[always[j].toLowerCase()]" in body
