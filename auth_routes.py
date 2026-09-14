@@ -228,8 +228,15 @@ def login():
                         masked = "your registered email"
             except Exception:
                 masked = "your registered email"
-            # Encode uid into pending token: "uid:token"
-            pending_signed = str(_rid) + ":" + pending
+            # Encode restaurant_id AND the user_id that actually authenticated:
+            # "rid:uid:secret". The user_id used to be absent, and verify-2fa
+            # then resolved the session with get_user_by_restaurant_id(), an
+            # unordered "LIMIT 1" over that restaurant's logins — so with more
+            # than one login on a restaurant, whoever passed the challenge got
+            # a session for whichever row SQLite returned first (typically the
+            # primary/owner login). One login per restaurant hid it; employee
+            # accounts make several logins the norm, so it is fixed here.
+            pending_signed = str(_rid) + ":" + str(user["id"]) + ":" + pending
             import base64 as _b64
             pending_encoded = _b64.urlsafe_b64encode(pending_signed.encode()).decode()
             import secrets as _sec4
@@ -291,11 +298,16 @@ def verify_2fa():
         try:
             import base64 as _b64_v
             decoded = _b64_v.urlsafe_b64decode(pending_token.encode()).decode()
-            uid_str, pending_secret = decoded.split(":", 1)
+            # "rid:uid:secret". A two-part token is the pre-fix format that
+            # never carried a user_id — it is refused rather than guessed at,
+            # so the worst case is re-entering a password, not being handed
+            # somebody else's session.
+            uid_str, pending_user_str, pending_secret = decoded.split(":", 2)
             uid = int(uid_str)
+            pending_user_id = int(pending_user_str)
         except Exception:
             return redirect("/login")
-        if not uid:
+        if not uid or not pending_user_id:
             return redirect("/login")
         rest = get_restaurant(uid)
         if not rest:
@@ -344,9 +356,14 @@ def verify_2fa():
         _fl3.session.pop("pending_token", None)
         _ip_2fa = _get_client_ip()
         _ua_2fa = request.headers.get("User-Agent", "")
-        # uid is restaurant_id — look up the actual user_id for the session
-        _user_for_session = get_user_by_restaurant_id(uid)
-        if not _user_for_session:
+        # The session belongs to the login that actually passed the password
+        # step, carried through the pending token — never "some active user of
+        # this restaurant". Re-checked against uid so a tampered token can't
+        # name a user from another restaurant.
+        from auth import get_user_by_id as _gubi_2fa
+        _user_for_session = _gubi_2fa(pending_user_id)
+        if (not _user_for_session or not _user_for_session.get("is_active")
+                or _user_for_session.get("restaurant_id") != uid):
             return redirect("/login")
         token = create_session(_user_for_session["id"], ip_address=_ip_2fa, user_agent=_ua_2fa, restaurant_id=_user_for_session["restaurant_id"])
         # Login notification (email + push + bell)

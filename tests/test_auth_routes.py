@@ -299,8 +299,8 @@ def test_verify_2fa_rejects_pending_token_for_wrong_restaurant(client, db_path):
     pending_token = _start_2fa_login(client, db_path, rid_a, username="alice", password="pw")
     # Forge a token pointing at rid_b using rid_a's real pending secret
     decoded = base64.urlsafe_b64decode(pending_token.encode()).decode()
-    _uid_str, real_secret = decoded.split(":", 1)
-    forged = base64.urlsafe_b64encode(f"{rid_b}:{real_secret}".encode()).decode()
+    _rid_str, _uid_str, real_secret = decoded.split(":", 2)
+    forged = base64.urlsafe_b64encode(f"{rid_b}:{_uid_str}:{real_secret}".encode()).decode()
     csrf = client.get_cookie("csrf_token").value
     resp = client.post("/verify-2fa", data={
         "pending_token": forged, "code": "000000", "next_url": "/",
@@ -308,3 +308,75 @@ def test_verify_2fa_rejects_pending_token_for_wrong_restaurant(client, db_path):
     })
     assert resp.status_code == 302
     assert resp.headers["Location"].endswith("/login")
+
+
+def test_verify_2fa_issues_a_session_for_the_login_that_authenticated(client, db_path):
+    """The escalation this closes: the pending token used to carry only a
+    restaurant_id, and the session was then created for
+    get_user_by_restaurant_id() — an unordered LIMIT 1 over that restaurant's
+    logins. With a second login present (a teammate, or an employee), whoever
+    passed the challenge was handed a session for whichever row came back
+    first, typically the primary owner login."""
+    rid = _restaurant(db_path)
+    update_restaurant(rid, {"two_fa_enabled": 1}, db_path=db_path)
+    owner_id = create_user(rid, "owner_first", "owner@x.com", "owner-pw", db_path=db_path)
+    teammate_id = create_user(rid, "teammate", "mate@x.com", "mate-pw", db_path=db_path)
+    assert owner_id < teammate_id  # the owner is what LIMIT 1 would return
+
+    resp = _login_form(client, "teammate", "mate-pw")
+    html = resp.data.decode()
+    marker = 'name="pending_token" value="'
+    start = html.index(marker) + len(marker)
+    pending_token = html[start:html.index('"', start)]
+
+    csrf = client.get_cookie("csrf_token").value
+    done = client.post("/verify-2fa", data={
+        "pending_token": pending_token, "code": _stored_2fa_code(db_path, rid),
+        "next_url": "/", "csrf_token": csrf,
+    })
+    assert done.status_code == 302
+    token = client.get_cookie("session_token").value
+
+    from auth import hash_session_token
+    conn = get_conn(db_path)
+    row = conn.execute("SELECT user_id FROM sessions WHERE token=?",
+                       (hash_session_token(token),)).fetchone()
+    conn.close()
+    assert row["user_id"] == teammate_id, "session was issued to the wrong login"
+
+
+def test_verify_2fa_refuses_a_token_naming_a_user_from_another_restaurant(client, db_path):
+    """A tampered token can't name a user_id outside the restaurant it claims."""
+    rid_a = _restaurant(db_path, name="Co A")
+    rid_b = _restaurant(db_path, name="Co B")
+    stranger_id = create_user(rid_b, "stranger", "stranger@x.com", "pw", db_path=db_path)
+    pending_token = _start_2fa_login(client, db_path, rid_a, username="alice", password="pw")
+    decoded = base64.urlsafe_b64decode(pending_token.encode()).decode()
+    rid_str, _uid_str, real_secret = decoded.split(":", 2)
+    forged = base64.urlsafe_b64encode(f"{rid_str}:{stranger_id}:{real_secret}".encode()).decode()
+    csrf = client.get_cookie("csrf_token").value
+    resp = client.post("/verify-2fa", data={
+        "pending_token": forged, "code": _stored_2fa_code(db_path, rid_a),
+        "next_url": "/", "csrf_token": csrf,
+    })
+    assert resp.status_code == 302
+    assert resp.headers["Location"].endswith("/login")
+    assert client.get_cookie("session_token") is None
+
+
+def test_verify_2fa_refuses_the_pre_fix_two_part_token(client, db_path):
+    """A token minted before this fix carries no user_id. It is refused
+    rather than falling back to the old guess-a-user behaviour."""
+    rid = _restaurant(db_path)
+    pending_token = _start_2fa_login(client, db_path, rid)
+    decoded = base64.urlsafe_b64decode(pending_token.encode()).decode()
+    _rid_str, _uid_str, real_secret = decoded.split(":", 2)
+    legacy = base64.urlsafe_b64encode(f"{rid}:{real_secret}".encode()).decode()
+    csrf = client.get_cookie("csrf_token").value
+    resp = client.post("/verify-2fa", data={
+        "pending_token": legacy, "code": _stored_2fa_code(db_path, rid),
+        "next_url": "/", "csrf_token": csrf,
+    })
+    assert resp.status_code == 302
+    assert resp.headers["Location"].endswith("/login")
+    assert client.get_cookie("session_token") is None

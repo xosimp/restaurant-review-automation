@@ -246,7 +246,11 @@ def mobile_login():
                     masked = email[:2] + "***@" + email.split("@")[-1]
         except Exception:
             pass
-        pending_encoded = base64.urlsafe_b64encode(f"{rid}:{pending}".encode()).decode()
+        # "rid:uid:secret" — the user_id that actually passed the password step
+        # is carried through, so verify-2fa issues a session for THAT login
+        # rather than an unordered "LIMIT 1" over the restaurant's users. See
+        # the same fix in auth_routes.py.
+        pending_encoded = base64.urlsafe_b64encode(f"{rid}:{user['id']}:{pending}".encode()).decode()
         return jsonify(ok=True, requires_2fa=True, pending_token=pending_encoded, masked_email=masked)
 
     ua = request.headers.get("User-Agent", "Cavnar-iOS")
@@ -469,8 +473,11 @@ def mobile_verify_2fa():
 
     try:
         decoded = base64.urlsafe_b64decode(pending_token.encode()).decode()
-        rid_str, pending_secret = decoded.split(":", 1)
+        # "rid:uid:secret" — a two-part token is the pre-fix format with no
+        # user_id and is refused rather than guessed at.
+        rid_str, pending_user_str, pending_secret = decoded.split(":", 2)
         rid = int(rid_str)
+        pending_user_id = int(pending_user_str)
     except Exception:
         return jsonify(ok=False, error="Session expired — please log in again."), 401
     rest = get_restaurant(rid) if rid else None
@@ -502,8 +509,12 @@ def mobile_verify_2fa():
 
     _clear_attempts("2fa:" + ip)
     update_restaurant(rid, {"two_fa_code": "", "two_fa_expires": "", "two_fa_pending": ""})
-    user = get_user_by_restaurant_id(rid)
-    if not user:
+    # The login that passed the password step, not an arbitrary active user of
+    # this restaurant. Re-checked against rid so a tampered token can't name
+    # somebody from another restaurant.
+    from auth import get_user_by_id as _gubi_m2fa
+    user = _gubi_m2fa(pending_user_id)
+    if not user or not user.get("is_active") or user.get("restaurant_id") != rid:
         return jsonify(ok=False, error="Session expired — please log in again."), 401
 
     ua = request.headers.get("User-Agent", "Cavnar-iOS")

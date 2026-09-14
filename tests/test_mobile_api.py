@@ -264,6 +264,65 @@ def test_verify_2fa_wrong_code_rejected(client, db_path):
     assert resp.get_json()["ok"] is False
 
 
+def test_verify_2fa_issues_a_session_for_the_login_that_authenticated(client, db_path):
+    """Mirror of the web fix: the pending token carried only a restaurant_id,
+    so the session went to get_user_by_restaurant_id()'s unordered LIMIT 1 —
+    the owner login — no matter who actually passed the password step."""
+    import base64 as _b64
+    rid = _restaurant(db_path)
+    update_restaurant(rid, {"two_fa_enabled": 1}, db_path=db_path)
+    owner_id = create_user(rid, "owner_first", "owner@x.com", "owner-pw", db_path=db_path)
+    teammate_id = create_user(rid, "teammate", "mate@x.com", "mate-pw", db_path=db_path)
+    assert owner_id < teammate_id
+
+    login_resp = client.post("/mobile/api/login", json={"username": "teammate", "password": "mate-pw"})
+    pending_token = login_resp.get_json()["pending_token"]
+    # The token names the teammate, not the restaurant's first login.
+    decoded = _b64.urlsafe_b64decode(pending_token.encode()).decode()
+    assert decoded.split(":", 2)[1] == str(teammate_id)
+
+    resp = client.post("/mobile/api/verify-2fa",
+                       json={"pending_token": pending_token, "code": _stored_2fa_code(db_path, rid)})
+    assert resp.status_code == 200
+    conn = get_conn(db_path)
+    row = conn.execute("SELECT user_id FROM sessions WHERE token=?",
+                       (hash_session_token(resp.get_json()["token"]),)).fetchone()
+    conn.close()
+    assert row["user_id"] == teammate_id, "session was issued to the wrong login"
+
+
+def test_verify_2fa_refuses_a_token_naming_a_user_from_another_restaurant(client, db_path):
+    import base64 as _b64
+    rid_a = _restaurant(db_path, name="Co A")
+    rid_b = _restaurant(db_path, name="Co B")
+    stranger_id = create_user(rid_b, "stranger", "stranger@x.com", "pw", db_path=db_path)
+    update_restaurant(rid_a, {"two_fa_enabled": 1}, db_path=db_path)
+    create_user(rid_a, "alice", "alice@x.com", "correct-horse", db_path=db_path)
+    login_resp = client.post("/mobile/api/login", json={"username": "alice", "password": "correct-horse"})
+    decoded = _b64.urlsafe_b64decode(login_resp.get_json()["pending_token"].encode()).decode()
+    rid_str, _uid, secret = decoded.split(":", 2)
+    forged = _b64.urlsafe_b64encode(f"{rid_str}:{stranger_id}:{secret}".encode()).decode()
+
+    resp = client.post("/mobile/api/verify-2fa",
+                       json={"pending_token": forged, "code": _stored_2fa_code(db_path, rid_a)})
+    assert resp.status_code == 401
+
+
+def test_verify_2fa_refuses_the_pre_fix_two_part_token(client, db_path):
+    import base64 as _b64
+    rid = _restaurant(db_path)
+    update_restaurant(rid, {"two_fa_enabled": 1}, db_path=db_path)
+    create_user(rid, "alice", "alice@x.com", "correct-horse", db_path=db_path)
+    login_resp = client.post("/mobile/api/login", json={"username": "alice", "password": "correct-horse"})
+    decoded = _b64.urlsafe_b64decode(login_resp.get_json()["pending_token"].encode()).decode()
+    rid_str, _uid, secret = decoded.split(":", 2)
+    legacy = _b64.urlsafe_b64encode(f"{rid_str}:{secret}".encode()).decode()
+
+    resp = client.post("/mobile/api/verify-2fa",
+                       json={"pending_token": legacy, "code": _stored_2fa_code(db_path, rid)})
+    assert resp.status_code == 401
+
+
 def test_verify_2fa_rate_limited_after_max_attempts(client, db_path):
     rid = _restaurant(db_path)
     update_restaurant(rid, {"two_fa_enabled": 1}, db_path=db_path)
