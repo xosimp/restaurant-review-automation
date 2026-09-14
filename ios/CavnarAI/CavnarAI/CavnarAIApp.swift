@@ -5,6 +5,11 @@ import UIKit
 struct CavnarAIApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var sessionStore = SessionStore()
+    // The employee tier. A second store rather than a mode flag on the first:
+    // the two tiers hold different tokens with different lifetimes and reach
+    // different APIs, and keeping them as separate objects means there is no
+    // state a bug could flip to turn one into the other.
+    @State private var staffSessionStore = StaffSessionStore()
 
     init() {
         #if DEBUG
@@ -36,6 +41,7 @@ struct CavnarAIApp: App {
         WindowGroup {
             RootView()
                 .environment(sessionStore)
+                .environment(staffSessionStore)
         }
     }
 }

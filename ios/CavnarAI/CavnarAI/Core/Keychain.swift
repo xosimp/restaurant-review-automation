@@ -45,6 +45,10 @@ enum Keychain {
         static let sessionToken = "cavnar.session_token"
         static let deviceRememberToken = "cavnar.2fa_device_token"
         static let deviceIdentity = "cavnar.device_identity"
+        /// The employee tier's shift session. A separate slot from
+        /// sessionToken on purpose — the two tiers must never be able to
+        /// read each other's token, even by a typo'd key.
+        static let staffSessionToken = "cavnar.staff_session_token"
     }
 
     /// A stable identifier for this physical device/install, generated

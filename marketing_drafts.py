@@ -96,12 +96,6 @@ def get_draft(draft_id, restaurant_id, db_path: str = DB_PATH):
     return dict(row) if row else None
 
 
-# Roles that may NOT release content. Deny-list rather than allow-list,
-# deliberately: an allow-list of {"client", "owner"} would silently lock out
-# any role added later, which is the shape of the bug this replaces.
-CANNOT_APPROVE = {"member"}
-
-
 def approve_draft(draft_id, restaurant_id, *, user_id=None, role=None,
                   db_path: str = DB_PATH) -> dict:
     """Release a draft. Invited teammates can write but not publish.
@@ -110,8 +104,14 @@ def approve_draft(draft_id, restaurant_id, *, user_id=None, role=None,
     anything: every restaurant's primary login is 'client', and 'owner' is
     reserved for the multi-restaurant account. auth.invite_team_member's
     comment records the same mistake being made and fixed for Team access.
+
+    The fix for that was a deny-list, which had the opposite failure mode: a
+    role added later was silently PERMITTED to publish. Both directions now
+    resolve through permissions.ROLE_PERMISSIONS, where a new role starts
+    with nothing and has to be granted MARKETING_APPROVE explicitly.
     """
-    if role in CANNOT_APPROVE:
+    from permissions import MARKETING_APPROVE, has_permission
+    if not has_permission({"role": role}, MARKETING_APPROVE):
         return {"ok": False,
                 "error": "Ask the main account to approve this before it goes out."}
     conn = get_conn(db_path)

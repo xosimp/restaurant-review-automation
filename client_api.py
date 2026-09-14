@@ -5616,7 +5616,8 @@ def marketing_unsubscribe(token):
 
 
 def _do_switch_location(current_user, target_id, token):
-    if current_user.get("role") != "owner":
+    from permissions import LOCATION_SWITCH, has_permission
+    if not has_permission(current_user, LOCATION_SWITCH):
         return {"ok": False, "error": "Not an owner account"}, 403
     if not target_id:
         return {"ok": False, "error": "Missing restaurant_id"}, 400
@@ -5640,7 +5641,8 @@ def _do_switch_location(current_user, target_id, token):
 
 
 def _do_group_locations(current_user):
-    if current_user.get("role") != "owner":
+    from permissions import LOCATION_SWITCH, has_permission
+    if not has_permission(current_user, LOCATION_SWITCH):
         return {"ok": True, "locations": []}, 200
     from models import get_restaurant, get_location_group
     base = get_restaurant(current_user["base_restaurant_id"])
@@ -6646,6 +6648,42 @@ def labor_team_remove(current_user):
 @login_required
 def labor_team_thresholds(current_user):
     return _m("mobile_set_thresholds")(current_user)
+
+
+@client_bp.route("/api/account/staff")
+@login_required
+def account_staff_list(current_user):
+    return _m("mobile_list_staff")(current_user)
+
+
+@client_bp.route("/api/account/staff", methods=["POST"])
+@login_required
+def account_staff_create(current_user):
+    return _m("mobile_create_staff")(current_user)
+
+
+@client_bp.route("/api/account/staff/<int:membership_id>/pin", methods=["POST"])
+@login_required
+def account_staff_pin(current_user, membership_id):
+    return _m("mobile_reset_staff_pin")(current_user, membership_id)
+
+
+@client_bp.route("/api/account/staff/<int:membership_id>/unlock", methods=["POST"])
+@login_required
+def account_staff_unlock(current_user, membership_id):
+    return _m("mobile_unlock_staff")(current_user, membership_id)
+
+
+@client_bp.route("/api/account/staff/<int:membership_id>/deactivate", methods=["POST"])
+@login_required
+def account_staff_deactivate(current_user, membership_id):
+    return _m("mobile_deactivate_staff")(current_user, membership_id)
+
+
+@client_bp.route("/api/account/staff/portal-link/rotate", methods=["POST"])
+@login_required
+def account_staff_rotate_link(current_user):
+    return _m("mobile_rotate_portal_link")(current_user)
 
 
 @client_bp.route("/api/team/inbox")

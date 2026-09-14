@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<title>{{ employee_name }} — {{ restaurant.name }}</title>
+<link rel="stylesheet" href="/static/css/cavnar-buttons.css">
+<style>
+  :root{
+    --paper:#0c0c0c; --card:#151515; --line:#262626;
+    --ink:#f0ebe0; --ink2:#cdbfa9; --ink3:#8f847b;
+    --ember:#d4583a; --ember2:#e8956a; --green:#4ead7a; --red:#e05555;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);
+       font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;
+       -webkit-font-smoothing:antialiased;padding:26px 18px 60px}
+  .wrap{max-width:520px;margin:0 auto}
+  .kicker{font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember2)}
+  h1{font-size:25px;line-height:1.15;margin:9px 0 3px;letter-spacing:-.01em}
+  .sub{color:var(--ink3);font-size:14px;margin:0 0 22px}
+
+  .tabs{display:flex;gap:7px;margin-bottom:20px}
+  .tabs button{flex:1;background:var(--card);border:1px solid var(--line);border-radius:10px;
+               padding:10px 8px;color:var(--ink3);font-family:inherit;font-size:14px;
+               font-weight:600;cursor:pointer}
+  .tabs button.on{background:var(--ember);border-color:var(--ember);color:#fff}
+
+  section{display:none}
+  section.on{display:block}
+
+  h2{font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;
+     color:var(--ember2);margin:24px 0 10px}
+  h2:first-child{margin-top:0}
+
+  .shift{background:var(--card);border:1px solid var(--line);border-left:3px solid var(--ember);
+         border-radius:12px;padding:14px 16px;margin-bottom:9px}
+  .shift.today{border-left-color:var(--green)}
+  .shift.off{border-left-color:var(--line);opacity:.62}
+  .shift .day{font-size:15px;font-weight:700}
+  .shift .date{font-size:12.5px;color:var(--ink3);margin-left:6px;font-weight:400}
+  .shift .time{font-size:18px;font-weight:700;margin-top:6px}
+  .shift .meta{font-size:13px;color:var(--ink2);margin-top:3px}
+  .shift .none{font-size:14px;color:var(--ink3);margin-top:5px}
+
+  .task{background:var(--card);border:1px solid var(--line);border-radius:10px;
+        padding:12px 14px;margin-bottom:8px;display:flex;align-items:center;gap:12px}
+  .task input{width:20px;height:20px;flex-shrink:0;accent-color:var(--ember)}
+  .task span{font-size:15.5px}
+  .task.done span{text-decoration:line-through;color:var(--ink3)}
+  .progress{font-size:13px;color:var(--ink3);margin-bottom:10px}
+
+  .row{background:var(--card);border:1px solid var(--line);border-radius:10px;
+       padding:13px 15px;margin-bottom:8px;display:flex;justify-content:space-between;
+       align-items:center;gap:10px}
+  .row .k{font-size:13px;color:var(--ink3)}
+  .row .v{font-size:15px;font-weight:600}
+
+  .empty{background:var(--card);border:1px solid var(--line);border-radius:12px;
+         padding:18px;color:var(--ink3);font-size:14px;line-height:1.55}
+  .load{color:var(--ink3);font-size:14px;padding:8px 0}
+  .err{color:var(--red);font-size:14px}
+
+  .pinform{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .pinform label{display:block;font-size:13px;color:var(--ink3);margin:10px 0 5px}
+  .pinform input{width:100%;background:#0f0f0f;border:1px solid var(--line);border-radius:8px;
+                 padding:11px 13px;color:var(--ink);font-family:inherit;font-size:17px;
+                 letter-spacing:.18em}
+  .pinmsg{font-size:13.5px;margin-top:10px}
+  footer{margin-top:34px;text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="kicker">{{ restaurant.name }}</div>
+  <h1>{{ employee_name }}</h1>
+  <p class="sub" id="today-line">&nbsp;</p>
+
+  <div class="tabs">
+    <button type="button" class="on" data-tab="schedule">Schedule</button>
+    <button type="button" data-tab="tasks">Tasks</button>
+    <button type="button" data-tab="profile">Profile</button>
+  </div>
+
+  <section id="tab-schedule" class="on">
+    <div id="sched-body" class="load">Loading your shifts…</div>
+  </section>
+
+  <section id="tab-tasks">
+    <div id="tasks-body" class="load">Loading your tasks…</div>
+  </section>
+
+  <section id="tab-profile">
+    <div id="profile-body" class="load">Loading…</div>
+    <h2>Change your PIN</h2>
+    <div class="pinform">
+      <label for="cur">Current PIN</label>
+      <input id="cur" type="password" inputmode="numeric" autocomplete="off" maxlength="8">
+      <label for="nw">New PIN</label>
+      <input id="nw" type="password" inputmode="numeric" autocomplete="off" maxlength="8">
+      <label for="nw2">Confirm new PIN</label>
+      <input id="nw2" type="password" inputmode="numeric" autocomplete="off" maxlength="8">
+      <div style="margin-top:14px">
+        <button type="button" class="cbtn cbtn-primary" onclick="savePin()">Save new PIN</button>
+      </div>
+      <div class="pinmsg" id="pinmsg"></div>
+    </div>
+    <footer>
+      <a class="cbtn cbtn-secondary" href="/staff/logout">Sign out</a>
+    </footer>
+  </section>
+</div>
+
+<script>
+(function(){
+  function $(id){ return document.getElementById(id); }
+  function esc(s){
+    return String(s == null ? '' : s)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+  function today(){
+    var d = new Date(), m = ('0'+(d.getMonth()+1)).slice(-2), day = ('0'+d.getDate()).slice(-2);
+    return d.getFullYear()+'-'+m+'-'+day;
+  }
+
+  var tabs = document.querySelectorAll('.tabs button');
+  for (var i = 0; i < tabs.length; i++) {
+    tabs[i].addEventListener('click', function(){
+      for (var j = 0; j < tabs.length; j++) tabs[j].className = '';
+      this.className = 'on';
+      var want = this.getAttribute('data-tab');
+      var secs = document.querySelectorAll('section');
+      for (var k = 0; k < secs.length; k++) {
+        secs[k].className = (secs[k].id === 'tab-' + want) ? 'on' : '';
+      }
+    });
+  }
+
+  // ── Schedule ────────────────────────────────────────────────────────────
+  fetch('/staff/api/shifts').then(function(r){ return r.json(); }).then(function(d){
+    var el = $('sched-body');
+    if (!d.ok) { el.className = 'err'; el.textContent = 'Could not load your shifts.'; return; }
+    el.className = '';
+    if (!d.published) {
+      el.innerHTML = '<div class="empty">No schedule has been posted yet. '
+                   + 'It will show up here as soon as your manager publishes one.</div>';
+      $('today-line').textContent = '';
+      return;
+    }
+    $('today-line').textContent = d.today
+      ? 'Today: ' + d.today.shift_start + ' – ' + d.today.shift_end
+      : "You're off today.";
+
+    var html = '<h2>Next 7 days</h2>';
+    for (var i = 0; i < d.week.length; i++) {
+      var day = d.week[i], s = day.shift;
+      var cls = 'shift' + (day.is_today ? ' today' : '') + (day.off ? ' off' : '');
+      html += '<div class="' + cls + '">'
+            + '<div><span class="day">' + esc(day.weekday) + '</span>'
+            + '<span class="date">' + esc(day.date) + (day.is_today ? ' · today' : '') + '</span></div>';
+      if (s) {
+        html += '<div class="time">' + esc(s.shift_start) + ' – ' + esc(s.shift_end) + '</div>'
+              + '<div class="meta">' + esc(s.role || '')
+              + (s.scheduled_hours ? ' · ' + esc(s.scheduled_hours) + 'h' : '') + '</div>';
+        if (s.notes) html += '<div class="meta">' + esc(s.notes) + '</div>';
+      } else {
+        html += '<div class="none">Off</div>';
+      }
+      html += '</div>';
+    }
+    el.innerHTML = html;
+  }).catch(function(){
+    $('sched-body').className = 'err';
+    $('sched-body').textContent = 'Could not load your shifts.';
+  });
+
+  // ── Tasks ───────────────────────────────────────────────────────────────
+  function loadTasks(){
+    fetch('/staff/api/tasks?date=' + today()).then(function(r){ return r.json(); }).then(function(d){
+      var el = $('tasks-body');
+      if (!d.ok) { el.className = 'err'; el.textContent = 'Could not load your tasks.'; return; }
+      el.className = '';
+      if (!d.role) {
+        el.innerHTML = '<div class="empty">Your job role isn’t set yet, so there’s no checklist to show. '
+                     + 'A manager can set it from the dashboard.</div>';
+        return;
+      }
+      if (!d.tasks.length) {
+        el.innerHTML = '<div class="empty">Nothing on the ' + esc(d.role) + ' checklist today.</div>';
+        return;
+      }
+      var done = 0;
+      for (var i = 0; i < d.tasks.length; i++) if (d.tasks[i].done) done++;
+      var html = '<h2>' + esc(d.role) + ' · today</h2>'
+               + '<div class="progress">' + done + ' of ' + d.tasks.length + ' done</div>';
+      for (var j = 0; j < d.tasks.length; j++) {
+        var t = d.tasks[j];
+        html += '<label class="task' + (t.done ? ' done' : '') + '">'
+              + '<input type="checkbox" data-task="' + t.id + '"' + (t.done ? ' checked' : '') + '>'
+              + '<span>' + esc(t.label) + '</span></label>';
+      }
+      el.innerHTML = html;
+    }).catch(function(){
+      $('tasks-body').className = 'err';
+      $('tasks-body').textContent = 'Could not load your tasks.';
+    });
+  }
+  loadTasks();
+
+  document.addEventListener('change', function(ev){
+    var el = ev.target;
+    if (!el || !el.getAttribute) return;
+    var id = el.getAttribute('data-task');
+    if (id === null) return;
+    fetch('/staff/api/tasks/complete', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({template_id: parseInt(id, 10), task_date: today(), done: el.checked})
+    }).then(function(r){ return r.json(); }).then(function(){ loadTasks(); })
+      .catch(function(){ loadTasks(); });
+  });
+
+  // ── Profile ─────────────────────────────────────────────────────────────
+  fetch('/staff/api/me').then(function(r){ return r.json(); }).then(function(d){
+    var el = $('profile-body');
+    if (!d.ok) { el.className = 'err'; el.textContent = 'Could not load your profile.'; return; }
+    el.className = '';
+    el.innerHTML = '<div class="row"><span class="k">Name</span><span class="v">' + esc(d.employee.name) + '</span></div>'
+                 + '<div class="row"><span class="k">Restaurant</span><span class="v">' + esc(d.employee.restaurant) + '</span></div>';
+  }).catch(function(){
+    $('profile-body').className = 'err';
+    $('profile-body').textContent = 'Could not load your profile.';
+  });
+
+  window.savePin = function(){
+    var msg = $('pinmsg');
+    msg.style.color = 'var(--red)';
+    if ($('nw').value !== $('nw2').value) { msg.textContent = 'The two new PINs don’t match.'; return; }
+    fetch('/staff/api/pin', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({current_pin: $('cur').value, new_pin: $('nw').value})
+    }).then(function(r){ return r.json(); }).then(function(d){
+      if (!d.ok) { msg.textContent = d.error || 'Could not change your PIN.'; return; }
+      msg.style.color = 'var(--green)';
+      msg.textContent = 'PIN changed. Signing you back in…';
+      setTimeout(function(){ window.location = '/staff/logout'; }, 1400);
+    }).catch(function(){ msg.textContent = 'Could not change your PIN.'; });
+  };
+})();
+</script>
+</body>
+</html>

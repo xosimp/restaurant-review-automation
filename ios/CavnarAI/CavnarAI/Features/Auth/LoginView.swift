@@ -19,6 +19,7 @@ struct LoginView: View {
     @State private var viewModel: LoginViewModel
     @FocusState private var focusedField: LoginField_?
     @State private var showingForgot = false
+    @State private var showingStaffSignIn = false
     @State private var showingRegister = false
     // False while RootView's launch splash still covers this on a cold
     // launch — the wordmark isn't mounted until it lifts, so its draw-in
@@ -92,6 +93,17 @@ struct LoginView: View {
             }
             .sheet(isPresented: $showingRegister) {
                 RegisterView(sessionStore: sessionStore)
+            }
+            .fullScreenCover(isPresented: $showingStaffSignIn) {
+                // Full screen rather than a sheet: this is the whole of the
+                // employee product, not a detour inside the owner one.
+                StaffLoginView()
+                    .overlay(alignment: .topTrailing) {
+                        Button("Close") { showingStaffSignIn = false }
+                            .font(.cavnarBody(14, weight: 600))
+                            .foregroundStyle(Color.cavnarInk3)
+                            .padding(18)
+                    }
             }
             .navigationDestination(
                 isPresented: Binding(
@@ -183,6 +195,23 @@ struct LoginView: View {
             .frame(maxWidth: .infinity)
 
             HStack {
+                // Staff don't have a username or a password — they have a
+                // name on a roster and four digits. Sending them down the
+                // owner sign-in form and letting it fail is the single most
+                // likely way this feature gets called broken, so the other
+                // door is on the same screen.
+                Button {
+                    Haptic.light()
+                    showingStaffSignIn = true
+                } label: {
+                    Text("I'm staff")
+                        .font(.cavnarBody(13.5, weight: 700))
+                        .foregroundStyle(Color.cavnarInk3)
+                        .frame(minHeight: LoginMetrics.touch)
+                        .padding(.horizontal, LoginMetrics.spaceXS)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
                 Spacer()
                 Button {
                     Haptic.light()

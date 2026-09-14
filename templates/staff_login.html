@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<title>{% if restaurant %}{{ restaurant.name }} — staff sign in{% else %}Staff sign in{% endif %}</title>
+<link rel="stylesheet" href="/static/css/cavnar-buttons.css">
+<style>
+  :root{
+    --paper:#0c0c0c; --card:#151515; --line:#262626;
+    --ink:#f0ebe0; --ink2:#cdbfa9; --ink3:#8f847b;
+    --ember:#d4583a; --ember2:#e8956a; --red:#e05555;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);
+       font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;
+       -webkit-font-smoothing:antialiased;padding:32px 18px 48px;min-height:100vh}
+  .wrap{max-width:460px;margin:0 auto}
+  .kicker{font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember2)}
+  h1{font-size:25px;line-height:1.15;margin:10px 0 4px;letter-spacing:-.01em}
+  .sub{color:var(--ink3);font-size:14px;margin:0 0 26px}
+
+  .who{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+  .who button{background:var(--card);border:1px solid var(--line);border-radius:12px;
+              padding:15px 12px;color:var(--ink);font-family:inherit;font-size:15.5px;
+              font-weight:600;cursor:pointer;text-align:left;transition:border-color .12s,background .12s}
+  .who button:hover{border-color:var(--ember)}
+  .who button .r{display:block;font-size:12px;font-weight:400;color:var(--ink3);margin-top:3px}
+
+  .pinstep{display:none}
+  .pinstep.on{display:block}
+  .backrow{display:flex;align-items:center;gap:10px;margin-bottom:18px}
+  .backrow button{background:none;border:none;color:var(--ink3);font-size:15px;cursor:pointer;
+                  font-family:inherit;padding:4px 6px}
+  .backrow .nm{font-size:18px;font-weight:700}
+
+  .dots{display:flex;gap:11px;justify-content:center;margin:8px 0 26px}
+  .dots i{width:14px;height:14px;border-radius:50%;background:var(--line);display:block;
+          transition:background .12s,transform .12s}
+  .dots i.f{background:var(--ember);transform:scale(1.12)}
+
+  .pad{display:grid;grid-template-columns:repeat(3,1fr);gap:11px;max-width:300px;margin:0 auto}
+  .pad button{aspect-ratio:1.45;background:var(--card);border:1px solid var(--line);
+              border-radius:14px;color:var(--ink);font-family:inherit;font-size:24px;
+              font-weight:600;cursor:pointer;transition:background .1s}
+  .pad button:active{background:#232323}
+  .pad button.act{font-size:14px;color:var(--ink3);font-weight:500}
+
+  .err{color:var(--red);font-size:14px;text-align:center;margin:18px 0 0;min-height:20px}
+  .empty{background:var(--card);border:1px solid var(--line);border-radius:12px;
+         padding:20px;color:var(--ink3);font-size:14px;line-height:1.55}
+</style>
+</head>
+<body>
+<div class="wrap">
+  {% if not restaurant %}
+    <div class="kicker">Cavnar AI</div>
+    <h1>Staff sign in</h1>
+    <p class="sub">{{ error or "Open the staff link your manager gave you to sign in." }}</p>
+    <div class="empty">Your restaurant has its own staff link. Ask a manager for it, or scan the code posted in the back of house.</div>
+  {% else %}
+    <div class="kicker">{{ restaurant.name }}</div>
+
+    <div id="pick">
+      <h1>Who's starting a shift?</h1>
+      <p class="sub">Tap your name, then enter your PIN.</p>
+      {% if roster %}
+        <div class="who">
+          {% for person in roster %}
+          <button type="button" data-id="{{ person.membership_id }}" data-name="{{ person.name }}">
+            {{ person.name }}
+          </button>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div class="empty">No staff PINs have been set up here yet. A manager can add them from the dashboard under Team.</div>
+      {% endif %}
+    </div>
+
+    <div id="pinstep" class="pinstep">
+      <div class="backrow">
+        <button type="button" onclick="back()">&larr;</button>
+        <span class="nm" id="who-name"></span>
+      </div>
+      <div class="dots" id="dots"><i></i><i></i><i></i><i></i></div>
+      <div class="pad">
+        <button type="button" data-d="1">1</button>
+        <button type="button" data-d="2">2</button>
+        <button type="button" data-d="3">3</button>
+        <button type="button" data-d="4">4</button>
+        <button type="button" data-d="5">5</button>
+        <button type="button" data-d="6">6</button>
+        <button type="button" data-d="7">7</button>
+        <button type="button" data-d="8">8</button>
+        <button type="button" data-d="9">9</button>
+        <button type="button" class="act" onclick="clearPin()">Clear</button>
+        <button type="button" data-d="0">0</button>
+        <button type="button" class="act" onclick="del()">&#9003;</button>
+      </div>
+      <div class="err" id="err"></div>
+    </div>
+  {% endif %}
+</div>
+
+<script>
+(function(){
+  var PORTAL = "{{ portal_token }}";
+  var pin = "", membershipId = null, busy = false;
+
+  function $(id){ return document.getElementById(id); }
+
+  function paint(){
+    var dots = $('dots').children;
+    for (var i = 0; i < dots.length; i++) {
+      dots[i].className = i < pin.length ? 'f' : '';
+    }
+  }
+
+  window.clearPin = function(){ pin = ""; paint(); $('err').textContent = ""; };
+  window.del = function(){ pin = pin.slice(0, -1); paint(); };
+  window.back = function(){
+    membershipId = null; clearPin();
+    $('pinstep').className = 'pinstep';
+    $('pick').style.display = '';
+  };
+
+  var picks = document.querySelectorAll('.who button');
+  for (var i = 0; i < picks.length; i++) {
+    picks[i].addEventListener('click', function(){
+      membershipId = parseInt(this.getAttribute('data-id'), 10);
+      $('who-name').textContent = this.getAttribute('data-name');
+      $('pick').style.display = 'none';
+      $('pinstep').className = 'pinstep on';
+      clearPin();
+    });
+  }
+
+  var keys = document.querySelectorAll('.pad button[data-d]');
+  for (var k = 0; k < keys.length; k++) {
+    keys[k].addEventListener('click', function(){
+      if (busy || pin.length >= 8) return;
+      pin += this.getAttribute('data-d');
+      paint();
+      if (pin.length === 4) submit();
+    });
+  }
+
+  document.addEventListener('keydown', function(e){
+    if (membershipId === null) return;
+    if (e.key >= '0' && e.key <= '9' && pin.length < 8) {
+      pin += e.key; paint();
+      if (pin.length === 4) submit();
+    } else if (e.key === 'Backspace') {
+      del();
+    } else if (e.key === 'Enter' && pin.length >= 4) {
+      submit();
+    }
+  });
+
+  function submit(){
+    if (busy || membershipId === null) return;
+    busy = true;
+    $('err').textContent = "";
+    fetch('/staff/r/' + PORTAL + '/login', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({membership_id: membershipId, pin: pin})
+    }).then(function(r){ return r.json(); }).then(function(d){
+      busy = false;
+      if (d.ok) { window.location = d.redirect; return; }
+      clearPin();
+      $('err').textContent = d.error || 'That PIN didn’t match.';
+    }).catch(function(){
+      busy = false; clearPin();
+      $('err').textContent = 'Could not reach the server. Try again.';
+    });
+  }
+})();
+</script>
+</body>
+</html>

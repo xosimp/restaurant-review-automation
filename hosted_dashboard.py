@@ -223,6 +223,14 @@ app.register_blueprint(clover_bp)
 app.register_blueprint(status_bp)
 app.register_blueprint(mobile_bp)
 
+# The staff portal. Deliberately NOT in the csrf_protect tuple above: its
+# sign-in POST happens before any session exists (there is no cookie jar to
+# double-submit from yet), and every authenticated call it makes is a JSON
+# fetch carrying its own httponly session cookie with SameSite=Lax, which is
+# the same posture mobile_bp already takes.
+from staff_routes import staff_bp
+app.register_blueprint(staff_bp)
+
 app.after_request(ensure_csrf_cookie)
 
 
@@ -265,11 +273,22 @@ def get_current_user():
     return get_session_user(token) if token else None
 
 def login_required(f):
+    """Local, weaker copy of auth.login_required — no billing or module
+    gating — that guards the dashboard HTML shell at "/".
+
+    It still has to refuse a staff PIN identity: serving them the shell would
+    render the whole owner dashboard, and while every XHR it fires would 403
+    on its own, the page itself leaks the restaurant's name, module layout
+    and navigation. Employees get sent to their own portal instead.
+    """
     @wraps(f)
     def decorated(*args, **kwargs):
         user = get_current_user()
         if not user:
             return redirect(url_for("auth.login", next=request.path))
+        from auth import _console_denied as _cd_shell
+        if _cd_shell(user):
+            return redirect(url_for("staff.portal_home"))
         return f(*args, **kwargs, current_user=user)
     return decorated
 
@@ -562,7 +581,8 @@ def index(current_user):
 
     # Multi-location: load group locations for owner switcher
     _group_locations = []
-    if current_user.get("role") == "owner":
+    from permissions import LOCATION_SWITCH as _LOC_SW, has_permission as _hp_loc
+    if _hp_loc(current_user, _LOC_SW):
         try:
             from models import get_restaurant as _gr_grp, get_location_group as _glg
             _base = _gr_grp(current_user["base_restaurant_id"])

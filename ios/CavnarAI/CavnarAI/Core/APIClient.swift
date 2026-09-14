@@ -296,7 +296,8 @@ actor APIClient {
     }
 
     private func buildRequest(
-        path: String, method: String, body: (any Encodable)?, query: [String: String]
+        path: String, method: String, body: (any Encodable)?, query: [String: String],
+        bearerOverride: String? = nil, omitAuth: Bool = false
     ) throws -> URLRequest {
         var url = baseURL.appendingPathComponent(path)
         if !query.isEmpty, var components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
@@ -305,7 +306,15 @@ actor APIClient {
         }
         var request = URLRequest(url: url)
         request.httpMethod = method
-        if let token {
+        // The staff tier passes its own bearer rather than using this actor's
+        // stored owner token. Keeping the two apart is the point: a staff
+        // token is never installed here, so it can never be sent to an owner
+        // endpoint by a call site that forgot which tier it was on.
+        if omitAuth {
+            // Sign-in and roster run before any session exists.
+        } else if let bearerOverride {
+            request.setValue("Bearer \(bearerOverride)", forHTTPHeaderField: "Authorization")
+        } else if let token {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
         if let body {
@@ -313,6 +322,62 @@ actor APIClient {
             request.httpBody = try JSONEncoder.cavnar.encode(body)
         }
         return request
+    }
+
+    /// A call made before any session exists — the staff portal's roster and
+    /// PIN sign-in. Never attaches the stored owner token.
+    func sendUnauthenticated<Response: Decodable>(
+        _ path: String,
+        method: HTTPMethod = .get,
+        body: (any Encodable)? = nil
+    ) async throws -> Response {
+        let request = try buildRequest(path: path, method: method.rawValue,
+                                       body: body, query: [:], omitAuth: true)
+        return try await perform(request, path: path, mayRetry: method == .get)
+    }
+
+    /// A call carrying an explicitly supplied bearer — the staff tier's
+    /// authenticated reads and writes.
+    func sendWithBearer<Response: Decodable>(
+        _ path: String,
+        method: HTTPMethod = .get,
+        body: (any Encodable)? = nil,
+        bearer: String
+    ) async throws -> Response {
+        let request = try buildRequest(path: path, method: method.rawValue,
+                                       body: body, query: [:], bearerOverride: bearer)
+        return try await perform(request, path: path, mayRetry: method == .get)
+    }
+
+    /// Shared transport + decode for the two helpers above. Deliberately does
+    /// NOT run the owner tier's session-expired handler: a staff token going
+    /// stale must sign out the staff store, not the owner one.
+    private func perform<Response: Decodable>(
+        _ request: URLRequest, path: String, mayRetry: Bool
+    ) async throws -> Response {
+        let (data, response) = try await Self.perform(request, on: session, mayRetry: mayRetry)
+        guard let http = response as? HTTPURLResponse else {
+            throw APIError(kind: .server, message: "The server sent something unreadable.")
+        }
+        if http.statusCode == 401 || http.statusCode == 403 {
+            if let decoded = try? JSONDecoder.cavnar.decode(ErrorEnvelope.self, from: data),
+               let message = decoded.error {
+                throw APIError(kind: .server, message: message)
+            }
+            throw SessionExpiredError()
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            if let decoded = try? JSONDecoder.cavnar.decode(ErrorEnvelope.self, from: data),
+               let message = decoded.error {
+                throw APIError(kind: .server, message: message)
+            }
+            throw APIError(kind: .server, message: "That didn't work. Try again.")
+        }
+        do {
+            return try JSONDecoder.cavnar.decode(Response.self, from: data)
+        } catch {
+            throw APIError(kind: .decoding, message: "The server sent something unreadable.")
+        }
     }
 
     /// Turns a URLError into a message the user can actually act on — "move

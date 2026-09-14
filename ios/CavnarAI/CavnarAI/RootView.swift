@@ -4,6 +4,7 @@ import LocalAuthentication
 
 struct RootView: View {
     @Environment(SessionStore.self) private var sessionStore
+    @Environment(StaffSessionStore.self) private var staffSessionStore
     @Environment(\.scenePhase) private var scenePhase
     @State private var deepLinkRouter = DeepLinkRouter()
     @State private var network = NetworkMonitor()
@@ -75,11 +76,24 @@ struct RootView: View {
     // one at a time, on settled frames, a beat after the landing.
     @State private var warmedTabs: Set<AppTab> = []
 
-    private var loginCoverUp: Bool { !sessionStore.isAuthenticated || loginLifted == false }
+    private var loginCoverUp: Bool {
+        guard !staffSessionStore.isAuthenticated else { return false }
+        return !sessionStore.isAuthenticated || loginLifted == false
+    }
 
     var body: some View {
         ZStack {
-            if sessionStore.isAuthenticated {
+            // The employee tier short-circuits everything below it. A staff
+            // session never reaches mainTabs — not hidden behind a flag on the
+            // dashboard, but a different root entirely, so there is no tab, no
+            // deep link and no sheet in the owner app that a PIN session can
+            // land on. The backend enforces the same boundary independently
+            // (auth._console_denied), so this is the convenience half of it,
+            // not the security half.
+            if staffSessionStore.isAuthenticated {
+                StaffPortalView()
+                    .transition(.opacity)
+            } else if sessionStore.isAuthenticated {
                 if sessionStore.isLocked {
                     // introReady: on a cold launch this mounts UNDER the splash;
                     // without the gate its draw-in played hidden and the user

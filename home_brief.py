@@ -733,7 +733,8 @@ def _build(current_user):
     # ── location context ───────────────────────────────────────────────────
     locations = []
     group_name = None
-    if current_user.get("role") == "owner":
+    from permissions import LOCATION_SWITCH as _LOC_SWITCH, has_permission as _has_perm
+    if _has_perm(current_user, _LOC_SWITCH):
         try:
             from models import get_location_group
             base = get_restaurant(current_user.get("base_restaurant_id") or rid)
@@ -873,7 +874,8 @@ def build_group_brief(current_user, fresh=False):
         hit = _CACHE.get(key)
         if hit and (datetime.now(timezone.utc) - hit[0]).total_seconds() < _CACHE_TTL:
             return hit[1], 200
-    if current_user.get("role") != "owner":
+    from permissions import LOCATION_SWITCH as _LOC_SWITCH_G, has_permission as _has_perm_g
+    if not _has_perm_g(current_user, _LOC_SWITCH_G):
         return {"ok": False, "error": "Only the owner login sees all locations"}, 403
     from models import get_location_group
     base = get_restaurant(current_user.get("base_restaurant_id") or current_user["restaurant_id"])

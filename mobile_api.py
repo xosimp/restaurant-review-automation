@@ -4332,7 +4332,8 @@ def mobile_invite_team_member(current_user):
     account owner here. There's no finer-grained permission tier today; a
     teammate just doesn't get this row in the UI, and the route
     double-checks it server-side regardless of what the client shows."""
-    if current_user.get("role") == "member":
+    from permissions import TEAM_INVITE, has_permission
+    if not has_permission(current_user, TEAM_INVITE):
         return jsonify(ok=False, error="Only the account owner can invite team members."), 403
     data = request.get_json() or {}
     name = (data.get("name") or "").strip()
@@ -4359,7 +4360,8 @@ def mobile_invite_team_member(current_user):
 @mobile_bp.route("/account/team/<int:user_id>/revoke", methods=["POST"])
 @mobile_login_required
 def mobile_revoke_team_member(current_user, user_id):
-    if current_user.get("role") == "member":
+    from permissions import TEAM_REVOKE, has_permission
+    if not has_permission(current_user, TEAM_REVOKE):
         return jsonify(ok=False, error="Only the account owner can remove team members."), 403
     from auth import revoke_team_member
     result = revoke_team_member(current_user["restaurant_id"], user_id, current_user["id"])
@@ -4367,6 +4369,151 @@ def mobile_revoke_team_member(current_user, user_id):
         return jsonify(ok=False, error=result.get("error", "Couldn't remove that teammate.")), 400
     _log_account_event(current_user["restaurant_id"], "team_member_revoked", current_user, detail=str(user_id))
     return jsonify(ok=True)
+
+
+# ── Staff accounts (owner side) ───────────────────────────────────────────
+#
+# Creating a staff account is deliberately NOT invite_team_member: that mints
+# a console login with a password and emails it. A staff account is an
+# identity with a PIN and an employee-tier membership, and most hourly staff
+# have no work email at all — the "invite" is a manager reading them four
+# digits at the start of a shift.
+
+def _require_team_admin(current_user):
+    from permissions import TEAM_INVITE, has_permission
+    if not has_permission(current_user, TEAM_INVITE):
+        return jsonify(ok=False, error="Only the account owner can manage staff accounts."), 403
+    return None
+
+
+@mobile_bp.route("/account/staff")
+@mobile_login_required
+def mobile_list_staff(current_user):
+    """The staff roster with PIN/lockout status — never a PIN or its hash."""
+    denied = _require_team_admin(current_user)
+    if denied:
+        return denied
+    from auth import (get_memberships_for_restaurant, get_or_create_staff_portal_token,
+                      pin_lockout_state)
+    rid = current_user["restaurant_id"]
+    out = []
+    for m in get_memberships_for_restaurant(rid, role="employee"):
+        state = pin_lockout_state(m["id"])
+        out.append({
+            "membership_id": m["id"],
+            "user_id": m["user_id"],
+            "name": m.get("employee_name") or m["username"],
+            "has_pin": bool(m.get("pin_hash")),
+            "pin_set_at": m.get("pin_set_at"),
+            "locked": state["locked"],
+            "failed_attempts": state["failed_count"],
+        })
+    return jsonify(ok=True, staff=out,
+                   portal_url=f"/staff/r/{get_or_create_staff_portal_token(rid)}")
+
+
+@mobile_bp.route("/account/staff", methods=["POST"])
+@mobile_login_required
+def mobile_create_staff(current_user):
+    """Create a staff identity + employee membership + PIN in one step.
+
+    The username is internal plumbing — staff never type it, they tap their
+    name — so it is derived rather than asked for. The password is random and
+    unusable: a staff identity authenticates by PIN, and leaving a known or
+    blank password on it would be a second, weaker way in.
+    """
+    denied = _require_team_admin(current_user)
+    if denied:
+        return denied
+    from auth import PinError, create_user, set_membership_pin, upsert_membership, validate_pin
+    import secrets as _sec, sqlite3 as _sq3
+
+    rid = current_user["restaurant_id"]
+    data = request.get_json() or {}
+    name = (data.get("employee_name") or "").strip()
+    if not name:
+        return jsonify(ok=False, error="Enter the employee's name."), 400
+    try:
+        pin = validate_pin(data.get("pin") or "")
+    except PinError as pe:
+        return jsonify(ok=False, error=str(pe)), 400
+
+    base = "".join(c for c in name.lower() if c.isalnum()) or "staff"
+    username, suffix = f"{base}.{rid}", 1
+    from auth import get_user_by_username
+    while get_user_by_username(username):
+        suffix += 1
+        username = f"{base}.{rid}.{suffix}"
+    try:
+        user_id = create_user(rid, username, f"{username}@staff.invalid",
+                              _sec.token_urlsafe(32))
+    except _sq3.IntegrityError:
+        return jsonify(ok=False, error="That employee already has a staff account."), 400
+
+    membership = upsert_membership(user_id, rid, "employee", employee_name=name)
+    set_membership_pin(membership["id"], rid, pin)
+    _log_account_event(rid, "staff_account_created", current_user, detail=name)
+    return jsonify(ok=True, membership_id=membership["id"], user_id=user_id, name=name)
+
+
+@mobile_bp.route("/account/staff/<int:membership_id>/pin", methods=["POST"])
+@mobile_login_required
+def mobile_reset_staff_pin(current_user, membership_id):
+    denied = _require_team_admin(current_user)
+    if denied:
+        return denied
+    from auth import PinError, set_membership_pin, validate_pin
+    data = request.get_json() or {}
+    try:
+        pin = validate_pin(data.get("pin") or "")
+    except PinError as pe:
+        return jsonify(ok=False, error=str(pe)), 400
+    # Scoped by the acting restaurant, so a guessed membership_id belonging to
+    # another tenant simply matches nothing.
+    if not set_membership_pin(membership_id, current_user["restaurant_id"], pin):
+        return jsonify(ok=False, error="Not found"), 404
+    _log_account_event(current_user["restaurant_id"], "staff_pin_reset", current_user,
+                       detail=str(membership_id))
+    return jsonify(ok=True)
+
+
+@mobile_bp.route("/account/staff/<int:membership_id>/unlock", methods=["POST"])
+@mobile_login_required
+def mobile_unlock_staff(current_user, membership_id):
+    denied = _require_team_admin(current_user)
+    if denied:
+        return denied
+    from auth import unlock_membership_pin
+    if not unlock_membership_pin(membership_id, current_user["restaurant_id"]):
+        return jsonify(ok=False, error="Not found"), 404
+    return jsonify(ok=True)
+
+
+@mobile_bp.route("/account/staff/<int:membership_id>/deactivate", methods=["POST"])
+@mobile_login_required
+def mobile_deactivate_staff(current_user, membership_id):
+    denied = _require_team_admin(current_user)
+    if denied:
+        return denied
+    from auth import set_membership_active
+    if not set_membership_active(membership_id, current_user["restaurant_id"], False):
+        return jsonify(ok=False, error="Not found"), 404
+    _log_account_event(current_user["restaurant_id"], "staff_account_deactivated",
+                       current_user, detail=str(membership_id))
+    return jsonify(ok=True)
+
+
+@mobile_bp.route("/account/staff/portal-link/rotate", methods=["POST"])
+@mobile_login_required
+def mobile_rotate_portal_link(current_user):
+    """Revoke the restaurant's staff link and mint a new one."""
+    denied = _require_team_admin(current_user)
+    if denied:
+        return denied
+    from auth import rotate_staff_portal_token
+    token = rotate_staff_portal_token(current_user["restaurant_id"])
+    _log_account_event(current_user["restaurant_id"], "staff_portal_link_rotated", current_user)
+    return jsonify(ok=True, portal_url=f"/staff/r/{token}")
 
 
 @mobile_bp.route("/account/send-test-digest", methods=["POST"])
@@ -4941,14 +5088,22 @@ def mobile_instagram_disconnect(current_user):
 def _may_manage_team(current_user):
     """Whether this login may change ratings, targets, profiles or weighting.
 
-    Defaults open, because every restaurant has exactly one login today and
-    locking them out of their own settings would be absurd. The column
-    exists so that the moment a second login is invited, the invite can
-    create it without this permission rather than handing a new teammate the
-    ability to re-rate the entire staff.
+    Two gates, both of which must pass:
+
+    1. The TEAM_RATE permission for the identity's role. This is what keeps
+       an employee PIN session out — it has no console permissions at all.
+    2. The per-user `can_manage_team` column, which stays as an override an
+       owner can switch off for one specific login without changing its role.
+
+    The column defaults open (and nothing in production has ever set it to 0)
+    so existing logins are unaffected; the role check is the part that
+    actually carries weight now.
     """
+    from permissions import TEAM_RATE, has_permission
     if current_user.get("is_admin"):
         return True
+    if not has_permission(current_user, TEAM_RATE):
+        return False
     value = current_user.get("can_manage_team")
     return True if value is None else bool(value)
 

@@ -77,6 +77,76 @@ CREATE TABLE IF NOT EXISTS login_reports (
     created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
     used_at         TEXT
 );
+
+-- Identity → Tenant → Role.
+--
+-- users.restaurant_id welds an identity to exactly one restaurant, which is
+-- why a person who works at two locations needs two accounts today. This is
+-- the edge that replaces it: one row per (person, restaurant), carrying the
+-- role they hold THERE. The same identity can be an employee at one location
+-- and a manager at another without a second login.
+--
+-- users.restaurant_id is deliberately NOT dropped. ~390 routes read
+-- current_user["restaurant_id"] for tenant scoping, and it keeps meaning
+-- exactly what it means today (the home restaurant). This table is the
+-- source of truth for AUTHORIZATION; that column stays the source of truth
+-- for SCOPING until a later phase retires it.
+--
+-- employee_name is the join back to the seven tables keyed by staff name
+-- (staff_capabilities, staff_availability, staff_contacts, staff_notes,
+-- manual_team_members, schedule_shares, capability_changes). Employees have
+-- always been name strings from POS shift data rather than a roster this app
+-- owns; a membership points AT one rather than renaming anything.
+--
+-- pin_hash is NULL until an owner issues a PIN. A membership without one is
+-- inert: it grants nothing and cannot sign in, which is what lets the whole
+-- feature roll out restaurant by restaurant.
+CREATE TABLE IF NOT EXISTS memberships (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id         INTEGER NOT NULL REFERENCES users(id),
+    restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
+    role            TEXT    NOT NULL,
+    employee_name   TEXT,
+    pin_hash        TEXT,
+    pin_set_at      TEXT,
+    is_active       INTEGER NOT NULL DEFAULT 1,
+    created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT,
+    UNIQUE(user_id, restaurant_id)
+);
+CREATE INDEX IF NOT EXISTS idx_memberships_restaurant
+    ON memberships(restaurant_id, is_active);
+CREATE INDEX IF NOT EXISTS idx_memberships_user
+    ON memberships(user_id, is_active);
+
+-- Per-membership PIN throttling.
+--
+-- A 4-6 digit PIN is 10^4-10^6 possibilities, so hashing is not the defence
+-- — throttling is. It cannot reuse auth_routes._login_attempts: that counter
+-- is per-IP, in memory, and per-process, so one kitchen behind a single NAT
+-- would share a 5-attempt budget across the whole staff and a deploy would
+-- reset it. This is per-membership and persisted.
+CREATE TABLE IF NOT EXISTS membership_pin_attempts (
+    membership_id   INTEGER PRIMARY KEY REFERENCES memberships(id),
+    failed_count    INTEGER NOT NULL DEFAULT 0,
+    last_failed_at  TEXT,
+    locked_until    TEXT
+);
+
+-- The staff portal's front door: a long random per-restaurant token that
+-- identifies WHICH restaurant's roster to show, so an employee never types a
+-- restaurant name. Same shape as schedule_shares.token, which has served the
+-- unauthenticated /s/<token> schedule page for exactly this reason.
+-- Revocable and re-mintable; it authorises nothing on its own.
+CREATE TABLE IF NOT EXISTS staff_portal_tokens (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
+    token           TEXT    NOT NULL UNIQUE,
+    created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+    revoked_at      TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_staff_portal_restaurant
+    ON staff_portal_tokens(restaurant_id, revoked_at);
 """
 
 def init_auth(db_path: str = DB_PATH):
@@ -136,6 +206,492 @@ def init_auth(db_path: str = DB_PATH):
         conn_n.close()
     except Exception:
         pass
+
+    backfill_memberships(db_path=db_path)
+
+
+def backfill_memberships(db_path: str = DB_PATH) -> int:
+    """Give every existing login the membership it implicitly already had.
+
+    Runs on every boot and is idempotent — the INSERT ... SELECT only picks
+    up users with no row yet, so it is a no-op from the second run onward.
+    Deriving (restaurant_id, role) straight off the user row means an
+    existing account's authorization is bit-for-bit what it was before this
+    table existed; nothing is invented and nothing needs a deploy window.
+
+    Returns how many rows it created, for the migration test to assert on.
+    """
+    try:
+        conn = sqlite3.connect(db_path)
+        cur = conn.execute("""
+            INSERT INTO memberships (user_id, restaurant_id, role, is_active, created_at)
+            SELECT u.id, u.restaurant_id, COALESCE(NULLIF(TRIM(u.role), ''), 'client'),
+                   u.is_active, COALESCE(u.created_at, datetime('now'))
+            FROM users u
+            WHERE u.restaurant_id IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM memberships m
+                  WHERE m.user_id = u.id AND m.restaurant_id = u.restaurant_id
+              )
+        """)
+        created = cur.rowcount or 0
+        conn.commit()
+        conn.close()
+        return created
+    except Exception:
+        # Same fail-quiet stance as the column migrations above: a backfill
+        # failure must not stop the app booting, and the dual-read in
+        # get_session_user() falls back to users.restaurant_id regardless.
+        return 0
+
+
+# ── Memberships (Identity → Tenant → Role) ────────────────────────────────
+
+def get_membership(user_id: int, restaurant_id: int,
+                   db_path: str = DB_PATH) -> Optional[dict]:
+    conn = get_conn(db_path)
+    row = conn.execute(
+        "SELECT * FROM memberships WHERE user_id=? AND restaurant_id=? AND is_active=1",
+        (user_id, restaurant_id)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def get_memberships_for_user(user_id: int, db_path: str = DB_PATH) -> list:
+    """Every restaurant this identity can act in. The multi-restaurant story:
+    one person, many memberships, a different role in each."""
+    conn = get_conn(db_path)
+    rows = conn.execute(
+        "SELECT * FROM memberships WHERE user_id=? AND is_active=1 ORDER BY id",
+        (user_id,)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_memberships_for_restaurant(restaurant_id: int, role: str = None,
+                                   db_path: str = DB_PATH) -> list:
+    conn = get_conn(db_path)
+    sql = ("SELECT m.*, u.username, u.email, u.is_active AS user_is_active "
+           "FROM memberships m JOIN users u ON u.id = m.user_id "
+           "WHERE m.restaurant_id=? AND m.is_active=1 AND u.is_active=1")
+    args = [restaurant_id]
+    if role:
+        sql += " AND m.role=?"
+        args.append(role)
+    sql += " ORDER BY COALESCE(m.employee_name, u.username) COLLATE NOCASE"
+    rows = conn.execute(sql, tuple(args)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def upsert_membership(user_id: int, restaurant_id: int, role: str,
+                      employee_name: str = None, db_path: str = DB_PATH) -> dict:
+    """Create or update one identity's role at one restaurant."""
+    from permissions import ROLE_PERMISSIONS, normalize_role
+    role = normalize_role(role)
+    if role not in ROLE_PERMISSIONS:
+        raise ValueError(f"unknown role: {role!r}")
+    conn = get_conn(db_path)
+    try:
+        conn.execute("""
+            INSERT INTO memberships (user_id, restaurant_id, role, employee_name, updated_at)
+            VALUES (?,?,?,?,datetime('now'))
+            ON CONFLICT(user_id, restaurant_id) DO UPDATE SET
+                role=excluded.role,
+                employee_name=COALESCE(excluded.employee_name, memberships.employee_name),
+                is_active=1,
+                updated_at=datetime('now')
+        """, (user_id, restaurant_id, role, (employee_name or "").strip() or None))
+        conn.commit()
+        row = conn.execute(
+            "SELECT * FROM memberships WHERE user_id=? AND restaurant_id=?",
+            (user_id, restaurant_id)).fetchone()
+    finally:
+        conn.close()
+    return dict(row)
+
+
+def set_membership_active(membership_id: int, restaurant_id: int, active: bool,
+                          db_path: str = DB_PATH) -> bool:
+    """Activate/deactivate one membership. Scoped by restaurant_id so an
+    owner can never toggle a membership belonging to another tenant."""
+    conn = get_conn(db_path)
+    try:
+        cur = conn.execute(
+            "UPDATE memberships SET is_active=?, updated_at=datetime('now') "
+            "WHERE id=? AND restaurant_id=?",
+            (1 if active else 0, membership_id, restaurant_id))
+        conn.commit()
+        changed = cur.rowcount > 0
+    finally:
+        conn.close()
+    if changed and not active:
+        # Revoking access has to end the sessions it already granted, not
+        # wait up to 14 hours for them to expire. Same stance as
+        # revoke_team_member, which kills sessions rather than trusting TTL.
+        _end_staff_sessions_for_membership(membership_id, restaurant_id, db_path=db_path)
+    return changed
+
+
+# ── PIN authentication ────────────────────────────────────────────────────
+#
+# PINs are treated as passwords: hashed with the same werkzeug KDF the
+# password column uses, never stored or logged in the clear, and compared
+# only through check_password_hash.
+#
+# The shortness is handled by throttling, not by the hash. A 4-digit PIN is
+# 10,000 possibilities — a KDF slows an OFFLINE attacker with the database in
+# hand, but does nothing about an online one typing at a tablet. That is what
+# membership_pin_attempts is for, and why the lockout is per-membership and
+# persisted rather than reusing auth_routes' per-IP in-memory counter (an
+# entire kitchen shares one NAT address, and a deploy resets it).
+#
+# A PIN is never an identifier. The flow resolves WHO first (tap your name),
+# then verifies. Two employees may hold the same PIN with no collision and no
+# way to enumerate one from the other.
+
+PIN_MIN_LENGTH = 4
+PIN_MAX_LENGTH = 8
+PIN_MAX_ATTEMPTS = 5
+PIN_LOCKOUT_MINUTES = 15
+# A staff session is a shift, not a month. These are frequently shared
+# devices sitting on a pass or a host stand.
+STAFF_SESSION_HOURS = 14
+
+
+class PinError(ValueError):
+    """A PIN that would be unsafe or meaningless to store."""
+
+
+def _pin_pepper() -> str:
+    """App-level secret mixed into every PIN before hashing.
+
+    With a 4-digit space, a stolen database is otherwise brute-forceable
+    offline against any KDF given enough hardware — 10,000 candidates per
+    membership is nothing. The pepper lives outside the database (env), so
+    dumping the DB alone is not enough to test candidates.
+    """
+    import os
+    return os.environ.get("CAVNAR_PIN_PEPPER", "")
+
+
+def _peppered(pin: str) -> str:
+    return f"{_pin_pepper()}::{pin}"
+
+
+def validate_pin(pin: str) -> str:
+    """Normalize and refuse PINs that aren't worth the name."""
+    pin = (pin or "").strip()
+    if not pin.isdigit():
+        raise PinError("A PIN must be digits only.")
+    if not (PIN_MIN_LENGTH <= len(pin) <= PIN_MAX_LENGTH):
+        raise PinError(f"A PIN must be {PIN_MIN_LENGTH}–{PIN_MAX_LENGTH} digits.")
+    if len(set(pin)) == 1:
+        raise PinError("That PIN is too easy to guess — don't repeat one digit.")
+    # Straight runs up or down (1234, 4321, 9876). Everything else — including
+    # dates and doubles like 1122 — is allowed; over-filtering a 4-digit space
+    # shrinks it faster than it helps, and the lockout is the real control.
+    digits = [int(c) for c in pin]
+    deltas = {b - a for a, b in zip(digits, digits[1:])}
+    if deltas in ({1}, {-1}):
+        raise PinError("That PIN is too easy to guess — avoid sequences.")
+    return pin
+
+
+def set_membership_pin(membership_id: int, restaurant_id: int, pin: str,
+                       db_path: str = DB_PATH) -> bool:
+    """Set or replace a membership's PIN, scoped to the acting restaurant.
+
+    Clears any lockout (an owner resetting a PIN is the documented way out of
+    one) and ends that membership's live staff sessions, so a rotated PIN
+    genuinely revokes the old one rather than leaving it usable until expiry.
+    """
+    pin = validate_pin(pin)
+    conn = get_conn(db_path)
+    try:
+        cur = conn.execute(
+            "UPDATE memberships SET pin_hash=?, pin_set_at=datetime('now'), "
+            "updated_at=datetime('now') WHERE id=? AND restaurant_id=?",
+            (generate_password_hash(_peppered(pin)), membership_id, restaurant_id))
+        conn.commit()
+        changed = cur.rowcount > 0
+        if changed:
+            conn.execute("DELETE FROM membership_pin_attempts WHERE membership_id=?",
+                         (membership_id,))
+            conn.commit()
+    finally:
+        conn.close()
+    if changed:
+        _end_staff_sessions_for_membership(membership_id, restaurant_id, db_path=db_path)
+    return changed
+
+
+def clear_membership_pin(membership_id: int, restaurant_id: int,
+                         db_path: str = DB_PATH) -> bool:
+    """Remove a PIN. The membership stays, but can no longer sign in — which
+    is how an owner takes staff access away without deleting the person."""
+    conn = get_conn(db_path)
+    try:
+        cur = conn.execute(
+            "UPDATE memberships SET pin_hash=NULL, pin_set_at=NULL, "
+            "updated_at=datetime('now') WHERE id=? AND restaurant_id=?",
+            (membership_id, restaurant_id))
+        conn.commit()
+        changed = cur.rowcount > 0
+    finally:
+        conn.close()
+    if changed:
+        _end_staff_sessions_for_membership(membership_id, restaurant_id, db_path=db_path)
+    return changed
+
+
+def pin_lockout_state(membership_id: int, db_path: str = DB_PATH) -> dict:
+    """{locked, failed_count, seconds_remaining} for one membership."""
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT failed_count, locked_until FROM membership_pin_attempts "
+            "WHERE membership_id=?", (membership_id,)).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return {"locked": False, "failed_count": 0, "seconds_remaining": 0}
+    remaining = 0
+    if row["locked_until"]:
+        try:
+            until = datetime.fromisoformat(str(row["locked_until"]))
+            remaining = max(0, int((until - datetime.utcnow()).total_seconds()))
+        except Exception:
+            remaining = 0
+    return {"locked": remaining > 0, "failed_count": row["failed_count"] or 0,
+            "seconds_remaining": remaining}
+
+
+def _record_pin_failure(membership_id: int, db_path: str = DB_PATH) -> dict:
+    """Count one miss and lock the membership out once it hits the ceiling."""
+    from datetime import timedelta as _td
+    conn = get_conn(db_path)
+    try:
+        conn.execute("""
+            INSERT INTO membership_pin_attempts (membership_id, failed_count, last_failed_at)
+            VALUES (?, 1, datetime('now'))
+            ON CONFLICT(membership_id) DO UPDATE SET
+                failed_count = membership_pin_attempts.failed_count + 1,
+                last_failed_at = datetime('now')
+        """, (membership_id,))
+        conn.commit()
+        row = conn.execute("SELECT failed_count FROM membership_pin_attempts "
+                           "WHERE membership_id=?", (membership_id,)).fetchone()
+        count = row["failed_count"] if row else 1
+        if count >= PIN_MAX_ATTEMPTS:
+            until = (datetime.utcnow() + _td(minutes=PIN_LOCKOUT_MINUTES)).isoformat()
+            conn.execute("UPDATE membership_pin_attempts SET locked_until=?, failed_count=0 "
+                         "WHERE membership_id=?", (until, membership_id))
+            conn.commit()
+    finally:
+        conn.close()
+    return pin_lockout_state(membership_id, db_path=db_path)
+
+
+def _clear_pin_failures(membership_id: int, db_path: str = DB_PATH):
+    conn = get_conn(db_path)
+    conn.execute("DELETE FROM membership_pin_attempts WHERE membership_id=?", (membership_id,))
+    conn.commit()
+    conn.close()
+
+
+def unlock_membership_pin(membership_id: int, restaurant_id: int,
+                          db_path: str = DB_PATH) -> bool:
+    """Owner-initiated unlock, scoped to the acting restaurant."""
+    conn = get_conn(db_path)
+    try:
+        owned = conn.execute("SELECT 1 FROM memberships WHERE id=? AND restaurant_id=?",
+                             (membership_id, restaurant_id)).fetchone()
+    finally:
+        conn.close()
+    if not owned:
+        return False
+    _clear_pin_failures(membership_id, db_path=db_path)
+    return True
+
+
+def verify_membership_pin(membership_id: int, restaurant_id: int, pin: str,
+                          db_path: str = DB_PATH) -> dict:
+    """Check a PIN. {ok} on success, {ok: False, error, locked} otherwise.
+
+    restaurant_id is passed in from the portal token, never from the client,
+    and is re-checked here so a tampered membership_id cannot reach across
+    tenants even if it is a real id belonging to someone else's restaurant.
+
+    Every failure path returns the same message. Distinguishing "no PIN set"
+    from "wrong PIN" would let anyone with the portal link enumerate which
+    staff have access.
+    """
+    generic = {"ok": False, "error": "That PIN didn't match.", "locked": False}
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT id, pin_hash FROM memberships "
+            "WHERE id=? AND restaurant_id=? AND is_active=1",
+            (membership_id, restaurant_id)).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return generic
+
+    state = pin_lockout_state(membership_id, db_path=db_path)
+    if state["locked"]:
+        mins = max(1, state["seconds_remaining"] // 60)
+        return {"ok": False, "locked": True,
+                "error": f"Too many tries. Ask a manager to unlock, or wait {mins} min."}
+
+    if not row["pin_hash"]:
+        # No PIN issued yet. Still counted, so the lockout also throttles
+        # probing at memberships that cannot log in at all.
+        _record_pin_failure(membership_id, db_path=db_path)
+        return generic
+
+    if not check_password_hash(row["pin_hash"], _peppered((pin or "").strip())):
+        after = _record_pin_failure(membership_id, db_path=db_path)
+        if after["locked"]:
+            mins = max(1, after["seconds_remaining"] // 60)
+            return {"ok": False, "locked": True,
+                    "error": f"Too many tries. Ask a manager to unlock, or wait {mins} min."}
+        return generic
+
+    _clear_pin_failures(membership_id, db_path=db_path)
+    return {"ok": True}
+
+
+def create_staff_session(user_id: int, restaurant_id: int, ip_address: str = None,
+                         user_agent: str = None, device_id: str = None,
+                         db_path: str = DB_PATH) -> str:
+    """A shift-length session tagged so it is distinguishable from a console
+    one. Reuses the sessions table wholesale — same hashed-token storage,
+    same expiry handling, same revoke paths."""
+    return create_session(user_id, days=0, ip_address=ip_address,
+                          user_agent=user_agent, device_type="staff_pin",
+                          device_id=device_id, restaurant_id=restaurant_id,
+                          hours=STAFF_SESSION_HOURS, db_path=db_path)
+
+
+def get_or_create_staff_portal_token(restaurant_id: int, db_path: str = DB_PATH) -> str:
+    """The restaurant's current staff-portal token, minting one on first use.
+
+    This identifies WHICH restaurant's roster to show and nothing else. It
+    authorises no data on its own — every read still requires a PIN session —
+    so its only real secret value is the roster of first names behind it.
+    """
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT token FROM staff_portal_tokens WHERE restaurant_id=? AND revoked_at IS NULL "
+            "ORDER BY id DESC LIMIT 1", (restaurant_id,)).fetchone()
+        if row:
+            return row["token"]
+        token = secrets.token_urlsafe(24)
+        conn.execute("INSERT INTO staff_portal_tokens (restaurant_id, token) VALUES (?,?)",
+                     (restaurant_id, token))
+        conn.commit()
+        return token
+    finally:
+        conn.close()
+
+
+def rotate_staff_portal_token(restaurant_id: int, db_path: str = DB_PATH) -> str:
+    """Revoke the current link and mint a new one — the answer to a link
+    that leaked, or an employee who left with it saved."""
+    conn = get_conn(db_path)
+    try:
+        conn.execute("UPDATE staff_portal_tokens SET revoked_at=datetime('now') "
+                     "WHERE restaurant_id=? AND revoked_at IS NULL", (restaurant_id,))
+        conn.commit()
+    finally:
+        conn.close()
+    return get_or_create_staff_portal_token(restaurant_id, db_path=db_path)
+
+
+def restaurant_for_portal_token(token: str, db_path: str = DB_PATH) -> Optional[int]:
+    """The restaurant a portal token belongs to, or None if unknown/revoked.
+
+    This is the ONLY way a staff request names a restaurant. Nothing reads a
+    restaurant_id off the request body, which is what keeps the whole tier
+    inside one tenant.
+    """
+    if not token:
+        return None
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT restaurant_id FROM staff_portal_tokens WHERE token=? AND revoked_at IS NULL",
+            (token,)).fetchone()
+    finally:
+        conn.close()
+    return row["restaurant_id"] if row else None
+
+
+def staff_login_required(f):
+    """Gate for the staff portal. The mirror image of login_required.
+
+    Requires a live session whose identity holds an EMPLOYEE-tier membership.
+    A console login (owner/manager) is refused here for the same reason an
+    employee is refused the dashboard: these are two different products, and
+    letting a session drift between them is how scoping bugs start. An owner
+    who wants to see the staff view signs in with their own PIN.
+    """
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        from flask import jsonify as _jsonify_sr
+        token = request.cookies.get("staff_session")
+        if not token:
+            auth_header = request.headers.get("Authorization", "")
+            if auth_header.startswith("Bearer "):
+                token = auth_header[7:].strip()
+        user = get_session_user(token) if token else None
+        wants_json = request.path.startswith("/staff/api") or request.method != "GET"
+        if not user:
+            if wants_json:
+                return _jsonify_sr(ok=False, error="Your shift session ended — sign in again.",
+                                   session_expired=True), 401
+            return redirect(url_for("staff.portal_entry"))
+        from permissions import TASKS_VIEW_OWN, has_permission
+        if not has_permission(user, TASKS_VIEW_OWN) or not user.get("membership_id"):
+            if wants_json:
+                return _jsonify_sr(ok=False, error="This isn't a staff account."), 403
+            return redirect(url_for("staff.portal_entry"))
+        return f(*args, **kwargs, current_user=user)
+    return decorated
+
+
+def _end_staff_sessions_for_membership(membership_id: int, restaurant_id: int,
+                                       db_path: str = DB_PATH):
+    """Drop every staff session belonging to this membership's identity at
+    this restaurant. Console sessions are left alone — a manager who also has
+    a PIN should not be signed out of the dashboard because their PIN
+    changed."""
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT user_id FROM memberships WHERE id=? AND restaurant_id=?",
+                           (membership_id, restaurant_id)).fetchone()
+        if row:
+            conn.execute(
+                "DELETE FROM sessions WHERE user_id=? AND device_type='staff_pin'",
+                (row["user_id"],))
+            conn.commit()
+    except Exception as exc:
+        # This revoke is a security control: if it fails, a deactivated
+        # employee or a rotated PIN leaves a live session behind for up to a
+        # full shift. Swallowing that silently is exactly the failure mode
+        # that makes a revocation feature untrustworthy, so it is reported.
+        try:
+            import ops as _ops_staff
+            _ops_staff.capture(exc, job="staff_session_revoke",
+                               context=f"membership_id={membership_id} restaurant_id={restaurant_id}")
+        except Exception:
+            print(f"[staff_session_revoke] failed for membership {membership_id}: {exc}")
+    finally:
+        conn.close()
+
 
 # ── User CRUD ─────────────────────────────────────────────────────────────────
 
@@ -350,7 +906,7 @@ def hash_session_token(token: str) -> str:
 def create_session(user_id: int, days: int = 30,
                    ip_address: str = None, user_agent: str = None,
                    device_type: str = "web", device_id: str = None,
-                   restaurant_id: int = None,
+                   restaurant_id: int = None, hours: int = None,
                    db_path: str = DB_PATH) -> str:
     """Every call used to unconditionally INSERT a new row, so a device that
     just re-logs in (session expired, signed out, reinstalled) piled up a
@@ -365,7 +921,11 @@ def create_session(user_id: int, days: int = 30,
     per-device identity to key off there."""
     token = secrets.token_urlsafe(32)
     from datetime import timedelta
-    expires = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
+    # `hours` is the staff-PIN path: a shift-length session rather than a
+    # month, because those run on shared devices sitting on a pass or a host
+    # stand. Everything else about the row is identical.
+    span = timedelta(hours=hours) if hours else timedelta(days=days)
+    expires = (datetime.now(timezone.utc) + span).isoformat()
     conn = get_conn(db_path)
     # Prune expired sessions for this user (keep active ones for multi-device support)
     conn.execute("DELETE FROM sessions WHERE user_id=? AND expires_at <= datetime('now')", (user_id,))
@@ -491,6 +1051,28 @@ def get_session_user(token: str, db_path: str = DB_PATH) -> Optional[dict]:
         user["restaurant_id"] = user["active_restaurant_id"]
     else:
         user["base_restaurant_id"] = user["restaurant_id"]
+
+    # Dual-read: the membership for the restaurant this session is ACTING in
+    # is the authority on role, because that is the whole point of separating
+    # identity from authorization — the same person can be a manager at one
+    # location and an employee at another, and users.role cannot express that.
+    #
+    # It is a fallback, not a requirement: a session whose membership row is
+    # missing (backfill hasn't run, or a brand-new login racing it) keeps the
+    # users.role it has always had, so nothing can be locked out by this
+    # table's absence. The membership is also what the staff routes read to
+    # resolve an employee's own name, so it is attached either way.
+    try:
+        membership = get_membership(user["id"], user["restaurant_id"], db_path=db_path)
+    except Exception:
+        membership = None
+    if membership:
+        user["role"] = membership["role"]
+        user["membership_id"] = membership["id"]
+        user["employee_name"] = membership.get("employee_name")
+    else:
+        user["membership_id"] = None
+        user["employee_name"] = None
     return user
 
 def switch_active_restaurant(token: str, restaurant_id: int, db_path: str = DB_PATH):
@@ -679,6 +1261,35 @@ def _module_blocked_message(label):
     return f"{label} isn't part of this plan. Contact will@cavnar.ai to add it."
 
 
+_STAFF_WRONG_DOOR = ("This is the owner dashboard. Open your staff portal link "
+                     "to see your shifts and tasks.")
+
+
+def _console_denied(user):
+    """True when this identity may not use the owner/manager console at all.
+
+    This is the gate that makes an employee tier safe to add. Employee PIN
+    sessions are real sessions in the same table, resolved by the same
+    get_session_user(), so WITHOUT this check a PIN would open every one of
+    the ~370 routes behind these two decorators — labor analytics, food cost,
+    financials, the review inbox, billing, the lot.
+
+    It is checked per-request rather than at login because a role can be
+    changed (or a membership deactivated) while a session is live, and the
+    next request must respect that rather than waiting 30 days for expiry.
+
+    Deliberately NOT modelled on _module_blocked/_billing_blocked, both of
+    which fail OPEN on exception. Those protect revenue; this protects data,
+    so it fails CLOSED — an identity whose permissions can't be resolved does
+    not get the console.
+    """
+    try:
+        from permissions import DASHBOARD_ACCESS, has_permission
+        return not has_permission(user, DASHBOARD_ACCESS)
+    except Exception:
+        return True
+
+
 def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
@@ -688,6 +1299,11 @@ def login_required(f):
                 from flask import jsonify as _jsonify_lr
                 return _jsonify_lr(ok=False, error="Your session expired — please log in again.", session_expired=True), 401
             return redirect(url_for("auth.login", next=request.path))
+        if _console_denied(user):
+            if _wants_json_response():
+                from flask import jsonify as _jsonify_cd
+                return _jsonify_cd(ok=False, error=_STAFF_WRONG_DOOR, staff_account=True), 403
+            return redirect(url_for("staff.portal_home"))
         if _billing_blocked(user):
             from flask import jsonify as _jsonify_bb
             return _jsonify_bb(ok=False, error=_BILLING_BLOCKED_MESSAGE,
@@ -728,6 +1344,13 @@ def mobile_login_required(f):
         if not user:
             from flask import jsonify as _jsonify_mlr
             return _jsonify_mlr(ok=False, error="Your session expired — please log in again.", session_expired=True), 401
+        # Same console gate as the web decorator — the iOS app ships both the
+        # owner dashboard and the staff portal against this one blueprint, so
+        # a PIN session must be refused here too or the whole owner API is
+        # reachable from the staff build.
+        if _console_denied(user):
+            from flask import jsonify as _jsonify_mcd
+            return _jsonify_mcd(ok=False, error=_STAFF_WRONG_DOOR, staff_account=True), 403
         if _billing_blocked(user):
             from flask import jsonify as _jsonify_mbb
             return _jsonify_mbb(ok=False, error=_BILLING_BLOCKED_MESSAGE,
