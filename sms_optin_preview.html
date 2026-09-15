@@ -40,10 +40,17 @@
     .chk { width: 15px; height: 15px; border: 1.5px solid var(--ember); border-radius: 3px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
     .chk.checked { background: var(--ember); }
     .chk.checked::after { content: '✓'; color: white; font-size: 10px; font-weight: 700; }
-    .consent-box { background: rgba(200,75,47,.06); border: 1px solid rgba(200,75,47,.25); border-radius: 8px; padding: 14px 16px; margin-bottom: 24px; }
+    .consent-box { background: rgba(200,75,47,.06); border: 1px solid rgba(200,75,47,.25); border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; }
     .consent-box .row { display: flex; align-items: flex-start; gap: 10px; font-size: 12px; color: var(--ink); line-height: 1.6; }
     .consent-box .row .chk { margin-top: 2px; }
     .consent-box a { color: var(--ember); }
+    /* The at-rest state — SMS not yet selected, so the consent box is dimmed
+       and inert, exactly as the live dashboard renders it. This is the state
+       a reviewer needs to see; a screenshot of the AFTER-consent state is
+       what triggered error 30925 ("the opt-in checkbox is missing or
+       appears to be pre-selected") on the first submission. */
+    .consent-box.at-rest { opacity: .4; }
+    .state-label { font-size: 11px; font-weight: 600; color: var(--ember); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 8px; }
 
     .caption { font-size: 12px; color: var(--ink3); font-style: italic; margin: -20px 0 32px; }
     footer { border-top: 1px solid var(--paper3); padding: 24px 40px; text-align: center; font-size: 12px; color: var(--ink3); }
@@ -88,6 +95,29 @@
         <span>dashboard.cavnar.ai/account (authenticated)</span>
       </div>
       <div class="mockup-body">
+        <div class="state-label">Default state — nothing selected, nothing pre-checked</div>
+        <div class="field-label">Delivery method</div>
+        <div class="delivery-row">
+          <label><span class="chk"></span> SMS text message</label>
+          <label><span class="chk"></span> Email</label>
+        </div>
+        <div class="consent-box at-rest">
+          <div class="row">
+            <span class="chk"></span>
+            <span>I agree to receive operational SMS alerts from Cavnar AI. Message &amp; data rates may apply. Reply STOP to cancel, HELP for help. <a href="/privacy">Privacy</a> &middot; <a href="/terms">Terms</a></span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="caption">This is what every account sees until they act — SMS delivery unselected, the consent box dimmed and inert. The Save button is disabled here.</p>
+
+    <div class="mockup-wrap">
+      <div class="mockup-titlebar">
+        <span>Alert Settings</span>
+        <span>dashboard.cavnar.ai/account (authenticated)</span>
+      </div>
+      <div class="mockup-body">
+        <div class="state-label">After the owner selects SMS and checks the box themselves</div>
         <div class="field-label">Delivery method</div>
         <div class="delivery-row">
           <label><span class="chk checked"></span> SMS text message</label>
@@ -101,7 +131,7 @@
         </div>
       </div>
     </div>
-    <p class="caption">Reproduced verbatim from the live dashboard's Alert Settings modal.</p>
+    <p class="caption">Only reachable by the account holder's own two clicks: select SMS, then check the box. Save is refused server-side if SMS is selected without it.</p>
 
     <h2>Message program details</h2>
     <p>
