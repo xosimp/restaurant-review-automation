@@ -463,3 +463,67 @@ def test_a_weak_pin_is_refused_at_signup(client, db_path):
     resp = _signup(client, db_path, rid, pin="1234")
     assert resp.status_code == 400
     assert "sequence" in resp.get_json()["error"].lower()
+
+
+# ── OTP traffic goes to its own campaign, not the alert campaign ──────────
+
+def test_the_signup_code_is_sent_on_the_otp_service_not_the_alert_service(
+        client, db_path, monkeypatch):
+    """A Messaging Service maps to exactly one A2P Campaign. Routing OTP
+    traffic through the alert service would be the mixed-use-case pattern
+    carriers filter hardest — this is what keeps them apart."""
+    import notify
+    monkeypatch.setattr(notify, "TWILIO_SID", "ACfake")
+    monkeypatch.setattr(notify, "TWILIO_TOKEN", "faketoken")
+    monkeypatch.setattr(notify, "TWILIO_FROM", "+15550000000")
+    monkeypatch.setattr(notify, "TWILIO_MESSAGING_SERVICE_SID", "MGalert000000000000000000000000")
+    monkeypatch.setattr(notify, "TWILIO_OTP_MESSAGING_SERVICE_SID", "MGotp0000000000000000000000000")
+
+    sent = {}
+
+    class FakeResponse:
+        status_code = 201
+        text = ""
+
+    def fake_post(url, auth, data, timeout):
+        sent.update(data)
+        return FakeResponse()
+
+    monkeypatch.setattr(notify.requests, "post", fake_post)
+
+    ok = client.post("/staff/api/signup/start",
+                     json={"phone": "5550142233", "optin": True}).get_json()
+    assert ok["ok"] is True
+    assert sent.get("MessagingServiceSid") == "MGotp0000000000000000000000000"
+    assert "From" not in sent
+
+
+def test_the_otp_send_falls_back_to_plain_from_when_no_otp_service_is_set(
+        client, db_path, monkeypatch):
+    """Until the second Messaging Service is provisioned, OTP sends must
+    still go out — on TWILIO_FROM, never silently borrowing the alert
+    campaign's service."""
+    import notify
+    monkeypatch.setattr(notify, "TWILIO_SID", "ACfake")
+    monkeypatch.setattr(notify, "TWILIO_TOKEN", "faketoken")
+    monkeypatch.setattr(notify, "TWILIO_FROM", "+15550000000")
+    monkeypatch.setattr(notify, "TWILIO_MESSAGING_SERVICE_SID", "MGalert000000000000000000000000")
+    monkeypatch.setattr(notify, "TWILIO_OTP_MESSAGING_SERVICE_SID", "")
+
+    sent = {}
+
+    class FakeResponse:
+        status_code = 201
+        text = ""
+
+    def fake_post(url, auth, data, timeout):
+        sent.update(data)
+        return FakeResponse()
+
+    monkeypatch.setattr(notify.requests, "post", fake_post)
+
+    ok = client.post("/staff/api/signup/start",
+                     json={"phone": "5550142233", "optin": True}).get_json()
+    assert ok["ok"] is True
+    assert sent.get("From") == "+15550000000"
+    assert "MessagingServiceSid" not in sent

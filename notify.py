@@ -42,6 +42,13 @@ TWILIO_FROM    = os.getenv("TWILIO_FROM_NUMBER", "")
 # documented fallback pairing on the number itself) when unset, so a
 # deployment that hasn't added this yet keeps working exactly as before.
 TWILIO_MESSAGING_SERVICE_SID = os.getenv("TWILIO_MESSAGING_SERVICE_SID", "")
+# A Messaging Service maps to exactly one A2P 10DLC Campaign, and a phone
+# number can only belong to one Campaign at a time — so a genuinely separate
+# use case (staff signup OTP vs. the owner alert campaign) needs its own
+# number and its own Messaging Service, not just its own campaign form.
+# Optional; falls back to TWILIO_MESSAGING_SERVICE_SID (and from there to
+# TWILIO_FROM) when unset, so nothing breaks before this is provisioned.
+TWILIO_OTP_MESSAGING_SERVICE_SID = os.getenv("TWILIO_OTP_MESSAGING_SERVICE_SID", "")
 # Read fresh at call time — see emails.py for why binding these at import
 # time is a silent-total-failure mode.
 def _resend_key(): return os.getenv("RESEND_API_KEY", "")
@@ -91,23 +98,37 @@ def validate_twilio_signature(url: str, post_params: dict, signature: str) -> bo
     return hmac.compare_digest(expected, signature)
 
 
-def send_sms(to_phone: str, message: str) -> bool:
+def send_sms(to_phone: str, message: str, use_case: str = "alert") -> bool:
     """Send a single SMS via Twilio. Returns True on success.
 
-    Sends via MessagingServiceSid when TWILIO_MESSAGING_SERVICE_SID is set —
-    the path Twilio's A2P 10DLC campaigns are registered against — rather
-    than the bare From number. A message sent with only From can still be
-    carrier-filtered as unregistered traffic even once the number is
-    attached to an approved campaign; routing through the service is what
-    reliably resolves the number to its campaign.
+    Sends via MessagingServiceSid rather than a bare From number — the path
+    Twilio's A2P 10DLC campaigns are registered against. A message sent with
+    only From can still be carrier-filtered as unregistered traffic even once
+    the number is attached to an approved campaign; routing through the
+    service is what reliably resolves the number to its campaign.
+
+    use_case picks WHICH service, because a Messaging Service maps to exactly
+    one Campaign: "alert" (default) is the owner review/health/labor alert
+    campaign on TWILIO_MESSAGING_SERVICE_SID; "otp" is the staff-signup
+    verification-code campaign on TWILIO_OTP_MESSAGING_SERVICE_SID, a
+    genuinely separate number and service. Sending OTP traffic through the
+    alert service (or vice versa) is exactly the "mixed use case on one
+    campaign" pattern carriers filter hardest.
     """
     if not all([TWILIO_SID, TWILIO_TOKEN, TWILIO_FROM]):
         print(f"[notify] Twilio not configured — would send to {to_phone}: {message[:80]}")
         return False
     phone = _normalize_phone(to_phone)
     data = {"To": phone, "Body": message}
-    if TWILIO_MESSAGING_SERVICE_SID:
-        data["MessagingServiceSid"] = TWILIO_MESSAGING_SERVICE_SID
+    # No fallback from "otp" to the alert service on a missing OTP SID —
+    # that would put verification-code traffic on the wrong campaign, which
+    # is worse than the plain-From send this falls back to instead (the
+    # behavior every send already had before TWILIO_MESSAGING_SERVICE_SID
+    # existed).
+    service_sid = (TWILIO_OTP_MESSAGING_SERVICE_SID if use_case == "otp"
+                   else TWILIO_MESSAGING_SERVICE_SID)
+    if service_sid:
+        data["MessagingServiceSid"] = service_sid
     else:
         data["From"] = TWILIO_FROM
     try:

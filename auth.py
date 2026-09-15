@@ -1376,8 +1376,13 @@ def start_staff_signup(phone: str, optin: bool = False, db_path: str = DB_PATH) 
     queued = False
     try:
         from notify import send_sms
+        # use_case="otp" routes this through its own Messaging Service/
+        # Campaign once TWILIO_OTP_MESSAGING_SERVICE_SID is set — a
+        # verification code is a different A2P use case from the owner alert
+        # campaign, and mixing the two on one campaign is what carriers
+        # filter hardest.
         queued = send_sms(phone, f"Your Cavnar AI code is {code}. It expires in "
-                                 f"{SIGNUP_CODE_TTL_MINUTES} minutes.")
+                                 f"{SIGNUP_CODE_TTL_MINUTES} minutes.", use_case="otp")
     except Exception as exc:
         print(f"[staff_signup] SMS send failed for {phone}: {exc}")
 
