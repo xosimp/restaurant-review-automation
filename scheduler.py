@@ -214,6 +214,7 @@ def run_daily_fetch():
                         gmb_failed_reason = "Google refresh token is no longer valid (revoked, or expired)"
                     else:
                         loc_id = restaurant.gmb_location_id
+                        acct_id = restaurant.gmb_account_id
                         if not loc_id and restaurant.google_place_id:
                             # Matched on this restaurant's own Place ID. The
                             # old backfill took accounts[0]/locations[0],
@@ -222,6 +223,7 @@ def run_daily_fetch():
                             _m = find_gmb_location(token, restaurant.google_place_id)
                             if _m.get("ok"):
                                 loc_id = _m["location"]
+                                acct_id = _m["account"]
                                 try:
                                     from models import update_restaurant as _ur
                                     _ur(rid, {"gmb_account_id": _m["account"],
@@ -235,6 +237,11 @@ def run_daily_fetch():
                         else:
                             reviews += fetch_reviews_via_gmb(token, loc_id, rid)
                             fetched_ok = True
+                            try:
+                                from gmb import fetch_gmb_logo_url
+                                fetch_gmb_logo_url(rid, token, acct_id, loc_id)
+                            except Exception:
+                                pass
                 except Exception as e:
                     gmb_failed_reason = str(e)[:200]
                     log.error(f"GMB fetch [{restaurant.name}]: {e}")

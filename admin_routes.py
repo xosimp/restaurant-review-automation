@@ -1037,6 +1037,7 @@ def fetch_reviews_now(restaurant_id, current_user):
                 token = get_valid_token(restaurant_id)
                 if token:
                     loc_id = restaurant.gmb_location_id
+                    acct_id = restaurant.gmb_account_id
                     if not loc_id:
                         _m = find_gmb_location(token, restaurant.google_place_id or "")
                         acct_id = _m.get("account") if _m.get("ok") else None
@@ -1052,10 +1053,16 @@ def fetch_reviews_now(restaurant_id, current_user):
                     if loc_id:
                         gmb_reviews = fetch_reviews_via_gmb(token, loc_id, restaurant_id)
                         reviews += gmb_reviews
-                        # Also capture official GBP overall rating
+                        # Also capture official GBP overall rating, and
+                        # backfill the hero-banner logo if not set yet
                         try:
                             from gmb import fetch_location_rating
                             fetch_location_rating(restaurant_id, token, loc_id)
+                        except Exception:
+                            pass
+                        try:
+                            from gmb import fetch_gmb_logo_url
+                            fetch_gmb_logo_url(restaurant_id, token, acct_id, loc_id)
                         except Exception:
                             pass
                     else:

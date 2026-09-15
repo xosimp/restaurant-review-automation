@@ -377,6 +377,49 @@ def delete_reply(restaurant_id: int, review_name: str) -> dict:
         return {"ok": False, "error": str(e)}
 
 
+def fetch_gmb_logo_url(restaurant_id: int, access_token: str, account_id: str, location_id: str) -> dict:
+    """One-time backfill of restaurants.brand_logo_url from the listing's own
+    LOGO-category photo, so the Account hero banner shows the restaurant's
+    real logo instead of a letter initial.
+
+    Never overwrites a value that's already there: an admin who hand-set
+    brand_logo_url, or a restaurant this already ran for, is left alone —
+    callers can invoke this unconditionally on every sync without it
+    re-fetching or fighting a manual override.
+
+    account_id/location_id format: "accounts/123" / "locations/456", matching
+    every other v4 Media API call in this module (create_local_post, etc).
+    """
+    from models import get_restaurant, update_restaurant
+    r = get_restaurant(restaurant_id)
+    if not r or r.brand_logo_url:
+        return {"ok": False, "error": "brand_logo_url already set"}
+    if not account_id or not location_id:
+        return {"ok": False, "error": "missing account or location id"}
+    try:
+        resp = requests.get(
+            f"https://mybusiness.googleapis.com/v4/{account_id}/{location_id}/media",
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            return {"ok": False, "error": f"Media API {resp.status_code}: {resp.text[:200]}"}
+        items = resp.json().get("mediaItems", []) or []
+        logo = next((m for m in items
+                    if (m.get("locationAssociation") or {}).get("category") == "LOGO"), None)
+        if not logo:
+            return {"ok": False, "error": "No LOGO-category photo on this listing"}
+        url = logo.get("googleUrl") or logo.get("sourceUrl")
+        if not url:
+            return {"ok": False, "error": "LOGO item had no usable URL"}
+        update_restaurant(restaurant_id, {"brand_logo_url": url})
+        print(f"[GMB] Logo cached for restaurant {restaurant_id}")
+        return {"ok": True, "url": url}
+    except Exception as e:
+        print(f"[GMB] fetch_gmb_logo_url error for restaurant {restaurant_id}: {e}")
+        return {"ok": False, "error": str(e)}
+
+
 def fetch_location_rating(restaurant_id: int, access_token: str, location_id: str) -> dict:
     """
     Fetch the official GBP overall rating + review count from the location's metadata.
