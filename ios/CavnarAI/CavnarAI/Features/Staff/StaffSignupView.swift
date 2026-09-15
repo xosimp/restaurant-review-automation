@@ -126,6 +126,20 @@ struct StaffSignupView: View {
                 .textContentType(.oneTimeCode)
                 .font(.cavnarNumber(22, weight: 600))
                 .multilineTextAlignment(.center)
+                // Submit on the sixth digit, the way every OTP field does now
+                // — including when iOS autofills the whole code from the SMS,
+                // which arrives as one change rather than six.
+                .onChange(of: smsCode) { _, value in
+                    let digits = value.filter(\.isNumber)
+                    if digits != value { smsCode = digits; return }
+                    // Only while they are typing. Clearing on empty would
+                    // wipe the message a failed attempt just set, since that
+                    // failure resets the field.
+                    if !digits.isEmpty { error = nil }
+                    if digits.count == 6, !loading {
+                        Task { await verifyCode() }
+                    }
+                }
 
             errorLine
             primary(loading ? "Checking…" : "Continue") {
@@ -323,8 +337,13 @@ struct StaffSignupView: View {
                 await loadNames()
             }
         } catch let apiError as APIClient.APIError {
+            // Cleared so the next attempt is six fresh presses rather than
+            // editing a wrong code in place — and so the auto-submit above
+            // does not re-fire on the same wrong value.
+            smsCode = ""
             error = apiError.message
         } catch {
+            smsCode = ""
             self.error = "Could not reach the server."
         }
     }

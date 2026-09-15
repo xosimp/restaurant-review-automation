@@ -263,6 +263,47 @@ def test_the_dev_code_never_appears_on_a_deployment(client, db_path, monkeypatch
     assert "dev_code" not in body
 
 
+def test_the_dev_code_appears_locally_even_when_twilio_is_configured(client, db_path, monkeypatch):
+    """The fallback keys on the DEPLOYMENT, not on whether the send worked.
+
+    Twilio answers 201 the moment it accepts a message, and a carrier can
+    reject it seconds later — so "sent" is not a fact the send can report.
+    Keying the fallback on that 201 produced the worst outcome available: no
+    text arrived AND no code was shown.
+    """
+    for var in ("RAILWAY_ENVIRONMENT", "RAILWAY_PROJECT_ID", "CAVNAR_FORCE_SECURE_COOKIES"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("TWILIO_ACCOUNT_SID", "ACfake")
+    monkeypatch.setenv("TWILIO_AUTH_TOKEN", "faketoken")
+    monkeypatch.setenv("TWILIO_FROM_NUMBER", "+15550000000")
+    import notify
+    # Queued, exactly as Twilio reports a message it has merely accepted.
+    monkeypatch.setattr(notify, "send_sms", lambda *a, **k: True)
+
+    body = client.post("/staff/api/signup/start", json={"phone": "5550142233"}).get_json()
+    assert body["sms_sent"] is True
+    assert body.get("dev_code"), "no code shown even though nothing was delivered"
+    # And it is a code that actually works.
+    assert client.post("/staff/api/signup/verify",
+                       json={"phone": "5550142233",
+                             "code": body["dev_code"]}).get_json()["ok"] is True
+
+
+def test_the_configured_check_reads_the_names_notify_actually_uses(monkeypatch):
+    """These names are not guessable and must match notify.py exactly — this
+    asked for TWILIO_PHONE_NUMBER, which exists nowhere."""
+    import notify
+    for var in ("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER"):
+        monkeypatch.setenv(var, "x")
+    assert auth._sms_configured() is True
+    monkeypatch.delenv("TWILIO_FROM_NUMBER")
+    assert auth._sms_configured() is False
+    # The source of truth: notify.py reads these three and no others.
+    src = open(notify.__file__).read()
+    for var in ("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER"):
+        assert f'os.getenv("{var}"' in src, var
+
+
 # ── the join code ──────────────────────────────────────────────────────────
 
 def test_the_join_code_is_typeable(db_path):

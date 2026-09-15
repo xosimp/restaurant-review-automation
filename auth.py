@@ -1312,9 +1312,15 @@ def normalize_phone(value) -> str:
 
 
 def _sms_configured() -> bool:
+    """Whether Twilio is wired up — the same three variables notify.py reads.
+
+    These names are not guessable and must match notify.py exactly: this asked
+    for TWILIO_PHONE_NUMBER, which exists nowhere, so it reported "not
+    configured" on a deployment where texting was fully set up.
+    """
     import os
     return all(os.environ.get(k) for k in
-               ("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_PHONE_NUMBER"))
+               ("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER"))
 
 
 def start_staff_signup(phone: str, db_path: str = DB_PATH) -> dict:
@@ -1356,20 +1362,26 @@ def start_staff_signup(phone: str, db_path: str = DB_PATH) -> dict:
     finally:
         conn.close()
 
-    delivered = False
+    queued = False
     try:
         from notify import send_sms
-        delivered = send_sms(phone, f"Your Cavnar AI code is {code}. It expires in "
-                                    f"{SIGNUP_CODE_TTL_MINUTES} minutes.")
+        queued = send_sms(phone, f"Your Cavnar AI code is {code}. It expires in "
+                                 f"{SIGNUP_CODE_TTL_MINUTES} minutes.")
     except Exception as exc:
         print(f"[staff_signup] SMS send failed for {phone}: {exc}")
 
-    out = {"ok": True, "sms_sent": delivered}
-    if not delivered and not _sms_configured() and not cookies_require_secure():
-        # Local/test only: never on a deployed environment, and never once
-        # Twilio is configured, so this cannot become a production bypass.
+    out = {"ok": True, "sms_sent": queued}
+    # The local escape hatch is keyed on the DEPLOYMENT, not on whether the
+    # send worked, because "it worked" is not something the send can tell us:
+    # Twilio answers 201 the moment it accepts a message for delivery, and the
+    # carrier can reject it seconds later (A2P 10DLC, unreachable handset, a
+    # landline). Keying the fallback on that 201 produced the worst outcome
+    # available — no text arrived AND no code was shown, because as far as the
+    # server knew it had been sent.
+    if not cookies_require_secure():
         print(f"[staff_signup] DEV CODE for {phone}: {code}")
         out["dev_code"] = code
+        out["sms_configured"] = _sms_configured()
     return out
 
 
