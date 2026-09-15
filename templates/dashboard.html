@@ -208,12 +208,10 @@ html[data-theme="dark"] body{color:var(--ink)}
 /* Sign out hover */
 [data-theme="dark"] .logout-btn:hover{color:var(--ink)!important;border-color:var(--ink2)!important}
 /* Consultant hero card */
-[data-theme="dark"] .acct-hero-card{background:#0c0c0c!important}
 /* Header logo */
 [data-theme="dark"] .hdr-logo{color:#f0ebe0!important}
 [data-theme="dark"] .hdr-logo em{color:var(--ember2)!important}
 /* Consultant card name text (uses var(--paper) designed for dark header, not dark card) */
-[data-theme="dark"] .acct-hero-card .acct-name{color:#f0ebe0!important}
 /* Reviews sub-tab underline — hide in dark mode */
 [data-theme="dark"] #rv-tab-container{border-bottom-color:transparent!important}
 /* Benchmark rate card dark override */
@@ -240,7 +238,6 @@ html[data-theme="dark"] body{color:var(--ink)}
    rather than needing to be matched by hand in four places. */
 .dark-insight-card{background:var(--paper2);border:1px solid var(--paper3)}
 [data-theme="dark"] .dark-insight-card{background:var(--surface)!important;border-color:var(--paper3)!important}
-.acct-hero-card{background:linear-gradient(160deg,var(--paper2) 0%,var(--paper3) 100%)}
 
 /* Text inside those cards was hardcoded to cream/white for the old
    always-dark look — remap to ink tokens in light mode only. Dark mode is
@@ -713,14 +710,6 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none}
   /* Hide less important columns in review cards */
   .card-sub .platform-badge { display: none; }
 
-  /* Account tab — stack all grids */
-  .account-top-row { grid-template-columns: 1fr !important; }
-  .account-two-col { grid-template-columns: 1fr !important; }
-
-  /* Hero banner — stack on mobile */
-  .acct-hero { flex-direction: column; gap: 12px !important; }
-  .acct-hero-right { text-align: left !important; }
-
   /* Inline-styled 1080px content wrappers — the 28px gutters eat a phone */
   div[style*="max-width:1080px"] { padding-left: 12px !important; padding-right: 12px !important; }
 
@@ -755,7 +744,6 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none}
   .two-col { grid-template-columns: 1fr; }
   .intel-stat-row { grid-template-columns: repeat(2, 1fr) !important; }
   .ct-grid { grid-template-columns: repeat(2, 1fr); }
-  .account-top-row, .account-two-col { grid-template-columns: 1fr !important; }
   div[style*="max-width:1080px"] { padding-left: 18px !important; padding-right: 18px !important; }
 }
 </style>
@@ -3846,806 +3834,785 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 
 
 <!-- ACCOUNT -->
-<div class="panel {{'active' if not mod_reviews and not mod_labor and not mod_inventory and not mod_marketing}}" id="panel-account" style="margin:0 auto">
-<div style="max-width:1080px;margin:0 auto;padding:24px 28px">
+<style>
+/* ═══════════════════════════════════════════════════════════════════════════
+   ACCOUNT — the restaurant's management center.
+   One component system (ac-*), tokens only, Space Grotesk on every number.
+   The --hb-* tokens are declared per-panel everywhere else in this file
+   (#panel-home, #panel-reviews, …); declaring them here is what lets the
+   shared .hb-skel / .hb-load primitives render inside this panel at all.
+   ═══════════════════════════════════════════════════════════════════════════ */
+#panel-account{--hb-line:rgba(14,12,10,.12);--hb-line2:rgba(14,12,10,.07);--hb-tint:rgba(200,75,47,.06);--hb-tint2:rgba(200,75,47,.12);--hb-good:var(--green);--hb-warn:var(--amber);--hb-bad:var(--red);--hb-field:rgba(255,255,255,.55);--ac-card:var(--surface);--ac-line:var(--paper3);--ac-glow:rgba(200,75,47,.14)}
+[data-theme="dark"] #panel-account{--hb-line:rgba(240,235,224,.14);--hb-line2:rgba(240,235,224,.07);--hb-tint:rgba(224,100,68,.09);--hb-tint2:rgba(224,100,68,.16);--hb-field:rgba(255,255,255,.05);--ac-card:var(--surface);--ac-glow:rgba(224,100,68,.2)}
+#panel-account{padding:0;max-width:none}
+.ac-page{max-width:1180px;margin:0 auto;padding:28px 28px 72px}
 
-  <!-- SECTION 1: Consultant hero card -->
-  <div class="acct-hero-card" style="border:1px solid rgba(200,75,47,.55);border-radius:var(--r);padding:24px 28px;margin-bottom:16px;position:relative;overflow:hidden;box-shadow:0 0 0 1px rgba(200,75,47,.18),0 8px 32px rgba(200,75,47,.28),0 1px 0 rgba(255,255,255,.06) inset">
-    <div style="display:flex;align-items:flex-start;gap:20px" class="acct-hero">
-      <div style="width:72px;height:72px;border-radius:50%;flex-shrink:0;box-shadow:0 0 0 3px #c84b2f55,0 0 20px 6px #c84b2f22;overflow:hidden;background:#1a1410">
-        <img src="/static/will.png" style="width:100%;height:110%;object-fit:cover;object-position:center 20%">
+/* ── Overview header ─────────────────────────────────────────────────────── */
+.ac-hero{position:relative;overflow:hidden;border-radius:16px;border:1px solid var(--ac-line);background:var(--ac-card);padding:28px 30px 26px;box-shadow:0 1px 0 rgba(255,255,255,.04) inset,0 10px 40px var(--ac-glow)}
+.ac-hero::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse 60% 120% at 0% 0%,var(--hb-tint2),transparent 60%);pointer-events:none}
+.ac-hero-top{position:relative;display:flex;align-items:flex-start;gap:22px}
+.ac-logo{width:76px;height:76px;border-radius:18px;flex:none;display:flex;align-items:center;justify-content:center;background:var(--ink);color:var(--paper);font-family:'Clash Display',sans-serif;font-size:30px;font-weight:600;letter-spacing:.02em;overflow:hidden;box-shadow:0 0 0 3px var(--hb-tint2),0 8px 24px var(--ac-glow)}
+.ac-logo img{width:100%;height:100%;object-fit:cover}
+.ac-title{flex:1;min-width:0}
+.ac-kicker{font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember)}
+.ac-name{font-family:'Clash Display',sans-serif;font-size:32px;font-weight:600;line-height:1.05;color:var(--ink);margin:6px 0 8px;letter-spacing:-.01em;text-wrap:balance}
+.ac-meta{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:14px;color:var(--ink3)}
+.ac-meta b{color:var(--ink2);font-weight:500}
+.ac-chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+.ac-chip{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 11px;border-radius:999px;font-size:12.5px;font-weight:600;letter-spacing:.01em;border:1px solid var(--ac-line);background:var(--paper2);color:var(--ink2);white-space:nowrap}
+.ac-chip i{width:7px;height:7px;border-radius:50%;background:var(--ink3);flex:none}
+.ac-chip.good{color:var(--green);background:var(--green-bg);border-color:transparent}.ac-chip.good i{background:var(--green)}
+.ac-chip.warn{color:var(--amber);background:var(--amber-bg);border-color:transparent}.ac-chip.warn i{background:var(--amber)}
+.ac-chip.bad{color:var(--red);background:var(--red-bg);border-color:transparent}.ac-chip.bad i{background:var(--red)}
+.ac-chip.ember{color:var(--ember);background:var(--hb-tint);border-color:transparent}.ac-chip.ember i{background:var(--ember)}
+.ac-chip.info{color:var(--blue);background:var(--blue-bg);border-color:transparent}.ac-chip.info i{background:var(--blue)}
+.ac-chip.sm{height:22px;padding:0 8px;font-size:11.5px}
+.ac-qa{position:relative;display:flex;flex-wrap:wrap;gap:8px;margin-top:22px;padding-top:18px;border-top:1px solid var(--ac-line)}
+.ac-qa-label{width:100%;font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-bottom:2px}
+
+/* ── Account health ──────────────────────────────────────────────────────── */
+.ac-health{display:grid;grid-template-columns:150px minmax(0,1fr);gap:22px;align-items:center;margin-top:16px;padding:20px 24px;border-radius:16px;border:1px solid var(--ac-line);background:var(--ac-card)}
+.ac-ring{position:relative;width:118px;height:118px;margin:0 auto}
+.ac-ring svg{width:100%;height:100%;transform:rotate(-90deg)}
+.ac-ring .tr{fill:none;stroke:var(--hb-line2);stroke-width:9}
+.ac-ring .ar{fill:none;stroke:var(--ember);stroke-width:9;stroke-linecap:round;stroke-dasharray:314;stroke-dashoffset:314;transition:stroke-dashoffset 1.2s cubic-bezier(.3,0,.15,1);filter:drop-shadow(0 0 6px var(--ac-glow))}
+.ac-ring .n{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:'Space Grotesk',sans-serif;font-variant-numeric:tabular-nums}
+.ac-ring .n b{font-size:30px;font-weight:600;color:var(--ink);line-height:1}
+.ac-ring .n span{font-size:10.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:4px}
+.ac-hgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px 14px}
+.ac-hitem{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-radius:10px;border:1px solid transparent;background:transparent;text-align:left;cursor:pointer;font-family:inherit;color:inherit;transition:background .15s,border-color .15s,transform .15s}
+.ac-hitem:hover{background:var(--paper2);border-color:var(--ac-line);transform:translateY(-1px)}
+.ac-hitem:focus-visible{outline:2px solid var(--ember);outline-offset:2px}
+.ac-hdot{width:10px;height:10px;border-radius:50%;flex:none;margin-top:5px;background:var(--ink3);box-shadow:0 0 0 3px var(--paper2)}
+.ac-hitem.ok .ac-hdot{background:var(--green)}.ac-hitem.warn .ac-hdot{background:var(--amber)}.ac-hitem.bad .ac-hdot{background:var(--red)}
+.ac-hitem b{display:block;font-size:14px;font-weight:600;color:var(--ink)}
+.ac-hitem span{display:block;font-size:12.5px;color:var(--ink3);margin-top:2px;line-height:1.35}
+
+/* ── Two-column body: sticky rail + sections ─────────────────────────────── */
+.ac-body{display:grid;grid-template-columns:196px minmax(0,1fr);gap:32px;margin-top:28px;align-items:start}
+.ac-nav{position:sticky;top:72px}
+.ac-nav a{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:9px;font-size:14px;font-weight:500;color:var(--ink3);text-decoration:none;border-left:2px solid transparent;transition:color .15s,background .15s}
+.ac-nav a:hover{color:var(--ink);background:var(--paper2)}
+.ac-nav a:focus-visible{outline:2px solid var(--ember);outline-offset:2px}
+.ac-nav a[aria-current="true"]{color:var(--ember);font-weight:600;background:var(--hb-tint);border-left-color:var(--ember)}
+.ac-nav a svg{width:16px;height:16px;flex:none;opacity:.85}
+.ac-nav .hint{margin:14px 12px 0;font-size:12px;color:var(--ink3);line-height:1.5}
+
+.ac-section{scroll-margin-top:84px;margin-bottom:44px}
+.ac-h{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--ac-line)}
+.ac-h h2{font-family:'Clash Display',sans-serif;font-size:22px;font-weight:600;color:var(--ink);margin:0;letter-spacing:-.005em}
+.ac-h p{margin:5px 0 0;font-size:14px;color:var(--ink3);max-width:60ch}
+.ac-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.ac-grid.three{grid-template-columns:repeat(3,minmax(0,1fr))}
+.ac-card{background:var(--ac-card);border:1px solid var(--ac-line);border-radius:14px;padding:20px 22px;box-shadow:0 2px 10px rgba(14,12,10,.05);transition:box-shadow .15s,transform .15s}
+.ac-card:hover{box-shadow:0 6px 20px rgba(14,12,10,.08)}
+[data-theme="dark"] .ac-card{box-shadow:0 4px 16px rgba(0,0,0,.35)}
+.ac-card.span{grid-column:1 / -1}
+.ac-card.accent{border-color:var(--hb-tint2);box-shadow:0 0 0 1px var(--hb-tint),0 8px 28px var(--ac-glow)}
+.ac-card-h{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}
+.ac-card-h h3{font-size:16px;font-weight:700;color:var(--ink);margin:0;letter-spacing:-.005em}
+.ac-card-h p{margin:3px 0 0;font-size:13.5px;color:var(--ink3);line-height:1.45}
+.ac-card-h .r{flex:none;display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+.ac-note{font-size:13px;color:var(--ink3);line-height:1.5;margin-top:10px}
+.ac-note a{color:var(--ember);text-decoration:none;font-weight:600}
+
+/* Rows: label · value · control */
+.ac-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:11px 0;border-top:1px solid var(--ac-line)}
+.ac-row:first-child,.ac-card-h + .ac-row,.ac-rows > .ac-row:first-child{border-top:none}
+.ac-row .l{min-width:0}
+.ac-row .l b{display:block;font-size:15px;font-weight:600;color:var(--ink)}
+.ac-row .l span{display:block;font-size:13px;color:var(--ink3);margin-top:2px;line-height:1.45}
+.ac-row .c{flex:none;display:flex;align-items:center;gap:8px}
+.ac-kv{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 20px}
+.ac-kv.three{grid-template-columns:repeat(3,minmax(0,1fr))}
+.ac-kv dt{font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3);margin:0 0 3px}
+.ac-kv dd{margin:0;font-size:15px;color:var(--ink);line-height:1.45;overflow-wrap:anywhere}
+.ac-kv dd.muted{color:var(--ink3)}
+.ac-big{font-family:'Space Grotesk',sans-serif;font-variant-numeric:tabular-nums;font-size:28px;font-weight:600;color:var(--ink);line-height:1;letter-spacing:-.01em}
+.ac-list{font-size:14px;color:var(--ink3)}
+.ac-list > div{border-top:1px solid var(--ac-line)}
+.ac-list > div:first-child{border-top:none}
+
+/* Switch — a real checkbox, keyboard-operable, no inline colours */
+.ac-switch{position:relative;display:inline-flex;align-items:center;width:44px;height:26px;flex:none;cursor:pointer}
+.ac-switch input{position:absolute;inset:0;opacity:0;margin:0;cursor:pointer}
+.ac-sw-track{position:absolute;inset:0;border-radius:26px;background:var(--paper3);transition:background .2s}
+.ac-sw-thumb{position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:var(--surface);box-shadow:0 1px 4px rgba(0,0,0,.25);transition:transform .2s cubic-bezier(.3,0,.15,1)}
+.ac-switch input:checked ~ .ac-sw-track{background:var(--ember)}
+.ac-switch input:checked ~ .ac-sw-thumb{transform:translateX(18px)}
+.ac-switch input:focus-visible ~ .ac-sw-track{outline:2px solid var(--ember);outline-offset:2px}
+.ac-switch input:disabled ~ .ac-sw-track{opacity:.45}
+
+/* Fields */
+.ac-field{display:flex;flex-direction:column;gap:5px;min-width:0}
+.ac-field label,.ac-lbl{font-size:12.5px;font-weight:600;color:var(--ink2)}
+.ac-input,.ac-select,.ac-textarea{width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid var(--ac-line);border-radius:9px;font-family:'Apfel Grotezk',sans-serif;font-size:14.5px;background:var(--paper);color:var(--ink);outline:none;transition:border-color .15s,box-shadow .15s}
+.ac-input:focus,.ac-select:focus,.ac-textarea:focus{border-color:var(--ember);box-shadow:0 0 0 3px var(--hb-tint2)}
+.ac-input[readonly]{color:var(--ink3);background:var(--paper2)}
+.ac-textarea{resize:vertical;min-height:64px;line-height:1.5}
+.ac-form{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px 14px}
+.ac-form .wide{grid-column:1 / -1}
+.ac-inline{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.ac-inline .ac-input{flex:1;min-width:150px}
+.ac-num{font-family:'Space Grotesk',sans-serif!important;font-variant-numeric:tabular-nums}
+.ac-status{font-size:13px;color:var(--ink3);min-height:18px}
+.ac-checks{display:flex;flex-wrap:wrap;gap:8px 18px;font-size:14px;color:var(--ink2)}
+.ac-checks label{display:flex;align-items:center;gap:7px;cursor:pointer}
+.ac-checks input{accent-color:var(--ember);width:16px;height:16px}
+
+/* Meter */
+.ac-meter{height:8px;border-radius:999px;background:var(--hb-line2);overflow:hidden}
+.ac-meter > i{display:block;height:100%;width:0;border-radius:999px;background:linear-gradient(90deg,var(--ember2),var(--ember));transition:width .9s cubic-bezier(.3,0,.15,1)}
+.ac-meter-cap{display:flex;justify-content:space-between;font-size:12.5px;color:var(--ink3);margin-top:6px}
+
+/* Connections */
+.ac-conn{display:flex;align-items:center;gap:14px;padding:14px 16px;border:1px solid var(--ac-line);border-radius:12px;background:var(--paper)}
+.ac-conn .ic{width:40px;height:40px;border-radius:10px;display:flex;align-items:center;justify-content:center;flex:none;background:var(--paper2);color:var(--ink2);font-size:13px;font-weight:700;letter-spacing:.02em}
+.ac-conn .ic.on{background:var(--green-bg);color:var(--green)}.ac-conn .ic.err{background:var(--red-bg);color:var(--red)}
+.ac-conn .t{flex:1;min-width:0}
+.ac-conn .t b{display:block;font-size:15px;font-weight:600;color:var(--ink)}
+.ac-conn .t span{display:block;font-size:13px;color:var(--ink3);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ac-conn .t span.err{color:var(--red)}
+.ac-conn .a{flex:none;display:flex;gap:6px}
+
+/* Disclosure */
+.ac-disc{border-top:1px solid var(--ac-line);padding:10px 0 0;margin-top:6px}
+.ac-disc-body{display:none;padding:8px 0 4px}
+.ac-disc-body.open{display:block}
+
+/* Join code */
+.ac-code{font-family:'Space Grotesk',sans-serif;font-variant-numeric:tabular-nums;font-size:34px;font-weight:600;letter-spacing:.18em;color:var(--ember);line-height:1}
+
+/* People rows rendered by JS keep their old inline layout; this just sizes them */
+#acct-team-list,#staff-list,#staff-pin-events,#staff-unclaimed,#sessions-list,#trusted-list,#login-history,#activity-log{font-size:14px;color:var(--ink3)}
+
+/* Consultant */
+.ac-consult{display:flex;gap:16px;align-items:center}
+.ac-consult .ph{width:64px;height:64px;border-radius:50%;overflow:hidden;flex:none;background:var(--ink);box-shadow:0 0 0 3px var(--hb-tint2),0 0 18px var(--ac-glow)}
+.ac-consult .ph img{width:100%;height:112%;object-fit:cover;object-position:center 20%}
+.ac-consult b{display:block;font-family:'Clash Display',sans-serif;font-size:19px;font-weight:600;color:var(--ink)}
+.ac-consult span{display:block;font-size:13.5px;color:var(--ink3);margin-top:2px}
+.ac-statusdot{width:8px;height:8px;border-radius:50%;background:var(--green);flex:none;box-shadow:0 0 0 3px var(--green-bg)}
+
+/* FAQ (kept: .faq-q is a listed exception in the button-system test) */
+.faq-group-title{font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3);margin:16px 0 4px}
+.faq-item{border-top:1px solid var(--ac-line)}
+.faq-item:first-of-type{border-top:none}
+.faq-q{display:flex;align-items:flex-start;justify-content:space-between;width:100%;text-align:left;background:none;border:none;padding:13px 0;font-family:'Apfel Grotezk',sans-serif;font-size:15px;font-weight:600;color:var(--ink);cursor:pointer;gap:10px;border-radius:6px}
+.faq-q:hover{color:var(--ember)}
+.faq-q:focus-visible{outline:2px solid var(--ember);outline-offset:2px}
+.faq-arrow{font-size:11px;color:var(--ink3);margin-top:3px;flex-shrink:0;transition:transform .2s}
+.faq-a{display:none;padding:0 0 14px;font-size:14px;line-height:1.65;color:var(--ink3)}
+.faq-item.open .faq-a{display:block}
+.faq-item.open .faq-arrow{transform:rotate(180deg)}
+
+/* Reveal — sections rest visible; only the ring/meters animate in */
+@media (prefers-reduced-motion:reduce){.ac-ring .ar,.ac-meter > i,.ac-sw-thumb,.ac-sw-track,.ac-card,.ac-hitem{transition:none!important}}
+
+/* ── Responsive ──────────────────────────────────────────────────────────── */
+@media (max-width:1000px){
+  .ac-body{grid-template-columns:1fr;gap:18px}
+  .ac-nav{position:sticky;top:56px;z-index:5;display:flex;gap:4px;overflow-x:auto;padding:8px 0;margin:0 -4px;background:var(--paper);border-bottom:1px solid var(--ac-line);-webkit-overflow-scrolling:touch;scrollbar-width:none}
+  .ac-nav::-webkit-scrollbar{display:none}
+  .ac-nav a{flex:none;border-left:none;border-bottom:2px solid transparent;border-radius:8px 8px 0 0;padding:8px 12px}
+  .ac-nav a[aria-current="true"]{border-left-color:transparent;border-bottom-color:var(--ember);background:transparent}
+  .ac-nav .hint{display:none}
+  .ac-health{grid-template-columns:1fr}
+  .ac-ring{margin-bottom:6px}
+}
+@media (max-width:760px){
+  .ac-page{padding:18px 14px 60px}
+  .ac-hero{padding:22px 20px}
+  .ac-hero-top{flex-direction:column;gap:14px}
+  .ac-name{font-size:26px}
+  .ac-grid,.ac-grid.three,.ac-kv,.ac-kv.three,.ac-form,.ac-hgrid{grid-template-columns:1fr}
+  .ac-h{flex-direction:column;align-items:flex-start}
+  .ac-conn{flex-wrap:wrap}
+  .ac-conn .a{width:100%;justify-content:flex-end}
+  .ac-row{flex-wrap:wrap}
+}
+</style>
+
+{# ── Connection card for the three POS providers. One template, three
+      states (connected · reconnect needed · not connected), replacing three
+      hand-copied 90-line blocks that had already drifted in their comments. #}
+{% macro pos_card(label, mark, ident, sync_error, last_synced, sync_fn, disconnect_fn, open_fn) -%}
+  <div class="ac-conn" data-conn="{{ label|lower|replace(' ','-') }}">
+    {% if ident and not sync_error %}
+      <div class="ic on" aria-hidden="true">{{ mark }}</div>
+      <div class="t"><b>{{ label }}</b><span>{% if last_synced %}Last synced {{ last_synced[:16].replace('T',' ') }} UTC{% else %}Connected &mdash; first sync pending{% endif %}</span></div>
+      <div class="a">
+        <button onclick="{{ sync_fn }}(this)" class="cbtn cbtn-success cbtn-sm">&#8635; Sync</button>
+        <button class="cbtn cbtn-danger cbtn-ghost cbtn-sm" onclick="{{ disconnect_fn }}(this)">Disconnect</button>
       </div>
-      <div style="flex:1">
-        <div class="acct-name" style="font-family:'Clash Display',sans-serif;font-size:20px;color:var(--ink);margin-bottom:3px">Will Cavnar</div>
-        <div style="font-size:12px;color:var(--ink3);margin-bottom:14px">Founder, Cavnar AI &middot; Your dedicated restaurant intelligence consultant</div>
-        <div style="display:flex;gap:10px;flex-wrap:wrap">
-          <a href="mailto:will@cavnar.ai" class="cbtn cbtn-primary">&#9993; Email Will</a>
-          <a href="https://calendly.com/will-cavnar/30min" target="_blank" class="cbtn cbtn-secondary">&#128197; Book a call</a>
-          <a href="https://status.cavnar.ai" target="_blank" class="cbtn cbtn-secondary">
-            <span id="acct-status-dot" style="width:7px;height:7px;border-radius:50%;background:#22c55e;flex-shrink:0"></span> System Status
-          </a>
-        </div>
+    {% elif ident and sync_error %}
+      {# Credentials on file but the last sync failed. A plain green check here
+         claimed "Connected" while no data had synced since — the state that
+         makes an owner think their numbers are live when they aren't. #}
+      <div class="ic err" aria-hidden="true">!</div>
+      <div class="t"><b>{{ label }} &mdash; needs attention</b><span class="err" title="{{ sync_error }}">{{ sync_error }}</span></div>
+      <div class="a">
+        <button onclick="{{ open_fn }}()" class="cbtn cbtn-success cbtn-sm">Reconnect</button>
+        <button class="cbtn cbtn-danger cbtn-ghost cbtn-sm" onclick="{{ disconnect_fn }}(this)">Disconnect</button>
       </div>
-      <div style="text-align:right;flex-shrink:0" class="acct-hero-right">
-        <div style="font-size:10px;color:#9a9188;text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px">Restaurant</div>
-        <div class="acct-name" style="font-size:15px;font-weight:700;color:var(--ink);margin-bottom:12px">{{restaurant.name}}</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;justify-items:end">
-          {% if mod_reviews %}<span style="font-size:11px;font-weight:600;color:#4ade80;background:rgba(74,222,128,.12);padding:2px 10px;border-radius:10px;white-space:nowrap">&#10003; Reviews</span>{% else %}<span></span>{% endif %}
-          {% if mod_labor %}<span style="font-size:11px;font-weight:600;color:#4ade80;background:rgba(74,222,128,.12);padding:2px 10px;border-radius:10px;white-space:nowrap">&#10003; Labor</span>{% else %}<span></span>{% endif %}
-          {% if mod_inventory %}<span style="font-size:11px;font-weight:600;color:#4ade80;background:rgba(74,222,128,.12);padding:2px 10px;border-radius:10px;white-space:nowrap">&#10003; Food Cost</span>{% else %}<span></span>{% endif %}
-          {% if mod_marketing %}<span style="font-size:11px;font-weight:600;color:#4ade80;background:rgba(74,222,128,.12);padding:2px 10px;border-radius:10px;white-space:nowrap">&#10003; Marketing</span>{% else %}<span></span>{% endif %}
-        </div>
-      </div>
-    </div>
+    {% else %}
+      <div class="ic" aria-hidden="true">{{ mark }}</div>
+      <div class="t"><b>{{ label }}</b><span>Not connected &mdash; powers live labor and sales data</span></div>
+      <div class="a"><button onclick="{{ open_fn }}()" class="cbtn cbtn-secondary cbtn-sm">Connect</button></div>
+    {% endif %}
   </div>
+{%- endmacro %}
 
-  <!-- SECTION 2: Restaurant profile (read-only) -->
-  <div class="acct-card" style="padding:18px 22px;margin-bottom:14px">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3)">Your Restaurant Profile</div>
-      <button onclick="toggleProfileEdit()" id="profile-edit-btn" class="cbtn cbtn-primary cbtn-sm">Edit profile</button>
-      <a href="mailto:will@cavnar.ai?subject=Profile update for {{restaurant.name}}" style="display:none" id="profile-request-link">Request an update<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
-    </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:0" class="profile-grid">
+{% set _pos_on = (restaurant.toast_restaurant_guid and not restaurant.toast_sync_error) or (restaurant.square_location_id and not restaurant.square_sync_error) or (restaurant.clover_merchant_id and not restaurant.clover_sync_error) %}
+{% set _pos_err = (restaurant.toast_restaurant_guid and restaurant.toast_sync_error) or (restaurant.square_location_id and restaurant.square_sync_error) or (restaurant.clover_merchant_id and restaurant.clover_sync_error) %}
+{% set _conn_count = (1 if restaurant.gmb_refresh_token else 0) + (1 if restaurant.ig_token else 0) + (1 if _pos_on else 0) %}
+{% set _profile_done = (1 if restaurant.owner_name else 0) + (1 if restaurant.owner_phone else 0) + (1 if restaurant.timezone else 0) + (1 if restaurant.voice_notes else 0) %}
+{% set _alerts_on = restaurant.alert_1star or restaurant.alert_2star or restaurant.alert_health or restaurant.alert_neg_spike or restaurant.alert_negative_trend or restaurant.alert_no_response or restaurant.alert_5star or restaurant.alert_rating_threshold or restaurant.alert_labor_over or restaurant.alert_any_review %}
+{% set _is_owner = current_user.role in ('owner', 'client') %}
 
-      <!-- Col 1: Who -->
-      <div style="padding-right:20px;border-right:1px solid var(--paper3)">
-        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);margin-bottom:8px">Contact</div>
-        <div style="margin-bottom:6px">
-          <div style="font-size:11px;color:var(--ink3)">Owner</div>
-          <div style="font-size:12px;font-weight:500;color:var(--ink)">{{restaurant.owner_name or '—'}}</div>
+<div class="panel {{'active' if not mod_reviews and not mod_labor and not mod_inventory and not mod_marketing}}" id="panel-account"
+     data-profile-done="{{ _profile_done }}" data-conn="{{ _conn_count }}" data-conn-err="{{ 1 if _pos_err else 0 }}"
+     data-twofa="{{ 1 if restaurant.two_fa_enabled else 0 }}" data-alerts="{{ 1 if _alerts_on else 0 }}"
+     data-digest="{{ 1 if restaurant.digest_enabled else 0 }}" data-login-notify="{{ 1 if restaurant.login_notify else 0 }}"
+     data-modules="{{ active_modules|length }}" data-full="{{ 1 if is_full_tier else 0 }}">
+<div class="ac-page">
+
+  <!-- ══════════════ OVERVIEW ══════════════ -->
+  <section class="ac-section" id="acct-overview" aria-labelledby="acct-overview-h" style="margin-bottom:0">
+    <div class="ac-hero">
+      <div class="ac-hero-top">
+        <div class="ac-logo" aria-hidden="true">
+          {% if restaurant.brand_logo_url %}<img src="{{ restaurant.brand_logo_url }}" alt="">{% else %}{{ (restaurant.brand_name or restaurant.name)[:1]|upper }}{% endif %}
         </div>
-        <div style="margin-bottom:6px">
-          <div style="font-size:11px;color:var(--ink3)">Email</div>
-          <div style="font-size:12px;font-weight:500;color:var(--ink)" id="profile-email-display">{{restaurant.owner_email or '—'}}</div>
-        </div>
-        <div>
-          <div style="font-size:11px;color:var(--ink3)">Phone</div>
-          <div style="font-size:12px;font-weight:500;color:var(--ink)">{{restaurant.owner_phone or '—'}}</div>
+        <div class="ac-title">
+          <div class="ac-kicker">Restaurant account</div>
+          <h1 class="ac-name" id="acct-overview-h">{{ restaurant.brand_name or restaurant.name }}</h1>
+          <div class="ac-meta">
+            {% if restaurant.location_name or restaurant.neighborhood %}<span>&#9679; <b>{{ restaurant.location_name or restaurant.neighborhood }}</b></span>{% endif %}
+            {% if group_locations and group_locations|length > 1 %}<span><b>{{ group_locations|length }}</b> locations</span>{% endif %}
+            <span>Timezone <b>{{ (restaurant.timezone or 'America/Chicago').split('/')[-1].replace('_',' ') }}</b></span>
+            <span>Owner <b>{{ restaurant.owner_name or restaurant.owner_email }}</b></span>
+          </div>
+          <div class="ac-chips" aria-label="Account status">
+            <span class="ac-chip ember"><i></i>{% if is_full_tier %}Full plan &middot; all modules{% else %}{{ active_modules|length }} module{{ '' if active_modules|length == 1 else 's' }}{% endif %}</span>
+            <span class="ac-chip" id="ac-sub-chip"><i></i>Checking subscription&hellip;</span>
+            <span class="ac-chip {{ 'good' if restaurant.gmb_refresh_token else '' }}"><i></i>Google {{ 'connected' if restaurant.gmb_refresh_token else 'not connected' }}</span>
+            <span class="ac-chip {{ 'bad' if _pos_err else ('good' if _pos_on else '') }}"><i></i>POS {{ 'needs attention' if _pos_err else ('connected' if _pos_on else 'not connected') }}</span>
+            {% if restaurant.two_fa_enabled %}<span class="ac-chip good"><i></i>2FA on</span>{% endif %}
+          </div>
         </div>
       </div>
-
-      <!-- Col 2: What -->
-      <div style="padding:0 20px;border-right:1px solid var(--paper3)">
-        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);margin-bottom:8px">About</div>
-        <div style="margin-bottom:6px">
-          <div style="font-size:11px;color:var(--ink3)">Location</div>
-          <div style="font-size:12px;font-weight:500;color:var(--ink)">{{restaurant.neighborhood or '—'}}</div>
-        </div>
-        <div style="margin-bottom:6px">
-          <div style="font-size:11px;color:var(--ink3)">Atmosphere</div>
-          <div style="font-size:12px;font-weight:500;color:var(--ink)">{{restaurant.vibe or '—'}}</div>
-        </div>
-        <div>
-          <div style="font-size:11px;color:var(--ink3)">Known for</div>
-          <div style="font-size:12px;font-weight:500;color:var(--ink)">{{restaurant.known_for or '—'}}</div>
-        </div>
-      </div>
-
-      <!-- Col 3: How the AI writes -->
-      <div style="padding-left:20px">
-        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);margin-bottom:8px">How the AI writes for you</div>
-        <div style="margin-bottom:6px">
-          <div style="font-size:11px;color:var(--ink3)">Brand voice</div>
-          <div style="font-size:12px;font-weight:500;color:var(--ink);line-height:1.5">{{restaurant.voice_notes or '—'}}</div>
-        </div>
-        {% if restaurant.never_say %}
-        <div style="margin-bottom:6px">
-          <div style="font-size:11px;color:var(--ink3)">Never says</div>
-          <div style="font-size:12px;font-weight:500;color:var(--ink)">{{restaurant.never_say}}</div>
-        </div>
-        {% endif %}
-        {% if restaurant.menu_notes %}
-        <div>
-          <div style="font-size:11px;color:var(--ink3)">Menu highlights</div>
-          <div style="font-size:12px;font-weight:500;color:var(--ink);line-height:1.5">{{restaurant.menu_notes}}</div>
-        </div>
-        {% endif %}
+      <div class="ac-qa" role="group" aria-label="Quick actions">
+        <div class="ac-qa-label">Quick actions</div>
+        {% if _is_owner %}<button class="cbtn cbtn-primary cbtn-sm" onclick="acctGo('people','team-name')">Invite a teammate</button>{% endif %}
+        <button class="cbtn cbtn-secondary cbtn-sm" onclick="acctGo('integrations')">Connect an integration</button>
+        <a class="cbtn cbtn-secondary cbtn-sm" id="ac-qa-billing" href="#" onclick="return acctBillingQuick(event)">Manage subscription</a>
+        <button class="cbtn cbtn-secondary cbtn-sm" onclick="acctGo('data','exp-first')">Export data</button>
+        <a class="cbtn cbtn-secondary cbtn-sm" href="mailto:will@cavnar.ai?subject=Question about {{restaurant.name}}">Contact Will</a>
       </div>
     </div>
 
-    <div id="profile-edit" style="display:none;border-top:1px solid var(--paper3);margin-top:14px;padding-top:14px">
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px" class="profile-grid">
-        <div><div style="font-size:11px;color:var(--ink3);margin-bottom:3px">Owner / GM name</div><input id="pe-owner-name" value="{{restaurant.owner_name or ''}}" style="width:100%;box-sizing:border-box;padding:7px 9px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;background:var(--paper);color:var(--ink);outline:none"></div>
-        <div><div style="font-size:11px;color:var(--ink3);margin-bottom:3px">Phone</div><input id="pe-phone" value="{{restaurant.owner_phone or ''}}" style="width:100%;box-sizing:border-box;padding:7px 9px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;background:var(--paper);color:var(--ink);outline:none"></div>
-        <div><div style="font-size:11px;color:var(--ink3);margin-bottom:3px">Timezone</div><select id="pe-tz" style="width:100%;box-sizing:border-box;padding:7px 9px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;background:var(--paper);color:var(--ink);outline:none">
-          {% for tz, tzl in [('America/New_York','Eastern'),('America/Chicago','Central'),('America/Denver','Mountain'),('America/Phoenix','Arizona'),('America/Los_Angeles','Pacific'),('America/Anchorage','Alaska'),('Pacific/Honolulu','Hawaii')] %}
-          <option value="{{tz}}" {% if (restaurant.timezone or 'America/Chicago') == tz %}selected{% endif %}>{{tzl}}</option>{% endfor %}</select></div>
-        <div><div style="font-size:11px;color:var(--ink3);margin-bottom:3px">Reply tone</div><select id="pe-tone" style="width:100%;box-sizing:border-box;padding:7px 9px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;background:var(--paper);color:var(--ink);outline:none">
-          {% for t, tl in [('','Your brand voice only'),('warm','Warm'),('professional','Professional'),('playful','Playful'),('concise','Concise')] %}
-          <option value="{{t}}" {% if (restaurant.tone_preset or '') == t %}selected{% endif %}>{{tl}}</option>{% endfor %}</select></div>
-        <div><div style="font-size:11px;color:var(--ink3);margin-bottom:3px">Reply language</div><select id="pe-lang" style="width:100%;box-sizing:border-box;padding:7px 9px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;background:var(--paper);color:var(--ink);outline:none">
-          {% for l, ll in [('','English'),('es','Spanish'),('fr','French'),('it','Italian'),('pt','Portuguese'),('de','German')] %}
-          <option value="{{l}}" {% if (restaurant.response_language or '') == l %}selected{% endif %}>{{ll}}</option>{% endfor %}</select></div>
-        <div><div style="font-size:11px;color:var(--ink3);margin-bottom:3px">Sign-off name</div><input id="pe-signoff" value="{{restaurant.sign_off_name or ''}}" placeholder="e.g. Maria &amp; the team" style="width:100%;box-sizing:border-box;padding:7px 9px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;background:var(--paper);color:var(--ink);outline:none"></div>
+    <div class="ac-health" aria-labelledby="ac-health-h">
+      <div class="ac-ring" role="img" aria-label="Account setup score">
+        <svg viewBox="0 0 118 118" aria-hidden="true"><circle class="tr" cx="59" cy="59" r="50"/><circle class="ar" id="ac-health-ring" cx="59" cy="59" r="50"/></svg>
+        <div class="n"><b id="ac-health-score">&hellip;</b><span>set up</span></div>
       </div>
-      <div style="margin-top:12px"><div style="font-size:11px;color:var(--ink3);margin-bottom:3px">How you sound</div><textarea id="pe-voice" rows="2" style="width:100%;box-sizing:border-box;padding:7px 9px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;background:var(--paper);color:var(--ink);outline:none" placeholder="e.g. genuine and warm, a little witty, never corporate">{{restaurant.voice_notes or ''}}</textarea></div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:10px">
-        <div><div style="font-size:11px;color:var(--ink3);margin-bottom:3px">Words to never use</div><input id="pe-never" value="{{restaurant.never_say or ''}}" placeholder="e.g. culinary journey, indulge" style="width:100%;box-sizing:border-box;padding:7px 9px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;background:var(--paper);color:var(--ink);outline:none"></div>
-        <div><div style="font-size:11px;color:var(--ink3);margin-bottom:3px">Menu &amp; current specials</div><textarea id="pe-menu" rows="2" style="width:100%;box-sizing:border-box;padding:7px 9px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;background:var(--paper);color:var(--ink);outline:none" placeholder="Signature dishes and what's running now">{{restaurant.menu_notes or ''}}</textarea></div>
-      </div>
-      <div style="display:flex;align-items:center;gap:10px;margin-top:14px;flex-wrap:wrap">
-        <button class="cbtn cbtn-primary" id="pe-save" onclick="saveProfile()">Save changes</button>
-        <button class="cbtn cbtn-secondary" onclick="toggleProfileEdit()">Cancel</button>
-        <span style="font-size:11px;color:var(--ink3)">Restaurant name, location, atmosphere and "known for" are set by Will &mdash; <a href="mailto:will@cavnar.ai?subject=Profile update for {{restaurant.name}}" style="color:var(--ember)">request an update</a>.</span>
-      </div>
-    </div>
-  </div>
-
-  <!-- SECTION 3: Account settings + Billing -->
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px" class="account-two-col">
-
-    <!-- Left: all settings in one card -->
-    <div class="acct-card" style="padding:18px 22px">
-
-      <!-- Identity -->
-      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Account</div>
-      <table style="font-size:13px;width:100%;margin-bottom:10px">
-        <tr>
-          <td style="color:var(--ink3);padding:4px 0;width:70px;font-size:12px;white-space:nowrap">Email:</td>
-          <td style="font-weight:500;font-size:12px;width:100%;padding-left:8px" id="acct-email-display">{{restaurant.owner_email}}</td>
-          <td style="text-align:right;padding:4px 0;white-space:nowrap"><button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="document.getElementById('email-modal').style.display='flex'">Update<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button></td>
-        </tr>
-        <tr><td style="color:var(--ink3);padding:4px 0;font-size:12px;white-space:nowrap">Username:</td><td style="font-weight:500;font-size:12px;padding-left:8px" colspan="2">{{current_user.username}}</td></tr>
-      </table>
-
-      <!-- Display -->
-      <div style="border-top:1px solid var(--paper3);padding-top:12px;margin-bottom:12px">
-        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Display</div>
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-          <div>
-            <div style="font-size:12px;font-weight:600;color:var(--ink)">Dark mode</div>
-            <div style="font-size:11px;color:var(--ink3)">Easier on the eyes at night. Saved to this browser.</div>
-          </div>
-          <label style="position:relative;display:inline-block;width:44px;height:24px;flex-shrink:0;cursor:pointer">
-            <input type="checkbox" id="dark-mode-toggle-input" onchange="toggleDarkMode()" style="opacity:0;width:0;height:0;position:absolute">
-            <span id="dark-mode-track" style="position:absolute;inset:0;border-radius:24px;background:#d0cbc4;transition:background .2s"></span>
-            <span id="dark-mode-thumb" style="position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:white;box-shadow:0 1px 4px rgba(0,0,0,.25);transition:transform .2s"></span>
-          </label>
-        </div>
-      </div>
-
-      <!-- Security -->
-      <div style="border-top:1px solid var(--paper3);padding-top:12px;margin-bottom:12px">
-        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Security</div>
-        <!-- 2FA -->
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-          <div>
-            <div style="font-size:12px;font-weight:600;color:var(--ink)">Two-factor authentication</div>
-            <div style="font-size:11px;color:var(--ink3)">{% if restaurant.two_fa_enabled %}Email code on new device sign-ins{% else %}Adds email code on new sign-ins{% endif %}</div>
-          </div>
-          {% if restaurant.two_fa_enabled %}
-          <div style="display:flex;align-items:center;gap:8px">
-            <span style="font-size:10px;font-weight:700;color:#2d6a4f;background:#eaf4ee;padding:2px 8px;border-radius:10px">&#10003; On</span>
-            <button onclick="toggle2FA(false)" class="cbtn cbtn-secondary cbtn-sm">Disable</button>
-          </div>
-          {% else %}
-          <button onclick="document.getElementById('twofa-modal').style.display='flex'" class="cbtn cbtn-primary cbtn-sm">Enable<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-          {% endif %}
-        </div>
-        <!-- Sign-in notifications -->
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-          <div>
-            <div style="font-size:12px;font-weight:600;color:var(--ink)">Sign-in notifications</div>
-            <div style="font-size:11px;color:var(--ink3)">Email me whenever someone signs in</div>
-          </div>
-          <div style="display:flex;align-items:center;gap:6px;cursor:pointer" onclick="toggleLoginNotify()">
-            <div style="position:relative;width:36px;height:20px">
-              <div id="login-notify-track" style="position:absolute;inset:0;border-radius:10px;background:{{'#c84b2f' if restaurant.login_notify else '#d1c9bd'}};transition:background .2s"></div>
-              <div id="login-notify-thumb" style="position:absolute;top:2px;left:{{'18px' if restaurant.login_notify else '2px'}};width:16px;height:16px;border-radius:50%;background:white;box-shadow:0 1px 3px rgba(0,0,0,.2);transition:left .2s"></div>
-            </div>
-            <span style="font-size:11px;color:var(--ink3)" id="login-notify-label">{{"On" if restaurant.login_notify else "Off"}}</span>
-          </div>
-        </div>
-        <!-- Active sessions -->
-        <div>
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
-            <div style="font-size:12px;font-weight:600;color:var(--ink);padding-bottom:5px;border-bottom:1px solid var(--ember)">Active sessions</div>
-            <button onclick="revokeOtherSessions(this)" id="revoke-sessions-btn" class="cbtn cbtn-primary cbtn-sm">Sign out all other devices</button>
-          </div>
-          <div id="sessions-list" style="font-size:11px;color:var(--ink3)">Loading&hellip;</div>
-        </div>
-        <!-- Change password link — inside security section -->
-        <div style="padding-top:10px;margin-top:2px">
-          <button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="document.getElementById('pw-modal').style.display='flex'">Change password<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-        <!-- iOS parity: checkup, backup codes, trusted devices, recovery email, sign-in history, activity -->
-        <div style="border-top:1px solid var(--paper3);margin-top:12px;padding-top:12px">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
-            <div style="font-size:12px;font-weight:600;color:var(--ink)">Security checkup</div>
-            <div style="font-family:'Space Grotesk',sans-serif;font-size:13px;font-weight:600;color:var(--ember)"><span id="sec-score">&hellip;</span><span style="color:var(--ink3);font-weight:400"> / 100</span></div>
-          </div>
-          <div style="height:4px;background:var(--paper3);border-radius:2px;overflow:hidden;margin-bottom:8px"><div id="sec-bar" style="height:100%;width:0;background:var(--ember);border-radius:2px;transition:width .4s"></div></div>
-          <div id="sec-items" style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;font-size:11px;color:var(--ink3)"></div>
-        </div>
-        {% if restaurant.two_fa_enabled %}
-        <div style="border-top:1px solid var(--paper3);margin-top:12px;padding-top:12px">
-          <div style="display:flex;align-items:center;justify-content:space-between">
-            <div><div style="font-size:12px;font-weight:600;color:var(--ink)">Backup codes</div><div style="font-size:11px;color:var(--ink3)"><span id="bc-remaining">&hellip;</span> unused &middot; one-time codes if you lose access to your email or phone</div></div>
-            <button onclick="regenBackupCodes(this)" class="cbtn cbtn-secondary cbtn-sm">Regenerate</button>
-          </div>
-          <div id="bc-codes" style="display:none;margin-top:8px;padding:10px 12px;background:var(--paper);border:1px dashed var(--ember);border-radius:8px;font-family:'Space Grotesk',sans-serif;font-size:12px;line-height:1.9;letter-spacing:.04em"></div>
-        </div>
-        <div style="border-top:1px solid var(--paper3);margin-top:12px;padding-top:12px">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
-            <div><div style="font-size:12px;font-weight:600;color:var(--ink)">Trusted devices</div><div style="font-size:11px;color:var(--ink3)">Skip the code on these for 30 days</div></div>
-            <button onclick="forgetAllTrusted(this)" class="cbtn cbtn-secondary cbtn-sm">Forget all</button>
-          </div>
-          <div id="trusted-list" style="font-size:11px;color:var(--ink3)">Loading&hellip;</div>
-        </div>
-        {% endif %}
-        <div style="border-top:1px solid var(--paper3);margin-top:12px;padding-top:12px">
-          <div style="font-size:12px;font-weight:600;color:var(--ink)">Recovery email</div>
-          <div style="font-size:11px;color:var(--ink3)" id="rec-status">Loading&hellip;</div>
-          <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
-            <input id="rec-email" type="email" placeholder="A second address you can always reach"  style="flex:1;min-width:180px;padding:7px 9px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;background:var(--paper);color:var(--ink)">
-            <button onclick="recSend(this)" class="cbtn cbtn-secondary cbtn-sm">Send code</button>
-          </div>
-          <div id="rec-verify" style="display:none;gap:6px;margin-top:8px">
-            <input id="rec-code" inputmode="numeric" maxlength="6" placeholder="6-digit code" style="width:120px;padding:7px 9px;border:1px solid var(--paper3);border-radius:7px;font-family:'Space Grotesk',sans-serif;font-size:12px;background:var(--paper);color:var(--ink)">
-            <button onclick="recVerify(this)" class="cbtn cbtn-primary cbtn-sm">Verify</button>
-          </div>
-        </div>
-        <div style="border-top:1px solid var(--paper3);margin-top:12px;padding-top:10px;display:flex;gap:16px;flex-wrap:wrap">
-          <button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="toggleSec('login-history')">Sign-in history &#9662;</button>
-          <button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="toggleSec('activity-log')">Account activity &#9662;</button>
-        </div>
-        <div id="login-history" style="display:none;margin-top:8px;font-size:11px;color:var(--ink3)"></div>
-        <div id="activity-log" style="display:none;margin-top:8px;font-size:11px;color:var(--ink3)"></div>
-      </div>
-
-      <!-- Change password modal -->
-    </div>
-
-
-    <!-- Right: Connections + Alerts + Billing -->
-    <div class="acct-card" style="padding:18px 22px" id="billing-card">
-
-      <!-- Connections -->
-      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:12px">Connections</div>
-      <!-- Google Business -->
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px">
-        <div style="display:flex;align-items:center;gap:8px;min-width:0">
-          {% if restaurant.gmb_refresh_token %}
-          <span style="color:var(--green);font-size:13px;flex-shrink:0">✓</span>
-          <div>
-            <div style="font-size:12px;font-weight:600;color:var(--ink)">Google Business</div>
-            <div style="font-size:11px;color:var(--ink3)">Auto-posts responses to Google</div>
-          </div>
-          {% else %}
-          <span style="color:#ef9f27;font-size:11px;flex-shrink:0">●</span>
-          <div>
-            <div style="font-size:12px;font-weight:600;color:var(--ink)">Google Business</div>
-            <div style="font-size:11px;color:var(--ink3)">Not connected</div>
-          </div>
-          {% endif %}
-        </div>
-        {% if restaurant.gmb_refresh_token %}
-        <button class="cbtn cbtn-danger cbtn-ghost cbtn-sm" onclick="gmbDisconnect()" style="flex-shrink:0">Disconnect</button>
-        {% else %}
-        <button onclick="gmbConnect()" class="cbtn cbtn-success cbtn-sm" style="flex-shrink:0">Connect<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-        {% endif %}
-      </div>
-      <!-- Instagram / Facebook -->
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px">
-        <div style="display:flex;align-items:center;gap:8px;min-width:0">
-          {% if restaurant.ig_token %}
-          <span style="color:var(--green);font-size:13px;flex-shrink:0">✓</span>
-          <div>
-            <div style="font-size:12px;font-weight:600;color:var(--ink)">Instagram &amp; Facebook</div>
-            <div style="font-size:11px;color:var(--ink3)">Posts generated content directly</div>
-          </div>
-          {% else %}
-          <span style="color:#ef9f27;font-size:11px;flex-shrink:0">●</span>
-          <div>
-            <div style="font-size:12px;font-weight:600;color:var(--ink)">Instagram &amp; Facebook</div>
-            <div style="font-size:11px;color:var(--ink3)">Not connected</div>
-          </div>
-          {% endif %}
-        </div>
-        {% if restaurant.ig_token %}
-        <button class="cbtn cbtn-danger cbtn-ghost cbtn-sm" onclick="disconnectInstagram(this)" style="flex-shrink:0">Disconnect</button>
-        {% else %}
-        <button onclick="igConnect()" class="cbtn cbtn-success cbtn-sm" style="flex-shrink:0">Connect<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-        {% endif %}
-      </div>
-      <!-- Toast POS -->
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
-        <div style="display:flex;align-items:center;gap:8px;min-width:0">
-          {% if restaurant.toast_restaurant_guid and not restaurant.toast_sync_error %}
-          <span style="color:var(--green);font-size:13px;flex-shrink:0">✓</span>
-          <div>
-            <div style="font-size:12px;font-weight:600;color:var(--ink)">Toast POS</div>
-            <div style="font-size:11px;color:var(--ink3)">{% if restaurant.toast_last_synced %}Last synced {{ restaurant.toast_last_synced[:16].replace('T',' ') }} UTC{% else %}Connected — initial sync pending{% endif %}</div>
-          </div>
-          {% elif restaurant.toast_restaurant_guid and restaurant.toast_sync_error %}
-          <!-- Credentials are on file but the last sync failed — a typo, or
-               a token Toast later revoked. Showing a plain green check here
-               (the id-only check this replaced) claimed "Connected" while no
-               data had synced since, which is exactly the state that would
-               make an owner think their numbers were live when they weren't. -->
-          <span style="color:var(--red);font-size:13px;flex-shrink:0">⚠</span>
-          <div style="min-width:0">
-            <div style="font-size:12px;font-weight:600;color:var(--ink)">Toast POS — reconnect needed</div>
-            <div style="font-size:11px;color:var(--red);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px" title="{{ restaurant.toast_sync_error }}">{{ restaurant.toast_sync_error }}</div>
-          </div>
-          {% else %}
-          <span style="color:#ef9f27;font-size:11px;flex-shrink:0">●</span>
-          <div>
-            <div style="font-size:12px;font-weight:600;color:var(--ink)">Toast POS</div>
-            <div style="font-size:11px;color:var(--ink3)">Connect to power live labor data</div>
-          </div>
-          {% endif %}
-        </div>
-        <div style="display:flex;gap:6px;flex-shrink:0">
-          {% if restaurant.toast_restaurant_guid and not restaurant.toast_sync_error %}
-          <button onclick="toastSyncNow(this)" class="cbtn cbtn-success cbtn-sm" style="flex-shrink:0">↻ Sync</button>
-          <button class="cbtn cbtn-danger cbtn-ghost cbtn-sm" onclick="toastDisconnect(this)" style="flex-shrink:0">Disconnect</button>
-          {% elif restaurant.toast_restaurant_guid and restaurant.toast_sync_error %}
-          <!-- Retrying a sync fixes nothing when the root cause is the
-               credentials themselves — offer re-entering them instead. -->
-          <button onclick="openToastClientModal()" class="cbtn cbtn-success cbtn-sm" style="flex-shrink:0">Reconnect</button>
-          <button class="cbtn cbtn-danger cbtn-ghost cbtn-sm" onclick="toastDisconnect(this)" style="flex-shrink:0">Disconnect</button>
-          {% else %}
-          <button onclick="openToastClientModal()" class="cbtn cbtn-success cbtn-sm" style="flex-shrink:0">Connect<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-          {% endif %}
-        </div>
-      </div>
-
-      <!-- Square POS -->
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:10px">
-        <div style="display:flex;align-items:center;gap:8px;min-width:0">
-          {% if restaurant.square_location_id and not restaurant.square_sync_error %}
-          <span style="color:var(--green);font-size:13px;flex-shrink:0">✓</span>
-          <div>
-            <div style="font-size:12px;font-weight:600;color:var(--ink)">Square POS</div>
-            <div style="font-size:11px;color:var(--ink3)">{% if restaurant.square_last_synced %}Last synced {{ restaurant.square_last_synced[:16].replace('T',' ') }} UTC{% else %}Connected — initial sync pending{% endif %}</div>
-          </div>
-          {% elif restaurant.square_location_id and restaurant.square_sync_error %}
-          <!-- Credentials are on file but the last sync failed — a typo, or
-               a token Square later revoked. Showing a plain green check here
-               (the id-only check this replaced) claimed "Connected" while no
-               data had synced since, which is exactly the state that would
-               make an owner think their numbers were live when they weren't. -->
-          <span style="color:var(--red);font-size:13px;flex-shrink:0">⚠</span>
-          <div style="min-width:0">
-            <div style="font-size:12px;font-weight:600;color:var(--ink)">Square POS — reconnect needed</div>
-            <div style="font-size:11px;color:var(--red);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px" title="{{ restaurant.square_sync_error }}">{{ restaurant.square_sync_error }}</div>
-          </div>
-          {% else %}
-          <span style="color:#ef9f27;font-size:11px;flex-shrink:0">●</span>
-          <div>
-            <div style="font-size:12px;font-weight:600;color:var(--ink)">Square POS</div>
-            <div style="font-size:11px;color:var(--ink3)">Connect to power live labor data</div>
-          </div>
-          {% endif %}
-        </div>
-        <div style="display:flex;gap:6px;flex-shrink:0">
-          {% if restaurant.square_location_id and not restaurant.square_sync_error %}
-          <button onclick="squareSyncNow(this)" class="cbtn cbtn-success cbtn-sm" style="flex-shrink:0">↻ Sync</button>
-          <button class="cbtn cbtn-danger cbtn-ghost cbtn-sm" onclick="squareDisconnect(this)" style="flex-shrink:0">Disconnect</button>
-          {% elif restaurant.square_location_id and restaurant.square_sync_error %}
-          <!-- Retrying a sync fixes nothing when the root cause is the
-               credentials themselves — offer re-entering them instead. -->
-          <button onclick="openSquareModal()" class="cbtn cbtn-success cbtn-sm" style="flex-shrink:0">Reconnect</button>
-          <button class="cbtn cbtn-danger cbtn-ghost cbtn-sm" onclick="squareDisconnect(this)" style="flex-shrink:0">Disconnect</button>
-          {% else %}
-          <button onclick="openSquareModal()" class="cbtn cbtn-success cbtn-sm" style="flex-shrink:0">Connect<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-          {% endif %}
-        </div>
-      </div>
-
-      <!-- Clover POS -->
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:10px">
-        <div style="display:flex;align-items:center;gap:8px;min-width:0">
-          {% if restaurant.clover_merchant_id and not restaurant.clover_sync_error %}
-          <span style="color:var(--green);font-size:13px;flex-shrink:0">✓</span>
-          <div>
-            <div style="font-size:12px;font-weight:600;color:var(--ink)">Clover POS</div>
-            <div style="font-size:11px;color:var(--ink3)">{% if restaurant.clover_last_synced %}Last synced {{ restaurant.clover_last_synced[:16].replace('T',' ') }} UTC{% else %}Connected — initial sync pending{% endif %}</div>
-          </div>
-          {% elif restaurant.clover_merchant_id and restaurant.clover_sync_error %}
-          <!-- Credentials are on file but the last sync failed — a typo, or
-               a token Clover later revoked. Showing a plain green check here
-               (the id-only check this replaced) claimed "Connected" while no
-               data had synced since, which is exactly the state that would
-               make an owner think their numbers were live when they weren't. -->
-          <span style="color:var(--red);font-size:13px;flex-shrink:0">⚠</span>
-          <div style="min-width:0">
-            <div style="font-size:12px;font-weight:600;color:var(--ink)">Clover POS — reconnect needed</div>
-            <div style="font-size:11px;color:var(--red);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px" title="{{ restaurant.clover_sync_error }}">{{ restaurant.clover_sync_error }}</div>
-          </div>
-          {% else %}
-          <span style="color:#ef9f27;font-size:11px;flex-shrink:0">●</span>
-          <div>
-            <div style="font-size:12px;font-weight:600;color:var(--ink)">Clover POS</div>
-            <div style="font-size:11px;color:var(--ink3)">Connect to power live labor data</div>
-          </div>
-          {% endif %}
-        </div>
-        <div style="display:flex;gap:6px;flex-shrink:0">
-          {% if restaurant.clover_merchant_id and not restaurant.clover_sync_error %}
-          <button onclick="cloverSyncNow(this)" class="cbtn cbtn-success cbtn-sm" style="flex-shrink:0">↻ Sync</button>
-          <button class="cbtn cbtn-danger cbtn-ghost cbtn-sm" onclick="cloverDisconnect(this)" style="flex-shrink:0">Disconnect</button>
-          {% elif restaurant.clover_merchant_id and restaurant.clover_sync_error %}
-          <!-- Retrying a sync fixes nothing when the root cause is the
-               credentials themselves — offer re-entering them instead. -->
-          <button onclick="openCloverModal()" class="cbtn cbtn-success cbtn-sm" style="flex-shrink:0">Reconnect</button>
-          <button class="cbtn cbtn-danger cbtn-ghost cbtn-sm" onclick="cloverDisconnect(this)" style="flex-shrink:0">Disconnect</button>
-          {% else %}
-          <button onclick="openCloverModal()" class="cbtn cbtn-success cbtn-sm" style="flex-shrink:0">Connect<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-          {% endif %}
-        </div>
-      </div>
-
-      <!-- Alert Contacts -->
-      <div style="margin-top:18px;padding-top:16px;border-top:1px solid var(--paper3)">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3)">Alert Contacts</div>
-          <button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="openAlertsModal()">Manage<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-        </div>
-        <div id="alerts-contacts-summary" style="font-size:12px;color:var(--ink3)">Loading&hellip;</div>
-        <div id="alerts-types-summary" style="font-size:11px;color:var(--ink3);margin-top:6px"></div>
-      </div>
-
-      <!-- Billing -->
-      <div style="margin-top:18px;padding-top:16px;border-top:1px solid var(--paper3)">
-        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:14px">Billing</div>
-        <div id="billing-loading" style="font-size:13px;color:var(--ink3)">Loading&hellip;</div>
-        <div id="billing-content" style="display:none">
-          <div style="margin-bottom:16px">
-            <div style="font-size:11px;color:var(--ink3);margin-bottom:3px">Next charge</div>
-            <div style="font-size:26px;font-weight:800;color:var(--ink);letter-spacing:-0.5px;line-height:1" id="billing-next-prominent">—</div>
-          </div>
-          <div style="margin-bottom:16px">
-            <div style="font-size:11px;color:var(--ink3);margin-bottom:3px">Amount</div>
-            <div style="font-size:26px;font-weight:800;color:var(--ink);letter-spacing:-0.5px;line-height:1" id="billing-amount-prominent">—</div>
-          </div>
-          <div style="font-size:12px;color:var(--ink3);margin-bottom:4px" id="billing-status"></div>
-          <div style="font-size:12px;color:var(--ink3);margin-bottom:16px" id="billing-pm"></div>
-          <div style="display:flex;flex-direction:column;gap:8px">
-            <a id="billing-portal-link" href="#" target="_blank" style="font-size:13px;color:var(--ember);text-decoration:none;font-weight:600">Manage payment method<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
-            <a id="billing-invoice-link" href="#" target="_blank" style="font-size:13px;color:var(--ink3);text-decoration:none;font-weight:500">View invoice history<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
-          </div>
-        </div>
-        <div id="billing-no-sub" style="display:none;font-size:12px;color:var(--ink3)">
-          No active subscription. <a href="mailto:will@cavnar.ai" style="color:var(--ember)">Contact Will</a>
-        </div>
-      </div>
-
-    </div>
-  </div>
-
-  <!-- iOS parity: team, export, report a bug -->
-  <div class="acct-card account-two-col" style="padding:18px 22px;margin-bottom:14px;display:grid;grid-template-columns:1fr 1fr;gap:0">
-    <div style="padding-right:24px;border-right:1px solid var(--paper3)">
-      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Team</div>
-      <div style="font-size:11px;color:var(--ink3)" style="font-size:12px;color:var(--ink3);margin-bottom:10px;line-height:1.5">Who has access to this restaurant. Each teammate gets their own login; the account owner can remove access any time.</div>
-      <div id="acct-team-list" style="font-size:11px;color:var(--ink3)">Loading&hellip;</div>
-      {% if current_user.role != 'member' %}
-      <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">
-        <input id="team-name" placeholder="Name" style="flex:1;min-width:110px;padding:7px 9px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;background:var(--paper);color:var(--ink)">
-        <input id="team-email" type="email" placeholder="Email" style="flex:1.4;min-width:150px;padding:7px 9px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;background:var(--paper);color:var(--ink)">
-        <button onclick="inviteTeam(this)" class="cbtn cbtn-primary cbtn-sm">Add teammate</button>
-      </div>
-      <div style="font-size:11px;color:var(--ink3)" style="font-size:11px;color:var(--ink3);margin-top:6px">They get a temporary password by email.</div>
-      {% endif %}
-    </div>
-    <div style="padding-left:24px">
-      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Export my data</div>
-      <div style="font-size:12px;color:var(--ink3);margin-bottom:10px;line-height:1.5">Emailed to you as CSV attachments.</div>
-      <div style="display:flex;gap:12px;flex-wrap:wrap;font-size:12px;color:var(--ink2);margin-bottom:10px">
-        <label style="display:flex;gap:5px;align-items:center;cursor:pointer"><input type="checkbox" class="exp-scope" value="reviews" checked> Reviews</label>
-        {% if mod_labor %}<label style="display:flex;gap:5px;align-items:center;cursor:pointer"><input type="checkbox" class="exp-scope" value="labor"> Labor</label>{% endif %}
-        {% if mod_inventory %}<label style="display:flex;gap:5px;align-items:center;cursor:pointer"><input type="checkbox" class="exp-scope" value="food_cost"> Food cost</label>{% endif %}
-        <label style="display:flex;gap:5px;align-items:center;cursor:pointer"><input type="checkbox" class="exp-scope" value="settings"> Settings</label>
-      </div>
-      <button onclick="exportData(this)" class="cbtn cbtn-primary cbtn-sm">Email me my data</button>
-      <div style="border-top:1px solid var(--paper3);margin-top:16px;padding-top:14px">
-        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Report a bug</div>
-        <textarea id="bug-msg" rows="2" placeholder="What happened, and where?" style="width:100%;box-sizing:border-box;padding:7px 9px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;background:var(--paper);color:var(--ink);resize:vertical"></textarea>
-        <button onclick="reportBug(this)" class="cbtn cbtn-secondary cbtn-sm" style="margin-top:8px">Send report</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Staff accounts: the owner-facing side of the employee PIN portal.
-       Every endpoint behind this already existed and nothing rendered them,
-       which meant a promotion, a corrected name or a re-hire needed database
-       access. Owner/primary-login only — the API enforces the same thing. -->
-  {% if current_user.role in ('owner', 'client') %}
-  <div class="acct-card" style="padding:18px 22px;margin-bottom:14px" id="staff-accounts-card">
-    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
       <div>
-        <div class="acct-card-title">Staff accounts</div>
-        <div class="acct-card-sub">Employees sign in with a PIN on the staff link &mdash; they see their own shifts and tasks, never this dashboard.</div>
-      </div>
-      <button onclick="rotateStaffLink(this)" class="cbtn cbtn-secondary cbtn-sm">New staff link</button>
-    </div>
-
-    <!-- Two ways in, same underlying link. The join code is what a new hire
-         types on their own phone to sign themselves up; the URL is what you
-         text to someone who already has an account. -->
-    <div style="display:grid;grid-template-columns:auto 1fr;gap:14px;align-items:center;margin-top:14px">
-      <div>
-        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:5px">Join code</div>
-        <div id="staff-join-code" style="font-family:'Space Grotesk',monospace;font-size:26px;font-weight:600;letter-spacing:.14em;color:var(--ember)">&mdash;</div>
-      </div>
-      <div style="font-size:11px;color:var(--ink3);line-height:1.55">Post this in the back of house. A new employee downloads Cavnar AI, taps <strong style="color:var(--ink2)">Create your account</strong>, and types it &mdash; then picks their own name off your roster and sets their own PIN. You don&rsquo;t have to do anything.</div>
-    </div>
-
-    <div style="display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap">
-      <input id="staff-portal-url" readonly style="flex:1;min-width:220px;padding:7px 9px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;background:var(--paper);color:var(--ink3)">
-      <button onclick="copyStaffLink(this)" class="cbtn cbtn-secondary cbtn-sm">Copy link</button>
-    </div>
-    <div style="font-size:11px;color:var(--ink3);margin-top:6px">A new code stops the old code and the old link working, everywhere.</div>
-
-    <div id="staff-list" style="margin-top:14px;font-size:12px;color:var(--ink3)">Loading&hellip;</div>
-    <div id="staff-unclaimed" style="margin-top:10px"></div>
-
-    <div style="border-top:1px solid var(--paper3);margin-top:14px;padding-top:14px">
-      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Add an employee yourself</div>
-      <div style="font-size:11px;color:var(--ink3);margin-bottom:10px">Only needed if someone can&rsquo;t sign themselves up &mdash; you&rsquo;ll have to read them the PIN.</div>
-      <div style="display:flex;gap:6px;flex-wrap:wrap">
-        <input id="staff-new-name" placeholder="Name (as it appears on the schedule)" style="flex:1.6;min-width:180px;padding:7px 9px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;background:var(--paper);color:var(--ink)">
-        <input id="staff-new-role" placeholder="Job (Server)" style="flex:1;min-width:110px;padding:7px 9px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;background:var(--paper);color:var(--ink)" list="staff-role-options">
-        <datalist id="staff-role-options"></datalist>
-        <input id="staff-new-pin" inputmode="numeric" placeholder="PIN" maxlength="8" style="width:90px;padding:7px 9px;border:1px solid var(--paper3);border-radius:7px;font-family:'Space Grotesk',monospace;font-size:12px;background:var(--paper);color:var(--ink)">
-        <button onclick="createStaff(this)" class="cbtn cbtn-primary cbtn-sm">Add</button>
-      </div>
-      <div style="font-size:11px;color:var(--ink3);margin-top:6px">4&ndash;8 digits, no repeats or runs. Read it to them &mdash; they can change it themselves in the portal.</div>
-    </div>
-
-    <div style="border-top:1px solid var(--paper3);margin-top:14px;padding-top:12px">
-      <label style="display:flex;gap:8px;align-items:center;cursor:pointer;font-size:12px;color:var(--ink2)">
-        <input type="checkbox" id="staff-signin-notify" {% if restaurant.staff_signin_notify %}checked{% endif %} onchange="toggleStaffSigninNotify(this)">
-        Notify me when someone opens the staff portal
-      </label>
-    </div>
-
-    <div id="staff-pin-events" style="margin-top:14px"></div>
-  </div>
-  {% endif %}
-
-  <!-- SECTION 3: Community strip -->
-  <div class="acct-card account-two-col" style="padding:18px 22px;margin-bottom:14px;display:grid;grid-template-columns:1fr 1fr;gap:0">
-    <!-- Referral -->
-    <div style="padding-right:24px">
-      <div style="font-size:13px;font-weight:700;color:var(--ink);margin-bottom:3px">Know another restaurant owner?</div>
-      <div style="font-size:12px;color:var(--ink3);margin-bottom:10px;line-height:1.5">Send them an intro &mdash; get <strong style="color:var(--ember)">one free month ($300)</strong> if they sign up.</div>
-      <div style="display:flex;flex-direction:column;gap:7px">
-        <div style="display:flex;gap:6px">
-          <input type="text" id="referral-name" placeholder="Restaurant name" style="flex:1;padding:7px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;outline:none">
-          <input type="email" id="referral-email" placeholder="Owner email" style="flex:1;padding:7px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;outline:none">
-        </div>
-        <textarea id="referral-note" rows="2" placeholder="Optional personal note&hellip;" style="padding:7px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;outline:none;resize:vertical"></textarea>
-        <div style="display:flex;align-items:center;gap:8px">
-          <button onclick="sendReferral()" class="cbtn cbtn-primary">Send referral</button>
-          <span id="referral-status" style="font-size:11px;display:none"></span>
+        <div class="ac-card-h" style="margin-bottom:8px"><div><h3 id="ac-health-h">Account health</h3><p id="ac-health-sub">What&rsquo;s configured, and what would make Cavnar AI work harder for you.</p></div></div>
+        <div class="ac-hgrid" id="ac-health-grid">
+          <button type="button" class="ac-hitem" data-health="profile" onclick="acctGo('restaurant')"><i class="ac-hdot"></i><div><b>Restaurant profile</b><span>&hellip;</span></div></button>
+          <button type="button" class="ac-hitem" data-health="people" onclick="acctGo('people')"><i class="ac-hdot"></i><div><b>People</b><span>&hellip;</span></div></button>
+          <button type="button" class="ac-hitem" data-health="integrations" onclick="acctGo('integrations')"><i class="ac-hdot"></i><div><b>Integrations</b><span>&hellip;</span></div></button>
+          <button type="button" class="ac-hitem" data-health="notifications" onclick="acctGo('notifications')"><i class="ac-hdot"></i><div><b>Notifications</b><span>&hellip;</span></div></button>
+          <button type="button" class="ac-hitem" data-health="security" onclick="acctGo('security')"><i class="ac-hdot"></i><div><b>Security</b><span>&hellip;</span></div></button>
+          <button type="button" class="ac-hitem" data-health="subscription" onclick="acctGo('billing')"><i class="ac-hdot"></i><div><b>Subscription</b><span>&hellip;</span></div></button>
         </div>
       </div>
     </div>
-    <!-- Support -->
-    <div style="border-left:1px solid var(--paper3);padding-left:24px">
-      <div style="font-size:13px;font-weight:700;color:var(--ink);margin-bottom:3px">Need anything?</div>
-      <div style="font-size:12px;color:var(--ink3);margin-bottom:16px;line-height:1.5">Questions, data requests, or something not working &mdash; reach out directly. Same-day response, always.</div>
-      <a href="mailto:will@cavnar.ai" class="cbtn cbtn-primary">Email Will<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
-    </div>
-  </div>
+  </section>
 
-  <!-- Help & FAQ -->
-  <!-- ACCOUNT SETTINGS PARITY: these five were app-only until now. The
-       auto-approve rule matters most — it publishes review replies from a
-       scheduled job, so a web-only client could not see or stop behaviour
-       that was running on their behalf. Same handlers as the app
-       (client_api._do_* ), so the two surfaces can't drift. -->
-  <div class="acct-card" style="padding:18px 22px;margin-bottom:14px" id="account-settings-card">
-    <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Automation &amp; data</div>
-
-    <div style="border-bottom:1px solid var(--paper3);padding-bottom:14px;margin-bottom:14px">
-      <div style="font-size:12px;font-weight:700;color:var(--ink);margin-bottom:4px">Auto-approve 5-star replies</div>
-      <p style="font-size:11.5px;color:var(--ink3);line-height:1.5;margin:0 0 12px">Drafted replies to 5-star reviews are approved automatically &mdash; and posted, when Google Business is connected. Capped per day, with a pause switch.</p>
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:7px 0">
-        <label for="as-auto-enabled" style="font-size:12px;cursor:pointer">Turn on auto-approve</label>
-        <input type="checkbox" id="as-auto-enabled" style="accent-color:var(--ember)">
-      </div>
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:7px 0">
-        <label for="as-auto-cap" style="font-size:12px">Most replies per day</label>
-        <input type="number" id="as-auto-cap" min="1" max="50" value="5" style="font-family:inherit;font-size:12px;padding:5px 8px;border:1px solid var(--paper3);border-radius:6px;background:var(--paper1);color:var(--ink);width:70px">
-      </div>
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:7px 0">
-        <label for="as-auto-paused" style="font-size:12px;cursor:pointer">Pause it for now</label>
-        <input type="checkbox" id="as-auto-paused" style="accent-color:var(--ember)">
-      </div>
-      <button class="cbtn cbtn-primary cbtn-sm" onclick="saveAutoApprove()" style="margin-top:8px">Save rule</button>
-      <span id="as-auto-status" style="font-size:11.5px;color:var(--ink3);margin-left:10px"></span>
-    </div>
-
-    <div style="border-bottom:1px solid var(--paper3);padding-bottom:14px;margin-bottom:14px">
-      <div style="font-size:12px;font-weight:700;color:var(--ink);margin-bottom:4px">Hours &amp; closures</div>
-      <p style="font-size:11.5px;color:var(--ink3);line-height:1.5;margin:0 0 12px">Used when generating schedules and when drafting replies that mention your hours. Leave a day blank if it varies.</p>
-      <div id="as-hours-grid" style="display:grid;grid-template-columns:auto 1fr 1fr;gap:6px 10px;align-items:center;margin-bottom:10px"></div>
-      <label for="as-closures" style="font-size:11.5px;color:var(--ink3);display:block;margin-bottom:4px">Closure dates (YYYY-MM-DD, comma separated)</label>
-      <input type="text" id="as-closures" placeholder="2026-12-25, 2027-01-01" style="font-family:inherit;font-size:12px;padding:5px 8px;border:1px solid var(--paper3);border-radius:6px;background:var(--paper1);color:var(--ink);width:100%;box-sizing:border-box">
-      <button class="cbtn cbtn-primary cbtn-sm" onclick="saveAccountHours()" style="margin-top:10px">Save hours</button>
-      <span id="as-hours-status" style="font-size:11.5px;color:var(--ink3);margin-left:10px"></span>
-    </div>
+  <div class="ac-body">
+    <!-- ══════════════ SECTION RAIL ══════════════ -->
+    <nav class="ac-nav" id="ac-nav" aria-label="Account sections">
+      <a href="#acct-overview" data-go="overview"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>Overview</a>
+      <a href="#acct-restaurant" data-go="restaurant"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 7l6-4 6 4v6H2z"/><path d="M6 13V9h4v4"/></svg>Restaurant</a>
+      <a href="#acct-people" data-go="people"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6" cy="5.5" r="2.5"/><path d="M1.5 13c0-2.5 2-4 4.5-4s4.5 1.5 4.5 4"/><circle cx="11.5" cy="6" r="2"/><path d="M11 9.5c2 0 3.5 1.3 3.5 3.5"/></svg>People</a>
+      <a href="#acct-billing" data-go="billing"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1.5" y="3.5" width="13" height="9" rx="1.5"/><path d="M1.5 7h13"/></svg>Billing</a>
+      <a href="#acct-notifications" data-go="notifications"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 11V7a4 4 0 018 0v4l1 1H3z"/><path d="M6.5 13.5a1.5 1.5 0 003 0"/></svg>Notifications</a>
+      <a href="#acct-automation" data-go="automation"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1.5l1.6 3.4 3.7.4-2.8 2.5.8 3.7L8 9.6l-3.3 1.9.8-3.7L2.7 5.3l3.7-.4z"/></svg>Automation &amp; AI</a>
+      <a href="#acct-integrations" data-go="integrations"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 10L3.5 12.5a2 2 0 01-2.8-2.8L4 7"/><path d="M10 6l2.5-2.5a2 2 0 012.8 2.8L12 9"/><path d="M5.5 10.5l5-5"/></svg>Integrations</a>
+      <a href="#acct-security" data-go="security"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1.5l5.5 2v4c0 3.5-2.5 6-5.5 7-3-1-5.5-3.5-5.5-7v-4z"/><path d="M5.5 8l2 2 3-3.5"/></svg>Security</a>
+      <a href="#acct-appearance" data-go="appearance"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 2a6 6 0 010 12z" fill="currentColor" stroke="none"/></svg>Appearance</a>
+      <a href="#acct-data" data-go="data"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><ellipse cx="8" cy="4" rx="5.5" ry="2"/><path d="M2.5 4v8c0 1.1 2.5 2 5.5 2s5.5-.9 5.5-2V4"/><path d="M2.5 8c0 1.1 2.5 2 5.5 2s5.5-.9 5.5-2"/></svg>Data &amp; privacy</a>
+      <a href="#acct-support" data-go="support"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M6.2 6.3a1.9 1.9 0 013.7.5c0 1.2-1.9 1.4-1.9 2.6"/><circle cx="8" cy="11.6" r=".6" fill="currentColor"/></svg>Support</a>
+      <div class="hint">Everything here is also in the iPhone app under Account.</div>
+    </nav>
 
     <div>
-      <div style="font-size:12px;font-weight:700;color:var(--ink);margin-bottom:4px">Data &amp; email</div>
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:7px 0">
-        <label for="as-retention" style="font-size:12px">Keep review history for</label>
-        <select id="as-retention" onchange="saveDataRetention()" style="font-family:inherit;font-size:12px;padding:5px 8px;border:1px solid var(--paper3);border-radius:6px;background:var(--paper1);color:var(--ink)">
-          <option value="0">Keep everything</option>
-          <option value="6">6 months</option>
-          <option value="12">12 months</option>
-          <option value="24">24 months</option>
-          <option value="36">36 months</option>
-        </select>
-      </div>
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:7px 0">
-        <label for="as-login-notify" style="font-size:12px;cursor:pointer">Email me about new sign-ins</label>
-        <input type="checkbox" id="as-login-notify" onchange="saveLoginNotify()" style="accent-color:var(--ember)">
-      </div>
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:7px 0">
-        <label for="as-marketing" style="font-size:12px;cursor:pointer">Product update emails</label>
-        <input type="checkbox" id="as-marketing" onchange="saveMarketingOptOut()" style="accent-color:var(--ember)">
-      </div>
-      <p style="font-size:11.5px;color:var(--ink3);line-height:1.5;margin:0 0 12px;margin:6px 0 0">Turning product updates off never affects security email &mdash; sign-in codes, password changes and alerts still send.</p>
-      <span id="as-data-status" style="font-size:11.5px;color:var(--ink3)"></span>
-    </div>
-  </div>
 
-  <div class="acct-card" style="padding:18px 22px;margin-bottom:14px" id="email-history-card">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
-      <div class="acct-card-title">Email history</div>
-      <button onclick="sendTestDigest(this)" class="cbtn cbtn-soft cbtn-sm">Send me a preview digest</button>
-    </div>
-    <div class="acct-card-sub">Everything Cavnar AI has sent for you, and whether it landed.</div>
-    <div id="eh-body" style="margin-top:12px;font-size:12px;color:var(--ink3)">Loading…</div>
-  </div>
+    <!-- ══════════════ RESTAURANT ══════════════ -->
+    <section class="ac-section" id="acct-restaurant" aria-labelledby="acct-restaurant-h">
+      <div class="ac-h"><div><h2 id="acct-restaurant-h">Restaurant</h2><p>Who you are, how to reach you, and the facts the AI writes from.</p></div>
+        <button onclick="toggleProfileEdit()" id="profile-edit-btn" class="cbtn cbtn-primary cbtn-sm">Edit profile</button></div>
 
-
-  <div class="acct-card" style="padding:18px 22px;margin-bottom:14px">
-    <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:12px">Help &amp; FAQ</div>
-    <div id="faq-list">
-      <div class="faq-group">
-        <div style="font-size:11px;font-weight:700;color:var(--ink3);margin:14px 0 6px" class="faq-group-title">Getting started</div>
-        <div class="faq-item"><button type="button" class="faq-q" onclick="toggleFaq(this)">How is Cavnar AI set up for my restaurant?<span class="faq-arrow">▾</span></button><div class="faq-a">Will personally sets up every restaurant &mdash; connecting your Google Business Profile, POS system, and configuring the modules you're paying for. You won't need to do any technical setup yourself; if something looks disconnected or missing, contact Will.</div></div>
-        <div class="faq-item"><button type="button" class="faq-q" onclick="toggleFaq(this)">What's the difference between the modules?<span class="faq-arrow">▾</span></button><div class="faq-a">Reviews drafts AI responses to your Google reviews and flags urgent ones. Intel tracks what's being said about you and nearby competitors. Marketing automates guest outreach. Labor pulls hours and schedules from your POS. Food Cost tracks ingredient spend and waste. Not every restaurant has every module &mdash; check Account for what's active on yours.</div></div>
-      </div>
-      <div class="faq-group">
-        <div style="font-size:11px;font-weight:700;color:var(--ink3);margin:14px 0 6px" class="faq-group-title">Reviews</div>
-        <div class="faq-item"><button type="button" class="faq-q" onclick="toggleFaq(this)">Does Cavnar AI post responses automatically?<span class="faq-arrow">▾</span></button><div class="faq-a">No &mdash; every AI-drafted response needs your approval before it goes out. You can edit the draft, approve it as-is, or regenerate it from the review's detail screen.</div></div>
-        <div class="faq-item"><button type="button" class="faq-q" onclick="toggleFaq(this)">Why does a review show as "urgent"?<span class="faq-arrow">▾</span></button><div class="faq-a">Reviews mentioning health, safety, or a sharp negative sentiment are flagged urgent so they surface above routine reviews and can trigger an alert, depending on your alert settings.</div></div>
-      </div>
-      <div class="faq-group">
-        <div style="font-size:11px;font-weight:700;color:var(--ink3);margin:14px 0 6px" class="faq-group-title">Security</div>
-        <div class="faq-item"><button type="button" class="faq-q" onclick="toggleFaq(this)">What does two-factor authentication protect?<span class="faq-arrow">▾</span></button><div class="faq-a">2FA adds a one-time code (by email or text) on top of your password at sign-in. Once it's on, you'll also get a set of one-time backup codes &mdash; save them somewhere safe in case you ever lose access to your email or phone.</div></div>
-        <div class="faq-item"><button type="button" class="faq-q" onclick="toggleFaq(this)">Can more than one person log in for my restaurant?<span class="faq-arrow">▾</span></button><div class="faq-a">Yes &mdash; the account owner can add teammates from the Team card above (or in the iOS app under Account &rarr; Manage team). Each teammate gets their own real login, and the owner can remove access at any time.</div></div>
-      </div>
-      <div class="faq-group">
-        <div style="font-size:11px;font-weight:700;color:var(--ink3);margin:14px 0 6px" class="faq-group-title">Billing &amp; account</div>
-        <div class="faq-item"><button type="button" class="faq-q" onclick="toggleFaq(this)">How do I change my plan or payment method?<span class="faq-arrow">▾</span></button><div class="faq-a">Use the Billing card above. If you don't have an active plan yet, or need something changed on your contract, contact Will directly.</div></div>
-        <div class="faq-item"><button type="button" class="faq-q" onclick="toggleFaq(this)">Can I export my review data?<span class="faq-arrow">▾</span></button><div class="faq-a">Yes &mdash; use Export my data above (or in the iOS app under Account &rarr; Export my data). It emails you CSVs of your reviews, labor and food cost history, plus a JSON of your settings.</div></div>
-        <div class="faq-item"><button type="button" class="faq-q" onclick="toggleFaq(this)">How do I cancel my account?<span class="faq-arrow">▾</span></button><div class="faq-a">Getting started with Cavnar AI includes signing a service agreement, so cancellation isn't self-serve &mdash; use the "Request cancellation" link below. 30 days' written notice is required; your account stays active through the end of your current billing period plus 30 days.</div></div>
-      </div>
-      <div class="faq-group">
-        <div style="font-size:11px;font-weight:700;color:var(--ink3);margin:14px 0 6px" class="faq-group-title">Notifications</div>
-        <div class="faq-item"><button type="button" class="faq-q" onclick="toggleFaq(this)">How do I control which alerts I get?<span class="faq-arrow">▾</span></button><div class="faq-a">Alert settings control what triggers an alert (1-star reviews, a rating spike, health mentions, etc.) and whether it reaches you by text, email, or push, plus optional quiet hours.</div></div>
-        <div class="faq-item"><button type="button" class="faq-q" onclick="toggleFaq(this)">What's the difference between alerts and the weekly digest?<span class="faq-arrow">▾</span></button><div class="faq-a">Alerts are near-real-time &mdash; something specific just happened. The weekly digest is a full summary sent on the day you choose.</div></div>
-      </div>
-    </div>
-    <div style="font-size:12px;color:var(--ink3);margin-top:16px">Can't find what you're looking for? <a href="mailto:will@cavnar.ai" style="color:var(--ember)">Contact Will</a></div>
-  </div>
-  <style>
-    .faq-item{border-top:1px solid var(--paper3)}
-    .faq-item:first-of-type{border-top:none}
-    .faq-q{display:flex;align-items:flex-start;justify-content:space-between;width:100%;text-align:left;background:none;border:none;padding:14px 0;font-family:'Apfel Grotezk',sans-serif;font-size:13px;font-weight:700;color:var(--ember2);cursor:pointer;gap:10px}
-    .faq-arrow{font-size:10px;color:var(--ink3);margin-left:0;margin-top:2px;flex-shrink:0}
-    .faq-a{display:none;padding:0 0 16px;font-size:12.5px;line-height:1.7;color:var(--ink3)}
-    .faq-item.open .faq-a{display:block}
-    .faq-item.open .faq-arrow{transform:rotate(180deg)}
-  </style>
-
-  <!-- Webhooks -->
-  <div class="acct-card" style="padding:18px 22px;margin-bottom:14px">
-    <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:12px">Outbound webhook</div>
-    <p style="font-size:12px;color:var(--ink3);line-height:1.6;margin:0 0 14px">Receive a POST request to your URL whenever a review comes in, an alert fires, or a response is approved. Use with Zapier, Slack, or your own tools.</p>
-
-    <div id="webhook-config" style="display:none">
-      <div id="wh-disabled-banner" style="display:none;background:var(--red-bg);border:1px solid var(--red);border-radius:6px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:var(--red)">
-        <div style="font-weight:600;margin-bottom:4px" id="wh-disabled-reason"></div>
-        <div>This webhook stopped delivering and was automatically disabled. Fix the endpoint, then <button class="cbtn cbtn-text cbtn-inline cbtn-danger cbtn-link cbtn-sm" onclick="reactivateWebhook()">reactivate it</button>.</div>
-      </div>
-      <div style="background:var(--paper2);border:1px solid var(--paper3);border-radius:6px;padding:10px 12px;margin-bottom:12px">
-        <div style="font-size:11px;color:var(--ink3);margin-bottom:4px">Signing secret</div>
-        <div style="display:flex;align-items:center;gap:8px">
-          <code id="webhook-secret" style="font-size:11px;color:var(--ink);font-family:monospace;word-break:break-all;flex:1"></code>
-          <button onclick="copyWebhookSecret()" class="cbtn cbtn-secondary cbtn-sm" style="white-space:nowrap" id="wh-copy-btn">Copy</button>
+      <div class="ac-grid three">
+        <div class="ac-card">
+          <div class="ac-card-h"><div><h3>Identity</h3><p>Set by Will at onboarding.</p></div></div>
+          <dl class="ac-kv" style="grid-template-columns:1fr">
+            <div><dt>Name</dt><dd>{{ restaurant.name }}</dd></div>
+            <div><dt>Location</dt><dd class="{{ '' if restaurant.neighborhood else 'muted' }}">{{ restaurant.neighborhood or 'Not set' }}</dd></div>
+            <div><dt>Atmosphere</dt><dd class="{{ '' if restaurant.vibe else 'muted' }}">{{ restaurant.vibe or 'Not set' }}</dd></div>
+            <div><dt>Known for</dt><dd class="{{ '' if restaurant.known_for else 'muted' }}">{{ restaurant.known_for or 'Not set' }}</dd></div>
+          </dl>
+          <div class="ac-note"><a href="mailto:will@cavnar.ai?subject=Profile update for {{restaurant.name}}">Request a change &rarr;</a></div>
         </div>
-      </div>
-      <div style="font-size:11px;color:var(--ink3);margin-bottom:6px">Last delivery: <span id="webhook-last-status">—</span></div>
-      <div style="margin-bottom:6px">
-        <button class="cbtn cbtn-text cbtn-inline cbtn-sm" type="button" onclick="toggleWhHistory()">Delivery history <span id="wh-history-arrow" style="font-size:9px">▾</span></button>
-      </div>
-      <div id="wh-history-panel" style="display:none;margin-bottom:10px;max-height:220px;overflow-y:auto;border:1px solid var(--paper3);border-radius:6px">
-        <table style="width:100%;border-collapse:collapse;font-size:11px">
-          <thead><tr style="background:var(--paper2)">
-            <th style="text-align:left;padding:6px 8px;font-weight:600;color:var(--ink3)">Event</th>
-            <th style="text-align:left;padding:6px 8px;font-weight:600;color:var(--ink3)">Status</th>
-            <th style="text-align:left;padding:6px 8px;font-weight:600;color:var(--ink3)">Attempts</th>
-            <th style="text-align:left;padding:6px 8px;font-weight:600;color:var(--ink3)">When</th>
-          </tr></thead>
-          <tbody id="wh-history-body"></tbody>
-        </table>
-      </div>
-    </div>
-
-    <div style="display:flex;gap:8px;margin-bottom:10px">
-      <input type="url" id="webhook-url" placeholder="https://hooks.zapier.com/..." style="flex:1;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-size:13px;font-family:'Apfel Grotezk',sans-serif">
-    </div>
-
-    <div style="margin-bottom:14px">
-      <button class="cbtn cbtn-secondary cbtn-sm" type="button" onclick="toggleEvtPanel()">
-        Events &nbsp;<span id="evt-count-label" style="color:var(--ink3);font-weight:400">3 selected</span><span id="evt-arrow" style="font-size:9px;color:var(--ink3);margin-left:2px">▾</span>
-      </button>
-      <div id="evt-panel" style="display:none;margin-top:10px;padding:14px 16px;background:var(--paper1);border:1px solid var(--paper3);border-radius:8px">
-        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0 20px">
-          <div>
-            <div style="font-size:10px;font-weight:700;letter-spacing:.06em;color:var(--ink3);text-transform:uppercase;margin-bottom:8px">Reviews</div>
-            <div style="display:flex;flex-direction:column;gap:6px">
-              <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none"><input type="checkbox" id="whe-review" checked onchange="updateEvtCount()" style="accent-color:var(--ember)"> New review</label>
-              <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none"><input type="checkbox" id="whe-negative" onchange="updateEvtCount()" style="accent-color:var(--ember)"> Negative (1–2★)</label>
-              <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none"><input type="checkbox" id="whe-positive" onchange="updateEvtCount()" style="accent-color:var(--ember)"> Positive (4–5★)</label>
-              <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none"><input type="checkbox" id="whe-alert" checked onchange="updateEvtCount()" style="accent-color:var(--ember)"> Alert fired</label>
-              <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none"><input type="checkbox" id="whe-approved" checked onchange="updateEvtCount()" style="accent-color:var(--ember)"> Response approved</label>
-              <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none"><input type="checkbox" id="whe-posted" onchange="updateEvtCount()" style="accent-color:var(--ember)"> Response posted</label>
-            </div>
-          </div>
-          <div>
-            <div style="font-size:10px;font-weight:700;letter-spacing:.06em;color:var(--ink3);text-transform:uppercase;margin-bottom:8px">Labor</div>
-            <div style="display:flex;flex-direction:column;gap:6px">
-              <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none"><input type="checkbox" id="whe-labor-over" onchange="updateEvtCount()" style="accent-color:var(--ember)"> Over target</label>
-              <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none"><input type="checkbox" id="whe-labor-updated" onchange="updateEvtCount()" style="accent-color:var(--ember)"> Data updated</label>
-            </div>
-          </div>
-          <div>
-            <div style="font-size:10px;font-weight:700;letter-spacing:.06em;color:var(--ink3);text-transform:uppercase;margin-bottom:8px">Food Cost</div>
-            <div style="display:flex;flex-direction:column;gap:6px">
-              <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none"><input type="checkbox" id="whe-inv-updated" onchange="updateEvtCount()" style="accent-color:var(--ember)"> Data updated</label>
-              <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none"><input type="checkbox" id="whe-inv-cost" onchange="updateEvtCount()" style="accent-color:var(--ember)"> Cost alert (&gt;8%)</label>
-              <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none"><input type="checkbox" id="whe-fc-spike" onchange="updateEvtCount()" style="accent-color:var(--ember)"> Price spike (1 wk)</label>
-              <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none"><input type="checkbox" id="whe-fc-trend" onchange="updateEvtCount()" style="accent-color:var(--ember)"> Price trend (3+ wks)</label>
-            </div>
-          </div>
-          <div>
-            <div style="font-size:10px;font-weight:700;letter-spacing:.06em;color:var(--ink3);text-transform:uppercase;margin-bottom:8px">Intel &amp; Reports</div>
-            <div style="display:flex;flex-direction:column;gap:6px">
-              <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none"><input type="checkbox" id="whe-intel" onchange="updateEvtCount()" style="accent-color:var(--ember)"> Competitor report</label>
-              <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none"><input type="checkbox" id="whe-report" onchange="updateEvtCount()" style="accent-color:var(--ember)"> Weekly digest</label>
-            </div>
+        <div class="ac-card">
+          <div class="ac-card-h"><div><h3>Contact</h3><p>Where alerts, receipts and digests go.</p></div></div>
+          <dl class="ac-kv" style="grid-template-columns:1fr">
+            <div><dt>Owner / GM</dt><dd class="{{ '' if restaurant.owner_name else 'muted' }}">{{ restaurant.owner_name or 'Not set' }}</dd></div>
+            <div><dt>Email</dt><dd id="profile-email-display">{{ restaurant.owner_email or '—' }}</dd></div>
+            <div><dt>Phone</dt><dd class="{{ '' if restaurant.owner_phone else 'muted' }}">{{ restaurant.owner_phone or 'Not set' }}</dd></div>
+            <div><dt>Timezone</dt><dd>{{ (restaurant.timezone or 'America/Chicago').split('/')[-1].replace('_',' ') }}</dd></div>
+          </dl>
+        </div>
+        <div class="ac-card">
+          <div class="ac-card-h"><div><h3>Sign-in</h3><p>Your login to this dashboard.</p></div></div>
+          <dl class="ac-kv" style="grid-template-columns:1fr">
+            <div><dt>Username</dt><dd>{{ current_user.username }}</dd></div>
+            <div><dt>Account email</dt><dd id="acct-email-display">{{ restaurant.owner_email }}</dd></div>
+            <div><dt>Role</dt><dd><span class="ac-chip sm {{ 'ember' if _is_owner else '' }}">{{ 'Owner' if _is_owner else ('Manager' if current_user.role == 'manager' else 'Teammate') }}</span></dd></div>
+          </dl>
+          <div class="ac-inline" style="margin-top:12px">
+            <button class="cbtn cbtn-secondary cbtn-sm" onclick="document.getElementById('email-modal').style.display='flex'">Change email</button>
+            <button class="cbtn cbtn-secondary cbtn-sm" onclick="document.getElementById('pw-modal').style.display='flex'">Change password</button>
           </div>
         </div>
       </div>
-    </div>
 
-    <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <button onclick="saveWebhook()" class="cbtn cbtn-primary" id="wh-save-btn">Save webhook</button>
-      <button onclick="testWebhook()" id="wh-test-btn" class="cbtn cbtn-secondary" style="display:none">Send test</button>
-      <button class="cbtn cbtn-danger cbtn-ghost cbtn-sm" onclick="deleteWebhook()" id="wh-delete-btn" style="display:none">Remove</button>
-    </div>
-    <div id="wh-status" style="font-size:12px;margin-top:8px;display:none"></div>
-  </div>
+      <div id="profile-edit" class="ac-card accent" style="display:none;margin-top:14px">
+        <div class="ac-card-h"><div><h3>Edit profile</h3><p>Contact details and how the AI sounds when it writes for you. Saved together.</p></div></div>
+        <div class="ac-form">
+          <div class="ac-field"><label for="pe-owner-name">Owner / GM name</label><input class="ac-input" id="pe-owner-name" value="{{restaurant.owner_name or ''}}"></div>
+          <div class="ac-field"><label for="pe-phone">Phone</label><input class="ac-input" id="pe-phone" value="{{restaurant.owner_phone or ''}}"></div>
+          <div class="ac-field"><label for="pe-tz">Timezone</label><select class="ac-select" id="pe-tz">
+            {% for tz, tzl in [('America/New_York','Eastern'),('America/Chicago','Central'),('America/Denver','Mountain'),('America/Phoenix','Arizona'),('America/Los_Angeles','Pacific'),('America/Anchorage','Alaska'),('Pacific/Honolulu','Hawaii')] %}
+            <option value="{{tz}}" {% if (restaurant.timezone or 'America/Chicago') == tz %}selected{% endif %}>{{tzl}}</option>{% endfor %}</select></div>
+          <div class="ac-field"><label for="pe-tone">Reply tone</label><select class="ac-select" id="pe-tone">
+            {% for t, tl in [('','Your brand voice only'),('warm','Warm'),('professional','Professional'),('playful','Playful'),('concise','Concise')] %}
+            <option value="{{t}}" {% if (restaurant.tone_preset or '') == t %}selected{% endif %}>{{tl}}</option>{% endfor %}</select></div>
+          <div class="ac-field"><label for="pe-lang">Reply language</label><select class="ac-select" id="pe-lang">
+            {% for l, ll in [('','English'),('es','Spanish'),('fr','French'),('it','Italian'),('pt','Portuguese'),('de','German')] %}
+            <option value="{{l}}" {% if (restaurant.response_language or '') == l %}selected{% endif %}>{{ll}}</option>{% endfor %}</select></div>
+          <div class="ac-field"><label for="pe-signoff">Sign-off name</label><input class="ac-input" id="pe-signoff" value="{{restaurant.sign_off_name or ''}}" placeholder="e.g. Maria &amp; the team"></div>
+          <div class="ac-field wide"><label for="pe-voice">How you sound</label><textarea class="ac-textarea" id="pe-voice" rows="2" placeholder="e.g. genuine and warm, a little witty, never corporate">{{restaurant.voice_notes or ''}}</textarea></div>
+          <div class="ac-field"><label for="pe-never">Words to never use</label><input class="ac-input" id="pe-never" value="{{restaurant.never_say or ''}}" placeholder="e.g. culinary journey, indulge"></div>
+          <div class="ac-field" style="grid-column:span 2"><label for="pe-menu">Menu &amp; current specials</label><textarea class="ac-textarea" id="pe-menu" rows="2" placeholder="Signature dishes and what's running now">{{restaurant.menu_notes or ''}}</textarea></div>
+        </div>
+        <div class="ac-inline" style="margin-top:14px">
+          <button class="cbtn cbtn-primary" id="pe-save" onclick="saveProfile()">Save changes</button>
+          <button class="cbtn cbtn-secondary" onclick="toggleProfileEdit()">Cancel</button>
+        </div>
+      </div>
 
-  <!-- Cancel — minimal text link -->
-  <div style="text-align:center;padding:4px 0 8px">
-    <a href="mailto:will@cavnar.ai?subject=Cancel%20my%20Cavnar%20AI%20subscription&body=Hi%20Will%2C%0A%0AI%20would%20like%20to%20cancel%20my%20Cavnar%20AI%20subscription%20for%20{{restaurant.name}}.%0A%0APer%20the%2030-day%20notice%20policy%2C%20I%20understand%20my%20account%20will%20remain%20active%20through%20the%20end%20of%20my%20current%20billing%20period%20and%20for%2030%20days%20after%20this%20notice." style="font-size:11px;color:var(--ink3);text-decoration:none">Request cancellation</a>
-    <span style="font-size:11px;color:var(--paper3);margin:0 6px">&middot;</span>
-    <span style="font-size:11px;color:var(--ink3)">30 days written notice required</span>
-  </div>
+      <div class="ac-card" style="margin-top:14px">
+        <div class="ac-card-h"><div><h3>Hours &amp; closures</h3><p>Used when generating schedules and when the AI mentions your hours. Leave a day blank if it varies.</p></div>
+          <div class="r"><span class="ac-status" id="as-hours-status"></span><button class="cbtn cbtn-primary cbtn-sm" onclick="saveAccountHours()">Save hours</button></div></div>
+        <div id="as-hours-grid" style="display:grid;grid-template-columns:auto 1fr 1fr;gap:8px 12px;align-items:center;max-width:520px"></div>
+        <div class="ac-field" style="margin-top:12px;max-width:520px"><label for="as-closures">Closure dates (YYYY-MM-DD, comma separated)</label><input class="ac-input" type="text" id="as-closures" placeholder="2026-12-25, 2027-01-01"></div>
+      </div>
+    </section>
 
-</div>
-</div>
+    <!-- ══════════════ PEOPLE ══════════════ -->
+    <section class="ac-section" id="acct-people" aria-labelledby="acct-people-h">
+      <div class="ac-h"><div><h2 id="acct-people-h">People</h2><p>Two kinds of access. Teammates sign in to this dashboard; employees sign in to the staff portal with a PIN and see only their own shifts and tasks.</p></div></div>
+
+      <div class="ac-grid">
+        <div class="ac-card">
+          <div class="ac-card-h"><div><h3>Dashboard logins</h3><p>Each teammate gets their own login. The owner can remove access any time.</p></div><div class="r"><span class="ac-chip sm">Team</span></div></div>
+          <div id="acct-team-list" class="ac-list">Loading&hellip;</div>
+          {% if current_user.role != 'member' %}
+          <div class="ac-inline" style="margin-top:14px">
+            <label class="ac-lbl" for="team-name" style="position:absolute;left:-9999px">Name</label>
+            <input class="ac-input" id="team-name" placeholder="Name" aria-label="Teammate name">
+            <input class="ac-input" id="team-email" type="email" placeholder="Email" aria-label="Teammate email" style="flex:1.4">
+            <button onclick="inviteTeam(this)" class="cbtn cbtn-primary cbtn-sm">Add teammate</button>
+          </div>
+          <div class="ac-note">They get a temporary password by email.</div>
+          {% endif %}
+        </div>
+
+        {% if _is_owner %}
+        <div class="ac-card accent">
+          <div class="ac-card-h"><div><h3>Staff join code</h3><p>Post it in the back of house. A new hire downloads Cavnar AI, taps <b>Create your account</b>, types it, picks their name off your roster and sets their own PIN. You don&rsquo;t have to do anything.</p></div>
+            <div class="r"><button onclick="rotateStaffLink(this)" class="cbtn cbtn-secondary cbtn-sm">New code</button></div></div>
+          <div class="ac-code" id="staff-join-code" aria-label="Staff join code">&mdash;</div>
+          <div class="ac-inline" style="margin-top:14px">
+            <label class="ac-lbl" for="staff-portal-url" style="position:absolute;left:-9999px">Staff portal link</label>
+            <input class="ac-input" id="staff-portal-url" readonly aria-label="Staff portal link">
+            <button onclick="copyStaffLink(this)" class="cbtn cbtn-secondary cbtn-sm">Copy link</button>
+          </div>
+          <div class="ac-note">A new code stops the old code and the old link working, everywhere.</div>
+        </div>
+        {% endif %}
+      </div>
+
+      {% if _is_owner %}
+      <div class="ac-card" style="margin-top:14px" id="staff-accounts-card">
+        <div class="ac-card-h"><div><h3>Staff accounts</h3><p>Who has signed up, from which number, and who on your roster hasn&rsquo;t yet.</p></div><div class="r"><span class="ac-chip sm">Employees</span></div></div>
+        <div id="staff-list" class="ac-list">Loading&hellip;</div>
+        <div id="staff-unclaimed" style="margin-top:8px"></div>
+
+        <div class="ac-disc">
+          <button class="cbtn cbtn-text cbtn-inline cbtn-sm" type="button" aria-expanded="false" aria-controls="ac-staff-add" onclick="acctDisclose(this,'ac-staff-add')">Add an employee yourself &#9662;</button>
+          <div class="ac-disc-body" id="ac-staff-add">
+            <div class="ac-note" style="margin:0 0 10px">Only needed if someone can&rsquo;t sign themselves up &mdash; you&rsquo;ll have to read them the PIN. 4&ndash;8 digits, no repeats or runs.</div>
+            <div class="ac-inline">
+              <input class="ac-input" id="staff-new-name" placeholder="Name, as it appears on the schedule" aria-label="Employee name" style="flex:1.6">
+              <input class="ac-input" id="staff-new-role" placeholder="Job (Server)" aria-label="Job" list="staff-role-options">
+              <datalist id="staff-role-options"></datalist>
+              <input class="ac-input ac-num" id="staff-new-pin" inputmode="numeric" placeholder="PIN" maxlength="8" aria-label="PIN" style="flex:0 0 96px">
+              <button onclick="createStaff(this)" class="cbtn cbtn-primary cbtn-sm">Add</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="ac-row" style="margin-top:6px">
+          <div class="l"><b>Tell me when someone opens the staff portal</b><span>A push and a bell entry per staff sign-in. Off by default so it never becomes noise.</span></div>
+          <div class="c"><label class="ac-switch"><input type="checkbox" id="staff-signin-notify" {% if restaurant.staff_signin_notify %}checked{% endif %} onchange="toggleStaffSigninNotify(this)" aria-label="Notify me when someone opens the staff portal"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div>
+        </div>
+        <div id="staff-pin-events" style="margin-top:10px"></div>
+      </div>
+      {% endif %}
+    </section>
+
+    <!-- ══════════════ BILLING ══════════════ -->
+    <section class="ac-section" id="acct-billing" aria-labelledby="acct-billing-h">
+      <div class="ac-h"><div><h2 id="acct-billing-h">Billing &amp; subscription</h2><p>Your plan, what&rsquo;s included, and what happens next.</p></div></div>
+      <div class="ac-grid">
+        <div class="ac-card" id="billing-card">
+          <div class="ac-card-h"><div><h3>Subscription</h3><p id="billing-status">&nbsp;</p></div></div>
+          <div id="billing-loading" class="hb-load" style="height:64px"><canvas class="hb-orb" data-orb-state="working" width="22" height="22" style="width:22px;height:22px"></canvas><span>Loading billing&hellip;</span></div>
+          <div id="billing-content" style="display:none">
+            <dl class="ac-kv">
+              <div><dt>Next charge</dt><dd class="ac-big" id="billing-next-prominent">&mdash;</dd></div>
+              <div><dt>Amount</dt><dd class="ac-big" id="billing-amount-prominent">&mdash;</dd></div>
+              <div style="grid-column:1 / -1"><dt>Payment method</dt><dd id="billing-pm">&mdash;</dd></div>
+            </dl>
+            <div class="ac-inline" style="margin-top:16px">
+              <a id="billing-portal-link" href="#" target="_blank" rel="noopener" class="cbtn cbtn-primary cbtn-sm">Manage payment method</a>
+              <a id="billing-invoice-link" href="#" target="_blank" rel="noopener" class="cbtn cbtn-secondary cbtn-sm">Invoice history</a>
+            </div>
+          </div>
+          <div id="billing-no-sub" style="display:none" class="ac-note">No active subscription on file. <a href="mailto:will@cavnar.ai">Contact Will</a> to set one up.</div>
+        </div>
+        <div class="ac-card">
+          <div class="ac-card-h"><div><h3>Feature access</h3><p>Modules on this account. Tabs you don&rsquo;t have are hidden, and their data is never fetched.</p></div></div>
+          <div class="ac-rows">
+            {% for m in [('Reviews', mod_reviews, 'AI-drafted replies, urgent flags, response tracking'), ('Labor', mod_labor, 'Schedules, labor %, operational scores'), ('Food Cost', mod_inventory, 'Ingredient spend, waste, menu margins'), ('Marketing', mod_marketing, 'Guest outreach, social posts, campaigns'), ('Intel', is_full_tier, 'Competitor tracking &amp; AI visibility &mdash; included with the full plan')] %}
+            <div class="ac-row"><div class="l"><b>{{ m[0] }}</b><span>{{ m[2]|safe }}</span></div><div class="c"><span class="ac-chip sm {{ 'good' if m[1] else '' }}"><i></i>{{ 'Active' if m[1] else 'Not on plan' }}</span></div></div>
+            {% endfor %}
+          </div>
+          <div class="ac-note">Want to add a module? <a href="mailto:will@cavnar.ai?subject=Add a module to {{restaurant.name}}">Ask Will</a> &mdash; pricing is per module, no contract change needed.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════════════ NOTIFICATIONS ══════════════ -->
+    <section class="ac-section" id="acct-notifications" aria-labelledby="acct-notifications-h">
+      <div class="ac-h"><div><h2 id="acct-notifications-h">Notifications</h2><p>What reaches you, how, and when. Alerts are near-real-time; the digest is a weekly summary.</p></div></div>
+      <div class="ac-grid">
+        <div class="ac-card">
+          <div class="ac-card-h"><div><h3>Alerts</h3><p>Who gets texted or emailed, and for what.</p></div>
+            <div class="r"><button class="cbtn cbtn-primary cbtn-sm" onclick="openAlertsModal()">Manage alerts</button></div></div>
+          <div class="ac-kv" style="grid-template-columns:1fr">
+            <div><dt>Contacts</dt><dd id="alerts-contacts-summary" class="muted">Loading&hellip;</dd></div>
+            <div><dt>Triggers</dt><dd id="alerts-types-summary" class="muted"></dd></div>
+          </div>
+          <div class="ac-note">Quiet hours, daily caps and the weekly digest day are all inside <b>Manage alerts</b>.</div>
+        </div>
+        <div class="ac-card">
+          <div class="ac-card-h"><div><h3>Email preferences</h3><p>Security email &mdash; sign-in codes, password changes, alerts &mdash; always sends regardless.</p></div></div>
+          <div class="ac-rows">
+            <div class="ac-row"><div class="l"><b>Email me about new sign-ins</b><span>A note whenever someone signs in to this dashboard, with a one-tap &ldquo;this wasn&rsquo;t me&rdquo;.</span></div>
+              <div class="c"><label class="ac-switch"><input type="checkbox" id="as-login-notify" onchange="saveLoginNotify()" aria-label="Email me about new sign-ins"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
+            <div class="ac-row"><div class="l"><b>Product update emails</b><span>Occasional notes about new features.</span></div>
+              <div class="c"><label class="ac-switch"><input type="checkbox" id="as-marketing" onchange="saveMarketingOptOut()" aria-label="Product update emails"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
+          </div>
+          <div class="ac-status" id="as-data-status" style="margin-top:8px"></div>
+        </div>
+        <div class="ac-card span" id="email-history-card">
+          <div class="ac-card-h"><div><h3>Email history</h3><p>Everything Cavnar AI has sent for you, and whether it landed.</p></div>
+            <div class="r"><button onclick="sendTestDigest(this)" class="cbtn cbtn-soft cbtn-sm">Send me a preview digest</button></div></div>
+          <div id="eh-body" class="ac-list">Loading&hellip;</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════════════ AUTOMATION & AI ══════════════ -->
+    <section class="ac-section" id="acct-automation" aria-labelledby="acct-automation-h">
+      <div class="ac-h"><div><h2 id="acct-automation-h">Automation &amp; AI</h2><p>What the AI is allowed to do on its own, and how it sounds when it speaks for you.</p></div></div>
+      <div class="ac-grid" id="account-settings-card">
+        <div class="ac-card">
+          <div class="ac-card-h"><div><h3>Auto-approve 5-star replies</h3><p>Drafted replies to 5-star reviews are approved automatically &mdash; and posted, when Google Business is connected. Capped per day, with a pause switch.</p></div>
+            <div class="r"><span class="ac-status" id="as-auto-status"></span><button class="cbtn cbtn-primary cbtn-sm" onclick="saveAutoApprove()">Save rule</button></div></div>
+          <div class="ac-rows">
+            <div class="ac-row"><div class="l"><b>Turn on auto-approve</b><span>Only 5-star reviews. Everything else still waits for you.</span></div>
+              <div class="c"><label class="ac-switch"><input type="checkbox" id="as-auto-enabled" onchange="acctCapMeter()" aria-label="Turn on auto-approve"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
+            <div class="ac-row"><div class="l"><b>Most replies per day</b><span>A ceiling, so a busy weekend can&rsquo;t post fifty replies unread.</span></div>
+              <div class="c"><label class="ac-lbl" for="as-auto-cap" style="position:absolute;left:-9999px">Most replies per day</label><input class="ac-input ac-num" type="number" id="as-auto-cap" min="1" max="50" value="5" oninput="acctCapMeter()" style="width:86px;text-align:center"></div></div>
+            <div class="ac-row"><div class="l"><b>Pause it for now</b><span>Keeps the rule and the cap; nothing posts until you unpause.</span></div>
+              <div class="c"><label class="ac-switch"><input type="checkbox" id="as-auto-paused" onchange="acctCapMeter()" aria-label="Pause auto-approve"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
+          </div>
+          <div style="margin-top:14px"><div class="ac-meter" aria-hidden="true"><i id="ac-cap-meter"></i></div><div class="ac-meter-cap"><span id="ac-cap-label">Daily ceiling</span><span class="ac-num" id="ac-cap-val">5 / 50</span></div></div>
+        </div>
+        <div class="ac-card">
+          <div class="ac-card-h"><div><h3>How the AI writes for you</h3><p>Every drafted reply and post follows this.</p></div>
+            <div class="r"><button class="cbtn cbtn-secondary cbtn-sm" onclick="acctGo('restaurant');if(document.getElementById('profile-edit').style.display==='none')toggleProfileEdit();">Edit voice</button></div></div>
+          <dl class="ac-kv" style="grid-template-columns:1fr">
+            <div><dt>Brand voice</dt><dd class="{{ '' if restaurant.voice_notes else 'muted' }}">{{ restaurant.voice_notes or 'Not set — the AI falls back to a neutral, warm tone.' }}</dd></div>
+            <div><dt>Tone &middot; Language &middot; Sign-off</dt><dd>{{ ({'':'Brand voice only','warm':'Warm','professional':'Professional','playful':'Playful','concise':'Concise'})[restaurant.tone_preset or ''] }} &middot; {{ ({'':'English','es':'Spanish','fr':'French','it':'Italian','pt':'Portuguese','de':'German'})[restaurant.response_language or ''] }} &middot; {{ restaurant.sign_off_name or 'No sign-off' }}</dd></div>
+            {% if restaurant.never_say %}<div><dt>Never says</dt><dd>{{ restaurant.never_say }}</dd></div>{% endif %}
+            {% if restaurant.menu_notes %}<div><dt>Menu highlights</dt><dd>{{ restaurant.menu_notes }}</dd></div>{% endif %}
+          </dl>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════════════ INTEGRATIONS ══════════════ -->
+    <section class="ac-section" id="acct-integrations" aria-labelledby="acct-integrations-h">
+      <div class="ac-h"><div><h2 id="acct-integrations-h">Integrations</h2><p>What Cavnar AI reads from and posts to. A connection that stops syncing says so here.</p></div></div>
+      <div class="ac-grid">
+        <div class="ac-conn">
+          {% if restaurant.gmb_refresh_token %}<div class="ic on" aria-hidden="true">G</div><div class="t"><b>Google Business Profile</b><span>Connected &mdash; approved replies post to Google</span></div>
+          <div class="a"><button class="cbtn cbtn-danger cbtn-ghost cbtn-sm" onclick="gmbDisconnect()">Disconnect</button></div>
+          {% else %}<div class="ic" aria-hidden="true">G</div><div class="t"><b>Google Business Profile</b><span>Not connected &mdash; replies stay in your inbox</span></div>
+          <div class="a"><button onclick="gmbConnect()" class="cbtn cbtn-secondary cbtn-sm">Connect</button></div>{% endif %}
+        </div>
+        <div class="ac-conn">
+          {% if restaurant.ig_token %}<div class="ic on" aria-hidden="true">IG</div><div class="t"><b>Instagram &amp; Facebook</b><span>Connected &mdash; posts generated content directly</span></div>
+          <div class="a"><button class="cbtn cbtn-danger cbtn-ghost cbtn-sm" onclick="disconnectInstagram(this)">Disconnect</button></div>
+          {% else %}<div class="ic" aria-hidden="true">IG</div><div class="t"><b>Instagram &amp; Facebook</b><span>Not connected</span></div>
+          <div class="a"><button onclick="igConnect()" class="cbtn cbtn-secondary cbtn-sm">Connect</button></div>{% endif %}
+        </div>
+        {{ pos_card('Toast POS', 'T', restaurant.toast_restaurant_guid, restaurant.toast_sync_error, restaurant.toast_last_synced, 'toastSyncNow', 'toastDisconnect', 'openToastClientModal') }}
+        {{ pos_card('Square POS', 'Sq', restaurant.square_location_id, restaurant.square_sync_error, restaurant.square_last_synced, 'squareSyncNow', 'squareDisconnect', 'openSquareModal') }}
+        {{ pos_card('Clover POS', 'C', restaurant.clover_merchant_id, restaurant.clover_sync_error, restaurant.clover_last_synced, 'cloverSyncNow', 'cloverDisconnect', 'openCloverModal') }}
+        <div class="ac-conn"><div class="ic" aria-hidden="true">S</div><div class="t"><b>Stripe</b><span>Billing runs through Stripe &mdash; manage it under Billing</span></div><div class="a"><button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="acctGo('billing')">Billing &rarr;</button></div></div>
+      </div>
+
+      <div class="ac-card" style="margin-top:14px">
+        <div class="ac-card-h"><div><h3>Outbound webhook</h3><p>A POST to your URL whenever a review comes in, an alert fires, or a reply is approved. Works with Zapier, Slack, or your own tools.</p></div></div>
+        <div id="webhook-config" style="display:none">
+          <div id="wh-disabled-banner" style="display:none;background:var(--red-bg);border:1px solid var(--red);border-radius:9px;padding:10px 12px;margin-bottom:12px;font-size:13.5px;color:var(--red)">
+            <div style="font-weight:600;margin-bottom:4px" id="wh-disabled-reason"></div>
+            <div>This webhook stopped delivering and was automatically disabled. Fix the endpoint, then <button class="cbtn cbtn-text cbtn-inline cbtn-danger cbtn-link cbtn-sm" onclick="reactivateWebhook()">reactivate it</button>.</div>
+          </div>
+          <div style="background:var(--paper2);border:1px solid var(--ac-line);border-radius:9px;padding:10px 12px;margin-bottom:12px">
+            <div class="ac-lbl" style="margin-bottom:4px">Signing secret</div>
+            <div class="ac-inline"><code id="webhook-secret" class="ac-num" style="font-size:12.5px;color:var(--ink);word-break:break-all;flex:1"></code><button onclick="copyWebhookSecret()" class="cbtn cbtn-secondary cbtn-sm" id="wh-copy-btn">Copy</button></div>
+          </div>
+          <div class="ac-note" style="margin:0 0 6px">Last delivery: <span id="webhook-last-status" class="ac-num">&mdash;</span></div>
+          <div style="margin-bottom:6px"><button class="cbtn cbtn-text cbtn-inline cbtn-sm" type="button" aria-expanded="false" aria-controls="wh-history-panel" onclick="toggleWhHistory();this.setAttribute('aria-expanded',document.getElementById('wh-history-panel').style.display!=='none')">Delivery history <span id="wh-history-arrow" style="font-size:9px">&#9662;</span></button></div>
+          <div id="wh-history-panel" style="display:none;margin-bottom:10px;max-height:220px;overflow-y:auto;border:1px solid var(--ac-line);border-radius:9px">
+            <table style="width:100%;border-collapse:collapse;font-size:13px">
+              <thead><tr style="background:var(--paper2)"><th style="text-align:left;padding:7px 9px;font-weight:600;color:var(--ink3)">Event</th><th style="text-align:left;padding:7px 9px;font-weight:600;color:var(--ink3)">Status</th><th style="text-align:left;padding:7px 9px;font-weight:600;color:var(--ink3)">Attempts</th><th style="text-align:left;padding:7px 9px;font-weight:600;color:var(--ink3)">When</th></tr></thead>
+              <tbody id="wh-history-body"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="ac-field"><label for="webhook-url">Endpoint URL</label><input class="ac-input" type="url" id="webhook-url" placeholder="https://hooks.zapier.com/..."></div>
+        <div style="margin:12px 0 14px">
+          <button class="cbtn cbtn-secondary cbtn-sm" type="button" aria-expanded="false" aria-controls="evt-panel" onclick="toggleEvtPanel();this.setAttribute('aria-expanded',document.getElementById('evt-panel').style.display!=='none')">Events &nbsp;<span id="evt-count-label" style="color:var(--ink3);font-weight:400">3 selected</span><span id="evt-arrow" style="font-size:9px;color:var(--ink3);margin-left:2px">&#9662;</span></button>
+          <div id="evt-panel" style="display:none;margin-top:10px;padding:14px 16px;background:var(--paper);border:1px solid var(--ac-line);border-radius:10px">
+            <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px 20px" class="ac-evt-grid">
+              <div><div class="ac-kv"><dt>Reviews</dt></div><div class="ac-checks" style="flex-direction:column;gap:7px;align-items:flex-start">
+                <label><input type="checkbox" id="whe-review" checked onchange="updateEvtCount()"> New review</label>
+                <label><input type="checkbox" id="whe-negative" onchange="updateEvtCount()"> Negative (1&ndash;2&#9733;)</label>
+                <label><input type="checkbox" id="whe-positive" onchange="updateEvtCount()"> Positive (4&ndash;5&#9733;)</label>
+                <label><input type="checkbox" id="whe-alert" checked onchange="updateEvtCount()"> Alert fired</label>
+                <label><input type="checkbox" id="whe-approved" checked onchange="updateEvtCount()"> Response approved</label>
+                <label><input type="checkbox" id="whe-posted" onchange="updateEvtCount()"> Response posted</label></div></div>
+              <div><div class="ac-kv"><dt>Labor</dt></div><div class="ac-checks" style="flex-direction:column;gap:7px;align-items:flex-start">
+                <label><input type="checkbox" id="whe-labor-over" onchange="updateEvtCount()"> Over target</label>
+                <label><input type="checkbox" id="whe-labor-updated" onchange="updateEvtCount()"> Data updated</label></div></div>
+              <div><div class="ac-kv"><dt>Food Cost</dt></div><div class="ac-checks" style="flex-direction:column;gap:7px;align-items:flex-start">
+                <label><input type="checkbox" id="whe-inv-updated" onchange="updateEvtCount()"> Data updated</label>
+                <label><input type="checkbox" id="whe-inv-cost" onchange="updateEvtCount()"> Cost alert (&gt;8%)</label>
+                <label><input type="checkbox" id="whe-fc-spike" onchange="updateEvtCount()"> Price spike (1 wk)</label>
+                <label><input type="checkbox" id="whe-fc-trend" onchange="updateEvtCount()"> Price trend (3+ wks)</label></div></div>
+              <div><div class="ac-kv"><dt>Intel &amp; reports</dt></div><div class="ac-checks" style="flex-direction:column;gap:7px;align-items:flex-start">
+                <label><input type="checkbox" id="whe-intel" onchange="updateEvtCount()"> Competitor report</label>
+                <label><input type="checkbox" id="whe-report" onchange="updateEvtCount()"> Weekly digest</label></div></div>
+            </div>
+          </div>
+        </div>
+        <div class="ac-inline">
+          <button onclick="saveWebhook()" class="cbtn cbtn-primary" id="wh-save-btn">Save webhook</button>
+          <button onclick="testWebhook()" id="wh-test-btn" class="cbtn cbtn-secondary" style="display:none">Send test</button>
+          <button class="cbtn cbtn-danger cbtn-ghost cbtn-sm" onclick="deleteWebhook()" id="wh-delete-btn" style="display:none">Remove</button>
+        </div>
+        <div id="wh-status" class="ac-status" style="margin-top:8px;display:none"></div>
+      </div>
+    </section>
+
+    <!-- ══════════════ SECURITY ══════════════ -->
+    <section class="ac-section" id="acct-security" aria-labelledby="acct-security-h">
+      <div class="ac-h"><div><h2 id="acct-security-h">Security</h2><p>How this account is protected, and what&rsquo;s been happening on it.</p></div></div>
+      <div class="ac-grid">
+        <div class="ac-card">
+          <div class="ac-card-h"><div><h3>Security checkup</h3><p>Six things that keep this account yours.</p></div>
+            <div class="r"><span class="ac-big" style="font-size:24px"><span id="sec-score">&hellip;</span><span style="color:var(--ink3);font-weight:400;font-size:14px"> / 100</span></span></div></div>
+          <div class="ac-meter" aria-hidden="true"><i id="sec-bar"></i></div>
+          <div id="sec-items" style="display:grid;grid-template-columns:1fr;gap:6px;font-size:14px;color:var(--ink3);margin-top:12px"></div>
+        </div>
+        <div class="ac-card">
+          <div class="ac-card-h"><div><h3>Sign-in protection</h3></div></div>
+          <div class="ac-rows">
+            <div class="ac-row"><div class="l"><b>Two-factor authentication</b><span>{% if restaurant.two_fa_enabled %}A code by {{ 'text' if restaurant.two_fa_method == 'sms' else 'email' }} on new-device sign-ins.{% else %}Adds a one-time code on new-device sign-ins.{% endif %}</span></div>
+              <div class="c">{% if restaurant.two_fa_enabled %}<span class="ac-chip sm good"><i></i>On</span><button onclick="toggle2FA(false)" class="cbtn cbtn-secondary cbtn-sm">Disable</button>{% else %}<button onclick="document.getElementById('twofa-modal').style.display='flex'" class="cbtn cbtn-primary cbtn-sm">Enable</button>{% endif %}</div></div>
+            <div class="ac-row"><div class="l"><b>Password</b><span>Change it any time; every other device is signed out.</span></div>
+              <div class="c"><button class="cbtn cbtn-secondary cbtn-sm" onclick="document.getElementById('pw-modal').style.display='flex'">Change</button></div></div>
+            <div class="ac-row"><div class="l"><b>Recovery email</b><span id="rec-status">Loading&hellip;</span></div></div>
+          </div>
+          <div class="ac-inline" style="margin-top:6px">
+            <input class="ac-input" id="rec-email" type="email" placeholder="A second address you can always reach" aria-label="Recovery email">
+            <button onclick="recSend(this)" class="cbtn cbtn-secondary cbtn-sm">Send code</button>
+          </div>
+          <div id="rec-verify" style="display:none;gap:8px;margin-top:8px;align-items:center">
+            <input class="ac-input ac-num" id="rec-code" inputmode="numeric" maxlength="6" placeholder="6-digit code" aria-label="Verification code" style="width:140px">
+            <button onclick="recVerify(this)" class="cbtn cbtn-primary cbtn-sm">Verify</button>
+          </div>
+          {% if restaurant.two_fa_enabled %}
+          <div class="ac-row" style="margin-top:10px"><div class="l"><b>Backup codes</b><span><span id="bc-remaining" class="ac-num">&hellip;</span> unused &middot; one-time codes if you lose access to your email or phone</span></div>
+            <div class="c"><button onclick="regenBackupCodes(this)" class="cbtn cbtn-secondary cbtn-sm">Regenerate</button></div></div>
+          <div id="bc-codes" class="ac-num" style="display:none;margin-top:8px;padding:10px 12px;background:var(--paper);border:1px dashed var(--ember);border-radius:9px;font-size:13px;line-height:1.9;letter-spacing:.04em"></div>
+          {% endif %}
+        </div>
+        <div class="ac-card">
+          <div class="ac-card-h"><div><h3>Active sessions</h3><p>Everywhere this account is signed in right now.</p></div>
+            <div class="r"><button onclick="revokeOtherSessions(this)" id="revoke-sessions-btn" class="cbtn cbtn-secondary cbtn-sm">Sign out other devices</button></div></div>
+          <div id="sessions-list" class="ac-list">Loading&hellip;</div>
+          {% if restaurant.two_fa_enabled %}
+          <div class="ac-card-h" style="margin-top:16px"><div><h3 style="font-size:15px">Trusted devices</h3><p>Skip the code on these for 30 days.</p></div>
+            <div class="r"><button onclick="forgetAllTrusted(this)" class="cbtn cbtn-secondary cbtn-sm">Forget all</button></div></div>
+          <div id="trusted-list" class="ac-list">Loading&hellip;</div>
+          {% endif %}
+        </div>
+        <div class="ac-card">
+          <div class="ac-card-h"><div><h3>Activity</h3><p>Sign-ins and account changes, newest first.</p></div></div>
+          <div class="ac-disc" style="border-top:none;padding-top:0;margin-top:0">
+            <button class="cbtn cbtn-text cbtn-inline cbtn-sm" type="button" aria-expanded="false" aria-controls="login-history" onclick="acctDisclose(this,'login-history')">Sign-in history &#9662;</button>
+            <div id="login-history" class="ac-disc-body"></div>
+          </div>
+          <div class="ac-disc">
+            <button class="cbtn cbtn-text cbtn-inline cbtn-sm" type="button" aria-expanded="false" aria-controls="activity-log" onclick="acctDisclose(this,'activity-log')">Account activity &#9662;</button>
+            <div id="activity-log" class="ac-disc-body"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════════════ APPEARANCE ══════════════ -->
+    <section class="ac-section" id="acct-appearance" aria-labelledby="acct-appearance-h">
+      <div class="ac-h"><div><h2 id="acct-appearance-h">Appearance</h2><p>Saved to this browser.</p></div></div>
+      <div class="ac-card">
+        <div class="ac-rows">
+          <div class="ac-row"><div class="l"><b>Dark mode</b><span>Obsidian ground, ember accents. Easier on the eyes on a late close.</span></div>
+            <div class="c"><label class="ac-switch"><input type="checkbox" id="dark-mode-toggle-input" onchange="toggleDarkMode()" aria-label="Dark mode"><span class="ac-sw-track" id="dark-mode-track"></span><span class="ac-sw-thumb" id="dark-mode-thumb"></span></label></div></div>
+          <div class="ac-row"><div class="l"><b>Dates &amp; numbers</b><span>Dates show as M/D/YY. Money and percentages use tabular figures so columns line up.</span></div><div class="c"><span class="ac-chip sm ac-num">9/15/26 &middot; $1,240 &middot; 28.4%</span></div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════════════ DATA & PRIVACY ══════════════ -->
+    <section class="ac-section" id="acct-data" aria-labelledby="acct-data-h">
+      <div class="ac-h"><div><h2 id="acct-data-h">Data &amp; privacy</h2><p>Your data is yours. Take a copy, decide how long we keep it, or close the account.</p></div></div>
+      <div class="ac-grid">
+        <div class="ac-card">
+          <div class="ac-card-h"><div><h3>Export my data</h3><p>Emailed to you as CSV attachments, plus a JSON of your settings.</p></div></div>
+          <div class="ac-checks" style="margin-bottom:14px">
+            <label><input type="checkbox" class="exp-scope" id="exp-first" value="reviews" checked> Reviews</label>
+            {% if mod_labor %}<label><input type="checkbox" class="exp-scope" value="labor"> Labor</label>{% endif %}
+            {% if mod_inventory %}<label><input type="checkbox" class="exp-scope" value="food_cost"> Food cost</label>{% endif %}
+            <label><input type="checkbox" class="exp-scope" value="settings"> Settings</label>
+          </div>
+          <button onclick="exportData(this)" class="cbtn cbtn-primary cbtn-sm">Email me my data</button>
+        </div>
+        <div class="ac-card">
+          <div class="ac-card-h"><div><h3>Retention</h3><p>How long review history stays on file.</p></div></div>
+          <div class="ac-row"><div class="l"><b>Keep review history for</b><span>Older reviews and their replies are removed on a rolling basis.</span></div>
+            <div class="c"><label class="ac-lbl" for="as-retention" style="position:absolute;left:-9999px">Keep review history for</label><select class="ac-select" id="as-retention" onchange="saveDataRetention()" style="width:auto">
+              <option value="0">Keep everything</option><option value="6">6 months</option><option value="12">12 months</option><option value="24">24 months</option><option value="36">36 months</option></select></div></div>
+          <div class="ac-note">Privacy: <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a> &middot; <a href="/terms" target="_blank" rel="noopener">Terms of Service</a></div>
+        </div>
+        <div class="ac-card span">
+          <div class="ac-card-h"><div><h3>Ownership &amp; cancellation</h3><p>This account belongs to <b>{{ restaurant.owner_name or restaurant.owner_email }}</b>. Service is under a signed agreement, so closing it isn&rsquo;t a button &mdash; it&rsquo;s a note to Will with 30 days&rsquo; written notice; the account stays active through the end of the current billing period plus 30 days.</p></div>
+            <div class="r"><a class="cbtn cbtn-danger cbtn-ghost cbtn-sm" href="mailto:will@cavnar.ai?subject=Cancel%20my%20Cavnar%20AI%20subscription&body=Hi%20Will%2C%0A%0AI%20would%20like%20to%20cancel%20my%20Cavnar%20AI%20subscription%20for%20{{restaurant.name}}.%0A%0APer%20the%2030-day%20notice%20policy%2C%20I%20understand%20my%20account%20will%20remain%20active%20through%20the%20end%20of%20my%20current%20billing%20period%20and%20for%2030%20days%20after%20this%20notice.">Request cancellation</a></div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════════════ SUPPORT ══════════════ -->
+    <section class="ac-section" id="acct-support" aria-labelledby="acct-support-h" style="margin-bottom:0">
+      <div class="ac-h"><div><h2 id="acct-support-h">Support</h2><p>A person, not a queue.</p></div></div>
+      <div class="ac-grid">
+        <div class="ac-card accent">
+          <div class="ac-consult">
+            <div class="ph"><img src="/static/will.png" alt="Will Cavnar"></div>
+            <div><b>Will Cavnar</b><span>Founder &middot; your dedicated restaurant intelligence consultant. Same-day response, always.</span></div>
+          </div>
+          <div class="ac-inline" style="margin-top:16px">
+            <a href="mailto:will@cavnar.ai" class="cbtn cbtn-primary cbtn-sm">Email Will</a>
+            <a href="https://calendly.com/will-cavnar/30min" target="_blank" rel="noopener" class="cbtn cbtn-secondary cbtn-sm">Book a call</a>
+            <a href="https://status.cavnar.ai" target="_blank" rel="noopener" class="cbtn cbtn-secondary cbtn-sm"><span id="acct-status-dot" class="ac-statusdot" style="margin-right:4px"></span>System status</a>
+            <button class="cbtn cbtn-secondary cbtn-sm" onclick="openChangelog()">What&rsquo;s new</button>
+          </div>
+        </div>
+        <div class="ac-card">
+          <div class="ac-card-h"><div><h3>Report a problem</h3><p>What happened, and where? Screenshots welcome by email.</p></div></div>
+          <label class="ac-lbl" for="bug-msg" style="position:absolute;left:-9999px">Describe the problem</label>
+          <textarea class="ac-textarea" id="bug-msg" rows="3" placeholder="What happened, and where?"></textarea>
+          <button onclick="reportBug(this)" class="cbtn cbtn-secondary cbtn-sm" style="margin-top:10px">Send report</button>
+        </div>
+        <div class="ac-card">
+          <div class="ac-card-h"><div><h3>Know another restaurant owner?</h3><p>Send them an intro &mdash; get <b style="color:var(--ember)">one free month ($300)</b> if they sign up.</p></div></div>
+          <div class="ac-form" style="grid-template-columns:1fr 1fr">
+            <div class="ac-field"><label for="referral-name">Restaurant name</label><input class="ac-input" type="text" id="referral-name" placeholder="Restaurant name"></div>
+            <div class="ac-field"><label for="referral-email">Owner email</label><input class="ac-input" type="email" id="referral-email" placeholder="Owner email"></div>
+            <div class="ac-field wide"><label for="referral-note">Personal note (optional)</label><textarea class="ac-textarea" id="referral-note" rows="2" placeholder="Optional personal note&hellip;"></textarea></div>
+          </div>
+          <div class="ac-inline" style="margin-top:12px"><button onclick="sendReferral()" class="cbtn cbtn-primary cbtn-sm">Send referral</button><span id="referral-status" class="ac-status" style="display:none"></span></div>
+        </div>
+        <div class="ac-card">
+          <div class="ac-card-h"><div><h3>Help &amp; FAQ</h3></div></div>
+          <div id="faq-list">
+            <div class="faq-group"><div class="faq-group-title">Getting started</div>
+              <div class="faq-item"><button type="button" class="faq-q" aria-expanded="false" onclick="toggleFaq(this)">How is Cavnar AI set up for my restaurant?<span class="faq-arrow">&#9662;</span></button><div class="faq-a">Will personally sets up every restaurant &mdash; connecting your Google Business Profile, POS system, and configuring the modules you're paying for. You won't need to do any technical setup yourself; if something looks disconnected or missing, contact Will.</div></div>
+              <div class="faq-item"><button type="button" class="faq-q" aria-expanded="false" onclick="toggleFaq(this)">What's the difference between the modules?<span class="faq-arrow">&#9662;</span></button><div class="faq-a">Reviews drafts AI responses to your Google reviews and flags urgent ones. Intel tracks what's being said about you and nearby competitors. Marketing automates guest outreach. Labor pulls hours and schedules from your POS. Food Cost tracks ingredient spend and waste. Not every restaurant has every module &mdash; see Billing for what's active on yours.</div></div></div>
+            <div class="faq-group"><div class="faq-group-title">Reviews</div>
+              <div class="faq-item"><button type="button" class="faq-q" aria-expanded="false" onclick="toggleFaq(this)">Does Cavnar AI post responses automatically?<span class="faq-arrow">&#9662;</span></button><div class="faq-a">Only if you turn on the auto-approve rule under Automation &amp; AI, and then only for 5-star reviews, capped per day. Everything else needs your approval before it goes out &mdash; edit the draft, approve it as-is, or regenerate it from the review's detail screen.</div></div>
+              <div class="faq-item"><button type="button" class="faq-q" aria-expanded="false" onclick="toggleFaq(this)">Why does a review show as "urgent"?<span class="faq-arrow">&#9662;</span></button><div class="faq-a">Reviews mentioning health, safety, or a sharp negative sentiment are flagged urgent so they surface above routine reviews and can trigger an alert, depending on your alert settings.</div></div></div>
+            <div class="faq-group"><div class="faq-group-title">Security</div>
+              <div class="faq-item"><button type="button" class="faq-q" aria-expanded="false" onclick="toggleFaq(this)">What does two-factor authentication protect?<span class="faq-arrow">&#9662;</span></button><div class="faq-a">2FA adds a one-time code (by email or text) on top of your password at sign-in. Once it's on, you'll also get a set of one-time backup codes &mdash; save them somewhere safe in case you ever lose access to your email or phone.</div></div>
+              <div class="faq-item"><button type="button" class="faq-q" aria-expanded="false" onclick="toggleFaq(this)">Can more than one person log in for my restaurant?<span class="faq-arrow">&#9662;</span></button><div class="faq-a">Yes &mdash; the account owner can add teammates under People (or in the iOS app under Account &rarr; Manage team). Each teammate gets their own real login, and the owner can remove access at any time. Employees are different: they use the staff portal with a PIN and never see this dashboard.</div></div></div>
+            <div class="faq-group"><div class="faq-group-title">Billing &amp; account</div>
+              <div class="faq-item"><button type="button" class="faq-q" aria-expanded="false" onclick="toggleFaq(this)">How do I change my plan or payment method?<span class="faq-arrow">&#9662;</span></button><div class="faq-a">Payment method and invoices are under Billing. To add or remove a module, or change anything on your contract, contact Will directly.</div></div>
+              <div class="faq-item"><button type="button" class="faq-q" aria-expanded="false" onclick="toggleFaq(this)">Can I export my review data?<span class="faq-arrow">&#9662;</span></button><div class="faq-a">Yes &mdash; use Export my data under Data &amp; privacy (or in the iOS app under Account &rarr; Export my data). It emails you CSVs of your reviews, labor and food cost history, plus a JSON of your settings.</div></div>
+              <div class="faq-item"><button type="button" class="faq-q" aria-expanded="false" onclick="toggleFaq(this)">How do I cancel my account?<span class="faq-arrow">&#9662;</span></button><div class="faq-a">Getting started with Cavnar AI includes signing a service agreement, so cancellation isn't self-serve &mdash; use Request cancellation under Data &amp; privacy. 30 days' written notice is required; your account stays active through the end of your current billing period plus 30 days.</div></div></div>
+            <div class="faq-group"><div class="faq-group-title">Notifications</div>
+              <div class="faq-item"><button type="button" class="faq-q" aria-expanded="false" onclick="toggleFaq(this)">How do I control which alerts I get?<span class="faq-arrow">&#9662;</span></button><div class="faq-a">Manage alerts (under Notifications) controls what triggers an alert &mdash; 1-star reviews, a rating spike, health mentions, and so on &mdash; and whether it reaches you by text, email, or push, plus optional quiet hours.</div></div>
+              <div class="faq-item"><button type="button" class="faq-q" aria-expanded="false" onclick="toggleFaq(this)">What's the difference between alerts and the weekly digest?<span class="faq-arrow">&#9662;</span></button><div class="faq-a">Alerts are near-real-time &mdash; something specific just happened. The weekly digest is a full summary sent on the day you choose.</div></div></div>
+          </div>
+          <div class="ac-note">Can't find what you're looking for? <a href="mailto:will@cavnar.ai">Contact Will</a></div>
+        </div>
+      </div>
+    </section>
+
+    </div><!-- /content column -->
+  </div><!-- /ac-body -->
+
+</div><!-- /ac-page -->
+</div><!-- /panel-account -->
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <!-- Ask Cavnar — AI copilot over the restaurant's own live data -->
@@ -5686,7 +5653,7 @@ function switchTab(n,btn){
   if(n==='inventory'){switchFcTab('analytics');}
   if(n==='competitor'){switchIntelTab('competitors');}
   if(n==='labor'){renderBars();if(_perfTab==='trend')loadLaborTrend(false);else renderLaborHero();if(typeof renderRoleDonut==='function'&&!window._donutDone){window._donutDone=true;renderRoleDonut();}if(window.loadScheduleHistory&&!window._schedHistDone){window._schedHistDone=true;loadScheduleHistory();}}
-  if(n==='account'){loadBillingInfo();loadSessions();loadAlertsSummary();loadAccountSettings();loadEmailHistory();if(window._acctExtras)window._acctExtras();}
+  if(n==='account'&&window.acctOnOpen){acctOnOpen();}
   if(n==='marketing'){var _mi=document.getElementById('mkt-insight');if(_mi&&(_mi.classList.contains('insight-loading')||_mi.textContent.trim()==='Loading marketing brief…'||!mktLoaded)){loadMktInsight();}loadRecentTopics();startMetricsPoller();if(!window._calLoaded){window._calLoaded=true;loadCalCached();}}else{stopMetricsPoller();}
   // Calendar is generated on demand only — no auto-generate to avoid wasteful API calls on reconnect/reload
   history.replaceState(null,null,'#'+n);
@@ -5893,10 +5860,6 @@ function toggleDarkMode() {
   fetch('/api/theme', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({theme: isDark ? 'dark' : 'light'})}).catch(function(){});
   var activeTab = (document.querySelector('.tab.active')||{}).id||'';
   setPageBg(activeTab.replace('tab-','') || 'home');
-  var track = document.getElementById('dark-mode-track');
-  var thumb = document.getElementById('dark-mode-thumb');
-  if (track) track.style.background = isDark ? '#923020' : '#d0cbc4';
-  if (thumb) thumb.style.transform = isDark ? 'translateX(20px)' : 'none';
 }
 
 function deleteReview(id, btn) {
@@ -9323,6 +9286,7 @@ function loadAccountSettings() {
     // The stored flag is an opt-OUT; the switch reads as "send them", so
     // it is deliberately the inverse.
     document.getElementById('as-marketing').checked = !d.marketing_emails_opt_out;
+    if (window.acctCapMeter) acctCapMeter();
   }).catch(function() {});
 }
 
@@ -9451,6 +9415,7 @@ function loadAlertsSummary() {
     var tEl = document.getElementById('alerts-types-summary');
     if (!d.ok || !cEl) return;
     var c = d.contacts || [];
+    window._acctData=window._acctData||{};window._acctData.alertContacts=c.length;if(window.acctHealthRefresh)acctHealthRefresh();
     if (c.length === 0) {
       cEl.textContent = 'No contacts set — click Manage to add a phone number.';
       tEl.textContent = '';
@@ -9496,6 +9461,7 @@ function saveDigestDay() {
 function loadBillingInfo() {
   fetch('/api/billing-info').then(function(r){return r.json();}).then(function(d){
     document.getElementById('billing-loading').style.display='none';
+    if(window.acctApplyBilling)acctApplyBilling(d);
     if(!d.ok || d.status==='inactive') {
       document.getElementById('billing-no-sub').style.display='block'; return;
     }
@@ -9514,7 +9480,10 @@ function loadBillingInfo() {
       document.getElementById('billing-portal-link').style.display='none';
       document.getElementById('billing-invoice-link').style.display='none';
     }
-  }).catch(function(){document.getElementById('billing-loading').textContent='Billing info unavailable.';});
+  }).catch(function(){
+    document.getElementById('billing-loading').textContent='Billing info unavailable right now.';
+    if(window.acctApplyBilling)acctApplyBilling({ok:false,error:'unavailable'});
+  });
 }
 
 
@@ -10411,16 +10380,6 @@ function changePassword(){
   })
 }
 
-var _loginNotifyOn={{'true' if restaurant.login_notify else 'false'}};
-function toggleLoginNotify(){
-  _loginNotifyOn=!_loginNotifyOn;
-  document.getElementById('login-notify-track').style.background=_loginNotifyOn?'#c84b2f':'#d1c9bd';
-  document.getElementById('login-notify-thumb').style.left=_loginNotifyOn?'18px':'2px';
-  document.getElementById('login-notify-label').textContent=_loginNotifyOn?'On':'Off';
-  toast(_loginNotifyOn?'Sign-in notifications enabled':'Sign-in notifications disabled','success');
-  fetch('/api/toggle-login-notify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:_loginNotifyOn})}).catch(function(){});
-}
-
 function loadSessions(){
   var el=document.getElementById('sessions-list');
   if(!el)return;
@@ -10433,8 +10392,7 @@ function loadSessions(){
     var html='';
     for(var i=0;i<d.sessions.length;i++){
       var s=d.sessions[i];
-      var _isDk=document.documentElement.getAttribute('data-theme')==='dark';
-      var badge=s.is_current?'<span style="font-size:10px;font-weight:700;color:'+(_isDk?'#4ead7a':'#2d6a4f')+';background:'+(_isDk?'#0c2318':'#eaf4ee')+';padding:1px 6px;border-radius:8px;margin-left:6px">This device</span>':'';
+      var badge=s.is_current?' <span class="ac-chip sm good" style="margin-left:6px;vertical-align:middle"><i></i>This device</span>':'';
       var borderStyle=i>0?'border-top:1px solid var(--paper3)':'';
       html+='<div style="padding:5px 0;'+borderStyle+'">';
       var deviceLabel=s.browser?s.device+' — '+s.browser:s.device;
@@ -10448,30 +10406,14 @@ function loadSessions(){
 }
 
 function revokeOtherSessions(btn){
-  btn.textContent='Signing out...';
-  btn.disabled=true;
+  var done=cbtnBusy(btn,'Signing out…');
   fetch('/api/sessions/revoke-others',{method:'POST'}).then(function(r){return r.json()}).then(function(d){
-    if(d.ok){
-      btn.textContent='Done ✔';
-      btn.style.background='#2d6a4f';
-      loadSessions();
-    } else {
-      btn.textContent='Sign out all other devices';
-      btn.style.background='#c84b2f';
-      btn.disabled=false;
-    }
-  }).catch(function(){
-    btn.textContent='Sign out all other devices';
-    btn.style.background='#c84b2f';
-    btn.disabled=false;
-  });
+    done();
+    if(d.ok){toast('Signed out everywhere else','success');loadSessions();}
+    else toast(d.error||'Could not sign out other devices','error');
+  }).catch(function(){done();toast('Network error','error');});
 }
 
-// Load sessions when account tab is active
-(function(){
-  var panel=document.getElementById('panel-account');
-  if(panel&&panel.classList.contains('active')){loadSessions();loadAlertsSummary();}
-})();
 
 // ── Live status indicator ─────────────────────────────────────────────────────
 (function(){
@@ -10552,6 +10494,7 @@ function revokeOtherSessions(btn){
   window.toggleFaq = function(btn) {
     var item = btn.parentElement;
     item.classList.toggle('open');
+    btn.setAttribute('aria-expanded', item.classList.contains('open') ? 'true' : 'false');
   };
 
   window.toggleWhHistory = function() {
@@ -11646,7 +11589,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
   // ── Security ──
   function renderCheckup(d){
     var items=[
-      ['Two-factor authentication',d.two_fa_enabled,30,d.two_fa_enabled?('On · '+(d.two_fa_method==='sms'?'text':'email')):'Off — turn it on above'],
+      ['Two-factor authentication',d.two_fa_enabled,30,d.two_fa_enabled?('On · '+(d.two_fa_method==='sms'?'text':'email')):'Off — turn it on under Sign-in protection'],
       ['Password strength',d.password_strength==='strong',15,d.password_strength||'unknown'],
       ['Backup codes on hand',d.two_fa_enabled&&d.backup_codes_remaining>0,15,d.two_fa_enabled?(d.backup_codes_remaining+' unused'):'Needs 2FA'],
       ['Sign-in notifications',d.login_notify,10,d.login_notify?'On':'Off'],
@@ -11655,6 +11598,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     ];
     var score=0,html='';
     items.forEach(function(it){if(it[1])score+=it[2];html+='<div style="display:flex;gap:6px;align-items:baseline"><span style="color:'+(it[1]?'var(--green)':'var(--ember)')+';font-weight:700">'+(it[1]?'✓':'•')+'</span><span style="color:var(--ink)">'+esc(it[0])+'</span><span>· '+esc(it[3])+'</span></div>';});
+    window._acctData=window._acctData||{};window._acctData.securityScore=score;if(window.acctHealthRefresh)acctHealthRefresh();
     var sc=document.getElementById('sec-score');if(sc)sc.textContent=score;
     var bar=document.getElementById('sec-bar');if(bar)bar.style.width=score+'%';
     var el=document.getElementById('sec-items');if(el)el.innerHTML=html;
@@ -11681,7 +11625,6 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       el.innerHTML=d.events.slice(0,20).map(function(e){return '<div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;border-top:1px solid var(--paper3)"><span style="color:var(--ink)">'+esc(e.label||e.type)+(e.detail?' <span style="color:var(--ink3)">· '+esc(e.detail)+'</span>':'')+'</span><span>'+esc(e.actor||'')+' · '+ago(e.created_at)+'</span></div>';}).join('');
     });
   };
-  window.toggleSec=function(id){var el=document.getElementById(id);if(el)el.style.display=el.style.display==='none'?'block':'none';};
   window.regenBackupCodes=function(btn){
     if(!confirm('Regenerate backup codes? Every code you saved before stops working.'))return;
     var done=busy(btn,'Generating…');
@@ -11701,6 +11644,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     var el=document.getElementById('acct-team-list');if(!el)return;
     jget('/api/account/team',function(d){
       if(!d.ok){el.textContent='Could not load your team.';return;}
+      window._acctData=window._acctData||{};window._acctData.team=(d.members||[]).length;if(window.acctHealthRefresh)acctHealthRefresh();
       el.innerHTML=(d.members||[]).map(function(m){
         var role=m.role==='member'?'Teammate':(m.role==='owner'?'Owner':'Account owner');
         var right=m.is_you?'<span style="color:var(--ink3)">you</span>':((window._cuRole!=='member')?'<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="revokeTeam('+m.id+',this)">Remove</button>':'');
@@ -11729,6 +11673,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       if(jc)jc.textContent=d.join_code||'—';
       _staffRoleOptions();
       var rows=d.staff||[];
+      window._acctData=window._acctData||{};window._acctData.staff=rows.filter(function(s){return s.active;}).length;if(window.acctHealthRefresh)acctHealthRefresh();
       if(!rows.length){el.innerHTML='<div style="color:var(--ink3)">Nobody has signed up yet. Give your staff the join code above.</div>';}
       else{
         el.innerHTML=rows.map(function(s){
@@ -12159,13 +12104,189 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
   if(_origPublish){window.publishScheduleNow=function(){_origPublish.apply(this,arguments);setTimeout(loadShareStatus,2500);setTimeout(loadShareStatus,15000);};}
   var _origOpenPublish=window.openPublishSchedule;
   if(_origOpenPublish){window.openPublishSchedule=function(){_origOpenPublish.apply(this,arguments);loadShareStatus();};}
-  document.addEventListener('DOMContentLoaded',function(){
-    // Account-tab extras load when the tab opens (see switchTab), not on every page load.
-    window._acctExtras=function(){if(window._acctExtrasDone)return;window._acctExtrasDone=true;loadSecurityExtras();loadTeam();if(document.getElementById('staff-list'))loadStaff();loadScheduleHistory();loadAivHistory();};
-    if(document.getElementById('panel-account')&&document.getElementById('panel-account').classList.contains('active'))window._acctExtras();
-  });
+  // Account-tab extras load when the tab opens (see acctOnOpen), not on every
+  // page load. Defined at script-eval time, NOT inside DOMContentLoaded: the
+  // hash-restore handler that opens the tab is registered earlier in this
+  // file and fires first, so a handler-scoped definition wasn't there yet
+  // when it was needed.
+  window._acctExtras=function(){if(window._acctExtrasDone)return;window._acctExtrasDone=true;loadSecurityExtras();loadTeam();if(document.getElementById('staff-list'))loadStaff();};
 })();
 
+</script>
+<script>
+// ── Account: command-center behaviour (section rail, health, quick actions) ─
+// ES5 only, like the rest of this file.
+(function(){
+  var SECTIONS=['overview','restaurant','people','billing','notifications','automation','integrations','security','appearance','data','support'];
+  window._acctData=window._acctData||{};
+  function $(id){return document.getElementById(id);}
+  function flag(name){var p=$('panel-account');return p?(p.getAttribute('data-'+name)||''):'';}
+
+  // Section rail. Smooth-scrolls without touching location.hash: the tab
+  // system owns the hash (see switchTab), and a stray '#acct-people' would
+  // break tab restore on reload.
+  window.acctGo=function(section,focusId){
+    var el=$('acct-'+section);if(!el)return false;
+    el.scrollIntoView({behavior:'smooth',block:'start'});
+    setCurrent(section);
+    if(focusId){setTimeout(function(){var f=$(focusId);if(f&&f.focus)f.focus({preventScroll:true});},450);}
+    return false;
+  };
+  function setCurrent(section){
+    var links=document.querySelectorAll('#ac-nav a[data-go]');
+    for(var i=0;i<links.length;i++){
+      if(links[i].getAttribute('data-go')===section)links[i].setAttribute('aria-current','true');
+      else links[i].removeAttribute('aria-current');
+    }
+  }
+  function wireNav(){
+    var links=document.querySelectorAll('#ac-nav a[data-go]');
+    for(var i=0;i<links.length;i++){
+      links[i].addEventListener('click',function(e){e.preventDefault();acctGo(this.getAttribute('data-go'));});
+    }
+    if(!window.IntersectionObserver)return;
+    // "Current" while scrolling = the section whose top has crossed the
+    // upper part of the viewport most recently.
+    var obs=new IntersectionObserver(function(entries){
+      for(var i=0;i<entries.length;i++){if(entries[i].isIntersecting)setCurrent(entries[i].target.id.replace('acct-',''));}
+    },{rootMargin:'-18% 0px -70% 0px',threshold:0});
+    for(var s=0;s<SECTIONS.length;s++){var sec=$('acct-'+SECTIONS[s]);if(sec)obs.observe(sec);}
+  }
+
+  // Disclosures: add-employee, sign-in history, account activity.
+  window.acctDisclose=function(btn,id){
+    var body=$(id);if(!body)return;
+    var open=!body.classList.contains('open');
+    body.classList.toggle('open',open);
+    btn.setAttribute('aria-expanded',open?'true':'false');
+  };
+
+  // Auto-approve cap as a picture of the ceiling, not just a number field.
+  window.acctCapMeter=function(){
+    var cap=$('as-auto-cap'),bar=$('ac-cap-meter'),val=$('ac-cap-val'),lbl=$('ac-cap-label');
+    if(!cap||!bar)return;
+    var n=Math.max(1,Math.min(50,parseInt(cap.value,10)||5));
+    var on=!!($('as-auto-enabled')&&$('as-auto-enabled').checked),paused=!!($('as-auto-paused')&&$('as-auto-paused').checked);
+    bar.style.width=(n/50*100)+'%';
+    bar.style.opacity=(on&&!paused)?'1':'.35';
+    if(val)val.textContent=n+' / 50';
+    if(lbl)lbl.textContent=!on?'Off — every reply waits for you':(paused?'Paused — nothing posts':'Daily ceiling');
+  };
+
+  // "Manage subscription" goes to the Stripe portal when there is one,
+  // otherwise to the Billing section.
+  window.acctBillingQuick=function(e){
+    var a=$('ac-qa-billing');
+    if(a&&a.getAttribute('data-portal'))return true;
+    if(e)e.preventDefault();
+    acctGo('billing');
+    return false;
+  };
+
+  // ── Account health ───────────────────────────────────────────────────────
+  // Six checks from what the page already knows: facts stamped on
+  // #panel-account by the template, plus the responses the existing loaders
+  // already fetch (they stash into window._acctData). Zero extra requests.
+  function setItem(key,state,sub){
+    var el=document.querySelector('.ac-hitem[data-health="'+key+'"]');if(!el)return;
+    el.classList.remove('ok','warn','bad');el.classList.add(state);
+    var s=el.querySelector('span');if(s)s.textContent=sub;
+  }
+  window.acctHealthRefresh=function(){
+    if(!$('ac-health-grid'))return;
+    var d=window._acctData,pts=0,max=6;
+
+    var pd=parseInt(flag('profile-done'),10)||0;
+    if(pd>=4){pts+=1;setItem('profile','ok','Complete — contact, timezone and brand voice all set');}
+    else if(pd>=2){pts+=.5;setItem('profile','warn',(4-pd)+' of 4 details missing — the AI writes better with them');}
+    else setItem('profile','bad','Add your contact details and how you sound');
+
+    if(d.team===undefined&&d.staff===undefined)setItem('people','warn','Checking…');
+    else{
+      var tm=(d.team||0)>1,st=(d.staff||0)>0;
+      if(tm&&st){pts+=1;setItem('people','ok',d.team+' logins · '+d.staff+' staff signed up');}
+      else if(tm||st){pts+=.6;setItem('people','warn',tm?'Teammates in — no staff have signed up yet':d.staff+' staff signed up · only you use the dashboard');}
+      else setItem('people','bad','Just you — invite a teammate or post the staff join code');
+    }
+
+    var conn=parseInt(flag('conn'),10)||0,cerr=flag('conn-err')==='1';
+    if(cerr)setItem('integrations','bad','A POS connection needs attention');
+    else if(conn>=2){pts+=1;setItem('integrations','ok',conn+' connected — replies post, data flows');}
+    else if(conn===1){pts+=.5;setItem('integrations','warn','1 connected — add your POS for live labor and sales');}
+    else setItem('integrations','bad','Nothing connected — start with Google Business');
+
+    var al=flag('alerts')==='1',dg=flag('digest')==='1',contacts=d.alertContacts;
+    if(al&&(contacts===undefined||contacts>0)){pts+=1;setItem('notifications','ok','Alerts on'+(dg?' · weekly digest on':''));}
+    else if(al||dg){pts+=.5;setItem('notifications','warn',al?'Alerts on, but no contact to send them to':'Digest on · no real-time alerts');}
+    else setItem('notifications','bad','No alerts — you’d only find problems by logging in');
+
+    var sec=d.securityScore;
+    if(sec===undefined)setItem('security','warn','Checking…');
+    else if(sec>=70){pts+=1;setItem('security','ok','Checkup '+sec+' / 100');}
+    else if(sec>=40){pts+=.5;setItem('security','warn','Checkup '+sec+' / 100 — turn on two-factor');}
+    else setItem('security','bad','Checkup '+sec+' / 100 — start with two-factor');
+
+    var b=d.billing;
+    if(b===undefined)setItem('subscription','warn','Checking…');
+    else if(b&&b.ok&&b.status==='active'){pts+=1;setItem('subscription','ok','Active · next charge '+(b.next_date||'—'));}
+    else if(b&&b.ok&&b.status==='trialing'){pts+=1;setItem('subscription','ok','Trial — first charge on day 31');}
+    else if(b&&b.ok&&b.status==='past_due')setItem('subscription','bad','Payment past due — update your card');
+    else if(b&&b.error)setItem('subscription','warn','Couldn’t reach billing just now — try again in a minute');
+    else setItem('subscription','warn','No subscription on file — Will can set one up');
+
+    var score=Math.round(pts/max*100);
+    var n=$('ac-health-score');if(n)n.textContent=score;
+    var ring=$('ac-health-ring');if(ring)ring.style.strokeDashoffset=String(314-314*score/100);
+    var sub=$('ac-health-sub');
+    if(sub)sub.textContent=score>=90?'Everything that matters is set up.':(score>=60?'Nearly there — the items below would make Cavnar AI work harder for you.':'A few things to set up before Cavnar AI can do its best work.');
+  };
+
+  // Subscription chip in the overview header, plus the quick-action link.
+  window.acctApplyBilling=function(d){
+    window._acctData.billing=d||{ok:false};
+    var chip=$('ac-sub-chip');
+    if(chip){
+      var st=(d&&d.ok)?d.status:(d&&d.error?'error':'none'),cls='',txt='No subscription on file';
+      if(st==='error'){cls='warn';txt='Billing unavailable right now';}
+      if(st==='active'){cls='good';txt='Subscription active';}
+      else if(st==='trialing'){cls='info';txt='Trial · '+(d.trial_end?'ends '+d.trial_end:'first charge day 31');}
+      else if(st==='past_due'){cls='bad';txt='Payment past due';}
+      else if(st==='canceled'){cls='warn';txt='Subscription canceled';}
+      chip.className='ac-chip '+cls;chip.innerHTML='<i></i>'+txt;
+    }
+    var qa=$('ac-qa-billing');
+    if(qa){
+      if(d&&d.ok&&d.portal_url){qa.href=d.portal_url;qa.target='_blank';qa.rel='noopener';qa.setAttribute('data-portal','1');}
+      else qa.removeAttribute('data-portal');
+    }
+    acctHealthRefresh();
+  };
+
+  // ── Opening the tab ──────────────────────────────────────────────────────
+  // One entry point for both ways in (tab click; landing on the tab). The
+  // guard collapses the corner case where both paths fire on the same load.
+  var _lazyWired=false,_openedAt=0;
+  window.acctOnOpen=function(){
+    var now=Date.now();if(now-_openedAt<1500)return;_openedAt=now;
+    loadBillingInfo();loadSessions();loadAlertsSummary();loadAccountSettings();
+    if(window._acctExtras)window._acctExtras();
+    if(!_lazyWired){
+      _lazyWired=true;
+      // The email-history table is the heaviest thing here and sits three
+      // sections down: fetch it when it scrolls into view, not on open.
+      cavnarWhenVisible($('email-history-card'),loadEmailHistory);
+    }
+    var dm=$('dark-mode-toggle-input');if(dm)dm.checked=document.documentElement.getAttribute('data-theme')==='dark';
+    acctHealthRefresh();
+  };
+
+  document.addEventListener('DOMContentLoaded',function(){
+    wireNav();
+    var dm=$('dark-mode-toggle-input');if(dm)dm.checked=document.documentElement.getAttribute('data-theme')==='dark';
+    var p=$('panel-account');
+    if(p&&p.classList.contains('active'))acctOnOpen();
+  });
+})();
 </script>
 </body>
 </html>
