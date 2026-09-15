@@ -994,6 +994,40 @@ def google_sso_callback():
 
     user = dict(row)
     from auth import create_session, update_last_login
+
+    # Password sign-in enforces both of these (see the /login handler). SSO
+    # used to skip straight from an email match to a session, which made it a
+    # way around both:
+    #
+    #   - must_reset_password is set by the "This wasn't me" link in a login
+    #     alert, which also kills every session. An attacker whose access was
+    #     revoked that way could simply come back through Google, because the
+    #     lock was only ever checked on the password path.
+    #   - 2FA likewise only gated the password path, so enabling it did not
+    #     actually require a second factor for any account whose email matched
+    #     a Google identity.
+    if user.get("must_reset_password"):
+        return _finish(error="password_reset_required")
+
+    try:
+        from models import get_restaurant as _gr_sso
+        rest_sso = _gr_sso(user.get("restaurant_id")) if not user.get("is_admin") else None
+        device_ok = False
+        if rest_sso and rest_sso.two_fa_enabled:
+            from auth import trusted_device_ok as _tdo_sso
+            cookie = request.cookies.get("device_token_" + str(user.get("restaurant_id")), "")
+            device_ok = bool(cookie) and _tdo_sso(user["restaurant_id"], cookie)
+        sso_needs_2fa = bool(rest_sso and rest_sso.two_fa_enabled and not device_ok)
+    except Exception:
+        # Fail CLOSED: if we cannot determine whether 2FA applies, do not
+        # hand out a session on a path that bypasses it.
+        sso_needs_2fa = True
+
+    if sso_needs_2fa:
+        # No silent second factor over a redirect callback — send them through
+        # the password form, which already implements the full challenge.
+        return _finish(error="use_password_for_2fa")
+
     ip = request.headers.get("X-Forwarded-For", request.remote_addr or "").split(",")[0].strip()
     ua = request.headers.get("User-Agent", "")
     device_id = request.cookies.get("g_sso_device_id") or None

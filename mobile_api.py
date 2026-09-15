@@ -182,6 +182,30 @@ def mobile_apple_signin():
         )), 401
 
     user = dict(row)
+
+    # Same two gates the password path enforces, for the same reason they were
+    # added to Google SSO in auth_routes.py: without them, Sign in with Apple
+    # is a way around both the "This wasn't me" lockout and 2FA entirely.
+    if user.get("must_reset_password"):
+        return jsonify(ok=False, error=(
+            "Your password needs to be reset before you can sign in again. "
+            "Use 'Forgot password' to set a new one."
+        )), 403
+    try:
+        rest_apple = get_restaurant(user.get("restaurant_id")) if not user.get("is_admin") else None
+        device_ok = False
+        if rest_apple and rest_apple.two_fa_enabled and device_id:
+            from auth import trusted_device_ok as _tdo_apple
+            device_ok = _tdo_apple(user["restaurant_id"], request.headers.get("X-Device-Token", ""))
+        needs_2fa = bool(rest_apple and rest_apple.two_fa_enabled and not device_ok)
+    except Exception:
+        needs_2fa = True   # fail closed rather than skipping a second factor
+    if needs_2fa:
+        return jsonify(ok=False, error=(
+            "Two-factor authentication is on for this restaurant. "
+            "Sign in with your username and password to get your code."
+        )), 403
+
     ip = _get_client_ip()
     ua = request.headers.get("User-Agent", "Cavnar-iOS")
     token = create_session(user["id"], ip_address=ip, user_agent=ua, device_type="ios", device_id=device_id, restaurant_id=user["restaurant_id"])
@@ -4514,6 +4538,31 @@ def mobile_rotate_portal_link(current_user):
     token = rotate_staff_portal_token(current_user["restaurant_id"])
     _log_account_event(current_user["restaurant_id"], "staff_portal_link_rotated", current_user)
     return jsonify(ok=True, portal_url=f"/staff/r/{token}")
+
+
+@mobile_bp.route("/account/team/<int:user_id>/can-manage", methods=["POST"])
+@mobile_login_required
+def mobile_set_can_manage_team(current_user, user_id):
+    """Turn one teammate's team-management access on or off.
+
+    The `can_manage_team` column has existed (and been enforced in ten places)
+    since the Team feature shipped, but nothing could ever set it — so it was
+    documented, checked, and inert. This is the control it was missing.
+    """
+    from permissions import TEAM_INVITE, has_permission
+    if not has_permission(current_user, TEAM_INVITE):
+        return jsonify(ok=False, error="Only the account owner can change teammate access."), 403
+    if user_id == current_user["id"]:
+        # Otherwise an owner can lock themselves out of their own settings
+        # with no way back short of database access.
+        return jsonify(ok=False, error="You can't change your own access."), 400
+    from auth import set_can_manage_team
+    allowed = bool((request.get_json() or {}).get("allowed"))
+    if not set_can_manage_team(current_user["restaurant_id"], user_id, allowed):
+        return jsonify(ok=False, error="Not found"), 404
+    _log_account_event(current_user["restaurant_id"], "team_access_changed", current_user,
+                       detail=f"{user_id}:{'on' if allowed else 'off'}")
+    return jsonify(ok=True, can_manage_team=allowed)
 
 
 @mobile_bp.route("/account/send-test-digest", methods=["POST"])

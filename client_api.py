@@ -6650,6 +6650,12 @@ def labor_team_thresholds(current_user):
     return _m("mobile_set_thresholds")(current_user)
 
 
+@client_bp.route("/api/account/team/<int:user_id>/can-manage", methods=["POST"])
+@login_required
+def account_team_can_manage(current_user, user_id):
+    return _m("mobile_set_can_manage_team")(current_user, user_id)
+
+
 @client_bp.route("/api/account/staff")
 @login_required
 def account_staff_list(current_user):

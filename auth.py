@@ -179,8 +179,16 @@ def init_auth(db_path: str = DB_PATH):
         "ALTER TABLE users ADD COLUMN must_reset_password INTEGER DEFAULT 0",
         # Who may change Operational Scores, shift targets, profiles and the
         # quality weighting. Defaults ON so every existing login keeps the
-        # access it has; the team-invite flow creates teammates with it OFF,
-        # so a second login cannot silently re-rate the whole staff.
+        # access it has.
+        #
+        # This comment used to claim the team-invite flow created teammates
+        # with it OFF. It never did — invite_team_member() calls create_user(),
+        # which never writes this column, so every invited teammate got the
+        # DEFAULT 1 and the permission was inert: documented, enforced in ten
+        # places, and impossible to actually switch off. The role now carries
+        # the real decision (permissions.TEAM_RATE) and this column is a
+        # per-login OVERRIDE an owner sets deliberately through
+        # /account/team/<id>/can-manage.
         "ALTER TABLE users ADD COLUMN can_manage_team INTEGER DEFAULT 1",
     ]:
         try:
@@ -208,6 +216,16 @@ def init_auth(db_path: str = DB_PATH):
         pass
 
     backfill_memberships(db_path=db_path)
+
+    # A missing pepper silently downgrades every staff PIN to something a
+    # leaked database makes trivially brute-forceable. It must not be a
+    # condition you only discover by reading the source.
+    try:
+        health = pin_pepper_health(db_path=db_path)
+        if not health["ok"]:
+            print(f"[auth] PIN PEPPER WARNING: {health['message']}")
+    except Exception:
+        pass
 
 
 def backfill_memberships(db_path: str = DB_PATH) -> int:
@@ -375,8 +393,71 @@ def _pin_pepper() -> str:
     return os.environ.get("CAVNAR_PIN_PEPPER", "")
 
 
-def _peppered(pin: str) -> str:
+# Hashes are written with the pepper VERSION they were made under, so the
+# pepper can be rotated without invalidating every PIN in the estate. An
+# unversioned hash predates this and is read as v0 (empty pepper).
+_PIN_PEPPER_VERSION = "v1"
+_PIN_HASH_PREFIX = "pep"
+
+
+def _peppered(pin: str, version: str = None) -> str:
+    """The string actually handed to the KDF.
+
+    v0 is the unpeppered form kept only so hashes written before versioning
+    still verify; everything new is written at the current version.
+    """
+    version = version or _PIN_PEPPER_VERSION
+    if version == "v0":
+        return f"::{pin}"
     return f"{_pin_pepper()}::{pin}"
+
+
+def _encode_pin_hash(raw_hash: str) -> str:
+    return f"{_PIN_HASH_PREFIX}{_PIN_PEPPER_VERSION}${raw_hash}"
+
+
+def _decode_pin_hash(stored: str):
+    """(version, raw_hash) for a stored PIN hash."""
+    if stored and stored.startswith(_PIN_HASH_PREFIX):
+        marker, _, raw = stored.partition("$")
+        return marker[len(_PIN_HASH_PREFIX):], raw
+    return "v0", stored
+
+
+def pin_pepper_health(db_path: str = DB_PATH) -> dict:
+    """Whether PINs are actually protected by a pepper right now.
+
+    A 4-digit secret hashed with no pepper is brute-forceable offline the
+    moment the database leaks, so "the env var was never set in production"
+    has to be loud rather than an invisible downgrade. init_auth() logs this
+    at boot and admin_ops surfaces it; see also scripts/check_pin_pepper.py.
+    """
+    configured = bool(_pin_pepper())
+    try:
+        conn = get_conn(db_path)
+        try:
+            rows = conn.execute(
+                "SELECT pin_hash FROM memberships WHERE pin_hash IS NOT NULL").fetchall()
+        finally:
+            conn.close()
+        total = len(rows)
+        unpeppered = sum(1 for r in rows if _decode_pin_hash(r["pin_hash"])[0] == "v0")
+    except Exception:
+        return {"configured": configured, "pins": 0, "unpeppered": 0,
+                "ok": configured, "message": "Unable to read membership PINs."}
+    ok = configured and unpeppered == 0
+    if not configured and total:
+        message = (f"CAVNAR_PIN_PEPPER is not set and {total} staff PIN(s) exist. "
+                   "Those hashes are brute-forceable offline if the database leaks.")
+    elif not configured:
+        message = ("CAVNAR_PIN_PEPPER is not set. Set it before issuing any staff PIN.")
+    elif unpeppered:
+        message = (f"{unpeppered} of {total} staff PIN(s) predate the current pepper "
+                   "and are re-hashed on next successful sign-in.")
+    else:
+        message = "OK"
+    return {"configured": configured, "pins": total, "unpeppered": unpeppered,
+            "ok": ok, "message": message}
 
 
 def validate_pin(pin: str) -> str:
@@ -412,7 +493,8 @@ def set_membership_pin(membership_id: int, restaurant_id: int, pin: str,
         cur = conn.execute(
             "UPDATE memberships SET pin_hash=?, pin_set_at=datetime('now'), "
             "updated_at=datetime('now') WHERE id=? AND restaurant_id=?",
-            (generate_password_hash(_peppered(pin)), membership_id, restaurant_id))
+            (_encode_pin_hash(generate_password_hash(_peppered(pin))),
+             membership_id, restaurant_id))
         conn.commit()
         changed = cur.rowcount > 0
         if changed:
@@ -551,7 +633,9 @@ def verify_membership_pin(membership_id: int, restaurant_id: int, pin: str,
         _record_pin_failure(membership_id, db_path=db_path)
         return generic
 
-    if not check_password_hash(row["pin_hash"], _peppered((pin or "").strip())):
+    candidate = (pin or "").strip()
+    version, raw_hash = _decode_pin_hash(row["pin_hash"])
+    if not check_password_hash(raw_hash, _peppered(candidate, version=version)):
         after = _record_pin_failure(membership_id, db_path=db_path)
         if after["locked"]:
             mins = max(1, after["seconds_remaining"] // 60)
@@ -560,6 +644,26 @@ def verify_membership_pin(membership_id: int, restaurant_id: int, pin: str,
         return generic
 
     _clear_pin_failures(membership_id, db_path=db_path)
+    # Transparent upgrade: a hash written under an older pepper version is
+    # rewritten under the current one the first time its owner signs in, so a
+    # rotation drains on its own instead of needing every PIN reissued.
+    if version != _PIN_PEPPER_VERSION:
+        try:
+            conn_up = get_conn(db_path)
+            try:
+                conn_up.execute(
+                    "UPDATE memberships SET pin_hash=?, updated_at=datetime('now') WHERE id=?",
+                    (_encode_pin_hash(generate_password_hash(_peppered(candidate))), membership_id))
+                conn_up.commit()
+            finally:
+                conn_up.close()
+        except Exception as exc:
+            try:
+                import ops as _ops_pin
+                _ops_pin.capture(exc, job="pin_pepper_upgrade",
+                                 context=f"membership_id={membership_id}")
+            except Exception:
+                print(f"[pin_pepper_upgrade] failed for membership {membership_id}: {exc}")
     return {"ok": True}
 
 
@@ -824,7 +928,42 @@ def invite_team_member(restaurant_id: int, name: str, email: str,
     # The distinction that actually matters is "primary login vs. someone
     # that login invited", and that's what this value records.
     set_user_role(user_id, "member", db_path=db_path)
+    # An invited teammate also gets a membership, so authorization for this
+    # login resolves through the same Identity → Tenant → Role path every
+    # other account now uses rather than falling back to users.role.
+    try:
+        upsert_membership(user_id, restaurant_id, "member", employee_name=name,
+                          db_path=db_path)
+    except Exception as exc:
+        # The login still works (get_session_user falls back to users.role),
+        # but a missing membership means this teammate is invisible to the
+        # staff roster and to any future per-location assignment — worth
+        # knowing about rather than discovering later.
+        try:
+            import ops as _ops_invite
+            _ops_invite.capture(exc, job="invite_membership",
+                                context=f"user_id={user_id} restaurant_id={restaurant_id}")
+        except Exception:
+            print(f"[invite_team_member] membership write failed for {user_id}: {exc}")
     return {"ok": True, "user_id": user_id, "username": candidate, "temp_password": temp_password}
+
+
+def set_can_manage_team(restaurant_id: int, user_id: int, allowed: bool,
+                        db_path: str = DB_PATH) -> bool:
+    """Turn the team-management override on or off for one login.
+
+    Scoped by restaurant_id so an owner can only ever change a login on their
+    own restaurant, and never the tenant next door by guessing a user id.
+    """
+    conn = get_conn(db_path)
+    try:
+        cur = conn.execute(
+            "UPDATE users SET can_manage_team=? WHERE id=? AND restaurant_id=?",
+            (1 if allowed else 0, user_id, restaurant_id))
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
 
 
 def get_team_members(restaurant_id: int, db_path: str = DB_PATH) -> list[dict]:
