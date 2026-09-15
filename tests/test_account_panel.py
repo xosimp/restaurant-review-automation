@@ -36,8 +36,8 @@ def _scripts():
 # rename it in the JS in the same commit and update this list.
 CONTRACT = """
 panel-account acct-status-dot profile-edit-btn profile-email-display profile-edit
-pe-owner-name pe-phone pe-tz pe-tone pe-lang pe-signoff pe-voice pe-never pe-menu pe-save
-acct-email-display dark-mode-toggle-input dark-mode-track dark-mode-thumb
+pe-owner-name pe-phone pe-tz pe-lang pe-signoff pe-voice pe-never pe-menu pe-save
+acct-email-display
 revoke-sessions-btn sessions-list sec-score sec-bar sec-items bc-remaining bc-codes trusted-list
 rec-status rec-email rec-verify rec-code login-history activity-log
 alerts-contacts-summary alerts-types-summary
@@ -139,11 +139,29 @@ def test_pos_connections_come_from_one_macro():
     assert s.count("{{ pos_card(") == 3
 
 
-def test_dark_mode_switch_is_styled_by_css_not_inline_js_colours():
-    s = _scripts()
-    i = s.index("function toggleDarkMode()")
-    body = s[i:s.index("\n}\n", i)]
-    assert "#" not in body.replace("'#'+", ""), "toggleDarkMode still writes hex colours inline"
+def test_dark_is_the_only_theme():
+    """The toggle, its endpoint call, and setPageBg's light branch are gone —
+    dark is set once, before paint, and never flipped."""
+    s = _src()
+    assert "toggleDarkMode" not in s
+    assert "dark-mode-toggle-input" not in s
+    assert "cavnar_theme" not in s
+    assert "data-theme','dark'" in s.split("<body", 1)[0] or "data-theme', 'dark'" in s.split("<body", 1)[0]
+    fn = s[s.index("function setPageBg("):]
+    body = fn[:fn.index("\n}\n")]
+    assert "_dark()" not in body and "? '#0c0c0c' :" not in body
+
+
+def test_reply_tone_is_gone_everywhere_it_was_settable():
+    """It existed in three places — Account's profile editor, the separate
+    Brand Voice modal, and iOS — all writing the same tone_preset column
+    brand voice already covers. All three are gone; the AI-generation call
+    sites no longer read the column either."""
+    s = _src()
+    for gone in ("pe-tone", "bv-tone", "tone_preset"):
+        assert gone not in s, gone
+    for path in ("client_api.py", "scheduler.py"):
+        assert "tone_preset" not in open(os.path.join(ROOT, path), encoding="utf-8").read(), path
 
 
 def test_revoking_sessions_uses_the_button_system_not_inline_backgrounds():

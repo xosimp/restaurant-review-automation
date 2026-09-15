@@ -25,7 +25,6 @@ struct AccountProfileDetailView: View {
     @State private var timezone: String
     @State private var signOffName: String
     @State private var responseLanguage: String
-    @State private var tonePreset: String
     @State private var showingHours = false
     @State private var autoApproveEnabled: Bool
     @State private var autoApprovePaused: Bool
@@ -36,10 +35,6 @@ struct AccountProfileDetailView: View {
     static let languageOptions: [(value: String, label: String)] = [
         ("", "Match the review"), ("en", "English"), ("es", "Spanish"), ("fr", "French"),
         ("it", "Italian"), ("pt", "Portuguese"), ("de", "German"),
-    ]
-    static let toneOptions: [(value: String, label: String)] = [
-        ("", "Your brand voice only"), ("warm", "Warm"), ("professional", "Professional"),
-        ("playful", "Playful"), ("concise", "Concise"),
     ]
     static let capOptions = [1, 3, 5, 10, 20]
     @FocusState private var focusedField: Field?
@@ -68,7 +63,6 @@ struct AccountProfileDetailView: View {
         _timezone   = State(initialValue: profile.timezone)
         _signOffName = State(initialValue: profile.signOffName ?? "")
         _responseLanguage = State(initialValue: profile.responseLanguage ?? "")
-        _tonePreset = State(initialValue: profile.tonePreset ?? "")
         let auto = viewModel.summary?.reviews
         _autoApproveEnabled = State(initialValue: auto?.enabled ?? false)
         _autoApprovePaused = State(initialValue: auto?.paused ?? false)
@@ -99,7 +93,7 @@ struct AccountProfileDetailView: View {
                                 ownerName: ownerName, ownerPhone: ownerPhone,
                                 voiceNotes: voiceNotes, neverSay: neverSay, menuNotes: menuNotes,
                                 timezone: timezone, signOffName: signOffName,
-                                responseLanguage: responseLanguage, tonePreset: tonePreset
+                                responseLanguage: responseLanguage
                             )
                             if viewModel.saveProfileSucceeded {
                                 Haptic.success()
@@ -332,15 +326,9 @@ struct AccountProfileDetailView: View {
             AccountEditor(label: "Never says", placeholder: "Phrases or claims the AI should avoid", text: $neverSay, focus: $focusedField, field: .neverSay)
             AccountEditor(label: "Menu highlights", placeholder: "Dishes, specials, or ingredients worth mentioning", text: $menuNotes, focus: $focusedField, field: .menuNotes)
             AccountField(label: "Signs off as", text: $signOffName, focus: $focusedField, field: .signOff)
-            AccountKVRow(label: "Reply language") {
+            AccountKVRow(label: "Reply language", showsDivider: false) {
                 Picker("", selection: $responseLanguage) {
                     ForEach(Self.languageOptions, id: \.value) { Text($0.label).tag($0.value) }
-                }
-                .tint(Color.cavnarEmber)
-            }
-            AccountKVRow(label: "Tone", showsDivider: false) {
-                Picker("", selection: $tonePreset) {
-                    ForEach(Self.toneOptions, id: \.value) { Text($0.label).tag($0.value) }
                 }
                 .tint(Color.cavnarEmber)
             }

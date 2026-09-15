@@ -3826,7 +3826,6 @@ def _do_mobile_account(current_user):
         "timezone": restaurant.timezone or "America/Chicago",
         "sign_off_name": getattr(restaurant, "sign_off_name", None) or None,
         "response_language": getattr(restaurant, "response_language", None) or None,
-        "tone_preset": getattr(restaurant, "tone_preset", None) or None,
         "open_times_json": getattr(restaurant, "open_times_json", None) or None,
         "close_times_json": getattr(restaurant, "close_times_json", None) or None,
         "skip_holidays": getattr(restaurant, "skip_holidays", None) or None,
@@ -4074,8 +4073,6 @@ def mobile_update_profile(current_user):
     # Fixed sets — these are dropped straight into the drafting prompt.
     lang = (data.get("response_language") or "").strip().lower()
     updates["response_language"] = lang if lang in ("en", "es", "fr", "it", "pt", "de") else None
-    tone = (data.get("tone_preset") or "").strip().lower()
-    updates["tone_preset"] = tone if tone in ("warm", "professional", "playful", "concise") else None
     # Same 7-zone list as the admin Client Settings page (templates/
     # client_settings.html) — only accept a value from that fixed set so a
     # bad string can't silently break "today"/trend math elsewhere.

@@ -840,11 +840,9 @@ final class AccountViewModel {
         let timezone: String
         let signOffName: String
         let responseLanguage: String
-        let tonePreset: String
         enum CodingKeys: String, CodingKey {
             case signOffName = "sign_off_name"
             case responseLanguage = "response_language"
-            case tonePreset = "tone_preset"
             case ownerName = "owner_name"
             case ownerPhone = "owner_phone"
             case voiceNotes = "voice_notes"
@@ -855,7 +853,7 @@ final class AccountViewModel {
     }
 
     func updateProfile(ownerName: String, ownerPhone: String, voiceNotes: String, neverSay: String, menuNotes: String, timezone: String,
-                       signOffName: String = "", responseLanguage: String = "", tonePreset: String = "") async {
+                       signOffName: String = "", responseLanguage: String = "") async {
         isSavingProfile = true
         saveProfileError = nil
         saveProfileSucceeded = false
@@ -866,7 +864,7 @@ final class AccountViewModel {
                 body: UpdateProfileBody(
                     ownerName: ownerName, ownerPhone: ownerPhone,
                     voiceNotes: voiceNotes, neverSay: neverSay, menuNotes: menuNotes, timezone: timezone,
-                    signOffName: signOffName, responseLanguage: responseLanguage, tonePreset: tonePreset
+                    signOffName: signOffName, responseLanguage: responseLanguage
                 )
             )
             if response.ok {

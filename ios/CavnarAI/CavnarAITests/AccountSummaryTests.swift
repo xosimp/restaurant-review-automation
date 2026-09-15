@@ -12,7 +12,7 @@ final class AccountSummaryTests: XCTestCase {
             "neighborhood": "River North", "vibe": "Upscale casual", "known_for": "Pasta",
             "voice_notes": "Warm and direct", "never_say": null, "menu_notes": null,
             "timezone": "America/Chicago", "sign_off_name": "Will", "response_language": null,
-            "tone_preset": "warm", "open_times_json": null, "close_times_json": null, "skip_holidays": null
+            "open_times_json": null, "close_times_json": null, "skip_holidays": null
           },
           "account": {
             "username": "will", "email": "will@x.com",
@@ -56,7 +56,6 @@ final class AccountSummaryTests: XCTestCase {
         XCTAssertTrue(summary.alerts.settings.alert1star)
         XCTAssertEqual(summary.alerts.settings.digestDay, "monday")
         XCTAssertEqual(summary.profile.signOffName, "Will")
-        XCTAssertEqual(summary.profile.tonePreset, "warm")
         XCTAssertEqual(summary.account.recoveryEmail, "backup@x.com")
         XCTAssertTrue(summary.alerts.settings.alertHealthBypassQuiet)
         XCTAssertEqual(summary.alerts.settings.alertExtraEmails, "chef@x.com")

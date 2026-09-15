@@ -1805,7 +1805,6 @@ def _do_regenerate_draft(review_id, restaurant_id):
             sign_off=restaurant.sign_off_name or restaurant.name,
             never_say=restaurant.never_say or "",
             language=getattr(restaurant, "response_language", None) or None,
-            tone=getattr(restaurant, "tone_preset", None) or None,
             urgency=r.get("urgency", "normal"),
         )
         conn = get_conn()
@@ -5999,8 +5998,6 @@ def _do_brand_voice(rid, data, current_user=None):
         # The phone's profile sheet has these two as well; one brand voice,
         # same fields on both.
         "sign_off_name": _clean((data or {}).get("sign_off_name"), 80),
-        "tone_preset": ((data or {}).get("tone_preset") or "").strip().lower()
-            if ((data or {}).get("tone_preset") or "").strip().lower() in ("warm", "professional", "playful", "concise") else None,
     })
     log_account_event(rid, "brand_voice_changed", current_user)
     return {"ok": True}, 200
@@ -6063,8 +6060,7 @@ def brand_voice(current_user):
                        voice_notes=getattr(r, "voice_notes", "") or "",
                        never_say=getattr(r, "never_say", "") or "",
                        menu_notes=getattr(r, "menu_notes", "") or "",
-                       sign_off_name=getattr(r, "sign_off_name", "") or "",
-                       tone_preset=getattr(r, "tone_preset", "") or "")
+                       sign_off_name=getattr(r, "sign_off_name", "") or "")
     payload, status = _do_brand_voice(rid, request.get_json(silent=True) or {}, current_user)
     return jsonify(**payload), status
 

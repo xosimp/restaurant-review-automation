@@ -15,7 +15,6 @@ struct AccountProfile: Decodable {
     let timezone: String
     let signOffName: String?
     let responseLanguage: String?
-    let tonePreset: String?
     let openTimesJson: String?
     let closeTimesJson: String?
     let skipHolidays: String?
@@ -30,7 +29,6 @@ struct AccountProfile: Decodable {
         case restaurantName = "restaurant_name"
         case signOffName = "sign_off_name"
         case responseLanguage = "response_language"
-        case tonePreset = "tone_preset"
         case openTimesJson = "open_times_json"
         case closeTimesJson = "close_times_json"
         case skipHolidays = "skip_holidays"

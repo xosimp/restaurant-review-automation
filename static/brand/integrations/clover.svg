@@ -1,0 +1,7 @@
+<svg role="img" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><title>Clover</title>
+  <circle cx="6.04" cy="6.04" r="6.48" fill="#237801"/>
+  <circle cx="17.96" cy="6.04" r="6.48" fill="#237801"/>
+  <circle cx="6.04" cy="17.96" r="6.48" fill="#237801"/>
+  <circle cx="17.96" cy="17.96" r="6.48" fill="#237801"/>
+  <path d="M 14.23 17.96 A 3.73 3.73 0 0 1 17.96 14.23" fill="none" stroke="#ffffff" stroke-opacity="0.55" stroke-width="1.43" stroke-linecap="round"/>
+</svg>

@@ -9,7 +9,7 @@
 <link rel="icon" type="image/png" href="/favicon.png">
 <link rel="shortcut icon" href="/favicon.ico">
 <meta name="theme-color" content="#0c0c0c">
-<script>(function(){var _v=localStorage.getItem('cavnar_theme');var d=_v===null?true:_v==='dark';if(d)document.documentElement.setAttribute('data-theme','dark');document.documentElement.style.background=d?'radial-gradient(ellipse 100% 55% at 50% 0%,rgba(200,75,47,.45) 0%,rgba(200,75,47,.18) 40%,transparent 70%),linear-gradient(180deg,#0c0c0c 0%,#0c0c0c 100%)':'radial-gradient(ellipse 100% 55% at 50% 0%,rgba(200,75,47,.32) 0%,rgba(200,75,47,.10) 45%,transparent 70%),linear-gradient(180deg,#f7f4ef 0%,#faf7f2 100%)';}());</script>
+<script>document.documentElement.setAttribute('data-theme','dark');document.documentElement.style.background='radial-gradient(ellipse 100% 55% at 50% 0%,rgba(200,75,47,.45) 0%,rgba(200,75,47,.18) 40%,transparent 70%),linear-gradient(180deg,#0c0c0c 0%,#0c0c0c 100%)';</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Bricolage+Grotesque:opsz,wght@12..96,700&display=block" rel="stylesheet">
@@ -1960,15 +1960,15 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     <!-- Step 1: Intro -->
     <div id="twofa-step1">
       <div style="font-size:18px;font-weight:700;color:var(--ink);margin-bottom:8px">Enable two-factor authentication</div>
-      <p style="font-size:13px;color:var(--ink3);margin-bottom:20px;line-height:1.6">Each time you sign in from a new device, we&rsquo;ll send a 6-digit code to <strong>{{restaurant.owner_email or "your email"}}</strong>. You&rsquo;ll need to enter it to access your dashboard.</p>
-      <div style="background:#f7f4ef;border-radius:8px;padding:14px;margin-bottom:20px;font-size:12px;color:var(--ink2);line-height:1.6">
+      <p style="font-size:16px;color:var(--ink3);margin-bottom:20px;line-height:1.6">Each time you sign in from a new device, we&rsquo;ll send a 6-digit code to <strong>{{restaurant.owner_email or "your email"}}</strong>. You&rsquo;ll need to enter it to access your dashboard.</p>
+      <div style="background:#f7f4ef;border-radius:8px;padding:14px;margin-bottom:20px;font-size:15px;color:var(--ink2);line-height:1.6">
         <strong>What to expect:</strong><br>
         &bull; Sign in normally with username + password<br>
         &bull; A code arrives in your email within seconds<br>
         &bull; Enter the code to complete sign in<br>
         &bull; Check &ldquo;Remember device&rdquo; to skip for 30 days
       </div>
-      <div style="display:flex;gap:14px;margin-bottom:14px;font-size:12px;color:var(--ink2)">
+      <div style="display:flex;gap:14px;margin-bottom:14px;font-size:15px;color:var(--ink2)">
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="radio" name="twofa-method" value="email" checked> Email me the code</label>
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="radio" name="twofa-method" value="sms"> Text me the code</label>
       </div>
@@ -1977,7 +1977,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     <!-- Step 2: Verify -->
     <div id="twofa-step2" style="display:none">
       <div style="font-size:18px;font-weight:700;color:var(--ink);margin-bottom:8px">Check your email</div>
-      <p style="font-size:13px;color:var(--ink3);margin-bottom:20px;line-height:1.6">We sent a test code to <strong id="twofa-masked-email"></strong>. Enter it below to confirm 2FA is working.</p>
+      <p style="font-size:16px;color:var(--ink3);margin-bottom:20px;line-height:1.6">We sent a test code to <strong id="twofa-masked-email"></strong>. Enter it below to confirm 2FA is working.</p>
       <div style="display:flex;gap:8px;justify-content:center;margin-bottom:16px" id="twofa-setup-inputs">
         <input type="text" maxlength="1" class="twofa-setup-digit" inputmode="numeric" style="width:46px;height:54px;text-align:center;font-size:24px;font-weight:700;border:2px solid #e0dbd0;border-radius:8px;font-family:monospace;outline:none">
         <input type="text" maxlength="1" class="twofa-setup-digit" inputmode="numeric" style="width:46px;height:54px;text-align:center;font-size:24px;font-weight:700;border:2px solid #e0dbd0;border-radius:8px;font-family:monospace;outline:none">
@@ -1986,7 +1986,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
         <input type="text" maxlength="1" class="twofa-setup-digit" inputmode="numeric" style="width:46px;height:54px;text-align:center;font-size:24px;font-weight:700;border:2px solid #e0dbd0;border-radius:8px;font-family:monospace;outline:none">
         <input type="text" maxlength="1" class="twofa-setup-digit" inputmode="numeric" style="width:46px;height:54px;text-align:center;font-size:24px;font-weight:700;border:2px solid #e0dbd0;border-radius:8px;font-family:monospace;outline:none">
       </div>
-      <div id="twofa-setup-error" style="display:none;color:var(--red);font-size:12px;text-align:center;margin-bottom:12px"></div>
+      <div id="twofa-setup-error" style="display:none;color:var(--red);font-size:15px;text-align:center;margin-bottom:12px"></div>
       <button onclick="twoFAVerify()" class="cbtn cbtn-primary cbtn-lg cbtn-block" style="margin-bottom:10px">Verify &amp; enable 2FA</button>
       <button onclick="twoFAStep2()" class="cbtn cbtn-secondary cbtn-lg cbtn-block">Resend code</button>
     </div>
@@ -1995,12 +1995,12 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       <div style="font-size:40px;margin-bottom:16px">&#x2705;</div>
       <div style="font-size:18px;font-weight:700;color:var(--ink);margin-bottom:8px">2FA is now active</div>
       <div id="twofa-backup-codes" style="display:none;margin:12px 0 4px">
-        <div style="font-size:12px;font-weight:600;color:var(--ink);margin-bottom:4px">Save these backup codes</div>
-        <div style="font-size:11px;color:var(--ink3);margin-bottom:8px">Each works once if you ever can't get a code. They won't be shown again.</div>
-        <div id="twofa-backup-list" style="padding:10px 12px;background:#f7f4ef;border:1px dashed var(--ember);border-radius:8px;font-family:'Space Grotesk',sans-serif;font-size:12px;line-height:1.9;letter-spacing:.04em;color:var(--ink)"></div>
+        <div style="font-size:15px;font-weight:600;color:var(--ink);margin-bottom:4px">Save these backup codes</div>
+        <div style="font-size:14px;color:var(--ink3);margin-bottom:8px">Each works once if you ever can't get a code. They won't be shown again.</div>
+        <div id="twofa-backup-list" style="padding:10px 12px;background:#f7f4ef;border:1px dashed var(--ember);border-radius:8px;font-family:'Space Grotesk',sans-serif;font-size:15px;line-height:1.9;letter-spacing:.04em;color:var(--ink)"></div>
         <button onclick="copyBackupCodes(this)" class="cbtn cbtn-secondary cbtn-sm" style="margin-top:8px">Copy codes</button>
       </div>
-      <p style="font-size:13px;color:var(--ink3);margin-bottom:24px;line-height:1.6">Your account is protected. You&rsquo;ll receive a verification code by email each time you sign in from a new device.</p>
+      <p style="font-size:16px;color:var(--ink3);margin-bottom:24px;line-height:1.6">Your account is protected. You&rsquo;ll receive a verification code by email each time you sign in from a new device.</p>
       <button onclick="document.getElementById('twofa-modal').style.display='none';location.reload();" class="cbtn cbtn-primary cbtn-lg">Done</button>
     </div>
   </div>
@@ -3547,13 +3547,9 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       <div class="slabel" style="margin:14px 0 4px">Menu &amp; current specials</div>
       <textarea id="bv-menu" rows="4" class="topic-input" style="width:100%;box-sizing:border-box;resize:vertical" placeholder="Signature dishes and what's running now — the AI only names dishes you list here, never invented ones"></textarea>
 
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px">
-        <div><div class="slabel" style="margin-bottom:4px">Reply tone</div>
-          <select id="bv-tone" class="topic-input" style="width:100%;box-sizing:border-box">
-            <option value="">Your brand voice only</option><option value="warm">Warm</option><option value="professional">Professional</option><option value="playful">Playful</option><option value="concise">Concise</option>
-          </select></div>
-        <div><div class="slabel" style="margin-bottom:4px">Sign-off name</div>
-          <input type="text" id="bv-signoff" class="topic-input" style="width:100%;box-sizing:border-box" placeholder="e.g. Maria &amp; the team"></div>
+      <div style="margin-top:14px;max-width:280px">
+        <div class="slabel" style="margin-bottom:4px">Sign-off name</div>
+        <input type="text" id="bv-signoff" class="topic-input" style="width:100%;box-sizing:border-box" placeholder="e.g. Maria &amp; the team">
       </div>
       <div style="display:flex;align-items:center;gap:10px;margin-top:18px">
         <button class="cbtn cbtn-primary" id="bv-save-btn" onclick="saveBrandVoice()">Save</button>
@@ -3856,7 +3852,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .ac-title{flex:1;min-width:0}
 .ac-kicker{font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember)}
 .ac-name{font-family:'Clash Display',sans-serif;font-size:32px;font-weight:600;line-height:1.05;color:var(--ink);margin:6px 0 8px;letter-spacing:-.01em;text-wrap:balance}
-.ac-meta{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:14px;color:var(--ink3)}
+.ac-meta{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:15px;color:var(--ink3)}
 .ac-meta b{color:var(--ink2);font-weight:500}
 .ac-chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
 .ac-chip{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 11px;border-radius:999px;font-size:12.5px;font-weight:600;letter-spacing:.01em;border:1px solid var(--ac-line);background:var(--paper2);color:var(--ink2);white-space:nowrap}
@@ -3885,23 +3881,23 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .ac-hitem:focus-visible{outline:2px solid var(--ember);outline-offset:2px}
 .ac-hdot{width:10px;height:10px;border-radius:50%;flex:none;margin-top:5px;background:var(--ink3);box-shadow:0 0 0 3px var(--paper2)}
 .ac-hitem.ok .ac-hdot{background:var(--green)}.ac-hitem.warn .ac-hdot{background:var(--amber)}.ac-hitem.bad .ac-hdot{background:var(--red)}
-.ac-hitem b{display:block;font-size:14px;font-weight:600;color:var(--ink)}
-.ac-hitem span{display:block;font-size:12.5px;color:var(--ink3);margin-top:2px;line-height:1.35}
+.ac-hitem b{display:block;font-size:15px;font-weight:600;color:var(--ink)}
+.ac-hitem span{display:block;font-size:14px;color:var(--ink3);margin-top:2px;line-height:1.4}
 
 /* ── Two-column body: sticky rail + sections ─────────────────────────────── */
 .ac-body{display:grid;grid-template-columns:196px minmax(0,1fr);gap:32px;margin-top:28px;align-items:start}
 .ac-nav{position:sticky;top:72px}
-.ac-nav a{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:9px;font-size:14px;font-weight:500;color:var(--ink3);text-decoration:none;border-left:2px solid transparent;transition:color .15s,background .15s}
+.ac-nav a{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:9px;font-size:15px;font-weight:500;color:var(--ink3);text-decoration:none;border-left:2px solid transparent;transition:color .15s,background .15s}
 .ac-nav a:hover{color:var(--ink);background:var(--paper2)}
 .ac-nav a:focus-visible{outline:2px solid var(--ember);outline-offset:2px}
 .ac-nav a[aria-current="true"]{color:var(--ember);font-weight:600;background:var(--hb-tint);border-left-color:var(--ember)}
 .ac-nav a svg{width:16px;height:16px;flex:none;opacity:.85}
-.ac-nav .hint{margin:14px 12px 0;font-size:12px;color:var(--ink3);line-height:1.5}
+.ac-nav .hint{margin:14px 12px 0;font-size:13px;color:var(--ink3);line-height:1.5}
 
 .ac-section{scroll-margin-top:84px;margin-bottom:44px}
 .ac-h{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--ac-line)}
 .ac-h h2{font-family:'Clash Display',sans-serif;font-size:22px;font-weight:600;color:var(--ink);margin:0;letter-spacing:-.005em}
-.ac-h p{margin:5px 0 0;font-size:14px;color:var(--ink3);max-width:60ch}
+.ac-h p{margin:5px 0 0;font-size:15px;color:var(--ink3);max-width:60ch}
 .ac-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
 .ac-grid.three{grid-template-columns:repeat(3,minmax(0,1fr))}
 .ac-card{background:var(--ac-card);border:1px solid var(--ac-line);border-radius:14px;padding:20px 22px;box-shadow:0 2px 10px rgba(14,12,10,.05);transition:box-shadow .15s,transform .15s}
@@ -3911,9 +3907,9 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .ac-card.accent{border-color:var(--hb-tint2);box-shadow:0 0 0 1px var(--hb-tint),0 8px 28px var(--ac-glow)}
 .ac-card-h{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}
 .ac-card-h h3{font-size:16px;font-weight:700;color:var(--ink);margin:0;letter-spacing:-.005em}
-.ac-card-h p{margin:3px 0 0;font-size:13.5px;color:var(--ink3);line-height:1.45}
+.ac-card-h p{margin:3px 0 0;font-size:15px;color:var(--ink3);line-height:1.5}
 .ac-card-h .r{flex:none;display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
-.ac-note{font-size:13px;color:var(--ink3);line-height:1.5;margin-top:10px}
+.ac-note{font-size:14px;color:var(--ink3);line-height:1.5;margin-top:10px}
 .ac-note a{color:var(--ember);text-decoration:none;font-weight:600}
 
 /* Rows: label · value · control */
@@ -3921,7 +3917,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .ac-row:first-child,.ac-card-h + .ac-row,.ac-rows > .ac-row:first-child{border-top:none}
 .ac-row .l{min-width:0}
 .ac-row .l b{display:block;font-size:15px;font-weight:600;color:var(--ink)}
-.ac-row .l span{display:block;font-size:13px;color:var(--ink3);margin-top:2px;line-height:1.45}
+.ac-row .l span{display:block;font-size:15px;color:var(--ink3);margin-top:2px;line-height:1.5}
 .ac-row .c{flex:none;display:flex;align-items:center;gap:8px}
 .ac-kv{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 20px}
 .ac-kv.three{grid-template-columns:repeat(3,minmax(0,1fr))}
@@ -3929,7 +3925,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .ac-kv dd{margin:0;font-size:15px;color:var(--ink);line-height:1.45;overflow-wrap:anywhere}
 .ac-kv dd.muted{color:var(--ink3)}
 .ac-big{font-family:'Space Grotesk',sans-serif;font-variant-numeric:tabular-nums;font-size:28px;font-weight:600;color:var(--ink);line-height:1;letter-spacing:-.01em}
-.ac-list{font-size:14px;color:var(--ink3)}
+.ac-list{font-size:15px;color:var(--ink3)}
 .ac-list > div{border-top:1px solid var(--ac-line)}
 .ac-list > div:first-child{border-top:none}
 
@@ -3945,8 +3941,8 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 
 /* Fields */
 .ac-field{display:flex;flex-direction:column;gap:5px;min-width:0}
-.ac-field label,.ac-lbl{font-size:12.5px;font-weight:600;color:var(--ink2)}
-.ac-input,.ac-select,.ac-textarea{width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid var(--ac-line);border-radius:9px;font-family:'Apfel Grotezk',sans-serif;font-size:14.5px;background:var(--paper);color:var(--ink);outline:none;transition:border-color .15s,box-shadow .15s}
+.ac-field label,.ac-lbl{font-size:13.5px;font-weight:600;color:var(--ink2)}
+.ac-input,.ac-select,.ac-textarea{width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid var(--ac-line);border-radius:9px;font-family:'Apfel Grotezk',sans-serif;font-size:15px;background:var(--paper);color:var(--ink);outline:none;transition:border-color .15s,box-shadow .15s}
 .ac-input:focus,.ac-select:focus,.ac-textarea:focus{border-color:var(--ember);box-shadow:0 0 0 3px var(--hb-tint2)}
 .ac-input[readonly]{color:var(--ink3);background:var(--paper2)}
 .ac-textarea{resize:vertical;min-height:64px;line-height:1.5}
@@ -3955,23 +3951,28 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .ac-inline{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .ac-inline .ac-input{flex:1;min-width:150px}
 .ac-num{font-family:'Space Grotesk',sans-serif!important;font-variant-numeric:tabular-nums}
-.ac-status{font-size:13px;color:var(--ink3);min-height:18px}
-.ac-checks{display:flex;flex-wrap:wrap;gap:8px 18px;font-size:14px;color:var(--ink2)}
+.ac-status{font-size:14px;color:var(--ink3);min-height:18px}
+.ac-checks{display:flex;flex-wrap:wrap;gap:8px 18px;font-size:15px;color:var(--ink2)}
 .ac-checks label{display:flex;align-items:center;gap:7px;cursor:pointer}
 .ac-checks input{accent-color:var(--ember);width:16px;height:16px}
 
 /* Meter */
 .ac-meter{height:8px;border-radius:999px;background:var(--hb-line2);overflow:hidden}
 .ac-meter > i{display:block;height:100%;width:0;border-radius:999px;background:linear-gradient(90deg,var(--ember2),var(--ember));transition:width .9s cubic-bezier(.3,0,.15,1)}
-.ac-meter-cap{display:flex;justify-content:space-between;font-size:12.5px;color:var(--ink3);margin-top:6px}
+.ac-meter-cap{display:flex;justify-content:space-between;font-size:13.5px;color:var(--ink3);margin-top:6px}
 
 /* Connections */
 .ac-conn{display:flex;align-items:center;gap:14px;padding:14px 16px;border:1px solid var(--ac-line);border-radius:12px;background:var(--paper)}
-.ac-conn .ic{width:40px;height:40px;border-radius:10px;display:flex;align-items:center;justify-content:center;flex:none;background:var(--paper2);color:var(--ink2);font-size:13px;font-weight:700;letter-spacing:.02em}
-.ac-conn .ic.on{background:var(--green-bg);color:var(--green)}.ac-conn .ic.err{background:var(--red-bg);color:var(--red)}
+.ac-conn .ic{position:relative;width:42px;height:42px;border-radius:13px;display:flex;align-items:center;justify-content:center;flex:none;background:linear-gradient(180deg,#2c2c2e,#16161a);box-shadow:0 3px 10px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.08)}
+.ac-conn .ic::before{content:'';position:absolute;inset:0;border-radius:inherit;padding:1.2px;background:linear-gradient(135deg,rgba(232,149,106,.9),rgba(200,75,47,.35) 45%,rgba(200,75,47,.1));-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;pointer-events:none}
+.ac-conn .ic img,.ac-conn .ic svg{width:58%;height:58%;object-fit:contain;position:relative}
+.ac-conn .ic:not(.on){opacity:.5}
+.ac-conn .ic.on::after,.ac-conn .ic.err::after{content:'';position:absolute;top:-2px;right:-2px;width:10px;height:10px;border-radius:50%;box-shadow:0 0 0 2px var(--ac-card)}
+.ac-conn .ic.on::after{background:var(--green)}
+.ac-conn .ic.err::after{background:var(--red)}
 .ac-conn .t{flex:1;min-width:0}
 .ac-conn .t b{display:block;font-size:15px;font-weight:600;color:var(--ink)}
-.ac-conn .t span{display:block;font-size:13px;color:var(--ink3);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ac-conn .t span{display:block;font-size:15px;color:var(--ink3);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ac-conn .t span.err{color:var(--red)}
 .ac-conn .a{flex:none;display:flex;gap:6px}
 
@@ -3984,14 +3985,14 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .ac-code{font-family:'Space Grotesk',sans-serif;font-variant-numeric:tabular-nums;font-size:34px;font-weight:600;letter-spacing:.18em;color:var(--ember);line-height:1}
 
 /* People rows rendered by JS keep their old inline layout; this just sizes them */
-#acct-team-list,#staff-list,#staff-pin-events,#staff-unclaimed,#sessions-list,#trusted-list,#login-history,#activity-log{font-size:14px;color:var(--ink3)}
+#acct-team-list,#staff-list,#staff-pin-events,#staff-unclaimed,#sessions-list,#trusted-list,#login-history,#activity-log{font-size:15px;color:var(--ink3)}
 
 /* Consultant */
 .ac-consult{display:flex;gap:16px;align-items:center}
 .ac-consult .ph{width:64px;height:64px;border-radius:50%;overflow:hidden;flex:none;background:var(--ink);box-shadow:0 0 0 3px var(--hb-tint2),0 0 18px var(--ac-glow)}
 .ac-consult .ph img{width:100%;height:112%;object-fit:cover;object-position:center 20%}
 .ac-consult b{display:block;font-family:'Clash Display',sans-serif;font-size:19px;font-weight:600;color:var(--ink)}
-.ac-consult span{display:block;font-size:13.5px;color:var(--ink3);margin-top:2px}
+.ac-consult span{display:block;font-size:15px;color:var(--ink3);margin-top:2px}
 .ac-statusdot{width:8px;height:8px;border-radius:50%;background:var(--green);flex:none;box-shadow:0 0 0 3px var(--green-bg)}
 
 /* FAQ (kept: .faq-q is a listed exception in the button-system test) */
@@ -4002,7 +4003,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .faq-q:hover{color:var(--ember)}
 .faq-q:focus-visible{outline:2px solid var(--ember);outline-offset:2px}
 .faq-arrow{font-size:11px;color:var(--ink3);margin-top:3px;flex-shrink:0;transition:transform .2s}
-.faq-a{display:none;padding:0 0 14px;font-size:14px;line-height:1.65;color:var(--ink3)}
+.faq-a{display:none;padding:0 0 14px;font-size:15px;line-height:1.7;color:var(--ink3)}
 .faq-item.open .faq-a{display:block}
 .faq-item.open .faq-arrow{transform:rotate(180deg)}
 
@@ -4039,7 +4040,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 {% macro pos_card(label, mark, ident, sync_error, last_synced, sync_fn, disconnect_fn, open_fn) -%}
   <div class="ac-conn" data-conn="{{ label|lower|replace(' ','-') }}">
     {% if ident and not sync_error %}
-      <div class="ic on" aria-hidden="true">{{ mark }}</div>
+      <div class="ic on" aria-hidden="true"><img src="{{ mark }}" alt=""></div>
       <div class="t"><b>{{ label }}</b><span>{% if last_synced %}Last synced {{ last_synced[:16].replace('T',' ') }} UTC{% else %}Connected &mdash; first sync pending{% endif %}</span></div>
       <div class="a">
         <button onclick="{{ sync_fn }}(this)" class="cbtn cbtn-success cbtn-sm">&#8635; Sync</button>
@@ -4056,7 +4057,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
         <button class="cbtn cbtn-danger cbtn-ghost cbtn-sm" onclick="{{ disconnect_fn }}(this)">Disconnect</button>
       </div>
     {% else %}
-      <div class="ic" aria-hidden="true">{{ mark }}</div>
+      <div class="ic" aria-hidden="true"><img src="{{ mark }}" alt=""></div>
       <div class="t"><b>{{ label }}</b><span>Not connected &mdash; powers live labor and sales data</span></div>
       <div class="a"><button onclick="{{ open_fn }}()" class="cbtn cbtn-secondary cbtn-sm">Connect</button></div>
     {% endif %}
@@ -4090,8 +4091,8 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
           <div class="ac-meta">
             {% if restaurant.location_name or restaurant.neighborhood %}<span>&#9679; <b>{{ restaurant.location_name or restaurant.neighborhood }}</b></span>{% endif %}
             {% if group_locations and group_locations|length > 1 %}<span><b>{{ group_locations|length }}</b> locations</span>{% endif %}
-            <span>Timezone <b>{{ (restaurant.timezone or 'America/Chicago').split('/')[-1].replace('_',' ') }}</b></span>
-            <span>Owner <b>{{ restaurant.owner_name or restaurant.owner_email }}</b></span>
+            <span>Timezone: <b>{{ (restaurant.timezone or 'America/Chicago').split('/')[-1].replace('_',' ') }}</b></span>
+            <span>Owner: <b>{{ restaurant.owner_name or restaurant.owner_email }}</b></span>
           </div>
           <div class="ac-chips" aria-label="Account status">
             <span class="ac-chip ember"><i></i>{% if is_full_tier %}Full plan &middot; all modules{% else %}{{ active_modules|length }} module{{ '' if active_modules|length == 1 else 's' }}{% endif %}</span>
@@ -4197,9 +4198,6 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
           <div class="ac-field"><label for="pe-tz">Timezone</label><select class="ac-select" id="pe-tz">
             {% for tz, tzl in [('America/New_York','Eastern'),('America/Chicago','Central'),('America/Denver','Mountain'),('America/Phoenix','Arizona'),('America/Los_Angeles','Pacific'),('America/Anchorage','Alaska'),('Pacific/Honolulu','Hawaii')] %}
             <option value="{{tz}}" {% if (restaurant.timezone or 'America/Chicago') == tz %}selected{% endif %}>{{tzl}}</option>{% endfor %}</select></div>
-          <div class="ac-field"><label for="pe-tone">Reply tone</label><select class="ac-select" id="pe-tone">
-            {% for t, tl in [('','Your brand voice only'),('warm','Warm'),('professional','Professional'),('playful','Playful'),('concise','Concise')] %}
-            <option value="{{t}}" {% if (restaurant.tone_preset or '') == t %}selected{% endif %}>{{tl}}</option>{% endfor %}</select></div>
           <div class="ac-field"><label for="pe-lang">Reply language</label><select class="ac-select" id="pe-lang">
             {% for l, ll in [('','English'),('es','Spanish'),('fr','French'),('it','Italian'),('pt','Portuguese'),('de','German')] %}
             <option value="{{l}}" {% if (restaurant.response_language or '') == l %}selected{% endif %}>{{ll}}</option>{% endfor %}</select></div>
@@ -4218,7 +4216,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
         <div class="ac-card-h"><div><h3>Hours &amp; closures</h3><p>Used when generating schedules and when the AI mentions your hours. Leave a day blank if it varies.</p></div>
           <div class="r"><span class="ac-status" id="as-hours-status"></span><button class="cbtn cbtn-primary cbtn-sm" onclick="saveAccountHours()">Save hours</button></div></div>
         <div id="as-hours-grid" style="display:grid;grid-template-columns:auto 1fr 1fr;gap:8px 12px;align-items:center;max-width:520px"></div>
-        <div class="ac-field" style="margin-top:12px;max-width:520px"><label for="as-closures">Closure dates (YYYY-MM-DD, comma separated)</label><input class="ac-input" type="text" id="as-closures" placeholder="2026-12-25, 2027-01-01"></div>
+        <div class="ac-field" style="margin-top:12px;max-width:520px"><label for="as-closures">Closure dates (comma separated)</label><input class="ac-input" type="text" id="as-closures" placeholder="12/25/2026, 1/1/2027"></div>
       </div>
     </section>
 
@@ -4370,7 +4368,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
             <div class="r"><button class="cbtn cbtn-secondary cbtn-sm" onclick="acctGo('restaurant');if(document.getElementById('profile-edit').style.display==='none')toggleProfileEdit();">Edit voice</button></div></div>
           <dl class="ac-kv" style="grid-template-columns:1fr">
             <div><dt>Brand voice</dt><dd class="{{ '' if restaurant.voice_notes else 'muted' }}">{{ restaurant.voice_notes or 'Not set — the AI falls back to a neutral, warm tone.' }}</dd></div>
-            <div><dt>Tone &middot; Language &middot; Sign-off</dt><dd>{{ ({'':'Brand voice only','warm':'Warm','professional':'Professional','playful':'Playful','concise':'Concise'})[restaurant.tone_preset or ''] }} &middot; {{ ({'':'English','es':'Spanish','fr':'French','it':'Italian','pt':'Portuguese','de':'German'})[restaurant.response_language or ''] }} &middot; {{ restaurant.sign_off_name or 'No sign-off' }}</dd></div>
+            <div><dt>Language &middot; Sign-off</dt><dd>{{ ({'':'English','es':'Spanish','fr':'French','it':'Italian','pt':'Portuguese','de':'German'})[restaurant.response_language or ''] }} &middot; {{ restaurant.sign_off_name or 'No sign-off' }}</dd></div>
             {% if restaurant.never_say %}<div><dt>Never says</dt><dd>{{ restaurant.never_say }}</dd></div>{% endif %}
             {% if restaurant.menu_notes %}<div><dt>Menu highlights</dt><dd>{{ restaurant.menu_notes }}</dd></div>{% endif %}
           </dl>
@@ -4383,21 +4381,22 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       <div class="ac-h"><div><h2 id="acct-integrations-h">Integrations</h2><p>What Cavnar AI reads from and posts to. A connection that stops syncing says so here.</p></div></div>
       <div class="ac-grid">
         <div class="ac-conn">
-          {% if restaurant.gmb_refresh_token %}<div class="ic on" aria-hidden="true">G</div><div class="t"><b>Google Business Profile</b><span>Connected &mdash; approved replies post to Google</span></div>
+          {% if restaurant.gmb_refresh_token %}<div class="ic on" aria-hidden="true"><img src="/static/brand/integrations/google.svg" alt=""></div><div class="t"><b>Google Business Profile</b><span>Connected &mdash; approved replies post to Google</span></div>
           <div class="a"><button class="cbtn cbtn-danger cbtn-ghost cbtn-sm" onclick="gmbDisconnect()">Disconnect</button></div>
-          {% else %}<div class="ic" aria-hidden="true">G</div><div class="t"><b>Google Business Profile</b><span>Not connected &mdash; replies stay in your inbox</span></div>
+          {% else %}<div class="ic" aria-hidden="true"><img src="/static/brand/integrations/google.svg" alt=""></div><div class="t"><b>Google Business Profile</b><span>Not connected &mdash; replies stay in your inbox</span></div>
           <div class="a"><button onclick="gmbConnect()" class="cbtn cbtn-secondary cbtn-sm">Connect</button></div>{% endif %}
         </div>
         <div class="ac-conn">
-          {% if restaurant.ig_token %}<div class="ic on" aria-hidden="true">IG</div><div class="t"><b>Instagram &amp; Facebook</b><span>Connected &mdash; posts generated content directly</span></div>
+          {% if restaurant.ig_token %}<div class="ic on" aria-hidden="true"><img src="/static/brand/integrations/instagram.svg" alt=""></div><div class="t"><b>Instagram &amp; Facebook</b><span>Connected &mdash; posts generated content directly</span></div>
           <div class="a"><button class="cbtn cbtn-danger cbtn-ghost cbtn-sm" onclick="disconnectInstagram(this)">Disconnect</button></div>
-          {% else %}<div class="ic" aria-hidden="true">IG</div><div class="t"><b>Instagram &amp; Facebook</b><span>Not connected</span></div>
+          {% else %}<div class="ic" aria-hidden="true"><img src="/static/brand/integrations/instagram.svg" alt=""></div><div class="t"><b>Instagram &amp; Facebook</b><span>Not connected</span></div>
           <div class="a"><button onclick="igConnect()" class="cbtn cbtn-secondary cbtn-sm">Connect</button></div>{% endif %}
         </div>
-        {{ pos_card('Toast POS', 'T', restaurant.toast_restaurant_guid, restaurant.toast_sync_error, restaurant.toast_last_synced, 'toastSyncNow', 'toastDisconnect', 'openToastClientModal') }}
-        {{ pos_card('Square POS', 'Sq', restaurant.square_location_id, restaurant.square_sync_error, restaurant.square_last_synced, 'squareSyncNow', 'squareDisconnect', 'openSquareModal') }}
-        {{ pos_card('Clover POS', 'C', restaurant.clover_merchant_id, restaurant.clover_sync_error, restaurant.clover_last_synced, 'cloverSyncNow', 'cloverDisconnect', 'openCloverModal') }}
-        <div class="ac-conn"><div class="ic" aria-hidden="true">S</div><div class="t"><b>Stripe</b><span>Billing runs through Stripe &mdash; manage it under Billing</span></div><div class="a"><button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="acctGo('billing')">Billing &rarr;</button></div></div>
+        {{ pos_card('Toast POS', '/static/brand/integrations/toast.png', restaurant.toast_restaurant_guid, restaurant.toast_sync_error, restaurant.toast_last_synced, 'toastSyncNow', 'toastDisconnect', 'openToastClientModal') }}
+        {{ pos_card('Square POS', '/static/brand/integrations/square.svg', restaurant.square_location_id, restaurant.square_sync_error, restaurant.square_last_synced, 'squareSyncNow', 'squareDisconnect', 'openSquareModal') }}
+        {{ pos_card('Clover POS', '/static/brand/integrations/clover.svg', restaurant.clover_merchant_id, restaurant.clover_sync_error, restaurant.clover_last_synced, 'cloverSyncNow', 'cloverDisconnect', 'openCloverModal') }}
+        <div class="ac-conn"><div class="ic" aria-hidden="true"><span style="font-size:15px;font-weight:700;color:var(--ink2)">R</span></div><div class="t"><b>RPower POS</b><span>Not connected yet &mdash; talk to your Cavnar rep to enable</span></div><div class="a"><button class="cbtn cbtn-secondary cbtn-sm" onclick="location.href='mailto:will@cavnar.ai?subject=Connect%20RPower%20POS'">Contact us</button></div></div>
+        <div class="ac-conn"><div class="ic" aria-hidden="true"><span style="font-size:15px;font-weight:700;color:var(--ink2)">S</span></div><div class="t"><b>Stripe</b><span>Billing runs through Stripe &mdash; manage it under Billing</span></div><div class="a"><button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="acctGo('billing')">Billing &rarr;</button></div></div>
       </div>
 
       <div class="ac-card" style="margin-top:14px">
@@ -4517,8 +4516,6 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       <div class="ac-h"><div><h2 id="acct-appearance-h">Appearance</h2><p>Saved to this browser.</p></div></div>
       <div class="ac-card">
         <div class="ac-rows">
-          <div class="ac-row"><div class="l"><b>Dark mode</b><span>Obsidian ground, ember accents. Easier on the eyes on a late close.</span></div>
-            <div class="c"><label class="ac-switch"><input type="checkbox" id="dark-mode-toggle-input" onchange="toggleDarkMode()" aria-label="Dark mode"><span class="ac-sw-track" id="dark-mode-track"></span><span class="ac-sw-thumb" id="dark-mode-thumb"></span></label></div></div>
           <div class="ac-row"><div class="l"><b>Dates &amp; numbers</b><span>Dates show as M/D/YY. Money and percentages use tabular figures so columns line up.</span></div><div class="c"><span class="ac-chip sm ac-num">9/15/26 &middot; $1,240 &middot; 28.4%</span></div></div>
         </div>
       </div>
@@ -4575,7 +4572,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
           <button onclick="reportBug(this)" class="cbtn cbtn-secondary cbtn-sm" style="margin-top:10px">Send report</button>
         </div>
         <div class="ac-card">
-          <div class="ac-card-h"><div><h3>Know another restaurant owner?</h3><p>Send them an intro &mdash; get <b style="color:var(--ember)">one free month ($300)</b> if they sign up.</p></div></div>
+          <div class="ac-card-h"><div><h3>Know another restaurant owner?</h3><p>Send them an intro &mdash; get <b style="color:var(--ember)">one free month ($349)</b> if they sign up.</p></div></div>
           <div class="ac-form" style="grid-template-columns:1fr 1fr">
             <div class="ac-field"><label for="referral-name">Restaurant name</label><input class="ac-input" type="text" id="referral-name" placeholder="Restaurant name"></div>
             <div class="ac-field"><label for="referral-email">Owner email</label><input class="ac-input" type="email" id="referral-email" placeholder="Owner email"></div>
@@ -5608,18 +5605,16 @@ function _moveTabIndicator(tabEl){
 }
 function _dark(){return document.documentElement.getAttribute('data-theme')==='dark';}
 function setPageBg(n){
-  var d=_dark();
   // One background for every page: the ember glow at the top running down
   // into obsidian (#0c0c0c — the iOS dark Paper). Taller than before so the
   // glow reaches the first section instead of stopping at the header.
   // The glow is sized in pixels from the top (not as a % of the page), so a
   // long page like the review inbox gets the same top glow as Home instead
   // of an orange wash stretched over thousands of pixels.
-  var glow = d
-    ? 'radial-gradient(ellipse 120% 100% at 50% 0%,rgba(200,75,47,.50) 0%,rgba(200,75,47,.24) 32%,rgba(200,75,47,.07) 62%,transparent 82%)'
-    : 'radial-gradient(ellipse 120% 100% at 50% 0%,rgba(200,75,47,.30) 0%,rgba(200,75,47,.12) 38%,rgba(200,75,47,.03) 65%,transparent 82%)';
+  // Dark is the only theme now — see the pre-paint <script> in <head>.
+  var glow = 'radial-gradient(ellipse 120% 100% at 50% 0%,rgba(200,75,47,.50) 0%,rgba(200,75,47,.24) 32%,rgba(200,75,47,.07) 62%,transparent 82%)';
   var st = document.body.style;
-  st.backgroundColor = d ? '#0c0c0c' : '#f8f5f0';
+  st.backgroundColor = '#0c0c0c';
   st.backgroundImage = glow;
   st.backgroundRepeat = 'no-repeat';
   st.backgroundSize = '100% 780px';
@@ -5771,24 +5766,12 @@ function clearFilters(){
   if(allPill)allPill.classList.add('active');
   filterReviews();
 }
-(function(){
-  var _v = localStorage.getItem('cavnar_theme');
-  if (_v === null || _v === 'dark') {
-    document.documentElement.setAttribute('data-theme','dark');
-  }
-  // Sync the in-dashboard toggle once DOM is ready
-  document.addEventListener('DOMContentLoaded', function() {
-    var isDark = localStorage.getItem('cavnar_theme') !== 'light';
-    var tog = document.getElementById('dark-mode-toggle-input');
-    var track = document.getElementById('dark-mode-track');
-    var thumb = document.getElementById('dark-mode-thumb');
-    if (tog) tog.checked = isDark;
-    if (track) track.style.background = isDark ? '#923020' : '#d0cbc4';
-    if (thumb) thumb.style.transform = isDark ? 'translateX(20px)' : 'none';
-    var activeTab = (document.querySelector('.tab.active')||{}).id||'';
-    setPageBg(activeTab.replace('tab-','') || 'home');
-  });
-})();
+// Dark is set once, before paint (see <head>), and is the only theme —
+// this used to also sync a toggle that no longer exists.
+document.addEventListener('DOMContentLoaded', function() {
+  var activeTab = (document.querySelector('.tab.active')||{}).id||'';
+  setPageBg(activeTab.replace('tab-','') || 'home');
+});
 
 // ── Changelog ────────────────────────────────────────────────────────────────
 var _changelogLoaded = false;
@@ -5851,16 +5834,6 @@ document.addEventListener('click', function(e) {
     document.getElementById('changelog-panel').style.display = 'none';
   }
 });
-
-function toggleDarkMode() {
-  var tog = document.getElementById('dark-mode-toggle-input');
-  var isDark = tog ? tog.checked : (document.documentElement.getAttribute('data-theme') === 'dark');
-  document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
-  localStorage.setItem('cavnar_theme', isDark ? 'dark' : 'light');
-  fetch('/api/theme', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({theme: isDark ? 'dark' : 'light'})}).catch(function(){});
-  var activeTab = (document.querySelector('.tab.active')||{}).id||'';
-  setPageBg(activeTab.replace('tab-','') || 'home');
-}
 
 function deleteReview(id, btn) {
   if (!confirm('Remove this review from your dashboard? This cannot be undone.')) return;
@@ -6828,7 +6801,6 @@ function openBrandVoice(){
     document.getElementById('bv-voice').value=d.voice_notes||'';
     document.getElementById('bv-never').value=d.never_say||'';
     document.getElementById('bv-menu').value=d.menu_notes||'';
-    document.getElementById('bv-tone').value=d.tone_preset||'';
     document.getElementById('bv-signoff').value=d.sign_off_name||'';
   }).catch(function(){});
 }
@@ -6844,7 +6816,6 @@ function saveBrandVoice(){
     voice_notes:document.getElementById('bv-voice').value,
     never_say:document.getElementById('bv-never').value,
     menu_notes:document.getElementById('bv-menu').value,
-    tone_preset:document.getElementById('bv-tone').value,
     sign_off_name:document.getElementById('bv-signoff').value
   })}).then(function(r){return r.json();}).then(function(d){
     if(btn){btn.disabled=false;btn.style.opacity='';}
@@ -11292,28 +11263,28 @@ document.addEventListener('click', function(e) {
       <span style="font-size:22px">🍞</span>
       <div style="font-size:16px;font-weight:700;color:var(--ink)">Connect Toast POS</div>
     </div>
-    <div style="font-size:12px;color:var(--ink3);margin-bottom:20px">Powers live labor data in the Labor tab</div>
-    <div id="toast-form-banner" style="display:none;padding:9px 13px;border-radius:7px;font-size:12px;margin-bottom:14px;line-height:1.5"></div>
+    <div style="font-size:15px;color:var(--ink3);margin-bottom:20px">Powers live labor data in the Labor tab</div>
+    <div id="toast-form-banner" style="display:none;padding:9px 13px;border-radius:7px;font-size:15px;margin-bottom:14px;line-height:1.5"></div>
     <div style="display:flex;flex-direction:column;gap:12px;margin-bottom:20px">
       <div>
-        <label style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);display:block;margin-bottom:4px">Client ID</label>
-        <input id="toast-cid" type="text" placeholder="e.g. 8f3a2c1d-…" autocomplete="off" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-size:13px;font-family:monospace;outline:none;background:var(--paper2);color:var(--ink);box-sizing:border-box">
+        <label style="font-size:14px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);display:block;margin-bottom:4px">Client ID</label>
+        <input id="toast-cid" type="text" placeholder="e.g. 8f3a2c1d-…" autocomplete="off" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-size:16px;font-family:monospace;outline:none;background:var(--paper2);color:var(--ink);box-sizing:border-box">
       </div>
       <div>
-        <label style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);display:block;margin-bottom:4px">Client Secret</label>
-        <input id="toast-csec" type="password" placeholder="••••••••••••••••" autocomplete="off" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-size:13px;font-family:monospace;outline:none;background:var(--paper2);color:var(--ink);box-sizing:border-box">
+        <label style="font-size:14px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);display:block;margin-bottom:4px">Client Secret</label>
+        <input id="toast-csec" type="password" placeholder="••••••••••••••••" autocomplete="off" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-size:16px;font-family:monospace;outline:none;background:var(--paper2);color:var(--ink);box-sizing:border-box">
       </div>
       <div>
-        <label style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);display:block;margin-bottom:4px">Restaurant GUID</label>
-        <input id="toast-guid-client" type="text" placeholder="e.g. a1b2c3d4-…" autocomplete="off" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-size:13px;font-family:monospace;outline:none;background:var(--paper2);color:var(--ink);box-sizing:border-box">
-        <div style="font-size:10px;color:var(--ink3);margin-top:4px">Toast Admin → Integrations → API Access → Location GUID</div>
+        <label style="font-size:14px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);display:block;margin-bottom:4px">Restaurant GUID</label>
+        <input id="toast-guid-client" type="text" placeholder="e.g. a1b2c3d4-…" autocomplete="off" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-size:16px;font-family:monospace;outline:none;background:var(--paper2);color:var(--ink);box-sizing:border-box">
+        <div style="font-size:12px;color:var(--ink3);margin-top:4px">Toast Admin → Integrations → API Access → Location GUID</div>
       </div>
     </div>
     <div style="display:flex;gap:8px">
       <button id="toast-modal-save-btn" onclick="toastSaveCredentials(this)" class="cbtn cbtn-primary cbtn-lg">Test &amp; Connect</button>
       <button onclick="closeToastClientModal()" class="cbtn cbtn-secondary cbtn-sm">Cancel</button>
     </div>
-    <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--paper3);font-size:11px;color:var(--ink3);line-height:1.6">
+    <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--paper3);font-size:14px;color:var(--ink3);line-height:1.6">
       <strong style="color:var(--ink2)">Where to find these:</strong> Toast Admin → Integrations → API Access → create a credential set with <em>Labor</em> and <em>Orders</em> permissions. Copy the Client ID, Secret, and Location GUID here.
     </div>
   </div>
@@ -11327,18 +11298,18 @@ document.addEventListener('click', function(e) {
       <span style="font-size:22px">&#9632;</span>
       <div style="font-size:16px;font-weight:700;color:var(--ink)">Connect Square POS</div>
     </div>
-    <div style="font-size:12px;color:var(--ink3);margin-bottom:20px">Powers live labor data in the Labor tab</div>
-    <div id="square-form-banner" style="display:none;padding:9px 13px;border-radius:7px;font-size:12px;margin-bottom:14px;line-height:1.5"></div>
+    <div style="font-size:15px;color:var(--ink3);margin-bottom:20px">Powers live labor data in the Labor tab</div>
+    <div id="square-form-banner" style="display:none;padding:9px 13px;border-radius:7px;font-size:15px;margin-bottom:14px;line-height:1.5"></div>
     <div style="display:flex;flex-direction:column;gap:12px;margin-bottom:20px">
       <div>
-        <label style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);display:block;margin-bottom:4px">Access Token</label>
-        <input id="square-token" type="password" placeholder="EAAAl…" autocomplete="off" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-size:13px;font-family:monospace;outline:none;background:var(--paper2);color:var(--ink);box-sizing:border-box">
-        <div style="font-size:10px;color:var(--ink3);margin-top:4px">Square Developer → Applications → your app → Production → Access Token</div>
+        <label style="font-size:14px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);display:block;margin-bottom:4px">Access Token</label>
+        <input id="square-token" type="password" placeholder="EAAAl…" autocomplete="off" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-size:16px;font-family:monospace;outline:none;background:var(--paper2);color:var(--ink);box-sizing:border-box">
+        <div style="font-size:12px;color:var(--ink3);margin-top:4px">Square Developer → Applications → your app → Production → Access Token</div>
       </div>
       <div>
-        <label style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);display:block;margin-bottom:4px">Location ID</label>
-        <input id="square-location" type="text" placeholder="L1A2B3C4…" autocomplete="off" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-size:13px;font-family:monospace;outline:none;background:var(--paper2);color:var(--ink);box-sizing:border-box">
-        <div style="font-size:10px;color:var(--ink3);margin-top:4px">Square Dashboard → Locations → click your location → copy the ID from the URL</div>
+        <label style="font-size:14px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);display:block;margin-bottom:4px">Location ID</label>
+        <input id="square-location" type="text" placeholder="L1A2B3C4…" autocomplete="off" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-size:16px;font-family:monospace;outline:none;background:var(--paper2);color:var(--ink);box-sizing:border-box">
+        <div style="font-size:12px;color:var(--ink3);margin-top:4px">Square Dashboard → Locations → click your location → copy the ID from the URL</div>
       </div>
     </div>
     <div style="display:flex;gap:8px">
@@ -11356,18 +11327,18 @@ document.addEventListener('click', function(e) {
       <span style="font-size:22px">&#9827;</span>
       <div style="font-size:16px;font-weight:700;color:var(--ink)">Connect Clover POS</div>
     </div>
-    <div style="font-size:12px;color:var(--ink3);margin-bottom:20px">Powers live labor data in the Labor tab</div>
-    <div id="clover-form-banner" style="display:none;padding:9px 13px;border-radius:7px;font-size:12px;margin-bottom:14px;line-height:1.5"></div>
+    <div style="font-size:15px;color:var(--ink3);margin-bottom:20px">Powers live labor data in the Labor tab</div>
+    <div id="clover-form-banner" style="display:none;padding:9px 13px;border-radius:7px;font-size:15px;margin-bottom:14px;line-height:1.5"></div>
     <div style="display:flex;flex-direction:column;gap:12px;margin-bottom:20px">
       <div>
-        <label style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);display:block;margin-bottom:4px">Merchant ID</label>
-        <input id="clover-mid" type="text" placeholder="ABCDE12345" autocomplete="off" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-size:13px;font-family:monospace;outline:none;background:var(--paper2);color:var(--ink);box-sizing:border-box">
-        <div style="font-size:10px;color:var(--ink3);margin-top:4px">Clover Dashboard → Account &amp; Setup → About your business → Merchant ID</div>
+        <label style="font-size:14px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);display:block;margin-bottom:4px">Merchant ID</label>
+        <input id="clover-mid" type="text" placeholder="ABCDE12345" autocomplete="off" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-size:16px;font-family:monospace;outline:none;background:var(--paper2);color:var(--ink);box-sizing:border-box">
+        <div style="font-size:12px;color:var(--ink3);margin-top:4px">Clover Dashboard → Account &amp; Setup → About your business → Merchant ID</div>
       </div>
       <div>
-        <label style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);display:block;margin-bottom:4px">API Token</label>
-        <input id="clover-token" type="password" placeholder="••••••••••••••••" autocomplete="off" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-size:13px;font-family:monospace;outline:none;background:var(--paper2);color:var(--ink);box-sizing:border-box">
-        <div style="font-size:10px;color:var(--ink3);margin-top:4px">Clover Developer → API Tokens → create token with Employee &amp; Order read permissions</div>
+        <label style="font-size:14px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);display:block;margin-bottom:4px">API Token</label>
+        <input id="clover-token" type="password" placeholder="••••••••••••••••" autocomplete="off" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-size:16px;font-family:monospace;outline:none;background:var(--paper2);color:var(--ink);box-sizing:border-box">
+        <div style="font-size:12px;color:var(--ink3);margin-top:4px">Clover Developer → API Tokens → create token with Employee &amp; Order read permissions</div>
       </div>
     </div>
     <div style="display:flex;gap:8px">
@@ -11386,65 +11357,65 @@ document.addEventListener('click', function(e) {
     </div>
 
     <!-- Contact 1 -->
-    <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:8px">Primary Contact</div>
+    <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:8px">Primary Contact</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px">
       <div>
-        <div style="font-size:11px;color:var(--ink3);margin-bottom:4px">Name</div>
-        <input id="alert-c1-name" type="text" placeholder="e.g. Owner" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
+        <div style="font-size:14px;color:var(--ink3);margin-bottom:4px">Name</div>
+        <input id="alert-c1-name" type="text" placeholder="e.g. Owner" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:15px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
       </div>
       <div>
-        <div style="font-size:11px;color:var(--ink3);margin-bottom:4px">Mobile number</div>
-        <input id="alert-c1-phone" type="tel" placeholder="+1 (555) 000-0000" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
+        <div style="font-size:14px;color:var(--ink3);margin-bottom:4px">Mobile number</div>
+        <input id="alert-c1-phone" type="tel" placeholder="+1 (555) 000-0000" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:15px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
       </div>
     </div>
 
     <!-- Contact 2 -->
-    <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:8px">Secondary Contact <span style="font-weight:400;text-transform:none;letter-spacing:0;font-size:10px">(optional)</span></div>
+    <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:8px">Secondary Contact <span style="font-weight:400;text-transform:none;letter-spacing:0;font-size:12px">(optional)</span></div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:20px">
       <div>
-        <div style="font-size:11px;color:var(--ink3);margin-bottom:4px">Name</div>
-        <input id="alert-c2-name" type="text" placeholder="e.g. Manager" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
+        <div style="font-size:14px;color:var(--ink3);margin-bottom:4px">Name</div>
+        <input id="alert-c2-name" type="text" placeholder="e.g. Manager" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:15px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
       </div>
       <div>
-        <div style="font-size:11px;color:var(--ink3);margin-bottom:4px">Mobile number</div>
-        <input id="alert-c2-phone" type="tel" placeholder="+1 (555) 000-0000" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
+        <div style="font-size:14px;color:var(--ink3);margin-bottom:4px">Mobile number</div>
+        <input id="alert-c2-phone" type="tel" placeholder="+1 (555) 000-0000" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:15px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
       </div>
     </div>
 
     <!-- Alert types -->
     <div style="border-top:1px solid var(--paper3);padding-top:16px;margin-bottom:16px">
-      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Which alerts do you want?</div>
+      <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Which alerts do you want?</div>
 
-      <div style="font-size:11px;font-weight:600;color:var(--ink3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.06em">All Reviews</div>
+      <div style="font-size:14px;font-weight:600;color:var(--ink3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.06em">All Reviews</div>
       <div style="display:flex;flex-direction:column;gap:7px;margin-bottom:14px">
-        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--ink)"><input type="checkbox" id="al-any-review" style="accent-color:var(--ember)"> Any new review received</label>
-        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--ink)"><input type="checkbox" id="al-resp-approved" style="accent-color:var(--ember)"> Response approved &amp; posted to Google</label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:15px;color:var(--ink)"><input type="checkbox" id="al-any-review" style="accent-color:var(--ember)"> Any new review received</label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:15px;color:var(--ink)"><input type="checkbox" id="al-resp-approved" style="accent-color:var(--ember)"> Response approved &amp; posted to Google</label>
       </div>
 
-      <div style="font-size:11px;font-weight:600;color:var(--ink3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.06em">Urgent</div>
+      <div style="font-size:14px;font-weight:600;color:var(--ink3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.06em">Urgent</div>
       <div style="display:flex;flex-direction:column;gap:7px;margin-bottom:14px">
-        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--ink)"><input type="checkbox" id="al-1star" style="accent-color:var(--ember)"> 1&#9733; review received</label>
-        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--ink)"><input type="checkbox" id="al-2star" style="accent-color:var(--ember)"> 2&#9733; review received</label>
-        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--ink)"><input type="checkbox" id="al-health" style="accent-color:var(--ember)"> Health or safety mention in a review</label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:15px;color:var(--ink)"><input type="checkbox" id="al-1star" style="accent-color:var(--ember)"> 1&#9733; review received</label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:15px;color:var(--ink)"><input type="checkbox" id="al-2star" style="accent-color:var(--ember)"> 2&#9733; review received</label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:15px;color:var(--ink)"><input type="checkbox" id="al-health" style="accent-color:var(--ember)"> Health or safety mention in a review</label>
       </div>
 
-      <div style="font-size:11px;font-weight:600;color:var(--ink3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.06em">Trends</div>
+      <div style="font-size:14px;font-weight:600;color:var(--ink3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.06em">Trends</div>
       <div style="display:flex;flex-direction:column;gap:7px;margin-bottom:14px">
-        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--ink)"><input type="checkbox" id="al-neg-spike" style="accent-color:var(--ember)"> Negative review spike (3+ in 48hrs)</label>
-        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--ink)"><input type="checkbox" id="al-neg-trend" style="accent-color:var(--ember)"> Negative trend alert</label>
-        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--ink)"><input type="checkbox" id="al-no-resp" style="accent-color:var(--ember)"> No response to a review in 14 days</label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:15px;color:var(--ink)"><input type="checkbox" id="al-neg-spike" style="accent-color:var(--ember)"> Negative review spike (3+ in 48hrs)</label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:15px;color:var(--ink)"><input type="checkbox" id="al-neg-trend" style="accent-color:var(--ember)"> Negative trend alert</label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:15px;color:var(--ink)"><input type="checkbox" id="al-no-resp" style="accent-color:var(--ember)"> No response to a review in 14 days</label>
       </div>
 
-      <div style="font-size:11px;font-weight:600;color:var(--ink3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.06em">Wins</div>
+      <div style="font-size:14px;font-weight:600;color:var(--ink3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.06em">Wins</div>
       <div style="display:flex;flex-direction:column;gap:7px;margin-bottom:14px">
-        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--ink)"><input type="checkbox" id="al-5star" style="accent-color:var(--ember)"> 5&#9733; review received</label>
-        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--ink)"><input type="checkbox" id="al-rating-thresh" style="accent-color:var(--ember)"> Rating climbs above <input type="number" id="al-rating-floor" min="1" max="5" step="0.1" style="width:46px;padding:2px 5px;border:1px solid var(--paper3);border-radius:5px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;outline:none;background:var(--paper);color:var(--ink);text-align:center"> stars</label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:15px;color:var(--ink)"><input type="checkbox" id="al-5star" style="accent-color:var(--ember)"> 5&#9733; review received</label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:15px;color:var(--ink)"><input type="checkbox" id="al-rating-thresh" style="accent-color:var(--ember)"> Rating climbs above <input type="number" id="al-rating-floor" min="1" max="5" step="0.1" style="width:46px;padding:2px 5px;border:1px solid var(--paper3);border-radius:5px;font-family:'Apfel Grotezk',sans-serif;font-size:15px;outline:none;background:var(--paper);color:var(--ink);text-align:center"> stars</label>
       </div>
 
       {% if mod_labor %}
-      <div style="font-size:11px;font-weight:600;color:var(--ink3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.06em">Labor</div>
+      <div style="font-size:14px;font-weight:600;color:var(--ink3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.06em">Labor</div>
       <div style="display:flex;flex-direction:column;gap:7px;margin-bottom:14px">
-        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--ink)"><input type="checkbox" id="al-labor-over" style="accent-color:var(--ember)"> Labor cost exceeds budget target</label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:15px;color:var(--ink)"><input type="checkbox" id="al-labor-over" style="accent-color:var(--ember)"> Labor cost exceeds budget target</label>
       </div>
       {% endif %}
     </div>
@@ -11452,12 +11423,12 @@ document.addEventListener('click', function(e) {
     <!-- Weekly digest -->
     {% if mod_reviews %}
     <div style="border-top:1px solid var(--paper3);padding-top:16px;margin-bottom:16px">
-      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Weekly Digest</div>
+      <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Weekly Digest</div>
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-        <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:12px;color:var(--ink)">
+        <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:15px;color:var(--ink)">
           <input type="checkbox" id="al-digest-enabled" style="accent-color:var(--ember)"> Send weekly review summary email every
         </label>
-        <select id="al-digest-day" style="padding:4px 8px;border:1px solid var(--paper3);border-radius:6px;font-family:'Apfel Grotezk',sans-serif;font-size:11px;background:var(--paper);color:var(--ink)">
+        <select id="al-digest-day" style="padding:4px 8px;border:1px solid var(--paper3);border-radius:6px;font-family:'Apfel Grotezk',sans-serif;font-size:14px;background:var(--paper);color:var(--ink)">
           {% for d in ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"] %}
           <option value="{{d}}">{{d|title}}</option>
           {% endfor %}
@@ -11468,14 +11439,14 @@ document.addEventListener('click', function(e) {
 
     <!-- Delivery -->
     <div style="border-top:1px solid var(--paper3);padding-top:16px;margin-bottom:20px">
-      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Delivery method</div>
+      <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Delivery method</div>
       <div style="display:flex;gap:16px;margin-bottom:10px">
-        <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:12px;color:var(--ink)"><input type="checkbox" id="al-via-sms" onchange="updateSmsConsentVisibility()" style="accent-color:var(--ember)"> SMS text message</label>
-        <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:12px;color:var(--ink)"><input type="checkbox" id="al-via-email" style="accent-color:var(--ember)"> Email</label>
+        <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:15px;color:var(--ink)"><input type="checkbox" id="al-via-sms" onchange="updateSmsConsentVisibility()" style="accent-color:var(--ember)"> SMS text message</label>
+        <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:15px;color:var(--ink)"><input type="checkbox" id="al-via-email" style="accent-color:var(--ember)"> Email</label>
       </div>
       <!-- SMS consent always visible, dims when SMS off -->
       <div id="al-sms-consent-row" style="background:rgba(200,75,47,.06);border:1px solid rgba(200,75,47,.2);border-radius:8px;padding:10px 12px;margin-top:10px;opacity:.35;pointer-events:none">
-        <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;font-size:11px;color:var(--ink);line-height:1.5">
+        <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;font-size:14px;color:var(--ink);line-height:1.5">
           <input type="checkbox" id="al-sms-consent" style="accent-color:var(--ember);margin-top:2px;flex-shrink:0">
           I agree to receive operational SMS alerts from Cavnar AI. Message &amp; data rates may apply. Reply STOP to cancel, HELP for help. <a href="/privacy" target="_blank" style="color:var(--ember)">Privacy</a> &middot; <a href="/terms" target="_blank" style="color:var(--ember)">Terms</a>
         </label>
@@ -11484,19 +11455,19 @@ document.addEventListener('click', function(e) {
 
     <!-- DND / frequency -->
     <div style="border-top:1px solid var(--paper3);padding-top:16px;margin-bottom:20px">
-      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Do-not-disturb &amp; frequency</div>
+      <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Do-not-disturb &amp; frequency</div>
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;align-items:end">
         <div>
-          <div style="font-size:11px;color:var(--ink3);margin-bottom:4px">Quiet start</div>
-          <input id="al-quiet-start" type="time" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
+          <div style="font-size:14px;color:var(--ink3);margin-bottom:4px">Quiet start</div>
+          <input id="al-quiet-start" type="time" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:15px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
         </div>
         <div>
-          <div style="font-size:11px;color:var(--ink3);margin-bottom:4px">Quiet end</div>
-          <input id="al-quiet-end" type="time" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
+          <div style="font-size:14px;color:var(--ink3);margin-bottom:4px">Quiet end</div>
+          <input id="al-quiet-end" type="time" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:15px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
         </div>
         <div>
-          <div style="font-size:11px;color:var(--ink3);margin-bottom:4px">Max alerts/day</div>
-          <select id="al-max-per-day" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
+          <div style="font-size:14px;color:var(--ink3);margin-bottom:4px">Max alerts/day</div>
+          <select id="al-max-per-day" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:15px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
             <option value="0">Unlimited</option>
             {% for n in [1,2,3,5,10] %}
             <option value="{{n}}">{{n}} per day</option>
@@ -11504,11 +11475,11 @@ document.addEventListener('click', function(e) {
           </select>
         </div>
       </div>
-      <div style="font-size:10px;color:var(--ink3);margin-top:8px">Times use Chicago timezone. Leave start/end blank to disable quiet hours.</div>
+      <div style="font-size:12px;color:var(--ink3);margin-top:8px">Times use Chicago timezone. Leave start/end blank to disable quiet hours.</div>
     </div>
 
     <div style="display:flex;align-items:center;justify-content:space-between">
-      <span id="alerts-save-msg" style="font-size:12px;display:none"></span>
+      <span id="alerts-save-msg" style="font-size:15px;display:none"></span>
       <button onclick="saveAlertSettings()" class="cbtn cbtn-primary" style="margin-left:auto">Save alerts</button>
     </div>
   </div>
@@ -11535,11 +11506,11 @@ document.addEventListener('click', function(e) {
     <button class="cbtn cbtn-close" aria-label="Close" onclick="closePwModal()">&#x2715;</button>
     <div style="font-size:16px;font-weight:700;color:var(--ink);margin-bottom:16px">Change password</div>
     <div style="display:flex;flex-direction:column;gap:10px">
-      <input class="form-input" type="password" id="pw-current" placeholder="Current password" style="font-size:13px">
-      <input class="form-input" type="password" id="pw-new" placeholder="New password (min 8 chars)" style="font-size:13px">
-      <input class="form-input" type="password" id="pw-confirm" placeholder="Confirm new password" style="font-size:13px">
+      <input class="form-input" type="password" id="pw-current" placeholder="Current password" style="font-size:16px">
+      <input class="form-input" type="password" id="pw-new" placeholder="New password (min 8 chars)" style="font-size:16px">
+      <input class="form-input" type="password" id="pw-confirm" placeholder="Confirm new password" style="font-size:16px">
       <button class="cbtn cbtn-primary cbtn-lg cbtn-block" onclick="changePassword()">Update password</button>
-      <div id="pw-status" style="font-size:12px;text-align:center;display:none"></div>
+      <div id="pw-status" style="font-size:15px;text-align:center;display:none"></div>
     </div>
   </div>
 </div>
@@ -11548,12 +11519,12 @@ document.addEventListener('click', function(e) {
   <div style="background:var(--paper);border-radius:14px;padding:28px;max-width:380px;width:90%;position:relative;border:1.5px solid var(--ember);box-shadow:0 8px 16px rgba(14,12,10,.6),0 24px 64px rgba(14,12,10,.55),0 0 0 1px rgba(200,75,47,.18)">
     <button class="cbtn cbtn-close" aria-label="Close" onclick="closeEmailModal()">&#x2715;</button>
     <div style="font-size:16px;font-weight:700;color:var(--ink);margin-bottom:4px">Update email</div>
-    <div style="font-size:12px;color:var(--ink3);margin-bottom:16px">Enter your current password to confirm the change.</div>
+    <div style="font-size:15px;color:var(--ink3);margin-bottom:16px">Enter your current password to confirm the change.</div>
     <div style="display:flex;flex-direction:column;gap:10px">
-      <input class="form-input" type="email" id="email-new" placeholder="New email address" style="font-size:13px">
-      <input class="form-input" type="password" id="email-pw" placeholder="Current password" style="font-size:13px">
+      <input class="form-input" type="email" id="email-new" placeholder="New email address" style="font-size:16px">
+      <input class="form-input" type="password" id="email-pw" placeholder="Current password" style="font-size:16px">
       <button class="cbtn cbtn-primary cbtn-lg cbtn-block" onclick="updateEmail()">Update email</button>
-      <div id="email-status" style="font-size:12px;text-align:center;display:none"></div>
+      <div id="email-status" style="font-size:15px;text-align:center;display:none"></div>
     </div>
   </div>
 </div>
@@ -11579,7 +11550,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
   window.saveProfile=function(){
     var done=busy(document.getElementById('pe-save'),'Saving…');
     var v=function(id){var el=document.getElementById(id);return el?el.value:'';};
-    jsend('/api/account/profile',{owner_name:v('pe-owner-name'),owner_phone:v('pe-phone'),timezone:v('pe-tz'),tone_preset:v('pe-tone'),response_language:v('pe-lang'),sign_off_name:v('pe-signoff'),voice_notes:v('pe-voice'),never_say:v('pe-never'),menu_notes:v('pe-menu')},function(d){
+    jsend('/api/account/profile',{owner_name:v('pe-owner-name'),owner_phone:v('pe-phone'),timezone:v('pe-tz'),response_language:v('pe-lang'),sign_off_name:v('pe-signoff'),voice_notes:v('pe-voice'),never_say:v('pe-never'),menu_notes:v('pe-menu')},function(d){
       done();
       if(d.ok){toast('Profile saved','success');setTimeout(function(){location.reload();},700);}
       else toast(d.error||'Could not save','error');
@@ -12276,13 +12247,11 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       // sections down: fetch it when it scrolls into view, not on open.
       cavnarWhenVisible($('email-history-card'),loadEmailHistory);
     }
-    var dm=$('dark-mode-toggle-input');if(dm)dm.checked=document.documentElement.getAttribute('data-theme')==='dark';
     acctHealthRefresh();
   };
 
   document.addEventListener('DOMContentLoaded',function(){
     wireNav();
-    var dm=$('dark-mode-toggle-input');if(dm)dm.checked=document.documentElement.getAttribute('data-theme')==='dark';
     var p=$('panel-account');
     if(p&&p.classList.contains('active'))acctOnOpen();
   });

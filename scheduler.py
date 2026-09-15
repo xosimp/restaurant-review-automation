@@ -346,8 +346,7 @@ def run_daily_fetch():
                                   approved_examples=approved_examples,
                                   sign_off=restaurant.sign_off_name or restaurant.name,
                                   never_say=restaurant.never_say or "",
-                                  language=getattr(restaurant, "response_language", None) or None,
-                                  tone=getattr(restaurant, "tone_preset", None) or None,)
+                                  language=getattr(restaurant, "response_language", None) or None,)
                 except Exception as e:
                     log.error(f"Draft error: {e}")
                     _ops.capture(e, job="review_draft", context=restaurant.name)

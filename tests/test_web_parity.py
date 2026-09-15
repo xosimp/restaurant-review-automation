@@ -68,11 +68,21 @@ def test_web_account_parity_routes_answer(client, db_path, monkeypatch):
 def test_web_profile_edit_writes_the_same_fields_as_the_phone(client, db_path, monkeypatch):
     rid = _restaurant(db_path)
     _web_user(monkeypatch, db_path, rid)
-    r = client.post("/api/account/profile", json={"owner_name": "Ada", "owner_phone": "555-0100", "tone_preset": "warm",
+    r = client.post("/api/account/profile", json={"owner_name": "Ada", "owner_phone": "555-0100",
                                                   "timezone": "America/Denver", "sign_off_name": "Ada & team"})
     assert r.status_code == 200 and r.get_json()["ok"]
     rest = get_restaurant(rid)
-    assert (rest.owner_name, rest.owner_phone, rest.tone_preset, rest.timezone) == ("Ada", "555-0100", "warm", "America/Denver")
+    assert (rest.owner_name, rest.owner_phone, rest.timezone) == ("Ada", "555-0100", "America/Denver")
+
+
+def test_reply_tone_no_longer_settable_even_if_sent(client, db_path, monkeypatch):
+    """Removed as a setting (brand voice already covers this) — a client on
+    an old build that still sends the field must not have it silently write
+    through anyway."""
+    rid = _restaurant(db_path)
+    _web_user(monkeypatch, db_path, rid)
+    client.post("/api/account/profile", json={"owner_name": "Ada", "tone_preset": "warm"})
+    assert get_restaurant(rid).tone_preset is None
 
 
 def test_web_team_invite_and_revoke(client, db_path, monkeypatch):
@@ -88,14 +98,15 @@ def test_web_team_invite_and_revoke(client, db_path, monkeypatch):
     assert all(m["id"] != uid or not m["is_active"] for m in client.get("/api/account/team").get_json()["members"])
 
 
-def test_web_brand_voice_carries_tone_and_sign_off(client, db_path, monkeypatch):
+def test_web_brand_voice_carries_sign_off(client, db_path, monkeypatch):
     rid = _restaurant(db_path)
     _web_user(monkeypatch, db_path, rid)
     r = client.post("/api/brand-voice", json={"voice_notes": "v", "never_say": "n", "menu_notes": "m",
-                                              "tone_preset": "playful", "sign_off_name": "Chef"})
+                                              "sign_off_name": "Chef"})
     assert r.get_json()["ok"]
     d = client.get("/api/brand-voice").get_json()
-    assert (d["tone_preset"], d["sign_off_name"]) == ("playful", "Chef")
+    assert d["sign_off_name"] == "Chef"
+    assert "tone_preset" not in d
 
 
 def test_mobile_home_carries_the_setup_checklist(client, db_path):
