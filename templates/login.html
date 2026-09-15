@@ -27,7 +27,7 @@
 *{box-sizing:border-box;margin:0;padding:0}
 *:focus-visible{outline:2px solid var(--ember);outline-offset:2px;border-radius:3px}
 input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none}
-:root{--ink:#0e0c0a;--ink2:#3a3530;--ink3:#7a736a;--paper:#f7f4ef;--paper2:#edeae3;--paper3:#e0dbd0;--ember:#c84b2f;--r:8px}
+:root{--ink:#f0ebe0;--ink2:#c4bdb4;--ink3:#cdbfa9;--paper:#1a1714;--paper2:#231f1b;--paper3:#4a4038;--surface:#201d19;--ember:#e06444;--red:#e05555;--red-bg:#2a1010;--green:#4ead7a;--green-bg:#0c2318;--r:8px}
 
 body{
   font-family:'Apfel Grotezk',sans-serif;
@@ -53,7 +53,7 @@ body{
 }
 
 .card{
-  background:var(--paper);
+  background:var(--surface);
   border-radius:14px;
   padding:40px 40px 36px;
   width:100%;
@@ -136,7 +136,7 @@ input{
   font-family:'Apfel Grotezk',sans-serif;
   font-size:14px;
   color:var(--ink);
-  background:white;
+  background:var(--paper);
   outline:none;
   transition:border-color .15s, box-shadow .15s;
 }
@@ -146,12 +146,12 @@ input:focus{
 }
 
 .error{
-  background:#fdf0ef;
-  border:1px solid #f5c6c2;
+  background:var(--red-bg);
+  border:1px solid rgba(224,85,85,.35);
   border-radius:var(--r);
   padding:10px 14px;
   font-size:13px;
-  color:var(--ember);
+  color:var(--red);
   margin-bottom:16px;
 }
 
@@ -162,14 +162,14 @@ input:focus{
   margin-top:20px;
 }
 .ftr-link{
-  color:#7a736a;
+  color:var(--ink3);
   text-decoration:none;
   transition:color .15s,text-shadow .15s;
   border-radius:3px;
 }
 .ftr-link:hover{
-  color:#c84b2f;
-  text-shadow:0 0 12px rgba(200,75,47,.25),0 1px 4px rgba(200,75,47,.15);
+  color:var(--ember);
+  text-shadow:0 0 12px rgba(224,100,68,.25),0 1px 4px rgba(224,100,68,.15);
 }
 /* The living background — a port of the iOS sign-in screen's LoginBackground
    (static/cavnar-field.js). Two canvases under a vignette to Paper. */
@@ -188,7 +188,7 @@ input:focus{
   <div class="sub">Restaurant Intelligence Dashboard</div>
   <div class="form-wrap">
     {% if error %}<div class="error">{{ error }}</div>{% endif %}
-    {% if request.args.get('reset') %}<div style="background:#f0faf4;border:1px solid #a7d7b8;border-radius:6px;padding:10px 14px;font-size:13px;color:#2d6a4f;margin-bottom:14px;text-align:center">✓ Password updated — sign in with your new password.</div>{% endif %}
+    {% if request.args.get('reset') %}<div style="background:var(--green-bg);border:1px solid rgba(78,173,122,.35);border-radius:6px;padding:10px 14px;font-size:13px;color:var(--green);margin-bottom:14px;text-align:center">✓ Password updated — sign in with your new password.</div>{% endif %}
     <form method="POST">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <div class="form-group">
@@ -204,18 +204,18 @@ input:focus{
 
     {% if google_sso_enabled %}
     <div style="display:flex;align-items:center;gap:10px;margin:16px 0 4px">
-      <div style="flex:1;height:1px;background:#e5e0d8"></div>
-      <span style="font-size:11px;color:#a09890;white-space:nowrap">or continue with</span>
-      <div style="flex:1;height:1px;background:#e5e0d8"></div>
+      <div style="flex:1;height:1px;background:var(--paper3)"></div>
+      <span style="font-size:11px;color:var(--ink3);white-space:nowrap">or continue with</span>
+      <div style="flex:1;height:1px;background:var(--paper3)"></div>
     </div>
-    <a href="/auth/google-sso" style="display:flex;align-items:center;justify-content:center;gap:10px;width:100%;padding:10px 16px;border:1px solid #e5e0d8;border-radius:6px;background:white;text-decoration:none;color:#1a1714;font-size:13px;font-weight:500;font-family:'Apfel Grotezk',sans-serif;box-sizing:border-box;margin-top:8px;transition:border-color .15s" onmouseover="this.style.borderColor='#c84b2f'" onmouseout="this.style.borderColor='#e5e0d8'">
+    <a href="/auth/google-sso" style="display:flex;align-items:center;justify-content:center;gap:10px;width:100%;padding:10px 16px;border:1px solid var(--paper3);border-radius:6px;background:var(--paper);text-decoration:none;color:var(--ink);font-size:13px;font-weight:500;font-family:'Apfel Grotezk',sans-serif;box-sizing:border-box;margin-top:8px;transition:border-color .15s" onmouseover="this.style.borderColor='#e06444'" onmouseout="this.style.borderColor='#4a4038'">
       <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.18 1.48-4.97 2.31-8.16 2.31-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/><path fill="none" d="M0 0h48v48H0z"/></svg>
       Sign in with Google
     </a>
     {% endif %}
 
     {% if request.args.get('error') %}
-    <div style="background:#fef2f0;border:1px solid #f5c6c2;border-radius:6px;padding:8px 12px;font-size:12px;color:#c0392b;margin-top:10px;text-align:center">
+    <div style="background:var(--red-bg);border:1px solid rgba(224,85,85,.35);border-radius:6px;padding:8px 12px;font-size:12px;color:var(--red);margin-top:10px;text-align:center">
       {% set errs = {'google_denied':'Google sign-in was cancelled.','no_account':'No account found for that Google email. Contact will@cavnar.ai.','state_mismatch':'Security check failed — please try again.','google_token_failed':'Could not connect to Google. Try again.','no_email':'Google did not return an email address.'} %}
       {{ errs.get(request.args.get('error'), 'Sign-in error. Please try again.') }}
     </div>
@@ -224,7 +224,7 @@ input:focus{
     <div class="footer-note" style="margin-top:12px">
       <a href="/forgot-password" class="ftr-link" style="font-size:12px">Forgot your password?</a>
     </div>
-    <div class="footer-note">Need access? Contact <a href="mailto:will@cavnar.ai" style="color:#c84b2f;text-decoration:none;font-weight:600">will@cavnar.ai</a></div>
+    <div class="footer-note">Need access? Contact <a href="mailto:will@cavnar.ai" style="color:#e06444;text-decoration:none;font-weight:600">will@cavnar.ai</a></div>
     <div class="footer-note" style="margin-top:20px;white-space:nowrap;font-size:10px">
       <a href="/privacy" class="ftr-link">Privacy Policy</a>
       &nbsp;·&nbsp;

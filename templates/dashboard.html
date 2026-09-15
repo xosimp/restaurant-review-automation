@@ -4156,6 +4156,28 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       <div class="ac-h"><div><h2 id="acct-restaurant-h">Restaurant</h2><p>Who you are, how to reach you, and the facts the AI writes from.</p></div>
         <button onclick="toggleProfileEdit()" id="profile-edit-btn" class="cbtn cbtn-primary cbtn-sm">Edit profile</button></div>
 
+      <div id="profile-edit" class="ac-card accent" style="display:none;margin-bottom:14px">
+        <div class="ac-card-h"><div><h3>Edit profile</h3><p>Contact details and how the AI sounds when it writes for you. Saved together.</p></div></div>
+        <div class="ac-form">
+          <div class="ac-field"><label for="pe-owner-name">Owner / GM name</label><input class="ac-input" id="pe-owner-name" value="{{restaurant.owner_name or ''}}"></div>
+          <div class="ac-field"><label for="pe-phone">Phone</label><input class="ac-input" id="pe-phone" value="{{restaurant.owner_phone or ''}}"></div>
+          <div class="ac-field"><label for="pe-tz">Timezone</label><select class="ac-select" id="pe-tz">
+            {% for tz, tzl in [('America/New_York','Eastern'),('America/Chicago','Central'),('America/Denver','Mountain'),('America/Phoenix','Arizona'),('America/Los_Angeles','Pacific'),('America/Anchorage','Alaska'),('Pacific/Honolulu','Hawaii')] %}
+            <option value="{{tz}}" {% if (restaurant.timezone or 'America/Chicago') == tz %}selected{% endif %}>{{tzl}}</option>{% endfor %}</select></div>
+          <div class="ac-field"><label for="pe-lang">Reply language</label><select class="ac-select" id="pe-lang">
+            {% for l, ll in [('','English'),('es','Spanish'),('fr','French'),('it','Italian'),('pt','Portuguese'),('de','German')] %}
+            <option value="{{l}}" {% if (restaurant.response_language or '') == l %}selected{% endif %}>{{ll}}</option>{% endfor %}</select></div>
+          <div class="ac-field"><label for="pe-signoff">Sign-off name</label><input class="ac-input" id="pe-signoff" value="{{restaurant.sign_off_name or ''}}" placeholder="e.g. Maria &amp; the team"></div>
+          <div class="ac-field wide"><label for="pe-voice">How you sound</label><textarea class="ac-textarea" id="pe-voice" rows="2" placeholder="e.g. genuine and warm, a little witty, never corporate">{{restaurant.voice_notes or ''}}</textarea></div>
+          <div class="ac-field"><label for="pe-never">Words to never use</label><input class="ac-input" id="pe-never" value="{{restaurant.never_say or ''}}" placeholder="e.g. culinary journey, indulge"></div>
+          <div class="ac-field" style="grid-column:span 2"><label for="pe-menu">Menu &amp; current specials</label><textarea class="ac-textarea" id="pe-menu" rows="2" placeholder="Signature dishes and what's running now">{{restaurant.menu_notes or ''}}</textarea></div>
+        </div>
+        <div class="ac-inline" style="margin-top:14px">
+          <button class="cbtn cbtn-primary" id="pe-save" onclick="saveProfile()">Save changes</button>
+          <button class="cbtn cbtn-secondary" onclick="toggleProfileEdit()">Cancel</button>
+        </div>
+      </div>
+
       <div class="ac-grid three">
         <div class="ac-card">
           <div class="ac-card-h"><div><h3>Identity</h3><p>Set by Will at onboarding.</p></div></div>
@@ -4187,28 +4209,6 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
             <button class="cbtn cbtn-secondary cbtn-sm" onclick="document.getElementById('email-modal').style.display='flex'">Change email</button>
             <button class="cbtn cbtn-secondary cbtn-sm" onclick="document.getElementById('pw-modal').style.display='flex'">Change password</button>
           </div>
-        </div>
-      </div>
-
-      <div id="profile-edit" class="ac-card accent" style="display:none;margin-top:14px">
-        <div class="ac-card-h"><div><h3>Edit profile</h3><p>Contact details and how the AI sounds when it writes for you. Saved together.</p></div></div>
-        <div class="ac-form">
-          <div class="ac-field"><label for="pe-owner-name">Owner / GM name</label><input class="ac-input" id="pe-owner-name" value="{{restaurant.owner_name or ''}}"></div>
-          <div class="ac-field"><label for="pe-phone">Phone</label><input class="ac-input" id="pe-phone" value="{{restaurant.owner_phone or ''}}"></div>
-          <div class="ac-field"><label for="pe-tz">Timezone</label><select class="ac-select" id="pe-tz">
-            {% for tz, tzl in [('America/New_York','Eastern'),('America/Chicago','Central'),('America/Denver','Mountain'),('America/Phoenix','Arizona'),('America/Los_Angeles','Pacific'),('America/Anchorage','Alaska'),('Pacific/Honolulu','Hawaii')] %}
-            <option value="{{tz}}" {% if (restaurant.timezone or 'America/Chicago') == tz %}selected{% endif %}>{{tzl}}</option>{% endfor %}</select></div>
-          <div class="ac-field"><label for="pe-lang">Reply language</label><select class="ac-select" id="pe-lang">
-            {% for l, ll in [('','English'),('es','Spanish'),('fr','French'),('it','Italian'),('pt','Portuguese'),('de','German')] %}
-            <option value="{{l}}" {% if (restaurant.response_language or '') == l %}selected{% endif %}>{{ll}}</option>{% endfor %}</select></div>
-          <div class="ac-field"><label for="pe-signoff">Sign-off name</label><input class="ac-input" id="pe-signoff" value="{{restaurant.sign_off_name or ''}}" placeholder="e.g. Maria &amp; the team"></div>
-          <div class="ac-field wide"><label for="pe-voice">How you sound</label><textarea class="ac-textarea" id="pe-voice" rows="2" placeholder="e.g. genuine and warm, a little witty, never corporate">{{restaurant.voice_notes or ''}}</textarea></div>
-          <div class="ac-field"><label for="pe-never">Words to never use</label><input class="ac-input" id="pe-never" value="{{restaurant.never_say or ''}}" placeholder="e.g. culinary journey, indulge"></div>
-          <div class="ac-field" style="grid-column:span 2"><label for="pe-menu">Menu &amp; current specials</label><textarea class="ac-textarea" id="pe-menu" rows="2" placeholder="Signature dishes and what's running now">{{restaurant.menu_notes or ''}}</textarea></div>
-        </div>
-        <div class="ac-inline" style="margin-top:14px">
-          <button class="cbtn cbtn-primary" id="pe-save" onclick="saveProfile()">Save changes</button>
-          <button class="cbtn cbtn-secondary" onclick="toggleProfileEdit()">Cancel</button>
         </div>
       </div>
 
@@ -9202,6 +9202,14 @@ function buildAccountHoursGrid(open, close) {
 
 function _ehEsc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 
+function _ehFmtDateTime(s){
+  var m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/.exec(String(s||''));
+  if(!m) return _ehEsc(s);
+  var y=m[1], mo=parseInt(m[2],10), d=parseInt(m[3],10), h=parseInt(m[4],10), mi=m[5];
+  var ap = h>=12?'pm':'am', h12=h%12; if(h12===0)h12=12;
+  return mo+'/'+d+'/'+y+', '+h12+':'+mi+ap;
+}
+
 function loadEmailHistory(){
   var el = document.getElementById('eh-body');
   if(!el) return;
@@ -9212,16 +9220,16 @@ function loadEmailHistory(){
       el.innerHTML = '<span style="color:var(--ink3)">No email sent yet.</span>';
       return;
     }
-    var html = '<table style="width:100%;border-collapse:collapse;font-size:11.5px"><tbody>';
+    var html = '<table style="width:100%;border-collapse:collapse;font-size:15px"><tbody>';
     d.emails.forEach(function(e){
       var badge = e.failed
-        ? '<span style="font-size:9px;font-weight:700;background:rgba(239,68,68,.15);color:#ef4444;padding:2px 7px;border-radius:10px">' + _ehEsc(e.status || 'failed') + '</span>'
-        : '<span style="font-size:9px;font-weight:700;background:rgba(111,207,151,.14);color:#6fcf97;padding:2px 7px;border-radius:10px">' + _ehEsc(e.status || 'sent') + '</span>';
+        ? '<span style="font-size:11px;font-weight:700;background:rgba(239,68,68,.15);color:#ef4444;padding:3px 8px;border-radius:10px">' + _ehEsc(e.status || 'failed') + '</span>'
+        : '<span style="font-size:11px;font-weight:700;background:rgba(111,207,151,.14);color:#6fcf97;padding:3px 8px;border-radius:10px">' + _ehEsc(e.status || 'sent') + '</span>';
       html += '<tr style="border-bottom:1px solid var(--paper3)">';
-      html += '<td style="padding:7px 4px;color:var(--ink)">' + _ehEsc(e.label) + '</td>';
-      html += '<td style="padding:7px 4px;color:var(--ink3)">' + _ehEsc(e.to_email) + '</td>';
-      html += '<td style="padding:7px 4px;color:var(--ink3);white-space:nowrap">' + _ehEsc(e.sent_at) + '</td>';
-      html += '<td style="padding:7px 4px;text-align:right">' + badge + '</td>';
+      html += '<td style="padding:9px 6px;color:var(--ink)">' + _ehEsc(e.label) + '</td>';
+      html += '<td style="padding:9px 6px;color:var(--ink3)">' + _ehEsc(e.to_email) + '</td>';
+      html += '<td style="padding:9px 6px;color:var(--ink3);white-space:nowrap">' + _ehFmtDateTime(e.sent_at) + '</td>';
+      html += '<td style="padding:9px 6px;text-align:right">' + badge + '</td>';
       html += '</tr>';
     });
     html += '</tbody></table>';
