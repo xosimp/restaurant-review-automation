@@ -126,8 +126,13 @@ CREATE INDEX IF NOT EXISTS idx_memberships_user
 -- is per-IP, in memory, and per-process, so one kitchen behind a single NAT
 -- would share a 5-attempt budget across the whole staff and a deploy would
 -- reset it. This is per-membership and persisted.
+-- ON DELETE CASCADE so a membership that is ever hard-deleted takes its
+-- attempt counter with it. Memberships are soft-deleted today (is_active=0),
+-- so this is belt-and-braces for a future hard delete — and databases created
+-- before this clause exists keep the un-cascaded definition, which is why
+-- init_auth() also sweeps orphans on every boot.
 CREATE TABLE IF NOT EXISTS membership_pin_attempts (
-    membership_id   INTEGER PRIMARY KEY REFERENCES memberships(id),
+    membership_id   INTEGER PRIMARY KEY REFERENCES memberships(id) ON DELETE CASCADE,
     failed_count    INTEGER NOT NULL DEFAULT 0,
     last_failed_at  TEXT,
     locked_until    TEXT
@@ -147,7 +152,64 @@ CREATE TABLE IF NOT EXISTS staff_portal_tokens (
 );
 CREATE INDEX IF NOT EXISTS idx_staff_portal_restaurant
     ON staff_portal_tokens(restaurant_id, revoked_at);
+
+-- Per-IP throttle for the staff portal's public surface (roster reads and
+-- sign-in attempts), replacing a module-level dict.
+--
+-- That dict had three problems and each one mattered: it reset on every
+-- deploy, it was per-process so the real ceiling was 30 × gunicorn workers ×
+-- replicas, and no key was ever removed, so it leaked one entry per IP
+-- forever. Rows here are deleted as they age out of the window, so the table
+-- is self-evicting rather than needing a sweeper.
+CREATE TABLE IF NOT EXISTS portal_attempts (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    ip              TEXT    NOT NULL,
+    created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_portal_attempts_ip
+    ON portal_attempts(ip, created_at);
+
+-- One-shot tokens that make a captured PIN sign-in POST unreplayable.
+--
+-- The body is {membership_id, pin} and nothing else varied between requests,
+-- so a captured one worked verbatim until the PIN changed. A nonce is minted
+-- with the roster, spent by the sign-in, and cannot be spent twice.
+CREATE TABLE IF NOT EXISTS portal_nonces (
+    nonce           TEXT    PRIMARY KEY,
+    restaurant_id   INTEGER NOT NULL,
+    created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_portal_nonces_created
+    ON portal_nonces(created_at);
 """
+
+# Indexes that reference columns added by the ALTER migrations below, so they
+# cannot live in AUTH_SCHEMA — that script runs before the columns exist.
+#
+# sessions was designed for ~1 row per restaurant. The employee tier changes
+# the access pattern to one row per employee per shift, and EVERY sign-in
+# runs two DELETE … WHERE user_id=? statements (expiry prune, then the staff
+# revoke). Unindexed, both are full scans of a table that now grows with
+# headcount × shifts, and they all land at once during the pre-shift rush.
+#
+# login_history is append-only and never pruned by design (it is what the
+# Account sign-in history reads), so it grows fastest of all — one row per
+# sign-in forever. get_login_history orders by created_at per user.
+AUTH_INDEXES = """
+CREATE INDEX IF NOT EXISTS idx_sessions_user
+    ON sessions(user_id, device_type);
+CREATE INDEX IF NOT EXISTS idx_sessions_expires
+    ON sessions(expires_at);
+CREATE INDEX IF NOT EXISTS idx_login_history_user
+    ON login_history(user_id, created_at);
+"""
+
+# login_history is the only append-only table in the schema, so it is also the
+# only one with no natural ceiling: 250k employees × one sign-in per shift is
+# ~91M rows a year in the same SQLite file serving live traffic. 90 days is
+# well past the security purpose it serves (the Account screen shows the last
+# 50, and "was this me?" is a question people ask within days, not quarters).
+LOGIN_HISTORY_RETENTION_DAYS = 90
 
 def init_auth(db_path: str = DB_PATH):
     # Tables must exist before the ALTER migrations below can run against them —
@@ -190,6 +252,14 @@ def init_auth(db_path: str = DB_PATH):
         # per-login OVERRIDE an owner sets deliberately through
         # /account/team/<id>/can-manage.
         "ALTER TABLE users ADD COLUMN can_manage_team INTEGER DEFAULT 1",
+        # The employee's JOB title ("Bartender"), as distinct from their
+        # AUTHORIZATION role ("employee"). It used to be derived per request
+        # from shift data via a loader that falls back to bundled SAMPLE
+        # shifts — so at a restaurant with no uploaded schedule, an employee
+        # whose name collided with a fixture was handed that fixture's job
+        # title, and the job title decides which task checklist they may
+        # complete. Authorization must never be derived from invented data.
+        "ALTER TABLE memberships ADD COLUMN job_role TEXT",
     ]:
         try:
             import sqlite3 as _sql
@@ -215,7 +285,21 @@ def init_auth(db_path: str = DB_PATH):
     except Exception:
         pass
 
+    # Indexes last: they name columns the ALTERs above add.
+    try:
+        conn_i = sqlite3.connect(db_path)
+        conn_i.executescript(AUTH_INDEXES)
+        conn_i.commit()
+        conn_i.close()
+    except Exception as exc:
+        # Not fatal — the app runs correctly without them, just slowly — but a
+        # silently missing index is exactly the kind of thing that is only
+        # discovered under load, so it must be visible at boot.
+        print(f"[auth] index creation failed: {exc}")
+
     backfill_memberships(db_path=db_path)
+    prune_login_history(db_path=db_path)
+    sweep_orphan_pin_attempts(db_path=db_path)
 
     # A missing pepper silently downgrades every staff PIN to something a
     # leaked database makes trivially brute-forceable. It must not be a
@@ -240,7 +324,11 @@ def backfill_memberships(db_path: str = DB_PATH) -> int:
     Returns how many rows it created, for the migration test to assert on.
     """
     try:
-        conn = sqlite3.connect(db_path)
+        # Through get_conn like every other write path, so PRAGMA
+        # foreign_keys=ON applies here too. Harmless for an INSERT…SELECT off
+        # users, but a migration that writes under different pragmas than the
+        # app is a footgun waiting for the first backfill that isn't harmless.
+        conn = get_conn(db_path)
         cur = conn.execute("""
             INSERT INTO memberships (user_id, restaurant_id, role, is_active, created_at)
             SELECT u.id, u.restaurant_id, COALESCE(NULLIF(TRIM(u.role), ''), 'client'),
@@ -260,6 +348,53 @@ def backfill_memberships(db_path: str = DB_PATH) -> int:
         # Same fail-quiet stance as the column migrations above: a backfill
         # failure must not stop the app booting, and the dual-read in
         # get_session_user() falls back to users.restaurant_id regardless.
+        return 0
+
+
+def prune_login_history(days: int = None, db_path: str = DB_PATH) -> int:
+    """Drop sign-in history older than the retention window.
+
+    login_history is deliberately append-only — it is what survives a session
+    being expired, revoked or deduped, which is the whole reason it exists
+    separately from `sessions`. "Append-only" was never meant to mean
+    "unbounded"; a staff tier writes a row per employee per shift, so the
+    table outgrows everything else in the file. Runs at boot; returns how many
+    rows it removed so a test can assert the window is actually applied.
+    """
+    days = LOGIN_HISTORY_RETENTION_DAYS if days is None else days
+    try:
+        conn = get_conn(db_path)
+        try:
+            cur = conn.execute(
+                "DELETE FROM login_history WHERE created_at < datetime('now', ?)",
+                (f"-{int(days)} days",))
+            conn.commit()
+            return cur.rowcount or 0
+        finally:
+            conn.close()
+    except Exception:
+        return 0
+
+
+def sweep_orphan_pin_attempts(db_path: str = DB_PATH) -> int:
+    """Delete lockout counters whose membership no longer exists.
+
+    The table gained ON DELETE CASCADE, but only for databases created after
+    that clause existed — SQLite cannot add a foreign-key action to a live
+    table without rebuilding it. This covers the ones already out there, and
+    costs nothing when there is nothing to sweep.
+    """
+    try:
+        conn = get_conn(db_path)
+        try:
+            cur = conn.execute(
+                "DELETE FROM membership_pin_attempts WHERE membership_id NOT IN "
+                "(SELECT id FROM memberships)")
+            conn.commit()
+            return cur.rowcount or 0
+        finally:
+            conn.close()
+    except Exception:
         return 0
 
 
@@ -287,11 +422,21 @@ def get_memberships_for_user(user_id: int, db_path: str = DB_PATH) -> list:
 
 
 def get_memberships_for_restaurant(restaurant_id: int, role: str = None,
+                                   include_inactive: bool = False,
                                    db_path: str = DB_PATH) -> list:
+    """The memberships at one restaurant.
+
+    include_inactive is for the OWNER-FACING management list only: a
+    deactivated employee has to stay visible to be reactivated. Every
+    staff-facing caller (the roster, the portal) leaves it off, so a
+    deactivated person never appears on the sign-in screen.
+    """
     conn = get_conn(db_path)
     sql = ("SELECT m.*, u.username, u.email, u.is_active AS user_is_active "
            "FROM memberships m JOIN users u ON u.id = m.user_id "
-           "WHERE m.restaurant_id=? AND m.is_active=1 AND u.is_active=1")
+           "WHERE m.restaurant_id=?")
+    if not include_inactive:
+        sql += " AND m.is_active=1 AND u.is_active=1"
     args = [restaurant_id]
     if role:
         sql += " AND m.role=?"
@@ -303,7 +448,8 @@ def get_memberships_for_restaurant(restaurant_id: int, role: str = None,
 
 
 def upsert_membership(user_id: int, restaurant_id: int, role: str,
-                      employee_name: str = None, db_path: str = DB_PATH) -> dict:
+                      employee_name: str = None, job_role: str = None,
+                      db_path: str = DB_PATH) -> dict:
     """Create or update one identity's role at one restaurant."""
     from permissions import ROLE_PERMISSIONS, normalize_role
     role = normalize_role(role)
@@ -312,14 +458,16 @@ def upsert_membership(user_id: int, restaurant_id: int, role: str,
     conn = get_conn(db_path)
     try:
         conn.execute("""
-            INSERT INTO memberships (user_id, restaurant_id, role, employee_name, updated_at)
-            VALUES (?,?,?,?,datetime('now'))
+            INSERT INTO memberships (user_id, restaurant_id, role, employee_name, job_role, updated_at)
+            VALUES (?,?,?,?,?,datetime('now'))
             ON CONFLICT(user_id, restaurant_id) DO UPDATE SET
                 role=excluded.role,
                 employee_name=COALESCE(excluded.employee_name, memberships.employee_name),
+                job_role=COALESCE(excluded.job_role, memberships.job_role),
                 is_active=1,
                 updated_at=datetime('now')
-        """, (user_id, restaurant_id, role, (employee_name or "").strip() or None))
+        """, (user_id, restaurant_id, role, (employee_name or "").strip() or None,
+              (job_role or "").strip() or None))
         conn.commit()
         row = conn.execute(
             "SELECT * FROM memberships WHERE user_id=? AND restaurant_id=?",
@@ -327,6 +475,78 @@ def upsert_membership(user_id: int, restaurant_id: int, role: str,
     finally:
         conn.close()
     return dict(row)
+
+
+def update_membership_details(membership_id: int, restaurant_id: int,
+                              role: str = None, employee_name: str = None,
+                              job_role: str = None, is_active: bool = None,
+                              db_path: str = DB_PATH) -> Optional[dict]:
+    """Day-two operations on one membership: promote, rename, reactivate.
+
+    These were the gap that made the auth system un-operable by a customer:
+    every other lifecycle step had an endpoint, but a promotion, a corrected
+    spelling and a re-hire all required a database console. The rename matters
+    most — employee_name is the join key to seven name-keyed tables, so a typo
+    silently detaches someone from their own schedule, ratings and
+    availability, and there was no way to fix it.
+
+    Scoped by restaurant_id like every other membership write, so a guessed id
+    belonging to another tenant matches nothing. Returns the updated row, or
+    None when nothing matched.
+    """
+    sets, args = [], []
+    if role is not None:
+        from permissions import ROLE_PERMISSIONS, normalize_role
+        role = normalize_role(role)
+        if role not in ROLE_PERMISSIONS:
+            raise ValueError(f"unknown role: {role!r}")
+        sets.append("role=?")
+        args.append(role)
+    if employee_name is not None:
+        cleaned = (employee_name or "").strip()
+        if not cleaned:
+            raise ValueError("employee_name cannot be blank")
+        sets.append("employee_name=?")
+        args.append(cleaned)
+    if job_role is not None:
+        sets.append("job_role=?")
+        args.append((job_role or "").strip() or None)
+    if is_active is not None:
+        sets.append("is_active=?")
+        args.append(1 if is_active else 0)
+    if not sets:
+        return get_membership_by_id(membership_id, restaurant_id, db_path=db_path)
+
+    sets.append("updated_at=datetime('now')")
+    conn = get_conn(db_path)
+    try:
+        cur = conn.execute(
+            f"UPDATE memberships SET {', '.join(sets)} WHERE id=? AND restaurant_id=?",
+            tuple(args) + (membership_id, restaurant_id))
+        conn.commit()
+        if not cur.rowcount:
+            return None
+    finally:
+        conn.close()
+    # A demotion or a deactivation has to end the access it already granted,
+    # not wait for a session to expire — same stance as set_membership_active.
+    if is_active is False or role is not None:
+        _end_staff_sessions_for_membership(membership_id, restaurant_id, db_path=db_path)
+    return get_membership_by_id(membership_id, restaurant_id, db_path=db_path)
+
+
+def get_membership_by_id(membership_id: int, restaurant_id: int,
+                         db_path: str = DB_PATH) -> Optional[dict]:
+    """One membership by id, scoped to the acting restaurant. Unlike
+    get_membership() this does NOT filter on is_active — an owner managing a
+    deactivated employee has to be able to see and reactivate them."""
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT * FROM memberships WHERE id=? AND restaurant_id=?",
+                           (membership_id, restaurant_id)).fetchone()
+    finally:
+        conn.close()
+    return dict(row) if row else None
 
 
 def set_membership_active(membership_id: int, restaurant_id: int, active: bool,
@@ -460,6 +680,31 @@ def pin_pepper_health(db_path: str = DB_PATH) -> dict:
             "ok": ok, "message": message}
 
 
+# A KDF-shaped decoy for the paths that have nothing to check against.
+#
+# The identical error messages below stop an attacker READING which staff have
+# access; they did nothing about the clock. A nonexistent or wrong-tenant
+# membership returned in ~0.35 ms because it never reached scrypt, against
+# ~57 ms for a real membership with a wrong PIN — a 160× tell that answered
+# exactly the question the messages were written to refuse.
+_DUMMY_PIN_HASH = None
+
+
+def _burn_pin_cycles(candidate: str):
+    """Spend a real KDF's worth of time on a path that has no hash to verify.
+
+    Built lazily (and once per process) so a pepper set after import is still
+    picked up, and so boot doesn't pay for a hash most deploys never need.
+    """
+    global _DUMMY_PIN_HASH
+    try:
+        if _DUMMY_PIN_HASH is None:
+            _DUMMY_PIN_HASH = generate_password_hash(_peppered("0" * PIN_MIN_LENGTH))
+        check_password_hash(_DUMMY_PIN_HASH, _peppered((candidate or "").strip()))
+    except Exception:
+        pass
+
+
 def validate_pin(pin: str) -> str:
     """Normalize and refuse PINs that aren't worth the name."""
     pin = (pin or "").strip()
@@ -575,6 +820,75 @@ def _record_pin_failure(membership_id: int, db_path: str = DB_PATH) -> dict:
     return pin_lockout_state(membership_id, db_path=db_path)
 
 
+def log_pin_event(membership_id: int, restaurant_id: int, event: str,
+                  ip_address: str = None, db_path: str = DB_PATH) -> bool:
+    """Record a PIN failure or lockout as a durable security event.
+
+    membership_pin_attempts is a COUNTER, not a record: it resets to zero the
+    moment the lockout fires and is deleted outright on the next successful
+    sign-in. That makes it useless for the question that actually matters —
+    "is someone working through the whole roster?" — because one failed
+    attempt against each of forty employees leaves no trace anywhere.
+
+    These go into login_history, which is already append-only, already
+    per-user, and already what the Account screen reads, rather than a second
+    events table nothing would ever look at.
+    """
+    if event not in ("pin_failed", "pin_locked"):
+        return False
+    try:
+        conn = get_conn(db_path)
+        try:
+            row = conn.execute(
+                "SELECT user_id FROM memberships WHERE id=? AND restaurant_id=?",
+                (membership_id, restaurant_id)).fetchone()
+            if not row:
+                return False
+            conn.execute(
+                "INSERT INTO login_history (user_id, restaurant_id, event, ip_address, "
+                "user_agent, device_type) VALUES (?,?,?,?,?,?)",
+                (row["user_id"], restaurant_id, event, ip_address or "", "", "staff_pin"))
+            conn.commit()
+            return True
+        finally:
+            conn.close()
+    except Exception as exc:
+        # A security log that fails silently is worse than none, because it
+        # reads as "no attacks" rather than "no logging".
+        try:
+            import ops as _ops_pe
+            _ops_pe.capture(exc, job="log_pin_event",
+                            context=f"membership_id={membership_id} event={event}")
+        except Exception:
+            print(f"[log_pin_event] failed for membership {membership_id}: {exc}")
+        return False
+
+
+def get_pin_security_events(restaurant_id: int, limit: int = 100,
+                            db_path: str = DB_PATH) -> list:
+    """PIN failures and lockouts across one restaurant, most recent first —
+    the cross-employee view the per-membership counter cannot give."""
+    try:
+        conn = get_conn(db_path)
+        try:
+            rows = conn.execute("""
+                SELECT h.event, h.ip_address, h.created_at, h.user_id,
+                       COALESCE(m.employee_name, u.username) AS name
+                FROM login_history h
+                JOIN users u ON u.id = h.user_id
+                LEFT JOIN memberships m
+                       ON m.user_id = h.user_id AND m.restaurant_id = h.restaurant_id
+                WHERE h.restaurant_id=? AND h.event IN ('pin_failed','pin_locked')
+                ORDER BY h.created_at DESC, h.id DESC
+                LIMIT ?
+            """, (restaurant_id, limit)).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
+    except Exception:
+        return []
+
+
 def _clear_pin_failures(membership_id: int, db_path: str = DB_PATH):
     conn = get_conn(db_path)
     conn.execute("DELETE FROM membership_pin_attempts WHERE membership_id=?", (membership_id,))
@@ -598,16 +912,17 @@ def unlock_membership_pin(membership_id: int, restaurant_id: int,
 
 
 def verify_membership_pin(membership_id: int, restaurant_id: int, pin: str,
-                          db_path: str = DB_PATH) -> dict:
+                          ip_address: str = None, db_path: str = DB_PATH) -> dict:
     """Check a PIN. {ok} on success, {ok: False, error, locked} otherwise.
 
     restaurant_id is passed in from the portal token, never from the client,
     and is re-checked here so a tampered membership_id cannot reach across
     tenants even if it is a real id belonging to someone else's restaurant.
 
-    Every failure path returns the same message. Distinguishing "no PIN set"
-    from "wrong PIN" would let anyone with the portal link enumerate which
-    staff have access.
+    Every failure path returns the same message AND spends the same time.
+    Distinguishing "no PIN set" from "wrong PIN" would let anyone with the
+    portal link enumerate which staff have access — and so would answering in
+    0.35 ms instead of 57 ms, which is what the early returns used to do.
     """
     generic = {"ok": False, "error": "That PIN didn't match.", "locked": False}
     conn = get_conn(db_path)
@@ -619,6 +934,7 @@ def verify_membership_pin(membership_id: int, restaurant_id: int, pin: str,
     finally:
         conn.close()
     if not row:
+        _burn_pin_cycles(pin)
         return generic
 
     state = pin_lockout_state(membership_id, db_path=db_path)
@@ -629,15 +945,26 @@ def verify_membership_pin(membership_id: int, restaurant_id: int, pin: str,
 
     if not row["pin_hash"]:
         # No PIN issued yet. Still counted, so the lockout also throttles
-        # probing at memberships that cannot log in at all.
-        _record_pin_failure(membership_id, db_path=db_path)
+        # probing at memberships that cannot log in at all — and still pays
+        # the KDF, so it is not distinguishable from a wrong PIN by timing.
+        _burn_pin_cycles(pin)
+        after_nopin = _record_pin_failure(membership_id, db_path=db_path)
+        log_pin_event(membership_id, restaurant_id, "pin_failed",
+                      ip_address=ip_address, db_path=db_path)
+        if after_nopin["locked"]:
+            log_pin_event(membership_id, restaurant_id, "pin_locked",
+                          ip_address=ip_address, db_path=db_path)
         return generic
 
     candidate = (pin or "").strip()
     version, raw_hash = _decode_pin_hash(row["pin_hash"])
     if not check_password_hash(raw_hash, _peppered(candidate, version=version)):
         after = _record_pin_failure(membership_id, db_path=db_path)
+        log_pin_event(membership_id, restaurant_id, "pin_failed",
+                      ip_address=ip_address, db_path=db_path)
         if after["locked"]:
+            log_pin_event(membership_id, restaurant_id, "pin_locked",
+                          ip_address=ip_address, db_path=db_path)
             mins = max(1, after["seconds_remaining"] // 60)
             return {"ok": False, "locked": True,
                     "error": f"Too many tries. Ask a manager to unlock, or wait {mins} min."}
@@ -732,6 +1059,111 @@ def restaurant_for_portal_token(token: str, db_path: str = DB_PATH) -> Optional[
     finally:
         conn.close()
     return row["restaurant_id"] if row else None
+
+
+# ── Staff portal throttle + replay protection ──────────────────────────────
+
+PORTAL_MAX_ATTEMPTS = 30
+PORTAL_WINDOW_SECONDS = 300
+PORTAL_NONCE_MINUTES = 30
+
+
+def record_portal_attempt(ip: str, db_path: str = DB_PATH) -> None:
+    """Count one hit on the portal's public surface, and evict the expired.
+
+    The delete is done here rather than in a scheduled sweep so the table can
+    never grow past one window's worth of traffic, with no process that has to
+    remember to run.
+    """
+    if not ip:
+        return
+    try:
+        conn = get_conn(db_path)
+        try:
+            conn.execute("INSERT INTO portal_attempts (ip) VALUES (?)", (ip,))
+            conn.execute("DELETE FROM portal_attempts WHERE created_at < datetime('now', ?)",
+                         (f"-{PORTAL_WINDOW_SECONDS} seconds",))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as exc:
+        # Deliberately does not raise: a throttle that breaks the door it
+        # guards is worse than the spraying it prevents, and the
+        # per-membership lockout is still in force. But it must not be
+        # INVISIBLE — a counter that has silently stopped counting looks
+        # exactly like an estate nobody is attacking.
+        _report_throttle_failure(exc, "record_portal_attempt", ip)
+
+
+def _report_throttle_failure(exc, where, ip):
+    try:
+        import ops as _ops_throttle
+        _ops_throttle.capture(exc, job="portal_throttle", context=f"{where} ip={ip}")
+    except Exception:
+        print(f"[portal_throttle] {where} failed for {ip}: {exc}")
+
+
+def portal_attempts_exceeded(ip: str, db_path: str = DB_PATH) -> bool:
+    """True when this IP has burned its budget inside the sliding window."""
+    if not ip:
+        return False
+    try:
+        conn = get_conn(db_path)
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) AS n FROM portal_attempts "
+                "WHERE ip=? AND created_at >= datetime('now', ?)",
+                (ip, f"-{PORTAL_WINDOW_SECONDS} seconds")).fetchone()
+        finally:
+            conn.close()
+        return (row["n"] if row else 0) >= PORTAL_MAX_ATTEMPTS
+    except Exception as exc:
+        # Fails open, for the same reason as above — and reported, for the
+        # same reason as above.
+        _report_throttle_failure(exc, "portal_attempts_exceeded", ip)
+        return False
+
+
+def issue_portal_nonce(restaurant_id: int, db_path: str = DB_PATH) -> str:
+    """Mint a single-use token for one upcoming PIN sign-in."""
+    nonce = secrets.token_urlsafe(18)
+    try:
+        conn = get_conn(db_path)
+        try:
+            conn.execute("DELETE FROM portal_nonces WHERE created_at < datetime('now', ?)",
+                         (f"-{PORTAL_NONCE_MINUTES} minutes",))
+            conn.execute("INSERT INTO portal_nonces (nonce, restaurant_id) VALUES (?,?)",
+                         (nonce, restaurant_id))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception:
+        return ""
+    return nonce
+
+
+def consume_portal_nonce(nonce: str, restaurant_id: int, db_path: str = DB_PATH) -> bool:
+    """Spend a nonce. True exactly once per issued token.
+
+    The DELETE is the check: rowcount is 1 for the first caller and 0 for
+    every replay, so two simultaneous requests carrying the same nonce cannot
+    both win regardless of ordering.
+    """
+    if not nonce:
+        return False
+    try:
+        conn = get_conn(db_path)
+        try:
+            cur = conn.execute(
+                "DELETE FROM portal_nonces WHERE nonce=? AND restaurant_id=? "
+                "AND created_at >= datetime('now', ?)",
+                (nonce, restaurant_id, f"-{PORTAL_NONCE_MINUTES} minutes"))
+            conn.commit()
+            return (cur.rowcount or 0) > 0
+        finally:
+            conn.close()
+    except Exception:
+        return False
 
 
 def staff_login_required(f):
@@ -1042,6 +1474,48 @@ def hash_session_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
+def install_proxy_fix(app):
+    """Trust exactly one proxy hop, in one place.
+
+    Railway terminates TLS at its edge, so every request reaches this process
+    over plain HTTP with the real scheme and client address in X-Forwarded-*.
+    Without this, request.is_secure is always False, request.remote_addr is
+    the proxy for every visitor (which quietly merges the whole internet into
+    one bucket for any per-IP throttle), and url_for(_external=True) builds
+    http:// links.
+
+    It exists as a function rather than three lines in hosted_dashboard so the
+    choice — one hop, deliberately, not "however many the header claims" — is
+    testable. Handlers must never read X-Forwarded-* themselves; the staff
+    cookie once decided its Secure flag that way, which is an unvalidated
+    header deciding a security property.
+    """
+    from werkzeug.middleware.proxy_fix import ProxyFix
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+    return app
+
+
+def cookies_require_secure() -> bool:
+    """Whether session cookies must carry the Secure flag.
+
+    One signal for every cookie this app sets. The staff cookie used to decide
+    this for itself with `request.headers.get("X-Forwarded-Proto") == "https"`,
+    which is a different question with a different answer: it asks the CLIENT
+    (through a proxy header the app never validated, normalised, or installed
+    ProxyFix to trust) instead of asking the DEPLOYMENT. If Railway's proxy
+    ever spelled that header differently, staff sessions would have gone out
+    over plaintext with no error and nothing to notice it by.
+
+    Deployment is the right question because the answer cannot be influenced
+    by a request: on Railway, everything is HTTPS, so Secure is unconditional.
+    CAVNAR_FORCE_SECURE_COOKIES exists for any other TLS-terminating host.
+    """
+    import os
+    return bool(os.getenv("RAILWAY_ENVIRONMENT")
+                or os.getenv("RAILWAY_PROJECT_ID")
+                or os.getenv("CAVNAR_FORCE_SECURE_COOKIES"))
+
+
 def create_session(user_id: int, days: int = 30,
                    ip_address: str = None, user_agent: str = None,
                    device_type: str = "web", device_id: str = None,
@@ -1074,9 +1548,15 @@ def create_session(user_id: int, days: int = 30,
         "INSERT INTO sessions (token, user_id, expires_at, ip_address, user_agent, device_type, device_id) VALUES (?,?,?,?,?,?,?)",
         (hash_session_token(token), user_id, expires, ip_address or "", user_agent or "", device_type, device_id or "")
     )
+    # The event names the KIND of sign-in, not just that one happened. A staff
+    # PIN sign-in and an owner console sign-in are different security events
+    # with different expected patterns, and reading `device_type` alone to tell
+    # them apart works only while that column happens to be populated — it is
+    # nullable and defaulted, so an audit query would silently lump them.
     conn.execute(
         "INSERT INTO login_history (user_id, restaurant_id, event, ip_address, user_agent, device_type) VALUES (?,?,?,?,?,?)",
-        (user_id, restaurant_id, "login", ip_address or "", user_agent or "", device_type)
+        (user_id, restaurant_id, "staff_login" if device_type == "staff_pin" else "login",
+         ip_address or "", user_agent or "", device_type)
     )
     conn.commit()
     conn.close()
@@ -1138,24 +1618,71 @@ def revoke_other_sessions(user_id: int, current_token: str,
 
 INACTIVITY_HOURS = 8  # Log out after 8 hours of inactivity
 
+# Device kinds the 8-hour inactivity rule does not apply to, each for its own
+# reason:
+#
+#   ios       — the window is a "walked away from the laptop" rule. It would
+#               log a phone out (2FA and all) every time an owner checked the
+#               app once a day. iOS relies on the 30-day hard expiry plus the
+#               app's own Face ID lock on foreground.
+#   staff_pin — these already carry a deliberately short hard expiry
+#               (STAFF_SESSION_HOURS, one shift). Leaving them subject to the
+#               8-hour rule as well made that constant dead code: an employee
+#               who signed in at the start of a double and did not touch the
+#               portal was signed out mid-shift, which is precisely the
+#               friction a shift-length TTL was chosen to avoid. The hard
+#               expiry IS the control here.
+_INACTIVITY_EXEMPT_DEVICES = frozenset({"ios", "staff_pin"})
+
+# The session row plus the membership for the restaurant the session is ACTING
+# in, in one round trip. The active-restaurant overlay is expressed in SQL
+# rather than applied afterwards so the join lands on the same restaurant the
+# Python below resolves to; it deliberately reads u.role (the stored role),
+# because that is what the owner overlay has always keyed off — the membership
+# role that replaces it further down is a consequence of this join, not an
+# input to it.
+_SESSION_USER_SQL = """
+    SELECT u.*, s.last_active, s.active_restaurant_id, s.device_type,
+           m.id            AS _m_id,
+           m.role          AS _m_role,
+           m.employee_name AS _m_employee_name
+    FROM sessions s
+    JOIN users u ON s.user_id = u.id
+    LEFT JOIN memberships m
+           ON m.user_id = u.id
+          AND m.is_active = 1
+          AND m.restaurant_id = CASE
+                WHEN u.role = 'owner' AND s.active_restaurant_id IS NOT NULL
+                THEN s.active_restaurant_id ELSE u.restaurant_id END
+    WHERE s.token=? AND s.expires_at > datetime('now') AND u.is_active=1
+"""
+
+_SESSION_USER_SQL_NO_MEMBERSHIP = """
+    SELECT u.*, s.last_active, s.active_restaurant_id, s.device_type FROM sessions s
+    JOIN users u ON s.user_id = u.id
+    WHERE s.token=? AND s.expires_at > datetime('now') AND u.is_active=1
+"""
+
+
 def get_session_user(token: str, db_path: str = DB_PATH) -> Optional[dict]:
     if not token:
         return None
     conn = get_conn(db_path)
-    row = conn.execute("""
-        SELECT u.*, s.last_active, s.active_restaurant_id, s.device_type FROM sessions s
-        JOIN users u ON s.user_id = u.id
-        WHERE s.token=? AND s.expires_at > datetime('now') AND u.is_active=1
-    """, (hash_session_token(token),)).fetchone()
+    joined = True
+    try:
+        row = conn.execute(_SESSION_USER_SQL, (hash_session_token(token),)).fetchone()
+    except Exception:
+        # A database predating the memberships table (an old fixture, a
+        # partially-migrated copy) must still resolve sessions — the dual-read
+        # was always a fallback, never a requirement.
+        joined = False
+        row = conn.execute(_SESSION_USER_SQL_NO_MEMBERSHIP,
+                           (hash_session_token(token),)).fetchone()
     if not row:
         conn.close()
         return None
-    # Check inactivity timeout — exempt iOS sessions. The web session's
-    # 8-hour inactivity window is a reasonable "walked away from the laptop"
-    # rule, but it would log a phone out (2FA and all) every single time an
-    # owner checked the app once a day. iOS sessions rely on the 30-day hard
-    # expiry above plus the app's own Face ID lock on foreground instead.
-    is_ios_session = (row["device_type"] or "web") == "ios"
+    # Check inactivity timeout, except for the device kinds above.
+    is_ios_session = (row["device_type"] or "web") in _INACTIVITY_EXEMPT_DEVICES
     last_active = row["last_active"] or ""
     if last_active and not is_ios_session:
         try:
@@ -1201,17 +1728,21 @@ def get_session_user(token: str, db_path: str = DB_PATH) -> Optional[dict]:
     # users.role it has always had, so nothing can be locked out by this
     # table's absence. The membership is also what the staff routes read to
     # resolve an employee's own name, so it is attached either way.
-    try:
-        membership = get_membership(user["id"], user["restaurant_id"], db_path=db_path)
-    except Exception:
-        membership = None
-    if membership:
-        user["role"] = membership["role"]
-        user["membership_id"] = membership["id"]
-        user["employee_name"] = membership.get("employee_name")
+    #
+    # It rides along on the session query above rather than costing a second
+    # one: this runs on all ~390 decorated routes plus the staff routes, and a
+    # separate round trip per request was a permanent tax for a row that
+    # changes about once a year per employee.
+    m_id = row["_m_id"] if joined else None
+    if m_id is not None:
+        user["role"] = row["_m_role"]
+        user["membership_id"] = m_id
+        user["employee_name"] = row["_m_employee_name"]
     else:
         user["membership_id"] = None
         user["employee_name"] = None
+    for k in ("_m_id", "_m_role", "_m_employee_name"):
+        user.pop(k, None)
     return user
 
 def switch_active_restaurant(token: str, restaurant_id: int, db_path: str = DB_PATH):
@@ -1400,6 +1931,37 @@ def _module_blocked_message(label):
     return f"{label} isn't part of this plan. Contact will@cavnar.ai to add it."
 
 
+def _module_permission_denied(user):
+    """The module label this ROLE may not read, or None to allow it.
+
+    The sibling of _module_blocked, asking the other question of the same path
+    table: that one asks whether the restaurant BOUGHT the module, this asks
+    whether the signed-in role may SEE it. They are genuinely different —
+    a shift manager at a restaurant on the full plan is entitled to nothing
+    they are not authorised for — and they fail in opposite directions.
+    _module_blocked fails OPEN because it protects revenue; this fails CLOSED
+    because it protects data, exactly like _console_denied.
+    """
+    try:
+        if not user or user.get("is_admin"):
+            return None
+        key = _required_module(request.path or "")
+        if not key:
+            return None
+        from permissions import MODULE_VIEW_PERMISSIONS, has_permission
+        needed = MODULE_VIEW_PERMISSIONS.get(key)
+        if not needed or has_permission(user, needed):
+            return None
+        from models import module_label
+        return module_label(key)
+    except Exception:
+        return "This section"
+
+
+def _module_permission_message(label):
+    return f"{label} isn't part of your access. Ask the account owner to change it."
+
+
 _STAFF_WRONG_DOOR = ("This is the owner dashboard. Open your staff portal link "
                      "to see your shifts and tasks.")
 
@@ -1452,6 +2014,11 @@ def login_required(f):
             from flask import jsonify as _jsonify_ml
             return _jsonify_ml(ok=False, error=_module_blocked_message(locked),
                                module_locked=True, module=locked), 403
+        unauthorised = _module_permission_denied(user)
+        if unauthorised:
+            from flask import jsonify as _jsonify_mp
+            return _jsonify_mp(ok=False, error=_module_permission_message(unauthorised),
+                               module_forbidden=True, module=unauthorised), 403
         return f(*args, **kwargs, current_user=user)
     return decorated
 
@@ -1499,6 +2066,11 @@ def mobile_login_required(f):
             from flask import jsonify as _jsonify_mml
             return _jsonify_mml(ok=False, error=_module_blocked_message(locked),
                                 module_locked=True, module=locked), 403
+        unauthorised = _module_permission_denied(user)
+        if unauthorised:
+            from flask import jsonify as _jsonify_mmp
+            return _jsonify_mmp(ok=False, error=_module_permission_message(unauthorised),
+                                module_forbidden=True, module=unauthorised), 403
         return f(*args, **kwargs, current_user=user)
     return decorated
 

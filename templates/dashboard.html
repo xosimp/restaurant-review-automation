@@ -4348,6 +4348,51 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     </div>
   </div>
 
+  <!-- Staff accounts: the owner-facing side of the employee PIN portal.
+       Every endpoint behind this already existed and nothing rendered them,
+       which meant a promotion, a corrected name or a re-hire needed database
+       access. Owner/primary-login only — the API enforces the same thing. -->
+  {% if current_user.role in ('owner', 'client') %}
+  <div class="acct-card" style="padding:18px 22px;margin-bottom:14px" id="staff-accounts-card">
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
+      <div>
+        <div class="acct-card-title">Staff accounts</div>
+        <div class="acct-card-sub">Employees sign in with a PIN on the staff link &mdash; they see their own shifts and tasks, never this dashboard.</div>
+      </div>
+      <button onclick="rotateStaffLink(this)" class="cbtn cbtn-secondary cbtn-sm">New staff link</button>
+    </div>
+
+    <div style="display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap">
+      <input id="staff-portal-url" readonly style="flex:1;min-width:220px;padding:7px 9px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;background:var(--paper);color:var(--ink3)">
+      <button onclick="copyStaffLink(this)" class="cbtn cbtn-secondary cbtn-sm">Copy</button>
+    </div>
+    <div style="font-size:11px;color:var(--ink3);margin-top:6px">Give this to your staff once. A new link stops the old one working.</div>
+
+    <div id="staff-list" style="margin-top:14px;font-size:12px;color:var(--ink3)">Loading&hellip;</div>
+
+    <div style="border-top:1px solid var(--paper3);margin-top:14px;padding-top:14px">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Add an employee</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <input id="staff-new-name" placeholder="Name (as it appears on the schedule)" style="flex:1.6;min-width:180px;padding:7px 9px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;background:var(--paper);color:var(--ink)">
+        <input id="staff-new-role" placeholder="Job (Server)" style="flex:1;min-width:110px;padding:7px 9px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;background:var(--paper);color:var(--ink)" list="staff-role-options">
+        <datalist id="staff-role-options"></datalist>
+        <input id="staff-new-pin" inputmode="numeric" placeholder="PIN" maxlength="8" style="width:90px;padding:7px 9px;border:1px solid var(--paper3);border-radius:7px;font-family:'Space Grotesk',monospace;font-size:12px;background:var(--paper);color:var(--ink)">
+        <button onclick="createStaff(this)" class="cbtn cbtn-primary cbtn-sm">Add</button>
+      </div>
+      <div style="font-size:11px;color:var(--ink3);margin-top:6px">4&ndash;8 digits, no repeats or runs. Read it to them &mdash; they can change it themselves in the portal.</div>
+    </div>
+
+    <div style="border-top:1px solid var(--paper3);margin-top:14px;padding-top:12px">
+      <label style="display:flex;gap:8px;align-items:center;cursor:pointer;font-size:12px;color:var(--ink2)">
+        <input type="checkbox" id="staff-signin-notify" {% if restaurant.staff_signin_notify %}checked{% endif %} onchange="toggleStaffSigninNotify(this)">
+        Notify me when someone opens the staff portal
+      </label>
+    </div>
+
+    <div id="staff-pin-events" style="margin-top:14px"></div>
+  </div>
+  {% endif %}
+
   <!-- SECTION 3: Community strip -->
   <div class="acct-card account-two-col" style="padding:18px 22px;margin-bottom:14px;display:grid;grid-template-columns:1fr 1fr;gap:0">
     <!-- Referral -->
@@ -11657,6 +11702,141 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     jsend('/api/account/team/invite',{name:name,email:email},function(d){done();if(d.ok){toast('Added — they’ve been emailed a temporary password','success');document.getElementById('team-name').value='';document.getElementById('team-email').value='';loadTeam();}else toast(d.error||'Could not add them','error');});
   };
   window.revokeTeam=function(id,btn){if(!confirm('Remove this teammate’s access? They’ll be signed out everywhere.'))return;var done=busy(btn,'…');jsend('/api/account/team/'+id+'/revoke',{},function(d){done();if(d.ok){toast('Access removed','success');loadTeam();}else toast(d.error||'Could not remove','error');});};
+  // ── Staff accounts (employee PIN portal) ──
+  // The owner side of staff_routes.py. Everything here was reachable only by
+  // curl before this card existed, which made day-two operations — promote,
+  // rename, re-hire — database work.
+  window.loadStaff=function(){
+    var el=document.getElementById('staff-list');if(!el)return;
+    jget('/api/account/staff',function(d){
+      if(!d.ok){el.textContent='Could not load your staff accounts.';return;}
+      var url=document.getElementById('staff-portal-url');
+      if(url&&d.portal_url)url.value=window.location.origin+d.portal_url;
+      _staffRoleOptions();
+      var rows=d.staff||[];
+      if(!rows.length){el.innerHTML='<div style="color:var(--ink3)">No staff accounts yet. Add one below and give them the link above.</div>';}
+      else{
+        el.innerHTML=rows.map(function(s){
+          var bits=[];
+          if(s.job_role)bits.push(esc(s.job_role));
+          if(!s.active)bits.push('<span style="color:var(--red)">inactive</span>');
+          else if(s.locked)bits.push('<span style="color:var(--red)">locked out</span>');
+          else if(!s.has_pin)bits.push('<span style="color:var(--red)">no PIN</span>');
+          var meta=bits.length?' <span style="color:var(--ink3)">· '+bits.join(' · ')+'</span>':'';
+          var acts='<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="renameStaff('+s.membership_id+',this)">Rename</button>'
+                 + '<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="retitleStaff('+s.membership_id+',this)">Job</button>'
+                 + '<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="resetStaffPin('+s.membership_id+',this)">New PIN</button>';
+          if(s.locked)acts+='<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="unlockStaff('+s.membership_id+',this)">Unlock</button>';
+          acts+= s.active
+            ? '<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="setStaffActive('+s.membership_id+',false,this)">Deactivate</button>'
+            : '<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="setStaffActive('+s.membership_id+',true,this)">Reactivate</button>';
+          return '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;padding:6px 0;border-top:1px solid var(--paper3);flex-wrap:wrap">'
+               + '<span><span style="color:var(--ink);font-weight:600">'+esc(s.name||'')+'</span>'+meta+'</span>'
+               + '<span style="display:flex;gap:4px;flex-wrap:wrap">'+acts+'</span></div>';
+        }).join('');
+      }
+      _renderPinEvents(d.pin_events||[]);
+    });
+  };
+  // Failed PINs across the whole roster. The per-employee counter resets on
+  // lockout and is deleted on the next success, so one failed try against
+  // each of forty people would otherwise leave no trace anywhere.
+  function _renderPinEvents(events){
+    var box=document.getElementById('staff-pin-events');if(!box)return;
+    if(!events.length){box.innerHTML='';return;}
+    box.innerHTML='<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:8px">Recent failed PINs</div>'
+      + events.slice(0,8).map(function(e){
+          var label=e.event==='pin_locked'?'<span style="color:var(--red)">locked out</span>':'wrong PIN';
+          return '<div style="font-size:11px;color:var(--ink3);padding:3px 0">'+esc(e.name||'Someone')+' · '+label+' · '+ago(e.created_at)+'</div>';
+        }).join('');
+  }
+  function _staffRoleOptions(){
+    var dl=document.getElementById('staff-role-options');if(!dl)return;
+    var roles=window._teamRoles||[];
+    dl.innerHTML=roles.map(function(r){return '<option value="'+esc(r)+'">';}).join('');
+  }
+  window.createStaff=function(btn){
+    var name=(document.getElementById('staff-new-name')||{}).value||'';
+    var job=(document.getElementById('staff-new-role')||{}).value||'';
+    var pin=(document.getElementById('staff-new-pin')||{}).value||'';
+    if(!name.trim()){toast('Enter their name','error');return;}
+    if(!/^[0-9]{4,8}$/.test(pin.trim())){toast('A PIN is 4–8 digits','error');return;}
+    var done=busy(btn,'Adding…');
+    jsend('/api/account/staff',{employee_name:name,job_role:job,pin:pin},function(d){
+      done();
+      if(d.ok){toast('Staff account added','success');
+        document.getElementById('staff-new-name').value='';
+        document.getElementById('staff-new-role').value='';
+        document.getElementById('staff-new-pin').value='';
+        loadStaff();}
+      else toast(d.error||'Could not add them','error');
+    });
+  };
+  function _patchStaff(id,body,btn,msg){
+    var done=busy(btn,'…');
+    jsend('/api/account/staff/'+id,body,function(d){
+      done();
+      if(d.ok){toast(msg,'success');loadStaff();}
+      else toast(d.error||'Could not save that','error');
+    });
+  }
+  window.renameStaff=function(id,btn){
+    // The name is the join key to shifts, ratings and availability, so this
+    // is the fix for a typo that silently detaches someone from their own
+    // history — say so rather than presenting it as cosmetic.
+    var name=prompt('Their name, spelled the way it appears on the schedule:');
+    if(name===null||!name.trim())return;
+    _patchStaff(id,{employee_name:name.trim()},btn,'Name updated');
+  };
+  window.retitleStaff=function(id,btn){
+    var job=prompt('Their job (this decides which task checklist they see):');
+    if(job===null)return;
+    _patchStaff(id,{job_role:job.trim()},btn,'Job updated');
+  };
+  window.setStaffActive=function(id,active,btn){
+    if(!active&&!confirm('Deactivate this employee? They’ll be signed out of the staff portal right away.'))return;
+    _patchStaff(id,{active:active},btn,active?'Reactivated':'Deactivated');
+  };
+  window.resetStaffPin=function(id,btn){
+    var pin=prompt('New PIN (4–8 digits). Read it to them — it isn’t emailed.');
+    if(pin===null)return;
+    if(!/^[0-9]{4,8}$/.test(pin.trim())){toast('A PIN is 4–8 digits','error');return;}
+    var done=busy(btn,'…');
+    jsend('/api/account/staff/'+id+'/pin',{pin:pin.trim()},function(d){
+      done();
+      if(d.ok){toast('PIN set — they’re signed out until they use it','success');loadStaff();}
+      else toast(d.error||'Could not set that PIN','error');
+    });
+  };
+  window.unlockStaff=function(id,btn){
+    var done=busy(btn,'…');
+    jsend('/api/account/staff/'+id+'/unlock',{},function(d){
+      done();
+      if(d.ok){toast('Unlocked','success');loadStaff();}else toast(d.error||'Could not unlock','error');
+    });
+  };
+  window.rotateStaffLink=function(btn){
+    if(!confirm('Make a new staff link? The old one stops working for everyone immediately.'))return;
+    var done=busy(btn,'…');
+    jsend('/api/account/staff/portal-link/rotate',{},function(d){
+      done();
+      if(d.ok){toast('New staff link created','success');loadStaff();}
+      else toast(d.error||'Could not rotate the link','error');
+    });
+  };
+  window.toggleStaffSigninNotify=function(cb){
+    jsend('/api/toggle-staff-signin-notify',{enabled:cb.checked?1:0},function(d){
+      if(d.ok)toast(cb.checked?'You’ll be told about staff sign-ins':'Staff sign-in alerts off','success');
+      else{cb.checked=!cb.checked;toast(d.error||'Could not save that','error');}
+    });
+  };
+  window.copyStaffLink=function(btn){
+    var el=document.getElementById('staff-portal-url');if(!el||!el.value)return;
+    el.select();
+    try{document.execCommand('copy');toast('Staff link copied','success');}
+    catch(e){toast('Copy it from the box above','error');}
+  };
+
   window.exportData=function(btn){
     var scopes=[].slice.call(document.querySelectorAll('.exp-scope:checked')).map(function(c){return c.value;});
     if(!scopes.length){toast('Pick at least one thing to export','error');return;}
@@ -11933,7 +12113,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
   if(_origOpenPublish){window.openPublishSchedule=function(){_origOpenPublish.apply(this,arguments);loadShareStatus();};}
   document.addEventListener('DOMContentLoaded',function(){
     // Account-tab extras load when the tab opens (see switchTab), not on every page load.
-    window._acctExtras=function(){if(window._acctExtrasDone)return;window._acctExtrasDone=true;loadSecurityExtras();loadTeam();loadScheduleHistory();loadAivHistory();};
+    window._acctExtras=function(){if(window._acctExtrasDone)return;window._acctExtrasDone=true;loadSecurityExtras();loadTeam();if(document.getElementById('staff-list'))loadStaff();loadScheduleHistory();loadAivHistory();};
     if(document.getElementById('panel-account')&&document.getElementById('panel-account').classList.contains('active'))window._acctExtras();
   });
 })();

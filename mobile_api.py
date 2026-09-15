@@ -3455,12 +3455,27 @@ def mobile_set_thresholds(current_user):
 
 
 # ── Team messages (manager DMs) ─────────────────────────────────────────────
-# Open to any active login on the restaurant — regular-hour staff never get
-# a login in this product, so every account already IS a manager/owner.
+# This is the manager thread, so it is gated on permissions.TEAM_MESSAGE
+# rather than on "has a login". The comment here used to read "every account
+# already IS a manager/owner" — that stopped being true the moment employee
+# identities and the `member` tier existed, and a DM inbox is the last place
+# to leave an assumption like that standing.
+
+
+def _require_team_message(current_user):
+    from permissions import TEAM_MESSAGE, has_permission
+    if not has_permission(current_user, TEAM_MESSAGE):
+        return jsonify(ok=False,
+                       error="Team messages are for managers and owners."), 403
+    return None
+
 
 @mobile_bp.route("/team/inbox")
 @mobile_login_required
 def mobile_team_inbox(current_user):
+    denied = _require_team_message(current_user)
+    if denied:
+        return denied
     from models import get_team_inbox, count_unread_team_messages
     rid = current_user["restaurant_id"]
     try:
@@ -3475,6 +3490,9 @@ def mobile_team_inbox(current_user):
 def mobile_team_thread(other_id, current_user):
     """One thread. Reading it marks the other person's messages read —
     the same "opening it is acknowledging it" behavior any chat app has."""
+    denied = _require_team_message(current_user)
+    if denied:
+        return denied
     from models import get_team_conversation, mark_team_messages_read
     rid = current_user["restaurant_id"]
     try:
@@ -3488,6 +3506,9 @@ def mobile_team_thread(other_id, current_user):
 @mobile_bp.route("/team/messages", methods=["POST"])
 @mobile_login_required
 def mobile_send_team_message(current_user):
+    denied = _require_team_message(current_user)
+    if denied:
+        return denied
     from models import send_team_message, TeamMessageError
     data = request.get_json(silent=True) or {}
     rid = current_user["restaurant_id"]
@@ -4418,22 +4439,89 @@ def mobile_list_staff(current_user):
     if denied:
         return denied
     from auth import (get_memberships_for_restaurant, get_or_create_staff_portal_token,
-                      pin_lockout_state)
+                      get_pin_security_events, pin_lockout_state)
     rid = current_user["restaurant_id"]
     out = []
-    for m in get_memberships_for_restaurant(rid, role="employee"):
+    # include_inactive: a deactivated employee has to stay visible, or there is
+    # no way to re-hire one without a database console.
+    for m in get_memberships_for_restaurant(rid, role="employee", include_inactive=True):
         state = pin_lockout_state(m["id"])
         out.append({
             "membership_id": m["id"],
             "user_id": m["user_id"],
             "name": m.get("employee_name") or m["username"],
+            "job_role": m.get("job_role"),
+            "active": bool(m.get("is_active")),
             "has_pin": bool(m.get("pin_hash")),
             "pin_set_at": m.get("pin_set_at"),
             "locked": state["locked"],
             "failed_attempts": state["failed_count"],
         })
     return jsonify(ok=True, staff=out,
-                   portal_url=f"/staff/r/{get_or_create_staff_portal_token(rid)}")
+                   portal_url=f"/staff/r/{get_or_create_staff_portal_token(rid)}",
+                   pin_events=get_pin_security_events(rid, limit=25))
+
+
+@mobile_bp.route("/account/staff/<int:membership_id>", methods=["PATCH", "POST"])
+@mobile_login_required
+def mobile_update_staff(current_user, membership_id):
+    """Promote, rename, retitle or reactivate one staff account.
+
+    The three operations this closes were all previously database-only:
+
+      role       — a promotion. The authorization role (employee/manager).
+      name       — a correction. employee_name is the join key to shifts,
+                   ratings, availability and notes, so a typo silently
+                   detached someone from their own history with no way back.
+      active     — a re-hire. set_membership_active(…, True) existed and was
+                   reachable from nothing.
+
+    Accepts POST as well as PATCH because the web fetch() layer and some
+    proxies treat PATCH as exotic; the semantics are identical either way.
+    """
+    denied = _require_team_admin(current_user)
+    if denied:
+        return denied
+    from auth import update_membership_details
+    data = request.get_json(silent=True) or {}
+    rid = current_user["restaurant_id"]
+
+    fields = {}
+    if "role" in data:
+        role = (data.get("role") or "").strip().lower()
+        # An owner may move someone between the staff tier and the console
+        # tier, but may not mint an owner — that is account-level, not
+        # restaurant-level, and nothing in this product should hand it out.
+        if role not in ("employee", "member", "manager"):
+            return jsonify(ok=False, error="Pick employee, member or manager."), 400
+        fields["role"] = role
+    if "employee_name" in data:
+        name = (data.get("employee_name") or "").strip()
+        if not name:
+            return jsonify(ok=False, error="Enter the employee's name."), 400
+        fields["employee_name"] = name
+    if "job_role" in data:
+        fields["job_role"] = (data.get("job_role") or "").strip()
+    if "active" in data:
+        fields["is_active"] = bool(data.get("active"))
+    if not fields:
+        return jsonify(ok=False, error="Nothing to change."), 400
+
+    try:
+        updated = update_membership_details(membership_id, rid, **fields)
+    except ValueError as ve:
+        return jsonify(ok=False, error=str(ve)), 400
+    if not updated:
+        return jsonify(ok=False, error="Not found"), 404
+    _log_account_event(rid, "staff_account_updated", current_user,
+                       detail=f"{membership_id}: {', '.join(sorted(fields))}")
+    return jsonify(ok=True, staff={
+        "membership_id": updated["id"],
+        "name": updated.get("employee_name"),
+        "role": updated.get("role"),
+        "job_role": updated.get("job_role"),
+        "active": bool(updated.get("is_active")),
+    })
 
 
 @mobile_bp.route("/account/staff", methods=["POST"])
@@ -4474,10 +4562,15 @@ def mobile_create_staff(current_user):
     except _sq3.IntegrityError:
         return jsonify(ok=False, error="That employee already has a staff account."), 400
 
-    membership = upsert_membership(user_id, rid, "employee", employee_name=name)
+    # job_role is the JOB title ("Bartender"), which decides the task
+    # checklist this person sees. Set here so it is a fact an owner stated
+    # rather than something inferred from shift data later.
+    membership = upsert_membership(user_id, rid, "employee", employee_name=name,
+                                   job_role=(data.get("job_role") or "").strip() or None)
     set_membership_pin(membership["id"], rid, pin)
     _log_account_event(rid, "staff_account_created", current_user, detail=name)
-    return jsonify(ok=True, membership_id=membership["id"], user_id=user_id, name=name)
+    return jsonify(ok=True, membership_id=membership["id"], user_id=user_id, name=name,
+                   job_role=membership.get("job_role"))
 
 
 @mobile_bp.route("/account/staff/<int:membership_id>/pin", methods=["POST"])

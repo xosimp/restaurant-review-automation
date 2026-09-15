@@ -430,6 +430,37 @@ def send_login_alert(restaurant_id: int, restaurant_name: str, owner_email: str,
         print(f"[LoginAlert] alert_log error: {e}")
 
 
+def send_staff_signin_alert(restaurant_id: int, restaurant_name: str, owner_email: str,
+                            employee_name: str, ip: str, db_path: str = DB_PATH):
+    """Tell an owner an employee opened the staff portal.
+
+    The console has had sign-in notifications since there was one account to
+    notify about. The staff portal added a second, much larger set of
+    sign-ins — on shared devices, from a link anyone with a phone can save —
+    and none of them were visible to the owner at all. Same three channels
+    and the same gate shape as send_login_alert; callers check the toggle.
+
+    Push only, plus the bell: an email per employee per shift would be forty
+    emails a day at one restaurant, which is how an alert becomes noise and
+    then gets switched off entirely.
+    """
+    try:
+        from push import fire_push
+        fire_push(
+            restaurant_id, "staff_signin",
+            "Staff sign-in",
+            f"{employee_name or 'Someone'} opened the staff portal",
+            data={"alert_type": "staff_signin"},
+            db_path=db_path,
+        )
+    except Exception as e:
+        print(f"[StaffSignIn] push error: {e}")
+    try:
+        _log_alert(restaurant_id, "staff_signin", db_path=db_path)
+    except Exception as e:
+        print(f"[StaffSignIn] alert_log error: {e}")
+
+
 # ── Main alert dispatch ───────────────────────────────────────
 
 def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: list, db_path: str = DB_PATH):

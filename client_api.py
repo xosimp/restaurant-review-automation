@@ -6668,6 +6668,13 @@ def account_staff_create(current_user):
     return _m("mobile_create_staff")(current_user)
 
 
+@client_bp.route("/api/account/staff/<int:membership_id>", methods=["PATCH", "POST"])
+@login_required
+def account_staff_update(current_user, membership_id):
+    """Promote, rename, retitle or reactivate one staff account."""
+    return _m("mobile_update_staff")(current_user, membership_id)
+
+
 @client_bp.route("/api/account/staff/<int:membership_id>/pin", methods=["POST"])
 @login_required
 def account_staff_pin(current_user, membership_id):

@@ -262,7 +262,8 @@ def login():
         except Exception as _ln_e:
             print(f"[LoginNotify] {_ln_e}")
         resp = make_response(redirect(next_url))
-        _on_railway = bool(os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RAILWAY_PROJECT_ID"))
+        from auth import cookies_require_secure as _crs
+        _on_railway = _crs()
         resp.set_cookie("session_token", token, max_age=30*24*3600,
                         httponly=True, secure=_on_railway, samesite="Lax")
         return resp
@@ -376,7 +377,8 @@ def verify_2fa():
                                  report_url=f"https://dashboard.cavnar.ai/auth/not-me/{_clr2(_user_for_session['id'], token)}")
         except Exception as _ln2_e:
             print(f"[LoginNotify2FA] {_ln2_e}")
-        _on_railway = bool(os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RAILWAY_PROJECT_ID"))
+        from auth import cookies_require_secure as _crs
+        _on_railway = _crs()
         resp_ok = make_response(redirect(next_url or "/"))
         resp_ok.set_cookie("session_token", token, max_age=30*24*3600,
                            httponly=True, secure=_on_railway, samesite="Lax")
@@ -686,6 +688,17 @@ def toggle_login_notify(current_user):
     data = request.get_json()
     enabled = 1 if data.get("enabled") else 0
     update_restaurant(current_user["restaurant_id"], {"login_notify": enabled})
+    return jsonify(ok=True)
+
+
+@auth_bp.route("/api/toggle-staff-signin-notify", methods=["POST"])
+@login_required
+def toggle_staff_signin_notify(current_user):
+    """Alert the owner when an employee opens the staff portal."""
+    from models import update_restaurant
+    data = request.get_json() or {}
+    enabled = 1 if data.get("enabled") else 0
+    update_restaurant(current_user["restaurant_id"], {"staff_signin_notify": enabled})
     return jsonify(ok=True)
 
 

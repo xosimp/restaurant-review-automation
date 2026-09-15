@@ -44,23 +44,48 @@ final class StaffSessionStore {
     private static let portalKey = "cavnar.staff_portal_token"
 
     func roster(portal: String) async throws -> StaffRosterResponse {
-        try await client.sendUnauthenticated("/staff/api/roster/\(portal)")
+        let resp: StaffRosterResponse = try await client.sendUnauthenticated(
+            "/staff/api/roster/\(portal)")
+        loginNonce = resp.loginNonce
+        return resp
     }
+
+    /// The nonce most recently handed out by `roster(portal:)`, spent by the
+    /// next sign-in. Held here rather than passed through the view so the
+    /// login screen never has to know the replay protection exists.
+    private var loginNonce: String?
 
     func signIn(portal: String, membershipID: Int, pin: String) async -> Bool {
         lastError = nil
+        return await attemptSignIn(portal: portal, membershipID: membershipID,
+                                   pin: pin, retryOnStaleNonce: true)
+    }
+
+    private func attemptSignIn(portal: String, membershipID: Int, pin: String,
+                               retryOnStaleNonce: Bool) async -> Bool {
         do {
             let body = StaffLoginBody(membershipID: membershipID, pin: pin,
-                                      deviceID: Keychain.deviceIdentity())
+                                      deviceID: Keychain.deviceIdentity(),
+                                      nonce: loginNonce ?? "")
             let resp: StaffLoginResponse = try await client.sendUnauthenticated(
                 "/staff/r/\(portal)/login", method: .post, body: body)
+            if let fresh = resp.loginNonce { loginNonce = fresh }
             guard resp.ok, let token = resp.token else {
+                // A stale nonce is the app's problem, not the employee's — a
+                // portal left open on a host stand all afternoon should not
+                // tell someone their correct PIN was wrong.
+                if resp.nonceExpired == true, retryOnStaleNonce {
+                    _ = try? await refreshNonce(portal: portal)
+                    return await attemptSignIn(portal: portal, membershipID: membershipID,
+                                               pin: pin, retryOnStaleNonce: false)
+                }
                 lastError = resp.error ?? "That PIN didn't match."
                 return false
             }
             Keychain.set(token, for: Keychain.Key.staffSessionToken)
             self.token = token
             self.portalToken = portal
+            self.loginNonce = nil
             return true
         } catch let error as APIClient.APIError {
             lastError = error.message
@@ -69,6 +94,14 @@ final class StaffSessionStore {
             lastError = "Could not reach the server."
             return false
         }
+    }
+
+    @discardableResult
+    private func refreshNonce(portal: String) async throws -> String? {
+        let resp: StaffRosterResponse = try await client.sendUnauthenticated(
+            "/staff/api/roster/\(portal)")
+        loginNonce = resp.loginNonce
+        return loginNonce
     }
 
     func signOut() {
@@ -97,11 +130,13 @@ final class StaffSessionStore {
         let membershipID: Int
         let pin: String
         let deviceID: String?
+        let nonce: String
 
         enum CodingKeys: String, CodingKey {
             case membershipID = "membership_id"
             case pin
             case deviceID = "device_id"
+            case nonce
         }
     }
 }

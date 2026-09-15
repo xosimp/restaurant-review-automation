@@ -22,6 +22,14 @@ struct StaffRosterResponse: Decodable {
     let restaurant: String?
     let roster: [StaffRosterEntry]?
     let error: String?
+    /// A one-shot token the sign-in POST must carry. The server spends it on
+    /// read, so a captured sign-in request cannot be replayed.
+    let loginNonce: String?
+
+    enum CodingKeys: String, CodingKey {
+        case ok, restaurant, roster, error
+        case loginNonce = "login_nonce"
+    }
 }
 
 struct StaffLoginResponse: Decodable {
@@ -32,6 +40,17 @@ struct StaffLoginResponse: Decodable {
     let token: String?
     let error: String?
     let locked: Bool?
+    /// True when the nonce had already been spent or aged out — recoverable,
+    /// unlike a wrong PIN: refetch the roster and send the same PIN again.
+    let nonceExpired: Bool?
+    /// A replacement nonce, so a mistyped PIN does not cost a round trip.
+    let loginNonce: String?
+
+    enum CodingKeys: String, CodingKey {
+        case ok, token, error, locked
+        case nonceExpired = "nonce_expired"
+        case loginNonce = "login_nonce"
+    }
 }
 
 struct StaffShift: Decodable, Hashable {

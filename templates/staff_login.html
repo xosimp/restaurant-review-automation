@@ -106,6 +106,7 @@
 <script>
 (function(){
   var PORTAL = "{{ portal_token }}";
+  var NONCE = "{{ login_nonce }}";
   var pin = "", membershipId = null, busy = false;
 
   function $(id){ return document.getElementById(id); }
@@ -158,23 +159,44 @@
     }
   });
 
-  function submit(){
-    if (busy || membershipId === null) return;
-    busy = true;
-    $('err').textContent = "";
+  /* The sign-in body is one-shot: the server spends NONCE when it reads it,
+     so a captured request cannot be replayed. A stale one (page left open on
+     a host stand all afternoon) is recoverable rather than fatal — refetch
+     the roster for a fresh one and send the same PIN again, once. */
+  function post(attempt){
     fetch('/staff/r/' + PORTAL + '/login', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({membership_id: membershipId, pin: pin})
+      body: JSON.stringify({membership_id: membershipId, pin: pin, nonce: NONCE})
     }).then(function(r){ return r.json(); }).then(function(d){
-      busy = false;
       if (d.ok) { window.location = d.redirect; return; }
+      if (d.login_nonce) { NONCE = d.login_nonce; }
+      if (d.nonce_expired && attempt === 0) { refreshNonce(post); return; }
+      busy = false;
       clearPin();
       $('err').textContent = d.error || 'That PIN didn’t match.';
     }).catch(function(){
       busy = false; clearPin();
       $('err').textContent = 'Could not reach the server. Try again.';
     });
+  }
+
+  function refreshNonce(next){
+    fetch('/staff/api/roster/' + PORTAL).then(function(r){ return r.json(); })
+      .then(function(d){
+        NONCE = (d && d.login_nonce) || "";
+        next(1);
+      }).catch(function(){
+        busy = false; clearPin();
+        $('err').textContent = 'Could not reach the server. Try again.';
+      });
+  }
+
+  function submit(){
+    if (busy || membershipId === null) return;
+    busy = true;
+    $('err').textContent = "";
+    post(0);
   }
 })();
 </script>

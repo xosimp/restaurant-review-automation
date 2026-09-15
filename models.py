@@ -248,6 +248,30 @@ CREATE TABLE IF NOT EXISTS client_data (
     inventory_source TEXT,          -- "upload" | "manual" | "sample"
     updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- The layer above a restaurant: a group, a franchise, a company.
+--
+-- This used to be `restaurants.location_group` — free text an admin typed per
+-- location, scoped by (group_name, owner_email) at every read. That worked,
+-- but it made the group an emergent property of matching strings rather than
+-- a thing that exists: a typo silently created a second group, two clients
+-- who typed "Syrup" became one tenant until the owner_email scope was added,
+-- and there was nowhere to hang anything a GROUP owns rather than a location.
+--
+-- A real id makes multi-location employee assignment expressible (memberships
+-- already carry a restaurant_id per person, so an organization is simply the
+-- set they can belong to) and is a prerequisite for payroll and clock-in.
+--
+-- It is additive on purpose. location_group stays, is still written, and is
+-- still what the backfill derives from, so every existing read path keeps
+-- working while the id becomes the grouping key underneath it.
+CREATE TABLE IF NOT EXISTS organizations (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    name            TEXT    NOT NULL,
+    owner_email     TEXT    NOT NULL,
+    created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(name, owner_email)
+);
 """
 
 
@@ -362,6 +386,10 @@ class Restaurant:
     skip_holidays:    Optional[str]  = None
     custom_competitors: Optional[str] = None
     login_notify:     int            = 0
+    # Notify the owner when an employee opens the staff portal. Off by
+    # default: the portal is meant to be used every shift, so this is an
+    # opt-in for owners who want to watch it, not a default alarm.
+    staff_signin_notify: int         = 0
     marketing_emails_opt_out: int    = 0
     # Settings audit additions (Account tab, iOS + web)
     alert_health_bypass_quiet: int   = 0     # health/safety alerts ignore quiet hours
@@ -575,6 +603,7 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "contract_status", "TEXT"),
         ("restaurants", "stripe_customer_id", "TEXT"),
         ("restaurants", "location_group", "TEXT"),
+        ("restaurants", "organization_id", "INTEGER"),
         ("restaurants", "location_name", "TEXT"),
         ("restaurants", "pos_system", "TEXT"),
         ("restaurants", "inventory_frequency", "TEXT"),
@@ -846,6 +875,7 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE restaurants ADD COLUMN docusign_envelope_id TEXT",
         "ALTER TABLE restaurants ADD COLUMN contract_status TEXT DEFAULT 'pending'",
         "ALTER TABLE restaurants ADD COLUMN location_group TEXT",
+        "ALTER TABLE restaurants ADD COLUMN organization_id INTEGER",
         "ALTER TABLE restaurants ADD COLUMN location_name TEXT",
         "ALTER TABLE restaurants ADD COLUMN inventory_frequency TEXT DEFAULT 'weekly'",
         "ALTER TABLE restaurants ADD COLUMN inventory_notes TEXT",
@@ -905,6 +935,7 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE restaurants ADD COLUMN skip_holidays TEXT",
         "ALTER TABLE restaurants ADD COLUMN custom_competitors TEXT",
         "ALTER TABLE restaurants ADD COLUMN login_notify INTEGER DEFAULT 0",
+        "ALTER TABLE restaurants ADD COLUMN staff_signin_notify INTEGER DEFAULT 0",
         "ALTER TABLE restaurants ADD COLUMN marketing_emails_opt_out INTEGER DEFAULT 0",
         "ALTER TABLE restaurants ADD COLUMN alert_health_bypass_quiet INTEGER DEFAULT 0",
         "ALTER TABLE restaurants ADD COLUMN alert_food_waste INTEGER DEFAULT 0",
@@ -1443,6 +1474,8 @@ def init_db(db_path: str = DB_PATH):
     conn.close()
     # Ensure any columns managed by ensure_columns() are present before seeding
     ensure_columns()
+    # Runs after ensure_columns() so organization_id exists to write into.
+    backfill_organizations(db_path=db_path)
     print(f"Database initialised at {db_path}")
 
 
@@ -2470,7 +2503,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH):
         "hourly_rate","labor_target_pct","week_start_day","role_strength_json","shift_leader_rules_json","quality_weights_json","monthly_revenue_target","hours_notes","role_rates_json","close_times_json","role_close_buffer_json","stripe_customer_id","docusign_envelope_id","contract_status","location_group","location_name","pos_system","inventory_frequency","delivery_days","inventory_notes","food_cost_target","inventory_updated_at","temp_password","ig_token","ig_user_id","fb_page_token","fb_page_id","ig_token_expires","fb_token_expires","competitor_intel","competitor_updated_at","reviews_live","billing_status","is_demo","internal_notes","gmb_access_token","gmb_refresh_token","gmb_account_id","gmb_location_id","gmb_token_expires",
         "service_tier","module_reviews","module_labor","module_inventory","module_marketing",
         "last_active_tab","last_activity","owner_name","owner_phone","digest_day","digest_enabled","menu_notes","menu_url","skip_holidays","custom_competitors",
-        "two_fa_enabled","two_fa_code","two_fa_expires","two_fa_device_token","two_fa_pending","two_fa_method","login_notify","marketing_emails_opt_out","timezone","onboarding_dismissed",
+        "two_fa_enabled","two_fa_code","two_fa_expires","two_fa_device_token","two_fa_pending","two_fa_method","login_notify","staff_signin_notify","marketing_emails_opt_out","timezone","onboarding_dismissed",
         "alert_health_bypass_quiet","alert_food_waste","alert_ai_visibility_drop","alert_extra_emails","push_sound",
         "auto_approve_5star","auto_approve_daily_cap","auto_approve_paused","open_times_json",
         "response_language","tone_preset","data_retention_months",
@@ -2504,6 +2537,35 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH):
     conn.execute(f"UPDATE restaurants SET {set_clause} WHERE id=?", values)
     conn.commit()
     conn.close()
+    # Keep the organization key in step with the group name an admin typed.
+    # location_group remains the field the admin console writes; this is what
+    # turns that string into the real grouping key without the console having
+    # to know organizations exist yet.
+    if "location_group" in updates or "owner_email" in updates:
+        try:
+            _sync_restaurant_organization(restaurant_id, db_path=db_path)
+        except Exception:
+            pass
+
+
+def _sync_restaurant_organization(restaurant_id: int, db_path: str = DB_PATH):
+    """Point a restaurant at the organization its (group, owner) names."""
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT location_group, owner_email FROM restaurants WHERE id=?",
+            (restaurant_id,)).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return
+    group = ((row["location_group"] or "") or "").strip()
+    if not group:
+        set_restaurant_organization(restaurant_id, None, db_path=db_path)
+        return
+    org = get_or_create_organization(group, row["owner_email"], db_path=db_path)
+    if org:
+        set_restaurant_organization(restaurant_id, org["id"], db_path=db_path)
 
 
 def get_deletion_requested_at(restaurant_id: int, db_path: str = DB_PATH):
@@ -2601,6 +2663,7 @@ def get_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> Optional[Resta
         skip_holidays=row["skip_holidays"] if "skip_holidays" in row.keys() else None,
         custom_competitors=row["custom_competitors"] if "custom_competitors" in row.keys() else None,
         login_notify=row["login_notify"] if "login_notify" in row.keys() else 0,
+        staff_signin_notify=row["staff_signin_notify"] if "staff_signin_notify" in row.keys() else 0,
         marketing_emails_opt_out=row["marketing_emails_opt_out"] if "marketing_emails_opt_out" in row.keys() else 0,
         alert_health_bypass_quiet=row["alert_health_bypass_quiet"] if "alert_health_bypass_quiet" in row.keys() else 0,
         alert_food_waste=row["alert_food_waste"] if "alert_food_waste" in row.keys() else 0,
@@ -5264,6 +5327,130 @@ def normalize_owner_email(value) -> str:
     return (value or "").strip().lower()
 
 
+# ── Organizations (the layer above a restaurant) ───────────────────────────
+
+def backfill_organizations(db_path: str = DB_PATH) -> int:
+    """Give every existing location group a real organization row.
+
+    Idempotent, runs at boot, derives everything from data already present:
+    one organization per distinct (location_group, normalised owner_email),
+    which is exactly the pair every multi-location read already scopes by. A
+    restaurant with no group name gets no organization — a single-location
+    client is not a group of one, and inventing one would put a concept in
+    front of clients who have no use for it.
+
+    Returns how many restaurants it linked, for the migration test.
+    """
+    try:
+        conn = get_conn(db_path)
+        try:
+            rows = conn.execute("""
+                SELECT DISTINCT TRIM(location_group) AS g, owner_email
+                FROM restaurants
+                WHERE location_group IS NOT NULL AND TRIM(location_group) <> ''
+                  AND organization_id IS NULL
+            """).fetchall()
+            linked = 0
+            for r in rows:
+                group, email = r["g"], normalize_owner_email(r["owner_email"])
+                if not group or not email:
+                    continue
+                conn.execute(
+                    "INSERT OR IGNORE INTO organizations (name, owner_email) VALUES (?,?)",
+                    (group, email))
+                org = conn.execute(
+                    "SELECT id FROM organizations WHERE name=? AND owner_email=?",
+                    (group, email)).fetchone()
+                if not org:
+                    continue
+                cur = conn.execute("""
+                    UPDATE restaurants SET organization_id=?
+                    WHERE organization_id IS NULL
+                      AND TRIM(location_group)=?
+                      AND LOWER(TRIM(COALESCE(owner_email,'')))=?
+                """, (org["id"], group, email))
+                linked += cur.rowcount or 0
+            conn.commit()
+            return linked
+        finally:
+            conn.close()
+    except Exception:
+        # Same stance as auth.backfill_memberships: a backfill failure must
+        # not stop the app booting, and every read still falls back to the
+        # (group_name, owner_email) string match it has always used.
+        return 0
+
+
+def get_organization(organization_id: int, db_path: str = DB_PATH):
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT * FROM organizations WHERE id=?",
+                           (organization_id,)).fetchone()
+    finally:
+        conn.close()
+    return dict(row) if row else None
+
+
+def list_organizations(owner_email=None, db_path: str = DB_PATH) -> list:
+    """Existing organizations, optionally for one owner.
+
+    This is what stops a typo creating a second group: an admin picks from
+    what exists instead of retyping the name on each location.
+    """
+    conn = get_conn(db_path)
+    try:
+        if owner_email is not None:
+            rows = conn.execute(
+                "SELECT * FROM organizations WHERE owner_email=? ORDER BY name COLLATE NOCASE",
+                (normalize_owner_email(owner_email),)).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM organizations ORDER BY name COLLATE NOCASE").fetchall()
+    finally:
+        conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_or_create_organization(name: str, owner_email: str, db_path: str = DB_PATH):
+    """The organization for this (name, owner), creating it on first use."""
+    group = (name or "").strip()
+    email = normalize_owner_email(owner_email)
+    if not group or not email:
+        return None
+    conn = get_conn(db_path)
+    try:
+        conn.execute("INSERT OR IGNORE INTO organizations (name, owner_email) VALUES (?,?)",
+                     (group, email))
+        conn.commit()
+        row = conn.execute("SELECT * FROM organizations WHERE name=? AND owner_email=?",
+                           (group, email)).fetchone()
+    finally:
+        conn.close()
+    return dict(row) if row else None
+
+
+def set_restaurant_organization(restaurant_id: int, organization_id, db_path: str = DB_PATH) -> bool:
+    conn = get_conn(db_path)
+    try:
+        cur = conn.execute("UPDATE restaurants SET organization_id=? WHERE id=?",
+                           (organization_id, restaurant_id))
+        conn.commit()
+        return (cur.rowcount or 0) > 0
+    finally:
+        conn.close()
+
+
+def get_organization_locations(organization_id: int, db_path: str = DB_PATH) -> list:
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT * FROM restaurants WHERE organization_id=? ORDER BY location_name",
+            (organization_id,)).fetchall()
+    finally:
+        conn.close()
+    return [dict(r) for r in rows]
+
+
 def get_location_group(group_name: str, db_path: str = DB_PATH, owner_email=None) -> list:
     """Every restaurant in a location group.
 
@@ -5279,9 +5466,24 @@ def get_location_group(group_name: str, db_path: str = DB_PATH, owner_email=None
     Passing `owner_email` scopes the group to that owner, which is what every
     caller acting on a client's behalf does. Callers that deliberately want
     the raw name match (admin tooling reporting on a collision) omit it.
+
+    When an organization row exists for that pair, membership is resolved by
+    organization_id — a real key rather than two strings that have to keep
+    agreeing. The string match stays as the fallback for anything the backfill
+    has not reached, so this is a strictly additive change in behaviour.
     """
     conn = get_conn(db_path)
     if owner_email is not None:
+        org = conn.execute(
+            "SELECT id FROM organizations WHERE name=? AND owner_email=?",
+            ((group_name or "").strip(), normalize_owner_email(owner_email))).fetchone()
+        if org:
+            rows = conn.execute(
+                "SELECT * FROM restaurants WHERE organization_id=? ORDER BY location_name",
+                (org["id"],)).fetchall()
+            if rows:
+                conn.close()
+                return [dict(r) for r in rows]
         rows = conn.execute(
             "SELECT * FROM restaurants WHERE location_group=? AND LOWER(TRIM(COALESCE(owner_email,'')))=? "
             "ORDER BY location_name",
@@ -6468,7 +6670,7 @@ def build_settings_export_json(restaurant_id: int, db_path: str = DB_PATH) -> st
         "name", "location_name", "owner_name", "owner_email", "owner_phone", "timezone",
         "neighborhood", "vibe", "known_for", "voice_notes", "never_say", "menu_notes", "sign_off_name",
         "response_language", "tone_preset", "open_times_json", "close_times_json", "skip_holidays",
-        "digest_day", "digest_enabled", "login_notify", "marketing_emails_opt_out",
+        "digest_day", "digest_enabled", "login_notify", "staff_signin_notify", "marketing_emails_opt_out",
         "alert_1star", "alert_2star", "alert_health", "alert_neg_spike", "alert_negative_trend",
         "alert_no_response", "alert_5star", "alert_labor_over", "alert_food_waste", "alert_ai_visibility_drop",
         "alert_health_bypass_quiet", "alert_extra_emails", "push_sound", "urgent_via_email", "urgent_via_sms",

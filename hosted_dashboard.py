@@ -55,6 +55,14 @@ if _SENTRY_DSN:
 
 app = Flask(__name__)
 
+# Trust the one proxy hop in front of us (Railway's edge) for scheme, client
+# address and host. See auth.install_proxy_fix for why this is a function.
+try:
+    from auth import install_proxy_fix as _install_proxy_fix
+    _install_proxy_fix(app)
+except Exception as _pf_e:  # pragma: no cover — werkzeug always ships this
+    print(f"[boot] ProxyFix unavailable: {_pf_e}")
+
 def _check_duplicate_routes():
     """Crash loudly at startup if any URL rule is registered more than once."""
     from collections import Counter

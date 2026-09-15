@@ -66,6 +66,15 @@ def _sign_in_staff(client, db_path, rid, uid):
     client.set_cookie("staff_session", create_staff_session(uid, rid, db_path=db_path))
 
 
+def _login(client, token, membership_id, pin):
+    """Sign in the way a real client does: read the roster (which mints the
+    one-shot nonce), then POST the PIN with it."""
+    roster = client.get(f"/staff/api/roster/{token}").get_json() or {}
+    return client.post(f"/staff/r/{token}/login",
+                       json={"membership_id": membership_id, "pin": pin,
+                             "nonce": roster.get("login_nonce", "")})
+
+
 # ── sign in ────────────────────────────────────────────────────────────────
 
 def test_the_portal_link_lists_only_staff_with_a_pin(client, db_path):
@@ -93,8 +102,7 @@ def test_signing_in_with_the_right_pin_starts_a_shift_session(client, db_path):
     rid = _restaurant(db_path)
     _uid, mid = _staff(db_path, rid, pin="8317")
     token = get_or_create_staff_portal_token(rid, db_path=db_path)
-    resp = client.post(f"/staff/r/{token}/login",
-                       json={"membership_id": mid, "pin": "8317"})
+    resp = _login(client, token, mid, "8317")
     assert resp.status_code == 200
     assert resp.get_json()["ok"] is True
     assert client.get_cookie("staff_session") is not None
@@ -104,8 +112,7 @@ def test_signing_in_with_the_wrong_pin_is_refused(client, db_path):
     rid = _restaurant(db_path)
     _uid, mid = _staff(db_path, rid, pin="8317")
     token = get_or_create_staff_portal_token(rid, db_path=db_path)
-    resp = client.post(f"/staff/r/{token}/login",
-                       json={"membership_id": mid, "pin": "0000"})
+    resp = _login(client, token, mid, "0000")
     assert resp.status_code == 401
     assert client.get_cookie("staff_session") is None
 
@@ -118,8 +125,7 @@ def test_a_membership_from_another_restaurant_cannot_sign_in_through_this_link(c
     _uid, foreign_mid = _staff(db_path, rid_b, username="stranger", pin="8317")
     token_a = get_or_create_staff_portal_token(rid_a, db_path=db_path)
 
-    resp = client.post(f"/staff/r/{token_a}/login",
-                       json={"membership_id": foreign_mid, "pin": "8317"})
+    resp = _login(client, token_a, foreign_mid, "8317")
     assert resp.status_code == 401
     assert client.get_cookie("staff_session") is None
 
@@ -275,8 +281,7 @@ def test_an_owner_can_create_a_staff_account_and_it_can_sign_in(client, db_path)
 
     client.set_cookie("session_token", "")
     token = get_or_create_staff_portal_token(rid, db_path=db_path)
-    signin = client.post(f"/staff/r/{token}/login",
-                         json={"membership_id": made["membership_id"], "pin": "8317"})
+    signin = _login(client, token, made["membership_id"], "8317")
     assert signin.status_code == 200
 
 

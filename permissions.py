@@ -60,6 +60,38 @@ TEAM_RATE = "team.rate"
 # Marketing drafts an AI wrote, published under the restaurant's own name.
 MARKETING_APPROVE = "marketing.approve"
 
+# Manager-to-manager direct messages.
+TEAM_MESSAGE = "team.message"
+
+# Per-module read access, one per product module.
+#
+# DASHBOARD_ACCESS was a single boolean: hold it and every non-employee route
+# in the app was open, because there was nothing below it. That made "manager"
+# unsellable as a real role — an owner could not hire a shift manager without
+# also handing over food costs, menu margins, labor analytics and the manager
+# DM inbox — and it made data minimisation impossible.
+#
+# These deliberately reuse the module keys in auth._MODULE_PREFIXES, which
+# already maps every route in the product to its module for billing. One path
+# table, two questions asked of it: "is this module sold to this restaurant?"
+# (entitlement) and "may this role read it?" (authorization).
+REVIEWS_VIEW = "reviews.view"
+LABOR_VIEW = "labor.view"
+FOOD_COST_VIEW = "foodcost.view"      # food cost, menu margins — the financials
+MARKETING_VIEW = "marketing.view"
+INTEL_VIEW = "intel.view"
+
+# module key (auth._MODULE_PREFIXES) → the permission that reads it.
+MODULE_VIEW_PERMISSIONS = {
+    "reviews": REVIEWS_VIEW,
+    "labor": LABOR_VIEW,
+    "inventory": FOOD_COST_VIEW,
+    "marketing": MARKETING_VIEW,
+    "intel": INTEL_VIEW,
+}
+
+_ALL_MODULES = frozenset(MODULE_VIEW_PERMISSIONS.values())
+
 # Employee-scoped. Each of these is limited server-side to the acting
 # identity's own membership — see the staff routes, which derive the
 # employee name from the session and never from the request.
@@ -74,12 +106,13 @@ ALL_PERMISSIONS = frozenset({
     TEAM_INVITE,
     TEAM_REVOKE,
     TEAM_RATE,
+    TEAM_MESSAGE,
     MARKETING_APPROVE,
     SCHEDULE_VIEW_OWN,
     TASKS_VIEW_OWN,
     TASKS_COMPLETE_OWN,
     PROFILE_MANAGE_OWN,
-})
+}) | _ALL_MODULES
 
 
 # ── Roles ──────────────────────────────────────────────────────────────────
@@ -97,27 +130,43 @@ _CONSOLE_BASE = frozenset({
     DASHBOARD_ACCESS,
     TEAM_RATE,          # can_manage_team defaults open, and nothing sets it to 0
     MARKETING_APPROVE,
-})
+}) | _ALL_MODULES       # every module, which is what holding the console meant
 
 ROLE_PERMISSIONS = {
     # Everything, plus the location switcher. The only role client_api's
     # _do_switch_location / _do_group_locations and home_brief's group brief
     # have ever accepted.
-    ROLE_OWNER: _CONSOLE_BASE | {LOCATION_SWITCH, TEAM_INVITE, TEAM_REVOKE},
+    ROLE_OWNER: _CONSOLE_BASE | {LOCATION_SWITCH, TEAM_INVITE, TEAM_REVOKE, TEAM_MESSAGE},
 
     # The primary per-restaurant login: everything except switching between
     # locations, which it is refused today.
-    ROLE_CLIENT: _CONSOLE_BASE | {TEAM_INVITE, TEAM_REVOKE},
+    ROLE_CLIENT: _CONSOLE_BASE | {TEAM_INVITE, TEAM_REVOKE, TEAM_MESSAGE},
 
-    # New. Runs the floor: full console, rates the team, approves marketing —
-    # but does not administer logins and cannot switch locations.
-    ROLE_MANAGER: _CONSOLE_BASE,
+    # New. Runs the floor: writes the schedule, answers reviews, posts
+    # marketing, reads competitor intel, and is in the manager DM thread —
+    # but does NOT see food cost or menu margins, does not administer logins,
+    # and cannot switch locations.
+    #
+    # The food-cost omission is the entire reason this tier of permissions
+    # exists. A shift manager needs labor and reviews to do the job and has no
+    # business in the restaurant's margins, and until there was something
+    # below DASHBOARD_ACCESS an owner could not express that.
+    ROLE_MANAGER: (_CONSOLE_BASE - {FOOD_COST_VIEW}) | {TEAM_MESSAGE},
 
     # Legacy invited teammate. Refused invite/revoke (mobile_api.py) and
     # marketing approval (marketing_drafts.CANNOT_APPROVE); everything else
     # was open, including team rating, because can_manage_team is never
     # actually set to 0 anywhere in production code.
-    ROLE_MEMBER: frozenset({DASHBOARD_ACCESS, TEAM_RATE}),
+    #
+    # The modules stay open here ON PURPOSE. Every live teammate login has
+    # read every module since the day it was created; narrowing that silently
+    # in a migration would take access away from people mid-shift with no
+    # warning and no way to grant it back. TEAM_MESSAGE is withheld instead
+    # because the manager DM inbox is new — nobody has ever had it, so nothing
+    # is taken away, and "managers can talk to each other" is the feature it
+    # was asked for. An owner who wants a narrower teammate promotes them to
+    # `manager`, which is the role that expresses it.
+    ROLE_MEMBER: frozenset({DASHBOARD_ACCESS, TEAM_RATE}) | _ALL_MODULES,
 
     # New. The staff portal and nothing else. Deliberately has no
     # DASHBOARD_ACCESS: that single omission is what keeps a PIN session out
