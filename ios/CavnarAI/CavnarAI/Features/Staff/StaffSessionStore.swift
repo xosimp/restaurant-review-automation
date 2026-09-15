@@ -126,6 +126,96 @@ final class StaffSessionStore {
         }
     }
 
+    // MARK: - Self-signup
+
+    /// Verified between `verifySignupCode` and `claim`. Held here rather than
+    /// passed through five screens, so the signup views only ever deal with
+    /// what the person is looking at.
+    private var signupToken: String?
+
+    func startSignup(phone: String) async throws -> StaffSignupStartResponse {
+        try await client.sendUnauthenticated("/staff/api/signup/start", method: .post,
+                                             body: ["phone": phone])
+    }
+
+    func verifySignupCode(phone: String, code: String) async throws -> Bool {
+        let resp: StaffSignupVerifyResponse = try await client.sendUnauthenticated(
+            "/staff/api/signup/verify", method: .post, body: ["phone": phone, "code": code])
+        guard resp.ok, let token = resp.signupToken else {
+            throw APIClient.APIError(message: resp.error ?? "That code didn't match.")
+        }
+        signupToken = token
+        return true
+    }
+
+    func restaurantFor(joinCode: String) async throws -> String {
+        let resp: StaffRestaurantLookup = try await client.sendUnauthenticated(
+            "/staff/api/signup/where/\(joinCode)")
+        guard resp.ok, let name = resp.restaurant else {
+            throw APIClient.APIError(message: resp.error ?? "We don't recognise that code.")
+        }
+        return name
+    }
+
+    func claimableNames(joinCode: String) async throws -> StaffClaimableResponse {
+        guard let signupToken else {
+            throw APIClient.APIError(message: "Verify your phone first.")
+        }
+        return try await client.sendUnauthenticated(
+            "/staff/api/signup/claimable/\(joinCode)?signup_token=\(signupToken)")
+    }
+
+    /// The last step: creates the account, sets the PIN, and signs in.
+    func claim(joinCode: String, employeeName: String, pin: String) async -> Bool {
+        lastError = nil
+        guard let signupToken else {
+            lastError = "That signup expired. Start again."
+            return false
+        }
+        do {
+            let resp: StaffClaimResponse = try await client.sendUnauthenticated(
+                "/staff/api/signup/claim", method: .post,
+                body: StaffClaimBody(signupToken: signupToken, joinCode: joinCode,
+                                     employeeName: employeeName, pin: pin,
+                                     deviceID: Keychain.deviceIdentity()))
+            guard resp.ok, let token = resp.token else {
+                lastError = resp.error ?? "Could not finish setting up your account."
+                return false
+            }
+            Keychain.set(token, for: Keychain.Key.staffSessionToken)
+            self.token = token
+            // Remembered as this device's staff code so the NEXT sign-in —
+            // after this shift session expires — lands straight on the roster
+            // picker. The join code resolves everywhere the long portal token
+            // does, so one code is all an employee ever holds.
+            self.portalToken = joinCode
+            self.signupToken = nil
+            return true
+        } catch let error as APIClient.APIError {
+            lastError = error.message
+            return false
+        } catch {
+            lastError = "Could not reach the server."
+            return false
+        }
+    }
+
+    private struct StaffClaimBody: Encodable {
+        let signupToken: String
+        let joinCode: String
+        let employeeName: String
+        let pin: String
+        let deviceID: String?
+
+        enum CodingKeys: String, CodingKey {
+            case pin
+            case signupToken = "signup_token"
+            case joinCode = "join_code"
+            case employeeName = "employee_name"
+            case deviceID = "device_id"
+        }
+    }
+
     private struct StaffLoginBody: Encodable {
         let membershipID: Int
         let pin: String

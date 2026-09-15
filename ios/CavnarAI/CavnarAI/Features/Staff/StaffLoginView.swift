@@ -12,6 +12,7 @@ struct StaffLoginView: View {
     @State private var pin: String = ""
     @State private var error: String?
     @State private var loading = false
+    @State private var showingSignup = false
 
     /// Whether this device already knows its restaurant. Remembered after the
     /// first sign-in so the code is one-time setup, not something retyped
@@ -37,6 +38,11 @@ struct StaffLoginView: View {
                 portalCode = saved
                 await loadRoster()
             }
+        }
+        .fullScreenCover(isPresented: $showingSignup) {
+            // Full screen, like the staff sign-in itself: this is the whole
+            // of getting into the product, not a detour inside it.
+            StaffSignupView(knownJoinCode: staff.portalToken)
         }
     }
 
@@ -77,6 +83,8 @@ struct StaffLoginView: View {
             }
             .buttonStyle(CavnarPrimaryButtonStyle())
             .disabled(portalCode.trimmingCharacters(in: .whitespaces).isEmpty || loading)
+
+            newHere
             Spacer()
         }
     }
@@ -118,6 +126,8 @@ struct StaffLoginView: View {
                 }
                 .padding(.top, 4)
             }
+
+            newHere
 
             Button("Use a different code") {
                 roster = []
@@ -177,6 +187,20 @@ struct StaffLoginView: View {
         }
     }
 
+    /// The way in for someone who has no account yet. Offered on both the
+    /// code screen and the roster screen, because "my name isn't on this
+    /// list" is exactly when a new hire realises they need it.
+    private var newHere: some View {
+        Button("First time here? Create your account") {
+            Haptic.light()
+            showingSignup = true
+        }
+        .font(.cavnarBody(14, weight: 600))
+        .foregroundStyle(Color.cavnarEmber2)
+        .frame(maxWidth: .infinity)
+        .padding(.top, 18)
+    }
+
     // MARK: - Actions
 
     private func loadRoster() async {
@@ -216,7 +240,10 @@ struct StaffLoginView: View {
 /// A numeric pad rather than the system keyboard: a phone on a pass gets used
 /// with one thumb and often a glove, and the keyboard's number row is the
 /// wrong target size for that.
-private struct StaffPinPad: View {
+/// Shared with StaffSignupView: the PIN someone chooses at signup and the PIN
+/// they type at the start of a shift should feel like the same control,
+/// because they are the same number.
+struct StaffPinPad: View {
     let onDigit: (String) -> Void
     let onDelete: () -> Void
     let onClear: () -> Void

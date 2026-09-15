@@ -437,6 +437,177 @@ final class AccountViewModel {
         }
     }
 
+    // MARK: - Staff accounts (the employee PIN portal)
+    //
+    // The owner side of staff_routes.py. Most employees sign themselves up
+    // with the join code, so the common jobs here are watching who claimed
+    // which name and correcting it — not creating accounts by hand.
+
+    var staffAccounts: [StaffAccount] = []
+    var staffJoinCode: String = ""
+    var staffPortalURL: String = ""
+    /// Names on the roster that nobody has claimed yet — the question an
+    /// owner actually asks when they open this screen.
+    var staffUnclaimed: [String] = []
+    var isLoadingStaff = false
+    var staffError: String?
+
+    struct StaffAccount: Decodable, Identifiable, Hashable {
+        let membershipID: Int
+        let name: String
+        let jobRole: String?
+        let active: Bool
+        let hasPin: Bool
+        let locked: Bool
+        let claimedByPhone: String?
+        let claimedAt: String?
+        let selfSignup: Bool
+
+        var id: Int { membershipID }
+
+        enum CodingKeys: String, CodingKey {
+            case name, active, locked
+            case membershipID = "membership_id"
+            case jobRole = "job_role"
+            case hasPin = "has_pin"
+            case claimedByPhone = "claimed_by_phone"
+            case claimedAt = "claimed_at"
+            case selfSignup = "self_signup"
+        }
+    }
+
+    private struct StaffListResponse: Decodable {
+        let ok: Bool
+        let staff: [StaffAccount]
+        let joinCode: String?
+        let portalURL: String?
+        let unclaimed: [String]?
+
+        enum CodingKeys: String, CodingKey {
+            case ok, staff, unclaimed
+            case joinCode = "join_code"
+            case portalURL = "portal_url"
+        }
+    }
+
+    func loadStaff() async {
+        isLoadingStaff = true
+        defer { isLoadingStaff = false }
+        do {
+            let response: StaffListResponse = try await client.send(
+                "/mobile/api/account/staff", hapticOnError: false)
+            staffAccounts = response.staff
+            staffJoinCode = response.joinCode ?? ""
+            staffPortalURL = response.portalURL ?? ""
+            staffUnclaimed = response.unclaimed ?? []
+        } catch {
+            // Non-fatal — the sheet shows its empty state.
+        }
+    }
+
+    private struct StaffOK: Decodable { let ok: Bool; let error: String? }
+
+    @discardableResult
+    private func staffAction(_ path: String, body: (any Encodable)? = nil,
+                             failure: String) async -> Bool {
+        staffError = nil
+        do {
+            let response: StaffOK = try await client.send(path, method: .post, body: body)
+            if response.ok {
+                await loadStaff()
+                return true
+            }
+            staffError = response.error ?? failure
+            return false
+        } catch let error as APIClient.APIError {
+            staffError = error.message
+            return false
+        } catch {
+            staffError = failure
+            return false
+        }
+    }
+
+    private struct StaffCreateBody: Encodable {
+        let employeeName: String
+        let jobRole: String
+        let pin: String
+        enum CodingKeys: String, CodingKey {
+            case pin
+            case employeeName = "employee_name"
+            case jobRole = "job_role"
+        }
+    }
+
+    @discardableResult
+    func createStaff(name: String, jobRole: String, pin: String) async -> Bool {
+        await staffAction("/mobile/api/account/staff",
+                          body: StaffCreateBody(employeeName: name, jobRole: jobRole, pin: pin),
+                          failure: "Couldn't add that employee.")
+    }
+
+    private struct StaffPatchBody: Encodable {
+        var employeeName: String?
+        var jobRole: String?
+        var active: Bool?
+        enum CodingKeys: String, CodingKey {
+            case active
+            case employeeName = "employee_name"
+            case jobRole = "job_role"
+        }
+    }
+
+    @discardableResult
+    func renameStaff(_ membershipID: Int, to name: String) async -> Bool {
+        await staffAction("/mobile/api/account/staff/\(membershipID)",
+                          body: StaffPatchBody(employeeName: name),
+                          failure: "Couldn't save that name.")
+    }
+
+    @discardableResult
+    func retitleStaff(_ membershipID: Int, to jobRole: String) async -> Bool {
+        await staffAction("/mobile/api/account/staff/\(membershipID)",
+                          body: StaffPatchBody(jobRole: jobRole),
+                          failure: "Couldn't save that job.")
+    }
+
+    @discardableResult
+    func setStaffActive(_ membershipID: Int, active: Bool) async -> Bool {
+        await staffAction("/mobile/api/account/staff/\(membershipID)",
+                          body: StaffPatchBody(active: active),
+                          failure: "Couldn't change that account.")
+    }
+
+    private struct StaffPinBody: Encodable { let pin: String }
+
+    @discardableResult
+    func resetStaffPin(_ membershipID: Int, pin: String) async -> Bool {
+        await staffAction("/mobile/api/account/staff/\(membershipID)/pin",
+                          body: StaffPinBody(pin: pin),
+                          failure: "Couldn't set that PIN.")
+    }
+
+    @discardableResult
+    func unlockStaff(_ membershipID: Int) async -> Bool {
+        await staffAction("/mobile/api/account/staff/\(membershipID)/unlock",
+                          failure: "Couldn't unlock that account.")
+    }
+
+    /// The owner's undo for a name claimed by the wrong person: the name goes
+    /// back on the list for whoever it belongs to, and the phone that took it
+    /// is refused if it tries again.
+    @discardableResult
+    func unlinkStaff(_ membershipID: Int) async -> Bool {
+        await staffAction("/mobile/api/account/staff/\(membershipID)/unlink",
+                          failure: "Couldn't unlink that account.")
+    }
+
+    @discardableResult
+    func rotateStaffJoinCode() async -> Bool {
+        await staffAction("/mobile/api/account/staff/portal-link/rotate",
+                          failure: "Couldn't make a new code.")
+    }
+
     private struct TeamResponse: Decodable { let ok: Bool; let members: [TeamMember] }
 
     func loadTeam() async {

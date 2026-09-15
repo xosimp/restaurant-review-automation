@@ -50,10 +50,26 @@
   .err{color:var(--red);font-size:14px;text-align:center;margin:18px 0 0;min-height:20px}
   .empty{background:var(--card);border:1px solid var(--line);border-radius:12px;
          padding:20px;color:var(--ink3);font-size:14px;line-height:1.55}
+
+  /* Self-signup */
+  .newhere{margin-top:30px;padding-top:20px;border-top:1px solid var(--line);text-align:center}
+  .linkish{background:none;border:none;color:var(--ember2);font-family:inherit;font-size:14px;
+           font-weight:600;cursor:pointer;padding:6px;text-decoration:underline;
+           text-underline-offset:3px}
+  .sustep{display:none}
+  .sustep.on{display:block}
+  .fld{width:100%;background:var(--card);border:1px solid var(--line);border-radius:12px;
+       padding:15px 14px;color:var(--ink);font-family:inherit;font-size:17px;margin-bottom:12px}
+  .fld:focus{outline:none;border-color:var(--ember)}
+  .fld.code{letter-spacing:.32em;text-align:center;font-weight:700;text-transform:uppercase}
+  .hint{color:var(--ink3);font-size:13px;line-height:1.55;margin:0 0 20px}
+  .devcode{background:var(--card);border:1px dashed var(--ember);border-radius:10px;
+           padding:12px;color:var(--ember2);font-size:13px;margin-bottom:14px;line-height:1.5}
 </style>
 </head>
 <body>
 <div class="wrap">
+ <div id="signin-root">
   {% if not restaurant %}
     <div class="kicker">Cavnar AI</div>
     <h1>Staff sign in</h1>
@@ -101,12 +117,79 @@
       <div class="err" id="err"></div>
     </div>
   {% endif %}
+
+  <div class="newhere">
+    <button type="button" class="linkish" onclick="startSignup()">First time here? Create your account</button>
+  </div>
+ </div>
+
+ <!-- Self-signup. Five steps, one screen each: phone, texted code, the
+      restaurant's join code, which name on the roster is you, and a PIN.
+      No manager involved at any point. -->
+ <div id="signup-root" style="display:none">
+   <div class="backrow">
+     <button type="button" onclick="signupBack()">&larr;</button>
+     <span class="nm" id="su-title">Create your account</span>
+   </div>
+
+   <div class="sustep on" id="su-phone">
+     <h1>What's your mobile number?</h1>
+     <p class="hint">We'll text you a code to make sure it's really you. Your manager sees this number next to your name.</p>
+     <input id="su-phone-in" class="fld" type="tel" inputmode="tel" autocomplete="tel" placeholder="(555) 014-2233">
+     <button type="button" class="cbtn cbtn-primary" style="width:100%" onclick="suSendCode(this)">Text me a code</button>
+   </div>
+
+   <div class="sustep" id="su-code">
+     <h1>Enter the code</h1>
+     <p class="hint" id="su-code-hint">We texted a 6-digit code.</p>
+     <div id="su-devcode"></div>
+     <input id="su-code-in" class="fld code" type="tel" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="000000">
+     <button type="button" class="cbtn cbtn-primary" style="width:100%" onclick="suVerify(this)">Continue</button>
+     <button type="button" class="linkish" style="width:100%;margin-top:12px" onclick="suSendCode(this)">Send it again</button>
+   </div>
+
+   <div class="sustep" id="su-where">
+     <h1>Your restaurant's code</h1>
+     <p class="hint">Six characters. It's posted in the back of house, or your manager has it.</p>
+     <input id="su-join-in" class="fld code" maxlength="9" autocapitalize="characters" autocomplete="off" placeholder="ABC123">
+     <button type="button" class="cbtn cbtn-primary" style="width:100%" onclick="suFindRestaurant(this)">Continue</button>
+   </div>
+
+   <div class="sustep" id="su-name">
+     <h1>Which one are you?</h1>
+     <p class="hint" id="su-name-hint">Tap your name so your shifts line up.</p>
+     <div class="who" id="su-names"></div>
+   </div>
+
+   <div class="sustep" id="su-pin">
+     <h1>Choose a PIN</h1>
+     <p class="hint">4 digits. You'll use this to sign in here and on the restaurant's tablet — don't share it.</p>
+     <div class="dots" id="su-dots"><i></i><i></i><i></i><i></i></div>
+     <div class="pad">
+       <button type="button" data-sd="1">1</button>
+       <button type="button" data-sd="2">2</button>
+       <button type="button" data-sd="3">3</button>
+       <button type="button" data-sd="4">4</button>
+       <button type="button" data-sd="5">5</button>
+       <button type="button" data-sd="6">6</button>
+       <button type="button" data-sd="7">7</button>
+       <button type="button" data-sd="8">8</button>
+       <button type="button" data-sd="9">9</button>
+       <button type="button" class="act" onclick="suClearPin()">Clear</button>
+       <button type="button" data-sd="0">0</button>
+       <button type="button" class="act" onclick="suDelPin()">&#9003;</button>
+     </div>
+   </div>
+
+   <div class="err" id="su-err"></div>
+ </div>
 </div>
 
 <script>
 (function(){
   var PORTAL = "{{ portal_token }}";
   var NONCE = "{{ login_nonce }}";
+  var JOIN_CODE = "{{ join_code }}";
   var pin = "", membershipId = null, busy = false;
 
   function $(id){ return document.getElementById(id); }
@@ -197,6 +280,192 @@
     busy = true;
     $('err').textContent = "";
     post(0);
+  }
+
+  /* ── Self-signup ──────────────────────────────────────────────────────
+     phone -> texted code -> join code -> claim a name -> set a PIN.
+     Each step is its own screen, and the back arrow walks the same list
+     backwards, so nobody is ever stranded mid-flow. */
+
+  var SU_STEPS = ['su-phone', 'su-code', 'su-where', 'su-name', 'su-pin'];
+  var suStep = 0, suPhone = "", suToken = "", suJoin = "", suName = "",
+      suPin = "", suBusy = false;
+
+  function suShow(i){
+    suStep = i;
+    for (var s = 0; s < SU_STEPS.length; s++) {
+      $(SU_STEPS[s]).className = 'sustep' + (s === i ? ' on' : '');
+    }
+    $('su-err').textContent = "";
+  }
+
+  function suFail(msg){ suBusy = false; $('su-err').textContent = msg; }
+
+  function suPost(path, body, done){
+    fetch(path, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body)
+    }).then(function(r){ return r.json(); })
+      .then(done)
+      .catch(function(){ suFail('Could not reach the server. Try again.'); });
+  }
+
+  window.startSignup = function(){
+    $('signin-root').style.display = 'none';
+    $('signup-root').style.display = 'block';
+    /* Arriving through a restaurant's own link means we already know where
+       they work, so that step is filled in and skipped later. */
+    suJoin = JOIN_CODE;
+    suShow(0);
+  };
+
+  window.signupBack = function(){
+    if (suStep === 0) {
+      $('signup-root').style.display = 'none';
+      $('signin-root').style.display = 'block';
+      return;
+    }
+    /* Step 2 is skipped on the way forward when the link named the
+       restaurant, so skip it on the way back too. */
+    if (suStep === 3 && JOIN_CODE) { suShow(1); return; }
+    suShow(suStep - 1);
+  };
+
+  window.suSendCode = function(btn){
+    if (suBusy) return;
+    var val = ($('su-phone-in').value || '').trim();
+    if (val.replace(/[^0-9]/g, '').length < 10) { suFail('Enter your full mobile number.'); return; }
+    suBusy = true;
+    $('su-err').textContent = "";
+    var label = btn.textContent;
+    btn.textContent = 'Sending…';
+    suPost('/staff/api/signup/start', {phone: val}, function(d){
+      suBusy = false;
+      btn.textContent = label;
+      if (!d.ok) { suFail(d.error || 'Could not send a code.'); return; }
+      suPhone = val;
+      $('su-code-hint').textContent = 'We texted a 6-digit code to ' + val + '.';
+      /* Only ever present when Twilio is unconfigured off a deployment —
+         the server decides, so this cannot show up in production. */
+      $('su-devcode').innerHTML = d.dev_code
+        ? '<div class="devcode">Texting isn’t set up on this server, so here’s your code: <b>' + d.dev_code + '</b></div>'
+        : '';
+      suShow(1);
+      $('su-code-in').focus();
+    });
+  };
+
+  window.suVerify = function(btn){
+    if (suBusy) return;
+    var code = ($('su-code-in').value || '').trim();
+    if (code.length < 6) { suFail('Enter the 6-digit code.'); return; }
+    suBusy = true;
+    var label = btn.textContent;
+    btn.textContent = 'Checking…';
+    suPost('/staff/api/signup/verify', {phone: suPhone, code: code}, function(d){
+      suBusy = false;
+      btn.textContent = label;
+      if (!d.ok) { suFail(d.error || 'That code didn’t match.'); return; }
+      suToken = d.signup_token;
+      if (suJoin) { suLoadNames(); } else { suShow(2); $('su-join-in').focus(); }
+    });
+  };
+
+  window.suFindRestaurant = function(btn){
+    if (suBusy) return;
+    var code = ($('su-join-in').value || '').trim();
+    if (!code) { suFail('Enter your restaurant’s code.'); return; }
+    suBusy = true;
+    var label = btn.textContent;
+    btn.textContent = 'Checking…';
+    fetch('/staff/api/signup/where/' + encodeURIComponent(code))
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        suBusy = false;
+        btn.textContent = label;
+        if (!d.ok) { suFail(d.error || 'We don’t recognise that code.'); return; }
+        suJoin = code;
+        suLoadNames();
+      }).catch(function(){ suFail('Could not reach the server. Try again.'); });
+  };
+
+  function suLoadNames(){
+    suBusy = true;
+    fetch('/staff/api/signup/claimable/' + encodeURIComponent(suJoin)
+          + '?signup_token=' + encodeURIComponent(suToken))
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        suBusy = false;
+        if (!d.ok) { suFail(d.error || 'Could not load the list.'); return; }
+        $('su-title').textContent = d.restaurant || 'Create your account';
+        if (d.none_left) {
+          $('su-names').innerHTML = '';
+          $('su-name-hint').textContent =
+            'Everyone on this restaurant’s list already has an account. Ask your manager to add you.';
+          suShow(3);
+          return;
+        }
+        $('su-name-hint').textContent = 'Tap your name so your shifts line up.';
+        var html = '';
+        for (var i = 0; i < d.names.length; i++) {
+          var n = d.names[i];
+          html += '<button type="button" data-claim="' + esc(n.name) + '">' + esc(n.name)
+                + (n.job_role ? '<span class="r">' + esc(n.job_role) + '</span>' : '')
+                + '</button>';
+        }
+        $('su-names').innerHTML = html;
+        var picks = $('su-names').getElementsByTagName('button');
+        for (var p = 0; p < picks.length; p++) {
+          picks[p].addEventListener('click', function(){
+            suName = this.getAttribute('data-claim');
+            $('su-title').textContent = suName;
+            suPin = ""; suPaintPin();
+            suShow(4);
+          });
+        }
+        suShow(3);
+      }).catch(function(){ suFail('Could not reach the server. Try again.'); });
+  }
+
+  function esc(s){
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  function suPaintPin(){
+    var dots = $('su-dots').children;
+    for (var i = 0; i < dots.length; i++) {
+      dots[i].className = i < suPin.length ? 'f' : '';
+    }
+  }
+
+  window.suClearPin = function(){ suPin = ""; suPaintPin(); $('su-err').textContent = ""; };
+  window.suDelPin = function(){ suPin = suPin.slice(0, -1); suPaintPin(); };
+
+  var suKeys = document.querySelectorAll('.pad button[data-sd]');
+  for (var sk = 0; sk < suKeys.length; sk++) {
+    suKeys[sk].addEventListener('click', function(){
+      if (suBusy || suPin.length >= 8) return;
+      suPin += this.getAttribute('data-sd');
+      suPaintPin();
+      if (suPin.length === 4) suClaim();
+    });
+  }
+
+  function suClaim(){
+    if (suBusy) return;
+    suBusy = true;
+    $('su-err').textContent = "";
+    suPost('/staff/api/signup/claim', {
+      signup_token: suToken, join_code: suJoin,
+      employee_name: suName, pin: suPin
+    }, function(d){
+      suBusy = false;
+      if (d.ok) { window.location = d.redirect; return; }
+      suPin = ""; suPaintPin();
+      suFail(d.error || 'Could not finish setting up your account.');
+    });
   }
 })();
 </script>

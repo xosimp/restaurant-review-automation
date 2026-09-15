@@ -15,13 +15,16 @@ time-off and messaging can be added without touching authentication again.
 from flask import (Blueprint, jsonify, make_response, redirect, render_template,
                    request, url_for)
 
-from auth import (STAFF_SESSION_HOURS, consume_portal_nonce, cookies_require_secure,
-                  create_staff_session, delete_session, get_membership,
-                  get_memberships_for_restaurant, issue_portal_nonce,
-                  pin_lockout_state, portal_attempts_exceeded,
-                  record_portal_attempt, restaurant_for_portal_token,
-                  set_membership_pin, staff_login_required, validate_pin,
-                  verify_membership_pin, PinError)
+from auth import (STAFF_SESSION_HOURS, SignupError, claim_staff_name,
+                  claimable_names, consume_portal_nonce, cookies_require_secure,
+                  create_staff_session, delete_session, get_join_code,
+                  get_membership, get_memberships_for_restaurant,
+                  issue_portal_nonce, phone_for_signup_token, pin_lockout_state,
+                  portal_attempts_exceeded, record_portal_attempt,
+                  restaurant_for_join_code, restaurant_for_staff_code,
+                  set_membership_pin, staff_login_required, start_staff_signup,
+                  validate_pin, verify_membership_pin, verify_staff_signup,
+                  PinError)
 from models import get_restaurant
 
 staff_bp = Blueprint("staff", __name__, url_prefix="/staff")
@@ -53,6 +56,21 @@ def _throttled(ip):
     return None
 
 
+def _notify_owner_of_signin(rid, user_id, ip):
+    """Owners could see every console sign-in and none of the portal ones,
+    even though the portal is the surface with the wider door. Off by
+    default — see restaurants.staff_signin_notify."""
+    try:
+        restaurant = get_restaurant(rid)
+        if restaurant and getattr(restaurant, "staff_signin_notify", 0):
+            membership = get_membership(user_id, rid) or {}
+            from notify import send_staff_signin_alert
+            send_staff_signin_alert(rid, restaurant.name or "", restaurant.owner_email or "",
+                                    membership.get("employee_name") or "", ip)
+    except Exception as exc:
+        print(f"[StaffSignIn] alert failed: {exc}")
+
+
 def _staff_context(current_user):
     """(restaurant_id, employee_name) for the signed-in employee.
 
@@ -71,7 +89,7 @@ def portal_entry():
     """Landing when we don't know which restaurant this is — the employee
     needs their restaurant's link."""
     return render_template("staff_login.html", restaurant=None, roster=[],
-                           portal_token="", error=None)
+                           portal_token="", login_nonce="", join_code="", error=None)
 
 
 @staff_bp.route("/r/<token>")
@@ -81,13 +99,13 @@ def portal_login(token):
     throttled = _throttled(ip)
     if throttled:
         return render_template("staff_login.html", restaurant=None, roster=[],
-                               portal_token="", login_nonce="",
+                               portal_token="", login_nonce="", join_code="",
                                error="Too many attempts from this device. Wait a few minutes."), 429
     record_portal_attempt(ip)
-    rid = restaurant_for_portal_token(token)
+    rid = restaurant_for_staff_code(token)
     if not rid:
         return render_template("staff_login.html", restaurant=None, roster=[],
-                               portal_token="", login_nonce="",
+                               portal_token="", login_nonce="", join_code="",
                                error="That staff link isn't valid any more. Ask a manager for the current one."), 404
     restaurant = get_restaurant(rid)
     roster = [
@@ -99,7 +117,7 @@ def portal_login(token):
     ]
     return render_template("staff_login.html", restaurant=restaurant, roster=roster,
                            portal_token=token, login_nonce=issue_portal_nonce(rid),
-                           error=None)
+                           join_code=get_join_code(rid), error=None)
 
 
 @staff_bp.route("/api/roster/<token>")
@@ -113,7 +131,7 @@ def api_roster(token):
     if throttled:
         return throttled
     record_portal_attempt(ip)
-    rid = restaurant_for_portal_token(token)
+    rid = restaurant_for_staff_code(token)
     if not rid:
         return jsonify(ok=False, error="That staff link isn't valid any more."), 404
     restaurant = get_restaurant(rid)
@@ -138,7 +156,7 @@ def portal_authenticate(token):
     throttled = _throttled(ip)
     if throttled:
         return throttled
-    rid = restaurant_for_portal_token(token)
+    rid = restaurant_for_staff_code(token)
     if not rid:
         return jsonify(ok=False, error="That staff link isn't valid any more."), 404
 
@@ -179,18 +197,7 @@ def portal_authenticate(token):
         user_agent=request.headers.get("User-Agent", ""),
         device_id=(data.get("device_id") or "").strip() or None)
 
-    # Owners could see every console sign-in and none of the portal ones,
-    # even though the portal is the surface with the wider door. Off by
-    # default — see restaurants.staff_signin_notify.
-    try:
-        restaurant = get_restaurant(rid)
-        if restaurant and getattr(restaurant, "staff_signin_notify", 0):
-            membership = get_membership(row["user_id"], rid) or {}
-            from notify import send_staff_signin_alert
-            send_staff_signin_alert(rid, restaurant.name or "", restaurant.owner_email or "",
-                                    membership.get("employee_name") or "", ip)
-    except Exception as exc:
-        print(f"[StaffSignIn] alert failed: {exc}")
+    _notify_owner_of_signin(rid, row["user_id"], ip)
 
     resp = make_response(jsonify(ok=True, redirect=url_for("staff.portal_home"),
                                  token=session_token))
@@ -204,6 +211,120 @@ def portal_authenticate(token):
     resp.set_cookie("staff_session", session_token, httponly=True, samesite="Lax",
                     max_age=STAFF_SESSION_HOURS * 3600,
                     secure=cookies_require_secure())
+    return resp
+
+
+# ── Self-signup ────────────────────────────────────────────────────────────
+#
+# Five steps, each one a separate request so a client can render them as
+# separate screens: phone → code → restaurant → name → PIN.
+#
+# Nothing here needs the owner. The control is on which NAME may be claimed
+# (once, from the real roster), not on who may sign up — an account with no
+# membership can see nothing at all.
+
+
+@staff_bp.route("/api/signup/start", methods=["POST"])
+def signup_start():
+    """Text a verification code to a phone."""
+    ip = _client_ip()
+    throttled = _throttled(ip)
+    if throttled:
+        return throttled
+    record_portal_attempt(ip)
+    data = request.get_json(silent=True) or {}
+    try:
+        result = start_staff_signup(data.get("phone") or "")
+    except SignupError as se:
+        return jsonify(ok=False, error=str(se)), 400
+    return jsonify(**result)
+
+
+@staff_bp.route("/api/signup/verify", methods=["POST"])
+def signup_verify():
+    """Check the texted code and hand back a short-lived signup token."""
+    ip = _client_ip()
+    throttled = _throttled(ip)
+    if throttled:
+        return throttled
+    record_portal_attempt(ip)
+    data = request.get_json(silent=True) or {}
+    try:
+        token = verify_staff_signup(data.get("phone") or "", data.get("code") or "")
+    except SignupError as se:
+        return jsonify(ok=False, error=str(se)), 400
+    return jsonify(ok=True, signup_token=token)
+
+
+@staff_bp.route("/api/signup/where/<code>")
+def signup_where(code):
+    """Which restaurant a join code names — so someone can confirm they typed
+    it right before they pick a name off a stranger's roster."""
+    ip = _client_ip()
+    throttled = _throttled(ip)
+    if throttled:
+        return throttled
+    record_portal_attempt(ip)
+    rid = restaurant_for_join_code(code)
+    if not rid:
+        return jsonify(ok=False, error="We don't recognise that code. Check with your manager."), 404
+    restaurant = get_restaurant(rid)
+    return jsonify(ok=True, restaurant=(restaurant.name if restaurant else ""))
+
+
+@staff_bp.route("/api/signup/claimable/<code>")
+def signup_claimable(code):
+    """The names still available at this restaurant.
+
+    Requires a verified signup token: the roster is a list of real people's
+    names, and there is no reason to hand it to someone who has not at least
+    proved they hold a phone.
+    """
+    token = (request.args.get("signup_token") or "").strip()
+    if not phone_for_signup_token(token):
+        return jsonify(ok=False, error="Verify your phone first.", signup_expired=True), 401
+    rid = restaurant_for_join_code(code)
+    if not rid:
+        return jsonify(ok=False, error="We don't recognise that code."), 404
+    names = claimable_names(rid)
+    restaurant = get_restaurant(rid)
+    return jsonify(ok=True, restaurant=(restaurant.name if restaurant else ""),
+                   names=names,
+                   none_left=(len(names) == 0))
+
+
+@staff_bp.route("/api/signup/claim", methods=["POST"])
+def signup_claim():
+    """Claim a name, set a PIN, and get signed in — the account exists from
+    here on."""
+    ip = _client_ip()
+    throttled = _throttled(ip)
+    if throttled:
+        return throttled
+    record_portal_attempt(ip)
+    data = request.get_json(silent=True) or {}
+    rid = restaurant_for_join_code(data.get("join_code") or "")
+    if not rid:
+        return jsonify(ok=False, error="We don't recognise that code."), 404
+    try:
+        claimed = claim_staff_name(
+            (data.get("signup_token") or "").strip(), rid,
+            data.get("employee_name") or "", data.get("pin") or "")
+    except SignupError as se:
+        return jsonify(ok=False, error=str(se)), 400
+
+    session_token = create_staff_session(
+        claimed["user_id"], rid, ip_address=ip,
+        user_agent=request.headers.get("User-Agent", ""),
+        device_id=(data.get("device_id") or "").strip() or None)
+    resp = make_response(jsonify(ok=True, redirect=url_for("staff.portal_home"),
+                                 token=session_token,
+                                 employee_name=claimed["employee_name"],
+                                 job_role=claimed["job_role"]))
+    resp.set_cookie("staff_session", session_token, httponly=True, samesite="Lax",
+                    max_age=STAFF_SESSION_HOURS * 3600,
+                    secure=cookies_require_secure())
+    _notify_owner_of_signin(rid, claimed["user_id"], ip)
     return resp
 
 
@@ -405,32 +526,18 @@ def _employee_job_role(restaurant_id, membership):
 
 
 def _resolve_job_role_from_data(restaurant_id, name):
-    """Job title from real restaurant data only — never a sample fallback."""
+    """Job title from real restaurant data only — never a sample fallback.
+
+    Same source as the claimable-name list at signup (staff_roster), so the
+    job someone is offered when they claim their name is the same job that
+    later decides which checklist they see.
+    """
     target = name.strip().lower()
     try:
-        from models import get_manual_team_members
-        for m in get_manual_team_members(restaurant_id):
-            if (m.get("name") or "").strip().lower() == target:
-                role = (m.get("role") or "").strip()
-                if role:
-                    return role
-    except Exception:
-        pass
-    try:
-        # The same source staff_schedule.py reads: the most recently published
-        # schedule, which either exists or doesn't. No fallback, by design.
-        from labor import employee_shifts_from_csv
-        from models import get_schedule_history, get_schedule_history_detail
-        history = get_schedule_history(restaurant_id) or []
-        if history:
-            detail = get_schedule_history_detail(history[0]["id"], restaurant_id) or {}
-            latest, role = "", None
-            for sh in employee_shifts_from_csv(detail.get("schedule_csv") or "", name):
-                d = sh.get("date") or ""
-                if d >= latest:
-                    latest, role = d, (sh.get("role") or "").strip() or role
-            if role:
-                return role
+        from staff_roster import roster_names_for_restaurant
+        for roster_name, job in roster_names_for_restaurant(restaurant_id):
+            if roster_name.strip().lower() == target and job:
+                return job
     except Exception:
         pass
     return None

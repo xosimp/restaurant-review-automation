@@ -6687,6 +6687,13 @@ def account_staff_unlock(current_user, membership_id):
     return _m("mobile_unlock_staff")(current_user, membership_id)
 
 
+@client_bp.route("/api/account/staff/<int:membership_id>/unlink", methods=["POST"])
+@login_required
+def account_staff_unlink(current_user, membership_id):
+    """Take a claimed name back from whoever claimed it."""
+    return _m("mobile_unlink_staff")(current_user, membership_id)
+
+
 @client_bp.route("/api/account/staff/<int:membership_id>/deactivate", methods=["POST"])
 @login_required
 def account_staff_deactivate(current_user, membership_id):

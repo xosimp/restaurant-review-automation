@@ -4438,8 +4438,10 @@ def mobile_list_staff(current_user):
     denied = _require_team_admin(current_user)
     if denied:
         return denied
-    from auth import (get_memberships_for_restaurant, get_or_create_staff_portal_token,
-                      get_pin_security_events, pin_lockout_state)
+    from auth import (get_join_code, get_memberships_for_restaurant,
+                      get_or_create_staff_portal_token, get_pin_security_events,
+                      pin_lockout_state)
+    from staff_roster import roster_names_for_restaurant
     rid = current_user["restaurant_id"]
     out = []
     # include_inactive: a deactivated employee has to stay visible, or there is
@@ -4456,9 +4458,23 @@ def mobile_list_staff(current_user):
             "pin_set_at": m.get("pin_set_at"),
             "locked": state["locked"],
             "failed_attempts": state["failed_count"],
+            # Who took this name, and when. This is the whole owner-side
+            # control for self-signup: a number Erik doesn't recognise next
+            # to a name he does is the signal to unlink.
+            "claimed_by_phone": m.get("claimed_by_phone"),
+            "claimed_at": m.get("claimed_at"),
+            "self_signup": bool(m.get("claimed_by_phone")),
         })
+    # Names nobody has claimed yet, so an owner can see at a glance who on
+    # their roster still has no account — the question they will actually ask.
+    claimed = {(m.get("employee_name") or "").strip().lower()
+               for m in get_memberships_for_restaurant(rid, role="employee")}
+    unclaimed = [n for n, _job in roster_names_for_restaurant(rid)
+                 if n.strip().lower() not in claimed]
     return jsonify(ok=True, staff=out,
                    portal_url=f"/staff/r/{get_or_create_staff_portal_token(rid)}",
+                   join_code=get_join_code(rid),
+                   unclaimed=unclaimed,
                    pin_events=get_pin_security_events(rid, limit=25))
 
 
@@ -4620,6 +4636,27 @@ def mobile_deactivate_staff(current_user, membership_id):
     return jsonify(ok=True)
 
 
+@mobile_bp.route("/account/staff/<int:membership_id>/unlink", methods=["POST"])
+@mobile_login_required
+def mobile_unlink_staff(current_user, membership_id):
+    """Take a claimed name back from whoever claimed it.
+
+    The owner-side undo for self-signup, and deliberately different from
+    deactivate: the name returns to the claimable pool so the person it
+    belongs to can take it, while the phone that took it is refused if it
+    tries again.
+    """
+    denied = _require_team_admin(current_user)
+    if denied:
+        return denied
+    from auth import unlink_claimed_membership
+    if not unlink_claimed_membership(membership_id, current_user["restaurant_id"]):
+        return jsonify(ok=False, error="Not found"), 404
+    _log_account_event(current_user["restaurant_id"], "staff_account_unlinked",
+                       current_user, detail=str(membership_id))
+    return jsonify(ok=True)
+
+
 @mobile_bp.route("/account/staff/portal-link/rotate", methods=["POST"])
 @mobile_login_required
 def mobile_rotate_portal_link(current_user):
@@ -4627,10 +4664,13 @@ def mobile_rotate_portal_link(current_user):
     denied = _require_team_admin(current_user)
     if denied:
         return denied
-    from auth import rotate_staff_portal_token
-    token = rotate_staff_portal_token(current_user["restaurant_id"])
-    _log_account_event(current_user["restaurant_id"], "staff_portal_link_rotated", current_user)
-    return jsonify(ok=True, portal_url=f"/staff/r/{token}")
+    from auth import get_join_code, rotate_staff_portal_token
+    rid = current_user["restaurant_id"]
+    token = rotate_staff_portal_token(rid)
+    _log_account_event(rid, "staff_portal_link_rotated", current_user)
+    # The join code rides on the same row, so rotating the link rotates both —
+    # which is what an owner means by "stop the old one working".
+    return jsonify(ok=True, portal_url=f"/staff/r/{token}", join_code=get_join_code(rid))
 
 
 @mobile_bp.route("/account/team/<int:user_id>/can-manage", methods=["POST"])

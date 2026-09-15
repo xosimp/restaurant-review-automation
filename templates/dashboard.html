@@ -4362,16 +4362,29 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       <button onclick="rotateStaffLink(this)" class="cbtn cbtn-secondary cbtn-sm">New staff link</button>
     </div>
 
+    <!-- Two ways in, same underlying link. The join code is what a new hire
+         types on their own phone to sign themselves up; the URL is what you
+         text to someone who already has an account. -->
+    <div style="display:grid;grid-template-columns:auto 1fr;gap:14px;align-items:center;margin-top:14px">
+      <div>
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:5px">Join code</div>
+        <div id="staff-join-code" style="font-family:'Space Grotesk',monospace;font-size:26px;font-weight:600;letter-spacing:.14em;color:var(--ember)">&mdash;</div>
+      </div>
+      <div style="font-size:11px;color:var(--ink3);line-height:1.55">Post this in the back of house. A new employee downloads Cavnar AI, taps <strong style="color:var(--ink2)">Create your account</strong>, and types it &mdash; then picks their own name off your roster and sets their own PIN. You don&rsquo;t have to do anything.</div>
+    </div>
+
     <div style="display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap">
       <input id="staff-portal-url" readonly style="flex:1;min-width:220px;padding:7px 9px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;background:var(--paper);color:var(--ink3)">
-      <button onclick="copyStaffLink(this)" class="cbtn cbtn-secondary cbtn-sm">Copy</button>
+      <button onclick="copyStaffLink(this)" class="cbtn cbtn-secondary cbtn-sm">Copy link</button>
     </div>
-    <div style="font-size:11px;color:var(--ink3);margin-top:6px">Give this to your staff once. A new link stops the old one working.</div>
+    <div style="font-size:11px;color:var(--ink3);margin-top:6px">A new code stops the old code and the old link working, everywhere.</div>
 
     <div id="staff-list" style="margin-top:14px;font-size:12px;color:var(--ink3)">Loading&hellip;</div>
+    <div id="staff-unclaimed" style="margin-top:10px"></div>
 
     <div style="border-top:1px solid var(--paper3);margin-top:14px;padding-top:14px">
-      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Add an employee</div>
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Add an employee yourself</div>
+      <div style="font-size:11px;color:var(--ink3);margin-bottom:10px">Only needed if someone can&rsquo;t sign themselves up &mdash; you&rsquo;ll have to read them the PIN.</div>
       <div style="display:flex;gap:6px;flex-wrap:wrap">
         <input id="staff-new-name" placeholder="Name (as it appears on the schedule)" style="flex:1.6;min-width:180px;padding:7px 9px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;background:var(--paper);color:var(--ink)">
         <input id="staff-new-role" placeholder="Job (Server)" style="flex:1;min-width:110px;padding:7px 9px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;background:var(--paper);color:var(--ink)" list="staff-role-options">
@@ -11712,29 +11725,39 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       if(!d.ok){el.textContent='Could not load your staff accounts.';return;}
       var url=document.getElementById('staff-portal-url');
       if(url&&d.portal_url)url.value=window.location.origin+d.portal_url;
+      var jc=document.getElementById('staff-join-code');
+      if(jc)jc.textContent=d.join_code||'—';
       _staffRoleOptions();
       var rows=d.staff||[];
-      if(!rows.length){el.innerHTML='<div style="color:var(--ink3)">No staff accounts yet. Add one below and give them the link above.</div>';}
+      if(!rows.length){el.innerHTML='<div style="color:var(--ink3)">Nobody has signed up yet. Give your staff the join code above.</div>';}
       else{
         el.innerHTML=rows.map(function(s){
           var bits=[];
           if(s.job_role)bits.push(esc(s.job_role));
-          if(!s.active)bits.push('<span style="color:var(--red)">inactive</span>');
+          if(!s.active)bits.push('<span style="color:var(--red)">removed</span>');
           else if(s.locked)bits.push('<span style="color:var(--red)">locked out</span>');
           else if(!s.has_pin)bits.push('<span style="color:var(--red)">no PIN</span>');
+          // The phone is the whole owner-side control for self-signup: a
+          // number you don't recognise next to a name you do is the signal.
+          if(s.self_signup)bits.push('signed up '+ago(s.claimed_at)+' · '+esc(_phone(s.claimed_by_phone)));
           var meta=bits.length?' <span style="color:var(--ink3)">· '+bits.join(' · ')+'</span>':'';
           var acts='<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="renameStaff('+s.membership_id+',this)">Rename</button>'
                  + '<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="retitleStaff('+s.membership_id+',this)">Job</button>'
                  + '<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="resetStaffPin('+s.membership_id+',this)">New PIN</button>';
           if(s.locked)acts+='<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="unlockStaff('+s.membership_id+',this)">Unlock</button>';
-          acts+= s.active
-            ? '<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="setStaffActive('+s.membership_id+',false,this)">Deactivate</button>'
-            : '<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="setStaffActive('+s.membership_id+',true,this)">Reactivate</button>';
+          if(s.active){
+            acts+= s.self_signup
+              ? '<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="unlinkStaff('+s.membership_id+',this)">Not them</button>'
+              : '<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="setStaffActive('+s.membership_id+',false,this)">Remove</button>';
+          } else {
+            acts+='<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="setStaffActive('+s.membership_id+',true,this)">Restore</button>';
+          }
           return '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;padding:6px 0;border-top:1px solid var(--paper3);flex-wrap:wrap">'
                + '<span><span style="color:var(--ink);font-weight:600">'+esc(s.name||'')+'</span>'+meta+'</span>'
                + '<span style="display:flex;gap:4px;flex-wrap:wrap">'+acts+'</span></div>';
         }).join('');
       }
+      _renderUnclaimed(d.unclaimed||[]);
       _renderPinEvents(d.pin_events||[]);
     });
   };
@@ -11749,6 +11772,22 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
           var label=e.event==='pin_locked'?'<span style="color:var(--red)">locked out</span>':'wrong PIN';
           return '<div style="font-size:11px;color:var(--ink3);padding:3px 0">'+esc(e.name||'Someone')+' · '+label+' · '+ago(e.created_at)+'</div>';
         }).join('');
+  }
+  // Who on your roster still has no account — the question an owner actually
+  // asks, and the only nudging self-signup ever needs.
+  function _renderUnclaimed(names){
+    var box=document.getElementById('staff-unclaimed');if(!box)return;
+    if(!names.length){box.innerHTML='';return;}
+    box.innerHTML='<div style="font-size:11px;color:var(--ink3);padding-top:8px;border-top:1px solid var(--paper3)">'
+      +'<strong style="color:var(--ink2)">Not signed up yet:</strong> '
+      +names.map(function(n){return esc(n);}).join(', ')
+      +'</div>';
+  }
+  function _phone(p){
+    var d=String(p||'').replace(/[^0-9]/g,'');
+    if(d.length===11&&d.charAt(0)==='1')d=d.slice(1);
+    if(d.length!==10)return p||'';
+    return '('+d.slice(0,3)+') '+d.slice(3,6)+'-'+d.slice(6);
   }
   function _staffRoleOptions(){
     var dl=document.getElementById('staff-role-options');if(!dl)return;
@@ -11808,6 +11847,15 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       else toast(d.error||'Could not set that PIN','error');
     });
   };
+  window.unlinkStaff=function(id,btn){
+    if(!confirm('Take this name back? Whoever claimed it is signed out, the name goes back on the list for the right person, and that phone can’t claim it again.'))return;
+    var done=busy(btn,'…');
+    jsend('/api/account/staff/'+id+'/unlink',{},function(d){
+      done();
+      if(d.ok){toast('Name is available again','success');loadStaff();}
+      else toast(d.error||'Could not unlink','error');
+    });
+  };
   window.unlockStaff=function(id,btn){
     var done=busy(btn,'…');
     jsend('/api/account/staff/'+id+'/unlock',{},function(d){
@@ -11816,12 +11864,12 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     });
   };
   window.rotateStaffLink=function(btn){
-    if(!confirm('Make a new staff link? The old one stops working for everyone immediately.'))return;
+    if(!confirm('Make a new join code and link? The old ones stop working for everyone immediately — including anyone mid-signup.'))return;
     var done=busy(btn,'…');
     jsend('/api/account/staff/portal-link/rotate',{},function(d){
       done();
-      if(d.ok){toast('New staff link created','success');loadStaff();}
-      else toast(d.error||'Could not rotate the link','error');
+      if(d.ok){toast('New join code created','success');loadStaff();}
+      else toast(d.error||'Could not rotate the code','error');
     });
   };
   window.toggleStaffSigninNotify=function(cb){

@@ -143,3 +143,85 @@ struct StaffOKResponse: Decodable {
     let ok: Bool
     let error: String?
 }
+
+// MARK: - Self-signup
+//
+// An employee makes their own account: verify a phone, name the restaurant
+// with a join code, claim their own name off the roster, set a PIN. The owner
+// does nothing. The control is on which NAME may be claimed — once, from the
+// real roster — not on who may sign up, because an account with no membership
+// can see nothing at all.
+
+struct StaffSignupStartResponse: Decodable {
+    let ok: Bool
+    let error: String?
+    let smsSent: Bool?
+    /// Present only when Twilio is unconfigured off a deployed environment, so
+    /// the flow is testable locally. The server decides; it can never appear
+    /// in production.
+    let devCode: String?
+
+    enum CodingKeys: String, CodingKey {
+        case ok, error
+        case smsSent = "sms_sent"
+        case devCode = "dev_code"
+    }
+}
+
+struct StaffSignupVerifyResponse: Decodable {
+    let ok: Bool
+    let error: String?
+    let signupToken: String?
+
+    enum CodingKeys: String, CodingKey {
+        case ok, error
+        case signupToken = "signup_token"
+    }
+}
+
+struct StaffRestaurantLookup: Decodable {
+    let ok: Bool
+    let error: String?
+    let restaurant: String?
+}
+
+struct StaffClaimableName: Decodable, Identifiable, Hashable {
+    let name: String
+    let jobRole: String?
+
+    var id: String { name }
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case jobRole = "job_role"
+    }
+}
+
+struct StaffClaimableResponse: Decodable {
+    let ok: Bool
+    let error: String?
+    let restaurant: String?
+    let names: [StaffClaimableName]?
+    /// True when every name on the roster is already taken — a real state
+    /// with its own answer ("ask your manager"), not an empty list.
+    let noneLeft: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case ok, error, restaurant, names
+        case noneLeft = "none_left"
+    }
+}
+
+struct StaffClaimResponse: Decodable {
+    let ok: Bool
+    let error: String?
+    let token: String?
+    let employeeName: String?
+    let jobRole: String?
+
+    enum CodingKeys: String, CodingKey {
+        case ok, error, token
+        case employeeName = "employee_name"
+        case jobRole = "job_role"
+    }
+}

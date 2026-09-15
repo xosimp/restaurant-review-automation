@@ -79,6 +79,7 @@ struct AccountView: View {
                 case "connections": showingConnections = true
                 case "billing": showingBilling = true
                 case "team": showingTeam = true
+                case "staff": showingStaff = true
                 case "export": showingExportData = true
                 case "emailhistory": showingEmailHistory = true
                 case "close-account": showingCloseAccount = true
@@ -182,6 +183,7 @@ struct AccountView: View {
     @State private var showingScheduleHistory = false
     @State private var showingChangelog = false
     @State private var showingTeam = false
+    @State private var showingStaff = false
     @State private var showingExportData = false
     @State private var showingEmailHistory = false
     @State private var showingCloseAccount = false
@@ -279,9 +281,21 @@ struct AccountView: View {
                     } action: {
                         showingTeam = true
                     }
+                    // Employees, as distinct from teammates: PIN identities on
+                    // the staff portal, who mostly sign themselves up with the
+                    // join code. Same owner-only gate, enforced server-side by
+                    // permissions.TEAM_INVITE.
+                    settingsRow {
+                        row("Staff accounts", systemImage: "person.badge.key")
+                    } action: {
+                        showingStaff = true
+                    }
                 }
                 .sheet(isPresented: $showingTeam) {
                     AccountTeamDetailView(viewModel: viewModel)
+                }
+                .sheet(isPresented: $showingStaff) {
+                    AccountStaffDetailView(viewModel: viewModel)
                 }
             }
 

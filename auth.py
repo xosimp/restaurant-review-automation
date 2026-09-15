@@ -169,6 +169,28 @@ CREATE TABLE IF NOT EXISTS portal_attempts (
 CREATE INDEX IF NOT EXISTS idx_portal_attempts_ip
     ON portal_attempts(ip, created_at);
 
+-- Employee self-signup: phone verification, before any account exists.
+--
+-- The identity is NOT created here. users.restaurant_id is NOT NULL and ~390
+-- routes read current_user["restaurant_id"] for tenant scoping, so an
+-- identity that exists before it has a restaurant would be a brand-new
+-- failure mode across the whole app. Instead the phone is verified first,
+-- held here, and the users + memberships rows are written together at the
+-- moment a name is claimed — by which point the restaurant is known.
+--
+-- Keyed by phone so one number has one live signup at a time, and rows are
+-- deleted as they age out rather than needing a sweeper.
+CREATE TABLE IF NOT EXISTS staff_signups (
+    phone           TEXT    PRIMARY KEY,
+    code_hash       TEXT    NOT NULL,
+    attempts        INTEGER NOT NULL DEFAULT 0,
+    sends           INTEGER NOT NULL DEFAULT 1,
+    token_hash      TEXT,
+    created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+    last_sent_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+    verified_at     TEXT
+);
+
 -- One-shot tokens that make a captured PIN sign-in POST unreplayable.
 --
 -- The body is {membership_id, pin} and nothing else varied between requests,
@@ -260,6 +282,18 @@ def init_auth(db_path: str = DB_PATH):
         # title, and the job title decides which task checklist they may
         # complete. Authorization must never be derived from invented data.
         "ALTER TABLE memberships ADD COLUMN job_role TEXT",
+        # Employee self-signup. The phone is the identity: it is how a
+        # returning employee is recognised at a second restaurant (one person,
+        # two memberships) rather than ending up with two accounts, and it is
+        # what an owner looks at to decide whether a claimed name is really
+        # that person.
+        "ALTER TABLE users ADD COLUMN phone TEXT",
+        "ALTER TABLE memberships ADD COLUMN claimed_by_phone TEXT",
+        "ALTER TABLE memberships ADD COLUMN claimed_at TEXT",
+        # A short, typeable version of the portal token. The 32-character URL
+        # token is fine to tap in a link and miserable to read off a whiteboard
+        # and type on a phone, which is exactly what signup asks people to do.
+        "ALTER TABLE staff_portal_tokens ADD COLUMN join_code TEXT",
     ]:
         try:
             import sqlite3 as _sql
@@ -1021,12 +1055,82 @@ def get_or_create_staff_portal_token(restaurant_id: int, db_path: str = DB_PATH)
         if row:
             return row["token"]
         token = secrets.token_urlsafe(24)
-        conn.execute("INSERT INTO staff_portal_tokens (restaurant_id, token) VALUES (?,?)",
-                     (restaurant_id, token))
+        conn.execute(
+            "INSERT INTO staff_portal_tokens (restaurant_id, token, join_code) VALUES (?,?,?)",
+            (restaurant_id, token, _mint_join_code(conn)))
         conn.commit()
         return token
     finally:
         conn.close()
+
+
+# No I, O, 0 or 1 — this gets read off a whiteboard and typed on a phone by
+# someone who is about to start a shift, and those four are the characters
+# people get wrong. 32^6 is ~1e9, which together with the signup throttle is
+# far more than enough for a code that only names a restaurant.
+_JOIN_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+JOIN_CODE_LENGTH = 6
+
+
+def _mint_join_code(conn) -> str:
+    for _ in range(12):
+        code = "".join(secrets.choice(_JOIN_ALPHABET) for _ in range(JOIN_CODE_LENGTH))
+        clash = conn.execute(
+            "SELECT 1 FROM staff_portal_tokens WHERE join_code=? AND revoked_at IS NULL",
+            (code,)).fetchone()
+        if not clash:
+            return code
+    # Twelve collisions against a billion-code space means something is very
+    # wrong; a longer code is better than an infinite loop or a duplicate.
+    return "".join(secrets.choice(_JOIN_ALPHABET) for _ in range(JOIN_CODE_LENGTH + 3))
+
+
+def normalize_join_code(value) -> str:
+    """What someone typed, as the code actually looks.
+
+    People type lowercase, add the dash they saw, and hit O for 0. The first
+    two are just tidied; the third cannot happen because those characters are
+    not in the alphabet.
+    """
+    return "".join(c for c in (value or "").upper() if c in _JOIN_ALPHABET)
+
+
+def get_join_code(restaurant_id: int, db_path: str = DB_PATH) -> str:
+    """The restaurant's current join code, minting one for links that predate
+    join codes entirely."""
+    get_or_create_staff_portal_token(restaurant_id, db_path=db_path)
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT id, join_code FROM staff_portal_tokens WHERE restaurant_id=? "
+            "AND revoked_at IS NULL ORDER BY id DESC LIMIT 1", (restaurant_id,)).fetchone()
+        if not row:
+            return ""
+        if row["join_code"]:
+            return row["join_code"]
+        code = _mint_join_code(conn)
+        conn.execute("UPDATE staff_portal_tokens SET join_code=? WHERE id=?",
+                     (code, row["id"]))
+        conn.commit()
+        return code
+    finally:
+        conn.close()
+
+
+def restaurant_for_join_code(code: str, db_path: str = DB_PATH) -> Optional[int]:
+    """The restaurant a join code names, or None. Same contract as
+    restaurant_for_portal_token: revoked codes resolve to nothing."""
+    code = normalize_join_code(code)
+    if not code:
+        return None
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT restaurant_id FROM staff_portal_tokens "
+            "WHERE join_code=? AND revoked_at IS NULL", (code,)).fetchone()
+    finally:
+        conn.close()
+    return row["restaurant_id"] if row else None
 
 
 def rotate_staff_portal_token(restaurant_id: int, db_path: str = DB_PATH) -> str:
@@ -1164,6 +1268,313 @@ def consume_portal_nonce(nonce: str, restaurant_id: int, db_path: str = DB_PATH)
             conn.close()
     except Exception:
         return False
+
+
+# ── Employee self-signup ───────────────────────────────────────────────────
+#
+# An employee creates their own account: verify a phone, name the restaurant
+# with a join code, claim their own name off the roster, set a PIN.
+#
+# The owner does nothing per employee. The control is not on WHO may sign up —
+# an account with no membership can see nothing, because every staff route
+# derives the restaurant from the membership and there isn't one — it is on
+# WHICH NAME may be claimed, and each name may be claimed exactly once.
+#
+# That single constraint is what stops the interesting attack. Without it,
+# anyone holding the join code could register as "Jordan P." and inherit
+# Jordan's schedule and, worse, tick Jordan's tasks: task_completions records
+# completed_by as a name string, so a self-asserted name turns the whole
+# accountability feature into fiction. Claiming from the roster also means the
+# name matches the schedule exactly, which is the other half of the problem —
+# a typed name silently detaches an employee from their own shifts.
+
+SIGNUP_CODE_TTL_MINUTES = 10
+SIGNUP_TOKEN_TTL_MINUTES = 30
+SIGNUP_MAX_ATTEMPTS = 5
+SIGNUP_RESEND_COOLDOWN_SECONDS = 45
+SIGNUP_MAX_SENDS = 5          # per phone, per live signup row
+
+
+class SignupError(ValueError):
+    """A signup step that cannot proceed, with a message safe to show."""
+
+
+def normalize_phone(value) -> str:
+    """One spelling for a phone number, so it works as an identity key."""
+    from notify import _normalize_phone
+    raw = (value or "").strip()
+    if not raw:
+        return ""
+    digits = "".join(c for c in raw if c.isdigit())
+    if len(digits) < 10:
+        return ""
+    return _normalize_phone(raw)
+
+
+def _sms_configured() -> bool:
+    import os
+    return all(os.environ.get(k) for k in
+               ("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_PHONE_NUMBER"))
+
+
+def start_staff_signup(phone: str, db_path: str = DB_PATH) -> dict:
+    """Send a verification code to a phone. {ok, dev_code} or raises.
+
+    dev_code is returned ONLY when Twilio is unconfigured and this is not a
+    deployed environment — otherwise local and test runs could never get past
+    step one, and a developer would be tempted to build a bypass that ships.
+    """
+    phone = normalize_phone(phone)
+    if not phone:
+        raise SignupError("Enter a mobile number we can text.")
+
+    code = f"{secrets.randbelow(1000000):06d}"
+    conn = get_conn(db_path)
+    try:
+        conn.execute("DELETE FROM staff_signups WHERE created_at < datetime('now', ?)",
+                     (f"-{SIGNUP_TOKEN_TTL_MINUTES} minutes",))
+        row = conn.execute(
+            "SELECT sends, last_sent_at FROM staff_signups WHERE phone=?", (phone,)).fetchone()
+        if row:
+            if (row["sends"] or 0) >= SIGNUP_MAX_SENDS:
+                raise SignupError("Too many codes sent to that number. Try again later.")
+            recent = conn.execute(
+                "SELECT 1 FROM staff_signups WHERE phone=? AND last_sent_at > datetime('now', ?)",
+                (phone, f"-{SIGNUP_RESEND_COOLDOWN_SECONDS} seconds")).fetchone()
+            if recent:
+                raise SignupError("We just texted you — give it a moment.")
+            conn.execute(
+                "UPDATE staff_signups SET code_hash=?, attempts=0, sends=sends+1, "
+                "token_hash=NULL, verified_at=NULL, last_sent_at=datetime('now'), "
+                "created_at=datetime('now') WHERE phone=?",
+                (generate_password_hash(code), phone))
+        else:
+            conn.execute(
+                "INSERT INTO staff_signups (phone, code_hash) VALUES (?,?)",
+                (phone, generate_password_hash(code)))
+        conn.commit()
+    finally:
+        conn.close()
+
+    delivered = False
+    try:
+        from notify import send_sms
+        delivered = send_sms(phone, f"Your Cavnar AI code is {code}. It expires in "
+                                    f"{SIGNUP_CODE_TTL_MINUTES} minutes.")
+    except Exception as exc:
+        print(f"[staff_signup] SMS send failed for {phone}: {exc}")
+
+    out = {"ok": True, "sms_sent": delivered}
+    if not delivered and not _sms_configured() and not cookies_require_secure():
+        # Local/test only: never on a deployed environment, and never once
+        # Twilio is configured, so this cannot become a production bypass.
+        print(f"[staff_signup] DEV CODE for {phone}: {code}")
+        out["dev_code"] = code
+    return out
+
+
+def verify_staff_signup(phone: str, code: str, db_path: str = DB_PATH) -> str:
+    """Check the texted code. Returns a signup token, or raises SignupError.
+
+    The token is what the claim step carries — the phone number itself is
+    never trusted as proof, because it arrives from the client.
+    """
+    phone = normalize_phone(phone)
+    if not phone:
+        raise SignupError("Enter a mobile number we can text.")
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT code_hash, attempts FROM staff_signups "
+            "WHERE phone=? AND created_at > datetime('now', ?)",
+            (phone, f"-{SIGNUP_CODE_TTL_MINUTES} minutes")).fetchone()
+        if not row:
+            raise SignupError("That code expired. Ask for a new one.")
+        if (row["attempts"] or 0) >= SIGNUP_MAX_ATTEMPTS:
+            raise SignupError("Too many tries. Ask for a new code.")
+        if not check_password_hash(row["code_hash"], (code or "").strip()):
+            conn.execute("UPDATE staff_signups SET attempts=attempts+1 WHERE phone=?", (phone,))
+            conn.commit()
+            raise SignupError("That code didn't match.")
+        token = secrets.token_urlsafe(24)
+        conn.execute(
+            "UPDATE staff_signups SET token_hash=?, verified_at=datetime('now'), attempts=0 "
+            "WHERE phone=?", (hash_session_token(token), phone))
+        conn.commit()
+    finally:
+        conn.close()
+    return token
+
+
+def phone_for_signup_token(token: str, db_path: str = DB_PATH) -> Optional[str]:
+    """The verified phone behind a signup token, or None."""
+    if not token:
+        return None
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT phone FROM staff_signups WHERE token_hash=? AND verified_at IS NOT NULL "
+            "AND verified_at > datetime('now', ?)",
+            (hash_session_token(token), f"-{SIGNUP_TOKEN_TTL_MINUTES} minutes")).fetchone()
+    finally:
+        conn.close()
+    return row["phone"] if row else None
+
+
+def _consume_signup_token(token: str, db_path: str = DB_PATH):
+    conn = get_conn(db_path)
+    try:
+        conn.execute("DELETE FROM staff_signups WHERE token_hash=?",
+                     (hash_session_token(token),))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def claimable_names(restaurant_id: int, db_path: str = DB_PATH) -> list:
+    """The names an employee may claim at this restaurant.
+
+    The pool is the roster the owner already keeps for Operational Score plus
+    whoever appears on the most recently published schedule — never invented,
+    never a sample fixture. Anything already claimed is removed, so a name is
+    claimable exactly once.
+    """
+    from staff_roster import roster_names_for_restaurant
+    taken = set()
+    conn = get_conn(db_path)
+    try:
+        for r in conn.execute(
+                "SELECT employee_name FROM memberships "
+                "WHERE restaurant_id=? AND employee_name IS NOT NULL AND is_active=1",
+                (restaurant_id,)).fetchall():
+            taken.add((r["employee_name"] or "").strip().lower())
+    finally:
+        conn.close()
+    out, seen = [], set()
+    for name, job in roster_names_for_restaurant(restaurant_id, db_path=db_path):
+        key = name.strip().lower()
+        if not key or key in taken or key in seen:
+            continue
+        seen.add(key)
+        out.append({"name": name, "job_role": job})
+    return out
+
+
+def claim_staff_name(signup_token: str, restaurant_id: int, employee_name: str,
+                     pin: str, db_path: str = DB_PATH) -> dict:
+    """Turn a verified phone plus a roster name into a real staff account.
+
+    users and memberships are written together here, which is why
+    users.restaurant_id never has to become nullable. A phone that already has
+    an identity (this employee works at another location, or came back) gets a
+    SECOND MEMBERSHIP on the same identity rather than a duplicate account —
+    which is the whole reason identity and membership are separate tables.
+
+    Raises SignupError with a message safe to show the employee.
+    """
+    phone = phone_for_signup_token(signup_token, db_path=db_path)
+    if not phone:
+        raise SignupError("That signup expired. Start again.")
+    wanted = (employee_name or "").strip()
+    if not wanted:
+        raise SignupError("Pick your name from the list.")
+    try:
+        pin = validate_pin(pin)
+    except PinError as pe:
+        raise SignupError(str(pe))
+
+    # The name must be on the roster AND unclaimed, re-checked here rather
+    # than trusted from the list the client was shown a moment ago.
+    available = {c["name"].strip().lower(): c for c in
+                 claimable_names(restaurant_id, db_path=db_path)}
+    match = available.get(wanted.lower())
+    if not match:
+        raise SignupError("That name isn't available. Ask your manager.")
+
+    # A name an owner unlinked is claimable again — someone new really may be
+    # hired into it — but not by the phone it was taken away from.
+    conn = get_conn(db_path)
+    try:
+        blocked = conn.execute(
+            "SELECT 1 FROM memberships WHERE restaurant_id=? AND is_active=0 "
+            "AND claimed_by_phone=?", (restaurant_id, phone)).fetchone()
+    finally:
+        conn.close()
+    if blocked:
+        raise SignupError("This phone can't be used here. Ask your manager.")
+
+    existing = get_user_by_phone(phone, db_path=db_path)
+    if existing:
+        user_id = existing["id"]
+    else:
+        base = "".join(c for c in wanted.lower() if c.isalnum()) or "staff"
+        username, suffix = f"{base}.{restaurant_id}", 1
+        while get_user_by_username(username, db_path=db_path):
+            suffix += 1
+            username = f"{base}.{restaurant_id}.{suffix}"
+        # A PIN identity must not also be a password login — that would be a
+        # second, weaker way into the same account.
+        user_id = create_user(restaurant_id, username, f"{username}@staff.invalid",
+                              secrets.token_urlsafe(32), db_path=db_path)
+        conn = get_conn(db_path)
+        try:
+            conn.execute("UPDATE users SET phone=? WHERE id=?", (phone, user_id))
+            conn.commit()
+        finally:
+            conn.close()
+
+    membership = upsert_membership(user_id, restaurant_id, "employee",
+                                   employee_name=match["name"],
+                                   job_role=match.get("job_role"), db_path=db_path)
+    conn = get_conn(db_path)
+    try:
+        conn.execute(
+            "UPDATE memberships SET claimed_by_phone=?, claimed_at=datetime('now') WHERE id=?",
+            (phone, membership["id"]))
+        conn.commit()
+    finally:
+        conn.close()
+    set_membership_pin(membership["id"], restaurant_id, pin, db_path=db_path)
+    _consume_signup_token(signup_token, db_path=db_path)
+    return {"user_id": user_id, "membership_id": membership["id"],
+            "employee_name": match["name"], "job_role": match.get("job_role")}
+
+
+def unlink_claimed_membership(membership_id: int, restaurant_id: int,
+                              db_path: str = DB_PATH) -> bool:
+    """Owner's undo for a name claimed by the wrong person.
+
+    Deactivates the membership (which ends its sessions) so the name returns
+    to the claimable pool for the person it belongs to, while claimed_by_phone
+    stays on the row — that is what stops the same phone taking it again.
+    """
+    return set_membership_active(membership_id, restaurant_id, False, db_path=db_path)
+
+
+def get_user_by_phone(phone: str, db_path: str = DB_PATH) -> Optional[dict]:
+    phone = normalize_phone(phone)
+    if not phone:
+        return None
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT * FROM users WHERE phone=? AND is_active=1 ORDER BY id LIMIT 1",
+            (phone,)).fetchone()
+    finally:
+        conn.close()
+    return dict(row) if row else None
+
+
+def restaurant_for_staff_code(code: str, db_path: str = DB_PATH) -> Optional[int]:
+    """The restaurant behind either kind of staff code.
+
+    There are two because they serve different moments — a 32-character token
+    to tap in a link, a 6-character code to type off a whiteboard — but an
+    employee should never have to know which one they are holding. Both
+    resolve here, and both stop resolving together when an owner rotates.
+    """
+    return (restaurant_for_portal_token(code, db_path=db_path)
+            or restaurant_for_join_code(code, db_path=db_path))
 
 
 def staff_login_required(f):
