@@ -68,6 +68,11 @@
   .hint{color:var(--ink3);font-size:13px;line-height:1.55;margin:0 0 20px}
   .devcode{background:var(--card);border:1px dashed var(--ember);border-radius:10px;
            padding:12px;color:var(--ember2);font-size:13px;margin-bottom:14px;line-height:1.5}
+  /* Required consent for the A2P 10DLC campaign: an unchecked, un-preselected
+     box, sitting right where the number is entered. */
+  .optin{display:flex;align-items:flex-start;gap:10px;margin:2px 0 16px;cursor:pointer}
+  .optin input{margin-top:3px;width:17px;height:17px;accent-color:var(--ember);flex:none}
+  .optin span{font-size:12.5px;line-height:1.5;color:var(--ink3)}
 </style>
 </head>
 <body>
@@ -137,8 +142,12 @@
 
    <div class="sustep on" id="su-phone">
      <h1>What's your mobile number?</h1>
-     <p class="hint">We'll text you a code to make sure it's really you. Your manager sees this number next to your name.</p>
+     <p class="hint">We'll text you a one-time code to verify it's you. Your manager sees this number next to your name. No marketing texts, ever.</p>
      <input id="su-phone-in" class="fld" type="tel" inputmode="tel" autocomplete="tel" placeholder="(555) 014-2233">
+     <label class="optin">
+       <input type="checkbox" id="su-optin">
+       <span>I consent to receive a one-time SMS verification code from Cavnar AI at this number. Message and data rates may apply.</span>
+     </label>
      <button type="button" class="cbtn cbtn-primary" style="width:100%" onclick="suSendCode(this)">Text me a code</button>
    </div>
 
@@ -339,11 +348,12 @@
     if (suBusy) return;
     var val = ($('su-phone-in').value || '').trim();
     if (val.replace(/[^0-9]/g, '').length < 10) { suFail('Enter your full mobile number.'); return; }
+    if (!$('su-optin').checked) { suFail('Check the box to consent to the text.'); return; }
     suBusy = true;
     $('su-err').textContent = "";
     var label = btn.textContent;
     btn.textContent = 'Sending…';
-    suPost('/staff/api/signup/start', {phone: val}, function(d){
+    suPost('/staff/api/signup/start', {phone: val, optin: $('su-optin').checked}, function(d){
       suBusy = false;
       btn.textContent = label;
       if (!d.ok) { suFail(d.error || 'Could not send a code.'); return; }

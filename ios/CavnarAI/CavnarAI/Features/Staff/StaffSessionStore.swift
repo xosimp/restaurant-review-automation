@@ -133,9 +133,18 @@ final class StaffSessionStore {
     /// what the person is looking at.
     private var signupToken: String?
 
-    func startSignup(phone: String) async throws -> StaffSignupStartResponse {
+    /// optin must be true — this is the A2P 10DLC consent Twilio's campaign
+    /// review requires. The server refuses the send without it; the
+    /// unchecked-by-default box on StaffSignupView is what makes this call
+    /// honest rather than a formality.
+    func startSignup(phone: String, optin: Bool) async throws -> StaffSignupStartResponse {
         try await client.sendUnauthenticated("/staff/api/signup/start", method: .post,
-                                             body: ["phone": phone])
+                                             body: StaffSignupStartBody(phone: phone, optin: optin))
+    }
+
+    private struct StaffSignupStartBody: Encodable {
+        let phone: String
+        let optin: Bool
     }
 
     func verifySignupCode(phone: String, code: String) async throws -> Bool {

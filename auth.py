@@ -1323,16 +1323,27 @@ def _sms_configured() -> bool:
                ("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER"))
 
 
-def start_staff_signup(phone: str, db_path: str = DB_PATH) -> dict:
+def start_staff_signup(phone: str, optin: bool = False, db_path: str = DB_PATH) -> dict:
     """Send a verification code to a phone. {ok, dev_code} or raises.
 
     dev_code is returned ONLY when Twilio is unconfigured and this is not a
     deployed environment — otherwise local and test runs could never get past
     step one, and a developer would be tempted to build a bypass that ships.
+
+    optin must be explicitly True. This is the server-side half of the A2P
+    10DLC consent requirement (Twilio rejected the first campaign submission
+    over exactly this: "the opt-in checkbox is missing or appears to be
+    pre-selected"). The web/iOS clients refuse to call this without a
+    genuinely unchecked-by-default box the person ticks themselves, but that
+    is a UI courtesy — a direct API call could skip it, and consent that can
+    be skipped is not consent a carrier will accept. Enforcing it here is
+    what makes it real.
     """
     phone = normalize_phone(phone)
     if not phone:
         raise SignupError("Enter a mobile number we can text.")
+    if not optin:
+        raise SignupError("Check the box to consent to the text before we can send it.")
 
     code = f"{secrets.randbelow(1000000):06d}"
     conn = get_conn(db_path)

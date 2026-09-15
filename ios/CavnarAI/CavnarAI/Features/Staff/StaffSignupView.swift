@@ -23,6 +23,7 @@ struct StaffSignupView: View {
 
     @State private var step: Step = .phone
     @State private var phone = ""
+    @State private var optedIn = false
     @State private var smsCode = ""
     @State private var devCode: String?
     @State private var joinCode = ""
@@ -83,7 +84,7 @@ struct StaffSignupView: View {
             Text("What's your mobile number?")
                 .font(.cavnarHeadline(25))
                 .foregroundStyle(Color.cavnarInk)
-            Text("We'll text you a code to make sure it's really you. Your manager sees this number next to your name.")
+            Text("We'll text you a one-time code to verify it's you. Your manager sees this number next to your name. No marketing texts, ever.")
                 .font(.cavnarBody(14))
                 .foregroundStyle(Color.cavnarInk3)
 
@@ -91,11 +92,31 @@ struct StaffSignupView: View {
                 .keyboardType(.phonePad)
                 .textContentType(.telephoneNumber)
 
+            // Unchecked by default, on purpose — this is the consent record
+            // Twilio's A2P 10DLC review requires, and a pre-selected box is a
+            // documented rejection reason, not just bad UX.
+            Button {
+                Haptic.light()
+                optedIn.toggle()
+            } label: {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: optedIn ? "checkmark.square.fill" : "square")
+                        .foregroundStyle(optedIn ? Color.cavnarEmber : Color.cavnarInk3)
+                        .font(.system(size: 17))
+                        .padding(.top, 2)
+                    Text("I consent to receive a one-time SMS verification code from Cavnar AI at this number. Message and data rates may apply.")
+                        .font(.cavnarBody(12.5))
+                        .foregroundStyle(Color.cavnarInk3)
+                        .multilineTextAlignment(.leading)
+                }
+            }
+            .buttonStyle(.plain)
+
             errorLine
             primary(loading ? "Sending…" : "Text me a code") {
                 Task { await sendCode() }
             }
-            .disabled(loading || phone.filter(\.isNumber).count < 10)
+            .disabled(loading || phone.filter(\.isNumber).count < 10 || !optedIn)
         }
     }
 
@@ -311,7 +332,7 @@ struct StaffSignupView: View {
         error = nil
         defer { loading = false }
         do {
-            let resp = try await staff.startSignup(phone: phone)
+            let resp = try await staff.startSignup(phone: phone, optin: optedIn)
             guard resp.ok else {
                 error = resp.error ?? "Could not send a code."
                 return

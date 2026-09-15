@@ -35,6 +35,13 @@ def _html_doc(fragment, bg="#f7f4ef"):
 TWILIO_SID     = os.getenv("TWILIO_ACCOUNT_SID", "")
 TWILIO_TOKEN   = os.getenv("TWILIO_AUTH_TOKEN", "")
 TWILIO_FROM    = os.getenv("TWILIO_FROM_NUMBER", "")
+# A2P 10DLC campaigns are registered against a Messaging Service, not a bare
+# number — sending via MessagingServiceSid is what lets Twilio route the
+# message through the number's approved campaign rather than as a plain
+# long-code send. Optional: falls back to TWILIO_FROM (still Twilio's
+# documented fallback pairing on the number itself) when unset, so a
+# deployment that hasn't added this yet keeps working exactly as before.
+TWILIO_MESSAGING_SERVICE_SID = os.getenv("TWILIO_MESSAGING_SERVICE_SID", "")
 # Read fresh at call time — see emails.py for why binding these at import
 # time is a silent-total-failure mode.
 def _resend_key(): return os.getenv("RESEND_API_KEY", "")
@@ -85,16 +92,29 @@ def validate_twilio_signature(url: str, post_params: dict, signature: str) -> bo
 
 
 def send_sms(to_phone: str, message: str) -> bool:
-    """Send a single SMS via Twilio. Returns True on success."""
+    """Send a single SMS via Twilio. Returns True on success.
+
+    Sends via MessagingServiceSid when TWILIO_MESSAGING_SERVICE_SID is set —
+    the path Twilio's A2P 10DLC campaigns are registered against — rather
+    than the bare From number. A message sent with only From can still be
+    carrier-filtered as unregistered traffic even once the number is
+    attached to an approved campaign; routing through the service is what
+    reliably resolves the number to its campaign.
+    """
     if not all([TWILIO_SID, TWILIO_TOKEN, TWILIO_FROM]):
         print(f"[notify] Twilio not configured — would send to {to_phone}: {message[:80]}")
         return False
     phone = _normalize_phone(to_phone)
+    data = {"To": phone, "Body": message}
+    if TWILIO_MESSAGING_SERVICE_SID:
+        data["MessagingServiceSid"] = TWILIO_MESSAGING_SERVICE_SID
+    else:
+        data["From"] = TWILIO_FROM
     try:
         r = requests.post(
             f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_SID}/Messages.json",
             auth=(TWILIO_SID, TWILIO_TOKEN),
-            data={"From": TWILIO_FROM, "To": phone, "Body": message},
+            data=data,
             timeout=10,
         )
         if r.status_code == 201:

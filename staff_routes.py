@@ -234,7 +234,7 @@ def signup_start():
     record_portal_attempt(ip)
     data = request.get_json(silent=True) or {}
     try:
-        result = start_staff_signup(data.get("phone") or "")
+        result = start_staff_signup(data.get("phone") or "", optin=bool(data.get("optin")))
     except SignupError as se:
         return jsonify(ok=False, error=str(se)), 400
     return jsonify(**result)

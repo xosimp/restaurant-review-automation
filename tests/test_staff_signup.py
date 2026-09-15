@@ -67,7 +67,8 @@ def _owner(db_path, rid, username="erik"):
 
 def _verified(client, phone="5550142233"):
     """Walk a phone through steps 1 and 2, returning the signup token."""
-    started = client.post("/staff/api/signup/start", json={"phone": phone}).get_json()
+    started = client.post("/staff/api/signup/start",
+                          json={"phone": phone, "optin": True}).get_json()
     assert started["ok"], started
     code = started["dev_code"]
     done = client.post("/staff/api/signup/verify",
@@ -224,7 +225,7 @@ def test_an_unverified_phone_cannot_read_the_roster(client, db_path):
 
 
 def test_a_wrong_code_is_refused_and_counted(client, db_path):
-    client.post("/staff/api/signup/start", json={"phone": "5550142233"})
+    client.post("/staff/api/signup/start", json={"phone": "5550142233", "optin": True})
     for _ in range(auth.SIGNUP_MAX_ATTEMPTS):
         bad = client.post("/staff/api/signup/verify",
                           json={"phone": "5550142233", "code": "000000"})
@@ -251,15 +252,30 @@ def test_a_signup_token_is_single_use(client, db_path):
 
 
 def test_a_short_number_is_refused(client, db_path):
-    resp = client.post("/staff/api/signup/start", json={"phone": "555"})
+    resp = client.post("/staff/api/signup/start", json={"phone": "555", "optin": True})
     assert resp.status_code == 400
+
+
+def test_a_code_is_refused_without_consent(client, db_path):
+    """Server-side half of the A2P 10DLC opt-in requirement (Twilio's own
+    rejection: "the opt-in checkbox is missing or appears to be
+    pre-selected"). The client box is a courtesy — a direct call has to be
+    refused too, or the consent isn't real."""
+    resp = client.post("/staff/api/signup/start", json={"phone": "5550142233"})
+    assert resp.status_code == 400
+    assert "consent" in resp.get_json()["error"].lower()
+
+    resp2 = client.post("/staff/api/signup/start",
+                        json={"phone": "5550142233", "optin": False})
+    assert resp2.status_code == 400
 
 
 def test_the_dev_code_never_appears_on_a_deployment(client, db_path, monkeypatch):
     """The escape hatch that makes this testable locally must not be one that
     ships."""
     monkeypatch.setenv("RAILWAY_ENVIRONMENT", "production")
-    body = client.post("/staff/api/signup/start", json={"phone": "5550142233"}).get_json()
+    body = client.post("/staff/api/signup/start",
+                       json={"phone": "5550142233", "optin": True}).get_json()
     assert "dev_code" not in body
 
 
@@ -280,7 +296,8 @@ def test_the_dev_code_appears_locally_even_when_twilio_is_configured(client, db_
     # Queued, exactly as Twilio reports a message it has merely accepted.
     monkeypatch.setattr(notify, "send_sms", lambda *a, **k: True)
 
-    body = client.post("/staff/api/signup/start", json={"phone": "5550142233"}).get_json()
+    body = client.post("/staff/api/signup/start",
+                       json={"phone": "5550142233", "optin": True}).get_json()
     assert body["sms_sent"] is True
     assert body.get("dev_code"), "no code shown even though nothing was delivered"
     # And it is a code that actually works.
