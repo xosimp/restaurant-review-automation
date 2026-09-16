@@ -392,3 +392,23 @@ def test_well_run_operation_is_flagged_not_inflated():
     r = engine.compute(a)
     assert r["health"]["score"] >= 90 and r["totals"]["cost"]["high"] == 0
     assert r["context"]["well_run"] and "well-run" in r["context"]["note"]
+
+
+# ── The audit tool page never triggers a stray "leave this page?" ─────────
+
+def test_backspace_outside_a_text_field_cannot_navigate_away():
+    """Clicking a yes/no answer button leaves keyboard focus on that button,
+    not a text field. Safari treats Backspace/Delete pressed outside an
+    editable element as browser-back — and since the page sets a
+    beforeunload guard whenever the audit is dirty (see dirtyAny()), every
+    accidental Backspace threw up "leave this page?" mid-edit."""
+    import os
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    html = open(os.path.join(root, "templates", "audit_tool.html"), encoding="utf-8").read()
+    assert "beforeunload" in html and "dirtyAny()" in html
+    keys_block = html.split("document.addEventListener('keydown', e => {", 1)[1].split("});", 1)[0]
+    guard_pos = keys_block.find("e.key==='Backspace'")
+    assert guard_pos != -1, "no guard against Backspace/Delete navigating away"
+    guard_line = keys_block[guard_pos - 40:guard_pos + 120]
+    assert "!typing" in guard_line, "the guard must only fire outside an editable field"
+    assert "e.preventDefault()" in guard_line

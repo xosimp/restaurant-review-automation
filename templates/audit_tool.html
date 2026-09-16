@@ -607,6 +607,12 @@ function closeSheet(){ $('drawer').classList.remove('on'); $('scrim').classList.
 document.addEventListener('keydown', e => {
   const typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
   if(e.key==='Escape'){ closeSheet(); $('menu').classList.remove('on'); return; }
+  // Safari navigates back on Backspace/Delete whenever focus isn't in an
+  // editable field. Clicking a yes/no answer button leaves focus on that
+  // button, so the next stray Backspace triggered Safari's back navigation
+  // — which beforeunload's dirty-audit guard then caught as "leave this
+  // page?", every time, since a mid-edit audit is always dirty.
+  if(!typing && (e.key==='Backspace' || e.key==='Delete')){ e.preventDefault(); return; }
   if(typing) return;
   const keys = SCHEMA ? SCHEMA.sections.map(s=>s.key).concat(SCHEMA.computed.map(s=>s.key)).concat(['sales']) : [];
   if(e.key===']' || e.key==='['){ const i = keys.indexOf(SECTION); const n = keys[i + (e.key===']'?1:-1)]; if(n) go(n); }
