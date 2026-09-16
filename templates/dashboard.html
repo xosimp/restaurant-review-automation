@@ -2799,18 +2799,87 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .fc2-hero-nums{display:flex;gap:34px;flex-wrap:wrap;align-items:flex-end}
 .fc2-hero-nums .n .big{font-size:clamp(34px,4vw,50px)}
 .fc2-hero-nums .n .big.bad{color:var(--hb-bad)}.fc2-hero-nums .n .big.good{color:var(--hb-good)}
-.fc2-trend{display:flex;gap:10px;margin-top:8px}
-.fc2-trend .y{display:flex;flex-direction:column;justify-content:space-between;align-items:flex-end;width:44px;font-size:10px;color:var(--ink3);font-family:'Space Grotesk',sans-serif;padding-bottom:18px;flex-shrink:0}
-.fc2-trend .plot{flex:1;min-width:0;position:relative}
-.fc2-trend .plot svg{display:block;width:100%;height:190px;overflow:visible}
-.fc2-trend .ax{display:flex;font-size:11px;color:var(--ink3);margin-top:4px}
-.fc2-trend .ax span{flex:1;text-align:center}
-.fc2-leg{display:flex;gap:16px;flex-wrap:wrap;font-size:11px;color:var(--ink3);margin-top:10px;align-items:center}
-.fc2-leg i{display:inline-block;width:9px;height:9px;border-radius:3px;margin-right:5px;vertical-align:-1px}
-.fc2-tip{position:fixed;z-index:9999;pointer-events:none;display:none;background:var(--paper);border:1px solid var(--hb-line);border-radius:8px;padding:10px 14px;min-width:160px;box-shadow:0 8px 24px rgba(0,0,0,.35);color:var(--ink);font-size:11px}
-.fc2-tip .w{font-size:10px;font-weight:700;color:var(--ink3);letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px}
-.fc2-tip .n{font-family:'Space Grotesk',sans-serif;font-size:18px;font-weight:700;color:var(--ember);line-height:1;margin-bottom:8px}
-.fc2-tip .up{color:var(--hb-bad)}.fc2-tip .dn{color:var(--hb-good)}
+/* ── Waste trend card ─────────────────────────────────────────────────── */
+.fc2-wt{margin-top:22px;padding:22px 24px 20px;border-radius:14px;background:linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,.012));border:1px solid var(--hb-line2)}
+.fc2-wt-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap}
+.fc2-wt-title{min-width:0;flex:1 1 360px}
+.fc2-wt-verdict{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:7px;font-family:'Clash Display',sans-serif;font-weight:500;font-size:25px;letter-spacing:-.01em;color:var(--ink);line-height:1.15}
+.fc2-wt-pill{font-family:'Apfel Grotezk',sans-serif;font-size:11.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;padding:4px 10px;border-radius:999px;background:var(--hb-tint2);color:var(--ember);white-space:nowrap}
+.fc2-wt-pill.good{background:rgba(78,173,122,.14);color:var(--hb-good)}.fc2-wt-pill.bad{background:rgba(224,85,85,.16);color:var(--hb-bad)}.fc2-wt-pill.warn{background:rgba(232,176,74,.14);color:var(--hb-warn)}
+.fc2-wt-sub{font-size:13.5px;color:var(--ink3);margin-top:6px;line-height:1.5}
+.fc2-wt-sub .hb-num{color:var(--ink2);font-weight:600}
+.fc2-wt-ctl{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.fc2-wt-ctl[hidden],.fc2-wt-kpis[hidden],.fc2-wt-leg[hidden],.fc2-wt-obs[hidden]{display:none}
+.fc2-wt-tgl.on{border-color:rgba(78,173,122,.5);color:var(--hb-good)}
+.fc2-wt-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0;margin-top:18px;padding:16px 0;border-top:1px solid var(--hb-line2);border-bottom:1px solid var(--hb-line2)}
+.fc2-wt-kpi{padding:0 20px;border-left:1px solid var(--hb-line2);min-width:0}
+.fc2-wt-kpi:first-child{padding-left:0;border-left:none}
+.fc2-wt-kpi .l{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);white-space:nowrap}
+.fc2-wt-kpi .v{font-family:'Space Grotesk',sans-serif;font-size:26px;font-weight:600;letter-spacing:-.02em;color:var(--ink);margin-top:6px;line-height:1;white-space:nowrap}
+.fc2-wt-kpi .v.good{color:var(--hb-good)}.fc2-wt-kpi .v.bad{color:var(--hb-bad)}
+.fc2-wt-kpi .d{font-size:12.5px;color:var(--ink3);margin-top:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fc2-wt-kpi .d b{font-family:'Space Grotesk',sans-serif;font-weight:700;color:var(--ink2)}
+.fc2-wt-kpi .d b.good{color:var(--hb-good)}.fc2-wt-kpi .d b.bad{color:var(--hb-bad)}
+.fc2-wt-chart{margin-top:18px;display:flex;gap:10px}
+.fc2-wt-chart .y{display:flex;flex-direction:column;justify-content:space-between;align-items:flex-end;width:50px;font-size:11.5px;color:var(--ink3);font-family:'Space Grotesk',sans-serif;padding-bottom:24px;flex-shrink:0}
+.fc2-wt-chart .plot{flex:1;min-width:0;position:relative}
+.fc2-wt-chart .plot svg{display:block;width:100%;height:230px;overflow:visible}
+.fc2-wt-chart .plot svg text{font-family:'Space Grotesk',sans-serif}
+.fc2-wt-chart .ax{display:flex;font-size:11.5px;color:var(--ink3);margin-top:6px}
+.fc2-wt-chart .ax span{flex:1;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.fc2-wt-chart .ax span.on{color:var(--ink);font-weight:600}
+.fc2-wt-hit{cursor:pointer}
+.fc2-wt-bar{transition:opacity .15s ease}
+.fc2-wt-chart.hov .fc2-wt-bar:not(.on){opacity:.45}
+.fc2-wt-leg{display:flex;gap:16px;flex-wrap:wrap;font-size:11.5px;color:var(--ink3);margin-top:12px;align-items:center}
+.fc2-wt-leg i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:-1px}
+.fc2-wt-leg i.ln{width:14px;height:0;border-top:2px solid var(--ember2);border-radius:0;vertical-align:3px}
+.fc2-wt-leg i.tg{width:14px;height:0;border-top:2px dashed var(--hb-good);border-radius:0;vertical-align:3px}
+.fc2-wt-drill{margin-top:14px;padding:14px 16px 16px;border-radius:10px;background:var(--hb-tint);border:1px solid var(--hb-line2)}
+.fc2-wt-drill .h{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.fc2-wt-drill .h .t{font-size:14px;color:var(--ink);font-weight:600}
+.fc2-wt-drill .h .t .hb-num{color:var(--ember);font-weight:700}
+.fc2-wt-drill .h .t small{font-size:12.5px;color:var(--ink3);font-weight:400;margin-left:8px}
+.fc2-wt-drill .rows{margin-top:12px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px 26px}
+.fc2-wt-drill .r{display:grid;grid-template-columns:minmax(0,1fr) 64px;gap:10px;align-items:center;font-size:12.5px;color:var(--ink2)}
+.fc2-wt-drill .r .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fc2-wt-drill .r .bar{height:6px;border-radius:3px;background:var(--hb-line2);overflow:hidden;margin-top:4px}
+.fc2-wt-drill .r .bar i{display:block;height:100%;border-radius:3px;background:var(--ember)}
+.fc2-wt-drill .r .v{font-family:'Space Grotesk',sans-serif;font-weight:700;color:var(--ink);text-align:right}
+.fc2-wt-drill .none{font-size:12.5px;color:var(--ink3);margin-top:8px;line-height:1.5}
+.fc2-wt-cats{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:12px;font-size:11.5px;color:var(--ink3)}
+.fc2-wt-cats .cbtn{text-transform:capitalize}
+.fc2-wt-cats .cbtn.on{background:var(--hb-tint2);border-color:transparent;color:var(--ember)}
+.fc2-wt-obs{margin-top:16px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 24px}
+.fc2-wt-ob{display:flex;gap:10px;align-items:flex-start;font-size:13.5px;line-height:1.5;color:var(--ink2)}
+.fc2-wt-ob i{flex-shrink:0;width:8px;height:8px;border-radius:50%;margin-top:7px;background:var(--ink3)}
+.fc2-wt-ob i.good{background:var(--hb-good)}.fc2-wt-ob i.bad{background:var(--hb-bad)}.fc2-wt-ob i.warn{background:var(--hb-warn)}
+.fc2-wt-ob small{display:block;font-size:11.5px;color:var(--ink3);margin-top:2px}
+.fc2-wt-tip{position:fixed;z-index:9999;pointer-events:none;display:none;background:var(--paper);border:1px solid var(--hb-line);border-radius:10px;padding:12px 14px;min-width:210px;max-width:270px;box-shadow:0 8px 24px rgba(0,0,0,.35);color:var(--ink);font-size:12.5px}
+.fc2-wt-tip .w{font-size:11px;font-weight:700;color:var(--ink3);letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px}
+.fc2-wt-tip .n{font-family:'Space Grotesk',sans-serif;font-size:21px;font-weight:700;color:var(--ink);line-height:1;margin-bottom:4px}
+.fc2-wt-tip .n small{font-family:'Apfel Grotezk',sans-serif;font-size:12px;font-weight:400;color:var(--ink3);margin-left:6px}
+.fc2-wt-tip .row{display:flex;justify-content:space-between;gap:12px;padding:4px 0;border-top:1px solid var(--hb-line2)}
+.fc2-wt-tip .row:first-of-type{margin-top:6px}
+.fc2-wt-tip .row span:first-child{color:var(--ink3)}
+.fc2-wt-tip .row b{font-family:'Space Grotesk',sans-serif;font-weight:700;white-space:nowrap}
+.fc2-wt-tip .up{color:var(--hb-bad)}.fc2-wt-tip .dn{color:var(--hb-good)}
+.fc2-wt-tip .items{margin-top:8px;padding-top:7px;border-top:1px solid var(--hb-line2);color:var(--ink3);line-height:1.5}
+.fc2-wt-tip .items b{color:var(--ink2);font-family:'Space Grotesk',sans-serif;font-weight:600}
+.fc2-wt-tip .flag{display:inline-block;margin:8px 6px 0 0;font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:2px 7px;border-radius:999px;background:var(--hb-tint2);color:var(--ember)}
+.fc2-wt-tip .flag.bad{background:rgba(224,85,85,.16);color:var(--hb-bad)}.fc2-wt-tip .flag.good{background:rgba(78,173,122,.14);color:var(--hb-good)}
+.fc2-wt-tip .hint{margin-top:8px;font-size:11px;color:var(--ink3)}
+.fc2-wt-empty{padding:26px 20px 22px;text-align:center;width:100%}
+.fc2-wt-empty .t{font-family:'Clash Display',sans-serif;font-weight:500;font-size:21px;color:var(--ink);margin-top:10px}
+.fc2-wt-empty .r{font-size:13.5px;color:var(--ink2);margin:8px auto 0;max-width:540px;line-height:1.55}
+.fc2-wt-empty .prog{display:inline-flex;align-items:center;gap:10px;margin-top:14px;font-size:12.5px;color:var(--ink3)}
+.fc2-wt-empty .prog .bar{width:120px;height:6px;border-radius:3px;background:var(--hb-line2);overflow:hidden}
+.fc2-wt-empty .prog .bar i{display:block;height:100%;background:var(--ember);border-radius:3px}
+.fc2-wt-empty .steps{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:18px auto 0;max-width:580px;text-align:left}
+.fc2-wt-empty .step{padding:12px 14px;border-radius:10px;background:var(--hb-tint);font-size:12.5px;color:var(--ink2);line-height:1.5}
+.fc2-wt-empty .step b{display:block;font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ember);margin-bottom:4px}
+@media(max-width:900px){.fc2-wt{padding:18px 16px 16px}.fc2-wt-kpis{grid-template-columns:repeat(2,minmax(0,1fr));row-gap:16px}.fc2-wt-kpi:nth-child(3){border-left:none;padding-left:0}.fc2-wt-kpi .d{white-space:normal;overflow:visible;text-overflow:clip}.fc2-wt-obs,.fc2-wt-drill .rows,.fc2-wt-empty .steps{grid-template-columns:1fr}}
+.fc2-empty{font-size:12.5px;color:var(--ink3);padding:26px 0;text-align:center}
 .fc2-gauge{position:relative;height:170px;margin-top:6px}
 .fc2-gauge svg{display:block;width:100%;height:170px;overflow:visible}
 .fc2-gauge .c{position:absolute;left:0;right:0;bottom:22px;text-align:center;pointer-events:none}
@@ -2828,10 +2897,6 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .fc2-ledger .r .v{font-family:'Space Grotesk',sans-serif;font-size:13px;font-weight:700;color:var(--ember);text-align:right;white-space:nowrap}
 .fc2-ledger .r .v.amber{color:var(--hb-warn)}
 @keyframes fc2Sheen{0%{left:-40%}100%{left:110%}}
-.fc2-bar{transform-box:fill-box;transform-origin:bottom;transform:scaleY(0);transition:transform 1.1s cubic-bezier(.3,0,.15,1)}
-.fc2-bar.on{transform:scaleY(1)}
-.fc2-trend .plot svg text{font-family:'Space Grotesk',sans-serif}
-.fc2-empty{font-size:12.5px;color:var(--ink3);padding:26px 0;text-align:center}
 .fc2-sec{margin-top:34px;padding-top:22px;border-top:1px solid var(--hb-line)}
 .fc2-sec .hd{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:8px}
 .fc2-sec .hd h2{font-family:'Clash Display',sans-serif;font-weight:500;font-size:22px;letter-spacing:-.01em;color:var(--ink);margin:4px 0 0}
@@ -2919,10 +2984,6 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     <div style="min-width:0;flex:1">
       <div class="hb-kicker">Food Cost · {{ now_mdy }} · {{ restaurant.name }}</div>
       <h1 class="hb-h1">Food cost. <span class="hb-head {{ _tone }}">{{ _head }}</span></h1>
-      {% if inv.is_live %}
-      <div class="hb-sub"><span><span class="hb-num">${{ inv.total_waste_cost_week|int|format_num }}</span> waste this week</span><span class="sep">·</span><span><span class="hb-num">${{ inv.monthly_waste_projection|int|format_num }}</span> projected / mo</span><span class="sep">·</span><span><span class="hb-num">{{ inv.waste_rate_pct }}%</span> of purchases vs a <span class="hb-num">4–5%</span> target</span><span class="sep">·</span><span><span class="hb-num">{{ inv.total_items }}</span> items tracked</span><span class="sep">·</span><span>updated <span class="hb-num">{{ inv.last_updated }}</span></span></div>
-      <div class="hb-sub" style="margin-top:4px">{% if inv.recoverable_monthly > 0 %}About ${{ inv.recoverable_monthly|int|format_num }} a month is recoverable with tighter ordering — ${{ inv.annual_recoverable|int|format_num }} a year.{% else %}Nothing is leaking this week — ordering looks calibrated.{% endif %}</div>
-      {% endif %}
     </div>
     <div class="hb-pulse">
       <span class="hb-chip {{ 'sample' if not inv.is_live else ('bad' if _tone == 'bad' else ('warn' if inv.total_waste_cost_week > 0 else 'good')) }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num">${{ inv.total_waste_cost_week|int|format_num }}</span></span><span class="l">waste / wk</span></span>
@@ -2939,10 +3000,28 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
         <div class="n"><div class="hb-kicker">Projected annual waste</div><div class="big bad"><span id="inv-annual-waste" class="hb-num">${{ inv.annual_waste_projection|int|format_num }}</span></div><div class="delta"><span>${{ inv.monthly_waste_projection|int|format_num }}/mo at the current rate</span></div></div>
         <div class="n"><div class="hb-kicker">Recoverable / year</div><div class="big good"><span id="inv-annual-recoverable" class="hb-num">${{ inv.annual_recoverable|int|format_num }}</span></div><div class="delta"><span>${{ inv.recoverable_monthly|int|format_num }}/mo with better ordering</span></div></div>
       </div>
-      <div style="text-align:right"><div class="hb-kicker">Waste · last 8 weeks</div><div class="delta {{ 'good' if _wl in ['Excellent','On Track'] else ('bad' if _wl in ['Concerning','Needs Attention'] else '') }}" id="fc2-bench">{% if inv.is_live and _wl != '—' %}<span class="hb-num">{{ inv.waste_rate_pct }}%</span> <span>vs. industry · {{ _wl }}</span>{% else %}<span>Not enough history yet</span>{% endif %}</div></div>
     </div>
-    <div id="fc2-trend"><div class="hb-load" style="height:190px;justify-content:center"><canvas class="hb-orb" data-orb-state="working" width="44" height="44"></canvas></div></div>
-    <div class="fc2-leg"><span><i style="background:#4ead7a"></i>Below average</span><span><i style="background:#d4a030"></i>Near average</span><span><i style="background:#e05555"></i>Above average</span><span><i style="background:#e8956a"></i>This week</span><span style="margin-left:auto"><i style="background:transparent;border-top:2px dashed var(--ink3);height:0;border-radius:0;vertical-align:2px"></i>8-week average</span></div>
+    {# The waste-trend card. Drawn entirely from /api/food-cost/waste-trend
+       (waste_trend.py) — the series, every derived figure and the
+       observations come from there; the JS below only lays them out. #}
+    <div class="fc2-wt" id="fc2-wt">
+      <div class="fc2-wt-head">
+        <div class="fc2-wt-title">
+          <div class="hb-kicker">Waste trend · <span id="fc2-wt-range-lbl">last 8 weeks</span> · <span id="fc2-wt-benchmark">{% if inv.is_live and _wl != '—' %}{{ inv.waste_rate_pct }}% of purchases · {{ _wl|lower }}{% else %}vs. a 4–5% industry target{% endif %}</span></div>
+          <div class="fc2-wt-verdict"><span id="fc2-wt-verdict">Reading your history…</span><span class="fc2-wt-pill" id="fc2-wt-pill" hidden></span></div>
+          <div class="fc2-wt-sub" id="fc2-wt-sub"></div>
+        </div>
+        <div class="fc2-wt-ctl" id="fc2-wt-ctl" hidden>
+          <div class="lb2-range" id="fc2-wt-ranges" role="tablist" aria-label="Trend range"></div>
+          <button type="button" class="cbtn cbtn-secondary cbtn-sm fc2-wt-tgl on" id="fc2-wt-target-tgl" onclick="wtToggleTarget()" aria-pressed="true">Target line</button>
+        </div>
+      </div>
+      <div class="fc2-wt-kpis" id="fc2-wt-kpis" hidden></div>
+      <div class="fc2-wt-chart" id="fc2-wt-chart"><div class="hb-load" style="height:230px;justify-content:center;width:100%"><canvas class="hb-orb" data-orb-state="working" width="44" height="44"></canvas></div></div>
+      <div class="fc2-wt-leg" id="fc2-wt-leg" hidden></div>
+      <div class="fc2-wt-drill" id="fc2-wt-drill" hidden></div>
+      <div class="fc2-wt-obs" id="fc2-wt-obs" hidden></div>
+    </div>
   </section>
   <div class="lb2-ai"><div class="tag">Cavnar's read on your food cost · week of {{ inv.week_start }} – {{ inv.week_end }}</div><div class="insight-text insight-loading" id="inv-insight"><div class="hb-load"><canvas class="hb-orb" data-orb-state="composing" width="28" height="28"></canvas><span>Counting the pantry…</span></div></div></div>
 
@@ -3069,7 +3148,6 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
   var _ostockDonutData=[
     {% for item in inv.overstock %}{"name":"{{item.item|e}}","cost":{{item.overstock_cost|round(2)}},"stock":"{{item.current_stock|int}}{% if item.unit %} {{item.unit}}{% endif %}","par":"{{item.par_level|int}}{% if item.unit %} {{item.unit}}{% endif %}"},{% endfor %}
   ];
-  var _fc2Rate={{ inv.waste_rate_pct|float }},_fc2WasteWeek={{ inv.total_waste_cost_week|float }};
   var _fc2Gauge={monthly:{{ inv.recoverable_monthly|int }},annual:{{ inv.annual_recoverable|int }},ceiling:{{ [inv.recoverable_monthly|int, (inv.monthly_waste_projection + _ostock_total)|int]|max }}};
   function _mmEsc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
   // Waste Ledger / Tied-Up Capital — every flagged item as a bar with its
@@ -8896,7 +8974,7 @@ function loadInvInsight(){
   // "Counting the Pantry" — the Food Cost analysis wait is a ledger filling
   // in category by category (over-budget one in ember), not anonymous bars.
   // Loading state is the Cavnar orb already in the markup (same as Labor).
-  loadInvTrend();
+  loadWasteTrend();
   var fiveMin=5*60*1000;
   try{
     var cached=sessionStorage.getItem('inv_insight');
@@ -8918,78 +8996,290 @@ function loadInvInsight(){
       elInvInsight.classList.remove('insight-loading');
       elInvInsight.innerHTML='';
       if(d.is_live===false){
-        elInvInsight.appendChild(aiCaveat('Example data','This is a sample pantry, not your numbers. Connect Toast or upload a count to see your own.'));
+        elInvInsight.appendChild(aiCaveat('Example data','This is a sample pantry, not your numbers. Connect your POS or upload a count to see your own.'));
         var _p=document.createElement('div');_p.textContent=html;elInvInsight.appendChild(_p);
       } else {
         typewriterEffect(elInvInsight,html);
       }
     }
+    // The insight run is what writes this week's inventory_history
+    // snapshot, so the trend fetched above may predate it — pull it once
+    // more now that the newest week exists (a cached insight wrote its
+    // snapshot earlier, so this only runs on a real fetch).
+    loadWasteTrend(true);
   }).catch(function(){
     var elInvErr=document.getElementById('inv-insight');
     if(elInvErr){elInvErr.classList.remove('insight-loading');elInvErr.innerHTML=emptyStateHtml('Analysis unavailable', 'Check back shortly — the AI retries automatically', true);}
   });
-  loadInvTrend();
 }
-var _invTrendData=null;
-function renderInvTrend(){
-  // "Waste — last 8 weeks": the iOS FoodCostTrendChart. Bars tinted by how
-  // the week sat against the 8-week average, this week hot, the average as
-  // a dashed rule and the 4.5% industry target as a green one.
-  var host=document.getElementById('fc2-trend');if(!host)return;
-  var esc=function(x){return String(x==null?'':x).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');};
-  var items=_invTrendData;
-  if(!items||!items.length){host.innerHTML='<div class="fc2-empty" style="height:190px;display:flex;align-items:center;justify-content:center">Not enough history yet — the trend appears after a couple of weekly submissions.</div>';return;}
-  var W=720,H=190,padT=18,padB=16,n=items.length,gap=Math.round(W*0.03),bw=(W-gap*(n+1))/n;
-  var max=0,sum=0;for(var i=0;i<n;i++){if(items[i].waste>max)max=items[i].waste;sum+=items[i].waste;}
-  var avg=sum/n,top=Math.ceil(Math.max(max*1.15,50)/10)*10;
-  var target=(typeof _fc2Rate!=='undefined'&&_fc2Rate>0&&typeof _fc2WasteWeek!=='undefined'&&_fc2WasteWeek>0)?_fc2WasteWeek*4.5/_fc2Rate:null;
-  if(target&&target>top)top=Math.ceil(target*1.1/10)*10;
-  function y(v){return padT+(H-padT-padB)*(1-v/top);}
-  var cols={good:['#2d6a4f','#4ead7a'],warn:['#8a5e12','#e8b04a'],bad:['#7a1f1f','#e05555'],hot:['#a8341c','#e8956a']};
-  var svg='<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none" aria-hidden="true"><defs>';
-  for(var k in cols){svg+='<linearGradient id="fc2t'+k+'" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="'+cols[k][0]+'"/><stop offset="1" stop-color="'+cols[k][1]+'"/></linearGradient>';}
-  svg+='<filter id="fc2tf" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="4"/></filter></defs>';
+// ── Waste trend card ────────────────────────────────────────────────────────
+// The engine (waste_trend.py) computes the series and every figure on the
+// card; this only lays the payload out. One fetch per range, memoised —
+// the target toggle, category filter, hover and drill-down all re-draw
+// from the payload in hand and never go back to the server.
+var _wt={data:null,range:'8w',cache:{},showTarget:true,cat:null,sel:null,inflight:null,animated:{}};
+function wtEsc(x){return String(x==null?'':x).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function wtMoney(v){return '$'+Math.round(Math.abs(v||0)).toLocaleString();}
+function wtSigned(v){return (v>=0?'+':'−')+wtMoney(v);}
+function wtPct(p){return p==null?'':' ('+Math.abs(p).toLocaleString(undefined,{maximumFractionDigits:1})+'%)';}
+function wtRangeLabel(r){return r==='all'?'all history':('last '+parseInt(r,10)+' weeks');}
+function loadWasteTrend(force){
+  var key=_wt.range;
+  if(force)_wt.cache={};
+  if(!force&&_wt.cache[key]){_wt.data=_wt.cache[key];renderWasteTrend();return;}
+  var req=fetch('/api/food-cost/waste-trend?range='+encodeURIComponent(key),{cache:'no-store'}).then(function(r){return r.json();}).then(function(d){
+    if(_wt.inflight!==req)return;  // a newer range request superseded this one
+    _wt.inflight=null;
+    if(!d||!d.ok){_wt.data={ok:false,weeks:[]};renderWasteTrend();return;}
+    _wt.cache[d.range]=d;_wt.range=d.range;_wt.data=d;renderWasteTrend();
+  }).catch(function(){if(_wt.inflight!==req)return;_wt.inflight=null;_wt.data={ok:false,weeks:[]};renderWasteTrend();});
+  _wt.inflight=req;
+}
+function wtSetRange(r){if(r===_wt.range&&_wt.data&&_wt.data.ok)return;_wt.range=r;_wt.sel=null;_wt.cat=null;loadWasteTrend();}
+function wtToggleTarget(){_wt.showTarget=!_wt.showTarget;var b=document.getElementById('fc2-wt-target-tgl');if(b){b.classList.toggle('on',_wt.showTarget);b.setAttribute('aria-pressed',_wt.showTarget?'true':'false');}if(_wt.data&&_wt.data.ok){wtDrawChart();wtDrawLegend();}}
+function wtSetCat(c){_wt.cat=(_wt.cat===c)?null:c;if(_wt.data&&_wt.data.ok){wtDrawChart();wtDrawDrill();}}
+function wtSelect(i){_wt.sel=(_wt.sel===i)?null:i;wtDrawChart();wtDrawDrill();}
+function wtShow(id,on){var el=document.getElementById(id);if(el)el.hidden=!on;}
+function renderWasteTrend(){
+  var d=_wt.data,host=document.getElementById('fc2-wt');if(!host||!d)return;
+  var chart=document.getElementById('fc2-wt-chart');
+  var v=document.getElementById('fc2-wt-verdict'),pill=document.getElementById('fc2-wt-pill'),sub=document.getElementById('fc2-wt-sub');
+  if(!d.ok){
+    if(v)v.textContent='Trend unavailable';if(pill)pill.hidden=true;if(sub)sub.textContent='';
+    if(chart)chart.innerHTML=emptyStateHtml('Trend unavailable','Check back shortly — the history is still there',true);
+    wtShow('fc2-wt-ctl',false);wtShow('fc2-wt-kpis',false);wtShow('fc2-wt-leg',false);wtShow('fc2-wt-drill',false);wtShow('fc2-wt-obs',false);
+    return;
+  }
+  var rl=document.getElementById('fc2-wt-range-lbl');if(rl)rl.textContent=wtRangeLabel(d.range);
+  if(!d.weeks.length){wtRenderEmpty(d);return;}
+  wtDrawHeader(d);wtDrawRanges(d);wtDrawKpis(d);wtDrawChart();wtDrawLegend();wtDrawDrill();wtDrawObs(d);
+}
+function wtRenderEmpty(d){
+  var e=d.empty||{},v=document.getElementById('fc2-wt-verdict'),pill=document.getElementById('fc2-wt-pill'),sub=document.getElementById('fc2-wt-sub');
+  if(v)v.textContent='No trend yet';if(pill)pill.hidden=true;if(sub)sub.textContent='';
+  wtShow('fc2-wt-ctl',false);wtShow('fc2-wt-kpis',false);wtShow('fc2-wt-leg',false);wtShow('fc2-wt-drill',false);wtShow('fc2-wt-obs',false);
+  var have=e.weeks_have||0,need=e.weeks_needed||2;
+  var h='<div class="fc2-wt-empty">'+(typeof cavnarHearthSvg==='function'?cavnarHearthSvg():'')
+    +'<div class="t">'+wtEsc(e.title||'No waste history yet')+'</div>'
+    +'<div class="r">'+wtEsc(e.reason||'')+'</div>'
+    +'<div class="prog"><span class="hb-num">'+have+' of '+need+'</span> weeks recorded<span class="bar"><i style="width:'+Math.round(Math.min(1,have/need)*100)+'%"></i></span></div>'
+    +'<div class="steps"><div class="step"><b>What fills it</b>'+wtEsc(e.needed||'')+'</div><div class="step"><b>When it appears</b>'+wtEsc(e.when||'')+'</div></div></div>';
+  var chart=document.getElementById('fc2-wt-chart');if(chart)chart.innerHTML=h;
+}
+function wtDrawHeader(d){
+  var s=d.stats,n=d.weeks.length,v=document.getElementById('fc2-wt-verdict'),pill=document.getElementById('fc2-wt-pill'),sub=document.getElementById('fc2-wt-sub');
+  var text;
+  if(s.direction==='worsening')text='Waste is climbing';
+  else if(s.direction==='improving')text='Waste is coming down';
+  else if(s.direction==='flat')text='Waste is holding steady';
+  else if(n>=2&&s.wow_delta!=null)text=Math.abs(s.wow_delta)<1?'Level with last week':(s.wow_delta>0?'Waste rose this week':'Waste fell this week');
+  else text='First week recorded';
+  if(v)v.textContent=text;
+  if(pill){
+    if(d.target&&d.target.weekly){
+      var cls=s.above_target?(s.intervention?'bad':'warn'):'good';
+      pill.className='fc2-wt-pill '+cls;pill.textContent=s.above_target?(s.intervention?'Action recommended':'Over target'):'On target';pill.hidden=false;
+    } else pill.hidden=true;
+  }
+  if(sub){
+    var parts=['This week <span class="hb-num">'+wtMoney(s.latest)+'</span>'];
+    if(n>=2)parts.push('<span class="hb-num">'+n+'</span>-week average <span class="hb-num">'+wtMoney(s.avg)+'</span>');
+    if(d.target&&d.target.weekly)parts.push('target <span class="hb-num">'+wtMoney(d.target.weekly)+'</span>/wk at <span class="hb-num">'+d.target.pct+'%</span> of purchases');
+    if(s.confidence)parts.push(wtEsc(s.confidence==='high'?'high-confidence read':(s.confidence==='medium'?'moderate-confidence read':'early read')));
+    sub.innerHTML=parts.join(' <span style="opacity:.5">·</span> ');
+  }
+}
+function wtDrawRanges(d){
+  var box=document.getElementById('fc2-wt-ranges');wtShow('fc2-wt-ctl',true);
+  var tgl=document.getElementById('fc2-wt-target-tgl');if(tgl)tgl.hidden=!(d.target&&d.target.weekly);
+  if(!box)return;
+  var rs=d.ranges||['8w'];
+  if(rs.length<2){box.hidden=true;return;}
+  box.hidden=false;var h='';
+  for(var i=0;i<rs.length;i++){var r=rs[i];h+='<button type="button" role="tab" aria-selected="'+(r===d.range?'true':'false')+'" class="'+(r===d.range?'on':'')+'" onclick="wtSetRange(\''+r+'\')">'+(r==='all'?'All':parseInt(r,10)+'w')+'</button>';}
+  box.innerHTML=h;
+}
+function wtDrawKpis(d){
+  var s=d.stats,n=d.weeks.length,box=document.getElementById('fc2-wt-kpis');if(!box)return;
+  wtShow('fc2-wt-kpis',true);
+  var hasT=!!(d.target&&d.target.weekly);
+  function tile(l,v,vcls,dd){return '<div class="fc2-wt-kpi"><div class="l">'+l+'</div><div class="v'+(vcls?' '+vcls:'')+'">'+v+'</div><div class="d">'+dd+'</div></div>';}
+  function arrow(x){return x>=0?'↑':'↓';}
+  var t1d=s.wow_delta==null?'first week on record':(Math.abs(s.wow_delta)<1?'<b>level</b> with last week':'<b class="'+(s.wow_delta>0?'bad':'good')+'">'+arrow(s.wow_delta)+' '+wtMoney(s.wow_delta)+wtPct(s.wow_pct)+'</b> vs last week');
+  var t2d=s.mom_delta==null?(n<5?'needs '+(5-n)+' more week'+(5-n===1?'':'s')+' to compare':'no prior period'):'<b class="'+(s.mom_delta>0?'bad':'good')+'">'+arrow(s.mom_delta)+' '+wtMoney(s.mom_delta)+wtPct(s.mom_pct)+'</b> vs prior 4 weeks';
+  var t3v='—',t3c='',t3d='add purchase data to set a target';
+  if(hasT){t3v=wtSigned(s.gap_weekly)+'<span style="font-size:14px;font-weight:400;color:var(--ink3)">/wk</span>';t3c=s.gap_weekly>0?'bad':'good';t3d='target '+wtMoney(d.target.weekly)+'/wk · <b>'+s.weeks_over_target+' of '+n+'</b> weeks over';}
+  var t4v='—',t4c='',t4d='needs a target';
+  if(hasT){if(s.savings_if_at_target>0){t4v=wtMoney(s.savings_if_at_target)+'<span style="font-size:14px;font-weight:400;color:var(--ink3)">/yr</span>';t4c='good';t4d='if 4-wk waste is brought to target';}else{t4v='$0';t4c='good';t4d='already under target — '+wtMoney(s.annualized_if_target-s.annualized_current)+'/yr below it';}}
+  box.innerHTML=tile('This week',wtMoney(s.latest),'',t1d)
+    +tile('4-week average',wtMoney(s.rolling4),'',t2d)
+    +tile('vs target',t3v,t3c,t3d)
+    +tile('Annual opportunity',t4v,t4c,t4d);
+}
+function wtNiceTop(v){
+  var steps=[10,20,25,50,100,200,250,500,1000,2000,2500,5000,10000,25000,50000,100000];
+  for(var i=0;i<steps.length;i++){var st=steps[i];var top=Math.ceil(v/st)*st;if(top/st<=8&&top>=v)return Math.max(top,st*2);}
+  return Math.ceil(v/100000)*100000;
+}
+function wtSeriesValue(w){
+  if(!_wt.cat)return w.waste;
+  if(!w.has_items)return null;
+  return (w.categories&&w.categories[_wt.cat])||0;
+}
+function wtDrawChart(){
+  var d=_wt.data,host=document.getElementById('fc2-wt-chart');if(!d||!host)return;
+  var weeks=d.weeks,n=weeks.length,s=d.stats;
+  var target=(_wt.showTarget&&!_wt.cat&&d.target&&d.target.weekly)?d.target.weekly:null;
+  var vals=[],max=0;
+  for(var i=0;i<n;i++){var vv=wtSeriesValue(weeks[i]);vals.push(vv);if(vv!=null&&vv>max)max=vv;}
+  // Rolling 4-week average at each point (shorter windows at the start).
+  var roll=[];
+  for(var i=0;i<n;i++){var sum=0,c=0;for(var j=Math.max(0,i-3);j<=i;j++){if(vals[j]!=null){sum+=vals[j];c++;}}roll.push(c?sum/c:null);}
+  var W=760,H=230,padT=30,base=H-6;
+  var top=wtNiceTop(Math.max(max*1.15,target?target*1.2:0,20));
+  function y(v){return padT+(base-padT)*(1-v/top);}
+  var dense=n>26,veryDense=n>52;
+  var gap=dense?Math.max(2,W*0.006):Math.max(8,W*0.024),bw=(W-gap*(n+1))/n;
+  var animate=!_wt.animated[d.range]&&!(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  _wt.animated[d.range]=true;
+  var svg='<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none" aria-hidden="true">';
   for(var g=1;g<=4;g++){var gy=y(top*g/4);svg+='<line x1="0" y1="'+gy.toFixed(1)+'" x2="'+W+'" y2="'+gy.toFixed(1)+'" stroke="currentColor" stroke-opacity=".07"/>';}
+  svg+='<line x1="0" y1="'+base+'" x2="'+W+'" y2="'+base+'" stroke="currentColor" stroke-opacity=".14"/>';
   var yLab='',steps=[top,top*.75,top*.5,top*.25,0];
   for(var q=0;q<steps.length;q++)yLab+='<span>$'+Math.round(steps[q]).toLocaleString()+'</span>';
-  var ax='';
-  for(var i=0;i<n;i++){var w=items[i],isLast=i===n-1,over=w.waste>avg*1.15,low=w.waste<avg*0.85;
-    var k=isLast?'hot':over?'bad':low?'good':'warn',x=gap+i*(bw+gap),bh=Math.max(2,y(0)-y(w.waste)),by=y(0)-bh;
-    var vsAvg=Math.round(w.waste-avg),vsPrev=i>0?Math.round(w.waste-items[i-1].waste):null;
-    var data=' data-week="'+esc('Week of '+(w.week_start_label||w.label)+' – '+w.label)+'" data-waste="'+Math.round(w.waste)+'" data-vsavg="'+vsAvg+'" data-vsprev="'+(vsPrev===null?'':vsPrev)+'" data-rate="'+(w.waste_rate_pct||'')+'"';
-    if(over||isLast)svg+='<rect class="fc2-bar" style="transition-delay:'+(i*110)+'ms" x="'+x.toFixed(1)+'" y="'+by.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+bh.toFixed(1)+'" rx="4" fill="url(#fc2t'+k+')" filter="url(#fc2tf)" opacity=".55"/>';
-    svg+='<rect class="fc2-bar fc2-tipbar" style="transition-delay:'+(i*110)+'ms;cursor:pointer" x="'+x.toFixed(1)+'" y="'+by.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+bh.toFixed(1)+'" rx="4" fill="url(#fc2t'+k+')"'+data+'/>';
-    svg+='<text x="'+(x+bw/2).toFixed(1)+'" y="'+(by-5).toFixed(1)+'" text-anchor="middle" font-size="10.5" font-weight="700" fill="'+cols[k][1]+'">$'+Math.round(w.waste).toLocaleString()+'</text>';
-    ax+='<span>'+esc(w.label)+'</span>';}
-  // Rule labels sit on a paper-coloured stroke so they stay legible over a bar
-  // that happens to land at the same height (paint-order keeps the fill on top).
+  var ax='',bars='',labels='';
   var lab='style="paint-order:stroke;stroke:var(--paper);stroke-width:4px;stroke-linejoin:round"';
-  var ay=y(avg),lastTop=y(items[n-1].waste),avgBelow=Math.abs(lastTop-ay)<16;
-  svg+='<line x1="0" y1="'+ay.toFixed(1)+'" x2="'+W+'" y2="'+ay.toFixed(1)+'" stroke="currentColor" stroke-opacity=".55" stroke-width="1.5" stroke-dasharray="5 5"/><text '+lab+' x="'+(W-4)+'" y="'+(avgBelow?ay+13:ay-5).toFixed(1)+'" text-anchor="end" font-size="10" font-weight="700" fill="currentColor" fill-opacity=".8">8-wk avg $'+Math.round(avg).toLocaleString()+'</text>';
-  if(target){var ty=y(target);svg+='<line x1="0" y1="'+ty.toFixed(1)+'" x2="'+W+'" y2="'+ty.toFixed(1)+'" stroke="#4ead7a" stroke-opacity=".8" stroke-width="1.5" stroke-dasharray="3 5"/><text '+lab+' x="4" y="'+(ty-5).toFixed(1)+'" font-size="10" font-weight="700" fill="#4ead7a">4.5% industry target · $'+Math.round(target).toLocaleString()+'</text>';}
-  svg+='</svg>';
-  host.innerHTML='<div class="fc2-trend"><div class="y">'+yLab+'</div><div class="plot">'+svg+'<div class="ax">'+ax+'</div></div></div>';
-  var bars=host.querySelectorAll('.fc2-bar');
-  requestAnimationFrame(function(){requestAnimationFrame(function(){for(var b=0;b<bars.length;b++)bars[b].classList.add('on');});});
-  var tip=document.getElementById('fc2-tip');
-  if(!tip){tip=document.createElement('div');tip.id='fc2-tip';tip.className='fc2-tip';document.body.appendChild(tip);}
-  var tb=host.querySelectorAll('.fc2-tipbar');
-  for(var t=0;t<tb.length;t++){(function(bar){
-    bar.addEventListener('mouseenter',function(){var vsavg=parseInt(bar.getAttribute('data-vsavg'),10),vp=bar.getAttribute('data-vsprev'),rate=bar.getAttribute('data-rate');
-      var h='<div class="w">'+bar.getAttribute('data-week')+'</div><div class="n">$'+parseInt(bar.getAttribute('data-waste'),10).toLocaleString()+'</div>';
-      if(rate)h+='<div style="color:var(--ink3);margin-bottom:6px">'+rate+'% waste rate</div>';
-      h+='<div><span class="'+(vsavg>=0?'up':'dn')+'">'+(vsavg>=0?'&#8593;':'&#8595;')+' $'+Math.abs(vsavg)+'</span> <span style="color:var(--ink3)">vs 8-wk avg</span></div>';
-      if(vp!==''){var v=parseInt(vp,10);h+='<div><span class="'+(v>=0?'up':'dn')+'">'+(v>=0?'&#8593;':'&#8595;')+' $'+Math.abs(v)+'</span> <span style="color:var(--ink3)">vs prior week</span></div>';}
-      tip.innerHTML=h;tip.style.display='block';bar.style.opacity='.75';});
-    bar.addEventListener('mousemove',function(e){var tx=e.clientX+14,ty=e.clientY-10;if(tx+190>window.innerWidth)tx=e.clientX-190;tip.style.left=tx+'px';tip.style.top=ty+'px';});
-    bar.addEventListener('mouseleave',function(){tip.style.display='none';bar.style.opacity='1';});
-  })(tb[t]);}
+  for(var i=0;i<n;i++){
+    var w=weeks[i],f=w.flags||{},x=gap+i*(bw+gap),val=vals[i],isLast=i===n-1,on=(_wt.sel===i);
+    var every=veryDense?Math.ceil(n/13):(dense?Math.ceil(n/13):1);
+    ax+='<span class="'+(on?'on':'')+'">'+((i%every===0||isLast)?wtEsc(w.label):'')+'</span>';
+    if(val==null){
+      bars+='<rect class="fc2-wt-bar" data-i="'+i+'" x="'+x.toFixed(1)+'" y="'+(base-8).toFixed(1)+'" width="'+bw.toFixed(1)+'" height="8" rx="2" fill="none" stroke="currentColor" stroke-opacity=".35" stroke-dasharray="3 3"/>';
+    } else {
+      var over=target?val>target:false,bh=Math.max(2,base-y(val)),by=base-bh;
+      var fill=over?'#c84b2f':(target?'#4ead7a':'#c84b2f'),op=isLast?1:(over?.85:.55);
+      var stroke=f.anomaly==='spike'?' stroke="#e05555" stroke-width="2"':(isLast?' stroke="#e8956a" stroke-width="1.5" stroke-opacity=".9"':'');
+      var delay=animate?' style="animation-delay:'+(i*(dense?12:70))+'ms"':'';
+      bars+='<rect class="fc2-wt-bar'+(animate?' hb-bar':'')+(on?' on':'')+'" data-i="'+i+'" x="'+x.toFixed(1)+'" y="'+by.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+bh.toFixed(1)+'" rx="'+(dense?2:4)+'" fill="'+fill+'" fill-opacity="'+op+'"'+stroke+delay+'/>';
+      if(!dense){
+        labels+='<text x="'+(x+bw/2).toFixed(1)+'" y="'+(by-6).toFixed(1)+'" text-anchor="middle" font-size="11.5" font-weight="'+(isLast?'700':'600')+'" fill="currentColor" fill-opacity="'+(isLast?'1':'.8')+'">'+wtMoney(val)+'</text>';
+        if(f.anomaly==='spike')labels+='<text x="'+(x+bw/2).toFixed(1)+'" y="'+(by-20).toFixed(1)+'" text-anchor="middle" font-size="10" font-weight="700" letter-spacing="1" fill="#e05555">SPIKE</text>';
+        else if(f.worst&&n>=3)labels+='<text x="'+(x+bw/2).toFixed(1)+'" y="'+(by-20).toFixed(1)+'" text-anchor="middle" font-size="10" font-weight="700" letter-spacing="1" fill="#e05555" fill-opacity=".85">WORST</text>';
+        else if(f.best&&n>=3)labels+='<text x="'+(x+bw/2).toFixed(1)+'" y="'+(by-20).toFixed(1)+'" text-anchor="middle" font-size="10" font-weight="700" letter-spacing="1" fill="#4ead7a" fill-opacity=".9">BEST</text>';
+      }
+    }
+    // Full-column hit area so a short bar is as easy to hover as a tall one.
+    bars+='<rect class="fc2-wt-hit" data-i="'+i+'" x="'+(x-gap/2).toFixed(1)+'" y="0" width="'+(bw+gap).toFixed(1)+'" height="'+H+'" fill="transparent"/>';
+  }
+  svg+=bars;
+  // Rolling 4-week average as a single quiet line — no glow, no dots.
+  var pts=[];for(var i=0;i<n;i++){if(roll[i]!=null)pts.push([gap+i*(bw+gap)+bw/2,y(roll[i])]);}
+  // Rule labels sit at the right edge, and dodge each other and the last
+  // bar's value label — the old chart printed "8-wk avg" straight over
+  // this week's figure whenever the two landed at the same height.
+  var lastVal=vals[n-1],lastLabelY=(lastVal!=null&&!dense)?y(lastVal)-6:-99,avgLabelY=null;
+  if(pts.length>=2){
+    var path=window.CavnarCharts?CavnarCharts.smooth(pts):pts.map(function(p,i){return (i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1);}).join(' ');
+    svg+='<path d="'+path+'" fill="none" stroke="#e8956a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke-opacity=".95"/>';
+    var lp=pts[pts.length-1];
+    avgLabelY=lp[1]-8;
+    if(Math.abs(avgLabelY-lastLabelY)<15)avgLabelY=lp[1]+14;
+    svg+='<text '+lab+' x="'+(W-4)+'" y="'+avgLabelY.toFixed(1)+'" text-anchor="end" font-size="11" font-weight="700" fill="#e8956a">4-wk avg '+wtMoney(roll[n-1])+'</text>';
+  }
+  if(target){
+    var ty=y(target),tly=ty-7;
+    if((avgLabelY!=null&&Math.abs(tly-avgLabelY)<15)||Math.abs(tly-lastLabelY)<15)tly=ty+14;
+    svg+='<line x1="0" y1="'+ty.toFixed(1)+'" x2="'+W+'" y2="'+ty.toFixed(1)+'" stroke="#4ead7a" stroke-opacity=".85" stroke-width="1.5" stroke-dasharray="4 5"/>';
+    svg+='<text '+lab+' x="'+(W-4)+'" y="'+tly.toFixed(1)+'" text-anchor="end" font-size="11" font-weight="700" fill="#4ead7a">target '+wtMoney(target)+'/wk</text>';
+  }
+  svg+=labels+'</svg>';
+  host.innerHTML='<div class="y">'+yLab+'</div><div class="plot">'+svg+'<div class="ax">'+ax+'</div></div>';
+  host.classList.remove('hov');
+  if(!host._wtBound){
+    host._wtBound=true;
+    host.addEventListener('mouseover',function(e){var t=e.target&&e.target.closest?e.target.closest('.fc2-wt-hit'):null;if(t)wtHover(parseInt(t.getAttribute('data-i'),10),e);});
+    host.addEventListener('mousemove',function(e){var tip=document.getElementById('fc2-wt-tip');if(tip&&tip.style.display==='block')wtTipPos(e);});
+    host.addEventListener('mouseleave',function(){wtHover(null);});
+    host.addEventListener('click',function(e){var t=e.target&&e.target.closest?e.target.closest('.fc2-wt-hit'):null;if(t)wtSelect(parseInt(t.getAttribute('data-i'),10));});
+  }
 }
-function loadInvTrend(){
-  fetch('/api/inv-trend',{cache:'no-store'}).then(function(r){return r.json();}).then(function(data){
-    _invTrendData=data.weeks?data.weeks.map(function(w){return{waste:w.waste,label:w.label,week_start_label:w.week_start_label||w.label,waste_rate_pct:w.waste_rate_pct||0,inv_value:w.inv_value||0};}):[];
-    renderInvTrend();
-  }).catch(function(){_invTrendData=[];renderInvTrend();});
+function wtTipPos(e){var tip=document.getElementById('fc2-wt-tip');if(!tip)return;var tx=e.clientX+16,ty=e.clientY-12,tw=tip.offsetWidth||240;if(tx+tw+8>window.innerWidth)tx=e.clientX-tw-16;if(ty+tip.offsetHeight>window.innerHeight)ty=window.innerHeight-tip.offsetHeight-8;tip.style.left=tx+'px';tip.style.top=ty+'px';}
+function wtHover(i,e){
+  var host=document.getElementById('fc2-wt-chart'),d=_wt.data;if(!host||!d)return;
+  var tip=document.getElementById('fc2-wt-tip');
+  if(!tip){tip=document.createElement('div');tip.id='fc2-wt-tip';tip.className='fc2-wt-tip';document.body.appendChild(tip);}
+  var bars=host.querySelectorAll('.fc2-wt-bar');
+  for(var b=0;b<bars.length;b++){var bi=parseInt(bars[b].getAttribute('data-i'),10);bars[b].classList.toggle('on',bi===i||bi===_wt.sel);}
+  if(i==null||!d.weeks[i]){host.classList.remove('hov');tip.style.display='none';return;}
+  host.classList.add('hov');
+  var w=d.weeks[i],s=d.stats,f=w.flags||{},val=wtSeriesValue(w),prev=i>0?wtSeriesValue(d.weeks[i-1]):null;
+  var h='<div class="w">Week of '+wtEsc(w.start_label)+' – '+wtEsc(w.label)+(f.this_week?' · this week':'')+'</div>';
+  if(val==null){h+='<div class="n">—</div><div class="items">No item-level detail was recorded for this week, so it can’t be split by category. Total waste: <b>'+wtMoney(w.waste)+'</b>.</div>';}
+  else{
+    h+='<div class="n">'+wtMoney(val)+(_wt.cat?'<small>'+wtEsc(_wt.cat)+' waste</small>':(w.rate?'<small>'+w.rate+'% of purchases</small>':''))+'</div>';
+    if(prev!=null){var pd=val-prev;h+='<div class="row"><span>vs prior week</span><b class="'+(pd>0?'up':'dn')+'">'+(pd>=0?'↑':'↓')+' '+wtMoney(pd)+(prev?wtPct(pd/prev*100):'')+'</b></div>';}
+    if(!_wt.cat&&s.avg!=null){var ad=val-s.avg;h+='<div class="row"><span>vs '+d.weeks.length+'-wk average</span><b class="'+(ad>0?'up':'dn')+'">'+(ad>=0?'↑':'↓')+' '+wtMoney(ad)+'</b></div>';}
+    if(!_wt.cat&&d.target&&d.target.weekly){var td=val-d.target.weekly;h+='<div class="row"><span>vs target</span><b class="'+(td>0?'up':'dn')+'">'+wtSigned(td)+'</b></div>';}
+    var items=w.top_items||[];
+    if(items.length){var il=[];for(var k=0;k<Math.min(3,items.length);k++){il.push(wtEsc(items[k].item)+(items[k].cost!=null?' <b>'+wtMoney(items[k].cost)+'</b>':''));}h+='<div class="items">Top waste: '+il.join(', ')+'</div>';}
+    var flags='';
+    if(f.anomaly==='spike')flags+='<span class="flag bad">Unusual spike</span>';
+    if(f.anomaly==='dip')flags+='<span class="flag good">Unusually low</span>';
+    if(f.worst&&d.weeks.length>=3)flags+='<span class="flag bad">Worst week</span>';
+    if(f.best&&d.weeks.length>=3)flags+='<span class="flag good">Best week</span>';
+    h+=flags;
+  }
+  h+='<div class="hint">'+(_wt.sel===i?'Click to close details':'Click for details')+'</div>';
+  tip.innerHTML=h;tip.style.display='block';if(e)wtTipPos(e);
+}
+function wtDrawLegend(){
+  var d=_wt.data,box=document.getElementById('fc2-wt-leg');if(!d||!box)return;
+  wtShow('fc2-wt-leg',true);
+  var hasT=!!(_wt.showTarget&&!_wt.cat&&d.target&&d.target.weekly),h='';
+  if(hasT)h+='<span><i style="background:#c84b2f"></i>Over target</span><span><i style="background:#4ead7a;opacity:.7"></i>Under target</span>';
+  else h+='<span><i style="background:#c84b2f;opacity:.6"></i>Weekly waste'+(_wt.cat?' · '+wtEsc(_wt.cat):'')+'</span>';
+  h+='<span><i style="background:#c84b2f;box-shadow:0 0 0 1.5px #e8956a"></i>This week</span><span><i class="ln"></i>4-week average</span>';
+  if(hasT)h+='<span><i class="tg"></i>Target ('+d.target.pct+'% of purchases)</span>';
+  if(d.stats.anomalies&&d.stats.anomalies.length)h+='<span><i style="background:transparent;box-shadow:inset 0 0 0 2px #e05555"></i>Unusual week</span>';
+  box.innerHTML=h;
+}
+function wtDrawDrill(){
+  var d=_wt.data,box=document.getElementById('fc2-wt-drill');if(!d||!box)return;
+  var cats=d.categories||[];
+  var catRow='';
+  if(cats.length){catRow='<div class="fc2-wt-cats"><span>Filter by category:</span>';for(var c=0;c<cats.length;c++){catRow+='<button type="button" class="cbtn cbtn-secondary cbtn-sm'+(_wt.cat===cats[c]?' on':'')+'" onclick="wtSetCat(\''+wtEsc(cats[c]).replace(/'/g,'')+'\')">'+wtEsc(cats[c])+'</button>';}catRow+='</div>';}
+  if(_wt.sel==null||!d.weeks[_wt.sel]){
+    if(!catRow){wtShow('fc2-wt-drill',false);return;}
+    wtShow('fc2-wt-drill',true);
+    box.innerHTML='<div class="h"><div class="t">Click any week for its top waste items</div></div>'+catRow;
+    return;
+  }
+  wtShow('fc2-wt-drill',true);
+  var w=d.weeks[_wt.sel],items=w.top_items||[];
+  var h='<div class="h"><div class="t">Week of '+wtEsc(w.start_label)+' – '+wtEsc(w.label)+' · <span class="hb-num">'+wtMoney(w.waste)+'</span>'+(w.rate?'<small><span class="hb-num">'+w.rate+'%</span> of purchases</small>':'')+(w.inv_value?'<small>inventory on hand <span class="hb-num">'+wtMoney(w.inv_value)+'</span></small>':'')+'</div>'
+    +'<button type="button" class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" aria-label="Close week details" onclick="wtSelect('+_wt.sel+')">✕</button></div>';
+  if(w.has_items&&items.length){
+    var mx=items[0].cost||1;h+='<div class="rows">';
+    for(var k=0;k<items.length;k++){h+='<div class="r"><div><div class="nm">'+wtEsc(items[k].item)+'</div><div class="bar"><i style="width:'+Math.round((items[k].cost||0)/mx*100)+'%"></i></div></div><div class="v">'+wtMoney(items[k].cost)+'</div></div>';}
+    h+='</div>';
+    if(w.categories){var cl=[];for(var key in w.categories){if(w.categories.hasOwnProperty(key))cl.push([key,w.categories[key]]);}cl.sort(function(a,b){return b[1]-a[1];});var cs=[];for(var m=0;m<Math.min(4,cl.length);m++)cs.push('<b style="text-transform:capitalize">'+wtEsc(cl[m][0])+'</b> '+wtMoney(cl[m][1]));h+='<div class="none">By category: '+cs.join(' · ')+'</div>';}
+  } else if(items.length){
+    var names=[];for(var k=0;k<items.length;k++)names.push(wtEsc(items[k].item));
+    h+='<div class="none">Top waste items that week: '+names.join(', ')+'. Per-item costs are recorded from the first week the analysis ran with a full count on file.</div>';
+  } else if(w.has_items){
+    h+='<div class="none">The count on file for this week carries no per-item waste lines — the '+wtMoney(w.waste)+' total was recorded, but not which items made it up.</div>';
+  } else {
+    h+='<div class="none">Only the weekly total was recorded for this week. Item-level detail is kept for every week from your first full count onward.</div>';
+  }
+  box.innerHTML=h+catRow;
+}
+function wtDrawObs(d){
+  var box=document.getElementById('fc2-wt-obs');if(!box)return;
+  var obs=d.observations||[],h='';
+  for(var i=0;i<obs.length;i++){h+='<div class="fc2-wt-ob"><i class="'+wtEsc(obs[i].tone||'')+'"></i><div>'+wtEsc(obs[i].text)+(obs[i].confidence?'<small>'+wtEsc(obs[i].confidence)+'</small>':'')+'</div></div>';}
+  if(d.weeks.length<2&&d.empty)h+='<div class="fc2-wt-ob"><i></i><div>'+wtEsc(d.empty.reason)+'<small>'+wtEsc(d.empty.when)+'</small></div></div>';
+  if(!h){wtShow('fc2-wt-obs',false);return;}
+  wtShow('fc2-wt-obs',true);box.innerHTML=h;
 }
 var selCt='{{ctypes[0].id if ctypes}}';
 function selectCt(id,el){selCt=id;document.querySelectorAll('.ct-btn').forEach(function(b){b.classList.remove('selected');});el.classList.add('selected');}

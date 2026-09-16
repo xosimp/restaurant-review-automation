@@ -1427,47 +1427,18 @@ def export_reviews(current_user):
 @admin_bp.route("/api/inv-trend")
 @login_required
 def inv_trend_api(current_user):
-    """Return weekly waste cost for up to 6 weeks for trend chart."""
+    """Legacy weekly waste series (8 weeks, oldest first). The dashboard's
+    Waste Trend card now reads /api/food-cost/waste-trend; this stays for
+    anything still on the old shape and is served from the same ISO-week
+    series (waste_trend.load_waste_history) so both agree."""
     try:
-        from models import get_conn as _gc_it
-        import json as _json_it
-        conn = _gc_it()
-        rows = conn.execute("""
-            SELECT week_end, waste_json FROM inventory_history
-            WHERE restaurant_id=? AND week_end IS NOT NULL
-            ORDER BY week_end DESC LIMIT 6
-        """, (current_user["restaurant_id"],)).fetchall()
-        conn.close()
-
-        if not rows:
-            return jsonify(weeks=[])
-
-        # Reverse so oldest is first (left-to-right on chart)
-        rows = list(reversed(rows))
-        weeks = []
-        for row in rows:
-            try:
-                data = _json_it.loads(row["waste_json"])
-                waste = round(float(data.get("total_waste_cost", 0)), 2)
-                # Format label: "5/27" from "2026-05-27"
-                parts = (row["week_end"] or "").split("-")
-                label = f"{int(parts[1])}/{int(parts[2])}" if len(parts) == 3 else row["week_end"]
-                waste_rate = round(float(data.get("waste_rate_pct") or 0), 1)
-                inv_value = round(float(data.get("inventory_value") or 0), 2)
-                # week_start = 6 days before week_end
-                import datetime as _dt
-                try:
-                    we = _dt.date.fromisoformat(row["week_end"])
-                    ws_str = (we - _dt.timedelta(days=6)).isoformat()
-                    ws_parts = ws_str.split("-")
-                    week_start_label = f"{int(ws_parts[1])}/{int(ws_parts[2])}"
-                except Exception:
-                    week_start_label = label
-                weeks.append({"label": label, "waste": waste, "week_end": row["week_end"], "week_start_label": week_start_label, "waste_rate_pct": waste_rate, "inv_value": inv_value})
-            except Exception:
-                continue
-
-        return jsonify(weeks=weeks)
+        from waste_trend import load_waste_history
+        weeks, _total = load_waste_history(current_user["restaurant_id"], limit=8)
+        return jsonify(weeks=[{
+            "label": w["label"], "waste": w["waste"], "week_end": w["week_end"],
+            "week_start_label": w["start_label"],
+            "waste_rate_pct": w["rate"] or 0, "inv_value": w["inv_value"] or 0,
+        } for w in weeks])
     except Exception as e:
         return jsonify(weeks=[], error=_safe_err(e))
 

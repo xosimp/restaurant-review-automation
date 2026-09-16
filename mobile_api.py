@@ -1793,50 +1793,17 @@ def mobile_food_cost_trend(current_user):
     only) reads, just mobile-auth'd and re-exposed here. 8 weeks (not that
     route's 6) to match LaborPerformanceChart's own "8-Week Trend" window,
     so the two modules' trend charts read as the same convention."""
-    from models import get_conn
-    import json as _json
-    import datetime as _dt
     rid = current_user["restaurant_id"]
     try:
-        conn = get_conn()
-        # Not part of init_db()'s base schema — inventory.py's own
-        # get_claude_insights() creates this lazily on first real analytics
-        # fetch. A restaurant that's never viewed Analytics yet (fresh
-        # install, or hitting this trend route before that one) would 500
-        # on "no such table" otherwise, which reads as an error when it's
-        # really just "no history yet" — same schema as that lazy creation.
-        conn.execute("""CREATE TABLE IF NOT EXISTS inventory_history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            restaurant_id INTEGER NOT NULL,
-            waste_json TEXT,
-            week_end    TEXT,
-            items_json  TEXT,
-            saved_at    TEXT DEFAULT (datetime('now'))
-        )""")
-        rows = conn.execute("""
-            SELECT week_end, waste_json FROM inventory_history
-            WHERE restaurant_id=? AND week_end IS NOT NULL
-            ORDER BY week_end DESC LIMIT 8
-        """, (rid,)).fetchall()
-        conn.close()
-
-        weeks = []
-        for row in reversed(rows):  # oldest first, left-to-right on the chart
-            try:
-                data = _json.loads(row["waste_json"])
-                waste = round(float(data.get("total_waste_cost", 0)), 2)
-                we = _dt.date.fromisoformat(row["week_end"])
-                ws = we - _dt.timedelta(days=6)
-                weeks.append({
-                    "label": f"{we.month}/{we.day}",
-                    "start": ws.isoformat(),
-                    "end": row["week_end"],
-                    "waste": waste,
-                })
-            except Exception:
-                continue
-
-        return jsonify(ok=True, weeks=weeks)
+        # Served from the same ISO-week series the web card reads
+        # (waste_trend.load_waste_history): one figure per week even when
+        # the insight ran twice that week, and the table is created lazily
+        # there, so a fresh install reads as "no history yet", not a 500.
+        from waste_trend import load_waste_history
+        weeks, _total = load_waste_history(rid, limit=8)
+        return jsonify(ok=True, weeks=[{
+            "label": w["label"], "start": w["start"], "end": w["week_end"], "waste": w["waste"],
+        } for w in weeks])
     except Exception as e:
         return jsonify(ok=False, weeks=[], error=_safe_err(e)), 500
 

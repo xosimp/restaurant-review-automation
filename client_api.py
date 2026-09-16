@@ -1515,6 +1515,36 @@ def inv_insight_api(current_user):
         print(f"[inv-insight ERROR] {_inv_e}\n{traceback.format_exc()}")
         return jsonify(insight="Analysis unavailable — check server logs.", error=str(_inv_e)), 500
 
+
+@client_bp.route("/api/food-cost/waste-trend")
+@login_required
+def food_cost_waste_trend(current_user):
+    """The Waste Trend card: the ISO-week series plus every derived figure
+    and observation, computed once server-side (waste_trend.py). The live
+    analysis is passed in so the target line reflects this week's real
+    purchases rather than an average of history."""
+    from inventory import load_inventory_for_restaurant, analyse_inventory
+    from waste_trend import build_waste_trend
+    rid = current_user["restaurant_id"]
+    range_key = (request.args.get("range") or "8w").lower()
+    analysis = None
+    is_live = True
+    try:
+        restaurant = get_restaurant(rid)
+        items, is_live = load_inventory_for_restaurant(rid)
+        # A sample pantry's purchases would put the target line somewhere
+        # the owner's real history never bought — without a live count the
+        # target comes from the newest week that recorded purchases, or
+        # not at all.
+        if is_live:
+            analysis = analyse_inventory(items, delivery_days=restaurant.delivery_days if restaurant else None)
+    except Exception:
+        analysis = None
+    try:
+        return jsonify(**build_waste_trend(rid, range_key, analysis=analysis, is_live=bool(is_live)))
+    except Exception as e:
+        return jsonify(ok=False, weeks=[], error=_safe_err(e)), 500
+
 @client_bp.route("/api/generate-content", methods=["POST"])
 @login_required
 def gen_content(current_user):
