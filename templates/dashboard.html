@@ -136,7 +136,7 @@ html[data-theme="dark"] body{color:var(--ink)}
 /* Reduce order pill — light green bg unreadable in dark mode */
 [data-theme="dark"] .pill[style*="background:#e8f4f0"]{background:#0c2318!important;color:#4ead7a!important}
 /* Toast notifications */
-[data-theme="dark"] .toast{background:#2a2520!important;color:var(--ink)!important;box-shadow:0 4px 16px rgba(0,0,0,.5)!important}
+[data-theme="dark"] .toast{background:#2a2520!important;color:var(--ink)!important;box-shadow:0 8px 28px rgba(0,0,0,.5)!important}
 [data-theme="dark"] .toast.toast-success{background:#0c2318!important;color:#6fcf97!important;border-left-color:#2d6a4f!important}
 [data-theme="dark"] .toast.toast-error{background:#2a1010!important;color:#ff9b8a!important;border-left-color:#c0392b!important}
 [data-theme="dark"] .toast.toast-warning{background:#251d08!important;color:#d4a030!important;border-left-color:#d4a030!important}
@@ -644,7 +644,7 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none}
 
 .ask-cavnar-accent-fill{fill:#c84b2f}
 [data-theme="dark"] .ask-cavnar-accent-fill{fill:#923020!important}
-.toast{position:fixed;bottom:20px;right:20px;padding:9px 16px 9px 13px;border-radius:7px;font-size:12px;font-weight:500;z-index:999;opacity:0;pointer-events:none;border-left:3px solid transparent;background:var(--ink);color:var(--paper);border-left-color:rgba(255,255,255,.18)}
+.toast{position:fixed;bottom:24px;right:24px;padding:13px 20px 13px 16px;border-radius:9px;font-size:14.5px;font-weight:500;z-index:999;opacity:0;pointer-events:none;border-left:4px solid transparent;background:var(--ink);color:var(--paper);border-left-color:rgba(255,255,255,.18);box-shadow:0 8px 28px rgba(0,0,0,.35)}
 .toast.toast-success{background:var(--green-bg);color:#166534;border-left-color:var(--green)}
 .toast.toast-error{background:var(--red-bg);color:#991b1b;border-left-color:var(--red)}
 .toast.toast-warning{background:var(--amber-bg);color:#92400e;border-left-color:var(--amber)}
@@ -970,7 +970,7 @@ document.documentElement.classList.add('pjs-loading');
     {% if group_locations and group_locations|length > 1 %}
     <div style="position:relative" id="loc-switcher-wrap">
       <button id="loc-switcher-btn" onclick="toggleLocSwitcher()" style="display:flex;align-items:center;gap:5px;background:none;border:none;cursor:pointer;padding:0;font-family:'Apfel Grotezk',sans-serif">
-        <span class="hdr-restaurant" id="loc-current-name" style="cursor:pointer">{{ restaurant.name }}{% if restaurant.location_name %} — {{ restaurant.location_name }}{% endif %}</span>
+        <span class="hdr-restaurant" id="loc-current-name" style="cursor:pointer">{{ restaurant.name }}{% if restaurant.location_name and restaurant.location_name != restaurant.name %} — {{ restaurant.location_name }}{% endif %}</span>
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="color:var(--ink3);margin-top:1px"><polyline points="6 9 12 15 18 9"/></svg>
       </button>
       <div id="loc-switcher-panel" style="display:none;position:absolute;left:0;top:calc(100% + 8px);min-width:180px;background:white;border:1px solid var(--paper3);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);z-index:999;overflow:hidden">
@@ -983,7 +983,7 @@ document.documentElement.classList.add('pjs-loading');
       </div>
     </div>
     {% else %}
-    <div class="hdr-restaurant">{{ restaurant.name }}{% if restaurant.location_name %} — {{ restaurant.location_name }}{% endif %}</div>
+    <div class="hdr-restaurant">{{ restaurant.name }}{% if restaurant.location_name and restaurant.location_name != restaurant.name %} — {{ restaurant.location_name }}{% endif %}</div>
     {% endif %}
   </div>
   <div class="hdr-right">
@@ -1276,7 +1276,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 <div class="hb-wrap" id="hb-root">
   <div class="hb-top">
     <div style="min-width:0;flex:1">
-      <div class="hb-kicker" id="hb-kicker">{{ now_mdy }} · {{ restaurant.name }}{% if restaurant.location_name %} — {{ restaurant.location_name }}{% endif %}</div>
+      <div class="hb-kicker" id="hb-kicker">{{ now_mdy }} · {{ restaurant.name }}{% if restaurant.location_name and restaurant.location_name != restaurant.name %} — {{ restaurant.location_name }}{% endif %}</div>
       <h1 class="hb-h1" id="hb-h1">{% if restaurant.owner_name or current_user.username %}Hello, {{ (restaurant.owner_name or current_user.username).split(' ')[0]|title }}.{% else %}Your brief.{% endif %} <span class="hb-head neutral">Reading the room…</span></h1>
       <div class="hb-sub" id="hb-sub">Pulling your latest numbers.</div>
     </div>
@@ -1514,7 +1514,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
   function renderTop(d){
     var c=d.context||{};
     var k=document.getElementById('hb-kicker');
-    var ctx=c.restaurant_name+(c.location_name?' — '+c.location_name:'');
+    var ctx=c.restaurant_name+((c.location_name&&c.location_name!==c.restaurant_name)?' — '+c.location_name:'');
     if(c.view==='location'&&c.group_name)ctx=c.group_name+' · '+(c.location_name||c.restaurant_name);
     if(k)k.textContent=dateKicker(d.local_now)+' · '+ctx;
     var h=document.getElementById('hb-h1');
@@ -4089,7 +4089,8 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
           <div class="ac-kicker">Restaurant account</div>
           <h1 class="ac-name" id="acct-overview-h">{{ restaurant.brand_name or restaurant.name }}</h1>
           <div class="ac-meta">
-            {% if restaurant.location_name or restaurant.neighborhood %}<span>&#9679; <b>{{ restaurant.location_name or restaurant.neighborhood }}</b></span>{% endif %}
+            {% set _acct_loc = restaurant.location_name or restaurant.neighborhood %}
+            {% if _acct_loc and _acct_loc != restaurant.name %}<span>&#9679; <b>{{ _acct_loc }}</b></span>{% endif %}
             {% if group_locations and group_locations|length > 1 %}<span><b>{{ group_locations|length }}</b> locations</span>{% endif %}
             <span>Timezone: <b>{{ (restaurant.timezone or 'America/Chicago').split('/')[-1].replace('_',' ') }}</b></span>
             <span>Owner: <b>{{ restaurant.owner_name or restaurant.owner_email }}</b></span>
@@ -11627,7 +11628,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       el.innerHTML=(d.members||[]).map(function(m){
         var role=m.role==='member'?'Teammate':(m.role==='owner'?'Owner':'Account owner');
         var right=m.is_you?'<span style="color:var(--ink3)">you</span>':((window._cuRole!=='member')?'<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="revokeTeam('+m.id+',this)">Remove</button>':'');
-        return '<div style="display:flex;justify-content:space-between;gap:8px;padding:5px 0;border-top:1px solid var(--paper3)"><span><span style="color:var(--ink);font-weight:600">'+esc(m.username)+'</span> <span style="color:var(--ink3)">· '+esc(m.email||'')+' · '+role+(m.last_login?' · last in '+ago(m.last_login):' · never signed in')+'</span></span>'+right+'</div>';
+        return '<div class="ac-row"><div class="l"><b>'+esc(m.username)+'</b><span>'+esc(m.email||'')+' · '+role+(m.last_login?' · last in '+ago(m.last_login):' · never signed in')+'</span></div><div class="c">'+right+'</div></div>';
       }).join('')||'Just you so far.';
     });
   };

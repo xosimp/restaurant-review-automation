@@ -1619,7 +1619,7 @@ def _seed_simple_ejs(db_path: str = DB_PATH):
             name=SIMPLE_EJS_NAME, owner_email=SIMPLE_EJS_EMAIL, owner_name="Erik",
             is_demo=1, module_reviews=1, module_labor=1, module_inventory=1,
             module_marketing=1, service_tier="full", timezone="America/Chicago",
-            location_name="Simple EJ's", hourly_rate=12.50, labor_target_pct=26.0,
+            hourly_rate=12.50, labor_target_pct=26.0,
         ), db_path=db_path)
         print(f"[auto-seed] created {SIMPLE_EJS_NAME} as id={rid}")
 
