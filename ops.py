@@ -41,9 +41,15 @@ def _ensure_table(conn):
     conn.execute(_TABLE_SQL)
 
 
-def capture(exc, job="unknown", context=""):
+def capture(exc, job="unknown", context="", db_path=None):
     """Record a handled exception. Never raises — an error reporter that can
-    take down the thing it's reporting on is worse than none."""
+    take down the thing it's reporting on is worse than none.
+
+    db_path defaults to None (models.DB_PATH, the one real database) rather
+    than being silently forced there — a caller running against its own
+    database (every isolated test fixture) can now say so, instead of this
+    always writing into whichever database happens to be the default in
+    that process."""
     try:
         import sentry_sdk
         sentry_sdk.capture_exception(exc)
@@ -51,7 +57,7 @@ def capture(exc, job="unknown", context=""):
         pass
     try:
         from models import get_conn
-        conn = get_conn()
+        conn = get_conn(db_path) if db_path else get_conn()
         _ensure_table(conn)
         conn.execute(
             "INSERT INTO job_failures (job, error, context) VALUES (?,?,?)",
@@ -77,10 +83,10 @@ CREATE TABLE IF NOT EXISTS job_runs (
 """
 
 
-def _record_run_start(name, context=""):
+def _record_run_start(name, context="", db_path=None):
     try:
         from models import get_conn
-        conn = get_conn()
+        conn = get_conn(db_path) if db_path else get_conn()
         conn.execute(_RUNS_SQL)
         cur = conn.execute("INSERT INTO job_runs (job, context) VALUES (?, ?)", (str(name)[:100], str(context)[:200]))
         run_id = cur.lastrowid
@@ -91,13 +97,13 @@ def _record_run_start(name, context=""):
         return None
 
 
-def _record_run_end(run_id, started, ok, error=None):
+def _record_run_end(run_id, started, ok, error=None, db_path=None):
     if run_id is None:
         return
     try:
         import time as _time
         from models import get_conn
-        conn = get_conn()
+        conn = get_conn(db_path) if db_path else get_conn()
         conn.execute("UPDATE job_runs SET finished_at=datetime('now'), duration_ms=?, ok=?, error=? WHERE id=?",
                      (int((_time.time() - started) * 1000), 1 if ok else 0, (str(error)[:500] if error else None), run_id))
         conn.commit()
@@ -329,7 +335,7 @@ def inflight_async_jobs(limit=20):
         return []
 
 
-def run_job(name, fn, *args, context="", **kwargs):
+def run_job(name, fn, *args, context="", db_path=None, **kwargs):
     """Run a scheduled job with failure capture. Returns the job's result,
     or None if it raised. Every run — not only the failures — lands in
     job_runs (start, end, duration, ok), which is what the admin console's
@@ -337,15 +343,15 @@ def run_job(name, fn, *args, context="", **kwargs):
     the scheduler's heartbeat."""
     import time as _time
     started = _time.time()
-    run_id = _record_run_start(name, context)
+    run_id = _record_run_start(name, context, db_path=db_path)
     try:
         result = fn(*args, **kwargs)
-        _record_run_end(run_id, started, True)
+        _record_run_end(run_id, started, True, db_path=db_path)
         return result
     except Exception as e:
         log.error(f"Job '{name}' crashed: {e}")
-        capture(e, job=name)
-        _record_run_end(run_id, started, False, e)
+        capture(e, job=name, db_path=db_path)
+        _record_run_end(run_id, started, False, e, db_path=db_path)
         return None
 
 

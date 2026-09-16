@@ -3,6 +3,8 @@ retry-with-backoff, per-delivery logging, and auto-disable-by-deletion after
 repeated failures, plus the one real deviation from the webhook pattern —
 an APNs "this token is permanently dead" response deletes it immediately
 instead of waiting out the failure counter."""
+import os
+
 import pytest
 
 import push
@@ -317,3 +319,31 @@ def test_a_full_queue_drops_rather_than_exhausting_the_container(db_path, rid, u
     push._push_executor().shutdown(wait=True)
     monkeypatch.setattr(push, "_executor", None)
     assert calls == [], "past the ceiling, a delivery is dropped rather than queued forever"
+
+
+def test_the_dropped_alert_is_logged_against_this_test_s_own_db_not_the_default_one(db_path, rid, uid, monkeypatch, tmp_path):
+    """fire_push's ops.capture() call used to omit db_path, so it always fell
+    through to models.DB_PATH regardless of which database the caller was
+    actually using — every isolated test run of the queue-full path above
+    was quietly writing a real 'push queue full at 0' row into whatever the
+    process's default database happened to be (the developer's own local
+    reviews.db when running pytest without RAILWAY_VOLUME_MOUNT_PATH set).
+    Proven here by pointing models.DB_PATH somewhere else entirely and
+    confirming that decoy file stays empty."""
+    import ops
+    import models
+    decoy = str(tmp_path / "decoy.db")
+    monkeypatch.setattr(models, "DB_PATH", decoy)
+    init_push(db_path=db_path)
+    register_device_token(uid, rid, "z" * 64, "production", db_path=db_path)
+    monkeypatch.setattr(push, "_deliver", lambda *a, **k: None)
+    monkeypatch.setattr(push, "_MAX_PUSH_QUEUED", 0)
+    push.fire_push(rid, "1star", "t", "b", db_path=db_path)
+    push._push_executor().shutdown(wait=True)
+    monkeypatch.setattr(push, "_executor", None)
+
+    assert not os.path.exists(decoy), "the failure must not leak into the default database"
+    conn = get_conn(db_path)
+    rows = conn.execute("SELECT job, error FROM job_failures").fetchall()
+    conn.close()
+    assert len(rows) == 1 and rows[0]["job"] == "fire_push"

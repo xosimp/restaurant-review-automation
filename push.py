@@ -256,7 +256,7 @@ def _deliver(device_token_row, alert_type, title, body, data, db_path=DB_PATH):
         # silently means retrying a token that will never work, forever.
         try:
             import ops
-            ops.capture(e, job="push_delivery_log", context=f"alert_type={alert_type}")
+            ops.capture(e, job="push_delivery_log", context=f"alert_type={alert_type}", db_path=db_path)
         except Exception:
             pass
     return {"ok": ok, "status": status, "attempts": attempts, "error": error}
@@ -315,7 +315,8 @@ def fire_push(restaurant_id, alert_type, title, body, data=None, db_path=DB_PATH
                     try:
                         import ops
                         ops.capture(RuntimeError(f"push queue full at {_queued}"),
-                                    job="fire_push", context=f"rid={restaurant_id} {alert_type}")
+                                    job="fire_push", context=f"rid={restaurant_id} {alert_type}",
+                                    db_path=db_path)
                     except Exception:
                         pass
                     break
