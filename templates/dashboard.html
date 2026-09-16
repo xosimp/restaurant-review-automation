@@ -472,6 +472,10 @@ html:not([data-theme="dark"]) .empty-state-sm.on-dark .es-sub{color:var(--ink3)}
 @keyframes cmBadgeRing{0%{transform:scale(1);opacity:.85}100%{transform:scale(4.5);opacity:0}}
 #notif-badge.cm-pop{animation:cmBadgePop .35s cubic-bezier(.2,.9,.3,1)}
 #notif-badge.cm-pop::after{content:'';position:absolute;inset:-1.5px;border-radius:50%;border:1px solid #c84b2f;animation:cmBadgeRing .9s ease-out .1s forwards}
+/* Header popovers (alerts, team messages, what's new) — drop in from the
+   button that opened them instead of just appearing */
+@keyframes hdrPanelDrop{from{opacity:0;transform:translateY(-10px) scale(.97)}to{opacity:1;transform:translateY(0) scale(1)}}
+.hdr-panel-in{transform-origin:top right;animation:hdrPanelDrop .2s cubic-bezier(.2,.9,.3,1) forwards}
 /* 14 Cold Hearth — gray seal, cold coal; the CTA is what lights it */
 svg.cm-hearth{width:56px;height:56px;overflow:visible}
 .cm-hearth .cm-hring{stroke:var(--ink3);stroke-opacity:.35;fill:none}
@@ -3576,29 +3580,29 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .in2-lede em{font-style:normal;color:var(--ember)}
 .in2-bars{display:flex;flex-direction:column;gap:12px;margin-top:16px}
 .in2-bar{display:grid;grid-template-columns:170px minmax(0,1fr) 62px;gap:12px;align-items:center}
-.in2-bar .n{font-size:13px;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.in2-bar .n{font-size:14.5px;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .in2-bar.you .n{color:var(--ink);font-weight:700}
 .in2-bar .tr{height:11px;border-radius:6px;background:var(--hb-line2);overflow:hidden;position:relative}
 .in2-bar .tr i{display:block;height:100%;border-radius:6px;background:linear-gradient(90deg,rgba(167,157,142,.55),rgba(167,157,142,.85));transform-origin:left;transform:scaleX(0);transition:transform 1.3s cubic-bezier(.3,0,.15,1)}
 .in2-bar.you .tr i{background:linear-gradient(90deg,#c84b2f,#e8956a);box-shadow:0 0 14px rgba(200,75,47,.55)}
 .in2-bar .tr.on i{transform:scaleX(1)}
-.in2-bar .v{font-family:'Space Grotesk',sans-serif;font-size:14px;font-weight:700;color:var(--ink2);text-align:right;white-space:nowrap}
+.in2-bar .v{font-family:'Space Grotesk',sans-serif;font-size:15px;font-weight:700;color:var(--ink2);text-align:right;white-space:nowrap}
 .in2-bar.you .v{color:var(--ember)}
-.in2-bar .v small{font-size:10px;font-weight:700;margin-left:2px}
+.in2-bar .v small{font-size:11px;font-weight:700;margin-left:2px}
 .in2-read .sec{margin-top:14px}
 .in2-read .sec:first-child{margin-top:0}
-.in2-read .st{font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;margin-bottom:8px}
+.in2-read .st{font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;margin-bottom:9px}
 .in2-read .st.good{color:var(--hb-good)}.in2-read .st.bad{color:var(--hb-bad)}.in2-read .st.ember{color:var(--ember)}
-.in2-read .b{display:flex;gap:9px;align-items:flex-start;margin-bottom:6px;font-size:13.5px;line-height:1.6;color:var(--ink2)}
-.in2-read .b i{font-style:normal;font-weight:700;flex-shrink:0;font-size:13px}
+.in2-read .b{display:flex;gap:9px;align-items:flex-start;margin-bottom:7px;font-size:15px;line-height:1.6;color:var(--ink2)}
+.in2-read .b i{font-style:normal;font-weight:700;flex-shrink:0;font-size:14px}
 .in2-read .b i.good{color:var(--hb-good)}.in2-read .b i.bad{color:var(--hb-bad)}
-.in2-read .rec{display:flex;gap:11px;align-items:flex-start;margin-bottom:8px;font-size:13.5px;line-height:1.6;color:var(--ink)}
+.in2-read .rec{display:flex;gap:11px;align-items:flex-start;margin-bottom:9px;font-size:15px;line-height:1.6;color:var(--ink)}
 .in2-read .rec b{flex-shrink:0;width:22px;height:22px;border-radius:50%;background:var(--ember);color:#fff;font-family:'Space Grotesk',sans-serif;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;margin-top:2px}
 .in2-pre{margin-top:34px;padding:22px 24px;border-radius:14px;background:var(--hb-tint);display:flex;gap:26px;align-items:center;flex-wrap:wrap}
 .in2-pre .t{flex:1;min-width:260px}
 .in2-pre h2{font-family:'Clash Display',sans-serif;font-weight:500;font-size:24px;letter-spacing:-.01em;color:var(--ink);margin:0 0 8px;text-wrap:balance}
-.in2-pre p{font-size:13.5px;line-height:1.6;color:var(--ink2);margin:0;max-width:64ch}
-.in2-pre .meta{font-size:11.5px;color:var(--ink3);margin-top:8px}
+.in2-pre p{font-size:14.5px;line-height:1.6;color:var(--ink2);margin:0;max-width:64ch}
+.in2-pre .meta{font-size:13px;color:var(--ink3);margin-top:8px}
 .in2-orbit{position:relative;height:150px;margin-top:6px}
 .in2-orbit svg{display:block;width:100%;height:150px;overflow:visible}
 .in2-orbit text{font-family:'Space Grotesk',sans-serif}
@@ -3606,9 +3610,9 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .in2-gbp .it{display:flex;gap:8px;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--hb-line2);min-width:0}
 .in2-gbp .it .ic{width:16px;height:16px;border-radius:50%;flex-shrink:0;margin-top:2px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;background:var(--hb-line2);color:var(--ink3)}
 .in2-gbp .it.done .ic{background:rgba(78,173,122,.18);color:var(--hb-good)}
-.in2-gbp .it .l{font-size:12.5px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.in2-gbp .it .l small{font-family:'Space Grotesk',sans-serif;font-weight:700;color:var(--ink3);margin-left:5px;font-size:10.5px}
-.in2-gbp .it .a{font-size:11.5px;color:var(--ember);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.in2-gbp .it .l{font-size:14.5px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.in2-gbp .it .l small{font-family:'Space Grotesk',sans-serif;font-weight:700;color:var(--ink3);margin-left:5px;font-size:12px}
+.in2-gbp .it .a{font-size:13.5px;color:var(--ember);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .in2-gbp .it .a.lock{color:var(--ink3)}
 .in2-gbp .it.done{opacity:.55}
 .in2-q{display:flex;flex-direction:column;gap:10px;margin-top:8px}
@@ -3616,10 +3620,20 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .in2-q .q:first-child{border-top:none;padding-top:2px}
 .in2-q .q::before{content:'';position:absolute;left:0;top:12px;bottom:10px;width:2.5px;border-radius:2px;background:var(--hb-bad)}
 .in2-q .q.hit::before{background:var(--hb-good)}
-.in2-q .q .h{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;font-size:12.5px;font-weight:600;color:var(--ink);line-height:1.4}
-.in2-q .q .h .tag{flex-shrink:0;font-family:'Space Grotesk',sans-serif;font-size:9.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:2px 7px;border-radius:999px;background:rgba(227,51,63,.14);color:var(--hb-bad)}
+.in2-q .q .h{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;font-size:14.5px;font-weight:600;color:var(--ink);line-height:1.4}
+.in2-q .q .h .tag{flex-shrink:0;font-family:'Space Grotesk',sans-serif;font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:2px 7px;border-radius:999px;background:rgba(227,51,63,.14);color:var(--hb-bad)}
 .in2-q .q.hit .h .tag{background:rgba(78,173,122,.16);color:var(--hb-good)}
-.in2-q .q .a{font-size:11.5px;color:var(--ink3);line-height:1.5;margin-top:4px}
+.in2-q .q .a{font-size:13.5px;color:var(--ink3);line-height:1.5;margin-top:4px}
+/* Rating-comparison hero and analysis card are Intel-specific; scoped so
+   this doesn't also push spacing/size around on the shared Labor/Food
+   Cost sections that reuse .lb2-hero / .lb2-ai. */
+.in2-rating-hero .big{margin-top:12px}
+#panel-competitor .lb2-ai .tag{margin-bottom:14px}
+#panel-competitor .lb2-ai{font-size:16px}
+#in2-aiv .lb2-sg .k{font-size:14px}
+#in2-aiv .lb2-sg .k i{font-size:13.5px}
+#in2-aiv .lb2-sg .v small{font-size:15px}
+#in2-aiv .lb2-sg .cap{font-size:14.5px}
 .in2-sec{margin-top:34px;padding-top:22px;border-top:1px solid var(--hb-line)}
 .in2-sec .hd{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:8px}
 .in2-sec .hd h2{font-family:'Clash Display',sans-serif;font-weight:500;font-size:22px;letter-spacing:-.01em;color:var(--ink);margin:4px 0 0}
@@ -3649,35 +3663,36 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .in2-search .res{display:none;margin-top:6px;border:1px solid var(--hb-line);border-radius:10px;background:var(--paper);overflow:hidden;box-shadow:0 10px 30px rgba(0,0,0,.25)}
 .in2-search .res .it{display:flex;align-items:center;gap:10px;padding:9px 12px;border-top:1px solid var(--hb-line2)}
 .in2-search .res .it:first-child{border-top:none}
-.in2-search .res .it .n{font-size:12.5px;font-weight:600;color:var(--ink)}
-.in2-search .res .it .m{font-size:11px;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.in2-search .res .it .n{font-size:14px;font-weight:600;color:var(--ink)}
+.in2-search .res .it .m{font-size:12.5px;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .in2-comp .row{display:flex;gap:14px;align-items:flex-start;padding:14px 0 14px 14px;border-top:1px solid var(--hb-line2);position:relative}
 .in2-comp .row:first-child{border-top:none}
 .in2-comp .row::before{content:'';position:absolute;left:0;top:16px;bottom:16px;width:2.5px;border-radius:2px;background:var(--hb-line)}
 .in2-comp .row.ahead::before{background:var(--hb-good)}.in2-comp .row.behind::before{background:var(--hb-bad)}
 .in2-comp .row .t{flex:1;min-width:0}
 .in2-comp .row .t .tt{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
-.in2-comp .row .t b{font-size:15px;font-weight:600;color:var(--ink)}
-.in2-comp .row .t .cu{font-family:'Space Grotesk',sans-serif;font-size:9.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ember);background:var(--hb-tint2);padding:2px 7px;border-radius:999px}
-.in2-comp .row .t .rm{background:none;border:none;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;font-size:11px;color:var(--ink3);padding:0;text-decoration:underline;text-underline-offset:2px}
+.in2-comp .row .t b{font-size:16px;font-weight:600;color:var(--ink)}
+.in2-comp .row .t .cu{font-family:'Space Grotesk',sans-serif;font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ember);background:var(--hb-tint2);padding:2px 7px;border-radius:999px}
+.in2-comp .row .t .rm{background:none;border:none;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;font-size:12.5px;color:var(--ink3);padding:0;text-decoration:underline;text-underline-offset:2px}
 .in2-comp .row .t .rm:hover{color:var(--ember)}
-.in2-comp .row .t .m{font-size:12px;color:var(--ink3);margin-top:2px}
-.in2-comp .row .t .rv{font-size:12px;color:var(--ink3);padding:7px 0 0;line-height:1.55}
+.in2-comp .row .t .m{font-size:14px;color:var(--ink3);margin-top:2px}
+.in2-comp .row .t .rv{font-size:14px;color:var(--ink3);padding:7px 0 0;line-height:1.55}
 .in2-comp .row .t .rv i{font-style:normal;margin-right:5px}
 .in2-comp .row .t .rv i.g{color:var(--hb-good)}.in2-comp .row .t .rv i.b{color:var(--hb-bad)}
-.in2-comp .row .t .more{margin-top:6px;background:transparent;border:none;font-size:11.5px;color:var(--ember);cursor:pointer;padding:0;font-family:'Apfel Grotezk',sans-serif}
+.in2-comp .row .t .more{margin-top:6px;background:transparent;border:none;font-size:13px;color:var(--ember);cursor:pointer;padding:0;font-family:'Apfel Grotezk',sans-serif}
 .in2-comp .row .rt{text-align:right;flex-shrink:0}
-.in2-comp .row .rt .r{font-family:'Space Grotesk',sans-serif;font-size:16px;font-weight:700;color:var(--ink)}
-.in2-comp .row .rt .r small{font-size:10px;margin-left:2px}
-.in2-comp .row .rt .c{font-size:11px;color:var(--ink3);margin-top:2px}
-.in2-comp .row .rt .df{display:inline-block;margin-top:5px;font-family:'Space Grotesk',sans-serif;font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:999px;background:var(--hb-line2);color:var(--ink3)}
+.in2-comp .row .rt .r{font-family:'Space Grotesk',sans-serif;font-size:17px;font-weight:700;color:var(--ink)}
+.in2-comp .row .rt .r small{font-size:11px;margin-left:2px}
+.in2-comp .row .rt .c{font-size:13px;color:var(--ink3);margin-top:2px}
+.in2-comp .row .rt .df{display:inline-block;margin-top:5px;font-family:'Space Grotesk',sans-serif;font-size:11.5px;font-weight:700;padding:2px 8px;border-radius:999px;background:var(--hb-line2);color:var(--ink3)}
 .in2-comp .row.ahead .rt .df{background:rgba(78,173,122,.16);color:var(--hb-good)}.in2-comp .row.behind .rt .df{background:rgba(227,51,63,.14);color:var(--hb-bad)}
-.in2-upd{display:flex;align-items:center;gap:8px;margin-top:12px;font-size:12px;color:var(--ink3);flex-wrap:wrap}
+.in2-upd{display:flex;align-items:center;gap:8px;margin-top:12px;font-size:13.5px;color:var(--ink3);flex-wrap:wrap}
 .in2-stale{font-family:'Space Grotesk',sans-serif;font-size:9.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;background:rgba(212,160,48,.16);color:var(--hb-warn);padding:2px 8px;border-radius:999px}
 .in2-empty{margin-top:30px;padding:40px 24px;border-radius:14px;background:var(--hb-tint);text-align:center}
 .in2-empty h2{font-family:'Clash Display',sans-serif;font-weight:500;font-size:26px;color:var(--ink);margin:14px 0 6px}
-.in2-empty p{font-size:13.5px;color:var(--ink3);margin:0 auto 16px;max-width:52ch}
+.in2-empty p{font-size:15px;color:var(--ink3);margin:0 auto 16px;max-width:52ch}
 #panel-competitor .cm-radar{margin:0 auto}
+#panel-competitor .in2-empty .cm-cap{font-size:14px;letter-spacing:1.4px;margin-top:16px}
 @media(max-width:900px){.in2-bar{grid-template-columns:110px minmax(0,1fr) 50px}.in2-gbp{grid-template-columns:1fr}}
 </style>
 
@@ -3701,8 +3716,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     <div style="min-width:0;flex:1">
       <div class="hb-kicker">Intel · {{ now_mdy }} · {{ restaurant.name }}</div>
       <h1 class="hb-h1">Intel. <span class="hb-head {{ _tone }}">{{ _head }}</span></h1>
-      <div class="hb-sub">{% if _cd %}<span><span class="hb-num">{{ comp_count }}</span> competitor{{ '' if comp_count == 1 else 's' }} tracked</span><span class="sep">·</span><span>market average <span class="hb-num">{{ avg_comp_rating }}★</span></span>{% if own is not none %}<span class="sep">·</span><span>you're at <span class="hb-num">{{ own }}★</span>{% if own_vs_avg is not none and own_vs_avg != 0 %} (<span class="hb-num">{{ '+' if own_vs_avg > 0 }}{{ own_vs_avg }}</span>){% endif %}</span>{% endif %}{% if _upd %}<span class="sep">·</span><span id="intel-updated-label">updated <span class="hb-num">{{ _upd|format_date }}</span></span><span id="intel-stale-badge" class="in2-stale" style="display:none">consider refreshing</span>{% endif %}{% else %}<span>Ratings, review volume and reputation for the restaurants around you, plus whether AI search knows you exist.</span>{% endif %}</div>
-      <div class="hb-sub" style="margin-top:4px"><span>{% if _cd and recs %}<span class="hb-num">{{ recs|length }}</span> action{{ '' if recs|length == 1 else 's' }} in Cavnar's read below. AI visibility runs on demand — about ten seconds.{% elif _cd %}AI visibility runs on demand — about ten seconds.{% else %}The first pull takes about thirty seconds.{% endif %}</span></div>
+      {% if not _cd %}<div class="hb-sub"><span>Ratings, review volume and reputation for the restaurants around you, plus whether AI search knows you exist.</span></div>{% endif %}
       <div class="lb2-actions">
         {% if _cd %}<button onclick="refreshCompetitorIntel(this)" class="cbtn cbtn-primary">Refresh competitors</button>{% else %}<button onclick="refreshCompetitorIntel(this)" class="cbtn cbtn-primary">Fetch competitor data</button>{% endif %}
         <button class="cbtn cbtn-secondary" onclick="in2Jump('in2-neighbors');var s=document.getElementById('intel-search');if(s)s.focus()">Track a competitor</button>
@@ -3719,14 +3733,13 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
   </div>
 
   {% if _cd %}
-  <section class="lb2-hero" aria-label="Rating comparison">
+  <section class="lb2-hero in2-rating-hero" aria-label="Rating comparison">
     <div class="hd">
       <div><div class="hb-kicker">Rating comparison · you vs. nearby</div>
         {% if own is not none %}<div class="big"><span class="hb-num">{{ own }}</span><small>★ your Google rating · market avg {{ avg_comp_rating }}★</small></div>
         <div class="delta {{ 'good' if own_vs_avg > 0 else ('bad' if own_vs_avg < 0 else '') }}">{% if own_vs_avg > 0 %}▲ {{ own_vs_avg }} above the block{% elif own_vs_avg < 0 %}▼ {{ own_vs_avg|abs }} below the block{% else %}Tied with the block{% endif %} <span>· {{ comp_count }} restaurants nearby</span></div>
         {% else %}<div class="big"><span class="hb-num">{{ avg_comp_rating }}</span><small>★ market average · connect Reviews to see yours alongside</small></div>{% endif %}
       </div>
-      <div style="text-align:right"><div class="hb-kicker">Cavnar's opening read</div></div>
     </div>
     {% if _parts and _parts.intro %}<div class="in2-lede">{{ _parts.intro }}</div>{% endif %}
     <div class="in2-bars" id="in2-bars">
@@ -3736,7 +3749,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       {% endfor %}
     </div>
   </section>
-  <div class="lb2-ai"><div class="tag">Cavnar's competitive analysis</div>
+  <div class="lb2-ai"><div class="tag">Cavnar AI's competitive analysis</div>
     <div class="in2-read" id="intel-insight-card">
       {% if _parts %}{% for name, bullets in _parts.sections %}{% if bullets %}
       <div class="sec"><div class="st {{ 'good' if 'WELL' in name|upper else 'bad' }}">{{ name }}</div>{% for b in bullets %}<div class="b"><i class="{{ 'good' if 'WELL' in name|upper else 'bad' }}">{{ '✓' if 'WELL' in name|upper else '✗' }}</i><span>{{ b }}</span></div>{% endfor %}</div>
@@ -3749,7 +3762,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
   <div class="in2-empty">
     <svg class="cm-hearth" viewBox="0 0 120 120" aria-hidden="true" style="width:72px;height:72px"><path class="cm-hring" d="M99.5,45 V44.5 A24,24 0 0 0 75.5,20.5 H44.5 A24,24 0 0 0 20.5,44.5 V75.5 A24,24 0 0 0 44.5,99.5 H75.5 A24,24 0 0 0 99.5,75.5 V75" stroke-width="19"/><circle class="cm-hglow" cx="99.5" cy="60" r="22"/><circle class="cm-hdot" cx="99.5" cy="60" r="10"/></svg>
     <h2>No competitor data yet</h2>
-    <p>See how your ratings, review volume and reputation stack up against the restaurants around you. Takes about thirty seconds.</p>
+    <p>See how your ratings, review volume and reputation stack up against the restaurants around you.</p>
     <button onclick="refreshCompetitorIntel(this)" class="cbtn cbtn-primary cbtn-lg">Fetch competitor data</button>
   </div>
   {% endif %}
@@ -3765,8 +3778,8 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     </div>
     <div class="in2-pre" id="aiv-loading" style="display:none;justify-content:center;text-align:center;flex-direction:column;gap:6px">
       <div id="aiv-radar"></div>
-      <div id="aiv-loading-text" style="font-size:13.5px;font-weight:600;color:var(--ember)">Querying AI assistants…</div>
-      <div style="font-size:11.5px;color:var(--ink3)">Running three local search queries</div>
+      <div id="aiv-loading-text" style="font-size:16px;font-weight:600;color:var(--ember)">Querying AI assistants…</div>
+      <div style="font-size:13.5px;color:var(--ink3)">Running three local search queries</div>
     </div>
     <div id="aiv-results" style="display:none">
       <div class="lb2-sig">
@@ -3986,6 +3999,10 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 
 /* People rows rendered by JS keep their old inline layout; this just sizes them */
 #acct-team-list,#staff-list,#staff-pin-events,#staff-unclaimed,#sessions-list,#trusted-list,#login-history,#activity-log{font-size:15px;color:var(--ink3)}
+/* The "you" tag / Remove button sit next to a two-line name+meta block —
+   center-aligning against the whole block's height leaves them floating
+   above where the meta line reads. Align to the bottom line instead. */
+#acct-team-list .ac-row{align-items:flex-end}
 
 /* Consultant */
 .ac-consult{display:flex;gap:16px;align-items:center}
@@ -5437,6 +5454,16 @@ window.switchReviewsTab = function(tab) {
 window.switchIntelTab = function(tab) {
   // Competitors and AI Visibility are one page now; this lights it up.
   setPageBg('competitor');
+  // #aiv-body's collapse relies on an explicit max-height, measured from
+  // scrollHeight — which reads as 0 if it's measured while this panel is
+  // still hidden (arriving via ?tab=competitor lands here from the 'load'
+  // handler, after DOMContentLoaded already tried and failed to measure
+  // it). That 0px then sticks forever with nothing to re-open it, clipping
+  // the whole AI visibility section to nothing. switchIntelTab always runs
+  // while this panel is genuinely visible, so re-measuring here every time
+  // is the one place that's guaranteed correct.
+  var _ab0 = document.getElementById('aiv-body');
+  if (_ab0) { _ab0.style.maxHeight = _ab0.scrollHeight + 'px'; _ab0.style.opacity = '1'; }
   var bars=document.querySelectorAll('#in2-bars .tr:not(.on)');
   if(bars.length){requestAnimationFrame(function(){requestAnimationFrame(function(){for(var i=0;i<bars.length;i++)bars[i].classList.add('on');});});}
   animateStatNums('panel-competitor');
@@ -5693,10 +5720,6 @@ document.addEventListener('DOMContentLoaded', function(){
   if(document.getElementById('panel-inventory')&&document.getElementById('panel-inventory').classList.contains('active')&&typeof switchFcTab==='function')switchFcTab('analytics');
   if(document.getElementById('panel-competitor')&&document.getElementById('panel-competitor').classList.contains('active')&&typeof switchIntelTab==='function')switchIntelTab('competitors');
 
-  // Init aiv-body max-height so collapse transition works immediately
-  var _aivBody = document.getElementById('aiv-body');
-  if (_aivBody) { _aivBody.style.maxHeight = _aivBody.scrollHeight + 'px'; _aivBody.style.opacity = '1'; }
-
   // 2FA digit auto-advance with focus highlight
   var twoFADigits = document.querySelectorAll('.twofa-setup-digit');
   for (var _di = 0; _di < twoFADigits.length; _di++) {
@@ -5779,7 +5802,7 @@ var _changelogLoaded = false;
 function openChangelog() {
   var panel = document.getElementById('changelog-panel');
   var isOpen = panel.style.display !== 'none';
-  panel.style.display = isOpen ? 'none' : 'block';
+  if (isOpen) { panel.style.display = 'none'; } else { window._openHdrPanel(panel); }
   if (!isOpen && !_changelogLoaded) { _loadChangelog(); }
 }
 function _loadChangelog() {
@@ -9723,14 +9746,24 @@ function toggleExtraReviews(idx, btn){
 }
 function refreshCompetitorIntel(btn){
   var _rs='<span style="display:inline-block;width:12px;height:12px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;vertical-align:middle;animation:spin .7s linear infinite"></span>';
-  btn.innerHTML='Fetching... '+_rs;btn.disabled=true;btn.style.opacity='0.7';
-  // "Reading the Room" — a radar finding competitors as ember blips for the
-  // ~30s the job runs: inside the empty-state card when that's where the
-  // button lives, otherwise as a floating card so the header stays intact.
-  var _inEmpty=btn.closest&&btn.closest('.empty-state');
-  if(_inEmpty){var _rad=document.createElement('div');_rad.id='comp-radar';_rad.style.cssText='margin-top:22px';_rad.innerHTML=cavnarRadarHtml('Scanning nearby restaurants');_inEmpty.appendChild(_rad);}
-  else{cmFloat(cavnarRadarHtml('Scanning nearby restaurants',130));}
-  function _resetBtn(){btn.textContent='Refresh';btn.disabled=false;btn.style.opacity='1';var _r=document.getElementById('comp-radar');if(_r)_r.remove();cmFloatHide();}
+  // "Reading the Room" — inside the big empty-state card when that's where
+  // the button lives, taking over its content directly instead of a boxy
+  // floating card stacked on top of it; a compact floating card everywhere
+  // else (the header's "Refresh" button), so the page above it stays intact.
+  var _inEmpty=btn.closest&&btn.closest('.in2-empty');
+  var _origHtml=null;
+  if(_inEmpty){
+    _origHtml=_inEmpty.innerHTML;
+    _inEmpty.innerHTML=cavnarRadarHtml('Scanning nearby restaurants',230);
+  }else{
+    btn.innerHTML='Fetching... '+_rs;btn.disabled=true;btn.style.opacity='0.7';
+    cmFloat(cavnarRadarHtml('Scanning nearby restaurants',130));
+  }
+  function _resetBtn(){
+    if(_inEmpty&&_origHtml!==null){_inEmpty.innerHTML=_origHtml;}
+    else{btn.textContent='Refresh';btn.disabled=false;btn.style.opacity='1';}
+    cmFloatHide();
+  }
   fetch('/api/refresh-competitor-intel',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
     if(!d.ok){_resetBtn();toast('Error: '+(d.error||'failed'),'error');return;}
     var jobId = d.job_id;
@@ -9752,6 +9785,17 @@ function refreshCompetitorIntel(btn){
   });
 }
 var _aivData = null;
+// #aiv-body drives its collapse/expand with an explicit max-height (see
+// toggleAivCard), which means every time the idle/loading/results content
+// swaps to something a different height, that cap has to be recomputed —
+// left stale, whichever state was tallest when it was last set clips
+// everything shorter... but more importantly the reverse: content taller
+// than that stale cap (loading, then the much taller results) got cut off
+// with no way to scroll to the rest of it.
+function _aivFitBody() {
+  var b = document.getElementById('aiv-body');
+  if (b && b.style.maxHeight && b.style.maxHeight !== '0px') { b.style.maxHeight = b.scrollHeight + 'px'; }
+}
 function runAIVisibility(btn) {
   var _aivB = document.getElementById('aiv-body');
   var _aivArrow = document.getElementById('aiv-collapse-arrow');
@@ -9765,6 +9809,7 @@ function runAIVisibility(btn) {
   document.getElementById('aiv-idle').style.display = 'none';
   document.getElementById('aiv-loading').style.display = 'block';
   document.getElementById('aiv-results').style.display = 'none';
+  _aivFitBody();
   // "Reading the Room" — the same radar the Competitors tab uses for its
   // fetch, here for the ~10s of live AI queries.
   var _aivRadar = document.getElementById('aiv-radar');
@@ -9783,6 +9828,7 @@ function runAIVisibility(btn) {
       if (btn) { btn.textContent = 'Retry'; btn.disabled = false; }
       document.getElementById('aiv-idle').style.display = 'block';
       document.getElementById('aiv-idle').innerHTML = '<div style="color:var(--red);font-size:13px;text-align:center">Error: ' + (d.error || 'Unknown error') + '</div>';
+      _aivFitBody();
       toast('AI check failed: ' + (d.error || 'Unknown error'), 'error');
       return;
     }
@@ -9794,6 +9840,7 @@ function runAIVisibility(btn) {
     if (btn) { btn.textContent = 'Retry'; btn.disabled = false; }
     document.getElementById('aiv-loading').style.display = 'none';
     document.getElementById('aiv-idle').style.display = 'block';
+    _aivFitBody();
     toast('Request failed — try again','error');
   });
 }
@@ -9955,6 +10002,7 @@ function renderAIVisibility(d) {
   // The run just landed in history server-side; pull it so the trend line
   // and "since last run" delta include this check, not just the last one.
   if (window.loadAivHistory) setTimeout(loadAivHistory, 500);
+  _aivFitBody();
 }
 
 function toggleAivCard() {
@@ -11005,10 +11053,17 @@ document.addEventListener('click', function(e) {
     });
   }
 
+  window._openHdrPanel = function(panel) {
+    panel.style.display = 'block';
+    panel.classList.remove('hdr-panel-in');
+    void panel.offsetWidth;
+    panel.classList.add('hdr-panel-in');
+  };
+
   window.toggleNotifPanel = function() {
     var panel = document.getElementById('notif-panel');
     var open  = panel.style.display !== 'none';
-    panel.style.display = open ? 'none' : 'block';
+    if (open) { panel.style.display = 'none'; } else { window._openHdrPanel(panel); }
     if (!open) {
       loadNotifications();
       // mark as read
@@ -11157,7 +11212,7 @@ document.addEventListener('click', function(e) {
   window.toggleTeamMsgPanel = function() {
     var panel = document.getElementById('team-msg-panel');
     var open = panel.style.display !== 'none';
-    panel.style.display = open ? 'none' : 'block';
+    if (open) { panel.style.display = 'none'; } else { window._openHdrPanel(panel); }
     if (!open) {
       tmBackToInbox();
     }
