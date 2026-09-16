@@ -3516,12 +3516,17 @@ def get_team_inbox(restaurant_id: int, user_id: int, db_path: str = DB_PATH) -> 
 
 
 def count_unread_team_messages(restaurant_id: int, user_id: int, db_path: str = DB_PATH) -> int:
+    """Unread messages from teammates still actually on the team. A sender
+    who's since been revoked never shows up in get_team_inbox()'s roster
+    again — counting their old unread message anyway left the badge stuck
+    on forever, with no thread the recipient could ever open to clear it."""
     init_team_messages(db_path)
     conn = get_conn(db_path)
     try:
         row = conn.execute(
-            "SELECT COUNT(*) AS n FROM team_messages "
-            "WHERE restaurant_id=? AND recipient_id=? AND read_at IS NULL",
+            "SELECT COUNT(*) AS n FROM team_messages tm "
+            "JOIN users u ON u.id = tm.sender_id "
+            "WHERE tm.restaurant_id=? AND tm.recipient_id=? AND tm.read_at IS NULL AND u.is_active=1",
             (restaurant_id, user_id)).fetchone()
         return row["n"]
     finally:

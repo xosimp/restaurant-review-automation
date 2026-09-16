@@ -1005,7 +1005,7 @@ document.documentElement.classList.add('pjs-loading');
           <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
           <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
         </svg>
-        <span id="notif-badge" style="display:none;position:absolute;top:2px;right:2px;width:7px;height:7px;border-radius:50%;background:#c84b2f;border:1.5px solid white"></span>
+        <span id="notif-badge" style="display:none;position:absolute;top:2px;right:2px;width:7px;height:7px;border-radius:50%;background:#c84b2f;border:1.5px solid #e8956a"></span>
       </button>
       <div id="notif-panel" style="display:none;position:absolute;right:0;top:calc(100% + 8px);width:280px;background:white;border:1px solid var(--paper3);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);z-index:999;overflow:hidden">
         <div style="padding:10px 14px;border-bottom:1px solid var(--paper3);display:flex;align-items:center;justify-content:space-between"><span style="font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3)">Recent alerts</span><button class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" aria-label="Close" onclick="document.getElementById('notif-panel').style.display='none'">✕</button></div>
@@ -1020,7 +1020,7 @@ document.documentElement.classList.add('pjs-loading');
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
         </svg>
-        <span id="team-msg-badge" style="display:none;position:absolute;top:2px;right:2px;width:7px;height:7px;border-radius:50%;background:#c84b2f;border:1.5px solid white"></span>
+        <span id="team-msg-badge" style="display:none;position:absolute;top:2px;right:2px;width:7px;height:7px;border-radius:50%;background:#c84b2f;border:1.5px solid #e8956a"></span>
       </button>
       <div id="team-msg-panel" style="display:none;position:absolute;right:0;top:calc(100% + 8px);width:320px;background:white;border:1px solid var(--paper3);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);z-index:999;overflow:hidden">
         <div id="tm-inbox-view">
@@ -1047,7 +1047,7 @@ document.documentElement.classList.add('pjs-loading');
     <div style="position:relative" id="changelog-wrap">
       <button id="changelog-btn" onclick="openChangelog()" title="What's new" style="background:none;border:none;cursor:pointer;padding:4px 6px;display:flex;align-items:center;gap:4px;color:var(--ink3);font-size:20px;font-weight:600;position:relative">
         ✦
-        <span id="changelog-badge" style="display:none;position:absolute;top:2px;right:0;width:7px;height:7px;border-radius:50%;background:#c84b2f;border:1.5px solid white"></span>
+        <span id="changelog-badge" style="display:none;position:absolute;top:2px;right:0;width:7px;height:7px;border-radius:50%;background:#c84b2f;border:1.5px solid #e8956a"></span>
       </button>
       <div id="changelog-panel" style="display:none;position:absolute;right:0;top:calc(100% + 8px);width:320px;background:white;border:1px solid var(--paper3);border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,.15);z-index:1001;overflow:hidden">
         <div style="padding:12px 16px;border-bottom:1px solid var(--paper3);display:flex;align-items:center;justify-content:space-between">
@@ -3635,10 +3635,17 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .in2-rating-hero .big{margin-top:12px}
 #panel-competitor .lb2-ai .tag{margin-bottom:14px}
 #panel-competitor .lb2-ai{font-size:16px}
-#in2-aiv .lb2-sg .k{font-size:14px}
-#in2-aiv .lb2-sg .k i{font-size:13.5px}
+#in2-aiv .lb2-sg .k{font-size:14px;flex-wrap:nowrap}
+#in2-aiv .lb2-sg .k span{white-space:nowrap}
+#in2-aiv .lb2-sg .k i{font-size:13.5px;white-space:nowrap;flex-shrink:0}
 #in2-aiv .lb2-sg .v small{font-size:15px}
-#in2-aiv .lb2-sg .cap{font-size:14.5px}
+#in2-aiv .lb2-sg .v #aiv-score-num{white-space:nowrap}
+#in2-aiv .lb2-sg .cap{font-size:14.5px;justify-content:flex-start;flex-wrap:wrap}
+#in2-aiv .lb2-sg .cap .sep{color:var(--ink3);opacity:.5;margin:0 1px}
+/* A bare red text label next to this page's own orange kickers read as
+   the same color at a glance — give a genuinely bad reading its own pill
+   instead of relying on a text-color difference alone. */
+#in2-aiv .lb2-sg .k i.bad{background:rgba(224,85,85,.16);padding:2px 8px;border-radius:999px}
 .in2-sec{margin-top:34px;padding-top:22px;border-top:1px solid var(--hb-line)}
 .in2-sec .hd{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:8px}
 .in2-sec .hd h2{font-family:'Clash Display',sans-serif;font-weight:500;font-size:22px;letter-spacing:-.01em;color:var(--ink);margin:4px 0 0}
@@ -3648,7 +3655,9 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .in2-road .row:first-child{border-top:none}
 .in2-road .row::before{content:'';position:absolute;left:0;top:14px;bottom:14px;width:2.5px;border-radius:2px;background:var(--rc,var(--ember))}
 .in2-road .row.done{opacity:.5}
-.in2-road .row .ic{width:30px;height:30px;border-radius:8px;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:var(--hb-tint2);color:var(--rc,var(--ember))}
+.in2-road .row .ic{position:relative;width:34px;height:34px;border-radius:10px;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:linear-gradient(180deg,#2c2c2e,#16161a);box-shadow:0 3px 8px rgba(0,0,0,.4),inset 0 1px 0 rgba(255,255,255,.08);color:var(--rc,var(--ember))}
+.in2-road .row .ic::before{content:'';position:absolute;inset:0;border-radius:inherit;padding:1.1px;background:linear-gradient(135deg,rgba(232,149,106,.85),rgba(200,75,47,.3) 45%,rgba(200,75,47,.1));-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;pointer-events:none}
+.in2-road .row .ic svg{position:relative}
 .in2-road .row .t{flex:1;min-width:0}
 .in2-road .row .t .tt{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .in2-road .row .t b{font-size:16px;font-weight:600;color:var(--ink)}
@@ -3790,19 +3799,19 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       <div class="lb2-sig">
         <div class="lb2-sg"><div class="k"><span>Visibility orbit</span><i id="aiv-score-label"></i></div><div class="v"><span id="aiv-score-num" class="hb-num">—</span><small id="in2-orbit-cap">of AI searches mention you</small></div>
           <div class="in2-orbit" id="in2-orbit"></div>
-          <div class="cap"><span id="aiv-history-count">first check</span><span>Perplexity live search</span></div></div>
+          <div class="cap"><span id="aiv-history-count">First check</span><span class="sep">·</span><span>AI live search</span></div></div>
         <div class="lb2-sg"><div class="k"><span>GBP completeness</span><i id="aiv-gbp-label"></i></div><div class="v"><span id="aiv-gbp-num" class="hb-num">—</span><small id="in2-gbp-cap">of the profile fields AI reads</small></div>
           <div class="in2-gbp" id="aiv-gbp-items"></div>
           <button type="button" id="aiv-gbp-viewall" class="in2-viewall" style="display:none" onclick="in2RevealMore('aiv-gbp-items',this)"></button>
-          <div class="cap"><span>each item is worth points toward your score</span></div></div>
+        </div>
         <div class="lb2-sg"><div class="k"><span>AI query results</span><i id="in2-q-flag"></i></div><div class="v"><span id="in2-q-n" class="hb-num">—</span><small>queries mentioned you</small></div>
           <div class="in2-q" id="aiv-queries"></div>
           <button type="button" id="aiv-q-viewall" class="in2-viewall" style="display:none" onclick="in2RevealMore('aiv-queries',this)"></button>
-          <div class="cap"><span>what Perplexity answered when asked about eating near you</span></div></div>
+        </div>
       </div>
       <div id="aiv-disclaimer" class="in2-note" style="display:none"></div>
       <div class="in2-sec" id="aiv-action-plan">
-        <div class="hd"><div><div class="hb-kicker">Your AI visibility roadmap</div><h2>What gets you into AI answers</h2><div class="sub">Ranked for this restaurant — the gaps you still have come first.</div></div><div class="r"><span class="hb-kicker" id="aiv-roadmap-pts"></span></div></div>
+        <div class="hd"><div><div class="hb-kicker" id="aiv-roadmap-pts"></div><h2>What gets you into AI answers</h2><div class="sub">Ranked for this restaurant — the gaps you still have come first.</div></div></div>
         <div class="in2-road" id="aiv-roadmap-cards"></div>
         <div class="in2-note" id="aiv-roadmap-footer" style="display:none"><b>What happens when you improve this?</b> We check one AI search system — Perplexity — by asking it the kinds of questions a guest would, and seeing whether you come up. What it answers from is Perplexity's business, not something we can see. What we can tell you is that these items are the public record of your restaurant: your reviews, your replies, and the fields on your Google listing. Most independent restaurants have gaps here. Closing them is the part that's in your hands.</div>
       </div>
@@ -5821,13 +5830,14 @@ function _loadChangelog() {
       list.innerHTML = '<div style="padding:14px 16px;font-size:12px;color:var(--ink3)">No updates yet.</div>';
       return;
     }
-    var tagColors = {feature:'#1a56cc',fix:'#2d6a4f',improvement:'#b7791f'};
-    var tagBg = {feature:'#e8f0fe',fix:'#eaf4ee',improvement:'#fef9ec'};
+    var tagColors = {feature:'var(--blue)',fix:'var(--green)',improvement:'var(--amber)'};
+    var tagBg = {feature:'var(--blue-bg)',fix:'var(--green-bg)',improvement:'var(--amber-bg)'};
     var html = '';
     for (var i=0; i<d.entries.length; i++) {
       var e = d.entries[i];
       var tag = e.tag || 'feature';
-      var date = (e.published_at||'').slice(0,10);
+      var dm = /^(\d{4})-(\d{2})-(\d{2})/.exec(e.published_at || '');
+      var date = dm ? (parseInt(dm[2],10) + '/' + parseInt(dm[3],10) + '/' + dm[1].slice(2)) : '';
       html += '<div style="padding:12px 16px;border-bottom:1px solid var(--paper3)">';
       html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">';
       html += '<span style="font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;background:'+(tagBg[tag]||'#e8f0fe')+';color:'+(tagColors[tag]||'#1a56cc')+';padding:2px 7px;border-radius:4px">'+tag+'</span>';
@@ -9803,17 +9813,23 @@ function _aivFitBody() {
   var b = document.getElementById('aiv-body');
   if (b && b.style.maxHeight && b.style.maxHeight !== '0px') { b.style.maxHeight = b.scrollHeight + 'px'; }
 }
-// "View all" for the GBP checklist / query results columns — reveals the
-// items past the initial cap in place, then re-fits #aiv-body (its own
-// max-height is measured content, so more content showing needs a bigger
-// cap or the newly-revealed rows just get clipped again).
+// "View all" for the GBP checklist / query results columns — toggles the
+// items past the initial cap in place (in2-extra rows stay in the DOM the
+// whole time, just display:none until expanded), then re-fits #aiv-body
+// (its own max-height is measured content, so more content showing needs
+// a bigger cap or the newly-revealed rows just get clipped again).
 window.in2RevealMore = function(containerId, btn) {
   var container = document.getElementById(containerId);
+  var expanded = btn.getAttribute('data-expanded') === '1';
   if (container) {
-    var hidden = container.querySelectorAll('.hidden-more');
-    for (var i = 0; i < hidden.length; i++) { hidden[i].style.display = ''; hidden[i].classList.remove('hidden-more'); }
+    var extra = container.querySelectorAll('.in2-extra');
+    for (var i = 0; i < extra.length; i++) { extra[i].style.display = expanded ? 'none' : ''; }
   }
-  if (btn) btn.style.display = 'none';
+  if (btn) {
+    btn.setAttribute('data-expanded', expanded ? '0' : '1');
+    var label = btn.getAttribute('data-label') || '';
+    btn.innerHTML = (expanded ? label : 'Show less') + (expanded ? _in2ChevronDown() : _in2ChevronUp());
+  }
   _aivFitBody();
 };
 // A small diagonal external-link arrow, matching the app's stroke-icon
@@ -9821,7 +9837,16 @@ window.in2RevealMore = function(containerId, btn) {
 // navigation (an internal tab), so it reads as "this goes somewhere"
 // rather than plain text.
 function _in2ExternalArrow() {
-  return '<svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M6 10L10 6"/><path d="M6.5 6H10v3.5"/></svg>';
+  return '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-left:2px"><path d="M6 10L10 6"/><path d="M6.5 6H10v3.5"/></svg>';
+}
+// The chevron for "View all" — same 14px sizing as the external-link
+// arrow above, so the two icons read as one family rather than two
+// different scales of arrow on the same card.
+function _in2ChevronDown() {
+  return '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-left:3px;vertical-align:-2px"><path d="M4 6l4 4 4-4"/></svg>';
+}
+function _in2ChevronUp() {
+  return '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-left:3px;vertical-align:-2px"><path d="M4 10l4-4 4 4"/></svg>';
 }
 // GBP checklist actions are full sentences ("In Google Business Profile →
 // Info → Phone: add your primary number", "Go to Reviews → use AI-drafted
@@ -9913,11 +9938,12 @@ function renderAIVisibility(d) {
     } else { countUp(scoreEl, ai, 1400, '', '%', 0); }
   }
   if (scoreLbl) {
-    // Was 'not yet indexed', a claim about every AI system from a
-    // sample of one. The system asked is named alongside it.
-    var plat = d.platform || 'AI search';
-    scoreLbl.textContent = !measured ? ('not measured · ' + plat)
-      : ((ai >= 67 ? 'comes up often' : (ai >= 34 ? 'comes up sometimes' : "doesn't come up yet")) + ' · ' + plat);
+    // Was 'not yet indexed', a claim about every AI system from a sample
+    // of one — the system asked is named in the caption line below
+    // instead now, not stuffed into this flag (which only has room for a
+    // couple words before it wraps the "Visibility orbit" label above it).
+    scoreLbl.textContent = !measured ? 'not measured'
+      : (ai >= 67 ? 'comes up often' : (ai >= 34 ? 'comes up sometimes' : "doesn't come up yet"));
     scoreLbl.className = !measured ? 'bad' : (ai >= 67 ? 'good' : (ai >= 34 ? 'warn' : 'bad'));
   }
   var tone = function(v,hi,mid){return v>=hi?'good':(v>=mid?'warn':'bad');};
@@ -9963,7 +9989,7 @@ function renderAIVisibility(d) {
     for (var ci = 0; ci < d.checklist.length; ci++) {
       var item = d.checklist[ci]; if (item.done) doneN++;
       var ic = item.done ? '&#10003;' : (item.needs_gmb ? '&#128274;' : '&#9675;');
-      var hide = ci >= GBP_VISIBLE ? ' hidden-more" style="display:none' : '';
+      var hide = ci >= GBP_VISIBLE ? ' in2-extra" style="display:none' : '';
       chtml += '<div class="it' + (item.done ? ' done' : '') + hide + '"><span class="ic">' + ic + '</span><div style="min-width:0"><div class="l" title="' + esc(item.label) + '">' + esc(item.label) + '<small>+' + item.pts + '</small></div>';
       if (!item.done && item.action) {
         var am = in2GbpActionMeta(item.action);
@@ -9979,7 +10005,11 @@ function renderAIVisibility(d) {
     var gc = document.getElementById('in2-gbp-cap'); if (gc) gc.textContent = doneN + ' of ' + d.checklist.length + ' profile items done';
     var gbpVB = document.getElementById('aiv-gbp-viewall');
     if (gbpVB) {
-      if (d.checklist.length > GBP_VISIBLE) { gbpVB.style.display = 'block'; gbpVB.textContent = 'View all ' + d.checklist.length + ' items'; }
+      if (d.checklist.length > GBP_VISIBLE) {
+        var gbpLabel = 'View all ' + d.checklist.length + ' items';
+        gbpVB.style.display = 'block'; gbpVB.setAttribute('data-expanded', '0'); gbpVB.setAttribute('data-label', gbpLabel);
+        gbpVB.innerHTML = gbpLabel + _in2ChevronDown();
+      }
       else { gbpVB.style.display = 'none'; }
     }
   }
@@ -10004,13 +10034,17 @@ function renderAIVisibility(d) {
       for (var _pi = 0; _pi < _aiPatterns.length; _pi++) clean = clean.replace(_aiPatterns[_pi], '');
       if (clean.length) clean = clean.charAt(0).toUpperCase() + clean.slice(1);
       var snippet = clean.substring(0, 200) + (clean.length > 200 ? '…' : '');
-      var qhide = i >= 2 ? ' hidden-more" style="display:none' : '';
+      var qhide = i >= 2 ? ' in2-extra" style="display:none' : '';
       qhtml += '<div class="q' + (q.appeared ? ' hit' : '') + qhide + '"><div class="h"><span>&ldquo;' + esc(q.query) + '&rdquo;</span><span class="tag">' + (q.appeared ? 'Appeared' : 'Not mentioned') + '</span></div><div class="a">' + esc(snippet) + '</div></div>';
     }
     qEl.innerHTML = qhtml;
     var qVB = document.getElementById('aiv-q-viewall');
     if (qVB) {
-      if (d.queries.length > 2) { qVB.style.display = 'block'; qVB.textContent = 'View all ' + d.queries.length + ' queries'; }
+      if (d.queries.length > 2) {
+        var qLabel = 'View all ' + d.queries.length + ' queries';
+        qVB.style.display = 'block'; qVB.setAttribute('data-expanded', '0'); qVB.setAttribute('data-label', qLabel);
+        qVB.innerHTML = qLabel + _in2ChevronDown();
+      }
       else { qVB.style.display = 'none'; }
     }
     var qn = document.getElementById('in2-q-n'); if (qn) qn.textContent = hits + ' / ' + d.queries.length;
@@ -11093,7 +11127,7 @@ document.addEventListener('click', function(e) {
     var html = '';
     for (var i = 0; i < _items.length; i++) {
       var n = _items[i];
-      html += '<div style="padding:9px 14px;border-bottom:1px solid var(--paper2);display:flex;align-items:center;justify-content:space-between;gap:10px">'
+      html += '<div style="padding:9px 14px;border-bottom:1px solid var(--paper3);display:flex;align-items:center;justify-content:space-between;gap:10px">'
             + '<span style="font-size:12px;color:var(--ink);font-weight:500">' + n.label + '</span>'
             + '<span style="font-size:11px;color:var(--ink3);white-space:nowrap;flex-shrink:0">' + timeAgo(n.fired_at) + '</span>'
             + '</div>';

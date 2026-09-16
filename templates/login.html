@@ -29,6 +29,7 @@
 input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none}
 :root{--ink:#f0ebe0;--ink2:#c4bdb4;--ink3:#cdbfa9;--paper:#1a1714;--paper2:#231f1b;--paper3:#4a4038;--surface:#201d19;--ember:#e06444;--red:#e05555;--red-bg:#2a1010;--green:#4ead7a;--green-bg:#0c2318;--r:8px}
 
+@keyframes pageFadeIn{from{opacity:0}to{opacity:1}}
 body{
   font-family:'Apfel Grotezk',sans-serif;
   background:#0c0c0c;
@@ -39,7 +40,10 @@ body{
   padding:20px;
   position:relative;
   overflow:hidden;
+  opacity:0;
+  animation:pageFadeIn .5s ease forwards;
 }
+@media (prefers-reduced-motion:reduce){body{animation-duration:.001s!important}}
 
 
 

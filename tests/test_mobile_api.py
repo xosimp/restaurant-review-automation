@@ -2438,6 +2438,27 @@ def test_team_invite_route_creates_user(client, db_path, monkeypatch):
     assert any(m["email"] == "teammate@x.com" for m in members)
 
 
+def test_team_invite_email_uses_the_owners_real_name_not_their_login(client, db_path, monkeypatch):
+    """current_user['username'] is the login handle — lowercased, deduped
+    with a trailing digit on collision ('erik', 'erik2') — never a name to
+    greet someone by. The invite email said "You've been added by erik",
+    every time, regardless of how the owner's own name is capitalized."""
+    rid = _restaurant(db_path, owner_name="Erik")
+    token = _login(client, db_path, rid, username="erik", role="owner")
+    captured = {}
+    monkeypatch.setattr(
+        "emails.send_team_invite_email",
+        lambda to_email, restaurant_name, username, password, inviter_name=None: captured.update(inviter_name=inviter_name),
+    )
+
+    resp = client.post(
+        "/mobile/api/account/team/invite", json={"name": "New Teammate", "email": "teammate2@x.com"},
+        headers=_auth_headers(token),
+    )
+    assert resp.get_json()["ok"] is True
+    assert captured["inviter_name"] == "Erik"
+
+
 def test_team_invite_route_rejects_duplicate_email(client, db_path, monkeypatch):
     rid = _restaurant(db_path)
     token = _login(client, db_path, rid, role="owner")

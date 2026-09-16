@@ -120,6 +120,20 @@ def test_unread_count_only_counts_messages_to_me(db_path):
     assert count_unread_team_messages(rid, dana, db_path=db_path) == 0
 
 
+def test_unread_count_ignores_a_revoked_senders_old_message(db_path):
+    """A teammate who sent an unread message and was later revoked never
+    shows up in get_team_inbox()'s roster again — there's no thread left
+    to open and mark it read, so counting it left the header badge stuck
+    on permanently with nothing the recipient could do about it."""
+    rid = _restaurant(db_path)
+    erik = _user(db_path, rid, "erik")
+    dana = _user(db_path, rid, "dana")
+    send_team_message(rid, dana, erik, "can you order more heaters?", db_path=db_path)
+    assert count_unread_team_messages(rid, erik, db_path=db_path) == 1
+    auth.revoke_team_member(rid, dana, erik, db_path=db_path)
+    assert count_unread_team_messages(rid, erik, db_path=db_path) == 0
+
+
 def test_inbox_lists_every_teammate_even_with_no_history(db_path):
     rid = _restaurant(db_path)
     erik = _user(db_path, rid, "erik")

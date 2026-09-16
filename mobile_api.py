@@ -4390,8 +4390,13 @@ def mobile_invite_team_member(current_user):
         from emails import send_team_invite_email
         from models import log_email, get_restaurant as _gr
         restaurant = _gr(current_user["restaurant_id"])
+        # current_user["username"] is the login handle (lowercased, deduped
+        # with a trailing digit on collision — "erik", "erik2") — never the
+        # name to greet someone by. owner_name is what's actually typed in
+        # with real capitalization; the login username is the last resort.
+        inviter = restaurant.owner_name or current_user.get("username")
         send_team_invite_email(email, restaurant.name, result["username"], result["temp_password"],
-                               inviter_name=current_user.get("username"))
+                               inviter_name=inviter)
         log_email(current_user["restaurant_id"], "team_invite", email, f"You've been added to {restaurant.name}")
     except Exception:
         pass
