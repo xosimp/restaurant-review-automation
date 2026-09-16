@@ -408,7 +408,7 @@ def format_insight_html(text):
             '<div style="margin-top:10px;padding:10px 12px;background:rgba(200,75,47,.08);'
             'border-left:2px solid var(--ember);border-radius:0 6px 6px 0">'
             '<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;'
-            'color:var(--ember);margin-bottom:4px">\U0001f52e Forecast</div>'
+            'color:var(--ember);margin-bottom:4px">Forecast</div>'
             '<div style="font-style:italic;line-height:1.6">' + forecast + '</div></div>'
         )
 

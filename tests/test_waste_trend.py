@@ -391,13 +391,64 @@ def test_the_initial_tab_is_only_activated_once():
     assert "!btn&&document.getElementById('panel-competitor')" in block.replace(" ", "")
 
 
-def test_good_tone_observations_are_sorted_to_fill_the_left_column_first():
-    """.fc2-wt-obs fills column-first (grid-auto-flow:column), so sorting
-    good-tone entries to the front of the array is what actually groups
-    them in the left column — verified live: two good-tone entries mixed
-    with a bad and a warn both landed at the same x as each other, to the
-    left of the other two."""
+def test_observations_sort_good_neutral_warn_bad_for_column_fill():
+    """.fc2-wt-obs fills column-first (grid-auto-flow:column), so this sort
+    order is what actually groups matching-tone bullets into the same
+    column — verified live: two good-tone entries mixed with a bad and a
+    warn both landed at the same x, left of the other two. warn sorts
+    before bad (swapped from the engine's own order) per an explicit ask:
+    the red bullet and the yellow bullet had landed in each other's spot."""
+    import re
+    import subprocess
     html = _dashboard_html()
     assert "grid-auto-flow:column" in html.split(".fc2-wt-obs{", 1)[1].split("}", 1)[0]
-    body = html.split("function wtDrawObs(d){", 1)[1].split("\nfunction ", 1)[0]
-    assert "sort(function(a,b){return (a.tone==='good'?0:1)-(b.tone==='good'?0:1);})" in body
+    m = re.search(r"var _obTonePri=.*?;", html)
+    assert m, "tone-priority map not found"
+    js = m.group(0) + """
+var obs = [
+  {tone:'bad', text:'b'}, {tone:'good', text:'g1'},
+  {tone:'warn', text:'w'}, {tone:'neutral', text:'n'}, {tone:'good', text:'g2'}
+];
+obs.sort(function(a,b){
+  var pa=_obTonePri[a.tone]!=null?_obTonePri[a.tone]:1, pb=_obTonePri[b.tone]!=null?_obTonePri[b.tone]:1;
+  return pa-pb;
+});
+console.log(JSON.stringify(obs.map(function(o){return o.tone;})));
+"""
+    out = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=10)
+    assert out.returncode == 0, out.stderr
+    import json
+    order = json.loads(out.stdout.strip())
+    assert order == ["good", "good", "neutral", "warn", "bad"]
+
+
+def test_the_over_target_pill_states_the_actual_target_percent():
+    """'Over target' on its own doesn't say what the target is — pin the
+    percent into the pill text."""
+    html = _dashboard_html()
+    assert "'Over '+d.target.pct+'% target'" in html
+
+
+def test_the_ledger_sheen_that_never_actually_left_the_bar_is_gone():
+    """.bar i::after's exit position (left:110%) was computed against the
+    *unscaled* width of the same element the bar's own transform:scaleX()
+    shrinks — so for any bar under 100% full (i.e. virtually all of them),
+    the sheen's "off-screen" endpoint landed proportionally compressed
+    back inside the visible bar and sat there permanently instead of
+    exiting, showing as a stray gray/white patch near the end of the bar."""
+    html = _dashboard_html()
+    assert "fc2Sheen" not in html
+    assert ".fc2-ledger .r .bar i::after" not in html
+
+
+def test_forecast_box_has_no_emoji():
+    import client_api
+    src = open(client_api.__file__.replace(".pyc", ".py"), encoding="utf-8").read()
+    forecast_block = src.split("forecast_html = (", 1)[1].split("unverified_html", 1)[0]
+    assert "\\U0001f52e" not in forecast_block
+    assert ">Forecast</div>" in forecast_block
+
+
+def test_the_food_cost_tag_credits_cavnar_ai_not_just_cavnar():
+    html = _dashboard_html()
+    assert "Cavnar AI's read on your food cost" in html

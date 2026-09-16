@@ -2797,6 +2797,10 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 #panel-inventory .lb2-sg .k{font-size:14px}
 #panel-inventory .lb2-sg .v{font-size:34px}
 #panel-inventory .lb2-sg .cap{font-size:15px}
+#panel-inventory .lb2-sg .k i.bad{background:rgba(224,85,85,.16);padding:2px 8px;border-radius:999px;position:relative;top:-1px}
+#panel-inventory .lb2-sg .k i.good{background:rgba(78,173,122,.14);padding:2px 8px;border-radius:999px;position:relative;top:-1px}
+#panel-inventory .lb2-sg .k span{white-space:nowrap}
+#panel-inventory .hb-kicker{font-size:12.5px}
 .fc2-sample{margin-bottom:14px;padding:10px 14px;border-radius:10px;background:var(--hb-tint);border:1px solid var(--hb-line2);font-size:12.5px;color:var(--ink2)}
 .fc2-sample b{color:var(--ember)}
 .fc2-top-right{display:flex;flex-direction:column;align-items:flex-end;gap:20px}
@@ -2887,11 +2891,11 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 @media(max-width:900px){.fc2-wt{padding:18px 16px 16px}.fc2-wt-kpis{grid-template-columns:repeat(2,minmax(0,1fr));row-gap:16px}.fc2-wt-kpi:nth-child(3){border-left:none;padding-left:0}.fc2-wt-kpi .d{white-space:normal;overflow:visible;text-overflow:clip}.fc2-wt-obs,.fc2-wt-drill .rows,.fc2-wt-empty .steps{grid-template-columns:1fr}}
 @media(max-width:640px){.fc2-hero-nums .n{padding-right:0;border-right:none}}
 .fc2-empty{font-size:14px;color:var(--ink3);padding:26px 0;text-align:center}
-.fc2-gauge{position:relative;height:170px;margin-top:6px}
-.fc2-gauge svg{display:block;width:100%;height:170px;overflow:visible}
-.fc2-gauge .c{position:absolute;left:0;right:0;bottom:22px;text-align:center;pointer-events:none}
-.fc2-gauge .c b{display:block;font-family:'Space Grotesk',sans-serif;font-size:27.5px;font-weight:700;color:var(--ink);line-height:1}
-.fc2-gauge .c span{display:block;font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);margin-top:4px}
+.fc2-gauge{position:relative;height:205px;margin-top:6px}
+.fc2-gauge svg{display:block;width:100%;height:205px;overflow:visible}
+.fc2-gauge .c{position:absolute;left:0;right:0;bottom:26px;text-align:center;pointer-events:none}
+.fc2-gauge .c b{display:block;font-family:'Space Grotesk',sans-serif;font-size:32px;font-weight:700;color:var(--ink);line-height:1}
+.fc2-gauge .c span{display:block;font-size:12.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);margin-top:4px}
 .fc2-ledger{margin-top:10px;display:flex;flex-direction:column;gap:9px}
 .fc2-ledger .r{display:grid;grid-template-columns:minmax(0,1fr) 64px;gap:10px;align-items:center}
 .fc2-ledger .r .nm{font-size:13.5px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -2899,30 +2903,30 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .fc2-ledger .r .bar{height:7px;border-radius:4px;background:var(--hb-line2);overflow:hidden;margin-top:5px;position:relative}
 .fc2-ledger .r .bar i{display:block;height:100%;border-radius:4px;background:linear-gradient(90deg,#c84b2f,#e8956a);box-shadow:0 0 10px rgba(200,75,47,.45);transform-origin:left;transform:scaleX(0);transition:transform 1.4s cubic-bezier(.3,0,.15,1)}
 .fc2-ledger .r .bar i.amber{background:linear-gradient(90deg,#b7791f,#e8b04a);box-shadow:0 0 10px rgba(212,160,48,.4)}
-.fc2-ledger .r .bar i::after{content:'';position:absolute;top:0;bottom:0;width:36%;background:linear-gradient(90deg,transparent,rgba(255,255,255,.35),transparent);animation:fc2Sheen 2.6s ease-in-out 1.2s both}
 .fc2-ledger .r .bar.on i{transform:scaleX(1)}
 .fc2-ledger .r .v{font-family:'Space Grotesk',sans-serif;font-size:14.5px;font-weight:700;color:var(--ember);text-align:right;white-space:nowrap}
 .fc2-ledger .r .v.amber{color:var(--hb-warn)}
-@keyframes fc2Sheen{0%{left:-40%}100%{left:110%}}
 .fc2-sec{margin-top:34px;padding-top:22px;border-top:1px solid var(--hb-line)}
 .fc2-sec .hd{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:8px}
 .fc2-sec .hd h2{font-family:'Clash Display',sans-serif;font-weight:500;font-size:23.5px;letter-spacing:-.01em;color:var(--ink);margin:4px 0 0}
 .fc2-sec .hd .sub{font-size:14px;color:var(--ink3);margin-top:3px}
 .fc2-orders{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:26px;margin-top:10px}
-.fc2-col .ch{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);padding-bottom:8px;border-bottom:1px solid var(--hb-line2)}
+.fc2-col .ch{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);padding-bottom:8px;border-bottom:1px solid var(--hb-line2)}
 .fc2-col .ch .d{width:8px;height:8px;border-radius:50%;flex-shrink:0}
-.fc2-col .ch .n{margin-left:auto;font-family:'Space Grotesk',sans-serif;font-size:12.5px;color:var(--ink)}
+.fc2-col .ch .n{margin-left:auto;font-family:'Space Grotesk',sans-serif;font-size:14px;color:var(--ember2)}
 .fc2-col.urgent .ch .d{background:var(--hb-bad);box-shadow:0 0 8px var(--hb-bad)}.fc2-col.soon .ch .d{background:var(--hb-warn);box-shadow:0 0 8px var(--hb-warn)}.fc2-col.reduce .ch .d{background:var(--hb-good);box-shadow:0 0 8px var(--hb-good)}
 .fc2-col .row{display:flex;align-items:center;gap:10px;padding:10px 0 10px 12px;border-top:1px solid var(--hb-line2);position:relative}
 .fc2-col .row:first-of-type{border-top:none}
 .fc2-col .row::before{content:'';position:absolute;left:0;top:10px;bottom:10px;width:2.5px;border-radius:2px;background:var(--hb-line)}
 .fc2-col.urgent .row::before{background:var(--hb-bad)}.fc2-col.soon .row::before{background:var(--hb-warn)}.fc2-col.reduce .row::before{background:var(--hb-good)}
 .fc2-col .row .t{flex:1;min-width:0}
-.fc2-col .row .t b{display:block;font-size:14.5px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.fc2-col .row .t span{display:block;font-size:12.5px;color:var(--ink3);margin-top:2px}
+.fc2-col .row .t b{display:block;font-size:16px;font-weight:600;color:var(--ember2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fc2-col .row .t span{display:block;font-size:13.5px;color:var(--ink3);margin-top:2px}
 .fc2-col .row .q{text-align:right;flex-shrink:0}
-.fc2-col .row .q .l{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3)}
-.fc2-col .row .q .p{display:inline-block;font-family:'Space Grotesk',sans-serif;font-size:13.5px;font-weight:700;color:var(--ink);background:var(--hb-tint2);border-radius:6px;padding:3px 9px;margin-top:2px;white-space:nowrap}
+.fc2-col .row .q .l{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3)}
+.fc2-col .row .q .p{display:inline-block;font-family:'Space Grotesk',sans-serif;font-size:14.5px;font-weight:700;color:var(--ember2);background:var(--hb-tint2);border-radius:6px;padding:3px 9px;margin-top:2px;white-space:nowrap}
+.fc2-col.reduce .row .q .p{background:rgba(78,173,122,.35);color:#eafaf0}
+.fc2-col.soon .row .q .p{background:rgba(212,160,48,.35);color:#fff8e6}
 .fc2-col.reduce .row .q .p{color:var(--hb-good)}
 .fc2-col .row .q .s{font-family:'Space Grotesk',sans-serif;font-size:12px;font-weight:700;margin-top:3px}
 .fc2-col .row .q .s.good{color:var(--hb-good)}.fc2-col .row .q .s.bad{color:var(--hb-bad)}.fc2-col .row .q .s.dim{color:var(--ink3);font-weight:400}
@@ -3028,10 +3032,10 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       <div class="fc2-wt-obs" id="fc2-wt-obs" hidden></div>
     </div>
   </section>
-  <div class="lb2-ai"><div class="tag">Cavnar's read on your food cost · week of {{ inv.week_start }} – {{ inv.week_end }}</div><div class="insight-text insight-loading" id="inv-insight"><div class="hb-load"><canvas class="hb-orb" data-orb-state="composing" width="28" height="28"></canvas><span>Counting the pantry…</span></div></div></div>
+  <div class="lb2-ai"><div class="tag">Cavnar AI's read on your food cost · week of {{ inv.week_start }} – {{ inv.week_end }}</div><div class="insight-text insight-loading" id="inv-insight"><div class="hb-load"><canvas class="hb-orb" data-orb-state="composing" width="28" height="28"></canvas><span>Counting the pantry…</span></div></div></div>
 
   <div class="lb2-sig">
-    <div class="lb2-sg"><div class="k"><span>Recoverable gauge</span><i>{% if inv.is_live and _wl != '—' %}{{ _wl }}{% endif %}</i></div><div class="v"><span class="hb-num" id="fc2-gauge-n">${{ inv.recoverable_monthly|int|format_num }}</span><small>/ mo you can claw back</small></div>
+    <div class="lb2-sg"><div class="k"><span>Recoverable gauge</span><i class="{{ 'bad' if _wl in ['Above Average','Concerning','Needs Attention'] else ('good' if _wl in ['Excellent','On Track'] else '') }}">{% if inv.is_live and _wl != '—' %}{{ _wl }}{% endif %}</i></div><div class="v"><span class="hb-num" id="fc2-gauge-n">${{ inv.recoverable_monthly|int|format_num }}</span><small>/ mo you can claw back</small></div>
       <div class="fc2-gauge" id="fc2-gauge"><div class="hb-load" style="height:170px;justify-content:center"><canvas class="hb-orb" data-orb-state="shaping" width="36" height="36"></canvas></div></div>
       <div class="cap"><span>of ${{ (inv.monthly_waste_projection + _ostock_total)|int|format_num }} leaking this month</span><span class="hb-num">${{ inv.annual_recoverable|int|format_num }}/yr</span></div></div>
     <div class="lb2-sg"><div class="k"><span>Waste ledger · top offenders</span></div><div class="v"><span class="hb-num">${{ inv.total_waste_cost_week|int|format_num }}</span><small>this week</small></div>
@@ -3177,7 +3181,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
   function renderFcGauge(){
     var el=document.getElementById('fc2-gauge');if(!el||el.dataset.done)return;el.dataset.done='1';
     var g=_fc2Gauge,frac=g.ceiling>0?Math.min(1,g.monthly/g.ceiling):0;
-    var W=300,H=170,cx=150,cy=136,R=104,sw=16;
+    var W=360,H=205,cx=180,cy=164,R=125,sw=19;
     var len=Math.PI*R;
     var s='<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet" aria-hidden="true"><defs><linearGradient id="fc2gg" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#c84b2f"/><stop offset="1" stop-color="#e8956a"/></linearGradient><filter id="fc2gf" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="4"/></filter></defs>';
     var d='M'+(cx-R)+' '+cy+' A'+R+' '+R+' 0 0 1 '+(cx+R)+' '+cy;
@@ -3189,8 +3193,8 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       s+='<circle class="hb-hot" cx="'+tx.toFixed(1)+'" cy="'+ty.toFixed(1)+'" r="13" fill="#e8956a" fill-opacity=".25" style="transform-box:fill-box;transform-origin:center;opacity:0;transition:opacity .6s 2s" data-tip="1"/>';
       s+='<circle cx="'+tx.toFixed(1)+'" cy="'+ty.toFixed(1)+'" r="5" fill="#f2b183" stroke="#fff" stroke-opacity=".8" stroke-width="1.5" style="opacity:0;transition:opacity .6s 2s" data-tip="1"/>';
     }
-    s+='<text x="'+(cx-R)+'" y="'+(cy+18)+'" text-anchor="middle" font-size="10" font-family="Space Grotesk, sans-serif" fill="currentColor" fill-opacity=".55">$0</text>';
-    s+='<text x="'+(cx+R)+'" y="'+(cy+18)+'" text-anchor="middle" font-size="10" font-family="Space Grotesk, sans-serif" fill="currentColor" fill-opacity=".55">$'+Math.round(g.ceiling).toLocaleString()+'</text>';
+    s+='<text x="'+(cx-R)+'" y="'+(cy+24)+'" text-anchor="middle" font-size="14" font-weight="700" font-family="Space Grotesk, sans-serif" fill="currentColor" fill-opacity=".6">$0</text>';
+    s+='<text x="'+(cx+R)+'" y="'+(cy+24)+'" text-anchor="middle" font-size="14" font-weight="700" font-family="Space Grotesk, sans-serif" fill="currentColor" fill-opacity=".6">$'+Math.round(g.ceiling).toLocaleString()+'</text>';
     s+='</svg><div class="c"><b data-n="'+g.monthly+'">$0</b><span>recoverable / mo</span></div>';
     el.innerHTML=s;
     var b=el.querySelector('.c b');
@@ -9090,7 +9094,7 @@ function wtDrawHeader(d){
   if(pill){
     if(d.target&&d.target.weekly){
       var cls=s.above_target?(s.intervention?'bad':'warn'):'good';
-      pill.className='fc2-wt-pill '+cls;pill.textContent=s.above_target?(s.intervention?'Action recommended':'Over target'):'On target';pill.hidden=false;
+      pill.className='fc2-wt-pill '+cls;pill.textContent=s.above_target?(s.intervention?'Action recommended':'Over '+d.target.pct+'% target'):'On target';pill.hidden=false;
     } else pill.hidden=true;
   }
 }
@@ -9150,7 +9154,7 @@ function wtDrawChart(){
   var svg='<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none" aria-hidden="true">';
   // Symmetric shadow (0,0 offset, so it reads as depth under the bar, not a
   // directional drop-shadow) — gives each bar a "lifted off the page" feel.
-  svg+='<defs><filter id="fc2wtLift" x="-60%" y="-60%" width="220%" height="220%"><feDropShadow dx="0" dy="0" stdDeviation="3.5" flood-color="#000" flood-opacity=".4"/></filter></defs>';
+  svg+='<defs><filter id="fc2wtLift" x="-80%" y="-80%" width="260%" height="260%"><feDropShadow dx="0" dy="0" stdDeviation="6" flood-color="#000" flood-opacity=".6"/></filter></defs>';
   for(var g=1;g<=4;g++){var gy=y(top*g/4);svg+='<line x1="0" y1="'+gy.toFixed(1)+'" x2="'+W+'" y2="'+gy.toFixed(1)+'" stroke="currentColor" stroke-opacity=".07"/>';}
   svg+='<line x1="0" y1="'+base+'" x2="'+W+'" y2="'+base+'" stroke="currentColor" stroke-opacity=".14"/>';
   var yLab='',steps=[top,top*.75,top*.5,top*.25,0];
@@ -9289,11 +9293,16 @@ function wtDrawDrill(){
 }
 function wtDrawObs(d){
   var box=document.getElementById('fc2-wt-obs');if(!box)return;
-  // Grid fills column-first (see .fc2-wt-obs), so sorting the good-tone
-  // reads to the front groups them together in the left column instead of
-  // scattering good/bad across both columns in whatever order the engine
-  // returned them.
-  var obs=(d.observations||[]).slice().sort(function(a,b){return (a.tone==='good'?0:1)-(b.tone==='good'?0:1);}),h='';
+  // Grid fills column-first (see .fc2-wt-obs), so ordering by tone here is
+  // what actually groups matching bullets into the same column: good
+  // first (left), then neutral, then warn before bad — swapped from
+  // engine order, which had a bad-tone bullet landing above a warn-tone
+  // one on the right.
+  var _obTonePri={good:0,neutral:1,warn:2,bad:3};
+  var obs=(d.observations||[]).slice().sort(function(a,b){
+    var pa=_obTonePri[a.tone]!=null?_obTonePri[a.tone]:1, pb=_obTonePri[b.tone]!=null?_obTonePri[b.tone]:1;
+    return pa-pb;
+  }),h='';
   for(var i=0;i<obs.length;i++){h+='<div class="fc2-wt-ob"><i class="'+wtEsc(obs[i].tone||'')+'"></i><div>'+wtEsc(obs[i].text)+(obs[i].confidence?'<small>'+wtEsc(obs[i].confidence)+'</small>':'')+'</div></div>';}
   if(d.weeks.length<2&&d.empty)h+='<div class="fc2-wt-ob"><i></i><div>'+wtEsc(d.empty.reason)+'<small>'+wtEsc(d.empty.when)+'</small></div></div>';
   if(!h){wtShow('fc2-wt-obs',false);return;}
@@ -10642,21 +10651,44 @@ function countUp(el, target, duration, prefix, suffix, decimals) {
 }
 function countUpMoney(el, target, duration) {
   if (!el) return;
-  var startTime = null, lastTick = null;
-  function tick(now) {
-    if (!startTime) { startTime = now; lastTick = now; }
-    var gap = now - lastTick;  // see countUp() above for why this exists
-    if (gap > 100) startTime += gap;
-    lastTick = now;
-    var elapsed = now - startTime;
-    var progress = Math.min(elapsed / duration, 1);
-    var ease = 1 - Math.pow(1 - progress, 3);
-    var val = Math.floor(target * ease);
-    el.textContent = '$' + val.toLocaleString();
-    if (progress < 1) requestAnimationFrame(tick);
-    else el.textContent = '$' + target.toLocaleString();
-  }
-  requestAnimationFrame(tick);
+  duration = duration || 1400;
+  // A tab switch to Food Cost kicks off a burst of synchronous work in
+  // this exact tick — the waste-trend chart, gauge and both donuts all
+  // rebuild their SVG right here. Starting the wall-clock timer before
+  // that burst clears meant the elapsed-time gap-fold below (needed for
+  // a genuinely backgrounded tab catching up) also fired for ordinary
+  // main-thread jank on an active tab: the first visible frame could
+  // already be a big chunk of the target, then jump unevenly as later
+  // async work (the insight fetch, its typewriter effect) stalled the
+  // main thread again. Two rAFs push the actual start past that burst.
+  var token = (el._cuToken = (el._cuToken || 0) + 1);
+  requestAnimationFrame(function () {
+    requestAnimationFrame(function () {
+      if (el._cuToken !== token) return;  // superseded by a newer call
+      var startTime = null, lastTick = null, lastProgress = 0;
+      function tick(now) {
+        if (el._cuToken !== token) return;
+        if (!startTime) { startTime = now; lastTick = now; }
+        var gap = now - lastTick;  // see countUp() above for why this exists
+        if (gap > 100) startTime += gap;
+        lastTick = now;
+        var elapsed = now - startTime;
+        var rawProgress = Math.min(elapsed / duration, 1);
+        // However far the raw timer thinks we should be, cap one rendered
+        // frame's jump to 4% of the way there — a stall just takes a
+        // couple of extra (still-fast) frames to settle
+        // instead of visibly teleporting the number forward.
+        var progress = Math.min(rawProgress, lastProgress + 0.04, 1);
+        lastProgress = progress;
+        var ease = 1 - Math.pow(1 - progress, 3);
+        var val = Math.floor(target * ease);
+        el.textContent = '$' + val.toLocaleString();
+        if (progress < 1) requestAnimationFrame(tick);
+        else el.textContent = '$' + target.toLocaleString();
+      }
+      requestAnimationFrame(tick);
+    });
+  });
 }
 function animateStatNums(panelId) {
   if (_gbpReload) return;
