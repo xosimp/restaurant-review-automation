@@ -9,7 +9,7 @@
 <link rel="icon" type="image/png" href="/favicon.png">
 <link rel="shortcut icon" href="/favicon.ico">
 <meta name="theme-color" content="#0c0c0c">
-<script>document.documentElement.setAttribute('data-theme','dark');document.documentElement.style.background='radial-gradient(ellipse 100% 55% at 50% 0%,rgba(200,75,47,.45) 0%,rgba(200,75,47,.18) 40%,transparent 70%),linear-gradient(180deg,#0c0c0c 0%,#0c0c0c 100%)';</script>
+<script>document.documentElement.setAttribute('data-theme','dark');document.documentElement.style.background='radial-gradient(ellipse 100% 70% at 50% 0%,rgba(200,75,47,.45) 0%,rgba(200,75,47,.18) 48%,transparent 78%),linear-gradient(180deg,#0c0c0c 0%,#0c0c0c 100%)';</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Bricolage+Grotesque:opsz,wght@12..96,700&display=block" rel="stylesheet">
@@ -3616,12 +3616,17 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .in2-gbp .it .a.lock{color:var(--ink3)}
 .in2-gbp .it.done{opacity:.55}
 .in2-q{display:flex;flex-direction:column;gap:10px;margin-top:8px}
+.in2-viewall{display:block;margin-top:10px;background:transparent;border:none;padding:0;font-family:inherit;font-size:13px;font-weight:600;color:var(--ember);cursor:pointer}
+.in2-viewall:hover{text-decoration:underline}
+.in2-gbp-link{display:inline-flex;align-items:center;gap:4px;background:none;border:none;padding:0;font-family:inherit;font-size:13.5px;color:var(--ember);cursor:pointer;text-align:left}
+.in2-gbp-link:hover{text-decoration:underline}
+.in2-gbp-link svg{flex-shrink:0}
 .in2-q .q{padding:10px 0 10px 12px;border-top:1px solid var(--hb-line2);position:relative}
 .in2-q .q:first-child{border-top:none;padding-top:2px}
 .in2-q .q::before{content:'';position:absolute;left:0;top:12px;bottom:10px;width:2.5px;border-radius:2px;background:var(--hb-bad)}
 .in2-q .q.hit::before{background:var(--hb-good)}
 .in2-q .q .h{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;font-size:14.5px;font-weight:600;color:var(--ink);line-height:1.4}
-.in2-q .q .h .tag{flex-shrink:0;font-family:'Space Grotesk',sans-serif;font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:2px 7px;border-radius:999px;background:rgba(227,51,63,.14);color:var(--hb-bad)}
+.in2-q .q .h .tag{flex-shrink:0;font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:2px 7px;border-radius:999px;background:rgba(227,51,63,.14);color:var(--hb-bad)}
 .in2-q .q.hit .h .tag{background:rgba(78,173,122,.16);color:var(--hb-good)}
 .in2-q .q .a{font-size:13.5px;color:var(--ink3);line-height:1.5;margin-top:4px}
 /* Rating-comparison hero and analysis card are Intel-specific; scoped so
@@ -3637,7 +3642,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .in2-sec{margin-top:34px;padding-top:22px;border-top:1px solid var(--hb-line)}
 .in2-sec .hd{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:8px}
 .in2-sec .hd h2{font-family:'Clash Display',sans-serif;font-weight:500;font-size:22px;letter-spacing:-.01em;color:var(--ink);margin:4px 0 0}
-.in2-sec .hd .sub{font-size:12.5px;color:var(--ink3);margin-top:3px}
+.in2-sec .hd .sub{font-size:14.5px;color:var(--ink3);margin-top:3px}
 .in2-sec .hd .r{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .in2-road .row{display:flex;gap:14px;align-items:flex-start;padding:13px 0 13px 14px;border-top:1px solid var(--hb-line2);position:relative}
 .in2-road .row:first-child{border-top:none}
@@ -3646,16 +3651,16 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .in2-road .row .ic{width:30px;height:30px;border-radius:8px;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:var(--hb-tint2);color:var(--rc,var(--ember))}
 .in2-road .row .t{flex:1;min-width:0}
 .in2-road .row .t .tt{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-.in2-road .row .t b{font-size:14.5px;font-weight:600;color:var(--ink)}
-.in2-road .row .t .im{font-family:'Space Grotesk',sans-serif;font-size:9.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--rc,var(--ember))}
+.in2-road .row .t b{font-size:16px;font-weight:600;color:var(--ink)}
+.in2-road .row .t .im{font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--rc,var(--ember))}
 .in2-road .row .t .im.done{color:var(--hb-good)}
-.in2-road .row .t .d{font-size:12px;color:var(--ink3);margin-top:2px}
-.in2-road .row .t .why{font-size:13px;color:var(--ink2);line-height:1.6;margin-top:8px;display:none}
+.in2-road .row .t .d{font-size:14px;color:var(--ink3);margin-top:2px}
+.in2-road .row .t .why{font-size:15px;color:var(--ink2);line-height:1.6;margin-top:8px;display:none}
 .in2-road .row .t .why.on{display:block}
 .in2-road .row .t .ac{display:flex;gap:12px;align-items:center;margin-top:9px;flex-wrap:wrap}
-.in2-road .row .t .wl{background:none;border:none;padding:0;font-family:'Apfel Grotezk',sans-serif;font-size:11.5px;color:var(--ink3);text-decoration:underline;text-underline-offset:2px;cursor:pointer}
+.in2-road .row .t .wl{background:none;border:none;padding:0;font-family:'Apfel Grotezk',sans-serif;font-size:13px;color:var(--ink3);text-decoration:underline;text-underline-offset:2px;cursor:pointer}
 .in2-road .row .t .wl:hover{color:var(--ember)}
-.in2-note{margin-top:14px;padding:12px 16px;border-radius:10px;background:var(--hb-tint);font-size:12.5px;line-height:1.6;color:var(--ink2)}
+.in2-note{margin-top:14px;padding:12px 16px;border-radius:10px;background:var(--hb-tint);font-size:14.5px;line-height:1.6;color:var(--ink2)}
 .in2-note b{color:var(--ember)}
 .in2-search{margin-top:10px;position:relative;max-width:520px}
 .in2-search input{width:100%;box-sizing:border-box;padding:9px 12px;border:1px solid var(--hb-line);border-radius:8px;font-family:'Apfel Grotezk',sans-serif;font-size:13px;background:var(--hb-field);color:var(--ink);outline:none}
@@ -3672,7 +3677,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .in2-comp .row .t{flex:1;min-width:0}
 .in2-comp .row .t .tt{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
 .in2-comp .row .t b{font-size:16px;font-weight:600;color:var(--ink)}
-.in2-comp .row .t .cu{font-family:'Space Grotesk',sans-serif;font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ember);background:var(--hb-tint2);padding:2px 7px;border-radius:999px}
+.in2-comp .row .t .cu{font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ember);background:var(--hb-tint2);padding:2px 7px;border-radius:999px}
 .in2-comp .row .t .rm{background:none;border:none;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;font-size:12.5px;color:var(--ink3);padding:0;text-decoration:underline;text-underline-offset:2px}
 .in2-comp .row .t .rm:hover{color:var(--ember)}
 .in2-comp .row .t .m{font-size:14px;color:var(--ink3);margin-top:2px}
@@ -3788,9 +3793,11 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
           <div class="cap"><span id="aiv-history-count">first check</span><span>Perplexity live search</span></div></div>
         <div class="lb2-sg"><div class="k"><span>GBP completeness</span><i id="aiv-gbp-label"></i></div><div class="v"><span id="aiv-gbp-num" class="hb-num">—</span><small id="in2-gbp-cap">of the profile fields AI reads</small></div>
           <div class="in2-gbp" id="aiv-gbp-items"></div>
+          <button type="button" id="aiv-gbp-viewall" class="in2-viewall" style="display:none" onclick="in2RevealMore('aiv-gbp-items',this)"></button>
           <div class="cap"><span>each item is worth points toward your score</span></div></div>
         <div class="lb2-sg"><div class="k"><span>AI query results</span><i id="in2-q-flag"></i></div><div class="v"><span id="in2-q-n" class="hb-num">—</span><small>queries mentioned you</small></div>
           <div class="in2-q" id="aiv-queries"></div>
+          <button type="button" id="aiv-q-viewall" class="in2-viewall" style="display:none" onclick="in2RevealMore('aiv-queries',this)"></button>
           <div class="cap"><span>what Perplexity answered when asked about eating near you</span></div></div>
       </div>
       <div id="aiv-disclaimer" class="in2-note" style="display:none"></div>
@@ -5640,12 +5647,12 @@ function setPageBg(n){
   // long page like the review inbox gets the same top glow as Home instead
   // of an orange wash stretched over thousands of pixels.
   // Dark is the only theme now — see the pre-paint <script> in <head>.
-  var glow = 'radial-gradient(ellipse 120% 100% at 50% 0%,rgba(200,75,47,.50) 0%,rgba(200,75,47,.24) 32%,rgba(200,75,47,.07) 62%,transparent 82%)';
+  var glow = 'radial-gradient(ellipse 120% 100% at 50% 0%,rgba(200,75,47,.50) 0%,rgba(200,75,47,.24) 38%,rgba(200,75,47,.07) 68%,transparent 88%)';
   var st = document.body.style;
   st.backgroundColor = '#0c0c0c';
   st.backgroundImage = glow;
   st.backgroundRepeat = 'no-repeat';
-  st.backgroundSize = '100% 780px';
+  st.backgroundSize = '100% 920px';
   st.backgroundPosition = 'center top';
 }
 function switchTab(n,btn){
@@ -9748,8 +9755,10 @@ function refreshCompetitorIntel(btn){
   var _rs='<span style="display:inline-block;width:12px;height:12px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;vertical-align:middle;animation:spin .7s linear infinite"></span>';
   // "Reading the Room" — inside the big empty-state card when that's where
   // the button lives, taking over its content directly instead of a boxy
-  // floating card stacked on top of it; a compact floating card everywhere
-  // else (the header's "Refresh" button), so the page above it stays intact.
+  // floating card stacked on top of it; everywhere else (the header's
+  // "Refresh" button, already tracking competitors) the button's own
+  // inline spinner is the whole loading state — no extra floating card
+  // stacked on top of a page that already has content on it.
   var _inEmpty=btn.closest&&btn.closest('.in2-empty');
   var _origHtml=null;
   if(_inEmpty){
@@ -9757,12 +9766,10 @@ function refreshCompetitorIntel(btn){
     _inEmpty.innerHTML=cavnarRadarHtml('Scanning nearby restaurants',230);
   }else{
     btn.innerHTML='Fetching... '+_rs;btn.disabled=true;btn.style.opacity='0.7';
-    cmFloat(cavnarRadarHtml('Scanning nearby restaurants',130));
   }
   function _resetBtn(){
     if(_inEmpty&&_origHtml!==null){_inEmpty.innerHTML=_origHtml;}
     else{btn.textContent='Refresh';btn.disabled=false;btn.style.opacity='1';}
-    cmFloatHide();
   }
   fetch('/api/refresh-competitor-intel',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
     if(!d.ok){_resetBtn();toast('Error: '+(d.error||'failed'),'error');return;}
@@ -9795,6 +9802,40 @@ var _aivData = null;
 function _aivFitBody() {
   var b = document.getElementById('aiv-body');
   if (b && b.style.maxHeight && b.style.maxHeight !== '0px') { b.style.maxHeight = b.scrollHeight + 'px'; }
+}
+// "View all" for the GBP checklist / query results columns — reveals the
+// items past the initial cap in place, then re-fits #aiv-body (its own
+// max-height is measured content, so more content showing needs a bigger
+// cap or the newly-revealed rows just get clipped again).
+window.in2RevealMore = function(containerId, btn) {
+  var container = document.getElementById(containerId);
+  if (container) {
+    var hidden = container.querySelectorAll('.hidden-more');
+    for (var i = 0; i < hidden.length; i++) { hidden[i].style.display = ''; hidden[i].classList.remove('hidden-more'); }
+  }
+  if (btn) btn.style.display = 'none';
+  _aivFitBody();
+};
+// A small diagonal external-link arrow, matching the app's stroke-icon
+// style — used next to a checklist action that's real, clickable
+// navigation (an internal tab), so it reads as "this goes somewhere"
+// rather than plain text.
+function _in2ExternalArrow() {
+  return '<svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M6 10L10 6"/><path d="M6.5 6H10v3.5"/></svg>';
+}
+// GBP checklist actions are full sentences ("In Google Business Profile →
+// Info → Phone: add your primary number", "Go to Reviews → use AI-drafted
+// responses..."). Only "Go to <tab>" / "Use the <tab> tab" ones point
+// somewhere Cavnar can actually navigate to — everything else (a Google
+// Business Profile field, or plain advice with no specific screen) stays
+// as text, since there's no real destination to send a click to.
+function in2GbpActionMeta(action) {
+  var m = /^Go to (Account|Reviews|Marketing)\b/i.exec(action);
+  if (m) return { short: 'Go to ' + m[1], nav: m[1].toLowerCase() };
+  if (/^Use the Reviews tab/i.test(action)) return { short: 'Go to Reviews', nav: 'reviews' };
+  var short = action.split(/\s+(?:→|—)\s+/)[0];
+  if (short.length > 46) short = short.slice(0, 43) + '…';
+  return { short: short, nav: null };
 }
 function runAIVisibility(btn) {
   var _aivB = document.getElementById('aiv-body');
@@ -9877,6 +9918,7 @@ function renderAIVisibility(d) {
     var plat = d.platform || 'AI search';
     scoreLbl.textContent = !measured ? ('not measured · ' + plat)
       : ((ai >= 67 ? 'comes up often' : (ai >= 34 ? 'comes up sometimes' : "doesn't come up yet")) + ' · ' + plat);
+    scoreLbl.className = !measured ? 'bad' : (ai >= 67 ? 'good' : (ai >= 34 ? 'warn' : 'bad'));
   }
   var tone = function(v,hi,mid){return v>=hi?'good':(v>=mid?'warn':'bad');};
   var chipAi=document.getElementById('in2-chip-ai'), chipAiN=document.getElementById('in2-chip-ai-n');
@@ -9906,22 +9948,40 @@ function renderAIVisibility(d) {
   var gbpEl = document.getElementById('aiv-gbp-num');
   var gbpLbl = document.getElementById('aiv-gbp-label');
   if (gbpEl) { countUp(gbpEl, gbp, 1400, '', '%', 0); gbpEl.style.color = gbp >= 70 ? 'var(--hb-good)' : (gbp >= 40 ? 'var(--hb-warn)' : 'var(--hb-bad)'); }
-  if (gbpLbl) gbpLbl.textContent = gbp >= 80 ? 'excellent' : (gbp >= 60 ? 'a few gaps' : (gbp >= 40 ? 'needs work' : 'critical gaps'));
+  if (gbpLbl) {
+    gbpLbl.textContent = gbp >= 80 ? 'excellent' : (gbp >= 60 ? 'a few gaps' : (gbp >= 40 ? 'needs work' : 'critical gaps'));
+    gbpLbl.className = gbp >= 80 ? 'good' : (gbp >= 40 ? 'warn' : 'bad');
+  }
   try { sessionStorage.setItem('aiv_cache', JSON.stringify(d)); sessionStorage.setItem('aiv_cache_at', String(Date.now())); } catch(e) {}
 
-  // GBP checklist grid — the iOS two-column grid.
+  // GBP checklist grid — the iOS two-column grid. Full list can run to a
+  // dozen-plus items; showing all of them by default buried the query
+  // results next to it, so only the first few show until asked for more.
   var gbpItemsEl = document.getElementById('aiv-gbp-items');
   if (gbpItemsEl && d.checklist) {
-    var chtml = '', doneN = 0;
+    var chtml = '', doneN = 0, GBP_VISIBLE = 5;
     for (var ci = 0; ci < d.checklist.length; ci++) {
       var item = d.checklist[ci]; if (item.done) doneN++;
       var ic = item.done ? '&#10003;' : (item.needs_gmb ? '&#128274;' : '&#9675;');
-      chtml += '<div class="it' + (item.done ? ' done' : '') + '"><span class="ic">' + ic + '</span><div style="min-width:0"><div class="l" title="' + esc(item.label) + '">' + esc(item.label) + '<small>+' + item.pts + '</small></div>';
-      if (!item.done && item.action) chtml += '<div class="a' + (item.needs_gmb ? ' lock' : '') + '" title="' + esc(item.action) + '">' + esc(item.action) + (item.needs_gmb ? ' (needs GBP)' : '') + '</div>';
+      var hide = ci >= GBP_VISIBLE ? ' hidden-more" style="display:none' : '';
+      chtml += '<div class="it' + (item.done ? ' done' : '') + hide + '"><span class="ic">' + ic + '</span><div style="min-width:0"><div class="l" title="' + esc(item.label) + '">' + esc(item.label) + '<small>+' + item.pts + '</small></div>';
+      if (!item.done && item.action) {
+        var am = in2GbpActionMeta(item.action);
+        if (am.nav) {
+          chtml += '<button type="button" class="in2-gbp-link" onclick="switchTab(\'' + am.nav + '\',document.getElementById(\'tab-' + am.nav + '\'))">' + esc(am.short) + _in2ExternalArrow() + '</button>';
+        } else {
+          chtml += '<div class="a' + (item.needs_gmb ? ' lock' : '') + '" title="' + esc(item.action) + '">' + esc(am.short) + (item.needs_gmb ? ' (needs GBP)' : '') + '</div>';
+        }
+      }
       chtml += '</div></div>';
     }
     gbpItemsEl.innerHTML = chtml;
     var gc = document.getElementById('in2-gbp-cap'); if (gc) gc.textContent = doneN + ' of ' + d.checklist.length + ' profile items done';
+    var gbpVB = document.getElementById('aiv-gbp-viewall');
+    if (gbpVB) {
+      if (d.checklist.length > GBP_VISIBLE) { gbpVB.style.display = 'block'; gbpVB.textContent = 'View all ' + d.checklist.length + ' items'; }
+      else { gbpVB.style.display = 'none'; }
+    }
   }
   // Query results
   var qEl = document.getElementById('aiv-queries');
@@ -9944,11 +10004,17 @@ function renderAIVisibility(d) {
       for (var _pi = 0; _pi < _aiPatterns.length; _pi++) clean = clean.replace(_aiPatterns[_pi], '');
       if (clean.length) clean = clean.charAt(0).toUpperCase() + clean.slice(1);
       var snippet = clean.substring(0, 200) + (clean.length > 200 ? '…' : '');
-      qhtml += '<div class="q' + (q.appeared ? ' hit' : '') + '"><div class="h"><span>&ldquo;' + esc(q.query) + '&rdquo;</span><span class="tag">' + (q.appeared ? 'Appeared' : 'Not mentioned') + '</span></div><div class="a">' + esc(snippet) + '</div></div>';
+      var qhide = i >= 2 ? ' hidden-more" style="display:none' : '';
+      qhtml += '<div class="q' + (q.appeared ? ' hit' : '') + qhide + '"><div class="h"><span>&ldquo;' + esc(q.query) + '&rdquo;</span><span class="tag">' + (q.appeared ? 'Appeared' : 'Not mentioned') + '</span></div><div class="a">' + esc(snippet) + '</div></div>';
     }
     qEl.innerHTML = qhtml;
+    var qVB = document.getElementById('aiv-q-viewall');
+    if (qVB) {
+      if (d.queries.length > 2) { qVB.style.display = 'block'; qVB.textContent = 'View all ' + d.queries.length + ' queries'; }
+      else { qVB.style.display = 'none'; }
+    }
     var qn = document.getElementById('in2-q-n'); if (qn) qn.textContent = hits + ' / ' + d.queries.length;
-    var qf = document.getElementById('in2-q-flag'); if (qf) qf.textContent = hits ? 'you came up' : 'not mentioned';
+    var qf = document.getElementById('in2-q-flag'); if (qf) { qf.textContent = hits ? 'you came up' : 'not mentioned'; qf.className = hits ? 'good' : 'bad'; }
     var oc = document.getElementById('in2-orbit-cap'); if (oc) oc.textContent = 'of AI searches mention you · ' + hits + ' of ' + d.queries.length + ' queries';
   }
   var cEl = document.getElementById('aiv-checklist'); if (cEl) cEl.innerHTML = '';
@@ -11957,7 +12023,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     var done=busy(btn,'Adding…');
     jsend('/api/intel/add-competitor',{place_id:placeId},function(d){
       if(!d.ok){done();toast(d.error||'Could not add','error');return;}
-      if(btn)btn.textContent='Added — refreshing…';
+      if(btn){btn.disabled=true;btn.innerHTML='<canvas class="hb-orb" data-orb-state="working" width="16" height="16" style="width:16px;height:16px;vertical-align:middle;margin-right:5px"></canvas>Added — refreshing…';}
       toast('Tracking them — pulling their reviews now (about 30 seconds)','success');
       intelRefreshThenReload();
     });
@@ -11965,7 +12031,16 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
   window.intelRemove=function(placeId,btn){
     if(!confirm('Stop tracking this competitor?'))return;
     var done=busy(btn,'…');
-    jsend('/api/intel/remove-competitor',{place_id:placeId},function(d){done();if(d.ok){toast('Removed','success');setTimeout(function(){window.location.href=window.location.pathname+'?tab=competitor';},500);}else toast(d.error||'Could not remove','error');});
+    var row=btn.closest?btn.closest('.row'):null;
+    jsend('/api/intel/remove-competitor',{place_id:placeId},function(d){
+      done();
+      if(d.ok){
+        toast('Removed','success');
+        if(row){row.style.transition='opacity .2s ease';row.style.opacity='0';setTimeout(function(){row.remove();},200);}
+      }else{
+        toast(d.error||'Could not remove','error');
+      }
+    });
   };
   window._aivRuns=[];
   window.loadAivHistory=function(){

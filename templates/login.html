@@ -75,21 +75,13 @@ body{
 }
 .logo em{color:var(--ember);font-style:italic}
 
-/* ── Cavnar motion: the seal draws itself, then the letters stamp in
-   (mirrors the iOS login's CavnarLockupIntro) ── */
-.seal-intro{display:block;margin-bottom:10px;line-height:0;opacity:0;animation:fadeUp .3s ease .1s forwards}
-.seal-intro svg{overflow:visible}
-@keyframes sealDraw{to{stroke-dashoffset:0}}
-@keyframes sealEmber{to{opacity:1;transform:scale(1)}}
-.seal-ring{stroke-dasharray:100;stroke-dashoffset:100;animation:sealDraw 1.1s cubic-bezier(.4,0,.2,1) .2s forwards}
-.seal-glow,.seal-dot{opacity:0;transform-box:fill-box;transform-origin:center;transform:scale(0);animation:sealEmber .4s ease-out 1.2s forwards}
-@keyframes wmStamp{from{opacity:0;transform:translateY(8%) scale(1.06)}to{opacity:1;transform:none}}
-@keyframes wmDrop{from{opacity:0;transform:translateY(-22px)}to{opacity:1;transform:none}}
-.logo .wl{opacity:0;transform-box:fill-box;transform-origin:center;animation:wmStamp .32s cubic-bezier(.2,.9,.3,1) forwards}
-.logo .wl1{animation-delay:.6s}.logo .wl2{animation-delay:.69s}.logo .wl3{animation-delay:.78s}.logo .wl4{animation-delay:.87s}.logo .wl5{animation-delay:.96s}.logo .wl6{animation-delay:1.05s}
-.logo .wm-dot{opacity:0;animation:wmDrop .35s ease-out 1.35s forwards}
-.logo .ai-tag{opacity:0;animation:fadeUp .4s ease 1.55s forwards}
-@media (prefers-reduced-motion:reduce){.seal-ring,.seal-glow,.seal-dot,.logo .wl,.logo .wm-dot,.logo .ai-tag,.seal-intro{animation-duration:.001s!important;animation-delay:0s!important}}
+/* The wordmark used to stamp in one letter at a time over ~1s (six
+   staggered animations plus the dot and "AI" tag) — a lot of sequenced
+   motion for a login screen, and the kind of thing that reads as choppy
+   rather than polished. It now fades in once, as a single unit, right
+   alongside the card itself. */
+.logo{opacity:0;animation:fadeUp .4s ease .18s forwards}
+@media (prefers-reduced-motion:reduce){.logo,.sub,.form-wrap{animation-duration:.001s!important;animation-delay:0s!important}}
 
 .sub{
   font-size:12px;
