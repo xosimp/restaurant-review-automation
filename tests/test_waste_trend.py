@@ -367,3 +367,37 @@ def test_the_empty_state_counts_weeks_recorded_out_of_weeks_needed():
     html = open(os.path.join(root, "templates", "dashboard.html"), encoding="utf-8").read()
     assert "e.weeks_have" in html and "e.weeks_needed" in html
     assert "weeks recorded" in html
+
+
+def _dashboard_html():
+    import os
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return open(os.path.join(root, "templates", "dashboard.html"), encoding="utf-8").read()
+
+
+def test_the_initial_tab_is_only_activated_once():
+    """On a fresh load with #inventory or #competitor in the URL, switchTab()
+    already calls switchFcTab()/switchIntelTab() once — a second, unguarded
+    call right after it in the DOMContentLoaded handler used to fire every
+    time that hash matched, doubling renderFcGauge()/renderWasteDonut()/
+    renderOstockDonut() (none of them are re-entry guarded) in the same
+    tick the hero numbers' count-up animation was starting. That extra
+    synchronous work landing mid-animation is what read as the count-up
+    lagging on load."""
+    html = _dashboard_html()
+    block = html.split("document.addEventListener('DOMContentLoaded', function(){", 1)[1]
+    block = block.split("// 2FA digit auto-advance", 1)[0]
+    assert "!btn&&document.getElementById('panel-inventory')" in block.replace(" ", "")
+    assert "!btn&&document.getElementById('panel-competitor')" in block.replace(" ", "")
+
+
+def test_good_tone_observations_are_sorted_to_fill_the_left_column_first():
+    """.fc2-wt-obs fills column-first (grid-auto-flow:column), so sorting
+    good-tone entries to the front of the array is what actually groups
+    them in the left column — verified live: two good-tone entries mixed
+    with a bad and a warn both landed at the same x as each other, to the
+    left of the other two."""
+    html = _dashboard_html()
+    assert "grid-auto-flow:column" in html.split(".fc2-wt-obs{", 1)[1].split("}", 1)[0]
+    body = html.split("function wtDrawObs(d){", 1)[1].split("\nfunction ", 1)[0]
+    assert "sort(function(a,b){return (a.tone==='good'?0:1)-(b.tone==='good'?0:1);})" in body

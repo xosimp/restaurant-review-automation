@@ -2794,71 +2794,77 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 [data-theme="dark"] #panel-inventory{--hb-line:rgba(240,235,224,.14);--hb-line2:rgba(240,235,224,.07);--hb-tint:rgba(224,100,68,.09);--hb-tint2:rgba(224,100,68,.16);--hb-field:rgba(255,255,255,.05)}
 #panel-inventory .hb-chip .v{display:inline-flex;align-items:baseline;gap:2px}
 #panel-inventory #inv-insight{font-size:14px;line-height:1.65;color:var(--ink2);white-space:pre-wrap;padding-left:0}
+#panel-inventory .lb2-sg .k{font-size:14px}
+#panel-inventory .lb2-sg .v{font-size:34px}
+#panel-inventory .lb2-sg .cap{font-size:15px}
 .fc2-sample{margin-bottom:14px;padding:10px 14px;border-radius:10px;background:var(--hb-tint);border:1px solid var(--hb-line2);font-size:12.5px;color:var(--ink2)}
 .fc2-sample b{color:var(--ember)}
-.fc2-hero-nums{display:flex;gap:34px;flex-wrap:wrap;align-items:flex-end}
+.fc2-top-right{display:flex;flex-direction:column;align-items:flex-end;gap:20px}
+.fc2-hero-nums{display:flex;gap:40px;flex-wrap:wrap}
+.fc2-hero-nums .n{padding-right:40px;border-right:1px solid var(--hb-line2)}
+.fc2-hero-nums .n:last-child{padding-right:0;border-right:none}
 .fc2-hero-nums .n .big{font-size:clamp(34px,4vw,50px)}
 .fc2-hero-nums .n .big.bad{color:var(--hb-bad)}.fc2-hero-nums .n .big.good{color:var(--hb-good)}
+.fc2-num-lbl{font-size:10.5px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--ember2);margin-top:6px}
 /* ── Waste trend card ─────────────────────────────────────────────────── */
 .fc2-wt{margin-top:22px;padding:22px 24px 20px;border-radius:14px;background:linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,.012));border:1px solid var(--hb-line2)}
 .fc2-wt-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap}
 .fc2-wt-title{min-width:0;flex:1 1 360px}
-.fc2-wt-verdict{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:7px;font-family:'Clash Display',sans-serif;font-weight:500;font-size:25px;letter-spacing:-.01em;color:var(--ink);line-height:1.15}
-.fc2-wt-pill{font-family:'Apfel Grotezk',sans-serif;font-size:11.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;padding:4px 10px;border-radius:999px;background:var(--hb-tint2);color:var(--ember);white-space:nowrap}
+.fc2-wt-verdict{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:7px;font-family:'Clash Display',sans-serif;font-weight:500;font-size:26.5px;letter-spacing:-.01em;color:var(--ink);line-height:1.15}
+.fc2-wt-pill{font-family:'Apfel Grotezk',sans-serif;font-size:13px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;padding:4px 10px;border-radius:999px;background:var(--hb-tint2);color:var(--ember);white-space:nowrap}
 .fc2-wt-pill.good{background:rgba(78,173,122,.14);color:var(--hb-good)}.fc2-wt-pill.bad{background:rgba(224,85,85,.16);color:var(--hb-bad)}.fc2-wt-pill.warn{background:rgba(232,176,74,.14);color:var(--hb-warn)}
-.fc2-wt-sub{font-size:13.5px;color:var(--ink3);margin-top:6px;line-height:1.5}
-.fc2-wt-sub .hb-num{color:var(--ink2);font-weight:600}
 .fc2-wt-ctl{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .fc2-wt-ctl[hidden],.fc2-wt-kpis[hidden],.fc2-wt-leg[hidden],.fc2-wt-obs[hidden]{display:none}
 .fc2-wt-tgl.on{border-color:rgba(78,173,122,.5);color:var(--hb-good)}
 .fc2-wt-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0;margin-top:18px;padding:16px 0;border-top:1px solid var(--hb-line2);border-bottom:1px solid var(--hb-line2)}
 .fc2-wt-kpi{padding:0 20px;border-left:1px solid var(--hb-line2);min-width:0}
 .fc2-wt-kpi:first-child{padding-left:0;border-left:none}
-.fc2-wt-kpi .l{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);white-space:nowrap}
-.fc2-wt-kpi .v{font-family:'Space Grotesk',sans-serif;font-size:26px;font-weight:600;letter-spacing:-.02em;color:var(--ink);margin-top:6px;line-height:1;white-space:nowrap}
+.fc2-wt-kpi .l{font-size:12.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);white-space:nowrap}
+.fc2-wt-kpi .v{font-family:'Space Grotesk',sans-serif;font-size:27.5px;font-weight:600;letter-spacing:-.02em;color:var(--ink);margin-top:6px;line-height:1;white-space:nowrap}
 .fc2-wt-kpi .v.good{color:var(--hb-good)}.fc2-wt-kpi .v.bad{color:var(--hb-bad)}
-.fc2-wt-kpi .d{font-size:12.5px;color:var(--ink3);margin-top:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fc2-wt-kpi .d{font-size:14px;color:var(--ink3);margin-top:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .fc2-wt-kpi .d b{font-family:'Space Grotesk',sans-serif;font-weight:700;color:var(--ink2)}
 .fc2-wt-kpi .d b.good{color:var(--hb-good)}.fc2-wt-kpi .d b.bad{color:var(--hb-bad)}
 .fc2-wt-chart{margin-top:18px;display:flex;gap:10px}
-.fc2-wt-chart .y{display:flex;flex-direction:column;justify-content:space-between;align-items:flex-end;width:50px;font-size:11.5px;color:var(--ink3);font-family:'Space Grotesk',sans-serif;padding-bottom:24px;flex-shrink:0}
+.fc2-wt-chart .y{display:flex;flex-direction:column;justify-content:space-between;align-items:flex-end;width:58px;font-size:14.5px;color:var(--ink3);font-family:'Space Grotesk',sans-serif;padding-bottom:24px;flex-shrink:0}
 .fc2-wt-chart .plot{flex:1;min-width:0;position:relative}
 .fc2-wt-chart .plot svg{display:block;width:100%;height:230px;overflow:visible}
 .fc2-wt-chart .plot svg text{font-family:'Space Grotesk',sans-serif}
-.fc2-wt-chart .ax{display:flex;font-size:11.5px;color:var(--ink3);margin-top:6px}
+.fc2-wt-chart .plot svg .fc2-wt-bar.hb-bar{animation-duration:1.7s}
+.fc2-wt-chart .ax{display:flex;font-size:14.5px;color:var(--ink3);margin-top:6px}
 .fc2-wt-chart .ax span{flex:1;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .fc2-wt-chart .ax span.on{color:var(--ink);font-weight:600}
 .fc2-wt-hit{cursor:pointer}
 .fc2-wt-bar{transition:opacity .15s ease}
 .fc2-wt-chart.hov .fc2-wt-bar:not(.on){opacity:.45}
-.fc2-wt-leg{display:flex;gap:16px;flex-wrap:wrap;font-size:11.5px;color:var(--ink3);margin-top:12px;align-items:center}
+.fc2-wt-leg{display:flex;gap:16px;flex-wrap:wrap;font-size:13px;color:var(--ink3);margin-top:12px;align-items:center}
 .fc2-wt-leg i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:-1px}
 .fc2-wt-leg i.ln{width:14px;height:0;border-top:2px solid var(--ember2);border-radius:0;vertical-align:3px}
 .fc2-wt-leg i.tg{width:14px;height:0;border-top:2px dashed var(--hb-good);border-radius:0;vertical-align:3px}
 .fc2-wt-drill{margin-top:14px;padding:14px 16px 16px;border-radius:10px;background:var(--hb-tint);border:1px solid var(--hb-line2)}
 .fc2-wt-drill .h{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
-.fc2-wt-drill .h .t{font-size:14px;color:var(--ink);font-weight:600}
+.fc2-wt-drill .h .t{font-size:15.5px;color:var(--ink);font-weight:600}
 .fc2-wt-drill .h .t .hb-num{color:var(--ember);font-weight:700}
-.fc2-wt-drill .h .t small{font-size:12.5px;color:var(--ink3);font-weight:400;margin-left:8px}
+.fc2-wt-drill .h .t small{font-size:14px;color:var(--ink3);font-weight:400;margin-left:8px}
 .fc2-wt-drill .rows{margin-top:12px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px 26px}
-.fc2-wt-drill .r{display:grid;grid-template-columns:minmax(0,1fr) 64px;gap:10px;align-items:center;font-size:12.5px;color:var(--ink2)}
+.fc2-wt-drill .r{display:grid;grid-template-columns:minmax(0,1fr) 64px;gap:10px;align-items:center;font-size:14px;color:var(--ink2)}
 .fc2-wt-drill .r .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .fc2-wt-drill .r .bar{height:6px;border-radius:3px;background:var(--hb-line2);overflow:hidden;margin-top:4px}
 .fc2-wt-drill .r .bar i{display:block;height:100%;border-radius:3px;background:var(--ember)}
 .fc2-wt-drill .r .v{font-family:'Space Grotesk',sans-serif;font-weight:700;color:var(--ink);text-align:right}
-.fc2-wt-drill .none{font-size:12.5px;color:var(--ink3);margin-top:8px;line-height:1.5}
-.fc2-wt-cats{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:12px;font-size:11.5px;color:var(--ink3)}
+.fc2-wt-drill .none{font-size:14px;color:var(--ink3);margin-top:8px;line-height:1.5}
+.fc2-wt-cats{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:12px;font-size:13px;color:var(--ink3)}
 .fc2-wt-cats .cbtn{text-transform:capitalize}
 .fc2-wt-cats .cbtn.on{background:var(--hb-tint2);border-color:transparent;color:var(--ember)}
-.fc2-wt-obs{margin-top:16px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 24px}
-.fc2-wt-ob{display:flex;gap:10px;align-items:flex-start;font-size:13.5px;line-height:1.5;color:var(--ink2)}
+.fc2-wt-obs{margin-top:16px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:repeat(2,auto);grid-auto-flow:column;gap:10px 24px}
+.fc2-wt-ob{display:flex;gap:10px;align-items:flex-start;font-size:15px;line-height:1.5;color:var(--ink2)}
 .fc2-wt-ob i{flex-shrink:0;width:8px;height:8px;border-radius:50%;margin-top:7px;background:var(--ink3)}
 .fc2-wt-ob i.good{background:var(--hb-good)}.fc2-wt-ob i.bad{background:var(--hb-bad)}.fc2-wt-ob i.warn{background:var(--hb-warn)}
-.fc2-wt-ob small{display:block;font-size:11.5px;color:var(--ink3);margin-top:2px}
-.fc2-wt-tip{position:fixed;z-index:9999;pointer-events:none;display:none;background:var(--paper);border:1px solid var(--hb-line);border-radius:10px;padding:12px 14px;min-width:210px;max-width:270px;box-shadow:0 8px 24px rgba(0,0,0,.35);color:var(--ink);font-size:12.5px}
-.fc2-wt-tip .w{font-size:11px;font-weight:700;color:var(--ink3);letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px}
-.fc2-wt-tip .n{font-family:'Space Grotesk',sans-serif;font-size:21px;font-weight:700;color:var(--ink);line-height:1;margin-bottom:4px}
-.fc2-wt-tip .n small{font-family:'Apfel Grotezk',sans-serif;font-size:12px;font-weight:400;color:var(--ink3);margin-left:6px}
+.fc2-wt-ob small{display:block;font-size:13px;color:var(--ink3);margin-top:2px}
+.fc2-wt-tip{position:fixed;z-index:9999;pointer-events:none;display:none;background:var(--paper);border:1px solid var(--hb-line);border-radius:10px;padding:12px 14px;min-width:210px;max-width:270px;box-shadow:0 8px 24px rgba(0,0,0,.35);color:var(--ink);font-size:14px}
+.fc2-wt-tip .w{font-size:12.5px;font-weight:700;color:var(--ink3);letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px}
+.fc2-wt-tip .n{font-family:'Space Grotesk',sans-serif;font-size:22.5px;font-weight:700;color:var(--ink);line-height:1;margin-bottom:4px}
+.fc2-wt-tip .n small{font-family:'Apfel Grotezk',sans-serif;font-size:13.5px;font-weight:400;color:var(--ink3);margin-left:6px}
 .fc2-wt-tip .row{display:flex;justify-content:space-between;gap:12px;padding:4px 0;border-top:1px solid var(--hb-line2)}
 .fc2-wt-tip .row:first-of-type{margin-top:6px}
 .fc2-wt-tip .row span:first-child{color:var(--ink3)}
@@ -2866,105 +2872,106 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .fc2-wt-tip .up{color:var(--hb-bad)}.fc2-wt-tip .dn{color:var(--hb-good)}
 .fc2-wt-tip .items{margin-top:8px;padding-top:7px;border-top:1px solid var(--hb-line2);color:var(--ink3);line-height:1.5}
 .fc2-wt-tip .items b{color:var(--ink2);font-family:'Space Grotesk',sans-serif;font-weight:600}
-.fc2-wt-tip .flag{display:inline-block;margin:8px 6px 0 0;font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:2px 7px;border-radius:999px;background:var(--hb-tint2);color:var(--ember)}
+.fc2-wt-tip .flag{display:inline-block;margin:8px 6px 0 0;font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:2px 7px;border-radius:999px;background:var(--hb-tint2);color:var(--ember)}
 .fc2-wt-tip .flag.bad{background:rgba(224,85,85,.16);color:var(--hb-bad)}.fc2-wt-tip .flag.good{background:rgba(78,173,122,.14);color:var(--hb-good)}
-.fc2-wt-tip .hint{margin-top:8px;font-size:11px;color:var(--ink3)}
+.fc2-wt-tip .hint{margin-top:8px;font-size:12.5px;color:var(--ink3)}
 .fc2-wt-empty{padding:26px 20px 22px;text-align:center;width:100%}
-.fc2-wt-empty .t{font-family:'Clash Display',sans-serif;font-weight:500;font-size:21px;color:var(--ink);margin-top:10px}
-.fc2-wt-empty .r{font-size:13.5px;color:var(--ink2);margin:8px auto 0;max-width:540px;line-height:1.55}
-.fc2-wt-empty .prog{display:inline-flex;align-items:center;gap:10px;margin-top:14px;font-size:12.5px;color:var(--ink3)}
+.fc2-wt-empty .t{font-family:'Clash Display',sans-serif;font-weight:500;font-size:22.5px;color:var(--ink);margin-top:10px}
+.fc2-wt-empty .r{font-size:15px;color:var(--ink2);margin:8px auto 0;max-width:540px;line-height:1.55}
+.fc2-wt-empty .prog{display:inline-flex;align-items:center;gap:10px;margin-top:14px;font-size:14px;color:var(--ink3)}
 .fc2-wt-empty .prog .bar{width:120px;height:6px;border-radius:3px;background:var(--hb-line2);overflow:hidden}
 .fc2-wt-empty .prog .bar i{display:block;height:100%;background:var(--ember);border-radius:3px}
 .fc2-wt-empty .steps{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:18px auto 0;max-width:580px;text-align:left}
-.fc2-wt-empty .step{padding:12px 14px;border-radius:10px;background:var(--hb-tint);font-size:12.5px;color:var(--ink2);line-height:1.5}
-.fc2-wt-empty .step b{display:block;font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ember);margin-bottom:4px}
+.fc2-wt-empty .step{padding:12px 14px;border-radius:10px;background:var(--hb-tint);font-size:14px;color:var(--ink2);line-height:1.5}
+.fc2-wt-empty .step b{display:block;font-size:12.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ember);margin-bottom:4px}
 @media(max-width:900px){.fc2-wt{padding:18px 16px 16px}.fc2-wt-kpis{grid-template-columns:repeat(2,minmax(0,1fr));row-gap:16px}.fc2-wt-kpi:nth-child(3){border-left:none;padding-left:0}.fc2-wt-kpi .d{white-space:normal;overflow:visible;text-overflow:clip}.fc2-wt-obs,.fc2-wt-drill .rows,.fc2-wt-empty .steps{grid-template-columns:1fr}}
-.fc2-empty{font-size:12.5px;color:var(--ink3);padding:26px 0;text-align:center}
+@media(max-width:640px){.fc2-hero-nums .n{padding-right:0;border-right:none}}
+.fc2-empty{font-size:14px;color:var(--ink3);padding:26px 0;text-align:center}
 .fc2-gauge{position:relative;height:170px;margin-top:6px}
 .fc2-gauge svg{display:block;width:100%;height:170px;overflow:visible}
 .fc2-gauge .c{position:absolute;left:0;right:0;bottom:22px;text-align:center;pointer-events:none}
-.fc2-gauge .c b{display:block;font-family:'Space Grotesk',sans-serif;font-size:26px;font-weight:700;color:var(--ink);line-height:1}
-.fc2-gauge .c span{display:block;font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);margin-top:4px}
+.fc2-gauge .c b{display:block;font-family:'Space Grotesk',sans-serif;font-size:27.5px;font-weight:700;color:var(--ink);line-height:1}
+.fc2-gauge .c span{display:block;font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);margin-top:4px}
 .fc2-ledger{margin-top:10px;display:flex;flex-direction:column;gap:9px}
 .fc2-ledger .r{display:grid;grid-template-columns:minmax(0,1fr) 64px;gap:10px;align-items:center}
-.fc2-ledger .r .nm{font-size:12px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.fc2-ledger .r .sub{font-size:10.5px;color:var(--ink3);font-family:'Space Grotesk',sans-serif;margin-top:1px}
+.fc2-ledger .r .nm{font-size:13.5px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fc2-ledger .r .sub{font-size:12px;color:var(--ink3);font-family:'Space Grotesk',sans-serif;margin-top:1px}
 .fc2-ledger .r .bar{height:7px;border-radius:4px;background:var(--hb-line2);overflow:hidden;margin-top:5px;position:relative}
 .fc2-ledger .r .bar i{display:block;height:100%;border-radius:4px;background:linear-gradient(90deg,#c84b2f,#e8956a);box-shadow:0 0 10px rgba(200,75,47,.45);transform-origin:left;transform:scaleX(0);transition:transform 1.4s cubic-bezier(.3,0,.15,1)}
 .fc2-ledger .r .bar i.amber{background:linear-gradient(90deg,#b7791f,#e8b04a);box-shadow:0 0 10px rgba(212,160,48,.4)}
 .fc2-ledger .r .bar i::after{content:'';position:absolute;top:0;bottom:0;width:36%;background:linear-gradient(90deg,transparent,rgba(255,255,255,.35),transparent);animation:fc2Sheen 2.6s ease-in-out 1.2s both}
 .fc2-ledger .r .bar.on i{transform:scaleX(1)}
-.fc2-ledger .r .v{font-family:'Space Grotesk',sans-serif;font-size:13px;font-weight:700;color:var(--ember);text-align:right;white-space:nowrap}
+.fc2-ledger .r .v{font-family:'Space Grotesk',sans-serif;font-size:14.5px;font-weight:700;color:var(--ember);text-align:right;white-space:nowrap}
 .fc2-ledger .r .v.amber{color:var(--hb-warn)}
 @keyframes fc2Sheen{0%{left:-40%}100%{left:110%}}
 .fc2-sec{margin-top:34px;padding-top:22px;border-top:1px solid var(--hb-line)}
 .fc2-sec .hd{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:8px}
-.fc2-sec .hd h2{font-family:'Clash Display',sans-serif;font-weight:500;font-size:22px;letter-spacing:-.01em;color:var(--ink);margin:4px 0 0}
-.fc2-sec .hd .sub{font-size:12.5px;color:var(--ink3);margin-top:3px}
+.fc2-sec .hd h2{font-family:'Clash Display',sans-serif;font-weight:500;font-size:23.5px;letter-spacing:-.01em;color:var(--ink);margin:4px 0 0}
+.fc2-sec .hd .sub{font-size:14px;color:var(--ink3);margin-top:3px}
 .fc2-orders{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:26px;margin-top:10px}
-.fc2-col .ch{display:flex;align-items:center;gap:8px;font-size:10.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);padding-bottom:8px;border-bottom:1px solid var(--hb-line2)}
+.fc2-col .ch{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);padding-bottom:8px;border-bottom:1px solid var(--hb-line2)}
 .fc2-col .ch .d{width:8px;height:8px;border-radius:50%;flex-shrink:0}
-.fc2-col .ch .n{margin-left:auto;font-family:'Space Grotesk',sans-serif;font-size:11px;color:var(--ink)}
+.fc2-col .ch .n{margin-left:auto;font-family:'Space Grotesk',sans-serif;font-size:12.5px;color:var(--ink)}
 .fc2-col.urgent .ch .d{background:var(--hb-bad);box-shadow:0 0 8px var(--hb-bad)}.fc2-col.soon .ch .d{background:var(--hb-warn);box-shadow:0 0 8px var(--hb-warn)}.fc2-col.reduce .ch .d{background:var(--hb-good);box-shadow:0 0 8px var(--hb-good)}
 .fc2-col .row{display:flex;align-items:center;gap:10px;padding:10px 0 10px 12px;border-top:1px solid var(--hb-line2);position:relative}
 .fc2-col .row:first-of-type{border-top:none}
 .fc2-col .row::before{content:'';position:absolute;left:0;top:10px;bottom:10px;width:2.5px;border-radius:2px;background:var(--hb-line)}
 .fc2-col.urgent .row::before{background:var(--hb-bad)}.fc2-col.soon .row::before{background:var(--hb-warn)}.fc2-col.reduce .row::before{background:var(--hb-good)}
 .fc2-col .row .t{flex:1;min-width:0}
-.fc2-col .row .t b{display:block;font-size:13px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.fc2-col .row .t span{display:block;font-size:11px;color:var(--ink3);margin-top:2px}
+.fc2-col .row .t b{display:block;font-size:14.5px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fc2-col .row .t span{display:block;font-size:12.5px;color:var(--ink3);margin-top:2px}
 .fc2-col .row .q{text-align:right;flex-shrink:0}
-.fc2-col .row .q .l{font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3)}
-.fc2-col .row .q .p{display:inline-block;font-family:'Space Grotesk',sans-serif;font-size:12px;font-weight:700;color:var(--ink);background:var(--hb-tint2);border-radius:6px;padding:3px 9px;margin-top:2px;white-space:nowrap}
+.fc2-col .row .q .l{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3)}
+.fc2-col .row .q .p{display:inline-block;font-family:'Space Grotesk',sans-serif;font-size:13.5px;font-weight:700;color:var(--ink);background:var(--hb-tint2);border-radius:6px;padding:3px 9px;margin-top:2px;white-space:nowrap}
 .fc2-col.reduce .row .q .p{color:var(--hb-good)}
-.fc2-col .row .q .s{font-family:'Space Grotesk',sans-serif;font-size:10.5px;font-weight:700;margin-top:3px}
+.fc2-col .row .q .s{font-family:'Space Grotesk',sans-serif;font-size:12px;font-weight:700;margin-top:3px}
 .fc2-col .row .q .s.good{color:var(--hb-good)}.fc2-col .row .q .s.bad{color:var(--hb-bad)}.fc2-col .row .q .s.dim{color:var(--ink3);font-weight:400}
-.fc2-col .none{font-size:11.5px;color:var(--ink3);padding:16px 0 6px 12px}
-.fc2-ok{display:flex;align-items:center;gap:10px;margin-top:12px;font-size:13.5px;color:var(--hb-good);font-weight:500}
+.fc2-col .none{font-size:13px;color:var(--ink3);padding:16px 0 6px 12px}
+.fc2-ok{display:flex;align-items:center;gap:10px;margin-top:12px;font-size:15px;color:var(--hb-good);font-weight:500}
 .fc2-ok i{width:8px;height:8px;border-radius:50%;background:var(--hb-good);box-shadow:0 0 8px var(--hb-good)}
 .fc2-pw .row{display:flex;align-items:flex-start;gap:12px;padding:11px 0 11px 12px;border-top:1px solid var(--hb-line2);position:relative}
 .fc2-pw .row:first-of-type{border-top:none}
 .fc2-pw .row::before{content:'';position:absolute;left:0;top:11px;bottom:11px;width:2.5px;border-radius:2px;background:var(--hb-warn)}
 .fc2-pw .row.trend::before{background:var(--hb-bad)}
 .fc2-pw .row .t{flex:1;min-width:0}
-.fc2-pw .row .t b{font-size:13.5px;font-weight:600;color:var(--ink)}
-.fc2-pw .row .t .pr{font-size:11px;color:var(--ink3);font-family:'Space Grotesk',sans-serif;margin-top:2px}
-.fc2-pw .row .t .h{font-size:12px;color:var(--ink2);margin-top:4px;line-height:1.5}
-.fc2-pw .row .pct{font-family:'Space Grotesk',sans-serif;font-size:14px;font-weight:700;color:var(--hb-warn);text-align:right;white-space:nowrap}
+.fc2-pw .row .t b{font-size:15px;font-weight:600;color:var(--ink)}
+.fc2-pw .row .t .pr{font-size:12.5px;color:var(--ink3);font-family:'Space Grotesk',sans-serif;margin-top:2px}
+.fc2-pw .row .t .h{font-size:13.5px;color:var(--ink2);margin-top:4px;line-height:1.5}
+.fc2-pw .row .pct{font-family:'Space Grotesk',sans-serif;font-size:15.5px;font-weight:700;color:var(--hb-warn);text-align:right;white-space:nowrap}
 .fc2-pw .row.trend .pct{color:var(--hb-bad)}
-.fc2-pw .row .pct small{display:block;font-family:'Apfel Grotezk',sans-serif;font-size:10px;font-weight:400;color:var(--ink3);margin-top:1px}
+.fc2-pw .row .pct small{display:block;font-family:'Apfel Grotezk',sans-serif;font-size:11px;font-weight:400;color:var(--ink3);margin-top:1px}
 .fc2-track{margin-top:12px;border-radius:12px;background:var(--hb-tint);padding:16px 18px}
-.fc2-drift{margin-bottom:12px;font-size:12.5px;font-weight:600;border-radius:8px;padding:9px 12px}
+.fc2-drift{margin-bottom:12px;font-size:14px;font-weight:600;border-radius:8px;padding:9px 12px}
 .fc2-drift.warn{background:rgba(212,160,48,.12);color:var(--hb-warn)}.fc2-drift.good{background:rgba(78,173,122,.12);color:var(--hb-good)}
-.fc2-table{width:100%;border-collapse:collapse;font-size:12.5px}
-.fc2-table th{text-align:left;padding:6px 8px;color:var(--ink3);font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;border-bottom:1px solid var(--hb-line)}
+.fc2-table{width:100%;border-collapse:collapse;font-size:14px}
+.fc2-table th{text-align:left;padding:6px 8px;color:var(--ink3);font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;border-bottom:1px solid var(--hb-line)}
 .fc2-table td{padding:6px 8px;border-bottom:1px solid var(--hb-line2)}
-.fc2-table .fc2-in{width:100%;border:none;border-bottom:1px solid transparent;background:transparent;font-size:13px;color:var(--ink);font-family:inherit;outline:none;padding:4px 0;transition:border-color .15s}
+.fc2-table .fc2-in{width:100%;border:none;border-bottom:1px solid transparent;background:transparent;font-size:14.5px;color:var(--ink);font-family:inherit;outline:none;padding:4px 0;transition:border-color .15s}
 .fc2-table .fc2-in.num{font-family:'Space Grotesk',sans-serif}
 .fc2-table .fc2-in:focus{border-bottom-color:var(--ember)}
 .fc2-table .fc2-in::placeholder{color:var(--ink3);opacity:.7}
-.fc2-table .fc-save-badge{font-size:9px;font-weight:700;letter-spacing:.06em;color:var(--ink3)}
+.fc2-table .fc-save-badge{font-size:10px;font-weight:700;letter-spacing:.06em;color:var(--ink3)}
 .fc2-table .fc-save-badge.saved{color:var(--hb-good)}.fc2-table .fc-save-badge.err{color:var(--hb-bad)}
-.fc2-table .rm{background:none;border:none;cursor:pointer;color:var(--ink3);font-size:13px;line-height:1;padding:0 4px;vertical-align:middle}
+.fc2-table .rm{background:none;border:none;cursor:pointer;color:var(--ink3);font-size:14.5px;line-height:1;padding:0 4px;vertical-align:middle}
 .fc2-table .rm:hover{color:var(--ember)}
 .fc2-submit{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:16px;flex-wrap:wrap}
 .fc2-submit .l{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 #fc-submit-pill{flex-direction:column;align-items:flex-start;justify-content:center;gap:1px;height:36px;padding:0 14px;background:rgba(78,173,122,.12);border:1px solid rgba(78,173,122,.3);border-radius:8px}
-#fc-pill-line1{font-size:11px;font-weight:700;color:var(--hb-good);line-height:1.3;white-space:nowrap}
-#fc-pill-line2{font-size:9px;color:var(--ink3);letter-spacing:.02em;line-height:1.3;white-space:nowrap}
+#fc-pill-line1{font-size:12.5px;font-weight:700;color:var(--hb-good);line-height:1.3;white-space:nowrap}
+#fc-pill-line2{font-size:10px;color:var(--ink3);letter-spacing:.02em;line-height:1.3;white-space:nowrap}
 .fc2-tools{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:26px;margin-top:10px}
-.fc2-tool .ch{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:10.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);padding-bottom:8px;border-bottom:1px solid var(--hb-line2)}
-.fc2-tool .bd{font-size:12.5px;color:var(--ink3);padding-top:10px;line-height:1.5}
-.fc2-tool table{width:100%;border-collapse:collapse;font-size:12px}
+.fc2-tool .ch{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);padding-bottom:8px;border-bottom:1px solid var(--hb-line2)}
+.fc2-tool .bd{font-size:14px;color:var(--ink3);padding-top:10px;line-height:1.5}
+.fc2-tool table{width:100%;border-collapse:collapse;font-size:13.5px}
 .fc2-tool td{padding:6px 4px;border-bottom:1px solid var(--hb-line2);color:var(--ink2)}
 .fc2-tool td:first-child{color:var(--ink);font-weight:600}
 .fc2-tool td .num{font-family:'Space Grotesk',sans-serif}
-.fc2-tool input.price{width:66px;background:var(--hb-field);border:1px solid var(--hb-line);border-radius:5px;color:var(--ink);padding:3px 6px;font-size:11.5px;text-align:right;font-family:'Space Grotesk',sans-serif}
+.fc2-tool input.price{width:66px;background:var(--hb-field);border:1px solid var(--hb-line);border-radius:5px;color:var(--ink);padding:3px 6px;font-size:13px;text-align:right;font-family:'Space Grotesk',sans-serif}
 .fc2-tool .g{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid var(--hb-line2)}
-.fc2-tool .g b{font-size:12.5px;font-weight:600;color:var(--ink)}
-.fc2-tool .g span{font-size:11px;color:var(--ink3);display:block;margin-top:2px}
+.fc2-tool .g b{font-size:14px;font-weight:600;color:var(--ink)}
+.fc2-tool .g span{font-size:12.5px;color:var(--ink3);display:block;margin-top:2px}
 .fc2-po{margin-top:14px}
-.fc2-po .row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid var(--hb-line2);font-size:12px;color:var(--ink2)}
+.fc2-po .row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid var(--hb-line2);font-size:13.5px;color:var(--ink2)}
 .fc2-po .row b{font-family:'Space Grotesk',sans-serif;color:var(--ink);font-weight:600}
 @media(max-width:900px){.fc2-orders,.fc2-tools{grid-template-columns:1fr}.fc2-col{margin-bottom:12px}}
 </style>
@@ -2974,7 +2981,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
   {% set _ostock_total = inv.overstock|sum(attribute='overstock_cost') if inv.overstock else 0 %}
   {% if not inv.is_live %}{% set _head = 'Add your inventory to light this up' %}{% set _tone = 'neutral' %}
   {% elif _wl in ['Excellent','On Track'] %}{% set _head = 'On track' %}{% set _tone = 'good' %}
-  {% elif _wl == 'Above Average' %}{% set _head = 'Waste is creeping up' %}{% set _tone = 'warn' %}
+  {% elif _wl == 'Above Average' %}{% set _head = 'Waste is above target' %}{% set _tone = 'warn' %}
   {% elif _wl in ['Concerning','Needs Attention'] %}{% set _head = 'Waste needs attention' %}{% set _tone = 'bad' %}
   {% else %}{% set _head = 'Tracking this week' %}{% set _tone = 'neutral' %}{% endif %}
   {% if not inv.is_live %}
@@ -2982,34 +2989,32 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
   {% endif %}
   <div class="hb-top">
     <div style="min-width:0;flex:1">
-      <div class="hb-kicker">Food Cost · {{ now_mdy }} · {{ restaurant.name }}</div>
       <h1 class="hb-h1">Food cost. <span class="hb-head {{ _tone }}">{{ _head }}</span></h1>
     </div>
-    <div class="hb-pulse">
-      <span class="hb-chip {{ 'sample' if not inv.is_live else ('bad' if _tone == 'bad' else ('warn' if inv.total_waste_cost_week > 0 else 'good')) }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num">${{ inv.total_waste_cost_week|int|format_num }}</span></span><span class="l">waste / wk</span></span>
-      <span class="hb-chip {{ 'sample' if not inv.is_live else 'warn' }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num">${{ inv.monthly_waste_projection|int|format_num }}</span></span><span class="l">projected / mo</span></span>
-      <span class="hb-chip {{ 'sample' if not inv.is_live else ('good' if inv.waste_items|length == 0 else 'warn') }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num">{{ inv.waste_items|length }}</span></span><span class="l">waste items</span></span>
-      <span class="hb-chip {{ 'sample' if not inv.is_live else ('good' if inv.critical_low|length == 0 else 'bad') }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num">{{ inv.critical_low|length }}</span></span><span class="l">critical low</span></span>
-      <span class="hb-chip {{ 'sample' if not inv.is_live else 'good' }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num">${{ inv.total_stock_value|int|format_num }}</span></span><span class="l">inventory value</span></span>
+    <div class="fc2-top-right">
+      <div class="hb-pulse">
+        <span class="hb-chip {{ 'sample' if not inv.is_live else ('bad' if _tone == 'bad' else ('warn' if inv.total_waste_cost_week > 0 else 'good')) }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num">${{ inv.total_waste_cost_week|int|format_num }}</span></span><span class="l">waste / wk</span></span>
+        <span class="hb-chip {{ 'sample' if not inv.is_live else 'warn' }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num">${{ inv.monthly_waste_projection|int|format_num }}</span></span><span class="l">projected / mo</span></span>
+        <span class="hb-chip {{ 'sample' if not inv.is_live else ('good' if inv.waste_items|length == 0 else 'warn') }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num">{{ inv.waste_items|length }}</span></span><span class="l">waste items</span></span>
+        <span class="hb-chip {{ 'sample' if not inv.is_live else ('good' if inv.critical_low|length == 0 else 'bad') }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num">{{ inv.critical_low|length }}</span></span><span class="l">critical low</span></span>
+        <span class="hb-chip {{ 'sample' if not inv.is_live else 'good' }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num">${{ inv.total_stock_value|int|format_num }}</span></span><span class="l">inventory value</span></span>
+      </div>
+      <div class="fc2-hero-nums">
+        <div class="n"><div class="big bad"><span id="inv-annual-waste" class="hb-num">${{ inv.annual_waste_projection|int|format_num }}</span></div><div class="fc2-num-lbl">Projected annual waste</div><div class="delta"><span>${{ inv.monthly_waste_projection|int|format_num }}/mo at the current rate</span></div></div>
+        <div class="n"><div class="big good"><span id="inv-annual-recoverable" class="hb-num">${{ inv.annual_recoverable|int|format_num }}</span></div><div class="fc2-num-lbl">Recoverable / year</div><div class="delta"><span>${{ inv.recoverable_monthly|int|format_num }}/mo with better ordering</span></div></div>
+      </div>
     </div>
   </div>
 
   <section class="lb2-hero" aria-label="Waste trend">
-    <div class="hd">
-      <div class="fc2-hero-nums">
-        <div class="n"><div class="hb-kicker">Projected annual waste</div><div class="big bad"><span id="inv-annual-waste" class="hb-num">${{ inv.annual_waste_projection|int|format_num }}</span></div><div class="delta"><span>${{ inv.monthly_waste_projection|int|format_num }}/mo at the current rate</span></div></div>
-        <div class="n"><div class="hb-kicker">Recoverable / year</div><div class="big good"><span id="inv-annual-recoverable" class="hb-num">${{ inv.annual_recoverable|int|format_num }}</span></div><div class="delta"><span>${{ inv.recoverable_monthly|int|format_num }}/mo with better ordering</span></div></div>
-      </div>
-    </div>
     {# The waste-trend card. Drawn entirely from /api/food-cost/waste-trend
        (waste_trend.py) — the series, every derived figure and the
        observations come from there; the JS below only lays them out. #}
     <div class="fc2-wt" id="fc2-wt">
       <div class="fc2-wt-head">
         <div class="fc2-wt-title">
-          <div class="hb-kicker">Waste trend · <span id="fc2-wt-range-lbl">last 8 weeks</span> · <span id="fc2-wt-benchmark">{% if inv.is_live and _wl != '—' %}{{ inv.waste_rate_pct }}% of purchases · {{ _wl|lower }}{% else %}vs. a 4–5% industry target{% endif %}</span></div>
+          <div class="hb-kicker">Waste trend · <span id="fc2-wt-range-lbl">last 8 weeks</span></div>
           <div class="fc2-wt-verdict"><span id="fc2-wt-verdict">Reading your history…</span><span class="fc2-wt-pill" id="fc2-wt-pill" hidden></span></div>
-          <div class="fc2-wt-sub" id="fc2-wt-sub"></div>
         </div>
         <div class="fc2-wt-ctl" id="fc2-wt-ctl" hidden>
           <div class="lb2-range" id="fc2-wt-ranges" role="tablist" aria-label="Trend range"></div>
@@ -5809,8 +5814,15 @@ document.addEventListener('DOMContentLoaded', function(){
   }
   // Initialize filter so count label is accurate — only when the inbox is on screen
   if(document.getElementById('panel-reviews')&&document.getElementById('panel-reviews').classList.contains('active'))filterReviews();
-  if(document.getElementById('panel-inventory')&&document.getElementById('panel-inventory').classList.contains('active')&&typeof switchFcTab==='function')switchFcTab('analytics');
-  if(document.getElementById('panel-competitor')&&document.getElementById('panel-competitor').classList.contains('active')&&typeof switchIntelTab==='function')switchIntelTab('competitors');
+  // Fallback-only (no hash): switchTab() above already ran switchFcTab()/
+  // switchIntelTab() once for a hash match — a second, unconditional call
+  // right here used to fire every time the initial tab was #inventory or
+  // #competitor, doubling renderFcGauge()/renderWasteDonut()/
+  // renderOstockDonut() (they have no re-entry guard) in the same tick the
+  // hero numbers' count-up animation was starting, which is what made that
+  // count-up look choppy on load.
+  if(!btn&&document.getElementById('panel-inventory')&&document.getElementById('panel-inventory').classList.contains('active')&&typeof switchFcTab==='function')switchFcTab('analytics');
+  if(!btn&&document.getElementById('panel-competitor')&&document.getElementById('panel-competitor').classList.contains('active')&&typeof switchIntelTab==='function')switchIntelTab('competitors');
 
   // 2FA digit auto-advance with focus highlight
   var twoFADigits = document.querySelectorAll('.twofa-setup-digit');
@@ -9043,9 +9055,9 @@ function wtShow(id,on){var el=document.getElementById(id);if(el)el.hidden=!on;}
 function renderWasteTrend(){
   var d=_wt.data,host=document.getElementById('fc2-wt');if(!host||!d)return;
   var chart=document.getElementById('fc2-wt-chart');
-  var v=document.getElementById('fc2-wt-verdict'),pill=document.getElementById('fc2-wt-pill'),sub=document.getElementById('fc2-wt-sub');
+  var v=document.getElementById('fc2-wt-verdict'),pill=document.getElementById('fc2-wt-pill');
   if(!d.ok){
-    if(v)v.textContent='Trend unavailable';if(pill)pill.hidden=true;if(sub)sub.textContent='';
+    if(v)v.textContent='Trend unavailable';if(pill)pill.hidden=true;
     if(chart)chart.innerHTML=emptyStateHtml('Trend unavailable','Check back shortly — the history is still there',true);
     wtShow('fc2-wt-ctl',false);wtShow('fc2-wt-kpis',false);wtShow('fc2-wt-leg',false);wtShow('fc2-wt-drill',false);wtShow('fc2-wt-obs',false);
     return;
@@ -9055,8 +9067,8 @@ function renderWasteTrend(){
   wtDrawHeader(d);wtDrawRanges(d);wtDrawKpis(d);wtDrawChart();wtDrawLegend();wtDrawDrill();wtDrawObs(d);
 }
 function wtRenderEmpty(d){
-  var e=d.empty||{},v=document.getElementById('fc2-wt-verdict'),pill=document.getElementById('fc2-wt-pill'),sub=document.getElementById('fc2-wt-sub');
-  if(v)v.textContent='No trend yet';if(pill)pill.hidden=true;if(sub)sub.textContent='';
+  var e=d.empty||{},v=document.getElementById('fc2-wt-verdict'),pill=document.getElementById('fc2-wt-pill');
+  if(v)v.textContent='No trend yet';if(pill)pill.hidden=true;
   wtShow('fc2-wt-ctl',false);wtShow('fc2-wt-kpis',false);wtShow('fc2-wt-leg',false);wtShow('fc2-wt-drill',false);wtShow('fc2-wt-obs',false);
   var have=e.weeks_have||0,need=e.weeks_needed||2;
   var h='<div class="fc2-wt-empty">'+(typeof cavnarHearthSvg==='function'?cavnarHearthSvg():'')
@@ -9067,7 +9079,7 @@ function wtRenderEmpty(d){
   var chart=document.getElementById('fc2-wt-chart');if(chart)chart.innerHTML=h;
 }
 function wtDrawHeader(d){
-  var s=d.stats,n=d.weeks.length,v=document.getElementById('fc2-wt-verdict'),pill=document.getElementById('fc2-wt-pill'),sub=document.getElementById('fc2-wt-sub');
+  var s=d.stats,n=d.weeks.length,v=document.getElementById('fc2-wt-verdict'),pill=document.getElementById('fc2-wt-pill');
   var text;
   if(s.direction==='worsening')text='Waste is climbing';
   else if(s.direction==='improving')text='Waste is coming down';
@@ -9080,13 +9092,6 @@ function wtDrawHeader(d){
       var cls=s.above_target?(s.intervention?'bad':'warn'):'good';
       pill.className='fc2-wt-pill '+cls;pill.textContent=s.above_target?(s.intervention?'Action recommended':'Over target'):'On target';pill.hidden=false;
     } else pill.hidden=true;
-  }
-  if(sub){
-    var parts=['This week <span class="hb-num">'+wtMoney(s.latest)+'</span>'];
-    if(n>=2)parts.push('<span class="hb-num">'+n+'</span>-week average <span class="hb-num">'+wtMoney(s.avg)+'</span>');
-    if(d.target&&d.target.weekly)parts.push('target <span class="hb-num">'+wtMoney(d.target.weekly)+'</span>/wk at <span class="hb-num">'+d.target.pct+'%</span> of purchases');
-    if(s.confidence)parts.push(wtEsc(s.confidence==='high'?'high-confidence read':(s.confidence==='medium'?'moderate-confidence read':'early read')));
-    sub.innerHTML=parts.join(' <span style="opacity:.5">·</span> ');
   }
 }
 function wtDrawRanges(d){
@@ -9143,12 +9148,21 @@ function wtDrawChart(){
   var animate=!_wt.animated[d.range]&&!(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   _wt.animated[d.range]=true;
   var svg='<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none" aria-hidden="true">';
+  // Symmetric shadow (0,0 offset, so it reads as depth under the bar, not a
+  // directional drop-shadow) — gives each bar a "lifted off the page" feel.
+  svg+='<defs><filter id="fc2wtLift" x="-60%" y="-60%" width="220%" height="220%"><feDropShadow dx="0" dy="0" stdDeviation="3.5" flood-color="#000" flood-opacity=".4"/></filter></defs>';
   for(var g=1;g<=4;g++){var gy=y(top*g/4);svg+='<line x1="0" y1="'+gy.toFixed(1)+'" x2="'+W+'" y2="'+gy.toFixed(1)+'" stroke="currentColor" stroke-opacity=".07"/>';}
   svg+='<line x1="0" y1="'+base+'" x2="'+W+'" y2="'+base+'" stroke="currentColor" stroke-opacity=".14"/>';
   var yLab='',steps=[top,top*.75,top*.5,top*.25,0];
   for(var q=0;q<steps.length;q++)yLab+='<span>$'+Math.round(steps[q]).toLocaleString()+'</span>';
   var ax='',bars='',labels='';
   var lab='style="paint-order:stroke;stroke:var(--paper);stroke-width:4px;stroke-linejoin:round"';
+  // The target band is drawn first (and the dashed line + label after it,
+  // further down) so the low-opacity pill sits behind everything else.
+  if(target){
+    var bandTy=y(target),bandH=18;
+    svg+='<rect x="0" y="'+(bandTy-bandH/2).toFixed(1)+'" width="'+W+'" height="'+bandH+'" rx="'+(bandH/2)+'" fill="#4ead7a" fill-opacity=".1"/>';
+  }
   for(var i=0;i<n;i++){
     var w=weeks[i],f=w.flags||{},x=gap+i*(bw+gap),val=vals[i],isLast=i===n-1,on=(_wt.sel===i);
     var every=veryDense?Math.ceil(n/13):(dense?Math.ceil(n/13):1);
@@ -9159,13 +9173,13 @@ function wtDrawChart(){
       var over=target?val>target:false,bh=Math.max(2,base-y(val)),by=base-bh;
       var fill=over?'#c84b2f':(target?'#4ead7a':'#c84b2f'),op=isLast?1:(over?.85:.55);
       var stroke=f.anomaly==='spike'?' stroke="#e05555" stroke-width="2"':(isLast?' stroke="#e8956a" stroke-width="1.5" stroke-opacity=".9"':'');
-      var delay=animate?' style="animation-delay:'+(i*(dense?12:70))+'ms"':'';
-      bars+='<rect class="fc2-wt-bar'+(animate?' hb-bar':'')+(on?' on':'')+'" data-i="'+i+'" x="'+x.toFixed(1)+'" y="'+by.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+bh.toFixed(1)+'" rx="'+(dense?2:4)+'" fill="'+fill+'" fill-opacity="'+op+'"'+stroke+delay+'/>';
+      var delay=animate?' style="animation-delay:'+(i*(dense?18:140))+'ms"':'';
+      bars+='<rect class="fc2-wt-bar'+(animate?' hb-bar':'')+(on?' on':'')+'" data-i="'+i+'" x="'+x.toFixed(1)+'" y="'+by.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+bh.toFixed(1)+'" rx="'+(dense?2:4)+'" fill="'+fill+'" fill-opacity="'+op+'" filter="url(#fc2wtLift)"'+stroke+delay+'/>';
       if(!dense){
-        labels+='<text x="'+(x+bw/2).toFixed(1)+'" y="'+(by-6).toFixed(1)+'" text-anchor="middle" font-size="11.5" font-weight="'+(isLast?'700':'600')+'" fill="currentColor" fill-opacity="'+(isLast?'1':'.8')+'">'+wtMoney(val)+'</text>';
-        if(f.anomaly==='spike')labels+='<text x="'+(x+bw/2).toFixed(1)+'" y="'+(by-20).toFixed(1)+'" text-anchor="middle" font-size="10" font-weight="700" letter-spacing="1" fill="#e05555">SPIKE</text>';
-        else if(f.worst&&n>=3)labels+='<text x="'+(x+bw/2).toFixed(1)+'" y="'+(by-20).toFixed(1)+'" text-anchor="middle" font-size="10" font-weight="700" letter-spacing="1" fill="#e05555" fill-opacity=".85">WORST</text>';
-        else if(f.best&&n>=3)labels+='<text x="'+(x+bw/2).toFixed(1)+'" y="'+(by-20).toFixed(1)+'" text-anchor="middle" font-size="10" font-weight="700" letter-spacing="1" fill="#4ead7a" fill-opacity=".9">BEST</text>';
+        labels+='<text x="'+(x+bw/2).toFixed(1)+'" y="'+(by-6).toFixed(1)+'" text-anchor="middle" font-size="13" font-weight="'+(isLast?'700':'600')+'" fill="currentColor" fill-opacity="'+(isLast?'1':'.8')+'">'+wtMoney(val)+'</text>';
+        if(f.anomaly==='spike')labels+='<text x="'+(x+bw/2).toFixed(1)+'" y="'+(by-21).toFixed(1)+'" text-anchor="middle" font-size="11.5" font-weight="700" letter-spacing=".3" fill="#e05555">SPIKE</text>';
+        else if(f.worst&&n>=3)labels+='<text x="'+(x+bw/2).toFixed(1)+'" y="'+(by-21).toFixed(1)+'" text-anchor="middle" font-size="11.5" font-weight="700" letter-spacing=".3" fill="#e05555" fill-opacity=".85">WORST</text>';
+        else if(f.best&&n>=3)labels+='<text x="'+(x+bw/2).toFixed(1)+'" y="'+(by-21).toFixed(1)+'" text-anchor="middle" font-size="11.5" font-weight="700" letter-spacing=".3" fill="#4ead7a" fill-opacity=".9">BEST</text>';
       }
     }
     // Full-column hit area so a short bar is as easy to hover as a tall one.
@@ -9184,13 +9198,13 @@ function wtDrawChart(){
     var lp=pts[pts.length-1];
     avgLabelY=lp[1]-8;
     if(Math.abs(avgLabelY-lastLabelY)<15)avgLabelY=lp[1]+14;
-    svg+='<text '+lab+' x="'+(W-4)+'" y="'+avgLabelY.toFixed(1)+'" text-anchor="end" font-size="11" font-weight="700" fill="#e8956a">4-wk avg '+wtMoney(roll[n-1])+'</text>';
+    svg+='<text '+lab+' x="'+(W-4)+'" y="'+avgLabelY.toFixed(1)+'" text-anchor="end" font-size="12.5" font-weight="700" fill="#e8956a">4-wk avg '+wtMoney(roll[n-1])+'</text>';
   }
   if(target){
     var ty=y(target),tly=ty-7;
     if((avgLabelY!=null&&Math.abs(tly-avgLabelY)<15)||Math.abs(tly-lastLabelY)<15)tly=ty+14;
     svg+='<line x1="0" y1="'+ty.toFixed(1)+'" x2="'+W+'" y2="'+ty.toFixed(1)+'" stroke="#4ead7a" stroke-opacity=".85" stroke-width="1.5" stroke-dasharray="4 5"/>';
-    svg+='<text '+lab+' x="'+(W-4)+'" y="'+tly.toFixed(1)+'" text-anchor="end" font-size="11" font-weight="700" fill="#4ead7a">target '+wtMoney(target)+'/wk</text>';
+    svg+='<text '+lab+' x="'+(W-4)+'" y="'+tly.toFixed(1)+'" text-anchor="end" font-size="12.5" font-weight="700" fill="#4ead7a">target '+wtMoney(target)+'/wk</text>';
   }
   svg+=labels+'</svg>';
   host.innerHTML='<div class="y">'+yLab+'</div><div class="plot">'+svg+'<div class="ax">'+ax+'</div></div>';
@@ -9275,7 +9289,11 @@ function wtDrawDrill(){
 }
 function wtDrawObs(d){
   var box=document.getElementById('fc2-wt-obs');if(!box)return;
-  var obs=d.observations||[],h='';
+  // Grid fills column-first (see .fc2-wt-obs), so sorting the good-tone
+  // reads to the front groups them together in the left column instead of
+  // scattering good/bad across both columns in whatever order the engine
+  // returned them.
+  var obs=(d.observations||[]).slice().sort(function(a,b){return (a.tone==='good'?0:1)-(b.tone==='good'?0:1);}),h='';
   for(var i=0;i<obs.length;i++){h+='<div class="fc2-wt-ob"><i class="'+wtEsc(obs[i].tone||'')+'"></i><div>'+wtEsc(obs[i].text)+(obs[i].confidence?'<small>'+wtEsc(obs[i].confidence)+'</small>':'')+'</div></div>';}
   if(d.weeks.length<2&&d.empty)h+='<div class="fc2-wt-ob"><i></i><div>'+wtEsc(d.empty.reason)+'<small>'+wtEsc(d.empty.when)+'</small></div></div>';
   if(!h){wtShow('fc2-wt-obs',false);return;}
