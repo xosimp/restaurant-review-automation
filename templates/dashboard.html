@@ -1055,7 +1055,7 @@ document.documentElement.classList.add('pjs-loading');
           <button class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" aria-label="Close" onclick="document.getElementById('changelog-panel').style.display='none'">✕</button>
         </div>
         <div id="changelog-list" style="max-height:340px;overflow-y:auto;padding:8px 0">
-          <div style="padding:14px 16px;font-size:12px;color:var(--ink3)">Loading…</div>
+          <div class="hb-load" style="height:80px;justify-content:center"><canvas class="hb-orb" data-orb-state="working" width="24" height="24" style="width:24px;height:24px"></canvas><span>Loading updates…</span></div>
         </div>
       </div>
     </div>
@@ -2913,21 +2913,16 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
   {% elif _wl in ['Concerning','Needs Attention'] %}{% set _head = 'Waste needs attention' %}{% set _tone = 'bad' %}
   {% else %}{% set _head = 'Tracking this week' %}{% set _tone = 'neutral' %}{% endif %}
   {% if not inv.is_live %}
-  <div class="fc2-sample"><b>Sample data.</b> Upload a CSV with item, current_stock, par_level, unit_cost, waste_last_week — or connect Toast — to see your real numbers.</div>
+  <div class="fc2-sample"><b>Sample data.</b> Upload a CSV with item, current_stock, par_level, unit_cost, waste_last_week — or connect your POS — to see your real numbers.</div>
   {% endif %}
   <div class="hb-top">
     <div style="min-width:0;flex:1">
       <div class="hb-kicker">Food Cost · {{ now_mdy }} · {{ restaurant.name }}</div>
       <h1 class="hb-h1">Food cost. <span class="hb-head {{ _tone }}">{{ _head }}</span></h1>
+      {% if inv.is_live %}
       <div class="hb-sub"><span><span class="hb-num">${{ inv.total_waste_cost_week|int|format_num }}</span> waste this week</span><span class="sep">·</span><span><span class="hb-num">${{ inv.monthly_waste_projection|int|format_num }}</span> projected / mo</span><span class="sep">·</span><span><span class="hb-num">{{ inv.waste_rate_pct }}%</span> of purchases vs a <span class="hb-num">4–5%</span> target</span><span class="sep">·</span><span><span class="hb-num">{{ inv.total_items }}</span> items tracked</span><span class="sep">·</span><span>updated <span class="hb-num">{{ inv.last_updated }}</span></span></div>
-      <div class="hb-sub" style="margin-top:4px">{% if inv.is_live %}{% if inv.recoverable_monthly > 0 %}About ${{ inv.recoverable_monthly|int|format_num }} a month is recoverable with tighter ordering — ${{ inv.annual_recoverable|int|format_num }} a year.{% else %}Nothing is leaking this week — ordering looks calibrated.{% endif %}{% else %}Everything below is a sample until your first count lands.{% endif %}</div>
-      <div class="lb2-actions">
-        <label class="cbtn cbtn-secondary">{% if inv.is_live %}Update inventory CSV{% else %}Upload inventory CSV{% endif %}<input type="file" accept=".csv" style="display:none" id="inventory-inline-input" onchange="clientUpload('inventory', this)"></label>
-        <button class="cbtn cbtn-secondary" onclick="fc2Jump('fc2-tracker')">Submit this week's prices</button>
-        <button class="cbtn cbtn-secondary" onclick="fc2Jump('fc2-tools');loadOrderDraft()">Send order</button>
-        <button class="cbtn cbtn-secondary" onclick="fc2Jump('fc2-tools');loadMenuMargins()">Menu margins</button>
-      </div>
-      <span id="inventory-inline-result" style="font-size:12px;color:var(--hb-good);display:none;margin-top:8px"></span>
+      <div class="hb-sub" style="margin-top:4px">{% if inv.recoverable_monthly > 0 %}About ${{ inv.recoverable_monthly|int|format_num }} a month is recoverable with tighter ordering — ${{ inv.annual_recoverable|int|format_num }} a year.{% else %}Nothing is leaking this week — ordering looks calibrated.{% endif %}</div>
+      {% endif %}
     </div>
     <div class="hb-pulse">
       <span class="hb-chip {{ 'sample' if not inv.is_live else ('bad' if _tone == 'bad' else ('warn' if inv.total_waste_cost_week > 0 else 'good')) }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num">${{ inv.total_waste_cost_week|int|format_num }}</span></span><span class="l">waste / wk</span></span>
@@ -2999,7 +2994,12 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 
   <div class="fc2-sec" id="fc2-tracker">
     <div class="hd"><div><div class="hb-kicker">Key ingredient price monitor</div><h2>This week's prices</h2><div class="sub">Fill in price per unit right after an invoice arrives — drift against last week is flagged automatically.</div></div>
-      {% if food_cost_data and food_cost_data.current and food_cost_data.current.submitted_at %}{% set _sa2=food_cost_data.current.submitted_at %}<div class="sub">Last submitted <span class="hb-num">{{ _sa2[5:7]|int }}/{{ _sa2[8:10]|int }}/{{ _sa2[2:4] }}</span></div>{% endif %}</div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px">
+        {% if food_cost_data and food_cost_data.current and food_cost_data.current.submitted_at %}{% set _sa2=food_cost_data.current.submitted_at %}<div class="sub">Last submitted <span class="hb-num">{{ _sa2[5:7]|int }}/{{ _sa2[8:10]|int }}/{{ _sa2[2:4] }}</span></div>{% endif %}
+        <label class="cbtn cbtn-secondary">{% if inv.is_live %}Update inventory CSV{% else %}Upload inventory CSV{% endif %}<input type="file" accept=".csv" style="display:none" id="inventory-inline-input" onchange="clientUpload('inventory', this)"></label>
+        <span id="inventory-inline-result" style="font-size:12px;color:var(--hb-good);display:none"></span>
+      </div>
+    </div>
     <div class="fc2-track">
       {% if food_cost_data and food_cost_data.current and food_cost_data.previous and food_cost_data.previous['items'] %}
       <div id="fc-drift-saved">
@@ -3072,7 +3072,6 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
   var _fc2Rate={{ inv.waste_rate_pct|float }},_fc2WasteWeek={{ inv.total_waste_cost_week|float }};
   var _fc2Gauge={monthly:{{ inv.recoverable_monthly|int }},annual:{{ inv.annual_recoverable|int }},ceiling:{{ [inv.recoverable_monthly|int, (inv.monthly_waste_projection + _ostock_total)|int]|max }}};
   function _mmEsc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
-  function fc2Jump(id){var el=document.getElementById(id);if(el)el.scrollIntoView({behavior:'smooth',block:'start'});}
   // Waste Ledger / Tied-Up Capital — every flagged item as a bar with its
   // dollars counting up beside it, sorted by cost (same chart as iOS).
   function _fc2Ledger(id,data,key,detailFn,amber){
@@ -5818,6 +5817,13 @@ function openChangelog() {
   var panel = document.getElementById('changelog-panel');
   var isOpen = panel.style.display !== 'none';
   if (isOpen) { panel.style.display = 'none'; } else { window._openHdrPanel(panel); }
+  // The panel's own drop-in animation finishes instantly; what actually
+  // read as lag was the first-ever /api/changelog fetch landing on a
+  // static "Loading…" line with nothing moving. The orb canvas sits in
+  // the DOM hidden (display:none) until now, so it never got mounted at
+  // page load — mount it the same way switchTab() does for a newly
+  // visible panel, one tick after the display flip takes effect.
+  if (!isOpen && window.cavnarMountOrbs) { setTimeout(function(){ cavnarMountOrbs(panel); }, 0); }
   if (!isOpen && !_changelogLoaded) { _loadChangelog(); }
 }
 function _loadChangelog() {
