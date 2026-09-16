@@ -3798,8 +3798,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     <div id="aiv-results" style="display:none">
       <div class="lb2-sig">
         <div class="lb2-sg"><div class="k"><span>Visibility orbit</span><i id="aiv-score-label"></i></div><div class="v"><span id="aiv-score-num" class="hb-num">—</span><small id="in2-orbit-cap">of AI searches mention you</small></div>
-          <div class="in2-orbit" id="in2-orbit"></div>
-          <div class="cap"><span id="aiv-history-count">First check</span><span class="sep">·</span><span>AI live search</span></div></div>
+          <div class="in2-orbit" id="in2-orbit"></div></div>
         <div class="lb2-sg"><div class="k"><span>GBP completeness</span><i id="aiv-gbp-label"></i></div><div class="v"><span id="aiv-gbp-num" class="hb-num">—</span><small id="in2-gbp-cap">of the profile fields AI reads</small></div>
           <div class="in2-gbp" id="aiv-gbp-items"></div>
           <button type="button" id="aiv-gbp-viewall" class="in2-viewall" style="display:none" onclick="in2RevealMore('aiv-gbp-items',this)"></button>
@@ -9934,7 +9933,9 @@ function renderAIVisibility(d) {
   if (scoreEl) {
     if (!hasScore) { scoreEl.textContent = '—'; }
     else if (d.ai_score_low != null && d.ai_score_high != null && d.ai_score_high > d.ai_score_low) {
-      scoreEl.textContent = d.ai_score_low + '–' + d.ai_score_high + '%';
+      // A bare "0-35%" reads as two competing numbers, not a range. The ~
+      // marks it as an estimate at a glance; the caption spells out why.
+      scoreEl.textContent = '~' + d.ai_score_low + '–' + d.ai_score_high + '%';
     } else { countUp(scoreEl, ai, 1400, '', '%', 0); }
   }
   if (scoreLbl) {
@@ -10049,7 +10050,14 @@ function renderAIVisibility(d) {
     }
     var qn = document.getElementById('in2-q-n'); if (qn) qn.textContent = hits + ' / ' + d.queries.length;
     var qf = document.getElementById('in2-q-flag'); if (qf) { qf.textContent = hits ? 'you came up' : 'not mentioned'; qf.className = hits ? 'good' : 'bad'; }
-    var oc = document.getElementById('in2-orbit-cap'); if (oc) oc.textContent = 'of AI searches mention you · ' + hits + ' of ' + d.queries.length + ' queries';
+    var oc = document.getElementById('in2-orbit-cap');
+    if (oc) {
+      // A bare "0-35%" reads as two conflicting numbers, not a range — say
+      // what it is when the score is one (a small/partial sample gives a
+      // spread, not a point estimate).
+      var ocIsRange = (d.ai_score_low != null && d.ai_score_high != null && d.ai_score_high > d.ai_score_low);
+      oc.textContent = (ocIsRange ? 'estimated range of AI searches mentioning you · ' : 'of AI searches mention you · ') + hits + ' of ' + d.queries.length + ' queries';
+    }
   }
   var cEl = document.getElementById('aiv-checklist'); if (cEl) cEl.innerHTML = '';
 
@@ -12081,7 +12089,6 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     jget('/api/ai-visibility/history',function(d){
       var runs=((d.ok&&d.runs)||[]).slice().reverse();  // oldest → newest
       window._aivRuns=runs;
-      var cnt=document.getElementById('aiv-history-count');if(cnt)cnt.textContent=runs.length>1?'last '+runs.length+' runs':(runs.length===1?'one check so far':'first check');
       var lr=document.getElementById('in2-last-run');if(lr&&runs.length){var L=runs[runs.length-1];lr.innerHTML=' · last check <span class="hb-num">'+Math.round(L.ai_score||0)+'%</span> on <span class="hb-num">'+(window.CavnarCharts?CavnarCharts.mdy(String(L.created_at||'').slice(0,10)):fmtDate(L.created_at))+'</span> · '+runs.length+' run'+(runs.length===1?'':'s')+' so far';}
       var score=_aivData?Math.round(_aivData.ai_score||0):(runs.length?Math.round(runs[runs.length-1].ai_score||0):null);
       if(score!==null&&document.getElementById('aiv-results')&&document.getElementById('aiv-results').style.display!=='none')renderVisibilityOrbit(score,runs);
@@ -12091,7 +12098,14 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
   // every past run as a thin glow line to the right (ported from iOS).
   window.renderVisibilityOrbit=function(score,runs){
     var el=document.getElementById('in2-orbit');if(!el)return;
-    var W=320,H=150,cx=64,cy=75,R=46,circ=2*Math.PI*R,frac=Math.max(0,Math.min(1,(score||0)/100));
+    // A trend line only exists once there are 2+ runs to connect. Before
+    // that, reserving the same wide viewBox for it left the ring stranded
+    // on the left with a lot of dead space to its right — recenter the
+    // ring in a narrower box instead of also captioning the empty space.
+    var hasTrend=!!(runs&&runs.length>=2);
+    var H=150,cy=75,R=46;
+    var W=hasTrend?320:170,cx=hasTrend?64:(W/2);
+    var circ=2*Math.PI*R,frac=Math.max(0,Math.min(1,(score||0)/100));
     var s='<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet" aria-hidden="true"><defs><linearGradient id="in2og" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#e8956a"/><stop offset="1" stop-color="#c84b2f"/></linearGradient><filter id="in2of" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="4"/></filter><linearGradient id="in2lg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#c84b2f" stop-opacity=".3"/><stop offset="1" stop-color="#c84b2f" stop-opacity="0"/></linearGradient></defs>';
     s+='<circle cx="'+cx+'" cy="'+cy+'" r="'+R+'" fill="none" stroke="currentColor" stroke-opacity=".08" stroke-width="10"/>';
     if(frac>0){
@@ -12101,10 +12115,8 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     var ang=-Math.PI/2+2*Math.PI*frac,dx=cx+R*Math.cos(ang),dy=cy+R*Math.sin(ang);
     s+='<circle class="hb-hot" cx="'+dx.toFixed(1)+'" cy="'+dy.toFixed(1)+'" r="12" fill="#e8956a" fill-opacity=".3" style="transform-box:fill-box;transform-origin:center;opacity:0;transition:opacity .5s 1.5s" data-tip="1"/><circle cx="'+dx.toFixed(1)+'" cy="'+dy.toFixed(1)+'" r="5" fill="#f2b183" stroke="#fff" stroke-opacity=".85" stroke-width="1.5" style="opacity:0;transition:opacity .5s 1.5s" data-tip="1"/>';
     s+='<text x="'+cx+'" y="'+(cy+4)+'" text-anchor="middle" font-size="24" font-weight="700" fill="currentColor" id="in2-orbit-n">'+Math.round(score||0)+'</text><text x="'+cx+'" y="'+(cy+19)+'" text-anchor="middle" font-size="9" font-weight="700" letter-spacing="1" fill="currentColor" fill-opacity=".55">AI VISIBILITY</text>';
-    var L=cx+R+34,Rr=W-8,T=34,B=H-30;
-    if(!runs||runs.length<2){
-      s+='<text x="'+L+'" y="'+(cy-8)+'" font-size="10" font-weight="700" letter-spacing="1" fill="currentColor" fill-opacity=".6">FIRST CHECK</text><text x="'+L+'" y="'+(cy+10)+'" font-size="11" fill="currentColor" fill-opacity=".75">Run another check to start the trend line.</text>';
-    }else{
+    if(hasTrend){
+      var L=cx+R+34,Rr=W-8,T=34,B=H-30;
       var n=runs.length,vals=runs.map(function(r){return +r.ai_score||0;}),lo=Math.max(0,Math.min.apply(null,vals)-10),hi=Math.min(100,Math.max.apply(null,vals)+10),rng=Math.max(1,hi-lo);
       var pts=[];for(var i=0;i<n;i++)pts.push([L+(Rr-L)*i/(n-1),B-(B-T)*((vals[i]-lo)/rng)]);
       var d=window.CavnarCharts?CavnarCharts.smooth(pts):pts.map(function(p,i){return (i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1);}).join(' ');
