@@ -396,15 +396,19 @@ def test_well_run_operation_is_flagged_not_inflated():
 
 # ── The audit tool page never triggers a stray "leave this page?" ─────────
 
+def _audit_tool_html():
+    import os
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return open(os.path.join(root, "templates", "audit_tool.html"), encoding="utf-8").read()
+
+
 def test_backspace_outside_a_text_field_cannot_navigate_away():
     """Clicking a yes/no answer button leaves keyboard focus on that button,
     not a text field. Safari treats Backspace/Delete pressed outside an
     editable element as browser-back — and since the page sets a
     beforeunload guard whenever the audit is dirty (see dirtyAny()), every
     accidental Backspace threw up "leave this page?" mid-edit."""
-    import os
-    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    html = open(os.path.join(root, "templates", "audit_tool.html"), encoding="utf-8").read()
+    html = _audit_tool_html()
     assert "beforeunload" in html and "dirtyAny()" in html
     keys_block = html.split("document.addEventListener('keydown', e => {", 1)[1].split("});", 1)[0]
     guard_pos = keys_block.find("e.key==='Backspace'")
@@ -412,3 +416,52 @@ def test_backspace_outside_a_text_field_cannot_navigate_away():
     guard_line = keys_block[guard_pos - 40:guard_pos + 120]
     assert "!typing" in guard_line, "the guard must only fire outside an editable field"
     assert "e.preventDefault()" in guard_line
+
+
+def test_a_focused_checkbox_is_not_mistaken_for_a_text_field():
+    """The first fix checked document.activeElement.tagName against
+    /INPUT|TEXTAREA|SELECT/ — but <input type="checkbox"> matches that
+    regex too, even though it holds no text to backspace through. The
+    "include in report" checkbox sits directly beside the notes textarea
+    it flags, so one click or Tab onto it left the guard silently
+    disabled: the very next Backspace was unguarded again, straight back
+    to the "leave this page?" dialog. Actually run isTextEditable() rather
+    than pattern-matching the source, since this is exactly the class of
+    logic bug a text match can't see."""
+    import re
+    import subprocess
+    html = _audit_tool_html()
+    const_m = re.search(r"const _UNEDITABLE_INPUT = .*?;", html)
+    fn_m = re.search(r"function isTextEditable\(el\)\{.*?\n\}", html, re.S)
+    assert const_m and fn_m, "isTextEditable() (or its input-type set) not found"
+    js = const_m.group(0) + "\n" + fn_m.group(0) + """
+const results = {};
+function elt(tag, type, contentEditable){
+  return {tagName: tag, type: type, isContentEditable: !!contentEditable};
+}
+results.textarea = isTextEditable(elt('TEXTAREA'));
+results.text_input = isTextEditable(elt('INPUT', 'text'));
+results.number_input = isTextEditable(elt('INPUT', 'number'));
+results.select = isTextEditable(elt('SELECT'));
+results.content_editable_div = isTextEditable(elt('DIV', null, true));
+results.checkbox = isTextEditable(elt('INPUT', 'checkbox'));
+results.radio = isTextEditable(elt('INPUT', 'radio'));
+results.button = isTextEditable(elt('BUTTON'));
+results.body = isTextEditable(elt('BODY'));
+results.null_el = isTextEditable(null);
+console.log(JSON.stringify(results));
+"""
+    out = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=10)
+    assert out.returncode == 0, out.stderr
+    import json
+    r = json.loads(out.stdout.strip())
+    assert r["textarea"] is True
+    assert r["text_input"] is True
+    assert r["number_input"] is True
+    assert r["select"] is True
+    assert r["content_editable_div"] is True
+    assert r["checkbox"] is False, "a checkbox has no text to backspace through"
+    assert r["radio"] is False
+    assert r["button"] is False
+    assert r["body"] is False
+    assert r["null_el"] is False

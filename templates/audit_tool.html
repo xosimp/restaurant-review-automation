@@ -604,14 +604,34 @@ function openSheet(){ const f = $('sheet'); if(!f.src) f.src = '/admin/audits/'+
 function closeSheet(){ $('drawer').classList.remove('on'); $('scrim').classList.remove('on'); }
 
 // ── keys ───────────────────────────────────────────────────────────────────
+// Not just tag name: a checkbox is an <input> too but isn't text-editable,
+// so the tag-only check below let a focused "include in report" checkbox
+// (right next to the notes textarea it sits beside) fall through as
+// "typing" and skip the Backspace guard — one stray click or Tab onto it
+// mid-sentence, and the very next Backspace was unguarded again.
+const _UNEDITABLE_INPUT = new Set(['checkbox','radio','button','submit','reset','file','range','color','image']);
+function isTextEditable(el){
+  if(!el) return false;
+  if(el.isContentEditable) return true;
+  const tag = el.tagName;
+  if(tag==='TEXTAREA' || tag==='SELECT') return true;
+  if(tag==='INPUT') return !_UNEDITABLE_INPUT.has((el.type||'text').toLowerCase());
+  return false;
+}
 document.addEventListener('keydown', e => {
-  const typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
+  const typing = isTextEditable(document.activeElement);
   if(e.key==='Escape'){ closeSheet(); $('menu').classList.remove('on'); return; }
-  // Safari navigates back on Backspace/Delete whenever focus isn't in an
-  // editable field. Clicking a yes/no answer button leaves focus on that
-  // button, so the next stray Backspace triggered Safari's back navigation
-  // — which beforeunload's dirty-audit guard then caught as "leave this
-  // page?", every time, since a mid-edit audit is always dirty.
+  // Safari navigates back on Backspace/Delete whenever focus isn't in a
+  // text-editable field. Clicking a yes/no button, a checkbox, or landing
+  // on nothing (document.body) between fields all leave focus somewhere
+  // non-editable — the next stray Backspace then triggered Safari's back
+  // navigation, which beforeunload's dirty-audit guard caught as "leave
+  // this page?" every time, since a mid-edit audit is always dirty. Once
+  // that dialog fired once, dismissing it didn't restore focus to the
+  // textarea either, so the very next Backspace (mid-sentence, since the
+  // user was still correcting text) tripped the exact same trap again —
+  // reported as the dialog "popping up a ton" and the page "freezing"
+  // under a cascade of blocking native prompts.
   if(!typing && (e.key==='Backspace' || e.key==='Delete')){ e.preventDefault(); return; }
   if(typing) return;
   const keys = SCHEMA ? SCHEMA.sections.map(s=>s.key).concat(SCHEMA.computed.map(s=>s.key)).concat(['sales']) : [];
