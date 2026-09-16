@@ -139,6 +139,66 @@ def test_a_profile_derived_city_says_so(db_path, monkeypatch):
     assert p["city_source"] == "profile"
 
 
+# ── Every "could not fetch answer" was Perplexity's rate limit, not an
+# outage — this key is on Tier 0 (50 RPM), and the eight queries a run
+# fires, with retries, used to land ~13 calls inside 9 seconds by
+# themselves. Pacing has to gate the actual send, process-wide. ───────────
+
+def test_pplx_wait_turn_enforces_the_rate_limit_gate(monkeypatch):
+    """The gate is a no-op inside pytest (nothing here talks to the real
+    Perplexity API), so remove that detection to prove the gate itself
+    actually blocks back-to-back sends for the configured interval."""
+    import time
+    import client_api
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    client_api._pplx_last_sent_at[0] = 0.0
+    start = time.monotonic()
+    client_api._pplx_wait_turn()
+    client_api._pplx_wait_turn()
+    elapsed = time.monotonic() - start
+    assert elapsed >= client_api._PPLX_MIN_INTERVAL - 0.05, (
+        f"two sends {elapsed:.2f}s apart, want >= {client_api._PPLX_MIN_INTERVAL}s")
+
+
+def test_a_429_honors_retry_after_instead_of_a_flat_delay(db_path, monkeypatch):
+    """A flat 2s retry can land back inside the same window that just
+    rejected it. Perplexity's own Retry-After header says how long its
+    limit actually takes to clear."""
+    import time
+    import client_api
+    import models
+    real = models.get_conn
+    monkeypatch.setattr(client_api, "get_conn", lambda *a, **k: real(db_path), raising=False)
+    monkeypatch.setattr(models, "DB_PATH", db_path)
+    conn = real(db_path)
+    conn.execute("INSERT INTO restaurants (id,name,owner_email,google_place_id,neighborhood,"
+                 "vibe,known_for) VALUES (1,'Gia Mia','o@x.test','ChIJx','Geneva',"
+                 "'lively pizza bar','wood-fired pizza')")
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(client_api, "get_restaurant", lambda rid: models.get_restaurant(rid, db_path))
+    monkeypatch.setattr(client_api, "_city_from_place_id", lambda pid: "Geneva")
+    monkeypatch.setattr(client_api, "get_review_stats", lambda rid: {"total": 10, "response_rate": 50})
+    monkeypatch.setattr(client_api, "ai_budget_exceeded", lambda rid: None, raising=False)
+    client_api._aivis_cache.clear()
+    monkeypatch.setenv("PERPLEXITY_API_KEY", "k")
+
+    class _Resp:
+        def __init__(self, code, headers=None):
+            self.status_code = code
+            self.headers = headers or {}
+        def json(self):
+            return {}
+
+    import requests as _rq
+    monkeypatch.setattr(_rq, "post", lambda *a, **kw: _Resp(429, {"Retry-After": "7"}))
+    slept = []
+    monkeypatch.setattr(time, "sleep", lambda s: slept.append(s))
+
+    client_api._do_ai_visibility_inner(1, force=True)
+    assert 7.0 in slept, f"a 429 with Retry-After: 7 should wait 7s, actually slept {slept}"
+
+
 # ── The score stops counting our own configuration ─────────────────────────
 
 def test_presence_and_setup_are_scored_separately(db_path, monkeypatch):

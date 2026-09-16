@@ -3,7 +3,7 @@ client_api.py — Client-facing API routes and data endpoints
 Registered as a Flask Blueprint in hosted_dashboard.py
 """
 from flask import Blueprint, request, jsonify, redirect, send_file, Response, render_template, make_response
-import os, json, re
+import os, json, re, time, threading
 from datetime import datetime
 
 from models import (get_conn, get_restaurant, update_restaurant, approve_response,
@@ -4446,6 +4446,45 @@ def _do_ai_visibility(rid):
 AIVIS_PLATFORM = "Perplexity"
 AIVIS_MODEL = os.getenv("AI_VISIBILITY_MODEL", "sonar")
 
+# Confirmed against production's ai_usage log: every "could not fetch answer"
+# was an HTTP 429 from Perplexity, never a timeout or any other failure.
+# This key sits on Perplexity's Tier 0 (no lifetime spend yet), which caps
+# sonar at 50 requests/minute — and the old per-run stagger (submit every
+# 0.6s, 3 workers, one 2s-delay retry) only paced one restaurant's own 8
+# queries against each other. It never accounted for: (a) that burst alone,
+# with its retries, already lands ~13 calls inside 9 seconds — well over
+# 50 RPM by itself — and (b) the limit is per API key, not per restaurant,
+# so run_weekly_ai_visibility() walking restaurants back-to-back (scheduler.py)
+# stacks each restaurant's burst on the same shared budget with no gap
+# between them. Pacing has to live at the one place every send actually
+# passes through, not at each call site.
+_PPLX_MIN_INTERVAL = float(os.getenv("PPLX_MIN_REQUEST_INTERVAL", "1.3"))  # 50 RPM = 1.2s; small margin
+_pplx_pace_lock = threading.Lock()
+_pplx_last_sent_at = [0.0]
+
+
+def _pplx_wait_turn():
+    """Block until it's safe to send the next Perplexity request.
+
+    Process-wide and thread-safe: every actual send — any restaurant, any
+    thread, any retry — queues through this one gate, so concurrent workers
+    within a run and back-to-back restaurants in the scheduler both respect
+    the same 50 RPM ceiling instead of only the queries within one run.
+
+    A no-op under pytest — this paces real network sends, and the test
+    suite's mocked ones don't touch Perplexity's actual rate limit, so
+    there's nothing here for a real request's timing to protect.
+    """
+    if "PYTEST_CURRENT_TEST" in os.environ:
+        return
+    with _pplx_pace_lock:
+        now = time.monotonic()
+        wait = _pplx_last_sent_at[0] + _PPLX_MIN_INTERVAL - now
+        if wait > 0:
+            time.sleep(wait)
+        _pplx_last_sent_at[0] = time.monotonic()
+
+
 _AIVIS_CACHE_SECS = int(os.getenv("AI_VISIBILITY_CACHE_SECS", "21600"))  # 6 hours
 _aivis_cache = {}
 
@@ -4741,17 +4780,15 @@ def _do_ai_visibility_inner(rid, force=False):
         cleaned = cleaned.strip()
         return cleaned[0].upper() + cleaned[1:] if cleaned else cleaned
 
-    # Firing all 3 queries at once via the ThreadPoolExecutor below
-    # reliably trips Perplexity's rate limit on this key's tier — verified
-    # directly: the same 3 queries run sequentially all succeed, but
-    # 2 of 3 silently come back empty when fired simultaneously, every
-    # time. One retry after a short delay (letting whatever per-second
-    # window the limit uses clear) recovers those without giving up the
-    # speed of parallelizing the common case where the limit isn't hit.
+    # Concurrency here is for latency (up to 3 responses in flight at once),
+    # not for send order — _pplx_wait_turn() below is what actually keeps
+    # this key under its 50 RPM ceiling, across every worker and every
+    # restaurant in the process, not just the queries in this one run.
     def _run_query(spec, _retry=True):
         q = spec["q"] if isinstance(spec, dict) else spec
         kind = spec.get("kind", "discovery") if isinstance(spec, dict) else "discovery"
         try:
+            _pplx_wait_turn()
             resp = _pplx_req.post(
                 "https://api.perplexity.ai/chat/completions",
                 headers={"Authorization": f"Bearer {_pplx_key}", "Content-Type": "application/json"},
@@ -4791,7 +4828,17 @@ def _do_ai_visibility_inner(rid, force=False):
             except Exception:
                 pass
             if not answer and _retry:
-                _pplx_time.sleep(2)
+                # _pplx_wait_turn() already keeps sends under the 50 RPM
+                # ceiling, so a 429 here means Perplexity's own window
+                # hasn't cleared yet — honor its Retry-After when it sends
+                # one instead of guessing a flat delay.
+                _delay = 2.0
+                if resp.status_code == 429:
+                    try:
+                        _delay = max(_delay, float(resp.headers.get("Retry-After", _delay)))
+                    except (TypeError, ValueError):
+                        pass
+                _pplx_time.sleep(_delay)
                 return _run_query(spec, _retry=False)
             if not answer:
                 # Perplexity did not answer. That is an outage on our side,
@@ -4826,20 +4873,14 @@ def _do_ai_visibility_inner(rid, force=False):
                     "appeared": False, "ok": False, "sources": [],
                     "competitors_named": []}
 
-    # Run all queries in parallel, but staggered — caps total time at ~10s
-    # instead of 30s+, while avoiding the true root cause of the rate-limit
-    # failures: all 3 requests landing in the same instant. The retry
-    # inside _run_query alone wasn't reliable enough (retries can still
-    # collide with each other); starting each submission 0.6s after the
-    # last spreads the burst without giving up most of the parallel-speed
-    # benefit (~1.2s of stagger vs ~3-4s per request either way).
+    # Submit all queries at once — up to 3 run concurrently for latency,
+    # but each one blocks on _pplx_wait_turn() before it actually sends,
+    # so send order (not submission order) is what respects the 50 RPM
+    # ceiling. A manual pre-submission stagger used to try to approximate
+    # this here; it's gone now that the real gate lives in _run_query.
     query_results = [None] * len(queries)
     with ThreadPoolExecutor(max_workers=3) as _pool:
-        _futures = {}
-        for _i, _q in enumerate(queries):
-            if _i > 0:
-                _pplx_time.sleep(0.6)
-            _futures[_pool.submit(_run_query, _q)] = _i
+        _futures = {_pool.submit(_run_query, _q): _i for _i, _q in enumerate(queries)}
         for _fut in as_completed(_futures):
             i = _futures[_fut]
             try:
