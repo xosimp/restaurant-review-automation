@@ -141,25 +141,93 @@ def test_dark_header_uses_obsidian():
 # A follow-up round: #0c0c0c itself started reading as a harsh "jet black"
 # once seen next to the login screen's card, which sits on var(--paper)
 # (#1a1714) — the same warm near-black used throughout the app's own dark
-# theme. The page background (not the header bar — --hdr-bg above is
-# untouched, on purpose) now matches that token instead of a flat literal
-# black, and the top glow gained extra gradient stops: the old 3-4 stop
-# radial showed visible banding rings on some displays.
+# theme. The page background matches that token instead of a flat literal
+# black.
+#
+# The background then became a layered CSS system (BACKGROUND SYSTEM in
+# dashboard.html): one fixed body::before canvas — grain, vignette, a side
+# glow, the module's key glow, a floor lift, and a base with a top-to-bottom
+# depth change — with each module contributing only its ambient accent via
+# data-page on <html>. setPageBg() no longer paints anything itself.
+
+_PAGES = ("home", "reviews", "labor", "inventory", "marketing", "competitor", "account")
+
+
+def _main_css():
+    # The first <style> is the optional one-line brand-colour override;
+    # the theme sheet is the one that declares the dark tokens.
+    s = _src()
+    i = s.index("<style>\n*,*::before,*::after{box-sizing")
+    return s[i:s.index("</style>", i)]
+
+
+def _bg_css():
+    s = _src()
+    i = s.index("body::before{")
+    return s[i:s.index("}", i)]
+
 
 def test_page_background_uses_the_warm_paper_black_not_flat_jet_black():
     s = _src()
-    assert "#0c0c0c" not in s.split("function setPageBg(", 1)[1].split("}", 1)[0]
-    fn = _fn("setPageBg")
-    assert "st.backgroundColor = '#1a1714'" in fn
-    assert 'html[data-theme="dark"]{background:#1a1714!important' in s
-    pre_paint = s.split("<script>document.documentElement.setAttribute('data-theme','dark')", 1)[1].split("</script>", 1)[0]
-    assert "#1a1714" in pre_paint and "#0c0c0c" not in pre_paint
+    css = _main_css()
+    assert "#0c0c0c" not in css.split("BACKGROUND SYSTEM", 1)[1].split("/* Header floats", 1)[0]
+    assert "--bg-base:#1a1714" in css
+    assert "html{background:var(--bg-base)" in css
+    # The pre-paint script sets the theme and the page accent — nothing else.
+    pre_paint = s.split("<script>", 1)[1].split("</script>", 1)[0]
+    assert "'data-theme','dark'" in pre_paint and "data-page" in pre_paint
+    assert "backgroundImage" not in pre_paint
 
 
-def test_page_background_gradient_has_enough_stops_to_avoid_banding():
+def test_page_background_is_css_not_painted_by_setPageBg():
     fn = _fn("setPageBg")
-    m = re.search(r"var glow = '([^']+)'", fn)
-    assert m, "glow gradient not found in setPageBg"
-    # Each "N%" is one color stop (ignore the leading "at 50% 0%" position).
-    stops = re.findall(r"\d+(?:\.\d+)?%", m.group(1).split("at 50% 0%", 1)[1])
+    assert "backgroundImage" not in fn and "backgroundColor" not in fn
+    assert "setAttribute('data-page'" in fn
+    for page in _PAGES:
+        assert page + ":1" in fn, page
+
+
+def test_page_background_is_one_fixed_canvas_with_the_expected_layers():
+    """position:fixed on a pseudo-element, not background-attachment:fixed
+    (which repaints every scroll frame on Safari) and not extra DOM."""
+    css = _bg_css()
+    assert "position:fixed" in css and "z-index:-1" in css and "pointer-events:none" in css
+    assert "background-attachment" not in css
+    assert "var(--bg-grain)" in css                       # grain
+    assert "rgba(0,0,0,.30) 100%" in css                  # vignette
+    assert "var(--bg-accent2)" in css                     # side glow
+    assert "var(--bg-accent)" in css                      # key glow
+    assert "rgba(240,235,224,.04)" in css                 # floor lift
+    assert "var(--bg-base-hi)" in css and "var(--bg-base-lo)" in css  # base depth
+    assert "overlay,normal" in css
+
+
+def test_page_background_key_glow_has_enough_stops_to_avoid_banding():
+    css = _bg_css()
+    assert "at 50% -8%," in css, "key glow not found in body::before"
+    glow = css.split("at 50% -8%,", 1)[1].split("\n", 1)[0]
+    stops = re.findall(r"transparent\)\s*\d+(?:\.\d+)?%|transparent \d+%", glow)
     assert len(stops) >= 7, "gradient should have enough stops for a smooth falloff, found %r" % stops
+
+
+def test_every_module_has_its_own_ambient_accent_and_they_crossfade():
+    css = _main_css()
+    for page in _PAGES[1:]:
+        assert 'html[data-page="%s"]{--bg-accent:#' % page in css, page
+    # Home is the :root default — brand ember.
+    assert "--bg-accent:#c84b2f;--bg-accent2:#e8956a" in css
+    assert "@property --bg-accent{syntax:'<color>'" in css
+    assert "transition:--bg-accent .8s ease,--bg-accent2 .8s ease" in css
+    assert "@media (prefers-reduced-motion:reduce){body::before{transition:none}}" in css
+
+
+def test_containers_share_one_elevation_system():
+    """Cards float over the canvas through shared tokens, not per-card
+    shadow literals — one place to tune how far everything floats."""
+    s = _src()
+    css = _main_css()
+    assert "--elev-1:" in css and "--elev-2:" in css and "--surface-glass:" in css
+    for sel in ('[data-theme="dark"] .card{', '[data-theme="dark"] .acct-card{', '[data-theme="dark"] .ac-card{'):
+        i = s.index(sel)
+        rule = s[i:s.index("}", i)]
+        assert "var(--elev-1)" in rule and "var(--surface-glass)" in rule, sel

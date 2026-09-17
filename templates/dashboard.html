@@ -9,16 +9,16 @@
 <link rel="icon" type="image/png" href="/favicon.png">
 <link rel="shortcut icon" href="/favicon.ico">
 <meta name="theme-color" content="#1a1714">
-<script>document.documentElement.setAttribute('data-theme','dark');(function(){
-  // A film-grain noise tile blended over the gradient breaks up the
-  // banding a plain multi-stop radial-gradient still shows on 8-bit
-  // displays — dithering, not more color stops, is what actually removes
-  // visible rings; see setPageBg() below for the same recipe.
-  var noise='url(\'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><filter id="n"><feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="2" stitchTiles="stitch"/></filter><rect width="100%" height="100%" filter="url(%23n)" opacity="0.05"/></svg>\')';
-  var s=document.documentElement.style;
-  s.backgroundImage=noise+',radial-gradient(ellipse 100% 70% at 50% 0%,rgba(200,75,47,.45) 0%,rgba(200,75,47,.315) 24%,rgba(200,75,47,.18) 48%,rgba(200,75,47,.09) 63%,transparent 78%),linear-gradient(180deg,#1a1714 0%,#1a1714 100%)';
-  s.backgroundRepeat='repeat,no-repeat,no-repeat';
-  s.backgroundBlendMode='overlay,normal,normal';
+<script>(function(){
+  var d=document.documentElement;
+  d.setAttribute('data-theme','dark');
+  // The page background is pure CSS (see BACKGROUND SYSTEM in the
+  // stylesheet); the only per-page input is the module's ambient accent,
+  // keyed off data-page. Set it before first paint from the hash so a
+  // reload on Food Cost opens under amber instead of flashing Home's
+  // ember and then crossfading.
+  var h=(location.hash||'').replace('#','');
+  d.setAttribute('data-page',/^[a-z]+$/.test(h)?h:'home');
 })();</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -38,8 +38,82 @@
   --amber:#d4a030;--amber-bg:#251d08;--blue:#6aabff;--blue-bg:#0a1828;
   --surface:#201d19;--hdr-bg:#1a1714;--qw-track:#5c4f3a
 }
-html[data-theme="dark"]{background:#1a1714!important;background-image:none!important}
 html[data-theme="dark"] body{color:var(--ink)}
+/* ── BACKGROUND SYSTEM ──────────────────────────────────────────────────────
+   One fixed canvas behind every tab, built from layers rather than a single
+   gradient. Top to bottom of the stack:
+     grain     — a tiled feTurbulence film grain blended (overlay) over the
+                 lot. Dithering is what actually removes the banding rings a
+                 large radial fade shows on 8-bit panels; more color stops
+                 never did.
+     vignette  — pulls the four corners back so the middle of the page reads
+                 as lit and the edges recede.
+     side glow — a smaller, second-accent glow off-axis top-right, so the
+                 light reads as lighting from somewhere rather than a logo
+                 stamped at top-centre.
+     key glow  — the module's ambient accent from above. Sized in clamp()ed
+                 px, not %, so a 3440px ultra-wide gets a pool of light and a
+                 phone gets one that still reaches the first section, and a
+                 5,000px review inbox gets the same top glow as Home rather
+                 than an orange wash stretched over the whole scroll.
+     floor     — a faint warm-white lift at the bottom-left, so the bottom of
+                 the page has depth instead of falling into flat black.
+     base      — the warm obsidian, a shade lighter at the top than the
+                 bottom.
+   It all lives on body::before — no extra DOM — position:fixed so it is
+   painted once and composited on scroll (background-attachment:fixed is
+   the thing that repaints every frame on Safari; this is not that).
+   Each module changes only --bg-accent / --bg-accent2, via data-page on
+   <html> (setPageBg); the layers never change, so every page is the same
+   background under a slightly different light. The two accents are
+   registered with @property so a tab switch crossfades the light instead
+   of snapping. */
+:root{
+  --bg-base:#1a1714;--bg-base-hi:#1d1a16;--bg-base-lo:#141110;
+  --bg-accent:#c84b2f;--bg-accent2:#e8956a;
+  --bg-grain:url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120"><filter id="n"><feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="2" stitchTiles="stitch"/></filter><rect width="100%" height="100%" filter="url(%23n)" opacity="0.045"/></svg>');
+  /* Elevation — how a container floats above the canvas. A 1px inner
+     highlight along the top edge (the light comes from above), a tight
+     contact shadow, and a long soft ambient one. Never a heavy drop. */
+  --line-hi:rgba(255,255,255,.075);
+  --surface-glass:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.012) 60%,rgba(255,255,255,0));
+  --elev-1:inset 0 1px 0 rgba(255,255,255,.05),0 1px 2px rgba(0,0,0,.28),0 14px 34px -16px rgba(0,0,0,.6);
+  --elev-2:inset 0 1px 0 rgba(255,255,255,.065),0 2px 4px rgba(0,0,0,.32),0 24px 52px -18px rgba(0,0,0,.7);
+}
+@property --bg-accent{syntax:'<color>';inherits:true;initial-value:#c84b2f}
+@property --bg-accent2{syntax:'<color>';inherits:true;initial-value:#e8956a}
+/* Per-module ambient light. Intensity is carried by the colour itself — a
+   darker or less saturated accent mixed at the same percentages is simply
+   a quieter light — so there is one knob per module, not three. */
+html[data-page="reviews"]{--bg-accent:#c9703a;--bg-accent2:#d9a441}
+html[data-page="labor"]{--bg-accent:#b0442a;--bg-accent2:#d0784a}
+html[data-page="inventory"]{--bg-accent:#b3782f;--bg-accent2:#d4a030}
+html[data-page="marketing"]{--bg-accent:#c8683a;--bg-accent2:#dcae4a}
+html[data-page="competitor"]{--bg-accent:#b43a2a;--bg-accent2:#d4573a}
+html[data-page="account"]{--bg-accent:#6f4a3e;--bg-accent2:#8a6a55}
+html{background:var(--bg-base);min-height:100%}
+body::before{
+  content:'';position:fixed;inset:0;z-index:-1;pointer-events:none;
+  background-color:var(--bg-base);
+  background-image:
+    var(--bg-grain),
+    radial-gradient(ellipse 115% 95% at 50% 42%,transparent 58%,rgba(0,0,0,.30) 100%),
+    radial-gradient(ellipse clamp(420px,44vw,780px) clamp(260px,40vh,520px) at 86% 4%,color-mix(in srgb,var(--bg-accent2) 11%,transparent) 0%,color-mix(in srgb,var(--bg-accent2) 5%,transparent) 42%,transparent 74%),
+    radial-gradient(ellipse clamp(720px,90vw,1560px) clamp(420px,60vh,780px) at 50% -8%,color-mix(in srgb,var(--bg-accent) 34%,transparent) 0%,color-mix(in srgb,var(--bg-accent) 26%,transparent) 18%,color-mix(in srgb,var(--bg-accent) 17%,transparent) 36%,color-mix(in srgb,var(--bg-accent) 10%,transparent) 52%,color-mix(in srgb,var(--bg-accent) 5%,transparent) 66%,color-mix(in srgb,var(--bg-accent) 2%,transparent) 78%,transparent 90%),
+    radial-gradient(ellipse clamp(520px,62vw,1100px) clamp(240px,36vh,460px) at 6% 104%,rgba(240,235,224,.04) 0%,rgba(240,235,224,.016) 45%,transparent 76%),
+    linear-gradient(180deg,var(--bg-base-hi) 0%,var(--bg-base) 42%,var(--bg-base-lo) 100%);
+  background-repeat:repeat,no-repeat,no-repeat,no-repeat,no-repeat,no-repeat;
+  background-size:120px 120px,auto,auto,auto,auto,auto;
+  background-blend-mode:overlay,normal,normal,normal,normal,normal;
+  transition:--bg-accent .8s ease,--bg-accent2 .8s ease;
+}
+@media (prefers-reduced-motion:reduce){body::before{transition:none}}
+/* Header floats over the canvas: translucent obsidian with a light blur so
+   content slides under it, and a hairline instead of a hard edge. The tab
+   strip is transparent so the module's light runs straight up into it. */
+[data-theme="dark"] .hdr{background:rgba(26,23,20,.78)!important;-webkit-backdrop-filter:blur(14px) saturate(1.25);backdrop-filter:blur(14px) saturate(1.25);border-bottom:1px solid var(--line-hi)}
+[data-theme="dark"] .tabs{background:transparent!important;border-top:none!important;border-bottom:1px solid rgba(255,255,255,.05)}
+[data-theme="dark"] .hdr-restaurant,[data-theme="dark"] .hdr-user,[data-theme="dark"] .logout-btn{background:transparent!important}
 /* Review status badge dark mode overrides */
 [data-theme="dark"] .rv-status-approved{background:#0a1828!important;color:#6aabff!important}
 [data-theme="dark"] .rv-status-live{background:#0c2318!important;color:#4ead7a!important}
@@ -76,25 +150,24 @@ html[data-theme="dark"] body{color:var(--ink)}
 .qw-slider::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;border-radius:50%;background:var(--qw-fill);border:none;cursor:pointer;margin-top:-5px}
 .qw-slider::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:var(--qw-fill);border:none;cursor:pointer}
 .qw-slider::-moz-range-track{height:6px;border-radius:3px;background:var(--qw-track)}
-/* Header & tabs must explicitly override the var(--ink) background (--ink is light in dark mode) */
-[data-theme="dark"] .hdr{background:var(--hdr-bg)!important}
-[data-theme="dark"] .tabs{background:#1a1714!important;border-top-color:#1a1714!important}
-[data-theme="dark"] .tab{color:rgba(240,235,224,.38)!important}
+/* Header & tabs: see BACKGROUND SYSTEM above (they float over the canvas). */
+[data-theme="dark"] .tab{color:rgba(240,235,224,.42)!important}
 [data-theme="dark"] .tab:hover{color:var(--ink)!important}
 [data-theme="dark"] .tab.active{color:var(--ink)!important}
 [data-theme="dark"] .tab .badge{background:rgba(240,235,224,.1)!important}
 /* Page background */
 [data-theme="dark"] .panel{background:transparent}
-/* Cards */
-[data-theme="dark"] .card{background:var(--surface)!important;border-color:var(--paper3)!important;color:var(--ink);box-shadow:0 4px 12px rgba(0,0,0,.4),0 1px 3px rgba(0,0,0,.3)!important}
-[data-theme="dark"] .card:hover{box-shadow:0 8px 24px rgba(0,0,0,.5)!important}
+/* Cards — float above the canvas: a glass sheen over the surface tone, a
+   hairline that catches the light, and the shared elevation shadows. */
+[data-theme="dark"] .card{background:var(--surface-glass),var(--surface)!important;border-color:var(--line-hi)!important;color:var(--ink);box-shadow:var(--elev-1)!important}
+[data-theme="dark"] .card:hover{box-shadow:var(--elev-2)!important}
 /* Stat cards — override all variants incl. gradients */
-[data-theme="dark"] .stat{background:var(--surface)!important;border-color:var(--paper3)!important}
+[data-theme="dark"] .stat{background:var(--surface-glass),var(--surface)!important;border-color:var(--line-hi)!important;box-shadow:var(--elev-1)}
 [data-theme="dark"] .stat.ok{background:var(--green-bg)!important;border-color:#1a4a30!important}
 [data-theme="dark"] .stat.hi{background:var(--red-bg)!important;border-color:#4a1c1c!important}
 [data-theme="dark"] .stat.warn{background:var(--amber-bg)!important;border-color:#4a3808!important}
 /* AI insight box — must NOT use --ink which is now cream */
-[data-theme="dark"] .insight{background:#0c0c0c!important;border:1px solid #2a2520}
+[data-theme="dark"] .insight{background:var(--surface-glass),var(--bg-base-lo)!important;border:1px solid var(--line-hi);box-shadow:var(--elev-1)}
 [data-theme="dark"] .insight .insight-text{color:rgba(240,235,224,.82)!important}
 [data-theme="dark"] .insight-lbl{color:var(--ink3)!important}
 /* Toolbar & filters */
@@ -287,7 +360,6 @@ html:not([data-theme="dark"]) .skeleton{background:rgba(20,15,10,.12)!important}
 [data-theme="dark"] [style*="background:rgba(255,255,255,.6)"]{background:rgba(255,255,255,.06)!important;color:var(--ink)!important}
 [data-theme="dark"] [style*="background:#e8f5ee"]{background:#0c2318!important;color:#4ead7a!important}
 body{font-family:'Apfel Grotezk',sans-serif;background:transparent;color:var(--ink);font-size:14px;line-height:1.6;min-height:100vh}
-html{background:linear-gradient(160deg,#edddd0 0%,#f2ece4 30%,#ede8df 65%,#e8e0d4 100%);background-attachment:fixed;min-height:100%}
 .hdr{background:var(--ink);height:56px;display:flex;align-items:center;padding:0 28px;justify-content:space-between;position:sticky;top:0;z-index:100}
 .hdr-left{display:flex;align-items:center;gap:16px}
 .hdr-logo{font-family:'Clash Display',sans-serif;font-size:16px;color:var(--paper)}
@@ -565,8 +637,8 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none}
 .acct-card::before{content:'';position:absolute;top:0;left:0;width:3px;height:100%;background:var(--ember)}
 .acct-card.no-accent::before{display:none}
 .acct-card:hover{box-shadow:0 6px 18px rgba(14,12,10,.09);transform:translateY(-1px)}
-[data-theme="dark"] .acct-card{background:var(--surface)!important;border-color:var(--paper3)!important;box-shadow:0 4px 14px rgba(0,0,0,.35)!important}
-[data-theme="dark"] .acct-card:hover{box-shadow:0 8px 22px rgba(0,0,0,.4)!important}
+[data-theme="dark"] .acct-card{background:var(--surface-glass),var(--surface)!important;border-color:var(--line-hi)!important;box-shadow:var(--elev-1)!important}
+[data-theme="dark"] .acct-card:hover{box-shadow:var(--elev-2)!important}
 .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:10px;margin-top:10px}
 
 /* cal-card (a day that already HAS generated content) keeps its ember tint
@@ -2841,7 +2913,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .fc2-hero-nums .n .big.bad{color:var(--hb-bad)}.fc2-hero-nums .n .big.good{color:var(--hb-good)}
 .fc2-num-lbl{font-size:10.5px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--ember2);margin-top:6px}
 /* ── Waste trend card ─────────────────────────────────────────────────── */
-.fc2-wt{margin-top:22px;padding:22px 24px 20px;border-radius:14px;background:linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,.012));border:1px solid var(--hb-line2)}
+.fc2-wt{margin-top:22px;padding:22px 24px 20px;border-radius:14px;background:var(--surface-glass);border:1px solid var(--line-hi);box-shadow:var(--elev-1)}
 .fc2-wt-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap}
 .fc2-wt-title{min-width:0;flex:1 1 360px}
 .fc2-wt-verdict{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:7px;font-family:'Clash Display',sans-serif;font-weight:500;font-size:26.5px;letter-spacing:-.01em;color:var(--ink);line-height:1.15}
@@ -4157,7 +4229,8 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .ac-grid.three{grid-template-columns:repeat(3,minmax(0,1fr))}
 .ac-card{background:var(--ac-card);border:1px solid var(--ac-line);border-radius:14px;padding:20px 22px;box-shadow:0 2px 10px rgba(14,12,10,.05);transition:box-shadow .15s,transform .15s}
 .ac-card:hover{box-shadow:0 6px 20px rgba(14,12,10,.08)}
-[data-theme="dark"] .ac-card{box-shadow:0 4px 16px rgba(0,0,0,.35)}
+[data-theme="dark"] .ac-card{background:var(--surface-glass),var(--ac-card);border-color:var(--line-hi);box-shadow:var(--elev-1)}
+[data-theme="dark"] .ac-card:hover{box-shadow:var(--elev-2)}
 .ac-card.span{grid-column:1 / -1}
 .ac-card.accent{border-color:var(--hb-tint2);box-shadow:0 0 0 1px var(--hb-tint),0 8px 28px var(--ac-glow)}
 .ac-card-h{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}
@@ -5875,28 +5948,14 @@ function _moveTabIndicator(tabEl){
 }
 function _dark(){return document.documentElement.getAttribute('data-theme')==='dark';}
 function setPageBg(n){
-  // One background for every page: the ember glow at the top running down
-  // into obsidian (#1a1714 — var(--paper), the same warm near-black the
-  // login screen's card sits on, not a flat jet black). Taller than before
-  // so the glow reaches the first section instead of stopping at the header.
-  // The glow is sized in pixels from the top (not as a % of the page), so a
-  // long page like the review inbox gets the same top glow as Home instead
-  // of an orange wash stretched over thousands of pixels. More stops than a
-  // "just 4 points" gradient needs — a radial fade this large showed visible
-  // banding rings with only 4, especially on lower color-depth displays.
-  // Dark is the only theme now — see the pre-paint <script> in <head>.
-  // A tiled noise layer on top blends (overlay) with the gradient below to
-  // break up the banding rings a plain multi-stop radial-gradient still
-  // shows on 8-bit displays — same recipe as the pre-paint <script>.
-  var noise = 'url(\'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><filter id="n"><feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="2" stitchTiles="stitch"/></filter><rect width="100%" height="100%" filter="url(%23n)" opacity="0.05"/></svg>\')';
-  var glow = 'radial-gradient(ellipse 120% 100% at 50% 0%,rgba(200,75,47,.50) 0%,rgba(200,75,47,.37) 19%,rgba(200,75,47,.24) 38%,rgba(200,75,47,.155) 53%,rgba(200,75,47,.07) 68%,rgba(200,75,47,.035) 78%,transparent 88%)';
-  var st = document.body.style;
-  st.backgroundColor = '#1a1714';
-  st.backgroundImage = noise + ',' + glow;
-  st.backgroundRepeat = 'repeat, no-repeat';
-  st.backgroundSize = '100px 100px, 100% 920px';
-  st.backgroundPosition = '0 0, center top';
-  st.backgroundBlendMode = 'overlay, normal';
+  // The background itself is CSS — one fixed canvas of layered gradients
+  // behind every tab (BACKGROUND SYSTEM in the stylesheet). The only thing
+  // that changes per module is its ambient accent, keyed off data-page on
+  // <html>; the layers, grain and vignette are shared, so every page is the
+  // same background under a slightly different light, and the @property-
+  // registered accents crossfade rather than snap. Dark is the only theme.
+  var known={home:1,reviews:1,labor:1,inventory:1,marketing:1,competitor:1,account:1};
+  document.documentElement.setAttribute('data-page',known[n]?n:'home');
 }
 function switchTab(n,btn){
   setPageBg(n);
