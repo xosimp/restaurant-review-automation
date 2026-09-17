@@ -170,7 +170,7 @@ def _bg_css():
 def test_page_background_uses_the_warm_paper_black_not_flat_jet_black():
     s = _src()
     css = _main_css()
-    assert "#0c0c0c" not in css.split("BACKGROUND SYSTEM", 1)[1].split("/* Header floats", 1)[0]
+    assert "#0c0c0c" not in css.split("BACKGROUND SYSTEM", 1)[1].split("/* Header and tab strip", 1)[0]
     assert "--bg-base:#1a1714" in css
     assert "html{background:var(--bg-base)" in css
     # The pre-paint script sets the theme and the page accent — nothing else.
@@ -194,12 +194,26 @@ def test_page_background_is_one_fixed_canvas_with_the_expected_layers():
     assert "position:fixed" in css and "z-index:-1" in css and "pointer-events:none" in css
     assert "background-attachment" not in css
     assert "var(--bg-grain)" in css                       # grain
-    assert "rgba(0,0,0,.30) 100%" in css                  # vignette
+    assert "rgba(0,0,0,0.22) 100%" in css                 # vignette
     assert "var(--bg-accent2)" in css                     # side glow
     assert "var(--bg-accent)" in css                      # key glow
-    assert "rgba(240,235,224,.04)" in css                 # floor lift
+    assert "rgba(240,235,224,0.04)" in css                 # floor lift
     assert "var(--bg-base-hi)" in css and "var(--bg-base-lo)" in css  # base depth
     assert "overlay,normal" in css
+
+
+def test_every_fade_is_cosine_sampled_not_a_handful_of_kinks():
+    """A slope change at every stop reads as a faint curved line across the
+    page. Each radial fade is sampled from a cosine at 8+ stops so no single
+    stop carries a visible kink, and each ends on `transparent` at zero
+    slope rather than a hard edge."""
+    css = _bg_css()
+    fades = re.findall(r"radial-gradient\((.*?)\),\n", css)
+    assert len(fades) == 4, fades
+    for fade in fades:
+        stops = re.findall(r"(?:\)|transparent|[0-9]) (\d+(?:\.\d+)?)%(?=,|$)", fade)
+        assert len(stops) >= 9, "fade with too few stops to be smooth: %s" % fade[:80]
+        assert fade.rstrip().endswith("transparent %s%%" % stops[-1]) or "0.22) 100%" in fade
 
 
 def test_page_background_key_glow_has_enough_stops_to_avoid_banding():

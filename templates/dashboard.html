@@ -71,7 +71,7 @@ html[data-theme="dark"] body{color:var(--ink)}
 :root{
   --bg-base:#1a1714;--bg-base-hi:#1d1a16;--bg-base-lo:#141110;
   --bg-accent:#c84b2f;--bg-accent2:#e8956a;
-  --bg-grain:url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120"><filter id="n"><feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="2" stitchTiles="stitch"/></filter><rect width="100%" height="100%" filter="url(%23n)" opacity="0.045"/></svg>');
+  --bg-grain:url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120"><filter id="n"><feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="2" stitchTiles="stitch"/></filter><rect width="100%" height="100%" filter="url(%23n)" opacity="0.07"/></svg>');
   /* Elevation — how a container floats above the canvas. A 1px inner
      highlight along the top edge (the light comes from above), a tight
      contact shadow, and a long soft ambient one. Never a heavy drop. */
@@ -95,12 +95,18 @@ html{background:var(--bg-base);min-height:100%}
 body::before{
   content:'';position:fixed;inset:0;z-index:-1;pointer-events:none;
   background-color:var(--bg-base);
+  /* Every fade below follows a cosine curve sampled at 8–14 stops. A
+     hand-picked stop list has a slope change at every stop, and the eye
+     reads each one as a faint curved line across the page (a Mach band) —
+     that, not 8-bit quantisation, is what showed as "bands". A cosine has
+     no kinks and a flat slope at both ends, so a glow simply dissolves
+     instead of ending on an edge. The grain then dithers what is left. */
   background-image:
     var(--bg-grain),
-    radial-gradient(ellipse 115% 95% at 50% 42%,transparent 58%,rgba(0,0,0,.30) 100%),
-    radial-gradient(ellipse clamp(420px,44vw,780px) clamp(260px,40vh,520px) at 86% 4%,color-mix(in srgb,var(--bg-accent2) 11%,transparent) 0%,color-mix(in srgb,var(--bg-accent2) 5%,transparent) 42%,transparent 74%),
-    radial-gradient(ellipse clamp(720px,90vw,1560px) clamp(420px,60vh,780px) at 50% -8%,color-mix(in srgb,var(--bg-accent) 34%,transparent) 0%,color-mix(in srgb,var(--bg-accent) 26%,transparent) 18%,color-mix(in srgb,var(--bg-accent) 17%,transparent) 36%,color-mix(in srgb,var(--bg-accent) 10%,transparent) 52%,color-mix(in srgb,var(--bg-accent) 5%,transparent) 66%,color-mix(in srgb,var(--bg-accent) 2%,transparent) 78%,transparent 90%),
-    radial-gradient(ellipse clamp(520px,62vw,1100px) clamp(240px,36vh,460px) at 6% 104%,rgba(240,235,224,.04) 0%,rgba(240,235,224,.016) 45%,transparent 76%),
+    radial-gradient(ellipse 115% 95% at 50% 42%,transparent 48%,rgba(0,0,0,0.005) 53.2%,rgba(0,0,0,0.021) 58.4%,rgba(0,0,0,0.045) 63.6%,rgba(0,0,0,0.076) 68.8%,rgba(0,0,0,0.11) 74%,rgba(0,0,0,0.144) 79.2%,rgba(0,0,0,0.175) 84.4%,rgba(0,0,0,0.199) 89.6%,rgba(0,0,0,0.215) 94.8%,rgba(0,0,0,0.22) 100%),
+    radial-gradient(ellipse clamp(420px,44vw,780px) clamp(260px,40vh,520px) at 86% 4%,color-mix(in srgb,var(--bg-accent2) 11%,transparent) 0%,color-mix(in srgb,var(--bg-accent2) 10.7%,transparent) 7.4%,color-mix(in srgb,var(--bg-accent2) 9.9%,transparent) 14.8%,color-mix(in srgb,var(--bg-accent2) 8.7%,transparent) 22.2%,color-mix(in srgb,var(--bg-accent2) 7.2%,transparent) 29.6%,color-mix(in srgb,var(--bg-accent2) 5.5%,transparent) 37%,color-mix(in srgb,var(--bg-accent2) 3.8%,transparent) 44.4%,color-mix(in srgb,var(--bg-accent2) 2.3%,transparent) 51.8%,color-mix(in srgb,var(--bg-accent2) 1.1%,transparent) 59.2%,color-mix(in srgb,var(--bg-accent2) 0.3%,transparent) 66.6%,transparent 74%),
+    radial-gradient(ellipse clamp(720px,90vw,1560px) clamp(420px,60vh,780px) at 50% -8%,color-mix(in srgb,var(--bg-accent) 32%,transparent) 0%,color-mix(in srgb,var(--bg-accent) 31.6%,transparent) 6.4%,color-mix(in srgb,var(--bg-accent) 30.4%,transparent) 12.9%,color-mix(in srgb,var(--bg-accent) 28.5%,transparent) 19.3%,color-mix(in srgb,var(--bg-accent) 26%,transparent) 25.7%,color-mix(in srgb,var(--bg-accent) 22.9%,transparent) 32.1%,color-mix(in srgb,var(--bg-accent) 19.6%,transparent) 38.6%,color-mix(in srgb,var(--bg-accent) 16%,transparent) 45%,color-mix(in srgb,var(--bg-accent) 12.4%,transparent) 51.4%,color-mix(in srgb,var(--bg-accent) 9.1%,transparent) 57.9%,color-mix(in srgb,var(--bg-accent) 6%,transparent) 64.3%,color-mix(in srgb,var(--bg-accent) 3.5%,transparent) 70.7%,color-mix(in srgb,var(--bg-accent) 1.6%,transparent) 77.1%,color-mix(in srgb,var(--bg-accent) 0.4%,transparent) 83.6%,transparent 90%),
+    radial-gradient(ellipse clamp(520px,62vw,1100px) clamp(240px,36vh,460px) at 6% 104%,rgba(240,235,224,0.04) 0%,rgba(240,235,224,0.038) 9.5%,rgba(240,235,224,0.034) 19%,rgba(240,235,224,0.028) 28.5%,rgba(240,235,224,0.02) 38%,rgba(240,235,224,0.012) 47.5%,rgba(240,235,224,0.006) 57%,rgba(240,235,224,0.002) 66.5%,transparent 76%),
     linear-gradient(180deg,var(--bg-base-hi) 0%,var(--bg-base) 42%,var(--bg-base-lo) 100%);
   background-repeat:repeat,no-repeat,no-repeat,no-repeat,no-repeat,no-repeat;
   background-size:120px 120px,auto,auto,auto,auto,auto;
@@ -108,11 +114,11 @@ body::before{
   transition:--bg-accent .8s ease,--bg-accent2 .8s ease;
 }
 @media (prefers-reduced-motion:reduce){body::before{transition:none}}
-/* Header floats over the canvas: translucent obsidian with a light blur so
-   content slides under it, and a hairline instead of a hard edge. The tab
-   strip is transparent so the module's light runs straight up into it. */
-[data-theme="dark"] .hdr{background:rgba(26,23,20,.78)!important;-webkit-backdrop-filter:blur(14px) saturate(1.25);backdrop-filter:blur(14px) saturate(1.25);border-bottom:1px solid var(--line-hi)}
-[data-theme="dark"] .tabs{background:transparent!important;border-top:none!important;border-bottom:1px solid rgba(255,255,255,.05)}
+/* Header and tab strip read as one dark band floating over the canvas:
+   the same translucent obsidian with a light blur so content slides under
+   the header, and one hairline under the tabs instead of a hard edge. */
+[data-theme="dark"] .hdr,[data-theme="dark"] .tabs{background:rgba(26,23,20,.86)!important;-webkit-backdrop-filter:blur(14px) saturate(1.25);backdrop-filter:blur(14px) saturate(1.25)}
+[data-theme="dark"] .tabs{border-top:none!important;border-bottom:1px solid var(--line-hi)}
 [data-theme="dark"] .hdr-restaurant,[data-theme="dark"] .hdr-user,[data-theme="dark"] .logout-btn{background:transparent!important}
 /* Review status badge dark mode overrides */
 [data-theme="dark"] .rv-status-approved{background:#0a1828!important;color:#6aabff!important}
@@ -4171,8 +4177,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .ac-page{max-width:1180px;margin:0 auto;padding:28px 28px 72px}
 
 /* ── Overview header ─────────────────────────────────────────────────────── */
-.ac-hero{position:relative;overflow:hidden;border-radius:16px;border:1px solid var(--ac-line);background:var(--ac-card);padding:28px 30px 26px;box-shadow:0 1px 0 rgba(255,255,255,.04) inset,0 10px 40px var(--ac-glow)}
-.ac-hero::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse 60% 120% at 0% 0%,var(--hb-tint2),transparent 60%);pointer-events:none}
+.ac-hero{position:relative;overflow:hidden;border-radius:16px;border:1px solid var(--line-hi);background:var(--surface-glass),var(--ac-card);padding:28px 30px 26px;box-shadow:var(--elev-1)}
 .ac-hero-top{position:relative;display:flex;align-items:flex-start;gap:22px}
 .ac-logo{width:76px;height:76px;border-radius:18px;flex:none;display:flex;align-items:center;justify-content:center;background:var(--ink);color:var(--paper);font-family:'Clash Display',sans-serif;font-size:30px;font-weight:600;letter-spacing:.02em;overflow:hidden;box-shadow:0 0 0 3px var(--hb-tint2),0 8px 24px var(--ac-glow)}
 .ac-logo img{width:100%;height:100%;object-fit:cover}
