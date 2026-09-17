@@ -1739,6 +1739,11 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 /* hero */
 .rv2-hero{margin-top:30px}
 .rv2-hero .hd{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap}
+/* "Rating · last 8 weeks" had no gap to the 3.6 below it at all — the
+   base .hb-kicker rule carries no margin, and the one that does add one
+   (.hb-hero .hd .hb-kicker) doesn't match here (this hero is .rv2-hero,
+   not .hb-hero). */
+.rv2-hero .hd .hb-kicker{margin-bottom:12px}
 .rv2-hero .big{font-family:'Space Grotesk',sans-serif;font-size:clamp(40px,4.6vw,58px);font-weight:600;letter-spacing:-.03em;line-height:1;color:var(--ink);display:flex;align-items:baseline;gap:10px}
 .rv2-hero .big small{font-family:'Apfel Grotezk',sans-serif;font-size:13px;font-weight:400;letter-spacing:0;color:var(--ink3)}
 .rv2-hero .delta{font-size:13px;font-weight:600;color:var(--ink2);margin-top:6px}
@@ -1783,7 +1788,10 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .rv2-topic:first-child{border-top:none}
 .rv2-topic:hover{background:var(--hb-tint)}
 .rv2-topic .bar{height:8px;border-radius:4px;overflow:hidden;display:flex;background:var(--hb-line2)}
-.rv2-topic .bar i{display:block;height:100%}
+/* The only one of the 3 charts in this row that didn't fill in on load —
+   reuses the exact grow-in @keyframes the "How replies got approved"
+   bars next to it already use, instead of a separate one. */
+.rv2-topic .bar i{display:block;height:100%;transform-origin:left;animation:rv2Grow .7s cubic-bezier(.4,0,.2,1) both}
 .rv2-topic .bar .p{background:#2d6a4f}.rv2-topic .bar .ng{background:#e05555}
 .rv2-topic .n{font-family:'Space Grotesk',sans-serif;font-weight:600;text-align:right}
 .rv2-topic .t{font-size:11px;margin-left:6px}
@@ -1915,7 +1923,14 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
         <div class="draft-actions" id="draft-actions-{{ r.id }}">
           {% if r.response_status=='posted' %}
             <span class="rv2-status live">✓ Live on {{ r.platform|title }}</span>
-            {% if r.platform=='google' %}<button class="cbtn cbtn-secondary cbtn-sm" onclick="retractR({{ r.id }},this)">Retract</button>{% endif %}
+            {# _do_retract (client_api.py) requires platform=='google' AND a
+               real review_name — the Business Profile API resource name set
+               only when OUR auto-post flow actually put the reply live.
+               response_status=='posted' alone doesn't mean that: an
+               imported/manually-marked-posted review has no review_name to
+               retract by, and the button used to show anyway, always
+               400ing with "only auto-posted Google replies". #}
+            {% if r.platform=='google' and r.review_name %}<button class="cbtn cbtn-secondary cbtn-sm" onclick="retractR({{ r.id }},this)">Retract</button>{% endif %}
           {% elif r.response_status=='approved' %}
             <span class="rv2-status ok">✓ Approved</span>
             <span style="font-size:11.5px;color:var(--ink3)">{% if r.platform=='google' %}Posting to Google{% else %}Copy and post to {{ r.platform|title }}{% endif %}</span>

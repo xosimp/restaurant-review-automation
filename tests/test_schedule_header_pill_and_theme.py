@@ -344,3 +344,52 @@ def test_rv2_inbox_no_longer_draws_a_duplicate_divider():
     assert m, ".rv2-inbox rule not found"
     assert "border-top" not in m.group(1) and "padding-top" not in m.group(1)
     assert '<div id="rv-inbox-reviews" class="rv2-inbox">\n    <div class="hb-sh"><div><div class="k">Inbox</div>' in s
+
+
+def test_rv2_hero_kicker_has_space_before_the_rating_number():
+    """'Rating · last 8 weeks' sat flush against the 3.6 below it — the
+    base .hb-kicker rule carries no margin, and the rule that does add
+    one (.hb-hero .hd .hb-kicker) targets a different ancestor class
+    (.hb-hero, used on Home) than this hero actually has (.rv2-hero)."""
+    css = _src()
+    assert ".rv2-hero .hd .hb-kicker{margin-bottom:12px}" in css
+
+
+def test_topic_heatmap_bars_animate_in_like_the_response_performance_bars():
+    """The 3rd column's bars ('What guests talk about') were the only ones
+    of the 3 charts in this row that rendered fully filled on load instead
+    of growing in — now reuses the exact @keyframes rv2Grow the 2nd
+    column's bars (.rv2-perf .bar i) already animate with, rather than a
+    separate keyframes rule."""
+    css = _src()
+    assert re.search(
+        r"\.rv2-topic \.bar i\{display:block;height:100%;transform-origin:left;"
+        r"animation:rv2Grow \.7s cubic-bezier\(\.4,0,\.2,1\) both\}",
+        css,
+    )
+    assert css.count("@keyframes rv2Grow{") == 1, "should reuse the one existing keyframes, not add a second"
+
+
+# ── Retract button shown when it would always fail ───────────────────────
+
+def test_retract_button_requires_a_real_google_review_name_not_just_platform():
+    """_do_retract (client_api.py) refuses to retract unless
+    response_status=='posted' AND platform=='google' AND review_name is
+    set — review_name is the Business Profile API resource name, only
+    present when OUR auto-post flow actually put the reply live. The
+    button used to show for any platform=='google' review with
+    response_status=='posted', regardless of review_name — an imported or
+    manually-marked-posted review (no review_name) showed "Live on
+    Google" AND a Retract button that always 400ed with "only supported
+    for auto-posted Google replies"."""
+    s = _src()
+    i = s.index('<span class="rv2-status live">✓ Live on {{ r.platform|title }}</span>')
+    after = s[i:i + 900]
+    assert "{% if r.platform=='google' and r.review_name %}" in after
+    assert "onclick=\"retractR({{ r.id }},this)\">Retract</button>{% endif %}" in after
+    # The backend gate this must match:
+    import client_api
+    import inspect
+    src = inspect.getsource(client_api._do_retract)
+    assert 'row["response_status"] != "posted"' in src
+    assert 'row["platform"] != "google" or not row["review_name"]' in src
