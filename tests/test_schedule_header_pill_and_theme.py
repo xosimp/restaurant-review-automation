@@ -171,7 +171,9 @@ def test_page_background_uses_the_warm_paper_black_not_flat_jet_black():
     s = _src()
     css = _main_css()
     assert "#0c0c0c" not in css.split("BACKGROUND SYSTEM", 1)[1].split("/* Header and tab strip", 1)[0]
-    assert "--bg-base:#1a1714" in css
+    # The base token sits ~3 levels under #1a1714 because the dither tile
+    # (below) adds a mean ~3.5 levels on top; the composite is #1a1714.
+    assert "--bg-base:#171411" in css and "--bg-base-hi:#1a1714" in css
     assert "html{background:var(--bg-base)" in css
     # The pre-paint script sets the theme and the page accent — nothing else.
     pre_paint = s.split("<script>", 1)[1].split("</script>", 1)[0]
@@ -199,7 +201,29 @@ def test_page_background_is_one_fixed_canvas_with_the_expected_layers():
     assert "var(--bg-accent)" in css                      # key glow
     assert "rgba(240,235,224,0.04)" in css                 # floor lift
     assert "var(--bg-base-hi)" in css and "var(--bg-base-lo)" in css  # base depth
-    assert "overlay,normal" in css
+    assert "background-blend-mode:normal,normal" in css, \
+        "the grain must blend normal — overlay scales with a near-black base and dithers nothing"
+
+
+def test_grain_tile_is_a_real_dither_not_an_invisible_overlay():
+    """Bands between 8-bit levels are only removed by per-pixel noise of
+    about a level in absolute terms. The committed tile is white at a
+    random 0–7/255 alpha (scripts/gen_bg_grain.py); pin that so nobody
+    quietly turns it back down to something that looks like nothing and
+    does nothing."""
+    from PIL import Image
+    path = os.path.join(ROOT, "static", "bg", "grain.png")
+    assert os.path.exists(path), "run scripts/gen_bg_grain.py"
+    im = Image.open(path)
+    assert im.mode == "LA"
+    lum = [p[0] for p in im.get_flattened_data()] if hasattr(im, "get_flattened_data") else [p[0] for p in im.getdata()]
+    alpha = [p[1] for p in im.get_flattened_data()] if hasattr(im, "get_flattened_data") else [p[1] for p in im.getdata()]
+    assert set(lum) == {255}, "dither pixels are white; the alpha carries the noise"
+    assert min(alpha) == 0 and 5 <= max(alpha) <= 10, (min(alpha), max(alpha))
+    assert 2.5 <= sum(alpha) / len(alpha) <= 5
+    css = _main_css()
+    assert "--bg-grain:url('/static/bg/grain.png')" in css
+    assert "feTurbulence type=" not in css   # the SVG filter tile is gone (the comment may still name it)
 
 
 def test_every_fade_is_cosine_sampled_not_a_handful_of_kinks():

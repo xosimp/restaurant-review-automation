@@ -42,10 +42,18 @@ html[data-theme="dark"] body{color:var(--ink)}
 /* ── BACKGROUND SYSTEM ──────────────────────────────────────────────────────
    One fixed canvas behind every tab, built from layers rather than a single
    gradient. Top to bottom of the stack:
-     grain     — a tiled feTurbulence film grain blended (overlay) over the
-                 lot. Dithering is what actually removes the banding rings a
-                 large radial fade shows on 8-bit panels; more color stops
-                 never did.
+     grain     — a tiled dither (static/bg/grain.png, from
+                 scripts/gen_bg_grain.py) over the lot: white pixels at a
+                 random 0–7/255 alpha, blended NORMAL so each pixel gains a
+                 random 0–6 levels whatever is beneath it. Between two 8-bit
+                 levels a slow gradient spans 50–150px and every step shows
+                 as a band — on any display, in any browser, with any number
+                 of stops. Per-pixel noise of about a level is the only cure.
+                 (An overlay-blended feTurbulence tile was tried first: overlay
+                 scales with the colour beneath, and on a near-black base ±7%
+                 is under one level — invisible, and no dither at all.) The
+                 grain's mean lift (~3.5 levels) is paid back by the base
+                 tokens sitting that much darker, so the composite is #1a1714.
      vignette  — pulls the four corners back so the middle of the page reads
                  as lit and the edges recede.
      side glow — a smaller, second-accent glow off-axis top-right, so the
@@ -69,9 +77,9 @@ html[data-theme="dark"] body{color:var(--ink)}
    registered with @property so a tab switch crossfades the light instead
    of snapping. */
 :root{
-  --bg-base:#1a1714;--bg-base-hi:#1d1a16;--bg-base-lo:#141110;
+  --bg-base:#171411;--bg-base-hi:#1a1714;--bg-base-lo:#110e0c; /* + grain mean ≈ #1a1714 */
   --bg-accent:#c84b2f;--bg-accent2:#e8956a;
-  --bg-grain:url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120"><filter id="n"><feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="2" stitchTiles="stitch"/></filter><rect width="100%" height="100%" filter="url(%23n)" opacity="0.07"/></svg>');
+  --bg-grain:url('/static/bg/grain.png');
   /* Elevation — how a container floats above the canvas. A 1px inner
      highlight along the top edge (the light comes from above), a tight
      contact shadow, and a long soft ambient one. Never a heavy drop. */
@@ -109,8 +117,8 @@ body::before{
     radial-gradient(ellipse clamp(520px,62vw,1100px) clamp(240px,36vh,460px) at 6% 104%,rgba(240,235,224,0.04) 0%,rgba(240,235,224,0.038) 9.5%,rgba(240,235,224,0.034) 19%,rgba(240,235,224,0.028) 28.5%,rgba(240,235,224,0.02) 38%,rgba(240,235,224,0.012) 47.5%,rgba(240,235,224,0.006) 57%,rgba(240,235,224,0.002) 66.5%,transparent 76%),
     linear-gradient(180deg,var(--bg-base-hi) 0%,var(--bg-base) 42%,var(--bg-base-lo) 100%);
   background-repeat:repeat,no-repeat,no-repeat,no-repeat,no-repeat,no-repeat;
-  background-size:120px 120px,auto,auto,auto,auto,auto;
-  background-blend-mode:overlay,normal,normal,normal,normal,normal;
+  background-size:192px 192px,auto,auto,auto,auto,auto;
+  background-blend-mode:normal,normal,normal,normal,normal,normal;
   transition:--bg-accent .8s ease,--bg-accent2 .8s ease;
 }
 @media (prefers-reduced-motion:reduce){body::before{transition:none}}
