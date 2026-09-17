@@ -396,6 +396,35 @@ def _is_health_alert(text: str, urgency: str = None) -> bool:
     return any(kw in t for kw in HEALTH_KEYWORDS)
 
 
+def _sms_safe_excerpt(raw_text: str, limit: int = 60) -> tuple:
+    """A short, carrier-filter-safer excerpt of a customer's own review
+    text, for the one channel a review's unmoderated wording actually
+    matters on: SMS. Email and push keep the full html-escaped quote
+    (preview/ellipsis below) — they aren't subject to carrier content
+    filtering the way A2P 10DLC SMS is, and a stranger's review can
+    contain a URL, a phone number, or characters a filter reads as spam
+    signals without Cavnar AI ever moderating it first.
+
+    This narrows exposure, it doesn't eliminate it — there is no keyword
+    list here for profanity or the like, deliberately: that needs an
+    actual moderation call on every alert's send path, which is a
+    different, larger change than trimming what SMS carries. What this
+    does: drop anything that looks like a URL or a phone number, keep
+    only letters/digits/basic sentence punctuation, collapse whitespace,
+    and truncate well short of the 120-char email preview — a shorter
+    quote is still enough to say "which review is this."
+    """
+    import re as _re_sms
+    cleaned = raw_text or ""
+    cleaned = _re_sms.sub(r"https?://\S+|www\.\S+", "", cleaned)
+    cleaned = _re_sms.sub(r"\+?\d[\d\-.\s()]{6,}\d", "", cleaned)  # phone-number-shaped runs
+    cleaned = _re_sms.sub(r"[^\w\s.,!?'\-]", "", cleaned, flags=_re_sms.UNICODE)
+    cleaned = _re_sms.sub(r"\s+", " ", cleaned).strip()
+    if len(cleaned) > limit:
+        return cleaned[:limit].rstrip(), "…"
+    return cleaned, ""
+
+
 def _neg_spike_count(restaurant_id: int, db_path: str = DB_PATH) -> int:
     """Negative reviews a guest actually WROTE in the last seven days.
 
@@ -684,12 +713,16 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
         platform = _html.escape((review.platform or "Google").title())
         preview  = _html.escape(text[:120].strip())
         ellipsis = "…" if len(text) > 120 else ""
+        # SMS gets its own, shorter, filter-safer excerpt — see
+        # _sms_safe_excerpt's docstring. Email/push keep preview/ellipsis
+        # above, unchanged.
+        sms_preview, sms_ellipsis = _sms_safe_excerpt(text)
 
         # Health alert — highest priority
         if row["alert_health"] and _is_health_alert(text, getattr(review, "urgency", None)):
             sms = (
                 f"🚨 HEALTH ALERT — {restaurant_name}\n"
-                f"{rating}★ {platform}: \"{preview}{ellipsis}\"\n"
+                f"{rating}★ {platform}: \"{sms_preview}{sms_ellipsis}\"\n"
                 f"Requires immediate response · dashboard.cavnar.ai"
             )
             html = _alert_email_html(
@@ -711,7 +744,7 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
             who  = f"{author}: " if author else ""
             sms  = (
                 f"🔴 1★ Review — {restaurant_name}\n"
-                f"{who}\"{preview}{ellipsis}\"\n"
+                f"{who}\"{sms_preview}{sms_ellipsis}\"\n"
                 f"Respond now · dashboard.cavnar.ai"
             )
             html = _alert_email_html(
@@ -731,7 +764,7 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
             who  = f"{author}" if author else "A guest"
             sms  = (
                 f"⭐ 5★ Review — {restaurant_name}\n"
-                f"{who} on {platform}: \"{preview}{ellipsis}\"\n"
+                f"{who} on {platform}: \"{sms_preview}{sms_ellipsis}\"\n"
                 f"dashboard.cavnar.ai"
             )
             html = _alert_email_html(
@@ -752,7 +785,7 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
             who  = f"{author}: " if author else ""
             sms  = (
                 f"🟠 2★ Review — {restaurant_name}\n"
-                f"{who}\"{preview}{ellipsis}\"\n"
+                f"{who}\"{sms_preview}{sms_ellipsis}\"\n"
                 f"dashboard.cavnar.ai"
             )
             html = _alert_email_html(
