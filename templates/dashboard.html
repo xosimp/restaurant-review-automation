@@ -1444,10 +1444,11 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     for(var i=0;i<n;i++){var wk=weeks[i],x=gap+i*(bw+gap),ph=((wk.pos||0)/max)*(base-4),nh=((wk.neg||0)/max)*(base-4),oh=(((wk.total||0)-(wk.pos||0)-(wk.neg||0))/max)*(base-4);
       var delay=reduced()?'':' style="animation-delay:'+(i*100)+'ms"';var y=base;
       if(nh>0){y-=nh;s+='<rect class="hb-bar"'+delay+' x="'+x.toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+nh.toFixed(1)+'" rx="2" fill="'+RED+'"/>';}
-      // The neutral (not pos/neg) remainder — was .25, which on the flat
-      // near-black canvas renders as a dark gray that all but disappears
-      // into the background. Lighter now so it reads as a real segment.
-      if(oh>0){y-=oh;s+='<rect class="hb-bar"'+delay+' x="'+x.toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+oh.toFixed(1)+'" fill="currentColor" fill-opacity=".45"/>';}
+      // The neutral (not pos/neg) remainder — was a translucent currentColor
+      // fill that read as a dark, low-contrast gray on the flat canvas.
+      // Now the same sand tone (--ink3) used for small text everywhere
+      // else, solid, matching the pos/neg bars' own solid fills.
+      if(oh>0){y-=oh;s+='<rect class="hb-bar"'+delay+' x="'+x.toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+oh.toFixed(1)+'" fill="var(--ink3)"/>';}
       if(ph>0){y-=ph;s+='<rect class="hb-bar"'+delay+' x="'+x.toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+ph.toFixed(1)+'" rx="2" fill="'+GREEN+'"/>';}
       s+='<text x="'+(x+bw/2).toFixed(1)+'" y="'+(h-3)+'" text-anchor="middle" font-size="9.5" font-family="Space Grotesk, sans-serif" fill="currentColor" fill-opacity=".7">'+esc(wk.label||'')+'</text>';}
     return s+'</svg>';
@@ -1724,6 +1725,10 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 #panel-reviews{--hb-line:rgba(14,12,10,.12);--hb-line2:rgba(14,12,10,.07);--hb-tint:rgba(200,75,47,.06);--hb-tint2:rgba(200,75,47,.12);--hb-good:var(--green);--hb-warn:var(--amber);--hb-bad:var(--red);--hb-field:rgba(255,255,255,.55)}
 [data-theme="dark"] #panel-reviews{--hb-line:rgba(240,235,224,.14);--hb-line2:rgba(240,235,224,.07);--hb-tint:rgba(224,100,68,.09);--hb-tint2:rgba(224,100,68,.16);--hb-field:rgba(255,255,255,.05)}
 #panel-reviews .hb-chip .v{display:inline-flex;align-items:baseline;gap:2px}
+/* The star used to be a bare character running straight into the rating
+   number with zero gap — wrapping it in its own element lets the shared
+   2px flex gap above apply to it at all, plus a touch more of its own. */
+#panel-reviews .rating-star{margin-left:2px}
 #panel-reviews .hb-chip .v span{font-family:'Space Grotesk',sans-serif}
 /* Orange section labels ("Rating · last 8 weeks", "Inbox") match the size
    Food Cost already bumped its own kickers to (#panel-inventory .hb-kicker
@@ -1803,7 +1808,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .rv2-topic:hover{background:var(--hb-tint)}
 .rv2-topic .bar{height:8px;border-radius:4px;overflow:hidden;display:flex;background:var(--hb-line2)}
 /* The only one of the 3 charts in this row that didn't fill in on load —
-   reuses the exact grow-in @keyframes the "How replies got approved"
+   reuses the exact grow-in @keyframes the "Approval Method"
    bars next to it already use, instead of a separate one. */
 .rv2-topic .bar i{display:block;height:100%;transform-origin:left;animation:rv2Grow .7s cubic-bezier(.4,0,.2,1) both}
 .rv2-topic .bar .p{background:#2d6a4f}.rv2-topic .bar .ng{background:#e05555}
@@ -1811,7 +1816,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
    own var(--hb-line2), which reads as dark gray on the flat canvas and
    nearly vanishes. Matches the "Reviews · per week" chart's own neutral
    segment fix (the same visual weight, so both charts' gray now agree). */
-.rv2-topic .bar .mid{background:rgba(240,235,224,.45)}
+.rv2-topic .bar .mid{background:var(--ink3)}
 .rv2-topic .n{font-family:'Space Grotesk',sans-serif;font-weight:600;text-align:right}
 .rv2-topic .t{font-size:11px;margin-left:6px}
 .rv2-topic .t.up{color:var(--hb-bad)}.rv2-topic .t.down{color:var(--hb-good)}
@@ -1873,6 +1878,12 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 #panel-reviews .cats{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 0 46px}
 #panel-reviews .cat{font-size:10.5px;padding:3px 9px;border-radius:999px;background:var(--hb-tint)!important;color:var(--ink2)!important;text-transform:capitalize}
 #panel-reviews .draft-box{margin:12px 0 0 46px;padding:12px 16px;border-radius:10px;background:var(--hb-tint)!important;border:none!important}
+/* Live-on-Google replies get a blue bubble instead of the default orange
+   tint, matching the row's own blue ribbon/badge for that state. Keyed
+   off .rv2-row.posted, which card.classList already carries the instant
+   an auto-post succeeds (approveR()) — no separate JS needed here, this
+   applies the moment that class lands, in-frame, no reload. */
+#panel-reviews .rv2-row.posted .draft-box{background:rgba(106,171,255,.14)!important}
 #panel-reviews .draft-lbl{font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember)!important;margin-bottom:6px}
 #panel-reviews .draft-txt{font-size:13.5px;color:var(--ink)!important;line-height:1.6;font-style:normal}
 #panel-reviews .draft-actions{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center}
@@ -1906,8 +1917,12 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       <span id="stat-this-month-n" hidden>{{ rstats.this_month }}</span><span id="stat-rr-detail" hidden></span><span id="review-savings-rate" hidden></span><strong id="rr-sent-mo-inline" hidden></strong><strong id="rr-sent-total-inline" hidden></strong>
     </div>
     <div class="hb-pulse">
-      {% set _rglow = 'stat-glow-green' if _rating >= 4.0 else ('stat-glow-amber' if _rating >= 3.0 else 'stat-glow-red') %}
-      <span class="hb-chip {{ 'good' if _rating >= 4.0 else ('warn' if _rating >= 3.0 else 'bad') }}" id="stat-rating"><span class="dot"><b></b><i></i></span><span class="v"><span id="stat-rating-n" class="{{ _rglow }}">{{ _rating }}</span>★</span><span class="l">{{ 'Google rating' if restaurant.gbp_rating else 'rating' }}</span></span>
+      {# The rating status (good/warn/bad) is already carried by the
+         pulsing dot via the pill's own good/warn/bad class below — the
+         number itself used to carry the SAME signal a second time
+         (stat-glow-amber etc.), which is redundant and, worse, made a
+         perfectly normal 3-point rating read like a flashing alert. #}
+      <span class="hb-chip {{ 'good' if _rating >= 4.0 else ('warn' if _rating >= 3.0 else 'bad') }}" id="stat-rating"><span class="dot"><b></b><i></i></span><span class="v"><span id="stat-rating-n">{{ _rating }}</span><span class="rating-star">★</span></span><span class="l">{{ 'Google rating' if restaurant.gbp_rating else 'rating' }}</span></span>
       {% set _rrglow = 'stat-glow-green' if rstats.response_rate >= 70 else ('stat-glow-amber' if rstats.response_rate >= 40 else 'stat-glow-red') %}
       <span class="hb-chip {{ 'good' if rstats.response_rate >= 70 else ('warn' if rstats.response_rate >= 40 else 'bad') }}" id="stat-rr"><span class="dot"><b></b><i></i></span><span class="v"><span id="stat-rr-n" class="{{ _rrglow }}">{{ rstats.response_rate|int }}</span><span id="stat-rr-pct">%</span></span><span class="l">answered</span></span>
       <span class="hb-chip {{ 'bad' if _await > _await_threshold else ('warn' if _await > 0 else 'good') }}" id="stat-pending"><span class="dot"><b></b><i></i></span><span class="v"><span id="stat-pending-n" class="{{ 'stat-glow-red' if _await > _await_threshold else ('stat-glow-amber' if _await > 0 else 'stat-glow-green') }}">{{ _await }}</span><span id="stat-pending-arrow" hidden>↓</span></span><span class="l">to approve</span></span>
@@ -1926,9 +1941,9 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       <div id="trend-avg-rating" hidden></div>
     </section>
     <div class="rv2-sig">
-      <div class="rv2-sg"><div class="k"><span>Reviews · per week</span></div><div class="v"><span id="rv-sent-n" class="hb-num">—</span><small>this week</small></div><div id="sentiment-trend-bars" style="color:var(--ink3)"><div class="hb-load" style="height:86px"><canvas class="hb-orb" data-orb-state="working" width="28" height="28"></canvas></div></div><div class="cap"><span><span style="color:#2d6a4f">■</span> positive &nbsp; <span style="color:#e05555">■</span> negative</span><span id="sentiment-trend-labels"></span></div></div>
-      <div class="rv2-sg" id="perf-card"><div class="k"><span>How replies got approved</span><span class="rv2-days" id="perf-days-btns"><button class="hm-days-btn" data-days="30" onclick="loadResponsePerf(30)">30d</button><button class="hm-days-btn on" data-days="90" onclick="loadResponsePerf(90)">90d</button><button class="hm-days-btn" data-days="180" onclick="loadResponsePerf(180)">6mo</button></span></div><div class="v"><span id="rv-perf-n" class="hb-num">—</span><small>approved</small></div><div id="perf-body"><div class="hb-load" style="height:86px"><canvas class="hb-orb" data-orb-state="working" width="28" height="28"></canvas></div></div><div class="cap"><span id="rv-perf-cap">as-is · edited · regenerated</span></div></div>
-      <div class="rv2-sg" id="topic-heatmap-card"><div class="k"><span>What guests talk about</span><span class="rv2-days" id="topic-days-btns"><button class="hm-days-btn" data-days="30" onclick="loadTopicHeatmap(30)">30d</button><button class="hm-days-btn on" data-days="90" onclick="loadTopicHeatmap(90)">90d</button><button class="hm-days-btn" data-days="180" onclick="loadTopicHeatmap(180)">6mo</button></span></div><div id="heatmap-grid" class="rv2-topics"><div class="hb-load" style="height:110px"><canvas class="hb-orb" data-orb-state="searching" width="28" height="28"></canvas></div></div><div class="cap"><span>click a topic to filter the inbox</span><span><span style="color:#2d6a4f">■</span> pos &nbsp; <span style="color:#e05555">■</span> neg</span></div></div>
+      <div class="rv2-sg"><div class="k"><span>Reviews · per week</span></div><div class="v"><span id="rv-sent-n" class="hb-num">—</span><small>this week</small></div><div id="sentiment-trend-bars" style="color:var(--ink3)"><div class="hb-load" style="height:86px"><canvas class="hb-orb" data-orb-state="working" width="28" height="28"></canvas></div></div><div class="cap"><span><span style="color:#2d6a4f">■</span> positive &nbsp; <span style="color:#e05555">■</span> negative &nbsp; <span style="color:var(--ink3)">■</span> neutral</span><span id="sentiment-trend-labels"></span></div></div>
+      <div class="rv2-sg" id="perf-card"><div class="k"><span>Approval Method</span><span class="rv2-days" id="perf-days-btns"><button class="hm-days-btn" data-days="30" onclick="loadResponsePerf(30)">30d</button><button class="hm-days-btn on" data-days="90" onclick="loadResponsePerf(90)">90d</button><button class="hm-days-btn" data-days="180" onclick="loadResponsePerf(180)">6mo</button></span></div><div class="v"><span id="rv-perf-n" class="hb-num">—</span><small>approved</small></div><div id="perf-body"><div class="hb-load" style="height:86px"><canvas class="hb-orb" data-orb-state="working" width="28" height="28"></canvas></div></div><div class="cap"><span id="rv-perf-cap">as-is · edited · regenerated</span></div></div>
+      <div class="rv2-sg" id="topic-heatmap-card"><div class="k"><span>What guests talk about</span><span class="rv2-days" id="topic-days-btns"><button class="hm-days-btn" data-days="30" onclick="loadTopicHeatmap(30)">30d</button><button class="hm-days-btn on" data-days="90" onclick="loadTopicHeatmap(90)">90d</button><button class="hm-days-btn" data-days="180" onclick="loadTopicHeatmap(180)">6mo</button></span></div><div id="heatmap-grid" class="rv2-topics"><div class="hb-load" style="height:110px"><canvas class="hb-orb" data-orb-state="searching" width="28" height="28"></canvas></div></div><div class="cap"><span>click a topic to filter the inbox</span><span><span style="color:#2d6a4f">■</span> pos &nbsp; <span style="color:#e05555">■</span> neg &nbsp; <span style="color:var(--ink3)">■</span> neu</span></div></div>
     </div>
   </div>
 
@@ -1950,7 +1965,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     <div class="rv2-row scroll-reveal {{ 'urgent' if r.urgency=='high' }} {{ 'posted' if r.response_status=='posted' }} {{ 'approved' if r.response_status=='approved' }} {{ 'skipped' if r.response_status=='skipped' }}" id="rc-{{ r.id }}" data-reveal-delay="{{ [loop.index0 * 0.05, 0.3]|min }}s" data-platform="{{ r.platform }}" data-yelp-id="{{ restaurant.yelp_business_id or '' }}" data-cats="{{ (r.categories|join(' '))|lower if r.categories else '' }}" data-author="{{ r.author|lower if r.author else '' }}" data-rating="{{ r.rating }}">
       <div class="rv2-head">
         <div class="rv2-av">{{ r.author[0].upper() if r.author else '?' }}</div>
-        <div class="rv2-who"><b>{{ r.author|e if r.author else 'Anonymous' }}</b><span class="rv2-stars">{% for i in range(5) %}{% if i < r.rating %}★{% else %}<span>★</span>{% endif %}{% endfor %}</span><span class="rv2-plat">{{ r.platform }}</span>{% if r.review_date %}<span class="rv2-date hb-num">{{ r.review_date|format_date }}</span>{% endif %}<span class="schip {{ r.sentiment or 'neutral' }}">{{ r.sentiment or 'neutral' }}</span>{% if r.urgency=='high' %}<span class="rv2-urg">Needs a reply now</span>{% endif %}</div>
+        <div class="rv2-who"><b>{{ r.author|e if r.author else 'Anonymous' }}</b><span class="rv2-stars">{% for i in range(5) %}{% if i < r.rating %}★{% else %}<span>★</span>{% endif %}{% endfor %}</span><span class="rv2-plat">{{ r.platform }}</span>{% if r.review_date %}<span class="rv2-date hb-num">{{ r.review_date|format_date }}</span>{% endif %}<span class="schip {{ r.sentiment or 'neutral' }}">{{ r.sentiment or 'neutral' }}</span>{% if r.urgency=='high' %}<span class="rv2-urg">Urgent</span>{% endif %}</div>
         <button class="rv2-x" aria-label="Remove review" title="Remove review" onclick="deleteReview({{ r.id }},this)">✕</button>
       </div>
       <div class="rtext">{{ r.text|e }}</div>
@@ -6400,11 +6415,15 @@ function updateReviewStats(){
     }
 
     // ── Avg rating ─────────────────────────────────────────
+    // The number itself no longer carries a status color — only the pill's
+    // own pulsing dot does (good/warn/bad class, set from the same
+    // thresholds server-side). See the matching change to stat-rating-n's
+    // markup: it used to double up on the same signal the dot already
+    // gives, which made an ordinary rating read like an alert.
     var ratingEl = document.getElementById('stat-rating');
     var ratingNEl = document.getElementById('stat-rating-n');
     if(ratingEl && ratingNEl && d.avg_rating !== undefined){
       ratingNEl.textContent = d.avg_rating;
-      statGlow(ratingNEl, d.avg_rating >= 4.0 ? 'stat-glow-green' : d.avg_rating >= 3.0 ? 'stat-glow-amber' : 'stat-glow-red');
     }
 
     // ── Responded this month ───────────────────────────────
@@ -6641,7 +6660,7 @@ function maybeShowCongrats(rrate){
   if(modal) modal.classList.add('show');
 }
 function updateResponseRateBar(){ updateReviewStats(); }
-// The 2nd of the 3 charts ("How replies got approved") only ever loaded on
+// The 2nd of the 3 charts ("Approval Method") only ever loaded on
 // first tab-open, or a full page reload — approving/skipping never told it
 // anything changed, so the card kept showing whatever it was already
 // holding (often the empty "no approved replies yet" state) even seconds

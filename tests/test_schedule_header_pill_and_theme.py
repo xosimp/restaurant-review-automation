@@ -464,22 +464,31 @@ def test_rv2_sg_columns_are_flex_so_captions_align_at_the_bottom():
 
 # ── Reviews: lighter neutral gray in both charts ──────────────────────────
 
-def test_neutral_segments_are_lighter_in_both_charts():
-    """Both charts' 'neutral' (not pos/neg) segment used to render as a
-    dark gray that all but disappeared into the flat canvas: the stacked
-    weekly bars used fill-opacity .25 on currentColor, and the topic
-    heatmap's middle segment had no fill at all (transparent over the
-    track's own var(--hb-line2)). Both lightened, and to the same visual
-    weight as each other."""
+def test_neutral_segments_use_the_sand_text_color_in_both_charts():
+    """Both charts' 'neutral' (not pos/neg) segment went through two
+    rounds: first a translucent currentColor/no-fill-at-all treatment that
+    read as a dark, low-contrast gray on the flat canvas; then a plain
+    lighter gray. Now it's the same sand tone (--ink3) used for small text
+    everywhere else in the app, solid — matching the pos/neg bars' own
+    solid fills — and identical between the two charts."""
     fn = _fn("stacked")
-    assert 'fill="currentColor" fill-opacity=".45"' in fn
-    assert 'fill-opacity=".25"' not in fn
+    assert 'fill="var(--ink3)"' in fn
+    assert 'fill-opacity=".25"' not in fn and 'fill-opacity=".45"' not in fn
     s = _src()
     m = re.search(r"\.rv2-topic \.bar \.mid\{([^}]*)\}", s)
     assert m, ".rv2-topic .bar .mid rule not found"
-    assert m.group(1) == "background:rgba(240,235,224,.45)"
+    assert m.group(1) == "background:var(--ink3)"
     fn = _fn("loadTopicHeatmap")
     assert '<i class="mid" style=' in fn, "the middle segment must carry the .mid class to pick up the fill"
+
+
+def test_both_charts_have_a_neutral_legend_swatch():
+    """The sand neutral segment had no legend entry in either chart's
+    caption row, next to the positive/negative swatches that were
+    already there."""
+    s = _src()
+    assert '<span style="color:var(--ink3)">■</span> neutral</span><span id="sentiment-trend-labels">' in s
+    assert '<span style="color:var(--ink3)">■</span> neu</span>' in s
 
 
 # ── Reviews: approve/skip update the UI immediately, no reload needed ────
@@ -558,3 +567,51 @@ def test_skipped_reviews_get_a_gray_ribbon():
     s = _src()
     assert ".rv2-row.skipped:before{background:var(--ink3)}" in s
     assert "{{ 'skipped' if r.response_status=='skipped' }}" in s
+
+
+# ── heading rename, rating pill, blue reply bubble, badge rename ─────────
+
+def test_approval_method_heading_renamed():
+    s = _src()
+    assert "How replies got approved" not in s
+    assert '<span>Approval Method</span>' in s
+
+
+def test_rating_number_carries_no_status_color_only_the_dot_does():
+    """The number used to double up on the same status signal the pill's
+    own pulsing dot already gives (good/warn/bad, from the container
+    class) — stat-glow-amber etc. on the number itself made an ordinary
+    3-point rating read like a flashing alert. Only the dot signals now;
+    the star gets its own element (and a touch of margin) instead of
+    running straight into the number with no gap."""
+    s = _src()
+    i = s.index('id="stat-rating">')
+    pill = s[i:s.index("</span></span>", i) + len("</span></span>")]
+    assert '<span id="stat-rating-n">{{ _rating }}</span>' in pill, \
+        "the number span must carry no {{ _rglow }} class"
+    assert '<span class="rating-star">★</span>' in pill
+    assert "_rglow" not in s
+    fn = _fn("updateReviewStats")
+    rating_block = fn[fn.index("// ── Avg rating"):fn.index("// ── Responded this month")]
+    assert "statGlow(ratingNEl" not in rating_block
+    assert "ratingNEl.textContent = d.avg_rating;" in rating_block
+    assert "#panel-reviews .rating-star{margin-left:2px}" in s
+
+
+def test_live_on_google_reply_bubble_is_blue_and_applies_without_a_reload():
+    """Keyed off .rv2-row.posted, which card.classList already gains the
+    instant an auto-post succeeds (approveR()'s class swap, fixed
+    earlier) — so this CSS rule alone makes the bubble turn blue in
+    frame, no extra JS and no reload needed."""
+    s = _src()
+    assert "#panel-reviews .rv2-row.posted .draft-box{background:rgba(106,171,255,.14)!important}" in s
+    fn = _fn("approveR")
+    auto = fn[fn.index("if(d.auto_posted){"):fn.index("} else {")]
+    assert "card.classList.add('posted');" in auto, \
+        "posted must land on the card synchronously with the approve response for the blue bubble to apply without a reload"
+
+
+def test_urgent_pill_renamed_from_needs_a_reply_now():
+    s = _src()
+    assert "Needs a reply now" not in s
+    assert '<span class="rv2-urg">Urgent</span>' in s
