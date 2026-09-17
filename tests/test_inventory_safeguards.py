@@ -4,6 +4,8 @@ event scaling, and per-category waste tolerance.
 """
 from datetime import date, timedelta
 
+import pytest
+
 from inventory import analyse_inventory, days_until_next_delivery, load_inventory
 
 # Derive weekday anchors programmatically (never hardcode which calendar
@@ -88,17 +90,38 @@ class TestDeliveryDayAwareThresholds:
 # ── Safeguard 2: weekend/day-of-week demand curve ───────────────────────
 
 class TestWeekendDemandCurve:
-    def test_matches_flat_average_with_no_weekend_in_window(self):
-        # Monday start, 2 days of stock covers only Mon+Tue -- no weekend.
+    """The curve redistributes a week's usage across its days. It must not
+    add any.
+
+    The multipliers used to be {Fri 1.3, Sat 1.5, Sun 1.15} against a flat 1.0
+    on weekdays, which averages 1.136 over a week — so a simulation driven by
+    a true 7-day average consumed ~14% more per week than the average it came
+    from. Every projection ran short, which biases the whole module toward
+    ordering more than the kitchen needs. They are normalised now, so the
+    week's multipliers average exactly 1.0 and only the SHAPE differs.
+    """
+
+    def test_the_curve_redistributes_a_week_of_usage_without_adding_any(self):
+        from inventory import _WEEKEND_USAGE_MULTIPLIER, _WEEKDAY_BASE_MULTIPLIER
+        week = [_WEEKEND_USAGE_MULTIPLIER.get(d, _WEEKDAY_BASE_MULTIPLIER) for d in range(7)]
+        assert sum(week) / 7 == pytest.approx(1.0), \
+            "a week of multipliers must average 1.0, or every projection is biased"
+
+    def test_a_weekday_only_window_lasts_at_least_the_flat_average(self):
+        # Monday start: Mon+Tue carry no weekend surge, so stock lasts at
+        # least as long as a flat division would say — never less.
         items = [_item(current_stock=10, avg_daily_usage=5)]
         analyse_inventory(items, today=MONDAY)
-        assert items[0]["days_remaining"] == 2.0
+        assert items[0]["days_remaining"] >= 2.0
 
     def test_weekend_surge_shortens_days_remaining(self):
-        # Same stock/usage, but starting Thursday the window now crosses Fri/Sat.
-        items = [_item(current_stock=10, avg_daily_usage=5)]
-        analyse_inventory(items, today=THURSDAY)
-        assert items[0]["days_remaining"] < 2.0
+        # Same stock and usage. Starting Thursday the window crosses Fri, so
+        # it must run out sooner than the weekday-only window above.
+        weekday = [_item(current_stock=10, avg_daily_usage=5)]
+        analyse_inventory(weekday, today=MONDAY)
+        weekend = [_item(current_stock=10, avg_daily_usage=5)]
+        analyse_inventory(weekend, today=THURSDAY)
+        assert weekend[0]["days_remaining"] < weekday[0]["days_remaining"]
 
 
 # ── Safeguard 3: case-size/MOQ rounding ─────────────────────────────────

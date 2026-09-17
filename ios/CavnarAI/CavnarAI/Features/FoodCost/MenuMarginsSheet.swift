@@ -24,14 +24,21 @@ final class MenuMarginsViewModel {
         let priced: [MenuMarginItem]
         let unpriced: [MenuMarginItem]
         let unmapped: [MenuMarginItem]
+        let uncosted: [MenuMarginItem]?
         let averageFoodCostPct: Double?
+        let averageBasis: String?
+        let hasSalesData: Bool?
         let best: MenuMarginItem?
         let worst: MenuMarginItem?
+        let highestFoodCost: MenuMarginItem?
         let error: String?
 
         enum CodingKeys: String, CodingKey {
-            case ok, priced, unpriced, unmapped, best, worst, error
+            case ok, priced, unpriced, unmapped, uncosted, best, worst, error
             case averageFoodCostPct = "average_food_cost_pct"
+            case averageBasis = "average_basis"
+            case hasSalesData = "has_sales_data"
+            case highestFoodCost = "highest_food_cost"
         }
     }
 
@@ -47,7 +54,10 @@ final class MenuMarginsViewModel {
         do {
             let r: Response = try await client.send("/mobile/api/food-cost/menu-profitability")
             data = MenuProfitability(priced: r.priced, unpriced: r.unpriced, unmapped: r.unmapped,
-                                     averageFoodCostPct: r.averageFoodCostPct, best: r.best, worst: r.worst)
+                                     uncosted: r.uncosted ?? [],
+                                     averageFoodCostPct: r.averageFoodCostPct,
+                                     averageBasis: r.averageBasis, hasSalesData: r.hasSalesData,
+                                     best: r.best, worst: r.worst, highestFoodCost: r.highestFoodCost)
         } catch let error as APIClient.APIError {
             if data == nil { errorMessage = error.message }
         } catch is CancellationError {
@@ -119,6 +129,9 @@ struct MenuMarginsSheet: View {
                             if !data.unpriced.isEmpty {
                                 unpricedCard(data.unpriced)
                             }
+                            if !data.uncosted.isEmpty {
+                                uncostedCard(data.uncosted)
+                            }
                             if !data.unmapped.isEmpty {
                                 unmappedCard(data.unmapped)
                             }
@@ -160,7 +173,14 @@ struct MenuMarginsSheet: View {
                 .foregroundStyle(Color.cavnarInk)
                 .cavnarNumberGlow()
                 .cavnarSensitive()
-            Text("Across the \(data.priced.count) dish\(data.priced.count == 1 ? "" : "es") with both a recipe and a price. Most kitchens aim for 28–35%.")
+            // The basis matters more than the number. 28-35% is a
+            // revenue-weighted rule of thumb; an unweighted mean of per-dish
+            // percentages counts a $3 side the same as the entree carrying
+            // the night's revenue, and comparing one to the other could send
+            // an owner to reprice a menu that is already healthy.
+            Text(data.hasSalesData == true
+                 ? "Across the \(data.priced.count) dish\(data.priced.count == 1 ? "" : "es") with a recipe and a price, weighted by what actually sold. Most kitchens aim for 28–35%."
+                 : "Across the \(data.priced.count) dish\(data.priced.count == 1 ? "" : "es") with a recipe and a price. No sales data yet, so every dish counts equally — that isn't directly comparable to the 28–35% rule of thumb, which is weighted by revenue.")
                 .font(.cavnarBody(14))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
@@ -261,6 +281,25 @@ struct MenuMarginsSheet: View {
                 }
             }
         }
+        .cavnarCard()
+    }
+
+    /// Dishes with a recipe whose ingredients aren't all priced. These used
+    /// to be costed as if the missing prices were zero, so a dish whose main
+    /// protein had never been priced showed an excellent margin with nothing
+    /// indicating the number was incomplete.
+    private func uncostedCard(_ items: [MenuMarginItem]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("MISSING INGREDIENT COSTS")
+                .font(.cavnarBody(13.5, weight: 700))
+                .tracking(1.2)
+                .foregroundStyle(Color.cavnarAmber)
+            Text("\(items.count) dish\(items.count == 1 ? "" : "es") can't be costed accurately yet — some ingredients have no unit cost: \(items.prefix(6).map(\.name).joined(separator: ", "))\(items.count > 6 ? "…" : "").")
+                .font(.cavnarBody(14))
+                .foregroundStyle(Color.cavnarInk3)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .cavnarCard()
     }
 

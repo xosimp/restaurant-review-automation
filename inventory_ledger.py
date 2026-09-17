@@ -797,6 +797,16 @@ def menu_profitability(restaurant_id: int) -> dict:
         entry["margin"] = round(price - entry["plate_cost"], 2)
         entry["food_cost_pct"] = round(entry["plate_cost"] / price * 100, 1)
         entry["margin_pct"] = round(entry["margin"] / price * 100, 1)
+        # ingredients.unit is a free-text display label and qty_per_unit is
+        # typed by hand, so nothing stops a cost-per-CASE being multiplied by
+        # a quantity in OUNCES. There is no conversion layer to catch it, and
+        # the result is wrong by orders of magnitude while looking like an
+        # ordinary number. A plate cost this far outside any real food cost
+        # is far more likely a unit mismatch than a genuine margin, and
+        # saying so is more useful than a silently wrong percentage.
+        band = _unit_sanity(entry["food_cost_pct"])
+        if band:
+            entry["unit_warning"] = band
         if entry["units_sold"]:
             entry["total_contribution"] = round(entry["margin"] * entry["units_sold"], 2)
             entry["total_revenue"] = round(price * entry["units_sold"], 2)
@@ -848,6 +858,25 @@ def menu_profitability(restaurant_id: int) -> dict:
         "highest_food_cost": priced[0] if priced else None,
         "menu_engineering": _menu_engineering(priced) if have_sales else None,
     }
+
+
+_IMPLAUSIBLE_LOW_FC_PCT = 2.0
+_IMPLAUSIBLE_HIGH_FC_PCT = 150.0
+
+
+def _unit_sanity(food_cost_pct):
+    """Whether a plate cost is so far outside any real food cost that the
+    likeliest explanation is a unit mismatch rather than a margin."""
+    if food_cost_pct is None:
+        return None
+    if food_cost_pct >= _IMPLAUSIBLE_HIGH_FC_PCT:
+        return ("This plate costs more than it sells for by a wide margin — "
+                "check that the recipe quantities use the same unit as the "
+                "ingredient's cost.")
+    if 0 < food_cost_pct <= _IMPLAUSIBLE_LOW_FC_PCT:
+        return ("This plate costs almost nothing to make — check that the "
+                "recipe quantities use the same unit as the ingredient's cost.")
+    return None
 
 
 def _menu_engineering(priced: list) -> dict:

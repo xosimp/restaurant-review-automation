@@ -46,12 +46,75 @@ _HOLIDAY_ITEM_KEYWORDS = {
     "new year": ["salmon", "lobster", "shrimp", "cream", "butter", "champagne"],
     "st. patrick": ["beef", "potato", "cabbage", "onion"],
 }
-# Bump suggested order qty ~40% for items tied to a holiday in the next 30 days
+# Peak bump for an item tied to an event, applied in full only when the event
+# is inside the window this order actually covers.
 _EVENT_SCALE_FACTOR = 1.4
+# An order covers roughly this many days (1.5x par plus three days of usage).
+# Beyond it, scaling up for an event means buying perishables for a week that
+# hasn't arrived.
+_EVENT_FULL_SCALE_DAYS = 7
+# Past this, the event is someone else's order to place.
+_EVENT_NO_SCALE_DAYS = 21
+
+
+def _event_scale(days_away):
+    """How much to scale an order for an event `days_away` from now.
+
+    The full 1.4x used to apply to any matching holiday inside a 30-day
+    window, so an order covering about three days of usage was inflated 40%
+    for something four weeks out — and again the next week, and the week
+    after. Full strength inside the order's own coverage window, tapering to
+    nothing by three weeks, and unchanged when the date can't be read.
+    """
+    if days_away is None:
+        return _EVENT_SCALE_FACTOR
+    if days_away <= _EVENT_FULL_SCALE_DAYS:
+        return _EVENT_SCALE_FACTOR
+    if days_away >= _EVENT_NO_SCALE_DAYS:
+        return 1.0
+    span = float(_EVENT_NO_SCALE_DAYS - _EVENT_FULL_SCALE_DAYS)
+    remaining = (_EVENT_NO_SCALE_DAYS - days_away) / span
+    return 1.0 + (_EVENT_SCALE_FACTOR - 1.0) * remaining
+
+
+def _days_until_relevant_holiday(upcoming_holidays: str, today) -> int:
+    """Days until the soonest holiday named in the string, or None.
+
+    marketing.get_upcoming_holidays already formats each entry with its date —
+    "Valentine's Day (Feb 14)" — so proximity is readable here without
+    changing that function's contract or asking it a second question.
+    """
+    import re as _re_h
+    if not upcoming_holidays:
+        return None
+    soonest = None
+    for entry in upcoming_holidays.split(", "):
+        m = _re_h.search(r"\(([A-Z][a-z]{2}) (\d{1,2})\)", entry)
+        if not m:
+            continue
+        for year in (today.year, today.year + 1):
+            try:
+                when = datetime.strptime(f"{m.group(1)} {m.group(2)} {year}", "%b %d %Y").date()
+            except ValueError:
+                continue
+            delta = (when - today).days
+            if delta >= 0 and (soonest is None or delta < soonest):
+                soonest = delta
+            break
+    return soonest
 
 # Fri/Sat/Sun usage multiplier vs. a flat Mon-Thu baseline — most full-service
 # restaurants see a real weekend demand surge that a single flat average masks.
-_WEEKEND_USAGE_MULTIPLIER = {4: 1.3, 5: 1.5, 6: 1.15}  # Mon=0 ... Sun=6
+#
+# Normalised so the week's multipliers AVERAGE to 1.0. The raw shape below
+# means (1+1+1+1+1.3+1.5+1.15)/7 = 1.136, so a simulation driven by a true
+# 7-day average consumed ~13.6% more per week than the average it came from —
+# a systematic bias toward "you'll run out sooner", and therefore toward
+# ordering more than needed, in every projection the module makes.
+_WEEKEND_SHAPE = {4: 1.3, 5: 1.5, 6: 1.15}  # Mon=0 ... Sun=6
+_WEEKEND_MEAN = sum(_WEEKEND_SHAPE.get(d, 1.0) for d in range(7)) / 7.0
+_WEEKEND_USAGE_MULTIPLIER = {d: v / _WEEKEND_MEAN for d, v in _WEEKEND_SHAPE.items()}
+_WEEKDAY_BASE_MULTIPLIER = 1.0 / _WEEKEND_MEAN
 
 _WEEKDAY_ABBR = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
@@ -102,7 +165,7 @@ def _simulate_days_remaining(current_stock: float, avg_daily_usage: float, today
     remaining = current_stock
     for day_offset in range(0, 30):
         d = today + timedelta(days=day_offset)
-        usage = avg_daily_usage * _WEEKEND_USAGE_MULTIPLIER.get(d.weekday(), 1.0)
+        usage = avg_daily_usage * _WEEKEND_USAGE_MULTIPLIER.get(d.weekday(), _WEEKDAY_BASE_MULTIPLIER)
         if remaining <= usage:
             return round(day_offset + max(0.0, remaining / usage), 1)
         remaining -= usage
@@ -178,6 +241,7 @@ def analyse_inventory(items: list[dict], delivery_days: str = None,
     today = today or datetime.now(ZoneInfo('America/Chicago')).date()
     delivery_offset = days_until_next_delivery(delivery_days, today)
     holiday_keywords = _holiday_relevant_keywords(upcoming_holidays)
+    holiday_days_away = _days_until_relevant_holiday(upcoming_holidays, today)
 
     waste_items   = []
     overstock     = []
@@ -228,9 +292,14 @@ def analyse_inventory(items: list[dict], delivery_days: str = None,
         # Event scaling — bump quantity for items tied to a holiday/event in
         # the next 30 days, so the actual order number reflects the surge,
         # not just the AI's narrative text about it.
+        # Scaled by how close the event actually is. The full 1.4x used to
+        # apply to any matching holiday in the next 30 days, so an order
+        # covering about three days of usage was inflated 40% for something
+        # four weeks away — and then again the following week, and the week
+        # after that.
         event_scaled = bool(holiday_keywords) and any(kw in item["item"].lower() for kw in holiday_keywords)
         if event_scaled:
-            raw_qty *= _EVENT_SCALE_FACTOR
+            raw_qty *= _event_scale(holiday_days_away)
 
         suggested_qty = max(0.0, raw_qty * waste_adj)
 

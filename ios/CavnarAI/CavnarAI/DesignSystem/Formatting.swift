@@ -14,3 +14,15 @@ extension Double {
         return formatter.string(from: NSNumber(value: intVal)) ?? "\(intVal)"
     }
 }
+
+extension NumberFormatter {
+    /// Parses a decimal the way the keyboard in front of the user types it.
+    /// `Double("3,50")` is nil in every comma-decimal locale, and a quick
+    /// count that fell back to 0 on a nil stored the zero as a real price.
+    static let cavnarDecimal: NumberFormatter = {
+        let f = NumberFormatter()
+        f.numberStyle = .decimal
+        f.locale = .current
+        return f
+    }()
+}

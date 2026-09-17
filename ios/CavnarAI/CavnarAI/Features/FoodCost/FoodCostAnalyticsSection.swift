@@ -54,14 +54,23 @@ struct FoodCostAnalyticsSection: View {
                         RecoverableGaugeChart(
                             monthly: analytics.recoverableMonthly ?? 0,
                             annual: analytics.annualRecoverable ?? (analytics.recoverableMonthly ?? 0) * 12,
+                            // Recurring waste only. Overstock is capital
+                            // sitting above par, not money leaving every
+                            // month; adding it made the arc a ratio of two
+                            // different kinds of quantity.
                             ceiling: max(analytics.recoverableMonthly ?? 0,
-                                         (analytics.monthlyWasteProjection ?? 0) + analytics.overstock.reduce(0) { $0 + $1.overstockCost })
+                                         analytics.monthlyWasteProjection ?? 0)
                         )
                     }
                     if !analytics.wasteItems.isEmpty {
                         WasteLedgerChart(
                             kicker: "Top waste offenders", title: "Waste Ledger",
-                            headline: "This week · $\(Int((analytics.totalWasteCostWeek ?? analytics.wasteItems.reduce(0) { $0 + $1.wasteCost }).rounded()).formatted()) flagged",
+                            // total_waste_cost_week covers every item;
+                            // waste_items is only those above their category
+                            // tolerance, capped at six. The two branches of
+                            // one label used to compute different numbers, so
+                            // the fallback is the server's own flagged total.
+                            headline: "This week · $\(Int((analytics.wasteItemsTotal ?? analytics.wasteItems.reduce(0) { $0 + $1.wasteCost }).rounded()).formatted()) flagged",
                             rows: analytics.wasteItems.map {
                                 WasteLedgerChart.Row(id: $0.id, name: $0.item, value: $0.wasteCost, detail: String(format: "%.0f%% waste", $0.wastePct))
                             }
@@ -70,7 +79,9 @@ struct FoodCostAnalyticsSection: View {
                     if !analytics.overstock.isEmpty {
                         WasteLedgerChart(
                             kicker: "Overstocked", title: "Tied-Up Capital",
-                            headline: "$\(Int(analytics.overstock.reduce(0) { $0 + $1.overstockCost }.rounded()).formatted()) sitting on shelves",
+                            // The server's total over every overstocked
+                            // item — the list here is truncated to five.
+                            headline: "$\(Int((analytics.overstockTotal ?? analytics.overstock.reduce(0) { $0 + $1.overstockCost }).rounded()).formatted()) sitting on shelves",
                             rows: analytics.overstock.map {
                                 WasteLedgerChart.Row(
                                     id: $0.id, name: $0.item, value: $0.overstockCost,
@@ -88,10 +99,17 @@ struct FoodCostAnalyticsSection: View {
                         weeks: viewModel.trend,
                         benchmarkLabel: analytics.benchmarkLabel,
                         wasteRatePct: analytics.wasteRatePct,
-                        totalWasteCostWeek: analytics.totalWasteCostWeek
+                        totalWasteCostWeek: analytics.totalWasteCostWeek,
+                        target: viewModel.trendTarget,
+                        asOf: analytics.lastUpdated
                     )
                 } else if viewModel.isLoading {
                     FoodCostAnalyticsSkeleton()
+                } else if let message = viewModel.errorMessage {
+                    // A failed load used to render an empty ScrollView: no
+                    // message, no retry, and the only way out was leaving the
+                    // module entirely.
+                    loadFailed(message)
                 }
             }
             .padding(.horizontal, 20)
@@ -107,6 +125,32 @@ struct FoodCostAnalyticsSection: View {
 
     private func hasHeroData(_ a: FoodCostAnalytics) -> Bool {
         (a.annualWasteProjection ?? 0) > 0 || (a.annualRecoverable ?? 0) > 0
+    }
+
+    // MARK: - Load failure
+
+    private func loadFailed(_ message: String) -> some View {
+        VStack(spacing: 12) {
+            Text("Food cost didn't load")
+                .font(.cavnarBody(17, weight: 600))
+                .foregroundStyle(Color.cavnarInk)
+            Text(message)
+                .font(.cavnarBody(14))
+                .foregroundStyle(Color.cavnarInk.opacity(0.6))
+                .multilineTextAlignment(.center)
+            Button {
+                Task { await viewModel.load() }
+            } label: {
+                Text("Try again")
+                    .font(.cavnarBody(15, weight: 600))
+                    .padding(.horizontal, 20).padding(.vertical, 10)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(Color.cavnarEmber)
+            .overlay(Capsule().stroke(Color.cavnarEmber.opacity(0.5), lineWidth: 1))
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 48)
     }
 
     // MARK: - Hero (the one real container on this page)
@@ -133,7 +177,11 @@ struct FoodCostAnalyticsSection: View {
                         .foregroundStyle(Color.cavnarInk.opacity(0.6))
                         .lineLimit(2, reservesSpace: true)
                     HeroAnimatedNumber(numericValue: a.annualWasteProjection ?? 0, tone: Color.cavnarRed, startFromZero: startFromZero)
-                    Text("$\((a.monthlyWasteProjection ?? 0).commaFormatted)/mo at current rate")
+                    // The basis, stated. This is one week's count projected
+                    // to a year; as a bare number in red it reads as measured
+                    // fact, and one heavy prep week becomes a five-figure
+                    // headline an owner may take to a supplier.
+                    Text("$\((a.monthlyWasteProjection ?? 0).commaFormatted)/mo — projected from this week's count")
                         .font(.cavnarBody(14))
                         .foregroundStyle(Color.cavnarInk.opacity(0.55))
                 }
@@ -146,7 +194,7 @@ struct FoodCostAnalyticsSection: View {
                         .lineLimit(2, reservesSpace: true)
                         .multilineTextAlignment(.trailing)
                     HeroAnimatedNumber(numericValue: a.annualRecoverable ?? 0, tone: Color.cavnarGreen, startFromZero: startFromZero)
-                    Text("$\((a.recoverableMonthly ?? 0).commaFormatted)/mo with better ordering")
+                    Text("$\((a.recoverableMonthly ?? 0).commaFormatted)/mo — waste above tolerance")
                         .font(.cavnarBody(14))
                         .foregroundStyle(Color.cavnarInk.opacity(0.55))
                         .multilineTextAlignment(.trailing)
@@ -156,12 +204,20 @@ struct FoodCostAnalyticsSection: View {
 
             Rectangle().fill(Color.cavnarEmber.opacity(0.35)).frame(height: 1)
 
-            AIConsultantEmbeddedStrip(
-                title: "Cavnar AI Food Cost Analysis",
-                insight: a.insight,
-                isLoading: isLoading,
-                showForecastInSheet: false
-            )
+            VStack(alignment: .leading, spacing: 10) {
+                AIConsultantEmbeddedStrip(
+                    title: "Cavnar AI Food Cost Analysis",
+                    insight: a.insight,
+                    isLoading: isLoading,
+                    showForecastInSheet: false
+                )
+                // The server computes this flag and every other module renders
+                // it; Food Cost declared no such key, so figures it could not
+                // trace back to the data were shown at full authority.
+                if a.hasUnverifiedFigures {
+                    CavnarCaveat.unverifiedFigures(a.unverifiedFigureList)
+                }
+            }
             .padding(.horizontal, 22)
             .padding(.top, 14)
             // The forecast ribbon straddles this card's bottom edge (see
@@ -234,17 +290,34 @@ struct FoodCostAnalyticsSection: View {
     private func statStrip(_ a: FoodCostAnalytics) -> some View {
         VStack(spacing: 20) {
             statRow([
-                ("$\((a.totalWasteCostWeek ?? 0).commaFormatted)", "Waste / wk", Color.cavnarRed),
-                ("$\((a.monthlyWasteProjection ?? 0).commaFormatted)", "Proj. / mo", Color.cavnarAmber),
+                (Self.money(a.totalWasteCostWeek), "Waste / wk", Color.cavnarRed),
+                (Self.money(a.monthlyWasteProjection), "Proj. / mo", Color.cavnarAmber),
                 ("\(a.wasteItems.count)", "Waste items", a.wasteItems.isEmpty ? Color.cavnarGreen : Color.cavnarAmber),
             ])
             Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1)
             statRow([
                 ("\(a.criticalLow.count)", "Critical low", a.criticalLow.isEmpty ? Color.cavnarGreen : Color.cavnarRed),
-                ("$\((a.totalStockValue ?? 0).commaFormatted)", "Inv. value", Color.cavnarInk),
-                ("\(a.totalItems ?? 0)", "Tracked", Color.cavnarInk),
+                (Self.money(a.totalStockValue), "Inv. value", Color.cavnarInk),
+                (a.totalItems.map(String.init) ?? "—", "Tracked", Color.cavnarInk),
             ])
+            if let asOf = a.lastUpdated, !asOf.isEmpty {
+                // The server has always sent week_start/week_end/last_updated
+                // and nothing rendered them, so an owner could not tell
+                // whether the annual projection above came from a count taken
+                // today or three weeks ago.
+                Text("From your count of \(asOf)")
+                    .font(.cavnarBody(12.5))
+                    .foregroundStyle(Color.cavnarInk.opacity(0.45))
+            }
         }
+    }
+
+    /// A dollar figure, or an em dash. `?? 0` turns "the field was absent"
+    /// into "$0" — and $0 of waste and no waste measurement at all are very
+    /// different things to show an owner.
+    private static func money(_ value: Double?) -> String {
+        guard let value else { return "—" }
+        return "$\(value.commaFormatted)"
     }
 
     private func statRow(_ items: [(String, String, Color)]) -> some View {
@@ -332,6 +405,21 @@ struct FoodCostAnalyticsSection: View {
                 }
                 .buttonStyle(CavnarSecondaryButtonStyle())
             }
+        } else {
+            // Menu margins used to live inside the order-list guard above, so
+            // a restaurant with a healthy pantry — or no inventory at all —
+            // lost the entire pricing feature, with no other way in.
+            Button {
+                Haptic.light()
+                showingMenuMargins = true
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "chart.pie.fill").font(.system(size: 13, weight: .semibold))
+                    Text("Menu margins")
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(CavnarSecondaryButtonStyle())
         }
     }
 
@@ -440,7 +528,11 @@ struct FoodCostAnalyticsSection: View {
             }
             Spacer(minLength: 8)
             VStack(alignment: .trailing, spacing: 3) {
-                Text("+\(String(format: "%.0f", item.changePct))%")
+                // Sign from the value. The "+" was hardcoded, which was only
+                // ever safe because the server detected increases and never
+                // drops — it now surfaces both, and a drop would have
+                // rendered as "+-6%".
+                Text("\(item.changePct >= 0 ? "+" : "")\(String(format: "%.0f", item.changePct))%")
                     .font(.cavnarNumber(14.5, weight: 700))
                     .foregroundStyle(accent)
                 Text(item.timeframeLabel)

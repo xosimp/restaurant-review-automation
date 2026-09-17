@@ -326,9 +326,22 @@ def waste_trend_stats(weeks, target_weekly=None):
         stats["above_target"] = values[-1] > target_weekly
         stats["gap_weekly"] = round(values[-1] - target_weekly, 2)
         stats["weeks_over_target"] = sum(1 for v in values if v > target_weekly)
-        stats["annualized_current"] = round(stats["rolling4"] * 52)
-        stats["annualized_if_target"] = round(target_weekly * 52)
-        stats["savings_if_at_target"] = round(max(0.0, stats["rolling4"] - target_weekly) * 52)
+        # One baseline per statement. gap_weekly came from the LATEST week
+        # while savings_if_at_target came from rolling4 x 52, and the card put
+        # them in one sentence — "you're $G a week over, about $S a year" —
+        # where G x 52 did not equal S. An owner who multiplied found the
+        # sentence contradicting itself.
+        stats["gap_baseline_weekly"] = round(stats["rolling4"] - target_weekly, 2)
+        # Annualising needs enough weeks to mean anything. rolling4 is a mean
+        # of whatever is there, so with two weeks on file this produced a
+        # confident "$X a year" from a fortnight.
+        if n >= WEEKS_FOR_TREND:
+            stats["annualized_current"] = round(stats["rolling4"] * 52)
+            stats["annualized_if_target"] = round(target_weekly * 52)
+            stats["savings_if_at_target"] = round(max(0.0, stats["rolling4"] - target_weekly) * 52)
+            stats["annualized_basis"] = "%d-week average x 52" % min(n, 4)
+        else:
+            stats["annualized_basis"] = None
         recent = values[-4:]
         over_recent = sum(1 for v in recent if v > target_weekly)
         # Over target and either getting worse, or stuck there for most of
@@ -398,10 +411,17 @@ def waste_trend_observations(stats, weeks, target_pct=WASTE_TARGET_PCT):
             save = stats.get("savings_if_at_target") or 0
             txt = f"You're {_money(gap)} a week over the {target_pct:g}% target"
             if save:
-                txt += f" — about {_money(save)} a year if waste is brought to target"
+                # Quoted against the same baseline the annual figure uses, so
+                # the two halves of this sentence agree with each other.
+                run_rate = stats.get("gap_baseline_weekly") or 0
+                txt += (f" — averaging {_money(run_rate)} a week over across the last "
+                        f"{min(n, 4)} weeks, about {_money(save)} a year if brought to target")
             out.append({"text": txt + ".", "tone": "bad" if stats.get("intervention") else "warn"})
-        else:
+        elif stats.get("annualized_if_target") is not None and stats.get("annualized_current") is not None:
             out.append({"text": f"You're {_money(gap)} a week under the {target_pct:g}% target — holding here keeps roughly {_money(stats['annualized_if_target'] - stats['annualized_current'])} a year off the waste bill versus target.",
+                        "tone": "good"})
+        else:
+            out.append({"text": f"You're {_money(gap)} a week under the {target_pct:g}% target.",
                         "tone": "good"})
 
     if stats.get("mom_delta") is not None and len(out) < 4:

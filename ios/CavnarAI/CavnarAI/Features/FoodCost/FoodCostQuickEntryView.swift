@@ -157,6 +157,17 @@ struct FoodCostQuickEntryView: View {
                         .foregroundStyle(Color.cavnarRed)
                 }
 
+                // Named, not dropped. A row with no price used to be sent as
+                // $0.00 and stored as a real price of record.
+                if !viewModel.rowsMissingAPrice.isEmpty {
+                    Text(viewModel.rowsMissingAPrice.count == 1
+                         ? "\(viewModel.rowsMissingAPrice[0]) has no price yet — it won't be saved."
+                         : "\(viewModel.rowsMissingAPrice.count) rows have no price yet and won't be saved.")
+                        .font(.cavnarBody(13.5))
+                        .foregroundStyle(Color.cavnarAmber)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
                 HoldToSubmitButton(
                     isSubmitting: viewModel.isSubmitting,
                     didSubmit: viewModel.didSubmit,

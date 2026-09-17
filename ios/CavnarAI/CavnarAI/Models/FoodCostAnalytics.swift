@@ -130,6 +130,22 @@ struct FoodCostTrendWeek: Decodable, Identifiable {
 struct FoodCostTrend: Decodable {
     let ok: Bool
     let weeks: [FoodCostTrendWeek]
+    /// The target the SERVER computed, from the same history the bars come
+    /// from. The chart used to derive its own from this week's analytics —
+    /// a different endpoint, a different table, and a divisor already rounded
+    /// to one decimal — and draw it across these bars as if they matched.
+    let target: FoodCostTrendTarget?
+}
+
+struct FoodCostTrendTarget: Decodable {
+    /// Target waste as a share of purchases. Per-restaurant, falling back to
+    /// the industry figure — not a constant the client keeps its own copy of.
+    let pct: Double?
+    /// That percentage applied to what this restaurant actually buys, in
+    /// dollars per week. Nil when there is no purchase history to imply it.
+    let weekly: Double?
+    /// "live" or "history" — which source the figure came from.
+    let basis: String?
 }
 
 struct FoodCostAnalytics: Decodable {
@@ -156,6 +172,16 @@ struct FoodCostAnalytics: Decodable {
     let weekStart: String?
     let weekEnd: String?
     let lastUpdated: String?
+    /// Totals over EVERY item, not just the truncated lists above. The client
+    /// used to sum the visible five overstock rows and present that as the
+    /// restaurant's tied-up capital, which undercounts whenever a sixth item
+    /// is overstocked.
+    let overstockTotal: Double?
+    let wasteItemsTotal: Double?
+    /// Figures the server could not trace back to the data it gave the model.
+    /// Reviews renders this; Food Cost declared no such key, so unsupported
+    /// numbers were shown at full authority.
+    let insightUnverified: String?
     /// False when the backend served the built-in example pantry because this
     /// restaurant has no inventory connected. Optional so a response from an
     /// older server (which didn't send it) still decodes, and defaults to
@@ -186,6 +212,9 @@ struct FoodCostAnalytics: Decodable {
         case weekEnd = "week_end"
         case lastUpdated = "last_updated"
         case isLive = "is_live"
+        case overstockTotal = "overstock_total"
+        case wasteItemsTotal = "waste_items_total"
+        case insightUnverified = "insight_unverified"
     }
 
     /// Example data must never be read as the owner's own numbers.
@@ -195,4 +224,22 @@ struct FoodCostAnalytics: Decodable {
         guard let insightIntro else { return nil }
         return AIInsight(intro: insightIntro, recommendations: insightRecommendations, forecast: insightForecast)
     }
+
+    /// True when the server flagged figures in the narrative that it could not
+    /// tie back to the data — the caveat the reader needs before acting on it.
+    var hasUnverifiedFigures: Bool { !unverifiedFigureList.isEmpty }
+
+    /// The individual figures the server could not support, for the caveat.
+    var unverifiedFigureList: [String] {
+        guard let insightUnverified else { return [] }
+        return insightUnverified
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    /// Annualised figures come from a single week's count. Below a few weeks
+    /// on file they are an extrapolation from one data point, and the chart
+    /// already refuses to draw on less — the hero had no equivalent test.
+    func annualFiguresAreSupported(weeksOfHistory: Int) -> Bool { weeksOfHistory >= 4 }
 }

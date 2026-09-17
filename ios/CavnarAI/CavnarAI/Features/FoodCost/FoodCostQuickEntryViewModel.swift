@@ -74,8 +74,29 @@ final class FoodCostQuickEntryViewModel {
     private struct ItemPayload: Encodable {
         let name: String
         let unit: String
-        let price: Double
-        let usage: Double
+        // Strings, deliberately. A blank field coerced to 0 was stored as
+        // this week's price of record, became next week's baseline, and then
+        // silently suppressed that ingredient's drift alert — the comparison
+        // only runs when both prices are above zero. The server validates and
+        // names anything it can't use, so an empty string reaches it as an
+        // empty string rather than as a confident $0.00.
+        let price: String
+        let usage: String
+    }
+
+    /// A row is submittable when it has a name AND a price that parses.
+    /// `canSubmit` used to require only a non-empty name anywhere in the list,
+    /// so all seven default ingredients could be submitted with every price
+    /// blank.
+    // nonisolated: a pure parse with no state, so it doesn't need the main
+    // actor and can be exercised directly by tests.
+    nonisolated static func parsedPrice(_ text: String) -> Double? {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return nil }
+        // Locale-aware first: Double("3,50") is nil on a comma-decimal
+        // keyboard, which is exactly where the silent zero came from.
+        if let n = NumberFormatter.cavnarDecimal.number(from: trimmed) { return n.doubleValue }
+        return Double(trimmed)
     }
 
     private struct QuickcountBody: Encodable {
@@ -97,17 +118,33 @@ final class FoodCostQuickEntryViewModel {
     }
 
     var canSubmit: Bool {
-        !isSubmitting && items.contains { !$0.name.trimmingCharacters(in: .whitespaces).isEmpty }
+        !isSubmitting && items.contains { item in
+            !item.name.trimmingCharacters(in: .whitespaces).isEmpty
+                && Self.parsedPrice(item.priceText) != nil
+        }
+    }
+
+    /// Rows that carry a name but no usable price — named back to the owner
+    /// rather than quietly stored as zeros.
+    var rowsMissingAPrice: [String] {
+        items.compactMap { item in
+            let name = item.name.trimmingCharacters(in: .whitespaces)
+            guard !name.isEmpty, Self.parsedPrice(item.priceText) == nil else { return nil }
+            return name
+        }
     }
 
     func submit() async {
         let payloadItems: [ItemPayload] = items.compactMap { item in
             let name = item.name.trimmingCharacters(in: .whitespaces)
             guard !name.isEmpty else { return nil }
+            // Only rows with a real price go up; the rest are reported in
+            // rowsMissingAPrice so the owner sees what was left out.
+            guard Self.parsedPrice(item.priceText) != nil else { return nil }
             return ItemPayload(
                 name: name, unit: item.unit,
-                price: Double(item.priceText) ?? 0,
-                usage: Double(item.usageText) ?? 0
+                price: item.priceText.trimmingCharacters(in: .whitespaces),
+                usage: item.usageText.trimmingCharacters(in: .whitespaces)
             )
         }
         guard !payloadItems.isEmpty else { return }

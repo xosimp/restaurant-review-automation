@@ -6,7 +6,14 @@ import Observation
 final class FoodCostAnalyticsViewModel {
     var analytics: FoodCostAnalytics?
     var trend: [FoodCostTrendWeek] = []
+    var trendTarget: FoodCostTrendTarget?
     var isLoading = false
+    /// Why the last load failed, when it did. `try?` used to swallow the
+    /// error and assign nil over previously good data, so a server failure
+    /// rendered as an empty ScrollView with no message and no way to retry —
+    /// the only recovery was leaving the module. MenuMarginsViewModel already
+    /// does this correctly; this is the same shape.
+    var errorMessage: String?
     // Drives the shared hero-forecast-ribbon pill (see
     // FoodCostQuickEntryView's .cavnarHeroForecastRibbon call) — matches
     // LaborViewModel.forecastExpanded exactly.
@@ -42,15 +49,30 @@ final class FoodCostAnalyticsViewModel {
     }
 
     func load() async {
-        isLoading = true
+        isLoading = analytics == nil
+        errorMessage = nil
         defer { isLoading = false }
         // Two independent endpoints, loaded together — a trend-fetch
         // failure shouldn't block the rest of the tab from showing (the
         // chart just renders its own "not enough data" state), matching
         // how Labor's own trend fetch is similarly best-effort.
-        async let analyticsResult: FoodCostAnalytics? = try? client.send("/mobile/api/food-cost/analytics")
+        //
+        // Analytics is NOT best-effort: its failure is the difference between
+        // a tab and a blank page, so it keeps whatever was already on screen
+        // and reports why rather than assigning nil over it.
         async let trendResult: FoodCostTrend? = try? client.send("/mobile/api/food-cost/trend")
-        analytics = await analyticsResult
-        trend = await trendResult?.weeks ?? []
+        do {
+            let fresh: FoodCostAnalytics = try await client.send("/mobile/api/food-cost/analytics")
+            analytics = fresh
+        } catch is CancellationError {
+            // View went away mid-fetch; not a failure.
+        } catch let error as APIClient.APIError {
+            if analytics == nil { errorMessage = error.message }
+        } catch {
+            if analytics == nil { errorMessage = "Couldn't load food cost right now." }
+        }
+        let trendPayload = await trendResult
+        trend = trendPayload?.weeks ?? []
+        trendTarget = trendPayload?.target
     }
 }

@@ -42,7 +42,14 @@ struct WasteLedgerChart: View {
             let full = size.width - left - right
             let bw = full * CGFloat(row.value / maxValue) * CGFloat(s)
             ctx.fill(CavnarChart.roundedRect(CGRect(x: left, y: y, width: full, height: bh), radius: bh / 2), with: .color(Color.white.opacity(0.05)))
-            let bar = CavnarChart.roundedRect(CGRect(x: left, y: y, width: max(bw, bh), height: bh), radius: bh / 2)
+            // A floor of a quarter of the bar height, not a full one. At
+            // max(bw, bh) every value below ~8% of the largest drew the same
+            // 26pt stub, so a $2 item and a $60 item looked identical beside
+            // a $400 one — flattening the exact ratio the ledger exists to
+            // show. Small enough to stay visible, small enough to still read
+            // as small.
+            let minBar = bh / 4
+            let bar = CavnarChart.roundedRect(CGRect(x: left, y: y, width: max(bw, minBar), height: bh), radius: bh / 2)
             ctx.drawLayer { layer in
                 layer.addFilter(.blur(radius: 6))
                 layer.fill(bar, with: .color(tint.opacity(0.6)))

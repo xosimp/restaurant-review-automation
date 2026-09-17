@@ -6450,6 +6450,18 @@ def food_cost_cogs(current_user):
         return jsonify(ok=False, pct=None, error=_safe_err(e)), 500
 
 
+@client_bp.route("/api/food-cost/recipe-coverage")
+@login_required
+def food_cost_recipe_coverage(current_user):
+    """What share of what this restaurant sold is accounted for by a recipe —
+    the number that says how far the rest of the module can be trusted."""
+    import inventory_ledger as _il
+    try:
+        return jsonify(ok=True, **_il.recipe_coverage(current_user["restaurant_id"]))
+    except Exception as e:
+        return jsonify(ok=False, error=_safe_err(e)), 500
+
+
 @client_bp.route("/api/food-cost/menu-profitability")
 @login_required
 def food_cost_menu_profitability(current_user):

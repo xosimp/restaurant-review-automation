@@ -19,6 +19,13 @@ struct FoodCostTrendChart: View {
     var benchmarkLabel: String?
     var wasteRatePct: Double?
     var totalWasteCostWeek: Double?
+    /// The target the server computed from the same history these bars come
+    /// from. See industryTargetDollar below for what this replaces.
+    var target: FoodCostTrendTarget?
+    /// When the analytics figures above the chart were measured. The bars come
+    /// from stored weekly snapshots and the badge beside them is recomputed
+    /// live, so without a date the two read as one moment when they may not be.
+    var asOf: String?
 
     @State private var barsVisible = false
     @State private var selectedWeek: FoodCostTrendWeek?
@@ -47,21 +54,29 @@ struct FoodCostTrendChart: View {
         return weeks.reduce(0) { $0 + $1.waste } / Double(weeks.count)
     }
 
-    /// The "Industry target: 4–5% of purchases" caption below the chart
-    /// had a yellow legend swatch pointing at nothing — no line on the
-    /// chart actually used industryLow/industryHigh. There's no dollar
-    /// figure for "purchases" in the API response to plot directly, so
-    /// it's backed out from the two numbers we do have: this week's waste
-    /// dollars and what percentage of purchases that waste represents.
-    /// Flat across all 8 weeks (purchases aren't tracked per-week here)
-    /// rather than precisely accurate per week — same simplification the
-    /// caption's own single flat percentage already made.
+    /// The target line, in dollars per week.
+    ///
+    /// This used to be derived here: weekly purchases were back-solved from
+    /// this week's analytics (`totalWasteCostWeek / (wasteRatePct / 100)` —
+    /// with wasteRatePct already rounded to one decimal, so the divisor
+    /// carried its rounding error), the 4–5% band was hard-coded client-side
+    /// while the server owned the same thresholds, and the result was drawn
+    /// flat across bars that come from a different endpoint reading a
+    /// different table. It is now whatever the server computed from the same
+    /// history as the bars, using this restaurant's own target percentage
+    /// rather than an industry constant the client kept a second copy of.
     private var industryTargetDollar: Double? {
-        guard let wasteRatePct, wasteRatePct > 0,
-              let totalWasteCostWeek, totalWasteCostWeek > 0 else { return nil }
-        let impliedWeeklyPurchases = totalWasteCostWeek / (wasteRatePct / 100)
-        let targetMidPct = (Self.industryLow + Self.industryHigh) / 2
-        return impliedWeeklyPurchases * (targetMidPct / 100)
+        guard let weekly = target?.weekly, weekly > 0 else { return nil }
+        return weekly
+    }
+
+    /// The target percentage to name in the caption — the restaurant's own
+    /// when it has one.
+    private var targetPctLabel: String {
+        if let pct = target?.pct, pct > 0 {
+            return pct == pct.rounded() ? String(format: "%.0f%%", pct) : String(format: "%.1f%%", pct)
+        }
+        return String(format: "%.0f–%.0f%%", Self.industryLow, Self.industryHigh)
     }
 
     private func barColor(_ waste: Double) -> Color {
@@ -127,7 +142,9 @@ struct FoodCostTrendChart: View {
                         .foregroundStyle(Color.cavnarInk.opacity(0.8))
                         .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
                         .annotation(position: .top, alignment: .trailing) {
-                            Text("your avg $\(Int(average))")
+                            // Rounded, not truncated: Int(347.90) is 347,
+                            // and the rest of this module rounds first.
+                            Text("your avg $\(Int(average.rounded()))")
                                 .font(.cavnarBody(13.5, weight: 700))
                                 .foregroundStyle(Color.black)
                                 .padding(.horizontal, 6)
@@ -140,7 +157,7 @@ struct FoodCostTrendChart: View {
                             .foregroundStyle(Self.industryBandColor)
                             .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [3, 3]))
                             .annotation(position: .top, alignment: .leading) {
-                                Text("your target ~$\(Int(industryTargetDollar))")
+                                Text("your target ~$\(Int(industryTargetDollar.rounded()))")
                                     .font(.cavnarBody(13.5, weight: 700))
                                     .foregroundStyle(Color.black)
                                     .padding(.horizontal, 6)
@@ -182,7 +199,8 @@ struct FoodCostTrendChart: View {
                 if let benchmarkLabel, wasteRatePct != nil, benchmarkLabel != "—" {
                     HStack(spacing: 5) {
                         Rectangle().fill(Self.industryBandColor).frame(width: 12, height: 2)
-                        Text("Industry target: 4–5% of purchases")
+                        Text(target?.pct != nil ? "Your target: \(targetPctLabel) of purchases"
+                                                : "Industry target: \(targetPctLabel) of purchases")
                         Text("· you're \(benchmarkLabel.lowercased())")
                             .foregroundStyle(benchmarkColor(benchmarkLabel))
                     }
@@ -238,7 +256,7 @@ struct FoodCostTrendChart: View {
             Text(week.label)
                 .font(.cavnarBody(13.5, weight: 700))
                 .foregroundStyle(Color.cavnarInk3)
-            Text("$\(Int(week.waste))")
+            Text("$\(Int(week.waste.rounded()))")
                 .font(.cavnarNumber(14, weight: 700))
                 .foregroundStyle(barColor(week.waste))
         }

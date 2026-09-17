@@ -103,3 +103,152 @@ final class FoodCostAnalyticsTests: XCTestCase {
         XCTAssertEqual(trend.weeks.last?.waste, 347.0)
     }
 }
+
+// MARK: - Food Cost audit regressions
+//
+// Each case here corresponds to a finding that was verified against the
+// implementation before it was fixed. The comments say what the behaviour
+// used to be, because in most of these the old code read as perfectly
+// reasonable at the call site.
+
+final class FoodCostAuditRegressionTests: XCTestCase {
+
+    /// The totals the server computes over EVERY item, not the truncated
+    /// lists it sends for display. The client summed the visible five
+    /// overstock rows and presented that as the restaurant's tied-up
+    /// capital — an undercount by construction past a sixth item.
+    func testDecodesServerSideTotalsRatherThanSummingATruncatedList() throws {
+        let json = """
+        {"ok": true, "insight_recommendations": [],
+         "waste_items": [], "overstock": [], "critical_low": [],
+         "reorder_soon": [], "order_reduction": [], "price_watch": [],
+         "overstock_total": 1875.25, "waste_items_total": 412.10}
+        """
+        let a = try JSONDecoder.cavnar.decode(FoodCostAnalytics.self, from: Data(json.utf8))
+        XCTAssertEqual(a.overstockTotal, 1875.25)
+        XCTAssertEqual(a.wasteItemsTotal, 412.10)
+    }
+
+    /// verify_figures was computed server-side and discarded; the client
+    /// declared no such key, so figures the backend could not trace back to
+    /// the data were rendered at full authority.
+    func testUnverifiedFiguresSurfaceAsACaveatList() throws {
+        let json = """
+        {"ok": true, "insight_recommendations": [],
+         "waste_items": [], "overstock": [], "critical_low": [],
+         "reorder_soon": [], "order_reduction": [], "price_watch": [],
+         "insight_unverified": "$340, 22%"}
+        """
+        let a = try JSONDecoder.cavnar.decode(FoodCostAnalytics.self, from: Data(json.utf8))
+        XCTAssertTrue(a.hasUnverifiedFigures)
+        XCTAssertEqual(a.unverifiedFigureList, ["$340", "22%"])
+    }
+
+    func testNoUnverifiedKeyMeansNoCaveat() throws {
+        let json = """
+        {"ok": true, "insight_recommendations": [],
+         "waste_items": [], "overstock": [], "critical_low": [],
+         "reorder_soon": [], "order_reduction": [], "price_watch": []}
+        """
+        let a = try JSONDecoder.cavnar.decode(FoodCostAnalytics.self, from: Data(json.utf8))
+        XCTAssertFalse(a.hasUnverifiedFigures)
+        XCTAssertTrue(a.unverifiedFigureList.isEmpty)
+    }
+
+    /// The chart used to back-solve its own target from this week's
+    /// analytics and draw it across bars from a different endpoint. The
+    /// server now sends the target with the series.
+    func testTrendCarriesTheServerComputedTarget() throws {
+        let json = """
+        {"ok": true,
+         "weeks": [{"label": "8/20", "start": "2026-08-14", "end": "2026-08-20", "waste": 347.0}],
+         "target": {"pct": 4.5, "weekly": 312.75, "basis": "history"}}
+        """
+        let trend = try JSONDecoder.cavnar.decode(FoodCostTrend.self, from: Data(json.utf8))
+        XCTAssertEqual(trend.target?.weekly, 312.75)
+        XCTAssertEqual(trend.target?.pct, 4.5)
+        XCTAssertEqual(trend.target?.basis, "history")
+    }
+
+    /// An older server sends no target; the chart must simply not draw the
+    /// line rather than fall back to inventing one.
+    func testTrendWithoutATargetDecodesCleanly() throws {
+        let json = """
+        {"ok": true, "weeks": []}
+        """
+        let trend = try JSONDecoder.cavnar.decode(FoodCostTrend.self, from: Data(json.utf8))
+        XCTAssertNil(trend.target)
+    }
+
+    /// A blank price field was coerced to 0 and stored as this week's price
+    /// of record, becoming next week's baseline and silently suppressing
+    /// that ingredient's drift alert.
+    @MainActor
+    func testABlankPriceIsNotSubmittable() {
+        let vm = FoodCostQuickEntryViewModel()
+        vm.items = [FoodCostItem(name: "Romaine", unit: "lb")]
+        XCTAssertFalse(vm.canSubmit, "a row with no price must not be submittable")
+        XCTAssertEqual(vm.rowsMissingAPrice, ["Romaine"])
+    }
+
+    @MainActor
+    func testARowWithAPriceIsSubmittable() {
+        let vm = FoodCostQuickEntryViewModel()
+        var item = FoodCostItem(name: "Romaine", unit: "lb")
+        item.priceText = "2.50"
+        vm.items = [item]
+        XCTAssertTrue(vm.canSubmit)
+        XCTAssertTrue(vm.rowsMissingAPrice.isEmpty)
+    }
+
+    /// Double("3,50") is nil in every comma-decimal locale, and the nil fell
+    /// back to a confident $0.00.
+    func testPriceParsingHandlesAPlainDecimal() {
+        XCTAssertEqual(FoodCostQuickEntryViewModel.parsedPrice("3.50"), 3.50)
+        XCTAssertNil(FoodCostQuickEntryViewModel.parsedPrice(""))
+        XCTAssertNil(FoodCostQuickEntryViewModel.parsedPrice("   "))
+        XCTAssertNil(FoodCostQuickEntryViewModel.parsedPrice("abc"))
+    }
+
+    /// Dishes whose ingredients aren't all priced are their own group. They
+    /// used to be costed with COALESCE(unit_cost, 0), so a dish whose main
+    /// protein had never been priced showed an excellent margin.
+    func testMenuProfitabilitySeparatesDishesWithUncostedIngredients() throws {
+        let json = """
+        {"ok": true, "priced": [], "unpriced": [], "unmapped": [],
+         "uncosted": [{"id": 3, "name": "Burger", "sell_price": 15.0,
+                        "ingredient_count": 2, "uncosted_ingredients": 1}],
+         "average_food_cost_pct": null, "average_basis": null,
+         "has_sales_data": false, "highest_food_cost": null}
+        """
+        let p = try JSONDecoder.cavnar.decode(MenuProfitability.self, from: Data(json.utf8))
+        XCTAssertEqual(p.uncosted.count, 1)
+        XCTAssertEqual(p.uncosted.first?.uncostedIngredients, 1)
+        XCTAssertFalse(p.isEmpty, "a menu with only uncosted dishes is not an empty menu")
+    }
+
+    /// "Best" means the biggest contributor, not the lowest food cost
+    /// percentage — a $3 soda used to outrank a $36 steak carrying $27 of
+    /// gross margin.
+    func testMenuProfitabilityCarriesContributionAndPopularity() throws {
+        let json = """
+        {"ok": true, "unpriced": [], "unmapped": [], "uncosted": [],
+         "priced": [{"id": 1, "name": "Ribeye", "sell_price": 36.0, "plate_cost": 9.0,
+                      "margin": 27.0, "food_cost_pct": 25.0, "margin_pct": 75.0,
+                      "units_sold": 100.0, "total_contribution": 2700.0, "ingredient_count": 3}],
+         "average_food_cost_pct": 23.8,
+         "average_basis": "weighted by units sold over the last 28 days",
+         "has_sales_data": true,
+         "best": {"id": 1, "name": "Ribeye", "sell_price": 36.0, "plate_cost": 9.0,
+                   "margin": 27.0, "food_cost_pct": 25.0, "margin_pct": 75.0,
+                   "units_sold": 100.0, "total_contribution": 2700.0, "ingredient_count": 3},
+         "highest_food_cost": null}
+        """
+        let p = try JSONDecoder.cavnar.decode(MenuProfitability.self, from: Data(json.utf8))
+        XCTAssertEqual(p.best?.name, "Ribeye")
+        XCTAssertEqual(p.priced.first?.totalContribution, 2700.0)
+        XCTAssertEqual(p.priced.first?.unitsSold, 100.0)
+        XCTAssertEqual(p.hasSalesData, true)
+        XCTAssertTrue((p.averageBasis ?? "").contains("weighted"))
+    }
+}

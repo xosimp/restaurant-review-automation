@@ -3048,6 +3048,10 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .fc2-fcp .b{font-size:12.5px;color:var(--ink3);margin-top:8px;line-height:1.45}
 .fc2-fcp .miss{margin:8px 0 0;padding-left:18px;font-size:13px;color:var(--ink3);line-height:1.5}
 .fc2-fcp .miss b{color:var(--ink2);font-weight:600}
+.fc2-cov{margin-top:10px;display:flex;flex-wrap:wrap;align-items:baseline;gap:8px;max-width:520px;font-size:13.5px;color:var(--ink3)}
+.fc2-cov .k{text-transform:uppercase;letter-spacing:.8px;font-weight:700;font-size:12px}
+.fc2-cov .v{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:17px;color:var(--ink)}
+.fc2-cov .v.good{color:var(--hb-good)}.fc2-cov .v.warn{color:var(--amber)}.fc2-cov .v.bad{color:var(--hb-bad)}
 .fc2-po{margin-top:14px}
 .fc2-po .row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid var(--hb-line2);font-size:13.5px;color:var(--ink2)}
 .fc2-po .row b{font-family:'Space Grotesk',sans-serif;color:var(--ink);font-weight:600}
@@ -3078,6 +3082,13 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
          answers, and when a component is missing it says which rather than
          showing a percentage built on an assumed number. #}
       <div id="fc2-fcp" class="fc2-fcp" hidden></div>
+      {# Recipe coverage: the share of sales a recipe actually accounts for.
+         A dish with no recipe depletes nothing, so its ingredients look like
+         they are never used — which understates usage, overstates days
+         remaining and keeps items out of the reorder list, worst for whatever
+         sells most. This number says how far the rest of the page can be
+         trusted, and it was only ever written to a log. #}
+      <div id="fc2-cov" class="fc2-cov" hidden></div>
     </div>
     <div class="fc2-top-right">
       <div class="hb-pulse">
@@ -9122,6 +9133,7 @@ function loadInvInsight(){
   // Loading state is the Cavnar orb already in the markup (same as Labor).
   loadWasteTrend();
   fc2LoadFoodCostPct();
+  fc2LoadRecipeCoverage();
   var fiveMin=5*60*1000;
   try{
     var cached=sessionStorage.getItem('inv_insight');
@@ -9212,6 +9224,28 @@ function fc2LoadFoodCostPct(){
       host.hidden=false;
     })
     .catch(function(){ host.hidden=true; });
+}
+function fc2LoadRecipeCoverage(){
+  var host=document.getElementById('fc2-cov');if(!host)return;
+  fetch('/api/food-cost/recipe-coverage',{headers:{'Accept':'application/json'}})
+    .then(function(r){return r.json();})
+    .then(function(d){
+      if(!d||!d.ok||!d.has_data||d.coverage_pct==null){host.hidden=true;return;}
+      var pct=d.coverage_pct;
+      var tone=pct>=90?'good':(pct>=70?'warn':'bad');
+      var h='<span class="k">Recipe coverage</span>'
+        +'<span class="v '+tone+'"><span class="hb-num">'+pct+'%</span></span>'
+        +'<span class="d">of what you sold over the last '+d.window_days+' days is costed by a recipe';
+      if(d.uncovered_count>0){
+        var names=[];
+        for(var i=0;i<d.uncovered_top.length&&i<2;i++)names.push(wtEsc(d.uncovered_top[i].name));
+        h+=' — '+d.uncovered_count+' dish'+(d.uncovered_count===1?'':'es')+' uncosted'
+          +(names.length?' ('+names.join(', ')+')':'');
+      }
+      h+='</span>';
+      host.innerHTML=h;host.hidden=false;
+    })
+    .catch(function(){host.hidden=true;});
 }
 function loadWasteTrend(force){
   var key=_wt.range;

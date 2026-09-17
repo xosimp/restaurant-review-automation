@@ -1600,6 +1600,18 @@ def mobile_menu_profitability(current_user):
         return jsonify(ok=False, error=f"Couldn't work out menu margins: {e}"), 500
 
 
+@mobile_bp.route("/food-cost/recipe-coverage")
+@mobile_login_required
+def mobile_recipe_coverage(current_user):
+    """Share of sales a recipe accounts for. A dish with no recipe depletes
+    nothing, so its ingredients look like they are never used."""
+    import inventory_ledger as _il
+    try:
+        return jsonify(ok=True, **_il.recipe_coverage(current_user["restaurant_id"]))
+    except Exception as e:
+        return jsonify(ok=False, error=_safe_err(e)), 500
+
+
 @mobile_bp.route("/food-cost/cogs")
 @mobile_login_required
 def mobile_food_cost_cogs(current_user):
@@ -1784,7 +1796,7 @@ def mobile_food_cost_analytics(current_user):
                 restaurant_name=restaurant.name if restaurant else None,
                 restaurant_id=rid, items=items, is_live=is_live,
             )
-            _capi._cache_set("mobile-inv-insight:" + str(rid), insight)
+            _capi._cache_set("mobile-inv-insight:%s:%s" % (rid, _fp), insight)
         return jsonify(
             ok=True,
             insight=insight,
@@ -1793,6 +1805,15 @@ def mobile_food_cost_analytics(current_user):
             **_insight_json(insight),
             waste_items=analysis.get("waste_items", []),
             overstock=analysis.get("overstock", []),
+            # The lists above are truncated for display (waste_items[:6],
+            # overstock[:5]). iOS summed the visible five and presented it as
+            # the restaurant's total tied-up capital, which is an undercount
+            # by construction whenever a sixth item is overstocked. Totals are
+            # computed here, over everything.
+            overstock_total=round(sum(float(x.get("overstock_cost") or 0)
+                                      for x in (analysis.get("overstock") or [])), 2),
+            waste_items_total=round(sum(float(x.get("waste_cost") or 0)
+                                        for x in (analysis.get("waste_items") or [])), 2),
             critical_low=analysis.get("critical_low", []),
             reorder_soon=analysis.get("reorder_soon", []),
             order_reduction=analysis.get("order_reduction", []),
@@ -1833,11 +1854,19 @@ def mobile_food_cost_trend(current_user):
         # (waste_trend.load_waste_history): one figure per week even when
         # the insight ran twice that week, and the table is created lazily
         # there, so a fresh install reads as "no history yet", not a 500.
-        from waste_trend import load_waste_history
+        from waste_trend import load_waste_history, implied_target_weekly, get_waste_target_pct
         weeks, _total = load_waste_history(rid, limit=8)
+        # The target travels with the series. iOS used to back-solve weekly
+        # purchases from THIS week's analytics (dividing by a rate already
+        # rounded to one decimal) and draw that against bars sourced from a
+        # different endpoint and a different table — two numbers from two
+        # places presented as one chart. The web card has always taken its
+        # target from here; now both do.
+        target_pct = get_waste_target_pct(rid)
+        target_weekly, basis = implied_target_weekly(None, weeks, target_pct)
         return jsonify(ok=True, weeks=[{
             "label": w["label"], "start": w["start"], "end": w["week_end"], "waste": w["waste"],
-        } for w in weeks])
+        } for w in weeks], target={"pct": target_pct, "weekly": target_weekly, "basis": basis})
     except Exception as e:
         return jsonify(ok=False, weeks=[], error=_safe_err(e)), 500
 
