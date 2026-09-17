@@ -274,19 +274,73 @@ def test_reviews_kicker_and_inbox_label_match_food_costs_bumped_size():
     assert '<div class="k">Inbox</div>' in panel
 
 
-def test_no_pill_has_an_ember_glow_on_any_module():
-    """The hero pills' box-shadow glow (.hb-chip / .hb-chip:hover) is gone
-    everywhere .hb-chip is used — Home, Reviews, Labor, Food Cost,
-    Marketing, Intel, Account all share the one class. A Reviews-only
-    override existed for one turn; the fix belongs on the shared rule so
-    every module's pills lose the glow, not just one page's."""
+def test_no_pill_has_an_ember_glow_or_border_on_any_module():
+    """The hero pills' ember box-shadow glow is gone everywhere .hb-chip is
+    used (Home, Reviews, Labor, Food Cost, Marketing, Intel, Account all
+    share the one class — a Reviews-only override existed for one turn;
+    the fix belongs on the shared rule). Went a round further: the orange
+    BORDER ring is gone too, replaced by a border the same tone as the
+    canvas (var(--bg-base)) — definition now comes entirely from a real
+    (colorless) drop shadow lifting the pill off the page, not from any
+    accent-colored outline or glow."""
     s = _src()
-    # "box-shadow:" (with the colon) so a `transition:...,box-shadow .12s`
-    # property-name listing doesn't false-positive as an actual declaration.
-    assert not re.search(r"\.hb-chip\{[^}]*box-shadow:", s)
-    assert not re.search(r"\.hb-chip:hover\{[^}]*box-shadow:", s)
+    rule = re.search(r"\.hb-chip\{[^}]*\}", s).group(0)
+    hover_rule = re.search(r"\.hb-chip:hover\{[^}]*\}", s).group(0)
+    assert "rgba(200,75,47," not in rule and "rgba(200,75,47," not in hover_rule, \
+        "no ember-colored glow on the pill itself"
+    assert "rgba(232,149,106," not in rule, "no orange border ring"
+    assert "border:1px solid var(--bg-base)" in rule
+    assert "box-shadow:0 10px 24px rgba(0,0,0,.45),0 3px 8px rgba(0,0,0,.35)" in rule
+    assert "box-shadow:0 14px 32px rgba(0,0,0,.5),0 4px 10px rgba(0,0,0,.4)" in hover_rule
     assert "#panel-reviews .hb-chip,#panel-reviews .hb-chip:hover{box-shadow:none}" not in s, \
         "page-scoped override should be gone now that the shared rule itself has no glow"
     # The .dot i/.dot b status-indicator glow is a different, small,
     # functional thing (not "the orange glow behind the pill") and stays.
     assert ".hb-chip .dot i{position:absolute;inset:0;border-radius:50%;background:var(--ember);box-shadow:0 0 6px var(--ember)}" in s
+
+
+# ── Reviews "3 charts" row — bigger, one chart repositioned, no double line ──
+
+def test_rv2_sig_three_columns_are_bigger():
+    """The label, big number, caption and both sub-chart's bar/row text
+    across all 3 columns (Reviews · per week / How replies got approved /
+    What guests talk about) were sized for a much quieter card than they
+    now sit in — bumped up across the board."""
+    css = _src()
+    assert ".rv2-sg .k{font-size:13px" in css
+    assert ".rv2-sg .v{font-family:'Space Grotesk',sans-serif;font-size:38px" in css
+    assert ".rv2-sg .v small{font-family:'Apfel Grotezk',sans-serif;font-size:14px" in css
+    assert ".rv2-sg svg{display:block;width:100%;height:108px" in css
+    assert ".rv2-sg .cap{font-size:13px" in css
+    assert ".rv2-perf .row{display:grid;grid-template-columns:124px 1fr 62px;gap:10px;align-items:center;font-size:13.5px" in css
+    assert ".rv2-perf .bar{height:13px" in css
+    assert ".rv2-topic{display:grid;grid-template-columns:1fr 130px 40px;gap:10px;align-items:center;padding:8px 0;border-top:1px solid var(--hb-line2);background:none;border-left:none;border-right:none;border-bottom:none;font-family:inherit;text-align:left;cursor:pointer;color:var(--ink);font-size:14px" in css
+    assert ".rv2-topic .bar{height:8px" in css
+
+
+def test_reviews_per_week_chart_moves_down_without_moving_its_number():
+    """Only #sentiment-trend-bars (the bar chart itself) gets pushed down
+    in its column — the 'k' label and the big 'v' number/caption above it
+    (shared .rv2-sg rules, unscoped) are untouched, and the other two
+    columns' own chart containers (#perf-body, #heatmap-grid) get no such
+    margin."""
+    css = _src()
+    assert "#sentiment-trend-bars{margin-top:22px}" in css
+    assert "#perf-body{margin-top" not in css
+    assert "#heatmap-grid{margin-top" not in css
+
+
+def test_rv2_inbox_no_longer_draws_a_duplicate_divider():
+    """.rv2-inbox and its child .hb-sh ('Inbox') both drew a full
+    margin-top/padding-top/border-top divider — two hairlines with a gap
+    between them reading as one thick double line, the same bug already
+    fixed on Labor's .lb2-sched. The divider now belongs to .hb-sh alone;
+    .rv2-inbox carries no spacing of its own beyond what its child needs,
+    and the inline style that used to zero out .hb-sh's own margin (to
+    compensate for the parent's) is gone since the parent no longer has
+    one to compensate for."""
+    s = _src()
+    m = re.search(r"\.rv2-inbox\{([^}]*)\}", s)
+    assert m, ".rv2-inbox rule not found"
+    assert "border-top" not in m.group(1) and "padding-top" not in m.group(1)
+    assert '<div id="rv-inbox-reviews" class="rv2-inbox">\n    <div class="hb-sh"><div><div class="k">Inbox</div>' in s

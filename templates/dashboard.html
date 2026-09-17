@@ -1196,9 +1196,13 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 .hb-top .hb-pulse{flex:0 1 auto}
 /* pulse chips (iOS HomePulseStrip) */
 .hb-pulse{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;padding-top:6px}
-.hb-chip{display:inline-flex;align-items:center;gap:8px;padding:8px 13px 8px 11px;border-radius:999px;border:1px solid rgba(232,149,106,.32);background:linear-gradient(180deg,rgba(255,255,255,.07),rgba(255,255,255,.02));cursor:pointer;font-family:inherit;color:var(--ink);white-space:nowrap;transition:transform .12s ease,box-shadow .12s ease}
+/* The pill's edge no longer reads as a colored ring — its border is the
+   same tone as the workspace canvas, so definition comes entirely from
+   the shadow lifting it off the page (the way every other elevated
+   container here works), not from an accent-colored outline. */
+.hb-chip{display:inline-flex;align-items:center;gap:8px;padding:8px 13px 8px 11px;border-radius:999px;border:1px solid var(--bg-base);background:linear-gradient(180deg,rgba(255,255,255,.07),rgba(255,255,255,.02));box-shadow:0 10px 24px rgba(0,0,0,.45),0 3px 8px rgba(0,0,0,.35);cursor:pointer;font-family:inherit;color:var(--ink);white-space:nowrap;transition:transform .12s ease,box-shadow .12s ease}
 html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(255,255,255,.8),rgba(255,255,255,.45))}
-.hb-chip:hover{transform:translateY(-1px)}
+.hb-chip:hover{transform:translateY(-1px);box-shadow:0 14px 32px rgba(0,0,0,.5),0 4px 10px rgba(0,0,0,.4)}
 .hb-chip .v{font-family:'Space Grotesk',sans-serif;font-size:14px;font-weight:700;letter-spacing:-.01em}
 .hb-chip .v .stat-n{font-size:14px}
 .hb-chip .l{font-size:11.5px;font-weight:600;color:var(--ink2)}
@@ -1751,36 +1755,46 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .rv2-sig{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0;margin-top:34px;padding-top:24px;border-top:1px solid var(--hb-line)}
 .rv2-sg{padding:0 26px 0 0;margin-right:26px;border-right:1px solid var(--hb-line2);min-width:0}
 .rv2-sg:last-child{border-right:none;margin-right:0;padding-right:0}
-.rv2-sg .k{font-size:10.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);display:flex;justify-content:space-between;align-items:center;gap:8px}
-.rv2-sg .k i{font-style:normal;color:var(--ember);font-weight:700;letter-spacing:.06em;font-size:10px}
-.rv2-sg .v{font-family:'Space Grotesk',sans-serif;font-size:30px;font-weight:600;letter-spacing:-.025em;line-height:1;color:var(--ink);margin:8px 0 2px;display:flex;align-items:baseline;gap:8px}
-.rv2-sg .v small{font-family:'Apfel Grotezk',sans-serif;font-size:12px;font-weight:400;letter-spacing:0;color:var(--ink3)}
-.rv2-sg svg{display:block;width:100%;height:86px;margin-top:10px;overflow:visible}
-.rv2-sg .cap{font-size:11.5px;color:var(--ink3);margin-top:6px;display:flex;justify-content:space-between;gap:10px}
+.rv2-sg .k{font-size:13px;font-weight:700;letter-spacing:.13em;text-transform:uppercase;color:var(--ink3);display:flex;justify-content:space-between;align-items:center;gap:8px}
+.rv2-sg .k i{font-style:normal;color:var(--ember);font-weight:700;letter-spacing:.06em;font-size:11.5px}
+.rv2-sg .v{font-family:'Space Grotesk',sans-serif;font-size:38px;font-weight:600;letter-spacing:-.025em;line-height:1;color:var(--ink);margin:10px 0 2px;display:flex;align-items:baseline;gap:8px}
+.rv2-sg .v small{font-family:'Apfel Grotezk',sans-serif;font-size:14px;font-weight:400;letter-spacing:0;color:var(--ink3)}
+/* The chart itself (not the .k / .v text above it) sits lower in its
+   column — #sentiment-trend-bars is the one chart called out for this,
+   the other two columns' own content (#perf-body, #heatmap-grid) are
+   untouched. */
+#sentiment-trend-bars{margin-top:22px}
+.rv2-sg svg{display:block;width:100%;height:108px;margin-top:10px;overflow:visible}
+.rv2-sg .cap{font-size:13px;color:var(--ink3);margin-top:8px;display:flex;justify-content:space-between;gap:10px}
 .rv2-days{display:flex;gap:2px}
-.rv2-days button{background:none;border:none;border-radius:999px;padding:3px 9px;font-family:'Space Grotesk',sans-serif;font-size:11px;font-weight:600;color:var(--ink3);cursor:pointer;letter-spacing:0;text-transform:none}
+.rv2-days button{background:none;border:none;border-radius:999px;padding:3px 9px;font-family:'Space Grotesk',sans-serif;font-size:12px;font-weight:600;color:var(--ink3);cursor:pointer;letter-spacing:0;text-transform:none}
 .rv2-days button.on{background-color:var(--hb-tint2);color:var(--ember)}
-.rv2-perf{display:flex;flex-direction:column;gap:8px;margin-top:12px}
-.rv2-perf .row{display:grid;grid-template-columns:110px 1fr 54px;gap:10px;align-items:center;font-size:12px;color:var(--ink2)}
-.rv2-perf .bar{height:10px;border-radius:5px;background:var(--hb-line2);overflow:hidden}
+.rv2-perf{display:flex;flex-direction:column;gap:10px;margin-top:16px}
+.rv2-perf .row{display:grid;grid-template-columns:124px 1fr 62px;gap:10px;align-items:center;font-size:13.5px;color:var(--ink2)}
+.rv2-perf .bar{height:13px;border-radius:6px;background:var(--hb-line2);overflow:hidden}
 .rv2-perf .bar i{display:block;height:100%;border-radius:5px;background:linear-gradient(90deg,var(--ember),#e8956a);box-shadow:0 0 10px rgba(200,75,47,.4);transform-origin:left;animation:rv2Grow .7s cubic-bezier(.4,0,.2,1) both}
 .rv2-perf .bar i.g{background:linear-gradient(90deg,#2d6a4f,#4ead7a);box-shadow:0 0 10px rgba(45,106,79,.4)}
 .rv2-perf .bar i.a{background:linear-gradient(90deg,#b7791f,#d4a030);box-shadow:0 0 10px rgba(183,121,31,.4)}
 .rv2-perf .n{font-family:'Space Grotesk',sans-serif;font-weight:600;color:var(--ink);text-align:right}
 .rv2-perf .n span{color:var(--ink3);font-weight:400}
 @keyframes rv2Grow{from{transform:scaleX(0)}to{transform:scaleX(1)}}
-.rv2-topics{display:flex;flex-direction:column;margin-top:10px}
-.rv2-topic{display:grid;grid-template-columns:1fr 120px 34px;gap:10px;align-items:center;padding:6px 0;border-top:1px solid var(--hb-line2);background:none;border-left:none;border-right:none;border-bottom:none;font-family:inherit;text-align:left;cursor:pointer;color:var(--ink);font-size:12.5px;border-radius:4px}
+.rv2-topics{display:flex;flex-direction:column;margin-top:12px}
+.rv2-topic{display:grid;grid-template-columns:1fr 130px 40px;gap:10px;align-items:center;padding:8px 0;border-top:1px solid var(--hb-line2);background:none;border-left:none;border-right:none;border-bottom:none;font-family:inherit;text-align:left;cursor:pointer;color:var(--ink);font-size:14px;border-radius:4px}
 .rv2-topic:first-child{border-top:none}
 .rv2-topic:hover{background:var(--hb-tint)}
-.rv2-topic .bar{height:6px;border-radius:3px;overflow:hidden;display:flex;background:var(--hb-line2)}
+.rv2-topic .bar{height:8px;border-radius:4px;overflow:hidden;display:flex;background:var(--hb-line2)}
 .rv2-topic .bar i{display:block;height:100%}
 .rv2-topic .bar .p{background:#2d6a4f}.rv2-topic .bar .ng{background:#e05555}
 .rv2-topic .n{font-family:'Space Grotesk',sans-serif;font-weight:600;text-align:right}
-.rv2-topic .t{font-size:10px;margin-left:6px}
+.rv2-topic .t{font-size:11px;margin-left:6px}
 .rv2-topic .t.up{color:var(--hb-bad)}.rv2-topic .t.down{color:var(--hb-good)}
 /* inbox */
-.rv2-inbox{margin-top:34px;padding-top:22px;border-top:1px solid var(--hb-line)}
+/* No border-top/padding-top of its own — its child .hb-sh already draws
+   that divider (margin-top:34px;padding-top:22px;border-top). Both used
+   to carry it, which read as one thick double line with a gap between
+   the "3 charts" row and Inbox, the same duplicate-divider bug already
+   fixed on Labor's .lb2-sched. */
+.rv2-inbox{margin-top:0}
 #panel-reviews .toolbar{display:flex;align-items:center;gap:8px;margin:12px 0 4px;flex-wrap:wrap;background:transparent}
 #panel-reviews .search-wrap{position:relative;max-width:300px;flex:1}
 #panel-reviews .search-ico{position:absolute;left:11px;top:50%;transform:translateY(-50%);width:14px;height:14px;color:var(--ink3);pointer-events:none}
@@ -1872,7 +1886,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
   </div>
 
   <div id="rv-inbox-reviews" class="rv2-inbox">
-    <div class="hb-sh" style="margin-top:0"><div><div class="k">Inbox</div><h2>Every review, with a reply ready<small><span class="count-lbl" style="margin-left:0">{{ reviews|length }} review{{ 's' if reviews|length != 1 }}</span></small></h2></div><div style="display:flex;gap:8px"><button class="cbtn cbtn-secondary" onclick="document.getElementById('rr-modal').style.display='flex'">+ Request a review</button><button class="cbtn cbtn-secondary" onclick="exportReviews()">Export CSV</button></div></div>
+    <div class="hb-sh"><div><div class="k">Inbox</div><h2>Every review, with a reply ready<small><span class="count-lbl" style="margin-left:0">{{ reviews|length }} review{{ 's' if reviews|length != 1 }}</span></small></h2></div><div style="display:flex;gap:8px"><button class="cbtn cbtn-secondary" onclick="document.getElementById('rr-modal').style.display='flex'">+ Request a review</button><button class="cbtn cbtn-secondary" onclick="exportReviews()">Export CSV</button></div></div>
     <div class="toolbar">
       <div class="search-wrap"><svg class="search-ico" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><input class="search-input" id="rsearch" aria-label="Search reviews" placeholder="Search name, keyword, rating, platform…" value="{{ rsearch }}" oninput="debouncedFilter()" onkeydown="if(event.key==='Escape'){this.value='';filterReviews();}"></div>
       <div class="filter-pills">
