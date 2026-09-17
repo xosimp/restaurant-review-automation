@@ -196,6 +196,66 @@ def test_session_within_inactivity_window_stays_valid(db_path):
     assert get_session_user(token, db_path=db_path) is not None
 
 
+def test_admin_view_as_session_slides_its_expiry_on_use(db_path):
+    """view_as_client() gives admin-view-as sessions a hard 30-minute
+    expires_at. Without renewal, a real testing session that stayed active
+    past that wall-clock mark would start failing every request even though
+    it never went idle. get_session_user must push expires_at forward on
+    each use so an actively-used view-as session doesn't die mid-session."""
+    rid = _restaurant(db_path)
+    uid = create_user(rid, "alice", "alice@x.com", "pw", db_path=db_path)
+    token = create_session(uid, db_path=db_path)
+    near_expiry = (datetime.utcnow() + timedelta(minutes=2)).strftime("%Y-%m-%d %H:%M:%S")
+    conn = get_conn(db_path)
+    conn.execute(
+        "UPDATE sessions SET device_type='admin-view-as', expires_at=? WHERE token=?",
+        (near_expiry, hash_session_token(token))
+    )
+    conn.commit()
+    conn.close()
+    # A use just before the original 30-minute wall would have hit succeeds,
+    # and must push expires_at back out rather than leaving it near-expired.
+    assert get_session_user(token, db_path=db_path) is not None
+    conn = get_conn(db_path)
+    row = conn.execute("SELECT expires_at FROM sessions WHERE token=?", (hash_session_token(token),)).fetchone()
+    conn.close()
+    new_expiry = datetime.fromisoformat(row["expires_at"][:19])
+    assert new_expiry - datetime.utcnow() > timedelta(minutes=25)
+
+
+def test_admin_view_as_session_still_dies_once_abandoned(db_path):
+    """The sliding renewal must not turn view-as into a long-lived session —
+    an abandoned one (no request in the last 30 minutes) still expires."""
+    rid = _restaurant(db_path)
+    uid = create_user(rid, "alice", "alice@x.com", "pw", db_path=db_path)
+    token = create_session(uid, db_path=db_path)
+    conn = get_conn(db_path)
+    conn.execute(
+        "UPDATE sessions SET device_type='admin-view-as', expires_at=datetime('now','-1 minute') WHERE token=?",
+        (hash_session_token(token),)
+    )
+    conn.commit()
+    conn.close()
+    assert get_session_user(token, db_path=db_path) is None
+
+
+def test_normal_session_expiry_untouched_by_view_as_renewal(db_path):
+    """Regression guard: the expires_at slide is scoped to admin-view-as
+    only — a normal (web/ios) session's 30-day expires_at must not be
+    rewritten on every request."""
+    rid = _restaurant(db_path)
+    uid = create_user(rid, "alice", "alice@x.com", "pw", db_path=db_path)
+    token = create_session(uid, db_path=db_path)
+    conn = get_conn(db_path)
+    before = conn.execute("SELECT expires_at FROM sessions WHERE token=?", (hash_session_token(token),)).fetchone()["expires_at"]
+    conn.close()
+    assert get_session_user(token, db_path=db_path) is not None
+    conn = get_conn(db_path)
+    after = conn.execute("SELECT expires_at FROM sessions WHERE token=?", (hash_session_token(token),)).fetchone()["expires_at"]
+    conn.close()
+    assert before == after
+
+
 def test_getting_session_user_refreshes_last_active(db_path):
     rid = _restaurant(db_path)
     uid = create_user(rid, "alice", "alice@x.com", "pw", db_path=db_path)

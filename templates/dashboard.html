@@ -8,8 +8,8 @@
 <link rel="icon" type="image/x-icon" href="/favicon.ico">
 <link rel="icon" type="image/png" href="/favicon.png">
 <link rel="shortcut icon" href="/favicon.ico">
-<meta name="theme-color" content="#0c0c0c">
-<script>document.documentElement.setAttribute('data-theme','dark');document.documentElement.style.background='radial-gradient(ellipse 100% 70% at 50% 0%,rgba(200,75,47,.45) 0%,rgba(200,75,47,.18) 48%,transparent 78%),linear-gradient(180deg,#0c0c0c 0%,#0c0c0c 100%)';</script>
+<meta name="theme-color" content="#1a1714">
+<script>document.documentElement.setAttribute('data-theme','dark');document.documentElement.style.background='radial-gradient(ellipse 100% 70% at 50% 0%,rgba(200,75,47,.45) 0%,rgba(200,75,47,.315) 24%,rgba(200,75,47,.18) 48%,rgba(200,75,47,.09) 63%,transparent 78%),linear-gradient(180deg,#1a1714 0%,#1a1714 100%)';</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Bricolage+Grotesque:opsz,wght@12..96,700&display=block" rel="stylesheet">
@@ -28,7 +28,7 @@
   --amber:#d4a030;--amber-bg:#251d08;--blue:#6aabff;--blue-bg:#0a1828;
   --surface:#201d19;--hdr-bg:#0c0c0c;--qw-track:#5c4f3a
 }
-html[data-theme="dark"]{background:#0c0c0c!important;background-image:none!important}
+html[data-theme="dark"]{background:#1a1714!important;background-image:none!important}
 html[data-theme="dark"] body{color:var(--ink)}
 /* Review status badge dark mode overrides */
 [data-theme="dark"] .rv-status-approved{background:#0a1828!important;color:#6aabff!important}
@@ -2793,7 +2793,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 #panel-inventory{--hb-line:rgba(14,12,10,.12);--hb-line2:rgba(14,12,10,.07);--hb-tint:rgba(200,75,47,.06);--hb-tint2:rgba(200,75,47,.12);--hb-good:var(--green);--hb-warn:var(--amber);--hb-bad:var(--red);--hb-field:rgba(255,255,255,.55)}
 [data-theme="dark"] #panel-inventory{--hb-line:rgba(240,235,224,.14);--hb-line2:rgba(240,235,224,.07);--hb-tint:rgba(224,100,68,.09);--hb-tint2:rgba(224,100,68,.16);--hb-field:rgba(255,255,255,.05)}
 #panel-inventory .hb-chip .v{display:inline-flex;align-items:baseline;gap:2px}
-#panel-inventory #inv-insight{font-size:14px;line-height:1.65;color:var(--ink2);white-space:pre-wrap;padding-left:0}
+#panel-inventory #inv-insight{font-size:15px;line-height:1.65;color:var(--ink2);white-space:pre-wrap;padding-left:0}
 #panel-inventory .lb2-sg .k{font-size:14px}
 #panel-inventory .lb2-sg .v{font-size:34px}
 #panel-inventory .lb2-sg .cap{font-size:15px}
@@ -2860,7 +2860,10 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .fc2-wt-cats{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:12px;font-size:13px;color:var(--ink3)}
 .fc2-wt-cats .cbtn{text-transform:capitalize}
 .fc2-wt-cats .cbtn.on{background:var(--hb-tint2);border-color:transparent;color:var(--ember)}
-.fc2-wt-obs{margin-top:16px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:repeat(2,auto);grid-auto-flow:column;gap:10px 24px}
+.fc2-wt-obs{margin-top:16px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px 24px;align-items:start}
+.fc2-wt-obcol{display:flex;flex-direction:column;gap:10px}
+.fc2-wt-obhd{font-size:12.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)}
+.fc2-wt-obhd.good{color:var(--hb-good)}
 .fc2-wt-ob{display:flex;gap:10px;align-items:flex-start;font-size:15px;line-height:1.5;color:var(--ink2)}
 .fc2-wt-ob i{flex-shrink:0;width:8px;height:8px;border-radius:50%;margin-top:7px;background:var(--ink3)}
 .fc2-wt-ob i.good{background:var(--hb-good)}.fc2-wt-ob i.bad{background:var(--hb-bad)}.fc2-wt-ob i.warn{background:var(--hb-warn)}
@@ -2901,10 +2904,10 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .fc2-ledger .r .nm{font-size:13.5px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .fc2-ledger .r .sub{font-size:12px;color:var(--ink3);font-family:'Space Grotesk',sans-serif;margin-top:1px}
 .fc2-ledger .r .bar{height:7px;border-radius:4px;background:var(--hb-line2);overflow:hidden;margin-top:5px;position:relative}
-.fc2-ledger .r .bar i{display:block;height:100%;border-radius:4px;background:linear-gradient(90deg,#c84b2f,#e8956a);box-shadow:0 0 10px rgba(200,75,47,.45);transform-origin:left;transform:scaleX(0);transition:transform 1.4s cubic-bezier(.3,0,.15,1)}
+.fc2-ledger .r .bar i{display:block;height:100%;border-radius:4px;background:linear-gradient(90deg,#7a1c16,#e05555);box-shadow:0 0 10px rgba(224,85,85,.45);transform-origin:left;transform:scaleX(0);transition:transform 1.4s cubic-bezier(.3,0,.15,1)}
 .fc2-ledger .r .bar i.amber{background:linear-gradient(90deg,#b7791f,#e8b04a);box-shadow:0 0 10px rgba(212,160,48,.4)}
 .fc2-ledger .r .bar.on i{transform:scaleX(1)}
-.fc2-ledger .r .v{font-family:'Space Grotesk',sans-serif;font-size:14.5px;font-weight:700;color:var(--ember);text-align:right;white-space:nowrap}
+.fc2-ledger .r .v{font-family:'Space Grotesk',sans-serif;font-size:14.5px;font-weight:700;color:var(--red);text-align:right;white-space:nowrap}
 .fc2-ledger .r .v.amber{color:var(--hb-warn)}
 .fc2-sec{margin-top:34px;padding-top:22px;border-top:1px solid var(--hb-line)}
 .fc2-sec .hd{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:8px}
@@ -2913,18 +2916,18 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .fc2-orders{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:26px;margin-top:10px}
 .fc2-col .ch{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);padding-bottom:8px;border-bottom:1px solid var(--hb-line2)}
 .fc2-col .ch .d{width:8px;height:8px;border-radius:50%;flex-shrink:0}
-.fc2-col .ch .n{margin-left:auto;font-family:'Space Grotesk',sans-serif;font-size:14px;color:var(--ember2)}
+.fc2-col .ch .n{margin-left:auto;font-family:'Space Grotesk',sans-serif;font-size:14px;color:var(--ink3)}
 .fc2-col.urgent .ch .d{background:var(--hb-bad);box-shadow:0 0 8px var(--hb-bad)}.fc2-col.soon .ch .d{background:var(--hb-warn);box-shadow:0 0 8px var(--hb-warn)}.fc2-col.reduce .ch .d{background:var(--hb-good);box-shadow:0 0 8px var(--hb-good)}
 .fc2-col .row{display:flex;align-items:center;gap:10px;padding:10px 0 10px 12px;border-top:1px solid var(--hb-line2);position:relative}
 .fc2-col .row:first-of-type{border-top:none}
 .fc2-col .row::before{content:'';position:absolute;left:0;top:10px;bottom:10px;width:2.5px;border-radius:2px;background:var(--hb-line)}
 .fc2-col.urgent .row::before{background:var(--hb-bad)}.fc2-col.soon .row::before{background:var(--hb-warn)}.fc2-col.reduce .row::before{background:var(--hb-good)}
 .fc2-col .row .t{flex:1;min-width:0}
-.fc2-col .row .t b{display:block;font-size:16px;font-weight:600;color:var(--ember2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fc2-col .row .t b{display:block;font-size:16px;font-weight:600;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .fc2-col .row .t span{display:block;font-size:13.5px;color:var(--ink3);margin-top:2px}
 .fc2-col .row .q{text-align:right;flex-shrink:0}
 .fc2-col .row .q .l{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3)}
-.fc2-col .row .q .p{display:inline-block;font-family:'Space Grotesk',sans-serif;font-size:14.5px;font-weight:700;color:var(--ember2);background:var(--hb-tint2);border-radius:6px;padding:3px 9px;margin-top:2px;white-space:nowrap}
+.fc2-col .row .q .p{display:inline-block;font-family:'Space Grotesk',sans-serif;font-size:14.5px;font-weight:700;color:var(--ink3);background:var(--hb-tint2);border-radius:6px;padding:3px 9px;margin-top:2px;white-space:nowrap}
 .fc2-col.reduce .row .q .p{background:rgba(78,173,122,.35);color:#eafaf0}
 .fc2-col.soon .row .q .p{background:rgba(212,160,48,.35);color:#fff8e6}
 .fc2-col.reduce .row .q .p{color:var(--hb-good)}
@@ -5747,15 +5750,18 @@ function _moveTabIndicator(tabEl){
 function _dark(){return document.documentElement.getAttribute('data-theme')==='dark';}
 function setPageBg(n){
   // One background for every page: the ember glow at the top running down
-  // into obsidian (#0c0c0c — the iOS dark Paper). Taller than before so the
-  // glow reaches the first section instead of stopping at the header.
+  // into obsidian (#1a1714 — var(--paper), the same warm near-black the
+  // login screen's card sits on, not a flat jet black). Taller than before
+  // so the glow reaches the first section instead of stopping at the header.
   // The glow is sized in pixels from the top (not as a % of the page), so a
   // long page like the review inbox gets the same top glow as Home instead
-  // of an orange wash stretched over thousands of pixels.
+  // of an orange wash stretched over thousands of pixels. More stops than a
+  // "just 4 points" gradient needs — a radial fade this large showed visible
+  // banding rings with only 4, especially on lower color-depth displays.
   // Dark is the only theme now — see the pre-paint <script> in <head>.
-  var glow = 'radial-gradient(ellipse 120% 100% at 50% 0%,rgba(200,75,47,.50) 0%,rgba(200,75,47,.24) 38%,rgba(200,75,47,.07) 68%,transparent 88%)';
+  var glow = 'radial-gradient(ellipse 120% 100% at 50% 0%,rgba(200,75,47,.50) 0%,rgba(200,75,47,.37) 19%,rgba(200,75,47,.24) 38%,rgba(200,75,47,.155) 53%,rgba(200,75,47,.07) 68%,rgba(200,75,47,.035) 78%,transparent 88%)';
   var st = document.body.style;
-  st.backgroundColor = '#0c0c0c';
+  st.backgroundColor = '#1a1714';
   st.backgroundImage = glow;
   st.backgroundRepeat = 'no-repeat';
   st.backgroundSize = '100% 920px';
@@ -9046,6 +9052,7 @@ function loadInvInsight(){
 // the target toggle, category filter, hover and drill-down all re-draw
 // from the payload in hand and never go back to the server.
 var _wt={data:null,range:'8w',cache:{},showTarget:true,cat:null,sel:null,inflight:null,animated:{}};
+var _wtFontRedrawn=false;
 function wtEsc(x){return String(x==null?'':x).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 function wtMoney(v){return '$'+Math.round(Math.abs(v||0)).toLocaleString();}
 function wtSigned(v){return (v>=0?'+':'−')+wtMoney(v);}
@@ -9237,6 +9244,17 @@ function wtDrawChart(){
   svg+='</svg>';
   host.innerHTML='<div class="y">'+yLab+'</div><div class="plot">'+svg+'<div class="ax">'+ax+'</div></div>';
   host.classList.remove('hov');
+  // Some browsers don't repaint an already-inserted SVG <text> once a
+  // webfont it's waiting on finishes loading (unlike ordinary HTML text,
+  // which reflows automatically) — if the chart's first draw landed before
+  // Space Grotesk was ready, its target/avg/BEST/WORST/SPIKE labels can be
+  // stuck on the fallback font permanently. Redraw once, after fonts.ready,
+  // to force those labels onto the real font; animate is already gated
+  // per-range so this repeat draw doesn't replay the entrance animation.
+  if(!_wtFontRedrawn&&window.document&&document.fonts&&document.fonts.status!=='loaded'){
+    _wtFontRedrawn=true;
+    document.fonts.ready.then(function(){if(_wt.data&&_wt.data.ok)wtDrawChart();});
+  }
   if(!host._wtBound){
     host._wtBound=true;
     host.addEventListener('mouseover',function(e){var t=e.target&&e.target.closest?e.target.closest('.fc2-wt-hit'):null;if(t)wtHover(parseInt(t.getAttribute('data-i'),10),e);});
@@ -9315,21 +9333,28 @@ function wtDrawDrill(){
   }
   box.innerHTML=h+catRow;
 }
+function wtObBullet(ob){return '<div class="fc2-wt-ob"><i class="'+wtEsc(ob.tone||'')+'"></i><div>'+wtEsc(ob.text)+(ob.confidence?'<small>'+wtEsc(ob.confidence)+'</small>':'')+'</div></div>';}
 function wtDrawObs(d){
   var box=document.getElementById('fc2-wt-obs');if(!box)return;
-  // Grid fills column-first (see .fc2-wt-obs), so ordering by tone here is
-  // what actually groups matching bullets into the same column: good
-  // first (left), then neutral, then warn before bad — swapped from
-  // engine order, which had a bad-tone bullet landing above a warn-tone
-  // one on the right.
-  var _obTonePri={good:0,neutral:1,warn:2,bad:3};
-  var obs=(d.observations||[]).slice().sort(function(a,b){
-    var pa=_obTonePri[a.tone]!=null?_obTonePri[a.tone]:1, pb=_obTonePri[b.tone]!=null?_obTonePri[b.tone]:1;
-    return pa-pb;
-  }),h='';
-  for(var i=0;i<obs.length;i++){h+='<div class="fc2-wt-ob"><i class="'+wtEsc(obs[i].tone||'')+'"></i><div>'+wtEsc(obs[i].text)+(obs[i].confidence?'<small>'+wtEsc(obs[i].confidence)+'</small>':'')+'</div></div>';}
-  if(d.weeks.length<2&&d.empty)h+='<div class="fc2-wt-ob"><i></i><div>'+wtEsc(d.empty.reason)+'<small>'+wtEsc(d.empty.when)+'</small></div></div>';
-  if(!h){wtShow('fc2-wt-obs',false);return;}
+  var obs=d.observations||[];
+  // Cold-start: no tone-classified observations yet, just the "here's what
+  // it takes to get your first one" note — plain, no column headers to split.
+  if(!obs.length){
+    if(d.weeks.length<2&&d.empty){
+      wtShow('fc2-wt-obs',true);
+      box.innerHTML='<div class="fc2-wt-ob"><i></i><div>'+wtEsc(d.empty.reason)+'<small>'+wtEsc(d.empty.when)+'</small></div></div>';
+    } else wtShow('fc2-wt-obs',false);
+    return;
+  }
+  // Two real, labeled groups rather than a position-based column split —
+  // "doing well" is good-tone only; everything else (neutral status notes
+  // included) is grouped under "fixable" so a 3rd good observation can
+  // never land in the same column as a bad one just because of count.
+  var good=[],fixable=[];
+  for(var i=0;i<obs.length;i++){(obs[i].tone==='good'?good:fixable).push(obs[i]);}
+  var h='';
+  if(good.length)h+='<div class="fc2-wt-obcol"><div class="fc2-wt-obhd good">Doing well</div>'+good.map(wtObBullet).join('')+'</div>';
+  if(fixable.length)h+='<div class="fc2-wt-obcol"><div class="fc2-wt-obhd">Fixable</div>'+fixable.map(wtObBullet).join('')+'</div>';
   wtShow('fc2-wt-obs',true);box.innerHTML=h;
 }
 var selCt='{{ctypes[0].id if ctypes}}';

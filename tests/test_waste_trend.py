@@ -391,35 +391,75 @@ def test_the_initial_tab_is_only_activated_once():
     assert "!btn&&document.getElementById('panel-competitor')" in block.replace(" ", "")
 
 
-def test_observations_sort_good_neutral_warn_bad_for_column_fill():
-    """.fc2-wt-obs fills column-first (grid-auto-flow:column), so this sort
-    order is what actually groups matching-tone bullets into the same
-    column — verified live: two good-tone entries mixed with a bad and a
-    warn both landed at the same x, left of the other two. warn sorts
-    before bad (swapped from the engine's own order) per an explicit ask:
-    the red bullet and the yellow bullet had landed in each other's spot."""
+def test_observations_split_into_labeled_good_and_fixable_columns():
+    """wtDrawObs used to sort bullets by tone and let a column-major grid
+    (grid-auto-flow:column) fall them into two columns by POSITION — with an
+    odd count, a 3rd good-tone bullet could land in the same column as a bad
+    one, which is exactly why real "Doing well" / "Fixable" column headers
+    were asked for: the split must be by GROUP, not position. good-tone
+    observations go under "Doing well"; everything else (including neutral
+    status notes, which are neither good news nor actionable) goes under
+    "Fixable"."""
     import re
     import subprocess
     html = _dashboard_html()
-    assert "grid-auto-flow:column" in html.split(".fc2-wt-obs{", 1)[1].split("}", 1)[0]
-    m = re.search(r"var _obTonePri=.*?;", html)
-    assert m, "tone-priority map not found"
-    js = m.group(0) + """
-var obs = [
-  {tone:'bad', text:'b'}, {tone:'good', text:'g1'},
-  {tone:'warn', text:'w'}, {tone:'neutral', text:'n'}, {tone:'good', text:'g2'}
-];
-obs.sort(function(a,b){
-  var pa=_obTonePri[a.tone]!=null?_obTonePri[a.tone]:1, pb=_obTonePri[b.tone]!=null?_obTonePri[b.tone]:1;
-  return pa-pb;
+    m = re.search(r"function wtDrawObs\(d\)\{.*?\n\}", html, re.S)
+    assert m, "wtDrawObs not found"
+    m2 = re.search(r"function wtObBullet\(ob\)\{.*?\}", html)
+    assert m2, "wtObBullet not found"
+    js = "function wtEsc(x){return String(x==null?'':x);}\n" + m2.group(0) + "\n" + m.group(0) + """
+var seen = null;
+var document = {getElementById:function(){return {};}};
+function wtShow(id, on){ seen = on; }
+wtDrawObs({
+  weeks: [1,2],
+  observations: [
+    {tone:'bad', text:'b'}, {tone:'good', text:'g1'},
+    {tone:'warn', text:'w'}, {tone:'neutral', text:'n'}, {tone:'good', text:'g2'}
+  ]
 });
-console.log(JSON.stringify(obs.map(function(o){return o.tone;})));
+"""
+    # wtDrawObs writes into box.innerHTML — capture it via a stub element.
+    js = js.replace(
+        "var document = {getElementById:function(){return {};}};",
+        "var box={innerHTML:''}; var document = {getElementById:function(){return box;}};"
+    )
+    js += "\nconsole.log(JSON.stringify({shown: seen, html: box.innerHTML}));\n"
+    out = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=10)
+    assert out.returncode == 0, out.stderr
+    import json
+    result = json.loads(out.stdout.strip())
+    assert result["shown"] is True
+    result_html = result["html"]
+    # Two explicit, labeled columns — not a position-based split.
+    after_good_hd = result_html.split('<div class="fc2-wt-obhd good">Doing well</div>', 1)[1]
+    good_col, fixable_col = after_good_hd.split('<div class="fc2-wt-obhd">Fixable</div>', 1)
+    assert "g1" in good_col and "g2" in good_col
+    assert 'class="bad"' in fixable_col and 'class="warn"' in fixable_col and 'class="neutral"' in fixable_col
+    assert 'class="bad"' not in good_col and 'class="warn"' not in good_col
+
+
+def test_observations_hide_empty_column_header():
+    """A week with only good-tone observations (or only fixable ones) must
+    not print an empty "Fixable" (or "Doing well") heading with nothing
+    under it."""
+    import re
+    import subprocess
+    html = _dashboard_html()
+    m = re.search(r"function wtDrawObs\(d\)\{.*?\n\}", html, re.S)
+    m2 = re.search(r"function wtObBullet\(ob\)\{.*?\}", html)
+    js = "function wtEsc(x){return String(x==null?'':x);}\n" + m2.group(0) + "\n" + m.group(0) + """
+var box={innerHTML:''}; var document = {getElementById:function(){return box;}};
+function wtShow(id, on){}
+wtDrawObs({weeks:[1,2], observations:[{tone:'good', text:'all good'}]});
+console.log(JSON.stringify(box.innerHTML));
 """
     out = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=10)
     assert out.returncode == 0, out.stderr
     import json
-    order = json.loads(out.stdout.strip())
-    assert order == ["good", "good", "neutral", "warn", "bad"]
+    result_html = json.loads(out.stdout.strip())
+    assert "Doing well" in result_html
+    assert "Fixable" not in result_html
 
 
 def test_the_over_target_pill_states_the_actual_target_percent():

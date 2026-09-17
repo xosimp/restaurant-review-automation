@@ -131,3 +131,31 @@ def test_old_jet_black_values_are_gone():
 def test_dark_header_uses_obsidian():
     css = _src()
     assert "--hdr-bg:#0c0c0c" in css
+
+
+# ── page background: softer obsidian + smoother gradient ────────────────────
+# A follow-up round: #0c0c0c itself started reading as a harsh "jet black"
+# once seen next to the login screen's card, which sits on var(--paper)
+# (#1a1714) — the same warm near-black used throughout the app's own dark
+# theme. The page background (not the header bar — --hdr-bg above is
+# untouched, on purpose) now matches that token instead of a flat literal
+# black, and the top glow gained extra gradient stops: the old 3-4 stop
+# radial showed visible banding rings on some displays.
+
+def test_page_background_uses_the_warm_paper_black_not_flat_jet_black():
+    s = _src()
+    assert "#0c0c0c" not in s.split("function setPageBg(", 1)[1].split("}", 1)[0]
+    fn = _fn("setPageBg")
+    assert "st.backgroundColor = '#1a1714'" in fn
+    assert 'html[data-theme="dark"]{background:#1a1714!important' in s
+    pre_paint = s.split("<script>document.documentElement.setAttribute('data-theme','dark')", 1)[1].split("</script>", 1)[0]
+    assert "#1a1714" in pre_paint and "#0c0c0c" not in pre_paint
+
+
+def test_page_background_gradient_has_enough_stops_to_avoid_banding():
+    fn = _fn("setPageBg")
+    m = re.search(r"var glow = '([^']+)'", fn)
+    assert m, "glow gradient not found in setPageBg"
+    # Each "N%" is one color stop (ignore the leading "at 50% 0%" position).
+    stops = re.findall(r"\d+(?:\.\d+)?%", m.group(1).split("at 50% 0%", 1)[1])
+    assert len(stops) >= 7, "gradient should have enough stops for a smooth falloff, found %r" % stops

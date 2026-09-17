@@ -2149,8 +2149,22 @@ def get_session_user(token: str, db_path: str = DB_PATH) -> Optional[dict]:
                             context=f"last_active={last_active!r}")
             except Exception:
                 pass
-    # Update last_active timestamp
-    conn.execute("UPDATE sessions SET last_active=datetime('now') WHERE token=?", (hash_session_token(token),))
+    # Update last_active timestamp. admin-view-as sessions also get their
+    # expires_at pushed forward on every use: view_as_client() gives them a
+    # hard 30-minute expires_at instead of the usual 30-day one (bounding how
+    # long an admin can wear a client's identity), but that wall was never
+    # renewed — a single active review session that ran past 30 minutes wall
+    # clock, not 30 minutes of actual inactivity, started failing every
+    # request. Sliding the deadline on each use keeps the same bound (an
+    # abandoned view-as session still dies within 30 minutes of the last real
+    # request) without punishing a longer session that stays active.
+    if (row["device_type"] or "") == "admin-view-as":
+        conn.execute(
+            "UPDATE sessions SET last_active=datetime('now'), expires_at=datetime('now','+30 minutes') WHERE token=?",
+            (hash_session_token(token),)
+        )
+    else:
+        conn.execute("UPDATE sessions SET last_active=datetime('now') WHERE token=?", (hash_session_token(token),))
     conn.commit()
     conn.close()
     user = dict(row)
