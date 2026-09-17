@@ -622,7 +622,7 @@ def index(current_user):
         # web layer exercises the same function the mobile API now relies on,
         # rather than that function only ever running for mobile requests.
         active_modules=get_active_modules(restaurant),
-        now=datetime.now().strftime("%b %d, %Y"),
+        now=datetime.now().strftime("%B %-d, %Y"),
         now_mdy=datetime.now().strftime("%-m/%-d/%y"),
         viewing_as=current_user.get("is_admin", 0),
         labor_target=float(restaurant.labor_target_pct or 30.0) if restaurant else 30.0,

@@ -129,8 +129,12 @@ def test_old_jet_black_values_are_gone():
 
 
 def test_dark_header_uses_obsidian():
+    """A later round moved the page background itself off #0c0c0c onto
+    #1a1714 (var(--paper), the login card's tone) for reading as too harsh
+    a jet black — the header was deliberately left alone at the time, but
+    the ask came back around to make the header match too."""
     css = _src()
-    assert "--hdr-bg:#0c0c0c" in css
+    assert "--hdr-bg:#1a1714" in css
 
 
 # ── page background: softer obsidian + smoother gradient ────────────────────

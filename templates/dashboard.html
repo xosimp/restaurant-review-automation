@@ -9,7 +9,17 @@
 <link rel="icon" type="image/png" href="/favicon.png">
 <link rel="shortcut icon" href="/favicon.ico">
 <meta name="theme-color" content="#1a1714">
-<script>document.documentElement.setAttribute('data-theme','dark');document.documentElement.style.background='radial-gradient(ellipse 100% 70% at 50% 0%,rgba(200,75,47,.45) 0%,rgba(200,75,47,.315) 24%,rgba(200,75,47,.18) 48%,rgba(200,75,47,.09) 63%,transparent 78%),linear-gradient(180deg,#1a1714 0%,#1a1714 100%)';</script>
+<script>document.documentElement.setAttribute('data-theme','dark');(function(){
+  // A film-grain noise tile blended over the gradient breaks up the
+  // banding a plain multi-stop radial-gradient still shows on 8-bit
+  // displays — dithering, not more color stops, is what actually removes
+  // visible rings; see setPageBg() below for the same recipe.
+  var noise='url(\'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><filter id="n"><feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="2" stitchTiles="stitch"/></filter><rect width="100%" height="100%" filter="url(%23n)" opacity="0.05"/></svg>\')';
+  var s=document.documentElement.style;
+  s.backgroundImage=noise+',radial-gradient(ellipse 100% 70% at 50% 0%,rgba(200,75,47,.45) 0%,rgba(200,75,47,.315) 24%,rgba(200,75,47,.18) 48%,rgba(200,75,47,.09) 63%,transparent 78%),linear-gradient(180deg,#1a1714 0%,#1a1714 100%)';
+  s.backgroundRepeat='repeat,no-repeat,no-repeat';
+  s.backgroundBlendMode='overlay,normal,normal';
+})();</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Bricolage+Grotesque:opsz,wght@12..96,700&display=block" rel="stylesheet">
@@ -26,7 +36,7 @@
   --ember:#e06444;--ember2:#e8956a;
   --green:#4ead7a;--green-bg:#0c2318;--red:#e05555;--red-bg:#2a1010;
   --amber:#d4a030;--amber-bg:#251d08;--blue:#6aabff;--blue-bg:#0a1828;
-  --surface:#201d19;--hdr-bg:#0c0c0c;--qw-track:#5c4f3a
+  --surface:#201d19;--hdr-bg:#1a1714;--qw-track:#5c4f3a
 }
 html[data-theme="dark"]{background:#1a1714!important;background-image:none!important}
 html[data-theme="dark"] body{color:var(--ink)}
@@ -1163,6 +1173,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 /* hero chart */
 .hb-hero{margin-top:30px;position:relative}
 .hb-hero .hd{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap}
+.hb-hero .hd .hb-kicker{font-size:14px;margin-bottom:10px}
 .hb-hero .big{font-family:'Space Grotesk',sans-serif;font-size:clamp(40px,4.6vw,58px);font-weight:600;letter-spacing:-.03em;line-height:1;color:var(--ink)}
 .hb-hero .big small{font-family:'Apfel Grotezk',sans-serif;font-size:13px;font-weight:400;letter-spacing:0;color:var(--ink3);margin-left:10px}
 .hb-hero .delta{font-size:13px;font-weight:600;color:var(--hb-good);margin-top:6px}
@@ -1194,7 +1205,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-row:first-of-type{border-top:none}
 .hb-row .d{width:9px;height:9px;border-radius:50%;background:var(--ink3);flex-shrink:0;box-shadow:0 0 8px currentColor}
 .hb-row.critical .d{background:var(--hb-bad);color:var(--hb-bad)}.hb-row.important .d{background:var(--hb-warn);color:var(--hb-warn)}.hb-row.watch .d{background:var(--ink3);color:transparent}
-.hb-row .t{flex:1;min-width:0;font-size:15px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hb-row .t{flex:1;min-width:0;font-size:15px;font-weight:600;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .hb-row .no{font-family:'Space Grotesk',sans-serif;font-size:18px;font-weight:600;color:var(--ember);width:26px;flex-shrink:0}
 .hb-row .m{font-size:12px;color:var(--ink3);white-space:nowrap}
 .hb-x{background:none;border:none;color:var(--ink3);font-size:14px;cursor:pointer;padding:2px 6px;border-radius:4px;opacity:0;transition:opacity .12s}
@@ -1280,7 +1291,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 <div class="hb-wrap" id="hb-root">
   <div class="hb-top">
     <div style="min-width:0;flex:1">
-      <div class="hb-kicker" id="hb-kicker">{{ now_mdy }} · {{ restaurant.name }}{% if restaurant.location_name and restaurant.location_name != restaurant.name %} — {{ restaurant.location_name }}{% endif %}</div>
+      <div class="hb-kicker" id="hb-kicker">{{ now }}</div>
       <h1 class="hb-h1" id="hb-h1">{% if restaurant.owner_name or current_user.username %}Hello, {{ (restaurant.owner_name or current_user.username).split(' ')[0]|title }}.{% else %}Your brief.{% endif %} <span class="hb-head neutral">Reading the room…</span></h1>
       <div class="hb-sub" id="hb-sub">Pulling your latest numbers.</div>
     </div>
@@ -2835,6 +2846,15 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .fc2-wt-chart .plot svg{display:block;width:100%;height:230px;overflow:visible}
 .fc2-wt-chart .plot svg text{font-family:'Space Grotesk',sans-serif}
 .fc2-wt-chart .plot svg .fc2-wt-bar.hb-bar{animation-duration:1.7s}
+/* The target/4-wk-avg rule lines wait for the bars to finish, then wipe in
+   left-to-right — a stroke-dasharray reveal (the .hb-draw recipe used
+   elsewhere) would collide with the target line's own dash pattern, since
+   both need the same attribute, so this is a separate transform-based
+   reveal instead. transform-box:fill-box scales from the shape's own
+   geometry rather than the SVG viewport, so this works the same for the
+   avg line's curve as for the target line's straight dashes. */
+.fc2-wt-line-draw{transform-box:fill-box;transform-origin:0% 50%;transform:scaleX(0);animation:fc2LineDraw .8s cubic-bezier(.3,0,.15,1) forwards}
+@keyframes fc2LineDraw{to{transform:scaleX(1)}}
 .fc2-wt-chart .ax{display:flex;font-size:14.5px;color:var(--ink3);margin-top:6px}
 .fc2-wt-chart .ax span{flex:1;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .fc2-wt-chart .ax span.on{color:var(--ink);font-weight:600}
@@ -2870,7 +2890,9 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .fc2-wt-cats .cbtn{text-transform:capitalize}
 .fc2-wt-cats .cbtn.on{background:var(--hb-tint2);border-color:transparent;color:var(--ember)}
 .fc2-wt-obs{margin-top:16px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px 24px;align-items:start}
-.fc2-wt-obcol{display:flex;flex-direction:column;gap:10px}
+.fc2-wt-obcol{display:flex;flex-direction:column;gap:10px;padding:14px 16px;border-radius:10px}
+.fc2-wt-obcol.good{background:var(--green-bg);border:1px solid rgba(78,173,122,.22)}
+.fc2-wt-obcol.warn{background:var(--amber-bg);border:1px solid rgba(212,160,48,.25)}
 .fc2-wt-obhd{font-size:12.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)}
 .fc2-wt-obhd.good{color:var(--hb-good)}
 .fc2-wt-ob{display:flex;gap:10px;align-items:flex-start;font-size:15px;line-height:1.5;color:var(--ink2)}
@@ -5767,13 +5789,18 @@ function setPageBg(n){
   // "just 4 points" gradient needs — a radial fade this large showed visible
   // banding rings with only 4, especially on lower color-depth displays.
   // Dark is the only theme now — see the pre-paint <script> in <head>.
+  // A tiled noise layer on top blends (overlay) with the gradient below to
+  // break up the banding rings a plain multi-stop radial-gradient still
+  // shows on 8-bit displays — same recipe as the pre-paint <script>.
+  var noise = 'url(\'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><filter id="n"><feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="2" stitchTiles="stitch"/></filter><rect width="100%" height="100%" filter="url(%23n)" opacity="0.05"/></svg>\')';
   var glow = 'radial-gradient(ellipse 120% 100% at 50% 0%,rgba(200,75,47,.50) 0%,rgba(200,75,47,.37) 19%,rgba(200,75,47,.24) 38%,rgba(200,75,47,.155) 53%,rgba(200,75,47,.07) 68%,rgba(200,75,47,.035) 78%,transparent 88%)';
   var st = document.body.style;
   st.backgroundColor = '#1a1714';
-  st.backgroundImage = glow;
-  st.backgroundRepeat = 'no-repeat';
-  st.backgroundSize = '100% 920px';
-  st.backgroundPosition = 'center top';
+  st.backgroundImage = noise + ',' + glow;
+  st.backgroundRepeat = 'repeat, no-repeat';
+  st.backgroundSize = '100px 100px, 100% 920px';
+  st.backgroundPosition = '0 0, center top';
+  st.backgroundBlendMode = 'overlay, normal';
 }
 function switchTab(n,btn){
   setPageBg(n);
@@ -9178,6 +9205,13 @@ function wtDrawChart(){
   var gap=dense?Math.max(2,W*0.006):Math.max(8,W*0.024),bw=(W-gap*(n+1))/n;
   var animate=!_wt.animated[d.range]&&!(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   _wt.animated[d.range]=true;
+  // When the bars finish growing in (their own stagger + the 1.7s duration
+  // this chart overrides .hb-bar to) — the target/avg rule lines wait for
+  // that instead of arriving with everything else, same as how the Labor
+  // and Value-delivered charts draw their line on top of already-settled
+  // bars rather than racing them.
+  var barsDoneMs=animate?((n-1)*(dense?18:140)+1700):0;
+  var lineDrawMs=800;
   var svg='<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none" aria-hidden="true">';
   // A soft resting shadow (gives each bar a "lifted off the page" feel
   // without the heavy black glow the old wide-blur version left between
@@ -9238,22 +9272,30 @@ function wtDrawChart(){
   // bar's value label — the old chart printed "8-wk avg" straight over
   // this week's figure whenever the two landed at the same height.
   var lastVal=vals[n-1],lastLabelY=(lastVal!=null&&!dense)?y(lastVal)-6:-99,avgLabelY=null;
-  var avgG='',targetG='';
+  // The line itself grows in via a scaleX wipe (left to right) once the
+  // bars finish — a stroke-dasharray reveal would fight the target line's
+  // own small dash pattern, since both would need the same attribute.
+  // Its label waits for the line to finish drawing rather than the line's
+  // own start, so text doesn't just appear floating with nothing under it.
+  var lineDraw=animate?' class="fc2-wt-line-draw" style="animation-delay:'+barsDoneMs+'ms;animation-duration:'+lineDrawMs+'ms"':'';
+  var lineLabelFade=animate?' style="opacity:0;animation:hbFillIn .5s ease '+(barsDoneMs+lineDrawMs)+'ms forwards"':'';
+  var avgG='',avgTxt='',targetG='',targetTxt='';
   if(pts.length>=2){
     var path=window.CavnarCharts?CavnarCharts.smooth(pts):pts.map(function(p,i){return (i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1);}).join(' ');
-    avgG+='<path d="'+path+'" fill="none" stroke="#e8956a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke-opacity=".95"/>';
+    avgG+='<path'+lineDraw+' d="'+path+'" fill="none" stroke="#e8956a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke-opacity=".95"/>';
     var lp=pts[pts.length-1];
     avgLabelY=lp[1]-8;
     if(Math.abs(avgLabelY-lastLabelY)<15)avgLabelY=lp[1]+14;
-    avgG+='<text '+lab+' x="'+(W-4)+'" y="'+avgLabelY.toFixed(1)+'" text-anchor="end" font-size="12.5" font-weight="700" fill="#e8956a">4-wk avg '+wtMoney(roll[n-1])+'</text>';
+    avgTxt='<text '+lab+' x="'+(W-4)+'" y="'+avgLabelY.toFixed(1)+'" text-anchor="end" font-size="12.5" font-weight="700" fill="#e8956a">4-wk avg '+wtMoney(roll[n-1])+'</text>';
   }
-  if(avgG)svg+='<g'+fadeIn+'>'+avgG+'</g>';
+  if(avgG)svg+=avgG;
+  if(avgTxt)svg+='<g'+lineLabelFade+'>'+avgTxt+'</g>';
   if(target){
     var ty=y(target),tly=ty-7;
     if((avgLabelY!=null&&Math.abs(tly-avgLabelY)<15)||Math.abs(tly-lastLabelY)<15)tly=ty+14;
-    targetG+='<line x1="0" y1="'+ty.toFixed(1)+'" x2="'+W+'" y2="'+ty.toFixed(1)+'" stroke="#4ead7a" stroke-opacity=".85" stroke-width="1.5" stroke-dasharray="4 5"/>';
-    targetG+='<text '+lab+' x="'+(W-4)+'" y="'+tly.toFixed(1)+'" text-anchor="end" font-size="12.5" font-weight="700" fill="#4ead7a">target '+wtMoney(target)+'/wk</text>';
-    svg+='<g'+fadeIn+'>'+targetG+'</g>';
+    targetG+='<line'+lineDraw+' x1="0" y1="'+ty.toFixed(1)+'" x2="'+W+'" y2="'+ty.toFixed(1)+'" stroke="#4ead7a" stroke-opacity=".85" stroke-width="1.5" stroke-dasharray="4 5"/>';
+    targetTxt='<text '+lab+' x="'+(W-4)+'" y="'+tly.toFixed(1)+'" text-anchor="end" font-size="12.5" font-weight="700" fill="#4ead7a">target '+wtMoney(target)+'/wk</text>';
+    svg+=targetG+'<g'+lineLabelFade+'>'+targetTxt+'</g>';
   }
   if(labels)svg+='<g'+fadeIn+'>'+labels+'</g>';
   svg+='</svg>';
@@ -9365,11 +9407,12 @@ function wtDrawObs(d){
   // "doing well" is good-tone only; everything else (neutral status notes
   // included) is grouped under "fixable" so a 3rd good observation can
   // never land in the same column as a bad one just because of count.
-  var good=[],fixable=[];
+  var good=[],fixable=[],_fixPri={neutral:0,warn:1,bad:2};
   for(var i=0;i<obs.length;i++){(obs[i].tone==='good'?good:fixable).push(obs[i]);}
+  fixable.sort(function(a,b){return (_fixPri[a.tone]!=null?_fixPri[a.tone]:0)-(_fixPri[b.tone]!=null?_fixPri[b.tone]:0);});
   var h='';
-  if(good.length)h+='<div class="fc2-wt-obcol"><div class="fc2-wt-obhd good">Doing well</div>'+good.map(wtObBullet).join('')+'</div>';
-  if(fixable.length)h+='<div class="fc2-wt-obcol"><div class="fc2-wt-obhd">Fixable</div>'+fixable.map(wtObBullet).join('')+'</div>';
+  if(good.length)h+='<div class="fc2-wt-obcol good"><div class="fc2-wt-obhd good">Doing well</div>'+good.map(wtObBullet).join('')+'</div>';
+  if(fixable.length)h+='<div class="fc2-wt-obcol warn"><div class="fc2-wt-obhd">Fixable</div>'+fixable.map(wtObBullet).join('')+'</div>';
   wtShow('fc2-wt-obs',true);box.innerHTML=h;
 }
 var selCt='{{ctypes[0].id if ctypes}}';

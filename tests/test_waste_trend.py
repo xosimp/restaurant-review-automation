@@ -554,27 +554,47 @@ def test_the_food_cost_tag_credits_cavnar_ai_not_just_cavnar():
     assert "Cavnar AI's read on your food cost" in html
 
 
-def test_the_target_avg_and_bar_labels_fade_in_together_with_the_bars():
-    """The target band/line, the rolling-average line, and every per-bar
-    $ label + SPIKE/WORST/BEST tag used to render at full opacity the
-    instant the SVG was inserted, while only the bars visibly grew in
-    underneath them — the bars caught up to content that was already
-    fully there. All four now share one fade group, gated by the same
-    `animate` (first-render-only) flag the bars already use, so a
-    settled re-render (category filter, drill-down) doesn't re-fade
-    content that's already showing."""
+def test_the_target_band_and_bar_labels_fade_in_together_with_the_bars():
+    """The target band and every per-bar $ label + SPIKE/WORST/BEST tag
+    used to render at full opacity the instant the SVG was inserted, while
+    only the bars visibly grew in underneath them — the bars caught up to
+    content that was already fully there. Both now share one fade group,
+    gated by the same `animate` (first-render-only) flag the bars already
+    use, so a settled re-render (category filter, drill-down) doesn't
+    re-fade content that's already showing. The rule LINES themselves
+    (target/avg) are covered by a separate, later-firing animation — see
+    test_target_and_avg_lines_wait_for_the_bars_to_finish below."""
     import re
     import subprocess
     html = _dashboard_html()
     body = html.split("function wtDrawChart(){", 1)[1].split("\nfunction wtTipPos", 1)[0]
     assert body.count("fadeIn=animate?") == 1
-    assert body.count("'<g'+fadeIn+'>") == 4, "target band, avg line+label, target line+label and bar labels should each be wrapped in a fade group"
+    assert body.count("'<g'+fadeIn+'>") == 2, "target band and bar labels should each be wrapped in the early fade group"
 
     stmt = re.search(r"var fadeIn=animate\?.*?:'';", body).group(0)
     js = "var animate=true;" + stmt + "console.log(fadeIn);"
     out = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=10)
     assert out.returncode == 0, out.stderr
     assert "opacity:0" in out.stdout and "hbFillIn" in out.stdout
+
+
+def test_target_and_avg_lines_wait_for_the_bars_to_finish():
+    """The target dashed line and the 4-week-average line used to arrive
+    with everything else, on top of bars that were still visibly growing.
+    They now wait for the bars' own stagger + grow duration to finish
+    before wiping in, and their text labels wait further still, until the
+    line has actually finished drawing — so a label never appears before
+    there's a line under it."""
+    import re
+    html = _dashboard_html()
+    body = html.split("function wtDrawChart(){", 1)[1].split("\nfunction wtTipPos", 1)[0]
+    assert re.search(r"var barsDoneMs=animate\?\(\(n-1\)\*\(dense\?18:140\)\+1700\):0;", body), \
+        "the line reveal should wait for the bars' real finish time (stagger + their 1.7s grow duration), not a guessed constant"
+    assert "class=\"fc2-wt-line-draw\"" in body
+    assert "barsDoneMs+lineDrawMs" in body, "the label fade should start only once the line-draw duration has elapsed too"
+    assert body.count("lineDraw=animate?") == 1
+    assert "'<line'+lineDraw+'" in body and "'<path'+lineDraw+'" in body, \
+        "both the target line and the avg path should carry the delayed draw-in"
 
 
 def test_gauge_and_ledger_bars_animate_on_scroll_not_on_tab_open():
