@@ -200,6 +200,21 @@ def test_setPageBg_is_an_intentional_noop():
     assert s.count("setPageBg(") >= 3
 
 
+def test_header_and_tabs_match_the_workspace_background_not_a_separate_literal():
+    """The header/tab bar used to be its own literal rgba(26,23,20,.86) —
+    close to --bg-base but not derived from it, so the two could drift
+    apart the next time either changed. It now reads --bg-base directly
+    (via color-mix, so it stays a translucent PLANE above the canvas
+    rather than becoming fully opaque and hiding it) so header, tabs and
+    canvas are provably the same tone."""
+    css = _main_css()
+    assert "color-mix(in srgb,var(--bg-base) 86%,transparent)" in css
+    assert 'rgba(26,23,20,.86)' not in css
+    rule_start = css.index('[data-theme="dark"] .hdr,[data-theme="dark"] .tabs{')
+    rule = css[rule_start:css.index("}", rule_start)]
+    assert "var(--bg-base)" in rule
+
+
 def test_containers_share_one_elevation_system():
     """Cards float over the canvas through shared tokens, not per-card
     shadow literals — one place to tune how far everything floats."""

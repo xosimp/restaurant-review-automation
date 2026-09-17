@@ -57,8 +57,10 @@ html[data-theme="dark"] body{color:var(--ink)}
 }
 html{background:var(--bg-base);min-height:100%}
 /* Header and tab strip read as one translucent plane above the flat
-   canvas: a light blur, a hairline instead of a hard edge. */
-[data-theme="dark"] .hdr,[data-theme="dark"] .tabs{background:rgba(26,23,20,.86)!important;-webkit-backdrop-filter:blur(14px) saturate(1.25);backdrop-filter:blur(14px) saturate(1.25)}
+   canvas: the same --bg-base tone (not a separate literal that could
+   drift from it) at reduced opacity plus a light blur, and a hairline
+   instead of a hard edge. */
+[data-theme="dark"] .hdr,[data-theme="dark"] .tabs{background:color-mix(in srgb,var(--bg-base) 86%,transparent)!important;-webkit-backdrop-filter:blur(14px) saturate(1.25);backdrop-filter:blur(14px) saturate(1.25)}
 [data-theme="dark"] .tabs{border-top:none!important;border-bottom:1px solid var(--line-hi)}
 [data-theme="dark"] .hdr-restaurant,[data-theme="dark"] .hdr-user,[data-theme="dark"] .logout-btn{background:transparent!important}
 /* Review status badge dark mode overrides */
@@ -9444,7 +9446,7 @@ function wtDrawChart(){
   // further down) so the low-opacity pill sits behind everything else.
   if(target){
     var bandTy=y(target),bandH=18;
-    svg+='<g'+fadeIn+'><rect x="0" y="'+(bandTy-bandH/2).toFixed(1)+'" width="'+W+'" height="'+bandH+'" rx="'+(bandH/2)+'" fill="#4ead7a" fill-opacity=".1"/></g>';
+    svg+='<g'+fadeIn+'><rect x="0" y="'+(bandTy-bandH/2).toFixed(1)+'" width="'+W+'" height="'+bandH+'" rx="'+(bandH/2)+'" fill="#4ead7a" fill-opacity=".22"/></g>';
   }
   for(var i=0;i<n;i++){
     var w=weeks[i],f=w.flags||{},x=gap+i*(bw+gap),val=vals[i],isLast=i===n-1,on=(_wt.sel===i);
