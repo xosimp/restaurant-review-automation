@@ -225,3 +225,60 @@ def test_containers_share_one_elevation_system():
         i = s.index(sel)
         rule = s[i:s.index("}", i)]
         assert "var(--elev-1)" in rule and "var(--surface-glass)" in rule, sel
+
+
+# ── Reviews tab decoration pass ──────────────────────────────────────────
+
+def _reviews_panel():
+    s = _src()
+    i = s.index('<div class="panel" id="panel-reviews"')
+    return s[i:s.index('<div class="panel', i + 1)]
+
+
+def test_reviews_tab_has_no_kicker_line_above_the_headline():
+    """'Reviews · {date} · {restaurant}' sat above the H1 as a small orange
+    line that repeated information already in the header bar and the '·'
+    separated hb-sub row just below it — removed."""
+    panel = _reviews_panel()
+    assert "Reviews · {{ now_mdy }}" not in panel
+    assert '<h1 class="hb-h1">Reviews. ' in panel
+
+
+def test_reviews_tab_has_no_cavnar_read_container():
+    """The whole 'Cavnar's read on your reviews' AI-summary card is gone —
+    markup, its two CSS rules, and its loading state. loadReviewInsight()
+    still exists (its callers also use it to gate loading the sentiment
+    trend / topic heatmap next to it) but early-returns now that
+    #review-insight is gone, so no fetch ever fires for it."""
+    panel = _reviews_panel()
+    assert 'class="rv2-ai"' not in panel
+    assert "Cavnar's read on your reviews" not in panel
+    assert 'id="review-insight"' not in panel
+    s = _src()
+    assert ".rv2-ai{" not in s and ".rv2-ai .tag{" not in s
+    fn = _fn("loadReviewInsight")
+    assert "if(!el)return;" in fn
+
+
+def test_reviews_kicker_and_inbox_label_match_food_costs_bumped_size():
+    """'Rating · last 8 weeks' and 'Inbox' are the same small-caps orange
+    heading Food Cost already bumped (#panel-inventory .hb-kicker); Reviews
+    now matches it for both its own .hb-kicker instances and the
+    differently-classed 'Inbox' section label (.hb-sh .k)."""
+    s = _src()
+    assert "#panel-inventory .hb-kicker{font-size:12.5px}" in s
+    assert "#panel-reviews .hb-kicker,#panel-reviews .hb-sh .k{font-size:12.5px}" in s
+    panel = _reviews_panel()
+    assert '<div class="hb-kicker">Rating · last 8 weeks</div>' in panel
+    assert '<div class="k">Inbox</div>' in panel
+
+
+def test_reviews_top_pills_have_no_ember_glow():
+    """The 4 hero pills (rating, answered, to approve, urgent) lose their
+    box-shadow glow on this page only — other modules that still use
+    .hb-chip (Home, Labor, Food Cost, Marketing, Intel, Account) keep it;
+    this is a page-scoped override, not a change to the shared class."""
+    s = _src()
+    assert "#panel-reviews .hb-chip,#panel-reviews .hb-chip:hover{box-shadow:none}" in s
+    # The shared .hb-chip glow itself must still exist for every other page.
+    assert re.search(r"\.hb-chip\{[^}]*box-shadow:0 0 18px rgba\(200,75,47,", s)

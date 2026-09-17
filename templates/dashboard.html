@@ -1711,6 +1711,16 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 [data-theme="dark"] #panel-reviews{--hb-line:rgba(240,235,224,.14);--hb-line2:rgba(240,235,224,.07);--hb-tint:rgba(224,100,68,.09);--hb-tint2:rgba(224,100,68,.16);--hb-field:rgba(255,255,255,.05)}
 #panel-reviews .hb-chip .v{display:inline-flex;align-items:baseline;gap:2px}
 #panel-reviews .hb-chip .v span{font-family:'Space Grotesk',sans-serif}
+/* The 4 top pills' own ember box-shadow (a "glow behind the pill") is gone
+   here — Home and the other modules keep it, this page just doesn't want
+   it. The dot indicator's own small glow (.dot i / .dot b) is untouched;
+   that's a status color, not the decorative pill glow. */
+#panel-reviews .hb-chip,#panel-reviews .hb-chip:hover{box-shadow:none}
+/* Orange section labels ("Rating · last 8 weeks", "Inbox") match the size
+   Food Cost already bumped its own kickers to (#panel-inventory .hb-kicker
+   below) — both are the same small-caps orange heading, just a different
+   class where "Inbox" is concerned. */
+#panel-reviews .hb-kicker,#panel-reviews .hb-sh .k{font-size:12.5px}
 /* onboarding */
 .rv2-setup{margin-top:22px;padding-top:18px;border-top:1px solid var(--hb-line);position:relative}
 .rv2-setup .x{position:absolute;top:14px;right:0;background:none;border:none;color:var(--ink3);cursor:pointer;font-size:15px;padding:4px}
@@ -1734,14 +1744,11 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .rv2-hero .delta span{color:var(--ink3);font-weight:400}
 .rv2-hero svg{display:block;width:100%;height:170px;margin-top:6px;overflow:visible}
 .rv2-hero .ax{display:flex;justify-content:space-between;font-size:11px;color:var(--ink3);margin-top:4px}
-.rv2-ai{margin-top:16px;padding:14px 18px;border-radius:10px;background:var(--hb-tint);font-size:14px;line-height:1.65;color:var(--ink2)}
-.rv2-ai .tag{font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);margin-bottom:6px}
 /* Said above an AI passage whose figures could not be traced back to the
    data it was given, or whose data is a built-in example set. Both used
    to render exactly like a verified analysis. */
 .ai-caveat{display:flex;gap:7px;align-items:flex-start;font-size:12px;line-height:1.5;padding:8px 10px;margin-bottom:9px;border-radius:8px;background:var(--amber-bg);color:var(--amber);border:1px solid rgba(217,119,6,.28)}
 .ai-caveat b{font-weight:700}
-#panel-reviews #review-insight{font-size:14px;line-height:1.65;color:var(--ink2);white-space:pre-wrap}
 /* signals */
 .rv2-sig{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0;margin-top:34px;padding-top:24px;border-top:1px solid var(--hb-line)}
 .rv2-sg{padding:0 26px 0 0;margin-right:26px;border-right:1px solid var(--hb-line2);min-width:0}
@@ -1835,7 +1842,6 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
   {% else %}{% set _head = 'Waiting for your first review' %}{% set _tone = 'neutral' %}{% endif %}
   <div class="hb-top">
     <div style="min-width:0;flex:1">
-      <div class="hb-kicker">Reviews · {{ now_mdy }} · {{ restaurant.name }}</div>
       <h1 class="hb-h1">Reviews. <span class="hb-head {{ _tone }}">{{ _head }}</span></h1>
       <div class="hb-sub"><span><span id="stat-received-mo-n" class="hb-num">{{ rstats.received_this_month }}</span> new this month</span><span class="sep">·</span><span><span id="stat-positive-n" class="hb-num">{{ rstats.positive_pct }}%</span> positive</span><span class="sep">·</span><span>avg reply <span id="stat-resp-time-n" class="hb-num">{% if rstats.avg_response_hours and rstats.avg_response_hours <= 720 %}{% if rstats.avg_response_hours < 24 %}{{rstats.avg_response_hours}}h{% elif rstats.avg_response_hours < 168 %}{{(rstats.avg_response_hours / 24)|int}}d{% else %}{{(rstats.avg_response_hours / 168)|int}}w{% endif %}{% else %}—{% endif %}</span></span><span class="sep">·</span><span>{{ 'Live from Google' if restaurant.reviews_live else ('Google connected' if restaurant.gmb_refresh_token else 'Imported reviews') }}</span>{% if savings_breakdown and savings_breakdown.reviews > 0 %}<span class="sep">·</span><span><span class="hb-num" id="review-savings-amt">${{ savings_breakdown.reviews|format_num }}</span> saved on <span id="review-savings-count" class="hb-num">{{ rstats.responded }}</span> replies</span>{% endif %}</div>
       <span id="stat-this-month-n" hidden>{{ rstats.this_month }}</span><span id="stat-rr-detail" hidden></span><span id="review-savings-rate" hidden></span><strong id="rr-sent-mo-inline" hidden></strong><strong id="rr-sent-total-inline" hidden></strong>
@@ -1860,8 +1866,6 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       <div id="rv-hero-chart"><div class="hb-load" style="height:170px;justify-content:center"><canvas class="hb-orb" data-orb-state="searching" width="44" height="44"></canvas><span>Charting your rating…</span></div></div>
       <div id="trend-avg-rating" hidden></div>
     </section>
-    <div class="rv2-ai"><div class="tag">Cavnar's read on your reviews</div><div class="insight-text insight-loading" id="review-insight"><div class="hb-load"><canvas class="hb-orb" data-orb-state="composing" width="28" height="28"></canvas><span>Reading your reviews…</span></div></div></div>
-
     <div class="rv2-sig">
       <div class="rv2-sg"><div class="k"><span>Reviews · per week</span></div><div class="v"><span id="rv-sent-n" class="hb-num">—</span><small>this week</small></div><div id="sentiment-trend-bars" style="color:var(--ink3)"><div class="hb-load" style="height:86px"><canvas class="hb-orb" data-orb-state="working" width="28" height="28"></canvas></div></div><div class="cap"><span><span style="color:#2d6a4f">■</span> positive &nbsp; <span style="color:#e05555">■</span> negative</span><span id="sentiment-trend-labels"></span></div></div>
       <div class="rv2-sg" id="perf-card"><div class="k"><span>How replies got approved</span><span class="rv2-days" id="perf-days-btns"><button class="hm-days-btn" data-days="30" onclick="loadResponsePerf(30)">30d</button><button class="hm-days-btn on" data-days="90" onclick="loadResponsePerf(90)">90d</button><button class="hm-days-btn" data-days="180" onclick="loadResponsePerf(180)">6mo</button></span></div><div class="v"><span id="rv-perf-n" class="hb-num">—</span><small>approved</small></div><div id="perf-body"><div class="hb-load" style="height:86px"><canvas class="hb-orb" data-orb-state="working" width="28" height="28"></canvas></div></div><div class="cap"><span id="rv-perf-cap">as-is · edited · regenerated</span></div></div>
@@ -5821,6 +5825,13 @@ function processInsightHtml(html){
   return out || html;
 }
 function loadReviewInsight(){
+  // The "Cavnar's read on your reviews" card this filled is gone from the
+  // markup, so #review-insight no longer exists and everything below is
+  // unreachable — but the 3 call sites also use reviewInsightLoaded as the
+  // shared "has this tab's lazy content loaded yet" gate for the sentiment
+  // trend and topic heatmap calls next to them, so this stays as the one
+  // place that flips it, rather than duplicating that flag-set at each
+  // call site.
   reviewInsightLoaded=true;
   var el=document.getElementById('review-insight');
   if(!el)return;
