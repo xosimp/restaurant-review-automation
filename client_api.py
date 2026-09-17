@@ -6450,6 +6450,19 @@ def food_cost_cogs(current_user):
         return jsonify(ok=False, pct=None, error=_safe_err(e)), 500
 
 
+@client_bp.route("/api/food-cost/waste-sources")
+@login_required
+def food_cost_waste_sources(current_user):
+    """Counted waste vs waste inferred from a recount gap. A gap is a
+    counting problem, not money wasted, and nothing used to tell them
+    apart for the owner."""
+    import inventory_ledger as _il
+    try:
+        return jsonify(ok=True, **_il.waste_sources(current_user["restaurant_id"]))
+    except Exception as e:
+        return jsonify(ok=False, error=_safe_err(e)), 500
+
+
 @client_bp.route("/api/food-cost/recipe-coverage")
 @login_required
 def food_cost_recipe_coverage(current_user):

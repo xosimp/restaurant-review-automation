@@ -1600,6 +1600,19 @@ def mobile_menu_profitability(current_user):
         return jsonify(ok=False, error=f"Couldn't work out menu margins: {e}"), 500
 
 
+@mobile_bp.route("/food-cost/waste-sources")
+@mobile_login_required
+def mobile_waste_sources(current_user):
+    """Counted waste vs waste inferred from a recount gap. A gap is a
+    counting problem, not money wasted, and nothing used to tell them
+    apart for the owner."""
+    import inventory_ledger as _il
+    try:
+        return jsonify(ok=True, **_il.waste_sources(current_user["restaurant_id"]))
+    except Exception as e:
+        return jsonify(ok=False, error=_safe_err(e)), 500
+
+
 @mobile_bp.route("/food-cost/recipe-coverage")
 @mobile_login_required
 def mobile_recipe_coverage(current_user):

@@ -356,6 +356,45 @@ def compute_daily_depletion(restaurant_id: int, business_date) -> dict:
     }
 
 
+def waste_sources(restaurant_id: int, days: int = _TREND_WINDOW_DAYS) -> dict:
+    """How much of this week's recorded waste was actually counted, and how
+    much was inferred from a recount coming in under expectation.
+
+    record_recount writes the gap as a waste event tagged source='inferred',
+    which is the right call for the ledger — but nothing downstream
+    distinguished it, so a miscount was reported to the owner as money
+    wasted. An owner can act on "you wasted $200 of produce"; they can only
+    act on "$200 of the gap is unexplained" by counting more carefully.
+    """
+    from models import get_conn
+    conn = get_conn()
+    try:
+        window_start = (date.today() - timedelta(days=days - 1)).isoformat()
+        rows = conn.execute(
+            "SELECT COALESCE(e.source,'manual') AS src, "
+            "       COALESCE(SUM(e.qty * COALESCE(i.unit_cost,0)), 0) AS cost "
+            "FROM ingredient_stock_events e "
+            "JOIN ingredients i ON i.id = e.ingredient_id AND i.restaurant_id = e.restaurant_id "
+            "WHERE e.restaurant_id=? AND e.event_type='waste' AND e.event_date>=? "
+            "GROUP BY COALESCE(e.source,'manual')",
+            (restaurant_id, window_start),
+        ).fetchall()
+    finally:
+        conn.close()
+    by_source = {r["src"]: round(float(r["cost"] or 0), 2) for r in rows}
+    inferred = by_source.get("inferred", 0.0)
+    counted = round(sum(v for k, v in by_source.items() if k != "inferred"), 2)
+    total = round(counted + inferred, 2)
+    return {
+        "window_days": days,
+        "counted": counted,
+        "inferred": inferred,
+        "total": total,
+        "inferred_pct": round(inferred / total * 100, 1) if total > 0 else None,
+        "has_data": bool(rows),
+    }
+
+
 def recipe_coverage(restaurant_id: int, days: int = _POPULARITY_WINDOW_DAYS) -> dict:
     """What share of what this restaurant sold is accounted for by a recipe.
 
@@ -602,26 +641,33 @@ def create_menu_item(restaurant_id: int, name: str) -> int:
 def list_menu_items_with_recipes(restaurant_id: int) -> list:
     from models import get_conn
     conn = get_conn()
-    menu_items = conn.execute(
-        "SELECT * FROM menu_items WHERE restaurant_id=? AND is_active=1 ORDER BY name",
-        (restaurant_id,)
-    ).fetchall()
-    result = []
-    for mi in menu_items:
-        recipe_rows = conn.execute(
-            # The ingredient is filtered by tenant too, the same way
-            # menu_profitability does it — a legacy recipe row written before
-            # add_recipe_ingredient validated the pair can point at another
-            # restaurant's ingredient, and this renders its name and unit.
-            "SELECT ri.id, ri.ingredient_id, ri.qty_per_unit, i.name AS ingredient_name, i.unit "
-            "FROM recipe_ingredients ri JOIN ingredients i "
-            "  ON i.id = ri.ingredient_id AND i.restaurant_id=? "
-            "WHERE ri.menu_item_id=?",
-            (restaurant_id, mi["id"])
+    try:
+        menu_items = conn.execute(
+            "SELECT * FROM menu_items WHERE restaurant_id=? AND is_active=1 ORDER BY name",
+            (restaurant_id,)
         ).fetchall()
-        result.append({**dict(mi), "recipe": [dict(r) for r in recipe_rows]})
-    conn.close()
-    return result
+        # Two queries, not one per dish. This ran a recipe lookup for every
+        # menu item — 201 queries for a 200-item menu — while
+        # menu_profitability next door already showed the grouped shape.
+        #
+        # The ingredient is filtered by tenant too: a legacy recipe row
+        # written before add_recipe_ingredient validated the pair can point at
+        # another restaurant's ingredient, and this renders its name and unit.
+        by_item = {}
+        for r in conn.execute(
+            "SELECT ri.id, ri.menu_item_id, ri.ingredient_id, ri.qty_per_unit, "
+            "       i.name AS ingredient_name, i.unit "
+            "FROM recipe_ingredients ri "
+            "JOIN menu_items m ON m.id = ri.menu_item_id AND m.restaurant_id=? "
+            "JOIN ingredients i ON i.id = ri.ingredient_id AND i.restaurant_id=? "
+            "ORDER BY ri.id",
+            (restaurant_id, restaurant_id)
+        ).fetchall():
+            by_item.setdefault(r["menu_item_id"], []).append(dict(r))
+        return [{**dict(mi), "recipe": by_item.get(mi["id"], [])} for mi in menu_items]
+    finally:
+        # Was outside any try, so a raised exception leaked the connection.
+        conn.close()
 
 
 def priority_ingredients(restaurant_id: int) -> list:

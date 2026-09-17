@@ -142,8 +142,21 @@ def test_no_direction_is_called_on_two_weeks():
     assert s["wow_delta"] == 50
 
 
+def test_three_weeks_is_not_yet_a_trend():
+    """WEEKS_FOR_TREND is 4, and its own comment says calling something a
+    trend needs "more than a coincidence of three" — but the code gated on
+    WEEKS_FOR_TREND - 1 and so declared one on exactly three, at "low"
+    confidence. The documented rule is now the enforced one."""
+    s = wt.waste_trend_stats(_weeks([100, 120, 140]))
+    assert s["direction"] is None
+    assert s["confidence"] is None
+    # The week-over-week comparison, which genuinely only needs two points,
+    # is unaffected.
+    assert s["wow_delta"] == 20
+
+
 def test_confidence_grows_with_weeks_and_consistency():
-    assert wt.waste_trend_stats(_weeks([100, 120, 140]))["confidence"] == "low"
+    assert wt.waste_trend_stats(_weeks([100, 120, 140, 160]))["confidence"] == "medium"
     assert wt.waste_trend_stats(_weeks([100, 120, 140, 160, 180]))["confidence"] == "medium"
     assert wt.waste_trend_stats(_weeks([100, 110, 120, 130, 140, 150, 160, 170]))["confidence"] == "high"
     # Eight weeks that zig-zag their way up are not a high-confidence trend.

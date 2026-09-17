@@ -41,6 +41,9 @@ _SCHEMA = """CREATE TABLE IF NOT EXISTS inventory_history (
     saved_at    TEXT DEFAULT (datetime('now'))
 )"""
 
+# Set once the table is known to exist — see load_waste_history.
+_SCHEMA_ENSURED = False
+
 
 def _f(v, default=0.0):
     try:
@@ -70,6 +73,10 @@ def _week_from_row(week_end, waste_json, items_json):
         we = date.fromisoformat(week_end)
     except Exception:
         return None
+    # week_end is the day the snapshot was taken, which is whenever the owner
+    # last opened the page — not a business week boundary. The label is
+    # therefore "the seven days ending when this was counted", and the payload
+    # says so rather than implying a Mon-Sun week the data never described.
     ws = we - timedelta(days=6)
     week = {
         "week_end": we.isoformat(),
@@ -127,7 +134,13 @@ def load_waste_history(restaurant_id, limit=None, db_path=None):
     from models import get_conn, DB_PATH
     conn = get_conn(db_path or DB_PATH)
     try:
-        conn.execute(_SCHEMA)
+        # models.init_db declares this table now; the lazy create stays only
+        # as a safety net for a database that predates that, and is skipped
+        # once the table is known to exist rather than run per request.
+        global _SCHEMA_ENSURED
+        if not _SCHEMA_ENSURED:
+            conn.execute(_SCHEMA)
+            _SCHEMA_ENSURED = True
         # Two queries on purpose. Snapshots are written per day the page is
         # viewed, not per week, so a single unbounded SELECT used to read and
         # JSON-parse every row this restaurant had ever written — each
@@ -215,7 +228,7 @@ def _confidence(values, slope):
     """How much to trust the direction call: more weeks, and consecutive
     moves that mostly agree with the fitted slope, earn more confidence."""
     n = len(values)
-    if n < WEEKS_FOR_TREND - 1:
+    if n < WEEKS_FOR_TREND:
         return None
     deltas = [values[i] - values[i - 1] for i in range(1, n)]
     agree = sum(1 for d in deltas if (d > 0) == (slope > 0) or d == 0)
@@ -311,7 +324,10 @@ def waste_trend_stats(weeks, target_weekly=None):
         stats["largest_increase"] = inc if inc["delta"] > 0 else None
         stats["largest_decrease"] = dec if dec["delta"] < 0 else None
 
-    if n >= WEEKS_FOR_TREND - 1:
+    # WEEKS_FOR_TREND, not WEEKS_FOR_TREND - 1. The constant's own comment
+    # says a trend needs "more than a coincidence of three", and the code
+    # then declared one on exactly three.
+    if n >= WEEKS_FOR_TREND:
         d = _direction(values)
         stats["direction"] = d["direction"]
         stats["change_pct"] = d["change_pct"]
@@ -370,7 +386,7 @@ def waste_trend_observations(stats, weeks, target_pct=WASTE_TARGET_PCT):
     conf_note = {"high": f"high confidence · {n} weeks", "medium": f"moderate confidence · {n} weeks",
                  "low": f"early read · {n} weeks"}.get(conf)
 
-    if stats.get("direction") and n >= WEEKS_FOR_TREND - 1:
+    if stats.get("direction") and n >= WEEKS_FOR_TREND:
         pct = abs(stats["change_pct"])
         if stats["direction"] == "worsening":
             out.append({"text": f"Waste is trending up about {pct:g}% across the last {n} weeks.",
@@ -487,7 +503,19 @@ def get_waste_target_pct(restaurant_id, db_path=None):
     finally:
         conn.close()
     pct = row["waste_target_pct"] if row else None
-    return float(pct) if pct is not None else WASTE_TARGET_PCT
+    if pct is None:
+        return WASTE_TARGET_PCT
+    # Validated here, not just in the settings form's min/max attributes —
+    # those are client-side only, and admin_routes stores a bare float(). A
+    # zero made implied_target_weekly return 0.0, which is falsy, so the
+    # entire target section silently disappeared with no explanation.
+    try:
+        pct = float(pct)
+    except (TypeError, ValueError):
+        return WASTE_TARGET_PCT
+    if not (0 < pct <= 100):
+        return WASTE_TARGET_PCT
+    return pct
 
 
 def build_waste_trend(restaurant_id, range_key="8w", analysis=None, is_live=True, db_path=None, target_pct=None):

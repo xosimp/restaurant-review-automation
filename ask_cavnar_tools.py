@@ -82,6 +82,14 @@ def _read_reviews(restaurant_id, sentiment=None, urgency=None, search=None,
 
 
 def _read_menu_margins(restaurant_id, limit=10):
+    # Its three sibling food-cost tools all refuse on sample data; this one
+    # returned margins and a menu-wide average with no such check.
+    from inventory import load_inventory_for_restaurant as _lifr_mm
+    _mm_items, _mm_live = _lifr_mm(restaurant_id)
+    if not _mm_live:
+        return {"is_live": False,
+                "note": "No real inventory data yet — nothing here reflects this restaurant. "
+                        "Say so rather than quoting these numbers."}
     import inventory_ledger
     data = inventory_ledger.menu_profitability(restaurant_id)
     n = min(int(limit or 10), _MAX_ROWS)

@@ -3066,7 +3066,11 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
   {% elif _wl == 'Above Average' %}{% set _head = 'Waste is above target' %}{% set _tone = 'warn' %}
   {% elif _wl in ['Concerning','Needs Attention'] %}{% set _head = 'Waste needs attention' %}{% set _tone = 'bad' %}
   {% else %}{% set _head = 'Tracking this week' %}{% set _tone = 'neutral' %}{% endif %}
-  {% if not inv.is_live %}
+  {% if inv.failed %}
+  {# The zeros below are placeholders, not measurements. Saying so beats
+     showing "$0 waste this week" as if it had been counted. #}
+  <div class="fc2-sample"><b>Analysis unavailable.</b> The food cost figures couldn't be computed just now — reload in a moment. Nothing below has been measured.</div>
+  {% elif not inv.is_live %}
   <div class="fc2-sample"><b>Sample data.</b> Upload a CSV with item, current_stock, par_level, unit_cost, waste_last_week — or connect your POS — to see your real numbers.</div>
   {% endif %}
   <div class="hb-top">
@@ -3089,6 +3093,10 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
          sells most. This number says how far the rest of the page can be
          trusted, and it was only ever written to a log. #}
       <div id="fc2-cov" class="fc2-cov" hidden></div>
+      {# Waste counted vs waste inferred from a recount coming in under
+         expectation. A gap is a counting problem, not money wasted, and the
+         two were indistinguishable in every figure on this page. #}
+      <div id="fc2-wsrc" class="fc2-cov" hidden></div>
     </div>
     <div class="fc2-top-right">
       <div class="hb-pulse">
@@ -9134,6 +9142,7 @@ function loadInvInsight(){
   loadWasteTrend();
   fc2LoadFoodCostPct();
   fc2LoadRecipeCoverage();
+  fc2LoadWasteSources();
   var fiveMin=5*60*1000;
   try{
     var cached=sessionStorage.getItem('inv_insight');
@@ -9224,6 +9233,21 @@ function fc2LoadFoodCostPct(){
       host.hidden=false;
     })
     .catch(function(){ host.hidden=true; });
+}
+function fc2LoadWasteSources(){
+  var host=document.getElementById('fc2-wsrc');if(!host)return;
+  fetch('/api/food-cost/waste-sources',{headers:{'Accept':'application/json'}})
+    .then(function(r){return r.json();})
+    .then(function(d){
+      // Only worth saying when a meaningful slice is unexplained.
+      if(!d||!d.ok||!d.has_data||!d.inferred||d.inferred_pct==null||d.inferred_pct<10){host.hidden=true;return;}
+      host.innerHTML='<span class="k">Unexplained</span>'
+        +'<span class="v warn"><span class="hb-num">'+d.inferred_pct+'%</span></span>'
+        +'<span class="d">of this week\u2019s waste ($'+Math.round(d.inferred).toLocaleString()
+        +') came from counts landing under expectation rather than recorded waste \u2014 worth a closer count before acting on it.</span>';
+      host.hidden=false;
+    })
+    .catch(function(){host.hidden=true;});
 }
 function fc2LoadRecipeCoverage(){
   var host=document.getElementById('fc2-cov');if(!host)return;

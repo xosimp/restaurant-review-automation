@@ -443,7 +443,11 @@ def index(current_user):
                "reorder_soon": [], "order_reduction": [], "total_items": 0}
     except Exception as e:
         print(f"Inventory analysis error: {e}")
-        inv = {"total_waste_cost_week":0,"monthly_waste_projection":0,
+        # `failed` so the template can say the analysis didn't run. The zeros
+        # below are placeholders to keep the page rendering, not measurements
+        # — without the flag an owner saw "$0 waste this week" and had no way
+        # to know nothing had been computed.
+        inv = {"failed":True,"total_waste_cost_week":0,"monthly_waste_projection":0,
                "recoverable_monthly":0,"total_stock_value":0,
                "waste_items":[],"overstock":[],"critical_low":[],
                "reorder_soon":[],"order_reduction":[],"total_items":0,
