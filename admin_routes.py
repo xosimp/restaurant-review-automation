@@ -1279,22 +1279,72 @@ def terms_page():
         html = "<h1>Terms of Service</h1><p>Coming soon. Contact will@cavnar.ai</p>"
     return Response(html, mimetype="text/html")
 
-@admin_bp.route("/sms-optin-preview")
+@admin_bp.route("/sms-optin-preview", methods=["GET", "POST"])
 def sms_optin_preview_page():
-    """Public, unauthenticated mirror of the Alert Settings SMS consent flow —
-    Twilio's A2P 10DLC campaign reviewers can't log into the dashboard to see
-    the real opt-in checkbox, and 'no publicly reachable opt-in URL' is a
-    standard rejection reason (error 30909/30921). This page exists to give
-    reviewers something to look at without needing credentials."""
+    """Public, unauthenticated, and — since the rejection that made the
+    point explicitly ("the opt-in link provided lacks phone number field")
+    — genuinely FUNCTIONAL SMS opt-in form for Twilio's A2P 10DLC campaign
+    reviewers, who cannot log into the dashboard to use the real one and
+    won't accept a screenshot/mockup of it in place of a live, testable
+    URL. A real <input type=tel> phone field, a real unchecked-by-default
+    consent <input type=checkbox> (not a styled <span>), and all four
+    required disclosures (message type, frequency, "rates may apply",
+    STOP-to-opt-out) together in that checkbox's own label — the previous
+    version had the STOP/rates language there but frequency only in a
+    separate "Message program details" paragraph further down the page,
+    which is what the most recent rejection's "missing required
+    disclosures (frequency,)" note was pointing at.
+
+    Submitting does not enroll the number in real messaging — the
+    messaging service this campaign registers is itself pending Twilio's
+    approval, so there is nothing live to send a confirmation through yet,
+    and a stranger's number entered by a reviewer must never receive a
+    real text from us. It validates, then shows an honest confirmation
+    state saying exactly that, rather than implying an SMS went out.
+    """
     from flask import Response
     import os as _os
+    import re as _re
+    import secrets as _secrets_csrf
+    from csrf import CSRF_COOKIE as _CSRF_COOKIE
+
+    submitted = False
+    error = None
+    if request.method == "POST":
+        cookie_tok = request.cookies.get(_CSRF_COOKIE, "")
+        sent_tok = request.form.get("csrf_token", "")
+        if not (cookie_tok and sent_tok and cookie_tok == sent_tok):
+            error = "Your session expired — please try again."
+        else:
+            phone = (request.form.get("phone") or "").strip()
+            consent = request.form.get("consent") == "on"
+            digits = _re.sub(r"\D", "", phone)
+            if not consent:
+                error = "Check the consent box to subscribe."
+            elif len(digits) < 10:
+                error = "Enter a valid mobile phone number."
+            else:
+                submitted = True
+
     try:
         html_path = _os.path.join(_os.path.dirname(__file__), "sms_optin_preview.html")
         with open(html_path, "r") as f:
             html = f.read()
     except FileNotFoundError:
-        html = "<h1>SMS Opt-In Flow</h1><p>Contact will@cavnar.ai</p>"
-    return Response(html, mimetype="text/html")
+        return Response("<h1>SMS Opt-In Flow</h1><p>Contact will@cavnar.ai</p>", mimetype="text/html")
+
+    csrf_token = request.cookies.get(_CSRF_COOKIE) or _secrets_csrf.token_urlsafe(32)
+    html = html.replace("{{CSRF_TOKEN}}", csrf_token)
+    html = html.replace("{{FORM_STATE}}", "submitted" if submitted else ("error" if error else "form"))
+    html = html.replace("{{ERROR_TEXT}}", error or "")
+    html = html.replace("{{ERROR_DISPLAY}}", "block" if error else "none")
+
+    resp = Response(html, mimetype="text/html")
+    if not request.cookies.get(_CSRF_COOKIE):
+        resp.set_cookie(_CSRF_COOKIE, csrf_token, max_age=30 * 24 * 3600,
+                        httponly=False, secure=bool(_os.getenv("RAILWAY_ENVIRONMENT")),
+                        samesite="Lax")
+    return resp
 
 @admin_bp.route("/.well-known/security.txt")
 def security_txt():
