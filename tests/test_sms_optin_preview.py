@@ -75,7 +75,7 @@ def test_all_four_required_disclosures_are_in_the_consent_label_itself():
     disclosures (frequency,)" flagged last time."""
     html = _client().get("/sms-optin-preview").data.decode()
     label = html.split('for="optin-consent">', 1)[1].split("</label>", 1)[0]
-    assert "review notifications" in label or "review alerts" in label, "message type"
+    assert "reviews" in label, "message type"
     assert "per week" in label, "message frequency"
     assert "Message and data rates may apply" in label
     assert "STOP" in label and "HELP" in label
