@@ -555,8 +555,8 @@ def test_row_hover_color_matches_its_own_ribbon_color_per_status():
     s = _src()
     assert ".rv2-row:hover{background:var(--hb-tint)}" in s, \
         "the generic (no status class) row should keep its original tint"
-    assert ".rv2-row.urgent:hover{background:rgba(224,85,85,.10)}" in s
-    assert ".rv2-row.approved:hover{background:rgba(78,173,122,.10)}" in s
+    assert ".rv2-row.urgent:hover{background:rgba(255,92,92,.10)}" in s
+    assert ".rv2-row.approved:hover{background:rgba(53,214,124,.10)}" in s
     assert ".rv2-row.posted:hover{background:rgba(106,171,255,.10)}" in s
     assert ".rv2-row.skipped:hover{background:rgba(240,235,224,.06)}" in s
 
@@ -585,7 +585,8 @@ def test_rating_number_carries_no_status_color_only_the_dot_does():
     the star gets its own element (and a touch of margin) instead of
     running straight into the number with no gap."""
     s = _src()
-    i = s.index('id="stat-rating">')
+    i = s.index('id="stat-rating"')
+    i = s.index(">", i) + 1
     pill = s[i:s.index("</span></span>", i) + len("</span></span>")]
     assert '<span id="stat-rating-n">{{ _rating }}</span>' in pill, \
         "the number span must carry no {{ _rglow }} class"
@@ -615,3 +616,94 @@ def test_urgent_pill_renamed_from_needs_a_reply_now():
     s = _src()
     assert "Needs a reply now" not in s
     assert '<span class="rv2-urg">Urgent</span>' in s
+
+
+# ── tab badge counts the whole actionable queue, not just drafted ────────
+
+def test_tab_badge_counts_undrafted_reviews_too_not_just_drafted():
+    """awaiting_approval alone (drafted, ready to approve) undercounted the
+    inbox — a review with no draft yet (get_pending_drafts' backlog) still
+    needs the owner to act on it, but never showed up in the tab badge.
+    Both the server-rendered badge and the live JS poller must add
+    needs_response in."""
+    s = _src()
+    assert "{% set _badge_n = (rstats.awaiting_approval or 0) + (rstats.needs_response or 0) %}" in s
+    assert 'id="reviews-badge" style="{% if _badge_n > 0 %}' in s
+    assert "{{_badge_n if _badge_n > 0 else \'\'}}" in s
+
+    fn = _fn("updateReviewStats")
+    badge_block = fn[fn.index("// ── Tab badge"):fn.index("// ── Urgent stat card")]
+    assert "var pending = (d.awaiting_approval || 0) + (d.needs_response || 0);" in badge_block
+
+
+# ── the 4 top pills jump to what they report on ──────────────────────────
+
+def test_the_4_top_pills_are_buttons_wired_to_reviewsPillJump():
+    s = _src()
+    assert 'id="stat-rating" onclick="reviewsPillJump(\'rating\')"' in s
+    assert 'id="stat-rr" onclick="reviewsPillJump(\'rr\')"' in s
+    assert 'id="stat-pending" onclick="reviewsPillJump(\'pending\')"' in s
+    assert 'id="stat-urgent" onclick="reviewsPillJump(\'urgent\')"' in s
+    # buttons, not spans — a span has no click semantics/keyboard focus
+    for pid in ("stat-rating", "stat-rr", "stat-pending", "stat-urgent"):
+        i = s.index('id="%s"' % pid)
+        assert s.rfind("<button", 0, i) > s.rfind("<span", 0, i), \
+            pid + " pill must be a <button>, not a <span>"
+
+
+def test_reviewsPillJump_scrolls_chart_pills_and_filters_inbox_pills():
+    fn = _fn("reviewsPillJump")
+    assert "querySelector(kind==='rating'?'.rv2-hero':'#perf-card')" in fn
+    assert "scrollIntoView({behavior:'smooth',block:'start'})" in fn
+    # the inbox pills drive the same rfilter + fpill machinery as the
+    # filter-pill row itself, so state never disagrees between the two
+    assert "var f = kind==='urgent' ? 'urgent' : 'pending';" in fn
+    assert "rfilter=f;" in fn
+    assert "filterReviews();" in fn
+    assert "getElementById(f==='urgent'?'fpill-urgent':'fpill-pending')" in fn
+    s = _src()
+    assert 'id="fpill-urgent"' in s and 'id="fpill-pending"' in s
+
+
+def test_pill_jump_flashes_the_element_it_scrolls_to():
+    s = _src()
+    assert "@keyframes rv2JumpFlash{0%{background:var(--hb-tint2)}100%{background:transparent}}" in s
+    assert ".rv2-jump-flash{animation:rv2JumpFlash 1.8s ease}" in s
+    fn = _fn("reviewsPillJump")
+    assert "_rvFlashJump(el)" in fn
+    assert "_rvFlashJump(target)" in fn
+
+
+# ── brighter red/green/sand, scoped to the Reviews page only ─────────────
+
+def test_reviews_panel_overrides_green_red_sand_to_more_vivid_values():
+    s = _src()
+    i = s.index('[data-theme="dark"] #panel-reviews{')
+    block = s[i:s.index("}", s.index("--green:", i)) + 1]
+    assert "--green:#35d67c;--red:#ff5c5c;--ink3:#e3c99a" in block
+
+
+def test_vivid_override_does_not_leak_into_other_modules():
+    """--green/--red are only redeclared brighter inside the Reviews
+    panel's own dark-theme override — every other module's #panel-* block
+    (Home, Labor, Food Cost, Intel, Account) never redeclares these
+    tokens, so they keep inheriting the original, muted site-wide dark
+    theme values instead of picking up Reviews' brighter ones."""
+    s = _src()
+    assert s.count("--green:#35d67c") == 1
+    assert s.count("--red:#ff5c5c") == 1
+    assert s.count("--ink3:#e3c99a") == 1
+
+
+def test_topic_and_approval_bars_use_the_shared_good_bad_tokens_not_literal_hex():
+    s = _src()
+    assert ".rv2-topic .bar .p{background:var(--hb-good)}.rv2-topic .bar .ng{background:var(--hb-bad)}" in s
+    assert ".rv2-perf .bar i.g{background:linear-gradient(90deg,#1fa862,var(--hb-good));box-shadow:0 0 10px rgba(53,214,124,.45)}" in s
+    assert ".rv2-perf .bar i.g{background:linear-gradient(90deg,#2d6a4f,#4ead7a)" not in s
+
+
+def test_per_week_chart_bars_use_css_vars_so_they_pick_up_the_reviews_override():
+    fn = _fn("stacked")
+    assert 'fill="var(--red)"' in fn
+    assert 'fill="var(--green)"' in fn
+    assert "RED" not in fn and "GREEN" not in fn

@@ -280,14 +280,11 @@ def run_daily_fetch():
             else:
                 log.warning(f"Review fetch did not complete for {restaurant.name} — last_fetched_at left stale on purpose")
 
-            if not reviews:
-                continue
-
-            new_count, new_reviews = save_reviews(reviews)
-            if new_count == 0:
-                continue
-
-            log.info(f"{new_count} new reviews for {restaurant.name}")
+            new_count, new_reviews = 0, []
+            if reviews:
+                new_count, new_reviews = save_reviews(reviews)
+                if new_count:
+                    log.info(f"{new_count} new reviews for {restaurant.name}")
 
             # Analyse BEFORE alerting. Alerts used to fire on the raw batch,
             # so sentiment and urgency were both still NULL when the health
@@ -298,9 +295,15 @@ def run_daily_fetch():
             # and why the negative-spike count saw none of the batch that
             # triggered it.
             #
-            # No limit: a review left unanalysed has no urgency, so its
-            # health alert never fires at all. Bounded by new_count, which
-            # is what this restaurant actually received.
+            # This sweep (and the drafting one below it) used to be nested
+            # under `if new_count:`, so a review stuck unanalysed or
+            # undrafted — a failed Haiku call, a rate limit, one inserted
+            # outside the normal fetch path (e.g. a seed/import script) —
+            # only got retried on a cycle where this SAME restaurant also
+            # happened to receive a genuinely new review that day. No new
+            # review meant the backlog sat there forever, fixable only by
+            # a manual click. Runs every cycle now, independent of whether
+            # this fetch turned up anything new.
             for r in get_pending_analysis(rid, limit=max(new_count, 50)):
                 try:
                     analyse_review(r.id, r.rating, r.text, restaurant_id=rid)
@@ -308,41 +311,43 @@ def run_daily_fetch():
                     log.error(f"Analyse error: {e}")
                     _ops.capture(e, job="review_analyse", context=restaurant.name)
 
-            # Re-read the batch so alerts and webhooks see the analysis.
-            try:
-                from models import get_reviews_by_ids as _grbi
-                new_reviews = _grbi(rid, [r.id for r in new_reviews if getattr(r, "id", None)]) or new_reviews
-            except Exception:
-                pass
+            if new_reviews:
+                # Re-read the batch so alerts and webhooks see the analysis.
+                try:
+                    from models import get_reviews_by_ids as _grbi
+                    new_reviews = _grbi(rid, [r.id for r in new_reviews if getattr(r, "id", None)]) or new_reviews
+                except Exception:
+                    pass
 
-            # Fire SMS/email alerts for newly saved reviews
-            try:
-                from notify import fire_review_alerts
-                fire_review_alerts(rid, restaurant.name, new_reviews)
-            except Exception as _ae:
-                log.error(f"Alert fire error [{restaurant.name}]: {_ae}")
+                # Fire SMS/email alerts for newly saved reviews
+                try:
+                    from notify import fire_review_alerts
+                    fire_review_alerts(rid, restaurant.name, new_reviews)
+                except Exception as _ae:
+                    log.error(f"Alert fire error [{restaurant.name}]: {_ae}")
 
-            # Fire outbound webhooks for each new review
-            try:
-                from webhooks import fire_webhook as _fw
-                for _nr in new_reviews:
-                    _payload = {
-                        "platform": _nr.platform,
-                        "rating":   _nr.rating,
-                        "author":   _nr.author,
-                        "body":     (_nr.text or "")[:500],
-                        "sentiment": getattr(_nr, "sentiment", None),
-                        "urgency":   getattr(_nr, "urgency", None),
-                    }
-                    _fw(rid, "review.received", _payload)
-                    if (_nr.rating or 5) <= 2:
-                        _fw(rid, "review.negative", _payload)
-                    if (_nr.rating or 0) >= 4:
-                        _fw(rid, "review.positive", _payload)
-            except Exception:
-                pass
+                # Fire outbound webhooks for each new review
+                try:
+                    from webhooks import fire_webhook as _fw
+                    for _nr in new_reviews:
+                        _payload = {
+                            "platform": _nr.platform,
+                            "rating":   _nr.rating,
+                            "author":   _nr.author,
+                            "body":     (_nr.text or "")[:500],
+                            "sentiment": getattr(_nr, "sentiment", None),
+                            "urgency":   getattr(_nr, "urgency", None),
+                        }
+                        _fw(rid, "review.received", _payload)
+                        if (_nr.rating or 5) <= 2:
+                            _fw(rid, "review.negative", _payload)
+                        if (_nr.rating or 0) >= 4:
+                            _fw(rid, "review.positive", _payload)
+                except Exception:
+                    pass
 
-            # Draft — include approved examples for style learning
+            # Draft — include approved examples for style learning. Same
+            # unconditional-sweep reasoning as the analysis loop above.
             from models import get_approved_examples
             approved_examples = get_approved_examples(rid, limit=4)
             for r in get_pending_drafts(rid, limit=50):
