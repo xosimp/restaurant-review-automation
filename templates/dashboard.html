@@ -347,7 +347,7 @@ body{font-family:'Apfel Grotezk',sans-serif;background:transparent;color:var(--i
 .tab:hover{color:var(--paper)}
 .tab.active{color:var(--paper);border-bottom-color:transparent}
 #tab-indicator{position:absolute;bottom:0;left:0;width:0;height:2px;background:var(--ember);transition:left .42s cubic-bezier(.34,1.56,.64,1),width .42s cubic-bezier(.34,1.56,.64,1);pointer-events:none;border-radius:1px 1px 0 0}
-.tab .badge{font-size:10px;font-family:'Bricolage Grotesque',sans-serif;font-weight:700;padding:1px 5px;border-radius:10px;background:rgba(255,255,255,.1);margin-left:4px}
+.tab .badge{font-size:10px;font-family:'Bricolage Grotesque',sans-serif;font-weight:700;padding:1px 5px;border-radius:10px;background:rgba(255,255,255,.1);margin-left:4px;position:relative;top:-2px}
 .panel{display:none;padding:24px 28px;max-width:1080px;background:transparent}
 .panel.active{display:block}
 .slabel{font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);margin-bottom:8px}
@@ -1118,7 +1118,7 @@ document.documentElement.classList.add('pjs-loading');
 </header>
 <div class="tabs" role="tablist" aria-label="Dashboard sections">
     <button class="tab active" id="tab-home" onclick="switchTab('home',this)">Home</button>
-    {% if mod_reviews %}<button class="tab" role="tab" id="tab-reviews" onclick="switchTab('reviews',this)">Reviews <span class="badge" id="reviews-badge" style="{% if rstats.awaiting_approval > 0 %}background:#c0392b;color:white{% else %}display:none{% endif %}">{{rstats.awaiting_approval if rstats.awaiting_approval > 0 else ''}}</span></button>{% endif %}
+    {% if mod_reviews %}<button class="tab" role="tab" id="tab-reviews" onclick="switchTab('reviews',this)">Reviews <span class="badge" id="reviews-badge" style="{% if rstats.awaiting_approval > 0 %}background:var(--ember)!important;color:white{% else %}display:none{% endif %}">{{rstats.awaiting_approval if rstats.awaiting_approval > 0 else ''}}</span></button>{% endif %}
     {% if mod_labor %}<button class="tab" role="tab" id="tab-labor" onclick="switchTab('labor',this)">Labor</button>{% endif %}
     {% if mod_inventory %}<button class="tab" role="tab" id="tab-inventory" onclick="switchTab('inventory',this)">Food Cost</button>{% endif %}
     {% if mod_marketing %}<button class="tab" role="tab" id="tab-marketing" onclick="switchTab('marketing',this)">Marketing</button>{% endif %}
@@ -1444,7 +1444,10 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     for(var i=0;i<n;i++){var wk=weeks[i],x=gap+i*(bw+gap),ph=((wk.pos||0)/max)*(base-4),nh=((wk.neg||0)/max)*(base-4),oh=(((wk.total||0)-(wk.pos||0)-(wk.neg||0))/max)*(base-4);
       var delay=reduced()?'':' style="animation-delay:'+(i*100)+'ms"';var y=base;
       if(nh>0){y-=nh;s+='<rect class="hb-bar"'+delay+' x="'+x.toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+nh.toFixed(1)+'" rx="2" fill="'+RED+'"/>';}
-      if(oh>0){y-=oh;s+='<rect class="hb-bar"'+delay+' x="'+x.toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+oh.toFixed(1)+'" fill="currentColor" fill-opacity=".25"/>';}
+      // The neutral (not pos/neg) remainder — was .25, which on the flat
+      // near-black canvas renders as a dark gray that all but disappears
+      // into the background. Lighter now so it reads as a real segment.
+      if(oh>0){y-=oh;s+='<rect class="hb-bar"'+delay+' x="'+x.toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+oh.toFixed(1)+'" fill="currentColor" fill-opacity=".45"/>';}
       if(ph>0){y-=ph;s+='<rect class="hb-bar"'+delay+' x="'+x.toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+ph.toFixed(1)+'" rx="2" fill="'+GREEN+'"/>';}
       s+='<text x="'+(x+bw/2).toFixed(1)+'" y="'+(h-3)+'" text-anchor="middle" font-size="9.5" font-family="Space Grotesk, sans-serif" fill="currentColor" fill-opacity=".7">'+esc(wk.label||'')+'</text>';}
     return s+'</svg>';
@@ -1804,6 +1807,11 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
    bars next to it already use, instead of a separate one. */
 .rv2-topic .bar i{display:block;height:100%;transform-origin:left;animation:rv2Grow .7s cubic-bezier(.4,0,.2,1) both}
 .rv2-topic .bar .p{background:#2d6a4f}.rv2-topic .bar .ng{background:#e05555}
+/* The neutral remainder had no fill at all — a plain <i> over the track's
+   own var(--hb-line2), which reads as dark gray on the flat canvas and
+   nearly vanishes. Matches the "Reviews · per week" chart's own neutral
+   segment fix (the same visual weight, so both charts' gray now agree). */
+.rv2-topic .bar .mid{background:rgba(240,235,224,.45)}
 .rv2-topic .n{font-family:'Space Grotesk',sans-serif;font-weight:600;text-align:right}
 .rv2-topic .t{font-size:11px;margin-left:6px}
 .rv2-topic .t.up{color:var(--hb-bad)}.rv2-topic .t.down{color:var(--hb-good)}
@@ -1834,6 +1842,20 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .rv2-row.approved:before{background:var(--hb-good)}
 .rv2-row.posted:before{background:#6aabff}
 .rv2-row.posted{opacity:.82}
+/* Skipped had no ribbon color at all — a real, deliberate decision (not
+   just "nothing happened yet") with no visual sign of one. */
+.rv2-row.skipped:before{background:var(--ink3)}
+/* Hover used the same ember tint on every row regardless of what it is —
+   now matches whatever the row's own ribbon already says: red for still-
+   urgent, green for approved, blue for live-on-Google, gray for skipped.
+   A plain not-yet-decided row keeps the original ember tint as the only
+   generic (no-status-yet) case. Ordered so a row carrying more than one
+   class (e.g. still urgent AND approved) resolves the same way its own
+   ribbon color above already does. */
+.rv2-row.urgent:hover{background:rgba(224,85,85,.10)}
+.rv2-row.approved:hover{background:rgba(78,173,122,.10)}
+.rv2-row.posted:hover{background:rgba(106,171,255,.10)}
+.rv2-row.skipped:hover{background:rgba(240,235,224,.06)}
 .rv2-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .rv2-av{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:'Clash Display',sans-serif;font-size:15px;color:#fff;background:linear-gradient(160deg,var(--ember),#e8956a);box-shadow:0 0 14px rgba(200,75,47,.3);flex-shrink:0}
 .rv2-who{display:flex;align-items:center;gap:9px;flex-wrap:wrap;flex:1;min-width:0}
@@ -1925,7 +1947,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     {% if reviews %}
     <div class="rv2-list">
     {% for r in reviews %}
-    <div class="rv2-row scroll-reveal {{ 'urgent' if r.urgency=='high' }} {{ 'posted' if r.response_status=='posted' }} {{ 'approved' if r.response_status=='approved' }}" id="rc-{{ r.id }}" data-reveal-delay="{{ [loop.index0 * 0.05, 0.3]|min }}s" data-platform="{{ r.platform }}" data-yelp-id="{{ restaurant.yelp_business_id or '' }}" data-cats="{{ (r.categories|join(' '))|lower if r.categories else '' }}" data-author="{{ r.author|lower if r.author else '' }}" data-rating="{{ r.rating }}">
+    <div class="rv2-row scroll-reveal {{ 'urgent' if r.urgency=='high' }} {{ 'posted' if r.response_status=='posted' }} {{ 'approved' if r.response_status=='approved' }} {{ 'skipped' if r.response_status=='skipped' }}" id="rc-{{ r.id }}" data-reveal-delay="{{ [loop.index0 * 0.05, 0.3]|min }}s" data-platform="{{ r.platform }}" data-yelp-id="{{ restaurant.yelp_business_id or '' }}" data-cats="{{ (r.categories|join(' '))|lower if r.categories else '' }}" data-author="{{ r.author|lower if r.author else '' }}" data-rating="{{ r.rating }}">
       <div class="rv2-head">
         <div class="rv2-av">{{ r.author[0].upper() if r.author else '?' }}</div>
         <div class="rv2-who"><b>{{ r.author|e if r.author else 'Anonymous' }}</b><span class="rv2-stars">{% for i in range(5) %}{% if i < r.rating %}★{% else %}<span>★</span>{% endif %}{% endfor %}</span><span class="rv2-plat">{{ r.platform }}</span>{% if r.review_date %}<span class="rv2-date hb-num">{{ r.review_date|format_date }}</span>{% endif %}<span class="schip {{ r.sentiment or 'neutral' }}">{{ r.sentiment or 'neutral' }}</span>{% if r.urgency=='high' %}<span class="rv2-urg">Needs a reply now</span>{% endif %}</div>
@@ -5687,7 +5709,7 @@ function loadTopicHeatmap(days){
     var h='';
     for(var j=0;j<items.length;j++){var it=items[j];var pos=it.pct_positive||0,neg=it.pct_negative||0,mid=Math.max(0,100-pos-neg);
       var tr=it.trend==='up'?'<span class="t up">↑</span>':(it.trend==='down'?'<span class="t down">↓</span>':'');
-      h+='<button type="button" class="rv2-topic" onclick="filterByTopic(\''+esc(it.category)+'\')"><span>'+esc(it.label)+tr+'</span><span class="bar"><i class="p" style="width:'+pos+'%"></i><i style="width:'+mid+'%"></i><i class="ng" style="width:'+neg+'%"></i></span><span class="n hb-num">'+(it.count||0)+'</span></button>';}
+      h+='<button type="button" class="rv2-topic" onclick="filterByTopic(\''+esc(it.category)+'\')"><span>'+esc(it.label)+tr+'</span><span class="bar"><i class="p" style="width:'+pos+'%"></i><i class="mid" style="width:'+mid+'%"></i><i class="ng" style="width:'+neg+'%"></i></span><span class="n hb-num">'+(it.count||0)+'</span></button>';}
     grid.innerHTML=h;
   }).catch(function(){grid.innerHTML='<div class="hb-empty">Unavailable.</div>';});
 }
@@ -6341,7 +6363,12 @@ function updateReviewStats(){
       var pending = d.awaiting_approval || 0;
       if(pending > 0){
         badge.textContent = pending;
-        badge.style.background = '#c0392b';
+        // [data-theme="dark"] .tab .badge carries its own !important
+        // background for the plain/no-count case — setProperty with the
+        // 'important' priority is the only way an inline style still wins
+        // against that (a bare .style.background assignment silently lost
+        // every time, leaving the badge on the generic gray forever).
+        badge.style.setProperty('background','var(--ember)','important');
         badge.style.color = 'white';
         badge.style.display = '';
       } else {
@@ -6614,21 +6641,38 @@ function maybeShowCongrats(rrate){
   if(modal) modal.classList.add('show');
 }
 function updateResponseRateBar(){ updateReviewStats(); }
+// The 2nd of the 3 charts ("How replies got approved") only ever loaded on
+// first tab-open, or a full page reload — approving/skipping never told it
+// anything changed, so the card kept showing whatever it was already
+// holding (often the empty "no approved replies yet" state) even seconds
+// after the first-ever approval. Reload it at whatever range is currently
+// selected (falls back to 90d, the default 'on' button, if none is).
+function _reloadResponsePerfCurrent(){
+  var on=document.querySelector('#perf-days-btns .hm-days-btn.on');
+  loadResponsePerf(on?parseInt(on.getAttribute('data-days'),10):90);
+}
 function approveR(id){
   var _appBtn=document.querySelector('#rc-'+id+' .cbtn-success');
   if(_appBtn){_appBtn.style.animation='btnPress .22s ease';setTimeout(function(){if(_appBtn)_appBtn.style.animation='';},240);}
   fetch('/approve/'+id,{method:'POST'}).then(function(r){return r.json();}).then(function(d){
   if(d.ok){
     var card = document.getElementById('rc-'+id);
-    card.classList.add('approved');
-    card.classList.remove('urgent');
+    card.classList.remove('urgent','skipped');
     if(d.auto_posted){
+      // Truly live now — the row's own ribbon must say "posted", not
+      // "approved". It used to only ever gain the 'approved' class here
+      // (never swapped to 'posted'), so an auto-posted reply's ribbon sat
+      // wrong until the next full reload re-rendered it from the DB.
+      card.classList.remove('approved');
+      card.classList.add('posted');
       // "Posted" — the ember leaves the draft, travels the wire, and lands
       // as a checkmark; only on the real 200, never optimistic.
       cmPostedThen(document.querySelector('#rc-'+id+' .draft-actions'),'Reply posted to Google','<span style="font-size:11px;color:var(--green);font-weight:500">✓ Posted to Google</span>');
       updateReviewStats();
+      _reloadResponsePerfCurrent();
       toast('Response approved and posted to Google ✓ — now live','success');
     } else {
+      card.classList.add('approved');
       var _plat = document.getElementById('rc-'+id) ? document.getElementById('rc-'+id).dataset.platform : '';
       var _markBtn = _plat === 'yelp'
         ? '<button class="cbtn cbtn-soft cbtn-sm" style="margin-left:6px" onclick="markPosted('+id+',this)">📋 Copy &amp; open Yelp</button>'
@@ -6642,6 +6686,7 @@ function approveR(id){
         document.querySelector('#rc-'+id+' .draft-actions').innerHTML='<span class="cbtn cbtn-success cbtn-ghost cbtn-done cbtn-sm">✓ Approved</span>'+_markBtn;
       }
       updateReviewStats();
+      _reloadResponsePerfCurrent();
       toast('Response approved' + (platform === 'google' ? ' and saved ✓' : ' — copy and post to ' + platform + ' manually'),'success');
     }
   }
@@ -6663,6 +6708,7 @@ function markPosted(id, btn){
   fetch('/api/mark-posted/'+id,{method:'POST'}).then(function(r){return r.json();}).then(function(d){
     if(d.ok){
       var actions = document.getElementById('draft-actions-'+id);
+      if(card){card.classList.remove('approved','skipped','urgent');card.classList.add('posted');}
       cmPostedThen(actions,'Marked as posted','<span style="font-size:11px;color:var(--green);font-weight:500">✓ Posted</span>');
       if(platform !== 'yelp') toast('Marked as posted','success');
       updateReviewStats();
@@ -6673,6 +6719,13 @@ function markPosted(id, btn){
 function skipR(id){
   fetch('/skip/'+id,{method:'POST'}).then(function(r){return r.json();}).then(function(d){
     if(d.ok){
+      var card = document.getElementById('rc-'+id);
+      // Skipping is a real decision, not a no-op — the review leaves the
+      // "needs action" queue exactly like an approve does. The pending
+      // pill, the tab badge and the ribbon used to only reflect that after
+      // a full reload; approveR() already told updateReviewStats() about
+      // its own change, this didn't.
+      if(card) card.classList.add('skipped');
       var actions = document.getElementById('draft-actions-'+id);
       if(actions) {
         actions.innerHTML =
@@ -6681,6 +6734,7 @@ function skipR(id){
           '<button class="cbtn cbtn-secondary cbtn-sm" onclick="regenDraft('+id+')">↻ Regenerate</button>';
         actions.style.display='flex';
       }
+      updateReviewStats();
       toast('Skipped — edit or regenerate below');
     } else { toast('Skip failed — try again','error'); }
   }).catch(function(){ toast('Network error — try again','error'); });

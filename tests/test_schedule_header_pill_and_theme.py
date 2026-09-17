@@ -460,3 +460,101 @@ def test_rv2_sg_columns_are_flex_so_captions_align_at_the_bottom():
     m = re.search(r"\.rv2-sg \.cap\{([^}]*)\}", s)
     assert m, ".rv2-sg .cap rule not found"
     assert "margin-top:auto" in m.group(1)
+
+
+# ── Reviews: lighter neutral gray in both charts ──────────────────────────
+
+def test_neutral_segments_are_lighter_in_both_charts():
+    """Both charts' 'neutral' (not pos/neg) segment used to render as a
+    dark gray that all but disappeared into the flat canvas: the stacked
+    weekly bars used fill-opacity .25 on currentColor, and the topic
+    heatmap's middle segment had no fill at all (transparent over the
+    track's own var(--hb-line2)). Both lightened, and to the same visual
+    weight as each other."""
+    fn = _fn("stacked")
+    assert 'fill="currentColor" fill-opacity=".45"' in fn
+    assert 'fill-opacity=".25"' not in fn
+    s = _src()
+    m = re.search(r"\.rv2-topic \.bar \.mid\{([^}]*)\}", s)
+    assert m, ".rv2-topic .bar .mid rule not found"
+    assert m.group(1) == "background:rgba(240,235,224,.45)"
+    fn = _fn("loadTopicHeatmap")
+    assert '<i class="mid" style=' in fn, "the middle segment must carry the .mid class to pick up the fill"
+
+
+# ── Reviews: approve/skip update the UI immediately, no reload needed ────
+
+def test_approving_an_auto_posted_reply_swaps_the_ribbon_to_posted_not_approved():
+    """auto_posted replies used to only ever gain the 'approved' class —
+    never swapped to 'posted' — so the ribbon showed the wrong color
+    (approved's) until the next full reload re-rendered the row from the
+    real DB state."""
+    fn = _fn("approveR")
+    auto = fn[fn.index("if(d.auto_posted){"):fn.index("} else {")]
+    assert "card.classList.remove('approved');" in auto
+    assert "card.classList.add('posted');" in auto
+
+
+def test_approve_and_skip_both_reload_the_response_performance_card():
+    """'How replies got approved' only ever loaded on first tab-open or a
+    full page reload — an approve (auto-posted or not) never told it
+    anything changed. Reloads at whatever day-range is currently
+    selected, not hardcoded back to 90d."""
+    s = _src()
+    assert "function _reloadResponsePerfCurrent(){" in s
+    fn = _fn("approveR")
+    assert fn.count("_reloadResponsePerfCurrent();") == 2, \
+        "both the auto-posted and the saved-not-yet-posted branch should reload it"
+
+
+def test_skip_updates_stats_and_ribbon_immediately():
+    """A skip is a real decision, not a no-op — the review leaves the
+    'needs action' queue exactly like an approve does, but skipR() never
+    told updateReviewStats() (which drives the 'to approve' pill and the
+    tab badge) or the row's own ribbon about it."""
+    fn = _fn("skipR")
+    assert "card.classList.add('skipped');" in fn
+    assert "updateReviewStats();" in fn
+
+
+# ── Reviews: tab badge is orange, not red, and sits a touch higher ───────
+
+def test_reviews_tab_badge_is_orange_not_red():
+    s = _src()
+    assert "background:#c0392b" not in s.split('id="reviews-badge"', 1)[1][:200]
+    assert "background:var(--ember)!important;color:white" in s
+    fn = _fn("updateReviewStats")
+    assert "badge.style.setProperty('background','var(--ember)','important');" in fn
+    assert "badge.style.background = '#c0392b';" not in fn
+
+
+def test_reviews_tab_badge_sits_a_touch_higher():
+    s = _src()
+    assert ";position:relative;top:-2px}" in s
+    m = re.search(r"(?<!\[data-theme=\"dark\"\] )\.tab \.badge\{([^}]*)\}", s)
+    assert m, ".tab .badge (base, not the dark-theme override) rule not found"
+    assert "position:relative" in m.group(1) and "top:-2px" in m.group(1)
+
+
+# ── Reviews: hover color matches the row's own status, not always orange ──
+
+def test_row_hover_color_matches_its_own_ribbon_color_per_status():
+    """Every row hovered the same ember tint regardless of urgent/approved/
+    posted/skipped — now each status gets a hover tint in the same color
+    family as its own left-edge ribbon; a plain not-yet-decided row keeps
+    the original ember tint as the only status-less case."""
+    s = _src()
+    assert ".rv2-row:hover{background:var(--hb-tint)}" in s, \
+        "the generic (no status class) row should keep its original tint"
+    assert ".rv2-row.urgent:hover{background:rgba(224,85,85,.10)}" in s
+    assert ".rv2-row.approved:hover{background:rgba(78,173,122,.10)}" in s
+    assert ".rv2-row.posted:hover{background:rgba(106,171,255,.10)}" in s
+    assert ".rv2-row.skipped:hover{background:rgba(240,235,224,.06)}" in s
+
+
+def test_skipped_reviews_get_a_gray_ribbon():
+    """Skipped had no ribbon color at all before — a real, deliberate
+    decision with no visual sign one was made."""
+    s = _src()
+    assert ".rv2-row.skipped:before{background:var(--ink3)}" in s
+    assert "{{ 'skipped' if r.response_status=='skipped' }}" in s
