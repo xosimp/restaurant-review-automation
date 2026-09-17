@@ -9453,14 +9453,21 @@ function wtSeriesValue(w){
 function wtDrawChart(){
   var d=_wt.data,host=document.getElementById('fc2-wt-chart');if(!d||!host)return;
   var weeks=d.weeks,n=weeks.length,s=d.stats;
-  var target=(_wt.showTarget&&!_wt.cat&&d.target&&d.target.weekly)?d.target.weekly:null;
+  // targetVal drives bar color and the y-scale — whether a week was over or
+  // under target is a fact about that week, not about whether the line is
+  // currently drawn. target (gated by the toggle) drives only the drawn
+  // line/band/label, so switching "Target line" off used to also erase
+  // every bar's over/under color and drop every bar to the same neutral
+  // gray — the toggle is a display preference, not a re-measurement.
+  var targetVal=(!_wt.cat&&d.target&&d.target.weekly)?d.target.weekly:null;
+  var target=_wt.showTarget?targetVal:null;
   var vals=[],max=0;
   for(var i=0;i<n;i++){var vv=wtSeriesValue(weeks[i]);vals.push(vv);if(vv!=null&&vv>max)max=vv;}
   // Rolling 4-week average at each point (shorter windows at the start).
   var roll=[];
   for(var i=0;i<n;i++){var sum=0,c=0;for(var j=Math.max(0,i-3);j<=i;j++){if(vals[j]!=null){sum+=vals[j];c++;}}roll.push(c?sum/c:null);}
   var W=760,H=230,padT=30,base=H-6;
-  var top=wtNiceTop(Math.max(max*1.15,target?target*1.2:0,20));
+  var top=wtNiceTop(Math.max(max*1.15,targetVal?targetVal*1.2:0,20));
   function y(v){return padT+(base-padT)*(1-v/top);}
   var dense=n>26,veryDense=n>52;
   var gap=dense?Math.max(2,W*0.006):Math.max(8,W*0.024),bw=(W-gap*(n+1))/n;
@@ -9517,12 +9524,14 @@ function wtDrawChart(){
     if(val==null){
       bars+='<rect class="fc2-wt-bar" data-i="'+i+'" x="'+x.toFixed(1)+'" y="'+(base-8).toFixed(1)+'" width="'+bw.toFixed(1)+'" height="8" rx="2" fill="none" stroke="currentColor" stroke-opacity=".35" stroke-dasharray="3 3"/>';
     } else {
-      var over=target?val>target:false,bh=Math.max(2,base-y(val)),by=base-bh;
+      var over=targetVal?val>targetVal:false,bh=Math.max(2,base-y(val)),by=base-bh;
       // With no target there is nothing to be over, so nothing is "bad".
       // Every bar used to render in the over-target ember, which reads as an
       // entire history of failure to a restaurant that simply has no purchase
-      // data to imply a target from yet.
-      var fill=target?(over?'url(#fc2wtBarBad)':'url(#fc2wtBarGood)'):'url(#fc2wtBarNeutral)',op=isLast?1:(over?.92:.78);
+      // data to imply a target from yet. Colored on targetVal (always known
+      // when a target exists), not target (only set while the line is
+      // shown) — hiding the line is not the same claim as having no target.
+      var fill=targetVal?(over?'url(#fc2wtBarBad)':'url(#fc2wtBarGood)'):'url(#fc2wtBarNeutral)',op=isLast?1:(over?.92:.78);
       var stroke=f.anomaly==='spike'?' stroke="#e05555" stroke-width="2"':(isLast?' stroke="#e8956a" stroke-width="1.5" stroke-opacity=".9"':' stroke="rgba(255,255,255,.14)" stroke-width="1"');
       var delay=animate?' style="animation-delay:'+(i*(dense?18:140))+'ms"':'';
       bars+='<rect class="fc2-wt-bar'+(animate?' hb-bar':'')+(on?' on':'')+'" data-i="'+i+'" x="'+x.toFixed(1)+'" y="'+by.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+bh.toFixed(1)+'" rx="'+(dense?3:6)+'" fill="'+fill+'" fill-opacity="'+op+'" filter="url(#fc2wtLift)"'+stroke+delay+'/>';
@@ -9567,6 +9576,11 @@ function wtDrawChart(){
     if((avgLabelY!=null&&Math.abs(tly-avgLabelY)<15)||Math.abs(tly-lastLabelY)<15)tly=ty+14;
     targetG+='<line'+lineDraw+' x1="0" y1="'+ty.toFixed(1)+'" x2="'+W+'" y2="'+ty.toFixed(1)+'" stroke="#4ead7a" stroke-opacity=".85" stroke-width="1.5" stroke-dasharray="4 5"/>';
     targetTxt='<text '+lab+' x="'+(W-4)+'" y="'+tly.toFixed(1)+'" text-anchor="end" font-size="12.5" font-weight="700" fill="#4ead7a">target '+wtMoney(target)+'/wk</text>';
+    // The chart plots dollars, not percent, so nothing on it said WHAT
+    // percent the dashed line represents — only the KPI tile below and the
+    // legend did. A second label at the line's own left end, in the same
+    // green, answers it right where the line is.
+    targetTxt+='<text '+lab+' x="4" y="'+tly.toFixed(1)+'" text-anchor="start" font-size="12.5" font-weight="700" fill="#4ead7a">'+d.target.pct+'% target</text>';
     svg+=targetG+'<g'+lineLabelFade+'>'+targetTxt+'</g>';
   }
   if(labels)svg+='<g'+fadeIn+'>'+labels+'</g>';

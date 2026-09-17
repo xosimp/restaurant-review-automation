@@ -654,9 +654,33 @@ def test_bars_are_neutral_when_there_is_no_target_to_be_over():
     assert fill_line, "bar fill selection not found"
     line = fill_line[0]
     assert "fc2wtBarNeutral" in line, "no-target bars should use the neutral gradient"
-    # The bad gradient must be reachable only through the target branch.
-    assert line.index("target?") < line.index("fc2wtBarBad"), \
+    # The bad gradient must be reachable only through the has-a-target branch.
+    assert line.index("targetVal?") < line.index("fc2wtBarBad"), \
         "the over/under choice must sit inside the has-a-target branch"
+
+
+def test_hiding_the_target_line_does_not_recolor_the_bars_gray():
+    """`target` (gated by the "Target line" toggle) used to double as the
+    over/under-target signal for bar color, so hiding the line made every
+    bar — the ones that were genuinely under target included — fall
+    through to the neutral-gray branch as if no target existed at all.
+    Bar color must come from `targetVal`, which does not depend on the
+    toggle; `target` should be used only to decide whether the line/band/
+    labels are drawn."""
+    body = _dashboard_chart_body()
+    assert "var targetVal=(!_wt.cat&&d.target&&d.target.weekly)?d.target.weekly:null;" in body
+    assert "var target=_wt.showTarget?targetVal:null;" in body
+    over_line = [l for l in body.splitlines() if "var over=" in l][0]
+    assert "targetVal?val>targetVal" in over_line, \
+        "over/under (and therefore bar color) must be computed from targetVal, not the toggle-gated target"
+    fill_line = [l for l in body.splitlines() if "var fill=" in l][0]
+    assert fill_line.startswith("      var fill=targetVal?"), \
+        "bar fill must key off targetVal so toggling the line off leaves colors alone"
+    # The y-scale must also key off targetVal, or the axis rescales (and
+    # every bar visibly jumps) purely from toggling the line's visibility.
+    assert "targetVal?targetVal*1.2:0" in body
+    # The drawn line/band/labels are the only things gated by the toggle.
+    assert "if(target){" in body
 
 
 def test_bar_hover_uses_filter_not_transform_to_avoid_fighting_the_grow_in_animation():
@@ -683,3 +707,22 @@ def test_bars_have_rounded_corners_and_a_subtle_edge_stroke():
 def _dashboard_chart_body():
     html = _dashboard_html()
     return html.split("function wtDrawChart(){", 1)[1].split("\nfunction wtTipPos", 1)[0]
+
+
+# ── target % label on the chart itself ────────────────────────────────────
+
+def test_target_percent_is_labeled_at_the_left_end_of_the_dashed_line():
+    """The chart plots dollars, not percent, so nothing on it said WHAT
+    percent the dashed target line represents — only the KPI tile and the
+    legend below did. A second label, in the same green as the line, now
+    sits at the line's own left end (opposite the '$X/wk' label already on
+    the right) so the percent reads right where the line is."""
+    body = _dashboard_chart_body()
+    assert "targetTxt=" in body
+    target_block = body.split("var ty=y(target),tly=ty-7;", 1)[1].split("\n  }", 1)[0]
+    assert 'x="4"' in target_block and 'text-anchor="start"' in target_block, \
+        "percent label should anchor at the left edge, opposite the right-anchored $/wk label"
+    assert "d.target.pct+'% target</text>'" in target_block
+    assert 'fill="#4ead7a"' in target_block.split("d.target.pct", 1)[0][-40:] or \
+        target_block.count('fill="#4ead7a"') >= 2, \
+        "the percent label should be the same green as the target line"
