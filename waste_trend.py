@@ -310,7 +310,7 @@ def _money(v):
     return f"${int(round(abs(v))):,}"
 
 
-def waste_trend_observations(stats, weeks):
+def waste_trend_observations(stats, weeks, target_pct=WASTE_TARGET_PCT):
     """Short, data-sourced statements for the card — every number in them
     is one the stats dict already holds, so nothing is asserted that the
     series doesn't show. Ordered by what an owner should read first."""
@@ -361,12 +361,12 @@ def waste_trend_observations(stats, weeks):
         gap = stats.get("gap_weekly") or 0
         if stats.get("above_target"):
             save = stats.get("savings_if_at_target") or 0
-            txt = f"You're {_money(gap)} a week over the {WASTE_TARGET_PCT:g}% target"
+            txt = f"You're {_money(gap)} a week over the {target_pct:g}% target"
             if save:
                 txt += f" — about {_money(save)} a year if waste is brought to target"
             out.append({"text": txt + ".", "tone": "bad" if stats.get("intervention") else "warn"})
         else:
-            out.append({"text": f"You're {_money(gap)} a week under the {WASTE_TARGET_PCT:g}% target — holding here keeps roughly {_money(stats['annualized_if_target'] - stats['annualized_current'])} a year off the waste bill versus target.",
+            out.append({"text": f"You're {_money(gap)} a week under the {target_pct:g}% target — holding here keeps roughly {_money(stats['annualized_if_target'] - stats['annualized_current'])} a year off the waste bill versus target.",
                         "tone": "good"})
 
     if stats.get("mom_delta") is not None and len(out) < 4:
@@ -405,8 +405,8 @@ def _empty_state(weeks_have, is_live):
     }
 
 
-def implied_target_weekly(analysis=None, weeks=None):
-    """The target line in dollars: the 4.5% band applied to what the
+def implied_target_weekly(analysis=None, weeks=None, target_pct=WASTE_TARGET_PCT):
+    """The target line in dollars: the target % band applied to what the
     restaurant actually buys in a week. The live analysis is the best
     source (this week's real purchases); failing that, the newest week
     whose snapshot carried purchase data. Returns (dollars, basis)."""
@@ -415,16 +415,31 @@ def implied_target_weekly(analysis=None, weeks=None):
         waste = _f(analysis.get("total_waste_cost_week"))
         if rate > 0 and waste > 0:
             purchased = waste / (rate / 100.0)
-            return round(purchased * WASTE_TARGET_PCT / 100.0, 2), "live"
+            return round(purchased * target_pct / 100.0, 2), "live"
     for w in reversed(weeks or []):
         if w.get("purchased"):
-            return round(w["purchased"] * WASTE_TARGET_PCT / 100.0, 2), "history"
+            return round(w["purchased"] * target_pct / 100.0, 2), "history"
     return None, None
 
 
-def build_waste_trend(restaurant_id, range_key="8w", analysis=None, is_live=True, db_path=None):
+def get_waste_target_pct(restaurant_id, db_path=None):
+    """This restaurant's own waste target %, or the industry default (see
+    WASTE_TARGET_PCT) when they haven't set one."""
+    from models import get_conn
+    conn = get_conn(db_path) if db_path else get_conn()
+    try:
+        row = conn.execute("SELECT waste_target_pct FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
+    finally:
+        conn.close()
+    pct = row["waste_target_pct"] if row else None
+    return float(pct) if pct is not None else WASTE_TARGET_PCT
+
+
+def build_waste_trend(restaurant_id, range_key="8w", analysis=None, is_live=True, db_path=None, target_pct=None):
     """The whole card payload for one restaurant and one range."""
     range_key = range_key if range_key in RANGE_WEEKS else "8w"
+    if target_pct is None:
+        target_pct = get_waste_target_pct(restaurant_id, db_path=db_path)
     weeks, total = load_waste_history(restaurant_id, RANGE_WEEKS[range_key], db_path=db_path)
     # Only offer a wider range once there is history beyond the narrower
     # one — a "26 weeks" button over 6 weeks of data is a button that does
@@ -441,7 +456,7 @@ def build_waste_trend(restaurant_id, range_key="8w", analysis=None, is_live=True
         range_key = ranges[-1]
         if RANGE_WEEKS[range_key]:
             weeks = weeks[-RANGE_WEEKS[range_key]:]
-    target, basis = implied_target_weekly(analysis, weeks)
+    target, basis = implied_target_weekly(analysis, weeks, target_pct)
     stats = waste_trend_stats(weeks, target)
 
     flag_by_index = {a["index"]: a["kind"] for a in stats["anomalies"]}
@@ -460,10 +475,10 @@ def build_waste_trend(restaurant_id, range_key="8w", analysis=None, is_live=True
         "range": range_key,
         "ranges": ranges,
         "weeks_total": total,
-        "target": {"pct": WASTE_TARGET_PCT, "weekly": target, "basis": basis},
+        "target": {"pct": target_pct, "weekly": target, "basis": basis},
         "weeks": weeks,
         "stats": stats,
-        "observations": waste_trend_observations(stats, weeks),
+        "observations": waste_trend_observations(stats, weeks, target_pct),
         "categories": categories,
         "empty": _empty_state(len(weeks), is_live) if len(weeks) < WEEKS_FOR_COMPARISON else None,
     }

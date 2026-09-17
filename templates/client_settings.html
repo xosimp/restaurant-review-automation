@@ -489,6 +489,11 @@ textarea{resize:vertical;min-height:60px}
           <div class="hint">Target food cost as % of revenue (typically 28–35%)</div>
         </div>
         <div class="form-group">
+          <label>Waste target %</label>
+          <input type="number" id="waste_target_pct" value="{{ restaurant.waste_target_pct if restaurant.waste_target_pct is not none else '' }}" min="1" max="20" step="0.1" placeholder="4.5">
+          <div class="hint">Target waste as % of purchases, used by the Food Cost waste-trend chart. Leave blank for the 4.5% industry default.</div>
+        </div>
+        <div class="form-group">
           <label>Last inventory update</label>
           <input type="text" value="{{ restaurant.inventory_updated_at[:10] if restaurant.inventory_updated_at else 'Never' }}" disabled style="background:var(--paper2);color:var(--ink3)">
           <div class="hint">Updated automatically when you upload new data</div>
@@ -862,6 +867,7 @@ async function saveSettings() {
     delivery_days:        document.getElementById('delivery_days') ? document.getElementById('delivery_days').value : '',
     inventory_notes:      document.getElementById('inventory_notes') ? document.getElementById('inventory_notes').value : '',
     food_cost_target:     document.getElementById('food_cost_target') ? document.getElementById('food_cost_target').value : 30,
+    waste_target_pct:     document.getElementById('waste_target_pct') && document.getElementById('waste_target_pct').value !== '' ? document.getElementById('waste_target_pct').value : '',
     digest_day:      document.getElementById('digest_day').value,
     digest_enabled:  parseInt(document.getElementById('digest_enabled').value),
     pos_system:      document.getElementById('pos_system').value,

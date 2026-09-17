@@ -2839,8 +2839,17 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .fc2-wt-chart .ax span{flex:1;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .fc2-wt-chart .ax span.on{color:var(--ink);font-weight:600}
 .fc2-wt-hit{cursor:pointer}
-.fc2-wt-bar{transition:opacity .15s ease}
+.fc2-wt-bar{transition:opacity .15s ease,filter .18s ease}
 .fc2-wt-chart.hov .fc2-wt-bar:not(.on){opacity:.45}
+/* .on drives both hover (wtHover toggles it on mouseover) and the
+   click-selected bar. A CSS "transform" here would fight the entrance
+   animation's own scaleY transform (its forwards-filled end state wins
+   the cascade, so a translateY would just silently do nothing once
+   settled) — filter is a separate property untouched by that animation,
+   so brightness reads as a genuine hover lift with no conflict, and
+   folding the drop-shadow into the same filter (rather than layering a
+   second one) keeps the shadow from doubling up with the SVG one. */
+.fc2-wt-bar.on{filter:brightness(1.12) drop-shadow(0 3px 6px rgba(0,0,0,.32))}
 .fc2-wt-leg{display:flex;gap:16px;flex-wrap:wrap;font-size:13px;color:var(--ink3);margin-top:12px;align-items:center}
 .fc2-wt-leg i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:-1px}
 .fc2-wt-leg i.ln{width:14px;height:0;border-top:2px solid var(--ember2);border-radius:0;vertical-align:3px}
@@ -3829,7 +3838,6 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
   {% set _upd = competitor_updated_at[:10] if competitor_updated_at else None %}
   <div class="hb-top">
     <div style="min-width:0;flex:1">
-      <div class="hb-kicker">Intel · {{ now_mdy }} · {{ restaurant.name }}</div>
       <h1 class="hb-h1">Intel. <span class="hb-head {{ _tone }}">{{ _head }}</span></h1>
       {% if not _cd %}<div class="hb-sub"><span>Ratings, review volume and reputation for the restaurants around you, plus whether AI search knows you exist.</span></div>{% endif %}
       <div class="lb2-actions">
@@ -9171,9 +9179,16 @@ function wtDrawChart(){
   var animate=!_wt.animated[d.range]&&!(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   _wt.animated[d.range]=true;
   var svg='<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none" aria-hidden="true">';
-  // Symmetric shadow (0,0 offset, so it reads as depth under the bar, not a
-  // directional drop-shadow) — gives each bar a "lifted off the page" feel.
-  svg+='<defs><filter id="fc2wtLift" x="-80%" y="-80%" width="260%" height="260%"><feDropShadow dx="0" dy="0" stdDeviation="6" flood-color="#000" flood-opacity=".6"/></filter></defs>';
+  // A soft resting shadow (gives each bar a "lifted off the page" feel
+  // without the heavy black glow the old wide-blur version left between
+  // bars) plus a vertical gradient per tone — brand ember on top, a
+  // darker shade of the same hue underneath — so each bar reads as a
+  // solid, lit object instead of a flat color fill.
+  svg+='<defs>'
+    +'<filter id="fc2wtLift" x="-60%" y="-40%" width="220%" height="180%"><feDropShadow dx="0" dy="2" stdDeviation="3.5" flood-color="#000" flood-opacity=".3"/></filter>'
+    +'<linearGradient id="fc2wtBarBad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#e2814f"/><stop offset="42%" stop-color="#c84b2f"/><stop offset="100%" stop-color="#9c3620"/></linearGradient>'
+    +'<linearGradient id="fc2wtBarGood" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#72d4a3"/><stop offset="42%" stop-color="#4ead7a"/><stop offset="100%" stop-color="#337d59"/></linearGradient>'
+    +'</defs>';
   for(var g=1;g<=4;g++){var gy=y(top*g/4);svg+='<line x1="0" y1="'+gy.toFixed(1)+'" x2="'+W+'" y2="'+gy.toFixed(1)+'" stroke="currentColor" stroke-opacity=".07"/>';}
   svg+='<line x1="0" y1="'+base+'" x2="'+W+'" y2="'+base+'" stroke="currentColor" stroke-opacity=".14"/>';
   var yLab='',steps=[top,top*.75,top*.5,top*.25,0];
@@ -9202,10 +9217,10 @@ function wtDrawChart(){
       bars+='<rect class="fc2-wt-bar" data-i="'+i+'" x="'+x.toFixed(1)+'" y="'+(base-8).toFixed(1)+'" width="'+bw.toFixed(1)+'" height="8" rx="2" fill="none" stroke="currentColor" stroke-opacity=".35" stroke-dasharray="3 3"/>';
     } else {
       var over=target?val>target:false,bh=Math.max(2,base-y(val)),by=base-bh;
-      var fill=over?'#c84b2f':(target?'#4ead7a':'#c84b2f'),op=isLast?1:(over?.85:.55);
-      var stroke=f.anomaly==='spike'?' stroke="#e05555" stroke-width="2"':(isLast?' stroke="#e8956a" stroke-width="1.5" stroke-opacity=".9"':'');
+      var fill=over?'url(#fc2wtBarBad)':(target?'url(#fc2wtBarGood)':'url(#fc2wtBarBad)'),op=isLast?1:(over?.92:.78);
+      var stroke=f.anomaly==='spike'?' stroke="#e05555" stroke-width="2"':(isLast?' stroke="#e8956a" stroke-width="1.5" stroke-opacity=".9"':' stroke="rgba(255,255,255,.14)" stroke-width="1"');
       var delay=animate?' style="animation-delay:'+(i*(dense?18:140))+'ms"':'';
-      bars+='<rect class="fc2-wt-bar'+(animate?' hb-bar':'')+(on?' on':'')+'" data-i="'+i+'" x="'+x.toFixed(1)+'" y="'+by.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+bh.toFixed(1)+'" rx="'+(dense?2:4)+'" fill="'+fill+'" fill-opacity="'+op+'" filter="url(#fc2wtLift)"'+stroke+delay+'/>';
+      bars+='<rect class="fc2-wt-bar'+(animate?' hb-bar':'')+(on?' on':'')+'" data-i="'+i+'" x="'+x.toFixed(1)+'" y="'+by.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+bh.toFixed(1)+'" rx="'+(dense?3:6)+'" fill="'+fill+'" fill-opacity="'+op+'" filter="url(#fc2wtLift)"'+stroke+delay+'/>';
       if(!dense){
         labels+='<text x="'+(x+bw/2).toFixed(1)+'" y="'+(by-6).toFixed(1)+'" text-anchor="middle" font-size="13" font-weight="'+(isLast?'700':'600')+'" fill="currentColor" fill-opacity="'+(isLast?'1':'.8')+'">'+wtMoney(val)+'</text>';
         if(f.anomaly==='spike')labels+='<text x="'+(x+bw/2).toFixed(1)+'" y="'+(by-21).toFixed(1)+'" text-anchor="middle" font-size="11.5" font-weight="700" letter-spacing=".3" fill="#e05555">SPIKE</text>';

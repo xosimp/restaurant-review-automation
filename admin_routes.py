@@ -719,6 +719,7 @@ def save_client_settings(restaurant_id, current_user):
             "sched_notes":           sanitize(data.get("sched_notes",""), max_len=2000),
             "monthly_revenue_target": float(data.get("monthly_revenue_target") or 0),
             "food_cost_target":      float(data.get("food_cost_target", 30) or 30),
+            "waste_target_pct":      float(data["waste_target_pct"]) if data.get("waste_target_pct") not in (None, "") else None,
             "digest_day":      data.get("digest_day","monday"),
             "digest_enabled":  int(data.get("digest_enabled",1)),
             "reviews_live":    int(bool(data.get("reviews_live"))),

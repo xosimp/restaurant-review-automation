@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS restaurants (
     delivery_days   TEXT,                 -- comma-separated weekday abbrevs this client's supplier delivers on, e.g. "Mon,Thu"
     inventory_notes TEXT,                 -- admin notes on how to get data from this client
     food_cost_target REAL DEFAULT 30.0,  -- target food cost % of revenue
+    waste_target_pct REAL,               -- target waste as % of purchases for the Food Cost waste-trend chart; NULL means "use the 4.5% industry default" (waste_trend.WASTE_TARGET_PCT)
     inventory_updated_at TEXT,            -- last time inventory data was uploaded
     -- Tech info
     pos_system      TEXT,          -- Toast / Square / Lightspeed / etc
@@ -301,6 +302,7 @@ class Restaurant:
     delivery_days: Optional[str]         = None
     inventory_notes: Optional[str]       = None
     food_cost_target: float              = 30.0
+    waste_target_pct: Optional[float]    = None
     monthly_revenue_target: float        = 0.0
     hours_notes: Optional[str]           = None
     role_rates_json: Optional[str]       = None
@@ -610,6 +612,7 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "delivery_days", "TEXT"),
         ("restaurants", "inventory_notes", "TEXT"),
         ("restaurants", "food_cost_target", "REAL"),
+        ("restaurants", "waste_target_pct", "REAL"),
         ("restaurants", "monthly_revenue_target", "REAL"),
         ("restaurants", "hours_notes", "TEXT"),
         ("restaurants", "role_rates_json", "TEXT"),
@@ -880,6 +883,7 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE restaurants ADD COLUMN inventory_frequency TEXT DEFAULT 'weekly'",
         "ALTER TABLE restaurants ADD COLUMN inventory_notes TEXT",
         "ALTER TABLE restaurants ADD COLUMN food_cost_target REAL DEFAULT 30.0",
+        "ALTER TABLE restaurants ADD COLUMN waste_target_pct REAL",
         "ALTER TABLE restaurants ADD COLUMN inventory_updated_at TEXT",
         "ALTER TABLE restaurants ADD COLUMN temp_password TEXT",
         "ALTER TABLE restaurants ADD COLUMN ig_token TEXT",
@@ -2500,7 +2504,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH):
     allowed = {
         "name","owner_email","google_place_id","yelp_business_id","voice_notes",
         "neighborhood","vibe","known_for","sign_off_name","never_say",
-        "hourly_rate","labor_target_pct","week_start_day","role_strength_json","shift_leader_rules_json","quality_weights_json","monthly_revenue_target","hours_notes","role_rates_json","close_times_json","role_close_buffer_json","stripe_customer_id","docusign_envelope_id","contract_status","location_group","location_name","pos_system","inventory_frequency","delivery_days","inventory_notes","food_cost_target","inventory_updated_at","temp_password","ig_token","ig_user_id","fb_page_token","fb_page_id","ig_token_expires","fb_token_expires","competitor_intel","competitor_updated_at","reviews_live","billing_status","is_demo","internal_notes","gmb_access_token","gmb_refresh_token","gmb_account_id","gmb_location_id","gmb_token_expires",
+        "hourly_rate","labor_target_pct","week_start_day","role_strength_json","shift_leader_rules_json","quality_weights_json","monthly_revenue_target","hours_notes","role_rates_json","close_times_json","role_close_buffer_json","stripe_customer_id","docusign_envelope_id","contract_status","location_group","location_name","pos_system","inventory_frequency","delivery_days","inventory_notes","food_cost_target","waste_target_pct","inventory_updated_at","temp_password","ig_token","ig_user_id","fb_page_token","fb_page_id","ig_token_expires","fb_token_expires","competitor_intel","competitor_updated_at","reviews_live","billing_status","is_demo","internal_notes","gmb_access_token","gmb_refresh_token","gmb_account_id","gmb_location_id","gmb_token_expires",
         "service_tier","module_reviews","module_labor","module_inventory","module_marketing",
         "last_active_tab","last_activity","owner_name","owner_phone","digest_day","digest_enabled","menu_notes","menu_url","skip_holidays","custom_competitors",
         "two_fa_enabled","two_fa_code","two_fa_expires","two_fa_device_token","two_fa_pending","two_fa_method","login_notify","staff_signin_notify","marketing_emails_opt_out","timezone","onboarding_dismissed",
@@ -2623,6 +2627,7 @@ def get_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> Optional[Resta
         delivery_days=row["delivery_days"] if "delivery_days" in row.keys() else None,
         inventory_notes=row["inventory_notes"] if "inventory_notes" in row.keys() else None,
         food_cost_target=row["food_cost_target"] if "food_cost_target" in row.keys() else 30.0,
+        waste_target_pct=row["waste_target_pct"] if "waste_target_pct" in row.keys() and row["waste_target_pct"] is not None else None,
         monthly_revenue_target=float(row["monthly_revenue_target"]) if "monthly_revenue_target" in row.keys() and row["monthly_revenue_target"] else 0.0,
         hours_notes=row["hours_notes"] if "hours_notes" in row.keys() else None,
         email_theme=row["email_theme"] if "email_theme" in row.keys() and row["email_theme"] else "dark",

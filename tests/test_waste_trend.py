@@ -11,6 +11,7 @@ import json
 import pytest
 from flask import Flask
 
+import admin_routes
 import auth
 import client_api
 import models
@@ -22,7 +23,7 @@ from models import Restaurant, create_restaurant
 def _redirect(db_path, monkeypatch):
     real = models.get_conn
     redirect = lambda *a, **k: real(db_path)
-    for mod in (models, auth, client_api):
+    for mod in (models, auth, client_api, admin_routes):
         monkeypatch.setattr(mod, "get_conn", redirect, raising=False)
     monkeypatch.setattr(models, "DB_PATH", db_path)
     auth.init_auth(db_path=db_path)
@@ -255,6 +256,65 @@ def test_payload_flags_each_week_and_offers_only_ranges_the_history_can_fill(db_
 def test_an_unknown_range_falls_back_to_eight_weeks(db_path):
     rid = _restaurant(db_path)
     assert wt.build_waste_trend(rid, "9000w", db_path=db_path)["range"] == "8w"
+
+
+def test_waste_target_pct_defaults_to_industry_constant(db_path):
+    rid = _restaurant(db_path)
+    assert wt.get_waste_target_pct(rid, db_path=db_path) == wt.WASTE_TARGET_PCT
+
+
+def test_waste_target_pct_uses_the_restaurants_own_value_when_set(db_path):
+    rid = _restaurant(db_path)
+    conn = models.get_conn(db_path)
+    conn.execute("UPDATE restaurants SET waste_target_pct=? WHERE id=?", (3.0, rid))
+    conn.commit(); conn.close()
+    assert wt.get_waste_target_pct(rid, db_path=db_path) == 3.0
+
+
+def test_build_waste_trend_uses_the_restaurants_own_target_pct(db_path):
+    """A restaurant with a custom (lower) target should compute a lower
+    dollar target, and the observations text should quote that % rather
+    than the hardcoded industry default."""
+    rid = _restaurant(db_path)
+    conn = models.get_conn(db_path)
+    conn.execute("UPDATE restaurants SET waste_target_pct=? WHERE id=?", (3.0, rid))
+    conn.commit(); conn.close()
+    from datetime import date, timedelta
+    d0 = date(2026, 6, 3)
+    for i, v in enumerate([150, 155, 148, 152]):
+        _row(db_path, rid, (d0 + timedelta(weeks=i)).isoformat(), v)
+    default_p = wt.build_waste_trend(rid, "8w", analysis={"waste_rate_pct": 8.0, "total_waste_cost_week": 160.0}, db_path=db_path, target_pct=wt.WASTE_TARGET_PCT)
+    custom_p = wt.build_waste_trend(rid, "8w", analysis={"waste_rate_pct": 8.0, "total_waste_cost_week": 160.0}, db_path=db_path)
+    assert custom_p["target"]["pct"] == 3.0
+    assert custom_p["target"]["weekly"] < default_p["target"]["weekly"]
+    assert any("3% target" in o["text"] for o in custom_p["observations"])
+
+
+def test_admin_settings_save_persists_and_clears_the_waste_target(db_path, monkeypatch):
+    """The Client Settings save route (templates/client_settings.html's
+    waste_target_pct field) must persist a set value and, per the same
+    convention as every other numeric target on this form, clearing the
+    field back to blank must reset it to NULL (the industry default) —
+    not silently keep whatever was last saved."""
+    from models import get_restaurant
+    monkeypatch.setattr(auth, "get_current_user", lambda: {"id": 999, "is_admin": 1})
+    rid = _restaurant(db_path)
+
+    flask_app = Flask(__name__)
+    flask_app.register_blueprint(admin_routes.admin_bp)
+    with flask_app.test_request_context(
+        f"/admin/client-settings/{rid}", method="POST",
+        json={"name": "Simple EJ's", "owner_email": "o@x.test", "waste_target_pct": "3.5"},
+    ):
+        admin_routes.save_client_settings(rid)
+    assert get_restaurant(rid, db_path=db_path).waste_target_pct == 3.5
+
+    with flask_app.test_request_context(
+        f"/admin/client-settings/{rid}", method="POST",
+        json={"name": "Simple EJ's", "owner_email": "o@x.test", "waste_target_pct": ""},
+    ):
+        admin_routes.save_client_settings(rid)
+    assert get_restaurant(rid, db_path=db_path).waste_target_pct is None
 
 
 def test_empty_states_explain_why_and_when(db_path):
@@ -536,3 +596,41 @@ def test_gauge_and_ledger_bars_animate_on_scroll_not_on_tab_open():
         before_gate = body[:gate_pos]
         assert "classList.add('on')" not in before_gate
         assert "strokeDashoffset=arcs" not in before_gate
+
+
+# ── premium bar redesign: gradients, depth, hover polish ─────────────────────
+
+def test_bars_use_gradient_fills_not_flat_color():
+    """A flat fill('#c84b2f') read as generic; each bar now gets a vertical
+    linear gradient (brand ember on top fading to a darker shade), defined
+    once in <defs> and referenced by url() from every bar."""
+    body = _dashboard_chart_body()
+    assert 'id="fc2wtBarBad"' in body and 'id="fc2wtBarGood"' in body
+    assert "over?'url(#fc2wtBarBad)':(target?'url(#fc2wtBarGood)'" in body
+    assert "fill=\"'+fill+'\"" in body, "bars should render with the computed gradient url(), not a literal hex"
+
+
+def test_bar_hover_uses_filter_not_transform_to_avoid_fighting_the_grow_in_animation():
+    """.hb-bar's entrance animation ends on transform:scaleY(1) with
+    animation-fill-mode:forwards, which wins the cascade over a later
+    plain CSS transform rule — a translateY-based hover lift would
+    silently do nothing once the bar had settled. filter is untouched by
+    that animation, so it's the only safe channel for a hover/active
+    treatment on .fc2-wt-bar."""
+    import re
+    css = _dashboard_html()
+    m = re.search(r"\.fc2-wt-bar\.on\{([^}]*)\}", css)
+    assert m, ".fc2-wt-bar.on rule not found"
+    assert "filter:" in m.group(1)
+    assert "transform:" not in m.group(1), "a transform on .on will be overridden by the grow-in animation's forwards fill"
+
+
+def test_bars_have_rounded_corners_and_a_subtle_edge_stroke():
+    body = _dashboard_chart_body()
+    assert 'rx="\'+(dense?3:6)+\'"' in body.replace(" ", "")
+    assert "rgba(255,255,255,.14)" in body, "default bars should carry a subtle hairline edge, not a bare flat fill"
+
+
+def _dashboard_chart_body():
+    html = _dashboard_html()
+    return html.split("function wtDrawChart(){", 1)[1].split("\nfunction wtTipPos", 1)[0]
