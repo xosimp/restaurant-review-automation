@@ -3171,8 +3171,14 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       h+='<div class="r"><div><div class="nm" title="'+_mmEsc(r.name)+'">'+_mmEsc(r.name)+'</div><div class="bar"><i class="'+(amber?'amber':'')+'" style="transition-delay:'+(i*120)+'ms;width:'+Math.max(4,Math.round(r[key]/max*100))+'%"></i></div><div class="sub">'+_mmEsc(detailFn(r))+'</div></div><div class="v '+(amber?'amber':'')+'" data-n="'+Math.round(r[key])+'">$0</div></div>';}
     el.innerHTML=h;
     var vs=el.querySelectorAll('.v');
-    requestAnimationFrame(function(){requestAnimationFrame(function(){var bars=el.querySelectorAll('.bar');for(var b=0;b<bars.length;b++)bars[b].classList.add('on');
-      for(var k=0;k<vs.length;k++){(function(v,delay){setTimeout(function(){if(typeof countUp==='function')countUp(v,parseInt(v.getAttribute('data-n'),10),1400,'$','',0);else v.textContent='$'+v.getAttribute('data-n');},delay);})(vs[k],k*120);}});});
+    // Used to fill and count up the instant the tab opened, whether or not
+    // this ledger (well down the page, under the trend card) was actually
+    // on screen yet — same fix as Labor's role donut: hold at the
+    // already-baked zero-width resting state until it's scrolled into view.
+    cavnarWhenVisible(el,function(){
+      requestAnimationFrame(function(){requestAnimationFrame(function(){var bars=el.querySelectorAll('.bar');for(var b=0;b<bars.length;b++)bars[b].classList.add('on');
+        for(var k=0;k<vs.length;k++){(function(v,delay){setTimeout(function(){if(typeof countUp==='function')countUp(v,parseInt(v.getAttribute('data-n'),10),1400,'$','',0);else v.textContent='$'+v.getAttribute('data-n');},delay);})(vs[k],k*120);}});});
+    });
   }
   function renderWasteDonut(){_fc2Ledger('fc2-ledger-waste',_wasteDonutData,'cost',function(r){return r.qty+' wasted · '+r.pct+'% of stock';},false);}
   function renderOstockDonut(){_fc2Ledger('fc2-ledger-stock',_ostockDonutData,'cost',function(r){return r.stock+' on hand · par '+r.par;},true);}
@@ -3198,7 +3204,13 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     s+='</svg><div class="c"><b data-n="'+g.monthly+'">$0</b><span>recoverable / mo</span></div>';
     el.innerHTML=s;
     var b=el.querySelector('.c b');
-    requestAnimationFrame(function(){requestAnimationFrame(function(){var arcs=el.querySelectorAll('.fc2-arc');for(var i=0;i<arcs.length;i++)arcs[i].style.strokeDashoffset=arcs[i].getAttribute('data-off');var tips=el.querySelectorAll('[data-tip]');for(var t=0;t<tips.length;t++)tips[t].style.opacity='1';if(typeof countUp==='function')countUp(b,g.monthly,2200,'$','',0);else b.textContent='$'+g.monthly.toLocaleString();});});
+    // Same as the ledger bars above: the arcs are already baked at their
+    // empty resting state (stroke-dashoffset=len), so holding the actual
+    // fill/count-up for cavnarWhenVisible costs nothing and stops this
+    // gauge from finishing its sweep before anyone has scrolled to it.
+    cavnarWhenVisible(el,function(){
+      requestAnimationFrame(function(){requestAnimationFrame(function(){var arcs=el.querySelectorAll('.fc2-arc');for(var i=0;i<arcs.length;i++)arcs[i].style.strokeDashoffset=arcs[i].getAttribute('data-off');var tips=el.querySelectorAll('[data-tip]');for(var t=0;t<tips.length;t++)tips[t].style.opacity='1';if(typeof countUp==='function')countUp(b,g.monthly,2200,'$','',0);else b.textContent='$'+g.monthly.toLocaleString();});});
+    });
   }
   function loadMenuMargins(){
     var el = document.getElementById('mm-body');
@@ -9161,11 +9173,19 @@ function wtDrawChart(){
   for(var q=0;q<steps.length;q++)yLab+='<span>$'+Math.round(steps[q]).toLocaleString()+'</span>';
   var ax='',bars='',labels='';
   var lab='style="paint-order:stroke;stroke:var(--paper);stroke-width:4px;stroke-linejoin:round"';
+  // Everything that isn't a bar (target band/line/label, avg line/label,
+  // the per-bar $ labels and SPIKE/WORST/BEST tags) used to be static —
+  // present in full the instant the SVG was inserted, while only the
+  // bars grew in underneath them. One shared fade, timed to land inside
+  // the bars' own stagger window, makes the whole chart arrive as one
+  // motion instead of "everything, then bars catch up." Skipped on a
+  // settled re-render (category filter, drill-down) same as the bars.
+  var fadeIn=animate?' style="opacity:0;animation:hbFillIn 1.3s ease .15s forwards"':'';
   // The target band is drawn first (and the dashed line + label after it,
   // further down) so the low-opacity pill sits behind everything else.
   if(target){
     var bandTy=y(target),bandH=18;
-    svg+='<rect x="0" y="'+(bandTy-bandH/2).toFixed(1)+'" width="'+W+'" height="'+bandH+'" rx="'+(bandH/2)+'" fill="#4ead7a" fill-opacity=".1"/>';
+    svg+='<g'+fadeIn+'><rect x="0" y="'+(bandTy-bandH/2).toFixed(1)+'" width="'+W+'" height="'+bandH+'" rx="'+(bandH/2)+'" fill="#4ead7a" fill-opacity=".1"/></g>';
   }
   for(var i=0;i<n;i++){
     var w=weeks[i],f=w.flags||{},x=gap+i*(bw+gap),val=vals[i],isLast=i===n-1,on=(_wt.sel===i);
@@ -9196,21 +9216,25 @@ function wtDrawChart(){
   // bar's value label — the old chart printed "8-wk avg" straight over
   // this week's figure whenever the two landed at the same height.
   var lastVal=vals[n-1],lastLabelY=(lastVal!=null&&!dense)?y(lastVal)-6:-99,avgLabelY=null;
+  var avgG='',targetG='';
   if(pts.length>=2){
     var path=window.CavnarCharts?CavnarCharts.smooth(pts):pts.map(function(p,i){return (i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1);}).join(' ');
-    svg+='<path d="'+path+'" fill="none" stroke="#e8956a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke-opacity=".95"/>';
+    avgG+='<path d="'+path+'" fill="none" stroke="#e8956a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke-opacity=".95"/>';
     var lp=pts[pts.length-1];
     avgLabelY=lp[1]-8;
     if(Math.abs(avgLabelY-lastLabelY)<15)avgLabelY=lp[1]+14;
-    svg+='<text '+lab+' x="'+(W-4)+'" y="'+avgLabelY.toFixed(1)+'" text-anchor="end" font-size="12.5" font-weight="700" fill="#e8956a">4-wk avg '+wtMoney(roll[n-1])+'</text>';
+    avgG+='<text '+lab+' x="'+(W-4)+'" y="'+avgLabelY.toFixed(1)+'" text-anchor="end" font-size="12.5" font-weight="700" fill="#e8956a">4-wk avg '+wtMoney(roll[n-1])+'</text>';
   }
+  if(avgG)svg+='<g'+fadeIn+'>'+avgG+'</g>';
   if(target){
     var ty=y(target),tly=ty-7;
     if((avgLabelY!=null&&Math.abs(tly-avgLabelY)<15)||Math.abs(tly-lastLabelY)<15)tly=ty+14;
-    svg+='<line x1="0" y1="'+ty.toFixed(1)+'" x2="'+W+'" y2="'+ty.toFixed(1)+'" stroke="#4ead7a" stroke-opacity=".85" stroke-width="1.5" stroke-dasharray="4 5"/>';
-    svg+='<text '+lab+' x="'+(W-4)+'" y="'+tly.toFixed(1)+'" text-anchor="end" font-size="12.5" font-weight="700" fill="#4ead7a">target '+wtMoney(target)+'/wk</text>';
+    targetG+='<line x1="0" y1="'+ty.toFixed(1)+'" x2="'+W+'" y2="'+ty.toFixed(1)+'" stroke="#4ead7a" stroke-opacity=".85" stroke-width="1.5" stroke-dasharray="4 5"/>';
+    targetG+='<text '+lab+' x="'+(W-4)+'" y="'+tly.toFixed(1)+'" text-anchor="end" font-size="12.5" font-weight="700" fill="#4ead7a">target '+wtMoney(target)+'/wk</text>';
+    svg+='<g'+fadeIn+'>'+targetG+'</g>';
   }
-  svg+=labels+'</svg>';
+  if(labels)svg+='<g'+fadeIn+'>'+labels+'</g>';
+  svg+='</svg>';
   host.innerHTML='<div class="y">'+yLab+'</div><div class="plot">'+svg+'<div class="ax">'+ax+'</div></div>';
   host.classList.remove('hov');
   if(!host._wtBound){

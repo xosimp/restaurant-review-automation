@@ -452,3 +452,47 @@ def test_forecast_box_has_no_emoji():
 def test_the_food_cost_tag_credits_cavnar_ai_not_just_cavnar():
     html = _dashboard_html()
     assert "Cavnar AI's read on your food cost" in html
+
+
+def test_the_target_avg_and_bar_labels_fade_in_together_with_the_bars():
+    """The target band/line, the rolling-average line, and every per-bar
+    $ label + SPIKE/WORST/BEST tag used to render at full opacity the
+    instant the SVG was inserted, while only the bars visibly grew in
+    underneath them — the bars caught up to content that was already
+    fully there. All four now share one fade group, gated by the same
+    `animate` (first-render-only) flag the bars already use, so a
+    settled re-render (category filter, drill-down) doesn't re-fade
+    content that's already showing."""
+    import re
+    import subprocess
+    html = _dashboard_html()
+    body = html.split("function wtDrawChart(){", 1)[1].split("\nfunction wtTipPos", 1)[0]
+    assert body.count("fadeIn=animate?") == 1
+    assert body.count("'<g'+fadeIn+'>") == 4, "target band, avg line+label, target line+label and bar labels should each be wrapped in a fade group"
+
+    stmt = re.search(r"var fadeIn=animate\?.*?:'';", body).group(0)
+    js = "var animate=true;" + stmt + "console.log(fadeIn);"
+    out = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=10)
+    assert out.returncode == 0, out.stderr
+    assert "opacity:0" in out.stdout and "hbFillIn" in out.stdout
+
+
+def test_gauge_and_ledger_bars_animate_on_scroll_not_on_tab_open():
+    """renderFcGauge() and _fc2Ledger() used to trigger their fill/count-up
+    the instant the tab opened, whether or not the gauge or either ledger
+    (both well down the page, under the whole trend card) were actually
+    on screen yet — same class of bug Labor's role donut already had
+    fixed via cavnarWhenVisible(). The HTML build (which bakes in the
+    zero-filled resting state) still has to run immediately; only the
+    reveal trigger moves inside the visibility gate."""
+    html = _dashboard_html()
+    gauge_body = html.split("function renderFcGauge(){", 1)[1].split("\n  function loadMenuMargins", 1)[0]
+    ledger_body = html.split("function _fc2Ledger(", 1)[1].split("\n  function renderWasteDonut", 1)[0]
+    for name, body in (("renderFcGauge", gauge_body), ("_fc2Ledger", ledger_body)):
+        assert "cavnarWhenVisible(el,function(){" in body, f"{name} doesn't gate its reveal on scroll visibility"
+        # The reveal (dashoffset / .on class / countUp) must be *inside*
+        # the cavnarWhenVisible callback, not before it.
+        gate_pos = body.index("cavnarWhenVisible(el,function(){")
+        before_gate = body[:gate_pos]
+        assert "classList.add('on')" not in before_gate
+        assert "strokeDashoffset=arcs" not in before_gate
