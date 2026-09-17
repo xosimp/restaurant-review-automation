@@ -406,18 +406,36 @@ def compute_item_trends(restaurant_id: int, current_items: list, db_path: str = 
         # against a same-day snapshot of itself — always equal, so a real
         # spike/trend from a fresh price update would silently stop being
         # detectable for the rest of that day.
+        #
+        # Fetch generously and bucket by ISO week below. Taking the last 8
+        # ROWS meant that for an owner who opens the page daily, "8 weeks of
+        # history" was 8 days — and the output says "up 12% over 3 weeks" in
+        # so many words. waste_trend.load_waste_history fixed exactly this for
+        # the chart; the fix never reached here.
         rows = conn.execute("""
             SELECT week_end, items_json FROM inventory_history
             WHERE restaurant_id=? AND items_json IS NOT NULL AND week_end < date('now','-1 day')
-            ORDER BY week_end DESC LIMIT 8
+            ORDER BY week_end DESC LIMIT 80
         """, (restaurant_id,)).fetchall()
         conn.close()
     except Exception:
         rows = []
 
+    # One entry per ISO week, newest snapshot in each week standing for it.
+    from datetime import date as _date_ci
+    weekly = {}
+    for row in rows:                      # newest → oldest
+        try:
+            key = _date_ci.fromisoformat(row["week_end"]).isocalendar()[:2]
+        except Exception:
+            continue
+        if key not in weekly:             # first seen is the newest in that week
+            weekly[key] = row
+    rows = [weekly[k] for k in sorted(weekly)][-8:]   # oldest → newest, 8 weeks
+
     # Build per-item price history: {name: [price_oldest, ..., price_newest]}
     history = {}
-    for row in reversed(rows):
+    for row in rows:
         try:
             for hi in _jt.loads(row["items_json"] or "[]"):
                 name = hi.get("item")
@@ -437,9 +455,13 @@ def compute_item_trends(restaurant_id: int, current_items: list, db_path: str = 
         # Week-over-week spike: >5% increase vs last stored week
         if hist:
             prev = hist[-1]
-            if prev > 0 and curr > prev:
+            # Drops as well as spikes. Only increases were ever detected, so
+            # an ingredient getting materially cheaper — a real buying
+            # opportunity, and a signal that a past spike has passed — never
+            # reached the owner.
+            if prev > 0 and curr != prev:
                 pct = round((curr - prev) / prev * 100, 1)
-                if pct >= 5:
+                if abs(pct) >= 5:
                     price_alerts.append({
                         "item": name,
                         "old_price": prev,
@@ -509,11 +531,15 @@ def build_price_watch(trends: dict) -> list:
     duplicate this judgment call."""
     watch = {}
     for a in trends.get("price_alerts", []):
+        rose = (a["change_pct"] or 0) > 0
         watch[a["item"]] = {
-            "item": a["item"], "kind": "spike", "change_pct": a["change_pct"],
+            "item": a["item"], "kind": "spike" if rose else "drop",
+            "change_pct": a["change_pct"],
             "weeks": None, "old_price": a["old_price"], "new_price": a["new_price"],
             "is_big_8": a["is_big_8"],
-            "action_hint": "One-week spike — worth checking this week's invoice for an error.",
+            "action_hint": ("One-week spike — worth checking this week's invoice for an error."
+                            if rose else
+                            "Price dropped — a good week to buy ahead if it keeps."),
         }
     for a in trends.get("trend_alerts", []):
         hint = ("Sustained rise — consider a menu price adjustment on dishes using this, or shop suppliers."

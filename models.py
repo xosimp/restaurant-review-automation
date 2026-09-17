@@ -6704,10 +6704,12 @@ def build_food_cost_export_csv(restaurant_id: int, db_path: str = DB_PATH) -> st
         for r in rows:
             k = r.keys()
             def g(col): return r[col] if col in k else ""
-            w.writerow([g("name"), g("unit"), g("on_hand"), g("par"), g("unit_cost"),
+            # The columns are current_stock and par_level. This asked for
+            # "on_hand" and "par", which exist on no table, so g() returned ""
+            # and every export ever produced had two permanently blank columns
+            # — on the artifact an owner hands to an accountant.
+            w.writerow([g("name"), g("unit"), g("current_stock"), g("par_level"), g("unit_cost"),
                         g("last_order_qty"), g("waste_last_week"), g("updated_at")])
-    except Exception as e:
-        w.writerow([f"food cost data unavailable: {e}"])
     finally:
         conn.close()
     return out.getvalue()
@@ -6837,7 +6839,11 @@ def next_po_number(restaurant_id: int, db_path: str = DB_PATH) -> str:
     """Sequential per restaurant — PO-0001, PO-0002... Derived from the
     count of existing rows rather than a global autoincrement so two
     restaurants never see each other's numbering, and so the number a
-    supplier sees is small and human-quotable."""
+    supplier sees is small and human-quotable.
+
+    Read-only, and therefore racy on its own: use record_purchase_order,
+    which allocates inside the same transaction as the insert.
+    """
     conn = get_conn(db_path)
     try:
         n = conn.execute(
@@ -6848,21 +6854,59 @@ def next_po_number(restaurant_id: int, db_path: str = DB_PATH) -> str:
     return f"PO-{n + 1:04d}"
 
 
-def record_purchase_order(restaurant_id: int, po_number: str, supplier_name: str,
+def record_purchase_order(restaurant_id: int, supplier_name: str,
                           supplier_email: str, items: list, total_cost: float,
-                          db_path: str = DB_PATH) -> int:
-    """Store what was actually sent, so receiving can pre-fill from it."""
+                          db_path: str = DB_PATH) -> str:
+    """Allocate a PO number and store what was sent, atomically. Returns the
+    number.
+
+    The number used to be read by a separate COUNT(*) before the supplier
+    email went out, and only then inserted against UNIQUE(restaurant_id,
+    po_number). Two concurrent sends both computed PO-0001, both emails left,
+    and the second insert raised IntegrityError — an uncaught 500 with no PO
+    row, no email log and no audit event, in front of an owner who would
+    reasonably click send again. Allocating inside BEGIN IMMEDIATE closes
+    that window; retrying on a unique collision covers the rest.
+    """
     import json as _json
+    import sqlite3 as _sqlite3
     conn = get_conn(db_path)
     try:
-        cur = conn.execute("""
-            INSERT INTO purchase_orders
-                (restaurant_id, po_number, supplier_name, supplier_email, items_json, total_cost)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (restaurant_id, po_number, supplier_name, supplier_email,
-              _json.dumps(items or []), round(float(total_cost or 0), 2)))
+        for _attempt in range(5):
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                n = conn.execute(
+                    "SELECT COUNT(*) FROM purchase_orders WHERE restaurant_id=?", (restaurant_id,)
+                ).fetchone()[0] or 0
+                po_number = f"PO-{n + 1:04d}"
+                conn.execute("""
+                    INSERT INTO purchase_orders
+                        (restaurant_id, po_number, supplier_name, supplier_email, items_json, total_cost)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (restaurant_id, po_number, supplier_name, supplier_email,
+                      _json.dumps(items or []), round(float(total_cost or 0), 2)))
+                conn.commit()
+                return po_number
+            except _sqlite3.IntegrityError:
+                conn.rollback()
+                continue
+        raise RuntimeError("could not allocate a purchase order number")
+    finally:
+        conn.close()
+
+
+def void_purchase_order(restaurant_id: int, po_number: str, db_path: str = DB_PATH) -> bool:
+    """Remove a PO whose email never left. The row is written first so a sent
+    order always has a record; when the send then fails there is nothing to
+    keep, and leaving it would make the next number skip and show the owner an
+    order the supplier never received."""
+    conn = get_conn(db_path)
+    try:
+        cur = conn.execute(
+            "DELETE FROM purchase_orders WHERE restaurant_id=? AND po_number=? AND status='sent'",
+            (restaurant_id, po_number))
         conn.commit()
-        return cur.lastrowid
+        return cur.rowcount > 0
     finally:
         conn.close()
 

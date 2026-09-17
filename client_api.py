@@ -43,17 +43,31 @@ def _cache_set(key, value):
     _insight_cache[key] = (datetime.utcnow(), value)
 
 
+def _analysis_fingerprint(analysis) -> str:
+    """A short hash of the figures an insight is written from, so a cached
+    narrative can never outlive the numbers it describes."""
+    import hashlib as _hl, json as _jfp
+    keys = ("total_waste_cost_week", "monthly_waste_projection", "recoverable_monthly",
+            "total_stock_value", "waste_rate_pct", "benchmark_label", "total_items")
+    shape = {k: analysis.get(k) for k in keys}
+    shape["waste_items"] = [(x.get("item"), x.get("waste_cost")) for x in (analysis.get("waste_items") or [])]
+    shape["critical_low"] = [x.get("item") for x in (analysis.get("critical_low") or [])]
+    return _hl.sha256(_jfp.dumps(shape, sort_keys=True, default=str).encode()).hexdigest()[:12]
+
+
 def invalidate_insight_cache(restaurant_id, prefixes=None):
     """Drop cached AI insight for one restaurant.
 
     Called when the underlying data changes. Without it a five-minute-old
     narrative sits next to freshly uploaded numbers and contradicts them.
+    The food-cost keys carry a fingerprint of the analysis after the
+    restaurant id, so they are matched by prefix rather than by equality.
     """
     prefixes = prefixes or ("labor-insight:", "mobile-labor-insight:",
                             "inv-insight:", "mobile-inv-insight:")
     suffix = str(restaurant_id)
     for key in [k for k in _insight_cache
-                if any(k == p + suffix for p in prefixes)]:
+                if any(k == p + suffix or k.startswith(p + suffix + ":") for p in prefixes)]:
         _insight_cache.pop(key, None)
 
 # ── Shared handler bodies ────────────────────────────────────────────────────
@@ -1494,20 +1508,34 @@ def labor_insight_api(current_user):
 def inv_insight_api(current_user):
     try:
         from inventory import analysis_for, get_claude_insights
-        restaurant = get_restaurant(current_user["restaurant_id"])
-        items, is_live, analysis = analysis_for(current_user["restaurant_id"])
-        owner_name = restaurant.owner_name if restaurant else None
-        insight = get_claude_insights(analysis, owner_name=owner_name,
-                                      restaurant_name=restaurant.name if restaurant else None,
-                                      restaurant_id=current_user["restaurant_id"], items=items,
-                                      is_live=is_live)
+        rid = current_user["restaurant_id"]
+        restaurant = get_restaurant(rid)
+        items, is_live, analysis = analysis_for(rid)
+        # Keyed on the figures, not just the restaurant. The mobile twin has
+        # cached this for a while and the web route did not, so every Food
+        # Cost page load was a fresh paid LLM call; and invalidate_insight_cache
+        # listed an "inv-insight:" key nothing ever wrote. Hashing the numbers
+        # means a quick count or a new delivery invalidates the narrative by
+        # construction, rather than leaving a five-minute-old story beside
+        # figures that have already moved.
+        cache_key = "inv-insight:%s:%s" % (rid, _analysis_fingerprint(analysis))
+        insight = _cache_get(cache_key)
+        if insight is None:
+            owner_name = restaurant.owner_name if restaurant else None
+            insight = get_claude_insights(analysis, owner_name=owner_name,
+                                          restaurant_name=restaurant.name if restaurant else None,
+                                          restaurant_id=rid, items=items,
+                                          is_live=is_live)
+            _cache_set(cache_key, insight)
         # is_live travels with the insight so the UI can say whose numbers
         # these are instead of presenting example data as the owner's own.
         return jsonify(insight=format_insight_html(insight), is_live=bool(is_live))
     except Exception as _inv_e:
         import traceback
         print(f"[inv-insight ERROR] {_inv_e}\n{traceback.format_exc()}")
-        return jsonify(insight="Analysis unavailable — check server logs.", error=str(_inv_e)), 500
+        # safe_error, not str(e): a requests failure carries the URL it was
+        # calling and a Places URL carries key=.
+        return jsonify(insight="Analysis unavailable — check back shortly.", error=_safe_err(_inv_e)), 500
 
 
 @client_bp.route("/api/food-cost/waste-trend")
@@ -4054,6 +4082,50 @@ def client_upload_data(current_user):
 
 # ── Food cost quick count ─────────────────────────────────────────────────────
 
+def _clean_quickcount_items(items):
+    """Coerce a submitted quick count into storable rows.
+
+    Returns (clean, rejected). A row needs a name and a finite, non-negative
+    price; usage is optional. Anything else is reported back by name rather
+    than silently stored as a zero that becomes next week's baseline and
+    suppresses that ingredient's drift alert forever.
+    """
+    import math as _math_fc
+    clean, rejected = [], []
+    for raw in items:
+        if not isinstance(raw, dict):
+            rejected.append({"name": None, "why": "not an item"})
+            continue
+        name = str(raw.get("name") or "").strip()[:120]
+        if not name:
+            rejected.append({"name": None, "why": "no name"})
+            continue
+
+        def _num(key, required):
+            v = raw.get(key)
+            if v in (None, ""):
+                return None if required else 0.0
+            try:
+                f = float(v)
+            except (TypeError, ValueError):
+                return None
+            if not _math_fc.isfinite(f) or f < 0:
+                return None
+            return round(f, 4)
+
+        price = _num("price", True)
+        if price is None:
+            rejected.append({"name": name, "why": "price is missing or not a number"})
+            continue
+        usage = _num("usage", False)
+        if usage is None:
+            rejected.append({"name": name, "why": "usage is not a number"})
+            continue
+        clean.append({"name": name, "unit": str(raw.get("unit") or "")[:40],
+                      "price": price, "usage": usage})
+    return clean, rejected
+
+
 def _do_food_cost_quickcount(restaurant_id, items):
     """Save Big-8 ingredient prices, compute week-over-week drift, return alerts."""
     import json as _json_fc
@@ -4062,6 +4134,18 @@ def _do_food_cost_quickcount(restaurant_id, items):
 
     if not items or not isinstance(items, list):
         return {"ok": False, "error": "No items provided"}, 400
+    if len(items) > 200:
+        return {"ok": False, "error": "Too many items in one count."}, 400
+
+    # Validate and coerce before anything is persisted. The raw array used to
+    # be written verbatim; on the NEXT submission it became `prev`, and
+    # prev_map's i["name"].lower() raised outside any try — a 500 that saved
+    # nothing, so the poisoned blob stayed and every future count 500'd for
+    # that restaurant permanently.
+    items, rejected = _clean_quickcount_items(items)
+    if not items:
+        return {"ok": False, "error": "No usable items — each needs a name and a valid price.",
+                "rejected": rejected}, 400
 
     rid = restaurant_id
     now_str = _dt_fc.now().strftime("%Y-%m-%d")
@@ -4080,8 +4164,9 @@ def _do_food_cost_quickcount(restaurant_id, items):
 
     # Compute price drift vs previous submission
     drift = []
-    if prev and prev.get("items"):
-        prev_map = {i["name"].lower(): i for i in prev["items"] if i.get("name")}
+    if prev and isinstance(prev.get("items"), list):
+        prev_map = {str(i["name"]).lower(): i for i in prev["items"]
+                    if isinstance(i, dict) and i.get("name")}
         for item in items:
             name = (item.get("name") or "").strip()
             if not name:
@@ -4109,8 +4194,13 @@ def _do_food_cost_quickcount(restaurant_id, items):
                 pass
     drift.sort(key=lambda x: abs(x["weekly_impact"]), reverse=True)
 
-    # Save new data
-    save_payload = _json_fc.dumps({"current": new_current, "previous": prev or {}})
+    # Merge, don't replace. Rebuilding the blob from scratch dropped the
+    # custom_items key that _do_save_food_cost_custom_item writes and the
+    # template renders — so every quick count silently deleted every custom
+    # ingredient the owner had added.
+    existing_fc["current"] = new_current
+    existing_fc["previous"] = prev or {}
+    save_payload = _json_fc.dumps(existing_fc)
     conn = _gcc()
     existing_row = conn.execute("SELECT id FROM client_data WHERE restaurant_id=?", (rid,)).fetchone()
     if existing_row:
@@ -4126,6 +4216,10 @@ def _do_food_cost_quickcount(restaurant_id, items):
     return {
         "ok": True, "drift": drift, "total_weekly_impact": round(total_impact, 2),
         "submitted_at": now_str, "prev_submitted_at": prev.get("submitted_at") if prev else None,
+        # Rows that couldn't be stored are named rather than dropped quietly:
+        # a blank price used to be written as $0.00 and then suppressed that
+        # ingredient's drift alert the following week.
+        "rejected": rejected,
     }, 200
 
 
@@ -6185,7 +6279,10 @@ def set_ingredient_supplier(current_user):
         return jsonify(ok=False, error="Ingredient name is required"), 400
     supplier_name  = (data.get("supplier_name") or "").strip()
     supplier_email = (data.get("supplier_email") or "").strip()
-    if supplier_email and "@" not in supplier_email:
+    # Was `"@" in value`, with no length bound and no format check — on the
+    # field that decides where a real purchase order gets emailed.
+    from guest_email import valid_email as _valid_email
+    if supplier_email and (len(supplier_email) > 254 or not _valid_email(supplier_email)):
         return jsonify(ok=False, error="That doesn't look like an email address"), 400
 
     conn = get_conn()
@@ -6203,6 +6300,23 @@ def set_ingredient_supplier(current_user):
     return jsonify(ok=True, name=name, supplier_name=supplier_name, supplier_email=supplier_email)
 
 
+_ORDER_SEND_COOLDOWN = 60  # seconds between supplier-order sends per restaurant
+_order_send_last = {}
+
+
+def _order_send_allowed(restaurant_id) -> bool:
+    """One supplier-order send per restaurant per cooldown. In-process, like
+    _insight_cache — enough to stop a double-click or an impatient retry from
+    putting a second real purchase order in a supplier's inbox."""
+    import time as _time_po
+    now = _time_po.monotonic()
+    last = _order_send_last.get(restaurant_id)
+    if last is not None and (now - last) < _ORDER_SEND_COOLDOWN:
+        return False
+    _order_send_last[restaurant_id] = now
+    return True
+
+
 @client_bp.route("/api/food-cost/order-draft")
 @login_required
 def food_cost_order_draft(current_user):
@@ -6218,7 +6332,7 @@ def food_cost_order_draft(current_user):
 @login_required
 def send_supplier_order(current_user):
     from inventory import build_supplier_orders
-    from models import next_po_number, record_purchase_order
+    from models import record_purchase_order
 
     rid = current_user["restaurant_id"]
     restaurant = get_restaurant(rid)
@@ -6228,10 +6342,23 @@ def send_supplier_order(current_user):
     data = request.get_json(silent=True) or {}
     only = (data.get("supplier_email") or "").strip().lower()
 
+    # This route puts a genuine purchase order in a supplier's inbox. A
+    # double-click or a retry after a timeout used to send a second one.
+    if not _order_send_allowed(rid):
+        return jsonify(ok=False, error="An order was just sent — give it a moment before sending again."), 429
+
     try:
         draft = build_supplier_orders(rid)
     except Exception as e:
         return jsonify(ok=False, error=f"Couldn't build the order: {e}"), 500
+
+    # Send what the owner approved. The draft is rebuilt here rather than
+    # stored, so a stock or supplier change between preview and send silently
+    # altered the quantities that went out.
+    expected = (data.get("draft_hash") or "").strip()
+    if expected and expected != (draft.get("draft_hash") or ""):
+        return jsonify(ok=False, stale=True, draft_hash=draft.get("draft_hash"),
+                       error="The order changed since you reviewed it — take another look before sending."), 409
 
     groups = draft.get("groups") or []
     if only:
@@ -6241,7 +6368,16 @@ def send_supplier_order(current_user):
 
     sent, failed = [], []
     for group in groups:
-        po_number = next_po_number(rid)
+        # The PO row is written BEFORE the email, and carries the number: an
+        # order that reached a supplier with no record of it is the worse of
+        # the two failure modes by a distance.
+        try:
+            po_number = record_purchase_order(
+                rid, group.get("supplier_name") or "", group["supplier_email"],
+                group["items"], group.get("total_cost") or 0)
+        except Exception as e:
+            failed.append({"supplier_email": group["supplier_email"], "error": _safe_err(e)})
+            continue
         try:
             from emails import send_supplier_order_email
             send_supplier_order_email(
@@ -6254,26 +6390,29 @@ def send_supplier_order(current_user):
                 reply_to=restaurant.owner_email or None,
             )
         except Exception as e:
-            failed.append({"supplier_email": group["supplier_email"], "error": str(e)})
+            from models import void_purchase_order as _void_po
+            _void_po(rid, po_number)
+            failed.append({"supplier_email": group["supplier_email"], "error": _safe_err(e)})
             continue
 
-        record_purchase_order(rid, po_number, group.get("supplier_name") or "",
-                              group["supplier_email"], group["items"], group.get("total_cost") or 0)
-        try:
-            from models import log_email as _log_email
-            _log_email(rid, "supplier_order", group["supplier_email"],
-                       f"Order {po_number} — {restaurant.name}")
-        except Exception:
-            pass
+        from models import log_email as _log_email
+        _log_email(rid, "supplier_order", group["supplier_email"],
+                   f"Order {po_number} — {restaurant.name}")
+        # Per order, with the supplier, the number and the total — the audit
+        # line used to read "2 orders" and nothing else.
+        log_account_event(rid, "supplier_order_sent", current_user,
+                          detail=f"{po_number} to {group['supplier_email']} — "
+                                 f"{len(group['items'])} items, ${group.get('total_cost') or 0:,.2f}")
         sent.append({"po_number": po_number, "supplier_email": group["supplier_email"],
                      "supplier_name": group.get("supplier_name") or "",
                      "item_count": len(group["items"]), "total_cost": group.get("total_cost") or 0})
 
-    if sent:
-        log_account_event(rid, "supplier_order_sent", current_user,
-                          detail=f"{len(sent)} order{'' if len(sent) == 1 else 's'}")
-    return jsonify(ok=bool(sent), sent=sent, failed=failed,
-                   error=None if sent else "Couldn't send the order — check the supplier addresses.")
+    if not sent:
+        # Was a 200 with ok=False, so any client branching on HTTP status read
+        # a total failure to send as a success.
+        return jsonify(ok=False, sent=[], failed=failed,
+                       error="Couldn't send the order — check the supplier addresses."), 502
+    return jsonify(ok=True, sent=sent, failed=failed, error=None)
 
 
 @client_bp.route("/api/food-cost/purchase-orders")

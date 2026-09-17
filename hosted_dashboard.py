@@ -84,6 +84,11 @@ app.template_filter("intel_parts")(lambda text: _parse_intel(text) if text else 
 app.template_filter("format_intel_body")(_format_intel_body)
 
 
+class _FoodCostWithheld(Exception):
+    """This identity may not see food cost, so none of it is computed or
+    rendered. Not an error — a deliberate, silent withholding."""
+
+
 def inv_banner_gradient(annual_waste, annual_recoverable):
     """Compute a red-to-green CSS gradient based on waste severity and recovery opportunity.
     Industry benchmarks: <$5K excellent | $5-15K normal | $15-30K concerning | >$30K serious
@@ -410,7 +415,19 @@ def index(current_user):
                  "overstaffed_days":[],"understaffed_days":[],"overtime_risk":[],
                  "dow_summary":{},"potential_savings":0,"potential_savings_weekly":0,"potential_savings_monthly":0,"period_days":0,"labor_target":30.0,
                  "by_day":{},"employee_hours":{},"role_summary":{},"role_summary_sorted":[],"role_max_pct":0,"trend_delta":None,"staff_constraints":{}}
+    # Whether this identity may see the restaurant's margins at all. The whole
+    # payload below used to be computed and rendered into the page for every
+    # session that could load "/", regardless of role or entitlement:
+    # _module_permission_denied is path-prefix driven and "/" matches no
+    # prefix. ROLE_MANAGER exists specifically to withhold food cost — see the
+    # comment on permissions.ROLE_MANAGER — and received it anyway, in the
+    # HTML of the first page it loaded, as did restaurants without the module.
+    from permissions import FOOD_COST_VIEW as _FC_VIEW, has_permission as _hp_fc
+    _can_see_food_cost = bool(restaurant and restaurant.module_inventory) and _hp_fc(current_user, _FC_VIEW)
+    inv = {}
     try:
+        if not _can_see_food_cost:
+            raise _FoodCostWithheld()
         from inventory import analysis_for as _analysis_for_dash
         _inv_items, _inv_live, inv = _analysis_for_dash(rid)
         inv['banner_gradient'] = inv_banner_gradient(inv['annual_waste_projection'], inv['annual_recoverable'])
@@ -420,6 +437,10 @@ def index(current_user):
         except Exception as _pw_e:
             print(f"Price watch error: {_pw_e}")
             inv['price_watch'] = []
+    except _FoodCostWithheld:
+        inv = {"withheld": True, "is_live": False, "price_watch": [],
+               "waste_items": [], "overstock": [], "critical_low": [],
+               "reorder_soon": [], "order_reduction": [], "total_items": 0}
     except Exception as e:
         print(f"Inventory analysis error: {e}")
         inv = {"total_waste_cost_week":0,"monthly_waste_projection":0,
@@ -573,11 +594,12 @@ def index(current_user):
     # Food cost: load saved quick-count data for price drift display
     _food_cost_data = None
     try:
-        from models import get_client_data as _gcd_fc
-        import json as _json_fc
-        _fc_raw = _gcd_fc(rid)
-        if _fc_raw and _fc_raw.get("food_cost_json"):
-            _food_cost_data = _json_fc.loads(_fc_raw["food_cost_json"])
+        if _can_see_food_cost:
+            from models import get_client_data as _gcd_fc
+            import json as _json_fc
+            _fc_raw = _gcd_fc(rid)
+            if _fc_raw and _fc_raw.get("food_cost_json"):
+                _food_cost_data = _json_fc.loads(_fc_raw["food_cost_json"])
     except Exception:
         pass
 
@@ -607,7 +629,9 @@ def index(current_user):
         labor=labor, inv=inv, ctypes=CONTENT_TYPES,
         mod_reviews=int(restaurant.module_reviews or 0),
         mod_labor=int(restaurant.module_labor or 0),
-        mod_inventory=int(restaurant.module_inventory or 0),
+        # Entitlement AND permission. The tab button was gated on the module
+        # alone; the panel itself was gated on nothing.
+        mod_inventory=int(1 if _can_see_food_cost else 0),
         mod_marketing=int(restaurant.module_marketing or 0),
         is_full_tier=is_full_tier(restaurant),
         # The registry-backed single source of truth (models.get_active_modules) —

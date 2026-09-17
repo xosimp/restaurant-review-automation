@@ -128,11 +128,44 @@ def load_waste_history(restaurant_id, limit=None, db_path=None):
     conn = get_conn(db_path or DB_PATH)
     try:
         conn.execute(_SCHEMA)
-        rows = conn.execute(
-            "SELECT week_end, waste_json, items_json FROM inventory_history "
+        # Two queries on purpose. Snapshots are written per day the page is
+        # viewed, not per week, so a single unbounded SELECT used to read and
+        # JSON-parse every row this restaurant had ever written — each
+        # items_json carrying a full item list — and then discard almost all
+        # of it in Python. The first query reads one small indexed column to
+        # find the true week count and the cutoff; only the rows inside the
+        # requested range carry their JSON across.
+        all_days = [r["week_end"] for r in conn.execute(
+            "SELECT week_end FROM inventory_history "
             "WHERE restaurant_id=? AND week_end IS NOT NULL ORDER BY week_end ASC",
             (restaurant_id,),
-        ).fetchall()
+        ).fetchall()]
+        seen, ordered_keys, first_day_of = set(), [], {}
+        for d in all_days:
+            try:
+                key = date.fromisoformat(d).isocalendar()[:2]
+            except Exception:
+                continue
+            if key not in seen:
+                seen.add(key)
+                ordered_keys.append(key)
+                first_day_of[key] = d
+        total_weeks = len(ordered_keys)
+        cutoff = None
+        if limit and total_weeks > limit:
+            cutoff = first_day_of[ordered_keys[-limit]]
+        if cutoff:
+            rows = conn.execute(
+                "SELECT week_end, waste_json, items_json FROM inventory_history "
+                "WHERE restaurant_id=? AND week_end >= ? ORDER BY week_end ASC",
+                (restaurant_id, cutoff),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT week_end, waste_json, items_json FROM inventory_history "
+                "WHERE restaurant_id=? AND week_end IS NOT NULL ORDER BY week_end ASC",
+                (restaurant_id,),
+            ).fetchall()
     finally:
         conn.close()
 
@@ -149,8 +182,10 @@ def load_waste_history(restaurant_id, limit=None, db_path=None):
             order.append(key)
         buckets[key] = week  # rows arrive oldest→newest, so the last one wins
     weeks = [buckets[k] for k in order]
-    total = len(weeks)
-    if limit and total > limit:
+    # total is every week on file, not just the ones fetched — build_waste_trend
+    # decides which range buttons to offer from it.
+    total = total_weeks
+    if limit and len(weeks) > limit:
         weeks = weeks[-limit:]
     return weeks, total
 

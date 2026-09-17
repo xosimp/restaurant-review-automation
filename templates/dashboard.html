@@ -2796,6 +2796,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 </div><!-- /panel-labor -->
 
 <!-- FOOD COST -->
+{% if mod_inventory %}
 <div class="panel {{'active' if not mod_reviews and not mod_labor and mod_inventory}}" id="panel-inventory" style="max-width:100%;padding:0;min-height:100vh;position:relative">
 <style>
 /* ── Food Cost (fc2-*) — Home/Reviews/Labor language: one hero chart, three
@@ -3323,7 +3324,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
   }
   </script>
 </div><!-- /hb-wrap -->
-</div><!-- /panel-inventory -->
+</div>{% endif %}<!-- /panel-inventory -->
 
 <!-- MARKETING -->
 <div class="panel {{'active' if not mod_reviews and not mod_labor and not mod_inventory and mod_marketing}}" id="panel-marketing" style="margin:0 auto">

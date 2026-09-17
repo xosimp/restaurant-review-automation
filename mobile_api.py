@@ -1406,7 +1406,10 @@ def mobile_set_ingredient_supplier(current_user):
         return jsonify(ok=False, error="Ingredient name is required"), 400
     supplier_name  = (data.get("supplier_name") or "").strip()
     supplier_email = (data.get("supplier_email") or "").strip()
-    if supplier_email and "@" not in supplier_email:
+    # Was `"@" in value`, with no length bound and no format check — on the
+    # field that decides where a real purchase order gets emailed.
+    from guest_email import valid_email as _valid_email
+    if supplier_email and (len(supplier_email) > 254 or not _valid_email(supplier_email)):
         return jsonify(ok=False, error="That doesn't look like an email address"), 400
 
     conn = get_conn()
@@ -1655,7 +1658,8 @@ def mobile_send_supplier_order(current_user):
     stop the rest — failures come back per-supplier rather than as a single
     all-or-nothing error."""
     from inventory import build_supplier_orders
-    from models import next_po_number, record_purchase_order
+    from models import record_purchase_order
+    from client_api import _order_send_allowed
 
     rid = current_user["restaurant_id"]
     restaurant = get_restaurant(rid)
@@ -1666,10 +1670,21 @@ def mobile_send_supplier_order(current_user):
     data = request.get_json(silent=True) or {}
     only = (data.get("supplier_email") or "").strip().lower()
 
+    # Shares the web route's cooldown: a double-tap on a phone is the most
+    # likely way a supplier receives the same order twice.
+    if not _order_send_allowed(rid):
+        return jsonify(ok=False, error="An order was just sent — give it a moment before sending again."), 429
+
     try:
         draft = build_supplier_orders(rid)
     except Exception as e:
         return jsonify(ok=False, error=f"Couldn't build the order: {e}"), 500
+
+    # Send what was previewed, not a rebuild of it.
+    expected = (data.get("draft_hash") or "").strip()
+    if expected and expected != (draft.get("draft_hash") or ""):
+        return jsonify(ok=False, stale=True, draft_hash=draft.get("draft_hash"),
+                       error="The order changed since you reviewed it — take another look before sending."), 409
 
     groups = draft.get("groups") or []
     if only:
@@ -1679,7 +1694,16 @@ def mobile_send_supplier_order(current_user):
 
     sent, failed = [], []
     for group in groups:
-        po_number = next_po_number(rid)
+        # Number allocated inside the insert, and the row written before the
+        # send: an order a supplier has but nothing recorded is far worse than
+        # a row whose email failed, which is voided just below.
+        try:
+            po_number = record_purchase_order(
+                rid, group.get("supplier_name") or "", group["supplier_email"],
+                group["items"], group.get("total_cost") or 0)
+        except Exception as e:
+            failed.append({"supplier_email": group["supplier_email"], "error": str(e)})
+            continue
         try:
             from emails import send_supplier_order_email
             send_supplier_order_email(
@@ -1692,28 +1716,25 @@ def mobile_send_supplier_order(current_user):
                 reply_to=restaurant.owner_email or None,
             )
         except Exception as e:
+            from models import void_purchase_order as _void_po
+            _void_po(rid, po_number)
             failed.append({"supplier_email": group["supplier_email"], "error": str(e)})
             continue
 
-        # Only recorded once the send actually succeeded — a PO in the
-        # ledger means a supplier really has it, so receiving can trust it.
-        record_purchase_order(rid, po_number, group.get("supplier_name") or "",
-                              group["supplier_email"], group["items"], group.get("total_cost") or 0)
-        try:
-            from models import log_email as _log_email
-            _log_email(rid, "supplier_order", group["supplier_email"],
-                       f"Order {po_number} — {restaurant.name}")
-        except Exception:
-            pass
+        from models import log_email as _log_email
+        _log_email(rid, "supplier_order", group["supplier_email"],
+                   f"Order {po_number} — {restaurant.name}")
+        _log_account_event(rid, "supplier_order_sent", current_user,
+                           detail=f"{po_number} to {group['supplier_email']} — "
+                                  f"{len(group['items'])} items, ${group.get('total_cost') or 0:,.2f}")
         sent.append({"po_number": po_number, "supplier_email": group["supplier_email"],
                      "supplier_name": group.get("supplier_name") or "",
                      "item_count": len(group["items"]), "total_cost": group.get("total_cost") or 0})
 
-    if sent:
-        _log_account_event(rid, "supplier_order_sent", current_user,
-                           detail=f"{len(sent)} order{'' if len(sent) == 1 else 's'}")
-    return jsonify(ok=bool(sent), sent=sent, failed=failed,
-                   error=None if sent else "Couldn't send the order — check the supplier addresses.")
+    if not sent:
+        return jsonify(ok=False, sent=[], failed=failed,
+                       error="Couldn't send the order — check the supplier addresses."), 502
+    return jsonify(ok=True, sent=sent, failed=failed, error=None)
 
 
 @mobile_bp.route("/food-cost/purchase-orders")
@@ -1753,7 +1774,8 @@ def mobile_food_cost_analytics(current_user):
             price_watch = build_price_watch(compute_item_trends(rid, items))
         except Exception:
             price_watch = []
-        cached = _capi._cache_get("mobile-inv-insight:" + str(rid))
+        _fp = _capi._analysis_fingerprint(analysis)
+        cached = _capi._cache_get("mobile-inv-insight:%s:%s" % (rid, _fp))
         if cached:
             insight = cached
         else:
@@ -4746,6 +4768,18 @@ def mobile_export_data(current_user):
     scopes = [s for s in (data.get("scopes") or ["reviews"]) if s in ("reviews", "labor", "food_cost", "settings")]
     if not scopes:
         return jsonify(ok=False, error="Pick at least one thing to export."), 400
+    # This route matches no entry in auth._MODULE_PREFIXES, so the module and
+    # permission gates that cover every /food-cost route did not apply here:
+    # a manager session — the role that exists precisely to withhold margins —
+    # could mail itself every ingredient, unit cost and waste figure. Scopes
+    # are gated individually rather than the whole request refused, so an
+    # export of the other three still works.
+    if "food_cost" in scopes:
+        from permissions import FOOD_COST_VIEW as _FC_VIEW, has_permission as _hp_fc
+        if not (restaurant.module_inventory and _hp_fc(current_user, _FC_VIEW)):
+            scopes = [s for s in scopes if s != "food_cost"]
+            if not scopes:
+                return jsonify(ok=False, error="You don't have access to food cost data."), 403
     safe_name = "".join(c for c in (restaurant.name or "cavnar") if c.isalnum() or c in " -_").strip() or "cavnar"
     attachments, labels = [], []
     builders = {
