@@ -200,19 +200,20 @@ def test_setPageBg_is_an_intentional_noop():
     assert s.count("setPageBg(") >= 3
 
 
-def test_header_and_tabs_match_the_workspace_background_not_a_separate_literal():
-    """The header/tab bar used to be its own literal rgba(26,23,20,.86) —
-    close to --bg-base but not derived from it, so the two could drift
-    apart the next time either changed. It now reads --bg-base directly
-    (via color-mix, so it stays a translucent PLANE above the canvas
-    rather than becoming fully opaque and hiding it) so header, tabs and
-    canvas are provably the same tone."""
+def test_header_and_tabs_match_the_workspace_background_exactly():
+    """First the header/tab bar was its own literal rgba(26,23,20,.86);
+    then it read --bg-base but translucent + blurred, which still never
+    matched pixel-for-pixel — what showed through the blur changed with
+    whatever had scrolled underneath, so the header visibly drifted from
+    the flat canvas depending on scroll position. It's now solid
+    var(--bg-base) at full opacity: the only way the two can match
+    exactly is being the same paint, not a translucent read of it."""
     css = _main_css()
-    assert "color-mix(in srgb,var(--bg-base) 86%,transparent)" in css
-    assert 'rgba(26,23,20,.86)' not in css
     rule_start = css.index('[data-theme="dark"] .hdr,[data-theme="dark"] .tabs{')
     rule = css[rule_start:css.index("}", rule_start)]
-    assert "var(--bg-base)" in rule
+    assert rule == '[data-theme="dark"] .hdr,[data-theme="dark"] .tabs{background:var(--bg-base)!important'
+    assert "backdrop-filter" not in rule and "color-mix" not in rule
+    assert 'rgba(26,23,20,.86)' not in css
 
 
 def test_containers_share_one_elevation_system():
@@ -273,12 +274,19 @@ def test_reviews_kicker_and_inbox_label_match_food_costs_bumped_size():
     assert '<div class="k">Inbox</div>' in panel
 
 
-def test_reviews_top_pills_have_no_ember_glow():
-    """The 4 hero pills (rating, answered, to approve, urgent) lose their
-    box-shadow glow on this page only — other modules that still use
-    .hb-chip (Home, Labor, Food Cost, Marketing, Intel, Account) keep it;
-    this is a page-scoped override, not a change to the shared class."""
+def test_no_pill_has_an_ember_glow_on_any_module():
+    """The hero pills' box-shadow glow (.hb-chip / .hb-chip:hover) is gone
+    everywhere .hb-chip is used — Home, Reviews, Labor, Food Cost,
+    Marketing, Intel, Account all share the one class. A Reviews-only
+    override existed for one turn; the fix belongs on the shared rule so
+    every module's pills lose the glow, not just one page's."""
     s = _src()
-    assert "#panel-reviews .hb-chip,#panel-reviews .hb-chip:hover{box-shadow:none}" in s
-    # The shared .hb-chip glow itself must still exist for every other page.
-    assert re.search(r"\.hb-chip\{[^}]*box-shadow:0 0 18px rgba\(200,75,47,", s)
+    # "box-shadow:" (with the colon) so a `transition:...,box-shadow .12s`
+    # property-name listing doesn't false-positive as an actual declaration.
+    assert not re.search(r"\.hb-chip\{[^}]*box-shadow:", s)
+    assert not re.search(r"\.hb-chip:hover\{[^}]*box-shadow:", s)
+    assert "#panel-reviews .hb-chip,#panel-reviews .hb-chip:hover{box-shadow:none}" not in s, \
+        "page-scoped override should be gone now that the shared rule itself has no glow"
+    # The .dot i/.dot b status-indicator glow is a different, small,
+    # functional thing (not "the orange glow behind the pill") and stays.
+    assert ".hb-chip .dot i{position:absolute;inset:0;border-radius:50%;background:var(--ember);box-shadow:0 0 6px var(--ember)}" in s

@@ -56,11 +56,14 @@ html[data-theme="dark"] body{color:var(--ink)}
   --elev-2:inset 0 1px 0 rgba(255,255,255,.06),0 2px 5px rgba(0,0,0,.26),0 20px 40px -18px rgba(0,0,0,.55);
 }
 html{background:var(--bg-base);min-height:100%}
-/* Header and tab strip read as one translucent plane above the flat
-   canvas: the same --bg-base tone (not a separate literal that could
-   drift from it) at reduced opacity plus a light blur, and a hairline
-   instead of a hard edge. */
-[data-theme="dark"] .hdr,[data-theme="dark"] .tabs{background:color-mix(in srgb,var(--bg-base) 86%,transparent)!important;-webkit-backdrop-filter:blur(14px) saturate(1.25);backdrop-filter:blur(14px) saturate(1.25)}
+/* Header and tab strip are the exact same solid tone as the workspace
+   canvas — var(--bg-base) at full opacity, not a translucent read of it.
+   A translucent+blur header (the previous approach) never actually
+   matched the canvas pixel-for-pixel: what showed through the blur
+   changed with whatever had scrolled underneath, so the header visibly
+   drifted from the flat background depending on scroll position. Solid
+   and identical is the only way the two can match perfectly. */
+[data-theme="dark"] .hdr,[data-theme="dark"] .tabs{background:var(--bg-base)!important}
 [data-theme="dark"] .tabs{border-top:none!important;border-bottom:1px solid var(--line-hi)}
 [data-theme="dark"] .hdr-restaurant,[data-theme="dark"] .hdr-user,[data-theme="dark"] .logout-btn{background:transparent!important}
 /* Review status badge dark mode overrides */
@@ -1193,9 +1196,9 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 .hb-top .hb-pulse{flex:0 1 auto}
 /* pulse chips (iOS HomePulseStrip) */
 .hb-pulse{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;padding-top:6px}
-.hb-chip{display:inline-flex;align-items:center;gap:8px;padding:8px 13px 8px 11px;border-radius:999px;border:1px solid rgba(232,149,106,.32);background:linear-gradient(180deg,rgba(255,255,255,.07),rgba(255,255,255,.02));box-shadow:0 0 18px rgba(200,75,47,.16);cursor:pointer;font-family:inherit;color:var(--ink);white-space:nowrap;transition:transform .12s ease,box-shadow .12s ease}
+.hb-chip{display:inline-flex;align-items:center;gap:8px;padding:8px 13px 8px 11px;border-radius:999px;border:1px solid rgba(232,149,106,.32);background:linear-gradient(180deg,rgba(255,255,255,.07),rgba(255,255,255,.02));cursor:pointer;font-family:inherit;color:var(--ink);white-space:nowrap;transition:transform .12s ease,box-shadow .12s ease}
 html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(255,255,255,.8),rgba(255,255,255,.45))}
-.hb-chip:hover{transform:translateY(-1px);box-shadow:0 0 24px rgba(200,75,47,.28)}
+.hb-chip:hover{transform:translateY(-1px)}
 .hb-chip .v{font-family:'Space Grotesk',sans-serif;font-size:14px;font-weight:700;letter-spacing:-.01em}
 .hb-chip .v .stat-n{font-size:14px}
 .hb-chip .l{font-size:11.5px;font-weight:600;color:var(--ink2)}
@@ -1711,11 +1714,6 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 [data-theme="dark"] #panel-reviews{--hb-line:rgba(240,235,224,.14);--hb-line2:rgba(240,235,224,.07);--hb-tint:rgba(224,100,68,.09);--hb-tint2:rgba(224,100,68,.16);--hb-field:rgba(255,255,255,.05)}
 #panel-reviews .hb-chip .v{display:inline-flex;align-items:baseline;gap:2px}
 #panel-reviews .hb-chip .v span{font-family:'Space Grotesk',sans-serif}
-/* The 4 top pills' own ember box-shadow (a "glow behind the pill") is gone
-   here — Home and the other modules keep it, this page just doesn't want
-   it. The dot indicator's own small glow (.dot i / .dot b) is untouched;
-   that's a status color, not the decorative pill glow. */
-#panel-reviews .hb-chip,#panel-reviews .hb-chip:hover{box-shadow:none}
 /* Orange section labels ("Rating · last 8 weeks", "Inbox") match the size
    Food Cost already bumped its own kickers to (#panel-inventory .hb-kicker
    below) — both are the same small-caps orange heading, just a different
