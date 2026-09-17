@@ -625,9 +625,25 @@ def test_bars_use_gradient_fills_not_flat_color():
     linear gradient (brand ember on top fading to a darker shade), defined
     once in <defs> and referenced by url() from every bar."""
     body = _dashboard_chart_body()
-    assert 'id="fc2wtBarBad"' in body and 'id="fc2wtBarGood"' in body
-    assert "over?'url(#fc2wtBarBad)':(target?'url(#fc2wtBarGood)'" in body
+    for grad in ("fc2wtBarBad", "fc2wtBarGood", "fc2wtBarNeutral"):
+        assert 'id="%s"' % grad in body, "missing gradient def: " + grad
+        assert "url(#%s)" % grad in body, "gradient defined but never referenced: " + grad
     assert "fill=\"'+fill+'\"" in body, "bars should render with the computed gradient url(), not a literal hex"
+
+
+def test_bars_are_neutral_when_there_is_no_target_to_be_over():
+    """With no purchase history there is no implied target, so nothing can be
+    over it. Every bar used to fall through to the over-target ember, which
+    reads to an owner as an unbroken history of failure rather than as an
+    absence of a benchmark."""
+    body = _dashboard_chart_body()
+    fill_line = [l for l in body.splitlines() if "var fill=" in l]
+    assert fill_line, "bar fill selection not found"
+    line = fill_line[0]
+    assert "fc2wtBarNeutral" in line, "no-target bars should use the neutral gradient"
+    # The bad gradient must be reachable only through the target branch.
+    assert line.index("target?") < line.index("fc2wtBarBad"), \
+        "the over/under choice must sit inside the has-a-target branch"
 
 
 def test_bar_hover_uses_filter_not_transform_to_avoid_fighting_the_grow_in_animation():

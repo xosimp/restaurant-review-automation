@@ -683,10 +683,18 @@ def add_recipe_ingredient(restaurant_id: int, menu_item_id: int, ingredient_id: 
             return 0
         if not ingredient_belongs_to(conn, restaurant_id, ingredient_id):
             return 0
-        cur = conn.execute(
-            "INSERT INTO recipe_ingredients (menu_item_id, ingredient_id, qty_per_unit) VALUES (?,?,?)",
-            (menu_item_id, ingredient_id, qty_per_unit)
-        )
+        # (menu_item_id, ingredient_id) is unique, so binding the same
+        # ingredient to a dish twice — which used to double-count it in the
+        # plate cost — is refused the same way an unowned pair is, rather
+        # than surfacing as a 500.
+        import sqlite3 as _sqlite3
+        try:
+            cur = conn.execute(
+                "INSERT INTO recipe_ingredients (menu_item_id, ingredient_id, qty_per_unit) VALUES (?,?,?)",
+                (menu_item_id, ingredient_id, qty_per_unit)
+            )
+        except _sqlite3.IntegrityError:
+            return 0
         conn.commit()
         return cur.lastrowid
 

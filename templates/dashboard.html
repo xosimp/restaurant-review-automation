@@ -816,8 +816,13 @@ function submitFoodCostCount() {
     if (inputs.length < 4) continue;
     var name = inputs[0].value.trim();
     var unit = inputs[1].value.trim();
-    var price = parseFloat(inputs[2].value) || 0;
-    var usage = parseFloat(inputs[3].value) || 0;
+    // Blank stays blank. A parseFloat-or-zero coercion turned an untouched
+    // price field into $0.00 as this week's price of record — which became
+    // next week's baseline and silently suppressed that ingredient's drift
+    // alert, since the comparison only runs when both prices are above zero.
+    // The server names anything it can't use rather than storing a zero.
+    var price = inputs[2].value.trim();
+    var usage = inputs[3].value.trim();
     if (name) {
       items.push({name: name, unit: unit, price: price, usage: usage});
     }
@@ -844,8 +849,19 @@ function submitFoodCostCount() {
         return;
       }
       if(_fcL1){_fcL1.textContent='✓ Saved '+_fmtFcDate(data.submitted_at);_fcL1.style.color='';}
-      if(_fcL2){_fcL2.textContent=_fcPrevSaved?'Last saved: '+_fmtFcDate(_fcPrevSaved):'First submission';_fcL2.style.color='rgba(111,207,151,.5)';}
+      if(_fcL2){
+        // Rows the server refused are named, not dropped in silence.
+        var _rej=data.rejected||[];
+        if(_rej.length){
+          var _names=[];for(var _r=0;_r<_rej.length&&_r<3;_r++){if(_rej[_r].name)_names.push(_rej[_r].name);}
+          _fcL2.textContent=_rej.length+' row'+(_rej.length===1?'':'s')+' skipped — needs a price'+(_names.length?': '+_names.join(', '):'');
+          _fcL2.style.color='var(--amber)';
+        } else {
+          _fcL2.textContent=_fcPrevSaved?'Last saved: '+_fmtFcDate(_fcPrevSaved):'First submission';_fcL2.style.color='rgba(111,207,151,.5)';
+        }
+      }
       _fcPrevSaved=data.submitted_at;
+      if(typeof fc2InvalidateStaticCards==='function')fc2InvalidateStaticCards();
       var driftEl = document.getElementById('fc-drift-live');
       if (!driftEl) return;
       var _cb=_isDark?'rgba(111,207,151,.1)':'#f0faf4',_cbr=_isDark?'rgba(111,207,151,.28)':'#a7d7b8',_ct=_isDark?'#6fcf97':'#2d6a4f';
@@ -2819,6 +2835,8 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .fc2-hero-nums{display:flex;gap:40px;flex-wrap:wrap}
 .fc2-hero-nums .n{padding-right:40px;border-right:1px solid var(--hb-line2)}
 .fc2-hero-nums .n:last-child{padding-right:0;border-right:none}
+/* Example data never renders at the same authority as the owner's own. */
+.fc2-hero-nums .n.sample{opacity:.55}
 .fc2-hero-nums .n .big{font-size:clamp(34px,4vw,50px)}
 .fc2-hero-nums .n .big.bad{color:var(--hb-bad)}.fc2-hero-nums .n .big.good{color:var(--hb-good)}
 .fc2-num-lbl{font-size:10.5px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--ember2);margin-top:6px}
@@ -2842,7 +2860,14 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .fc2-wt-kpi .d b{font-family:'Space Grotesk',sans-serif;font-weight:700;color:var(--ink2)}
 .fc2-wt-kpi .d b.good{color:var(--hb-good)}.fc2-wt-kpi .d b.bad{color:var(--hb-bad)}
 .fc2-wt-chart{margin-top:18px;display:flex;gap:10px}
-.fc2-wt-chart .y{display:flex;flex-direction:column;justify-content:space-between;align-items:flex-end;width:58px;font-size:14.5px;color:var(--ink3);font-family:'Space Grotesk',sans-serif;padding-bottom:24px;flex-shrink:0}
+/* padding-top matches the SVG's own padT (30) and padding-bottom its axis
+   gutter, so a scale label sits on the gridline it names. Without the top
+   inset every label floated ~25px above its line and reading a bar height off
+   the axis gave the wrong dollar figure. */
+.fc2-wt-chart .y{display:flex;flex-direction:column;justify-content:space-between;align-items:flex-end;width:58px;font-size:14.5px;color:var(--ink3);font-family:'Space Grotesk',sans-serif;padding-top:24px;padding-bottom:30px;flex-shrink:0}
+/* Visible to a screen reader, not to the eye — the text equivalent of a chart. */
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+.fc2-wt-kpinote{grid-column:1/-1;font-size:13.5px;color:var(--ink3);padding:0 0 10px}
 .fc2-wt-chart .plot{flex:1;min-width:0;position:relative}
 .fc2-wt-chart .plot svg{display:block;width:100%;height:230px;overflow:visible}
 .fc2-wt-chart .plot svg text{font-family:'Space Grotesk',sans-serif}
@@ -3009,6 +3034,20 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .fc2-tool .g{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid var(--hb-line2)}
 .fc2-tool .g b{font-size:14px;font-weight:600;color:var(--ink)}
 .fc2-tool .g span{font-size:12.5px;color:var(--ink3);display:block;margin-top:2px}
+/* The tracker's columns are fixed-width and total ~360px; inside the card's
+   own padding that overflows the panel at phone widths, and the responsive
+   block below only restacks the order/tools grids. */
+.fc2-table-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.fc2-h1-basis{font-size:14px;color:var(--ink3);margin-top:6px}
+.fc2-fcp{margin-top:16px;padding:14px 18px;border-radius:12px;background:var(--surface);border:1px solid var(--hb-line2);max-width:420px}
+.fc2-fcp .k{font-size:12.5px;text-transform:uppercase;letter-spacing:.8px;color:var(--ink3);font-weight:700}
+.fc2-fcp .v{font-size:38px;line-height:1.1;font-weight:600;font-family:'Space Grotesk',sans-serif;margin-top:2px;color:var(--ink)}
+.fc2-fcp .v.good{color:var(--hb-good)}.fc2-fcp .v.warn{color:var(--amber)}.fc2-fcp .v.bad{color:var(--hb-bad)}
+.fc2-fcp .d{font-size:14px;color:var(--ink2);margin-top:4px}
+.fc2-fcp .d b.good{color:var(--hb-good)}.fc2-fcp .d b.bad{color:var(--hb-bad)}
+.fc2-fcp .b{font-size:12.5px;color:var(--ink3);margin-top:8px;line-height:1.45}
+.fc2-fcp .miss{margin:8px 0 0;padding-left:18px;font-size:13px;color:var(--ink3);line-height:1.5}
+.fc2-fcp .miss b{color:var(--ink2);font-weight:600}
 .fc2-po{margin-top:14px}
 .fc2-po .row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid var(--hb-line2);font-size:13.5px;color:var(--ink2)}
 .fc2-po .row b{font-family:'Space Grotesk',sans-serif;color:var(--ink);font-weight:600}
@@ -3028,7 +3067,17 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
   {% endif %}
   <div class="hb-top">
     <div style="min-width:0;flex:1">
+      {# This verdict is THIS WEEK's benchmark; the trend card below states a
+         direction over many weeks. Both were unqualified, so "On track" could
+         sit six inches above "Waste is climbing" with nothing explaining how
+         both were true. Each now says which question it answers. #}
       <h1 class="hb-h1">Food cost. <span class="hb-head {{ _tone }}">{{ _head }}</span></h1>
+      {% if inv.is_live and inv.benchmark_detail and inv.benchmark_label != '—' %}<div class="fc2-h1-basis">This week · {{ inv.benchmark_detail }}</div>{% endif %}
+      {# Actual food cost % — COGS over net sales, against this restaurant's own
+         food_cost_target. Filled by /api/food-cost/cogs; hidden until it
+         answers, and when a component is missing it says which rather than
+         showing a percentage built on an assumed number. #}
+      <div id="fc2-fcp" class="fc2-fcp" hidden></div>
     </div>
     <div class="fc2-top-right">
       <div class="hb-pulse">
@@ -3039,8 +3088,14 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
         <span class="hb-chip {{ 'sample' if not inv.is_live else 'good' }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num">${{ inv.total_stock_value|int|format_num }}</span></span><span class="l">inventory value</span></span>
       </div>
       <div class="fc2-hero-nums">
-        <div class="n"><div class="big bad"><span id="inv-annual-waste" class="hb-num">${{ inv.annual_waste_projection|int|format_num }}</span></div><div class="fc2-num-lbl">Projected annual waste</div><div class="delta"><span>${{ inv.monthly_waste_projection|int|format_num }}/mo at the current rate</span></div></div>
-        <div class="n"><div class="big good"><span id="inv-annual-recoverable" class="hb-num">${{ inv.annual_recoverable|int|format_num }}</span></div><div class="fc2-num-lbl">Recoverable / year</div><div class="delta"><span>${{ inv.recoverable_monthly|int|format_num }}/mo with better ordering</span></div></div>
+        {# Both figures are one week's count projected out. That basis is now
+           stated under each of them: an annual number set in 50px red with no
+           qualifier reads as a measured fact, and one heavy prep week can put
+           a $60k headline in front of an owner about to renegotiate with a
+           supplier. The sample class dims them so example data never renders
+           at the same authority as the owner's own. #}
+        <div class="n{{ ' sample' if not inv.is_live }}"><div class="big bad"><span id="inv-annual-waste" class="hb-num">${{ inv.annual_waste_projection|int|format_num }}</span></div><div class="fc2-num-lbl">Projected annual waste</div><div class="delta"><span>${{ inv.monthly_waste_projection|int|format_num }}/mo — projected from this week's count</span></div></div>
+        <div class="n{{ ' sample' if not inv.is_live }}"><div class="big good"><span id="inv-annual-recoverable" class="hb-num">${{ inv.annual_recoverable|int|format_num }}</span></div><div class="fc2-num-lbl">Recoverable / year</div><div class="delta"><span>${{ inv.recoverable_monthly|int|format_num }}/mo — waste above each category's tolerance band</span></div></div>
       </div>
     </div>
   </div>
@@ -3072,7 +3127,12 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
   <div class="lb2-sig">
     <div class="lb2-sg"><div class="k"><span>Recoverable gauge</span><i class="{{ 'bad' if _wl in ['Above Average','Concerning','Needs Attention'] else ('good' if _wl in ['Excellent','On Track'] else '') }}">{% if inv.is_live and _wl != '—' %}{{ _wl }}{% endif %}</i></div><div class="v"><span class="hb-num" id="fc2-gauge-n">${{ inv.recoverable_monthly|int|format_num }}</span><small>/ mo you can claw back</small></div>
       <div class="fc2-gauge" id="fc2-gauge"><div class="hb-load" style="height:170px;justify-content:center"><canvas class="hb-orb" data-orb-state="shaping" width="36" height="36"></canvas></div></div>
-      <div class="cap"><span>of ${{ (inv.monthly_waste_projection + _ostock_total)|int|format_num }} leaking this month</span><span class="hb-num">${{ inv.annual_recoverable|int|format_num }}/yr</span></div></div>
+      {# _ostock_total is overstock_units x unit_cost — working capital sitting
+   above par, not money leaving each month. It was added to the monthly waste
+   projection and labelled "leaking this month", while the very next card
+   showed the same dollars, correctly, as "Tied-up capital". One quantity, two
+   meanings, on adjacent cards. #}
+<div class="cap"><span>of ${{ inv.monthly_waste_projection|int|format_num }} in waste this month</span><span class="hb-num">${{ inv.annual_recoverable|int|format_num }}/yr</span></div></div>
     <div class="lb2-sg"><div class="k"><span>Waste ledger · top offenders</span></div><div class="v"><span class="hb-num">${{ inv.total_waste_cost_week|int|format_num }}</span><small>this week</small></div>
       <div class="fc2-ledger" id="fc2-ledger-waste"></div>
       <div class="cap"><span>sorted by cost — the first bar is the thing to fix</span></div></div>
@@ -3092,7 +3152,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
         {% set _delta = (item.suggested_order_qty - item.last_order_qty) if (item.suggested_order_qty and item.suggested_order_qty > 0 and item.last_order_qty is not none) else 0 %}
         <div class="row"><div class="t"><b>{{ item.item }}</b><span>{% if _grp != 'reduce' %}{{ item.days_remaining }}d left · {% endif %}last order {{ item.last_order_qty|int }}{% if item.unit %} {{ item.unit }}{% endif %}</span></div>
           <div class="q"><div class="l">{% if _delta > 0.05 %}Order {{ _delta|round|int }} more{% elif _delta < -0.05 %}Order {{ (-_delta)|round|int }} less{% else %}Order{% endif %}</div><div class="p">{% if item.suggested_order_qty == 0 %}skip{% else %}{{ item.suggested_order_qty }}{% if item.unit %} {{ item.unit }}{% endif %}{% endif %}</div>
-            <div class="s {{ 'good' if item.savings_vs_last > 0 else ('bad' if item.savings_vs_last < 0 else 'dim') }}">{% if item.savings_vs_last > 0 %}↓ ${{ item.savings_vs_last }}{% elif item.savings_vs_last < 0 %}↑ ${{ "{:.2f}".format(item.savings_vs_last * -1) }}{% else %}—{% endif %}</div></div></div>
+            <div class="s {{ 'good' if item.savings_vs_last > 0 else ('bad' if item.savings_vs_last < 0 else 'dim') }}">{% if item.savings_vs_last > 0 %}↓ ${{ "%.2f"|format(item.savings_vs_last) }}{% elif item.savings_vs_last < 0 %}↑ ${{ "{:.2f}".format(item.savings_vs_last * -1) }}{% else %}—{% endif %}</div></div></div>
         {% else %}
         <div class="none">{% if _grp == 'urgent' %}Nothing critical this week{% elif _grp == 'soon' %}Nothing upcoming this week{% else %}No reductions needed{% endif %}</div>
         {% endfor %}
@@ -3109,7 +3169,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     <div class="hd"><div><div class="hb-kicker">Price watch</div><h2>Supplier prices that moved</h2><div class="sub">Caught from your weekly submissions — a trend means it has moved more than once.</div></div></div>
     <div class="fc2-pw">
       {% for w in inv.price_watch %}
-      <div class="row {{ 'trend' if w.kind == 'trend' else '' }}"><div class="t"><b>{{ w.item }}</b><div class="pr">${{ "%.2f"|format(w.old_price) }} → ${{ "%.2f"|format(w.new_price) }}</div><div class="h">{{ w.action_hint }}</div></div><div class="pct">+{{ w.change_pct|round|int }}%<small>{% if w.kind == 'trend' %}over {{ w.weeks }} week{% if w.weeks != 1 %}s{% endif %}{% else %}this week{% endif %}</small></div></div>
+      <div class="row {{ 'trend' if w.kind == 'trend' else '' }}"><div class="t"><b>{{ w.item }}</b><div class="pr">${{ "%.2f"|format(w.old_price) }} → ${{ "%.2f"|format(w.new_price) }}</div><div class="h">{{ w.action_hint }}</div></div><div class="pct">{{ '+' if w.change_pct >= 0 else '' }}{{ w.change_pct|round|int }}%<small>{% if w.kind == 'trend' %}over {{ w.weeks }} week{% if w.weeks != 1 %}s{% endif %}{% else %}this week{% endif %}</small></div></div>
       {% endfor %}
     </div>
   </div>
@@ -3144,6 +3204,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       </div>
       {% endif %}
       <div id="fc-drift-live" style="display:none;margin-bottom:12px"></div>
+      <div class="fc2-table-scroll">
       <table class="fc2-table" id="fc-table">
         <thead><tr><th>Ingredient</th><th style="width:70px">Unit</th><th style="width:110px">Price / unit $</th><th style="width:90px">Wk usage</th><th style="width:90px"></th></tr></thead>
         <tbody id="fc-rows">
@@ -3161,6 +3222,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
           {% endif %}
         </tbody>
       </table>
+      </div>
       <div class="fc2-submit">
         <div class="l">
           <button onclick="submitFoodCostCount()" class="cbtn cbtn-primary">Submit this week's prices</button>
@@ -3192,10 +3254,24 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
   var _ostockDonutData=[
     {% for item in inv.overstock %}{"name":"{{item.item|e}}","cost":{{item.overstock_cost|round(2)}},"stock":"{{item.current_stock|int}}{% if item.unit %} {{item.unit}}{% endif %}","par":"{{item.par_level|int}}{% if item.unit %} {{item.unit}}{% endif %}"},{% endfor %}
   ];
-  var _fc2Gauge={monthly:{{ inv.recoverable_monthly|int }},annual:{{ inv.annual_recoverable|int }},ceiling:{{ [inv.recoverable_monthly|int, (inv.monthly_waste_projection + _ostock_total)|int]|max }}};
+  // Ceiling is recurring waste only — mixing a monthly flow with a one-time
+  // capital figure made the "share of the leak that is recoverable" arc a
+  // ratio of two different kinds of quantity.
+  var _fc2Gauge={monthly:{{ inv.recoverable_monthly|int }},annual:{{ inv.annual_recoverable|int }},ceiling:{{ [inv.recoverable_monthly|int, inv.monthly_waste_projection|int]|max }}};
   function _mmEsc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
   // Waste Ledger / Tied-Up Capital — every flagged item as a bar with its
   // dollars counting up beside it, sorted by cost (same chart as iOS).
+  // Cleared so the guarded one-shot renderers below run again after a
+  // submission changes the underlying figures — they used to latch on their
+  // first paint, so the hero, ledgers and gauge kept pre-submission numbers
+  // while the trend card beside them refreshed.
+  window.fc2InvalidateStaticCards=function(){
+    var ids=['fc2-ledger-waste','fc2-ledger-stock','fc2-gauge'];
+    for(var i=0;i<ids.length;i++){var el=document.getElementById(ids[i]);if(el)delete el.dataset.done;}
+    if(typeof renderWasteDonut==='function')renderWasteDonut();
+    if(typeof renderOstockDonut==='function')renderOstockDonut();
+    if(typeof renderFcGauge==='function')renderFcGauge();
+  };
   function _fc2Ledger(id,data,key,detailFn,amber){
     var el=document.getElementById(id);if(!el)return;
     if(el.dataset.done)return;el.dataset.done='1';
@@ -9045,6 +9121,7 @@ function loadInvInsight(){
   // in category by category (over-budget one in ember), not anonymous bars.
   // Loading state is the Cavnar orb already in the markup (same as Labor).
   loadWasteTrend();
+  fc2LoadFoodCostPct();
   var fiveMin=5*60*1000;
   try{
     var cached=sessionStorage.getItem('inv_insight');
@@ -9094,6 +9171,48 @@ function wtMoney(v){return '$'+Math.round(Math.abs(v||0)).toLocaleString();}
 function wtSigned(v){return (v>=0?'+':'−')+wtMoney(v);}
 function wtPct(p){return p==null?'':' ('+Math.abs(p).toLocaleString(undefined,{maximumFractionDigits:1})+'%)';}
 function wtRangeLabel(r){return r==='all'?'all history':('last '+parseInt(r,10)+' weeks');}
+// ── Actual food cost % (COGS / net sales) ───────────────────────────────────
+// The module is named Food Cost and never computed one: it measured waste, a
+// waste rate against purchases, and a theoretical plate cost per dish, while
+// restaurants.food_cost_target sat configurable, shown in admin, and read by
+// nothing. This is the number an owner reads off a P&L.
+function fc2LoadFoodCostPct(){
+  var host=document.getElementById('fc2-fcp');if(!host)return;
+  fetch('/api/food-cost/cogs',{headers:{'Accept':'application/json'}})
+    .then(function(r){return r.json();})
+    .then(function(d){
+      if(!d)return;
+      if(d.ok&&d.pct!=null){
+        var tone=d.tone||'neutral';
+        var tgt=d.target?('target '+d.target+'%'):'no target set';
+        var vs='';
+        if(d.variance_pts!=null){
+          vs=' · <b class="'+(d.variance_pts>0?'bad':'good')+'">'
+            +(d.variance_pts>0?'+':'')+d.variance_pts+' pts</b> vs '+tgt;
+        } else { vs=' · '+tgt; }
+        host.innerHTML='<div class="k">Food cost</div>'
+          +'<div class="v '+tone+'"><span class="hb-num">'+d.pct+'%</span></div>'
+          +'<div class="d">'+wtEsc(d.label||'')+vs+'</div>'
+          +'<div class="b">'+wtEsc(d.basis||'')+'</div>';
+        host.hidden=false;
+        return;
+      }
+      // No percentage. Say exactly what is missing — an owner can act on
+      // "no closing count" in a way they cannot act on a blank card.
+      var miss=(d.missing||[]);
+      if(!miss.length){host.hidden=true;return;}
+      var li='';
+      for(var i=0;i<miss.length&&i<3;i++){
+        li+='<li><b>'+wtEsc(miss[i].component||'')+'</b> — '+wtEsc(miss[i].why||'')+'</li>';
+      }
+      host.innerHTML='<div class="k">Food cost</div>'
+        +'<div class="v neutral"><span class="hb-num">—</span></div>'
+        +'<div class="d">Not enough recorded to work it out yet</div>'
+        +'<ul class="miss">'+li+'</ul>';
+      host.hidden=false;
+    })
+    .catch(function(){ host.hidden=true; });
+}
 function loadWasteTrend(force){
   var key=_wt.range;
   if(force)_wt.cache={};
@@ -9108,7 +9227,7 @@ function loadWasteTrend(force){
 }
 function wtSetRange(r){if(r===_wt.range&&_wt.data&&_wt.data.ok)return;_wt.range=r;_wt.sel=null;_wt.cat=null;loadWasteTrend();}
 function wtToggleTarget(){_wt.showTarget=!_wt.showTarget;var b=document.getElementById('fc2-wt-target-tgl');if(b){b.classList.toggle('on',_wt.showTarget);b.setAttribute('aria-pressed',_wt.showTarget?'true':'false');}if(_wt.data&&_wt.data.ok){wtDrawChart();wtDrawLegend();}}
-function wtSetCat(c){_wt.cat=(_wt.cat===c)?null:c;if(_wt.data&&_wt.data.ok){wtDrawChart();wtDrawDrill();}}
+function wtSetCat(c){_wt.cat=(_wt.cat===c)?null:c;if(_wt.data&&_wt.data.ok){/* Every part of the card, not just the bars: the KPI tiles, the verdict and the legend describe the whole series, so filtering to one category used to leave two different quantities side by side with nothing saying so. */wtDrawHeader(_wt.data);wtDrawKpis(_wt.data);wtDrawChart();wtDrawLegend();wtDrawDrill();}}
 function wtSelect(i){_wt.sel=(_wt.sel===i)?null:i;wtDrawChart();wtDrawDrill();}
 function wtShow(id,on){var el=document.getElementById(id);if(el)el.hidden=!on;}
 function renderWasteTrend(){
@@ -9139,10 +9258,13 @@ function wtRenderEmpty(d){
 }
 function wtDrawHeader(d){
   var s=d.stats,n=d.weeks.length,v=document.getElementById('fc2-wt-verdict'),pill=document.getElementById('fc2-wt-pill');
-  var text;
-  if(s.direction==='worsening')text='Waste is climbing';
-  else if(s.direction==='improving')text='Waste is coming down';
-  else if(s.direction==='flat')text='Waste is holding steady';
+  // Scoped in words, so this can't read as contradicting the page headline
+  // above it — that one is this week against the benchmark, this one is the
+  // direction across the whole range.
+  var text,span=' over '+n+' weeks';
+  if(s.direction==='worsening')text='Waste is climbing'+span;
+  else if(s.direction==='improving')text='Waste is coming down'+span;
+  else if(s.direction==='flat')text='Waste is holding steady'+span;
   else if(n>=2&&s.wow_delta!=null)text=Math.abs(s.wow_delta)<1?'Level with last week':(s.wow_delta>0?'Waste rose this week':'Waste fell this week');
   else text='First week recorded';
   if(v)v.textContent=text;
@@ -9166,6 +9288,10 @@ function wtDrawRanges(d){
 function wtDrawKpis(d){
   var s=d.stats,n=d.weeks.length,box=document.getElementById('fc2-wt-kpis');if(!box)return;
   wtShow('fc2-wt-kpis',true);
+  // These four figures are always the whole series. When the chart below is
+  // filtered to one category they no longer describe what is drawn, so say so
+  // rather than leaving the reader to assume they match.
+  var catNote=_wt.cat?'<div class="fc2-wt-kpinote">Figures below cover all categories — the chart is filtered to '+wtEsc(_wt.cat)+'.</div>':'';
   var hasT=!!(d.target&&d.target.weekly);
   function tile(l,v,vcls,dd){return '<div class="fc2-wt-kpi"><div class="l">'+l+'</div><div class="v'+(vcls?' '+vcls:'')+'">'+v+'</div><div class="d">'+dd+'</div></div>';}
   function arrow(x){return x>=0?'↑':'↓';}
@@ -9174,8 +9300,12 @@ function wtDrawKpis(d){
   var t3v='—',t3c='',t3d='add purchase data to set a target';
   if(hasT){t3v=wtSigned(s.gap_weekly)+'<span style="font-size:14px;font-weight:400;color:var(--ink3)">/wk</span>';t3c=s.gap_weekly>0?'bad':'good';t3d='target '+wtMoney(d.target.weekly)+'/wk · <b>'+s.weeks_over_target+' of '+n+'</b> weeks over';}
   var t4v='—',t4c='',t4d='needs a target';
-  if(hasT){if(s.savings_if_at_target>0){t4v=wtMoney(s.savings_if_at_target)+'<span style="font-size:14px;font-weight:400;color:var(--ink3)">/yr</span>';t4c='good';t4d='if 4-wk waste is brought to target';}else{t4v='$0';t4c='good';t4d='already under target — '+wtMoney(s.annualized_if_target-s.annualized_current)+'/yr below it';}}
-  box.innerHTML=tile('This week',wtMoney(s.latest),'',t1d)
+  // Annualizing needs enough weeks to be worth stating. rolling4 is computed
+  // at any n, so with two weeks on file this tile used to put a confident
+  // "$X/yr" in front of an owner on the strength of a fortnight.
+  if(hasT&&n<4){t4v='—';t4c='';t4d='needs '+(4-n)+' more week'+(4-n===1?'':'s')+' before an annual figure means anything';}
+  else if(hasT){if(s.savings_if_at_target>0){t4v=wtMoney(s.savings_if_at_target)+'<span style="font-size:14px;font-weight:400;color:var(--ink3)">/yr</span>';t4c='good';t4d='if 4-wk waste is brought to target';}else{t4v='$0';t4c='good';t4d='already under target — '+wtMoney(s.annualized_if_target-s.annualized_current)+'/yr below it';}}
+  box.innerHTML=catNote+tile('This week',wtMoney(s.latest),'',t1d)
     +tile('4-week average',wtMoney(s.rolling4),'',t2d)
     +tile('vs target',t3v,t3c,t3d)
     +tile('Annual opportunity',t4v,t4c,t4d);
@@ -9213,7 +9343,12 @@ function wtDrawChart(){
   // bars rather than racing them.
   var barsDoneMs=animate?((n-1)*(dense?18:140)+1700):0;
   var lineDrawMs=800;
-  var svg='<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none" aria-hidden="true">';
+  // xMidYMid meet, not none: with "none" the viewBox stretched to the
+  // container width, so on a phone the x-scale was roughly half the y-scale
+  // and every $ label, SPIKE/BEST/WORST tag and rule label was squeezed to
+  // half width. The gauge and the Intel chart in this same file already use
+  // meet — this was the odd one out.
+  var svg='<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Weekly waste, '+n+' weeks">';
   // A soft resting shadow (gives each bar a "lifted off the page" feel
   // without the heavy black glow the old wide-blur version left between
   // bars) plus a vertical gradient per tone — brand ember on top, a
@@ -9223,6 +9358,7 @@ function wtDrawChart(){
     +'<filter id="fc2wtLift" x="-60%" y="-40%" width="220%" height="180%"><feDropShadow dx="0" dy="2" stdDeviation="3.5" flood-color="#000" flood-opacity=".3"/></filter>'
     +'<linearGradient id="fc2wtBarBad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#e2814f"/><stop offset="42%" stop-color="#c84b2f"/><stop offset="100%" stop-color="#9c3620"/></linearGradient>'
     +'<linearGradient id="fc2wtBarGood" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#72d4a3"/><stop offset="42%" stop-color="#4ead7a"/><stop offset="100%" stop-color="#337d59"/></linearGradient>'
+    +'<linearGradient id="fc2wtBarNeutral" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#8d8378"/><stop offset="42%" stop-color="#6d645b"/><stop offset="100%" stop-color="#4a4038"/></linearGradient>'
     +'</defs>';
   for(var g=1;g<=4;g++){var gy=y(top*g/4);svg+='<line x1="0" y1="'+gy.toFixed(1)+'" x2="'+W+'" y2="'+gy.toFixed(1)+'" stroke="currentColor" stroke-opacity=".07"/>';}
   svg+='<line x1="0" y1="'+base+'" x2="'+W+'" y2="'+base+'" stroke="currentColor" stroke-opacity=".14"/>';
@@ -9252,7 +9388,11 @@ function wtDrawChart(){
       bars+='<rect class="fc2-wt-bar" data-i="'+i+'" x="'+x.toFixed(1)+'" y="'+(base-8).toFixed(1)+'" width="'+bw.toFixed(1)+'" height="8" rx="2" fill="none" stroke="currentColor" stroke-opacity=".35" stroke-dasharray="3 3"/>';
     } else {
       var over=target?val>target:false,bh=Math.max(2,base-y(val)),by=base-bh;
-      var fill=over?'url(#fc2wtBarBad)':(target?'url(#fc2wtBarGood)':'url(#fc2wtBarBad)'),op=isLast?1:(over?.92:.78);
+      // With no target there is nothing to be over, so nothing is "bad".
+      // Every bar used to render in the over-target ember, which reads as an
+      // entire history of failure to a restaurant that simply has no purchase
+      // data to imply a target from yet.
+      var fill=target?(over?'url(#fc2wtBarBad)':'url(#fc2wtBarGood)'):'url(#fc2wtBarNeutral)',op=isLast?1:(over?.92:.78);
       var stroke=f.anomaly==='spike'?' stroke="#e05555" stroke-width="2"':(isLast?' stroke="#e8956a" stroke-width="1.5" stroke-opacity=".9"':' stroke="rgba(255,255,255,.14)" stroke-width="1"');
       var delay=animate?' style="animation-delay:'+(i*(dense?18:140))+'ms"':'';
       bars+='<rect class="fc2-wt-bar'+(animate?' hb-bar':'')+(on?' on':'')+'" data-i="'+i+'" x="'+x.toFixed(1)+'" y="'+by.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+bh.toFixed(1)+'" rx="'+(dense?3:6)+'" fill="'+fill+'" fill-opacity="'+op+'" filter="url(#fc2wtLift)"'+stroke+delay+'/>';
@@ -9264,6 +9404,7 @@ function wtDrawChart(){
       }
     }
     // Full-column hit area so a short bar is as easy to hover as a tall one.
+    // (The table equivalent below carries the same numbers for screen readers.)
     bars+='<rect class="fc2-wt-hit" data-i="'+i+'" x="'+(x-gap/2).toFixed(1)+'" y="0" width="'+(bw+gap).toFixed(1)+'" height="'+H+'" fill="transparent"/>';
   }
   svg+=bars;
@@ -9300,7 +9441,12 @@ function wtDrawChart(){
   }
   if(labels)svg+='<g'+fadeIn+'>'+labels+'</g>';
   svg+='</svg>';
-  host.innerHTML='<div class="y">'+yLab+'</div><div class="plot">'+svg+'<div class="ax">'+ax+'</div></div>';
+  // A text equivalent of the same series. The chart itself is a picture to a
+  // screen reader; without this the whole card was unreadable to one.
+  var tbl='<table class="sr-only"><caption>Weekly waste</caption><thead><tr><th>Week ending</th><th>Waste</th></tr></thead><tbody>';
+  for(var ti=0;ti<n;ti++){var tv=vals[ti];tbl+='<tr><td>'+wtEsc(weeks[ti].label)+'</td><td>'+(tv==null?'not recorded':wtMoney(tv))+'</td></tr>';}
+  tbl+='</tbody></table>';
+  host.innerHTML='<div class="y">'+yLab+'</div><div class="plot">'+svg+'<div class="ax">'+ax+'</div></div>'+tbl;
   host.classList.remove('hov');
   // Some browsers don't repaint an already-inserted SVG <text> once a
   // webfont it's waiting on finishes loading (unlike ordinary HTML text,
