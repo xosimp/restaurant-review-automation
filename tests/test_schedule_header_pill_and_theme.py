@@ -137,18 +137,18 @@ def test_dark_header_uses_obsidian():
     assert "--hdr-bg:#1a1714" in css
 
 
-# ── page background: softer obsidian + smoother gradient ────────────────────
-# A follow-up round: #0c0c0c itself started reading as a harsh "jet black"
-# once seen next to the login screen's card, which sits on var(--paper)
-# (#1a1714) — the same warm near-black used throughout the app's own dark
-# theme. The page background matches that token instead of a flat literal
-# black.
-#
-# The background then became a layered CSS system (BACKGROUND SYSTEM in
-# dashboard.html): one fixed body::before canvas — grain, vignette, a side
-# glow, the module's key glow, a floor lift, and a base with a top-to-bottom
-# depth change — with each module contributing only its ambient accent via
-# data-page on <html>. setPageBg() no longer paints anything itself.
+# ── page background: from decoration to a flat workspace tone ───────────────
+# Three rounds, in order: (1) #0c0c0c itself read as a harsh jet black next
+# to the login card's #1a1714, so the page background moved to that token;
+# (2) it became a layered body::before canvas — grain, vignette, a side
+# glow, a per-module key glow via data-page, a floor lift — smoothed twice
+# over for banding; (3) that whole system was the actual problem: a radial
+# glow plus a film-grain dither is decoration competing with the content it
+# sits behind, however carefully tuned. It is gone. The workspace
+# background is now one flat, matte `html{background:var(--bg-base)}` —
+# no pseudo-element, no gradient, no grain, no per-module accent, nothing
+# that can band because there is no adjacent shade to band against.
+# setPageBg() is an intentional no-op kept only as a seam for call sites.
 
 _PAGES = ("home", "reviews", "labor", "inventory", "marketing", "competitor", "account")
 
@@ -161,102 +161,43 @@ def _main_css():
     return s[i:s.index("</style>", i)]
 
 
-def _bg_css():
-    s = _src()
-    i = s.index("body::before{")
-    return s[i:s.index("}", i)]
-
-
-def test_page_background_uses_the_warm_paper_black_not_flat_jet_black():
-    s = _src()
+def test_workspace_background_is_one_flat_tone_with_no_decoration():
+    """The whole point of the rewrite: nothing left to band, glow, or draw
+    the eye. No pseudo-element canvas, no gradient/radial/grain/vignette,
+    no per-module accent variable, no @property color animation."""
     css = _main_css()
-    assert "#0c0c0c" not in css.split("BACKGROUND SYSTEM", 1)[1].split("/* Header and tab strip", 1)[0]
-    # The base token sits ~3 levels under #1a1714 because the dither tile
-    # (below) adds a mean ~3.5 levels on top; the composite is #1a1714.
-    assert "--bg-base:#171411" in css and "--bg-base-hi:#1a1714" in css
     assert "html{background:var(--bg-base)" in css
-    # The pre-paint script sets the theme and the page accent — nothing else.
+    assert "--bg-base:#141110" in css
+    # Scoped to the workspace-background block itself (through the next
+    # unrelated rule) — a blanket search over the whole stylesheet would
+    # also flag other components' own, unrelated gradients (e.g. the Ask
+    # panel's), which is not what this test is about.
+    block = css.split("WORKSPACE BACKGROUND", 1)[1].split("/* Review status badge", 1)[0]
+    for gone in (
+        "body::before", "background-image:", "radial-gradient(", "linear-gradient(180deg,var(--bg-base",
+        "--bg-accent", "--bg-grain", "data-page", "@property", "feTurbulence", "grain.png",
+    ):
+        assert gone not in block, "workspace background should carry no decoration: found %r" % gone
+    assert not os.path.exists(os.path.join(ROOT, "static", "bg", "grain.png"))
+    assert not os.path.exists(os.path.join(ROOT, "scripts", "gen_bg_grain.py"))
+
+
+def test_pre_paint_script_only_sets_the_theme():
+    """The pre-paint <script> used to also stamp a per-page accent (first
+    from data-page, keyed off the URL hash) before first paint. With no
+    per-page accent left to avoid flashing, it should do exactly one thing."""
+    s = _src()
     pre_paint = s.split("<script>", 1)[1].split("</script>", 1)[0]
-    assert "'data-theme','dark'" in pre_paint and "data-page" in pre_paint
-    assert "backgroundImage" not in pre_paint
+    assert pre_paint.strip() == "document.documentElement.setAttribute('data-theme','dark');"
 
 
-def test_page_background_is_css_not_painted_by_setPageBg():
+def test_setPageBg_is_an_intentional_noop():
     fn = _fn("setPageBg")
-    assert "backgroundImage" not in fn and "backgroundColor" not in fn
-    assert "setAttribute('data-page'" in fn
-    for page in _PAGES:
-        assert page + ":1" in fn, page
-
-
-def test_page_background_is_one_fixed_canvas_with_the_expected_layers():
-    """position:fixed on a pseudo-element, not background-attachment:fixed
-    (which repaints every scroll frame on Safari) and not extra DOM."""
-    css = _bg_css()
-    assert "position:fixed" in css and "z-index:-1" in css and "pointer-events:none" in css
-    assert "background-attachment" not in css
-    assert "var(--bg-grain)" in css                       # grain
-    assert "rgba(0,0,0,0.22) 100%" in css                 # vignette
-    assert "var(--bg-accent2)" in css                     # side glow
-    assert "var(--bg-accent)" in css                      # key glow
-    assert "rgba(240,235,224,0.04)" in css                 # floor lift
-    assert "var(--bg-base-hi)" in css and "var(--bg-base-lo)" in css  # base depth
-    assert "background-blend-mode:normal,normal" in css, \
-        "the grain must blend normal — overlay scales with a near-black base and dithers nothing"
-
-
-def test_grain_tile_is_a_real_dither_not_an_invisible_overlay():
-    """Bands between 8-bit levels are only removed by per-pixel noise of
-    about a level in absolute terms. The committed tile is white at a
-    random 0–7/255 alpha (scripts/gen_bg_grain.py); pin that so nobody
-    quietly turns it back down to something that looks like nothing and
-    does nothing."""
-    from PIL import Image
-    path = os.path.join(ROOT, "static", "bg", "grain.png")
-    assert os.path.exists(path), "run scripts/gen_bg_grain.py"
-    im = Image.open(path)
-    assert im.mode == "LA"
-    lum = [p[0] for p in im.get_flattened_data()] if hasattr(im, "get_flattened_data") else [p[0] for p in im.getdata()]
-    alpha = [p[1] for p in im.get_flattened_data()] if hasattr(im, "get_flattened_data") else [p[1] for p in im.getdata()]
-    assert set(lum) == {255}, "dither pixels are white; the alpha carries the noise"
-    assert min(alpha) == 0 and 5 <= max(alpha) <= 10, (min(alpha), max(alpha))
-    assert 2.5 <= sum(alpha) / len(alpha) <= 5
-    css = _main_css()
-    assert "--bg-grain:url('/static/bg/grain.png')" in css
-    assert "feTurbulence type=" not in css   # the SVG filter tile is gone (the comment may still name it)
-
-
-def test_every_fade_is_cosine_sampled_not_a_handful_of_kinks():
-    """A slope change at every stop reads as a faint curved line across the
-    page. Each radial fade is sampled from a cosine at 8+ stops so no single
-    stop carries a visible kink, and each ends on `transparent` at zero
-    slope rather than a hard edge."""
-    css = _bg_css()
-    fades = re.findall(r"radial-gradient\((.*?)\),\n", css)
-    assert len(fades) == 4, fades
-    for fade in fades:
-        stops = re.findall(r"(?:\)|transparent|[0-9]) (\d+(?:\.\d+)?)%(?=,|$)", fade)
-        assert len(stops) >= 9, "fade with too few stops to be smooth: %s" % fade[:80]
-        assert fade.rstrip().endswith("transparent %s%%" % stops[-1]) or "0.22) 100%" in fade
-
-
-def test_page_background_key_glow_has_enough_stops_to_avoid_banding():
-    css = _bg_css()
-    assert "at 50% -8%," in css, "key glow not found in body::before"
-    glow = css.split("at 50% -8%,", 1)[1].split("\n", 1)[0]
-    stops = re.findall(r"transparent\)\s*\d+(?:\.\d+)?%|transparent \d+%", glow)
-    assert len(stops) >= 7, "gradient should have enough stops for a smooth falloff, found %r" % stops
-
-
-def test_every_module_has_its_own_ambient_accent_and_they_crossfade():
-    css = _main_css()
-    for page in _PAGES[1:]:
-        assert 'html[data-page="%s"]{--bg-accent:#' % page in css, page
-    # Home is the :root default — brand ember.
-    assert "--bg-accent:#c84b2f;--bg-accent2:#e8956a" in css
-    assert "@property --bg-accent{syntax:'<color>'" in css
-    assert "transition:--bg-accent .8s ease,--bg-accent2 .8s ease" in css
-    assert "@media (prefers-reduced-motion:reduce){body::before{transition:none}}" in css
+    assert "setAttribute" not in fn and "backgroundImage" not in fn and "backgroundColor" not in fn
+    # Still called from every tab switch — the seam stays even though it
+    # currently does nothing, so no call site needed to change.
+    s = _src()
+    assert s.count("setPageBg(") >= 3
 
 
 def test_containers_share_one_elevation_system():

@@ -9,17 +9,7 @@
 <link rel="icon" type="image/png" href="/favicon.png">
 <link rel="shortcut icon" href="/favicon.ico">
 <meta name="theme-color" content="#1a1714">
-<script>(function(){
-  var d=document.documentElement;
-  d.setAttribute('data-theme','dark');
-  // The page background is pure CSS (see BACKGROUND SYSTEM in the
-  // stylesheet); the only per-page input is the module's ambient accent,
-  // keyed off data-page. Set it before first paint from the hash so a
-  // reload on Food Cost opens under amber instead of flashing Home's
-  // ember and then crossfading.
-  var h=(location.hash||'').replace('#','');
-  d.setAttribute('data-page',/^[a-z]+$/.test(h)?h:'home');
-})();</script>
+<script>document.documentElement.setAttribute('data-theme','dark');</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Bricolage+Grotesque:opsz,wght@12..96,700&display=block" rel="stylesheet">
@@ -39,92 +29,35 @@
   --surface:#201d19;--hdr-bg:#1a1714;--qw-track:#5c4f3a
 }
 html[data-theme="dark"] body{color:var(--ink)}
-/* ── BACKGROUND SYSTEM ──────────────────────────────────────────────────────
-   One fixed canvas behind every tab, built from layers rather than a single
-   gradient. Top to bottom of the stack:
-     grain     — a tiled dither (static/bg/grain.png, from
-                 scripts/gen_bg_grain.py) over the lot: white pixels at a
-                 random 0–7/255 alpha, blended NORMAL so each pixel gains a
-                 random 0–6 levels whatever is beneath it. Between two 8-bit
-                 levels a slow gradient spans 50–150px and every step shows
-                 as a band — on any display, in any browser, with any number
-                 of stops. Per-pixel noise of about a level is the only cure.
-                 (An overlay-blended feTurbulence tile was tried first: overlay
-                 scales with the colour beneath, and on a near-black base ±7%
-                 is under one level — invisible, and no dither at all.) The
-                 grain's mean lift (~3.5 levels) is paid back by the base
-                 tokens sitting that much darker, so the composite is #1a1714.
-     vignette  — pulls the four corners back so the middle of the page reads
-                 as lit and the edges recede.
-     side glow — a smaller, second-accent glow off-axis top-right, so the
-                 light reads as lighting from somewhere rather than a logo
-                 stamped at top-centre.
-     key glow  — the module's ambient accent from above. Sized in clamp()ed
-                 px, not %, so a 3440px ultra-wide gets a pool of light and a
-                 phone gets one that still reaches the first section, and a
-                 5,000px review inbox gets the same top glow as Home rather
-                 than an orange wash stretched over the whole scroll.
-     floor     — a faint warm-white lift at the bottom-left, so the bottom of
-                 the page has depth instead of falling into flat black.
-     base      — the warm obsidian, a shade lighter at the top than the
-                 bottom.
-   It all lives on body::before — no extra DOM — position:fixed so it is
-   painted once and composited on scroll (background-attachment:fixed is
-   the thing that repaints every frame on Safari; this is not that).
-   Each module changes only --bg-accent / --bg-accent2, via data-page on
-   <html> (setPageBg); the layers never change, so every page is the same
-   background under a slightly different light. The two accents are
-   registered with @property so a tab switch crossfades the light instead
-   of snapping. */
+/* ── WORKSPACE BACKGROUND ─────────────────────────────────────────────────
+   The canvas behind every module (Home, Reviews, Labor, Food Cost,
+   Marketing, Intel, Account) is one flat, matte tone — html{background}
+   below is the whole thing. No gradient, no glow, no grain, no vignette,
+   no per-module accent: this is application chrome, not a hero section,
+   and a radial ember glow plus a film-grain dither (the previous two
+   rounds) read as decoration competing with the charts and cards it sat
+   behind however much either was toned down. A flat color also has no
+   adjacent shade to band against, so it can't reintroduce the banding
+   problem the gradient version needed a dither to work around in the
+   first place — the fix for "the background draws attention" is not a
+   quieter decoration, it's no decoration.
+   Depth instead comes from the containers: a three-step luminance
+   staircase — base (darkest) < header/tab chrome (translucent, blurred,
+   a shade up) < card surface (lightest, --surface) — plus one hairline
+   top highlight and two mostly-black shadows (--elev-1 resting, --elev-2
+   hover) shared by every card, stat tile and panel below. Hide every
+   card on top of this and the canvas alone should look like nothing in
+   particular; that is the point, not a bug. */
 :root{
-  --bg-base:#171411;--bg-base-hi:#1a1714;--bg-base-lo:#110e0c; /* + grain mean ≈ #1a1714 */
-  --bg-accent:#c84b2f;--bg-accent2:#e8956a;
-  --bg-grain:url('/static/bg/grain.png');
-  /* Elevation — how a container floats above the canvas. A 1px inner
-     highlight along the top edge (the light comes from above), a tight
-     contact shadow, and a long soft ambient one. Never a heavy drop. */
-  --line-hi:rgba(255,255,255,.075);
-  --surface-glass:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.012) 60%,rgba(255,255,255,0));
-  --elev-1:inset 0 1px 0 rgba(255,255,255,.05),0 1px 2px rgba(0,0,0,.28),0 14px 34px -16px rgba(0,0,0,.6);
-  --elev-2:inset 0 1px 0 rgba(255,255,255,.065),0 2px 4px rgba(0,0,0,.32),0 24px 52px -18px rgba(0,0,0,.7);
+  --bg-base:#141110;
+  --line-hi:rgba(255,255,255,.07);
+  --surface-glass:linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,.01) 55%,rgba(255,255,255,0));
+  --elev-1:inset 0 1px 0 rgba(255,255,255,.045),0 1px 2px rgba(0,0,0,.22),0 12px 28px -16px rgba(0,0,0,.46);
+  --elev-2:inset 0 1px 0 rgba(255,255,255,.06),0 2px 5px rgba(0,0,0,.26),0 20px 40px -18px rgba(0,0,0,.55);
 }
-@property --bg-accent{syntax:'<color>';inherits:true;initial-value:#c84b2f}
-@property --bg-accent2{syntax:'<color>';inherits:true;initial-value:#e8956a}
-/* Per-module ambient light. Intensity is carried by the colour itself — a
-   darker or less saturated accent mixed at the same percentages is simply
-   a quieter light — so there is one knob per module, not three. */
-html[data-page="reviews"]{--bg-accent:#c9703a;--bg-accent2:#d9a441}
-html[data-page="labor"]{--bg-accent:#b0442a;--bg-accent2:#d0784a}
-html[data-page="inventory"]{--bg-accent:#b3782f;--bg-accent2:#d4a030}
-html[data-page="marketing"]{--bg-accent:#c8683a;--bg-accent2:#dcae4a}
-html[data-page="competitor"]{--bg-accent:#b43a2a;--bg-accent2:#d4573a}
-html[data-page="account"]{--bg-accent:#6f4a3e;--bg-accent2:#8a6a55}
 html{background:var(--bg-base);min-height:100%}
-body::before{
-  content:'';position:fixed;inset:0;z-index:-1;pointer-events:none;
-  background-color:var(--bg-base);
-  /* Every fade below follows a cosine curve sampled at 8–14 stops. A
-     hand-picked stop list has a slope change at every stop, and the eye
-     reads each one as a faint curved line across the page (a Mach band) —
-     that, not 8-bit quantisation, is what showed as "bands". A cosine has
-     no kinks and a flat slope at both ends, so a glow simply dissolves
-     instead of ending on an edge. The grain then dithers what is left. */
-  background-image:
-    var(--bg-grain),
-    radial-gradient(ellipse 115% 95% at 50% 42%,transparent 48%,rgba(0,0,0,0.005) 53.2%,rgba(0,0,0,0.021) 58.4%,rgba(0,0,0,0.045) 63.6%,rgba(0,0,0,0.076) 68.8%,rgba(0,0,0,0.11) 74%,rgba(0,0,0,0.144) 79.2%,rgba(0,0,0,0.175) 84.4%,rgba(0,0,0,0.199) 89.6%,rgba(0,0,0,0.215) 94.8%,rgba(0,0,0,0.22) 100%),
-    radial-gradient(ellipse clamp(420px,44vw,780px) clamp(260px,40vh,520px) at 86% 4%,color-mix(in srgb,var(--bg-accent2) 11%,transparent) 0%,color-mix(in srgb,var(--bg-accent2) 10.7%,transparent) 7.4%,color-mix(in srgb,var(--bg-accent2) 9.9%,transparent) 14.8%,color-mix(in srgb,var(--bg-accent2) 8.7%,transparent) 22.2%,color-mix(in srgb,var(--bg-accent2) 7.2%,transparent) 29.6%,color-mix(in srgb,var(--bg-accent2) 5.5%,transparent) 37%,color-mix(in srgb,var(--bg-accent2) 3.8%,transparent) 44.4%,color-mix(in srgb,var(--bg-accent2) 2.3%,transparent) 51.8%,color-mix(in srgb,var(--bg-accent2) 1.1%,transparent) 59.2%,color-mix(in srgb,var(--bg-accent2) 0.3%,transparent) 66.6%,transparent 74%),
-    radial-gradient(ellipse clamp(720px,90vw,1560px) clamp(420px,60vh,780px) at 50% -8%,color-mix(in srgb,var(--bg-accent) 32%,transparent) 0%,color-mix(in srgb,var(--bg-accent) 31.6%,transparent) 6.4%,color-mix(in srgb,var(--bg-accent) 30.4%,transparent) 12.9%,color-mix(in srgb,var(--bg-accent) 28.5%,transparent) 19.3%,color-mix(in srgb,var(--bg-accent) 26%,transparent) 25.7%,color-mix(in srgb,var(--bg-accent) 22.9%,transparent) 32.1%,color-mix(in srgb,var(--bg-accent) 19.6%,transparent) 38.6%,color-mix(in srgb,var(--bg-accent) 16%,transparent) 45%,color-mix(in srgb,var(--bg-accent) 12.4%,transparent) 51.4%,color-mix(in srgb,var(--bg-accent) 9.1%,transparent) 57.9%,color-mix(in srgb,var(--bg-accent) 6%,transparent) 64.3%,color-mix(in srgb,var(--bg-accent) 3.5%,transparent) 70.7%,color-mix(in srgb,var(--bg-accent) 1.6%,transparent) 77.1%,color-mix(in srgb,var(--bg-accent) 0.4%,transparent) 83.6%,transparent 90%),
-    radial-gradient(ellipse clamp(520px,62vw,1100px) clamp(240px,36vh,460px) at 6% 104%,rgba(240,235,224,0.04) 0%,rgba(240,235,224,0.038) 9.5%,rgba(240,235,224,0.034) 19%,rgba(240,235,224,0.028) 28.5%,rgba(240,235,224,0.02) 38%,rgba(240,235,224,0.012) 47.5%,rgba(240,235,224,0.006) 57%,rgba(240,235,224,0.002) 66.5%,transparent 76%),
-    linear-gradient(180deg,var(--bg-base-hi) 0%,var(--bg-base) 42%,var(--bg-base-lo) 100%);
-  background-repeat:repeat,no-repeat,no-repeat,no-repeat,no-repeat,no-repeat;
-  background-size:192px 192px,auto,auto,auto,auto,auto;
-  background-blend-mode:normal,normal,normal,normal,normal,normal;
-  transition:--bg-accent .8s ease,--bg-accent2 .8s ease;
-}
-@media (prefers-reduced-motion:reduce){body::before{transition:none}}
-/* Header and tab strip read as one dark band floating over the canvas:
-   the same translucent obsidian with a light blur so content slides under
-   the header, and one hairline under the tabs instead of a hard edge. */
+/* Header and tab strip read as one translucent plane above the flat
+   canvas: a light blur, a hairline instead of a hard edge. */
 [data-theme="dark"] .hdr,[data-theme="dark"] .tabs{background:rgba(26,23,20,.86)!important;-webkit-backdrop-filter:blur(14px) saturate(1.25);backdrop-filter:blur(14px) saturate(1.25)}
 [data-theme="dark"] .tabs{border-top:none!important;border-bottom:1px solid var(--line-hi)}
 [data-theme="dark"] .hdr-restaurant,[data-theme="dark"] .hdr-user,[data-theme="dark"] .logout-btn{background:transparent!important}
@@ -164,7 +97,7 @@ body::before{
 .qw-slider::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;border-radius:50%;background:var(--qw-fill);border:none;cursor:pointer;margin-top:-5px}
 .qw-slider::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:var(--qw-fill);border:none;cursor:pointer}
 .qw-slider::-moz-range-track{height:6px;border-radius:3px;background:var(--qw-track)}
-/* Header & tabs: see BACKGROUND SYSTEM above (they float over the canvas). */
+/* Header & tabs: see WORKSPACE BACKGROUND above (they float over the canvas). */
 [data-theme="dark"] .tab{color:rgba(240,235,224,.42)!important}
 [data-theme="dark"] .tab:hover{color:var(--ink)!important}
 [data-theme="dark"] .tab.active{color:var(--ink)!important}
@@ -181,7 +114,7 @@ body::before{
 [data-theme="dark"] .stat.hi{background:var(--red-bg)!important;border-color:#4a1c1c!important}
 [data-theme="dark"] .stat.warn{background:var(--amber-bg)!important;border-color:#4a3808!important}
 /* AI insight box — must NOT use --ink which is now cream */
-[data-theme="dark"] .insight{background:var(--surface-glass),var(--bg-base-lo)!important;border:1px solid var(--line-hi);box-shadow:var(--elev-1)}
+[data-theme="dark"] .insight{background:var(--surface-glass),var(--bg-base)!important;border:1px solid var(--line-hi);box-shadow:var(--elev-1)}
 [data-theme="dark"] .insight .insight-text{color:rgba(240,235,224,.82)!important}
 [data-theme="dark"] .insight-lbl{color:var(--ink3)!important}
 /* Toolbar & filters */
@@ -5961,14 +5894,10 @@ function _moveTabIndicator(tabEl){
 }
 function _dark(){return document.documentElement.getAttribute('data-theme')==='dark';}
 function setPageBg(n){
-  // The background itself is CSS — one fixed canvas of layered gradients
-  // behind every tab (BACKGROUND SYSTEM in the stylesheet). The only thing
-  // that changes per module is its ambient accent, keyed off data-page on
-  // <html>; the layers, grain and vignette are shared, so every page is the
-  // same background under a slightly different light, and the @property-
-  // registered accents crossfade rather than snap. Dark is the only theme.
-  var known={home:1,reviews:1,labor:1,inventory:1,marketing:1,competitor:1,account:1};
-  document.documentElement.setAttribute('data-page',known[n]?n:'home');
+  // Intentionally a no-op. The workspace background is one flat tone for
+  // every module now (WORKSPACE BACKGROUND in the stylesheet) — there is
+  // no per-page state left to set. Kept (rather than removing it and every
+  // call site) as the seam if a future need re-adds page-aware chrome.
 }
 function switchTab(n,btn){
   setPageBg(n);
