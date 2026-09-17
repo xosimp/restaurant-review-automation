@@ -2517,16 +2517,43 @@ def _seed_gia_mia(db_path: str = DB_PATH):
 
 # ── Restaurant CRUD ───────────────────────────────────────────────────────────
 
+# Alert-configuration fields on the Restaurant dataclass (models.py:~409-441)
+# predate this INSERT and were never added to it — a value passed to any of
+# these at creation (e.g. Restaurant(al_1star_sms=1, ...)) was silently
+# dropped; the new row got whatever the column's own ALTER TABLE ... DEFAULT
+# is regardless. update_restaurant()'s whitelist already has all of these
+# correctly; this list and its VALUES are built from getattr(r, ...) rather
+# than typed out positionally, since a 40+ item literal tuple is exactly
+# where a hand-counted "?" placeholder silently drifts from its value.
+_ALERT_CONFIG_FIELDS = (
+    "alert_1star", "alert_2star", "alert_health", "alert_neg_spike",
+    "alert_negative_trend", "alert_no_response", "alert_5star",
+    "alert_rating_threshold", "alert_rating_floor", "alert_labor_over",
+    "alert_any_review", "alert_resp_approved",
+    "urgent_via_email", "urgent_via_sms",
+    "al_health_email", "al_health_sms", "al_health_push",
+    "al_1star_email", "al_1star_sms", "al_1star_push",
+    "al_2star_email", "al_2star_sms", "al_2star_push",
+    "al_5star_email", "al_5star_sms", "al_5star_push",
+    "al_spike_email", "al_spike_sms", "al_spike_push",
+    "al_unres_email", "al_unres_sms", "al_unres_push",
+)
+
+
 def create_restaurant(r: Restaurant, db_path: str = DB_PATH) -> int:
     conn = get_conn(db_path)
-    cur = conn.execute("""
+    alert_cols = ", ".join(_ALERT_CONFIG_FIELDS)
+    alert_qs = ", ".join("?" * len(_ALERT_CONFIG_FIELDS))
+    alert_vals = tuple(getattr(r, f) for f in _ALERT_CONFIG_FIELDS)
+    cur = conn.execute(f"""
         INSERT INTO restaurants (name, owner_email, google_place_id, yelp_business_id,
             voice_notes, neighborhood, vibe, known_for, sign_off_name, never_say,
             hourly_rate, labor_target_pct, stripe_customer_id,
             location_group, location_name, pos_system, reviews_live, billing_status, is_demo,
             service_tier, module_reviews, module_labor, module_inventory, module_marketing,
-            owner_name, owner_phone, digest_day, digest_enabled, created_at, timezone)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            owner_name, owner_phone, digest_day, digest_enabled, created_at, timezone,
+            {alert_cols})
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, {alert_qs})
     """, (r.name, r.owner_email, r.google_place_id, r.yelp_business_id,
           r.voice_notes, r.neighborhood, r.vibe, r.known_for,
           r.sign_off_name, r.never_say, r.hourly_rate, r.labor_target_pct,
@@ -2535,7 +2562,7 @@ def create_restaurant(r: Restaurant, db_path: str = DB_PATH) -> int:
           r.module_reviews, r.module_labor, r.module_inventory,
           r.module_marketing, r.owner_name, r.owner_phone,
           r.digest_day, r.digest_enabled, r.created_at,
-          r.timezone or "America/Chicago"))
+          r.timezone or "America/Chicago") + alert_vals)
     conn.commit()
     rid = cur.lastrowid
     conn.close()

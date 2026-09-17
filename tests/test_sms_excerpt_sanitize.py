@@ -72,19 +72,13 @@ def _no_network(monkeypatch):
 
 
 def _restaurant(db_path, **kw):
-    # create_restaurant()'s INSERT predates the al_*/urgent_via_* columns —
-    # they only get whatever the ALTER TABLE's own DEFAULT is (0) no matter
-    # what's passed to the Restaurant dataclass at creation. update_restaurant()
-    # does have them in its whitelist, so flip the toggles that way instead.
-    from models import update_restaurant
-    rid = create_restaurant(
+    kw.setdefault("urgent_via_sms", 1)
+    kw.setdefault("al_1star_sms", 1)
+    kw.setdefault("urgent_via_email", 1)
+    kw.setdefault("al_1star_email", 1)
+    return create_restaurant(
         Restaurant(name=kw.pop("name", "Sanitize Co"), owner_email="s@x.com", **kw), db_path=db_path
     )
-    update_restaurant(rid, {
-        "urgent_via_sms": 1, "al_1star_sms": 1,
-        "urgent_via_email": 1, "al_1star_email": 1,
-    }, db_path=db_path)
-    return rid
 
 
 def _review(rid, **kw):
