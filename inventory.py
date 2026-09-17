@@ -7,7 +7,9 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from ai_utils import create_with_retry, extract_text
 
-client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+# An explicit timeout: the SDK default let a hung call hold a request worker
+# for as long as the connection stayed open, on a route a page load blocks on.
+client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"), timeout=45.0)
 
 # Category-specific waste tolerance — fresh produce/herbs naturally run
 # higher waste (wilting, trim loss) than proteins/dairy, so a flat 20%
@@ -308,32 +310,39 @@ def analyse_inventory(items: list[dict], delivery_days: str = None,
     # Industry benchmark: waste cost as % of total purchased this week
     # 4-5% = industry target | 5-8% = above average | 8-15% = concerning | >15% = serious
     total_purchased = sum(i["last_order_qty"] * i["unit_cost"] for i in items)
-    _has_benchmark  = total_purchased > 0 and total_waste_cost > 0
+    # A benchmark needs a denominator, and nothing else. This used to also
+    # require total_waste_cost > 0, so a restaurant that wasted nothing all
+    # week — the best possible outcome — was told "Upload inventory data to
+    # see benchmark", exactly as if it had no data at all.
+    _has_benchmark  = total_purchased > 0
     waste_rate_pct  = round((total_waste_cost / total_purchased * 100) if _has_benchmark else 0, 1)
-    # Benchmark rating
+    # Benchmark rating. The tone is a semantic name, not a hex: these values
+    # crossed a module boundary into home_brief, which tested them against
+    # the string "green" and therefore never once matched.
     if not _has_benchmark:
         benchmark_label  = "—"
-        benchmark_color  = "#999999"
+        benchmark_tone   = "neutral"
         benchmark_detail = "Upload inventory data to see benchmark"
     elif waste_rate_pct <= 4:
         benchmark_label  = "Excellent"
-        benchmark_color  = "#2d6a4f"
-        benchmark_detail = "At or below the 4% industry target"
+        benchmark_tone   = "good"
+        benchmark_detail = ("No waste recorded this week" if total_waste_cost <= 0
+                            else "At or below the 4% industry target")
     elif waste_rate_pct <= 6:
         benchmark_label  = "On Track"
-        benchmark_color  = "#6fcf97"
+        benchmark_tone   = "good"
         benchmark_detail = "Near the 4-5% industry target"
     elif waste_rate_pct <= 10:
         benchmark_label  = "Above Average"
-        benchmark_color  = "#ef9f27"
+        benchmark_tone   = "warn"
         benchmark_detail = f"Industry target is 4-5% — you're at {waste_rate_pct}%"
     elif waste_rate_pct <= 15:
         benchmark_label  = "Concerning"
-        benchmark_color  = "#e07040"
+        benchmark_tone   = "bad"
         benchmark_detail = f"Industry target is 4-5% — you're at {waste_rate_pct}%"
     else:
         benchmark_label  = "Needs Attention"
-        benchmark_color  = "#c0392b"
+        benchmark_tone   = "bad"
         benchmark_detail = f"Industry target is 4-5% — you're at {waste_rate_pct}%"
 
     # Always use current Chicago time as week end — matches when the client uploaded
@@ -354,7 +363,7 @@ def analyse_inventory(items: list[dict], delivery_days: str = None,
         "recoverable_basis":        RECOVERABLE_BASIS,
         "waste_rate_pct":           waste_rate_pct,
         "benchmark_label":          benchmark_label,
-        "benchmark_color":          benchmark_color,
+        "benchmark_tone":           benchmark_tone,
         "benchmark_detail":         benchmark_detail,
         "total_stock_value":     round(total_stock_value, 2),
         "waste_items":    waste_items[:6],
@@ -517,6 +526,38 @@ def build_price_watch(trends: dict) -> list:
     return sorted(watch.values(), key=lambda x: abs(x["change_pct"]), reverse=True)
 
 
+def _supported_savings_block(analysis: dict) -> str:
+    """The dollar figures a recommendation is allowed to quote, each tied to
+    the item and the mechanism that produces it.
+
+    analyse_inventory already computes all three: recoverable_cost (waste
+    above the category tolerance band), overstock_cost (capital sitting over
+    par) and savings_vs_last (ordering the suggested quantity instead of
+    repeating the last order). None of them used to reach the prompt, so the
+    model was asked for savings figures it had no way to derive.
+    """
+    lines = []
+    for x in (analysis.get("waste_items") or [])[:4]:
+        rec = float(x.get("recoverable_cost") or 0)
+        if rec > 0:
+            lines.append(f"- {x['item']}: ${rec:,.2f}/week recoverable — waste above its "
+                         f"{x.get('waste_tolerance_pct')}% tolerance band")
+    for x in (analysis.get("order_reduction") or [])[:4]:
+        sav = float(x.get("savings_vs_last") or 0)
+        if sav > 0:
+            lines.append(f"- {x['item']}: ${sav:,.2f} saved by ordering "
+                         f"{x.get('suggested_order_qty')} instead of repeating the last order of "
+                         f"{x.get('last_order_qty')}")
+    for x in (analysis.get("overstock") or [])[:3]:
+        ov = float(x.get("overstock_cost") or 0)
+        if ov > 0:
+            lines.append(f"- {x['item']}: ${ov:,.2f} of capital sitting above par "
+                         f"(this is stock on hand, not a weekly saving)")
+    if not lines:
+        return "- None. The data does not support a specific dollar saving this week."
+    return "\n".join(lines)
+
+
 SAMPLE_DATA_NOTICE = (
     "Food Cost is showing example data — this restaurant has no inventory "
     "connected yet. Connect Toast or upload a count to see your own numbers. "
@@ -545,6 +586,8 @@ def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name:
     menu_context = ""
     trend_context = ""
     big_8_context = ""
+    forecast_next_week = None
+    forecast_monthly = None
     if restaurant_id:
         try:
             from models import get_conn as _gc_inv
@@ -565,6 +608,13 @@ def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name:
                     pct_change = round((diff / prev_total) * 100, 1)
                     direction = "UP" if diff > 0 else "DOWN"
                     wow_context = f"\n- vs last week: waste is {direction} ${abs(diff):,.2f} ({abs(pct_change)}%) — mention this trend"
+                    # The forecast dollar figure is computed here rather than
+                    # left to the model. Asking for "what that means in
+                    # dollars if it continues" guaranteed a model-generated
+                    # number, because the consequence of a projection is by
+                    # definition not in the prompt.
+                    forecast_next_week = round(max(0.0, curr_total + diff), 2)
+                    forecast_monthly = round(forecast_next_week * WEEKS_PER_MONTH, 2)
                 prev_items = set(prev_waste.get("top_items", []))
                 curr_items = set(x["item"] for x in analysis["waste_items"][:4])
                 repeat = prev_items & curr_items
@@ -640,7 +690,15 @@ def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name:
             rest = _gr_inv(restaurant_id)
             if rest and rest.menu_notes and analysis["waste_items"]:
                 top_waste_item = analysis["waste_items"][0]["item"]
-                menu_context = f"\n- Menu context: {rest.menu_notes[:300]}. If {top_waste_item} appears in multiple dishes, consider whether portion sizes or menu placement should change."
+                # menu_notes is owner-authored free text and reaches the model
+                # verbatim; ingredient names arrive from CSV upload and Toast
+                # sync. Fenced the same way the review paths fence their input.
+                from ai_guard import wrap_untrusted
+                menu_context = (
+                    "\n- Menu context: " + wrap_untrusted(rest.menu_notes[:300])
+                    + f". If {top_waste_item} appears in multiple dishes, consider whether "
+                      "portion sizes or menu placement should change."
+                )
         except Exception:
             pass
 
@@ -681,12 +739,19 @@ def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name:
     except Exception as _he:
         print(f"[inventory holiday context] {_he}")
 
-    has_trend = bool(wow_context)
+    # Every savings figure the model is allowed to quote, computed here.
+    # The prompt used to require "an estimated dollar amount" on each
+    # recommendation without supplying one, so every "saves $X" in the output
+    # was the model's own arithmetic on figures nothing had checked.
+    savings_block = _supported_savings_block(analysis)
+
+    has_trend = bool(wow_context) and forecast_next_week is not None
     forecast_instruction = (
         '\n- Then, on a final new line, add exactly "FORECAST:" followed by one sentence '
         "predicting where waste cost is headed next week based on the week-over-week trend "
-        "above, and what that means in dollars if it continues. Only include this if the trend "
-        "is genuinely supported by the data given."
+        f"above. If it continues at this rate next week lands near ${forecast_next_week:,.0f} "
+        f"(${forecast_monthly:,.0f} a month) — quote those figures exactly and invent no others. "
+        "Only include this if the trend is genuinely supported by the data given."
     ) if has_trend else ""
 
     prompt = f"""You are a food cost consultant reviewing weekly inventory data for a restaurant.
@@ -701,16 +766,23 @@ Key findings:
 - Total current inventory value: ${analysis['total_stock_value']:,.2f}
 - Waste rate vs industry: {analysis['waste_rate_pct']}% (industry target is 4-5% — label: {analysis['benchmark_label']}){wow_context}{trend_context}{big_8_context}{holiday_context}
 
+How "recoverable" is defined: {RECOVERABLE_BASIS}
+
 Top waste offenders:
-{json.dumps([{"item": x["item"], "waste_units": x["waste_last_week"], "waste_cost": x["waste_cost"], "waste_pct": x["waste_pct"]} for x in analysis["waste_items"][:4]], indent=2)}
+{json.dumps([{"item": x["item"], "waste_units": x["waste_last_week"], "waste_cost": x["waste_cost"], "waste_pct": x["waste_pct"], "par": x["par_level"], "current_stock": x["current_stock"], "unit_cost": x["unit_cost"], "tolerance_pct": x.get("waste_tolerance_pct"), "recoverable_cost": x.get("recoverable_cost")} for x in analysis["waste_items"][:4]], indent=2)}
 
 Overstocked items:
 {json.dumps([{"item": x["item"], "current": x["current_stock"], "par": x["par_level"], "overstock_cost": x["overstock_cost"]} for x in analysis["overstock"][:3]], indent=2)}
 
 Critical low stock:
-{json.dumps([{"item": x["item"], "days_remaining": x["days_remaining"]} for x in analysis["critical_low"]], indent=2)}{menu_context}
+{json.dumps([{"item": x["item"], "days_remaining": x["days_remaining"], "suggested_order_qty": x.get("suggested_order_qty"), "par": x["par_level"], "current_stock": x["current_stock"]} for x in analysis["critical_low"]], indent=2)}
+
+Savings the data supports (these are the only savings figures that exist — use these, do not compute your own):
+{savings_block}{menu_context}
 
 Write a food cost analysis. Rules that apply to everything:
+- Every dollar amount, percentage and quantity you write must appear verbatim somewhere above. Do not add, average, extrapolate or otherwise derive a number of your own — not even a rounded one.
+- If the data does not support a genuine, specific opportunity, say so plainly in one sentence and write no recommendations at all. An honest "nothing worth changing this week" is a correct answer.
 - No markdown, no bullet points, no bold text, no asterisks whatsoever
 - Do NOT label sections or write "Part 1", "Part 2", "Recommendations", or any headers
 - Plain flowing prose throughout — no line that starts with a dash or number
@@ -725,10 +797,10 @@ First, write one paragraph of 2 sentences max (never 3-4):
 
 Then, on new lines after the paragraph, write 1-3 recommendations:
 - Only include recommendations where there is a genuine, specific opportunity — do not pad to three if the data does not support it
-- Maximum of three, minimum of one, ranked by dollar impact (highest first)
+- Maximum of three, ranked by dollar impact (highest first). Zero is allowed when the data supports none.
 - Number each one: start with "1. ", "2. ", "3. "
 - Hard cap: 20 words per recommendation. Lead with the action, not the reasoning.
-- Each must directly save money this week or next week with an estimated dollar amount
+- Each must directly save money this week or next week, quoting a dollar figure from the "Savings the data supports" block above — never a figure you worked out yourself
 - Specific to the actual items in the data — never generic advice
 - Never suggest anything that hurts guest experience, reduces quality, or cuts portions
 - Focus on quantity reductions or par level adjustments based on the data — NEVER assume or mention ordering frequency (daily, weekly, twice a week etc.) since you don't know their ordering schedule
@@ -746,13 +818,20 @@ Then, on new lines after the paragraph, write 1-3 recommendations:
     result = extract_text(msg).strip()
     if getattr(msg, "stop_reason", None) == "max_tokens":
         raise ValueError("food cost insight was truncated")
+    # The return value used to be discarded. labor.py appends the marker,
+    # client_api.py parses it and mobile_api.py renders it as
+    # claim_kinds.insight_unverified — the whole pipeline existed and food
+    # cost was the one module that computed the flag and dropped it, showing
+    # figures nothing could trace back to the data as plain fact.
     from ai_guard import verify_figures
-    verify_figures(result, prompt, "inventory_insight", restaurant_id)
+    unsupported = verify_figures(result, prompt, "inventory_insight", restaurant_id)
     # Strip any markdown that slips through
     import re as _re_inv
     result = _re_inv.sub('[*]{2}(.+?)[*]{2}', lambda m: m.group(1), result)
     result = _re_inv.sub('[*](.+?)[*]', lambda m: m.group(1), result)
     result = _re_inv.sub(r'#{1,6}\s', '', result)
+    if unsupported:
+        result = result.rstrip() + "\n\nUNVERIFIED: " + ", ".join(str(u) for u in unsupported[:5])
     return result
 
 
@@ -796,6 +875,36 @@ def load_inventory_for_restaurant(restaurant_id: int):
     return load_inventory(), False  # fallback to sample
 
 
+def analysis_for(restaurant_id: int, items=None, is_live=None):
+    """The one food-cost analysis. Every surface comes through here.
+
+    Callers used to assemble analyse_inventory()'s arguments themselves —
+    eleven call sites, four different combinations — so the Food Cost page,
+    the Home brief, the weekly digest, the alert engine and the purchase
+    order that actually reaches a supplier could each compute a different
+    answer for the same restaurant at the same moment. delivery_days changes
+    which items land in critical_low vs reorder_soon, and upcoming_holidays
+    scales suggested_order_qty by 40%, so "the order shown" and "the order
+    sent" were genuinely different orders.
+
+    Returns (items, is_live, analysis). analysis carries is_live so no caller
+    can drop it on the way to an email or an alert.
+    """
+    from models import get_restaurant
+    from marketing import get_upcoming_holidays
+
+    if items is None or is_live is None:
+        items, is_live = load_inventory_for_restaurant(restaurant_id)
+    restaurant = get_restaurant(restaurant_id)
+    analysis = analyse_inventory(
+        items,
+        delivery_days=restaurant.delivery_days if restaurant else None,
+        upcoming_holidays=get_upcoming_holidays(),
+    )
+    analysis["is_live"] = bool(is_live)
+    return items, bool(is_live), analysis
+
+
 # ── Supplier orders ────────────────────────────────────────────────────────────
 
 def build_supplier_orders(restaurant_id: int, db_path: str = None) -> dict:
@@ -819,8 +928,12 @@ def build_supplier_orders(restaurant_id: int, db_path: str = None) -> dict:
         # nothing would actually send today, but an order built from
         # invented stock levels should not exist at all.
         return {"groups": [], "unassigned": [], "item_count": 0, "total_cost": 0.0,
-                "is_live": False, "notice": SAMPLE_DATA_NOTICE}
-    analysis = analyse_inventory(items)
+                "is_live": False, "notice": SAMPLE_DATA_NOTICE, "draft_hash": None}
+    # Through analysis_for, not a bare analyse_inventory(items): this draft is
+    # what gets emailed to a supplier, and it used to be computed without the
+    # delivery schedule or holiday scaling the page itself applied — so the
+    # order sent was not the order the owner approved.
+    _, _, analysis = analysis_for(restaurant_id, items=items, is_live=is_live)
 
     # critical_low first — same order the UI shows them in — then
     # reorder_soon, skipping anything already picked up.
@@ -865,4 +978,18 @@ def build_supplier_orders(restaurant_id: int, db_path: str = None) -> dict:
         "item_count": len(ordered),
         "total_cost": round(sum(r["line_cost"] for r in ordered), 2),
         "is_live": True,
+        # Identifies exactly this draft. /food-cost/send-order rebuilds the
+        # draft rather than storing it, so stock or supplier edits between
+        # preview and send would silently change quantities; the client sends
+        # this back and a mismatch is refused instead of mailed.
+        "draft_hash": draft_hash(group_list),
     }
+
+
+def draft_hash(group_list) -> str:
+    """Stable fingerprint of a supplier-order draft: who it goes to, what is
+    on it, and how much of each."""
+    import hashlib
+    shape = [[g["supplier_email"], sorted((r["item"], r["qty"]) for r in g["items"])]
+             for g in group_list]
+    return hashlib.sha256(json.dumps(shape, sort_keys=True).encode("utf-8")).hexdigest()[:16]

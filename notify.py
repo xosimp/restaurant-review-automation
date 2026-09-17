@@ -430,14 +430,54 @@ def _already_alerted_spike(restaurant_id: int, db_path: str = DB_PATH) -> bool:
     return row is not None
 
 
-def _log_alert(restaurant_id: int, alert_type: str, review_id: int = None, db_path: str = DB_PATH):
+def _log_alert(restaurant_id: int, alert_type: str, review_id: int = None, db_path: str = DB_PATH,
+               value: float = None):
+    """`value` records the figure the alert fired on, so a later run can ask
+    whether the condition actually worsened instead of re-firing on the same
+    standing level (see _waste_alert_worsened)."""
     conn = models.get_conn(db_path)
+    _ensure_alert_value_column(conn)
     conn.execute(
-        "INSERT INTO alert_log (restaurant_id, alert_type, review_id) VALUES (?,?,?)",
-        (restaurant_id, alert_type, review_id),
+        "INSERT INTO alert_log (restaurant_id, alert_type, review_id, value) VALUES (?,?,?,?)",
+        (restaurant_id, alert_type, review_id, value),
     )
     conn.commit()
     conn.close()
+
+
+def _ensure_alert_value_column(conn):
+    try:
+        conn.execute("ALTER TABLE alert_log ADD COLUMN value REAL")
+    except Exception:
+        pass  # already there
+
+
+def _waste_alert_worsened(restaurant_id: int, total: float, db_path: str = DB_PATH,
+                          min_increase_pct: float = 10.0) -> bool:
+    """True when this week's flagged waste is meaningfully worse than the
+    figure the last food-waste alert fired on.
+
+    A restaurant chronically over its tolerance bands used to receive the
+    identical SMS + email + push every 7 days indefinitely, which trains an
+    owner to ignore the channel entirely. Alerting on deterioration keeps the
+    signal meaningful; the first alert (no prior figure) always fires.
+    """
+    conn = models.get_conn(db_path)
+    try:
+        _ensure_alert_value_column(conn)
+        row = conn.execute(
+            "SELECT value FROM alert_log WHERE restaurant_id=? AND alert_type='food_waste' "
+            "AND value IS NOT NULL ORDER BY id DESC LIMIT 1",
+            (restaurant_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row or row["value"] is None:
+        return True
+    prior = float(row["value"])
+    if prior <= 0:
+        return True
+    return ((total - prior) / prior * 100.0) >= min_increase_pct
 
 
 def send_login_alert(restaurant_id: int, restaurant_name: str, owner_email: str,
@@ -1122,7 +1162,7 @@ def check_extra_daily_alerts(db_path: str = DB_PATH):
             c2.close()
             return row is not None
 
-        def _fire(alert_type, sms_text, subject, lines):
+        def _fire(alert_type, sms_text, subject, lines, value=None):
             if _daily_alert_suppressed(rid, alert_type, db_path):
                 return
             html = _alert_email_html(name, subject, lines, restaurant_id=rid)
@@ -1136,26 +1176,86 @@ def check_extra_daily_alerts(db_path: str = DB_PATH):
                 fire_push(rid, alert_type, subject, sms_text, data={"alert_type": alert_type}, db_path=db_path)
             except Exception:
                 pass
-            _log_alert(rid, alert_type, db_path=db_path)
+            _log_alert(rid, alert_type, db_path=db_path, value=value)
 
         # ── Food waste ────────────────────────────────────────
         if r["alert_food_waste"] and not _recent("food_waste"):
             try:
-                from inventory import load_inventory_for_restaurant, analyse_inventory
-                items = load_inventory_for_restaurant(rid)
-                analysis = analyse_inventory(items) if items else None
-                waste_items = (analysis or {}).get("waste_items") or []
+                # load_inventory_for_restaurant returns (items, is_live). The
+                # tuple used to be passed straight into analyse_inventory,
+                # which subscripts each element by string key — so this alert
+                # raised TypeError on every restaurant, every day, and the
+                # bare except below printed it and moved on. It had never
+                # fired. is_live now gates it too: without that, fixing the
+                # unpack would start emailing sample-pantry dollars to
+                # restaurants that have no inventory connected.
+                from inventory import analysis_for
+                items, is_live, analysis = analysis_for(rid)
+                waste_items = (analysis or {}).get("waste_items") or [] if (items and is_live) else []
                 total = sum(float(x.get("waste_cost") or 0) for x in waste_items)
                 flagged = [x for x in waste_items if float(x.get("waste_cost") or 0) > 0]
-                if len(flagged) >= 3 or total >= 150:
+                # Fire on deterioration, not on a level: a restaurant that is
+                # chronically over tolerance used to get the identical alert
+                # every 7 days forever. _waste_alert_worsened compares against
+                # what was last alerted on.
+                if (len(flagged) >= 3 or total >= 150) and _waste_alert_worsened(rid, total, db_path=db_path):
                     top = ", ".join(x.get("item", "?") for x in flagged[:3])
                     _fire("food_waste",
                           f"Cavnar AI: ${total:,.0f} of waste flagged this week at {name} ({top}).",
                           f"Food waste flagged — {name}",
                           [f"${total:,.0f} of waste across {len(flagged)} items this week.",
-                           f"Biggest: {top}.", "Open Food Cost to see the breakdown."])
+                           f"Biggest: {top}.", "Open Food Cost to see the breakdown."],
+                          value=total)
             except Exception as e:
+                # Was a bare print, which is how a TypeError on every run for
+                # every restaurant stayed invisible for the life of the alert.
+                import ops
+                ops.capture(e, job="notify.food_waste", context=f"rid={rid}", db_path=db_path)
                 print(f"[notify] food waste check error rid={rid}: {e}")
+
+        # ── Running out before the next delivery ──────────────
+        # The two conditions an owner most wants pushed at them had no alert
+        # at all: an item that runs out before the truck comes, and a Big-8
+        # ingredient whose price is climbing. Both ride the same food-cost
+        # preference as waste rather than adding two more toggles.
+        if r["alert_food_waste"] and not _recent("critical_low"):
+            try:
+                from inventory import analysis_for
+                items, is_live, analysis = analysis_for(rid)
+                crit = (analysis or {}).get("critical_low") or [] if (items and is_live) else []
+                if crit:
+                    names = ", ".join(x.get("item", "?") for x in crit[:3])
+                    _fire("critical_low",
+                          f"Cavnar AI: {len(crit)} item(s) run out before your next delivery at {name} ({names}).",
+                          f"Running out before delivery — {name}",
+                          [f"{len(crit)} item(s) won't last until the next delivery.",
+                           f"Soonest: {names}.", "Open Food Cost to send the order."],
+                          value=float(len(crit)))
+            except Exception as e:
+                import ops
+                ops.capture(e, job="notify.critical_low", context=f"rid={rid}", db_path=db_path)
+                print(f"[notify] critical low check error rid={rid}: {e}")
+
+        # ── Ingredient price climbing ────────────────────────
+        if r["alert_food_waste"] and not _recent("price_spike"):
+            try:
+                from inventory import load_inventory_for_restaurant, compute_item_trends, build_price_watch
+                _pw_items, _pw_live = load_inventory_for_restaurant(rid)
+                watch = build_price_watch(compute_item_trends(rid, _pw_items)) if (_pw_items and _pw_live) else []
+                big = [w for w in watch if w.get("is_big_8") and (w.get("change_pct") or 0) >= 5]
+                if big:
+                    top = big[0]
+                    _fire("price_spike",
+                          f"Cavnar AI: {top['item']} is up {abs(top['change_pct']):.0f}% at {name}.",
+                          f"Ingredient price climbing — {name}",
+                          [f"{top['item']} moved from ${top['old_price']:.2f} to ${top['new_price']:.2f}"
+                           f" ({abs(top['change_pct']):.0f}%).",
+                           top.get("action_hint") or "", "Open Food Cost to see Price Watch."],
+                          value=float(top.get("change_pct") or 0))
+            except Exception as e:
+                import ops
+                ops.capture(e, job="notify.price_spike", context=f"rid={rid}", db_path=db_path)
+                print(f"[notify] price spike check error rid={rid}: {e}")
 
         # ── AI visibility drop ───────────────────────────────
         if r["alert_ai_visibility_drop"] and not _recent("ai_visibility_drop"):

@@ -126,10 +126,14 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
         except Exception:
             pass
         try:
-            from inventory import load_inventory_for_restaurant, analyse_inventory
-            inv, _ = load_inventory_for_restaurant(report.restaurant_id)
-            if inv:
-                analysis = analyse_inventory(inv)
+            # is_live was discarded here, and load_inventory_for_restaurant
+            # falls back to a bundled 20-item sample pantry that is always
+            # truthy — so a client with no inventory connected received a
+            # weekly email naming sample ingredients as their own top waste
+            # item and their own critically-low stock.
+            from inventory import analysis_for
+            inv, inv_live, analysis = analysis_for(report.restaurant_id)
+            if inv and inv_live:
                 waste = analysis.get("waste_items", [])
                 low = analysis.get("critical_low", [])
                 top_waste = waste[0]["item"] if waste else None
@@ -532,10 +536,12 @@ def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = No
 
     # ── Food Cost Control ──────────────────────────────────────────────────
     try:
+        from inventory import analysis_for
+        items, _inv_live, inv = (None, False, {})
         if _rest and _rest.module_inventory:
-            from inventory import load_inventory_for_restaurant, analyse_inventory
-            items, _ = load_inventory_for_restaurant(restaurant_id)
-            inv = analyse_inventory(items)
+            items, _inv_live, inv = analysis_for(restaurant_id)
+        # Sample-pantry figures must never reach an outbound report.
+        if items and _inv_live:
             waste = inv.get("total_waste_cost_week", 0)
             recoverable = inv.get("recoverable_monthly", 0)
             top_waste = inv.get("waste_items", [])

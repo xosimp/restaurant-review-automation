@@ -1459,6 +1459,49 @@ def init_db(db_path: str = DB_PATH):
         )""",
         "CREATE INDEX IF NOT EXISTS idx_recipe_menu_item ON recipe_ingredients(menu_item_id)",
         "CREATE INDEX IF NOT EXISTS idx_recipe_ingredient ON recipe_ingredients(ingredient_id)",
+        # A recipe row should exist once per (dish, ingredient). Without this
+        # the same ingredient could be bound to a dish twice and the plate
+        # cost silently double-counted it. Collapse any existing duplicates
+        # first, keeping the most recently added row, or the unique index
+        # can't be created and the guarantee would silently not exist.
+        """DELETE FROM recipe_ingredients WHERE id NOT IN (
+               SELECT MAX(id) FROM recipe_ingredients GROUP BY menu_item_id, ingredient_id
+           )""",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_recipe_pair ON recipe_ingredients(menu_item_id, ingredient_id)",
+        # Units sold per dish per day. compute_daily_depletion already reads
+        # exactly this from Toast to drive depletion and then discarded it,
+        # which is why menu margins had no popularity data: "best dish" meant
+        # lowest food cost %, so a $3 soda outranked a $38 entree carrying $25
+        # of contribution, and the menu's average food cost % was an
+        # unweighted mean of per-dish percentages rather than a revenue-
+        # weighted one.
+        """CREATE TABLE IF NOT EXISTS menu_item_sales (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id   INTEGER NOT NULL,
+            menu_item_id    INTEGER NOT NULL REFERENCES menu_items(id),
+            business_date   TEXT NOT NULL,
+            qty_sold        REAL NOT NULL,
+            UNIQUE(restaurant_id, menu_item_id, business_date)
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_menu_item_sales ON menu_item_sales(restaurant_id, business_date)",
+        # inventory_history is read on every waste-trend request, filtered by
+        # restaurant_id and sorted by week_end, and had no index at all. The
+        # table itself was only ever created lazily by whichever food-cost
+        # path ran first, so it is declared here too — an index migration
+        # against a table that doesn't exist yet fails silently.
+        """CREATE TABLE IF NOT EXISTS inventory_history (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id   INTEGER NOT NULL,
+            waste_json      TEXT,
+            week_end        TEXT,
+            items_json      TEXT,
+            saved_at        TEXT DEFAULT (datetime('now'))
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_inventory_history_rid ON inventory_history(restaurant_id, week_end)",
+        # _compute_current_stock and recompute_rollups filter on ingredient_id
+        # alone, so idx_stock_events_ingredient's leading restaurant_id column
+        # never matched and every rollup scanned.
+        "CREATE INDEX IF NOT EXISTS idx_stock_events_by_ingredient ON ingredient_stock_events(ingredient_id, event_type, id)",
     ]
     for m in migrations:
         try:

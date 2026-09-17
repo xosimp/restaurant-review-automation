@@ -29,6 +29,9 @@ from datetime import date, timedelta
 log = logging.getLogger("inventory_ledger")
 
 _TREND_WINDOW_DAYS = 7
+# How far back menu popularity is measured. Long enough to even out a quiet
+# week, short enough to still describe the current menu.
+_POPULARITY_WINDOW_DAYS = 28
 
 
 def _as_date_str(d) -> str:
@@ -101,13 +104,20 @@ def recompute_rollups(restaurant_id: int, ingredient_id: int, conn=None) -> None
             sets.append("last_recount_at=?")
             params.append(recount["event_date"])
         if has_depletion:
-            depletion_sum = conn.execute(
-                "SELECT COALESCE(SUM(qty),0) AS total FROM ingredient_stock_events "
+            # Divided by the days that actually carry depletion, not a flat 7.
+            # A restaurant two days into a Toast connection had its usage
+            # understated 3.5x, and one closed Mondays was understated ~14%
+            # permanently — which overstates days_remaining, keeps items out
+            # of critical_low, and runs the kitchen out of product.
+            row = conn.execute(
+                "SELECT COALESCE(SUM(qty),0) AS total, COUNT(DISTINCT event_date) AS days "
+                "FROM ingredient_stock_events "
                 "WHERE ingredient_id=? AND event_type='depletion' AND event_date>=?",
                 (ingredient_id, window_start)
-            ).fetchone()["total"]
+            ).fetchone()
+            days_with_data = max(1, int(row["days"] or 0))
             sets.append("avg_daily_usage=?")
-            params.append(round(depletion_sum / _TREND_WINDOW_DAYS, 3))
+            params.append(round(row["total"] / days_with_data, 3))
         if has_waste:
             waste_sum = conn.execute(
                 "SELECT COALESCE(SUM(qty),0) AS total FROM ingredient_stock_events "
@@ -116,11 +126,31 @@ def recompute_rollups(restaurant_id: int, ingredient_id: int, conn=None) -> None
             ).fetchone()["total"]
             sets.append("waste_last_week=?")
             params.append(round(waste_sum, 3))
-        if last_receiving:
+        # Purchases over the SAME window as the waste figure above, not the
+        # single most recent delivery. waste_last_week is a 7-day total;
+        # dividing it by one delivery's quantity inflated waste_pct roughly in
+        # proportion to how often the restaurant takes deliveries, which drove
+        # the headline benchmark and cut suggested order quantities by up to
+        # 40% through waste_adj.
+        received = conn.execute(
+            "SELECT COALESCE(SUM(qty),0) AS total FROM ingredient_stock_events "
+            "WHERE ingredient_id=? AND event_type='receiving' AND event_date>=?",
+            (ingredient_id, window_start)
+        ).fetchone()["total"]
+        if received > 0:
+            sets.append("last_order_qty=?")
+            params.append(round(received, 3))
+        elif last_receiving:
+            # Nothing received in the window — fall back to the last delivery
+            # so an item ordered less often than weekly still has a denominator.
             sets.append("last_order_qty=?")
             params.append(last_receiving["qty"])
         params.append(ingredient_id)
-        conn.execute(f"UPDATE ingredients SET {', '.join(sets)} WHERE id=?", params)
+        params.append(restaurant_id)
+        # Scoped by restaurant_id as well as id. The tenant guarantee used to
+        # rest entirely on callers checking ownership first; one caller that
+        # forgot would rewrite another restaurant's cached stock and usage.
+        conn.execute(f"UPDATE ingredients SET {', '.join(sets)} WHERE id=? AND restaurant_id=?", params)
         if _own_conn:
             conn.commit()
     finally:
@@ -208,6 +238,11 @@ def record_depletion_from_sale(restaurant_id: int, ingredient_id: int, qty: floa
     from models import db_conn
     event_date_str = _as_date_str(event_date)
     with db_conn() as conn:
+        # Its recount and receiving siblings both check the pair; this one
+        # took it on trust, which is the same trap that let an event be
+        # written against another location's ingredient.
+        if not ingredient_belongs_to(conn, restaurant_id, ingredient_id):
+            return 0
         cur = conn.execute(
             "INSERT INTO ingredient_stock_events "
             "(restaurant_id, ingredient_id, event_type, qty, event_date, source) "
@@ -269,6 +304,17 @@ def compute_daily_depletion(restaurant_id: int, business_date) -> dict:
                 unmapped.append({"toast_guid": guid, "qty_sold": qty_sold, "reason": "menu item not discovered"})
                 continue
 
+            # Units sold, recorded whether or not a recipe exists: this is the
+            # popularity half of menu engineering, and it was being read from
+            # Toast and thrown away. Same idempotency as the depletion rows —
+            # re-running a business date replaces rather than accumulates.
+            conn.execute(
+                "INSERT INTO menu_item_sales (restaurant_id, menu_item_id, business_date, qty_sold) "
+                "VALUES (?,?,?,?) ON CONFLICT(restaurant_id, menu_item_id, business_date) "
+                "DO UPDATE SET qty_sold=excluded.qty_sold",
+                (restaurant_id, menu_item["id"], business_date_str, qty_sold)
+            )
+
             recipe_rows = conn.execute(
                 "SELECT ingredient_id, qty_per_unit FROM recipe_ingredients WHERE menu_item_id=?",
                 (menu_item["id"],)
@@ -296,7 +342,55 @@ def compute_daily_depletion(restaurant_id: int, business_date) -> dict:
         log.warning(f"[inventory_ledger] restaurant {restaurant_id} on {business_date_str}: "
                     f"{len(unmapped)} unmapped selection(s) — {unmapped}")
 
-    return {"ingredients_updated": len(ingredients_updated), "unmapped_selections": unmapped}
+    sold_total = sum(sold_by_guid.values())
+    covered = sold_total - sum(float(u.get("qty_sold") or 0) for u in unmapped)
+    return {
+        "ingredients_updated": len(ingredients_updated),
+        "unmapped_selections": unmapped,
+        # Coverage was only ever logged. Everything downstream — usage, days
+        # remaining, reorder urgency — is only as good as the share of sales
+        # a recipe actually accounts for, and the owner had no way to see it.
+        "units_sold": round(sold_total, 2),
+        "units_covered": round(covered, 2),
+        "coverage_pct": round(covered / sold_total * 100, 1) if sold_total > 0 else None,
+    }
+
+
+def recipe_coverage(restaurant_id: int, days: int = _POPULARITY_WINDOW_DAYS) -> dict:
+    """What share of what this restaurant sold is accounted for by a recipe.
+
+    The single most important honesty indicator in the module: a dish with no
+    recipe depletes nothing, so its ingredients look like they are never used.
+    That understates usage, overstates days remaining, and keeps items out of
+    the reorder list — silently, and worst for the dishes that sell most.
+    """
+    from models import get_conn
+    conn = get_conn()
+    try:
+        window_start = (date.today() - timedelta(days=days - 1)).isoformat()
+        rows = conn.execute(
+            "SELECT s.menu_item_id AS mid, m.name AS name, SUM(s.qty_sold) AS qty, "
+            "       (SELECT COUNT(*) FROM recipe_ingredients ri WHERE ri.menu_item_id=s.menu_item_id) AS n "
+            "FROM menu_item_sales s JOIN menu_items m ON m.id = s.menu_item_id "
+            "WHERE s.restaurant_id=? AND s.business_date>=? "
+            "GROUP BY s.menu_item_id ORDER BY qty DESC",
+            (restaurant_id, window_start),
+        ).fetchall()
+    finally:
+        conn.close()
+    total = sum(float(r["qty"] or 0) for r in rows)
+    covered = sum(float(r["qty"] or 0) for r in rows if (r["n"] or 0) > 0)
+    gaps = [{"name": r["name"], "units_sold": round(float(r["qty"] or 0), 2)}
+            for r in rows if not (r["n"] or 0)]
+    return {
+        "window_days": days,
+        "units_sold": round(total, 2),
+        "units_covered": round(covered, 2),
+        "coverage_pct": round(covered / total * 100, 1) if total > 0 else None,
+        "uncovered_top": gaps[:8],
+        "uncovered_count": len(gaps),
+        "has_data": bool(rows),
+    }
 
 
 def discover_menu_items(restaurant_id: int, days: int = 7) -> dict:
@@ -515,10 +609,15 @@ def list_menu_items_with_recipes(restaurant_id: int) -> list:
     result = []
     for mi in menu_items:
         recipe_rows = conn.execute(
+            # The ingredient is filtered by tenant too, the same way
+            # menu_profitability does it — a legacy recipe row written before
+            # add_recipe_ingredient validated the pair can point at another
+            # restaurant's ingredient, and this renders its name and unit.
             "SELECT ri.id, ri.ingredient_id, ri.qty_per_unit, i.name AS ingredient_name, i.unit "
-            "FROM recipe_ingredients ri JOIN ingredients i ON i.id = ri.ingredient_id "
+            "FROM recipe_ingredients ri JOIN ingredients i "
+            "  ON i.id = ri.ingredient_id AND i.restaurant_id=? "
             "WHERE ri.menu_item_id=?",
-            (mi["id"],)
+            (restaurant_id, mi["id"])
         ).fetchall()
         result.append({**dict(mi), "recipe": [dict(r) for r in recipe_rows]})
     conn.close()
@@ -571,7 +670,14 @@ def add_recipe_ingredient(restaurant_id: int, menu_item_id: int, ingredient_id: 
     percentage to the client and to Ask Cavnar. Returns 0 if either side
     isn't this restaurant's.
     """
+    import math
     from models import db_conn
+    try:
+        qty_per_unit = float(qty_per_unit)
+    except (TypeError, ValueError):
+        return 0
+    if not math.isfinite(qty_per_unit) or qty_per_unit <= 0:
+        return 0
     with db_conn() as conn:
         if not menu_item_belongs_to(conn, restaurant_id, menu_item_id):
             return 0
@@ -629,7 +735,13 @@ def menu_profitability(restaurant_id: int) -> dict:
         for row in conn.execute("""
             SELECT ri.menu_item_id AS mid,
                    SUM(ri.qty_per_unit * COALESCE(i.unit_cost, 0)) AS plate_cost,
-                   COUNT(*) AS n
+                   COUNT(*) AS n,
+                   -- An ingredient with no unit_cost contributes nothing to
+                   -- the sum above, so a dish whose main protein has never
+                   -- been priced showed an excellent margin. Counting them
+                   -- lets the caller refuse to report a figure it can't
+                   -- actually compute.
+                   SUM(CASE WHEN i.unit_cost IS NULL OR i.unit_cost <= 0 THEN 1 ELSE 0 END) AS uncosted
             FROM recipe_ingredients ri
             JOIN menu_items  m ON m.id = ri.menu_item_id
             -- The ingredient is filtered too, not just the dish. A recipe row
@@ -641,20 +753,35 @@ def menu_profitability(restaurant_id: int) -> dict:
             WHERE m.restaurant_id=?
             GROUP BY ri.menu_item_id
         """, (restaurant_id,)).fetchall():
-            costs[row["mid"]] = {"cost": float(row["plate_cost"] or 0), "ingredients": int(row["n"] or 0)}
+            costs[row["mid"]] = {"cost": float(row["plate_cost"] or 0),
+                                 "ingredients": int(row["n"] or 0),
+                                 "uncosted": int(row["uncosted"] or 0)}
+        window_start = (date.today() - timedelta(days=_POPULARITY_WINDOW_DAYS - 1)).isoformat()
+        sold = {r["menu_item_id"]: float(r["qty"] or 0) for r in conn.execute(
+            "SELECT menu_item_id, SUM(qty_sold) AS qty FROM menu_item_sales "
+            "WHERE restaurant_id=? AND business_date>=? GROUP BY menu_item_id",
+            (restaurant_id, window_start)
+        ).fetchall()}
     finally:
         conn.close()
 
-    priced, unpriced, unmapped = [], [], []
+    priced, unpriced, unmapped, uncosted_items = [], [], [], []
     for it in items:
         entry = {"id": it["id"], "name": it["name"],
-                 "sell_price": round(float(it["sell_price"]), 2) if it["sell_price"] else None}
+                 "sell_price": round(float(it["sell_price"]), 2) if it["sell_price"] else None,
+                 "units_sold": round(sold.get(it["id"], 0.0), 2) if sold else None}
         costed = costs.get(it["id"])
         if not costed or costed["ingredients"] == 0:
             unmapped.append(entry)
             continue
-        entry["plate_cost"] = round(costed["cost"], 2)
         entry["ingredient_count"] = costed["ingredients"]
+        if costed["uncosted"]:
+            # Missing measurement, not a zero. Reporting this plate's cost
+            # would understate it by exactly the ingredients nobody priced.
+            entry["uncosted_ingredients"] = costed["uncosted"]
+            uncosted_items.append(entry)
+            continue
+        entry["plate_cost"] = round(costed["cost"], 2)
         price = entry["sell_price"]
         if not price or price <= 0:
             unpriced.append(entry)
@@ -662,32 +789,103 @@ def menu_profitability(restaurant_id: int) -> dict:
         entry["margin"] = round(price - entry["plate_cost"], 2)
         entry["food_cost_pct"] = round(entry["plate_cost"] / price * 100, 1)
         entry["margin_pct"] = round(entry["margin"] / price * 100, 1)
+        if entry["units_sold"]:
+            entry["total_contribution"] = round(entry["margin"] * entry["units_sold"], 2)
+            entry["total_revenue"] = round(price * entry["units_sold"], 2)
         priced.append(entry)
 
-    # Worst food cost first — the dish quietly eating the margin is the
-    # one worth looking at, not the best performer.
+    have_sales = any(e.get("units_sold") for e in priced)
+
+    # Worst food cost first — the dish quietly eating the margin is the one
+    # worth looking at, not the best performer.
     priced.sort(key=lambda e: e["food_cost_pct"], reverse=True)
-    avg_fc = round(sum(e["food_cost_pct"] for e in priced) / len(priced), 1) if priced else None
+
+    # The menu's food cost % is total cost over total revenue, not the mean
+    # of each dish's percentage: an unweighted mean gives a $3 side the same
+    # weight as the entree that is most of the night's revenue, and it was
+    # being shown against the 28-35% rule of thumb, which is revenue-weighted.
+    if have_sales:
+        rev = sum(e.get("total_revenue") or 0 for e in priced)
+        cost = sum((e["plate_cost"] * (e.get("units_sold") or 0)) for e in priced)
+        avg_fc = round(cost / rev * 100, 1) if rev > 0 else None
+        avg_basis = f"weighted by units sold over the last {_POPULARITY_WINDOW_DAYS} days"
+    elif priced:
+        avg_fc = round(sum(e["food_cost_pct"] for e in priced) / len(priced), 1)
+        avg_basis = ("unweighted — no sales data yet, so every dish counts equally "
+                     "regardless of how often it sells")
+    else:
+        avg_fc, avg_basis = None, None
+
+    # "Best" means the dish contributing the most gross margin, not the one
+    # with the lowest food cost percentage. Ranking by percentage promotes
+    # cheap low-margin items over the dishes actually paying the rent.
+    if have_sales:
+        by_contribution = sorted(priced, key=lambda e: e.get("total_contribution") or 0, reverse=True)
+    else:
+        by_contribution = sorted(priced, key=lambda e: e.get("margin") or 0, reverse=True)
+
     return {
         "priced": priced,
         "unpriced": unpriced,
         "unmapped": unmapped,
+        "uncosted": uncosted_items,
         "average_food_cost_pct": avg_fc,
-        "best": priced[-1] if priced else None,
-        "worst": priced[0] if priced else None,
+        "average_basis": avg_basis,
+        "has_sales_data": have_sales,
+        "popularity_window_days": _POPULARITY_WINDOW_DAYS,
+        # Highest and lowest gross-margin contributors.
+        "best": by_contribution[0] if by_contribution else None,
+        "worst": by_contribution[-1] if by_contribution else None,
+        # Highest food cost % — still worth surfacing, just not as "worst dish".
+        "highest_food_cost": priced[0] if priced else None,
+        "menu_engineering": _menu_engineering(priced) if have_sales else None,
     }
+
+
+def _menu_engineering(priced: list) -> dict:
+    """The standard four-quadrant classification: each dish against the menu's
+    median popularity and median contribution margin.
+
+    stars       — sells well, earns well: protect and feature
+    plowhorses  — sells well, earns little: reprice or re-cost
+    puzzles     — earns well, sells little: promote or reposition
+    dogs        — neither: candidates for removal
+    """
+    usable = [e for e in priced if e.get("units_sold") and e.get("margin") is not None]
+    if len(usable) < 4:
+        return None
+    sold = sorted(e["units_sold"] for e in usable)
+    margins = sorted(e["margin"] for e in usable)
+    mid = len(usable) // 2
+    med_sold = sold[mid] if len(usable) % 2 else (sold[mid - 1] + sold[mid]) / 2
+    med_margin = margins[mid] if len(usable) % 2 else (margins[mid - 1] + margins[mid]) / 2
+    buckets = {"stars": [], "plowhorses": [], "puzzles": [], "dogs": []}
+    for e in usable:
+        popular = e["units_sold"] >= med_sold
+        profitable = e["margin"] >= med_margin
+        key = ("stars" if popular and profitable else
+               "plowhorses" if popular else
+               "puzzles" if profitable else "dogs")
+        buckets[key].append(e["name"])
+    return {"median_units_sold": round(med_sold, 2),
+            "median_margin": round(med_margin, 2), **buckets}
 
 
 def set_menu_item_price(restaurant_id: int, menu_item_id: int, sell_price) -> bool:
     """Scoped by restaurant_id so one restaurant can never price another's
     menu. `sell_price` of None or 0 clears the price. Returns False if the
     item isn't theirs."""
+    import math
     from models import get_conn
     try:
         price = None if sell_price in (None, "", 0) else round(float(sell_price), 2)
     except (TypeError, ValueError):
         return False
-    if price is not None and price < 0:
+    # NaN passes every comparison guard (nan < 0 is False) and Infinity passes
+    # too. Either one persists, then propagates through food_cost_pct and
+    # margin_pct, and jsonify emits bare NaN — invalid JSON that breaks the
+    # whole menu-margins payload for that restaurant.
+    if price is not None and (not math.isfinite(price) or price < 0):
         return False
     conn = get_conn()
     try:

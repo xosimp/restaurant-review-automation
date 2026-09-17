@@ -353,7 +353,7 @@ def index(current_user):
     if current_user.get("is_admin"):
         return redirect("/admin")
     from labor import analyse_shifts_for_restaurant
-    from inventory import load_inventory_for_restaurant, analyse_inventory
+    from inventory import load_inventory_for_restaurant
     from marketing import CONTENT_TYPES
     rid     = current_user["restaurant_id"]
     rfilter = request.args.get("filter","all")
@@ -411,14 +411,8 @@ def index(current_user):
                  "dow_summary":{},"potential_savings":0,"potential_savings_weekly":0,"potential_savings_monthly":0,"period_days":0,"labor_target":30.0,
                  "by_day":{},"employee_hours":{},"role_summary":{},"role_summary_sorted":[],"role_max_pct":0,"trend_delta":None,"staff_constraints":{}}
     try:
-        _inv_items, _inv_live = load_inventory_for_restaurant(rid)
-        from marketing import get_upcoming_holidays as _guh_dash
-        inv = analyse_inventory(
-            _inv_items,
-            delivery_days=restaurant.delivery_days if restaurant else None,
-            upcoming_holidays=_guh_dash(),
-        )
-        inv['is_live'] = _inv_live
+        from inventory import analysis_for as _analysis_for_dash
+        _inv_items, _inv_live, inv = _analysis_for_dash(rid)
         inv['banner_gradient'] = inv_banner_gradient(inv['annual_waste_projection'], inv['annual_recoverable'])
         try:
             from inventory import compute_item_trends as _cit_dash, build_price_watch as _bpw_dash
@@ -432,7 +426,7 @@ def index(current_user):
                "recoverable_monthly":0,"total_stock_value":0,
                "waste_items":[],"overstock":[],"critical_low":[],
                "reorder_soon":[],"order_reduction":[],"total_items":0,
-               "annual_waste_projection":0,"annual_recoverable":0,"waste_rate_pct":0,"benchmark_label":"—","benchmark_color":"#999","benchmark_detail":"Upload inventory to see benchmark",
+               "annual_waste_projection":0,"annual_recoverable":0,"waste_rate_pct":0,"benchmark_label":"—","benchmark_tone":"neutral","benchmark_detail":"Food cost analysis is unavailable right now",
                "week_start":"—","week_end":"—","last_updated":"—",
                "banner_gradient":"linear-gradient(to right,#2a0808 0%,#0d331f 100%)",
                "is_live":False,"price_watch":[]}

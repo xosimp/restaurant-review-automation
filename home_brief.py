@@ -276,10 +276,9 @@ def _build(current_user):
     inv, inv_live = {}, False
     if "inventory" in active_keys:
         try:
-            from inventory import load_inventory_for_restaurant, analyse_inventory
-            items, inv_live = load_inventory_for_restaurant(rid)
-            inv = analyse_inventory(items) if items else {}
-            inv_live = bool(inv_live)
+            from inventory import analysis_for
+            items, inv_live, inv = analysis_for(rid)
+            inv = inv if items else {}
         except Exception:
             inv = {}
 
@@ -578,7 +577,7 @@ def _build(current_user):
             else:
                 add_win("waste_low", "Waste is under control", f"{inv.get('benchmark_label') or 'Low'} waste rate" + (f" ({waste_rate}%)" if waste_rate is not None else "") + " this week.", "inventory")
             snapshot.append({"key": "inventory", "label": "Food Cost", "status": "available", "value": f"${recoverable:,.0f}", "unit": "recoverable / mo",
-                             "delta": ({"value": f"{waste_rate}% waste", "label": inv.get("benchmark_label") or "", "good": inv.get("benchmark_color") in ("green", None)} if waste_rate is not None else None),
+                             "delta": ({"value": f"{waste_rate}% waste", "label": inv.get("benchmark_label") or "", "good": inv.get("benchmark_tone") in ("good", None)} if waste_rate is not None else None),
                              "secondary": [{"label": "Critical low", "value": str(len(crit))}, {"label": "Reorder soon", "value": str(len(reorder))}, {"label": "Stock value", "value": f"${float(inv.get('total_stock_value') or 0):,.0f}"}],
                              "interpretation": (f"{top.get('item')} is the biggest waste line (${float(top.get('waste_cost') or 0):,.0f} last week)." if top else "No waste flagged this week."),
                              "state": "bad" if crit else ("warn" if recoverable > 0 else "good"),
@@ -832,10 +831,9 @@ def _location_record(conn, r, now):
     inv = None
     if r.get("module_inventory"):
         try:
-            from inventory import load_inventory_for_restaurant, analyse_inventory
-            items, live = load_inventory_for_restaurant(rid)
+            from inventory import analysis_for
+            items, live, a = analysis_for(rid)
             if live and items:
-                a = analyse_inventory(items)
                 inv = {"recoverable": float(a.get("recoverable_monthly") or 0), "critical_low": len(a.get("critical_low") or []), "waste_rate": a.get("waste_rate_pct")}
         except Exception:
             inv = None

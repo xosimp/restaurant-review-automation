@@ -852,9 +852,8 @@ def _do_mobile_home(current_user):
             }
         elif key == "inventory":
             try:
-                from inventory import load_inventory_for_restaurant, analyse_inventory
-                _items, _live = load_inventory_for_restaurant(rid)
-                inv = analyse_inventory(_items)
+                from inventory import analysis_for
+                _items, _live, inv = analysis_for(rid)
                 # Only a restaurant with its own live inventory gets a
                 # waste line on the weekly receipt — the sample items a
                 # fresh account is analysed against aren't its own waste.
@@ -1598,6 +1597,24 @@ def mobile_menu_profitability(current_user):
         return jsonify(ok=False, error=f"Couldn't work out menu margins: {e}"), 500
 
 
+@mobile_bp.route("/food-cost/cogs")
+@mobile_login_required
+def mobile_food_cost_cogs(current_user):
+    """Actual food cost % — COGS over net sales — against the restaurant's
+    own target. Withholds the number when a component is missing and says
+    which, rather than reporting a percentage built on an assumption."""
+    import cogs as _cogs
+    try:
+        days = int(request.args.get("days") or _cogs.DEFAULT_WINDOW_DAYS)
+    except (TypeError, ValueError):
+        days = _cogs.DEFAULT_WINDOW_DAYS
+    days = max(7, min(days, 365))
+    try:
+        return jsonify(**_cogs.build_food_cost_pct(current_user["restaurant_id"], days=days))
+    except Exception as e:
+        return jsonify(ok=False, pct=None, error=f"Couldn't work out food cost %: {e}"), 500
+
+
 @mobile_bp.route("/food-cost/menu-item-price", methods=["POST"])
 @mobile_login_required
 def mobile_set_menu_item_price(current_user):
@@ -1725,18 +1742,13 @@ def mobile_food_cost_analytics(current_user):
     same waste_items/overstock breakdowns dashboard.html bakes into its donut
     charts at render time — both already computed by analyse_inventory(),
     just not previously exposed as JSON."""
-    from inventory import (load_inventory_for_restaurant, analyse_inventory, get_claude_insights,
+    from inventory import (load_inventory_for_restaurant, analysis_for, get_claude_insights,
                           compute_item_trends, build_price_watch)
     from marketing import get_upcoming_holidays
     rid = current_user["restaurant_id"]
     try:
         restaurant = get_restaurant(rid)
-        items, is_live = load_inventory_for_restaurant(rid)
-        analysis = analyse_inventory(
-            items,
-            delivery_days=restaurant.delivery_days if restaurant else None,
-            upcoming_holidays=get_upcoming_holidays(),
-        )
+        items, is_live, analysis = analysis_for(rid)
         try:
             price_watch = build_price_watch(compute_item_trends(rid, items))
         except Exception:

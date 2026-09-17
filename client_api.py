@@ -1493,15 +1493,9 @@ def labor_insight_api(current_user):
 @login_required
 def inv_insight_api(current_user):
     try:
-        from inventory import load_inventory_for_restaurant, analyse_inventory, get_claude_insights
-        from marketing import get_upcoming_holidays
+        from inventory import analysis_for, get_claude_insights
         restaurant = get_restaurant(current_user["restaurant_id"])
-        items, is_live = load_inventory_for_restaurant(current_user["restaurant_id"])
-        analysis = analyse_inventory(
-            items,
-            delivery_days=restaurant.delivery_days if restaurant else None,
-            upcoming_holidays=get_upcoming_holidays(),
-        )
+        items, is_live, analysis = analysis_for(current_user["restaurant_id"])
         owner_name = restaurant.owner_name if restaurant else None
         insight = get_claude_insights(analysis, owner_name=owner_name,
                                       restaurant_name=restaurant.name if restaurant else None,
@@ -1523,7 +1517,7 @@ def food_cost_waste_trend(current_user):
     and observation, computed once server-side (waste_trend.py). The live
     analysis is passed in so the target line reflects this week's real
     purchases rather than an average of history."""
-    from inventory import load_inventory_for_restaurant, analyse_inventory
+    from inventory import load_inventory_for_restaurant, analysis_for
     from waste_trend import build_waste_trend
     rid = current_user["restaurant_id"]
     range_key = (request.args.get("range") or "8w").lower()
@@ -1537,7 +1531,7 @@ def food_cost_waste_trend(current_user):
         # target comes from the newest week that recorded purchases, or
         # not at all.
         if is_live:
-            analysis = analyse_inventory(items, delivery_days=restaurant.delivery_days if restaurant else None)
+            _, _, analysis = analysis_for(rid, items=items, is_live=is_live)
     except Exception:
         analysis = None
     try:
@@ -3931,10 +3925,11 @@ def client_upload_data(current_user):
             _rid_inv = restaurant_id
             def _inv_trend_bg():
                 try:
-                    from inventory import load_inventory_for_restaurant as _lif, analyse_inventory as _ai, compute_item_trends as _cit
+                    from inventory import analysis_for as _afor, compute_item_trends as _cit
                     from webhooks import fire_webhook as _fw_inv
-                    _items, _ = _lif(_rid_inv)
-                    _analysis = _ai(_items)
+                    _items, _live_inv, _analysis = _afor(_rid_inv)
+                    if not (_items and _live_inv):
+                        return  # never fan out sample-pantry figures to a customer's webhook
                     _trends = _cit(_rid_inv, _items)
                     _fw_inv(_rid_inv, "inventory.updated", {
                         "waste_rate_pct": _analysis.get("waste_rate_pct"),
@@ -6296,6 +6291,24 @@ def receive_purchase_order(current_user, po_id):
     if not mark_purchase_order_received(current_user["restaurant_id"], po_id):
         return jsonify(ok=False, error="That order is already received, or isn't yours."), 404
     return jsonify(ok=True)
+
+
+@client_bp.route("/api/food-cost/cogs")
+@login_required
+def food_cost_cogs(current_user):
+    """Actual food cost % — COGS over net sales — against the restaurant's
+    own food_cost_target. Returns ok=False with a `missing` list rather than
+    a figure built on a substituted zero."""
+    import cogs as _cogs
+    try:
+        days = int(request.args.get("days") or _cogs.DEFAULT_WINDOW_DAYS)
+    except (TypeError, ValueError):
+        days = _cogs.DEFAULT_WINDOW_DAYS
+    days = max(7, min(days, 365))
+    try:
+        return jsonify(**_cogs.build_food_cost_pct(current_user["restaurant_id"], days=days))
+    except Exception as e:
+        return jsonify(ok=False, pct=None, error=_safe_err(e)), 500
 
 
 @client_bp.route("/api/food-cost/menu-profitability")

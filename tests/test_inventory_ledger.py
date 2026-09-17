@@ -126,14 +126,51 @@ class TestRecordReceiving:
 
 class TestRecordDepletion:
     def test_decreases_current_stock_and_computes_avg_daily_usage(self, db_path):
+        """Usage is per day that actually has depletion, not per calendar day
+        in the window.
+
+        This used to divide by a flat 7 regardless of how many days carried
+        data, so one day of sales read as one seventh of the real usage. That
+        understates usage, overstates days_remaining, keeps the item out of
+        critical_low and runs the kitchen out of product — the failure mode
+        the reorder logic exists to prevent.
+        """
         rid = _restaurant(db_path)
         iid = _ingredient(db_path, rid, current_stock=20, avg_daily_usage=999)
         ledger.record_depletion_from_sale(rid, iid, qty=3.5, event_date=date.today())
         ledger.recompute_rollups(rid, iid)
         row = _row(db_path, iid)
         assert row["current_stock"] == 16.5
-        # trailing-7-day sum (3.5) / 7
-        assert row["avg_daily_usage"] == 0.5
+        # one day of data, 3.5 depleted -> 3.5/day, not 3.5/7
+        assert row["avg_daily_usage"] == 3.5
+
+    def test_avg_daily_usage_divides_by_days_with_data_not_the_window(self, db_path):
+        rid = _restaurant(db_path)
+        iid = _ingredient(db_path, rid, current_stock=100, avg_daily_usage=0)
+        for offset in range(4):            # four consecutive days, 2 units each
+            ledger.record_depletion_from_sale(rid, iid, qty=2.0,
+                                              event_date=date.today() - timedelta(days=offset))
+        ledger.recompute_rollups(rid, iid)
+        assert _row(db_path, iid)["avg_daily_usage"] == 2.0   # 8 / 4, not 8 / 7
+
+    def test_receiving_in_the_window_sums_rather_than_taking_the_last_delivery(self, db_path):
+        """last_order_qty is the denominator of waste_pct, whose numerator is a
+        7-day waste total. Taking only the most recent delivery inflated the
+        waste rate roughly in proportion to delivery frequency."""
+        rid = _restaurant(db_path)
+        iid = _ingredient(db_path, rid, current_stock=0)
+        for offset in (0, 2, 4):
+            ledger.record_receiving(rid, iid, qty=10.0,
+                                    event_date=date.today() - timedelta(days=offset))
+        ledger.recompute_rollups(rid, iid)
+        assert _row(db_path, iid)["last_order_qty"] == 30.0
+
+    def test_receiving_older_than_the_window_still_gives_a_denominator(self, db_path):
+        rid = _restaurant(db_path)
+        iid = _ingredient(db_path, rid, current_stock=0)
+        ledger.record_receiving(rid, iid, qty=12.0, event_date=date.today() - timedelta(days=30))
+        ledger.recompute_rollups(rid, iid)
+        assert _row(db_path, iid)["last_order_qty"] == 12.0
 
     def test_manual_ingredient_never_touched_by_depletion_keeps_manual_avg_usage(self, db_path):
         # No depletion events ever recorded -> avg_daily_usage must stay

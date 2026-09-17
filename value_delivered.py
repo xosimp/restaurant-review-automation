@@ -62,9 +62,8 @@ def compute_total_value_delivered(restaurant_id: int, db_path: str = DB_PATH) ->
     inv_value = 0
     if restaurant.module_inventory:
         try:
-            from inventory import load_inventory_for_restaurant, analyse_inventory
-            items, _live = load_inventory_for_restaurant(restaurant_id)
-            inv = analyse_inventory(items)
+            from inventory import analysis_for
+            items, _live, inv = analysis_for(restaurant_id)
             inv_value = int(inv.get("recoverable_monthly", 0)) if _live else 0
         except Exception:
             inv_value = 0

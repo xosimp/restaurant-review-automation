@@ -261,4 +261,7 @@ def test_home_dates_are_m_d_yy_and_ask_uses_data_attributes(db_path):
     panel = html[a:b]
     assert 'data-ask="' in panel and 'data-ask-submit' in panel
     assert "onclick=\"hbAsk(" not in panel and "hbAskSubmit()\"" not in panel
-    assert "now_mdy" in panel
+    # The Home kicker used to read "9/16/26 · Simple EJ's" off now_mdy. It now
+    # carries the full current date on its own ("September 16, 2026") — the
+    # restaurant's own name directly under its own header was noise.
+    assert "{{ now }}" in panel and "now_mdy" not in panel

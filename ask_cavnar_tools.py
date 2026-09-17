@@ -363,7 +363,7 @@ def _read_shifts(restaurant_id, employee=None, limit=20):
 def _read_food_cost(restaurant_id):
     """Item-level detail behind the food-cost totals: what's low, what's
     being wasted, and which prices are moving."""
-    from inventory import (load_inventory_for_restaurant, analyse_inventory,
+    from inventory import (load_inventory_for_restaurant, analysis_for,
                            compute_item_trends, build_price_watch)
     # Returns (items, is_live) — is_live is False when it fell back to the
     # built-in sample set, and the model must be told so it never quotes
@@ -374,7 +374,7 @@ def _read_food_cost(restaurant_id):
         return {"is_live": False,
                 "note": "No real inventory data yet — nothing here reflects this restaurant. "
                         "Say so rather than quoting these numbers."}
-    a = analyse_inventory(items)
+    _, _, a = analysis_for(restaurant_id, items=items, is_live=is_live)
     try:
         watch = build_price_watch(compute_item_trends(restaurant_id, items))
     except Exception:

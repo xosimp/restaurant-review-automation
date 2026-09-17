@@ -114,8 +114,12 @@ def test_total_value_delivered_uses_the_normalized_figures(monkeypatch):
     monkeypatch.setattr(value_delivered, "get_review_stats", lambda rid: {"responded": 3})
     monkeypatch.setattr(labor, "analyse_shifts_for_restaurant", lambda rid: {
         "is_live": True, "potential_savings": 4000.0, "potential_savings_weekly": 2000.0, "potential_savings_monthly": 8666.67})
-    monkeypatch.setattr(inventory, "load_inventory_for_restaurant", lambda rid: ([], True))
-    monkeypatch.setattr(inventory, "analyse_inventory", lambda items: {"recoverable_monthly": 150})
+    # Every food-cost surface now goes through inventory.analysis_for, which
+    # resolves delivery_days and upcoming_holidays itself so the page, the
+    # weekly email, the alert engine and the supplier order can no longer
+    # compute different answers for the same restaurant.
+    monkeypatch.setattr(inventory, "analysis_for",
+                        lambda rid, items=None, is_live=None: ([], True, {"recoverable_monthly": 150}))
     total = value_delivered.compute_total_value_delivered(1)
     assert total == 3 * 5 + 8667 + 150
     # a sample (not live) labor set counts nothing
