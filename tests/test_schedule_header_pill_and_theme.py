@@ -393,3 +393,70 @@ def test_retract_button_requires_a_real_google_review_name_not_just_platform():
     src = inspect.getsource(client_api._do_retract)
     assert 'row["response_status"] != "posted"' in src
     assert 'row["platform"] != "google" or not row["review_name"]' in src
+
+
+# ── Intel: redundant "Check AI visibility" button removed ────────────────
+
+def test_intel_top_actions_no_longer_duplicate_the_aiv_section_button():
+    """The AI Visibility section already has its own primary (orange)
+    'Check AI visibility' button (#aiv-run-btn) that runs the real check.
+    A second, secondary-styled one sat in the page's top action row doing
+    the same thing via in2Jump + a synthetic click on that same button —
+    pure duplication, not a different action."""
+    s = _src()
+    start = s.index('<h1 class="hb-h1">Intel. ')
+    top = s[start:s.index('<div class="hb-pulse">', start)]
+    assert "Check AI visibility" not in top
+    assert 'onclick="in2Jump(\'in2-neighbors\')' in top, "the other 2 top actions should be untouched"
+    # The real button stays exactly once.
+    assert s.count("Check AI visibility") == 1
+    assert 'id="aiv-run-btn"' in s and 'cbtn-primary cbtn-lg' in s
+
+
+# ── Reviews pill colors: real amber, and a real threshold on "to approve" ────
+
+def test_stat_glow_amber_is_actually_amber_not_the_brand_orange():
+    """Named "amber" but colored var(--ember) — the brand orange used for
+    urgent/action-now states — so a 3-point-something rating and a
+    couple of pending approvals (both "warn" tier) read exactly like an
+    urgent alert. Now the real amber/warn token."""
+    s = _src()
+    m = re.search(r"\.stat-glow-amber\{([^}]*)\}", s)
+    assert m, ".stat-glow-amber rule not found"
+    assert "var(--amber)" in m.group(1)
+    assert "var(--ember)" not in m.group(1)
+
+
+def test_to_approve_pill_is_green_only_at_zero_with_a_named_threshold():
+    """Green used to mean nothing on this number — 0 pending rendered in
+    plain ink, not green, while amber/red both had a color. Now: 0 is the
+    only green case, 1..threshold is amber, >threshold is red — server
+    render and the client-side live updater (setPendingClass, after an
+    in-place approve) share the same threshold value instead of two
+    independently-maintained magic numbers."""
+    s = _src()
+    assert "{% set _await_threshold = 2 %}" in s
+    i = s.index("hb-chip {{ 'bad' if _await")
+    pill = s[i:s.index('</span>\n      <span class="hb-chip', i)]
+    assert "'stat-glow-red' if _await > _await_threshold else ('stat-glow-amber' if _await > 0 else 'stat-glow-green')" in pill
+    assert "'bad' if _await > _await_threshold else ('warn' if _await > 0 else 'good')" in pill
+    fn = _fn("setPendingClass")
+    assert "PENDING_APPROVAL_WARN_THRESHOLD = 2" in s
+    assert "count===0 ? 'stat-glow-green' : count<=PENDING_APPROVAL_WARN_THRESHOLD ? 'stat-glow-amber' : 'stat-glow-red'" in fn
+
+
+# ── Reviews 3-column row: bottom-aligned captions ─────────────────────────
+
+def test_rv2_sg_columns_are_flex_so_captions_align_at_the_bottom():
+    """.rv2-sig's grid already stretches every .rv2-sg to the row's full
+    height (set by the tallest column, the 6-row topic list) — but each
+    column's own trailing .cap caption used to sit right after its own
+    content instead of at the bottom of that stretched cell, so a shorter
+    chart's caption ('positive/negative') landed above 'click a topic to
+    filter the inbox' instead of level with it. .rv2-sg is now a flex
+    column and .cap anchors to the bottom of it via margin-top:auto."""
+    s = _src()
+    assert re.search(r"\.rv2-sg\{display:flex;flex-direction:column;", s)
+    m = re.search(r"\.rv2-sg \.cap\{([^}]*)\}", s)
+    assert m, ".rv2-sg .cap rule not found"
+    assert "margin-top:auto" in m.group(1)

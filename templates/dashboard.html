@@ -73,7 +73,11 @@ html{background:var(--bg-base);min-height:100%}
 /* Stat number color states — effect D: deep emboss */
 .stat-glow-green{color:#3ecf6e!important}
 .stat-glow-red{color:#e02828!important}
-.stat-glow-amber{color:var(--ember)!important}
+/* Named "amber" but rendered var(--ember) — the brand orange, not an
+   actual amber/yellow — so every "warn"-tier stat number (a 3.something
+   rating, a couple of pending approvals) read as the same color as an
+   "urgent, act now" state. Uses the real amber/warn token instead. */
+.stat-glow-amber{color:var(--amber)!important}
 .rv-stat-n{color:var(--ink2)}
 [data-theme="dark"] .stat-glow-green{text-shadow:0 2px 0 rgba(0,0,0,.9),0 -1px 0 rgba(255,255,255,.18),0 3px 12px rgba(0,0,0,.6),0 -2px 4px rgba(62,207,110,.12)!important}
 [data-theme="dark"] .stat-glow-red{text-shadow:0 2px 0 rgba(0,0,0,.9),0 -1px 0 rgba(255,255,255,.14),0 3px 12px rgba(0,0,0,.6),0 -2px 4px rgba(224,40,40,.12)!important}
@@ -1758,7 +1762,14 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .ai-caveat b{font-weight:700}
 /* signals */
 .rv2-sig{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0;margin-top:34px;padding-top:24px;border-top:1px solid var(--hb-line)}
-.rv2-sg{padding:0 26px 0 0;margin-right:26px;border-right:1px solid var(--hb-line2);min-width:0}
+/* A flex column, not block: .rv2-sig's grid already stretches every .rv2-sg
+   to the row's full height (the tallest column, "What guests talk about",
+   with 6 topic rows), but each column's own .cap caption used to sit right
+   after its own content — so the shorter "Reviews · per week" chart's
+   caption landed higher up than "click a topic to filter the inbox",
+   with empty space below it. .cap now anchors to the bottom of whichever
+   column it's in via margin-top:auto, so both captions land flush. */
+.rv2-sg{display:flex;flex-direction:column;padding:0 26px 0 0;margin-right:26px;border-right:1px solid var(--hb-line2);min-width:0}
 .rv2-sg:last-child{border-right:none;margin-right:0;padding-right:0}
 .rv2-sg .k{font-size:13px;font-weight:700;letter-spacing:.13em;text-transform:uppercase;color:var(--ink3);display:flex;justify-content:space-between;align-items:center;gap:8px}
 .rv2-sg .k i{font-style:normal;color:var(--ember);font-weight:700;letter-spacing:.06em;font-size:11.5px}
@@ -1770,7 +1781,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
    untouched. */
 #sentiment-trend-bars{margin-top:22px}
 .rv2-sg svg{display:block;width:100%;height:108px;margin-top:10px;overflow:visible}
-.rv2-sg .cap{font-size:13px;color:var(--ink3);margin-top:8px;display:flex;justify-content:space-between;gap:10px}
+.rv2-sg .cap{font-size:13px;color:var(--ink3);margin-top:auto;padding-top:8px;display:flex;justify-content:space-between;gap:10px}
 .rv2-days{display:flex;gap:2px}
 .rv2-days button{background:none;border:none;border-radius:999px;padding:3px 9px;font-family:'Space Grotesk',sans-serif;font-size:12px;font-weight:600;color:var(--ink3);cursor:pointer;letter-spacing:0;text-transform:none}
 .rv2-days button.on{background-color:var(--hb-tint2);color:var(--ember)}
@@ -1856,6 +1867,12 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 <div class="hb-wrap">
   {% set _rating = restaurant.gbp_rating or rstats.avg_rating %}
   {% set _urgent = rstats.urgent or 0 %}{% set _await = rstats.awaiting_approval or 0 %}
+  {# "To approve" pill: green ONLY at zero (an empty queue, not "a small
+     number of something bad"), amber up to the threshold, red past it.
+     Named here and reused for both the pill's own tone and its number's
+     glow class so the two can't drift out of sync; setPendingClass() (JS,
+     for the live post-approve update) mirrors the same threshold. #}
+  {% set _await_threshold = 2 %}
   {% if _urgent > 0 %}{% set _head = _urgent ~ ' need' ~ ('s' if _urgent == 1 else '') ~ ' a reply now' %}{% set _tone = 'bad' %}
   {% elif _await > 0 %}{% set _head = _await ~ (' reply' if _await == 1 else ' replies') ~ ' ready to publish' %}{% set _tone = 'warn' %}
   {% elif rstats.total %}{% set _head = 'Inbox is clear' %}{% set _tone = 'good' %}
@@ -1871,7 +1888,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       <span class="hb-chip {{ 'good' if _rating >= 4.0 else ('warn' if _rating >= 3.0 else 'bad') }}" id="stat-rating"><span class="dot"><b></b><i></i></span><span class="v"><span id="stat-rating-n" class="{{ _rglow }}">{{ _rating }}</span>★</span><span class="l">{{ 'Google rating' if restaurant.gbp_rating else 'rating' }}</span></span>
       {% set _rrglow = 'stat-glow-green' if rstats.response_rate >= 70 else ('stat-glow-amber' if rstats.response_rate >= 40 else 'stat-glow-red') %}
       <span class="hb-chip {{ 'good' if rstats.response_rate >= 70 else ('warn' if rstats.response_rate >= 40 else 'bad') }}" id="stat-rr"><span class="dot"><b></b><i></i></span><span class="v"><span id="stat-rr-n" class="{{ _rrglow }}">{{ rstats.response_rate|int }}</span><span id="stat-rr-pct">%</span></span><span class="l">answered</span></span>
-      <span class="hb-chip {{ 'bad' if _await > 2 else ('warn' if _await > 0 else 'good') }}" id="stat-pending"><span class="dot"><b></b><i></i></span><span class="v"><span id="stat-pending-n" class="{{ 'stat-glow-red' if _await > 2 else ('stat-glow-amber' if _await > 0 else '') }}">{{ _await }}</span><span id="stat-pending-arrow" hidden>↓</span></span><span class="l">to approve</span></span>
+      <span class="hb-chip {{ 'bad' if _await > _await_threshold else ('warn' if _await > 0 else 'good') }}" id="stat-pending"><span class="dot"><b></b><i></i></span><span class="v"><span id="stat-pending-n" class="{{ 'stat-glow-red' if _await > _await_threshold else ('stat-glow-amber' if _await > 0 else 'stat-glow-green') }}">{{ _await }}</span><span id="stat-pending-arrow" hidden>↓</span></span><span class="l">to approve</span></span>
       <span class="hb-chip {{ 'bad' if _urgent > 0 else 'good' }}" id="stat-urgent"><span class="dot"><b></b><i></i></span><span class="v"><span id="stat-urgent-n" class="{{ 'stat-glow-red' if _urgent > 0 else '' }}">{{ _urgent }}</span></span><span class="l">urgent</span></span>
     </div>
   </div>
@@ -4013,7 +4030,6 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       <div class="lb2-actions">
         {% if _cd %}<button onclick="refreshCompetitorIntel(this)" class="cbtn cbtn-primary">Refresh competitors</button>{% else %}<button onclick="refreshCompetitorIntel(this)" class="cbtn cbtn-primary">Fetch competitor data</button>{% endif %}
         <button class="cbtn cbtn-secondary" onclick="in2Jump('in2-neighbors');var s=document.getElementById('intel-search');if(s)s.focus()">Track a competitor</button>
-        <button class="cbtn cbtn-secondary" onclick="in2Jump('in2-aiv');runAIVisibility(document.getElementById('aiv-run-btn'))">Check AI visibility</button>
       </div>
     </div>
     <div class="hb-pulse">
@@ -6242,8 +6258,11 @@ function statGlow(el, cls){
   if(!cls){ el.style.color='var(--ink3)'; el.style.textShadow='0 2px 0 rgba(0,0,0,.9),0 -1px 0 rgba(255,255,255,.08),0 3px 8px rgba(0,0,0,.5)'; }
   else { el.style.color=''; el.style.textShadow=''; }
 }
+// Mirrors the server-rendered threshold (_await_threshold in dashboard.html) —
+// green only at an empty queue, amber up to it, red past it.
+var PENDING_APPROVAL_WARN_THRESHOLD = 2;
 function setPendingClass(el, count){
-  statGlow(document.getElementById('stat-pending-n'), count===0 ? '' : count<=2 ? 'stat-glow-amber' : 'stat-glow-red');
+  statGlow(document.getElementById('stat-pending-n'), count===0 ? 'stat-glow-green' : count<=PENDING_APPROVAL_WARN_THRESHOLD ? 'stat-glow-amber' : 'stat-glow-red');
 }
 function setUrgentClass(el, count){
   statGlow(document.getElementById('stat-urgent-n'), count===0 ? '' : 'stat-glow-red');
