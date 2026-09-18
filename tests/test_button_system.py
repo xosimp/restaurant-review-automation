@@ -129,7 +129,12 @@ def test_system_buttons_carry_no_inline_presentation_overrides():
 
 def test_the_two_js_selectors_that_targeted_legacy_classes_were_updated_with_the_markup():
     s = _src()
-    assert "document.querySelector('#rc-'+id+' .cbtn-success')" in s
+    # The Approve button itself moved from .cbtn-success (green) to
+    # .cbtn-primary (ember) — same color as approving is meant to look
+    # like the one dominant action, not indistinguishable from the green
+    # "done" state it turns into — so this press-animation selector had to
+    # move with it.
+    assert "document.querySelector('#rc-'+id+' .cbtn-primary')" in s
     assert "document.querySelector('.cbtn-primary[onclick*=\"genContent\"]')" in s
     assert "document.querySelector('#twofa-step2 .cbtn-primary')" in s
     assert "confirm.className = 'cbtn cbtn-primary cbtn-sm';" in s

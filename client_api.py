@@ -108,48 +108,82 @@ def _do_approve(rid, restaurant_id):
         _fw(restaurant_id, "response.approved", {"review_id": rid})
     except Exception:
         pass
-    # Auto-post to Google in background thread — don't block the response
+    auto_posted, post_error = _attempt_google_post(rid, restaurant_id)
+    payload = {"ok": True, "auto_posted": auto_posted}
+    if post_error:
+        payload["post_error"] = post_error
+    return payload, 200
+
+
+def _attempt_google_post(rid, restaurant_id):
+    """Synchronously tries to post a review's approved draft to Google.
+
+    Used right after approving, and again from the "Retry posting" button
+    on a review whose first attempt failed. Used to run in a background
+    thread that fired-and-forgot the result — the HTTP response went out
+    with auto_posted:True before Google had actually been asked, so the UI
+    showed "Posted to Google" optimistically, and a failure (bad token,
+    Google API error) was never seen by anyone, just printed to server
+    logs. A review stuck at 'approved' then showed a static "Posting to
+    Google" label forever with no way to tell "still working" from
+    "silently failed" and no way to retry.
+
+    Returns (auto_posted, post_error). auto_posted is True only once
+    Google has actually accepted the reply. post_error carries the reason
+    when an attempt was made and failed; it's None both on success and
+    when nothing was attempted (not a Google review, no draft, or GBP
+    isn't connected yet — none of those are failures).
+    """
     try:
-        from gmb import is_connected
+        from gmb import is_connected, post_reply
         conn = get_conn()
         row = conn.execute(
             "SELECT platform, draft_response, review_name FROM reviews WHERE id=? AND restaurant_id=?",
             (rid, restaurant_id)
         ).fetchone()
         conn.close()
-        if row and row["platform"] == "google" and row["review_name"] and row["draft_response"]:
-            if is_connected(restaurant_id):
-                import threading as _t_gmb
-                _rid_capture = rid
-                _rest_id_capture = restaurant_id
-                _review_name = row["review_name"]
-                _draft = row["draft_response"]
-                def _post_gmb_bg():
-                    try:
-                        from gmb import post_reply
-                        result = post_reply(_rest_id_capture, _review_name, _draft)
-                        if result["ok"]:
-                            from models import mark_posted
-                            mark_posted(_rid_capture)
-                            print(f"[GMB] Auto-posted review {_rid_capture} ✓")
-                            try:
-                                from webhooks import fire_webhook as _fw2
-                                _fw2(_rest_id_capture, "response.posted", {
-                                    "review_id": _rid_capture,
-                                    "platform": "google",
-                                    "author": _review_name,
-                                })
-                            except Exception:
-                                pass
-                        else:
-                            print(f"[GMB] Auto-post failed for review {_rid_capture}: {result['error']}")
-                    except Exception as _ge:
-                        print(f"[GMB] Background post error: {_ge}")
-                _t_gmb.Thread(target=_post_gmb_bg, daemon=True).start()
-                return {"ok": True, "auto_posted": True}, 200
+        if not (row and row["platform"] == "google" and row["review_name"] and row["draft_response"]):
+            return False, None
+        if not is_connected(restaurant_id):
+            return False, None
+        result = post_reply(restaurant_id, row["review_name"], row["draft_response"])
+        if result["ok"]:
+            from models import mark_posted
+            mark_posted(rid)
+            print(f"[GMB] Auto-posted review {rid} ✓")
+            try:
+                from webhooks import fire_webhook as _fw2
+                _fw2(restaurant_id, "response.posted", {
+                    "review_id": rid,
+                    "platform": "google",
+                    "author": row["review_name"],
+                })
+            except Exception:
+                pass
+            return True, None
+        print(f"[GMB] Auto-post failed for review {rid}: {result['error']}")
+        return False, result["error"]
     except Exception as e:
         print(f"[GMB] approve auto-post error: {e}")
-    return {"ok": True, "auto_posted": False}, 200
+        return False, str(e)
+
+
+def _do_retry_post(rid, restaurant_id):
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT response_status, platform FROM reviews WHERE id=? AND restaurant_id=?",
+        (rid, restaurant_id)
+    ).fetchone()
+    conn.close()
+    if not row:
+        return {"ok": False, "error": "Review not found"}, 404
+    if row["response_status"] != "approved" or row["platform"] != "google":
+        return {"ok": False, "error": "Only an approved Google reply that hasn't posted yet can be retried."}, 400
+    auto_posted, post_error = _attempt_google_post(rid, restaurant_id)
+    payload = {"ok": True, "auto_posted": auto_posted}
+    if post_error:
+        payload["post_error"] = post_error
+    return payload, 200
 
 
 def _do_approve_all(restaurant_id, limit=25):
@@ -284,7 +318,17 @@ def _do_retract(rid, restaurant_id):
         return {"ok": False, "error": result["error"]}, 502
 
     from models import revert_to_drafted, log_event
-    revert_to_drafted(rid, restaurant_id)
+    try:
+        # The reply is already gone from Google at this point — a failure
+        # here (a locked db under concurrent writes, say) used to be an
+        # unhandled exception straight to Flask's generic HTML error page,
+        # which the client's fetch().then(r => r.json()) can't parse, so
+        # every retract that hit this surfaced as a flat "Network error"
+        # toast with nothing to go on, even though Google had already
+        # accepted the retraction. Our own status just failed to catch up.
+        revert_to_drafted(rid, restaurant_id)
+    except Exception as e:
+        return {"ok": False, "error": "Retracted from Google, but couldn't update our own status — refresh the page. (" + str(e) + ")"}, 500
     try:
         log_event(restaurant_id, "review_retracted", {"review_id": rid})
     except Exception:
@@ -301,6 +345,13 @@ def _do_retract(rid, restaurant_id):
 @login_required
 def approve(rid, current_user):
     payload, status = _do_approve(rid, current_user["restaurant_id"])
+    return jsonify(**payload), status
+
+
+@client_bp.route("/api/reviews/<int:rid>/retry-post", methods=["POST"])
+@login_required
+def retry_post_review(rid, current_user):
+    payload, status = _do_retry_post(rid, current_user["restaurant_id"])
     return jsonify(**payload), status
 
 def _do_delete_review(rid, restaurant_id):

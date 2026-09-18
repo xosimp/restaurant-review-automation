@@ -1794,7 +1794,15 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
    column it's in via margin-top:auto, so both captions land flush. */
 .rv2-sg{display:flex;flex-direction:column;padding:0 26px 0 0;margin-right:26px;border-right:1px solid var(--hb-line2);min-width:0}
 .rv2-sg:last-child{border-right:none;margin-right:0;padding-right:0}
-.rv2-sg .k{font-size:13px;font-weight:700;letter-spacing:.13em;text-transform:uppercase;color:var(--ink3);display:flex;justify-content:space-between;align-items:center;gap:8px}
+/* "Approval Method" wraps to 2 lines next to its 30d/90d/6mo buttons at
+   this column width (the day picker eats width the plain-text "Reviews ·
+   per week" heading, which has no picker, never has to share) — a taller
+   .k row there pushed that column's big number down relative to its two
+   siblings, so all 3 looked unaligned and the numbers looked mismatched
+   in size purely from sitting at different heights. A shared min-height
+   (2 lines at this font's own line-height) keeps every .k row the same
+   height whether its own title wraps or not. */
+.rv2-sg .k{font-size:13px;font-weight:700;letter-spacing:.13em;text-transform:uppercase;color:var(--ink3);display:flex;justify-content:space-between;align-items:center;gap:8px;min-height:41.6px}
 .rv2-sg .k i{font-style:normal;color:var(--ember);font-weight:700;letter-spacing:.06em;font-size:11.5px}
 .rv2-sg .v{font-family:'Space Grotesk',sans-serif;font-size:38px;font-weight:600;letter-spacing:-.025em;line-height:1;color:var(--ink);margin:10px 0 2px;display:flex;align-items:baseline;gap:8px}
 .rv2-sg .v small{font-family:'Apfel Grotezk',sans-serif;font-size:14px;font-weight:400;letter-spacing:0;color:var(--ink3)}
@@ -1905,13 +1913,19 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
    an auto-post succeeds (approveR()) — no separate JS needed here, this
    applies the moment that class lands, in-frame, no reload. */
 #panel-reviews .rv2-row.posted .draft-box{background:rgba(106,171,255,.14)!important}
+/* Same idea for approved (green, matching the .rv2-row.approved ribbon)
+   and skipped (sand/gray, matching the .rv2-row.skipped ribbon) — both
+   classes already land on the card synchronously from approveR()/skipR(),
+   so these apply in-frame too, no reload needed. */
+#panel-reviews .rv2-row.approved .draft-box{background:rgba(53,214,124,.14)!important}
+#panel-reviews .rv2-row.skipped .draft-box{background:rgba(227,201,154,.12)!important}
 #panel-reviews .draft-lbl{font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember)!important;margin-bottom:6px}
 #panel-reviews .draft-txt{font-size:13.5px;color:var(--ink)!important;line-height:1.6;font-style:normal}
 #panel-reviews .draft-actions{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center}
 #panel-reviews .response-editor textarea{width:100%;padding:10px 12px;border:1px solid var(--hb-line);border-radius:8px;font-family:'Apfel Grotezk',sans-serif;font-size:13px;color:var(--ink);background:var(--hb-field);resize:vertical;min-height:90px;outline:none}
 #panel-reviews .response-editor textarea:focus{border-color:var(--ember);box-shadow:0 0 0 3px rgba(200,75,47,.14)}
 .rv2-status{font-size:11px;font-weight:600;padding:3px 9px;border-radius:999px}
-.rv2-status.live{background:var(--blue-bg);color:var(--blue)}.rv2-status.ok{background:var(--green-bg);color:var(--hb-good)}
+.rv2-status.live{background:var(--blue-bg);color:var(--blue)}.rv2-status.ok{background:var(--green-bg);color:var(--hb-good)}.rv2-status.bad{background:var(--red-bg);color:var(--hb-bad)}
 .rv2-empty{padding:40px 0;text-align:center;color:var(--ink3);font-size:13px}
 .rv2-empty b{display:block;color:var(--ink);font-size:15px;margin-bottom:4px;font-weight:600}
 @media (max-width:1000px){.rv2-sig{grid-template-columns:1fr}.rv2-sg{border-right:none;margin-right:0;padding:0 0 18px;border-bottom:1px solid var(--hb-line2);margin-bottom:18px}.rv2-sg:last-child{border-bottom:none;margin-bottom:0}}
@@ -1962,7 +1976,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       <div id="trend-avg-rating" hidden></div>
     </section>
     <div class="rv2-sig">
-      <div class="rv2-sg"><div class="k"><span>Reviews · per week</span></div><div class="v"><span id="rv-sent-n" class="hb-num">—</span><small>this week</small></div><div id="sentiment-trend-bars" style="color:var(--ink3)"><div class="hb-load" style="height:86px"><canvas class="hb-orb" data-orb-state="working" width="28" height="28"></canvas></div></div><div class="cap"><span><span style="color:var(--hb-good)">■</span> positive &nbsp; <span style="color:var(--hb-bad)">■</span> negative &nbsp; <span style="color:var(--ink3)">■</span> neutral</span><span id="sentiment-trend-labels"></span></div></div>
+      <div class="rv2-sg"><div class="k"><span>Reviews · per week</span></div><div class="v"><span id="rv-sent-n" class="hb-num">—</span><small>this week</small></div><div id="sentiment-trend-bars" style="color:var(--ink3)"><div class="hb-load" style="height:86px"><canvas class="hb-orb" data-orb-state="working" width="28" height="28"></canvas></div></div><div class="cap"><span><span style="color:var(--hb-good)">■</span> pos &nbsp; <span style="color:var(--hb-bad)">■</span> neg &nbsp; <span style="color:var(--ink3)">■</span> neu</span><span id="sentiment-trend-labels"></span></div></div>
       <div class="rv2-sg" id="perf-card"><div class="k"><span>Approval Method</span><span class="rv2-days" id="perf-days-btns"><button class="hm-days-btn" data-days="30" onclick="loadResponsePerf(30)">30d</button><button class="hm-days-btn on" data-days="90" onclick="loadResponsePerf(90)">90d</button><button class="hm-days-btn" data-days="180" onclick="loadResponsePerf(180)">6mo</button></span></div><div class="v"><span id="rv-perf-n" class="hb-num">—</span><small>approved</small></div><div id="perf-body"><div class="hb-load" style="height:86px"><canvas class="hb-orb" data-orb-state="working" width="28" height="28"></canvas></div></div><div class="cap"><span id="rv-perf-cap">as-is · edited · regenerated</span></div></div>
       <div class="rv2-sg" id="topic-heatmap-card"><div class="k"><span>What guests talk about</span><span class="rv2-days" id="topic-days-btns"><button class="hm-days-btn" data-days="30" onclick="loadTopicHeatmap(30)">30d</button><button class="hm-days-btn on" data-days="90" onclick="loadTopicHeatmap(90)">90d</button><button class="hm-days-btn" data-days="180" onclick="loadTopicHeatmap(180)">6mo</button></span></div><div id="heatmap-grid" class="rv2-topics"><div class="hb-load" style="height:110px"><canvas class="hb-orb" data-orb-state="searching" width="28" height="28"></canvas></div></div><div class="cap"><span>click a topic to filter the inbox</span><span><span style="color:var(--hb-good)">■</span> pos &nbsp; <span style="color:var(--hb-bad)">■</span> neg &nbsp; <span style="color:var(--ink3)">■</span> neu</span></div></div>
     </div>
@@ -2007,23 +2021,36 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
                400ing with "only auto-posted Google replies". #}
             {% if r.platform=='google' and r.review_name %}<button class="cbtn cbtn-secondary cbtn-sm" onclick="retractR({{ r.id }},this)">Retract</button>{% endif %}
           {% elif r.response_status=='approved' %}
-            <span class="rv2-status ok">✓ Approved</span>
-            <span style="font-size:11.5px;color:var(--ink3)">{% if r.platform=='google' %}Posting to Google{% else %}Copy and post to {{ r.platform|title }}{% endif %}</span>
+            {# platform==google + approved (never made it to 'posted') is now
+               only reached after a SYNCHRONOUS post attempt (_attempt_google_post,
+               client_api.py) already ran and returned — there's no more "still
+               working" window it could be sitting in. So if GBP is connected,
+               landing here means that attempt failed; a static "Posting to
+               Google" label used to sit here regardless, forever, with no way
+               to tell "in progress" from "silently failed" and no retry. #}
+            {% if r.platform=='google' and restaurant.gmb_refresh_token %}
+              <span class="rv2-status bad">⚠ Couldn't post to Google</span>
+              <span style="font-size:11.5px;color:var(--ink3)">The reply is saved — try posting it again.</span>
+              <button class="cbtn cbtn-secondary cbtn-sm" onclick="retryPostR({{ r.id }},this)">Retry posting</button>
+            {% else %}
+              <span class="rv2-status ok">✓ Approved</span>
+              <span style="font-size:11.5px;color:var(--ink3)">{% if r.platform=='google' %}Will post to Google once connected{% else %}Copy and post to {{ r.platform|title }}{% endif %}</span>
+            {% endif %}
             <button class="cbtn cbtn-secondary cbtn-sm" onclick="skipR({{ r.id }})">Edit</button>
             {% if r.platform != 'google' %}<button class="cbtn cbtn-soft cbtn-sm" onclick="markPosted({{ r.id }},this)">Mark as posted</button>{% endif %}
           {% elif r.response_status=='skipped' %}
-            <button class="cbtn cbtn-success cbtn-sm" onclick="approveR({{ r.id }})">✓ Approve</button>
+            <button class="cbtn cbtn-primary cbtn-sm" onclick="approveR({{ r.id }})">✓ Approve</button>
             <button class="cbtn cbtn-secondary cbtn-sm" onclick="openEditor({{ r.id }})">Edit</button>
             <button class="cbtn cbtn-secondary cbtn-sm" onclick="regenDraft({{ r.id }})">↻ Regenerate</button>
           {% else %}
-            <button class="cbtn cbtn-success cbtn-sm" onclick="approveR({{ r.id }})">✓ Approve</button>
+            <button class="cbtn cbtn-primary cbtn-sm" onclick="approveR({{ r.id }})">✓ Approve</button>
             <button class="cbtn cbtn-secondary cbtn-sm" onclick="skipR({{ r.id }})">Skip</button>
           {% endif %}
         </div>
         <div class="response-editor" id="editor-{{ r.id }}" style="display:none;margin-top:10px">
           <textarea id="editor-text-{{ r.id }}" placeholder="Write your own response…">{{ r.draft_response|e }}</textarea>
           <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center">
-            <button class="cbtn cbtn-success cbtn-sm" onclick="saveDraft({{ r.id }})">Save &amp; approve</button>
+            <button class="cbtn cbtn-primary cbtn-sm" onclick="saveDraft({{ r.id }})">Save &amp; approve</button>
             <button class="cbtn cbtn-secondary cbtn-sm" onclick="regenDraft({{ r.id }})">↻ Regenerate</button>
             <button class="cbtn cbtn-secondary cbtn-sm" data-tmpl-btn="1" onclick="toggleTmplPicker({{ r.id }},this)">Templates ▾</button>
             <button class="cbtn cbtn-secondary cbtn-sm" onclick="closeEditor({{ r.id }})">Cancel</button>
@@ -2042,7 +2069,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
         <div class="response-editor" id="editor-{{ r.id }}" style="display:none;margin-top:10px">
           <textarea id="editor-text-{{ r.id }}" placeholder="Write your response here…"></textarea>
           <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center">
-            <button class="cbtn cbtn-success cbtn-sm" onclick="saveDraft({{ r.id }})">Save &amp; approve</button>
+            <button class="cbtn cbtn-primary cbtn-sm" onclick="saveDraft({{ r.id }})">Save &amp; approve</button>
             <button class="cbtn cbtn-secondary cbtn-sm" data-tmpl-btn="1" onclick="toggleTmplPicker({{ r.id }},this)">Templates ▾</button>
             <button class="cbtn cbtn-secondary cbtn-sm" onclick="closeEditor({{ r.id }})">Cancel</button>
             <button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="saveAsTemplate({{ r.id }})">Save as template</button>
@@ -5330,7 +5357,7 @@ function regenDraft(id) {
         if (txtEl) txtEl.textContent = data.draft;
         if (editorEl) editorEl.value = data.draft;
         actionsEl.innerHTML =
-          '<button class="cbtn cbtn-success cbtn-sm" onclick="approveR('+id+')">✓ Approve</button>' +
+          '<button class="cbtn cbtn-primary cbtn-sm" onclick="approveR('+id+')">✓ Approve</button>' +
           '<button class="cbtn cbtn-secondary cbtn-sm" onclick="skipR('+id+')">Skip</button>';
         actionsEl.style.display='flex';
         document.getElementById('editor-'+id).style.display='none';
@@ -5340,13 +5367,13 @@ function regenDraft(id) {
           '<div class="draft-lbl">Suggested response</div>' +
           '<div class="draft-txt" id="draft-txt-'+id+'">'+data.draft+'</div>' +
           '<div class="draft-actions" id="draft-actions-'+id+'">' +
-            '<button class="cbtn cbtn-success cbtn-sm" onclick="approveR('+id+')">✓ Approve</button>' +
+            '<button class="cbtn cbtn-primary cbtn-sm" onclick="approveR('+id+')">✓ Approve</button>' +
             '<button class="cbtn cbtn-secondary cbtn-sm" onclick="skipR('+id+')">Skip</button>' +
           '</div>' +
           '<div class="response-editor" id="editor-'+id+'" style="display:none;margin-top:10px">' +
             '<textarea id="editor-text-'+id+'" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:\'Apfel Grotezk\',sans-serif;font-size:12px;color:var(--ink);background:white;resize:vertical;min-height:90px;outline:none">'+data.draft+'</textarea>' +
             '<div style="display:flex;gap:6px;margin-top:6px">' +
-              '<button class="cbtn cbtn-success cbtn-sm" onclick="saveDraft('+id+')">Save & approve</button>' +
+              '<button class="cbtn cbtn-primary cbtn-sm" onclick="saveDraft('+id+')">Save & approve</button>' +
               '<button class="cbtn cbtn-secondary cbtn-sm" onclick="regenDraft('+id+')">↻ Regenerate AI draft</button>' +
               '<button class="cbtn cbtn-secondary cbtn-sm" onclick="closeEditor('+id+')">Cancel</button>' +
             '</div>' +
@@ -6728,7 +6755,7 @@ function _reloadResponsePerfCurrent(){
   loadResponsePerf(on?parseInt(on.getAttribute('data-days'),10):90);
 }
 function approveR(id){
-  var _appBtn=document.querySelector('#rc-'+id+' .cbtn-success');
+  var _appBtn=document.querySelector('#rc-'+id+' .cbtn-primary');
   if(_appBtn){_appBtn.style.animation='btnPress .22s ease';setTimeout(function(){if(_appBtn)_appBtn.style.animation='';},240);}
   fetch('/approve/'+id,{method:'POST'}).then(function(r){return r.json();}).then(function(d){
   if(d.ok){
@@ -6755,18 +6782,60 @@ function approveR(id){
         : '<button class="cbtn cbtn-soft cbtn-sm" style="margin-left:6px" onclick="markPosted('+id+',this)">Mark as posted</button>';
       var platform = card.dataset.platform || 'google';
       if(platform === 'google'){
-        document.querySelector('#rc-'+id+' .draft-actions').innerHTML=
-          '<span class="cbtn cbtn-success cbtn-ghost cbtn-done cbtn-sm">✓ Approved</span>' +
-          '<span style="font-size:11px;color:var(--ink3);margin-left:6px">Saved — will post to Google when GBP is connected</span>';
+        // The post attempt already ran synchronously by the time this
+        // response comes back (_attempt_google_post, client_api.py) — so
+        // auto_posted:false here means one of two real outcomes, not "in
+        // progress": post_error means it was tried and failed (used to
+        // show a static "Posting to Google" label that never changed and
+        // silently hid the failure); no post_error means GBP just isn't
+        // connected yet.
+        if(d.post_error){
+          document.querySelector('#rc-'+id+' .draft-actions').innerHTML=
+            '<span class="rv2-status bad" style="margin-right:6px">⚠ Couldn\'t post to Google</span>' +
+            '<span style="font-size:11px;color:var(--ink3)">The reply is saved — try posting it again.</span>' +
+            '<button class="cbtn cbtn-secondary cbtn-sm" style="margin-left:6px" onclick="retryPostR('+id+',this)">Retry posting</button>';
+          toast('Approved, but posting to Google failed — you can retry below','error');
+        } else {
+          document.querySelector('#rc-'+id+' .draft-actions').innerHTML=
+            '<span class="cbtn cbtn-success cbtn-ghost cbtn-done cbtn-sm">✓ Approved</span>' +
+            '<span style="font-size:11px;color:var(--ink3);margin-left:6px">Will post to Google once connected</span>';
+          toast('Response approved and saved ✓','success');
+        }
       } else {
         document.querySelector('#rc-'+id+' .draft-actions').innerHTML='<span class="cbtn cbtn-success cbtn-ghost cbtn-done cbtn-sm">✓ Approved</span>'+_markBtn;
+        toast('Response approved — copy and post to ' + platform + ' manually','success');
       }
       updateReviewStats();
       _reloadResponsePerfCurrent();
-      toast('Response approved' + (platform === 'google' ? ' and saved ✓' : ' — copy and post to ' + platform + ' manually'),'success');
     }
   }
 })}
+
+function retryPostR(id, btn){
+  // busy() is a one-line wrapper around cbtnBusy() local to the "iOS
+  // parity" IIFE further down the page (where retractR etc. live) — call
+  // cbtnBusy directly here since it's the one actually declared at top
+  // level/global scope.
+  var done=cbtnBusy(btn,'Posting…');
+  fetch('/api/reviews/'+id+'/retry-post',{method:'POST'}).then(function(r){
+    return r.json().catch(function(){ throw new Error('Server error (HTTP '+r.status+') — please try again'); });
+  }).then(function(d){
+    done();
+    if(!d.ok){ toast(d.error||'Could not retry','error'); return; }
+    var card=document.getElementById('rc-'+id);
+    if(d.auto_posted){
+      if(card){ card.classList.remove('approved'); card.classList.add('posted'); }
+      cmPostedThen(document.querySelector('#rc-'+id+' .draft-actions'),'Reply posted to Google','<span style="font-size:11px;color:var(--green);font-weight:500">✓ Posted to Google</span>');
+      updateReviewStats();
+      _reloadResponsePerfCurrent();
+      toast('Posted to Google ✓ — now live','success');
+    } else if(d.post_error){
+      toast('Still couldn\'t post — ' + d.post_error,'error');
+    } else {
+      toast('Google isn\'t connected yet','error');
+    }
+  }).catch(function(e){ done(); toast((e&&e.message)||'Network error — check your connection','error'); });
+}
 
 function markPosted(id, btn){
   var card = document.getElementById('rc-'+id);
@@ -6801,11 +6870,16 @@ function skipR(id){
       // pill, the tab badge and the ribbon used to only reflect that after
       // a full reload; approveR() already told updateReviewStats() about
       // its own change, this didn't.
-      if(card) card.classList.add('skipped');
+      // "Edit" on an approved/urgent/posted card also routes through here
+      // (it's how a card leaves those states to become editable again) —
+      // without clearing them first, the old class lingered alongside
+      // 'skipped', so the ribbon and reply-bubble color depended on CSS
+      // source order rather than actually reflecting the current status.
+      if(card){ card.classList.remove('approved','urgent','posted'); card.classList.add('skipped'); }
       var actions = document.getElementById('draft-actions-'+id);
       if(actions) {
         actions.innerHTML =
-          '<button class="cbtn cbtn-success cbtn-sm" onclick="approveR('+id+')">✓ Approve</button>' +
+          '<button class="cbtn cbtn-primary cbtn-sm" onclick="approveR('+id+')">✓ Approve</button>' +
           '<button class="cbtn cbtn-secondary cbtn-sm" onclick="openEditor('+id+')">Edit response</button>' +
           '<button class="cbtn cbtn-secondary cbtn-sm" onclick="regenDraft('+id+')">↻ Regenerate</button>';
         actions.style.display='flex';
@@ -13114,7 +13188,14 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
   window.retractR=function(id,btn){
     if(!confirm('Retract this reply from Google? The review goes back to your inbox with the draft ready to edit.'))return;
     var done=busy(btn,'Retracting…');
-    fetch('/retract/'+id,{method:'POST'}).then(function(r){return r.json();}).then(function(d){done();if(d.ok){toast('Reply retracted','success');setTimeout(function(){location.reload();},700);}else toast(d.error||'Could not retract','error');}).catch(function(){done();toast('Network error','error');});
+    // A response that isn't valid JSON (a 500's HTML error page, most
+    // likely) used to fall straight into the outer .catch() and always
+    // read as "Network error" — indistinguishable from the request never
+    // reaching the server at all. Naming which one it was makes the
+    // toast worth reading instead of a dead end.
+    fetch('/retract/'+id,{method:'POST'}).then(function(r){
+      return r.json().catch(function(){ throw new Error('Server error (HTTP '+r.status+') — please try again'); });
+    }).then(function(d){done();if(d.ok){toast('Reply retracted','success');setTimeout(function(){location.reload();},700);}else toast(d.error||'Could not retract','error');}).catch(function(e){done();toast((e&&e.message)||'Network error — check your connection','error');});
   };
 
   // ── Hooks ──

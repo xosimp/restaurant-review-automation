@@ -56,5 +56,14 @@ def test_each_page_mounts_the_field_and_dropped_the_css_glows(name):
     assert '<script src="/static/cavnar-field.js"></script>' in t
     assert "window.cavnarField=CavnarField.mount({aurora:document.getElementById('cf-aurora'),sky:document.getElementById('cf-sky')})" in t
     assert "body::before" not in t and "body::after" not in t
-    assert "background:#0c0c0c;" in t, "Paper (dark) under the field, matching iOS"
+    # login.html moved onto the flat workspace background (--bg-base,
+    # #141110) shared by every dashboard module, so its sign-in form
+    # doesn't sit on a visibly different near-black from the app behind
+    # it. The other 3 auth pages (forgot/reset password) weren't part of
+    # that ask and still use the original #0c0c0c.
+    if name == "login.html":
+        assert "background:#141110;" in t, "flat workspace bg-base, matching every dashboard module"
+        assert "background:#0c0c0c;" not in t
+    else:
+        assert "background:#0c0c0c;" in t, "Paper (dark) under the field, matching iOS"
     assert ".cf-vignette{position:fixed" in t and ".card{z-index:1}" in t

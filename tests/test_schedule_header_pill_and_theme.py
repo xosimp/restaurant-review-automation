@@ -485,10 +485,12 @@ def test_neutral_segments_use_the_sand_text_color_in_both_charts():
 def test_both_charts_have_a_neutral_legend_swatch():
     """The sand neutral segment had no legend entry in either chart's
     caption row, next to the positive/negative swatches that were
-    already there."""
+    already there. Both legends use the same short pos/neg/neu labels —
+    "Reviews · per week" used to spell them out while the topic heatmap
+    right next to it abbreviated, so the two didn't match."""
     s = _src()
-    assert '<span style="color:var(--ink3)">■</span> neutral</span><span id="sentiment-trend-labels">' in s
-    assert '<span style="color:var(--ink3)">■</span> neu</span>' in s
+    assert '<span style="color:var(--hb-good)">■</span> pos &nbsp; <span style="color:var(--hb-bad)">■</span> neg &nbsp; <span style="color:var(--ink3)">■</span> neu</span><span id="sentiment-trend-labels">' in s
+    assert '<span style="color:var(--hb-good)">■</span> pos &nbsp; <span style="color:var(--hb-bad)">■</span> neg &nbsp; <span style="color:var(--ink3)">■</span> neu</span></div></div>' in s
 
 
 # ── Reviews: approve/skip update the UI immediately, no reload needed ────
@@ -707,3 +709,150 @@ def test_per_week_chart_bars_use_css_vars_so_they_pick_up_the_reviews_override()
     assert 'fill="var(--red)"' in fn
     assert 'fill="var(--green)"' in fn
     assert "RED" not in fn and "GREEN" not in fn
+
+
+# ── Retract: a crash mid-way used to read as "Network error" ─────────────
+
+def test_retract_status_update_failure_returns_json_not_a_crash():
+    """revert_to_drafted() ran unguarded after the live Google delete
+    already succeeded — an exception there (e.g. a locked db under
+    concurrent writes) went straight to Flask's generic HTML 500 page,
+    which the client's r.json() can't parse, so every failure here read
+    as a flat, misleading "Network error" no matter what actually broke."""
+    import client_api, inspect
+    src = inspect.getsource(client_api._do_retract)
+    i = src.index("revert_to_drafted(rid, restaurant_id)")
+    before = src[:i]
+    after = src[i:]
+    since_import = before[before.rindex("from models import revert_to_drafted"):]
+    assert "try:" in since_import, "the call must be inside a try block"
+    assert "except Exception as e:" in after[:250]
+    assert '"ok": False' in after[:400] and "500" in after[:400]
+
+
+def test_retractR_distinguishes_a_server_error_from_a_real_network_failure():
+    s = _src()
+    fn = s[s.index("window.retractR=function"):s.index("window.retractR=function") + 1400]
+    assert "r.json().catch(function(){ throw new Error('Server error (HTTP '+r.status+')" in fn
+    assert "toast((e&&e.message)||'Network error" in fn
+
+
+# ── Approve: orange while pending, real green/blue only once confirmed ───
+
+def test_approve_buttons_are_the_primary_ember_variant_not_green():
+    """The Approve button and the done "✓ Approved" pill looked identical
+    (both green) — there was no color change to confirm the click landed.
+    Approve is now the one dominant action (cbtn-primary, ember); the done
+    state stays cbtn-success (green), so clicking it now visibly changes
+    color, not just text."""
+    s = _src()
+    assert 'cbtn cbtn-primary cbtn-sm" onclick="approveR(' in s
+    assert 'cbtn cbtn-primary cbtn-sm" onclick="saveDraft(' in s
+    assert "cbtn cbtn-success cbtn-sm\" onclick=\"approveR(" not in s
+    assert "cbtn cbtn-success cbtn-sm\" onclick=\"saveDraft(" not in s
+    # the done pill after a real approve/auto-post stays green
+    assert 'cbtn cbtn-success cbtn-ghost cbtn-done cbtn-sm">✓ Approved</span>' in s
+    fn = _fn("approveR")
+    assert "document.querySelector('#rc-'+id+' .cbtn-primary')" in fn
+
+
+def test_approved_and_skipped_reply_bubbles_get_their_own_tint_like_posted_does():
+    s = _src()
+    assert "#panel-reviews .rv2-row.approved .draft-box{background:rgba(53,214,124,.14)!important}" in s
+    assert "#panel-reviews .rv2-row.skipped .draft-box{background:rgba(227,201,154,.12)!important}" in s
+
+
+def test_skipR_clears_the_other_status_classes_it_can_land_on_top_of():
+    """'Edit' on an approved/urgent/posted card calls skipR() to make it
+    editable again — without clearing those classes first, the old one
+    stuck around next to 'skipped', so the ribbon/bubble color depended on
+    CSS source order rather than the card's real current status."""
+    fn = _fn("skipR")
+    assert "card.classList.remove('approved','urgent','posted'); card.classList.add('skipped');" in fn
+
+
+# ── Approve: the Google post attempt is synchronous, not fire-and-forget ─
+
+def test_google_post_attempt_is_synchronous_not_a_background_thread():
+    """post_reply() used to run in a daemon thread kicked off right before
+    the HTTP response went out — the client got auto_posted:True (or the
+    'will post when connected' message) before Google had actually been
+    asked, and a failure was only ever printed to server logs. A review
+    stuck at 'approved' then showed a static "Posting to Google" label
+    forever, with no way to tell an in-flight post from a silently failed
+    one and no way to retry."""
+    import client_api, inspect
+    src = inspect.getsource(client_api._attempt_google_post)
+    assert "threading" not in src and "Thread(" not in src
+    assert "result = post_reply(restaurant_id, row[\"review_name\"], row[\"draft_response\"])" in src
+    assert "return True, None" in src
+    assert "return False, result[\"error\"]" in src
+
+    approve_src = inspect.getsource(client_api._do_approve)
+    assert "threading" not in approve_src and "Thread(" not in approve_src
+    assert "auto_posted, post_error = _attempt_google_post(rid, restaurant_id)" in approve_src
+    assert '"post_error"' in approve_src
+
+
+def test_retry_post_route_only_allows_an_approved_google_reply():
+    import client_api, inspect
+    src = inspect.getsource(client_api._do_retry_post)
+    assert 'row["response_status"] != "approved" or row["platform"] != "google"' in src
+    assert "/api/reviews/<int:rid>/retry-post" in inspect.getsource(client_api)
+
+
+def test_approved_google_state_shows_retry_only_when_the_post_actually_failed():
+    """Reaching response_status=='approved' with platform=='google' now
+    only happens AFTER a synchronous post attempt has already run and
+    returned — so if GBP is connected, landing here always means that
+    attempt failed, never "still working". The old static "Posting to
+    Google" label covered both cases identically and never changed."""
+    s = _src()
+    i = s.index("{% elif r.response_status=='approved' %}")
+    block = s[i:s.index("{% elif r.response_status=='skipped' %}", i)]
+    assert "restaurant.gmb_refresh_token" in block
+    assert "Couldn't post to Google" in block
+    assert 'onclick="retryPostR({{ r.id }},this)"' in block
+    assert "Will post to Google once connected" in block
+    assert "Posting to Google" not in block
+
+
+def test_retryPostR_js_function_exists_and_handles_all_three_outcomes():
+    fn = _fn("retryPostR")
+    assert "/api/reviews/'+id+'/retry-post" in fn
+    assert "d.auto_posted" in fn and "d.post_error" in fn
+    assert "card.classList.remove('approved'); card.classList.add('posted');" in fn
+
+
+def test_approveR_shows_retry_ui_when_the_synchronous_post_fails():
+    fn = _fn("approveR")
+    assert "d.post_error" in fn
+    assert 'onclick="retryPostR(\'+id+\',this)"' in fn
+    assert "Couldn\\'t post to Google" in fn
+
+
+# ── Reviews · per week / Approval Method / What guests talk about ────────
+# columns must line up regardless of which one's heading wraps
+
+def test_all_three_column_headings_share_a_min_height_for_alignment():
+    """"Approval Method" wraps to 2 lines next to its own 30d/90d/6mo
+    picker at this column width; "Reviews · per week" has no picker and
+    never wraps — so its big number sat visibly higher than its two
+    siblings', which also made two identically-sized numbers (38px, same
+    rv2-sg .v rule) look mismatched in size since they didn't sit at the
+    same height."""
+    s = _src()
+    assert ".rv2-sg .k{font-size:13px" in s
+    i = s.index(".rv2-sg .k{font-size:13px")
+    rule = s[i:s.index("}", i) + 1]
+    assert "min-height:41.6px" in rule
+
+
+# ── Login page must use the same flat workspace background ───────────────
+
+def test_login_page_background_matches_the_dashboard_flat_bg_base():
+    login_src = open(os.path.join(ROOT, "templates", "login.html"), encoding="utf-8").read()
+    assert "background:#141110;" in login_src
+    assert "background:#0c0c0c" not in login_src
+    assert "rgba(20,17,16," in login_src
+    assert 'content="#141110"' in login_src
