@@ -88,13 +88,24 @@ def inventory_value_near(weeks, target_day, tolerance_days=SNAPSHOT_TOLERANCE_DA
 
 def net_sales_in_window(restaurant_id, start, end):
     """Net sales from the POS for the window, or None when the POS can't
-    answer. None means unknown — never 0."""
+    answer. None means unknown — never 0.
+
+    Goes through pos.py rather than importing toast directly. That import was
+    the reason food cost % was a Toast-only feature: a Square, Clover or
+    RPOWER restaurant was told "no POS connected" by this function while
+    pos.connected_provider knew perfectly well which POS they were on, so the
+    one number this module is named after could never be computed for them.
+    """
     try:
-        import toast
-        if not toast.is_connected(restaurant_id):
-            return None, "no POS connected"
-        by_date = toast.fetch_business_days(restaurant_id, start, end)
+        import pos
+        by_date, _provider = pos.fetch_business_days(restaurant_id, start, end)
     except Exception as e:
+        # POSCapabilityError carries the honest reason ("no POS connected",
+        # or connected-but-cannot-report); anything else is a transport
+        # failure. Both are "unknown", and both say which.
+        import pos as _pos
+        if isinstance(e, getattr(_pos, "POSCapabilityError", ())):
+            return None, str(e)
         return None, f"POS request failed: {e}"
     if not by_date:
         return None, "POS returned no business days for this window"

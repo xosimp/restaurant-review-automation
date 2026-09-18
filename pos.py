@@ -18,10 +18,22 @@ log = logging.getLogger("pos")
 #   build_shifts_csv(restaurant_id, days=60) -> str|None
 PROVIDER_API = ("is_connected", "sync_to_db", "build_shifts_csv")
 
+# The DATA reads, which only some providers can answer. These were never part
+# of the contract, so cogs.py and inventory_ledger.py imported `toast`
+# directly — which meant food cost %, recipe depletion and menu discovery were
+# Toast-only features that silently reported "no POS connected" to a Square or
+# Clover restaurant this module knew perfectly well was connected.
+#
+# Optional rather than required: Square and Clover expose daily sales totals
+# but no item-level detail, and a provider that cannot answer must say so
+# rather than return an empty list, because "nothing sold" and "I can't see
+# what sold" lead to opposite conclusions everywhere downstream.
+DATA_API = ("fetch_business_days", "fetch_order_selections")
+
 
 def _load_providers():
-    import toast, square, clover
-    return {"toast": toast, "square": square, "clover": clover}
+    import toast, square, clover, rpower
+    return {"toast": toast, "square": square, "clover": clover, "rpower": rpower}
 
 
 # Populated lazily so tests can inject fakes and a broken provider import
@@ -87,3 +99,56 @@ def connection_status(restaurant_id):
     """Uniform status for UI: which provider, connected or not."""
     name, mod = connected_provider(restaurant_id)
     return {"connected": bool(mod), "provider": name}
+
+
+# ── data reads ──────────────────────────────────────────────────────────────
+
+class POSCapabilityError(Exception):
+    """The connected POS cannot answer this question.
+
+    Distinct from "there is no POS" and from "the POS returned nothing",
+    because all three need different words in front of an owner: connect
+    something, connect something that reports this, or you genuinely sold
+    nothing that day.
+    """
+
+
+def supports(restaurant_id, capability):
+    """Whether the connected provider can answer `capability`."""
+    _name, mod = connected_provider(restaurant_id)
+    return bool(mod and hasattr(mod, capability))
+
+
+def fetch_business_days(restaurant_id, start_date, end_date):
+    """{'YYYY-MM-DD': net_sales} from whichever POS is connected.
+
+    Returns (data, provider_name). Raises POSCapabilityError when a POS is
+    connected but cannot report daily sales — never an empty dict, which
+    would read downstream as a restaurant that took no money.
+    """
+    name, mod = connected_provider(restaurant_id)
+    if not mod:
+        raise POSCapabilityError("no POS connected")
+    fn = getattr(mod, "fetch_business_days", None)
+    if fn is None:
+        raise POSCapabilityError(f"{name} does not report daily sales through Cavnar yet")
+    return fn(restaurant_id, start_date, end_date), name
+
+
+def fetch_order_selections(restaurant_id, business_date):
+    """One business date's sold items as [{"item": {"guid": ...}, "quantity": n}].
+
+    Returns (rows, provider_name). Item-level detail is what recipe depletion
+    and menu discovery are built on; a provider without it raises rather than
+    returning [], because an empty list makes every ingredient look unused and
+    quietly stops the reorder list from ever flagging anything.
+    """
+    name, mod = connected_provider(restaurant_id)
+    if not mod:
+        raise POSCapabilityError("no POS connected")
+    fn = getattr(mod, "fetch_order_selections", None)
+    if fn is None:
+        raise POSCapabilityError(
+            f"{name} does not report item-level sales through Cavnar yet, so recipe "
+            f"depletion and menu discovery cannot run for this restaurant")
+    return fn(restaurant_id, business_date), name

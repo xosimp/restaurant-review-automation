@@ -206,6 +206,21 @@ td.r,th.r{text-align:right}
     <div style="display:flex;gap:8px;margin-top:6px"><button class="btn p" onclick="toastSave()">Test &amp; save</button><button class="btn" onclick="toastSync()">Sync now</button><button class="btn d" onclick="toastDisconnect()">Disconnect</button></div>
   </div>
 </div></div>
+<!-- RPOWER. A token, not a credential set: RPOWER issues one to Cavnar as
+     an integrator and it may see several stores, so saving is two steps —
+     verify the token, then bind this restaurant to one store. Binding to the
+     wrong store produces a module full of somebody else's numbers that looks
+     entirely normal, so it is never guessed. -->
+<div class="mo" id="m-rpower"><div class="mb">
+  <div class="mh"><h2 id="m-rpower-title">RPOWER POS</h2><button class="x" onclick="closeModal('m-rpower')">✕</button></div>
+  <div class="fl">
+    <div id="m-rpower-status" class="sub"></div>
+    <label>Authorization token</label><input id="rp-token" type="password" placeholder="Bearer token from RPOWER">
+    <div class="sub">Issued by RPOWER to Cavnar — request at integrations@rpower.com. The store is resolved automatically once the token is verified.</div>
+    <div id="rp-stores" style="display:none;margin-top:8px"><label>Which store is this restaurant?</label><select id="rp-store"></select><button class="btn p" style="margin-top:6px" onclick="rpowerBind()">Bind store</button></div>
+    <div style="display:flex;gap:8px;margin-top:6px"><button class="btn p" onclick="rpowerSave()">Verify &amp; save</button><button class="btn" onclick="rpowerSync()">Sync now</button><button class="btn d" onclick="rpowerDisconnect()">Disconnect</button></div>
+  </div>
+</div></div>
 <div class="mo" id="m-brand"><div class="mb">
   <div class="mh"><h2>White-label branding</h2><button class="x" onclick="closeModal('m-brand')">✕</button></div>
   <div class="fl"><label>Brand name</label><input id="b-name"><label>Brand color (hex)</label><input id="b-color" placeholder="#c84b2f"><label>Logo URL</label><input id="b-logo">
@@ -717,7 +732,7 @@ async function clientView(id, qs){
   else if(tab==='actions') body = `<div class="grid g3">
     <div class="card"><div class="ch"><h2>Reviews</h2></div><div class="cb" style="display:flex;flex-direction:column;gap:8px"><button class="btn" onclick="act('/admin/fetch-reviews/${c.id}','Fetch reviews now')">Fetch reviews now</button><button class="btn" onclick="act('/admin/redraft-all/${c.id}','Re-draft every pending reply with AI',true)">Re-draft all with AI</button><button class="btn" onclick="importOpen(${c.id},'${esc(c.name)}','tripadvisor')">Import TripAdvisor CSV</button><button class="btn" onclick="importOpen(${c.id},'${esc(c.name)}','doordash')">Import DoorDash CSV</button><button class="btn" onclick="importOpen(${c.id},'${esc(c.name)}','ubereats')">Import Uber Eats CSV</button><button class="btn" onclick="act('/admin/seed-reviews/${c.id}','Seed sample reviews',true)">Seed sample reviews</button>${c.is_demo?`<button class="btn d" onclick="act('/admin/reseed-demo-data/${c.id}','Reseed ALL demo data (wipes this demo account\\'s data)',true)">Reseed demo data</button>`:''}</div></div>
     <div class="card"><div class="ch"><h2>Communications</h2></div><div class="cb" style="display:flex;flex-direction:column;gap:8px"><button class="btn" onclick="act('/admin/resend-contract/${c.id}','Resend the DocuSign contract')">Resend contract</button><button class="btn" onclick="act('/admin/resend-payment/${c.id}','Resend the payment link')">Resend payment link</button><button class="btn" onclick="act('/admin/resend-welcome/${c.id}','Resend the welcome email')">Resend welcome email</button><button class="btn" onclick="act('/admin/test-digest/${c.id}','Send a test digest')">Send test digest</button><button class="btn" onclick="act('/admin/test-urgent/${c.id}','Send a test urgent alert')">Send test urgent alert</button></div></div>
-    <div class="card"><div class="ch"><h2>Integrations &amp; branding</h2></div><div class="cb" style="display:flex;flex-direction:column;gap:8px"><button class="btn" onclick="toastOpen(${c.id},'${esc(c.name)}')">Toast credentials</button><button class="btn" onclick="act('/admin/toast/sync/${c.id}','Sync Toast now')">Sync Toast now</button><button class="btn" onclick="act('/admin/refresh-ig-token/${c.id}','Refresh Instagram token')">Refresh Instagram token</button><button class="btn" onclick="brandOpen(${c.id},'${esc(c.name)}')">White-label branding</button><a class="btn" href="/admin/client-settings/${c.id}">Full settings</a><a class="btn" href="/admin/client-data/${c.id}">Manage data (CSV)</a></div></div>
+    <div class="card"><div class="ch"><h2>Integrations &amp; branding</h2></div><div class="cb" style="display:flex;flex-direction:column;gap:8px"><button class="btn" onclick="toastOpen(${c.id},'${esc(c.name)}')">Toast credentials</button><button class="btn" onclick="rpowerOpen(${c.id},'${esc(c.name)}')">RPOWER token</button><button class="btn" onclick="act('/admin/toast/sync/${c.id}','Sync Toast now')">Sync Toast now</button><button class="btn" onclick="act('/admin/refresh-ig-token/${c.id}','Refresh Instagram token')">Refresh Instagram token</button><button class="btn" onclick="brandOpen(${c.id},'${esc(c.name)}')">White-label branding</button><a class="btn" href="/admin/client-settings/${c.id}">Full settings</a><a class="btn" href="/admin/client-data/${c.id}">Manage data (CSV)</a></div></div>
     <div class="card"><div class="ch"><h2>Access</h2></div><div class="cb" style="display:flex;flex-direction:column;gap:8px">${c.logins.map(l=>`<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span class="chip ${l.is_active?'':'off'}">${esc(l.username)} · ${esc(l.role)}</span>${l.is_active?`<button class="btn s d" onclick="act('/admin/deactivate-client/${l.id}','Deactivate ${esc(l.username)} (they are signed out everywhere)',true)">Deactivate</button>`:`<button class="btn s" onclick="act('/admin/reactivate-client/${l.id}','Reactivate ${esc(l.username)}')">Reactivate</button>`}<select onchange="setRole(${l.id},this.value)" style="padding:3px 6px;font-size:11px"><option value="" selected disabled>role…</option><option value="client">GM (single location)</option><option value="owner">Owner (multi-location)</option><option value="member">Teammate</option></select></div>`).join('')||'<span class="dim">No logins.</span>'}<button class="btn d" onclick="resetPassword(${c.id})">Reset password (issue a temporary one)</button><a class="btn" href="/admin/view-as/${c.id}">View dashboard as this client</a></div></div>
     <div class="card"><div class="ch"><h2>Demo flag</h2><div class="r">${c.is_demo?'<span class="chip warn">demo</span>':'<span class="chip ok">real client</span>'}</div></div><div class="cb"><div class="sub">${c.is_demo?'Flagged as a demo: seed reviews and labor history are wiped and regenerated on every deploy, and it is excluded from MRR. Flip this off the moment they become a paying client.':'A real client: nothing is ever reseeded here.'}</div><div style="margin-top:10px"><button class="btn s ${c.is_demo?'':'d'}" onclick="setDemo(${c.id},${c.is_demo?0:1})">${c.is_demo?'Mark as real client':'Mark as demo'}</button></div></div></div>
     <div class="card"><div class="ch"><h2>Guardrails</h2></div><div class="cb sub">Nothing on this page changes billing or deletes a restaurant. Reseeding demo data, re-drafting, deactivating and password resets ask for confirmation. Data deletion is done from the database directly, on purpose.</div></div>
@@ -737,6 +752,23 @@ async function toastOpen(rid, name){ _tRid=rid; $('m-toast-title').textContent='
 async function toastSave(){ const d = await post('/admin/toast/save/'+_tRid, {client_id:$('t-cid').value.trim(), client_secret:$('t-sec').value.trim(), restaurant_guid:$('t-guid').value.trim(), test:true}); $('m-toast-status').textContent = d.ok ? ('✓ '+(d.message||'Saved and tested')) : ('✕ '+(d.error||'Failed')); if(d.ok){ _clients=null; } }
 async function toastSync(){ const d = await post('/admin/toast/sync/'+_tRid); $('m-toast-status').textContent = d.ok ? ('✓ '+(d.message||'Synced')) : ('✕ '+(d.error||'Sync failed')); }
 async function toastDisconnect(){ if(!confirm('Disconnect Toast for this restaurant?')) return; const d = await post('/admin/toast/disconnect/'+_tRid); $('m-toast-status').textContent = d.ok?'Disconnected':(d.error||'Failed'); _clients=null; }
+// RPOWER
+let _rpRid=null;
+function rpowerOpen(rid, name){ _rpRid=rid; $('m-rpower-title').textContent='RPOWER POS — '+name; $('m-rpower-status').textContent=''; $('rp-token').value=''; $('rp-stores').style.display='none'; openModal('m-rpower'); rpowerStatus(); }
+async function rpowerStatus(){ const r = await fetch('/admin/rpower/status/'+_rpRid); const d = await r.json();
+  $('m-rpower-status').textContent = d.connected ? ('✓ Connected to '+(d.store_name||'RPOWER')+(d.last_synced?(' — last synced '+fmtDT(d.last_synced)):'')) : (d.message||d.error||'Not connected'); }
+async function rpowerSave(){ const t=$('rp-token').value.trim(); if(!t){ $('m-rpower-status').textContent='✕ Paste the token first'; return; }
+  $('m-rpower-status').textContent='Verifying…';
+  const d = await post('/admin/rpower/save/'+_rpRid, {token:t});
+  if(!d.ok){ $('m-rpower-status').textContent='✕ '+(d.error||'Failed'); return; }
+  if(d.needs_choice){ const sel=$('rp-store'); sel.innerHTML=''; (d.stores||[]).forEach(function(st){ const o=document.createElement('option'); o.value=st.store_mid; o.textContent=st.name+' (cg '+st.cg+')'; sel.appendChild(o); });
+    $('rp-stores').style.display='block'; $('m-rpower-status').textContent=d.message; return; }
+  $('m-rpower-status').textContent='✓ '+(d.message||'Connected'); _clients=null; }
+async function rpowerBind(){ const d = await post('/admin/rpower/bootstrap/'+_rpRid, {store_mid:$('rp-store').value});
+  $('m-rpower-status').textContent = d.ok ? ('✓ Bound to '+(d.store&&d.store.name||'store')) : ('✕ '+(d.error||'Failed'));
+  if(d.ok){ $('rp-stores').style.display='none'; _clients=null; } }
+async function rpowerSync(){ const d = await post('/admin/rpower/sync/'+_rpRid); $('m-rpower-status').textContent = d.ok ? ('✓ '+(d.message||'Sync started')) : ('✕ '+(d.error||'Sync failed')); }
+async function rpowerDisconnect(){ if(!confirm('Disconnect RPOWER for this restaurant?')) return; const d = await post('/admin/rpower/disconnect/'+_rpRid); $('m-rpower-status').textContent = d.ok?'Disconnected':(d.error||'Failed'); _clients=null; }
 // Brand
 let _bRid=null; function brandOpen(rid, name){ _bRid=rid; $('b-status').textContent=''; openModal('m-brand'); }
 async function brandSave(){ const d = await post('/admin/api/brand/'+_bRid, {brand_name:$('b-name').value.trim(), brand_color:$('b-color').value.trim(), brand_logo_url:$('b-logo').value.trim()}); $('b-status').textContent = d.ok?'✓ Saved':('✕ '+(d.error||'Failed')); }

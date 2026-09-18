@@ -274,12 +274,18 @@ def compute_daily_depletion(restaurant_id: int, business_date) -> dict:
     business date are deleted before the freshly computed set is inserted,
     inside the same transaction — safe to re-run (nightly retry, manual
     resync) without double-depleting stock."""
-    import toast as _toast
+    import pos as _pos
     from models import db_conn
 
     business_date_str = _as_date_str(business_date)
     real_date = business_date if hasattr(business_date, "isoformat") else date.fromisoformat(business_date_str)
-    selections = _toast.fetch_order_selections(restaurant_id, real_date)
+    # Through pos.py, not toast directly. Recipe depletion was Toast-only for
+    # no reason other than this import: any provider that can report
+    # item-level sales can drive it, and one that cannot now RAISES rather
+    # than returning [] — an empty selection list looks identical to "sold
+    # nothing", which would zero every ingredient's usage, overstate days
+    # remaining and quietly empty the reorder list.
+    selections, _provider = _pos.fetch_order_selections(restaurant_id, real_date)
 
     sold_by_guid = {}
     for sel in selections:
@@ -584,21 +590,29 @@ def discover_menu_items(restaurant_id: int, days: int = 7) -> dict:
     selections into menu_items — the one-time-ish admin action that seeds
     the recipe editor without a separate Toast Menus API integration.
     Safe to re-run: upserts by (restaurant_id, toast_guid), never duplicates."""
-    import toast as _toast
+    import pos as _pos
     from models import db_conn
 
     end = date.today()
-    # fetch_business_days isn't demo-mode aware (only fetch_order_selections
-    # is), so a demo/showcase restaurant would otherwise throw trying a real
-    # HTTP call with a fake token. _demo_order_selections returns the same
-    # fixed menu regardless of date, so one representative date is enough.
-    business_dates = [end.isoformat()] if _toast._is_demo(restaurant_id) else \
-        sorted(_toast.fetch_business_days(restaurant_id, end - timedelta(days=days), end).keys())
+    # Toast's demo mode short-circuits fetch_order_selections but not
+    # fetch_business_days, so a showcase restaurant would otherwise make a
+    # real HTTP call with a fake token. Asked of the toast module directly
+    # because it is a Toast-specific fixture, and only when Toast is the
+    # provider — other providers have no such mode.
+    _name, _mod = _pos.connected_provider(restaurant_id)
+    _is_toast_demo = bool(
+        _name == "toast" and getattr(_mod, "_is_demo", None) and _mod._is_demo(restaurant_id))
+    if _is_toast_demo:
+        business_dates = [end.isoformat()]
+    else:
+        _days, _ = _pos.fetch_business_days(restaurant_id, end - timedelta(days=days), end)
+        business_dates = sorted(_days.keys())
 
     seen = {}  # guid -> display name
     for bd_str in business_dates:
         bd = date.fromisoformat(bd_str)
-        for sel in _toast.fetch_order_selections(restaurant_id, bd):
+        _sels, _ = _pos.fetch_order_selections(restaurant_id, bd)
+        for sel in _sels:
             guid = (sel.get("item") or {}).get("guid")
             if not guid:
                 continue

@@ -138,7 +138,11 @@ def test_stale_check_uses_ledger_freshness_for_migrated_restaurants(db_path, mon
     assert "Fresh Ledger Co" not in html
 
 
-def test_stale_check_flags_disconnected_toast_restaurant_explicitly(db_path, monkeypatch):
+def test_stale_check_flags_a_disconnected_pos_explicitly(db_path, monkeypatch):
+    """The wording is provider-agnostic now: the staleness check asks pos.py
+    which POS is attached rather than asking Toast specifically, so a Square,
+    Clover or RPOWER restaurant whose POS drops off is reported the same way
+    a Toast one always was."""
     from datetime import datetime, timedelta
 
     monkeypatch.setenv("RESEND_API_KEY", "fake-key")
@@ -152,7 +156,10 @@ def test_stale_check_flags_disconnected_toast_restaurant_explicitly(db_path, mon
     conn.commit()
     conn.close()
 
-    monkeypatch.setattr("toast.is_connected", lambda r: False)
+    import pos
+    for provider in ("toast", "square", "clover", "rpower"):
+        monkeypatch.setattr(f"{provider}.is_connected", lambda r: False)
+    monkeypatch.setattr(pos, "PROVIDERS", None)
     scheduler.check_stale_inventory()
 
-    assert "Toast disconnected" in sent.get("html", "")
+    assert "POS disconnected" in sent.get("html", "")

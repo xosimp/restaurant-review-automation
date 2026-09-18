@@ -514,12 +514,15 @@ def check_stale_inventory():
             if ledger_row and ledger_row["updated_at"]:
                 updated = datetime.fromisoformat(ledger_row["updated_at"])
                 days_old = (_chi_now() - updated).days
-                # A disconnected Toast restaurant's numbers freeze rather than
-                # silently drifting wrong — surface that explicitly instead of
-                # applying the same day-count threshold as a live sync.
-                import toast as _toast
-                if not _toast.is_connected(r.id) and days_old >= 3:
-                    stale.append((r.name, f"Toast disconnected, ledger frozen {days_old}d"))
+                # A restaurant whose POS has dropped off has numbers that
+                # freeze rather than silently drifting wrong — surface that
+                # explicitly instead of applying the same day-count threshold
+                # as a live sync. Asked of pos.py so this reads correctly for
+                # every provider, not just Toast.
+                import pos as _pos
+                _pname, _pmod = _pos.connected_provider(r.id)
+                if not _pmod and days_old >= 3:
+                    stale.append((r.name, f"POS disconnected, ledger frozen {days_old}d"))
                 elif days_old >= 3:
                     stale.append((r.name, f"ledger not synced in {days_old}d"))
                 conn.close()
@@ -616,16 +619,21 @@ def run_toast_sync():
 
 def run_daily_depletion_sync():
     """
-    Nightly ingredient depletion sync (5am CT, right after the 3am Toast
-    labor sync): for every Toast-connected restaurant that has at least one
-    recipe configured, pull yesterday's real Toast business date(s) and
-    compute ingredient depletion from actual sales — see
+    Nightly ingredient depletion sync (5am CT, right after the 3am labor
+    sync): for every restaurant on a POS that reports item-level sales and
+    that has at least one recipe configured, pull yesterday's real business
+    date(s) and compute ingredient depletion from actual sales — see
     inventory_ledger.compute_daily_depletion(). Two-layer error isolation
     matching pos.sync_all(): one restaurant's bad recipe data must never
     take down the whole night's run for everyone else.
+
+    Resolved through pos.py rather than toast directly. This was Toast-only,
+    so a Square, Clover or RPOWER restaurant with recipes mapped got no
+    depletion at all — their ingredients read as never used, which overstates
+    days remaining and keeps everything out of the reorder list, silently.
     """
     try:
-        import toast
+        import pos
         import inventory_ledger
         import ops
         from datetime import timedelta as _td
@@ -645,12 +653,17 @@ def run_daily_depletion_sync():
             if r.id not in restaurants_with_recipes:
                 continue
             try:
-                if not toast.is_connected(r.id):
+                # A POS that cannot report item-level sales is skipped
+                # explicitly rather than erroring per restaurant every night:
+                # Square and Clover report daily totals but no line items, so
+                # there is nothing to deplete from and that is a fact about
+                # the integration, not a failure.
+                if not pos.supports(r.id, "fetch_order_selections"):
                     continue
                 total += 1
                 end = _chi_now().date()
                 start = end - _td(days=2)  # small overlap window, idempotent re-sync covers gaps
-                business_dates = toast.fetch_business_days(r.id, start, end)
+                business_dates, _provider = pos.fetch_business_days(r.id, start, end)
                 for bd_str in business_dates:
                     result = inventory_ledger.compute_daily_depletion(r.id, __import__('datetime').date.fromisoformat(bd_str))
                     if result.get("unmapped_selections"):

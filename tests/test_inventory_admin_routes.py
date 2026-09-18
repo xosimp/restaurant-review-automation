@@ -4,6 +4,21 @@ call-the-decorated-function-directly pattern as tests/test_admin_routes.py."""
 import pytest
 from flask import Flask
 
+def _connect_toast(monkeypatch):
+    """Attach a stub Toast provider.
+
+    Menu discovery and depletion resolve their POS through pos.py now, which
+    requires a provider reporting itself connected — the previous direct
+    toast import ran against any restaurant whether or not a POS was attached.
+    """
+    import pos
+    monkeypatch.setattr("toast.is_connected", lambda restaurant_id: True)
+    for other in ("square", "clover", "rpower"):
+        monkeypatch.setattr(f"{other}.is_connected", lambda restaurant_id: False)
+    monkeypatch.setattr(pos, "PROVIDERS", None)
+
+
+
 import admin_routes
 import auth
 import inventory_ledger
@@ -203,6 +218,7 @@ def test_discover_add_delete_recipe_flow(app, db_path, monkeypatch):
     rid = _restaurant(db_path)
     ingredient_id = inventory_ledger.create_ingredient(rid, name="Romaine Lettuce", current_stock=20)
 
+    _connect_toast(monkeypatch)
     monkeypatch.setattr("toast.fetch_business_days", lambda rid, start, end: {"2026-08-20": 500.0})
     monkeypatch.setattr(
         "toast.fetch_order_selections",
@@ -255,6 +271,7 @@ def test_resync_depletion_route(app, db_path, monkeypatch):
     conn.commit()
     conn.close()
 
+    _connect_toast(monkeypatch)
     monkeypatch.setattr(
         "toast.fetch_order_selections",
         lambda rid, bd: [{"item": {"guid": "guid-shrimp-scampi"}, "displayName": "Shrimp Scampi", "quantity": 5}]

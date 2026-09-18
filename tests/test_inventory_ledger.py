@@ -216,6 +216,26 @@ class TestCreateMenuItem:
 
 # ── compute_daily_depletion idempotency ──────────────────────────────────
 
+def _connect_toast(monkeypatch, selections):
+    """Attach a stub Toast provider for the depletion tests.
+
+    compute_daily_depletion now resolves its POS through pos.py, which
+    requires a provider that reports itself connected. The old code imported
+    toast directly and ran whether or not anything was attached — depleting a
+    restaurant's inventory from a POS it is not connected to. Requiring the
+    connection is the behaviour under test; these stubs supply it.
+    """
+    import pos
+    monkeypatch.setattr("toast.is_connected", lambda restaurant_id: True)
+    monkeypatch.setattr("toast.fetch_order_selections", selections)
+    # connected_provider walks the registry in order, so a Square or Clover
+    # module raising here would mask the Toast stub.
+    for other in ("square", "clover", "rpower"):
+        monkeypatch.setattr(f"{other}.is_connected", lambda restaurant_id: False)
+    monkeypatch.setattr(pos, "PROVIDERS", None)
+    return pos
+
+
 class TestComputeDailyDepletion:
     def _setup_recipe(self, db_path, rid, iid):
         conn = get_conn(db_path)
@@ -237,12 +257,9 @@ class TestComputeDailyDepletion:
         iid = _ingredient(db_path, rid, current_stock=20)
         self._setup_recipe(db_path, rid, iid)
 
-        monkeypatch.setattr(
-            "toast.fetch_order_selections",
-            lambda restaurant_id, business_date: [
-                {"item": {"guid": "guid-caesar"}, "displayName": "Caesar Salad", "quantity": 4}
-            ]
-        )
+        _connect_toast(monkeypatch, lambda restaurant_id, business_date: [
+            {"item": {"guid": "guid-caesar"}, "displayName": "Caesar Salad", "quantity": 4}
+        ])
         result = ledger.compute_daily_depletion(rid, date.today())
         assert result["ingredients_updated"] == 1
         assert result["unmapped_selections"] == []
@@ -255,12 +272,9 @@ class TestComputeDailyDepletion:
         self._setup_recipe(db_path, rid, iid)
         business_date = date.today()
 
-        monkeypatch.setattr(
-            "toast.fetch_order_selections",
-            lambda restaurant_id, bd: [
-                {"item": {"guid": "guid-caesar"}, "displayName": "Caesar Salad", "quantity": 4}
-            ]
-        )
+        _connect_toast(monkeypatch, lambda restaurant_id, bd: [
+            {"item": {"guid": "guid-caesar"}, "displayName": "Caesar Salad", "quantity": 4}
+        ])
         ledger.compute_daily_depletion(rid, business_date)
         ledger.compute_daily_depletion(rid, business_date)  # re-run, same date
 
@@ -277,12 +291,9 @@ class TestComputeDailyDepletion:
         rid = _restaurant(db_path)
         _ingredient(db_path, rid)  # no recipe configured for anything
 
-        monkeypatch.setattr(
-            "toast.fetch_order_selections",
-            lambda restaurant_id, bd: [
-                {"item": {"guid": "guid-unknown"}, "displayName": "Mystery Dish", "quantity": 2}
-            ]
-        )
+        _connect_toast(monkeypatch, lambda restaurant_id, bd: [
+            {"item": {"guid": "guid-unknown"}, "displayName": "Mystery Dish", "quantity": 2}
+        ])
         result = ledger.compute_daily_depletion(rid, date.today())
         assert result["ingredients_updated"] == 0
         assert len(result["unmapped_selections"]) == 1
@@ -294,7 +305,7 @@ class TestComputeDailyDepletion:
         rid = _restaurant(db_path)
         iid = _ingredient(db_path, rid, current_stock=20)
         self._setup_recipe(db_path, rid, iid)
-        monkeypatch.setattr("toast.fetch_order_selections", lambda restaurant_id, bd: [])
+        _connect_toast(monkeypatch, lambda restaurant_id, bd: [])
         result = ledger.compute_daily_depletion(rid, date.today())
         assert result["ingredients_updated"] == 0
         assert _row(db_path, iid)["current_stock"] == 20.0

@@ -378,6 +378,23 @@ class Restaurant:
     clover_api_token: Optional[str]      = None
     clover_last_synced: Optional[str]    = None
     clover_sync_error: Optional[str]     = None
+    # RPOWER Core API. The token is issued by RPOWER per integrator+customer
+    # and is the ONLY credential — there is no client_id/secret exchange and
+    # no refresh, so unlike Toast there is nothing to expire and re-mint.
+    # cg (consolidation group) and store_mid are not entered by hand: they
+    # come back from /store/get using the token itself, and rpower.bootstrap
+    # writes them. Kept as columns anyway because every subsequent call needs
+    # both, and re-deriving them per request would be a round trip each time.
+    rpower_token: Optional[str]          = None
+    rpower_cg: Optional[int]             = None
+    rpower_store_mid: Optional[str]      = None
+    rpower_store_name: Optional[str]     = None
+    rpower_last_synced: Optional[str]    = None
+    rpower_sync_error: Optional[str]     = None
+    # Set once /store/get has been called successfully — the difference
+    # between "a token was pasted in" and "the token works and we know which
+    # store it points at".
+    rpower_verified_at: Optional[str]    = None
     pos_system: Optional[str]       = None
     owner_name: Optional[str]       = None
     owner_phone: Optional[str]      = None
@@ -1012,6 +1029,15 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE restaurants ADD COLUMN clover_api_token TEXT",
         "ALTER TABLE restaurants ADD COLUMN clover_last_synced TEXT",
         "ALTER TABLE restaurants ADD COLUMN clover_sync_error TEXT",
+        # RPOWER Core API — see the dataclass for why cg/store_mid are stored
+        # rather than entered.
+        "ALTER TABLE restaurants ADD COLUMN rpower_token TEXT",
+        "ALTER TABLE restaurants ADD COLUMN rpower_cg INTEGER",
+        "ALTER TABLE restaurants ADD COLUMN rpower_store_mid TEXT",
+        "ALTER TABLE restaurants ADD COLUMN rpower_store_name TEXT",
+        "ALTER TABLE restaurants ADD COLUMN rpower_last_synced TEXT",
+        "ALTER TABLE restaurants ADD COLUMN rpower_sync_error TEXT",
+        "ALTER TABLE restaurants ADD COLUMN rpower_verified_at TEXT",
         "ALTER TABLE restaurants ADD COLUMN gbp_rating REAL",
         "ALTER TABLE restaurants ADD COLUMN gbp_review_count INTEGER",
         """CREATE TABLE IF NOT EXISTS review_requests (
@@ -2738,6 +2764,8 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH):
         "auto_approve_5star","auto_approve_daily_cap","auto_approve_paused","open_times_json",
         "response_language","tone_preset","data_retention_months",
         "toast_client_id","toast_client_secret","toast_restaurant_guid",
+        "rpower_token","rpower_cg","rpower_store_mid","rpower_store_name",
+        "rpower_last_synced","rpower_sync_error","rpower_verified_at",
         "toast_access_token","toast_token_expires","toast_last_synced","toast_sync_error",
         "square_access_token","square_location_id","square_last_synced","square_sync_error",
         "clover_merchant_id","clover_api_token","clover_last_synced","clover_sync_error",
@@ -2951,6 +2979,13 @@ def get_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> Optional[Resta
         gmb_token_expires=row["gmb_token_expires"] if "gmb_token_expires" in row.keys() else None,
         toast_client_id=row["toast_client_id"] if "toast_client_id" in row.keys() else None,
         toast_client_secret=row["toast_client_secret"] if "toast_client_secret" in row.keys() else None,
+        rpower_token=row["rpower_token"] if "rpower_token" in row.keys() else None,
+        rpower_cg=row["rpower_cg"] if "rpower_cg" in row.keys() else None,
+        rpower_store_mid=row["rpower_store_mid"] if "rpower_store_mid" in row.keys() else None,
+        rpower_store_name=row["rpower_store_name"] if "rpower_store_name" in row.keys() else None,
+        rpower_last_synced=row["rpower_last_synced"] if "rpower_last_synced" in row.keys() else None,
+        rpower_sync_error=row["rpower_sync_error"] if "rpower_sync_error" in row.keys() else None,
+        rpower_verified_at=row["rpower_verified_at"] if "rpower_verified_at" in row.keys() else None,
         toast_restaurant_guid=row["toast_restaurant_guid"] if "toast_restaurant_guid" in row.keys() else None,
         toast_access_token=row["toast_access_token"] if "toast_access_token" in row.keys() else None,
         toast_token_expires=row["toast_token_expires"] if "toast_token_expires" in row.keys() else None,

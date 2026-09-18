@@ -208,6 +208,7 @@ from client_api import client_bp
 from toast_routes import toast_bp
 from square_routes import square_bp
 from clover_routes import clover_bp
+from rpower_routes import rpower_bp
 from status_routes import status_bp
 from mobile_api import mobile_bp
 from csrf import csrf_protect, ensure_csrf_cookie
@@ -217,7 +218,7 @@ from csrf import csrf_protect, ensure_csrf_cookie
 # status_bp (public GETs), and mobile_bp (bearer-token auth, no cookie jar
 # to carry a CSRF cookie — see mobile_api.py's module docstring) are
 # intentionally exempt.
-for _bp in (admin_bp, client_bp, social_bp, toast_bp, square_bp, clover_bp):
+for _bp in (admin_bp, client_bp, social_bp, toast_bp, square_bp, clover_bp, rpower_bp):
     csrf_protect(_bp)
 
 app.register_blueprint(admin_bp)
@@ -233,6 +234,7 @@ app.register_blueprint(client_bp)
 app.register_blueprint(toast_bp)
 app.register_blueprint(square_bp)
 app.register_blueprint(clover_bp)
+app.register_blueprint(rpower_bp)
 app.register_blueprint(status_bp)
 app.register_blueprint(mobile_bp)
 
