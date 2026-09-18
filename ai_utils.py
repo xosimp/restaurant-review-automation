@@ -9,6 +9,7 @@ backoff and no second attempt. This wraps the call once so every caller gets
 the same retry behavior instead of each reimplementing it inconsistently.
 """
 import os
+import sqlite3
 import time
 import anthropic
 
@@ -133,9 +134,10 @@ class AIBudgetExceeded(RuntimeError):
 
 def _spend_since(sql_window, restaurant_id=None, db_path=None, paid_only=False):
     from models import get_conn, DB_PATH
-    conn = get_conn(db_path or DB_PATH)
+    path = db_path or DB_PATH
+    conn = get_conn(path)
     try:
-        conn.execute(_USAGE_TABLE_SQL)
+        _ensure_usage_schema(conn, path)
         where = "WHERE created_at >= ?"
         params = [sql_window]
         if restaurant_id is not None:
@@ -147,9 +149,16 @@ def _spend_since(sql_window, restaurant_id=None, db_path=None, paid_only=False):
             # count here, or those accounts can starve the people paying.
             where += (" AND (restaurant_id IS NULL OR restaurant_id IN "
                       "(SELECT id FROM restaurants WHERE LOWER(TRIM(COALESCE(billing_status,''))) IN ('active','internal')))")
-        row = conn.execute(
-            f"SELECT COALESCE(SUM(cost_usd), 0) AS spend FROM ai_usage {where}", params
-        ).fetchone()
+        sql = f"SELECT COALESCE(SUM(cost_usd), 0) AS spend FROM ai_usage {where}"
+        try:
+            row = conn.execute(sql, params).fetchone()
+        except sqlite3.OperationalError:
+            # The table or a column went missing since this process last
+            # checked — a deploy migrating the volume under a live instance,
+            # a restored backup. This runs before EVERY Claude call, so
+            # raising here would refuse all AI rather than report spend.
+            _ensure_usage_schema(conn, path, force=True)
+            row = conn.execute(sql, params).fetchone()
         return float(row["spend"] or 0.0)
     finally:
         conn.close()
@@ -345,6 +354,44 @@ _USAGE_INDEX_SQL = (
 )
 
 
+# The usage table's schema setup ran on the HOT PATH: _spend_since executed
+# CREATE TABLE before every AI call (the budget check), and log_ai_usage
+# executed CREATE TABLE + two CREATE INDEX + a PRAGMA table_info + up to four
+# ALTER checks after every one. init_db already owns this table; the repeated
+# DDL was belt-and-braces for databases that predate it.
+#
+# Kept, but run ONCE per database per process. Keyed by db_path rather than a
+# bare flag because the test suite points every test at its own fresh file,
+# and a global flag would let the second test inherit the first's "already
+# done" and run against a table that does not exist yet.
+_usage_schema_ready = set()
+
+
+def _ensure_usage_schema(conn, db_path, force=False):
+    """Create/migrate the usage table, at most once per database per process.
+
+    `force` re-runs it after a write failed on a missing column — the schema
+    can change underneath a live process (a deploy migrating the volume while
+    the previous instance is still serving, a restored backup, and the test
+    that drops and recreates this table to prove the in-place migration still
+    works). The once-per-process flag is a hot-path optimisation, not a claim
+    that the schema is immutable.
+    """
+    if db_path in _usage_schema_ready and not force:
+        return
+    try:
+        conn.execute(_USAGE_TABLE_SQL)
+        for _ix in _USAGE_INDEX_SQL:
+            conn.execute(_ix)
+        _ensure_usage_columns(conn)
+        conn.commit()
+        _usage_schema_ready.add(db_path)
+    except Exception:
+        # Leave it unmarked so the next call retries rather than reading a
+        # table that was never created.
+        pass
+
+
 def _ensure_usage_columns(conn):
     """status/error arrived after the table existed on Railway, and the two
     cache columns after that — add them in place so old rows keep their
@@ -407,11 +454,9 @@ def log_api_call(restaurant_id, action, vendor, calls=1, input_tokens=0, output_
     cost = 0.0 if status != "ok" else (per_call + token_cost)
     try:
         from models import get_conn, DB_PATH
-        conn = get_conn(db_path or DB_PATH)
-        conn.execute(_USAGE_TABLE_SQL)
-        for _ix in _USAGE_INDEX_SQL:
-            conn.execute(_ix)
-        _ensure_usage_columns(conn)
+        path = db_path or DB_PATH
+        conn = get_conn(path)
+        _ensure_usage_schema(conn, path)
         conn.execute(
             "INSERT INTO ai_usage (restaurant_id, action, model, input_tokens, output_tokens, cost_usd, status, error) "
             "VALUES (?,?,?,?,?,?,?,?)",
@@ -479,21 +524,25 @@ def log_ai_usage(restaurant_id, action, model, input_tokens, output_tokens, db_p
                  status="ok", error=None, cache_write_tokens=0, cache_read_tokens=0,
                  latency_ms=None):
     from models import get_conn, DB_PATH
-    conn = get_conn(db_path or DB_PATH)
-    conn.execute(_USAGE_TABLE_SQL)
-    for _ix in _USAGE_INDEX_SQL:
-        conn.execute(_ix)
-    _ensure_usage_columns(conn)
+    path = db_path or DB_PATH
+    conn = get_conn(path)
+    _ensure_usage_schema(conn, path)
     cost = (_estimate_cost(model, input_tokens, output_tokens,
                            cache_write_tokens, cache_read_tokens)
             if status == "ok" else 0.0)
-    conn.execute(
-        "INSERT INTO ai_usage (restaurant_id, action, model, input_tokens, output_tokens, "
-        "cost_usd, status, error, cache_write_tokens, cache_read_tokens, latency_ms) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-        (restaurant_id, action, model, input_tokens, output_tokens, cost, status, error,
-         cache_write_tokens or 0, cache_read_tokens or 0, latency_ms),
-    )
+    _row = (restaurant_id, action, model, input_tokens, output_tokens, cost, status, error,
+            cache_write_tokens or 0, cache_read_tokens or 0, latency_ms)
+    _insert = ("INSERT INTO ai_usage (restaurant_id, action, model, input_tokens, output_tokens, "
+               "cost_usd, status, error, cache_write_tokens, cache_read_tokens, latency_ms) "
+               "VALUES (?,?,?,?,?,?,?,?,?,?,?)")
+    try:
+        conn.execute(_insert, _row)
+    except sqlite3.OperationalError:
+        # The table lost a column since this process last checked. Re-run the
+        # migration and try once more rather than dropping the row — see
+        # _ensure_usage_schema's note on schemas changing under a live process.
+        _ensure_usage_schema(conn, path, force=True)
+        conn.execute(_insert, _row)
     conn.commit()
     conn.close()
     # Fold this call into the cached totals so a burst inside one cache
@@ -505,14 +554,15 @@ def usage_summary(restaurant_id=None, since_days=30, db_path=None):
     """Spend grouped by action+model, optionally scoped to one restaurant,
     over the last `since_days` days — most-expensive first."""
     from models import get_conn, DB_PATH
-    conn = get_conn(db_path or DB_PATH)
-    conn.execute(_USAGE_TABLE_SQL)
+    path = db_path or DB_PATH
+    conn = get_conn(path)
+    _ensure_usage_schema(conn, path)
     where = "WHERE created_at >= datetime('now', ?)"
     params = [f"-{since_days} days"]
     if restaurant_id is not None:
         where += " AND restaurant_id=?"
         params.append(restaurant_id)
-    rows = conn.execute(f"""
+    sql = f"""
         SELECT action, model, COUNT(*) as calls,
                SUM(input_tokens) as input_tokens, SUM(output_tokens) as output_tokens,
                SUM(COALESCE(cache_write_tokens,0)) as cache_write_tokens,
@@ -522,7 +572,14 @@ def usage_summary(restaurant_id=None, since_days=30, db_path=None):
                SUM(cost_usd) as cost_usd
         FROM ai_usage {where}
         GROUP BY action, model ORDER BY cost_usd DESC
-    """, params).fetchall()
+    """
+    try:
+        rows = conn.execute(sql, params).fetchall()
+    except sqlite3.OperationalError:
+        # Same self-healing path as the budget read: the schema can change
+        # under a live process.
+        _ensure_usage_schema(conn, path, force=True)
+        rows = conn.execute(sql, params).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 

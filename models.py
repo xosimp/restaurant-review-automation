@@ -346,6 +346,11 @@ class Restaurant:
     longitude: Optional[float]           = None
     weather_cache_json: Optional[str]    = None   # cached NWS forecast periods
     weather_cached_at: Optional[str]     = None
+    # When a geocode last resolved to nothing usable. A place_id that returns
+    # no geometry is permanent until someone corrects it, and without this the
+    # retry re-billed Google on every call — 570 requests for one restaurant
+    # in eight days (audit #17).
+    geocode_failed_at: Optional[str]     = None
     email_theme: Optional[str]           = "dark"  # 'dark' or 'light' — drives weekly digest email theme
     inventory_updated_at: Optional[str]  = None
     temp_password: Optional[str]         = None
@@ -673,6 +678,7 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "longitude", "REAL"),
         ("restaurants", "weather_cache_json", "TEXT"),
         ("restaurants", "weather_cached_at", "TEXT"),
+        ("restaurants", "geocode_failed_at", "TEXT"),
         ("restaurants", "email_theme", "TEXT DEFAULT 'dark'"),
         ("restaurants", "inventory_updated_at", "TEXT"),
         ("restaurants", "gbp_rating", "REAL"),
@@ -1584,6 +1590,19 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE reviews ADD COLUMN specific_complaint TEXT",   # <=8 words, the actual thing that went wrong
         "ALTER TABLE reviews ADD COLUMN severity TEXT",             # safety|legal|operational|service|minor
         "CREATE INDEX IF NOT EXISTS idx_reviews_rest_severity ON reviews(restaurant_id, severity)",
+        # The time axis every intelligence query filters on is an EXPRESSION,
+        # not a column — REVIEW_TIME_AXIS_BARE. idx_reviews_rest_date covers
+        # review_date alone, which the planner cannot use for the COALESCE,
+        # so complaint_clusters/rating_trend narrowed to the restaurant and
+        # then evaluated the date over its whole review history in memory.
+        # Bounded (one restaurant, not the table) but it grows with every
+        # review that restaurant ever receives. Audit #17.
+        "CREATE INDEX IF NOT EXISTS idx_reviews_rest_axis "
+        "ON reviews(restaurant_id, COALESCE(NULLIF(review_date,''), fetched_at))",
+        # usage_summary groups by action+model and the admin AI-cost view is
+        # the only reader; only created_at and (restaurant_id, created_at)
+        # existed.
+        "CREATE INDEX IF NOT EXISTS idx_ai_usage_action ON ai_usage(action, model)",
 
         # One stored root-cause diagnosis per (restaurant, category, window).
         #
@@ -2785,6 +2804,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH):
         "brand_name","brand_color","brand_logo_url",
         "section_count","daypart_split","delivery_pct","role_minimums_json","sched_notes","email_theme",
         "latitude","longitude","weather_cache_json","weather_cached_at",
+        "geocode_failed_at",
     }
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
@@ -2795,6 +2815,10 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH):
     conn.execute(f"UPDATE restaurants SET {set_clause} WHERE id=?", values)
     conn.commit()
     conn.close()
+    # get_restaurant is memoised for the life of a request, so a settings POST
+    # that writes and then re-reads in the same request would otherwise be
+    # served the row as it was before its own write.
+    _invalidate_request_cache(restaurant_id)
     # Keep the organization key in step with the group name an admin typed.
     # location_group remains the field the admin console writes; this is what
     # turns that string into the real grouping key without the console having
@@ -2854,12 +2878,73 @@ def request_account_deletion(restaurant_id: int, db_path: str = DB_PATH) -> str:
     return now
 
 
+def _request_cache():
+    """This request's read memo, or None when there is no request.
+
+    Audit #17 measured ONE web Home load at 116 queries and 87 SQLite
+    connection opens, of which 35 were get_restaurant() fetching the SAME row
+    35 times. Nothing was wrong with any individual call; there was just no
+    scope in which "I already read this" could be true.
+
+    Deliberately scoped to the Flask request and nowhere else. models.py is
+    imported by the scheduler, the test suite and one-off scripts, none of
+    which have an app context — they get None here and behave exactly as
+    before. A process-lifetime cache would be wrong for all three: a job loop
+    that runs for an hour must see a restaurant's row change under it.
+    """
+    try:
+        from flask import g, has_app_context
+        if not has_app_context():
+            return None
+        cache = getattr(g, "_cavnar_read_cache", None)
+        if cache is None:
+            cache = {}
+            g._cavnar_read_cache = cache
+        return cache
+    except Exception:
+        # No Flask, or a context torn down mid-call. Uncached is always correct.
+        return None
+
+
+def _invalidate_request_cache(restaurant_id=None):
+    """Drop memoised reads after a write, so a read-after-write in the same
+    request sees the write. Called by update_restaurant."""
+    cache = _request_cache()
+    if cache is None:
+        return
+    if restaurant_id is None:
+        cache.clear()
+        return
+    for key in [k for k in cache if k[0] == "restaurant" and k[1] == int(restaurant_id)]:
+        cache.pop(key, None)
+
+
 def get_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> Optional[Restaurant]:
+    # Memoised per request. Restaurant objects are read-only by convention
+    # everywhere in this codebase (the only dataclass mutations anywhere are
+    # on Review inside save_reviews), so handing the same instance to two
+    # callers in one request cannot alias.
+    cache = _request_cache()
+    ckey = ("restaurant", int(restaurant_id), db_path)
+    if cache is not None and ckey in cache:
+        return cache[ckey]
+
     conn = get_conn(db_path)
     row = conn.execute("SELECT * FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
     conn.close()
     if not row:
+        if cache is not None:
+            cache[ckey] = None
         return None
+    result = _restaurant_from_row(row)
+    if cache is not None:
+        cache[ckey] = result
+    return result
+
+
+def _restaurant_from_row(row) -> Restaurant:
+    """Row -> Restaurant. Split out so callers that already hold the row can
+    hydrate from it instead of re-querying by id (see get_all_restaurants)."""
     return Restaurant(
         id=row["id"], name=row["name"], owner_email=row["owner_email"],
         google_place_id=row["google_place_id"], yelp_business_id=row["yelp_business_id"],
@@ -3031,6 +3116,7 @@ def get_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> Optional[Resta
         longitude=row["longitude"]                     if "longitude" in row.keys() else None,
         weather_cache_json=row["weather_cache_json"]   if "weather_cache_json" in row.keys() else None,
         weather_cached_at=row["weather_cached_at"]     if "weather_cached_at" in row.keys() else None,
+        geocode_failed_at=row["geocode_failed_at"]     if "geocode_failed_at" in row.keys() else None,
     )
 
 
@@ -5485,21 +5571,43 @@ def get_yoy_schedule_context(restaurant_id: int, next_week_dates: list,
     """
     from datetime import datetime as _dt, timedelta as _td
     conn = get_conn(db_path)
+
+    # Every candidate date across every requested date, fetched once.
+    #
+    # This was a query per offset per date — seven dates by a seven-day window
+    # is 49 round trips to answer one question about one restaurant's history
+    # (audit #17). The window and the tie-break below are unchanged; only the
+    # number of queries is.
+    wanted = set()
+    for date_str in next_week_dates:
+        try:
+            yoy_dt = _dt.strptime(date_str, "%Y-%m-%d") - _td(weeks=52)
+        except Exception:
+            continue
+        for offset in range(-3, 4):
+            wanted.add((yoy_dt + _td(days=offset)).strftime("%Y-%m-%d"))
+
+    by_date = {}
+    if wanted:
+        marks = ",".join("?" * len(wanted))
+        for row in conn.execute(
+            f"SELECT * FROM labor_daily_history WHERE restaurant_id=? AND date IN ({marks})",
+            (restaurant_id, *sorted(wanted))
+        ).fetchall():
+            by_date[row["date"]] = dict(row)
+
     rows_out = []
     for date_str in next_week_dates:
         try:
             dt = _dt.strptime(date_str, "%Y-%m-%d")
             yoy_dt = dt - _td(weeks=52)
-            # Search ±3 days window around the 52-week-ago date for any data
-            candidates = []
-            for offset in range(-3, 4):
-                candidate_date = (yoy_dt + _td(days=offset)).strftime("%Y-%m-%d")
-                row = conn.execute(
-                    "SELECT * FROM labor_daily_history WHERE restaurant_id=? AND date=?",
-                    (restaurant_id, candidate_date)
-                ).fetchone()
-                if row:
-                    candidates.append(dict(row))
+            # Same ±3 day window, still walked in offset order so the
+            # fallback below keeps picking the earliest date with data.
+            candidates = [
+                by_date[d] for d in
+                ((yoy_dt + _td(days=o)).strftime("%Y-%m-%d") for o in range(-3, 4))
+                if d in by_date
+            ]
             # Prefer exact 52-week match, fall back to closest with data
             exact = next((c for c in candidates if c["date"] == yoy_dt.strftime("%Y-%m-%d")), None)
             best = exact or (candidates[0] if candidates else None)
@@ -5626,7 +5734,16 @@ def set_service_tier(restaurant_id: int, tier: str,
 
 
 def get_all_restaurants(db_path: str = DB_PATH) -> list:
-    """Get all active restaurant records."""
+    """Every restaurant record, hydrated from one query.
+
+    This used to SELECT * and then throw every column away, calling
+    get_restaurant(row["id"]) per row — one query and one connection each.
+    Measured at 17 queries for 16 restaurants; at 1,000 restaurants it is
+    1,001, and ten scheduler jobs call this daily (audit #17).
+
+    The hydration is a pure row -> dataclass mapping, so reusing the rows
+    already in hand is the same object by a cheaper route.
+    """
     conn = get_conn(db_path)
     rows = conn.execute(
         "SELECT * FROM restaurants WHERE id > 0 ORDER BY id"
@@ -5634,8 +5751,10 @@ def get_all_restaurants(db_path: str = DB_PATH) -> list:
     conn.close()
     result = []
     for row in rows:
+        # Per-row guard kept: one malformed row must not cost the caller the
+        # whole list, which is what the old per-row try/except bought.
         try:
-            result.append(get_restaurant(row["id"], db_path))
+            result.append(_restaurant_from_row(row))
         except Exception:
             pass
     return result
@@ -7062,6 +7181,74 @@ def last_two_ai_visibility_runs(restaurant_id: int, db_path: str = DB_PATH) -> l
 def last_two_ai_visibility_scores(restaurant_id: int, db_path: str = DB_PATH) -> list:
     """Scores only. Kept for callers that just want the numbers."""
     return [r["ai_score"] for r in last_two_ai_visibility_runs(restaurant_id, db_path)]
+
+
+# Operational logs nothing prunes.
+#
+# ai_usage is read by the budget check on EVERY AI call (a SUM over a window)
+# and by the admin cost view; job_runs and push_deliveries are diagnostics.
+# None of them had a retention policy, so all three grow forever and the
+# budget SUM gets slower every day the product is used (audit #17).
+#
+# The windows are set by what actually reads them: the longest budget window
+# is monthly, so a quarter of ai_usage is three times more history than any
+# query asks for. Deliberately generous — this is about bounding unbounded
+# growth, not about reclaiming bytes.
+# (retention days, the column that carries the row's age).
+#
+# The timestamp column is NOT uniformly `created_at` — job_runs stamps
+# `started_at` and email_log stamps `sent_at`. Naming it per table rather than
+# assuming is the difference between pruning and a DELETE that raises, gets
+# swallowed, and silently never runs.
+_LOG_RETENTION_DAYS = {
+    "ai_usage": (120, "created_at"),
+    "job_runs": (90, "started_at"),
+    "push_deliveries": (90, "created_at"),
+    "email_log": (365, "sent_at"),    # the client-facing "what did you send me" view
+    "activity_log": (180, "created_at"),
+}
+
+
+def prune_operational_logs(db_path: str = DB_PATH) -> dict:
+    """Delete operational log rows past their retention window.
+
+    Never touches anything a client reads as a record of their own business:
+    reviews have their own owner-controlled retention (purge_expired_reviews),
+    and ask_cavnar_actions is explicitly never pruned.
+
+    A table whose timestamp column is missing is reported as a problem rather
+    than skipped: silently pruning nothing looks identical to having nothing
+    to prune, and the table would grow forever with nobody the wiser.
+    """
+    deleted, problems = {}, []
+    conn = get_conn(db_path)
+    try:
+        existing = {r["name"] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        for table, (days, column) in _LOG_RETENTION_DAYS.items():
+            if table not in existing:
+                continue          # not created yet on this database — fine
+            cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+            if column not in cols:
+                problems.append(f"{table}.{column} missing")
+                continue
+            cur = conn.execute(
+                f"DELETE FROM {table} WHERE {column} < datetime('now', ?)",
+                (f"-{int(days)} days",))
+            if cur.rowcount:
+                deleted[table] = cur.rowcount
+        conn.commit()
+    finally:
+        conn.close()
+    if problems:
+        try:
+            import ops
+            ops.capture(RuntimeError(f"retention could not prune: {problems}"),
+                        job="prune_operational_logs", context=", ".join(problems))
+        except Exception:
+            pass
+        deleted["_problems"] = problems
+    return deleted
 
 
 def purge_expired_reviews(db_path: str = DB_PATH) -> int:

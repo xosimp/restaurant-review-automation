@@ -166,15 +166,27 @@ def send_newsletter(restaurant_id, body, subject=None, db_path: str = DB_PATH) -
         for p in body_text.split("\n\n") if p.strip()
     )
 
+    # Mint every missing unsubscribe token up front, on ONE connection.
+    # This used to open a connection, write, commit and close INSIDE the send
+    # loop — so the first newsletter to a 5,000-person list opened 5,000
+    # SQLite connections, each taking the write lock in turn while the send
+    # loop was already the slowest thing in the request (audit #17).
+    missing = [p for p in people if not p.get("email_token")]
+    if missing:
+        minted = {p["id"]: _token() for p in missing}
+        conn = get_conn(db_path)
+        try:
+            conn.executemany("UPDATE guest_contacts SET email_token=? WHERE id=?",
+                             [(tok, pid) for pid, tok in minted.items()])
+            conn.commit()
+        finally:
+            conn.close()
+        for p in missing:
+            p["email_token"] = minted[p["id"]]
+
     sent, failed = 0, 0
     for person in people:
         token = person.get("email_token")
-        if not token:
-            token = _token()
-            conn = get_conn(db_path)
-            conn.execute("UPDATE guest_contacts SET email_token=? WHERE id=?", (token, person["id"]))
-            conn.commit()
-            conn.close()
         unsub = f"{base}/e/{token}"
         greeting = ""
         if (person.get("name") or "").strip():

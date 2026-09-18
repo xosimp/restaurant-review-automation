@@ -104,3 +104,19 @@ A deletion is only "verified" when the trace is written down alongside it.
   no-op.
 - **Targeted tests by default.** Run the full suite once before pushing, or
   when asked — not after every edit.
+- **`get_restaurant()` is memoised per Flask request**, and only per request —
+  outside one (scheduler, tests, scripts) it is uncached, deliberately, so a
+  long-running job sees rows change under it. Any new write path to
+  `restaurants` outside `update_restaurant` must call
+  `models._invalidate_request_cache(rid)`.
+- **Never put schema DDL on a request or per-call path.** `init_db()` owns
+  every table. `ai_utils._ensure_usage_schema` is the pattern where a lazy
+  table is unavoidable: once per database per process, with a self-healing
+  retry if a write later fails on a missing column.
+- **Deployment shape.** The scheduler runs in the web process by default;
+  `RUN_SCHEDULER_IN_WEB=0` plus the `worker.py` service moves it out. See
+  `RAILWAY_SCHEDULER_SPLIT.md`. The single-runner guarantee is
+  `ops.acquire_scheduler_lease()`, not the worker count.
+- **Static assets have no cache-busting** (`/static/cavnar-orb.js`, bare
+  path). Do not add a far-future `max-age` until they are hashed or
+  versioned, or a JS fix will be stranded in browser caches.

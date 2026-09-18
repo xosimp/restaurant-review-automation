@@ -44,6 +44,11 @@ ALLOWED_WRITE_SITES = {
     ("status_manager.py", "seed_default_services"),
     ("ops.py", "claim_period"),               # pruning old rows is opportunistic
     ("hosted_dashboard.py", "<module>"),      # boot-time PRAGMA journal_mode=WAL
+    # CREATE TABLE / CREATE INDEX / ALTER for the usage ledger, run once per
+    # database per process. A failure here must not break the AI call being
+    # metered, and it is deliberately NOT marked done on failure — the next
+    # call retries, and the insert itself heals a missing column and retries.
+    ("ai_utils.py", "_ensure_usage_schema"),
 }
 
 WRITE_MARKERS = ("INSERT ", "INSERT\n", "UPDATE ", "DELETE FROM", ".commit(")

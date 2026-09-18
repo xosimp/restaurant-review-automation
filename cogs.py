@@ -86,9 +86,64 @@ def inventory_value_near(weeks, target_day, tolerance_days=SNAPSHOT_TOLERANCE_DA
     return best, (best_day.isoformat() if best_day else None)
 
 
+def _archived_net_sales(restaurant_id, start, end):
+    """Net sales for the window from the LOCAL archive, or None.
+
+    labor_daily_history carries one row per business date with that day's
+    sales, written by each provider's nightly sync_to_db. Reading it is free
+    and works when the POS is unreachable.
+
+    Coverage is decided by the archive's own edges, not by counting dates: a
+    restaurant closed on Mondays has no Monday row, so "every calendar date
+    present" would never be true. If the archive spans the window — its
+    earliest row is at or before `start` and its latest is at or after `end`
+    — the nightly sync has been through this period and what is there is what
+    there is. Anything narrower falls through to the live POS rather than
+    quietly returning a smaller number, which is the one failure mode that
+    matters here: an under-reported sales figure inflates food cost %.
+    """
+    from models import get_conn
+    s, e = str(start)[:10], str(end)[:10]
+    try:
+        conn = get_conn()
+        try:
+            row = conn.execute(
+                "SELECT MIN(date) AS first, MAX(date) AS last, "
+                "       COALESCE(SUM(sales), 0) AS total, COUNT(*) AS n "
+                "FROM labor_daily_history "
+                "WHERE restaurant_id=? AND sales IS NOT NULL AND sales > 0 "
+                "  AND date >= ? AND date <= ?", (restaurant_id, s, e)).fetchone()
+            edges = conn.execute(
+                "SELECT MIN(date) AS first, MAX(date) AS last FROM labor_daily_history "
+                "WHERE restaurant_id=? AND sales IS NOT NULL AND sales > 0",
+                (restaurant_id,)).fetchone()
+        finally:
+            conn.close()
+    except Exception:
+        return None
+    if not row or not row["n"] or not edges or not edges["first"]:
+        return None
+    if str(edges["first"])[:10] > s or str(edges["last"])[:10] < e:
+        return None          # the archive does not span this window
+    total = _f(row["total"])
+    return round(total, 2) if total > 0 else None
+
+
 def net_sales_in_window(restaurant_id, start, end):
-    """Net sales from the POS for the window, or None when the POS can't
-    answer. None means unknown — never 0.
+    """Net sales for the window, or None when it cannot be known. None means
+    unknown — never 0.
+
+    Reads the LOCAL ARCHIVE first and only calls the POS when the archive
+    does not span the window.
+
+    Two reasons, and the second is a vendor requirement rather than an
+    optimisation. RPOWER's integrator asked explicitly that we "download and
+    archive the data" rather than query it repeatedly, and told us there is
+    no sandbox — every call is against a live store. Meanwhile this function
+    is reached twice per profitability_projection, which is reached by
+    business_intelligence.gather, which runs on every Ask Cavnar context
+    build. That is a lot of traffic against an API whose rate limits we have
+    not been given.
 
     Goes through pos.py rather than importing toast directly. That import was
     the reason food cost % was a Toast-only feature: a Square, Clover or
@@ -96,6 +151,9 @@ def net_sales_in_window(restaurant_id, start, end):
     pos.connected_provider knew perfectly well which POS they were on, so the
     one number this module is named after could never be computed for them.
     """
+    archived = _archived_net_sales(restaurant_id, start, end)
+    if archived is not None:
+        return archived, None
     try:
         import pos
         by_date, _provider = pos.fetch_business_days(restaurant_id, start, end)

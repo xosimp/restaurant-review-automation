@@ -1270,6 +1270,12 @@ def run_daily_alert_checks():
         out["purged"] = f"failed: {pe}"
         log.error(f"Retention purge failed: {pe}")
         _ops.capture(pe, job="daily_alerts", context="retention purge")
+    try:
+        from models import prune_operational_logs
+        out["pruned"] = prune_operational_logs()
+    except Exception as le:
+        out["pruned"] = f"failed: {le}"
+        _ops.capture(le, job="daily_alerts", context="operational log prune")
     return out
 
 

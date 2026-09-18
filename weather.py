@@ -42,12 +42,60 @@ _USER_AGENT = "CavnarAI/1.0 (will@cavnar.ai)"  # NWS asks for an identifying UA,
 _CACHE_HOURS = 6
 
 
+# How long to wait before retrying a place_id that produced no geometry.
+#
+# Audit #17 measured 572 billed geocode requests in 30 days, of which 570 were
+# ONE restaurant: its place_id returns a result with no geometry, the old code
+# returned early WITHOUT recording anything, and so every caller re-geocoded
+# and re-billed — 71 times a day, forever. That was 61% of all AI and vendor
+# spend on the account.
+#
+# A place_id that resolves but carries no geometry is a permanent condition
+# until somebody fixes the place_id, not a transient one. Weekly is often
+# enough to pick up a correction and rare enough to cost nothing.
+_GEOCODE_RETRY_DAYS = 7
+
+
+def _geocode_recently_failed(restaurant):
+    """True when this restaurant's last geocode attempt failed inside the
+    retry window.
+
+    Its own column rather than a key inside weather_cache_json: that column
+    holds a LIST of NWS periods and _cached_periods json.loads it as one, so
+    putting a dict in there would be two shapes in one field waiting to
+    collide.
+    """
+    failed_at = getattr(restaurant, "geocode_failed_at", None)
+    if not failed_at:
+        return False
+    try:
+        return datetime.fromisoformat(failed_at) > datetime.now() - timedelta(days=_GEOCODE_RETRY_DAYS)
+    except Exception:
+        return False
+
+
+def _note_geocode_failure(restaurant, db_path=DB_PATH):
+    """Record that this place_id produced no usable location."""
+    try:
+        update_restaurant(restaurant.id,
+                          {"geocode_failed_at": datetime.now().isoformat()},
+                          db_path=db_path)
+    except Exception:
+        pass
+
+
 def _geocode(restaurant, db_path=DB_PATH):
-    """Returns (lat, lon) or (None, None). Result is cached on the
-    restaurant row so this only ever hits Google once per restaurant."""
+    """Returns (lat, lon) or (None, None).
+
+    A success is cached on the restaurant row, so this hits Google once per
+    restaurant. A FAILURE is cached too — see _GEOCODE_RETRY_DAYS for the
+    570-call bill that taught us to.
+    """
     if restaurant.latitude is not None and restaurant.longitude is not None:
         return restaurant.latitude, restaurant.longitude
     if not restaurant.google_place_id or not _GOOGLE_KEY:
+        return None, None
+    if _geocode_recently_failed(restaurant):
         return None, None
     try:
         resp = requests.get(
@@ -62,10 +110,18 @@ def _geocode(restaurant, db_path=DB_PATH):
         loc = resp.json().get("result", {}).get("geometry", {}).get("location", {})
         lat, lon = loc.get("lat"), loc.get("lng")
         if lat is None or lon is None:
+            # Resolved, but carries no location. Permanent until the place_id
+            # itself is corrected — do not pay for this answer again today.
+            _note_geocode_failure(restaurant, db_path=db_path)
             return None, None
-        update_restaurant(restaurant.id, {"latitude": lat, "longitude": lon}, db_path=db_path)
+        update_restaurant(restaurant.id,
+                          {"latitude": lat, "longitude": lon, "geocode_failed_at": None},
+                          db_path=db_path)
         return lat, lon
     except Exception:
+        # A network error or a 4xx is also not worth retrying on every call
+        # in a loop over every restaurant.
+        _note_geocode_failure(restaurant, db_path=db_path)
         return None, None
 
 
@@ -96,9 +152,12 @@ def _cached_periods(restaurant):
     if datetime.now() - cached_at > timedelta(hours=_CACHE_HOURS):
         return None
     try:
-        return json.loads(restaurant.weather_cache_json or "[]")
+        periods = json.loads(restaurant.weather_cache_json or "[]")
     except Exception:
         return None
+    # Only ever a list of periods. Anything else is a corrupt or repurposed
+    # cache and must read as "no cache", not be handed to the loop below.
+    return periods if isinstance(periods, list) else None
 
 
 def get_forecast_for_week(restaurant, week_dates, db_path=DB_PATH):

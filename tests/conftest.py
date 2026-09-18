@@ -49,6 +49,19 @@ def _reset_home_brief_cache():
 
 
 @pytest.fixture(autouse=True)
+def _reset_usage_schema_flag():
+    """ai_utils remembers, per process, which databases it has already created
+    the usage table in — so the DDL is off the hot path of every AI call.
+    It is keyed by db_path, and a test that points at the default ./reviews.db
+    would otherwise hand its "already done" to the next one and read a table
+    that test had just recreated. Same shape as the three resets above."""
+    import ai_utils
+    ai_utils._usage_schema_ready.clear()
+    yield
+    ai_utils._usage_schema_ready.clear()
+
+
+@pytest.fixture(autouse=True)
 def _reset_ask_context_cache():
     """Identical hazard to _reset_home_brief_cache: ask_cavnar.build_context
     caches the assembled snapshot per restaurant_id for 60s, and every test's

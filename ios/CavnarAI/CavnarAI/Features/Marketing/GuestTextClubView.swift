@@ -381,8 +381,15 @@ struct GuestTextClubView: View {
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
-                ForEach(viewModel.contacts) { contact in
-                    contactRow(contact)
+                // Lazy: this is the one unbounded list in the app — a text
+                // club is thousands of guests and get_guest_contacts applies
+                // no LIMIT, so a plain ForEach in a ScrollView built every row
+                // on appear (audit #17). Every other long list here is either
+                // inside a List (Reviews) or bounded by its own data.
+                LazyVStack(alignment: .leading, spacing: 12) {
+                    ForEach(viewModel.contacts) { contact in
+                        contactRow(contact)
+                    }
                 }
             }
         }

@@ -58,6 +58,11 @@ PAGE_SIZE = 1000
 # _paged verifies by primary key rather than trusting the page arithmetic, and
 # this flag stays True so the verification cost is a deliberate, visible
 # choice rather than a forgotten one.
+# Still unconfirmed. RPOWER has not given us rate limits or the non-200
+# response shapes, and there is NO SANDBOX — confirmed 18 Sep 2026, access is
+# read-only against live stores. So the first real call is against Erik's
+# production data, and every defensive choice in this file stays until the
+# behaviour is observed rather than assumed.
 PAGINATION_UNVERIFIED = True
 
 # No rate limit is documented. These are conservative defaults chosen so a
@@ -70,6 +75,10 @@ TIMEOUT_SECONDS = 45
 
 # A backfill asks for one business date at a time for item-level data (a busy
 # day can exceed a single page) but takes date ranges where the API allows.
+#
+# CONFIRMED by RPOWER (Justin, 18 Sep 2026): "Month worth of data at a time."
+# Both range fetches below chunk through _chunk_range, so a 60-day sync is two
+# requests rather than one oversized one.
 MAX_RANGE_DAYS = 31
 
 
@@ -730,6 +739,15 @@ def push_labor_schedule(restaurant_id: int, shifts: list) -> dict:
     ability to push labor schedules to stores, email a request." So a 401/403
     here means the feature is not enabled for this token, which is a
     different problem from a bad token and is reported as such.
+
+    AS OF 18 Sep 2026 this is EXPECTED to fail: RPOWER confirmed our access is
+    read-only, and said there is "a secondary way apart from the API to push
+    schedules if we need to do that temporarily". So until the write scope is
+    granted, weekly schedule delivery goes out by Cavnar's own email path
+    (labor's publish_schedule, which emails each employee their own shifts)
+    and this function stays unused rather than removed — the moment the scope
+    is enabled it is the path, and the 401/403 message already tells an
+    operator exactly what to ask for.
 
     `shifts` is Cavnar's own shape — [{employee_payroll_id, job, start, end}]
     — grouped here into RPOWER's per-employee structure. Times are local wall

@@ -180,6 +180,13 @@ def format_date_filter(d):
     except Exception:
         return str(d)[:10]
 
+# Response compression and cache headers live in http_layer.py so they can be
+# tested without booting this module (importing it initialises the database,
+# seeds demo data and starts the scheduler thread).
+import http_layer
+http_layer.register(app)
+
+
 @app.after_request
 def add_security_headers(response):
     """Add security headers to every response."""
@@ -845,12 +852,30 @@ try:
 except Exception as _boot_e:
     print(f"Admin seed error: {_boot_e}")
 
-try:
-    from scheduler import start_scheduler as _ss
-    _ss()
-    print("Scheduler started OK")
-except Exception as _e:
-    print(f"Scheduler start error: {_e}")
+# The scheduler runs in this process by default, which is how it has always
+# worked and what a single-service deployment needs.
+#
+# Set RUN_SCHEDULER_IN_WEB=0 once worker.py is deployed as its own Railway
+# service, so the web process stops doing background work: a job holding
+# SQLite's single writer lock makes request threads wait out a 30-second busy
+# timeout, and a job that overruns an hour causes later hour-gated jobs to be
+# skipped for the day (audit #17).
+#
+# Running BOTH is safe and is the intended migration path — ops.acquire_
+# scheduler_lease() elects exactly one runner across processes, so the loser
+# idles and takes over only if the holder stops heartbeating. Unsetting the
+# variable is therefore also the rollback.
+_RUN_SCHEDULER_IN_WEB = os.getenv("RUN_SCHEDULER_IN_WEB", "1").strip().lower() not in ("0", "false", "no")
+if _RUN_SCHEDULER_IN_WEB:
+    try:
+        from scheduler import start_scheduler as _ss
+        _ss()
+        print("Scheduler started OK")
+    except Exception as _e:
+        print(f"Scheduler start error: {_e}")
+else:
+    print("Scheduler not started in web process (RUN_SCHEDULER_IN_WEB=0) — "
+          "worker.py is expected to be running it")
 
 # Enable WAL mode for concurrent access
 try:
