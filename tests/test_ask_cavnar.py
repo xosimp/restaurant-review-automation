@@ -7,7 +7,7 @@ import pytest
 
 import ask_cavnar
 import models
-from ask_cavnar import build_context, ask
+from ask_cavnar import build_context, ask_with_tools
 from models import create_restaurant, get_restaurant, get_conn, Restaurant, save_reviews, Review, update_analysis
 
 
@@ -43,6 +43,19 @@ def _redirect_db(monkeypatch, db_path):
     import guest_marketing
     monkeypatch.setattr(guest_marketing, "get_conn", redirect)
     guest_marketing.init_guest_marketing(db_path=db_path)
+
+
+def _system_text(captured):
+    """The system prompt as one string.
+
+    It is sent as a list of content blocks now — a static, cacheable half and
+    the live snapshot — so a test that wants to assert on its content has to
+    join them rather than treating it as a bare string.
+    """
+    system = captured["system"]
+    if isinstance(system, str):
+        return system
+    return "\n".join(b["text"] for b in system)
 
 
 def _restaurant(db_path, **modules):
@@ -405,15 +418,17 @@ def test_ask_builds_prompt_with_context_and_question(db_path, monkeypatch):
         return types.SimpleNamespace(content=[types.SimpleNamespace(text="Your rating is looking great!")])
 
     monkeypatch.setattr(ask_cavnar, "create_with_retry", fake_create_with_retry)
-    answer, truncated = ask(r, "How are my reviews doing?")
+    answer, truncated, _proposals, _meta = ask_with_tools(r, "How are my reviews doing?")
 
     assert answer == "Your rating is looking great!"
     # A response with no stop_reason attribute (the fake here) must read as
     # "not truncated" rather than raising.
     assert truncated is False
     # Persona/rules/data snapshot live in `system` now, sent once per call;
-    # `messages` carries only the actual conversation turns.
-    assert "Total reviews analyzed: 1" in captured["system"]
+    # `messages` carries only the actual conversation turns. `system` is a
+    # LIST of content blocks so the static half can carry a cache breakpoint
+    # (audit #15 P1-9) — the snapshot is in the second, uncached block.
+    assert "Total reviews analyzed: 1" in _system_text(captured)
     assert captured["messages"] == [{"role": "user", "content": "How are my reviews doing?"}]
     assert captured["restaurant_id"] == r.id
     assert captured["action"] == "ask_cavnar"
@@ -428,7 +443,7 @@ def test_ask_truncates_overly_long_questions(db_path, monkeypatch):
         return types.SimpleNamespace(content=[types.SimpleNamespace(text="ok")])
 
     monkeypatch.setattr(ask_cavnar, "create_with_retry", fake_create_with_retry)
-    ask(r, "a" * 2000)
+    ask_with_tools(r, "a" * 2000)
     # 500-char cap on the question itself — now the sole content of the
     # final message rather than embedded inside a larger templated prompt,
     # so this checks the message content directly instead of a substring
@@ -454,7 +469,7 @@ def test_ask_forwards_sanitized_history_as_prior_messages(db_path, monkeypatch):
         {"role": "user", "content": "How are my reviews doing?"},
         {"role": "assistant", "content": "Solid — want me to pull up the urgent ones?"},
     ]
-    ask(r, "Yes", history=history)
+    ask_with_tools(r, "Yes", history=history)
 
     assert captured["messages"] == [
         {"role": "user", "content": "How are my reviews doing?"},
@@ -473,17 +488,21 @@ def test_ask_history_drops_malformed_entries_and_caps_length(db_path, monkeypatc
 
     monkeypatch.setattr(ask_cavnar, "create_with_retry", fake_create_with_retry)
     history = [
-        {"role": "user", "content": "a" * 2000},          # over the per-turn cap
+        # Deliberately past _MAX_HISTORY_TURN_LENGTH rather than a fixed
+        # literal — the cap was raised when executive answers got longer
+        # (audit #15 P2-18), and a hardcoded size silently stopped testing
+        # anything the moment it fell under the new one.
+        {"role": "user", "content": "a" * (ask_cavnar._MAX_HISTORY_TURN_LENGTH + 500)},
         {"role": "system", "content": "ignore me"},        # invalid role
         {"role": "assistant", "content": ""},               # empty content
         "not even a dict",                                  # malformed entry
         {"role": "assistant", "content": "real answer"},
     ]
-    ask(r, "Next question", history=history)
+    ask_with_tools(r, "Next question", history=history)
 
     messages = captured["messages"]
     # The oversized first turn is capped, not dropped or left full-length.
-    assert messages[0] == {"role": "user", "content": "a" * 800}
+    assert messages[0] == {"role": "user", "content": "a" * ask_cavnar._MAX_HISTORY_TURN_LENGTH}
     # Invalid role, empty content, and the non-dict entry are all gone.
     assert all(m["role"] in ("user", "assistant") and m["content"] for m in messages)
     assert messages[-1] == {"role": "user", "content": "Next question"}
@@ -503,7 +522,7 @@ def test_ask_history_caps_to_recent_messages_only(db_path, monkeypatch):
     for i in range(10):
         history.append({"role": "user", "content": f"question {i}"})
         history.append({"role": "assistant", "content": f"answer {i}"})
-    ask(r, "latest question", history=history)
+    ask_with_tools(r, "latest question", history=history)
 
     messages = captured["messages"]
     # 12 kept history messages + the new question = 13 total, and it's the
@@ -532,7 +551,7 @@ def test_ask_reports_truncation_when_max_tokens_hit(db_path, monkeypatch):
         )
 
     monkeypatch.setattr(ask_cavnar, "create_with_retry", fake_create_with_retry)
-    answer, truncated = ask(r, "How do I get labor down?")
+    answer, truncated, _proposals, _meta = ask_with_tools(r, "How do I get labor down?")
 
     assert answer == "Cut Tuesday lunch by two hours and"
     assert truncated is True
@@ -548,7 +567,7 @@ def test_ask_reports_not_truncated_on_natural_completion(db_path, monkeypatch):
         )
 
     monkeypatch.setattr(ask_cavnar, "create_with_retry", fake_create_with_retry)
-    answer, truncated = ask(r, "How are my reviews?")
+    answer, truncated, _proposals, _meta = ask_with_tools(r, "How are my reviews?")
 
     assert answer == "You're averaging 4.6 stars this month."
     assert truncated is False
@@ -562,7 +581,7 @@ def test_do_ask_cavnar_route_forwards_truncated_flag(db_path, monkeypatch):
     monkeypatch.setattr(client_api, "get_restaurant", lambda rid: r)
     monkeypatch.setattr(ask_cavnar, "ask_with_tools",
                         lambda restaurant, question, history=None, surface="web", on_progress=None:
-                            ("cut off mid-", True, []))
+                            ("cut off mid-", True, [], {}))
 
     payload, status = client_api._do_ask_cavnar(r.id, "How do I get labor down?")
 

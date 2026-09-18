@@ -49,6 +49,18 @@ def _reset_home_brief_cache():
 
 
 @pytest.fixture(autouse=True)
+def _reset_ask_context_cache():
+    """Identical hazard to _reset_home_brief_cache: ask_cavnar.build_context
+    caches the assembled snapshot per restaurant_id for 60s, and every test's
+    fresh database starts its ids at 1, so one test's context would be served
+    to the next. The TTL is the point in production, where ids are unique."""
+    import ask_cavnar
+    ask_cavnar.invalidate_context()
+    yield
+    ask_cavnar.invalidate_context()
+
+
+@pytest.fixture(autouse=True)
 def _no_real_email_or_sms(monkeypatch):
     """The suite must never reach Resend, Twilio, Stripe or DocuSign.
 

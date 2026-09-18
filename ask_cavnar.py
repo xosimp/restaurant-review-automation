@@ -331,12 +331,14 @@ def _inventory_context(restaurant_id):
 
 
 def _marketing_context(restaurant_id):
+    # No DDL here. This ran CREATE TABLE IF NOT EXISTS on every single
+    # question — schema work in the hottest read path in the product, the
+    # same antipattern removed from inventory.py in audit #14. The table is
+    # created by models.init_db at boot like every other one; if it is
+    # genuinely absent the query raises and build_context's per-section
+    # guard reports the section as unavailable, which is the honest outcome.
     from models import get_conn
     conn = get_conn()
-    conn.execute("""CREATE TABLE IF NOT EXISTS marketing_content_log (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, restaurant_id INTEGER NOT NULL,
-        content_type TEXT, topic TEXT, post_id TEXT, post_platform TEXT,
-        created_at TEXT DEFAULT (datetime('now')))""")
     row = conn.execute("""
         SELECT COUNT(*) as posted,
                COALESCE(SUM(reach),0) as reach,
@@ -492,12 +494,89 @@ def _memory_context(restaurant_id):
     return "\n".join(lines) + "\n"
 
 
+def _commitments_context(restaurant_id):
+    """What the assistant has already proposed, and what the owner did with it.
+
+    The action log was written at propose time and again at confirm/dismiss,
+    and then never read by anything. The transcript carries a "[Confirmed: …]"
+    line, but the transcript is scoped to ONE conversation — so in a new chat
+    the assistant had no idea it had proposed a supplier order yesterday, let
+    alone that the owner approved it. Asked "did that go out?", it answered
+    from nothing.
+
+    Outcomes only, newest first, and short: this is the assistant's memory of
+    its own advice, not an audit screen.
+    """
+    from models import get_ask_actions
+    try:
+        rows = get_ask_actions(restaurant_id, limit=40)
+    except Exception:
+        return ""
+    # A proposal that was never confirmed or dismissed is still open, and that
+    # is the interesting state — but the same action appears twice (proposed,
+    # then the outcome), so the outcome wins per action+summary pair.
+    seen, settled, open_items = set(), [], []
+    for r in rows:
+        key = (r.get("action"), r.get("summary"))
+        if key in seen:
+            continue
+        seen.add(key)
+        when = (r.get("created_at") or "")[:10]
+        label = r.get("summary") or (r.get("action") or "").replace("_", " ")
+        if r.get("outcome") == "confirmed":
+            settled.append(f"{label} — the owner confirmed it, {when}")
+        elif r.get("outcome") == "dismissed":
+            settled.append(f"{label} — the owner declined it, {when}")
+        else:
+            open_items.append(f"{label} — proposed {when}, never confirmed or dismissed")
+    if not settled and not open_items:
+        return ""
+    lines = ["WHAT YOU HAVE ALREADY PROPOSED",
+             "- Across every conversation, not just this one. Never tell the owner nothing "
+             "has been sent without checking this list first."]
+    for s in settled[:6]:
+        lines.append(f"- {s}")
+    for o in open_items[:4]:
+        lines.append(f"- {o}")
+    return "\n".join(lines) + "\n"
+
+
+def _cross_module_context(restaurant_id, restaurant):
+    """Where the money is and what lines up across modules.
+
+    The one section no single module could produce. See
+    business_intelligence.py — everything in it is computed, never written by
+    a model, and a link only appears when two modules independently cleared
+    their own evidence floors.
+    """
+    import business_intelligence
+    return business_intelligence.snapshot_block(restaurant_id, restaurant=restaurant)
+
+
 _CONTEXT_BUILDERS = (
     ("module_reviews", _reviews_context),
     ("module_labor", _labor_context),
     ("module_inventory", _inventory_context),
     ("module_marketing", _marketing_context),
 )
+
+# build_context runs a full labor analysis, a full inventory analysis and the
+# cross-module pass on EVERY question. An owner asking three follow-ups paid
+# for three of each. home_brief already caches its payload for 60s for exactly
+# this reason; this is the same trade — a minute-old snapshot is indis-
+# tinguishable from a fresh one for every question anyone actually asks, and
+# the tool layer reads live data anyway whenever detail matters.
+_CONTEXT_CACHE = {}
+_CONTEXT_TTL_SECONDS = 60
+
+
+def invalidate_context(restaurant_id=None):
+    """Drop a cached snapshot. Called after anything that changes the numbers
+    underneath it — a confirmed action, a sync, an upload."""
+    if restaurant_id is None:
+        _CONTEXT_CACHE.clear()
+    else:
+        _CONTEXT_CACHE.pop(int(restaurant_id), None)
 
 
 def build_context(restaurant):
@@ -508,10 +587,16 @@ def build_context(restaurant):
     active. A module the client doesn't have is simply omitted, not
     described as empty — that keeps the model from being asked to reason
     about data that was never going to exist for this client."""
+    import time
+    cached = _CONTEXT_CACHE.get(restaurant.id)
+    if cached and (time.time() - cached[0]) < _CONTEXT_TTL_SECONDS:
+        return cached[1]
+
     parts = [_identity_context(restaurant), _profile_context(restaurant)]
-    # Neither of these belongs to a module — one is what has fired for this
-    # owner, the other is what they have already told the assistant.
-    for always in (_memory_context, _alerts_context):
+    # None of these belongs to a module — what the owner has told the
+    # assistant, what has fired, and what the assistant itself has already
+    # put in front of them.
+    for always in (_memory_context, _alerts_context, _commitments_context):
         try:
             section = always(restaurant.id)
             if section:
@@ -533,10 +618,22 @@ def build_context(restaurant):
             parts.append(_intel_context(restaurant.id))
     except Exception:
         pass
+    # Last, and deliberately so: the cross-module read is the section the
+    # model should carry forward when it answers, and it reads better sitting
+    # under the per-module numbers it was computed from.
+    try:
+        section = _cross_module_context(restaurant.id, restaurant)
+        if section:
+            parts.append(section)
+    except Exception:
+        pass
+
     # parts always has at least the TODAY section now, so this never falls
     # back to a bare placeholder the way it used to for a restaurant with
     # zero active modules — date/holiday/identity info isn't module-gated.
-    return "\n".join(parts)
+    context = "\n".join(parts)
+    _CONTEXT_CACHE[restaurant.id] = (time.time(), context)
+    return context
 
 
 # System prompt (persona/rules/data snapshot) is sent once per call via the
@@ -547,7 +644,19 @@ def build_context(restaurant):
 # follow-up like "yes" arrived as a fresh, context-free question every
 # time — real bug, reported live: the model had no way to know what "yes"
 # was even responding to.
-ASK_CAVNAR_SYSTEM_PROMPT = """You are Cavnar AI, an AI-powered restaurant intelligence consultant embedded in {restaurant_name}'s dashboard, having an ongoing conversation with the owner. You have two modes, and most questions call for a blend of both:
+#
+# The prompt is deliberately in TWO pieces. Everything that is identical from
+# one call to the next — persona, rules, tool guidance, formatting, the depth
+# contracts — lives in _SYSTEM_STATIC and carries a cache breakpoint. The
+# restaurant's name and its live snapshot change every time and live in the
+# second block, after it. A single tool-using turn makes 2-5 API calls with
+# the same prefix, so this pays for itself inside one question, and the tool
+# definitions (~2,750 tokens) sit in front of the system prompt in the cache
+# prefix, so they ride along with it.
+#
+# Nothing below may interpolate per-restaurant data into the static block.
+# One f-string there and the cache never hits again for anyone.
+_SYSTEM_STATIC = """You are Cavnar AI, an AI-powered restaurant intelligence consultant embedded in a restaurant's dashboard, having an ongoing conversation with the owner. You have two modes, and most questions call for a blend of both:
 
 1. QUESTIONS ABOUT THIS RESTAURANT'S OWN NUMBERS (reviews, labor, food cost, marketing, competitors): answer strictly from the DATA SNAPSHOT below. Never invent a figure that isn't there. If what's needed isn't in the snapshot, say so plainly and suggest what to check instead (e.g. "upload your shifts CSV" if labor data is missing) rather than guessing.
 
@@ -571,18 +680,31 @@ Two things not to do: don't propose an action nobody asked for, and don't call a
 
 But check before you refuse. The snapshot is a summary and can be thin or stale — it may say there's no labor data while a schedule does exist. Never tell an owner something isn't there based on the snapshot alone when a read tool could look: call the tool first, then answer. "There's no schedule yet" is only true after read_schedule says so.
 
+THINK ACROSS MODULES. This is the whole reason the owner has more than one module, and it is the thing a single tab can never do for them.
+
+A restaurant is one business. Guest complaints, staffing, waste, menu margin, marketing and search visibility are one story told in six places, and an owner asking "why did profits drop", "what should I focus on", "how much am I leaving on the table" or "what's going wrong" is asking about the business, not about a module. Never answer a question like that from one module when others hold relevant evidence.
+
+Before answering any question about money, profit, priorities, causes, "what should I do", or how the business is doing overall: call read_business_snapshot. It returns every module's executive read plus the cross-module links in one payload, already computed — one call instead of six, and it carries the ranked dollars that let you say what to do FIRST rather than listing things that are all wrong at once.
+
+When your snapshot has an ACROSS THE BUSINESS section, it already carries the links that were found — use them. When it says nothing lines up, or when the section is absent entirely because there was nothing to put in it, say so plainly; do not connect two findings yourself to fill the gap. A link between two modules is only real when both of them independently cleared their own evidence floor, and that test has already been run for you.
+
+When you do use a link, carry all three parts: what lines up, what would confirm it, and what else would explain it. Two facts sharing a day is a question worth asking, not a cause. Never state a co-occurrence as a cause, and never say a lean labor day cost the restaurant revenue or slowed service — this product has no service-time, wait-time or cover-count data, so that cannot be known from here.
+
+MONEY. When you quote the ranked dollars, quote each with its own basis and never add them together. They come from different methods measuring different things — a measured cost, a scheduling gap against target, a forecast from rating elasticity — and only the first is money already being spent. A range stays a range.
+
+SEPARATE WHAT YOU KNOW FROM WHAT YOU THINK. A figure read from the data, a pattern computed from it, your own read of why, a forecast, and a suggestion are five different things and must never be delivered in the same voice. Say "measured", "that works out to", "my read is", "if this holds" and "I'd suggest" — the owner has to be able to tell which is which without asking.
+
+CONFIDENCE. Whenever you give a recommendation, say how sure you are and what it rests on. If the data behind it is thin, stale, or below a floor the modules told you about, say that in the same breath as the recommendation rather than after it. "Low confidence, and here's why" is a useful answer. A confident answer built on two reviews is not.
+
 The DATA SNAPSHOT below always opens with a TODAY section — this restaurant's real current date (in its own local timezone) and its real upcoming holidays for the next 30 days. Always use that section directly for any date, day-of-week, "how many days until," or "what's coming up" question — you have real, live information here, not a training cutoff. Never say you don't have access to a calendar or can't check dates; you can, right there in TODAY.
 
 Right after that is a RESTAURANT PROFILE section — hours, menu, Google's own published rating, revenue target, delivery mix, which plan they're on, which platforms are connected, and how long they've been a client, whenever admin has that on file. Use it the same way: it's real information about this specific restaurant, not something to say you don't have access to.
 
-Restaurant: {restaurant_name}
-
-CURRENT DATA SNAPSHOT:
-{context}
-
 This is a real, ongoing conversation — the message history below is genuine back-and-forth with this same owner, not a series of disconnected one-off questions. Read it the way a person would: if the latest message is a short reply like "yes," "the second one," or "how about labor instead," resolve it against what YOU just said or asked in your own previous message, and answer accordingly. Never ask the owner to repeat context that's already sitting right there in the conversation.
 
-LENGTH. Match it to the question, and default short. A direct factual question ("what's my labor at," "how many reviews are pending") gets 1-3 short sentences — the number or fact, one line of context if it's genuinely useful, done. Owners are checking this between tables; they did not open the app to read a paragraph. Only go longer when the question actually is bigger — genuinely multi-part, asks for options/alternatives, or asks you to walk through steps. Even then, prefer the structure below over long prose: three short bullets beat one dense paragraph saying the same thing. If there's more worth saying than fits, give the most useful part now and offer to go deeper rather than saying everything at once. Warm and direct, like a trusted advisor at the table — not a corporate assistant. Always use $ signs before dollar amounts when citing this restaurant's real numbers.
+LENGTH. Match it to the question. A direct factual question ("what's my labor at," "how many reviews are pending") gets 1-3 short sentences — the number or fact, one line of context if it's genuinely useful, done. Owners are checking this between tables; they did not open the app to read a paragraph about a number they asked for.
+
+But a big question deserves a real answer, and cutting one short to stay brief is its own failure. When the owner asks why something happened, what to focus on, where the money is going, or how the business is doing, they are asking you to think — give them the reasoning, the evidence and the priority, not a headline. Warm and direct, like a trusted advisor at the table — not a corporate assistant, and not a summary of an answer you decided not to write. Always use $ signs before dollar amounts when citing this restaurant's real numbers.
 
 FORMATTING. The client renders a small, specific set of markup — use it when it genuinely helps, skip it entirely for a short direct answer (most questions). Never use it just to make a simple answer look more substantial.
 - A blank line between anything below and the next block, or between two blocks — the parser splits blocks on blank lines.
@@ -594,21 +716,99 @@ Plain sentences with no marker are just a paragraph, which is what most answers 
 
 When you offer more than one named option or alternative, give each one its own "## " heading and write that option's ENTIRE actual content under it — the full caption, the full sentence, the full whatever-was-asked-for. Never describe what an option would contain instead of writing it ("the storytelling version, longer and more atmospheric..." is not an option — it's a description of one that doesn't exist yet). If you don't have room to fully write out every option you'd like to offer, offer fewer options rather than shortchanging one."""
 
+
+# ── how much room the answer gets ──────────────────────────────────────────
+#
+# Audit #15: the prompt told the model to "default short, 1-3 sentences" on
+# every surface, and the only variation available made it SHORTER still. An
+# executive answer — what happened, why, the evidence, what it costs, what to
+# do, how sure you are — cannot be delivered under that instruction, so the
+# module was being measured against behaviour it was explicitly told not to
+# produce. These are the three contracts, and the question picks one.
+
+_DEPTH_BRIEF = """
+
+SURFACE: the Home screen's quick-answer box. Reply in at most three short sentences of plain text. No markdown, no headers, no bullet points, no bold. Lead with the single most important thing and the number that backs it; offer to go deeper in one clause at most."""
+
+_DEPTH_EXECUTIVE = """
+
+THIS ONE IS A BUSINESS QUESTION, so answer it the way the owner's most trusted advisor would — not with a headline, and not with everything you know. Work through it:
+
+- What is actually happening, with the measured figure.
+- Why, as far as the evidence supports — and say plainly when the evidence supports a question rather than an answer.
+- What it rests on: which modules, how many reviews or days, how fresh.
+- What it is worth per month, each figure with its own basis, never added together.
+- What to do first, and what that will take.
+- How confident you are, and what would change your mind.
+- What to watch to know it worked.
+
+Do not pad this into a template — if one of those has no honest answer, say so in a clause and move on. Lead with the answer, not the method. Priorities go in a numbered list, evidence in bullets, and the whole thing should read like a person who knows the business talking, not a report."""
+
+
+def _depth_for(question, brief=False):
+    """brief | executive | standard, from the question itself.
+
+    Deterministic and testable rather than a model judgment: the same
+    question always gets the same room. `brief` is the Home box and always
+    wins — that surface is three lines wide regardless of the question.
+    """
+    if brief:
+        return "brief"
+    q = (question or "").lower()
+    # Questions about the business rather than about a number. Each of these
+    # is a phrase an owner uses when they want thinking, not a lookup.
+    for needle in (
+        "why", "what should i", "what do i", "where should", "how do i fix",
+        "what's driving", "whats driving", "what is driving", "focus on",
+        "priorit", "biggest problem", "going wrong", "leaving on the table",
+        "making money", "losing money", "profit", "margin", "how are we doing",
+        "how is the business", "what's going on", "whats going on",
+        "worth fixing", "first thing", "overall", "big picture",
+    ):
+        if needle in q:
+            return "executive"
+    return "standard"
+
+
+def _system_blocks(restaurant_name, context, depth):
+    """The system prompt as API content blocks, with the cache breakpoint.
+
+    Block 1 is byte-identical across every restaurant and every call at this
+    depth, so it (and the tool definitions in front of it) cache. Block 2 is
+    this restaurant's name and live snapshot and never caches, which is
+    correct — it changes.
+    """
+    static = _SYSTEM_STATIC
+    if depth == "brief":
+        static += _DEPTH_BRIEF
+    elif depth == "executive":
+        static += _DEPTH_EXECUTIVE
+    return [
+        {"type": "text", "text": static, "cache_control": {"type": "ephemeral"}},
+        {"type": "text", "text": f"Restaurant: {restaurant_name}\n\nCURRENT DATA SNAPSHOT:\n{context}"},
+    ]
+
+
 # Bounds how much prior conversation gets sent (and paid for) on every
 # single call — 12 messages is 6 full exchanges, plenty for a short-term
 # "what were we just talking about" memory without letting an old, long
 # session balloon every subsequent request's cost indefinitely.
 _MAX_HISTORY_MESSAGES = 12
-_MAX_HISTORY_TURN_LENGTH = 800
+# Raised from 800. An executive answer is legitimately long now, and truncating
+# the assistant's own previous turn at 800 characters meant a follow-up like
+# "do the second one" resolved against an answer whose second option had been
+# cut off — the model could see the question it was answering but not its own
+# answer to it.
+_MAX_HISTORY_TURN_LENGTH = 2400
 
 
 def _sanitize_history(history):
     """Defensively rebuilds the conversation history rather than trusting
     the client's payload outright: drops anything without a valid
     user/assistant role or non-empty content, caps each turn's length,
-    collapses any accidental same-role repeats (the Messages API requires
-    strict alternation starting with "user"), and keeps only the most
-    recent _MAX_HISTORY_MESSAGES entries."""
+    merges any accidental same-role repeats (the Messages API expects
+    alternation starting with "user"), and keeps only the most recent
+    _MAX_HISTORY_MESSAGES entries."""
     cleaned = []
     for turn in (history or []):
         if not isinstance(turn, dict):
@@ -618,7 +818,16 @@ def _sanitize_history(history):
         if role not in ("user", "assistant") or not content:
             continue
         if cleaned and cleaned[-1]["role"] == role:
-            cleaned[-1] = {"role": role, "content": content}  # keep the newer one
+            # MERGE, never replace. This used to keep the newer turn and drop
+            # the older one outright, which quietly erased exactly the rows
+            # that most need to survive: confirming one proposal and then
+            # dismissing another writes two user turns back to back, and the
+            # first — "[Confirmed: Email the order to Fresh Co]" — vanished.
+            # Those lines exist so the model knows what happened to its own
+            # proposals; dropping one puts it back to answering "did that go
+            # out?" from nothing.
+            merged = f"{cleaned[-1]['content']}\n{content}"[:_MAX_HISTORY_TURN_LENGTH * 2]
+            cleaned[-1] = {"role": role, "content": merged}
         else:
             cleaned.append({"role": role, "content": content})
     # Cap FIRST, then re-check the "starts with user" rule against the
@@ -631,53 +840,24 @@ def _sanitize_history(history):
     return cleaned
 
 
-def ask(restaurant, question, history=None):
-    """Ask Cavnar a question about `restaurant`'s own data. `history` is the
-    prior back-and-forth in THIS chat session as
-    [{"role": "user"|"assistant", "content": str}, ...], oldest first, NOT
-    including `question` itself — the caller's own message list up to (but
-    not including) the new question.
-
-    Returns (answer_text, was_truncated). `was_truncated` is True when the
-    model hit max_tokens and the answer therefore stops mid-thought — the
-    client used to render that identically to a complete answer, so a
-    half-finished recommendation about labor or a supplier read as final
-    advice. labor.py already checks stop_reason for the same reason.
-    Callers are responsible for rate-limiting (see ai_utils.ai_rate_limited)
-    before calling this — it always makes a real Claude call."""
-    context = build_context(restaurant)
-    system_prompt = ASK_CAVNAR_SYSTEM_PROMPT.format(restaurant_name=restaurant.name, context=context)
-    messages = _sanitize_history(history) + [{"role": "user", "content": question.strip()[:_MAX_QUESTION_LENGTH]}]
-    message = create_with_retry(
-        _client,
-        model=os.getenv("ASK_CAVNAR_MODEL", "claude-sonnet-5"),
-        # Brought back down from 450 now that the prompt targets 2-3
-        # sentences (occasionally 4) instead of 2-5 — this is a safety
-        # ceiling against a rare run-on answer, not the actual length
-        # target, so it stays a bit above what 3-4 tight sentences with a
-        # couple of dollar figures actually needs rather than risking a
-        # mid-sentence cutoff.
-        max_tokens=320,
-        # claude-sonnet-5 rejects `temperature` outright ("deprecated for
-        # this model") — confirmed live via direct API call. Omitted rather
-        # than set, since this model doesn't accept it at all.
-        system=system_prompt,
-        messages=messages,
-        restaurant_id=restaurant.id,
-        action="ask_cavnar",
-    )
-    truncated = getattr(message, "stop_reason", None) == "max_tokens"
-    return extract_text(message).strip(), truncated
+# ask() lived here: a no-tools, 320-token twin of ask_with_tools that nothing
+# has called since the tool loop landed. It was kept in step with the prompt
+# by hand for months, it could not propose an action or read anything, and
+# the one reference to it left in the codebase is a stale comment in
+# client_api. Removed rather than maintained — audit #15, P2-13.
 
 
-# A short answer wants a small ceiling; one that had to read reviews and
-# reason over them does not. 320 was tuned for the 2-4 sentence case and
-# silently truncated anything larger — labor advice and any tool-using
-# answer both need real headroom.
-_MAX_TOKENS_SIMPLE = 320
-_MAX_TOKENS_WITH_TOOLS = 1200
+# How much room the answer gets, by depth. An executive answer carries the
+# reasoning, the evidence, the dollars and the confidence; 1200 tokens was
+# tuned for a paragraph and silently truncated anything that actually thought.
+_MAX_TOKENS = {"brief": 400, "standard": 1200, "executive": 4000}
 _MAX_QUESTION_LENGTH = 2000
-_MAX_TOOL_ROUNDS = 4
+# Raised from 4. A genuine cross-module question can legitimately want the
+# business snapshot, then a drill-down into two modules, then a detail read —
+# and running out mid-chain produced a confident answer built on half the
+# evidence. read_business_snapshot exists so the common case needs FEWER
+# rounds, not more; this is headroom for the uncommon one.
+_MAX_TOOL_ROUNDS = 6
 
 # The orb states a client can render — the nine hand-tuned motions in the
 # shared orb engine (static/cavnar-orb.js, DesignSystem/CavnarOrb.swift).
@@ -690,17 +870,22 @@ _MAX_TOOL_ROUNDS = 4
 #   composing   the final answer is being written after tools ran
 #   breathing   idle — the header orb, nothing in flight
 #   listening   reserved: voice input, not built
-#   weaving     reserved: multi-tool synthesis, not currently emitted
-BRIEF_SURFACE_SUFFIX = """
-
-SURFACE: the Home screen's quick-answer box. Reply in at most three short sentences of plain text. No markdown, no headers, no bullet points, no bold. Lead with the single most important thing and the number that backs it; offer to go deeper in one clause at most."""
-
+#   weaving     multi-tool synthesis — emitted when one round runs more than
+#               one read, which is exactly the cross-module case
 ORB_STATES = ("connecting", "solving", "searching", "working", "shaping",
               "composing", "breathing", "listening", "weaving")
+
+# Kept as an alias: BRIEF_SURFACE_SUFFIX was the public name for the Home
+# box's length rule before depth contracts existed.
+BRIEF_SURFACE_SUFFIX = _DEPTH_BRIEF
 
 # Shown while a tool runs. Plain language — the owner should see what it's
 # doing, not a function name.
 _TOOL_LABELS = {
+    "read_business_snapshot": "Looking across the whole business",
+    "read_review_brief": "Ranking your review problems",
+    "set_auto_approve": "Getting that auto-approve change ready",
+    "set_data_retention": "Getting that retention change ready",
     "read_reviews": "Reading your reviews",
     "read_team": "Looking at your team",
     "read_alerts": "Checking what needs you",
@@ -746,10 +931,17 @@ _TOOL_LABELS = {
 def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=False):
     """Ask Cavnar, with the ability to look things up and to propose actions.
 
-    Returns (answer_text, truncated, proposals). `proposals` is the list of
-    confirm cards the client should render — actions the model wants to
-    take that it deliberately cannot take itself. An empty list means it
-    only answered.
+    Returns (answer_text, truncated, proposals, meta).
+
+    `proposals` is the list of confirm cards the client should render —
+    actions the model wants to take that it deliberately cannot take itself.
+    An empty list means it only answered.
+
+    `meta` is what the answer rests on: which modules were consulted, which
+    tools ran, the depth contract used, a confidence read, and any figure in
+    the answer that could not be traced back to something the model was
+    handed. Without this on the wire no client could render an evidence panel
+    or caveat a number, however good the answer was.
 
     Read tools execute inline and loop back into the model. Write tools do
     not execute at all here: they become proposals, and the loop stops
@@ -772,12 +964,10 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
     import ask_cavnar_tools as tools
 
     context = build_context(restaurant)
-    system_prompt = ASK_CAVNAR_SYSTEM_PROMPT.format(restaurant_name=restaurant.name, context=context)
-    if brief:
-        # The Home screen's inline box: an owner glancing between tables.
-        system_prompt += BRIEF_SURFACE_SUFFIX
+    depth = _depth_for(question, brief=brief)
+    system_blocks = _system_blocks(restaurant.name, context, depth)
     user_turn = question.strip()[:_MAX_QUESTION_LENGTH]
-    if brief:
+    if depth == "brief":
         # Repeated on the user turn: after a tool loop the final answer is
         # generated with the tool results freshest in context, and a length
         # rule stated right beside the question survives that far better
@@ -790,14 +980,27 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
     proposals = []
     truncated = False
     model = os.getenv("ASK_CAVNAR_MODEL", "claude-sonnet-5")
+    max_tokens = _MAX_TOKENS.get(depth, _MAX_TOKENS["standard"])
+
+    # Everything the model was actually handed, accumulated as the loop runs.
+    # This is the corpus the answer's figures are checked against, and it has
+    # to be everything: the snapshot alone is not enough, because a tool
+    # result is a legitimate source for a number the snapshot never carried,
+    # and neither is snapshot+tools, because "as I said, labour was 31.4%"
+    # quotes a figure from earlier in the conversation. A corpus missing any
+    # of the three turns a correct citation into a false alarm.
+    seen_corpus = [context] + [m["content"] for m in messages if isinstance(m.get("content"), str)]
+    tools_used = []
+    # Modules a tool reported reading that its own name does not reveal.
+    consulted = []
 
     _progress("Thinking", "solving")
     for _ in range(_MAX_TOOL_ROUNDS):
         message = create_with_retry(
             _client,
             model=model,
-            max_tokens=_MAX_TOKENS_WITH_TOOLS,
-            system=system_prompt,
+            max_tokens=max_tokens,
+            system=system_blocks,
             messages=messages,
             tools=tools.tool_specs(restaurant),
             restaurant_id=restaurant.id,
@@ -806,16 +1009,25 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
         truncated = getattr(message, "stop_reason", None) == "max_tokens"
 
         if getattr(message, "stop_reason", None) != "tool_use":
-            return extract_text(message).strip(), truncated, proposals
+            answer = extract_text(message).strip()
+            return (answer, truncated, proposals,
+                    _meta(answer, seen_corpus, tools_used, consulted, depth, restaurant.id))
 
         # Echo the assistant turn back verbatim — the API requires the
         # tool_use blocks it produced to be present before their results.
         messages.append({"role": "assistant", "content": message.content})
 
+        calls = [b for b in message.content if getattr(b, "type", None) == "tool_use"]
+        # More than one tool in a single round IS the cross-module case — the
+        # model reaching into two places at once to answer one question. The
+        # orb has had a motion for it since the engine was built and nothing
+        # ever emitted it.
+        if len(calls) > 1:
+            _progress("Putting it together", "weaving")
+
         results = []
-        for block in message.content:
-            if getattr(block, "type", None) != "tool_use":
-                continue
+        for block in calls:
+            tools_used.append(block.name)
             if tools.is_write_tool(block.name):
                 _progress(_TOOL_LABELS.get(block.name, "Preparing that action"), "shaping")
                 proposal = tools.build_proposal(block.name, block.input)
@@ -845,12 +1057,33 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
                 # Reads and direct actions both execute; only the label and
                 # the orb state differ.
                 is_action = tools.is_action_tool(block.name)
-                _progress(_TOOL_LABELS.get(
-                    block.name, "Making that change" if is_action else "Looking that up"),
-                    "working" if is_action else "searching")
+                # An action CHANGES something, so it always announces itself —
+                # a read bundled into a multi-tool round can be covered by the
+                # single "Putting it together", but a setting being changed or
+                # a draft being rewritten must never happen silently just
+                # because it shared a round with two lookups.
+                if is_action or len(calls) == 1:
+                    _progress(_TOOL_LABELS.get(
+                        block.name, "Making that change" if is_action else "Looking that up"),
+                        "working" if is_action else "searching")
+                payload = tools.run_read_tool(block.name, restaurant.id, block.input)
+                # Every figure the model is handed becomes fair game for it to
+                # quote, so the verification corpus has to include tool output
+                # as well as the snapshot.
+                seen_corpus.append(payload)
+                # The business snapshot reads every module in one call, so the
+                # tool name alone understates what the answer rests on — an
+                # answer built on it would have been attributed to one
+                # "module" and scored as a single-module read. Take the real
+                # list from the payload it just produced.
+                if block.name == "read_business_snapshot":
+                    try:
+                        consulted.extend(json.loads(payload).get("modules_consulted") or [])
+                    except Exception:
+                        pass
                 results.append({
                     "type": "tool_result", "tool_use_id": block.id,
-                    "content": tools.run_read_tool(block.name, restaurant.id, block.input),
+                    "content": payload,
                 })
         messages.append({"role": "user", "content": results})
         # Back to the model with results in hand: it is now composing the
@@ -863,17 +1096,87 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
             # One confirmation per turn. Ask for a plain summary and stop.
             _progress("Composing your answer", "composing")
             final = create_with_retry(
-                _client, model=model, max_tokens=_MAX_TOKENS_WITH_TOOLS,
-                system=system_prompt, messages=messages,
+                _client, model=model, max_tokens=max_tokens,
+                system=system_blocks, messages=messages,
                 restaurant_id=restaurant.id, action="ask_cavnar",
             )
-            return (extract_text(final).strip(),
-                    getattr(final, "stop_reason", None) == "max_tokens", proposals)
+            answer = extract_text(final).strip()
+            return (answer, getattr(final, "stop_reason", None) == "max_tokens", proposals,
+                    _meta(answer, seen_corpus, tools_used, consulted, depth, restaurant.id))
 
     # Ran out of rounds — answer with what it has rather than looping.
     final = create_with_retry(
-        _client, model=model, max_tokens=_MAX_TOKENS_WITH_TOOLS,
-        system=system_prompt, messages=messages,
+        _client, model=model, max_tokens=max_tokens,
+        system=system_blocks, messages=messages,
         restaurant_id=restaurant.id, action="ask_cavnar",
     )
-    return extract_text(final).strip(), getattr(final, "stop_reason", None) == "max_tokens", proposals
+    answer = extract_text(final).strip()
+    return (answer, getattr(final, "stop_reason", None) == "max_tokens", proposals,
+            _meta(answer, seen_corpus, tools_used, consulted, depth, restaurant.id))
+
+
+# Which module each tool speaks for, so an answer can say what it consulted.
+# Read from the registry rather than a second hand-kept list — a tool added
+# there is attributed here automatically, and one that moves module cannot
+# drift out of sync.
+_UNTAGGED_MODULE = {
+    "read_alerts": "alerts", "read_email_history": "account",
+    "read_competitors": "intel", "read_ai_visibility": "visibility",
+    "change_setting": "account", "remember": "memory", "forget": "memory",
+    "read_business_snapshot": "across the business",
+}
+
+
+def _modules_for(tool_names):
+    import ask_cavnar_tools as tools
+    out = []
+    for name in tool_names:
+        spec = tools._BY_NAME.get(name) or {}
+        label = _UNTAGGED_MODULE.get(name) or (spec.get("module") or "").replace("module_", "")
+        if label and label not in out:
+            out.append(label)
+    return out
+
+
+def _meta(answer, corpus, tools_used, consulted, depth, restaurant_id):
+    """What the answer rests on, and whether its figures check out.
+
+    The figure check is the important half. Every prompt in this product
+    tells the model to be specific with real numbers; nothing on this surface
+    ever checked that a stated number was one it had been handed — and Ask is
+    the surface most able to invent one, because it reads from up to 39 tools
+    and can do arithmetic across them. Audit #14 caught exactly this failure
+    in a far simpler prompt.
+
+    Interactive text keeps its content and carries a flag rather than being
+    silently rewritten — see ai_guard.verify_figures on why unattended email
+    is treated differently. The flag is what lets the UI caveat the numbers.
+    """
+    from ai_guard import verify_figures
+    try:
+        unverified = verify_figures(answer, "\n".join(str(c) for c in corpus),
+                                    job="ask_cavnar", restaurant_id=restaurant_id)
+    except Exception:
+        unverified = []
+    # What the answer rests on: the modules the tool names imply, plus the
+    # ones a tool reported reading on its own (read_business_snapshot reads
+    # every module in one call, and its name says none of them).
+    modules = list(dict.fromkeys(_modules_for(tools_used) + list(consulted or [])))
+    # Confidence is a floor, not a judgment of the reasoning: an answer that
+    # consulted nothing, or that states a figure nobody gave it, cannot be
+    # high whatever it sounds like.
+    if unverified:
+        confidence = "low"
+    elif not tools_used:
+        confidence = "medium"
+    elif len(modules) > 1:
+        confidence = "high"
+    else:
+        confidence = "medium"
+    return {
+        "modules_consulted": modules,
+        "tools_used": list(dict.fromkeys(tools_used)),
+        "depth": depth,
+        "confidence": confidence,
+        "unverified_figures": unverified[:5],
+    }

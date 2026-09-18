@@ -669,6 +669,12 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none}
 .ask-b.loading .bb{display:flex;align-items:center;gap:10px;min-width:170px}
 .ask-b.loading .bb canvas{display:block;flex-shrink:0}
 .ask-b.loading .bb span{font-size:12.5px;color:var(--ink3)}
+.ask-eva{align-self:flex-start;max-width:92%;margin-top:-6px}
+.ask-eva-warn{font-size:12px;line-height:1.45;color:var(--red);border-left:2px solid var(--red);padding:2px 0 2px 8px;margin-bottom:7px}
+.ask-eva-chips{display:flex;flex-wrap:wrap;gap:5px}
+.ask-eva-chip{font-size:10.5px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--ink3);background:var(--paper2);border:1px solid var(--paper3);border-radius:999px;padding:3px 8px}
+.ask-eva-chip.conf.high{color:var(--green);border-color:var(--green)}
+.ask-eva-chip.conf.low{color:var(--red);border-color:var(--red)}
 .ask-prop{align-self:flex-start;max-width:92%;background:var(--paper2);border:1px solid var(--ember);border-radius:14px;padding:12px 14px}
 .ask-prop .t{font-size:13px;font-weight:700;color:var(--ink);margin-bottom:9px}
 .ask-prop .r{display:flex;gap:8px}
@@ -5235,6 +5241,47 @@ function _setAskCavnarLoadingState(bubble, label, state) {
   if (_askCavnarLoadingOrb && state && window.CavnarOrb) CavnarOrb.setState(_askCavnarLoadingOrb, state);
 }
 
+function _appendAskCavnarEvidence(d) {
+  // The provenance strip under an answer. Nothing here is decoration: an
+  // owner acting on a dollar figure needs to know which modules it came from
+  // and whether it checked out, and before this the API returned a bare
+  // string so no client could show either.
+  var mods = d.modules_consulted || [];
+  var bad = d.unverified_figures || [];
+  if (!mods.length && !bad.length && d.confidence !== 'low') return;
+  var messages = document.getElementById('ask-cavnar-messages');
+  var row = document.createElement('div');
+  row.className = 'ask-eva';
+
+  if (bad.length) {
+    // Deliberately loud, and deliberately not a reason to hide the answer —
+    // ai_guard's rule for interactive text is keep it and caveat it.
+    var warn = document.createElement('div');
+    warn.className = 'ask-eva-warn';
+    warn.textContent = 'Couldn’t verify ' + bad.join(', ') + ' against your data — treat '
+                     + (bad.length > 1 ? 'those figures' : 'that figure') + ' as unconfirmed.';
+    row.appendChild(warn);
+  }
+
+  var chips = document.createElement('div');
+  chips.className = 'ask-eva-chips';
+  for (var i = 0; i < mods.length; i++) {
+    var c = document.createElement('span');
+    c.className = 'ask-eva-chip';
+    c.textContent = mods[i];
+    chips.appendChild(c);
+  }
+  if (d.confidence && d.confidence !== 'unknown') {
+    var conf = document.createElement('span');
+    conf.className = 'ask-eva-chip conf ' + d.confidence;
+    conf.textContent = d.confidence + ' confidence';
+    chips.appendChild(conf);
+  }
+  if (chips.childNodes.length) row.appendChild(chips);
+  messages.appendChild(row);
+  messages.scrollTop = messages.scrollHeight;
+}
+
 function _appendAskCavnarProposal(p) {
   var messages = document.getElementById('ask-cavnar-messages');
   var card = document.createElement('div');
@@ -5267,7 +5314,12 @@ function _recordAskCavnarAction(p, outcome) {
   // Audit line only — never the thing itself.
   fetch('/api/ask-cavnar/action', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({action: p.action, outcome: outcome, summary: p.summary, body: p.body})
+    // conversation_id, so the "[Confirmed: ...]" audit line lands in the chat
+    // the proposal actually came from. Without it the line went to whichever
+    // chat was most recent, so switching chats before confirming filed it
+    // under the wrong conversation. iOS has always sent it.
+    body: JSON.stringify({action: p.action, outcome: outcome, summary: p.summary, body: p.body,
+                          conversation_id: window._askConversationId || null})
   }).catch(function(){});
 }
 
@@ -5324,6 +5376,10 @@ window.sendAskCavnar = function() {
       _askCavnarHistory.push({role: 'user', content: question});
       _askCavnarHistory.push({role: 'assistant', content: answer});
       if (window.askRefreshConversations) askRefreshConversations(true);
+      // What the answer rests on: which modules it consulted, how sure it
+      // is, and whether any figure in it failed verification against what
+      // the model was actually handed.
+      _appendAskCavnarEvidence(d);
       // Anything that leaves the building comes back as a proposal, never
       // as something already done — render the confirm card.
       (d.proposals || []).forEach(_appendAskCavnarProposal);
@@ -5356,7 +5412,15 @@ window.sendAskCavnar = function() {
           if (evt.type === 'progress') {
             _setAskCavnarLoadingState(loadingBubble, evt.label, evt.state);
           } else if (evt.type === 'answer') {
-            _finish({ok: true, answer: evt.answer, truncated: evt.truncated, proposals: evt.proposals});
+            // Rebuilt field by field, so anything the server adds has to be
+            // added here too — the evidence strip silently never rendered on
+            // the streamed path (the normal one) while working fine on the
+            // JSON fallback, because these three were being dropped.
+            _finish({ok: true, answer: evt.answer, truncated: evt.truncated,
+                     proposals: evt.proposals,
+                     modules_consulted: evt.modules_consulted,
+                     confidence: evt.confidence,
+                     unverified_figures: evt.unverified_figures});
           } else if (evt.type === 'error') {
             _finish({ok: false, error: evt.error});
           }

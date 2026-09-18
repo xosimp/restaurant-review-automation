@@ -225,10 +225,24 @@ actor APIClient {
         /// Which chat the answer was filed under — tells a client that
         /// started a fresh conversation what its id is now.
         let conversationId: Int?
+        /// What the answer rests on: the modules it consulted, how confident
+        /// it is, and any figure in it the backend could not trace back to
+        /// data the model was actually handed.
+        let modulesConsulted: [String]?
+        let confidence: String?
+        let unverifiedFigures: [String]?
 
         enum CodingKeys: String, CodingKey {
-            case type, label, state, answer, truncated, proposals, error
+            case type, label, state, answer, truncated, proposals, error, confidence
             case conversationId = "conversation_id"
+            case modulesConsulted = "modules_consulted"
+            case unverifiedFigures = "unverified_figures"
+        }
+
+        var evidence: AskEvidence {
+            AskEvidence(modules: modulesConsulted ?? [],
+                        confidence: confidence ?? "unknown",
+                        unverifiedFigures: unverifiedFigures ?? [])
         }
     }
 

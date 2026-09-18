@@ -12,6 +12,11 @@ struct ChatMessage: Identifiable {
     /// itself. Rendered as confirm cards under the answer; nothing happens
     /// until the owner taps one.
     var proposals: [AskProposal] = []
+    /// What this answer rests on — which modules it consulted, how confident
+    /// it is, and any figure in it that could not be traced back to data the
+    /// model was handed. Nil on the owner's own turns and on older stored
+    /// messages, which predate the backend sending it.
+    var evidence: AskEvidence?
     /// Set once this message's typewriter reveal has actually played. The
     /// view model (not the view) owns this because the view's own @State is
     /// torn down every time the screen goes away — without a model-level
@@ -34,6 +39,36 @@ struct ChatMessage: Identifiable {
         var label = String(text[text.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
         if label.hasSuffix("]") { label.removeLast() }
         return (verb, label)
+    }
+}
+
+/// The provenance of one answer.
+///
+/// Before this the API returned the answer as a bare markdown string, so the
+/// app could not show which modules an answer came from or flag a number
+/// that did not check out — however carefully the backend had worked both
+/// out. `unverifiedFigures` is the important one: it means a currency or
+/// percentage in the text does not appear in anything the model was given,
+/// and the owner is about to act on it.
+struct AskEvidence: Decodable, Hashable {
+    var modules: [String] = []
+    var confidence: String = "unknown"
+    var unverifiedFigures: [String] = []
+
+    /// Nothing worth drawing a strip for.
+    var isEmpty: Bool {
+        modules.isEmpty && unverifiedFigures.isEmpty && confidence != "low"
+    }
+
+    var confidenceLabel: String? {
+        confidence == "unknown" ? nil : "\(confidence) confidence"
+    }
+
+    var warning: String? {
+        guard !unverifiedFigures.isEmpty else { return nil }
+        let list = unverifiedFigures.joined(separator: ", ")
+        let noun = unverifiedFigures.count > 1 ? "those figures" : "that figure"
+        return "Couldn’t verify \(list) against your data — treat \(noun) as unconfirmed."
     }
 }
 
@@ -112,6 +147,8 @@ final class AskCavnarViewModel {
     /// discarded server-side anyway; sending it only cost upload time on the
     /// weak connections this app runs on (audit 5.4).
     static let maxHistoryMessages = 12
+    /// Mirrors ask_cavnar.py's `_MAX_HISTORY_TURN_LENGTH`.
+    static let maxHistoryTurnLength = 2400
     /// Mirrors ask_cavnar.py's `_MAX_QUESTION_LENGTH`. Enforced here so the
     /// user sees the limit rather than having the tail of their question
     /// silently cut server-side (audit 5.2).
@@ -203,10 +240,21 @@ final class AskCavnarViewModel {
         let truncated: Bool?
         let proposals: [AskProposal]?
         let conversationId: Int?
+        let modulesConsulted: [String]?
+        let confidence: String?
+        let unverifiedFigures: [String]?
 
         enum CodingKeys: String, CodingKey {
-            case ok, answer, error, truncated, proposals
+            case ok, answer, error, truncated, proposals, confidence
             case conversationId = "conversation_id"
+            case modulesConsulted = "modules_consulted"
+            case unverifiedFigures = "unverified_figures"
+        }
+
+        var evidence: AskEvidence {
+            AskEvidence(modules: modulesConsulted ?? [],
+                        confidence: confidence ?? "unknown",
+                        unverifiedFigures: unverifiedFigures ?? [])
         }
     }
 
@@ -462,7 +510,12 @@ final class AskCavnarViewModel {
         let history = messages
             .filter { !$0.isStatusLine }
             .suffix(Self.maxHistoryMessages)
-            .map { HistoryTurn(role: $0.isUser ? "user" : "assistant", content: String($0.text.prefix(800))) }
+            // Mirrors ask_cavnar._MAX_HISTORY_TURN_LENGTH. Raised with it when
+            // executive answers got longer: truncating the assistant's own
+            // previous turn meant a follow-up like "do the second one"
+            // resolved against an answer whose second option had been cut off.
+            .map { HistoryTurn(role: $0.isUser ? "user" : "assistant",
+                               content: String($0.text.prefix(Self.maxHistoryTurnLength))) }
         messages.append(ChatMessage(text: asked, isUser: true))
         question = ""
         isLoading = true
@@ -492,7 +545,8 @@ final class AskCavnarViewModel {
                 )
                 if response.ok { adopt(conversationId: response.conversationId) }
                 appendAnswer(from: response.ok ? (response.answer ?? "") : (response.error ?? "Something went wrong."),
-                            truncated: response.truncated == true, proposals: response.proposals ?? [])
+                            truncated: response.truncated == true, proposals: response.proposals ?? [],
+                            evidence: response.ok ? response.evidence : nil)
             } catch is CancellationError {
                 if messages.last?.isUser == true { messages.removeLast() }
                 question = asked
@@ -530,10 +584,11 @@ final class AskCavnarViewModel {
                 gotAnswer = true
                 adopt(conversationId: event.conversationId)
                 appendAnswer(from: event.answer ?? "", truncated: event.truncated == true,
-                            proposals: event.proposals ?? [])
+                            proposals: event.proposals ?? [], evidence: event.evidence)
             case "error":
                 gotAnswer = true
-                appendAnswer(from: event.error ?? "Something went wrong.", truncated: false, proposals: [])
+                appendAnswer(from: event.error ?? "Something went wrong.", truncated: false,
+                            proposals: [], evidence: nil)
             default:
                 break
             }
@@ -554,12 +609,17 @@ final class AskCavnarViewModel {
         Task { await refreshConversations() }
     }
 
-    private func appendAnswer(from raw: String, truncated: Bool, proposals: [AskProposal]) {
+    private func appendAnswer(from raw: String, truncated: Bool, proposals: [AskProposal],
+                              evidence: AskEvidence?) {
         let cleaned = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         let display = cleaned.isEmpty
             ? "I didn't get an answer back that time — mind asking again?"
             : cleaned
-        messages.append(ChatMessage(text: display, isUser: false, wasTruncated: truncated, proposals: proposals))
+        // An empty strip is carried as nil so the view has one thing to check
+        // rather than reaching into the struct to decide whether to draw.
+        let ev = (evidence?.isEmpty == false) ? evidence : nil
+        messages.append(ChatMessage(text: display, isUser: false, wasTruncated: truncated,
+                                    proposals: proposals, evidence: ev))
     }
 }
 

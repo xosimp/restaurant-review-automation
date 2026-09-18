@@ -31,7 +31,7 @@ enum CavnarOrbState: String, CaseIterable {
     case composing    // the final answer is being written
     case breathing    // idle — the header orb
     case listening    // reserved: voice input
-    case weaving      // reserved: multi-tool synthesis
+    case weaving      // multi-tool synthesis — more than one read in one round
 
     /// Accessibility label, matching the reference library's wording.
     var label: String {

@@ -201,7 +201,7 @@ def test_a_write_tool_call_yields_a_proposal_and_never_executes(db_path, monkeyp
     monkeypatch.setattr(ask_cavnar, "create_with_retry", fake_create)
     monkeypatch.setattr(ask_cavnar, "extract_text", lambda m: "Confirm below and it goes out.")
 
-    answer, truncated, proposals = ask_cavnar.ask_with_tools(restaurant, "send the order")
+    answer, truncated, proposals, meta = ask_cavnar.ask_with_tools(restaurant, "send the order")
     assert [p["action"] for p in proposals] == ["send_supplier_order"]
     assert fired == [], "a proposal must never actually send"
     assert "Confirm" in answer
@@ -223,7 +223,7 @@ def test_a_read_tool_call_executes_and_feeds_back(db_path, monkeypatch):
     monkeypatch.setattr(ask_cavnar, "create_with_retry", fake_create)
     monkeypatch.setattr(ask_cavnar, "extract_text", lambda m: "One review mentions the patio.")
 
-    answer, _, proposals = ask_cavnar.ask_with_tools(restaurant, "which reviews mention the patio?")
+    answer, _, proposals, meta = ask_cavnar.ask_with_tools(restaurant, "which reviews mention the patio?")
     assert proposals == []
     tool_results = [b for m in seen["messages"] if isinstance(m.get("content"), list)
                     for b in m["content"] if isinstance(b, dict) and b.get("type") == "tool_result"]
@@ -451,7 +451,7 @@ def test_asking_in_a_named_chat_stays_in_that_chat(client, db_path, monkeypatch)
     from models import create_ask_conversation, get_ask_history
     rid = _restaurant(db_path)
     _login_as(monkeypatch, rid)
-    monkeypatch.setattr(ask_cavnar, "ask_with_tools", lambda *a, **kw: ("an answer", False, []))
+    monkeypatch.setattr(ask_cavnar, "ask_with_tools", lambda *a, **kw: ("an answer", False, [], {}))
     monkeypatch.setattr(client_api, "ai_rate_limited", lambda *a, **kw: False, raising=False)
     older = create_ask_conversation(rid, db_path=db_path)
     newer = create_ask_conversation(rid, db_path=db_path)
@@ -469,7 +469,7 @@ def test_new_conversation_opens_a_fresh_chat_on_the_first_question(client, db_pa
     from models import save_ask_message, list_ask_conversations, get_ask_history
     rid = _restaurant(db_path)
     _login_as(monkeypatch, rid)
-    monkeypatch.setattr(ask_cavnar, "ask_with_tools", lambda *a, **kw: ("fresh answer", False, []))
+    monkeypatch.setattr(ask_cavnar, "ask_with_tools", lambda *a, **kw: ("fresh answer", False, [], {}))
     existing = save_ask_message(rid, "user", "older chat", db_path=db_path)
     body = client.post("/api/ask-cavnar", json={"question": "brand new topic", "new_conversation": True}).get_json()
     assert body["ok"] and body["conversation_id"] != existing
@@ -599,7 +599,12 @@ def test_read_competitors_returns_the_set_behind_the_summary(db_path):
     out = json.loads(tools.run_read_tool("read_competitors", rid, {}))
     assert out["has_data"] is True
     assert out["competitors"][0]["name"] == "Mio Modo"
-    assert out["competitors"][0]["sample_reviews"][0]["text"] == "Great pasta"
+    # A competitor's reviewer is a member of the public, so their words reach
+    # the model inside ai_guard's delimiters rather than bare (audit #15
+    # P2-16). The text is intact; it is the boundary that is new.
+    review_text = out["competitors"][0]["sample_reviews"][0]["text"]
+    assert "Great pasta" in review_text
+    assert review_text != "Great pasta", "public text must be delimited, not bare"
 
 
 def test_read_competitors_says_so_when_none_has_been_run(db_path):

@@ -1401,20 +1401,55 @@ def _parse_conversation_id(raw):
 
 def _resolve_ask_conversation(restaurant_id, conversation_id, new_conversation=False, user_id=None):
     """For a question: which chat it belongs in. An explicit id must be one
-    of this restaurant's own (404 otherwise — the caller never learns whether
-    it exists for someone else); `new_conversation` starts a fresh chat for
-    this question (the app's "New chat" — created here, on the first
-    question, so an untouched New chat never leaves an empty row in the
-    history); no id means "the current chat, or a fresh one if there are
-    none yet". Returns (conversation_id, error_payload)."""
+    of this restaurant's own AND one this person can see (404 otherwise — the
+    caller never learns which of the two it failed); `new_conversation` starts
+    a fresh chat for this question (the app's "New chat" — created here, on
+    the first question, so an untouched New chat never leaves an empty row in
+    the history); no id means "my current chat, or a fresh one if there are
+    none yet". Returns (conversation_id, error_payload).
+
+    `user_id` is the viewer, and it is passed through to models as viewer_id
+    rather than only being stamped on new rows. list/get/delete were already
+    viewer-scoped; this path was not, so an invited teammate who supplied a
+    conversation_id got the owner's chat resolved, replayed into the prompt,
+    and answered back to them — the exact leak _viewer_clause exists to stop,
+    through the one door that never asked it. Ask transcripts carry labor
+    cost, food cost and revenue in plain text.
+    """
     from models import get_ask_conversation, current_ask_conversation_id, create_ask_conversation
     if new_conversation:
         return create_ask_conversation(restaurant_id, user_id=user_id), None
     if conversation_id is not None:
-        if get_ask_conversation(restaurant_id, conversation_id) is None:
+        if get_ask_conversation(restaurant_id, conversation_id, viewer_id=user_id) is None:
             return None, ({"ok": False, "error": "That conversation doesn't exist."}, 404)
         return conversation_id, None
-    return current_ask_conversation_id(restaurant_id), None
+    return current_ask_conversation_id(restaurant_id, viewer_id=user_id), None
+
+
+def _ask_rate_key(restaurant_id, user_id):
+    """One bucket per person. Falls back to the restaurant when a caller has
+    no user id, which is the old behaviour and still bounded."""
+    return f"askcavnar:{restaurant_id}:{user_id}" if user_id else f"askcavnar:{restaurant_id}"
+
+
+def _ask_meta(meta):
+    """The answer's provenance, in the shape both clients read.
+
+    Kept to what a UI can actually act on: which modules were consulted (an
+    evidence panel and a drill-down), how confident the answer is, and
+    whether any figure in it failed verification against what the model was
+    handed. `unverified_figures` being non-empty is the signal to caveat the
+    numbers on screen rather than to hide the answer — see ai_guard's note on
+    interactive vs unattended text.
+    """
+    meta = meta or {}
+    return {
+        "modules_consulted": meta.get("modules_consulted") or [],
+        "tools_used": meta.get("tools_used") or [],
+        "confidence": meta.get("confidence") or "unknown",
+        "unverified_figures": meta.get("unverified_figures") or [],
+        "depth": meta.get("depth") or "standard",
+    }
 
 
 def _do_ask_cavnar(restaurant_id, question, history=None, user_id=None, conversation_id=None,
@@ -1426,8 +1461,8 @@ def _do_ask_cavnar(restaurant_id, question, history=None, user_id=None, conversa
 
     `history` is the caller's own prior message list for this chat session
     (list of {"role", "content"} dicts, oldest first, NOT including
-    `question`) — ask_cavnar.ask() sanitizes/caps it itself, so this is a
-    thin passthrough, not a second place that needs to re-validate it.
+    `question`) — ask_with_tools sanitizes/caps it itself, so this is a thin
+    passthrough, not a second place that needs to re-validate it.
 
     `conversation_id` picks the chat the turn belongs to (the app's chat
     history); None means the restaurant's current chat."""
@@ -1437,7 +1472,12 @@ def _do_ask_cavnar(restaurant_id, question, history=None, user_id=None, conversa
     if len(question) > 2000:
         return {"ok": False, "error": "That question is too long — try to keep it under 2000 characters."}, 400
     from ai_utils import ai_rate_limited
-    if ai_rate_limited(f"askcavnar:{restaurant_id}", max_calls=5, window_secs=60):
+    # Keyed per PERSON, not per restaurant. A restaurant-wide bucket meant an
+    # owner and an invited teammate asking at the same time throttled each
+    # other, and the bucket is a spend guard on one human's typing speed, not
+    # on the account. The account-level ceiling is ai_budget_exceeded, which
+    # create_with_retry already enforces on every call.
+    if ai_rate_limited(_ask_rate_key(restaurant_id, user_id), max_calls=5, window_secs=60):
         return {"ok": False, "error": "Too many questions — please wait a moment and try again."}, 429
     # After the rate limit, so a hammered "New chat" can't mint 50 empty rows.
     conversation_id, err = _resolve_ask_conversation(restaurant_id, conversation_id,
@@ -1455,10 +1495,14 @@ def _do_ask_cavnar(restaurant_id, question, history=None, user_id=None, conversa
         # a reload or an app restart; a client-supplied list is still honoured
         # for callers that haven't migrated.
         if history is None:
+            # viewer_id, not just conversation_id: replaying a transcript into
+            # the prompt is a read of it, and it has to obey the same scoping
+            # the history endpoint does.
             history = [{"role": h["role"], "content": h["content"]}
-                       for h in get_ask_history(restaurant_id, conversation_id=conversation_id)]
+                       for h in get_ask_history(restaurant_id, conversation_id=conversation_id,
+                                                viewer_id=user_id)]
 
-        answer, truncated, proposals = ask_with_tools(
+        answer, truncated, proposals, meta = ask_with_tools(
             restaurant, question, history=history, **({'brief': True} if brief else {}))
 
         try:
@@ -1480,9 +1524,13 @@ def _do_ask_cavnar(restaurant_id, question, history=None, user_id=None, conversa
         # sentence as complete advice. `proposals` are confirm cards — actions
         # the assistant wants to take and deliberately cannot take itself.
         # `conversation_id` tells a client that started a fresh chat which
-        # one it is now in.
+        # one it is now in. `modules_consulted` / `unverified_figures` /
+        # `confidence` are what the answer rests on — without them on the wire
+        # no client could ever render an evidence panel or a confidence chip,
+        # however good the answer was.
         return {"ok": True, "answer": answer, "truncated": truncated,
-                "proposals": proposals or [], "conversation_id": conversation_id}, 200
+                "proposals": proposals or [], "conversation_id": conversation_id,
+                **_ask_meta(meta)}, 200
     except Exception as e:
         import ops
         ops.capture(e, job="ask_cavnar", context=f"restaurant_id={restaurant_id}")
@@ -1523,7 +1571,7 @@ def _ask_cavnar_stream_response(rid, uid, question, conversation_id=None, new_co
     if len(question) > 2000:
         return jsonify(ok=False, error="That question is too long — keep it under 2000 characters."), 400
     from ai_utils import ai_rate_limited
-    if ai_rate_limited(f"askcavnar:{rid}", max_calls=5, window_secs=60):
+    if ai_rate_limited(_ask_rate_key(rid, uid), max_calls=5, window_secs=60):
         return jsonify(ok=False, error="Too many questions — please wait a moment."), 429
     conversation_id, err = _resolve_ask_conversation(rid, conversation_id,
                                                      new_conversation=new_conversation, user_id=uid)
@@ -1543,8 +1591,8 @@ def _ask_cavnar_stream_response(rid, uid, question, conversation_id=None, new_co
                 events.put({"type": "error", "error": "Restaurant not found"})
                 return
             history = [{"role": h["role"], "content": h["content"]}
-                       for h in get_ask_history(rid, conversation_id=cid)]
-            answer, truncated, proposals = ask_with_tools(
+                       for h in get_ask_history(rid, conversation_id=cid, viewer_id=uid)]
+            answer, truncated, proposals, meta = ask_with_tools(
                 restaurant, question, history=history,
                 on_progress=lambda label, state: events.put(
                     {"type": "progress", "label": label, "state": state}),
@@ -1560,7 +1608,7 @@ def _ask_cavnar_stream_response(rid, uid, question, conversation_id=None, new_co
                 pass
             events.put({"type": "answer", "answer": answer,
                         "truncated": truncated, "proposals": proposals or [],
-                        "conversation_id": cid})
+                        "conversation_id": cid, **_ask_meta(meta)})
         except Exception as e:
             import ops
             ops.capture(e, job="ask_cavnar_stream", context=f"restaurant_id={rid}")
@@ -1688,6 +1736,15 @@ def _do_record_ask_action(restaurant_id, user_id, data):
         return {"ok": False, "error": "action and outcome (confirmed|dismissed) are required"}, 400
     log_ask_action(restaurant_id, action, summary=data.get("summary"),
                    body=data.get("body"), outcome=outcome, user_id=user_id)
+    # The snapshot is cached for a minute and now carries what has already
+    # been proposed — so confirming an order and immediately asking "did that
+    # go out?" would otherwise be answered from a context assembled before
+    # the confirmation existed. Same reason home_brief invalidates on dismiss.
+    try:
+        import ask_cavnar
+        ask_cavnar.invalidate_context(restaurant_id)
+    except Exception:
+        pass
 
     # Also write it into the transcript. Without this the model never learns
     # what happened to its own proposal: asked "did that order go out?" after

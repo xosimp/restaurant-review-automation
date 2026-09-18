@@ -586,6 +586,10 @@ private struct ChatBubble: View {
                             .foregroundStyle(Color.cavnarAmber)
                             .padding(.top, 4)
                     }
+                    if let evidence = message.evidence {
+                        EvidenceStrip(evidence: evidence)
+                            .padding(.top, 8)
+                    }
                     ForEach(message.proposals) { proposal in
                         ProposalCard(proposal: proposal, viewModel: viewModel)
                             .padding(.top, 10)
@@ -618,6 +622,77 @@ private struct ChatBubble: View {
         message.isUser
             ? AnyShapeStyle(LinearGradient(colors: [Color.cavnarEmber2, Color.cavnarEmber], startPoint: .topLeading, endPoint: .bottomTrailing))
             : AnyShapeStyle(Color.cavnarPaper2)
+    }
+}
+
+/// What an answer rests on, under the answer.
+///
+/// Two jobs. The chips say which parts of the business were actually read,
+/// which is the difference between "your food cost is high" and the same
+/// sentence backed by something. The warning says a figure in the text could
+/// not be found in anything the model was handed — the answer still shows,
+/// because deleting half an analysis is worse than caveating it, but the
+/// owner is told before they act on the number.
+private struct EvidenceStrip: View {
+    let evidence: AskEvidence
+
+    private var confidenceColor: Color {
+        switch evidence.confidence {
+        case "high": return Color.cavnarGreen
+        case "low":  return Color.cavnarRed
+        default:     return Color.cavnarInk3
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            if let warning = evidence.warning {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 11, weight: .bold))
+                    Text(warning)
+                        .font(.cavnarBody(12.5))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .foregroundStyle(Color.cavnarRed)
+            }
+            // Wraps rather than scrolls: a cross-module answer can name five
+            // modules, and a strip that scrolls sideways under a paragraph is
+            // something nobody discovers.
+            FlowChips(labels: evidence.modules.map { ($0, Color.cavnarInk3) }
+                      + (evidence.confidenceLabel.map { [($0, confidenceColor)] } ?? []))
+        }
+    }
+}
+
+/// Small wrapping row of labels. SwiftUI has no flow layout before the
+/// Layout protocol, and this needs to work as a plain wrap of short chips.
+private struct FlowChips: View {
+    let labels: [(String, Color)]
+
+    var body: some View {
+        // Two rows at most in practice — modules top out at five and the
+        // confidence chip makes six.
+        let rows = stride(from: 0, to: labels.count, by: 3).map {
+            Array(labels[$0..<min($0 + 3, labels.count)])
+        }
+        VStack(alignment: .leading, spacing: 5) {
+            ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                HStack(spacing: 5) {
+                    ForEach(Array(row.enumerated()), id: \.offset) { _, chip in
+                        Text(chip.0.uppercased())
+                            .font(.cavnarBody(10.5, weight: 700))
+                            .tracking(0.6)
+                            .foregroundStyle(chip.1)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .overlay(
+                                Capsule().stroke(chip.1.opacity(0.35), lineWidth: 1)
+                            )
+                    }
+                }
+            }
+        }
     }
 }
 
