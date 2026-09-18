@@ -16,6 +16,22 @@ from typing import Optional
 # only sessions/login_history (which have no such reseed) visibly emptied.
 DB_PATH = os.path.join(os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "."), "reviews.db")
 
+# ── The one time axis every review query uses ─────────────────────────────────
+#
+# When a GUEST wrote the review, falling back to when Cavnar pulled it only
+# when the platform gave us nothing. There were three different answers to
+# this question across the codebase — bare `review_date` in get_review_stats
+# and home_brief, `fetched_at` in the weekly digest, and this COALESCE in the
+# AI insight — so the same restaurant's "last 30 days" meant three different
+# sets of reviews depending on which surface asked, and a CSV-imported review
+# with no review_date was counted by one and dropped by another.
+#
+# Interpolate it into SQL as a column expression. It is a constant built from
+# literal column names, never from user input.
+REVIEW_TIME_AXIS = "COALESCE(NULLIF(reviews.review_date,''), reviews.fetched_at)"
+# The same expression for queries that don't qualify the table name.
+REVIEW_TIME_AXIS_BARE = "COALESCE(NULLIF(review_date,''), fetched_at)"
+
 # Restaurant.service_tier's human-readable display names — lives here
 # rather than in hosted_dashboard.py (where it originated) so anything
 # needing just this small static lookup (e.g. ask_cavnar.py's context
@@ -1524,6 +1540,58 @@ def init_db(db_path: str = DB_PATH):
         # alone, so idx_stock_events_ingredient's leading restaurant_id column
         # never matched and every rollup scanned.
         "CREATE INDEX IF NOT EXISTS idx_stock_events_by_ingredient ON ingredient_stock_events(ingredient_id, event_type, id)",
+
+        # ── Review intelligence: the operational dimension of a review ──────
+        #
+        # The analyser returned {sentiment, categories, summary, urgency} and
+        # nothing else, so "cold food" and "the steak was overcooked" and
+        # "they forgot my appetiser" all collapsed into the single token
+        # `food_quality`. Every downstream question an owner actually asks —
+        # which dish, which shift, which role, is this the same problem as
+        # last week — was unanswerable from stored data at any price, because
+        # the detail was discarded at the moment of analysis and the review
+        # text was never shown to a model again.
+        #
+        # These three columns are that detail. They cost no extra AI call:
+        # the analyser already reads the full text, it simply threw this away.
+        "ALTER TABLE reviews ADD COLUMN entities TEXT",             # JSON {dishes, staff_roles, daypart, service_mode}
+        "ALTER TABLE reviews ADD COLUMN specific_complaint TEXT",   # <=8 words, the actual thing that went wrong
+        "ALTER TABLE reviews ADD COLUMN severity TEXT",             # safety|legal|operational|service|minor
+        "CREATE INDEX IF NOT EXISTS idx_reviews_rest_severity ON reviews(restaurant_id, severity)",
+
+        # One stored root-cause diagnosis per (restaurant, category, window).
+        #
+        # This is the step the module never took. It knew "food quality is
+        # your most-mentioned complaint (11)" and stopped there, which is a
+        # fact the owner already had. The diagnosis is what a consultant adds
+        # after that sentence: the likely operational cause, the reviews it
+        # rests on, the figure from another module that supports or
+        # contradicts it, an alternative explanation, and what would settle
+        # which one is right.
+        #
+        # Stored rather than recomputed because it is a Sonnet call over a
+        # cluster of reviews, it changes on the timescale of days, and both
+        # clients plus the weekly digest read the same answer.
+        """CREATE TABLE IF NOT EXISTS review_diagnoses (
+            id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id        INTEGER NOT NULL REFERENCES restaurants(id),
+            category             TEXT    NOT NULL,
+            window_days          INTEGER NOT NULL,
+            mention_count        INTEGER NOT NULL DEFAULT 0,
+            cause                TEXT    NOT NULL,
+            alternative_cause    TEXT,
+            evidence_review_ids  TEXT,   -- JSON list of review ids the cause rests on
+            operational_evidence TEXT,   -- JSON list of {module, metric, value} from other modules
+            confidence           TEXT,   -- high|medium|low
+            what_would_confirm   TEXT,
+            recommended_action   TEXT,
+            expected_outcome     TEXT,
+            revenue_at_risk_low  REAL,
+            revenue_at_risk_high REAL,
+            generated_at         TEXT    NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(restaurant_id, category, window_days)
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_review_diagnoses ON review_diagnoses(restaurant_id, generated_at)",
     ]
     for m in migrations:
         try:
@@ -3189,24 +3257,48 @@ def get_urgent_reviews(restaurant_id: int, db_path: str = DB_PATH) -> list[Revie
 
 def get_reviews_since(restaurant_id: int, since: str,
                        db_path: str = DB_PATH) -> list[Review]:
+    """Reviews a guest wrote since `since` — the weekly digest's whole input.
+
+    Two things were wrong. It windowed on `fetched_at`, so on a first connect
+    the entire multi-year history arrives stamped with one timestamp and the
+    first weekly digest reported every review the restaurant had ever received
+    as "this week". And it never excluded soft-deleted rows, so a review the
+    owner removed still shaped their digest's rating, sentiment split and top
+    themes.
+    """
     conn = get_conn(db_path)
-    rows = conn.execute("""
+    rows = conn.execute(f"""
         SELECT * FROM reviews
-        WHERE restaurant_id=? AND fetched_at >= ? AND processed=1
-        ORDER BY review_date DESC
+        WHERE restaurant_id=? AND processed=1 AND deleted_at IS NULL
+          AND {REVIEW_TIME_AXIS_BARE} >= ?
+        ORDER BY {REVIEW_TIME_AXIS_BARE} DESC
     """, (restaurant_id, since)).fetchall()
     conn.close()
     return [_row_to_review(r) for r in rows]
 
 
 def update_analysis(review_id: int, sentiment: str, categories: list,
-                     summary: str, urgency: str, db_path: str = DB_PATH):
+                     summary: str, urgency: str, db_path: str = DB_PATH,
+                     entities: dict = None, specific_complaint: str = None,
+                     severity: str = None):
+    """Store the analyser's read of one review.
+
+    entities/specific_complaint/severity are the operational dimension — the
+    dish, the role, the daypart, the actual thing that went wrong, and how
+    serious it is beyond the binary high/normal urgency. They default to None
+    so every existing caller (and any review analysed before these columns
+    existed) keeps working; the readers all treat absent as "not known" rather
+    than as a value.
+    """
     conn = get_conn(db_path)
     conn.execute("""
         UPDATE reviews
-        SET sentiment=?, categories=?, summary=?, urgency=?, processed=1
+        SET sentiment=?, categories=?, summary=?, urgency=?, processed=1,
+            entities=?, specific_complaint=?, severity=?
         WHERE id=?
-    """, (sentiment, json.dumps(categories), summary, urgency, review_id))
+    """, (sentiment, json.dumps(categories), summary, urgency,
+          json.dumps(entities) if entities else None,
+          specific_complaint or None, severity or None, review_id))
     conn.commit()
     conn.close()
 
@@ -5809,6 +5901,13 @@ def get_review_stats(restaurant_id):
     # Sentiment counts still require analysis, because an unanalysed review
     # genuinely has no sentiment; unanalysed is reported as its own number
     # rather than folded into one of the three.
+    #
+    # The three time-windowed columns below read bare `review_date`, which
+    # meant a CSV-imported review with no review_date was silently absent from
+    # "this month", "last 30 days" and the 30-day average — while the AI
+    # insight's own windows, built on the COALESCE axis, counted it. The same
+    # prompt therefore carried two incompatible definitions of the same
+    # period. REVIEW_TIME_AXIS_BARE is now the single answer everywhere.
     rows = conn.execute("""
         SELECT
             COUNT(*)                                                                    AS total,
@@ -5824,11 +5923,11 @@ def get_review_stats(restaurant_id):
             SUM(response_status IN ('posted','approved'))                               AS responded,
             SUM(response_status='skipped')                                              AS skipped,
             SUM(response_status IN ('posted','approved') AND approved_at >= date('now','start of month')) AS responded_this_month,
-            SUM(review_date >= date('now','start of month'))                            AS received_this_month,
-            SUM(review_date >= date('now','-30 days'))                                  AS last_30d,
-            AVG(CASE WHEN review_date >= date('now','-30 days') THEN rating END)        AS avg_rating_30d
+            SUM({_AX} >= date('now','start of month'))                                  AS received_this_month,
+            SUM({_AX} >= date('now','-30 days'))                                        AS last_30d,
+            AVG(CASE WHEN {_AX} >= date('now','-30 days') THEN rating END)              AS avg_rating_30d
         FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL
-    """, (restaurant_id,)).fetchone()
+    """.format(_AX=REVIEW_TIME_AXIS_BARE), (restaurant_id,)).fetchone()
 
     # Average response time in hours (review_date → approved_at) — industry standard definition.
     # Matches how Google/Podium/Birdeye measure it: time from when customer wrote review
@@ -6125,6 +6224,16 @@ def get_topic_heatmap(restaurant_id: int, days: int = 90) -> list:
     return results
 
 
+# Kept here rather than imported from analyser.py so that reading a review
+# never pulls in the anthropic client at module scope.
+_SEVERITY_LABELS = {
+    "safety":      "Guest safety",
+    "legal":       "Legal exposure",
+    "operational": "Operational failure",
+    "service":     "Service quality",
+    "minor":       "Minor",
+}
+
 # The inbox's page size. The list used to be unbounded: every review a
 # restaurant had ever received was selected, serialised and — on the web —
 # rendered server-side as a full card with a draft box, a textarea and a
@@ -6179,8 +6288,16 @@ def get_reviews_data(restaurant_id, filter_by="all", search="", category=None, p
         total = conn.execute(
             f"SELECT COUNT(*) FROM reviews WHERE {' AND '.join(where)}", params
         ).fetchone()[0]
+    # Severity orders ahead of sentiment now. A guest-safety report and a
+    # parking gripe were both simply "negative" and sorted identically; the
+    # tier the analyser assigns is the one thing that says which of twelve
+    # open complaints to read first. NULL severity (analysed before the column
+    # existed) sorts with 'service', neither pushed to the top nor buried.
     sql = f"""SELECT * FROM reviews WHERE {' AND '.join(where)}
         ORDER BY CASE urgency WHEN 'high' THEN 0 ELSE 1 END,
+        CASE COALESCE(severity,'service')
+             WHEN 'safety' THEN 0 WHEN 'legal' THEN 1 WHEN 'operational' THEN 2
+             WHEN 'service' THEN 3 ELSE 4 END,
         CASE sentiment WHEN 'negative' THEN 0 WHEN 'neutral' THEN 1 ELSE 2 END,
         COALESCE(NULLIF(review_date,''), fetched_at) DESC"""
     page_params = list(params)
@@ -6203,6 +6320,17 @@ def get_reviews_data(restaurant_id, filter_by="all", search="", category=None, p
             and d.get("platform") == "google"
             and d.get("review_name")
         )
+        # The operational read of this review. `summary` was generated on
+        # every single review, stored, and then rendered by nothing on either
+        # platform — the only per-review AI reasoning the system produced was
+        # dead output. These four fields are what the card now shows.
+        try:
+            d["entities"] = json.loads(d.get("entities") or "null")
+        except Exception:
+            d["entities"] = None
+        d["severity"] = d.get("severity") or None
+        d["severity_label"] = _SEVERITY_LABELS.get(d.get("severity") or "", None)
+        d["specific_complaint"] = d.get("specific_complaint") or None
         result.append(d)
     if include_total:
         return result, total

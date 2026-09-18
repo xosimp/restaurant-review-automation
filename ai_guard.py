@@ -158,6 +158,19 @@ def unsupported_commitments(draft: str) -> list:
 
 _MONEY_RE = re.compile(r"\$\s?([\d,]+(?:\.\d+)?)")
 _PCT_RE = re.compile(r"([\d,]+(?:\.\d+)?)\s?%")
+# A star rating written as a rating: "4.2★", "3.8 stars", "rating of 4.1".
+#
+# unsupported_figures ignores everything at or below 10 on purpose — "top 5",
+# "the last 2 weeks" and "3 reviews" are ordinary prose, not claims traceable
+# to a row. But the Reviews module's PRINCIPAL numbers are star ratings, and
+# every one of them lives under that floor, so the module's most quotable
+# figure was the one figure nothing checked. These are matched separately and
+# held to an exact-match rule instead: a rating is quoted to one decimal from
+# a specific query, so 4.2 and 4.3 are different claims, not rounding.
+_STAR_RE = re.compile(
+    r"(?:(\d(?:\.\d)?)\s?(?:★|☆|-?\s?stars?\b)"
+    r"|\brating(?:\s+\w+){0,2}\s+(?:of|to|at|was|is)\s+(\d(?:\.\d)?))",
+    re.I)
 
 
 def _numbers(text: str) -> set:
@@ -200,6 +213,23 @@ def unsupported_figures(generated: str, context: str, tolerance: float = 0.02) -
         if value <= 10:
             continue
         if any(abs(value - k) <= max(tolerance * max(abs(value), 1), 0.5) for k in known):
+            continue
+        missing.append(m.group(0).strip())
+
+    # Star ratings, held to an exact match rather than the proportional
+    # tolerance above — a rating is read off a query to one decimal place, so
+    # "4.2★" when the input said 4.3 is a different claim, not a rounding of
+    # the same one. Only ratings in range are considered; "5 stars" as a
+    # figure of speech and a 0-10 score are not this check's business.
+    for m in _STAR_RE.finditer(generated or ""):
+        raw = m.group(1) or m.group(2)
+        try:
+            value = round(float(raw), 2)
+        except (TypeError, ValueError):
+            continue
+        if not (1.0 <= value <= 5.0):
+            continue
+        if any(abs(value - k) <= 0.051 for k in known):
             continue
         missing.append(m.group(0).strip())
     return missing

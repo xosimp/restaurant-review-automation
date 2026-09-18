@@ -33,11 +33,59 @@ struct Review: Codable, Identifiable, Hashable {
     /// sentiment, categories and urgency are all absent, and showing it as
     /// "neutral" claimed a reading nobody made.
     let processed: Bool?
+    /// Cavnar's own one-line read of this review. The analyser has written
+    /// one on every review since the product existed and NOTHING rendered it
+    /// on either platform — the only per-review AI reasoning the system
+    /// produced was output the client paid for and never saw.
+    let summary: String?
+    /// The single concrete thing that went wrong, in at most eight words.
+    let specificComplaint: String?
+    /// How serious, beyond the binary urgency that drives alerting:
+    /// safety / legal / operational / service / minor.
+    let severity: String?
+    let severityLabel: String?
+    /// The dish, role, daypart and service mode the review actually named.
+    /// Everything here came out of the guest's own words — the analyser is
+    /// forbidden from inferring a dish from a category or a role from a
+    /// complaint, so an absent field means the review did not say.
+    let entities: ReviewEntities?
+
+    struct ReviewEntities: Codable, Hashable {
+        let dishes: [String]?
+        let staffRoles: [String]?
+        let daypart: String?
+        let serviceMode: String?
+
+        enum CodingKeys: String, CodingKey {
+            case dishes, daypart
+            case staffRoles = "staff_roles"
+            case serviceMode = "service_mode"
+        }
+
+        /// Chips, in the order they should read: what was eaten, who served
+        /// it, when. Empty when the review named nothing, which is common
+        /// and correct — it is not a gap to fill.
+        var chips: [String] {
+            var out: [String] = []
+            out.append(contentsOf: (dishes ?? []).prefix(2))
+            out.append(contentsOf: (staffRoles ?? []).prefix(2).map { $0.replacingOccurrences(of: "_", with: " ") })
+            if let daypart { out.append(daypart.replacingOccurrences(of: "_", with: " ")) }
+            if let serviceMode { out.append(serviceMode.replacingOccurrences(of: "_", with: " ")) }
+            return out
+        }
+    }
 
     var isAnalysed: Bool { processed ?? true }
 
+    /// The two tiers an owner must not scroll past. The other three are real
+    /// and used for ordering, but a badge on every review is a badge on none.
+    var isHighSeverity: Bool { severity == "safety" || severity == "legal" }
+
     enum CodingKeys: String, CodingKey {
         case id, platform, author, rating, text, sentiment, urgency, categories, processed
+        case summary, severity, entities
+        case specificComplaint = "specific_complaint"
+        case severityLabel = "severity_label"
         case canRetractFlag = "can_retract"
         case reviewDate = "review_date"
         case draftResponse = "draft_response"
@@ -146,7 +194,9 @@ struct Review: Codable, Identifiable, Hashable {
             draftResponse: draftResponse, responseStatus: newStatus, categories: categories,
             draftNeedsReview: draftNeedsReview, draftReviewReason: draftReviewReason,
             editedAt: editedAt, originalRating: originalRating,
-            canRetractFlag: retractable, processed: processed
+            canRetractFlag: retractable, processed: processed,
+            summary: summary, specificComplaint: specificComplaint,
+            severity: severity, severityLabel: severityLabel, entities: entities
         )
     }
 }

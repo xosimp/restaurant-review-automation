@@ -10,6 +10,32 @@ CATEGORIES = [
     "ambiance", "cleanliness", "reservation", "takeout_delivery"
 ]
 
+# The operational vocabulary. Every value the model may return for a
+# structured entity field is enumerated here and validated against the list,
+# for the same reason `categories` is: an un-enumerated string becomes a
+# bucket of one that no trend query can ever group with anything else.
+DAYPARTS = ("breakfast", "brunch", "lunch", "happy_hour", "dinner", "late_night")
+SERVICE_MODES = ("dine_in", "takeout", "delivery", "bar", "patio", "private_event")
+STAFF_ROLES = ("server", "host", "bartender", "kitchen", "manager", "busser",
+               "runner", "delivery_driver")
+
+# How serious this is, beyond the binary urgency flag that drives alerting.
+# Ordered most to least severe — index in this tuple IS the priority, so a
+# caller can sort on it without a second lookup table.
+#
+# urgency="high" answers "wake the owner up?". This answers "where does it sit
+# when the owner is ranking twelve complaints on a Tuesday morning?", which is
+# the question the module could not represent at all: a parking gripe and a
+# legal threat were both simply "normal" or both simply "high".
+SEVERITIES = ("safety", "legal", "operational", "service", "minor")
+SEVERITY_LABELS = {
+    "safety":      "Guest safety",
+    "legal":       "Legal exposure",
+    "operational": "Operational failure",
+    "service":     "Service quality",
+    "minor":       "Minor",
+}
+
 ANALYSE_PROMPT = """You are analysing a restaurant review. Return ONLY valid JSON — no markdown, no commentary.
 
 {untrusted_note}
@@ -24,8 +50,30 @@ Return this exact shape:
   "sentiment": "positive" | "neutral" | "negative",
   "categories": [list of 1-3 from: {categories}],
   "summary": "one sentence, max 20 words, owner perspective",
-  "urgency": "high" | "normal"
+  "urgency": "high" | "normal",
+  "severity": one of: {severities},
+  "specific_complaint": "the single concrete thing that went wrong, max 8 words, or null if nothing did",
+  "entities": {{
+    "dishes": [menu items or drinks named IN THE REVIEW, max 3, exactly as the guest wrote them],
+    "staff_roles": [list from: {roles}],
+    "daypart": one of {dayparts} or null,
+    "service_mode": one of {modes} or null
+  }}
 }}
+
+EXTRACTION RULES — these bound what you may put in `entities`:
+- Only extract what the review ITSELF states or unambiguously implies. Never infer a dish from a category, a role from a complaint, or a daypart from a rating.
+- `daypart`: only if the review names a meal, a time, or an unambiguous occasion ("we came for brunch", "at 10pm", "after work drinks"). A review that just says "we came in Saturday" has no daypart — return null.
+- `staff_roles`: only a role the review actually points at. "The service was slow" is not a role; "our server disappeared" is `server`; "the bartender was great" is `bartender`.
+- `dishes`: the guest's own words, not a normalised menu name. If no food or drink is named, return an empty list.
+- When you are unsure, return null or an empty list. An empty field is correct; a guessed one is a fabricated fact about this restaurant's operation.
+
+severity is:
+- "safety" — illness, food poisoning, allergic reaction, foreign object, injury on premises, or an active hazard
+- "legal" — lawsuit, attorney, health department, BBB, discrimination, harassment, or a staff misconduct allegation
+- "operational" — something broke in how the restaurant runs: wrong or missing order, very long wait, cold food, a reservation not honoured, a closure or availability failure
+- "service" — the experience was poor but nothing failed outright: unfriendly, inattentive, rushed, noisy
+- "minor" — a preference, a small gripe, or a positive review with no complaint in it
 
 urgency is "high" if ANY of these are present:
 - Food safety, illness, food poisoning, allergic reaction, foreign object in food
@@ -58,6 +106,86 @@ def _sentiment_floor(rating: int, sentiment: str) -> str:
     return sentiment
 
 
+def _clean_dish(raw: str) -> str:
+    """A dish name the guest wrote, trimmed to something a trend query can
+    group on. Lowercased and whitespace-collapsed so "Truffle Fries" and
+    "truffle  fries" are one bucket, capped so a model that returns half the
+    review as a "dish" cannot poison the cluster."""
+    name = " ".join(str(raw or "").split()).strip(" .,!?\"'").lower()
+    if len(name) < 2 or len(name) > 40:
+        return ""
+    # A "dish" that is really a sentence is the model paraphrasing, not
+    # naming. Five words is generous for "the bone-in ribeye special".
+    if len(name.split()) > 5:
+        return ""
+    return name
+
+
+def _validate_entities(raw):
+    """Coerce the model's `entities` object into the enumerated vocabulary.
+
+    Same discipline as `categories`: anything outside the enum is dropped
+    rather than stored, because an un-enumerated value is a cluster of one
+    that no trend query will ever group with anything else — and it would be
+    rendered to the owner as if it were one of ours. Returns None when nothing
+    survived, so "the model gave us nothing" and "the review mentioned nothing"
+    are both stored as absent rather than as an empty shape that reads like a
+    measured result.
+    """
+    if not isinstance(raw, dict):
+        return None
+    dishes, seen = [], set()
+    rd = raw.get("dishes")
+    if isinstance(rd, str):
+        rd = [rd]
+    for d in (rd or [])[:5]:
+        name = _clean_dish(d)
+        if name and name not in seen:
+            seen.add(name)
+            dishes.append(name)
+        if len(dishes) >= 3:
+            break
+    rr = raw.get("staff_roles")
+    if isinstance(rr, str):
+        rr = [rr]
+    roles = []
+    for r in (rr or []):
+        v = str(r).strip().lower().replace(" ", "_")
+        if v in STAFF_ROLES and v not in roles:
+            roles.append(v)
+    daypart = str(raw.get("daypart") or "").strip().lower().replace(" ", "_")
+    daypart = daypart if daypart in DAYPARTS else None
+    mode = str(raw.get("service_mode") or "").strip().lower().replace(" ", "_")
+    mode = mode if mode in SERVICE_MODES else None
+    out = {}
+    if dishes:  out["dishes"] = dishes
+    if roles:   out["staff_roles"] = roles
+    if daypart: out["daypart"] = daypart
+    if mode:    out["service_mode"] = mode
+    return out or None
+
+
+def _severity_floor(rating: int, urgency: str, severity: str) -> str:
+    """Keep severity consistent with the two facts we already hold.
+
+    A review the model itself flagged urgent cannot be "minor" or "service" —
+    urgency="high" is defined by safety, injury, legal threat or misconduct,
+    so the severity tier has to be one of the two that mean the same thing.
+    And a 5-star review with no complaint is not an operational failure
+    whatever prose the model produced. Without this the priority ordering
+    could contradict the alerting that already fired on the same row.
+    """
+    sev = severity if severity in SEVERITIES else None
+    if str(urgency or "").lower() == "high":
+        return sev if sev in ("safety", "legal") else "safety"
+    try:
+        if int(rating) >= 5 and sev in ("safety", "legal", "operational"):
+            return "minor"
+    except (TypeError, ValueError):
+        pass
+    return sev or "minor"
+
+
 def _validate_analysis(result, rating: int = None):
     """Coerce the model's JSON into what the schema and the UI can hold.
 
@@ -85,7 +213,15 @@ def _validate_analysis(result, rating: int = None):
         raise ValueError("analysis had no summary")
     if rating is not None:
         sentiment = _sentiment_floor(rating, sentiment)
-    return {"sentiment": sentiment, "categories": cats, "summary": summary, "urgency": urgency}
+    complaint = " ".join(str(result.get("specific_complaint") or "").split())[:120] or None
+    if complaint and complaint.lower() in ("null", "none", "n/a"):
+        complaint = None
+    severity = _severity_floor(rating, urgency,
+                               str(result.get("severity") or "").strip().lower())
+    return {"sentiment": sentiment, "categories": cats, "summary": summary,
+            "urgency": urgency, "severity": severity,
+            "specific_complaint": complaint,
+            "entities": _validate_entities(result.get("entities"))}
 
 
 def analyse_review(review_id: int, rating: int, text: str, restaurant_id: int = None) -> dict:
@@ -97,11 +233,18 @@ def analyse_review(review_id: int, rating: int, text: str, restaurant_id: int = 
         text=wrap_untrusted(text),
         untrusted_note=UNTRUSTED_NOTE,
         categories=", ".join(CATEGORIES),
+        severities=", ".join(SEVERITIES),
+        roles=", ".join(STAFF_ROLES),
+        dayparts=", ".join(DAYPARTS),
+        modes=", ".join(SERVICE_MODES),
     )
     message = create_with_retry(
         client,
         model="claude-haiku-4-5-20251001",
-        max_tokens=256,
+        # The schema grew an entities object and two more fields; 256 tokens
+        # was already close enough to the old ceiling that a review naming
+        # three dishes would have tripped the truncation guard below.
+        max_tokens=512,
         messages=[{"role": "user", "content": prompt}],
         restaurant_id=restaurant_id,
         action="review_analysis",
@@ -117,6 +260,9 @@ def analyse_review(review_id: int, rating: int, text: str, restaurant_id: int = 
         result["categories"],
         result["summary"],
         result["urgency"],
+        entities=result.get("entities"),
+        specific_complaint=result.get("specific_complaint"),
+        severity=result.get("severity"),
     )
     return result
 

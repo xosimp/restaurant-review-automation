@@ -160,7 +160,7 @@ def _location_signal(conn, r, now):
     rid = r["id"]
     urgent = _one(conn, "SELECT COUNT(*) AS n FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL AND urgency='high' AND response_status NOT IN ('posted','approved','skipped')", (rid,)) or {}
     awaiting = _one(conn, "SELECT COUNT(*) AS n FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL AND response_status='drafted'", (rid,)) or {}
-    rating = _one(conn, "SELECT ROUND(AVG(rating),1) AS r, COUNT(*) AS n FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL AND review_date >= date('now','-30 days')", (rid,)) or {}
+    rating = _one(conn, "SELECT ROUND(AVG(rating),1) AS r, COUNT(*) AS n FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL AND COALESCE(NULLIF(review_date,''), fetched_at) >= date('now','-30 days')", (rid,)) or {}
     issues = []
     if (urgent.get("n") or 0) > 0:
         issues.append(("critical", f"{_plural(urgent['n'], 'urgent review')} unanswered"))
@@ -256,7 +256,7 @@ def _build(current_user):
     reviews_since = _one(conn, "SELECT COUNT(*) AS n, ROUND(AVG(rating),1) AS avg, SUM(rating<=2) AS low FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL AND (fetched_at >= ? OR fetched_at >= ?)", (rid, since_sql, since_iso_t)) or {}
     replies_since = _one(conn, "SELECT SUM(response_status='posted' AND posted_at >= ?) AS posted, SUM(response_status IN ('approved','posted') AND approved_at >= ?) AS approved FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL", (since_iso_t, since_iso_t, rid)) or {}
     stale_unanswered = _one(conn, "SELECT COUNT(*) AS n FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL AND rating<=3 AND response_status IN ('pending','drafted') AND julianday(fetched_at) < julianday('now','-2 days')", (rid,)) or {}
-    rating_prev = _one(conn, "SELECT ROUND(AVG(rating),1) AS r, COUNT(*) AS n FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL AND review_date >= date('now','-60 days') AND review_date < date('now','-30 days')", (rid,)) or {}
+    rating_prev = _one(conn, "SELECT ROUND(AVG(rating),1) AS r, COUNT(*) AS n FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL AND COALESCE(NULLIF(review_date,''), fetched_at) >= date('now','-60 days') AND COALESCE(NULLIF(review_date,''), fetched_at) < date('now','-30 days')", (rid,)) or {}
 
     # ── labor ───────────────────────────────────────────────────────────────
     labor, labor_live = None, False
@@ -810,10 +810,10 @@ def _location_record(conn, r, now):
     rs = _one(conn, """SELECT COUNT(*) AS total, SUM(response_status IN ('posted','approved')) AS responded,
                               SUM(response_status='drafted') AS awaiting,
                               SUM(urgency='high' AND response_status NOT IN ('posted','approved','skipped')) AS urgent,
-                              ROUND(AVG(CASE WHEN review_date >= date('now','-30 days') THEN rating END),1) AS avg30,
-                              SUM(review_date >= date('now','-30 days')) AS n30,
-                              ROUND(AVG(CASE WHEN review_date >= date('now','-60 days') AND review_date < date('now','-30 days') THEN rating END),1) AS avg_prev,
-                              SUM(rating<=2 AND review_date >= date('now','-7 days')) AS low7
+                              ROUND(AVG(CASE WHEN COALESCE(NULLIF(review_date,''), fetched_at) >= date('now','-30 days') THEN rating END),1) AS avg30,
+                              SUM(COALESCE(NULLIF(review_date,''), fetched_at) >= date('now','-30 days')) AS n30,
+                              ROUND(AVG(CASE WHEN COALESCE(NULLIF(review_date,''), fetched_at) >= date('now','-60 days') AND COALESCE(NULLIF(review_date,''), fetched_at) < date('now','-30 days') THEN rating END),1) AS avg_prev,
+                              SUM(rating<=2 AND COALESCE(NULLIF(review_date,''), fetched_at) >= date('now','-7 days')) AS low7
                        FROM reviews WHERE restaurant_id=? AND processed=1 AND deleted_at IS NULL""", (rid,)) or {}
     total = int(rs.get("total") or 0)
     rate = round(100.0 * int(rs.get("responded") or 0) / total) if total else None

@@ -160,10 +160,70 @@ struct ReviewDetailView: View {
     }
 
     private var reviewText: some View {
-        Text(viewModel.review.text ?? "")
-            .font(.cavnarBody(17))
-            .foregroundStyle(Color.cavnarInk2)
-            .lineSpacing(6)
+        VStack(alignment: .leading, spacing: 12) {
+            Text(viewModel.review.text ?? "")
+                .font(.cavnarBody(17))
+                .foregroundStyle(Color.cavnarInk2)
+                .lineSpacing(6)
+            cavnarRead
+        }
+    }
+
+    /// Cavnar's own read of this one review: the one-line summary the
+    /// analyser has always written, the concrete thing that went wrong, and
+    /// the dish / role / daypart the guest named.
+    ///
+    /// The summary existed on every review in the database and was rendered
+    /// by nothing on either platform. The rest is new, and it is what makes a
+    /// dish-level or shift-level pattern possible at all downstream — showing
+    /// it here is also the only way the owner can tell whether the extraction
+    /// read their review correctly.
+    @ViewBuilder
+    private var cavnarRead: some View {
+        let r = viewModel.review
+        let chips = r.entities?.chips ?? []
+        if r.summary?.isEmpty == false || r.specificComplaint?.isEmpty == false || !chips.isEmpty {
+            VStack(alignment: .leading, spacing: 7) {
+                if let summary = r.summary, !summary.isEmpty {
+                    Text(summary)
+                        .font(.cavnarBody(14))
+                        .italic()
+                        .foregroundStyle(Color.cavnarInk3)
+                        .lineSpacing(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if !chips.isEmpty || r.specificComplaint?.isEmpty == false {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 5) {
+                            if let what = r.specificComplaint, !what.isEmpty {
+                                Text(what)
+                                    .font(.cavnarBody(11.5, weight: 600))
+                                    .foregroundStyle(Color.cavnarInk2)
+                                    .padding(.horizontal, 9).padding(.vertical, 3)
+                                    .background(Color.cavnarEmber.opacity(0.12), in: Capsule())
+                            }
+                            ForEach(chips, id: \.self) { chip in
+                                Text(chip)
+                                    .font(.cavnarBody(11.5))
+                                    .foregroundStyle(Color.cavnarInk3)
+                                    .padding(.horizontal, 9).padding(.vertical, 3)
+                                    .overlay(Capsule().stroke(Color.cavnarInk3.opacity(0.28), lineWidth: 1))
+                            }
+                        }
+                        .padding(.vertical, 1)
+                    }
+                    .scrollBounceBehavior(.basedOnSize)
+                }
+            }
+            .padding(.leading, 11)
+            .overlay(alignment: .leading) {
+                Rectangle().fill(Color.cavnarEmber.opacity(0.35)).frame(width: 2)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Cavnar's read. \(r.summary ?? "")"
+                                + (r.specificComplaint.map { " Issue: \($0)." } ?? "")
+                                + (chips.isEmpty ? "" : " Mentioned: \(chips.joined(separator: ", "))."))
+        }
     }
 
     // A review reopened after being acted on (posted/approved/skipped) is

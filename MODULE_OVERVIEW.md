@@ -6,11 +6,13 @@ One section per product module: what it does, the key files, the invariants an a
 
 ## Reviews
 
-**Files**: `fetcher.py` (Google/Yelp pull), `analyser.py` (Claude sentiment/category/summary), `drafter.py` (AI reply drafting), `client_api.py`/`mobile_api.py` review routes.
+**Files**: `fetcher.py` (Google/Yelp pull), `analyser.py` (Claude sentiment/category/summary/severity/entities), `drafter.py` (AI reply drafting), `review_intelligence.py` (the consultant layer), `client_api.py`/`mobile_api.py` review routes.
 
-**Flow**: scheduled fetch → `analyser.py` scores sentiment/urgency → `drafter.py` writes a draft reply → owner approves/edits/skips → posted back to the platform (where API access allows) or copy-pasted.
+**Flow**: scheduled fetch → `analyser.py` scores sentiment/urgency/severity and extracts the dish, role and daypart the guest named → `drafter.py` writes a draft reply → owner approves/edits/skips → posted back to the platform (where API access allows) or copy-pasted. Separately, at 6am daily, `scheduler.run_review_diagnoses` clusters the negative reviews and produces a root-cause read per cluster.
 
 **Invariants (audit #10)**: a Google Business location is matched on `google_place_id`, never fuzzy name matching. A review's time for trend/period purposes is `review_date` (when it was posted), not `fetched_at` (when Cavnar AI saw it) — a backfilled batch of old reviews must not appear as "this week's activity." An unanalysed review (fetched but not yet scored) still counts toward totals — it just lacks sentiment/urgency until the analysis pass catches up. A drafted reply is never allowed to invent a commitment ("we'll refund you," "come back for a free X") the restaurant hasn't actually offered.
+
+**Invariants (audit #13 — the consultant layer)**: there is exactly ONE review time axis, `models.REVIEW_TIME_AXIS_BARE`, and every window in every file uses it — there were three answers to "the last 30 days" and the same AI prompt once carried two of them. A pattern claim needs volume behind it on both sides (`MIN_CLUSTER_MENTIONS`, `MIN_TREND_REVIEWS_PER_WEEK`, `MIN_TOPIC_TREND_MENTIONS`), and a "concentration" that holds less than half its cluster is not reported at all. A rating direction carries a real confidence, computed by the same slope-agreement scorer `waste_trend` uses for waste dollars — never a bare monotonic check over three weekly means. A cause is only ever asserted from a stored diagnosis that cited real review ids; with no diagnosis, no cause is stated. The cross-module block distinguishes "no data" from "nothing notable", and sample data is refused rather than reported. A revenue figure is a labelled forecast, a range, shown with its inputs, and absent entirely when either input is missing. And a claim's kind (`ai_guard.CLAIM_KINDS`) travels with it to both clients, so measured, inferred and projected never render alike.
 
 ---
 

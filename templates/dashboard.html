@@ -1783,6 +1783,34 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
    to render exactly like a verified analysis. */
 .ai-caveat{display:flex;gap:7px;align-items:flex-start;font-size:12px;line-height:1.5;padding:8px 10px;margin-bottom:9px;border-radius:8px;background:var(--amber-bg);color:var(--amber);border:1px solid rgba(217,119,6,.28)}
 .ai-caveat b{font-weight:700}
+/* The root-cause card — the step after "food quality is your most-mentioned
+   complaint". Deliberately NOT another .lb2-ai tinted block: a diagnosis is a
+   different KIND of claim from a snapshot, and giving it the same treatment
+   would say the two carry the same weight. Tokens only, both themes. */
+.rv-diag{margin-top:14px;border:1px solid var(--hb-line);border-radius:12px;overflow:hidden;background:var(--surface)}
+.rv-diag-hd{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid var(--hb-line2)}
+.rv-diag-hd .t{font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ember)}
+.rv-diag-hd .m{font-size:12px;color:var(--ink3)}
+.rv-diag-bd{padding:14px 16px;display:flex;flex-direction:column;gap:13px}
+.rv-diag-row{display:flex;flex-direction:column;gap:3px}
+.rv-diag-row .k{font-size:10.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)}
+.rv-diag-row .v{font-size:14.5px;line-height:1.6;color:var(--ink2)}
+.rv-diag-row.alt .v{color:var(--ink3);font-size:13.5px}
+.rv-conf{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;padding:3px 9px;border-radius:999px}
+.rv-conf.high{background:var(--green-bg);color:var(--hb-good)}
+.rv-conf.medium{background:var(--amber-bg);color:var(--hb-warn)}
+.rv-conf.low{background:var(--paper2);color:var(--ink3)}
+.rv-diag-ev{display:flex;flex-wrap:wrap;gap:6px}
+.rv-diag-ev button{font-size:11.5px;padding:3px 9px;border-radius:999px;border:1px solid var(--hb-line);background:transparent;color:var(--ink2);cursor:pointer;font-family:inherit}
+.rv-diag-ev button:hover{border-color:var(--ember);color:var(--ember)}
+.rv-money{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap;padding:10px 12px;border-radius:9px;background:var(--hb-tint)}
+.rv-money .n{font-family:'Space Grotesk',ui-sans-serif,system-ui,sans-serif;font-size:19px;font-weight:600;color:var(--ink)}
+.rv-money .l{font-size:11.5px;color:var(--ink3);line-height:1.5}
+.rv-sev{display:flex;flex-wrap:wrap;gap:6px;margin-top:11px}
+.rv-sev .s{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;padding:4px 10px;border-radius:999px;background:transparent;color:var(--ink2);border:1px solid var(--hb-line)}
+.rv-sev .s .n{font-family:'Space Grotesk',ui-sans-serif,system-ui,sans-serif;font-weight:700}
+.rv-sev .s.safety{background:var(--red-bg);color:var(--hb-bad);border-color:var(--red-bg)}
+.rv-sev .s.legal{background:var(--amber-bg);color:var(--hb-warn);border-color:var(--amber-bg)}
 /* signals */
 .rv2-sig{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0;margin-top:34px;padding-top:24px;border-top:1px solid var(--hb-line)}
 /* A flex column, not block: .rv2-sig's grid already stretches every .rv2-sg
@@ -1904,6 +1932,23 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
    describes what Cavnar hasn't done yet, not what the guest said. */
 #panel-reviews .schip.pending{color:var(--ink3);opacity:.75;font-style:italic;letter-spacing:.06em}
 .rv2-urg{font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--hb-bad);padding:3px 8px;border-radius:999px;background:var(--red-bg)}
+/* Severity, drawn only for the two tiers an owner must not scroll past.
+   `Urgent` above answers "should this have woken me up?"; this answers
+   "what kind of problem is it?", which is the question that orders twelve
+   open complaints on a Tuesday morning. */
+#panel-reviews .rv2-sevchip{font-size:10px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;padding:3px 8px;border-radius:999px}
+#panel-reviews .rv2-sevchip.safety{color:var(--hb-bad);background:var(--red-bg)}
+#panel-reviews .rv2-sevchip.legal{color:var(--hb-warn);background:var(--amber-bg)}
+/* Cavnar's read of one review: the one-line summary the analyser has always
+   written and nothing ever showed, plus the concrete thing that went wrong
+   and the dish/role/daypart it named. Set quieter than the guest's own words
+   above it — this is our reading of their review, not more of their review. */
+#panel-reviews .rv2-read{margin-top:9px;padding-left:11px;border-left:2px solid var(--hb-tint2)}
+#panel-reviews .rv2-read-s{font-size:13px;line-height:1.55;color:var(--ink3);font-style:italic}
+#panel-reviews .rv2-read-m{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px}
+#panel-reviews .rv2-what{font-size:11px;font-weight:600;color:var(--ink2);padding:2px 8px;border-radius:999px;background:var(--hb-tint)}
+#panel-reviews .rv2-ent{font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--hb-line);color:var(--ink3)}
+#panel-reviews .rv2-ent.dish{color:var(--ember)}
 .rv2-x{background:none;border:none;color:var(--ink3);font-size:15px;cursor:pointer;padding:2px 6px;line-height:1;opacity:0;transition:opacity .12s;border-radius:4px}
 .rv2-row:hover .rv2-x{opacity:.7}.rv2-x:hover{opacity:1!important;color:var(--hb-bad);background:var(--hb-tint)}
 #panel-reviews .rtext{font-size:14px;color:var(--ink);line-height:1.6;margin:10px 0 0 46px;border-left:none!important;padding-left:0}
@@ -1991,7 +2036,17 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
        about it, reached nobody. Same .lb2-ai treatment Labor and Intel
        use, and applyFigureCaveat() still prepends the unverified-numbers
        warning when the server couldn't trace a figure back to the data. #}
-    <div class="lb2-ai"><div class="tag">Cavnar AI's read on your reviews</div><div class="insight-text insight-loading" id="review-insight"><div class="hb-load"><canvas class="hb-orb" data-orb-state="composing" width="28" height="28"></canvas><span>Reading your reviews…</span></div></div></div>
+    <div class="lb2-ai"><div class="tag">Cavnar AI's read on your reviews</div><div class="insight-text insight-loading" id="review-insight"><div class="hb-load"><canvas class="hb-orb" data-orb-state="composing" width="28" height="28"></canvas><span>Reading your reviews…</span></div></div><div id="review-severity" class="rv-sev" hidden></div></div>
+    {# The root-cause card. Everything above this line is a snapshot: what
+       happened, how much of it, and what to do next. This is the step after
+       that — the most likely OPERATIONAL cause of the biggest complaint
+       cluster, what else it could be, and the one thing that would tell them
+       apart. Produced by review_intelligence.diagnose on a schedule (it is a
+       Sonnet call per cluster, not something to run on a tab open), cited
+       against real review ids, and carrying its own confidence and age.
+       Empty and hidden until there is a diagnosis — an owner with three
+       reviews should see nothing here rather than a manufactured cause. #}
+    <div id="review-diagnosis" hidden></div>
     <div class="rv2-sig">
       <div class="rv2-sg"><div class="k"><span>Reviews · per week</span></div><div class="v"><span id="rv-sent-n" class="hb-num">—</span><small>this week</small></div><div id="sentiment-trend-bars" style="color:var(--ink3)"><div class="hb-load" style="height:86px"><canvas class="hb-orb" data-orb-state="working" width="28" height="28"></canvas></div></div><div class="cap"><span><span style="color:var(--hb-good)">■</span> pos &nbsp; <span style="color:var(--hb-bad)">■</span> neg &nbsp; <span style="color:var(--ink3)">■</span> neu</span><span id="sentiment-trend-labels"></span></div></div>
       <div class="rv2-sg" id="perf-card"><div class="k"><span>Approval Method</span><span class="rv2-days" id="perf-days-btns"><button class="hm-days-btn" data-days="30" onclick="loadResponsePerf(30)">30d</button><button class="hm-days-btn on" data-days="90" onclick="loadResponsePerf(90)">90d</button><button class="hm-days-btn" data-days="180" onclick="loadResponsePerf(180)">6mo</button></span></div><div class="v"><span id="rv-perf-n" class="hb-num">—</span><small>approved</small></div><div id="perf-body"><div class="hb-load" style="height:86px"><canvas class="hb-orb" data-orb-state="working" width="28" height="28"></canvas></div></div><div class="cap"><span id="rv-perf-cap">as-is · edited · regenerated</span></div></div>
@@ -5873,7 +5928,11 @@ function processInsightHtml(html){
     '⚠': '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true" style="flex-shrink:0;margin-top:3px"><path d="M8 2L14 13H2L8 2Z" stroke="#e8a825" stroke-width="1.5" stroke-linejoin="round"/><rect x="7.3" y="6.5" width="1.4" height="3.5" rx=".7" fill="#e8a825"/><circle cx="8" cy="11.5" r=".8" fill="#e8a825"/></svg>',
     '✅': '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true" style="flex-shrink:0;margin-top:3px"><circle cx="8" cy="8" r="6" stroke="#3ecf6e" stroke-width="1.5"/><path d="M5.5 8.5l2 2 3.5-3.5" stroke="#3ecf6e" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
     '🚨': '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true" style="flex-shrink:0;margin-top:3px"><circle cx="8" cy="8" r="6" stroke="#f05555" stroke-width="1.5"/><rect x="7.3" y="4.5" width="1.4" height="4.5" rx=".7" fill="#f05555"/><circle cx="8" cy="11" r=".8" fill="#f05555"/></svg>',
-    '💡': '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true" style="flex-shrink:0;margin-top:3px"><circle cx="8" cy="7" r="4.5" stroke="#e8a825" stroke-width="1.5"/><path d="M6 11.5h4M6.5 13h3" stroke="#e8a825" stroke-width="1.5" stroke-linecap="round"/></svg>'
+    '💡': '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true" style="flex-shrink:0;margin-top:3px"><circle cx="8" cy="7" r="4.5" stroke="#e8a825" stroke-width="1.5"/><path d="M6 11.5h4M6.5 13h3" stroke="#e8a825" stroke-width="1.5" stroke-linecap="round"/></svg>',
+    /* The "Why" line — the read's own root-cause sentence, drawn from the
+       stored diagnosis. Its own mark because it is a different KIND of claim
+       from the measured line above it. */
+    '🔍': '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true" style="flex-shrink:0;margin-top:3px"><circle cx="7" cy="7" r="4.5" stroke="#e06444" stroke-width="1.5"/><path d="M10.4 10.4L14 14" stroke="#e06444" stroke-width="1.5" stroke-linecap="round"/></svg>'
   };
   var _emojiRe = /^([\uD83C-􏰀-\uDFFF]{1,2}[️]?|[☀-➿][️]?)\s*/;
   var lines = html.replace(/<br\s*\/?>/gi,'\n').split('\n');
@@ -5912,22 +5971,172 @@ function loadReviewInsight(){
     var cached=sessionStorage.getItem('review_insight');
     var cachedAt=parseInt(sessionStorage.getItem('review_insight_at')||'0',10);
     if(cached&&cachedAt&&(Date.now()-cachedAt)<fiveMin){
+      /* Older entries held the bare sentence; new ones hold the whole
+         payload. Parse defensively so a session that spans the deploy
+         doesn't render "[object Object]" or throw away its caveats. */
+      var cd=null;
+      try{cd=JSON.parse(cached);}catch(pe){cd=null;}
+      if(!cd||typeof cd!=='object'){cd={insight:cached};}
       el.classList.remove('insight-loading');
       _twTokens[el.id]=(_twTokens[el.id]||0)+1;
-      el.innerHTML=processInsightHtml(cached);
+      el.innerHTML=processInsightHtml(cd.insight||'');
+      applyInsightCaveats(el,cd);
+      renderSeverityStrip(cd);
+      renderDiagnosis(cd);
       return;
     }
   }catch(e){}
   fetch('/api/review-insight').then(function(r){return r.json();}).then(function(d){
     var html=d.insight||'Analysis unavailable.';
-    try{sessionStorage.setItem('review_insight',html);sessionStorage.setItem('review_insight_at',String(Date.now()));}catch(e){}
+    /* The WHOLE payload is cached, not just the sentence. Caching the string
+       meant the caveats that qualify it — unverified figures, unverified
+       names, the trend's confidence, the diagnosis and its age — were shown
+       once and then silently dropped for five minutes while the text they
+       qualified kept rendering. */
+    try{sessionStorage.setItem('review_insight',JSON.stringify(d));sessionStorage.setItem('review_insight_at',String(Date.now()));}catch(e){}
     el.classList.remove('insight-loading');
     typewriterEffect(el,processInsightHtml(html));
-    applyFigureCaveat(el,d);
+    applyInsightCaveats(el,d);
+    renderSeverityStrip(d);
+    renderDiagnosis(d);
   }).catch(function(){
     el.classList.remove('insight-loading');
     el.innerHTML=emptyStateHtml('Analysis unavailable', 'Check back shortly — the AI retries automatically', true);
   });
+}
+/* Every caveat the server attached to this passage, in one place. Figures
+   were already checked; names were not, and a fabricated guest name is the
+   single most damaging thing this card can get wrong — the whole premise of
+   the panel is that Cavnar has actually read the reviews.
+
+   This script block sits outside the Home IIFE that owns its own esc(), so
+   the renderers below carry their own. Same escaping, local scope. */
+function _rvEsc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+function applyInsightCaveats(el,d){
+  if(!el||!d)return;
+  applyFigureCaveat(el,d);
+  if(d.names_verified===false){
+    var n=(d.unsupported_names||[]);
+    el.insertBefore(aiCaveat('Unverified name',
+      'Cavnar could not match '+(n.length?n.slice(0,2).join(', '):'a name')
+      +' to any reviewer in your data. Check the review before acting on this.'),el.firstChild);
+  }
+  if(d.stale){
+    el.insertBefore(aiCaveat('Older read',
+      'This is the last read Cavnar completed'+(d.as_of?(', from '+d.as_of):'')
+      +'. A fresh one is on the way.'),el.firstChild);
+  }
+}
+/* Open complaints by how serious they are, not how many there are. Urgency
+   was binary — it answers "wake the owner up?", not "which of twelve open
+   complaints do I read first?". Only tiers with something open are drawn. */
+function renderSeverityStrip(d){
+  var box=document.getElementById('review-severity');
+  if(!box)return;
+  box.innerHTML='';
+  var tiers=(d.severity&&d.severity.tiers)||[];
+  var any=false;
+  for(var i=0;i<tiers.length;i++){
+    var t=tiers[i];
+    if(!t.open)continue;
+    any=true;
+    var s=document.createElement('span');
+    s.className='s '+t.key;
+    s.innerHTML='<span class="n">'+t.open+'</span> '+_rvEsc(t.label);
+    s.title=t.total+' in the last '+(d.severity.days||90)+' days, '+t.open+' still open';
+    box.appendChild(s);
+  }
+  box.hidden=!any;
+}
+/* The diagnosis card. Renders nothing at all when there is no diagnosis —
+   an owner whose reviews do not yet support a cause should see the snapshot
+   and stop there, not a cause invented to fill the space. */
+function renderDiagnosis(d){
+  var box=document.getElementById('review-diagnosis');
+  if(!box)return;
+  var dg=d&&d.diagnosis;
+  if(!dg||!dg.cause){box.hidden=true;box.innerHTML='';return;}
+  var conf=(dg.confidence||'low');
+  var h=''
+    +'<div class="rv-diag">'
+    +'<div class="rv-diag-hd">'
+    +'<span class="t">Why this is happening</span>'
+    +'<span class="rv-conf '+conf+'">'+conf+' confidence</span>'
+    +'<span class="m">'+_rvEsc(String(dg.category||'').replace(/_/g,' '))+' · '
+    +dg.mention_count+' negative reviews over '+dg.window_days+' days'
+    +(dg.stale?' · older read':'')+'</span>'
+    +'</div><div class="rv-diag-bd">'
+    +'<div class="rv-diag-row"><div class="k">Most likely cause</div><div class="v">'+_rvEsc(dg.cause)+'</div></div>';
+  if(dg.alternative_cause){
+    h+='<div class="rv-diag-row alt"><div class="k">It could also be</div><div class="v">'+_rvEsc(dg.alternative_cause)+'</div></div>';
+  }
+  if(dg.what_would_confirm){
+    h+='<div class="rv-diag-row"><div class="k">What would tell them apart</div><div class="v">'+_rvEsc(dg.what_would_confirm)+'</div></div>';
+  }
+  if(dg.recommended_action){
+    h+='<div class="rv-diag-row"><div class="k">Do this</div><div class="v">'+_rvEsc(dg.recommended_action)+'</div></div>';
+  }
+  if(dg.expected_outcome){
+    h+='<div class="rv-diag-row alt"><div class="k">What should change</div><div class="v">'+_rvEsc(dg.expected_outcome)+'</div></div>';
+  }
+  /* What another module recorded over the same period. The prompt may only
+     connect a complaint to a figure by naming that figure, so anything here
+     is traceable back to a real number. */
+  var oe=dg.operational_evidence||[];
+  if(oe.length){
+    var ol=[];
+    for(var k=0;k<oe.length;k++){ol.push(_rvEsc(oe[k].module.replace(/_/g,' '))+': '+_rvEsc(oe[k].metric)+' '+_rvEsc(oe[k].value));}
+    h+='<div class="rv-diag-row alt"><div class="k">Cross-checked against</div><div class="v">'+ol.join(' &nbsp;·&nbsp; ')+'</div></div>';
+  }
+  var ids=dg.evidence_review_ids||[];
+  if(ids.length){
+    var bl='';
+    for(var j=0;j<ids.length;j++){bl+='<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-review-id="'+ids[j]+'">Review #'+ids[j]+'</button>';}
+    h+='<div class="rv-diag-row"><div class="k">Reviews this rests on</div><div class="rv-diag-ev">'+bl+'</div></div>';
+  }
+  var m=d.revenue_at_risk;
+  if(m&&m.available){
+    h+='<div class="rv-money"><span class="n">$'+Math.abs(m.monthly_low).toLocaleString()
+      +'–$'+Math.abs(m.monthly_high).toLocaleString()+'</span>'
+      +'<span class="l">a month '+(m.direction==='at_risk'?'at risk':'of upside')+' from the '
+      +(m.rating_delta>0?'+':'')+m.rating_delta+'★ move over 30 days. Forecast, not a measurement — '
+      +_rvEsc(m.assumption)+'</span></div>';
+  }
+  h+='</div></div>';
+  box.innerHTML=h;
+  box.hidden=false;
+  /* Delegated, per this file's ES5-only rule and the no-inline-handler
+     convention used everywhere else in the module. */
+  var btns=box.querySelectorAll('.rv-diag-ev button');
+  for(var b=0;b<btns.length;b++){
+    btns[b].onclick=function(){jumpToReview(this.getAttribute('data-review-id'));};
+  }
+}
+/* Scroll the inbox to one review and flash it — the diagnosis's evidence
+   chips are only worth more than prose if the owner can actually reach the
+   reviews behind them. Reuses _rvFlashJump, the same highlight the filter
+   pills use, so a jump always looks like a jump. */
+function jumpToReview(id){
+  switchReviewsTab('inbox');
+  var tries=0;
+  var seek=function(){
+    var card=document.getElementById('rc-'+id);
+    if(card){
+      card.scrollIntoView({behavior:'smooth',block:'center'});
+      _rvFlashJump(card);
+      return;
+    }
+    /* The inbox pages at 50; an older cited review may not be rendered yet.
+       Pull the next page and look again rather than claiming it is missing. */
+    if(tries++<3){
+      var more=document.getElementById('rv-more-btn');
+      if(more&&!more.hidden){ more.click(); }
+      setTimeout(seek,450);
+    } else {
+      toast('Review #'+id+' is further back — search for it in the inbox','warning');
+    }
+  };
+  setTimeout(seek,120);
 }
 function filterByTopic(category){
   window._topicFilter = category;

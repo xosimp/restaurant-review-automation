@@ -273,11 +273,35 @@ struct ReviewRow: View {
                                 .foregroundStyle(Color.cavnarRed)
                                 .font(.system(size: 12))
                         }
+                        // The severity tier, for the two tiers an owner must
+                        // not scroll past. The urgency dot above answers
+                        // "should this have woken me up?"; this answers "what
+                        // kind of problem is it?", which is what orders a
+                        // dozen open complaints on a Tuesday morning.
+                        if review.isHighSeverity, let label = review.severityLabel {
+                            Text(label)
+                                .font(.cavnarBody(10, weight: 700))
+                                .tracking(0.6)
+                                .textCase(.uppercase)
+                                .foregroundStyle(review.severity == "safety" ? Color.cavnarRed : Color.cavnarAmber)
+                                .padding(.horizontal, 7).padding(.vertical, 2)
+                                .background((review.severity == "safety" ? Color.cavnarRed : Color.cavnarAmber).opacity(0.13),
+                                            in: Capsule())
+                        }
                     }
                     Text(review.text ?? "")
                         .font(.cavnarBody(14))
                         .foregroundStyle(Color.cavnarInk3)
                         .lineLimit(2)
+                    // Cavnar's one-line read, which the analyser has written
+                    // on every review since the product existed and which
+                    // nothing on either platform ever showed.
+                    if let complaint = review.specificComplaint, !complaint.isEmpty {
+                        Text(complaint)
+                            .font(.cavnarBody(11.5, weight: 600))
+                            .foregroundStyle(Color.cavnarEmber)
+                            .lineLimit(1)
+                    }
                     if !review.isAnalysed {
                         // Unanalysed reviews reach the inbox now; saying so
                         // beats showing the "neutral" sentiment they were
@@ -311,8 +335,10 @@ struct ReviewRow: View {
         parts.append("\(review.rating ?? 0) star review")
         parts.append("by \(review.author ?? "Anonymous")")
         if review.isUrgent { parts.append("urgent") }
+        if review.isHighSeverity, let label = review.severityLabel { parts.append(label) }
         parts.append(StatusPill.spokenStatus(review.responseStatus))
         if !review.isAnalysed { parts.append("analysis pending") }
+        if let complaint = review.specificComplaint, !complaint.isEmpty { parts.append(complaint) }
         if let date = review.formattedDate { parts.append(date) }
         if let text = review.text, !text.isEmpty { parts.append(text) }
         return parts.joined(separator: ", ")

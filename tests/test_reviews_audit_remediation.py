@@ -158,9 +158,49 @@ def test_every_draft_call_site_passes_urgency():
 
 def test_the_insight_times_reviews_by_when_the_guest_wrote_them():
     src = inspect.getsource(client_api._do_review_insight)
-    assert "_AXIS = \"COALESCE(NULLIF(review_date,''), fetched_at)\"" in src
+    # The axis is no longer a literal defined here — it is one shared
+    # constant, because there were three different answers to "what is the
+    # last 30 days" across the review surfaces and the same prompt carried
+    # two of them at once.
+    assert "REVIEW_TIME_AXIS_BARE as _AXIS" in src
     assert "strftime('%Y-W%W', fetched_at)" not in src, "the bucket key must use the same axis"
     assert src.count("deleted_at IS NULL") >= 4
+
+
+def test_every_review_time_window_uses_the_one_shared_axis():
+    """A period window over reviews reads when the GUEST wrote them.
+
+    Asserted against the source of every review surface rather than against
+    one rendered payload: this has to hold in every query, and a fixture only
+    ever covers the branches that fixture happens to reach. The exceptions are
+    named individually below and each one is about when CAVNAR received a
+    review, which is a genuinely different question.
+    """
+    import re
+    import models, home_brief, reporter, review_intelligence
+
+    # "since you last looked" and "how long have we been sitting on this"
+    # are both properly about fetched_at — the owner is being shown what is
+    # new to them, and how long a reply has been owed.
+    ALLOWED = ("reviews_since", "stale_unanswered", "last_fetched_at",
+               "julianday(fetched_at)", "ORDER BY fetched_at")
+
+    bad = []
+    for mod in (models, home_brief, reporter, review_intelligence, client_api):
+        src = inspect.getsource(mod)
+        for m in re.finditer(r"[^(,\w]review_date\s*(>=|<|>|<=)", src):
+            line_start = src.rfind("\n", 0, m.start()) + 1
+            line = src[line_start:src.find("\n", m.end())]
+            if any(a in line for a in ALLOWED) or "NULLIF(review_date" in line:
+                continue
+            bad.append(f"{mod.__name__}: {line.strip()[:110]}")
+        for m in re.finditer(r"[^(,\w]fetched_at\s*(>=|<|>|<=)", src):
+            line_start = src.rfind("\n", 0, m.start()) + 1
+            line = src[line_start:src.find("\n", m.end())]
+            if any(a in line for a in ALLOWED) or "NULLIF(review_date" in line:
+                continue
+            bad.append(f"{mod.__name__}: {line.strip()[:110]}")
+    assert not bad, "review windows not on the shared axis:\n" + "\n".join(bad)
 
 
 def test_the_insight_will_not_call_a_trend_off_single_review_weeks():

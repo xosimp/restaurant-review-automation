@@ -60,10 +60,14 @@ def _review_card(r) -> str:
         'padding:6px 10px;font-size:12px;color:#dc2626;margin-bottom:8px">'
         'Needs immediate attention</div>'
     ) if r.urgency == "high" else ""
+    # Escaped like every other field on this card. It was the one that wasn't
+    # — author, text, sentiment and platform all went through _html.escape and
+    # the AI-authored draft went in raw, so a reply containing an angle
+    # bracket broke the card's markup in the owner's inbox.
     draft_section = (
         f'<div style="background:#f8fafc;border-radius:6px;padding:10px 12px;'
         f'font-size:13px;margin-top:8px"><strong>Suggested reply:</strong><br>'
-        f'<span style="color:#374151">{r.draft_response}</span></div>'
+        f'<span style="color:#374151">{_html.escape(r.draft_response)}</span></div>'
     ) if r.draft_response else ""
 
     return f"""
@@ -91,10 +95,20 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
         neg = report.sentiment.get("negative", 0)
         urgent_count = sum(1 for r in reviews if r.urgency == "high")
         top_themes = ", ".join(cat.replace("_"," ") for cat, n in (report.top_issues or [])[:3])
-        # Pull labor and inventory context if available
+        # Pull labor and inventory context if available.
+        #
+        # Every module below now produces BOTH a prose line (for the prompt)
+        # and a structured `_facts` dict (for the correlation block). The
+        # correlations used to be substring tests against the prose — a
+        # case-sensitive `"UP" in inventory_context` that a waste item named
+        # SOUP BASE would satisfy with no waste increase at all, and a
+        # `"trending UP" in labor_context` that broke silently the moment the
+        # wording changed. Comparing the floats they were rendered from cannot
+        # drift and cannot be fooled by an ingredient's name.
         labor_context = ""
         inventory_context = ""
         marketing_context = ""
+        _facts = {"labor": None, "inventory": None, "marketing": None}
         try:
             from labor import analyse_shifts_for_restaurant
             labor = analyse_shifts_for_restaurant(report.restaurant_id)
@@ -104,6 +118,9 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
                 labor_context = f"Labor: {lp:.1f}% of revenue this week"
                 if ot_risk:
                     labor_context += f", {len(ot_risk)} overtime risk"
+                _facts["labor"] = {"pct": float(lp), "direction": None,
+                                   "from_pct": None, "weeks": 0,
+                                   "overtime_risk": len(ot_risk)}
                 # Pull labor trend from history
                 try:
                     from models import get_conn as _gc_lr
@@ -116,9 +133,12 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
                     _conn_lr.close()
                     if len(_lh) >= 2:
                         _vals = [r["labor_pct"] for r in reversed(_lh)]
+                        _facts["labor"].update({"from_pct": float(_vals[0]), "weeks": len(_vals)})
                         if _vals[-1] > _vals[0] + 1.5:
+                            _facts["labor"]["direction"] = "up"
                             labor_context += f" — trending UP from {_vals[0]:.1f}% ({len(_vals)} weeks)"
                         elif _vals[-1] < _vals[0] - 1.5:
+                            _facts["labor"]["direction"] = "down"
                             labor_context += f" — trending DOWN from {_vals[0]:.1f}% ({len(_vals)} weeks, improving)"
                 except Exception:
                     pass
@@ -138,6 +158,9 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
                 low = analysis.get("critical_low", [])
                 top_waste = waste[0]["item"] if waste else None
                 inventory_context = f"Inventory: top waste item is {top_waste}" if top_waste else ""
+                _facts["inventory"] = {"top_waste_item": top_waste,
+                                       "critical_low": len(low or []),
+                                       "waste_direction": None, "waste_change_pct": None}
                 # Pull inventory trend from history
                 try:
                     from models import get_conn as _gc_iv
@@ -158,6 +181,8 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
                             _diff = _curr_total - _prev_total
                             _pct = round(abs(_diff) / _prev_total * 100, 0)
                             if abs(_diff) > 20:
+                                _facts["inventory"]["waste_direction"] = "up" if _diff > 0 else "down"
+                                _facts["inventory"]["waste_change_pct"] = float(_pct)
                                 inventory_context += f" (waste {'UP' if _diff > 0 else 'DOWN'} {int(_pct)}% vs last week)"
                 except Exception:
                     pass
@@ -185,42 +210,93 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
                 _br = (_best["reach"] or 0) + (_best["impressions"] or 0)
                 if _br > 0:
                     marketing_context = f"Marketing: best recent post was '{_best['topic']}' ({_br} reach+impr)."
+                    _facts["marketing"] = {"best_topic": _best["topic"], "best_reach": int(_br),
+                                           "measured_posts": len(_mkt_rows)}
         except Exception:
             pass
 
-        # Cross-module correlation — find patterns that span multiple modules
+        # Cross-module correlation — patterns that span more than one module.
+        #
+        # Three things were wrong with this and all three are the same
+        # mistake: it inspected the RENDERED PROSE instead of the numbers the
+        # prose was rendered from. `"UP" in inventory_context` is true of a
+        # waste item called SOUP BASE. `"trending UP" in labor_context` breaks
+        # the moment that sentence is reworded. And the review floor was
+        # `(pos + neg) > 3` — four classified reviews was the entire
+        # evidentiary bar for telling an owner their kitchen is understaffed.
+        #
+        # Now: floats compared to floats, the same review floor the rest of
+        # the module uses, and language that says two things moved together
+        # rather than that one caused the other. A 90-day co-movement in a
+        # restaurant is a prompt to go look, not a finding.
         correlation_context = ""
         try:
+            from notify import MIN_TREND_REVIEWS_PER_WEEK as _MIN_WK_RPT
             signals = []
-            # Labor up + food quality complaints = understaffed kitchen signal
-            _labor_up = "trending UP" in labor_context
+            _classified = pos + neg
+            _enough_reviews = _classified >= _MIN_WK_RPT * 2
+            _lab, _inv, _mkt = _facts["labor"], _facts["inventory"], _facts["marketing"]
+
+            _ops_issues = {"food_quality", "wait_time", "service"}
             _food_complaints = any(
-                (i[0] if isinstance(i, tuple) else i.get("label","")).lower()
-                in ("food_quality", "wait_time", "service")
+                (i[0] if isinstance(i, tuple) else i.get("category", i.get("label", ""))).lower()
+                in _ops_issues
                 for i in (report.top_issues or [])[:5]
             )
-            if _labor_up and _food_complaints:
-                signals.append("Labor % is rising the same period food quality/wait complaints increased — possible understaffing causing kitchen pressure. Worth investigating connection.")
 
-            # Inventory waste up + negative reviews both rising = volume spike signal
-            _waste_up = "UP" in inventory_context
-            _neg_rising = neg > pos * 0.4 if (pos + neg) > 3 else False
-            if _waste_up and _neg_rising:
-                signals.append("Food waste and negative reviews are both elevated this week — higher-than-expected volume may be the common cause (over-ordering met by service strain).")
+            if _lab and _lab.get("direction") == "up" and _food_complaints and _enough_reviews:
+                signals.append(
+                    f"Labor moved from {_lab['from_pct']:.1f}% to {_lab['pct']:.1f}% over "
+                    f"{_lab['weeks']} weeks in the same period service and kitchen complaints "
+                    f"appeared. These moved together; that is not proof one caused the other. "
+                    f"Worth checking whether the busiest shifts are the ones the complaints name.")
 
-            # Labor trending down + review sentiment improving = scheduling optimization working
-            _labor_down = "trending DOWN" in labor_context
-            if _labor_down and pos > neg * 2 and pos >= 3:
-                signals.append("Labor costs are improving AND guest sentiment is strong — the scheduling adjustments appear to be working without hurting the guest experience.")
+            _neg_rising = _enough_reviews and neg >= _MIN_WK_RPT and neg > pos
+            if _inv and _inv.get("waste_direction") == "up" and _neg_rising:
+                signals.append(
+                    f"Waste is up {int(_inv['waste_change_pct'])}% on last week and negative "
+                    f"reviews ({neg} of {_classified} classified) outnumber positive ones in the "
+                    f"same week. Higher-than-expected volume would produce both. Check covers "
+                    f"before concluding anything.")
 
-            # Marketing performance up + no corresponding review volume increase = awareness not converting
-            _mkt_good = marketing_context and "reach+impr" in marketing_context
-            _reviews_low = report.total_reviews < 3
-            if _mkt_good and _reviews_low:
-                signals.append("Social posts are getting good reach but review volume is low — guests are seeing the content but not being prompted to leave reviews. Consider adding a review ask to post captions.")
+            if _lab and _lab.get("direction") == "down" and _enough_reviews and pos > neg * 2:
+                signals.append(
+                    f"Labor improved from {_lab['from_pct']:.1f}% to {_lab['pct']:.1f}% and guest "
+                    f"sentiment held at {pos} positive against {neg} negative — the schedule came "
+                    f"down without the guest experience following it.")
+
+            if _mkt and report.total_reviews < _MIN_WK_RPT:
+                signals.append(
+                    f"'{_mkt['best_topic']}' reached {_mkt['best_reach']} and only "
+                    f"{report.total_reviews} reviews came in this week — reach is not converting "
+                    f"into reviews. A review ask in the caption is the cheapest thing to try.")
 
             if signals:
-                correlation_context = "\n\nCross-module patterns detected (mention the most relevant one in your summary):\n" + "\n".join(f"- {s}" for s in signals)
+                correlation_context = (
+                    "\n\nCross-module observations (these are CO-MOVEMENTS, not established "
+                    "causes — if you mention one, say the two moved together, never that one "
+                    "caused the other):\n" + "\n".join(f"- {s}" for s in signals))
+        except Exception:
+            pass
+
+        # The review module's own root-cause diagnosis, if one exists. This is
+        # the difference between a digest that says "food quality was your top
+        # theme" — which the owner already knew — and one that says what most
+        # likely produced it and what would confirm that.
+        diagnosis_context = ""
+        try:
+            import review_intelligence as _ri_rpt
+            _dg = _ri_rpt.get_diagnoses(report.restaurant_id, include_stale=True)
+            if _dg:
+                _d0 = _dg[0]
+                diagnosis_context = (
+                    f"\n\nROOT-CAUSE DIAGNOSIS for the '{_d0['category'].replace('_',' ')}' cluster "
+                    f"({_d0['mention_count']} negative reviews, {_d0['confidence']} confidence):\n"
+                    f"- Most likely cause: {_d0['cause']}\n"
+                    + (f"- Alternative: {_d0['alternative_cause']}\n" if _d0.get("alternative_cause") else "")
+                    + (f"- What would confirm it: {_d0['what_would_confirm']}\n" if _d0.get("what_would_confirm") else "")
+                    + (f"- Recommended: {_d0['recommended_action']}\n" if _d0.get("recommended_action") else "")
+                    + "Use this for the ACTION line. Do not substitute a cause of your own.")
         except Exception:
             pass
 
@@ -233,20 +309,29 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
             extra_context += f"\n- {marketing_context}"
         if correlation_context:
             extra_context += correlation_context
+        if diagnosis_context:
+            extra_context += diagnosis_context
 
-        # Pull last week's stats for comparison
+        # Pull last week's stats for comparison.
+        #
+        # This read `fetched_at` — when Cavnar pulled the review — while every
+        # other review surface had moved to the guest's own time axis, and it
+        # counted soft-deleted rows that every other query excludes. On a
+        # first connect an entire multi-year history arrives stamped with one
+        # fetched_at, so "last week" was whatever happened to sync then.
         wow_context = ""
         try:
             from datetime import timedelta
-            from models import get_reviews_since, get_conn as _gc_r
+            from models import get_reviews_since, get_conn as _gc_r, REVIEW_TIME_AXIS_BARE as _AX_RPT
             from time_utils import restaurant_now_by_id
             now_chi = restaurant_now_by_id(restaurant_id or report.restaurant_id)
             last_week_start = (now_chi - timedelta(days=14)).isoformat()
             last_week_end = (now_chi - timedelta(days=7)).isoformat()
             _conn_r = _gc_r()
             last_week = _conn_r.execute(
-                """SELECT COUNT(*) as cnt, AVG(rating) as avg_r FROM reviews
-                   WHERE restaurant_id=? AND fetched_at >= ? AND fetched_at < ?""",
+                f"""SELECT COUNT(*) as cnt, AVG(rating) as avg_r FROM reviews
+                   WHERE restaurant_id=? AND deleted_at IS NULL
+                     AND {_AX_RPT} >= ? AND {_AX_RPT} < ?""",
                 (report.restaurant_id, last_week_start, last_week_end)
             ).fetchone()
             _conn_r.close()
@@ -289,7 +374,8 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
             _conn_bl = _gc_bl()
             _backlog = _conn_bl.execute(
                 """SELECT COUNT(*) as cnt FROM reviews
-                   WHERE restaurant_id=? AND response_status IN ('pending','drafted')
+                   WHERE restaurant_id=? AND deleted_at IS NULL
+                   AND response_status IN ('pending','drafted')
                    AND draft_response IS NOT NULL AND draft_response != ''""",
                 (report.restaurant_id,)
             ).fetchone()
@@ -326,19 +412,48 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
         if has_inventory: modules_active.append("Food Cost Control")
         if has_marketing: modules_active.append("Marketing Autopilot")
 
-        # Build per-module instructions — every ACTIVE module must produce a line, even with thin data
+        # Build per-module instructions.
+        #
+        # This block used to say, three separate times, that the model must
+        # write a line for every active module "even if the data section above
+        # is thin or missing for it" and must "always write something specific
+        # and useful for it". That is an instruction to manufacture prose out
+        # of a missing-data condition, in the one AI artefact that reaches the
+        # owner unattended, weekly, signed "the Cavnar AI Consultant". The
+        # figure check downstream could not catch it either: a line with no
+        # number in it — "Labor is trending up; tighten next week's schedule"
+        # — passes `unsupported_figures` clean and gets emailed.
+        #
+        # A module the client pays for that has no data this week is a real
+        # thing worth saying, and saying it is a deterministic Python string,
+        # not a generation. `_module_gap_lines` below carries those; the model
+        # is only ever asked to write about modules that actually reported.
+        _module_data = {"LABOR": bool(labor_context),
+                        "INVENTORY": bool(inventory_context),
+                        "MARKETING": bool(marketing_context)}
+        _active = {"LABOR": has_labor, "INVENTORY": has_inventory, "MARKETING": has_marketing}
         required_lines = ["REVIEWS"]
-        if has_labor: required_lines.append("LABOR")
-        if has_inventory: required_lines.append("INVENTORY")
-        if has_marketing: required_lines.append("MARKETING")
+        for key in ("LABOR", "INVENTORY", "MARKETING"):
+            if _active[key] and _module_data[key]:
+                required_lines.append(key)
+        # Active, paid for, and silent this week. The owner is told plainly
+        # rather than being handed a sentence invented about it.
+        _MODULE_GAP_COPY = {
+            "LABOR": "Labor: no shifts synced this week, so there is no labor read. Upload or reconnect your POS to get one.",
+            "INVENTORY": "Food cost: no inventory counted this week, so there is no waste read. Submit a count to get one.",
+            "MARKETING": "Marketing: no post performance recorded this week, so there is nothing to measure yet.",
+        }
+        module_gap_lines = [_MODULE_GAP_COPY[k] for k in ("LABOR", "INVENTORY", "MARKETING")
+                            if _active[k] and not _module_data[k]]
         module_instruction = f"""
 
-Active modules for this client: {", ".join(required_lines)}. You MUST output exactly these lines (plus HEADLINE and ACTION) — never skip an active module even if the data section above is thin or missing for it.
-- REVIEWS: overall rating picture, call out any multi-week trend if present, mention any urgent reviewer by name
-- LABOR (if active): state the labor % and whether it's trending up or down vs prior weeks; if no prior-week comparison is available, state the current % and that it's the first week of tracking
-- INVENTORY (if active): mention whether waste improved or worsened vs last week (% change if available), name the top waste item; if no waste data at all, state that inventory is tracking clean with no waste flagged
-- MARKETING (if active): if post performance data is available, name the best-performing topic and suggest doubling down or trying a new angle; if no performance data exists yet, suggest one concrete content idea based on what guests are saying in reviews this week
-Do NOT omit an active module's line just because its data section above is empty — always write something specific and useful for it."""
+You MUST output exactly these lines and no others (plus HEADLINE and ACTION): {", ".join(required_lines)}.
+- REVIEWS: the rating picture, any multi-week trend that carries a stated confidence, and any urgent reviewer named in the data above
+- LABOR: state the labor % and whether it is trending up or down against prior weeks, using only the figures above
+- INVENTORY: whether waste improved or worsened against last week with the % change given above, and the top waste item named above
+- MARKETING: name the best-performing topic given above and say whether to push it further or change angle
+
+Every module NOT in that list is either switched off for this client or reported no data this week. Write NO line for it. Do not infer what it might have said, do not suggest what it might show, and do not refer to it at all. A module with no data is handled outside this summary — inventing a sentence for it would be inventing a fact about this restaurant's week."""
 
         prompt = f"""You are the Cavnar AI Consultant writing a weekly digest for {restaurant_name}.
 
@@ -354,7 +469,7 @@ Today: {today_rpt}
 
 Notable reviews:{specific_reviews}
 
-Respond in EXACTLY this structure, one item per line, label followed by a colon, nothing else on the line before the colon. Output ONLY the lines listed as required in "Active modules" above (plus HEADLINE and ACTION) — do not add lines for inactive modules, and do not skip lines for active ones:
+Respond in EXACTLY this structure, one item per line, label followed by a colon, nothing else on the line before the colon. Output ONLY the lines listed above as required (plus HEADLINE and ACTION):
 
 HEADLINE: one sentence — the single most important takeaway this week, addressed to the owner by name ("{greeting},")
 REVIEWS: one short sentence on review performance this week
@@ -364,11 +479,13 @@ MARKETING: one short sentence on best-performing content or a suggested content 
 ACTION: one specific, concrete next step the owner should take this week
 
 Rules:
-- Only write lines for modules listed as active above — never write a line for an inactive module, and never skip a line for an active one, regardless of how much data is available
+- Write a line ONLY for a module listed as required above. Never write a line for a module that is not on that list, for any reason.
 - Each line is ONE sentence, plain text, no markdown, no bullets, no bold
 - Always use $ signs before dollar amounts ($2,400 not 2400)
-- Be specific with real numbers from the data above when available
-- Do not list every review — only mention a reviewer by name if they stand out
+- State no figure — a dollar amount, a percentage, a count, a rating — that does not appear in the data above. Not one.
+- Name a reviewer only from "Notable reviews" above, spelled as it is written there. Name no one if that section is empty.
+- Where a ROOT-CAUSE DIAGNOSIS is given above, the ACTION line comes from its recommendation. Never substitute a cause or a fix of your own — this system cannot confirm one.
+- Where a cross-module observation is given above, you may say the two things moved together. Never say one caused the other.
 - The ACTION line must always be present and must be concrete (a specific call, message, schedule change, or order — not vague advice)"""
 
         msg = create_with_retry(
@@ -413,8 +530,29 @@ Rules:
                 except Exception:
                     pass
                 parsed.pop(key)
+
+        # A module line the prompt did not ask for is, by construction, a line
+        # about a module with no data this week — exactly the fabrication the
+        # instruction above was rewritten to prevent. Enforced here as well as
+        # asked for, because a prompt rule is a request and this email goes
+        # out with nobody reading it first.
+        _allowed = {k.lower() for k in required_lines} | {"headline", "action"}
+        for key in [k for k in parsed if k not in _allowed]:
+            print(f"[digest] dropped {key} line — that module reported no data this week")
+            try:
+                import ops
+                ops.capture(RuntimeError(f"digest wrote a {key} line for a module with no data"),
+                            job="weekly_digest", context=f"restaurant_id={restaurant_id}")
+            except Exception:
+                pass
+            parsed.pop(key)
+
         if not parsed.get("headline"):
             raise ValueError("weekly digest headline stated figures that were not in the data")
+        # Modules the client pays for that reported nothing. Deterministic
+        # copy, never generated — see the module_instruction comment.
+        if module_gap_lines:
+            parsed["_data_gaps"] = module_gap_lines
         return parsed
     except Exception as e:
         try:
@@ -588,6 +726,15 @@ def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = No
 
     if ai_summary.get("action"):
         sections.append(report_action("This week's move", _html.escape(ai_summary["action"])))
+
+    # Modules this client pays for that reported nothing this week. The digest
+    # used to instruct the model to write a line for these anyway ("always
+    # write something specific and useful for it"), which turned a missing
+    # sync into a confident sentence about the restaurant's week. Saying so
+    # plainly is both honest and more actionable — it names the thing the
+    # owner can fix to get the module working.
+    for gap in (ai_summary.get("_data_gaps") or []):
+        sections.append(report_paragraph(_html.escape(gap)))
 
     from time_utils import restaurant_now_by_id as _rnbi_html
     week_label = (_rnbi_html(restaurant_id or report.restaurant_id)

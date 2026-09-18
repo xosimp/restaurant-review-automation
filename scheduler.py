@@ -1260,6 +1260,64 @@ def run_daily_alert_checks():
     return out
 
 
+def run_review_diagnoses():
+    """Daily — produce the root-cause read for each restaurant's biggest
+    complaint clusters.
+
+    This is the step the Reviews module never took. It could tell an owner
+    "food quality is your most-mentioned complaint (11)" — which they already
+    knew — and had no code that went further. review_intelligence.diagnose
+    takes each cluster, the reviews behind it, and what the other modules
+    recorded over the same period, and produces a cited cause with an
+    alternative explanation and a way to tell them apart.
+
+    It runs here, on a schedule, rather than on a page load: it is a Sonnet
+    call per cluster, and putting that on the critical path of opening a tab
+    would make the tab slow and the bill large for an answer that changes on
+    the timescale of days. The insight endpoint and the weekly digest both
+    READ what this writes.
+
+    Per restaurant in its own try, for the same reason every other sweep in
+    this file is: one restaurant's failure must not cost the rest theirs.
+    """
+    from models import get_conn, get_restaurant
+    import review_intelligence as ri
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT id FROM restaurants WHERE module_reviews=1 "
+        "AND COALESCE(billing_status,'trial') IN ('trial','active')"
+    ).fetchall()
+    conn.close()
+    done, failed, skipped = 0, 0, 0
+    for row in rows:
+        rid = row["id"]
+        try:
+            r = get_restaurant(rid)
+            # A restaurant whose AI budget is spent gets no diagnosis rather
+            # than a failed call per cluster — create_with_retry would refuse
+            # each one individually and we would pay three exceptions for it.
+            if r and getattr(r, "ai_budget_exceeded", False):
+                skipped += 1
+                continue
+            produced = ri.diagnose(rid)
+            if produced:
+                done += 1
+                # A fresh cause makes every cached insight for this
+                # restaurant out of date — it is the thing the insight is now
+                # built around.
+                try:
+                    from client_api import invalidate_insight_cache
+                    invalidate_insight_cache(rid)
+                except Exception:
+                    pass
+        except Exception as e:
+            failed += 1
+            log.error(f"Review diagnosis failed for restaurant {rid}: {e}")
+            _ops.capture(e, job="review_diagnoses", context=f"restaurant_id={rid}")
+    log.info(f"Review diagnoses: {done} produced, {skipped} skipped, {failed} failed")
+    return {"diagnosed": done, "skipped": skipped, "failed": failed}
+
+
 def run_monthly_summaries():
     """1st of the month, 9am — the monthly summary email to active clients."""
     from emails import send_monthly_summary_email
@@ -1377,6 +1435,12 @@ def scheduler_loop():
             if now.hour == 10 and _ops.claim_period("daily_alerts", str(today)):
                 log.info("Running daily alert checks...")
                 _ops.run_job("daily_alerts", run_daily_alert_checks)
+
+            # 6am daily — root-cause diagnoses, before the owner opens the app
+            # and before the 9am weekly digest reads them.
+            if now.hour == 6 and _ops.claim_period("review_diagnoses", str(today)):
+                log.info("Running review root-cause diagnoses...")
+                _ops.run_job("review_diagnoses", run_review_diagnoses)
 
             # 1st of the month at 9am — send monthly summary to all active clients
             if now.day == 1 and now.hour == 9 and _ops.claim_period("monthly_summary", str(today)):

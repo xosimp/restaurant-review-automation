@@ -777,12 +777,79 @@ def review_insight_api(current_user):
     return jsonify(**insight), status
 
 
+def _verify_named_entities(generated: str, context: str) -> list:
+    """Capitalised names in generated text that were never in its input.
+
+    The `Do today` line's own worked example is "Respond to Amanda L.s 1-star
+    review about cold food" — a guest named by name. The urgent-excerpt query
+    selected `text` and not `author`, so no guest name reached the prompt at
+    all, and the model was shown a demonstration of naming a person while
+    holding no people to name. `verify_figures` could not catch it: a
+    fabricated name is not a figure.
+
+    Deliberately narrow. It matches a capitalised word only where the prose
+    treats it as a person or a place — after a preposition or a possessive,
+    or followed by a surname initial — so ordinary sentence-initial
+    capitalisation and the platform names the prompt always carries do not
+    trip it.
+    """
+    import re as _re_n
+    known = {w.lower() for w in _re_n.findall(r"[A-Za-z][\w'-]+", context or "")}
+    # Words that are capitalised in ordinary prose and are never a guest.
+    _SKIP = {"google", "yelp", "monday", "tuesday", "wednesday", "thursday",
+             "friday", "saturday", "sunday", "january", "february", "march",
+             "april", "may", "june", "july", "august", "september", "october",
+             "november", "december", "cavnar", "respond", "review", "reviews"}
+    out = []
+    patterns = (
+        r"\b(?:from|by|to|for|with)\s+([A-Z][a-z]{2,})\b",   # "respond to Amanda"
+        r"\b([A-Z][a-z]{2,})\s+[A-Z]\.",                       # "Amanda L."
+        r"\b([A-Z][a-z]{2,})'s\b",                             # "Amanda's review"
+    )
+    for pat in patterns:
+        for m in _re_n.finditer(pat, generated or ""):
+            name = m.group(1)
+            low = name.lower()
+            if low in _SKIP or low in known or name in out:
+                continue
+            out.append(name)
+    return out
+
+
 def _do_review_insight(rid):
-    """Shared by the web route above and mobile_api.py's own /reviews/insight —
-    one AI-prompt implementation behind both surfaces, same cache."""
+    """The Reviews module's AI read — shared by the web route above and
+    mobile_api.py's own /reviews/insight.
+
+    This used to be a summariser wearing a consultant's voice. Every
+    substantive claim in its output had already been computed in Python before
+    the model was called — `trend_str`, `persist_str`, `wow_str`, `issues_str`
+    — so the model's whole remaining job was to rephrase four pre-formed
+    strings at twenty words each. The deterministic pre-computation was good
+    work, and it is still here; what was missing was the step after it.
+
+    Three things changed:
+
+      * The model is now handed the DIAGNOSIS (review_intelligence.diagnose) —
+        a stored, evidence-cited root cause with an alternative explanation and
+        a way to tell them apart — and the operational figures from the other
+        modules, and is asked to connect them. It is reasoning over evidence
+        rather than restating a sentence it was given.
+      * Every claim carries a kind (ai_guard.CLAIM_KINDS) and the trend carries
+        a real confidence (waste_trend's slope-agreement scorer), so a measured
+        figure, an inference and a forecast stop arriving as three identical
+        lines.
+      * Guest names are now IN the prompt, and a name in the output that was
+        not in the prompt is caught and flagged, the way an unsupported figure
+        already was.
+
+    The whole payload is cached, not just the insight string — the caveat
+    flags used to be computed fresh and then thrown away on every cache hit,
+    so the warning showed once and silently vanished for the next five
+    minutes.
+    """
     cached = _cache_get("review-insight:" + str(rid))
     if cached:
-        return {"insight": cached}, 200
+        return (dict(cached) if isinstance(cached, dict) else {"insight": cached}), 200
     try:
         import os, json, anthropic as _anth
         from models import get_restaurant, get_review_stats, get_top_issues
@@ -807,7 +874,7 @@ def _do_review_insight(rid):
         # one bar. Soft-deleted rows are excluded here too; every other
         # review query already excludes them, so the AI passage was the one
         # surface still describing reviews the owner had removed.
-        _AXIS = "COALESCE(NULLIF(review_date,''), fetched_at)"
+        from models import REVIEW_TIME_AXIS_BARE as _AXIS
         weekly_rows = _conn_ri.execute(f"""
             SELECT strftime('%Y-W%W', {_AXIS}) as week,
                    COUNT(*) as cnt,
@@ -851,11 +918,15 @@ def _do_review_insight(rid):
                 cats = []
             for cat in cats:
                 topic_weeks.append({"category": cat, "week": row["week"]})
-        urgent_rows = _conn_ri.execute("""
-            SELECT text FROM reviews
+        # `author` and `id` travel with the text now. Without them the prompt
+        # held no guest names at all while its own worked example named one,
+        # and the model's only way to satisfy "never generic" was to make a
+        # name up. See _verify_named_entities above.
+        urgent_rows = _conn_ri.execute(f"""
+            SELECT id, author, rating, text FROM reviews
             WHERE restaurant_id=? AND deleted_at IS NULL AND urgency='high'
               AND response_status NOT IN ('posted','skipped')
-            ORDER BY fetched_at DESC LIMIT 2
+            ORDER BY {_AXIS} DESC LIMIT 2
         """, (rid,)).fetchall()
         _conn_ri.close()
 
@@ -904,40 +975,177 @@ def _do_review_insight(rid):
         if persistent:
             persist_str = f"Recurring complaints (2+ weeks): {', '.join(persistent[:3])}."
 
-        urgent_texts = "; ".join(f'"{r["text"][:80]}"' for r in urgent_rows) if urgent_rows else "none"
+        # Urgent reviews now reach the prompt with the guest's first name and
+        # the review id, so "respond to X about Y" can name a real person.
+        def _first_name(raw):
+            parts = (raw or "").strip().split()
+            first = parts[0] if parts else ""
+            return first if len(first) > 1 and first.lower() not in (
+                "a", "an", "the", "anonymous", "user", "google", "yelp", "local") else ""
+        _urgent_lines = []
+        for r in urgent_rows:
+            who = _first_name(r["author"]) or "an unnamed guest"
+            _urgent_lines.append(f'#{r["id"]} {who} ({r["rating"]}★): "{(r["text"] or "")[:110]}"')
+        urgent_texts = "; ".join(_urgent_lines) if _urgent_lines else "none"
         issues_str = ", ".join(f"{i['label']} ({i['count']})" for i in top_issues) if top_issues else "no data"
-        owner_name = restaurant.owner_name if restaurant else None
         rest_name  = restaurant.name if restaurant else "this restaurant"
-        name_line  = f"Owner: {owner_name}" if owner_name else ""
-        trend_block = (f"4-week trend: {trend_str}\n" if trend_str else "") + (f"Persistent issues: {persist_str}\n" if persist_str else "")
-        has_trend = bool(trend_str)
-        format_count = "4" if has_trend else "3"
+
+        # ── The consultant's evidence pack ──────────────────────────────────
+        #
+        # Everything below is the step the module never took. The old prompt
+        # was handed four pre-written sentences (trend_str, persist_str,
+        # wow_str, issues_str) and asked to rephrase them in twenty words
+        # each; this one is handed the evidence those sentences were written
+        # from, plus what the other modules recorded over the same period,
+        # plus a stored root-cause diagnosis that had to cite real review ids
+        # to exist at all.
+        import review_intelligence as _ri
+        _trend = _ri.rating_trend(rid)
+        _ops_ctx = _ri.operational_context(rid)
+        _money = _ri.revenue_at_risk(rid)
+        _bench = _ri.competitor_benchmark(rid)
+        _sev = _ri.severity_breakdown(rid)
+        _parts = _ri.daypart_breakdown(rid)
+        _locs = _ri.location_comparison(rid)
+        # Diagnoses are READ here, not generated — generating would put a
+        # Sonnet call per cluster on the critical path of every tab open. The
+        # scheduler refreshes them daily; this reads whatever is current,
+        # stale ones included, because a stale cause beats no cause and it
+        # carries its own age.
+        _diags = _ri.get_diagnoses(rid, include_stale=True)
+
+        _ev = []
+        if _trend["direction"]:
+            _ev.append(f"Rating {_trend['direction']} {_trend['first']}★ to {_trend['latest']}★ "
+                       f"across {_trend['weeks_above_floor']} weeks that clear the "
+                       f"{_trend['min_reviews_per_week']}-review floor "
+                       f"({_trend['confidence']} confidence).")
+        elif _trend["reason"]:
+            _ev.append(f"No rating direction: {_trend['reason']}.")
+        for a in _trend["anomalies"][:2]:
+            _ev.append(f"Week {a['week']} sat outside the series ({a['kind']}, "
+                       f"{a['avg_rating']}★ on {a['count']} reviews).")
+        if persist_str:
+            _ev.append(persist_str)
+        _open_sev = [t for t in _sev["tiers"] if t["open"] > 0
+                     and t["key"] in ("safety", "legal", "operational")]
+        if _open_sev:
+            _ev.append("Open by severity: " + ", ".join(
+                f"{t['open']} {t['label'].lower()}" for t in _open_sev) + ".")
+        _hot_days = [d for d in _parts["by_weekday"] if d["negative_pct"] is not None][:2]
+        if _hot_days:
+            _ev.append("Worst weekdays by negative share: " + ", ".join(
+                f"{d['weekday']} {d['negative_pct']}% of {d['total']}" for d in _hot_days) + ".")
+        _hot_parts = [d for d in _parts["by_daypart"] if d["negative_pct"] is not None][:2]
+        if _hot_parts:
+            _ev.append("By daypart: " + ", ".join(
+                f"{d['daypart'].replace('_',' ')} {d['negative_pct']}% of {d['total']}"
+                for d in _hot_parts) + ".")
+        if _bench.get("available") and _bench.get("gap_vs_median") is not None:
+            _ev.append(f"Against the {_bench['competitor_count']} competitors Intel tracks: "
+                       f"you are {_bench['our_rating_90d']}★ over 90 days vs a "
+                       f"{_bench['competitor_median']}★ median "
+                       f"({_bench['gap_vs_median']:+.2f}), intel as of {_bench.get('as_of') or 'unknown'}.")
+        if _locs.get("available") and _locs.get("outlier_themes"):
+            _o = _locs["outlier_themes"][0]
+            _ev.append(f"Across your locations, {_o['category'].replace('_',' ')} is "
+                       f"{int(_o['our_share']*100)}% of this location's complaints vs "
+                       f"{int(_o['peer_share']*100)}% at the others.")
+        if _money.get("available"):
+            _ev.append(f"Revenue implication of the {_money['rating_delta']:+.2f}-star 30-day move: "
+                       f"${abs(_money['monthly_low']):,} to ${abs(_money['monthly_high']):,} a month "
+                       f"{'at risk' if _money['direction']=='at_risk' else 'of upside'}, "
+                       f"on {_money['sales_source']}. A forecast from a published range, not a measurement.")
+        evidence_block = "\n".join(f"- {e}" for e in _ev) if _ev else "- (nothing above the evidence floor)"
+
+        ops_block = _ri._operational_block(_ops_ctx)
+
+        if _diags:
+            _d = _diags[0]
+            diag_block = (
+                f"Theme: {_d['category'].replace('_',' ')} ({_d['mention_count']} negative reviews)\n"
+                f"Most likely cause: {_d['cause']}\n"
+                f"Alternative: {_d['alternative_cause'] or 'none offered'}\n"
+                f"How to tell them apart: {_d['what_would_confirm'] or 'not established'}\n"
+                f"Recommended: {_d['recommended_action'] or 'none'}\n"
+                f"Confidence: {_d['confidence']} | rests on reviews "
+                + ", ".join("#" + str(i) for i in _d['evidence_review_ids'][:5])
+                + (f" | produced {int(_d['age_hours'])}h ago" if _d.get("age_hours") is not None else ""))
+        else:
+            diag_block = ("(No root-cause diagnosis exists yet - either no complaint cluster "
+                          "clears the evidence floor, or the diagnosis pass has not run. Do NOT "
+                          "invent a cause. Say what the reviews show and stop.)")
+
+        has_trend = bool(_trend["direction"] in ("improving", "declining")
+                         and _trend["confidence"] in ("high", "medium"))
+        has_diag = bool(_diags)
         forecast_line = (
-            "\n\U0001f52e Next week: [1 sentence predicting where the rating/negative-review "
-            "trend is headed if it continues, based on the 4-week trend above.]"
+            "\n\U0001f52e Next week: [1 sentence on where the rating trend is headed IF it "
+            "continues. Say 'if nothing changes'. This is a projection, not a measurement.]"
         ) if has_trend else ""
+        why_line = (
+            "\n\U0001f50d Why: [1-2 sentences naming the most likely OPERATIONAL cause from the "
+            "DIAGNOSIS block, what else it could be, and the one thing that would tell them "
+            "apart. Use that diagnosis - do not substitute a different cause.]"
+        ) if has_diag else ""
+        from ai_guard import UNTRUSTED_NOTE as _UN_RI
         prompt = (
-            f"You are a restaurant reputation assistant. Output ONLY a {format_count}-line snapshot.\n\n"
-            f"Restaurant: {rest_name} | Today: {today_str}\n"
-            f"Data: {rstats['total']} reviews | {rstats['avg_rating']}★ avg | "
-            f"{rstats['positive']} pos / {rstats['negative']} neg / {rstats['neutral']} neutral | "
-            f"{rstats['urgent']} urgent | response rate {rstats['response_rate']}%\n"
-            f"Top topics: {issues_str} | {wow_str}\n"
-            f"{trend_block}"
-            f"Urgent excerpts: {urgent_texts}\n\n"
-            f"Return EXACTLY this format — {format_count} lines:\n"
-            "\U0001f4ca This week: [1 punchy sentence on the most important number or multi-week trend. Be specific.]\n"
-            "\u26a0\ufe0f Watch: [1 sentence on the biggest risk — multi-week declining trend, recurring complaint, rising negative %, or urgent review. Skip if nothing notable.]\n"
-            "\u2705 Do today: [1 concrete action — e.g. 'Respond to Amanda L.s 1-star review about cold food.' Never generic.]"
-            f"{forecast_line}\n\n"
-            "Rules: no markdown, no extra lines, no preamble. Each line max 20 words. Never invent data. Prioritize multi-week trends over single-week blips."
+            "You are an experienced restaurant operations consultant writing the daily read on "
+            "this restaurant's reviews. You are not a summariser: the owner can already see their "
+            "counts and their star average on the same screen. Your value is the step after the "
+            "count - what it means operationally, how sure you are, and what to do about it.\n\n"
+            f"{_UN_RI}\n\n"
+            f"Restaurant: {rest_name} | Today: {today_str}\n\n"
+            "MEASURED (read from the database - these are facts):\n"
+            f"- {rstats['total']} reviews all time, {rstats['avg_rating']} star lifetime average\n"
+            f"- {rstats['positive']} positive / {rstats['negative']} negative / "
+            f"{rstats['neutral']} neutral of {rstats['classified']} analysed"
+            + (f" ({rstats['unanalysed']} not yet analysed, so the split covers less than the total)"
+               if rstats.get("unanalysed") else "") + "\n"
+            f"- {rstats['urgent']} urgent and unresolved | response rate {rstats['response_rate']}%\n"
+            f"- Topics guests raise: {issues_str}\n"
+            + (f"- {wow_str}\n" if wow_str else "")
+            + f"- Urgent reviews awaiting a reply: {urgent_texts}\n\n"
+            "DERIVED (computed from those facts, each carrying its own confidence):\n"
+            f"{evidence_block}\n\n"
+            "WHAT THE OTHER MODULES RECORDED OVER THE SAME PERIOD:\n"
+            f"{ops_block}\n\n"
+            "DIAGNOSIS (a stored root-cause pass over the largest complaint cluster):\n"
+            f"{diag_block}\n\n"
+            "EVIDENCE RULES - these bound what you may claim:\n"
+            "- State no figure that does not appear above. Not a dollar amount, not a percentage, "
+            "not a count, not a rating.\n"
+            "- Name a guest ONLY from the urgent-review list above, using the name exactly as it "
+            "is written there. If that list says 'none', name no one at all.\n"
+            "- You may connect reviews to another module's figure ONLY by naming that figure. If "
+            "the other-modules section says there is no data, you have no operational evidence - "
+            "say what the reviews show and stop there.\n"
+            "- Never assert a cause that is not in the DIAGNOSIS block. If there is no diagnosis, "
+            "there is no cause for you to state.\n"
+            "- Keep measured, inferred and projected apart. A confidence level given above travels "
+            "with the claim it belongs to: if a trend is low confidence, say so rather than "
+            "stating it flat.\n"
+            "- Prioritise a multi-week pattern over a single-week blip, and a serious complaint "
+            "over a merely frequent one.\n\n"
+            "Return EXACTLY these lines, in this order, no markdown, no preamble, no extra lines:\n"
+            "\U0001f4ca This week: [1 sentence on the most important MEASURED fact. Max 22 words.]"
+            f"{why_line}\n"
+            "\u26a0\ufe0f Watch: [1 sentence on the biggest risk and how confident you are in it. "
+            "Omit this line entirely if nothing clears the evidence floor. Max 22 words.]\n"
+            "\u2705 Do today: [1 concrete action a manager can start this shift with the staff and "
+            "menu they already have. If a guest is named above, name them. Never generic. Max 22 words.]"
+            f"{forecast_line}"
         )
 
         from ai_utils import create_with_retry, extract_text
         msg = create_with_retry(
             _client_ri,
-            model=os.getenv("CLAUDE_MODEL","claude-haiku-4-5-20251001"),
-            max_tokens=260,
+            # A consultant's read is worth a bigger model than a rephrase was.
+            # Haiku was adequate when the job was restating four pre-written
+            # sentences; connecting a complaint cluster to a labor figure and
+            # saying how sure it is, is not that job.
+            model=os.getenv("REVIEW_INSIGHT_MODEL", "claude-sonnet-5"),
+            max_tokens=520,
             messages=[{"role":"user","content":prompt}],
             restaurant_id=rid,
             action="review_insight",
@@ -951,17 +1159,85 @@ def _do_review_insight(rid):
         # rather than dropped — this is on-screen text the owner is reading
         # now, so it carries a flag instead of a hole — but the flag is what
         # lets the UI stop presenting an unverified number as a fact.
-        from ai_guard import verify_figures
+        from ai_guard import verify_figures, CLAIM_KINDS
         _unsupported = verify_figures(insight, prompt, "review_insight", rid)
-        _cache_set("review-insight:" + str(rid), insight)
-        return {"insight": insight, "figures_verified": not _unsupported,
-                "unsupported_figures": _unsupported}, 200
+        # A name the model wrote that was never in its input. verify_figures
+        # cannot see this — a fabricated guest is not a figure — and it is the
+        # most damaging thing this passage can get wrong, because the whole
+        # premise of the panel is that Cavnar has read the reviews.
+        _invented_names = _verify_named_entities(insight, prompt)
+        if _invented_names:
+            try:
+                import ops as _ops_ri
+                _ops_ri.capture(
+                    RuntimeError(f"review_insight named {_invented_names[:3]} — not in its input"),
+                    job="review_insight", context=f"restaurant_id={rid}")
+            except Exception:
+                pass
+
+        # What kind of claim each part of this payload is making.
+        # ai_guard.CLAIM_KINDS was written for exactly this and is already
+        # shipped by Intel and Food Cost; Reviews sent a measured figure, an
+        # inference and a projection as three identical lines of prose.
+        _kinds = {"this_week": "measured", "watch": "inferred",
+                  "do_today": "suggestion", "rating_trend": "computed",
+                  "severity_breakdown": "measured", "dayparts": "measured"}
+        if has_diag:
+            _kinds["why"] = "inferred"
+        if has_trend:
+            _kinds["next_week"] = "forecast"
+        if _money.get("available"):
+            _kinds["revenue_at_risk"] = "forecast"
+        if _bench.get("available"):
+            _kinds["benchmark"] = "measured"
+        _kinds = {k: v for k, v in _kinds.items() if v in CLAIM_KINDS}
+
+        payload = {
+            "insight": insight,
+            "figures_verified": not _unsupported,
+            "unsupported_figures": _unsupported,
+            "names_verified": not _invented_names,
+            "unsupported_names": _invented_names,
+            "claim_kinds": _kinds,
+            "confidence": _trend.get("confidence"),
+            "trend": {k: _trend[k] for k in
+                      ("direction", "confidence", "change", "first", "latest",
+                       "weeks_above_floor", "reason", "anomalies")},
+            "diagnosis": _diags[0] if _diags else None,
+            "diagnoses": _diags[:3],
+            "revenue_at_risk": _money,
+            "benchmark": _bench,
+            "severity": _sev,
+            "dayparts": _parts,
+            "locations": _locs,
+            "operational_context": _ops_ctx,
+            "generated_at": datetime.utcnow().isoformat(timespec="seconds"),
+            "stale": False,
+        }
+        # The WHOLE payload is cached now, not just the insight string.
+        # Caching the string meant every caveat — unverified figures,
+        # unverified names, the trend's confidence, the diagnosis's own age —
+        # was computed, rendered once, and then silently dropped for the next
+        # five minutes while the text it qualified kept being shown.
+        _cache_set("review-insight:" + str(rid), payload)
+        return payload, 200
     except Exception as _re:
         import traceback
         print(f"[review-insight ERROR] {_re}\n{traceback.format_exc()}")
         stale = _insight_cache.get("review-insight:" + str(rid))
         if stale:
-            return {"insight": stale[1]}, 200
+            # This path deliberately bypasses the TTL — a stale read beats no
+            # read — so it has to say how old it is. ai_guard.freshness exists
+            # for exactly this: text written some time ago read identically to
+            # text written this morning, because the claims never carried a
+            # date. stale_after_days=0 because anything on this path is, by
+            # definition, past its window.
+            from ai_guard import freshness as _fresh_ri
+            body = stale[1]
+            out = dict(body) if isinstance(body, dict) else {"insight": body}
+            out.update(_fresh_ri(stale[0].isoformat(timespec="seconds"), stale_after_days=0))
+            out["stale"] = True
+            return out, 200
         return {"insight": "Analysis unavailable — check back shortly.", "error": str(_re)}, 500
 
 def _do_recent_topics(rid):
@@ -5309,7 +5585,11 @@ def _do_ai_visibility_inner(rid, force=False):
     # 1/2/4/5/6.
     _rconn = get_conn()
     recent_reviews = _rconn.execute(
-        "SELECT COUNT(*) FROM reviews WHERE restaurant_id=? AND processed=1 AND deleted_at IS NULL AND fetched_at >= datetime('now','-30 days')",
+        # On the guest's own axis: a first connect stamps an entire multi-year
+        # history with one fetched_at, which would read here as thirty days of
+        # a "steady, current review stream" that in fact stopped years ago.
+        "SELECT COUNT(*) FROM reviews WHERE restaurant_id=? AND processed=1 AND deleted_at IS NULL "
+        "AND COALESCE(NULLIF(review_date,''), fetched_at) >= datetime('now','-30 days')",
         (rid,)
     ).fetchone()[0] or 0
     _rconn.close()

@@ -57,4 +57,30 @@ struct CavnarCaveat: View {
         }
         return CavnarCaveat(title: "Unverified numbers", detail: detail)
     }
+
+    /// A name the passage used that was never in the data behind it.
+    ///
+    /// The figure check cannot catch this — a fabricated guest is not a
+    /// figure — and it is the most damaging thing an AI read of someone's
+    /// reviews can get wrong, because the entire premise of the panel is
+    /// that Cavnar has actually read them.
+    static func unverifiedNames(_ names: [String]) -> CavnarCaveat {
+        let who = names.isEmpty ? "a name here"
+            : "\(names.prefix(2).joined(separator: ", "))"
+        return CavnarCaveat(
+            title: "Unverified name",
+            detail: "Cavnar couldn't match \(who) to a reviewer in your data. Open the review before acting on this."
+        )
+    }
+
+    /// The last read Cavnar completed, rather than a fresh one. Shown rather
+    /// than hidden: a stale read beats no read, but it must not be presented
+    /// as current — the whole reason ai_guard.freshness exists.
+    static func olderRead(asOf: String?) -> CavnarCaveat {
+        CavnarCaveat(
+            title: "Older read",
+            detail: asOf.map { "This is the last read Cavnar finished, from \($0). A fresh one is on the way." }
+                ?? "This is the last read Cavnar finished. A fresh one is on the way."
+        )
+    }
 }

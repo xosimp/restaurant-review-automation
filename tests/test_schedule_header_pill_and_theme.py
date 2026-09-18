@@ -288,8 +288,18 @@ def test_the_cavnar_read_card_is_on_the_reviews_tab():
     assert 'class="lb2-ai"' in panel
     fn = _fn("loadReviewInsight")
     assert "fetch('/api/review-insight')" in fn
-    # the unverified-numbers caveat still rides on it
-    assert "applyFigureCaveat(el,d)" in fn
+    # Every caveat the server attaches rides on it — unverified figures,
+    # unverified names and staleness now go through one call.
+    assert "applyInsightCaveats(el,d)" in fn
+    caveats = _fn("applyInsightCaveats")
+    assert "applyFigureCaveat(el,d)" in caveats
+    assert "names_verified" in caveats
+    # And the root-cause card, which is the point of the endpoint now: a
+    # snapshot the owner can already read off their own screen is not worth
+    # an AI call, and restating one was all this card used to do.
+    assert "renderDiagnosis(d)" in fn
+    assert "renderSeverityStrip(d)" in fn
+    assert 'id="review-diagnosis"' in panel
 
 
 def test_reviews_kicker_and_inbox_label_match_food_costs_bumped_size():

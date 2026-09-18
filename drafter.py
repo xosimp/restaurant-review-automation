@@ -7,25 +7,27 @@ client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 
 def get_approved_examples(restaurant_id: int, limit: int = 4) -> str:
-    """Pull recent approved responses to learn the owner's style."""
+    """The style block, built from models.get_approved_examples.
+
+    There used to be two independent implementations of "find this owner's
+    approved replies": this one, with its own SQL, and models.get_approved_
+    examples, which draft_pending() actually calls. Because draft_pending
+    always passes its result down as `approved_examples`, the SQL here was
+    unreachable on the production path — so the two could drift and only the
+    dead one would show it. One query, one definition of what an approved
+    example is; this function now only formats.
+    """
     try:
-        conn = get_conn()
-        rows = conn.execute("""
-            SELECT rating, text, draft_response FROM reviews
-            WHERE restaurant_id=? AND response_status IN ('approved','posted')
-            AND draft_response IS NOT NULL AND draft_response != ''
-            ORDER BY id DESC LIMIT ?
-        """, (restaurant_id, limit)).fetchall()
-        conn.close()
+        from models import get_approved_examples as _fetch
+        rows = _fetch(restaurant_id, limit=limit) or []
         if not rows:
             return ""
-        lines = []
-        for i, row in enumerate(rows, 1):
-            lines.append(
-                f'Example {i} ({row["rating"]}★): '
-                f'Review: "{row["text"][:100]}" → '
-                f'Response: "{row["draft_response"]}"'
-            )
+        lines = [
+            f'Example {i} ({e["rating"]}★): '
+            f'Review: "{(e.get("review") or "")[:100]}" → '
+            f'Response: "{e.get("response") or ""}"'
+            for i, e in enumerate(rows, 1)
+        ]
         return "\nApproved response examples — match this owner's exact tone and style:\n" + "\n".join(lines) + "\n"
     except Exception:
         return ""

@@ -571,6 +571,53 @@ def _read_review_trends(restaurant_id, weeks=8, days=90):
     }
 
 
+def _read_review_diagnosis(restaurant_id):
+    """Why the complaints are happening, not just what they are.
+
+    read_review_trends answers "is it getting worse" and "what do they talk
+    about". This answers the question after that — the likely operational
+    cause of the biggest complaint clusters, what else it could be, and what
+    would tell the two apart — which nothing in this product could answer
+    before review_intelligence existed.
+
+    Reads stored diagnoses; it never generates one, because a tool call
+    inside a chat turn is the worst place to start a per-cluster Sonnet pass.
+    """
+    import review_intelligence as _ri
+    try:
+        diagnoses = _ri.get_diagnoses(restaurant_id, include_stale=True)
+    except Exception:
+        diagnoses = []
+    try:
+        clusters = _ri.complaint_clusters(restaurant_id)
+    except Exception:
+        clusters = []
+    if not diagnoses and not clusters:
+        return {"has_diagnosis": False,
+                "note": "No complaint cluster clears the evidence floor yet — there are not "
+                        "enough negative reviews on one theme to say what is causing them. "
+                        "Say that rather than offering a cause."}
+    try:
+        money = _ri.revenue_at_risk(restaurant_id)
+    except Exception:
+        money = {"available": False}
+    return {
+        "has_diagnosis": bool(diagnoses),
+        "diagnoses": diagnoses[:3],
+        # The clusters behind them, so a question about a theme with no
+        # diagnosis still gets the concentration and the guests' own words.
+        "clusters": [{k: c[k] for k in ("category", "mentions", "avg_rating", "dish",
+                                        "role", "daypart", "weekday", "weekday_pair",
+                                        "worst_severity", "complaints", "review_ids")}
+                     for c in clusters[:3]],
+        "revenue_at_risk": money if money.get("available") else
+            {"available": False, "reason": money.get("reason")},
+        "note": ("Every cause here cites the review ids it rests on and offers an "
+                 "alternative explanation. Quote the cause, the alternative and what would "
+                 "confirm it — never present one as settled."),
+    }
+
+
 def _read_ai_visibility(restaurant_id):
     """Whether this restaurant shows up when someone asks an AI where to eat.
 
@@ -970,6 +1017,22 @@ TOOLS = [
             "input_schema": {"type": "object", "properties": {
                 "weeks": {"type": "integer", "description": "Weeks of sentiment history (default 8)."},
                 "days": {"type": "integer", "description": "Window for topics (default 90)."}}},
+        },
+    },
+    {
+        "kind": "read",
+        "fn": _read_review_diagnosis,
+        "module": "module_reviews",
+        "spec": {
+            "name": "read_review_diagnosis",
+            "description": (
+                "WHY guests are complaining — the likely operational cause behind the biggest "
+                "complaint clusters, an alternative explanation, what would tell them apart, "
+                "and the reviews each cause rests on. Call this for any 'why', 'what's causing', "
+                "'what should I fix' or 'how do I stop this' question about reviews. "
+                "read_review_trends gives direction and topics; this gives the diagnosis."
+            ),
+            "input_schema": {"type": "object", "properties": {}},
         },
     },
     {
