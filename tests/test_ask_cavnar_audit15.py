@@ -520,5 +520,95 @@ def test_the_business_snapshot_reports_every_module_it_actually_read(db_path, mo
         {"has_data": True, "modules_consulted": ["reviews", "food_cost", "labor"]}))
 
     _a, _t, _p, meta = ask_cavnar.ask_with_tools(r, "why did profits drop?")
-    assert set(meta["modules_consulted"]) >= {"reviews", "food_cost", "labor"}
+    assert set(meta["modules_consulted"]) == {"reviews", "food_cost", "labor"}
+    assert ask_cavnar._ACROSS_LABEL not in meta["modules_consulted"], \
+        "the stand-in label is redundant once the real modules are known"
     assert meta["confidence"] == "high", "a genuine cross-module read is not single-module"
+
+
+def test_untrusted_markers_never_reach_the_owners_screen(db_path, monkeypatch):
+    """Review text reaches the model fenced between markers, and a model
+    quoting a guest verbatim can carry the fence out with the quote. On
+    screen that reads as a bug."""
+    r = _restaurant(db_path)
+    from ai_guard import UNTRUSTED_OPEN, UNTRUSTED_CLOSE
+    monkeypatch.setattr(ask_cavnar, "build_context", lambda rest: "REVIEWS\n")
+    monkeypatch.setattr(ask_cavnar, "create_with_retry", lambda client, **kw: _reply(
+        f'One guest wrote: {UNTRUSTED_OPEN}\nthe patio was freezing\n{UNTRUSTED_CLOSE}'))
+
+    answer, _t, _p, _m = ask_cavnar.ask_with_tools(r, "what are people saying?")
+    assert "UNTRUSTED_GUEST_TEXT" not in answer
+    assert "the patio was freezing" in answer
+
+
+def test_stripping_markers_leaves_an_ordinary_answer_untouched():
+    text = "Labor is 22.4% — under your target.\n\n- Friday runs leanest"
+    assert ask_cavnar._strip_leaked_markers(text) == text
+
+
+# ── prompt caching has to be BILLED, not just enabled ─────────────────────
+
+def test_cache_tokens_are_priced_into_the_call(db_path):
+    """Cache writes cost 1.25x the input rate and reads 0.1x, and neither is
+    included in `input_tokens`. With Ask caching ~9,600 tokens of tools and
+    static prompt, a cache write was a real charge the ledger recorded as
+    nothing — and ai_budget_exceeded sums that ledger, so the daily and
+    monthly ceilings were being enforced against an understated figure."""
+    import ai_utils
+    base = ai_utils._estimate_cost("claude-sonnet-5", 1000, 100)
+    with_write = ai_utils._estimate_cost("claude-sonnet-5", 1000, 100,
+                                         cache_write_tokens=10_000)
+    with_read = ai_utils._estimate_cost("claude-sonnet-5", 1000, 100,
+                                        cache_read_tokens=10_000)
+    assert with_write > base, "a cache write is a real charge"
+    assert with_read > base, "a cache read is cheap, not free"
+    assert with_read < with_write, "reading a cache must cost far less than writing it"
+
+
+def test_a_cache_read_is_far_cheaper_than_paying_full_price(db_path):
+    """The whole point. If this ever inverts, caching is costing money."""
+    import ai_utils
+    uncached = ai_utils._estimate_cost("claude-sonnet-5", 10_000, 0)
+    cached = ai_utils._estimate_cost("claude-sonnet-5", 0, 0, cache_read_tokens=10_000)
+    assert cached < uncached / 5
+
+
+def test_cache_usage_is_recorded_against_the_restaurant(db_path, monkeypatch):
+    """A cache that silently stops hitting is an expensive regression nothing
+    would otherwise surface."""
+    import ai_utils
+    r = _restaurant(db_path)
+    ai_utils.log_ai_usage(r.id, "ask_cavnar", "claude-sonnet-5", 500, 120,
+                          db_path=db_path, cache_write_tokens=9000, cache_read_tokens=0)
+    ai_utils.log_ai_usage(r.id, "ask_cavnar", "claude-sonnet-5", 500, 120,
+                          db_path=db_path, cache_write_tokens=0, cache_read_tokens=9000)
+    rows = ai_utils.usage_summary(restaurant_id=r.id, db_path=db_path)
+    ask = [x for x in rows if x["action"] == "ask_cavnar"][0]
+    assert ask["cache_write_tokens"] == 9000
+    assert ask["cache_read_tokens"] == 9000
+
+
+def test_call_latency_is_recorded(db_path):
+    """Nothing measured how long an AI call took, anywhere. It matters more
+    now that an executive answer can run several tool rounds — a slow action
+    should show up as a number rather than as a client's complaint."""
+    import ai_utils
+    r = _restaurant(db_path)
+    ai_utils.log_ai_usage(r.id, "ask_cavnar", "claude-sonnet-5", 100, 50,
+                          db_path=db_path, latency_ms=2400)
+    ai_utils.log_ai_usage(r.id, "ask_cavnar", "claude-sonnet-5", 100, 50,
+                          db_path=db_path, latency_ms=800)
+    ask = [x for x in ai_utils.usage_summary(restaurant_id=r.id, db_path=db_path)
+           if x["action"] == "ask_cavnar"][0]
+    assert ask["avg_latency_ms"] == 1600
+    assert ask["max_latency_ms"] == 2400
+
+
+def test_a_call_with_no_latency_recorded_does_not_break_the_summary(db_path):
+    """Rows written before the column existed carry NULL."""
+    import ai_utils
+    r = _restaurant(db_path)
+    ai_utils.log_ai_usage(r.id, "analyse_review", "claude-haiku-4-5-20251001", 10, 5,
+                          db_path=db_path)
+    rows = ai_utils.usage_summary(restaurant_id=r.id, db_path=db_path)
+    assert rows, "a row with no latency still appears in the summary"

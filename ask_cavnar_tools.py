@@ -48,7 +48,14 @@ _UNTRUSTED_NOTE = (
 # notice and connect, while a delimiter marks where the untrusted span starts
 # and stops. Everything else in this codebase that shows a model public text
 # already wraps it this way.
-_UNTRUSTED_FIELDS = ("text", "message", "complaints", "notes", "preview", "author")
+#
+# `author` is deliberately NOT here. A display name is attacker-controlled
+# like everything else a guest writes, but wrap_untrusted frames each value
+# on its own lines, and paying that for a single name across twenty rows buys
+# little: the payload's _UNTRUSTED_NOTE already names review authors
+# explicitly, and a name is not prose an instruction can hide inside the way
+# a paragraph is. The delimiters go where the sentences are.
+_UNTRUSTED_FIELDS = ("text", "message", "complaints", "notes", "preview")
 
 # Ceiling on rows any single read tool returns. The model pays for every
 # token of this, and 20 reviews is plenty to answer "what are people

@@ -60,6 +60,11 @@ LEAN_DAY_MIN_GAP_PTS = 2.0
 # period in which every weekday has been seen at least twice.
 MIN_PERIOD_DAYS_FOR_WEEKDAY = 14
 
+# Mirrors labor.MIN_DAYS_TO_EXTRAPOLATE — the point below which labor.py
+# itself withholds a monthly projection, so a zero coming back from it means
+# "too short", not "nothing to recover".
+_LABOR_MIN_DAYS_TO_PROJECT = 7
+
 # A cross-module money line is only worth an owner's attention above this.
 # Under it the figure is real but the action it implies costs more than it
 # returns, and listing it crowds out the ones that matter.
@@ -378,7 +383,11 @@ def correlations(restaurant_id: int, data: dict = None, restaurant=None,
                 "headline": (f"{waste_day} carries both the {c['category']} complaints and "
                              f"{int(_f(waste_share) * 100)}% of the week's waste"),
                 "evidence": [
-                    f"{c['mentions']} negative reviews naming {c['category']}, concentrated on {waste_day}",
+                    # Same rule as the labour link: a pair's share covers both
+                    # days and must not be reported against the one day this
+                    # link matched on.
+                    f"{c['mentions']} negative reviews naming {c['category']}, "
+                    f"{_concentration_phrase(c)}",
                     f"{waste_day} holds {int(_f(waste_share) * 100)}% of waste dollars against "
                     f"an even week of {int(100 / 7)}%",
                 ],
@@ -469,17 +478,24 @@ def money_at_stake(restaurant_id: int, data: dict = None, restaurant=None,
                             "reason": fc.get("reason") or "no driver figure available"})
 
     labor = data.get("labor") or {}
-    if labor.get("is_live") and labor.get("potential_savings_monthly"):
+    if not labor.get("is_live"):
+        unavailable.append({"module": "labor", "reason": "no real shift data uploaded yet"})
+    elif labor.get("potential_savings_monthly"):
         lines.append({"module": "labor", "label": "Scheduling against target",
                       "monthly": round(_f(labor["potential_savings_monthly"]), 2),
                       "claim_kind": "computed",
                       "basis": (f"gap above the {labor.get('labor_target', 30)}% target over "
                                 f"{labor.get('period_days', 0)} days synced")})
-    elif not labor.get("is_live"):
-        unavailable.append({"module": "labor", "reason": "no real shift data uploaded yet"})
-    else:
+    elif labor.get("period_too_short_to_project") or \
+            _f(labor.get("period_days")) < _LABOR_MIN_DAYS_TO_PROJECT:
         unavailable.append({"module": "labor",
                             "reason": "period too short to project a monthly figure"})
+    else:
+        # A zero is not a missing measurement here, and reporting it as "too
+        # short" was simply the wrong sentence: labour at or under target has
+        # nothing above target to recover, which is a result worth saying.
+        unavailable.append({"module": "labor",
+                            "reason": "labour is at or under target — nothing above it to recover"})
 
     # revenue_at_risk returns a RANGE and a direction, never a point figure —
     # it is an elasticity forecast, not a measurement. Collapsing it to one
@@ -496,7 +512,7 @@ def money_at_stake(restaurant_id: int, data: dict = None, restaurant=None,
                  "monthly_high": round(hi), "is_range": True,
                  "rating_delta": money.get("rating_delta"),
                  "claim_kind": "forecast",
-                 "basis": (f"{money.get('rating_delta'):+.2f}★ against a "
+                 "basis": (f"{_f(money.get('rating_delta')):+.2f}★ against a "
                            f"{money.get('elasticity_low_pct')}-{money.get('elasticity_high_pct')}% "
                            f"revenue-per-star range on "
                            f"{money.get('sales_source') or 'trailing sales'}")}

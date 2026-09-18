@@ -280,8 +280,14 @@ def create_with_retry(client, retries=2, backoff=1.5, restaurant_id=None, action
     attempt = 0
     while True:
         try:
+            # Wall time for the call itself, so "is Ask slow?" has an answer.
+            # Nothing measured latency anywhere, and it matters more now that
+            # an executive answer can run several tool rounds: a slow action
+            # shows up here as a number rather than as a client's complaint.
+            _started = time.time()
             message = client.messages.create(**kwargs)
-            _log_usage_safe(message, kwargs.get("model", "unknown"), restaurant_id, action)
+            _log_usage_safe(message, kwargs.get("model", "unknown"), restaurant_id, action,
+                            latency_ms=int((time.time() - _started) * 1000))
             return message
         except _RETRYABLE as e:
             attempt += 1
@@ -319,6 +325,9 @@ CREATE TABLE IF NOT EXISTS ai_usage (
     model TEXT,
     input_tokens INTEGER,
     output_tokens INTEGER,
+    cache_write_tokens INTEGER DEFAULT 0,
+    cache_read_tokens INTEGER DEFAULT 0,
+    latency_ms INTEGER,
     cost_usd REAL,
     created_at TEXT DEFAULT (datetime('now')),
     status TEXT DEFAULT 'ok',
@@ -337,14 +346,21 @@ _USAGE_INDEX_SQL = (
 
 
 def _ensure_usage_columns(conn):
-    """status/error arrived after the table existed on Railway — add them in
-    place so old rows keep their (implicit) 'ok'."""
+    """status/error arrived after the table existed on Railway, and the two
+    cache columns after that — add them in place so old rows keep their
+    (implicit) 'ok' and their implicit zero cache usage."""
     try:
         cols = {r[1] for r in conn.execute("PRAGMA table_info(ai_usage)").fetchall()}
         if "status" not in cols:
             conn.execute("ALTER TABLE ai_usage ADD COLUMN status TEXT DEFAULT 'ok'")
         if "error" not in cols:
             conn.execute("ALTER TABLE ai_usage ADD COLUMN error TEXT")
+        if "cache_write_tokens" not in cols:
+            conn.execute("ALTER TABLE ai_usage ADD COLUMN cache_write_tokens INTEGER DEFAULT 0")
+        if "cache_read_tokens" not in cols:
+            conn.execute("ALTER TABLE ai_usage ADD COLUMN cache_read_tokens INTEGER DEFAULT 0")
+        if "latency_ms" not in cols:
+            conn.execute("ALTER TABLE ai_usage ADD COLUMN latency_ms INTEGER")
     except Exception:
         pass
 
@@ -409,12 +425,31 @@ def log_api_call(restaurant_id, action, vendor, calls=1, input_tokens=0, output_
     return cost
 
 
-def _estimate_cost(model, input_tokens, output_tokens):
+# Prompt caching is billed at its own rates, as a multiple of the model's
+# input rate: writing a cache entry costs 1.25x, reading one 0.1x. Neither is
+# included in `input_tokens`, which counts only the uncached remainder.
+#
+# This matters beyond reporting. Ask Cavnar now caches ~9,600 tokens of tools
+# and static prompt, so a cache WRITE is a real charge the ledger recorded as
+# nothing — and ai_budget_exceeded sums this ledger, so the $10/day and
+# $1,500/month ceilings would have been enforced against an understated
+# figure on every cached call. Counting reads matters the other way: they are
+# the saving, and a cache that silently stops hitting is an expensive
+# regression nothing would otherwise surface.
+_CACHE_WRITE_MULTIPLIER = 1.25
+_CACHE_READ_MULTIPLIER = 0.10
+
+
+def _estimate_cost(model, input_tokens, output_tokens,
+                   cache_write_tokens=0, cache_read_tokens=0):
     in_rate, out_rate = _MODEL_PRICING.get(model, (3.00, 15.00))
-    return (input_tokens / 1_000_000) * in_rate + (output_tokens / 1_000_000) * out_rate
+    return ((input_tokens / 1_000_000) * in_rate
+            + (output_tokens / 1_000_000) * out_rate
+            + (cache_write_tokens / 1_000_000) * in_rate * _CACHE_WRITE_MULTIPLIER
+            + (cache_read_tokens / 1_000_000) * in_rate * _CACHE_READ_MULTIPLIER)
 
 
-def _log_usage_safe(message, model, restaurant_id, action):
+def _log_usage_safe(message, model, restaurant_id, action, latency_ms=None):
     """Never let usage logging break the AI call it's measuring."""
     try:
         usage = getattr(message, "usage", None)
@@ -424,6 +459,9 @@ def _log_usage_safe(message, model, restaurant_id, action):
             restaurant_id, action or "unspecified", model,
             getattr(usage, "input_tokens", 0) or 0,
             getattr(usage, "output_tokens", 0) or 0,
+            cache_write_tokens=getattr(usage, "cache_creation_input_tokens", 0) or 0,
+            cache_read_tokens=getattr(usage, "cache_read_input_tokens", 0) or 0,
+            latency_ms=latency_ms,
         )
     except Exception:
         pass
@@ -438,17 +476,23 @@ def _log_failure_safe(exc, model, restaurant_id, action):
 
 
 def log_ai_usage(restaurant_id, action, model, input_tokens, output_tokens, db_path=None,
-                 status="ok", error=None):
+                 status="ok", error=None, cache_write_tokens=0, cache_read_tokens=0,
+                 latency_ms=None):
     from models import get_conn, DB_PATH
     conn = get_conn(db_path or DB_PATH)
     conn.execute(_USAGE_TABLE_SQL)
     for _ix in _USAGE_INDEX_SQL:
         conn.execute(_ix)
     _ensure_usage_columns(conn)
-    cost = _estimate_cost(model, input_tokens, output_tokens) if status == "ok" else 0.0
+    cost = (_estimate_cost(model, input_tokens, output_tokens,
+                           cache_write_tokens, cache_read_tokens)
+            if status == "ok" else 0.0)
     conn.execute(
-        "INSERT INTO ai_usage (restaurant_id, action, model, input_tokens, output_tokens, cost_usd, status, error) VALUES (?,?,?,?,?,?,?,?)",
-        (restaurant_id, action, model, input_tokens, output_tokens, cost, status, error),
+        "INSERT INTO ai_usage (restaurant_id, action, model, input_tokens, output_tokens, "
+        "cost_usd, status, error, cache_write_tokens, cache_read_tokens, latency_ms) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        (restaurant_id, action, model, input_tokens, output_tokens, cost, status, error,
+         cache_write_tokens or 0, cache_read_tokens or 0, latency_ms),
     )
     conn.commit()
     conn.close()
@@ -471,6 +515,10 @@ def usage_summary(restaurant_id=None, since_days=30, db_path=None):
     rows = conn.execute(f"""
         SELECT action, model, COUNT(*) as calls,
                SUM(input_tokens) as input_tokens, SUM(output_tokens) as output_tokens,
+               SUM(COALESCE(cache_write_tokens,0)) as cache_write_tokens,
+               SUM(COALESCE(cache_read_tokens,0)) as cache_read_tokens,
+               ROUND(AVG(latency_ms)) as avg_latency_ms,
+               MAX(latency_ms) as max_latency_ms,
                SUM(cost_usd) as cost_usd
         FROM ai_usage {where}
         GROUP BY action, model ORDER BY cost_usd DESC

@@ -401,3 +401,27 @@ def test_a_weekday_pair_share_is_reported_across_both_days(db_path, monkeypatch)
 def test_a_single_dominant_day_reads_as_that_day():
     single = {"weekday": {"value": "Friday", "count": 5, "share": 1.0}, "weekday_pair": None}
     assert bi._concentration_phrase(single) == "100% on Friday"
+
+
+def test_labour_at_target_is_reported_as_such_not_as_too_short(db_path, monkeypatch):
+    """A zero here is a result, not a missing measurement. Reporting "period
+    too short" when the real answer is "you are at target" tells an owner to
+    go and sync more data to answer a question that is already answered."""
+    rid = _restaurant(db_path)
+    monkeypatch.setattr(bi, "gather", lambda *a, **k: {
+        "reviews": None, "food_cost": None, "marketing": None, "visibility": None,
+        "labor": {"is_live": True, "period_days": 30, "potential_savings_monthly": 0},
+        "degraded": [], "modules_off": [], "complete": True})
+    reason = {u["module"]: u["reason"] for u in bi.money_at_stake(rid)["unavailable"]}["labor"]
+    assert "at or under target" in reason
+    assert "too short" not in reason
+
+
+def test_a_genuinely_short_labour_period_still_says_too_short(db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    monkeypatch.setattr(bi, "gather", lambda *a, **k: {
+        "reviews": None, "food_cost": None, "marketing": None, "visibility": None,
+        "labor": {"is_live": True, "period_days": 4, "potential_savings_monthly": 0},
+        "degraded": [], "modules_off": [], "complete": True})
+    reason = {u["module"]: u["reason"] for u in bi.money_at_stake(rid)["unavailable"]}["labor"]
+    assert "too short" in reason

@@ -101,7 +101,7 @@ Two halves:
 
 ## Ask Cavnar
 
-**Files**: `ask_cavnar.py` (context snapshot builder + `ask`/`ask_with_tools`), `ask_cavnar_tools.py` (the tool registry, 36 tools), `home_brief.py` (feeds the opening briefing).
+**Files**: `ask_cavnar.py` (context snapshot builder + `ask_with_tools`), `ask_cavnar_tools.py` (the tool registry, 43 tools), `business_intelligence.py` (the cross-module layer), `home_brief.py` (feeds the opening briefing).
 
 **Design stance**: an AI-powered restaurant COO, not a chatbot wrapper. Every question gets a fresh `build_context()` snapshot (identity, sibling locations, alerts, memory, module data the restaurant's tier actually has) plus a filtered tool list (`tool_specs(restaurant)` — a tool tagged with a module the restaurant doesn't have is never offered, so the model can't call it and produce an empty-result apology).
 
@@ -114,7 +114,15 @@ Two halves:
 
 **Memory** (`ask_memory`): the model calls `remember`/`forget` deliberately; nothing lands automatically. Facts are marked "told, not measured" wherever they appear in the snapshot, so the model never presents an owner's stated goal as something it computed.
 
-**Don't touch casually**: the module-gating in `tool_specs()`, and the read/write split — a tool that reaches an outside effect (email, public post) must be `write`, never `read`/`action`.
+**Across modules** (`business_intelligence.py`, audit #15): the layer that answers "why did profits drop" rather than six single-module answers. `gather()` collects each module's own executive brief; `correlations()` reports where two of them point at the same day, dish or shift; `money_at_stake()` ranks each module's monthly dollar figure against the others. It invents no thresholds — a link only exists when both sides already cleared their own module's evidence floor — and it never states a co-occurrence as a cause: each link carries `confirm_by` and `alternative`, and the labour link carries `not_a_cause` because this product has no service-time or cover-count data. The money lines are deliberately never summed (a measured cost, a scheduling gap and an elasticity forecast are not addends), and a range stays a range. Reached by the model through `read_business_snapshot`, and summarised into every snapshot by `snapshot_block()`.
+
+**Grounding**: `ai_guard.verify_figures` runs on every answer against the snapshot + every tool payload + the replayed history. An untraceable figure caps confidence at `low` and reaches both clients, which keep the answer and caveat the number.
+
+**Depth** (`_depth_for`): `brief` (Home box, 3 sentences), `standard`, `executive` (what/why/evidence/dollars/action/confidence/what-to-watch). Chosen from the question, deterministically.
+
+**Prompt caching**: `system` is a list of blocks — static rules with a `cache_control` breakpoint, then the live snapshot. ~9,700 tokens cached per turn. Never interpolate per-restaurant data into the static block.
+
+**Don't touch casually**: the module-gating in `tool_specs()`, and the read/write split — a tool that reaches an outside effect (email, public post, scheduled deletion) must be `write`, never `read`/`action`. `auto_approve` and `data_retention` are write tools for exactly this reason. And never call `client_api._do_ai_visibility` from the context path: on a cache miss it fires live Perplexity queries.
 
 ---
 

@@ -1009,7 +1009,7 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
         truncated = getattr(message, "stop_reason", None) == "max_tokens"
 
         if getattr(message, "stop_reason", None) != "tool_use":
-            answer = extract_text(message).strip()
+            answer = _strip_leaked_markers(extract_text(message))
             return (answer, truncated, proposals,
                     _meta(answer, seen_corpus, tools_used, consulted, depth, restaurant.id))
 
@@ -1100,7 +1100,7 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
                 system=system_blocks, messages=messages,
                 restaurant_id=restaurant.id, action="ask_cavnar",
             )
-            answer = extract_text(final).strip()
+            answer = _strip_leaked_markers(extract_text(final))
             return (answer, getattr(final, "stop_reason", None) == "max_tokens", proposals,
                     _meta(answer, seen_corpus, tools_used, consulted, depth, restaurant.id))
 
@@ -1110,7 +1110,7 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
         system=system_blocks, messages=messages,
         restaurant_id=restaurant.id, action="ask_cavnar",
     )
-    answer = extract_text(final).strip()
+    answer = _strip_leaked_markers(extract_text(final))
     return (answer, getattr(final, "stop_reason", None) == "max_tokens", proposals,
             _meta(answer, seen_corpus, tools_used, consulted, depth, restaurant.id))
 
@@ -1119,11 +1119,15 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
 # Read from the registry rather than a second hand-kept list — a tool added
 # there is attributed here automatically, and one that moves module cannot
 # drift out of sync.
+_ACROSS_LABEL = "across the business"
+
 _UNTAGGED_MODULE = {
     "read_alerts": "alerts", "read_email_history": "account",
     "read_competitors": "intel", "read_ai_visibility": "visibility",
     "change_setting": "account", "remember": "memory", "forget": "memory",
-    "read_business_snapshot": "across the business",
+    # A stand-in only: replaced by the real list as soon as the snapshot
+    # reports which modules it actually read.
+    "read_business_snapshot": _ACROSS_LABEL,
 }
 
 
@@ -1138,15 +1142,32 @@ def _modules_for(tool_names):
     return out
 
 
+def _strip_leaked_markers(text):
+    """Remove any untrusted-content delimiter that made it into the answer.
+
+    Review text reaches the model fenced between markers, and a model quoting
+    a guest verbatim can carry the fence out with the quote. The owner should
+    never see "<<<UNTRUSTED_GUEST_TEXT" in their own assistant's reply — it is
+    scaffolding, and on screen it reads as a bug.
+
+    Cosmetic only, and deliberately so: it does not weaken the fence, which
+    did its work upstream when the model read the content.
+    """
+    from ai_guard import UNTRUSTED_OPEN, UNTRUSTED_CLOSE
+    for marker in (UNTRUSTED_OPEN, UNTRUSTED_CLOSE):
+        text = text.replace(marker, "")
+    return "\n".join(line.rstrip() for line in text.splitlines()).strip()
+
+
 def _meta(answer, corpus, tools_used, consulted, depth, restaurant_id):
     """What the answer rests on, and whether its figures check out.
 
     The figure check is the important half. Every prompt in this product
     tells the model to be specific with real numbers; nothing on this surface
     ever checked that a stated number was one it had been handed — and Ask is
-    the surface most able to invent one, because it reads from up to 39 tools
-    and can do arithmetic across them. Audit #14 caught exactly this failure
-    in a far simpler prompt.
+    the surface most able to invent one, because it reads from every tool in
+    the registry and can do arithmetic across them. Audit #14 caught exactly
+    this failure in a far simpler prompt.
 
     Interactive text keeps its content and carries a flag rather than being
     silently rewritten — see ai_guard.verify_figures on why unattended email
@@ -1162,6 +1183,12 @@ def _meta(answer, corpus, tools_used, consulted, depth, restaurant_id):
     # ones a tool reported reading on its own (read_business_snapshot reads
     # every module in one call, and its name says none of them).
     modules = list(dict.fromkeys(_modules_for(tools_used) + list(consulted or [])))
+    # Once the snapshot has named the real modules it read, its own stand-in
+    # label is redundant — showing "across the business" as a chip beside the
+    # three modules it stands for is noise in a strip that exists to be
+    # skimmed.
+    if consulted and _ACROSS_LABEL in modules and len(modules) > 1:
+        modules.remove(_ACROSS_LABEL)
     # Confidence is a floor, not a judgment of the reasoning: an answer that
     # consulted nothing, or that states a figure nobody gave it, cannot be
     # high whatever it sounds like.
