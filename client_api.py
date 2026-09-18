@@ -376,7 +376,12 @@ def reviews_page_api(current_user):
         platform=request.args.get("platform") or None,
         limit=REVIEWS_PAGE_SIZE, offset=offset, include_total=True,
     )
-    return jsonify(ok=True, reviews=rows, total=total,
+    restaurant = get_restaurant(current_user["restaurant_id"])
+    html = "".join(
+        render_template("_review_card.html", r=r, restaurant=restaurant, delay=0)
+        for r in rows
+    )
+    return jsonify(ok=True, html=html, count=len(rows), total=total,
                    offset=offset + len(rows),
                    has_more=(offset + len(rows)) < total)
 

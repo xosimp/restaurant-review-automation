@@ -33,7 +33,18 @@ DASHBOARD = os.path.join(ROOT, "templates", "dashboard.html")
 
 
 def _src():
-    return open(DASHBOARD, encoding="utf-8").read()
+    """dashboard.html plus the review-card partial it includes.
+
+    One review row moved into templates/_review_card.html so the first page
+    and every "Load more" page render identical markup; every assertion in
+    this file predates that split and is written against "the page", so the
+    partial is appended rather than made every caller's problem. Appending
+    keeps all the index-based slicing below valid."""
+    card = os.path.join(ROOT, "templates", "_review_card.html")
+    body = open(DASHBOARD, encoding="utf-8").read()
+    if os.path.exists(card):
+        body += open(card, encoding="utf-8").read()
+    return body
 
 
 def _fn(name):
@@ -230,10 +241,23 @@ def test_containers_share_one_elevation_system():
 
 # ── Reviews tab decoration pass ──────────────────────────────────────────
 
+REVIEW_CARD = os.path.join(ROOT, "templates", "_review_card.html")
+
+
+def _review_card():
+    """One review row's markup. It lives in its own partial now so the
+    first page (rendered into dashboard.html) and every "Load more" page
+    (client_api's /api/reviews/page) render the identical card instead of
+    a second copy hand-written in JS."""
+    return open(REVIEW_CARD, encoding="utf-8").read()
+
+
 def _reviews_panel():
     s = _src()
     i = s.index('<div class="panel" id="panel-reviews"')
-    return s[i:s.index('<div class="panel', i + 1)]
+    # The partial is part of this panel as far as every assertion here is
+    # concerned — it is {% include %}d into it.
+    return s[i:s.index('<div class="panel', i + 1)] + _review_card()  # noqa: E501
 
 
 def test_reviews_tab_has_no_kicker_line_above_the_headline():
@@ -245,20 +269,27 @@ def test_reviews_tab_has_no_kicker_line_above_the_headline():
     assert '<h1 class="hb-h1">Reviews. ' in panel
 
 
-def test_reviews_tab_has_no_cavnar_read_container():
-    """The whole 'Cavnar's read on your reviews' AI-summary card is gone —
-    markup, its two CSS rules, and its loading state. loadReviewInsight()
-    still exists (its callers also use it to gate loading the sentiment
-    trend / topic heatmap next to it) but early-returns now that
-    #review-insight is gone, so no fetch ever fires for it."""
+def test_the_cavnar_read_card_is_on_the_reviews_tab():
+    """REVERSES an earlier deliberate removal of this card.
+
+    It was taken out in a decluttering pass, and the audit found what that
+    left behind: /api/review-insight is the only thing in the module that
+    says WHY a number moved and what to do about it, and with the card gone
+    loadReviewInsight() early-returned on the missing element, so the
+    endpoint — prompt, figure-verification guard and all — reached nobody
+    on web, while iOS fetched it and never rendered it. Home's own AI line
+    reads the same 5-minute cache and so was almost always cold too.
+
+    It uses the .lb2-ai treatment Labor and Intel already share rather than
+    reinstating the old rv2-ai rules."""
     panel = _reviews_panel()
-    assert 'class="rv2-ai"' not in panel
-    assert "Cavnar's read on your reviews" not in panel
-    assert 'id="review-insight"' not in panel
-    s = _src()
-    assert ".rv2-ai{" not in s and ".rv2-ai .tag{" not in s
+    assert "Cavnar AI's read on your reviews" in panel
+    assert 'id="review-insight"' in panel
+    assert 'class="lb2-ai"' in panel
     fn = _fn("loadReviewInsight")
-    assert "if(!el)return;" in fn
+    assert "fetch('/api/review-insight')" in fn
+    # the unverified-numbers caveat still rides on it
+    assert "applyFigureCaveat(el,d)" in fn
 
 
 def test_reviews_kicker_and_inbox_label_match_food_costs_bumped_size():
@@ -385,8 +416,18 @@ def test_retract_button_requires_a_real_google_review_name_not_just_platform():
     s = _src()
     i = s.index('<span class="rv2-status live">✓ Live on {{ r.platform|title }}</span>')
     after = s[i:i + 900]
-    assert "{% if r.platform=='google' and r.review_name %}" in after
+    # The same gate, computed once server-side and exposed per review as
+    # can_retract, so the phone can apply it too — iOS could not, because
+    # Review.swift deliberately doesn't decode review_name, so it offered
+    # "Retract from Google" on every posted review including Yelp ones.
+    assert "{% if r.can_retract %}" in after
     assert "onclick=\"retractR({{ r.id }},this)\">Retract</button>{% endif %}" in after
+    import models, inspect as _i
+    gd = _i.getsource(models.get_reviews_data)
+    assert 'd["can_retract"] = bool(' in gd
+    assert 'd.get("response_status") == "posted"' in gd
+    assert 'd.get("platform") == "google"' in gd
+    assert 'd.get("review_name")' in gd
     # The backend gate this must match:
     import client_api
     import inspect

@@ -1,0 +1,86 @@
+{# One review in the inbox. Extracted so the first page (rendered into
+   dashboard.html) and every subsequent page (client_api's
+   /api/reviews/page) render the SAME markup — the alternative was a
+   second copy of this card written in JS string concatenation, which
+   is exactly how the two drift. `delay` is the scroll-reveal stagger. #}
+    <div class="rv2-row scroll-reveal {{ 'urgent' if r.urgency=='high' }} {{ 'posted' if r.response_status=='posted' }} {{ 'approved' if r.response_status=='approved' }} {{ 'skipped' if r.response_status=='skipped' }}" id="rc-{{ r.id }}" data-reveal-delay="{{ delay|default(0) }}s" data-platform="{{ r.platform }}" data-yelp-id="{{ restaurant.yelp_business_id or '' }}" data-cats="{{ (r.categories|join(' '))|lower if r.categories else '' }}" data-author="{{ r.author|lower if r.author else '' }}" data-rating="{{ r.rating }}" data-status="{{ r.response_status }}">
+      <div class="rv2-head">
+        <div class="rv2-av">{{ r.author[0].upper() if r.author else '?' }}</div>
+        <div class="rv2-who"><b>{{ r.author|e if r.author else 'Anonymous' }}</b><span class="rv2-stars">{% for i in range(5) %}{% if i < r.rating %}★{% else %}<span>★</span>{% endif %}{% endfor %}</span><span class="rv2-plat">{{ r.platform }}</span>{% if r.review_date %}<span class="rv2-date hb-num">{{ r.review_date|format_date }}</span>{% endif %}{% if r.processed %}<span class="schip {{ r.sentiment or 'neutral' }}">{{ r.sentiment or 'neutral' }}</span>{% else %}{# Not analysed yet — it used to be filtered out of this list entirely while still counting in the badge above, so the owner saw a number pointing at nothing. Saying "pending" beats inventing a neutral sentiment it was never given. #}<span class="schip pending" title="Cavnar hasn't analysed this review yet">analysis pending</span>{% endif %}{% if r.urgency=='high' %}<span class="rv2-urg">Urgent</span>{% endif %}</div>
+        <button class="rv2-x" aria-label="Remove review" title="Remove review" onclick="deleteReview({{ r.id }},this)">✕</button>
+      </div>
+      <div class="rtext">{{ r.text|e }}</div>
+      {% if r.categories %}<div class="cats">{% for c in r.categories %}<span class="cat">{{ c.replace('_',' ') }}</span>{% endfor %}</div>{% endif %}
+      {% if r.draft_response %}
+      <div class="draft-box" id="draft-box-{{ r.id }}">
+        <div class="draft-lbl">Cavnar's reply</div>
+        <div class="draft-txt" id="draft-txt-{{ r.id }}">{{ r.draft_response|e }}</div>
+        <div class="draft-actions" id="draft-actions-{{ r.id }}">
+          {% if r.response_status=='posted' %}
+            <span class="rv2-status live">✓ Live on {{ r.platform|title }}</span>
+            {# _do_retract (client_api.py) requires platform=='google' AND a
+               real review_name — the Business Profile API resource name set
+               only when OUR auto-post flow actually put the reply live.
+               response_status=='posted' alone doesn't mean that: an
+               imported/manually-marked-posted review has no review_name to
+               retract by, and the button used to show anyway, always
+               400ing with "only auto-posted Google replies". #}
+            {% if r.can_retract %}<button class="cbtn cbtn-secondary cbtn-sm" onclick="retractR({{ r.id }},this)">Retract</button>{% endif %}
+          {% elif r.response_status=='approved' %}
+            {# platform==google + approved (never made it to 'posted') is now
+               only reached after a SYNCHRONOUS post attempt (_attempt_google_post,
+               client_api.py) already ran and returned — there's no more "still
+               working" window it could be sitting in. So if GBP is connected,
+               landing here means that attempt failed; a static "Posting to
+               Google" label used to sit here regardless, forever, with no way
+               to tell "in progress" from "silently failed" and no retry. #}
+            {% if r.platform=='google' and restaurant.gmb_refresh_token %}
+              <span class="rv2-status bad">⚠ Couldn't post to Google</span>
+              <span style="font-size:11.5px;color:var(--ink3)">The reply is saved — try posting it again.</span>
+              <button class="cbtn cbtn-secondary cbtn-sm" onclick="retryPostR({{ r.id }},this)">Retry posting</button>
+            {% else %}
+              <span class="rv2-status ok">✓ Approved</span>
+              <span style="font-size:11.5px;color:var(--ink3)">{% if r.platform=='google' %}Will post to Google once connected{% else %}Copy and post to {{ r.platform|title }}{% endif %}</span>
+            {% endif %}
+            <button class="cbtn cbtn-secondary cbtn-sm" onclick="skipR({{ r.id }})">Edit</button>
+            {% if r.platform != 'google' %}<button class="cbtn cbtn-soft cbtn-sm" onclick="markPosted({{ r.id }},this)">Mark as posted</button>{% endif %}
+          {% elif r.response_status=='skipped' %}
+            <button class="cbtn cbtn-primary cbtn-sm" onclick="approveR({{ r.id }})">✓ Approve</button>
+            <button class="cbtn cbtn-secondary cbtn-sm" onclick="openEditor({{ r.id }})">Edit</button>
+            <button class="cbtn cbtn-secondary cbtn-sm" onclick="regenDraft({{ r.id }})">↻ Regenerate</button>
+          {% else %}
+            <button class="cbtn cbtn-primary cbtn-sm" onclick="approveR({{ r.id }})">✓ Approve</button>
+            <button class="cbtn cbtn-secondary cbtn-sm" onclick="skipR({{ r.id }})">Skip</button>
+          {% endif %}
+        </div>
+        <div class="response-editor" id="editor-{{ r.id }}" style="display:none;margin-top:10px">
+          <textarea id="editor-text-{{ r.id }}" placeholder="Write your own response…">{{ r.draft_response|e }}</textarea>
+          <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center">
+            <button class="cbtn cbtn-primary cbtn-sm" onclick="saveDraft({{ r.id }})">Save &amp; approve</button>
+            <button class="cbtn cbtn-secondary cbtn-sm" onclick="regenDraft({{ r.id }})">↻ Regenerate</button>
+            <button class="cbtn cbtn-secondary cbtn-sm" data-tmpl-btn="1" onclick="toggleTmplPicker({{ r.id }},this)">Templates ▾</button>
+            <button class="cbtn cbtn-secondary cbtn-sm" onclick="closeEditor({{ r.id }})">Cancel</button>
+            <button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="saveAsTemplate({{ r.id }})">Save as template</button>
+          </div>
+        </div>
+      </div>
+      {% elif r.response_status != 'posted' %}
+      <div class="draft-box" id="draft-box-{{ r.id }}">
+        <div class="draft-lbl">No reply drafted yet</div>
+        <div class="draft-actions" id="draft-actions-{{ r.id }}" style="margin-top:6px">
+          <button class="cbtn cbtn-success cbtn-sm" onclick="regenDraft({{ r.id }})">Draft a reply</button>
+          <button class="cbtn cbtn-secondary cbtn-sm" onclick="openEditor({{ r.id }})">Write my own</button>
+          <button class="cbtn cbtn-secondary cbtn-sm" data-tmpl-btn="1" onclick="toggleTmplPicker({{ r.id }},this)">Templates ▾</button>
+        </div>
+        <div class="response-editor" id="editor-{{ r.id }}" style="display:none;margin-top:10px">
+          <textarea id="editor-text-{{ r.id }}" placeholder="Write your response here…"></textarea>
+          <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center">
+            <button class="cbtn cbtn-primary cbtn-sm" onclick="saveDraft({{ r.id }})">Save &amp; approve</button>
+            <button class="cbtn cbtn-secondary cbtn-sm" data-tmpl-btn="1" onclick="toggleTmplPicker({{ r.id }},this)">Templates ▾</button>
+            <button class="cbtn cbtn-secondary cbtn-sm" onclick="closeEditor({{ r.id }})">Cancel</button>
+            <button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="saveAsTemplate({{ r.id }})">Save as template</button>
+          </div>
+        </div>
+      </div>
+      {% endif %}
+    </div>

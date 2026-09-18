@@ -1900,6 +1900,9 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .rv2-date{font-size:11.5px;color:var(--ink3)}
 #panel-reviews .schip{font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)}
 #panel-reviews .schip.positive{color:var(--hb-good)}#panel-reviews .schip.negative{color:var(--hb-bad)}#panel-reviews .schip.neutral{color:var(--hb-warn)}
+/* Waiting on analysis — deliberately the quietest of the four, since it
+   describes what Cavnar hasn't done yet, not what the guest said. */
+#panel-reviews .schip.pending{color:var(--ink3);opacity:.75;font-style:italic;letter-spacing:.06em}
 .rv2-urg{font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--hb-bad);padding:3px 8px;border-radius:999px;background:var(--red-bg)}
 .rv2-x{background:none;border:none;color:var(--ink3);font-size:15px;cursor:pointer;padding:2px 6px;line-height:1;opacity:0;transition:opacity .12s;border-radius:4px}
 .rv2-row:hover .rv2-x{opacity:.7}.rv2-x:hover{opacity:1!important;color:var(--hb-bad);background:var(--hb-tint)}
@@ -1948,7 +1951,13 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
   <div class="hb-top">
     <div style="min-width:0;flex:1">
       <h1 class="hb-h1">Reviews. <span class="hb-head {{ _tone }}">{{ _head }}</span></h1>
-      <div class="hb-sub"><span><span id="stat-received-mo-n" class="hb-num">{{ rstats.received_this_month }}</span> new this month</span><span class="sep">·</span><span><span id="stat-positive-n" class="hb-num">{{ rstats.positive_pct }}%</span> positive</span><span class="sep">·</span><span>avg reply <span id="stat-resp-time-n" class="hb-num">{% if rstats.avg_response_hours and rstats.avg_response_hours <= 720 %}{% if rstats.avg_response_hours < 24 %}{{rstats.avg_response_hours}}h{% elif rstats.avg_response_hours < 168 %}{{(rstats.avg_response_hours / 24)|int}}d{% else %}{{(rstats.avg_response_hours / 168)|int}}w{% endif %}{% else %}—{% endif %}</span></span><span class="sep">·</span><span>{{ 'Live from Google' if restaurant.reviews_live else ('Google connected' if restaurant.gmb_refresh_token else 'Imported reviews') }}</span>{% if savings_breakdown and savings_breakdown.reviews > 0 %}<span class="sep">·</span><span><span class="hb-num" id="review-savings-amt">${{ savings_breakdown.reviews|format_num }}</span> saved on <span id="review-savings-count" class="hb-num">{{ rstats.responded }}</span> replies</span>{% endif %}</div>
+      <div class="hb-sub"><span><span id="stat-received-mo-n" class="hb-num">{{ rstats.received_this_month }}</span> new this month</span><span class="sep">·</span><span><span id="stat-positive-n" class="hb-num">{{ rstats.positive_pct }}%</span> positive</span><span class="sep">·</span><span>avg reply <span id="stat-resp-time-n" class="hb-num">{% if rstats.avg_response_hours and rstats.avg_response_hours <= 720 %}{% if rstats.avg_response_hours < 24 %}{{rstats.avg_response_hours}}h{% elif rstats.avg_response_hours < 168 %}{{(rstats.avg_response_hours / 24)|int}}d{% else %}{{(rstats.avg_response_hours / 168)|int}}w{% endif %}{% else %}—{% endif %}</span></span><span class="sep">·</span><span>{{ 'Live from Google' if restaurant.reviews_live else ('Google connected' if restaurant.gmb_refresh_token else 'Imported reviews') }}</span>{#
+   Two honesty lines the backend has always computed and no screen has
+   ever shown. official_rating/official_review_count/is_full_history exist
+   because the rating pill can be Google's all-time figure OR our average
+   over the reviews we actually hold, and both were displayed unlabelled;
+   `unanalysed` exists because when it is non-zero the sentiment split and
+   the topic charts cover fewer reviews than the totals beside them. #}{% if rstats.official_review_count and not rstats.is_full_history %}<span class="sep">·</span><span title="Google's own all-time rating is over every review ever left; ours is over the reviews Cavnar holds.">avg over <span class="hb-num">{{ rstats.total }}</span> of <span class="hb-num">{{ rstats.official_review_count }}</span> reviews</span>{% endif %}{% if rstats.unanalysed %}<span class="sep">·</span><span style="color:var(--hb-warn)" title="Sentiment and topic charts only cover analysed reviews."><span class="hb-num">{{ rstats.unanalysed }}</span> not yet analysed</span>{% endif %}{% if savings_breakdown and savings_breakdown.reviews > 0 %}<span class="sep">·</span><span><span class="hb-num" id="review-savings-amt">${{ savings_breakdown.reviews|format_num }}</span> saved on <span id="review-savings-count" class="hb-num">{{ rstats.responded }}</span> replies</span>{% endif %}</div>
       <span id="stat-this-month-n" hidden>{{ rstats.this_month }}</span><span id="stat-rr-detail" hidden></span><span id="review-savings-rate" hidden></span><strong id="rr-sent-mo-inline" hidden></strong><strong id="rr-sent-total-inline" hidden></strong>
     </div>
     <div class="hb-pulse">
@@ -1975,6 +1984,14 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       <div id="rv-hero-chart"><div class="hb-load" style="height:170px;justify-content:center"><canvas class="hb-orb" data-orb-state="searching" width="44" height="44"></canvas><span>Charting your rating…</span></div></div>
       <div id="trend-avg-rating" hidden></div>
     </section>
+    {# The AI read on the reviews. This card was removed from the markup at
+       some point and loadReviewInsight() has been dead-ending on the
+       missing #review-insight ever since — so /api/review-insight, the one
+       thing in this module that says WHY a number moved and what to do
+       about it, reached nobody. Same .lb2-ai treatment Labor and Intel
+       use, and applyFigureCaveat() still prepends the unverified-numbers
+       warning when the server couldn't trace a figure back to the data. #}
+    <div class="lb2-ai"><div class="tag">Cavnar AI's read on your reviews</div><div class="insight-text insight-loading" id="review-insight"><div class="hb-load"><canvas class="hb-orb" data-orb-state="composing" width="28" height="28"></canvas><span>Reading your reviews…</span></div></div></div>
     <div class="rv2-sig">
       <div class="rv2-sg"><div class="k"><span>Reviews · per week</span></div><div class="v"><span id="rv-sent-n" class="hb-num">—</span><small>this week</small></div><div id="sentiment-trend-bars" style="color:var(--ink3)"><div class="hb-load" style="height:86px"><canvas class="hb-orb" data-orb-state="working" width="28" height="28"></canvas></div></div><div class="cap"><span><span style="color:var(--hb-good)">■</span> pos &nbsp; <span style="color:var(--hb-bad)">■</span> neg &nbsp; <span style="color:var(--ink3)">■</span> neu</span><span id="sentiment-trend-labels"></span></div></div>
       <div class="rv2-sg" id="perf-card"><div class="k"><span>Approval Method</span><span class="rv2-days" id="perf-days-btns"><button class="hm-days-btn" data-days="30" onclick="loadResponsePerf(30)">30d</button><button class="hm-days-btn on" data-days="90" onclick="loadResponsePerf(90)">90d</button><button class="hm-days-btn" data-days="180" onclick="loadResponsePerf(180)">6mo</button></span></div><div class="v"><span id="rv-perf-n" class="hb-num">—</span><small>approved</small></div><div id="perf-body"><div class="hb-load" style="height:86px"><canvas class="hb-orb" data-orb-state="working" width="28" height="28"></canvas></div></div><div class="cap"><span id="rv-perf-cap">as-is · edited · regenerated</span></div></div>
@@ -1997,89 +2014,20 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     {% if reviews %}
     <div class="rv2-list">
     {% for r in reviews %}
-    <div class="rv2-row scroll-reveal {{ 'urgent' if r.urgency=='high' }} {{ 'posted' if r.response_status=='posted' }} {{ 'approved' if r.response_status=='approved' }} {{ 'skipped' if r.response_status=='skipped' }}" id="rc-{{ r.id }}" data-reveal-delay="{{ [loop.index0 * 0.05, 0.3]|min }}s" data-platform="{{ r.platform }}" data-yelp-id="{{ restaurant.yelp_business_id or '' }}" data-cats="{{ (r.categories|join(' '))|lower if r.categories else '' }}" data-author="{{ r.author|lower if r.author else '' }}" data-rating="{{ r.rating }}">
-      <div class="rv2-head">
-        <div class="rv2-av">{{ r.author[0].upper() if r.author else '?' }}</div>
-        <div class="rv2-who"><b>{{ r.author|e if r.author else 'Anonymous' }}</b><span class="rv2-stars">{% for i in range(5) %}{% if i < r.rating %}★{% else %}<span>★</span>{% endif %}{% endfor %}</span><span class="rv2-plat">{{ r.platform }}</span>{% if r.review_date %}<span class="rv2-date hb-num">{{ r.review_date|format_date }}</span>{% endif %}<span class="schip {{ r.sentiment or 'neutral' }}">{{ r.sentiment or 'neutral' }}</span>{% if r.urgency=='high' %}<span class="rv2-urg">Urgent</span>{% endif %}</div>
-        <button class="rv2-x" aria-label="Remove review" title="Remove review" onclick="deleteReview({{ r.id }},this)">✕</button>
-      </div>
-      <div class="rtext">{{ r.text|e }}</div>
-      {% if r.categories %}<div class="cats">{% for c in r.categories %}<span class="cat">{{ c.replace('_',' ') }}</span>{% endfor %}</div>{% endif %}
-      {% if r.draft_response %}
-      <div class="draft-box" id="draft-box-{{ r.id }}">
-        <div class="draft-lbl">Cavnar's reply</div>
-        <div class="draft-txt" id="draft-txt-{{ r.id }}">{{ r.draft_response|e }}</div>
-        <div class="draft-actions" id="draft-actions-{{ r.id }}">
-          {% if r.response_status=='posted' %}
-            <span class="rv2-status live">✓ Live on {{ r.platform|title }}</span>
-            {# _do_retract (client_api.py) requires platform=='google' AND a
-               real review_name — the Business Profile API resource name set
-               only when OUR auto-post flow actually put the reply live.
-               response_status=='posted' alone doesn't mean that: an
-               imported/manually-marked-posted review has no review_name to
-               retract by, and the button used to show anyway, always
-               400ing with "only auto-posted Google replies". #}
-            {% if r.platform=='google' and r.review_name %}<button class="cbtn cbtn-secondary cbtn-sm" onclick="retractR({{ r.id }},this)">Retract</button>{% endif %}
-          {% elif r.response_status=='approved' %}
-            {# platform==google + approved (never made it to 'posted') is now
-               only reached after a SYNCHRONOUS post attempt (_attempt_google_post,
-               client_api.py) already ran and returned — there's no more "still
-               working" window it could be sitting in. So if GBP is connected,
-               landing here means that attempt failed; a static "Posting to
-               Google" label used to sit here regardless, forever, with no way
-               to tell "in progress" from "silently failed" and no retry. #}
-            {% if r.platform=='google' and restaurant.gmb_refresh_token %}
-              <span class="rv2-status bad">⚠ Couldn't post to Google</span>
-              <span style="font-size:11.5px;color:var(--ink3)">The reply is saved — try posting it again.</span>
-              <button class="cbtn cbtn-secondary cbtn-sm" onclick="retryPostR({{ r.id }},this)">Retry posting</button>
-            {% else %}
-              <span class="rv2-status ok">✓ Approved</span>
-              <span style="font-size:11.5px;color:var(--ink3)">{% if r.platform=='google' %}Will post to Google once connected{% else %}Copy and post to {{ r.platform|title }}{% endif %}</span>
-            {% endif %}
-            <button class="cbtn cbtn-secondary cbtn-sm" onclick="skipR({{ r.id }})">Edit</button>
-            {% if r.platform != 'google' %}<button class="cbtn cbtn-soft cbtn-sm" onclick="markPosted({{ r.id }},this)">Mark as posted</button>{% endif %}
-          {% elif r.response_status=='skipped' %}
-            <button class="cbtn cbtn-primary cbtn-sm" onclick="approveR({{ r.id }})">✓ Approve</button>
-            <button class="cbtn cbtn-secondary cbtn-sm" onclick="openEditor({{ r.id }})">Edit</button>
-            <button class="cbtn cbtn-secondary cbtn-sm" onclick="regenDraft({{ r.id }})">↻ Regenerate</button>
-          {% else %}
-            <button class="cbtn cbtn-primary cbtn-sm" onclick="approveR({{ r.id }})">✓ Approve</button>
-            <button class="cbtn cbtn-secondary cbtn-sm" onclick="skipR({{ r.id }})">Skip</button>
-          {% endif %}
-        </div>
-        <div class="response-editor" id="editor-{{ r.id }}" style="display:none;margin-top:10px">
-          <textarea id="editor-text-{{ r.id }}" placeholder="Write your own response…">{{ r.draft_response|e }}</textarea>
-          <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center">
-            <button class="cbtn cbtn-primary cbtn-sm" onclick="saveDraft({{ r.id }})">Save &amp; approve</button>
-            <button class="cbtn cbtn-secondary cbtn-sm" onclick="regenDraft({{ r.id }})">↻ Regenerate</button>
-            <button class="cbtn cbtn-secondary cbtn-sm" data-tmpl-btn="1" onclick="toggleTmplPicker({{ r.id }},this)">Templates ▾</button>
-            <button class="cbtn cbtn-secondary cbtn-sm" onclick="closeEditor({{ r.id }})">Cancel</button>
-            <button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="saveAsTemplate({{ r.id }})">Save as template</button>
-          </div>
-        </div>
-      </div>
-      {% elif r.response_status != 'posted' %}
-      <div class="draft-box" id="draft-box-{{ r.id }}">
-        <div class="draft-lbl">No reply drafted yet</div>
-        <div class="draft-actions" id="draft-actions-{{ r.id }}" style="margin-top:6px">
-          <button class="cbtn cbtn-success cbtn-sm" onclick="regenDraft({{ r.id }})">Draft a reply</button>
-          <button class="cbtn cbtn-secondary cbtn-sm" onclick="openEditor({{ r.id }})">Write my own</button>
-          <button class="cbtn cbtn-secondary cbtn-sm" data-tmpl-btn="1" onclick="toggleTmplPicker({{ r.id }},this)">Templates ▾</button>
-        </div>
-        <div class="response-editor" id="editor-{{ r.id }}" style="display:none;margin-top:10px">
-          <textarea id="editor-text-{{ r.id }}" placeholder="Write your response here…"></textarea>
-          <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center">
-            <button class="cbtn cbtn-primary cbtn-sm" onclick="saveDraft({{ r.id }})">Save &amp; approve</button>
-            <button class="cbtn cbtn-secondary cbtn-sm" data-tmpl-btn="1" onclick="toggleTmplPicker({{ r.id }},this)">Templates ▾</button>
-            <button class="cbtn cbtn-secondary cbtn-sm" onclick="closeEditor({{ r.id }})">Cancel</button>
-            <button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="saveAsTemplate({{ r.id }})">Save as template</button>
-          </div>
-        </div>
-      </div>
-      {% endif %}
-    </div>
+    {% set delay = [loop.index0 * 0.05, 0.3]|min %}
+    {% include '_review_card.html' %}
     {% endfor %}
     </div>
+    {# The list is one page now. It used to render every review the
+       restaurant had ever received into this document — each with a draft
+       box, a textarea and a template picker — which is fine at 58 reviews
+       and a multi-megabyte page at 3,000. #}
+    {% if reviews_total and reviews_total > reviews|length %}
+    <div id="rv-more-wrap" style="display:flex;flex-direction:column;align-items:center;gap:8px;padding:18px 0 4px">
+      <button class="cbtn cbtn-secondary" id="rv-more-btn" onclick="loadMoreReviews(this)">Load more reviews</button>
+      <span style="font-size:12px;color:var(--ink3)">Showing <span class="hb-num" id="rv-shown-n">{{ reviews|length }}</span> of <span class="hb-num">{{ reviews_total }}</span></span>
+    </div>
+    {% endif %}
     {% else %}
     <div class="rv2-empty"><b>No reviews match this filter</b>Try clearing the filters or the search term.<div style="margin-top:12px"><button class="cbtn cbtn-secondary" onclick="clearFilters()">Clear filters</button></div></div>
     {% endif %}
@@ -5953,13 +5901,9 @@ function processInsightHtml(html){
   return out || html;
 }
 function loadReviewInsight(){
-  // The "Cavnar's read on your reviews" card this filled is gone from the
-  // markup, so #review-insight no longer exists and everything below is
-  // unreachable — but the 3 call sites also use reviewInsightLoaded as the
-  // shared "has this tab's lazy content loaded yet" gate for the sentiment
-  // trend and topic heatmap calls next to them, so this stays as the one
-  // place that flips it, rather than duplicating that flag-set at each
-  // call site.
+  // reviewInsightLoaded is also the shared "has this tab's lazy content
+  // loaded yet" gate for the sentiment trend and topic heatmap calls next
+  // to it, so this stays the one place that flips it.
   reviewInsightLoaded=true;
   var el=document.getElementById('review-insight');
   if(!el)return;
@@ -6302,7 +6246,7 @@ document.addEventListener('click', function(e) {
 function deleteReview(id, btn) {
   if (!confirm('Remove this review from your dashboard? This cannot be undone.')) return;
   fetch('/api/reviews/' + id + '/delete', {method:'POST'})
-    .then(function(r){ return r.json(); })
+    .then(function(r){ return r.json().catch(function(){ throw new Error('Server error (HTTP '+r.status+')'); }); })
     .then(function(d){
       if (d.ok) {
         var card = document.getElementById('rc-' + id);
@@ -6346,9 +6290,16 @@ function filterReviews(){
     var cats=card.dataset.cats||'';
     var searchable=(reviewText+' '+author+' '+rating+' star '+platform+' '+cats).toLowerCase();
     // Filter match
+    // These four must mean the same thing here, in models.get_reviews_data
+    // (the server-side filter) and in the iOS inbox. They didn't: "To
+    // approve" meant response_status='drafted' on the server, "not
+    // approved AND not posted AND not urgent" here, and "awaiting
+    // approval" on the phone — three different sets behind one label.
+    // Server definition wins: still-in-the-queue is pending OR drafted.
+    var status=card.dataset.status||'';
     var matchFilter=true;
     if(rfilter==='urgent') matchFilter=urgency;
-    else if(rfilter==='pending') matchFilter=(!approved&&!posted&&!urgency);
+    else if(rfilter==='pending') matchFilter=(status==='pending'||status==='drafted');
     else if(rfilter==='negative') matchFilter=(sentiment==='negative');
     else if(rfilter==='positive') matchFilter=(sentiment==='positive');
     // Topic match
@@ -6757,7 +6708,9 @@ function _reloadResponsePerfCurrent(){
 function approveR(id){
   var _appBtn=document.querySelector('#rc-'+id+' .cbtn-primary');
   if(_appBtn){_appBtn.style.animation='btnPress .22s ease';setTimeout(function(){if(_appBtn)_appBtn.style.animation='';},240);}
-  fetch('/approve/'+id,{method:'POST'}).then(function(r){return r.json();}).then(function(d){
+  fetch('/approve/'+id,{method:'POST'}).then(function(r){
+    return r.json().catch(function(){ throw new Error('Server error (HTTP '+r.status+') — please try again'); });
+  }).then(function(d){
   if(d.ok){
     var card = document.getElementById('rc-'+id);
     card.classList.remove('urgent','skipped');
@@ -6768,6 +6721,7 @@ function approveR(id){
       // wrong until the next full reload re-rendered it from the DB.
       card.classList.remove('approved');
       card.classList.add('posted');
+      card.dataset.status='posted';
       // "Posted" — the ember leaves the draft, travels the wire, and lands
       // as a checkmark; only on the real 200, never optimistic.
       cmPostedThen(document.querySelector('#rc-'+id+' .draft-actions'),'Reply posted to Google','<span style="font-size:11px;color:var(--green);font-weight:500">✓ Posted to Google</span>');
@@ -6776,6 +6730,7 @@ function approveR(id){
       toast('Response approved and posted to Google ✓ — now live','success');
     } else {
       card.classList.add('approved');
+      card.dataset.status='approved';
       var _plat = document.getElementById('rc-'+id) ? document.getElementById('rc-'+id).dataset.platform : '';
       var _markBtn = _plat === 'yelp'
         ? '<button class="cbtn cbtn-soft cbtn-sm" style="margin-left:6px" onclick="markPosted('+id+',this)">📋 Copy &amp; open Yelp</button>'
@@ -6811,6 +6766,40 @@ function approveR(id){
   }
 })}
 
+// One page at a time. The server renders the SAME _review_card.html
+// partial the first page came from, so there is no second copy of the card
+// markup here to drift out of sync.
+var _rvOffset = null;
+function loadMoreReviews(btn){
+  var wrap=document.getElementById('rv-more-wrap');
+  var list=document.querySelector('#rv-inbox-reviews .rv2-list');
+  if(!list) return;
+  if(_rvOffset===null) _rvOffset=document.querySelectorAll('#rv-inbox-reviews .rv2-row').length;
+  var done=cbtnBusy(btn,'Loading…');
+  var q='offset='+encodeURIComponent(_rvOffset)+'&filter='+encodeURIComponent(rfilter||'all');
+  var searchEl=document.getElementById('rsearch');
+  if(searchEl&&searchEl.value) q+='&search='+encodeURIComponent(searchEl.value);
+  if(window._topicFilter) q+='&category='+encodeURIComponent(window._topicFilter);
+  fetch('/api/reviews/page?'+q).then(function(r){
+    return r.json().catch(function(){ throw new Error('Server error (HTTP '+r.status+')'); });
+  }).then(function(d){
+    done();
+    if(!d.ok){ toast(d.error||'Could not load more','error'); return; }
+    var holder=document.createElement('div');
+    holder.innerHTML=d.html||'';
+    while(holder.firstElementChild){
+      var el=holder.firstElementChild;
+      el.classList.add('revealed');
+      list.appendChild(el);
+    }
+    _rvOffset=d.offset;
+    var shownEl=document.getElementById('rv-shown-n');
+    if(shownEl) shownEl.textContent=document.querySelectorAll('#rv-inbox-reviews .rv2-row').length;
+    if(!d.has_more&&wrap) wrap.style.display='none';
+    filterReviews();
+  }).catch(function(e){ done(); toast((e&&e.message)||'Network error — check your connection','error'); });
+}
+
 function retryPostR(id, btn){
   // busy() is a one-line wrapper around cbtnBusy() local to the "iOS
   // parity" IIFE further down the page (where retractR etc. live) — call
@@ -6824,7 +6813,7 @@ function retryPostR(id, btn){
     if(!d.ok){ toast(d.error||'Could not retry','error'); return; }
     var card=document.getElementById('rc-'+id);
     if(d.auto_posted){
-      if(card){ card.classList.remove('approved'); card.classList.add('posted'); }
+      if(card){ card.classList.remove('approved'); card.classList.add('posted'); card.dataset.status='posted'; }
       cmPostedThen(document.querySelector('#rc-'+id+' .draft-actions'),'Reply posted to Google','<span style="font-size:11px;color:var(--green);font-weight:500">✓ Posted to Google</span>');
       updateReviewStats();
       _reloadResponsePerfCurrent();
@@ -6850,10 +6839,12 @@ function markPosted(id, btn){
     }
     window.open('https://business.yelp.com', '_blank');
   }
-  fetch('/api/mark-posted/'+id,{method:'POST'}).then(function(r){return r.json();}).then(function(d){
+  fetch('/api/mark-posted/'+id,{method:'POST'}).then(function(r){
+    return r.json().catch(function(){ throw new Error('Server error (HTTP '+r.status+') — please try again'); });
+  }).then(function(d){
     if(d.ok){
       var actions = document.getElementById('draft-actions-'+id);
-      if(card){card.classList.remove('approved','skipped','urgent');card.classList.add('posted');}
+      if(card){card.classList.remove('approved','skipped','urgent');card.classList.add('posted');card.dataset.status='posted';}
       cmPostedThen(actions,'Marked as posted','<span style="font-size:11px;color:var(--green);font-weight:500">✓ Posted</span>');
       if(platform !== 'yelp') toast('Marked as posted','success');
       updateReviewStats();
@@ -6862,7 +6853,9 @@ function markPosted(id, btn){
 }
 
 function skipR(id){
-  fetch('/skip/'+id,{method:'POST'}).then(function(r){return r.json();}).then(function(d){
+  fetch('/skip/'+id,{method:'POST'}).then(function(r){
+    return r.json().catch(function(){ throw new Error('Server error (HTTP '+r.status+') — please try again'); });
+  }).then(function(d){
     if(d.ok){
       var card = document.getElementById('rc-'+id);
       // Skipping is a real decision, not a no-op — the review leaves the
@@ -6875,7 +6868,7 @@ function skipR(id){
       // without clearing them first, the old class lingered alongside
       // 'skipped', so the ribbon and reply-bubble color depended on CSS
       // source order rather than actually reflecting the current status.
-      if(card){ card.classList.remove('approved','urgent','posted'); card.classList.add('skipped'); }
+      if(card){ card.classList.remove('approved','urgent','posted'); card.classList.add('skipped'); card.dataset.status='skipped'; }
       var actions = document.getElementById('draft-actions-'+id);
       if(actions) {
         actions.innerHTML =
@@ -6887,7 +6880,7 @@ function skipR(id){
       updateReviewStats();
       toast('Skipped — edit or regenerate below');
     } else { toast('Skip failed — try again','error'); }
-  }).catch(function(){ toast('Network error — try again','error'); });
+  }).catch(function(e){ toast((e&&e.message)||'Network error — check your connection','error'); });
 }
 var dowData={{labor.dow_summary|tojson}};
 var laborByDay={{labor.by_day|tojson if labor.by_day else '{}'}};
