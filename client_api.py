@@ -109,6 +109,11 @@ def _do_approve(rid, restaurant_id):
     except Exception:
         pass
     auto_posted, post_error = _attempt_google_post(rid, restaurant_id)
+    try:
+        from notify import fire_response_approved_alert
+        fire_response_approved_alert(restaurant_id, rid, posted=auto_posted)
+    except Exception:
+        pass
     payload = {"ok": True, "auto_posted": auto_posted}
     if post_error:
         payload["post_error"] = post_error
@@ -346,6 +351,34 @@ def _do_retract(rid, restaurant_id):
 def approve(rid, current_user):
     payload, status = _do_approve(rid, current_user["restaurant_id"])
     return jsonify(**payload), status
+
+
+@client_bp.route("/api/reviews/page")
+@login_required
+def reviews_page_api(current_user):
+    """One page of the inbox, for the web's "Load more".
+
+    The dashboard used to render every review the restaurant had ever
+    received into the initial HTML document; this is what lets it render a
+    page at a time instead. Returns rendered-ready dicts, the running
+    offset and whether more remain.
+    """
+    from models import get_reviews_data, REVIEWS_PAGE_SIZE
+    try:
+        offset = max(0, int(request.args.get("offset", 0)))
+    except (TypeError, ValueError):
+        offset = 0
+    rows, total = get_reviews_data(
+        current_user["restaurant_id"],
+        request.args.get("filter", "all"),
+        request.args.get("search", ""),
+        category=request.args.get("category") or None,
+        platform=request.args.get("platform") or None,
+        limit=REVIEWS_PAGE_SIZE, offset=offset, include_total=True,
+    )
+    return jsonify(ok=True, reviews=rows, total=total,
+                   offset=offset + len(rows),
+                   has_more=(offset + len(rows)) < total)
 
 
 @client_bp.route("/api/reviews/<int:rid>/retry-post", methods=["POST"])
@@ -748,41 +781,55 @@ def _do_review_insight(rid):
         _client_ri = _anth.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY",""))
         restaurant = get_restaurant(rid)
         rstats = get_review_stats(rid)
-        top_issues = get_top_issues(rid, days=90, limit=5)
+        # sentiment=None: this line is labelled "Top topics" in the prompt,
+        # not "complaints" — see get_top_issues' docstring.
+        top_issues = get_top_issues(rid, days=90, limit=5, sentiment=None)
         from time_utils import restaurant_now
         now_chi = restaurant_now(restaurant)
         today_str = now_chi.strftime("%B %d, %Y")
         from models import get_conn as _gc_ri
         _conn_ri = _gc_ri()
-        # 4-week rolling trend
-        weekly_rows = _conn_ri.execute("""
-            SELECT strftime('%Y-W%W', fetched_at) as week,
+        # Every window and every bucket key below reads the time a GUEST
+        # wrote the review — COALESCE(NULLIF(review_date,''), fetched_at) —
+        # not fetched_at, which is when Cavnar pulled it. On a first connect
+        # an entire multi-year history arrives stamped with one fetched_at,
+        # so "this week" was the whole history and the 4-week buckets were
+        # one bar. Soft-deleted rows are excluded here too; every other
+        # review query already excludes them, so the AI passage was the one
+        # surface still describing reviews the owner had removed.
+        _AXIS = "COALESCE(NULLIF(review_date,''), fetched_at)"
+        weekly_rows = _conn_ri.execute(f"""
+            SELECT strftime('%Y-W%W', {_AXIS}) as week,
                    COUNT(*) as cnt,
                    ROUND(AVG(rating),2) as avg_r,
                    ROUND(SUM(CASE WHEN sentiment='negative' THEN 1 ELSE 0 END)*100.0/COUNT(*),1) as neg_pct
             FROM reviews
-            WHERE restaurant_id=? AND fetched_at >= datetime('now','-28 days')
+            WHERE restaurant_id=? AND deleted_at IS NULL
+              AND {_AXIS} >= datetime('now','-28 days')
             GROUP BY week ORDER BY week
         """, (rid,)).fetchall()
-        this_week = _conn_ri.execute("""
+        this_week = _conn_ri.execute(f"""
             SELECT COUNT(*) as cnt, AVG(rating) as avg_r,
                    SUM(CASE WHEN sentiment='negative' THEN 1 ELSE 0 END) as neg,
                    SUM(CASE WHEN urgency='high' AND response_status NOT IN ('posted','skipped') THEN 1 ELSE 0 END) as urgent
             FROM reviews
-            WHERE restaurant_id=? AND fetched_at >= datetime('now','-7 days')
+            WHERE restaurant_id=? AND deleted_at IS NULL
+              AND {_AXIS} >= datetime('now','-7 days')
         """, (rid,)).fetchone()
-        last_week = _conn_ri.execute("""
+        last_week = _conn_ri.execute(f"""
             SELECT COUNT(*) as cnt, AVG(rating) as avg_r
             FROM reviews
-            WHERE restaurant_id=? AND fetched_at >= datetime('now','-14 days')
-              AND fetched_at < datetime('now','-7 days')
+            WHERE restaurant_id=? AND deleted_at IS NULL
+              AND {_AXIS} >= datetime('now','-14 days')
+              AND {_AXIS} < datetime('now','-7 days')
         """, (rid,)).fetchone()
         # Topic persistence — issues appearing in 2+ of the last 4 weeks
         # categories is a JSON array; pull raw rows and parse in Python
-        topic_rows = _conn_ri.execute("""
-            SELECT categories, strftime('%Y-W%W', fetched_at) as week
+        topic_rows = _conn_ri.execute(f"""
+            SELECT categories, strftime('%Y-W%W', {_AXIS}) as week
             FROM reviews
-            WHERE restaurant_id=? AND fetched_at >= datetime('now','-28 days')
+            WHERE restaurant_id=? AND deleted_at IS NULL
+              AND {_AXIS} >= datetime('now','-28 days')
               AND categories IS NOT NULL AND categories != '' AND categories != '[]'
         """, (rid,)).fetchall()
         import json as _json_ri
@@ -796,23 +843,36 @@ def _do_review_insight(rid):
                 topic_weeks.append({"category": cat, "week": row["week"]})
         urgent_rows = _conn_ri.execute("""
             SELECT text FROM reviews
-            WHERE restaurant_id=? AND urgency='high'
+            WHERE restaurant_id=? AND deleted_at IS NULL AND urgency='high'
               AND response_status NOT IN ('posted','skipped')
             ORDER BY fetched_at DESC LIMIT 2
         """, (rid,)).fetchall()
         _conn_ri.close()
 
-        # Build week-over-week string
+        # Build week-over-week string.
+        # One shared floor for "is this enough data to call a direction"
+        # (notify.MIN_TREND_REVIEWS_PER_WEEK), used by the week-over-week
+        # line, the 4-week trend below it and the daily trend alert.
+        from notify import MIN_TREND_REVIEWS_PER_WEEK as _MIN_WK
         wow_str = ""
-        if last_week and last_week["cnt"] > 0 and this_week and this_week["cnt"] > 0:
+        if (last_week and this_week
+                and (last_week["cnt"] or 0) >= _MIN_WK and (this_week["cnt"] or 0) >= _MIN_WK):
             diff = (this_week["cnt"] or 0) - last_week["cnt"]
             rdiff = round(((this_week["avg_r"] or 0) - (last_week["avg_r"] or 0)), 1)
             wow_str = f"vs last week: {'+' if diff>=0 else ''}{diff} reviews, avg rating {'up' if rdiff>0 else 'down' if rdiff<0 else 'unchanged'} {abs(rdiff) if rdiff!=0 else ''}."
 
-        # Build 4-week rating trend string
+        # Build 4-week rating trend string.
+        #
+        # Only weeks with enough reviews behind them count. Without this a
+        # week holding a single 5-star review followed by a week holding a
+        # single 3-star one produced "Rating DECLINING 3 weeks straight —
+        # flag this", which is a direction read off three data points that
+        # each represent one guest. cnt was already selected above and was
+        # simply never looked at.
+        trend_weeks = [r for r in weekly_rows if (r["cnt"] or 0) >= _MIN_WK]
         trend_str = ""
-        if len(weekly_rows) >= 3:
-            ratings = [r["avg_r"] for r in weekly_rows if r["avg_r"]]
+        if len(trend_weeks) >= 3:
+            ratings = [r["avg_r"] for r in trend_weeks if r["avg_r"]]
             if len(ratings) >= 3:
                 if all(ratings[i] <= ratings[i+1] for i in range(len(ratings)-1)):
                     trend_str = f"Rating IMPROVING {len(ratings)} weeks straight ({ratings[0]}★ → {ratings[-1]}★)."
@@ -820,7 +880,7 @@ def _do_review_insight(rid):
                     trend_str = f"Rating DECLINING {len(ratings)} weeks straight ({ratings[0]}★ → {ratings[-1]}★). Flag this."
                 else:
                     trend_str = f"Rating unstable last {len(ratings)} weeks: {' → '.join(str(r) + '★' for r in ratings)}."
-            neg_pcts = [r["neg_pct"] for r in weekly_rows if r["neg_pct"] is not None]
+            neg_pcts = [r["neg_pct"] for r in trend_weeks if r["neg_pct"] is not None]
             if len(neg_pcts) >= 3 and neg_pcts[-1] > neg_pcts[0] + 5:
                 trend_str += f" Negative % rising: {neg_pcts[0]}% → {neg_pcts[-1]}%."
 

@@ -65,7 +65,11 @@ def test_old_reviews_fetched_today_do_not_collapse_into_this_week(db_path):
     for i in range(6):
         _review(db_path, 1, ext=f"g{i}", rating=5, written_days_ago=30 * (i + 1) * 2)
     weeks = models.get_sentiment_trend(1, weeks=8)
-    assert len(weeks) <= 2, f"3 years of reviews landed in {len(weeks)} bucket(s)"
+    # Every week in the window is emitted now, empty ones included (a quiet
+    # week is data, and collapsing it compressed the x-axis) — so count the
+    # buckets that actually hold something.
+    filled = [w for w in weeks if w["total"]]
+    assert len(filled) <= 2, f"3 years of reviews landed in {len(filled)} bucket(s)"
     assert sum(w["total"] for w in weeks) < 6, "old reviews are inside an 8-week window"
 
 
@@ -86,8 +90,12 @@ def test_reviews_written_in_different_weeks_get_different_bars(db_path):
         _review(db_path, 1, ext=f"w{weeks_ago}", rating=5,
                 written_days_ago=weeks_ago * 7, fetched_days_ago=0)
     weeks = models.get_sentiment_trend(1, weeks=8)
-    assert len(weeks) == 3, f"3 separate weeks rendered as {len(weeks)} bar(s)"
-    assert all(w["total"] == 1 for w in weeks)
+    filled = [w for w in weeks if w["total"]]
+    assert len(filled) == 3, f"3 separate weeks rendered as {len(filled)} bar(s)"
+    # The quiet weeks between them are emitted as zeros rather than being
+    # dropped, so the x-axis doesn't silently compress 5 weeks into 3 bars.
+    assert len(weeks) == 6, f"gaps collapsed: {[w['week_key'] for w in weeks]}"
+    assert all(w["total"] == 1 for w in filled)
 
 
 def test_the_trend_labels_each_bar_with_a_real_date(db_path):

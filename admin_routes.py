@@ -1082,13 +1082,16 @@ def fetch_reviews_now(restaurant_id, current_user):
     if not reviews and not errors:
         return jsonify(ok=False, error="No platform IDs configured, reviews_live is off, and GMB not connected")
 
-    new_count, new_reviews = save_reviews(reviews) if reviews else (0, [])
+    _downgraded = []
+    new_count, new_reviews = save_reviews(reviews, downgrades=_downgraded) if reviews else (0, [])
 
-    # Fire alerts for newly saved reviews
-    if new_reviews:
+    # Fire alerts for newly saved reviews, and for reviews a guest edited
+    # down to a lower rating on this fetch.
+    if new_reviews or _downgraded:
         try:
             from notify import fire_review_alerts
-            fire_review_alerts(restaurant_id, restaurant.name, new_reviews)
+            fire_review_alerts(restaurant_id, restaurant.name, new_reviews,
+                               edited_reviews=_downgraded)
         except Exception as _ae:
             print(f"[alert] fire error: {_ae}")
 
@@ -1113,6 +1116,11 @@ def fetch_reviews_now(restaurant_id, current_user):
                         approved_examples=approved_examples,
                         sign_off=restaurant.sign_off_name or restaurant.name,
                         never_say=restaurant.never_say or "",
+                        # Both were missing here: urgency meant the serious-issue
+                        # escalation never applied, and language meant a redraft
+                        # silently reverted a non-English restaurant's replies.
+                        urgency=r.urgency or "normal",
+                        language=getattr(restaurant, "response_language", None) or None,
                     )
                 except Exception: pass
         except Exception as e:
@@ -1163,6 +1171,11 @@ def redraft_all(restaurant_id, current_user):
                         approved_examples=approved_examples,
                         sign_off=restaurant.sign_off_name or restaurant.name,
                         never_say=restaurant.never_say or "",
+                        # Both were missing here: urgency meant the serious-issue
+                        # escalation never applied, and language meant a redraft
+                        # silently reverted a non-English restaurant's replies.
+                        urgency=r.urgency or "normal",
+                        language=getattr(restaurant, "response_language", None) or None,
                     )
                 except Exception as _e:
                     print(f"[redraft-all] error [{r.id}]: {_e}")
@@ -1431,7 +1444,16 @@ def mark_posted(review_id, current_user):
     conn = get_conn()
     row = conn.execute("SELECT platform, author, rating FROM reviews WHERE id=? AND restaurant_id=?",
                        (review_id, current_user["restaurant_id"])).fetchone()
-    conn.execute("UPDATE reviews SET response_status='posted' WHERE id=? AND restaurant_id=?",
+    if not row:
+        # Returned ok=True regardless, so a request for another tenant's
+        # review (or a deleted one) reported success having changed nothing.
+        conn.close()
+        return jsonify(ok=False, error="Review not found"), 404
+    # posted_at as well as the status — models.mark_posted sets both, and
+    # leaving it null here made two rows that mean the same thing look
+    # different to anything reading the timestamp.
+    conn.execute("UPDATE reviews SET response_status='posted', posted_at=datetime('now') "
+                 "WHERE id=? AND restaurant_id=?",
                  (review_id, current_user["restaurant_id"]))
     conn.commit(); conn.close()
     try:

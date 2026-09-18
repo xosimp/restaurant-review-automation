@@ -236,6 +236,9 @@ CREATE TABLE IF NOT EXISTS changelog_entries (
 );
 
 CREATE INDEX IF NOT EXISTS idx_reviews_restaurant   ON reviews(restaurant_id);
+CREATE INDEX IF NOT EXISTS idx_reviews_rest_date    ON reviews(restaurant_id, review_date);
+CREATE INDEX IF NOT EXISTS idx_reviews_rest_status  ON reviews(restaurant_id, response_status);
+CREATE INDEX IF NOT EXISTS idx_reviews_rest_processed ON reviews(restaurant_id, processed);
 CREATE INDEX IF NOT EXISTS idx_reviews_status       ON reviews(response_status);
 CREATE INDEX IF NOT EXISTS idx_reviews_fetched      ON reviews(fetched_at);
 CREATE INDEX IF NOT EXISTS idx_reviews_urgency      ON reviews(urgency);
@@ -408,6 +411,9 @@ class Restaurant:
     data_retention_months: int       = 0     # 0 = keep everything
     alert_1star:          int       = 1
     alert_2star:          int       = 0
+    # 3-star was the one rating with no alert path at all — the classic
+    # silent-churn review ("waited 45 minutes, food was cold, 3 stars").
+    alert_3star:          int       = 0
     alert_health:         int       = 1
     alert_neg_spike:      int       = 1
     alert_negative_trend: int       = 1
@@ -430,6 +436,9 @@ class Restaurant:
     al_2star_email:       int       = 1
     al_2star_sms:         int       = 0
     al_2star_push:        int       = 1
+    al_3star_email:       int       = 1
+    al_3star_sms:         int       = 0
+    al_3star_push:        int       = 1
     al_5star_email:       int       = 0
     al_5star_sms:         int       = 0
     al_5star_push:        int       = 1
@@ -759,6 +768,13 @@ def _migrate_reviews_unique(conn):
         conn.execute("PRAGMA foreign_keys=ON")
         # The rebuild drops the table's indexes with it.
         for idx in ("CREATE INDEX IF NOT EXISTS idx_reviews_restaurant ON reviews(restaurant_id)",
+                    # Every inbox and analytics query is scoped to one
+                    # restaurant and then ordered/filtered by time or
+                    # status; a bare restaurant_id index left the rest to a
+                    # scan of that restaurant's whole history.
+                    "CREATE INDEX IF NOT EXISTS idx_reviews_rest_date ON reviews(restaurant_id, review_date)",
+                    "CREATE INDEX IF NOT EXISTS idx_reviews_rest_status ON reviews(restaurant_id, response_status)",
+                    "CREATE INDEX IF NOT EXISTS idx_reviews_rest_processed ON reviews(restaurant_id, processed)",
                     "CREATE INDEX IF NOT EXISTS idx_reviews_status ON reviews(response_status)",
                     "CREATE INDEX IF NOT EXISTS idx_reviews_fetched ON reviews(fetched_at)",
                     "CREATE INDEX IF NOT EXISTS idx_reviews_urgency ON reviews(urgency)"):
@@ -1080,6 +1096,12 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE restaurants ADD COLUMN alert_rating_floor REAL DEFAULT 4.0",
         "ALTER TABLE restaurants ADD COLUMN alert_labor_over INTEGER DEFAULT 0",
         "ALTER TABLE restaurants ADD COLUMN alert_any_review INTEGER DEFAULT 0",
+        "ALTER TABLE restaurants ADD COLUMN alert_3star INTEGER DEFAULT 0",
+        "ALTER TABLE reviews ADD COLUMN analysis_attempts INTEGER DEFAULT 0",
+        "ALTER TABLE reviews ADD COLUMN draft_attempts INTEGER DEFAULT 0",
+        "ALTER TABLE restaurants ADD COLUMN al_3star_email INTEGER DEFAULT 1",
+        "ALTER TABLE restaurants ADD COLUMN al_3star_sms INTEGER DEFAULT 0",
+        "ALTER TABLE restaurants ADD COLUMN al_3star_push INTEGER DEFAULT 1",
         "ALTER TABLE restaurants ADD COLUMN alert_resp_approved INTEGER DEFAULT 0",
         # marketing_content_log had 4 different ad-hoc CREATE TABLE statements
         # scattered across client_api.py/hosted_dashboard.py/marketing.py, some
@@ -2526,7 +2548,7 @@ def _seed_gia_mia(db_path: str = DB_PATH):
 # than typed out positionally, since a 40+ item literal tuple is exactly
 # where a hand-counted "?" placeholder silently drifts from its value.
 _ALERT_CONFIG_FIELDS = (
-    "alert_1star", "alert_2star", "alert_health", "alert_neg_spike",
+    "alert_1star", "alert_2star", "alert_3star", "alert_health", "alert_neg_spike",
     "alert_negative_trend", "alert_no_response", "alert_5star",
     "alert_rating_threshold", "alert_rating_floor", "alert_labor_over",
     "alert_any_review", "alert_resp_approved",
@@ -2534,6 +2556,7 @@ _ALERT_CONFIG_FIELDS = (
     "al_health_email", "al_health_sms", "al_health_push",
     "al_1star_email", "al_1star_sms", "al_1star_push",
     "al_2star_email", "al_2star_sms", "al_2star_push",
+    "al_3star_email", "al_3star_sms", "al_3star_push",
     "al_5star_email", "al_5star_sms", "al_5star_push",
     "al_spike_email", "al_spike_sms", "al_spike_push",
     "al_unres_email", "al_unres_sms", "al_unres_push",
@@ -2586,7 +2609,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH):
         "square_access_token","square_location_id","square_last_synced","square_sync_error",
         "clover_merchant_id","clover_api_token","clover_last_synced","clover_sync_error",
         "gbp_rating","gbp_review_count","gbp_rating_updated_at",
-        "alert_1star","alert_2star","alert_health","alert_neg_spike","alert_negative_trend","alert_no_response",
+        "alert_1star","alert_2star","alert_3star","alert_health","alert_neg_spike","alert_negative_trend","alert_no_response",
         "alert_5star","alert_rating_threshold","alert_rating_floor","alert_labor_over",
         "alert_any_review","alert_resp_approved",
         "urgent_via_email","urgent_via_sms",
@@ -2756,6 +2779,7 @@ def get_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> Optional[Resta
         alert_2star=row["alert_2star"] if "alert_2star" in row.keys() else 0,
         alert_health=row["alert_health"] if "alert_health" in row.keys() else 1,
         alert_neg_spike=row["alert_neg_spike"] if "alert_neg_spike" in row.keys() else 1,
+        alert_3star=row["alert_3star"] if "alert_3star" in row.keys() else 0,
         alert_negative_trend=row["alert_negative_trend"] if "alert_negative_trend" in row.keys() else 1,
         alert_no_response=row["alert_no_response"] if "alert_no_response" in row.keys() else 0,
         alert_5star=row["alert_5star"] if "alert_5star" in row.keys() else 0,
@@ -2775,6 +2799,9 @@ def get_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> Optional[Resta
         al_2star_email=row["al_2star_email"] if "al_2star_email" in row.keys() else 1,
         al_2star_sms=row["al_2star_sms"]     if "al_2star_sms"   in row.keys() else 0,
         al_2star_push=row["al_2star_push"]   if "al_2star_push"  in row.keys() else 1,
+        al_3star_email=row["al_3star_email"] if "al_3star_email" in row.keys() else 1,
+        al_3star_sms=row["al_3star_sms"]     if "al_3star_sms"   in row.keys() else 0,
+        al_3star_push=row["al_3star_push"]   if "al_3star_push"  in row.keys() else 1,
         al_5star_email=row["al_5star_email"] if "al_5star_email" in row.keys() else 0,
         al_5star_sms=row["al_5star_sms"]     if "al_5star_sms"   in row.keys() else 0,
         al_5star_push=row["al_5star_push"]   if "al_5star_push"  in row.keys() else 1,
@@ -2936,8 +2963,14 @@ def get_active_modules(restaurant: Optional["Restaurant"]) -> list[dict]:
 
 # ── Review CRUD ───────────────────────────────────────────────────────────────
 
-def _apply_review_edit(conn, r: "Review") -> bool:
-    """Update a stored review when its author has edited it. True if changed.
+def _apply_review_edit(conn, r: "Review") -> tuple:
+    """Update a stored review when its author has edited it.
+
+    Returns (changed, downgraded) — downgraded meaning the guest lowered
+    their own star rating, which is a reputation event the owner needs to
+    hear about and which used to pass in complete silence: an edit is not a
+    new row, so it never reached new_reviews, so no alert, push or webhook
+    ever fired for a five-star dropped to one.
 
     Compares the guest's own fields only. Everything the restaurant did —
     the draft, the approval, the posted reply — is left alone, because an
@@ -2949,11 +2982,13 @@ def _apply_review_edit(conn, r: "Review") -> bool:
         "WHERE restaurant_id=? AND platform=? AND external_id=?",
         (r.restaurant_id, r.platform, r.external_id)).fetchone()
     if not row:
-        return False
-    same_rating = int(row["rating"] or 0) == int(r.rating or 0)
+        return (False, False)
+    old_rating = int(row["rating"] or 0)
+    new_rating = int(r.rating or 0)
+    same_rating = old_rating == new_rating
     same_text = (row["text"] or "").strip() == (r.text or "").strip()
     if same_rating and same_text:
-        return False
+        return (False, False)
     # Keep what the guest first said, so a rating that moved can be shown as
     # having moved rather than quietly replaced.
     original = row["original_rating"] if row["original_rating"] is not None else row["rating"]
@@ -2964,13 +2999,21 @@ def _apply_review_edit(conn, r: "Review") -> bool:
         "WHERE id=?",
         (r.rating, r.text, original, r.source_updated_at, row["id"]))
     r.id = row["id"]
-    return True
+    # Carried on the object so the alert can say "5★ → 1★" rather than just
+    # "now 1★" (the dataclass has no column for it; the DB keeps the first
+    # rating in original_rating).
+    r.previous_rating = old_rating
+    return (True, bool(new_rating and old_rating and new_rating < old_rating))
 
 
-def save_reviews(reviews: list[Review], db_path: str = DB_PATH) -> tuple[int, list]:
+def save_reviews(reviews: list[Review], db_path: str = DB_PATH,
+                 downgrades: list = None) -> tuple[int, list]:
     """Upsert reviews; skip ones this restaurant already has.
 
-    Returns (new_count, new_review_objects).
+    Returns (new_count, new_review_objects). Pass a list as `downgrades` to
+    also collect the reviews whose author LOWERED their own rating on this
+    fetch — an out-parameter rather than a third return value so the two
+    dozen existing `a, b = save_reviews(...)` call sites keep working.
 
     The skip used to be a bare `pass` under a GLOBAL UNIQUE(platform,
     external_id), which meant "another restaurant already claimed this
@@ -2985,7 +3028,25 @@ def save_reviews(reviews: list[Review], db_path: str = DB_PATH) -> tuple[int, li
     already_had = 0
     edited = 0
     unexpected = []
+    # Review.fetched_at's dataclass default is a hardcoded America/Chicago
+    # stamp, while fetcher.py carefully resolves the RESTAURANT's timezone
+    # for review_date — and fetched_at is the fallback axis every trend
+    # query uses when review_date is missing, so the two disagreed by hours
+    # for anyone outside Central. One lookup per batch (they share a
+    # restaurant), applied only to rows about to be inserted.
+    _tz_stamp = None
+    if reviews:
+        try:
+            from zoneinfo import ZoneInfo as _ZI_sr
+            from datetime import datetime as _dt_sr
+            _r0 = get_restaurant(reviews[0].restaurant_id, db_path=db_path)
+            _tz = _ZI_sr(getattr(_r0, "timezone", None) or "America/Chicago")
+            _tz_stamp = _dt_sr.now(_tz).strftime("%Y-%m-%dT%H:%M:%S")
+        except Exception:
+            _tz_stamp = None
     for r in reviews:
+        if _tz_stamp:
+            r.fetched_at = _tz_stamp
         try:
             cur = conn.execute("""
                 INSERT INTO reviews
@@ -3019,8 +3080,11 @@ def save_reviews(reviews: list[Review], db_path: str = DB_PATH) -> tuple[int, li
                 # restaurant's work and are never touched. The text changed,
                 # so the row goes back for re-analysis.
                 try:
-                    if _apply_review_edit(conn, r):
+                    _changed, _downgraded = _apply_review_edit(conn, r)
+                    if _changed:
                         edited += 1
+                    if _downgraded and downgrades is not None:
+                        downgrades.append(r)
                 except Exception as _ee:
                     unexpected.append((r.external_id, f"edit failed: {_ee}"))
             else:
@@ -3042,15 +3106,24 @@ def save_reviews(reviews: list[Review], db_path: str = DB_PATH) -> tuple[int, li
     return new_count, new_reviews
 
 
+# A review that fails analysis or drafting is retried on the next cycle —
+# but not forever. Without a ceiling a permanently-unanalysable review was
+# re-sent to the model on all four fetch cycles a day, indefinitely, against
+# the restaurant's own AI budget, with nothing anywhere saying so.
+MAX_AI_ATTEMPTS = 5
+
+
 def get_pending_analysis(restaurant_id: int, limit: int = 50,
                           db_path: str = DB_PATH) -> list[Review]:
-    """Reviews fetched but not yet analysed by Claude."""
+    """Reviews fetched but not yet analysed by Claude, excluding the ones
+    that have already failed MAX_AI_ATTEMPTS times."""
     conn = get_conn(db_path)
     rows = conn.execute("""
         SELECT * FROM reviews
         WHERE restaurant_id=? AND processed=0
+          AND COALESCE(analysis_attempts, 0) < ?
         ORDER BY fetched_at DESC LIMIT ?
-    """, (restaurant_id, limit)).fetchall()
+    """, (restaurant_id, MAX_AI_ATTEMPTS, limit)).fetchall()
     conn.close()
     return [_row_to_review(r) for r in rows]
 
@@ -3062,13 +3135,45 @@ def get_pending_drafts(restaurant_id: int, limit: int = 50,
     rows = conn.execute("""
         SELECT * FROM reviews
         WHERE restaurant_id=? AND processed=1 AND response_status='pending'
+          AND COALESCE(draft_attempts, 0) < ?
         ORDER BY
             CASE urgency WHEN 'high' THEN 0 ELSE 1 END,
             fetched_at DESC
         LIMIT ?
-    """, (restaurant_id, limit)).fetchall()
+    """, (restaurant_id, MAX_AI_ATTEMPTS, limit)).fetchall()
     conn.close()
     return [_row_to_review(r) for r in rows]
+
+
+def record_ai_attempt(review_id: int, kind: str, db_path: str = DB_PATH):
+    """Count one analysis/draft attempt against a review.
+
+    Called on failure so a review that can never be processed stops being
+    retried four times a day forever; get_pending_analysis and
+    get_pending_drafts both skip rows past MAX_AI_ATTEMPTS, and
+    count_stalled_reviews() reports what is sitting there.
+    """
+    col = "analysis_attempts" if kind == "analysis" else "draft_attempts"
+    conn = get_conn(db_path)
+    conn.execute(f"UPDATE reviews SET {col} = COALESCE({col}, 0) + 1 WHERE id=?", (review_id,))
+    conn.commit()
+    conn.close()
+
+
+def count_stalled_reviews(restaurant_id: int, db_path: str = DB_PATH) -> dict:
+    """Reviews that gave up after MAX_AI_ATTEMPTS — the ones a human has to
+    look at, rather than silently missing forever."""
+    conn = get_conn(db_path)
+    row = conn.execute("""
+        SELECT
+          SUM(processed=0 AND COALESCE(analysis_attempts,0) >= ?) AS unanalysed,
+          SUM(processed=1 AND response_status='pending'
+              AND COALESCE(draft_attempts,0) >= ?)               AS undrafted
+        FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL
+    """, (MAX_AI_ATTEMPTS, MAX_AI_ATTEMPTS, restaurant_id)).fetchone()
+    conn.close()
+    return {"unanalysed": (row["unanalysed"] or 0) if row else 0,
+            "undrafted": (row["undrafted"] or 0) if row else 0}
 
 
 def get_urgent_reviews(restaurant_id: int, db_path: str = DB_PATH) -> list[Review]:
@@ -5822,36 +5927,81 @@ def get_sentiment_trend(restaurant_id, weeks=8):
         ORDER BY week_key ASC
     """, (restaurant_id, f"-{weeks * 7}")).fetchall()
     conn.close()
-    from datetime import datetime as _dt_st
-    result = []
+    from datetime import datetime as _dt_st, timedelta as _td_st
+    by_key = {}
     for row in rows:
-        # Format label as M/D from week_start
-        try:
-            dt = _dt_st.strptime(row["week_start"], "%Y-%m-%d")
-            label = f"{dt.month}/{dt.day}"
-        except Exception:
-            label = row["week_key"]
-        result.append({
-            "label":      label,
-            "week_key":   row["week_key"],
-            "positive":   row["positive"] or 0,
-            "negative":   row["negative"] or 0,
-            "neutral":    row["neutral"]  or 0,
-            "total":      row["total"]    or 0,
-            "avg_rating": row["avg_rating"] or 0,
-        })
+        by_key[row["week_key"]] = row
+
+    # Emit every week from the first one that HAS data through to now,
+    # including the quiet ones. GROUP BY only produces weeks that exist, so
+    # a week with no reviews simply vanished and the chart drew the weeks
+    # either side of it as adjacent — time silently compressed, and a gap
+    # in trading (a closure, a slow January) read as continuity.
+    #
+    # A restaurant with nothing in the window still returns [] rather than
+    # a row of zero bars, because every caller uses an empty list to mean
+    # "show the empty state" and a fake 8-bar chart is worse than none.
+    if not rows:
+        return []
+    today = _dt_st.now()
+    monday = today - _td_st(days=today.weekday())
+    first_key = min(by_key)
+    result = []
+    for i in range(weeks - 1, -1, -1):
+        start = monday - _td_st(weeks=i)
+        if start.strftime("%Y-%W") < first_key:
+            continue
+        key = start.strftime("%Y-%W")
+        row = by_key.get(key)
+        if row is not None:
+            try:
+                dt = _dt_st.strptime(row["week_start"], "%Y-%m-%d")
+                label = f"{dt.month}/{dt.day}"
+            except Exception:
+                label = row["week_key"]
+            result.append({
+                "label":      label,
+                "week_key":   row["week_key"],
+                "positive":   row["positive"] or 0,
+                "negative":   row["negative"] or 0,
+                "neutral":    row["neutral"]  or 0,
+                "total":      row["total"]    or 0,
+                "avg_rating": row["avg_rating"] or 0,
+            })
+        else:
+            result.append({
+                "label":      f"{start.month}/{start.day}",
+                "week_key":   key,
+                "positive":   0, "negative": 0, "neutral": 0,
+                "total":      0, "avg_rating": 0,
+            })
     return result
 
-def get_top_issues(restaurant_id, days=90, limit=6):
-    """Return top review categories by mention count for the last N days."""
+def get_top_issues(restaurant_id, days=90, limit=6, sentiment="negative"):
+    """Top review categories by mention count for the last N days.
+
+    sentiment="negative" (the default) counts ONLY the categories attached
+    to negative reviews, because every caller that reads position 0 of this
+    list calls it a complaint — Home's headline recommendation renders it
+    as "Look into {topic} — it's the most-mentioned complaint" under the
+    line "Repeat themes in negative reviews are the fixable kind." It
+    counted every sentiment, so a restaurant whose guests consistently
+    PRAISED its food quality was told to go fix its food quality.
+
+    Pass sentiment=None for "what guests talk about", regardless of tone —
+    which is what the AI insight wants, and which it labels "Top topics".
+    """
     from collections import Counter
     conn = get_conn()
-    rows = conn.execute("""
+    where_sentiment = "AND sentiment=?" if sentiment else ""
+    params = [restaurant_id] + ([sentiment] if sentiment else []) + [str(days)]
+    rows = conn.execute(f"""
         SELECT categories FROM reviews
         WHERE restaurant_id=? AND processed=1 AND deleted_at IS NULL
+        {where_sentiment}
         AND categories IS NOT NULL AND categories != '[]'
         AND COALESCE(NULLIF(review_date,''), fetched_at) >= datetime('now', '-' || ? || ' days')
-    """, (restaurant_id, str(days))).fetchall()
+    """, params).fetchall()
     conn.close()
     counts = Counter()
     for row in rows:
@@ -5881,6 +6031,11 @@ def get_top_issues(restaurant_id, days=90, limit=6):
             "count":    count,
         })
     return results
+
+# Both periods need at least this many mentions of a topic before its
+# arrow claims a direction. Mirrors notify.MIN_TREND_REVIEWS_PER_WEEK.
+MIN_TOPIC_TREND_MENTIONS = 3
+
 
 def get_topic_heatmap(restaurant_id: int, days: int = 90) -> list:
     """Return all 8 categories with sentiment breakdown and period-over-period trend."""
@@ -5942,9 +6097,14 @@ def get_topic_heatmap(restaurant_id: int, days: int = 90) -> list:
         total = totals[cat]
         p, n, u = pos[cat], neg[cat], neu[cat]
         pv = prev[cat]
-        if total == 0:
+        # A direction needs enough mentions on BOTH sides of the comparison
+        # to mean anything. Without this, one mention this period against
+        # zero last period rendered a "trending up" arrow — a signal an
+        # owner may act on, drawn from a single guest. MIN_TOPIC_TREND_
+        # MENTIONS is the same idea as notify.MIN_TREND_REVIEWS_PER_WEEK.
+        if total < MIN_TOPIC_TREND_MENTIONS or pv < MIN_TOPIC_TREND_MENTIONS:
             trend = "flat"
-        elif pv == 0 or total > pv * 1.15:
+        elif total > pv * 1.15:
             trend = "up"
         elif total < pv * 0.85:
             trend = "down"
@@ -5965,16 +6125,42 @@ def get_topic_heatmap(restaurant_id: int, days: int = 90) -> list:
     return results
 
 
-def get_reviews_data(restaurant_id, filter_by="all", search="", category=None, platform=None):
+# The inbox's page size. The list used to be unbounded: every review a
+# restaurant had ever received was selected, serialised and — on the web —
+# rendered server-side as a full card with a draft box, a textarea and a
+# template picker. Fine at 58 reviews, a multi-megabyte document at 3,000.
+REVIEWS_PAGE_SIZE = 50
+
+
+def get_reviews_data(restaurant_id, filter_by="all", search="", category=None, platform=None,
+                     limit=None, offset=0, include_total=False):
+    """Rows for the review inbox.
+
+    Unanalysed reviews are INCLUDED. The filter used to be `processed=1`,
+    which put this query at odds with get_review_stats (which deliberately
+    counts every review, analysed or not): a review whose Haiku analysis
+    failed was counted in the owner's "needs a reply" totals and in the tab
+    badge, but was missing from the list those numbers point at — a badge
+    reading 3 over an inbox with nothing in it, and no way to tell why.
+    Callers can read `processed` on each row to label the ones still
+    waiting on analysis.
+
+    limit/offset paginate; include_total adds the unpaginated count so a
+    caller can tell whether more remain.
+    """
     conn = get_conn()
-    where  = ["processed=1", "restaurant_id=?", "deleted_at IS NULL"]
+    where  = ["restaurant_id=?", "deleted_at IS NULL"]
     params = [restaurant_id]
     if filter_by == "urgent":
         where.append("urgency='high'")
     elif filter_by in ("positive","neutral","negative"):
         where.append("sentiment=?"); params.append(filter_by)
     elif filter_by == "pending":
-        where.append("response_status='drafted'")
+        # "To approve" is everything still sitting in the queue: a drafted
+        # reply waiting on a decision AND a review with no draft yet. It
+        # meant only 'drafted' here while the web's own client-side filter
+        # meant something else again and iOS a third thing.
+        where.append("response_status IN ('pending','drafted')")
     if search:
         where.append("(author LIKE ? OR text LIKE ?)")
         params.extend([f"%{search}%", f"%{search}%"])
@@ -5988,19 +6174,38 @@ def get_reviews_data(restaurant_id, filter_by="all", search="", category=None, p
     if platform:
         where.append("platform=?")
         params.append(platform)
-    rows = conn.execute(
-        f"""SELECT * FROM reviews WHERE {' AND '.join(where)}
+    total = None
+    if include_total:
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM reviews WHERE {' AND '.join(where)}", params
+        ).fetchone()[0]
+    sql = f"""SELECT * FROM reviews WHERE {' AND '.join(where)}
         ORDER BY CASE urgency WHEN 'high' THEN 0 ELSE 1 END,
         CASE sentiment WHEN 'negative' THEN 0 WHEN 'neutral' THEN 1 ELSE 2 END,
-        fetched_at DESC""",
-        params
-    ).fetchall()
+        COALESCE(NULLIF(review_date,''), fetched_at) DESC"""
+    page_params = list(params)
+    if limit is not None:
+        sql += " LIMIT ? OFFSET ?"
+        page_params += [int(limit), int(offset or 0)]
+    rows = conn.execute(sql, page_params).fetchall()
     conn.close()
     result = []
     for r in rows:
         d = dict(r)
         d["categories"] = json.loads(d["categories"] or "[]")
+        d["processed"] = bool(d.get("processed"))
+        # Whether Retract can possibly work on this review, so a client
+        # doesn't have to infer it from response_status alone and offer a
+        # button that always 400s (see client_api._do_retract's gate:
+        # posted AND google AND a real review_name from our own auto-post).
+        d["can_retract"] = bool(
+            d.get("response_status") == "posted"
+            and d.get("platform") == "google"
+            and d.get("review_name")
+        )
         result.append(d)
+    if include_total:
+        return result, total
     return result
 
 
@@ -6027,6 +6232,7 @@ def get_response_performance(restaurant_id: int, days: int = 90, db_path: str = 
         SELECT response_action, COUNT(*) as cnt
         FROM reviews
         WHERE restaurant_id=?
+          AND deleted_at IS NULL
           AND response_action IS NOT NULL
           AND approved_at >= datetime('now', '-' || ? || ' days')
         GROUP BY response_action
@@ -6646,7 +6852,7 @@ def purge_expired_reviews(db_path: str = DB_PATH) -> int:
             cur = conn.execute(f"""
                 UPDATE reviews SET deleted_at = datetime('now')
                 WHERE restaurant_id=? AND deleted_at IS NULL
-                  AND COALESCE(review_date, fetched_at) < datetime('now', '-{months * 30} days')
+                  AND COALESCE(NULLIF(review_date,''), fetched_at) < datetime('now', '-{months * 30} days')
             """, (r["id"],))
             total += cur.rowcount or 0
         conn.commit()
@@ -6753,7 +6959,7 @@ def build_settings_export_json(restaurant_id: int, db_path: str = DB_PATH) -> st
         "neighborhood", "vibe", "known_for", "voice_notes", "never_say", "menu_notes", "sign_off_name",
         "response_language", "tone_preset", "open_times_json", "close_times_json", "skip_holidays",
         "digest_day", "digest_enabled", "login_notify", "staff_signin_notify", "marketing_emails_opt_out",
-        "alert_1star", "alert_2star", "alert_health", "alert_neg_spike", "alert_negative_trend",
+        "alert_1star", "alert_2star", "alert_3star", "alert_health", "alert_neg_spike", "alert_negative_trend",
         "alert_no_response", "alert_5star", "alert_labor_over", "alert_food_waste", "alert_ai_visibility_drop",
         "alert_health_bypass_quiet", "alert_extra_emails", "push_sound", "urgent_via_email", "urgent_via_sms",
         "alert_quiet_start", "alert_quiet_end", "auto_approve_5star", "auto_approve_daily_cap",

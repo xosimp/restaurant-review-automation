@@ -391,7 +391,10 @@ def _build(current_user):
         if awaiting:
             add_attn("awaiting_approval", "watch" if awaiting < 5 else "important", f"{_plural(awaiting, 'reply')} drafted, waiting for you",
                      "Written in your voice. Approve them in one click and Google-connected replies post right away.", "reviews",
-                     f"Publish {min(awaiting, 25)}", action="publish_replies", evidence=f"{awaiting} drafted")
+                     # Names what the tap publishes, not just a count —
+                     # "Publish 1" alone doesn't say what gets published.
+                     f"Publish {min(awaiting, 25)} {_plural(min(awaiting, 25), 'reply', 'replies').split(' ', 1)[1]}",
+                     action="publish_replies", evidence=f"{awaiting} drafted")
         if total >= 5 and rate < 50:
             add_attn("low_response_rate", "watch", f"Response rate at {rate:.0f}%",
                      "Restaurants answering 80%+ of reviews see measurably more new guests.", "reviews", "Answer reviews",

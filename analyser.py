@@ -147,6 +147,11 @@ def analyse_pending(restaurant_id: int, limit: int = 500):
             # on from — it reaches the daily failure digest.
             print(f"    [{r.id}] ERROR: {e}")
             try:
+                from models import record_ai_attempt
+                record_ai_attempt(r.id, "analysis")
+            except Exception:
+                pass
+            try:
                 import ops
                 ops.capture(e, job="review_analysis",
                             context=f"restaurant_id={restaurant_id} review_id={r.id}")

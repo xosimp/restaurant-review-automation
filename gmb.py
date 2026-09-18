@@ -256,21 +256,53 @@ def find_gmb_location(access_token: str, place_id: str) -> dict:
 
 # ── Review fetching via Business Profile API ─────────────────────────────────
 
+# Google returns at most 50 reviews per page. Without following
+# nextPageToken a restaurant with years of history imported its newest 50
+# and never backfilled the rest — and since save_reviews is keyed on
+# external_id, the older ones were not "pending", they were simply never
+# seen. Bounded so one restaurant's 12-year backlog cannot hold the single
+# fetch thread for every other restaurant in the cycle; the next run picks
+# up where this one stopped, because anything already stored is a no-op.
+GMB_REVIEW_PAGE_SIZE = 50
+GMB_MAX_REVIEW_PAGES = 20
+
+
 def fetch_reviews_via_gmb(access_token: str, location_id: str, restaurant_id: int) -> list:
     """
     Fetch reviews using the current Business Profile Reviews API.
     location_id format: "locations/456"
+
+    Raises on API/transport failure rather than returning []. It used to
+    swallow every exception and return an empty list, which the caller
+    could not tell apart from "nothing new today" — so scheduler.py set
+    fetched_ok=True, stamped last_fetched_at, and the 25-hour staleness
+    monitor built to catch a dead Google connection never fired. Reviews
+    stopped arriving permanently while every health indicator read green.
+    fetcher.fetch_google already raises; this now matches it.
     """
     from models import Review
-    try:
+    raw = []
+    page_token = None
+    for _page in range(GMB_MAX_REVIEW_PAGES):
+        params = {"pageSize": GMB_REVIEW_PAGE_SIZE}
+        if page_token:
+            params["pageToken"] = page_token
         resp = requests.get(
             f"https://mybusinessreviews.googleapis.com/v1/{location_id}/reviews",
             headers={"Authorization": f"Bearer {access_token}"},
-            params={"pageSize": 50},
+            params=params,
             timeout=10,
         )
         resp.raise_for_status()
-        raw = resp.json().get("reviews", [])
+        body = resp.json()
+        raw.extend(body.get("reviews") or [])
+        page_token = body.get("nextPageToken")
+        if not page_token:
+            break
+    else:
+        print(f"[GMB] stopped at {GMB_MAX_REVIEW_PAGES} pages for {location_id} — "
+              f"more history remains, next run continues")
+    try:
         reviews = []
         for r in raw:
             star_map = {"ONE": 1, "TWO": 2, "THREE": 3, "FOUR": 4, "FIVE": 5}
@@ -308,8 +340,10 @@ def fetch_reviews_via_gmb(access_token: str, location_id: str, restaurant_id: in
             ))
         return reviews
     except Exception as e:
-        print(f"[GMB] fetch_reviews_via_gmb error: {e}")
-        return []
+        # Parsing failures only — the HTTP call above is deliberately left
+        # to raise so the caller can tell a dead connection from a quiet day.
+        print(f"[GMB] fetch_reviews_via_gmb parse error: {e}")
+        raise
 
 
 # ── Reply posting ─────────────────────────────────────────────────────────────

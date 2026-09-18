@@ -326,6 +326,12 @@ def delete_alert_contact(contact_id: int, db_path: str = DB_PATH):
 # runaway stops being the owner's problem.
 ALERT_HARD_CEILING_PER_DAY = 50
 
+# A weekly average is only a trend if the week has enough reviews behind it.
+# Shared by the daily negative-trend alert here and the Reviews module's own
+# trend surfaces (models.get_topic_heatmap, client_api._do_review_insight),
+# so "how much data makes a direction real" is one number, in one place.
+MIN_TREND_REVIEWS_PER_WEEK = 3
+
 
 def _over_alert_ceiling(restaurant_id: int, db_path: str = DB_PATH) -> bool:
     try:
@@ -373,23 +379,42 @@ def _daily_alert_suppressed(restaurant_id: int, alert_type: str, db_path: str = 
     return _over_alert_ceiling(restaurant_id, db_path)
 
 
-def _is_health_alert(text: str, urgency: str = None) -> bool:
+def _is_health_alert(text: str, urgency: str = None, processed: bool = None) -> bool:
     """Whether a new review warrants the health/safety alert.
 
-    The analyser's own urgency classification decides this when it exists.
-    It reads the review in context and covers the same ground this keyword
-    list does — food safety, illness, injury, legal threats, staff
-    misconduct — without matching a bare substring.
+    The analyser's own urgency classification decides this when the review
+    was actually analysed. It reads the review in context and covers the
+    same ground the keyword list does — food safety, illness, injury, legal
+    threats, staff misconduct — without matching a bare substring.
 
-    The keyword list is the fallback for a review that could not be
+    The keyword list is the fallback for a review that could NOT be
     analysed, and only the fallback. Used on its own it fired a 🚨 HEALTH
     ALERT on a five-star review reading "no roach problem here, unlike the
     place down the road": "roach" is in the list and negation is invisible
-    to a substring match. drafter.py already moved off keywords for exactly
-    this reason and documented the same false positive; the alert path,
-    which is the one that texts the owner at 11pm, had not.
+    to a substring match.
+
+    `processed` is what decides which branch runs, because `urgency` cannot.
+    Review.urgency defaults to "normal" (models.py) and the column is
+    `DEFAULT 'normal'` — never null, never empty — so the old `if urgency:`
+    test was always true and the fallback below was unreachable code. The
+    effect was that a review whose analysis failed (API timeout, bad JSON,
+    or the per-restaurant AI budget cap) carried urgency='normal' and its
+    health alert silently never fired, which is exactly the case the
+    fallback was written to cover: the backstop went missing precisely when
+    the AI layer was failing.
     """
-    if urgency:
+    if processed is True:
+        # Analysed: the analyser read it in context and its answer stands,
+        # including when that answer is "normal" (see the negated-mention
+        # case above — keywords would fire on that, the analyser does not).
+        return str(urgency or "").strip().lower() == "high"
+    if processed is False:
+        # Explicitly NOT analysed — the only case the keyword list exists
+        # for, and the case that was unreachable before.
+        pass
+    elif urgency:
+        # Caller didn't say either way: preserve the old contract rather
+        # than risk a keyword false positive on an analysed review.
         return str(urgency).strip().lower() == "high"
     import unicodedata
     t = unicodedata.normalize("NFKC", text or "").lower().strip()
@@ -446,6 +471,31 @@ def _neg_spike_count(restaurant_id: int, db_path: str = DB_PATH) -> int:
     """, (restaurant_id,)).fetchone()[0]
     conn.close()
     return count
+
+
+def _neg_spike_window_total(restaurant_id: int, db_path: str = DB_PATH) -> int:
+    """Every review a guest wrote in the same seven days _neg_spike_count
+    measures negatives over — the denominator the alert needs to say
+    anything about a trend.
+
+    Three negatives is a crisis for a restaurant that gets five reviews a
+    week and noise for one that gets two hundred. The alert fired on the
+    absolute count alone, so both got the identical "trending issue" SMS.
+    """
+    conn = models.get_conn(db_path)
+    count = conn.execute("""
+        SELECT COUNT(*) FROM reviews
+        WHERE restaurant_id=? AND deleted_at IS NULL
+          AND COALESCE(NULLIF(review_date,''), fetched_at) >= datetime('now', '-7 days')
+    """, (restaurant_id,)).fetchone()[0]
+    conn.close()
+    return count
+
+
+# A spike needs both: enough negatives to be real, and a big enough share of
+# the week's reviews to be a signal rather than the ordinary background rate.
+NEG_SPIKE_MIN_COUNT = 3
+NEG_SPIKE_MIN_SHARE = 0.20
 
 
 def _already_alerted_spike(restaurant_id: int, db_path: str = DB_PATH) -> bool:
@@ -573,24 +623,33 @@ def send_staff_signin_alert(restaurant_id: int, restaurant_name: str, owner_emai
 
 # ── Main alert dispatch ───────────────────────────────────────
 
-def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: list, db_path: str = DB_PATH):
+def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: list,
+                       db_path: str = DB_PATH, edited_reviews: list = None):
     """
     Check newly saved reviews against per-restaurant alert toggles.
     Fires SMS (if urgent_via_sms) and/or email (if urgent_via_email).
     Call this after save_reviews() with the list of newly inserted Review objects.
+
+    `edited_reviews` carries reviews whose author lowered their own rating
+    (save_reviews' `downgrades` out-parameter). They get their own alert
+    type at the end, through the same blast() gating as everything else —
+    an edit is not a new row, so before this it produced no alert at all
+    and a five-star quietly becoming a one-star was invisible.
     """
-    if not new_reviews:
+    if not new_reviews and not edited_reviews:
         return
 
     conn = models.get_conn(db_path)
     row = conn.execute("""
-        SELECT alert_1star, alert_2star, alert_health, alert_5star,
+        SELECT alert_1star, alert_2star, alert_3star, alert_health, alert_5star,
                alert_neg_spike, alert_negative_trend, alert_no_response,
+               alert_any_review,
                urgent_via_sms, urgent_via_email, owner_email,
                alert_max_per_day,
                al_health_email, al_health_sms, al_health_push,
                al_1star_email,  al_1star_sms,  al_1star_push,
                al_2star_email,  al_2star_sms,  al_2star_push,
+               al_3star_email,  al_3star_sms,  al_3star_push,
                al_5star_email,  al_5star_sms,  al_5star_push,
                al_spike_email,  al_spike_sms,  al_spike_push,
                al_unres_email,  al_unres_sms,  al_unres_push
@@ -610,7 +669,7 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
     global_sms   = bool(row["urgent_via_sms"])
     global_email = bool(row["urgent_via_email"])
     _push_cols = ("al_health_push", "al_1star_push", "al_2star_push",
-                  "al_5star_push", "al_spike_push", "al_unres_push")
+                  "al_3star_push", "al_5star_push", "al_spike_push", "al_unres_push")
     any_push = any(row[c] for c in _push_cols if c in row.keys())
     if not global_sms and not global_email and not any_push:
         return
@@ -665,6 +724,14 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
             "health":    ("al_health_sms",  "al_health_email",  "al_health_push"),
             "1star":     ("al_1star_sms",   "al_1star_email",   "al_1star_push"),
             "2star":     ("al_2star_sms",   "al_2star_email",   "al_2star_push"),
+            "3star":     ("al_3star_sms",   "al_3star_email",   "al_3star_push"),
+            # "any review" and the approval confirmation are low-stakes
+            # informational types — they ride the 1-star channel matrix
+            # rather than adding two more toggle triplets to the settings
+            # screen for something the owner opted into by name already.
+            "any_review":   ("al_1star_sms", "al_1star_email", "al_1star_push"),
+            "resp_approved":("al_1star_sms", "al_1star_email", "al_1star_push"),
+            "edit_downgrade":("al_1star_sms", "al_1star_email", "al_1star_push"),
             "5star":     ("al_5star_sms",   "al_5star_email",   "al_5star_push"),
             "neg_spike": ("al_spike_sms",   "al_spike_email",   "al_spike_push"),
             "unresponded":("al_unres_sms",  "al_unres_email",   "al_unres_push"),
@@ -719,7 +786,8 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
         sms_preview, sms_ellipsis = _sms_safe_excerpt(text)
 
         # Health alert — highest priority
-        if row["alert_health"] and _is_health_alert(text, getattr(review, "urgency", None)):
+        if row["alert_health"] and _is_health_alert(text, getattr(review, "urgency", None),
+                                                    processed=bool(getattr(review, "processed", False))):
             sms = (
                 f"🚨 HEALTH ALERT — {restaurant_name}\n"
                 f"{rating}★ {platform}: \"{sms_preview}{sms_ellipsis}\"\n"
@@ -780,6 +848,28 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
             )
             blast(sms, f"⭐ 5★ review — {restaurant_name}", html, "5star", review.id)
 
+        # 3★ alert — the one rating with no path at all before. A 3-star
+        # "waited 45 minutes and the food was cold" is the review an owner
+        # most often never hears about and most easily could have saved.
+        elif rating == 3 and _col("alert_3star", 0):
+            who  = f"{author}: " if author else ""
+            sms  = (
+                f"🟡 3★ Review — {restaurant_name}\n"
+                f"{who}\"{sms_preview}{sms_ellipsis}\"\n"
+                f"dashboard.cavnar.ai"
+            )
+            html = _alert_email_html(
+                restaurant_name,
+                f"🟡 3★ review received on {platform}",
+                [
+                    f'<strong>{author}</strong> left a 3-star review on {platform}:' if author else f"A 3-star review was posted on {platform}:",
+                    f'<em>"{preview}{ellipsis}"</em>',
+                    "Middling reviews usually name something specific and fixable.",
+                ],
+                restaurant_id=restaurant_id,
+            )
+            blast(sms, f"🟡 3★ review — {restaurant_name}", html, "3star", review.id)
+
         # 2★ alert
         elif rating == 2 and row["alert_2star"]:
             who  = f"{author}: " if author else ""
@@ -799,24 +889,132 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
             )
             blast(sms, f"🟠 2★ review — {restaurant_name}", html, "2star", review.id)
 
+        # Any review — the catch-all toggle. Settable in Account → Alerts
+        # (client_api.py) since it shipped, and read by nothing until now,
+        # so an owner who asked to hear about every review heard about none
+        # outside the rating-specific types above.
+        elif _col("alert_any_review", 0):
+            who  = f"{author}: " if author else ""
+            sms  = (
+                f"💬 {rating}★ Review — {restaurant_name}\n"
+                f"{who}\"{sms_preview}{sms_ellipsis}\"\n"
+                f"dashboard.cavnar.ai"
+            )
+            html = _alert_email_html(
+                restaurant_name,
+                f"💬 New {rating}★ review on {platform}",
+                [
+                    f'<strong>{author}</strong> left a {rating}-star review on {platform}:' if author else f"A {rating}-star review was posted on {platform}:",
+                    f'<em>"{preview}{ellipsis}"</em>',
+                ],
+                restaurant_id=restaurant_id,
+            )
+            blast(sms, f"💬 New review — {restaurant_name}", html, "any_review", review.id)
+
+    # A guest lowered their own rating — every bit as much a reputation
+    # event as a new bad review, and previously silent.
+    for review in (edited_reviews or []):
+        was = getattr(review, "previous_rating", None)
+        now = review.rating or 0
+        moved = f"{was}★ → {now}★" if was else f"now {now}★"
+        _p, _e = _sms_safe_excerpt(review.text or "")
+        _author_parts_e = (review.author or "").split()
+        _author_e = _html.escape(_author_parts_e[0]) if _author_parts_e else ""
+        who = f"{_author_e} " if _author_e else ""
+        sms = (
+            f"📉 Review edited down — {restaurant_name}\n"
+            f"{who}changed their review: {moved}\n"
+            f"\"{_p}{_e}\" · dashboard.cavnar.ai"
+        )
+        html = _alert_email_html(
+            restaurant_name,
+            "📉 A guest lowered their review",
+            [
+                f"<strong>{_author_e or 'A guest'}</strong> edited their review: <strong>{moved}</strong>.",
+                f'<em>"{_html.escape((review.text or "")[:120].strip())}"</em>',
+                "Your existing reply, if any, is still published against it.",
+            ],
+            cta_label="Open the review",
+            restaurant_id=restaurant_id,
+        )
+        blast(sms, f"📉 Review edited down — {restaurant_name}", html, "edit_downgrade", review.id)
+
     # Negative spike — once per batch, 24h dedup
     if row["alert_neg_spike"] and not _already_alerted_spike(restaurant_id, db_path):
         count = _neg_spike_count(restaurant_id, db_path)
-        if count >= 3:
+        total = _neg_spike_window_total(restaurant_id, db_path)
+        share = (count / total) if total else 0
+        if count >= NEG_SPIKE_MIN_COUNT and share >= NEG_SPIKE_MIN_SHARE:
+            pct = round(share * 100)
             sms  = (
-                f"⚠️ {restaurant_name}: {count} negative reviews in the last 7 days.\n"
+                f"⚠️ {restaurant_name}: {count} of {total} reviews in the last 7 days "
+                f"were negative ({pct}%).\n"
                 f"Trending issue — check your dashboard · dashboard.cavnar.ai"
             )
             html = _alert_email_html(
                 restaurant_name,
                 f"⚠️ Negative review spike detected",
                 [
-                    f"<strong>{count} negative reviews</strong> have been received in the last 7 days.",
+                    f"<strong>{count} of {total} reviews</strong> in the last 7 days were negative "
+                    f"(<strong>{pct}%</strong>).",
                     "This may indicate a recurring issue worth investigating.",
                 ],
                 restaurant_id=restaurant_id,
             )
             blast(sms, f"⚠️ Negative spike — {restaurant_name}", html, "neg_spike")
+
+
+def fire_response_approved_alert(restaurant_id: int, review_id: int,
+                                 posted: bool = False, db_path: str = DB_PATH):
+    """Confirmation that a reply was approved (and, when Google is
+    connected, published).
+
+    `alert_resp_approved` has been a settable toggle in Account -> Alerts
+    since it shipped and was read by no alert code at all, so an owner who
+    asked to be told when a reply went out was told nothing. Email + push
+    only, deliberately: a confirmation of something the owner just did does
+    not warrant a text message, and SMS costs money per send.
+
+    Gated through _daily_alert_suppressed like every other non-blast()
+    alert type, so quiet hours, the owner's daily cap and the hard ceiling
+    all still apply.
+    """
+    try:
+        conn = models.get_conn(db_path)
+        r = conn.execute(
+            "SELECT name, owner_email, alert_resp_approved, al_1star_email, al_1star_push "
+            "FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
+        review = conn.execute(
+            "SELECT author, rating, platform FROM reviews WHERE id=? AND restaurant_id=?",
+            (review_id, restaurant_id)).fetchone()
+        conn.close()
+        if not r or not r["alert_resp_approved"]:
+            return
+        if _daily_alert_suppressed(restaurant_id, "resp_approved", db_path):
+            return
+        name = r["name"] or "your restaurant"
+        author = (review["author"] or "a guest") if review else "a guest"
+        rating = (review["rating"] if review else None) or ""
+        platform = ((review["platform"] or "google") if review else "google").title()
+        verb = f"published to {platform}" if posted else "approved"
+        subject = f"✅ Reply {verb} — {name}"
+        body = f"Your reply to {author}'s {rating}★ review was {verb}."
+        html = _alert_email_html(
+            name, f"✅ Reply {verb}",
+            [body, "No action needed — this is a confirmation."],
+            cta_label="See the review", restaurant_id=restaurant_id,
+        )
+        if r["owner_email"] and (r["al_1star_email"] if "al_1star_email" in r.keys() else 1):
+            _send_alert_email(r["owner_email"], subject, html, restaurant_id=restaurant_id)
+        try:
+            from push import fire_push as _fp
+            _fp(restaurant_id, "resp_approved", subject, body,
+                data={"alert_type": "resp_approved", "review_id": review_id})
+        except Exception:
+            pass
+        _log_alert(restaurant_id, "resp_approved", review_id, db_path=db_path)
+    except Exception as e:
+        print(f"[notify] resp_approved alert error rid={restaurant_id}: {e}")
 
 
 def check_no_response_alerts(db_path: str = DB_PATH):
@@ -1000,19 +1198,30 @@ def check_daily_alerts(db_path: str = DB_PATH):
         # ── Negative trend ────────────────────────────────────
         if r["alert_negative_trend"] and not _already_alerted("negative_trend"):
             c2 = models.get_conn(db_path)
+            # COALESCE(NULLIF(review_date,''), fetched_at), not review_date
+            # alone: a CSV/manual import with no date was excluded from its
+            # own restaurant's trend entirely. Soft-deleted rows excluded.
+            # `n` comes back so a "week" of one review cannot be a trend.
             weeks = c2.execute("""
-                SELECT strftime('%Y-%W', review_date) as week,
-                       AVG(rating) as avg_rating
+                SELECT strftime('%Y-%W', COALESCE(NULLIF(review_date,''), fetched_at)) as week,
+                       AVG(rating) as avg_rating,
+                       COUNT(*)    as n
                 FROM reviews
                 WHERE restaurant_id=?
-                  AND review_date >= date('now', '-28 days')
+                  AND deleted_at IS NULL
+                  AND COALESCE(NULLIF(review_date,''), fetched_at) >= date('now', '-28 days')
                   AND rating IS NOT NULL
                 GROUP BY week
                 ORDER BY week ASC
             """, (rid,)).fetchall()
             c2.close()
-            if len(weeks) >= 3:
-                avgs = [w["avg_rating"] for w in weeks[-3:]]
+            # Three consecutive weekly averages, each over at least
+            # MIN_TREND_REVIEWS_PER_WEEK reviews. Without the volume gate a
+            # single 5-star week followed by a single 3-star week read as a
+            # "rating declining 3 weeks in a row" SMS.
+            recent = weeks[-3:]
+            if len(recent) >= 3 and all((w["n"] or 0) >= MIN_TREND_REVIEWS_PER_WEEK for w in recent):
+                avgs = [w["avg_rating"] for w in recent]
                 if avgs[0] > avgs[1] > avgs[2]:
                     sms  = (
                         f"📉 {name}: Average rating has declined 3 weeks in a row "

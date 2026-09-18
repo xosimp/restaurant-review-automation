@@ -924,7 +924,7 @@ def _do_mobile_home(current_user):
         needs_attention.append({
             "type": "low_response_rate", "module": "reviews",
             "title": f"Response rate at {rstats['response_rate']}%",
-            "detail": "Restaurants at 80%+ get 2x more new guests",
+            "detail": "Restaurants answering 80%+ of reviews see measurably more new guests",
             "cta": "Answer reviews", "secondary": None, "action": "open_module",
         })
 
@@ -947,8 +947,62 @@ def _do_mobile_home(current_user):
     from models import is_in_quiet_hours
     quiet_hours_active = is_in_quiet_hours(rid)
 
+    # Home's attention list comes from home_brief — the same engine the web
+    # Home uses — rather than the hand-rolled three-item version built
+    # above. That version had already drifted: it had no rating-drop, no
+    # negative-trend (both sample-gated in home_brief), no "unanswered for
+    # 48h+", and no "reviews haven't refreshed in N days", so the phone
+    # could not tell an owner their rating was slipping or that their
+    # Google connection had gone stale. The local list stays as the
+    # fallback when the brief can't be built.
+    try:
+        import home_brief as _hb
+        _brief_payload, _brief_status = _hb.build_home_brief(current_user)
+        if _brief_status == 200:
+            _order = {"critical": 0, "important": 1, "watch": 2}
+            _attn = sorted(_brief_payload.get("attention") or [],
+                           key=lambda a: _order.get(a.get("severity"), 3))
+            # The app keys its attention-card icons off these type strings
+            # (HomeActionDeck/NeedsAttentionCard), so home_brief's own key
+            # names are translated onto the vocabulary the app already
+            # knows rather than silently degrading every icon to the
+            # default. Anything unmapped passes through as-is.
+            _TYPE_ALIASES = {
+                "awaiting_approval": "reviews_awaiting_approval",
+                "urgent_reviews": "urgent_reviews",
+                "low_response_rate": "low_response_rate",
+            }
+            if _attn:
+                needs_attention = [{
+                    "type": _TYPE_ALIASES.get(a.get("key"), a.get("key")),
+                    "module": a.get("module"),
+                    "title": a.get("title"),
+                    "detail": a.get("detail"),
+                    # home_brief nests the CTA as action:{label,kind,module};
+                    # the app's contract is a flat cta/action pair.
+                    "cta": (a.get("action") or {}).get("label") or "Open",
+                    # home_brief has no secondary-action concept; the app's
+                    # deck does, and "Read them first" next to a bulk
+                    # publish is the one that matters — it's the out for an
+                    # owner who doesn't want to publish unread.
+                    "secondary": ("Read them first"
+                                  if a.get("key") == "awaiting_approval" else None),
+                    "action": (a.get("action") or {}).get("kind") or "open_module",
+                    "severity": a.get("severity"),
+                    "evidence": a.get("evidence"),
+                } for a in _attn]
+            _brief_recs = _brief_payload.get("recs") or []
+            _brief_wins = _brief_payload.get("wins") or []
+        else:
+            _brief_recs, _brief_wins = [], []
+    except Exception as _hbe:
+        print(f"[home] brief unavailable, using local attention list: {_hbe}")
+        _brief_recs, _brief_wins = [], []
+
     return {
         "ok": True,
+        "recommendations": _brief_recs,
+        "wins": _brief_wins,
         "username": current_user.get("username"),
         "setup_checklist": _setup_checklist(restaurant, rstats, labor, active_keys),
         "restaurant_name": restaurant.name,
@@ -976,21 +1030,60 @@ def mobile_home(current_user):
 
 # ── Reviews ───────────────────────────────────────────────────────────────
 
-def _do_mobile_reviews(restaurant_id, filter_by="all", search="", category=None, platform=None):
-    from models import get_reviews_data
-    reviews = get_reviews_data(restaurant_id, filter_by, search, category=category, platform=platform)
-    return {"ok": True, "reviews": reviews}, 200
+def _window_days(raw, allowed=(30, 60, 90, 180), default=90):
+    """Parse an analytics ?days= window. int() on the raw value ran before
+    the route's try block, so ?days=abc was an unhandled ValueError and a
+    500 rather than a sensible default."""
+    try:
+        days = int(raw) if raw is not None else default
+    except (TypeError, ValueError):
+        return default
+    return days if days in allowed else default
+
+
+def _do_mobile_reviews(restaurant_id, filter_by="all", search="", category=None, platform=None,
+                       limit=None, offset=0):
+    """One page of the inbox.
+
+    The app used to request the whole thing (filter=all, no limit) and
+    filter client-side, so a restaurant with years of history shipped every
+    review — text, draft and all — to the phone on every pull-to-refresh.
+    limit/offset are optional so an older build keeps working.
+    """
+    from models import get_reviews_data, REVIEWS_PAGE_SIZE
+    if limit is None:
+        reviews = get_reviews_data(restaurant_id, filter_by, search,
+                                   category=category, platform=platform)
+        return {"ok": True, "reviews": reviews, "total": len(reviews),
+                "offset": len(reviews), "has_more": False}, 200
+    rows, total = get_reviews_data(restaurant_id, filter_by, search,
+                                   category=category, platform=platform,
+                                   limit=limit, offset=offset, include_total=True)
+    return {"ok": True, "reviews": rows, "total": total,
+            "offset": offset + len(rows),
+            "has_more": (offset + len(rows)) < total}, 200
 
 
 @mobile_bp.route("/reviews")
 @mobile_login_required
 def mobile_reviews(current_user):
+    from models import REVIEWS_PAGE_SIZE
+    raw_limit = request.args.get("limit")
+    try:
+        limit = min(int(raw_limit), 200) if raw_limit is not None else None
+    except (TypeError, ValueError):
+        limit = REVIEWS_PAGE_SIZE
+    try:
+        offset = max(0, int(request.args.get("offset", 0)))
+    except (TypeError, ValueError):
+        offset = 0
     payload, status = _do_mobile_reviews(
         current_user["restaurant_id"],
         request.args.get("filter", "all"),
         request.args.get("search", ""),
         request.args.get("category") or None,
         request.args.get("platform") or None,
+        limit=limit, offset=offset,
     )
     return jsonify(**payload), status
 
@@ -1073,9 +1166,7 @@ def mobile_delete_review(review_id, current_user):
 @mobile_login_required
 def mobile_response_performance(current_user):
     from models import get_response_performance
-    days = int(request.args.get("days", 90))
-    if days not in (30, 60, 90, 180):
-        days = 90
+    days = _window_days(request.args.get("days"))
     try:
         data = get_response_performance(current_user["restaurant_id"], days=days)
         return jsonify(ok=True, data=data)
@@ -1087,9 +1178,7 @@ def mobile_response_performance(current_user):
 @mobile_login_required
 def mobile_topic_heatmap(current_user):
     from models import get_topic_heatmap
-    days = int(request.args.get("days", 90))
-    if days not in (30, 60, 90, 180):
-        days = 90
+    days = _window_days(request.args.get("days"))
     try:
         data = get_topic_heatmap(current_user["restaurant_id"], days=days)
         return jsonify(ok=True, data=data)
@@ -1112,7 +1201,10 @@ def mobile_sentiment_trend(current_user):
 @mobile_login_required
 def mobile_review_insight(current_user):
     payload, status = _capi._do_review_insight(current_user["restaurant_id"])
-    return jsonify(ok=True, **payload), status
+    # ok tracks the actual status. This hardcoded ok=True, so the error
+    # payload ("Analysis unavailable — check back shortly") arrived at the
+    # app labelled as a successful insight.
+    return jsonify(ok=(status == 200), **payload), status
 
 
 # ── Response templates ───────────────────────────────────────────────────

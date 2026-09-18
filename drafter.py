@@ -259,6 +259,11 @@ def draft_pending(restaurant_id: int, limit: int = 50):
             # digest; this one printed to stdout and moved on.
             print(f"    [{r.id}] ERROR: {e}")
             try:
+                from models import record_ai_attempt
+                record_ai_attempt(r.id, "draft")
+            except Exception:
+                pass
+            try:
                 import ops
                 ops.capture(e, job="review_draft",
                             context=f"restaurant_id={restaurant_id} review_id={r.id}")

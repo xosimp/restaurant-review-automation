@@ -365,7 +365,13 @@ def index(current_user):
     rsearch = request.args.get("search","")
     restaurant = get_restaurant(rid)
     rstats     = get_review_stats(rid)
-    reviews    = get_reviews_data(rid, rfilter, rsearch)
+    # First page only. This used to select and render EVERY review the
+    # restaurant had ever received — each one a full card with a draft box,
+    # a textarea and a template picker — so the document grew without bound
+    # with the review history. The rest load from /api/reviews/page.
+    from models import REVIEWS_PAGE_SIZE
+    reviews, reviews_total = get_reviews_data(rid, rfilter, rsearch,
+                                              limit=REVIEWS_PAGE_SIZE, include_total=True)
     top_issues        = get_top_issues(rid, days=90)
     sentiment_trend    = get_sentiment_trend(rid, weeks=8)
     try:
@@ -629,7 +635,9 @@ def index(current_user):
         csrf_token=csrf_token,
         current_user=current_user, restaurant=restaurant,
         group_locations=_group_locations,
-        rstats=rstats, reviews=reviews, rfilter=rfilter, rsearch=rsearch, top_issues=top_issues, sentiment_trend=sentiment_trend,
+        rstats=rstats, reviews=reviews, reviews_total=reviews_total,
+        reviews_page_size=REVIEWS_PAGE_SIZE,
+        rfilter=rfilter, rsearch=rsearch, top_issues=top_issues, sentiment_trend=sentiment_trend,
         labor=labor, inv=inv, ctypes=CONTENT_TYPES,
         mod_reviews=int(restaurant.module_reviews or 0),
         mod_labor=int(restaurant.module_labor or 0),

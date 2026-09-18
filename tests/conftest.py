@@ -37,6 +37,18 @@ def _reset_supplier_order_cooldown():
 
 
 @pytest.fixture(autouse=True)
+def _reset_home_brief_cache():
+    """home_brief caches its whole payload per restaurant_id for 60s, and
+    every test's fresh database starts its ids at 1 — so the second Home
+    test in a file was served the first one's brief. Harmless in
+    production (the TTL is the point); a silent cross-test leak here."""
+    import home_brief
+    home_brief.invalidate()
+    yield
+    home_brief.invalidate()
+
+
+@pytest.fixture(autouse=True)
 def _no_real_email_or_sms(monkeypatch):
     """The suite must never reach Resend, Twilio, Stripe or DocuSign.
 

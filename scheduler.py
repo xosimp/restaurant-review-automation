@@ -184,11 +184,11 @@ def run_daily_fetch():
 
         log.info(f"Daily fetch for {len(live)} live restaurant(s)")
 
-        for row in live:
+        def _process_restaurant(row):
             rid = row["id"]
             restaurant = get_restaurant(rid)
             if not restaurant:
-                continue
+                return
 
             # Fetch.
             #
@@ -281,10 +281,13 @@ def run_daily_fetch():
                 log.warning(f"Review fetch did not complete for {restaurant.name} — last_fetched_at left stale on purpose")
 
             new_count, new_reviews = 0, []
+            downgraded = []
             if reviews:
-                new_count, new_reviews = save_reviews(reviews)
+                new_count, new_reviews = save_reviews(reviews, downgrades=downgraded)
                 if new_count:
                     log.info(f"{new_count} new reviews for {restaurant.name}")
+                if downgraded:
+                    log.info(f"{len(downgraded)} review(s) edited down for {restaurant.name}")
 
             # Analyse BEFORE alerting. Alerts used to fire on the raw batch,
             # so sentiment and urgency were both still NULL when the health
@@ -310,19 +313,27 @@ def run_daily_fetch():
                 except Exception as e:
                     log.error(f"Analyse error: {e}")
                     _ops.capture(e, job="review_analyse", context=restaurant.name)
+                    try:
+                        from models import record_ai_attempt
+                        record_ai_attempt(r.id, "analysis")
+                    except Exception:
+                        pass
 
-            if new_reviews:
+            if new_reviews or downgraded:
                 # Re-read the batch so alerts and webhooks see the analysis.
                 try:
                     from models import get_reviews_by_ids as _grbi
-                    new_reviews = _grbi(rid, [r.id for r in new_reviews if getattr(r, "id", None)]) or new_reviews
+                    if new_reviews:
+                        new_reviews = _grbi(rid, [r.id for r in new_reviews if getattr(r, "id", None)]) or new_reviews
                 except Exception:
                     pass
 
-                # Fire SMS/email alerts for newly saved reviews
+                # Fire SMS/email alerts for newly saved reviews, and for any
+                # review whose author lowered their own rating.
                 try:
                     from notify import fire_review_alerts
-                    fire_review_alerts(rid, restaurant.name, new_reviews)
+                    fire_review_alerts(rid, restaurant.name, new_reviews,
+                                       edited_reviews=downgraded)
                 except Exception as _ae:
                     log.error(f"Alert fire error [{restaurant.name}]: {_ae}")
 
@@ -358,10 +369,23 @@ def run_daily_fetch():
                                   approved_examples=approved_examples,
                                   sign_off=restaurant.sign_off_name or restaurant.name,
                                   never_say=restaurant.never_say or "",
-                                  language=getattr(restaurant, "response_language", None) or None,)
+                                  language=getattr(restaurant, "response_language", None) or None,
+                                  # Without this the whole urgent-issue
+                                  # escalation in drafter.py (80-100 words,
+                                  # no minimising, invite direct contact)
+                                  # was dead in the ONE path that drafts
+                                  # essentially every production reply — it
+                                  # defaulted to "normal", so a food-safety
+                                  # report got the standard 1-star template.
+                                  urgency=r.urgency or "normal",)
                 except Exception as e:
                     log.error(f"Draft error: {e}")
                     _ops.capture(e, job="review_draft", context=restaurant.name)
+                    try:
+                        from models import record_ai_attempt
+                        record_ai_attempt(r.id, "draft")
+                    except Exception:
+                        pass
 
             # Auto-approve rule (Account -> Profile -> Auto-approve): only
             # ever drafted 5-star responses, only under the daily cap, and
@@ -383,6 +407,18 @@ def run_daily_fetch():
             conn.close()
 
             # Email + SMS alerts now handled by notify.fire_review_alerts() at ingest time
+
+        # One restaurant's failure is one restaurant's failure. This loop
+        # used to sit bare inside the outer try below, so an unhandled error
+        # anywhere in the body above — a locked database on save_reviews, a
+        # get_restaurant that raised — ended the cycle for every restaurant
+        # after it, silently, behind a single log line.
+        for row in live:
+            try:
+                _process_restaurant(row)
+            except Exception as e:
+                log.error(f"Review cycle failed for restaurant {row['id']}: {e}")
+                _ops.capture(e, job="review_fetch", context=f"restaurant_id={row['id']}")
 
     except Exception as e:
         log.error(f"Daily fetch error: {e}")
