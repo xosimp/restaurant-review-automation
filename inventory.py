@@ -223,7 +223,9 @@ Shrimp 16/20,Protein,10,8,14.2,1.6,10,1.2"""
 
 
 def analyse_inventory(items: list[dict], delivery_days: str = None,
-                      upcoming_holidays: str = None, today=None) -> dict:
+                      upcoming_holidays: str = None, today=None,
+                      purchases_window: float = None, counted_from: str = None,
+                      counted_to: str = None) -> dict:
     """Compute waste, overstock, and reorder flags.
 
     delivery_days: optional comma-separated weekday abbreviations (e.g.
@@ -237,6 +239,19 @@ def analyse_inventory(items: list[dict], delivery_days: str = None,
         for ingredients tied to a matching event.
     today: optional date override for deterministic testing; defaults to
         the real current date (America/Chicago).
+    purchases_window: dollars actually received over the same 7 days the
+        waste figure covers (cogs.purchases_in_window). When given it is the
+        benchmark's denominator; without it the fallback is the sum of each
+        item's last_order_qty, which is the LAST order whenever it happened.
+        A restaurant ordering fortnightly therefore had a denominator
+        covering two weeks against a numerator covering one, and its waste
+        rate read roughly half of the truth — the figure that drives the
+        Excellent/Concerning label, the AI's "waste rate vs industry" line
+        and Home's "waste is under control" win.
+    counted_from / counted_to: the real first and last count dates behind
+        these figures. The window label used to be hardcoded to "today minus
+        six days" regardless of when anything was actually counted, so a
+        three-week-old count was presented as the last seven days.
     """
     today = today or datetime.now(ZoneInfo('America/Chicago')).date()
     delivery_offset = days_until_next_delivery(delivery_days, today)
@@ -371,14 +386,31 @@ def analyse_inventory(items: list[dict], delivery_days: str = None,
     critical_low     = sorted(critical_low,     key=lambda x: x["days_remaining"])
     order_reduction  = sorted(order_reduction,  key=lambda x: x["savings_vs_last"], reverse=True)
 
-    monthly_waste_projection = total_waste_cost * WEEKS_PER_MONTH
-    annual_waste_projection  = monthly_waste_projection * 12
-    recoverable = total_recoverable_week * WEEKS_PER_MONTH
-    annual_recoverable = recoverable * 12
+    # Rounded once, then everything else derives from the rounded figure.
+    # monthly was rounded to whole dollars and annual was computed from the
+    # UNROUNDED monthly, so the two numbers shown side by side on the iOS
+    # hero disagreed: an owner multiplying the monthly figure by twelve got a
+    # different answer from the annual figure printed beside it.
+    monthly_waste_projection = round(total_waste_cost * WEEKS_PER_MONTH, 2)
+    annual_waste_projection  = round(monthly_waste_projection * 12, 2)
+    recoverable = round(total_recoverable_week * WEEKS_PER_MONTH)
+    annual_recoverable = round(recoverable * 12, 2)
 
-    # Industry benchmark: waste cost as % of total purchased this week
+    # Industry benchmark: waste cost as % of what was actually purchased over
+    # the SAME period the waste covers.
     # 4-5% = industry target | 5-8% = above average | 8-15% = concerning | >15% = serious
-    total_purchased = sum(i["last_order_qty"] * i["unit_cost"] for i in items)
+    #
+    # purchases_window comes from the receiving ledger (cogs.purchases_in_window)
+    # and is the correct denominator. The fallback below is the sum of each
+    # item's last order, which is a different period per item and usually a
+    # longer one than the numerator — see the docstring.
+    if purchases_window is not None and purchases_window > 0:
+        total_purchased = float(purchases_window)
+        purchases_basis = "received over the same 7 days, from the delivery ledger"
+    else:
+        total_purchased = sum(i["last_order_qty"] * i["unit_cost"] for i in items)
+        purchases_basis = ("each item's last recorded order — no delivery ledger for this "
+                           "window, so the period behind this denominator varies by item")
     # A benchmark needs a denominator, and nothing else. This used to also
     # require total_waste_cost > 0, so a restaurant that wasted nothing all
     # week — the best possible outcome — was told "Upload inventory data to
@@ -414,23 +446,64 @@ def analyse_inventory(items: list[dict], delivery_days: str = None,
         benchmark_tone   = "bad"
         benchmark_detail = f"Industry target is 4-5% — you're at {waste_rate_pct}%"
 
-    # Always use current Chicago time as week end — matches when the client uploaded
     now_chi = datetime.now(ZoneInfo('America/Chicago')).replace(tzinfo=None)
-    # Week ending on the upload day, starting 6 days prior
+    # Two different windows, kept apart on purpose.
+    #
+    # week_start/week_end label the period the WASTE figures cover, and for a
+    # ledger restaurant that genuinely is the trailing seven days —
+    # recompute_rollups sums waste over exactly today-6..today. Relabelling
+    # this with the count dates (the first version of this fix) was wrong:
+    # it renamed a correct seven-day waste window after a single count day.
+    #
+    # counted_from/counted_to are a different fact: when stock was last
+    # physically verified. That governs how much the CURRENT STOCK figures —
+    # days remaining, reorder urgency, overstock — can be trusted, and it was
+    # missing entirely, which is why a three-week-old count could drive a
+    # confident order list while home_brief separately warned it was stale.
+    def _parse(d):
+        try:
+            return datetime.strptime(str(d)[:10], "%Y-%m-%d")
+        except (TypeError, ValueError):
+            return None
     week_end_dt   = now_chi
     week_start_dt = now_chi - timedelta(days=6)
+    counted_to_dt = _parse(counted_to)
+    counts_are_real = bool(counted_to_dt)
+    # Days since the newest count. 0 when nothing is on file — reported
+    # alongside window_from_counts=False so an absent count is never read as
+    # a fresh one.
+    window_age_days = max(0, (now_chi.date() - counted_to_dt.date()).days) if counted_to_dt else 0
 
     def fmt(dt): return dt.strftime("%-m/%-d/%y")
 
     return {
         "total_waste_cost_week":    round(total_waste_cost, 2),
-        "monthly_waste_projection": round(monthly_waste_projection, 2),
-        "annual_waste_projection":  round(annual_waste_projection, 2),
-        "recoverable_monthly":      round(recoverable),
-        "annual_recoverable":       round(annual_recoverable, 2),
+        "monthly_waste_projection": monthly_waste_projection,
+        "annual_waste_projection":  annual_waste_projection,
+        "recoverable_monthly":      recoverable,
+        "annual_recoverable":       annual_recoverable,
         "recoverable_weekly":       round(total_recoverable_week, 2),
         "recoverable_basis":        RECOVERABLE_BASIS,
+        "projection_basis":         ("one week extrapolated at "
+                                     f"{WEEKS_PER_MONTH:.2f} weeks a month — a single week, "
+                                     "not a trend"),
         "waste_rate_pct":           waste_rate_pct,
+        "purchases_basis":          purchases_basis,
+        "total_purchased":          round(total_purchased, 2),
+        # Count provenance — a different fact from the waste window above.
+        # `counted_to` governs how far the CURRENT STOCK figures (days
+        # remaining, reorder urgency, overstock) can be trusted; the waste
+        # window is always the trailing seven days.
+        "window_from_counts":       counts_are_real,
+        "window_age_days":          window_age_days,
+        "counted_from":             counted_from,
+        "counted_to":               counted_to,
+        "stock_basis":              (
+            f"Stock figures rest on counts taken {window_age_days} day"
+            f"{'' if window_age_days == 1 else 's'} ago."
+            if counts_are_real else
+            "No count dates on file — stock figures are as supplied, with no way to say how "
+            "current they are."),
         "benchmark_label":          benchmark_label,
         "benchmark_tone":           benchmark_tone,
         "benchmark_detail":         benchmark_detail,
@@ -684,39 +757,74 @@ def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name:
     forecast_next_week = None
     forecast_monthly = None
     if restaurant_id:
+        # Week over week, from the ISO-week series the trend card already
+        # computes — not from "the previous snapshot row".
+        #
+        # week_end is TODAY's date, written on every render, so the old query
+        # ("week_end < date('now','-1 day') ORDER BY week_end DESC LIMIT 1")
+        # returned whenever the owner last opened the tab. An owner who looked
+        # on Monday and again on Wednesday was shown a two-day delta labelled
+        # "vs last week" — and the dollar forecast was computed from it. There
+        # were two week-over-week implementations over one table; this is now
+        # the one, and it carries a confidence the other never had.
+        try:
+            from waste_trend import build_waste_trend as _bwt
+            _stats = (_bwt(restaurant_id) or {}).get("stats") or {}
+            _d, _p = _stats.get("wow_delta"), _stats.get("wow_pct")
+            if _d is not None:
+                direction = "UP" if _d > 0 else "DOWN"
+                wow_context = (f"\n- vs last week (ISO weeks): waste is {direction} "
+                               f"${abs(_d):,.2f}"
+                               + (f" ({abs(_p):g}%)" if _p is not None else "")
+                               + " — mention this trend")
+                # The forecast dollars are computed here rather than left to
+                # the model, and only when the direction is one the series can
+                # actually bear. A single week extrapolated is not a forecast;
+                # waste_trend's own confidence and anomaly detection decide
+                # whether there is a trend to project at all.
+                _conf = _stats.get("confidence")
+                _anoms = {a["index"] for a in (_stats.get("anomalies") or [])}
+                _latest_is_anomaly = (_stats.get("weeks") or 0) - 1 in _anoms
+                if _conf in ("high", "medium") and not _latest_is_anomaly:
+                    _curr = float(_stats.get("latest") or analysis['total_waste_cost_week'])
+                    forecast_next_week = round(max(0.0, _curr + _d), 2)
+                    forecast_monthly = round(forecast_next_week * WEEKS_PER_MONTH, 2)
+                elif _latest_is_anomaly:
+                    wow_context += ("\n- NOTE: the most recent week sits outside this series' "
+                                    "own spread, so it is an outlier rather than a new level. "
+                                    "Do not project from it.")
+        except Exception as _we:
+            print(f"[inventory wow] {_we}")
+
         try:
             from models import get_conn as _gc_inv
             _conn_inv = _gc_inv()
-            # Get previous week's snapshot for WoW waste comparison
-            prev = _conn_inv.execute("""
+            import json as _json_inv
+            _prev_top = _conn_inv.execute("""
                 SELECT waste_json FROM inventory_history
-                WHERE restaurant_id=? AND week_end < date('now','-1 day')
+                WHERE restaurant_id=? AND week_end < date('now','-6 days')
                 ORDER BY week_end DESC LIMIT 1
             """, (restaurant_id,)).fetchone()
-            if prev and prev["waste_json"]:
-                import json as _json_inv
-                prev_waste = _json_inv.loads(prev["waste_json"])
-                prev_total = prev_waste.get("total_waste_cost", 0)
-                curr_total = analysis['total_waste_cost_week']
-                if prev_total > 0:
-                    diff = curr_total - prev_total
-                    pct_change = round((diff / prev_total) * 100, 1)
-                    direction = "UP" if diff > 0 else "DOWN"
-                    wow_context = f"\n- vs last week: waste is {direction} ${abs(diff):,.2f} ({abs(pct_change)}%) — mention this trend"
-                    # The forecast dollar figure is computed here rather than
-                    # left to the model. Asking for "what that means in
-                    # dollars if it continues" guaranteed a model-generated
-                    # number, because the consequence of a projection is by
-                    # definition not in the prompt.
-                    forecast_next_week = round(max(0.0, curr_total + diff), 2)
-                    forecast_monthly = round(forecast_next_week * WEEKS_PER_MONTH, 2)
-                prev_items = set(prev_waste.get("top_items", []))
-                curr_items = set(x["item"] for x in analysis["waste_items"][:4])
-                repeat = prev_items & curr_items
+            if _prev_top and _prev_top["waste_json"]:
+                try:
+                    prev_items = set(_json_inv.loads(_prev_top["waste_json"]).get("top_items") or [])
+                except Exception:
+                    prev_items = set()
+                repeat = prev_items & set(x["item"] for x in analysis["waste_items"][:4])
                 if repeat:
-                    wow_context += f"\n- REPEAT waste offenders (2+ weeks): {', '.join(repeat)} — these need stronger action, not just reordering"
+                    wow_context += (f"\n- REPEAT waste offenders (2+ weeks): {', '.join(repeat)}"
+                                    " — these need stronger action, not just reordering")
 
-            # Save snapshot — upsert by week_end, now including full items_json
+            # Upsert today's snapshot. The scheduled writer
+            # (food_cost_intelligence.weekly_snapshot) owns this table now;
+            # this render-time write keeps the series current between runs and
+            # never competes with it — same (restaurant, week_end) key, and
+            # `source` is left alone so a scheduled row stays marked as one.
+            #
+            # The CREATE TABLE and two ALTER TABLEs that used to run here on
+            # EVERY insight are gone: models.init_db declares the table, and
+            # DDL on the render path is exactly the cost waste_trend removed
+            # with its own _SCHEMA_ENSURED guard.
             import json as _json_inv2
             try:
                 _week_end_str = datetime.strptime(analysis.get("week_end", ""), "%m/%d/%y").strftime("%Y-%m-%d")
@@ -727,37 +835,36 @@ def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name:
                 "total_waste_cost": analysis['total_waste_cost_week'],
                 "top_items": [x["item"] for x in analysis["waste_items"][:4]]
             }
-            _conn_inv.execute("""CREATE TABLE IF NOT EXISTS inventory_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                restaurant_id INTEGER NOT NULL,
-                waste_json TEXT,
-                week_end    TEXT,
-                items_json  TEXT,
-                saved_at    TEXT DEFAULT (datetime('now'))
-            )""")
-            for _col_sql in [
-                "ALTER TABLE inventory_history ADD COLUMN week_end TEXT",
-                "ALTER TABLE inventory_history ADD COLUMN items_json TEXT",
-            ]:
-                try:
-                    _conn_inv.execute(_col_sql)
-                    _conn_inv.commit()
-                except Exception:
-                    pass
             _items_json_str = _json_inv2.dumps(items) if items else None
             existing = _conn_inv.execute(
                 "SELECT id FROM inventory_history WHERE restaurant_id=? AND week_end=?",
                 (restaurant_id, _week_end_str)
             ).fetchone()
             if existing:
+                # inv_value is deliberately NOT updated here.
+                #
+                # It is the anchor cogs.inventory_value_near brackets a COGS
+                # window on, so rewriting it on a page render makes the food
+                # cost percentage move because somebody opened a tab — and
+                # worse, this write lands BEFORE the CFO evidence is assembled
+                # a few lines below, so the render changed the closing
+                # inventory that its own food cost % was then computed from.
+                # Caught in end-to-end verification: two consecutive loads
+                # produced 7.6% and 31.4% from identical underlying data.
+                # The scheduled writer owns this column; once a day.
                 _conn_inv.execute(
-                    "UPDATE inventory_history SET waste_json=?, items_json=?, saved_at=datetime('now') WHERE id=?",
-                    (_json_inv2.dumps(snapshot), _items_json_str, existing["id"])
+                    "UPDATE inventory_history SET waste_json=?, items_json=?, "
+                    "inv_value=COALESCE(inv_value, ?), saved_at=datetime('now') WHERE id=?",
+                    (_json_inv2.dumps(snapshot), _items_json_str,
+                     analysis.get("total_stock_value"), existing["id"])
                 )
             else:
                 _conn_inv.execute(
-                    "INSERT INTO inventory_history (restaurant_id, waste_json, week_end, items_json) VALUES (?,?,?,?)",
-                    (restaurant_id, _json_inv2.dumps(snapshot), _week_end_str, _items_json_str)
+                    "INSERT INTO inventory_history "
+                    "(restaurant_id, waste_json, week_end, items_json, inv_value, source) "
+                    "VALUES (?,?,?,?,?,'render')",
+                    (restaurant_id, _json_inv2.dumps(snapshot), _week_end_str,
+                     _items_json_str, analysis.get("total_stock_value"))
                 )
             _conn_inv.commit()
             _conn_inv.close()
@@ -840,28 +947,128 @@ def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name:
     # was the model's own arithmetic on figures nothing had checked.
     savings_block = _supported_savings_block(analysis)
 
-    has_trend = bool(wow_context) and forecast_next_week is not None
-    forecast_instruction = (
-        '\n- Then, on a final new line, add exactly "FORECAST:" followed by one sentence '
-        "predicting where waste cost is headed next week based on the week-over-week trend "
-        f"above. If it continues at this rate next week lands near ${forecast_next_week:,.0f} "
-        f"(${forecast_monthly:,.0f} a month) — quote those figures exactly and invent no others. "
-        "Only include this if the trend is genuinely supported by the data given."
-    ) if has_trend else ""
+    # ── The CFO's evidence pack ─────────────────────────────────────────────
+    #
+    # The module held four financial engines and this prompt saw one of them.
+    # cogs.build_food_cost_pct computed actual food cost % against the
+    # restaurant's own target, menu_profitability computed plate margin and
+    # contribution, recipe_coverage said how far any of it could be trusted —
+    # and none reached the model, so an AI titled "food cost consultant" could
+    # not say whether food cost was over target or which dish was eating the
+    # margin. It narrated waste.
+    #
+    # Everything below is measured by code that already existed. The drivers
+    # are ranked HERE, in Python, because ranking is arithmetic: the prompt
+    # used to say "ranked by dollar impact" over an unordered concatenation of
+    # three loops and nothing checked the order that came back.
+    cfo_block = ""
+    trust_block = ""
+    position_block = ""
+    profit_block = ""
+    drivers_block = ""
+    cross_block = ""
+    diag_block = ""
+    ranked_labels = []
+    if restaurant_id:
+        try:
+            import food_cost_intelligence as _fci
+            _ev = _fci.build_evidence(restaurant_id)
+            position_block = _fci._position_block(_ev["food_cost"])
+            profit_block = _fci._profit_block(_ev["profitability"])
+            trust_block = _fci._trust_block(_ev["coverage"], _ev["waste_sources"])
+            drivers_block = _fci._drivers_block(_ev["drivers"])
+            cross_block = _fci._operational_block(_ev["operational"])
+            ranked_labels = [d["label"] for d in (_ev["drivers"].get("drivers") or [])]
+            _pat = _fci._pattern_block(_ev["weekday"], _ev["seasonal"])
+            _acc = _ev["forecast_accuracy"]
+            _acc_line = ("\n\nHow accurate past forecasts here have been: "
+                         f"{_acc['scored']} scored, mean error {_acc['mean_error_pct']}% "
+                         f"({_acc['reading']}). Mention this if you make a projection."
+                         if _acc.get("available") else "")
+            cfo_block = (
+                "\n\nFOOD COST POSITION:\n" + position_block +
+                "\n\nPROFITABILITY:\n" + profit_block +
+                "\n\nWHERE THE MONEY IS (already ranked by dollars, then confidence, then ease "
+                "— do NOT re-rank these):\n" + drivers_block +
+                "\n\nHOW FAR THESE FIGURES CAN BE TRUSTED:\n" + trust_block +
+                "\n\nWHERE AND WHEN THE WASTE LANDS:\n" + _pat +
+                "\n\nWHAT THE OTHER MODULES RECORDED OVER THE SAME PERIOD:\n" + cross_block +
+                _acc_line
+            )
+        except Exception as _ce:
+            print(f"[inventory cfo context] {_ce}")
 
-    prompt = f"""You are a food cost consultant reviewing weekly inventory data for a restaurant.
+        # The stored root-cause read. Read, never generated here: producing
+        # one is a Sonnet call over the ranked drivers and belongs on the
+        # scheduler, not on the critical path of a page load.
+        try:
+            import food_cost_intelligence as _fci2
+            _dg = _fci2.get_diagnosis(restaurant_id, include_stale=True)
+            if _dg and _dg.get("cause"):
+                diag_block = (
+                    "\n\nROOT-CAUSE READ (stored, " + str(_dg.get("confidence")) + " confidence"
+                    + (f", produced {int(_dg['age_hours'])}h ago" if _dg.get("age_hours") is not None else "")
+                    + "):\n- Most likely: " + _dg["cause"]
+                    + (f"\n- Alternative: {_dg['alternative_cause']}" if _dg.get("alternative_cause") else "")
+                    + (f"\n- What would confirm it: {_dg['what_would_confirm']}" if _dg.get("what_would_confirm") else "")
+                    + (f"\n- Recommended: {_dg['recommended_action']}" if _dg.get("recommended_action") else "")
+                    + "\nUse this for the WHY sentence. Do not substitute a cause of your own.")
+            else:
+                diag_block = ("\n\nROOT-CAUSE READ: none has been produced yet. Do NOT state a "
+                              "cause. Say what the figures show and stop.")
+        except Exception:
+            pass
+
+    # Projected only when waste_trend's own confidence and anomaly checks say
+    # there is a direction to project — see the wow_context block above, which
+    # sets forecast_next_week to None when the latest week is an outlier or
+    # the series cannot bear a direction. The dollars are computed in Python;
+    # asking the model "what does that mean if it continues" guarantees a
+    # model-generated number, because the consequence of a projection is by
+    # definition not in the prompt.
+    has_trend = bool(wow_context) and forecast_next_week is not None
+    forecast_instruction = ""
+    if has_trend:
+        forecast_instruction = (
+            '\n- Then, on a final new line, add exactly "FORECAST:" followed by one sentence '
+            "predicting where waste cost is headed next week based on the week-over-week trend "
+            f"above. If it continues at this rate next week lands near ${forecast_next_week:,.0f} "
+            f"(${forecast_monthly:,.0f} a month) — quote those figures exactly and invent no others. "
+            "Only include this if the trend is genuinely supported by the data given."
+        )
+        # Stored so it can be scored against what actually happens. A forecast
+        # nobody checks costs nothing to get wrong, which is the opposite of
+        # what a projection is for. See food_cost_intelligence.score_forecasts.
+        if restaurant_id:
+            try:
+                import food_cost_intelligence as _fci_f
+                from datetime import date as _d_f, timedelta as _td_f
+                _fci_f.record_forecast(
+                    restaurant_id, "waste_week",
+                    (_d_f.today() + _td_f(days=7)).isoformat(),
+                    forecast_next_week,
+                    basis="week-over-week delta on the ISO-week waste series")
+            except Exception as _fe:
+                print(f"[inventory forecast log] {_fe}")
+
+    has_why = "Most likely:" in diag_block
+
+    prompt = f"""You are an experienced restaurant CFO reviewing this restaurant's food cost.
+
+You are not writing a summary. The owner can already see their waste total and their inventory value on the same screen. Your value is the step after the number: what it means for their margin, what is driving it, and what to do first.
 {rest_line}
 {name_line}
 Today's date: {today_inv}
 
 Key findings:
 - Waste this week: ${analysis['total_waste_cost_week']:,.2f}
-- Projected monthly waste cost: ${analysis['monthly_waste_projection']:,.2f}
+- Projected monthly waste cost: ${analysis['monthly_waste_projection']:,.2f} ({analysis['projection_basis']})
 - Recoverable with better ordering: ${analysis['recoverable_monthly']:,.2f}/month
 - Total current inventory value: ${analysis['total_stock_value']:,.2f}
-- Waste rate vs industry: {analysis['waste_rate_pct']}% (industry target is 4-5% — label: {analysis['benchmark_label']}){wow_context}{trend_context}{big_8_context}{holiday_context}
+- Waste rate vs industry: {analysis['waste_rate_pct']}% of ${analysis['total_purchased']:,.2f} purchased (industry target is 4-5% — label: {analysis['benchmark_label']}). Denominator basis: {analysis['purchases_basis']}{wow_context}{trend_context}{big_8_context}{holiday_context}
 
 How "recoverable" is defined: {RECOVERABLE_BASIS}
+{cfo_block}{diag_block}
 
 Top waste offenders:
 {json.dumps([{"item": x["item"], "waste_units": x["waste_last_week"], "waste_cost": x["waste_cost"], "waste_pct": x["waste_pct"], "par": x["par_level"], "current_stock": x["current_stock"], "unit_cost": x["unit_cost"], "tolerance_pct": x.get("waste_tolerance_pct"), "recoverable_cost": x.get("recoverable_cost")} for x in analysis["waste_items"][:4]], indent=2)}
@@ -877,6 +1084,10 @@ Savings the data supports (these are the only savings figures that exist — use
 
 Write a food cost analysis. Rules that apply to everything:
 - Every dollar amount, percentage and quantity you write must appear verbatim somewhere above. Do not add, average, extrapolate or otherwise derive a number of your own — not even a rounded one.
+- Never state a cause that is not in the ROOT-CAUSE READ above. If there is none, describe what the figures show and stop.
+- The drivers above are ALREADY RANKED by dollars, then confidence, then ease. Follow that order. Do not promote a cheaper or easier item above a more expensive one.
+- Read "HOW FAR THESE FIGURES CAN BE TRUSTED" before you commit to anything. Low recipe coverage or a high inferred-waste share means the usage figures underneath are soft, and you must say so rather than writing past it.
+- Where a figure is marked as not computable, do not estimate it. "We cannot measure your food cost percentage until a second count is in" is a correct and useful sentence.
 - If the data does not support a genuine, specific opportunity, say so plainly in one sentence and write no recommendations at all. An honest "nothing worth changing this week" is a correct answer.
 - No markdown, no bullet points, no bold text, no asterisks whatsoever
 - Do NOT label sections or write "Part 1", "Part 2", "Recommendations", or any headers
@@ -887,25 +1098,33 @@ Write a food cost analysis. Rules that apply to everything:
 This is read on a phone screen — brevity is the whole point. Cut ruthlessly.
 
 First, write one paragraph of 2 sentences max (never 3-4):
-- Open with the monthly waste projection dollar amount, make it feel real and personal
-- Name the single worst waste offender by item name with its dollar amount
+- Lead with the money: their food cost position or projected month if either is computable above, otherwise the monthly waste projection
+- Name the single largest driver by item name with its dollar amount
+{("- Then one sentence beginning \"Why:\" giving the cause from the ROOT-CAUSE READ, and how confident it is." if has_why else "")}
 
 Then, on new lines after the paragraph, write 1-3 recommendations:
+- Take them IN THE ORDER the drivers are ranked above. Do not reorder.
 - Only include recommendations where there is a genuine, specific opportunity — do not pad to three if the data does not support it
-- Maximum of three, ranked by dollar impact (highest first). Zero is allowed when the data supports none.
+- Maximum of three. Zero is allowed when the data supports none.
 - Number each one: start with "1. ", "2. ", "3. "
-- Hard cap: 20 words per recommendation. Lead with the action, not the reasoning.
-- Each must directly save money this week or next week, quoting a dollar figure from the "Savings the data supports" block above — never a figure you worked out yourself
+- Hard cap: 30 words per recommendation. Lead with the action.
+- End each one with " — " then its monthly dollar figure, its confidence and how hard it is, exactly as given above (e.g. " — $240/month, high confidence, low effort")
+- Each must quote a dollar figure from the driver list or the "Savings the data supports" block — never a figure you worked out yourself
 - Specific to the actual items in the data — never generic advice
 - Never suggest anything that hurts guest experience, reduces quality, or cuts portions
-- Focus on quantity reductions or par level adjustments based on the data — NEVER assume or mention ordering frequency (daily, weekly, twice a week etc.) since you don't know their ordering schedule
+- NEVER assume or mention ordering frequency (daily, weekly, twice a week etc.) since you don't know their ordering schedule
 - Do not use the owner name anywhere in the recommendations
-- On the LAST numbered recommendation only, you may add up to 8 words of warm closing after it — tied loosely to how the week looks (good week gets a small celebration, rough week gets encouragement), nothing more. Do NOT write a separate closing line after the numbered list; there must be nothing after the last recommendation.{forecast_instruction}"""
+- On the LAST numbered recommendation only, you may add up to 8 words of warm closing after it — tied loosely to how the week looks, nothing more. Do NOT write a separate closing line after the numbered list.{forecast_instruction}"""
+
 
     msg = create_with_retry(
         client,
         model=os.getenv("INVENTORY_INSIGHT_MODEL", "claude-sonnet-5"),
-        max_tokens=950,
+        # The recommendations now carry a dollar figure, a confidence and an
+        # effort level each, and the opening paragraph can carry a Why
+        # sentence. 950 was sized for the old bare-action format and the
+        # truncation guard below would have started firing.
+        max_tokens=1200,
         messages=[{"role": "user", "content": prompt}],
         restaurant_id=restaurant_id,
         action="inventory_insight",
@@ -991,10 +1210,44 @@ def analysis_for(restaurant_id: int, items=None, is_live=None):
     if items is None or is_live is None:
         items, is_live = load_inventory_for_restaurant(restaurant_id)
     restaurant = get_restaurant(restaurant_id)
+
+    # The two measured inputs analyse_inventory could not derive for itself:
+    # what was actually received over the same seven days the waste covers,
+    # and when the counts behind these figures were really taken. Both come
+    # from the ledger and are simply absent for a restaurant still on the CSV
+    # path, in which case analyse_inventory falls back and says so.
+    purchases_window, counted_from, counted_to = None, None, None
+    if is_live:
+        try:
+            from datetime import date as _d, timedelta as _td
+            import cogs as _cogs
+            _end = _d.today()
+            _start = _end - _td(days=6)
+            _p, _n = _cogs.purchases_in_window(restaurant_id, _start, _end)
+            if _n:
+                purchases_window = _p
+        except Exception:
+            pass
+        try:
+            from models import get_conn as _gc
+            _c = _gc()
+            _row = _c.execute(
+                "SELECT MIN(last_recount_at) AS lo, MAX(last_recount_at) AS hi "
+                "FROM ingredients WHERE restaurant_id=? AND is_active=1 "
+                "AND last_recount_at IS NOT NULL", (restaurant_id,)).fetchone()
+            _c.close()
+            if _row and _row["hi"]:
+                counted_from, counted_to = _row["lo"], _row["hi"]
+        except Exception:
+            pass
+
     analysis = analyse_inventory(
         items,
         delivery_days=restaurant.delivery_days if restaurant else None,
         upcoming_holidays=get_upcoming_holidays(),
+        purchases_window=purchases_window,
+        counted_from=counted_from,
+        counted_to=counted_to,
     )
     analysis["is_live"] = bool(is_live)
     return items, bool(is_live), analysis

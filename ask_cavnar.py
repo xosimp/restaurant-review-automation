@@ -722,6 +722,7 @@ _TOOL_LABELS = {
     "approve_review": "Getting that reply ready to post",
     "read_review_trends": "Looking at how reviews are trending",
     "read_review_diagnosis": "Working out what's causing it",
+    "read_food_cost_drivers": "Working out where the money is going",
     "read_ai_visibility": "Checking your AI search visibility",
     "read_labor_detail": "Breaking labour down by day",
     "read_schedule_history": "Pulling up past schedules",

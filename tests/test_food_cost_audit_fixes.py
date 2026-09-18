@@ -86,9 +86,14 @@ def test_analysis_for_resolves_delivery_days_and_holidays_itself(monkeypatch, db
     rid = _restaurant(db_path, delivery_days="Mon,Thu")
     seen = {}
 
-    def spy(items, delivery_days=None, upcoming_holidays=None, today=None):
+    def spy(items, delivery_days=None, upcoming_holidays=None, today=None, **kw):
         seen["delivery_days"] = delivery_days
         seen["holidays"] = upcoming_holidays
+        # analysis_for also resolves the measured inputs analyse_inventory
+        # cannot derive for itself — real windowed purchases and the actual
+        # count dates. Captured so the assertions below can check they are
+        # threaded through rather than silently dropped.
+        seen.update(kw)
         return {"waste_items": [], "critical_low": [], "reorder_soon": []}
 
     # get_restaurant binds DB_PATH as a default argument at import time, so

@@ -571,6 +571,47 @@ def _read_review_trends(restaurant_id, weeks=8, days=90):
     }
 
 
+def _read_food_cost_drivers(restaurant_id):
+    """WHY food cost is where it is — the ranked drivers and the stored
+    root-cause read.
+
+    read_food_cost gives the totals; this gives what is moving them, already
+    ranked by dollars then confidence then ease, with the evidence behind
+    each and what happens if it is ignored. Reads stored diagnoses; never
+    generates one, because a per-restaurant Sonnet pass inside a chat turn is
+    the wrong place to start it.
+    """
+    import food_cost_intelligence as _fci
+    try:
+        brief = _fci.executive_brief(restaurant_id)
+    except Exception as e:
+        return {"has_data": False, "note": f"Food cost intelligence unavailable: {e}"}
+    drivers = (brief.get("needs_attention_now") or []) + (brief.get("can_wait") or [])
+    if not drivers and not brief.get("why", {}).get("cause"):
+        return {"has_data": False,
+                "note": "Nothing clears the dollar floor and no root-cause read exists yet. "
+                        "Say that rather than offering a cause."}
+    return {
+        "has_data": True,
+        "why": brief.get("why"),
+        "fix_first": brief.get("fix_first"),
+        "needs_attention_now": brief.get("needs_attention_now"),
+        "can_wait": brief.get("can_wait"),
+        "money_involved": brief.get("money_involved"),
+        "food_cost": brief.get("food_cost"),
+        "profitability": brief.get("profitability"),
+        "improved": brief.get("improved"),
+        "worsened": brief.get("worsened"),
+        # How far the figures underneath can be trusted. Quote it whenever a
+        # recommendation rests on usage.
+        "trust": brief.get("trust"),
+        "note": ("Drivers are already ranked by dollars, then confidence, then ease — quote "
+                 "that order. Every cause offers an alternative; never present one as settled. "
+                 "If recipe coverage is low or the inferred-waste share is high, say the usage "
+                 "figures underneath are soft."),
+    }
+
+
 def _read_review_diagnosis(restaurant_id):
     """Why the complaints are happening, not just what they are.
 
@@ -965,6 +1006,22 @@ TOOLS = [
         "spec": {
             "name": "read_food_cost",
             "description": "Item-level food cost: what's critically low, what's being wasted, what's overstocked, and which supplier prices are rising.",
+            "input_schema": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "kind": "read",
+        "fn": _read_food_cost_drivers,
+        "module": "module_inventory",
+        "spec": {
+            "name": "read_food_cost_drivers",
+            "description": (
+                "WHY food cost is where it is — the ranked cost drivers with the dollars each "
+                "carries, the stored root-cause read, the food cost % against target, and the "
+                "month-end profitability projection. Call this for any 'why', 'what's driving', "
+                "'what should I fix first', 'how much is this costing me' or 'am I making money' "
+                "question. read_food_cost gives the item totals; this gives the diagnosis."
+            ),
             "input_schema": {"type": "object", "properties": {}},
         },
     },

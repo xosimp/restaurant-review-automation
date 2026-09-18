@@ -49,7 +49,23 @@ struct FoodCostAnalyticsSection: View {
                             showForecastInSheet: false
                         )
                     }
+                    // The module's namesake number, the coverage that says how
+                    // far the rest of this screen can be trusted, and the
+                    // counted-vs-inferred waste split. All three were computed
+                    // server-side and exposed on their own endpoints; this app
+                    // called none of them, so the phone showed a confident
+                    // waste analysis with no way to see the percentage it was
+                    // about or how soft the usage figures underneath were.
+                    positionStrip(analytics)
                     statStrip(analytics)
+                    // The CFO read: what is DRIVING the cost, ranked by the
+                    // dollars each driver carries, the stored root cause with
+                    // its alternative and its confidence, and the month-end
+                    // prime-cost projection. Everything above is a position;
+                    // this is the step after it.
+                    if viewModel.hasCFORead {
+                        cfoCard(viewModel.cfo)
+                    }
                     if (analytics.recoverableMonthly ?? 0) > 0 {
                         RecoverableGaugeChart(
                             monthly: analytics.recoverableMonthly ?? 0,
@@ -160,6 +176,272 @@ struct FoodCostAnalyticsSection: View {
     // .clipShape() instead of being a separate card placed underneath it.
     // That's the actual "attached to the hero" ask: one continuous
     // surface, not two adjacent ones with a small gap between them.
+    // MARK: - Position: the percentage, and how far to trust it
+
+    /// Food cost %, recipe coverage and the counted-vs-inferred waste split.
+    ///
+    /// Each renders only when its own figure exists. When food cost % cannot
+    /// be computed the card says which component is missing rather than
+    /// showing nothing — an owner can act on "no closing count" in a way they
+    /// cannot act on a blank space.
+    @ViewBuilder
+    private func positionStrip(_ a: FoodCostAnalytics) -> some View {
+        if a.cogs != nil || a.recipeCoverage != nil || a.wasteSplit != nil {
+            VStack(alignment: .leading, spacing: 12) {
+                if let c = a.cogs {
+                    if c.ok, let pct = c.pct {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("FOOD COST")
+                                .font(.cavnarBody(11, weight: 700)).tracking(1.2)
+                                .foregroundStyle(Color.cavnarInk3)
+                            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                                Text("\(pct, specifier: "%.1f")%")
+                                    .font(.cavnarNumber(34, weight: 600))
+                                    .foregroundStyle(Self.toneColor(c.tone))
+                                if let v = c.variancePts, let t = c.target {
+                                    Text("\(v > 0 ? "+" : "")\(v, specifier: "%.1f") pts vs \(t, specifier: "%.0f")% target")
+                                        .font(.cavnarBody(13.5))
+                                        .foregroundStyle(v > 0 ? Color.cavnarRed : Color.cavnarGreen)
+                                } else if let label = c.label {
+                                    Text(label).font(.cavnarBody(13.5))
+                                        .foregroundStyle(Color.cavnarInk3)
+                                }
+                            }
+                            if let basis = c.basis {
+                                Text(basis).font(.cavnarBody(11.5))
+                                    .foregroundStyle(Color.cavnarInk3)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel("Food cost \(String(format: "%.1f", pct)) percent of sales")
+                    } else if let missing = c.missing, !missing.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("FOOD COST — NOT YET MEASURABLE")
+                                .font(.cavnarBody(11, weight: 700)).tracking(1.2)
+                                .foregroundStyle(Color.cavnarInk3)
+                            ForEach(missing, id: \.self) { m in
+                                Text("· \(m.component): \(m.why)")
+                                    .font(.cavnarBody(12.5))
+                                    .foregroundStyle(Color.cavnarInk3)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    }
+                }
+                let trustLines = Self.trustLines(a)
+                if !trustLines.isEmpty {
+                    Text(trustLines.joined(separator: "  ·  "))
+                        .font(.cavnarBody(12))
+                        .foregroundStyle(Color.cavnarInk3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private static func trustLines(_ a: FoodCostAnalytics) -> [String] {
+        var out: [String] = []
+        if let cov = a.recipeCoverage, let pct = cov.coveragePct {
+            out.append("recipes cover \(Int(pct))% of what sold")
+        }
+        if let w = a.wasteSplit, let pct = w.inferredPct {
+            out.append("\(Int(pct))% of waste is an unexplained count gap")
+        }
+        if a.windowFromCounts == false {
+            out.append("no count dates on file — window is approximate")
+        } else if let age = a.windowAgeDays, age > 8 {
+            out.append("newest count is \(age) days old")
+        }
+        return out
+    }
+
+    private static func toneColor(_ tone: String?) -> Color {
+        switch tone {
+        case "good":  return .cavnarGreen
+        case "warn":  return .cavnarAmber
+        case "bad":   return .cavnarRed
+        default:      return .cavnarInk
+        }
+    }
+
+    // MARK: - The CFO read
+
+    /// What is driving the cost, what it is worth, and what to do first.
+    ///
+    /// The drivers arrive already ranked by dollars, then confidence, then
+    /// ease, and are rendered in that order — never re-sorted here, because
+    /// the ranking is computed server-side precisely so two clients cannot
+    /// disagree about which opportunity is the biggest.
+    @ViewBuilder
+    private func cfoCard(_ cfo: FoodCostCFO?) -> some View {
+        if let cfo {
+            let dg = cfo.diagnosis
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("Where the money is going")
+                        .font(.cavnarBody(11, weight: 700)).tracking(1.1)
+                        .textCase(.uppercase)
+                        .foregroundStyle(Color.cavnarEmber)
+                    Spacer(minLength: 0)
+                    if let band = dg?.confidenceBand {
+                        Text(band)
+                            .font(.cavnarBody(10, weight: 700)).tracking(0.7)
+                            .textCase(.uppercase)
+                            .foregroundStyle(Self.confidenceTint(band))
+                            .padding(.horizontal, 8).padding(.vertical, 3)
+                            .background(Self.confidenceTint(band).opacity(0.14), in: Capsule())
+                    }
+                }
+                .padding(.horizontal, 16).padding(.top, 14)
+
+                if let total = cfo.drivers?.totalMonthly, total > 0 {
+                    Text("$\(total.commaFormatted)/month across \(viewModel.drivers.count) driver\(viewModel.drivers.count == 1 ? "" : "s")"
+                         + ((dg?.stale ?? false) ? " · older read" : ""))
+                        .font(.cavnarBody(12))
+                        .foregroundStyle(Color.cavnarInk3)
+                        .padding(.horizontal, 16).padding(.top, 4)
+                }
+
+                VStack(alignment: .leading, spacing: 14) {
+                    if let headline = dg?.headline {
+                        Text(headline)
+                            .font(.cavnarBody(16, weight: 600))
+                            .foregroundStyle(Color.cavnarInk)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if let p = cfo.profitability, p.available,
+                       let prime = p.primeCostPct, let projected = p.projectedPrimeCost {
+                        profitabilityBlock(p, prime: prime, projected: projected)
+                    }
+                    if let cause = dg?.cause {
+                        cfoRow("Most likely cause", cause)
+                    }
+                    if let alt = dg?.alternativeCause { cfoRow("It could also be", alt, quiet: true) }
+                    if let confirm = dg?.whatWouldConfirm { cfoRow("What would tell them apart", confirm) }
+                    if let action = dg?.recommendedAction { cfoRow("Do this first", action) }
+                    if let outcome = dg?.expectedOutcome { cfoRow("What should change", outcome, quiet: true) }
+                    if let oe = dg?.operationalEvidence, !oe.isEmpty {
+                        cfoRow("Cross-checked against",
+                               oe.map { "\($0.module): \($0.metric) \($0.value)" }
+                                 .joined(separator: "  ·  "), quiet: true)
+                    }
+                    if !viewModel.drivers.isEmpty { driverList(viewModel.drivers) }
+                }
+                .padding(16)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.cavnarInk3.opacity(0.05),
+                        in: RoundedRectangle(cornerRadius: CavnarRadius.control))
+            .overlay(RoundedRectangle(cornerRadius: CavnarRadius.control)
+                .stroke(Color.cavnarInk3.opacity(0.18), lineWidth: 1))
+        }
+    }
+
+    private static func profitabilitySentence(_ p: FoodCostCFO.Profitability,
+                                              projected: Double) -> String {
+        var s = "month to date"
+        if let food = p.foodCostPct, let labor = p.laborPct {
+            s += String(format: " (food %.1f%% + labor %.1f%%)", food, labor)
+        }
+        s += ". At this run rate the month lands near $\(projected.commaFormatted)"
+        if let sales = p.projectedSales {
+            s += " on $\(sales.commaFormatted) of sales"
+        }
+        if let delta = p.dollarsVsLastMonth {
+            let word = delta > 0 ? "worse" : "better"
+            s += " — $\(abs(delta).commaFormatted) \(word) than last month"
+        }
+        return s + "."
+    }
+
+    private func profitabilityBlock(_ p: FoodCostCFO.Profitability,
+                                    prime: Double, projected: Double) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("\(prime, specifier: "%.1f")% prime cost")
+                .font(.cavnarNumber(21, weight: 600))
+                .foregroundStyle(Color.cavnarInk)
+            // Built up in statements rather than one concatenated expression:
+            // the single-expression version pushed the type checker past its
+            // budget and failed the build outright.
+            Text(Self.profitabilitySentence(p, projected: projected))
+                .font(.cavnarBody(12.5))
+                .foregroundStyle(Color.cavnarInk2)
+                .fixedSize(horizontal: false, vertical: true)
+            if let basis = p.basis {
+                Text("Projection, not a measurement. \(basis)")
+                    .font(.cavnarBody(11))
+                    .foregroundStyle(Color.cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(Color.cavnarEmber.opacity(0.09), in: RoundedRectangle(cornerRadius: 9))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Forecast. Prime cost \(String(format: "%.1f", prime)) percent month to date.")
+    }
+
+    private func driverList(_ drivers: [FoodCostCFO.Driver]) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Ranked by dollars, then confidence, then ease")
+                .font(.cavnarBody(10, weight: 700)).tracking(0.9)
+                .textCase(.uppercase)
+                .foregroundStyle(Color.cavnarInk3)
+            ForEach(Array(drivers.prefix(5))) { d in
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                        Text("$\(d.dollarsMonthly.commaFormatted)")
+                            .font(.cavnarNumber(16, weight: 600))
+                            .foregroundStyle(Color.cavnarInk)
+                        Text(d.label)
+                            .font(.cavnarBody(14, weight: 600))
+                            .foregroundStyle(Color.cavnarInk)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Text(d.evidence)
+                        .font(.cavnarBody(12))
+                        .foregroundStyle(Color.cavnarInk3)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text("\(d.confidence) confidence · \(d.difficulty) effort · if ignored: \(d.ifIgnored)")
+                        .font(.cavnarBody(11))
+                        .foregroundStyle(Color.cavnarInk3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.vertical, 7)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("$\(d.dollarsMonthly.commaFormatted) a month. \(d.label). \(d.evidence)")
+            }
+        }
+    }
+
+    private func cfoRow(_ label: String, _ body: String, quiet: Bool = false) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label)
+                .font(.cavnarBody(10, weight: 700)).tracking(0.9)
+                .textCase(.uppercase)
+                .foregroundStyle(Color.cavnarInk3)
+            Text(body)
+                .font(.cavnarBody(quiet ? 13 : 14.5))
+                .foregroundStyle(quiet ? Color.cavnarInk3 : Color.cavnarInk2)
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(label). \(body)")
+    }
+
+    private static func confidenceTint(_ band: String) -> Color {
+        switch band {
+        case "high":   return .cavnarGreen
+        case "medium": return .cavnarAmber
+        default:       return .cavnarInk3
+        }
+    }
+
     private func heroCard(_ a: FoodCostAnalytics, isLoading: Bool) -> some View {
         let startFromZero = !viewModel.hasPlayedHeroIntro
         return VStack(spacing: 0) {

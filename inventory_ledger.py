@@ -40,22 +40,34 @@ def _as_date_str(d) -> str:
     return d.isoformat() if hasattr(d, "isoformat") else str(d)
 
 
-def _compute_current_stock(conn, ingredient_id: int) -> float:
+def _compute_current_stock(conn, ingredient_id: int, restaurant_id: int = None) -> float:
+    """Stock on hand for one ingredient, from the ledger.
+
+    `restaurant_id` is optional only because every existing caller already
+    checks ownership before reaching here. Pass it: this function reads and
+    returns a financial quantity keyed on nothing but an integer id, and it
+    is one unguarded future caller away from computing one restaurant's stock
+    from another's events. When given, it is enforced on every read.
+    """
+    scope = " AND restaurant_id=?" if restaurant_id is not None else ""
+    extra = (restaurant_id,) if restaurant_id is not None else ()
     recount = conn.execute(
         "SELECT id, qty FROM ingredient_stock_events "
-        "WHERE ingredient_id=? AND event_type='recount' ORDER BY id DESC LIMIT 1",
-        (ingredient_id,)
+        f"WHERE ingredient_id=?{scope} AND event_type='recount' ORDER BY id DESC LIMIT 1",
+        (ingredient_id, *extra)
     ).fetchone()
     if not recount:
-        row = conn.execute("SELECT current_stock FROM ingredients WHERE id=?", (ingredient_id,)).fetchone()
+        row = conn.execute(
+            f"SELECT current_stock FROM ingredients WHERE id=?{scope}",
+            (ingredient_id, *extra)).fetchone()
         return row["current_stock"] if row else 0.0
 
     stock = recount["qty"]
     deltas = conn.execute(
         "SELECT event_type, COALESCE(SUM(qty),0) AS total FROM ingredient_stock_events "
-        "WHERE ingredient_id=? AND id>? AND event_type IN ('receiving','depletion','waste') "
+        f"WHERE ingredient_id=?{scope} AND id>? AND event_type IN ('receiving','depletion','waste') "
         "GROUP BY event_type",
-        (ingredient_id, recount["id"])
+        (ingredient_id, *extra, recount["id"])
     ).fetchall()
     for d in deltas:
         if d["event_type"] == "receiving":
@@ -75,76 +87,77 @@ def recompute_rollups(restaurant_id: int, ingredient_id: int, conn=None) -> None
         from models import get_conn
         conn = get_conn()
     try:
-        current_stock = _compute_current_stock(conn, ingredient_id)
-
-        recount = conn.execute(
-            "SELECT event_date FROM ingredient_stock_events "
-            "WHERE ingredient_id=? AND event_type='recount' ORDER BY id DESC LIMIT 1",
-            (ingredient_id,)
-        ).fetchone()
+        current_stock = _compute_current_stock(conn, ingredient_id, restaurant_id)
 
         window_start = (date.today() - timedelta(days=_TREND_WINDOW_DAYS - 1)).isoformat()
 
-        has_depletion = conn.execute(
-            "SELECT 1 FROM ingredient_stock_events WHERE ingredient_id=? AND event_type='depletion' LIMIT 1",
-            (ingredient_id,)
-        ).fetchone() is not None
-        has_waste = conn.execute(
-            "SELECT 1 FROM ingredient_stock_events WHERE ingredient_id=? AND event_type='waste' LIMIT 1",
-            (ingredient_id,)
-        ).fetchone() is not None
-        last_receiving = conn.execute(
-            "SELECT qty FROM ingredient_stock_events "
-            "WHERE ingredient_id=? AND event_type='receiving' ORDER BY id DESC LIMIT 1",
-            (ingredient_id,)
+        # One aggregate instead of six separate reads. This runs once per
+        # ingredient touched by a business date inside compute_daily_depletion's
+        # loop, so on a wide menu it was the dominant cost of the nightly sync:
+        # six statements x every ingredient x every restaurant, every night.
+        # Same numbers, one pass over the same index.
+        agg = conn.execute(
+            """SELECT
+                 SUM(event_type='depletion')                                        AS n_depletion,
+                 SUM(event_type='waste')                                            AS n_waste,
+                 COALESCE(SUM(CASE WHEN event_type='depletion' AND event_date>=? THEN qty END),0) AS dep_qty,
+                 COUNT(DISTINCT CASE WHEN event_type='depletion' AND event_date>=? THEN event_date END) AS dep_days,
+                 COALESCE(SUM(CASE WHEN event_type='waste'     AND event_date>=? THEN qty END),0) AS waste_qty,
+                 COALESCE(SUM(CASE WHEN event_type='receiving' AND event_date>=? THEN qty END),0) AS recv_qty,
+                 MAX(CASE WHEN event_type='recount'   THEN id END)                   AS recount_id,
+                 MAX(CASE WHEN event_type='receiving' THEN id END)                   AS last_recv_id
+               FROM ingredient_stock_events
+               WHERE ingredient_id=? AND restaurant_id=?""",
+            (window_start, window_start, window_start, window_start,
+             ingredient_id, restaurant_id)
         ).fetchone()
 
+        # Scoped explicitly even though the id came from the restaurant-scoped
+        # aggregate above. "Safe because of where the id came from" is exactly
+        # the reasoning that left _compute_current_stock reading a financial
+        # quantity off a bare integer; the guarantee belongs in the query.
+        recount_date = None
+        if agg and agg["recount_id"]:
+            r = conn.execute(
+                "SELECT event_date FROM ingredient_stock_events WHERE id=? AND restaurant_id=?",
+                (agg["recount_id"], restaurant_id)).fetchone()
+            recount_date = r["event_date"] if r else None
+
         sets, params = ["current_stock=?", "updated_at=datetime('now')"], [current_stock]
-        if recount:
+        if recount_date:
             sets.append("last_recount_at=?")
-            params.append(recount["event_date"])
-        if has_depletion:
+            params.append(recount_date)
+        if agg and (agg["n_depletion"] or 0) > 0:
             # Divided by the days that actually carry depletion, not a flat 7.
             # A restaurant two days into a Toast connection had its usage
             # understated 3.5x, and one closed Mondays was understated ~14%
             # permanently — which overstates days_remaining, keeps items out
             # of critical_low, and runs the kitchen out of product.
-            row = conn.execute(
-                "SELECT COALESCE(SUM(qty),0) AS total, COUNT(DISTINCT event_date) AS days "
-                "FROM ingredient_stock_events "
-                "WHERE ingredient_id=? AND event_type='depletion' AND event_date>=?",
-                (ingredient_id, window_start)
-            ).fetchone()
-            days_with_data = max(1, int(row["days"] or 0))
+            days_with_data = max(1, int(agg["dep_days"] or 0))
             sets.append("avg_daily_usage=?")
-            params.append(round(row["total"] / days_with_data, 3))
-        if has_waste:
-            waste_sum = conn.execute(
-                "SELECT COALESCE(SUM(qty),0) AS total FROM ingredient_stock_events "
-                "WHERE ingredient_id=? AND event_type='waste' AND event_date>=?",
-                (ingredient_id, window_start)
-            ).fetchone()["total"]
+            params.append(round(float(agg["dep_qty"] or 0) / days_with_data, 3))
+        if agg and (agg["n_waste"] or 0) > 0:
             sets.append("waste_last_week=?")
-            params.append(round(waste_sum, 3))
+            params.append(round(float(agg["waste_qty"] or 0), 3))
         # Purchases over the SAME window as the waste figure above, not the
         # single most recent delivery. waste_last_week is a 7-day total;
         # dividing it by one delivery's quantity inflated waste_pct roughly in
         # proportion to how often the restaurant takes deliveries, which drove
         # the headline benchmark and cut suggested order quantities by up to
         # 40% through waste_adj.
-        received = conn.execute(
-            "SELECT COALESCE(SUM(qty),0) AS total FROM ingredient_stock_events "
-            "WHERE ingredient_id=? AND event_type='receiving' AND event_date>=?",
-            (ingredient_id, window_start)
-        ).fetchone()["total"]
+        received = float(agg["recv_qty"] or 0) if agg else 0.0
         if received > 0:
             sets.append("last_order_qty=?")
             params.append(round(received, 3))
-        elif last_receiving:
+        elif agg and agg["last_recv_id"]:
             # Nothing received in the window — fall back to the last delivery
             # so an item ordered less often than weekly still has a denominator.
-            sets.append("last_order_qty=?")
-            params.append(last_receiving["qty"])
+            lr = conn.execute(
+                "SELECT qty FROM ingredient_stock_events WHERE id=? AND restaurant_id=?",
+                (agg["last_recv_id"], restaurant_id)).fetchone()
+            if lr:
+                sets.append("last_order_qty=?")
+                params.append(lr["qty"])
         params.append(ingredient_id)
         params.append(restaurant_id)
         # Scoped by restaurant_id as well as id. The tenant guarantee used to
@@ -392,6 +405,138 @@ def waste_sources(restaurant_id: int, days: int = _TREND_WINDOW_DAYS) -> dict:
         "total": total,
         "inferred_pct": round(inferred / total * 100, 1) if total > 0 else None,
         "has_data": bool(rows),
+        # Which ingredients the unexplained gap is actually in. This used to
+        # be aggregated away to a single dollar figure, which is the one
+        # number an owner cannot act on — see inferred_variance below.
+        "top_inferred": inferred_variance(restaurant_id, days=days)["ingredients"][:5],
+    }
+
+
+# A gap has to be a real share of what the recipes said should have been used
+# before it means anything. Below this it is ordinary count noise — a scale
+# read, a partial case, a rounding — not a portioning problem.
+MIN_VARIANCE_PCT = 8.0
+# And it has to be worth money. A 30% variance on $4 of parsley is not a
+# finding; it is a distraction from the 9% variance on the ribeye.
+MIN_VARIANCE_DOLLARS = 15.0
+
+# Well above any real menu — a ceiling against an unbounded Toast catalogue,
+# not a paging window the UI is expected to walk.
+MENU_PAGE_SIZE = 500
+
+
+def inferred_variance(restaurant_id: int, days: int = _TREND_WINDOW_DAYS) -> dict:
+    """Where theoretical usage and actual usage disagree, by ingredient and
+    by the dishes that ingredient goes into.
+
+    record_recount already writes the gap between what the ledger expected
+    and what was physically counted as a waste event tagged source='inferred'
+    — per ingredient, with the expected and counted quantities in its note.
+    That gap IS over-portioning, prep loss or theft. waste_sources aggregated
+    it into one restaurant-wide dollar figure and discarded which ingredient
+    produced it, so the module held the measurement and could not name it.
+
+    The variance is expressed against theoretical depletion over the same
+    window (recipe quantity x units sold), because a 6-unit gap means very
+    different things on an ingredient that depleted 40 units and one that
+    depleted 600.
+
+    `dishes` attributes each ingredient's variance to the menu items that use
+    it, weighted by how much of that ingredient each dish actually consumed in
+    the window. A dish is named only when a recipe binds it to the ingredient
+    — this never guesses which dish is over-portioned, it reports which
+    dishes are the candidates and how much of the consumption each accounts
+    for.
+    """
+    from models import get_conn
+    conn = get_conn()
+    try:
+        window_start = (date.today() - timedelta(days=days - 1)).isoformat()
+        rows = conn.execute(
+            """SELECT i.id, i.name, i.unit, COALESCE(i.unit_cost,0) AS unit_cost,
+                      COALESCE(SUM(CASE WHEN e.event_type='waste' AND e.source='inferred'
+                                        THEN e.qty END),0) AS gap_qty,
+                      COALESCE(SUM(CASE WHEN e.event_type='depletion' THEN e.qty END),0) AS theoretical_qty
+                 FROM ingredients i
+                 JOIN ingredient_stock_events e
+                   ON e.ingredient_id=i.id AND e.restaurant_id=i.restaurant_id
+                WHERE i.restaurant_id=? AND e.event_date>=?
+                GROUP BY i.id
+               HAVING gap_qty > 0""",
+            (restaurant_id, window_start),
+        ).fetchall()
+
+        out = []
+        for r in rows:
+            gap, theo = float(r["gap_qty"] or 0), float(r["theoretical_qty"] or 0)
+            cost = round(gap * float(r["unit_cost"] or 0), 2)
+            # No theoretical usage means no recipe depleted this ingredient,
+            # so there is no baseline to call the gap large or small against.
+            # Reported with pct=None rather than dropped or divided by zero.
+            pct = round(gap / theo * 100, 1) if theo > 0 else None
+            out.append({
+                "ingredient_id": r["id"], "ingredient": r["name"],
+                "unit": r["unit"] or "", "gap_qty": round(gap, 3),
+                "theoretical_qty": round(theo, 3),
+                "variance_pct": pct, "cost": cost,
+                "monthly_cost": round(cost * (30.0 / days), 2),
+                "material": bool(pct is not None and pct >= MIN_VARIANCE_PCT
+                                 and cost >= MIN_VARIANCE_DOLLARS),
+            })
+
+        # Which dishes consume each flagged ingredient, and in what share.
+        material_ids = [e["ingredient_id"] for e in out if e["material"]]
+        dishes = []
+        if material_ids:
+            marks = ",".join("?" for _ in material_ids)
+            for d in conn.execute(
+                f"""SELECT ri.ingredient_id AS iid, m.id AS mid, m.name AS dish,
+                           ri.qty_per_unit,
+                           COALESCE(SUM(s.qty_sold),0) AS units_sold
+                      FROM recipe_ingredients ri
+                      JOIN menu_items m ON m.id = ri.menu_item_id AND m.restaurant_id=?
+                      LEFT JOIN menu_item_sales s
+                        ON s.menu_item_id = m.id AND s.restaurant_id = m.restaurant_id
+                       AND s.business_date >= ?
+                     WHERE ri.ingredient_id IN ({marks})
+                     GROUP BY ri.ingredient_id, m.id""",
+                (restaurant_id, window_start, *material_ids),
+            ).fetchall():
+                consumed = float(d["qty_per_unit"] or 0) * float(d["units_sold"] or 0)
+                if consumed > 0:
+                    dishes.append({"ingredient_id": d["iid"], "menu_item_id": d["mid"],
+                                   "dish": d["dish"], "consumed_qty": round(consumed, 3),
+                                   "units_sold": round(float(d["units_sold"] or 0), 2)})
+    finally:
+        conn.close()
+
+    # Share of each ingredient's consumption per dish, so the caller can say
+    # "the ribeye accounts for 78% of what used that cut" rather than merely
+    # listing every dish the ingredient appears in.
+    by_ing = {}
+    for d in dishes:
+        by_ing.setdefault(d["ingredient_id"], []).append(d)
+    for iid, ds in by_ing.items():
+        tot = sum(x["consumed_qty"] for x in ds)
+        for x in ds:
+            x["share"] = round(x["consumed_qty"] / tot, 3) if tot > 0 else None
+        ds.sort(key=lambda x: x["consumed_qty"], reverse=True)
+    for e in out:
+        e["dishes"] = by_ing.get(e["ingredient_id"], [])[:3]
+
+    out.sort(key=lambda e: e["cost"], reverse=True)
+    material = [e for e in out if e["material"]]
+    return {
+        "window_days": days,
+        "ingredients": out,
+        "material": material,
+        "material_monthly_cost": round(sum(e["monthly_cost"] for e in material), 2),
+        "min_variance_pct": MIN_VARIANCE_PCT,
+        "min_variance_dollars": MIN_VARIANCE_DOLLARS,
+        "basis": (f"Gap between recipe-theoretical usage and physical counts over {days} days. "
+                  f"Reported when the gap is at least {MIN_VARIANCE_PCT:g}% of theoretical usage "
+                  f"AND at least ${MIN_VARIANCE_DOLLARS:g}. A gap is over-portioning, prep loss "
+                  f"or shrink — it is not counted waste."),
     }
 
 
@@ -781,10 +926,20 @@ def menu_profitability(restaurant_id: int) -> dict:
     from models import get_conn
     conn = get_conn()
     try:
+        # Bounded. A restaurant that ran discover_menu_items against a large
+        # Toast catalogue can carry several thousand active items; this
+        # selected all of them, joined every recipe row and every sale in the
+        # window, and serialised the lot to a phone. MENU_PAGE_SIZE is a
+        # ceiling on the response, not on the maths — the weighted average
+        # below is computed from what is returned, so the cap is set well
+        # above any real menu and `truncated` says when it bit.
         items = conn.execute(
-            "SELECT id, name, sell_price FROM menu_items WHERE restaurant_id=? AND is_active=1 ORDER BY name",
-            (restaurant_id,)
+            "SELECT id, name, sell_price FROM menu_items WHERE restaurant_id=? AND is_active=1 "
+            "ORDER BY name LIMIT ?",
+            (restaurant_id, MENU_PAGE_SIZE + 1)
         ).fetchall()
+        truncated = len(items) > MENU_PAGE_SIZE
+        items = items[:MENU_PAGE_SIZE]
         costs = {}
         for row in conn.execute("""
             SELECT ri.menu_item_id AS mid,
@@ -903,7 +1058,10 @@ def menu_profitability(restaurant_id: int) -> dict:
         # Highest food cost % — still worth surfacing, just not as "worst dish".
         "highest_food_cost": priced[0] if priced else None,
         "menu_engineering": _menu_engineering(priced) if have_sales else None,
+        "truncated": truncated,
+        "page_size": MENU_PAGE_SIZE,
     }
+
 
 
 _IMPLAUSIBLE_LOW_FC_PCT = 2.0

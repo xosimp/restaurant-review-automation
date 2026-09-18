@@ -26,6 +26,16 @@ This is the module's answer to "why", and its guards are the point of it: `_vali
 ### Review reply drafting (`drafter.py`)
 Model: Sonnet (`DRAFTER_MODEL`). Input: the review + the restaurant's brand-voice fields (`voice_notes`, `sign_off_name`, `never_say`) + recent reply history (avoid repeating the same phrasing). Output: one draft reply. **Never** commits the restaurant to anything not already true (no invented refunds/comps/promises) — this is a hand-reviewed invariant, not an automated guard, so a reviewer of drafter changes should re-check it manually.
 
+### Food cost insight (`inventory.get_claude_insights`)
+Model: Sonnet (`INVENTORY_INSIGHT_MODEL`). Framed as a restaurant CFO, not a waste consultant, and handed all five engines: `analyse_inventory`'s waste/overstock/reorder, `cogs.build_food_cost_pct` (food cost % against the restaurant's own target), `food_cost_intelligence`'s ranked cost drivers, the recipe-coverage and counted-vs-inferred trust block, the weekday and year-over-year patterns, what labor/reviews/marketing recorded over the same period, and the stored root-cause read.
+
+The guards are the point of it: `_supported_savings_block` pre-computes every dollar the model may quote, the drivers arrive already ranked and the prompt is told not to re-rank them, a cause may only come from the ROOT-CAUSE READ block, a figure marked not-computable may not be estimated, and `verify_figures` appends an `UNVERIFIED:` marker rendered as a distinct caveat on both clients. The honest-zero path is real: *"If the data does not support a genuine, specific opportunity, say so plainly and write no recommendations at all."*
+
+### Food cost root-cause diagnosis (`food_cost_intelligence.py`)
+Model: Sonnet (`CLAUDE_REPORTER_MODEL`). Scheduled (`scheduler.run_food_cost_diagnoses`, 06:00), never on a page load. Input: the ranked drivers with the dollars each carries, the food cost position, the prime-cost projection, the trust block, the weekday/seasonal patterns, the cross-module context, and a fixed CAUSE VOCABULARY. Output: a headline, a cause naming at least one given driver, an alternative explanation, what would tell them apart, a confidence, an action and an expected outcome.
+
+`_validate_diagnosis` rejects a cause naming a driver it was not handed — the same discipline `verify_figures` applies to numbers — and an unsourced figure flags the result and forces confidence to `low`. An empty cross-module block tells the model in so many words that it has no operational evidence and must cap its confidence, because an empty block otherwise reads as "nothing notable happened" rather than "we have no data".
+
 ### Labor AI insight (`labor.py` → Claude via `ai_utils`)
 Model: Haiku. Input: the period's aggregated labor numbers (by day, by role) — never raw shift rows. Output: 2–4 sentences plus a short recommendations list. Every dollar/percentage figure named must trace back to a number `labor.py` actually computed; where the model states something it can't verify against the passed-in numbers, the response is expected to mark it `UNVERIFIED` rather than assert it plainly (see the real example: *"about $145 over target each day... UNVERIFIED: $145"* when the exact dollar figure wasn't in the aggregate passed to it).
 

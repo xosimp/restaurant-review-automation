@@ -1260,6 +1260,97 @@ def run_daily_alert_checks():
     return out
 
 
+def run_food_cost_snapshots():
+    """Daily — write every active restaurant's inventory snapshot, and score
+    any forecast whose period has closed.
+
+    `inventory_history` had exactly one writer in production: the AI insight
+    function, on page render. The weekly waste series, the multi-week price
+    trends, the price-spike alert and the opening/closing values behind food
+    cost % all read that table, so all four were functions of whether the
+    owner happened to open the tab — and a week nobody looked at is ABSENT
+    from the series rather than zero in it.
+
+    Runs before the diagnosis pass below, which reads what this writes.
+    """
+    from models import get_conn
+    import food_cost_intelligence as fci
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT id FROM restaurants WHERE module_inventory=1 "
+        "AND COALESCE(billing_status,'trial') IN ('trial','active')"
+    ).fetchall()
+    conn.close()
+    written, skipped, failed, scored = 0, 0, 0, 0
+    for row in rows:
+        rid = row["id"]
+        try:
+            out = fci.weekly_snapshot(rid)
+            if out.get("ok"):
+                written += 1
+            else:
+                skipped += 1
+        except Exception as e:
+            failed += 1
+            log.error(f"Food cost snapshot failed for restaurant {rid}: {e}")
+            _ops.capture(e, job="food_cost_snapshots", context=f"restaurant_id={rid}")
+        try:
+            scored += fci.score_forecasts(rid).get("scored", 0)
+        except Exception as e:
+            _ops.capture(e, job="food_cost_forecast_scoring", context=f"restaurant_id={rid}")
+    log.info(f"Food cost snapshots: {written} written, {skipped} skipped, {failed} failed, "
+             f"{scored} forecasts scored")
+    return {"written": written, "skipped": skipped, "failed": failed, "forecasts_scored": scored}
+
+
+def run_food_cost_diagnoses():
+    """Daily — the root-cause read over each restaurant's ranked cost drivers.
+
+    The module could say "waste is $420 this week" and stopped there; no
+    prompt in the food-cost path asked why. This is a Sonnet call per
+    restaurant over the drivers food_cost_intelligence.cost_drivers already
+    ranked, so it runs here rather than on the critical path of a page load.
+    The insight endpoint and the morning brief both READ what this writes.
+    """
+    from models import get_conn, get_restaurant
+    import food_cost_intelligence as fci
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT id FROM restaurants WHERE module_inventory=1 "
+        "AND COALESCE(billing_status,'trial') IN ('trial','active')"
+    ).fetchall()
+    conn.close()
+    done, skipped, failed = 0, 0, 0
+    for row in rows:
+        rid = row["id"]
+        try:
+            r = get_restaurant(rid)
+            # A restaurant whose AI budget is spent gets no diagnosis rather
+            # than a refused call and a captured exception.
+            if r and getattr(r, "ai_budget_exceeded", False):
+                skipped += 1
+                continue
+            out = fci.diagnose(rid)
+            if out and out.get("ok"):
+                done += 1
+                # A fresh cause makes every cached food-cost narrative for
+                # this restaurant out of date — it is what the narrative is
+                # now built around.
+                try:
+                    from client_api import invalidate_insight_cache
+                    invalidate_insight_cache(rid)
+                except Exception:
+                    pass
+            else:
+                skipped += 1
+        except Exception as e:
+            failed += 1
+            log.error(f"Food cost diagnosis failed for restaurant {rid}: {e}")
+            _ops.capture(e, job="food_cost_diagnoses", context=f"restaurant_id={rid}")
+    log.info(f"Food cost diagnoses: {done} produced, {skipped} skipped, {failed} failed")
+    return {"diagnosed": done, "skipped": skipped, "failed": failed}
+
+
 def run_review_diagnoses():
     """Daily — produce the root-cause read for each restaurant's biggest
     complaint clusters.
@@ -1441,6 +1532,17 @@ def scheduler_loop():
             if now.hour == 6 and _ops.claim_period("review_diagnoses", str(today)):
                 log.info("Running review root-cause diagnoses...")
                 _ops.run_job("review_diagnoses", run_review_diagnoses)
+
+            # 5:30-ish daily, straight after the depletion sync at 5 — the
+            # snapshot has to be written from post-sync numbers, and the
+            # diagnosis at 6 has to read the snapshot.
+            if now.hour == 5 and _ops.claim_period("food_cost_snapshots", str(today)):
+                log.info("Writing food cost snapshots...")
+                _ops.run_job("food_cost_snapshots", run_food_cost_snapshots)
+
+            if now.hour == 6 and _ops.claim_period("food_cost_diagnoses", str(today)):
+                log.info("Running food cost root-cause diagnoses...")
+                _ops.run_job("food_cost_diagnoses", run_food_cost_diagnoses)
 
             # 1st of the month at 9am — send monthly summary to all active clients
             if now.day == 1 and now.hour == 9 and _ops.claim_period("monthly_summary", str(today)):

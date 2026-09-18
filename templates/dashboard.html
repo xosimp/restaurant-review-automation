@@ -3209,6 +3209,36 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .fc2-cov .k{text-transform:uppercase;letter-spacing:.8px;font-weight:700;font-size:12px}
 .fc2-cov .v{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:17px;color:var(--ink)}
 .fc2-cov .v.good{color:var(--hb-good)}.fc2-cov .v.warn{color:var(--amber)}.fc2-cov .v.bad{color:var(--hb-bad)}
+/* The CFO card. Deliberately NOT another tinted .fc2-fcp block: a driver
+   ranking and a root cause are a different KIND of claim from a measured
+   percentage, and giving them the same treatment would say they carry the
+   same weight. */
+.fc2-cfo{margin-top:18px;border:1px solid var(--hb-line);border-radius:12px;overflow:hidden;background:var(--surface)}
+.fc2-cfo-hd{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:13px 18px;border-bottom:1px solid var(--hb-line2)}
+.fc2-cfo-hd .t{font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ember)}
+.fc2-cfo-hd .m{font-size:12.5px;color:var(--ink3)}
+.fc2-cfo-bd{padding:15px 18px;display:flex;flex-direction:column;gap:14px}
+.fc2-hl{font-size:17px;line-height:1.5;color:var(--ink);font-weight:600}
+.fc2-row{display:flex;flex-direction:column;gap:3px}
+.fc2-row .k{font-size:10.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)}
+.fc2-row .v{font-size:14.5px;line-height:1.6;color:var(--ink2)}
+.fc2-row.alt .v{color:var(--ink3);font-size:13.5px}
+.fc2-conf{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;padding:3px 9px;border-radius:999px}
+.fc2-conf.high{background:var(--green-bg);color:var(--hb-good)}
+.fc2-conf.medium{background:var(--amber-bg);color:var(--hb-warn)}
+.fc2-conf.low{background:var(--paper2);color:var(--ink3)}
+/* One driver. The dollars lead because that is the ranking. */
+.fc2-drv{display:flex;align-items:flex-start;gap:12px;padding:11px 0;border-top:1px solid var(--hb-line2)}
+.fc2-drv:first-child{border-top:none;padding-top:2px}
+.fc2-drv .n{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:17px;color:var(--ink);min-width:96px;text-align:right}
+.fc2-drv .bd{flex:1;min-width:0}
+.fc2-drv .lbl{font-size:14.5px;color:var(--ink);font-weight:600}
+.fc2-drv .ev{font-size:12.5px;color:var(--ink3);line-height:1.5;margin-top:2px}
+.fc2-drv .tags{display:flex;flex-wrap:wrap;gap:5px;margin-top:5px}
+.fc2-drv .tag{font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--hb-line);color:var(--ink3)}
+.fc2-prof{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;padding:11px 13px;border-radius:9px;background:var(--hb-tint)}
+.fc2-prof .n{font-family:'Space Grotesk',sans-serif;font-size:21px;font-weight:600;color:var(--ink)}
+.fc2-prof .l{font-size:12px;color:var(--ink3);line-height:1.5}
 .fc2-po{margin-top:14px}
 .fc2-po .row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid var(--hb-line2);font-size:13.5px;color:var(--ink2)}
 .fc2-po .row b{font-family:'Space Grotesk',sans-serif;color:var(--ink);font-weight:600}
@@ -3255,6 +3285,15 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
          two were indistinguishable in every figure on this page. #}
       <div id="fc2-wsrc" class="fc2-cov" hidden></div>
     </div>
+    {# The CFO read. Everything above is a position: what the waste is, what
+       the percentage is, how far to trust it. This is the step after —
+       what is DRIVING the cost, ranked by the dollars each driver carries,
+       the stored root cause with its alternative and its confidence, and the
+       month-end prime-cost projection. Filled by /api/food-cost/cfo; renders
+       nothing at all when no driver clears the dollar floor, because an owner
+       whose numbers do not yet support a cause should see the position and
+       stop, never a cause produced to fill the card. #}
+    <div id="fc2-cfo" hidden></div>
     <div class="fc2-top-right">
       <div class="hb-pulse">
         <span class="hb-chip {{ 'sample' if not inv.is_live else ('bad' if _tone == 'bad' else ('warn' if inv.total_waste_cost_week > 0 else 'good')) }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num">${{ inv.total_waste_cost_week|int|format_num }}</span></span><span class="l">waste / wk</span></span>
@@ -9609,6 +9648,7 @@ function loadInvInsight(){
   fc2LoadFoodCostPct();
   fc2LoadRecipeCoverage();
   fc2LoadWasteSources();
+  fc2LoadCfo();
   var fiveMin=5*60*1000;
   try{
     var cached=sessionStorage.getItem('inv_insight');
@@ -9658,6 +9698,78 @@ function wtMoney(v){return '$'+Math.round(Math.abs(v||0)).toLocaleString();}
 function wtSigned(v){return (v>=0?'+':'−')+wtMoney(v);}
 function wtPct(p){return p==null?'':' ('+Math.abs(p).toLocaleString(undefined,{maximumFractionDigits:1})+'%)';}
 function wtRangeLabel(r){return r==='all'?'all history':('last '+parseInt(r,10)+' weeks');}
+// ── The CFO read ────────────────────────────────────────────────────────────
+// Everything else on this page is a position. This is the step after it: what
+// is driving the cost, ranked by the dollars each driver carries, the stored
+// root cause with its alternative and its confidence, and the month-end
+// prime-cost projection. Renders nothing when no driver clears the floor.
+function fc2Money(v){return '$'+Math.round(Number(v)||0).toLocaleString();}
+function fc2LoadCfo(){
+  var host=document.getElementById('fc2-cfo');if(!host)return;
+  fetch('/api/food-cost/cfo',{headers:{'Accept':'application/json'}})
+    .then(function(r){return r.json();})
+    .then(function(d){
+      if(!d||!d.ok){host.hidden=true;return;}
+      var b=d.brief||{},dg=d.diagnosis,drv=(d.drivers&&d.drivers.drivers)||[];
+      if(!drv.length&&!(dg&&dg.cause)){host.hidden=true;return;}
+      var conf=(dg&&dg.confidence)||'low';
+      var h='<div class="fc2-cfo"><div class="fc2-cfo-hd"><span class="t">Where the money is going</span>';
+      if(dg&&dg.cause){h+='<span class="fc2-conf '+conf+'">'+conf+' confidence</span>';}
+      var at=(b.money_involved&&b.money_involved.monthly_at_stake);
+      if(at){h+='<span class="m">'+fc2Money(at)+'/month across '+drv.length+' driver'+(drv.length===1?'':'s')+'</span>';}
+      if(dg&&dg.stale){h+='<span class="m">· older read</span>';}
+      h+='</div><div class="fc2-cfo-bd">';
+      if(dg&&dg.headline){h+='<div class="fc2-hl">'+wtEsc(dg.headline)+'</div>';}
+      // The month-end projection, always labelled a projection.
+      var p=b.profitability;
+      if(p&&p.available){
+        h+='<div class="fc2-prof"><span class="n"><span class="hb-num">'+p.prime_cost_pct+'%</span></span>'
+          +'<span class="l">prime cost month to date (food '+p.food_cost_pct+'% + labor '+p.labor_pct+'%). '
+          +'At this run rate the month lands near '+fc2Money(p.projected_prime_cost)
+          +' on '+fc2Money(p.projected_sales)+' of sales';
+        if(p.dollars_vs_last_month!=null){
+          h+=' — '+fc2Money(Math.abs(p.dollars_vs_last_month))+' '
+            +(p.dollars_vs_last_month>0?'worse':'better')+' than last month';
+        }
+        h+='. Projection, not a measurement. '+wtEsc(p.basis||'')+'</span></div>';
+      }
+      if(dg&&dg.cause){
+        h+='<div class="fc2-row"><div class="k">Most likely cause</div><div class="v">'+wtEsc(dg.cause)+'</div></div>';
+        if(dg.alternative_cause){h+='<div class="fc2-row alt"><div class="k">It could also be</div><div class="v">'+wtEsc(dg.alternative_cause)+'</div></div>';}
+        if(dg.what_would_confirm){h+='<div class="fc2-row"><div class="k">What would tell them apart</div><div class="v">'+wtEsc(dg.what_would_confirm)+'</div></div>';}
+        if(dg.recommended_action){h+='<div class="fc2-row"><div class="k">Do this first</div><div class="v">'+wtEsc(dg.recommended_action)+'</div></div>';}
+        if(dg.expected_outcome){h+='<div class="fc2-row alt"><div class="k">What should change</div><div class="v">'+wtEsc(dg.expected_outcome)+'</div></div>';}
+        var oe=dg.operational_evidence||[];
+        if(oe.length){
+          var ol=[];for(var k=0;k<oe.length;k++){ol.push(wtEsc(oe[k].module)+': '+wtEsc(oe[k].metric)+' '+wtEsc(oe[k].value));}
+          h+='<div class="fc2-row alt"><div class="k">Cross-checked against</div><div class="v">'+ol.join(' &nbsp;·&nbsp; ')+'</div></div>';
+        }
+      }
+      if(drv.length){
+        h+='<div class="fc2-row"><div class="k">Ranked by dollars, then confidence, then ease</div><div>';
+        for(var i=0;i<drv.length&&i<5;i++){
+          var x=drv[i];
+          h+='<div class="fc2-drv"><div class="n"><span class="hb-num">'+fc2Money(x.dollars_monthly)+'</span></div>'
+            +'<div class="bd"><div class="lbl">'+wtEsc(x.label)+'</div>'
+            +'<div class="ev">'+wtEsc(x.evidence)+'</div>'
+            +'<div class="tags"><span class="tag">'+wtEsc(x.confidence)+' confidence</span>'
+            +'<span class="tag">'+wtEsc(x.difficulty)+' effort</span>'
+            +'<span class="tag">if ignored: '+wtEsc(x.if_ignored)+'</span></div></div></div>';
+        }
+        h+='</div></div>';
+      }
+      // How far any of this can be trusted. Never buried.
+      var t=b.trust||{};
+      var tl=[];
+      if(t.recipe_coverage_pct!=null){tl.push('recipes cover '+t.recipe_coverage_pct+'% of what sold');}
+      if(t.inferred_waste_pct!=null){tl.push(t.inferred_waste_pct+'% of waste is an unexplained count gap, not observed spoilage');}
+      if(t.forecast_accuracy&&t.forecast_accuracy.available){tl.push('past forecasts here have been '+wtEsc(t.forecast_accuracy.reading)+' ('+t.forecast_accuracy.mean_error_pct+'% mean error over '+t.forecast_accuracy.scored+')');}
+      if(tl.length){h+='<div class="fc2-row alt"><div class="k">How far to trust this</div><div class="v">'+tl.join(' · ')+'</div></div>';}
+      h+='</div></div>';
+      host.innerHTML=h;host.hidden=false;
+    }).catch(function(){host.hidden=true;});
+}
+
 // ── Actual food cost % (COGS / net sales) ───────────────────────────────────
 // The module is named Food Cost and never computed one: it measured waste, a
 // waste rate against purchases, and a theoretical plate cost per dish, while

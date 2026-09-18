@@ -571,20 +571,96 @@ def _build(current_user):
                 add_attn("critical_low", "important", f"{_plural(len(crit), 'item')} critically low",
                          ", ".join(str(c.get("item", ""))[:22] for c in crit[:4]) + " — likely to run out before the next delivery.", "inventory", "See the list",
                          evidence=f"{len(reorder)} more to reorder soon")
-            if top and float(top.get("waste_cost") or 0) >= 40:
+            # The CFO read. The module's morning headline was
+            # "$X recoverable/month" — a waste-recovery estimate, when the
+            # question an operator opens with is where their margin is. Food
+            # cost % and the ranked cost drivers were both computed and
+            # neither reached this screen. Best-effort: Home must render even
+            # when the ledger cannot answer.
+            fc_pct, fc_target, fc_label = None, None, None
+            drivers, cfo_why = [], None
+            try:
+                import food_cost_intelligence as _fci_hb
+                _ev = _fci_hb.build_evidence(rid)
+                _fc = _ev["food_cost"]
+                if _fc.get("ok"):
+                    fc_pct, fc_target, fc_label = _fc["pct"], _fc.get("target"), _fc.get("label")
+                drivers = (_ev["drivers"].get("drivers") or [])
+                _dg = _fci_hb.get_diagnosis(rid, include_stale=True)
+                if _dg and _dg.get("cause"):
+                    cfo_why = {"cause": _dg["cause"], "confidence": _dg.get("confidence"),
+                               "stale": _dg.get("stale")}
+            except Exception:
+                pass
+
+            # The recommendation is now the top RANKED driver — ranked by
+            # dollars, then confidence, then ease — rather than whichever item
+            # happened to waste the most last week. A driver carries its own
+            # evidence, its confidence, how hard it is and what happens if it
+            # is ignored, none of which the old waste-only line could say.
+            if drivers:
+                d0 = drivers[0]
+                add_rec(f"food_cost_driver:{d0['label'][:40]}", d0["label"],
+                        d0["if_ignored"].capitalize() + ".",
+                        f"${d0['dollars_monthly']:,.0f}/month · {d0['confidence']} confidence · "
+                        f"{d0['difficulty']} effort · {d0['evidence']}",
+                        "Food cost · margin", "inventory", "This week",
+                        "strong" if d0["dollars_monthly"] >= 150 else "moderate", "See the numbers")
+            elif top and float(top.get("waste_cost") or 0) >= 40:
                 add_rec(f"cut_waste:{top.get('item', 'item')}", f"Cut {top.get('item', 'top-item')} waste", f"It's the single biggest line in last week's waste — {top.get('waste_pct', 0)}% of what you ordered.",
                         f"${float(top.get('waste_cost') or 0):,.0f} wasted last week · ${recoverable:,.0f}/mo recoverable across items", "Food cost · margin", "inventory", "Next order",
                         "strong" if float(top.get("waste_cost") or 0) >= 100 else "moderate", "Adjust the order")
-            if recoverable > 0:
+
+            # The brief line leads with the margin position when it can be
+            # measured, and falls back to recoverable waste when it cannot.
+            if fc_pct is not None:
+                _over = (fc_target is not None and fc_pct > fc_target)
+                brief_lines.append({
+                    "text": f"Food cost {fc_pct}% of sales"
+                            + (f" against a {fc_target}% target" if fc_target else f" — {fc_label}")
+                            + (f", led by {drivers[0]['label'].lower()}" if drivers else "") + ".",
+                    "tone": "bad" if _over else "good", "module": "inventory"})
+            elif recoverable > 0:
                 brief_lines.append({"text": f"${recoverable:,.0f}/month of recoverable food waste, led by {top.get('item') if top else 'a few items'}.", "tone": "warn", "module": "inventory"})
-            else:
+            if recoverable <= 0 and fc_pct is None:
                 add_win("waste_low", "Waste is under control", f"{inv.get('benchmark_label') or 'Low'} waste rate" + (f" ({waste_rate}%)" if waste_rate is not None else "") + " this week.", "inventory")
-            snapshot.append({"key": "inventory", "label": "Food Cost", "status": "available", "value": f"${recoverable:,.0f}", "unit": "recoverable / mo",
-                             "delta": ({"value": f"{waste_rate}% waste", "label": inv.get("benchmark_label") or "", "good": inv.get("benchmark_tone") in ("good", None)} if waste_rate is not None else None),
-                             "secondary": [{"label": "Critical low", "value": str(len(crit))}, {"label": "Reorder soon", "value": str(len(reorder))}, {"label": "Stock value", "value": f"${float(inv.get('total_stock_value') or 0):,.0f}"}],
-                             "interpretation": (f"{top.get('item')} is the biggest waste line (${float(top.get('waste_cost') or 0):,.0f} last week)." if top else "No waste flagged this week."),
-                             "state": "bad" if crit else ("warn" if recoverable > 0 else "good"),
-                             "spark": [], "spark_label": None, "attention": bool(crit) or recoverable >= 200, "sample": False, "last_data": r.get("inventory_updated_at")})
+            elif fc_target is not None and fc_pct is not None and fc_pct <= fc_target:
+                add_win("food_cost_on_target", f"Food cost {fc_pct}% — on target",
+                        f"At or under your own {fc_target}% target over the last 28 days.", "inventory")
+
+            # The headline number is the margin position where it exists, and
+            # the recoverable estimate only where it does not.
+            _headline = f"{fc_pct}%" if fc_pct is not None else f"${recoverable:,.0f}"
+            _unit = ("food cost" if fc_pct is not None else "recoverable / mo")
+            _delta = None
+            if fc_pct is not None and fc_target is not None:
+                _delta = {"value": f"{fc_pct - fc_target:+.1f} pts", "label": fc_label or "",
+                          "good": fc_pct <= fc_target}
+            elif waste_rate is not None:
+                _delta = {"value": f"{waste_rate}% waste", "label": inv.get("benchmark_label") or "",
+                          "good": inv.get("benchmark_tone") in ("good", None)}
+            _secondary = [{"label": "Critical low", "value": str(len(crit))},
+                          {"label": "Reorder soon", "value": str(len(reorder))},
+                          {"label": "Stock value", "value": f"${float(inv.get('total_stock_value') or 0):,.0f}"}]
+            if drivers:
+                _secondary.insert(0, {"label": "At stake",
+                                      "value": f"${sum(d['dollars_monthly'] for d in drivers):,.0f}/mo"})
+            snapshot.append({"key": "inventory", "label": "Food Cost", "status": "available",
+                             "value": _headline, "unit": _unit,
+                             "delta": _delta,
+                             "secondary": _secondary,
+                             # WHY, not just what — the one thing the card
+                             # could never say.
+                             "interpretation": (
+                                 cfo_why["cause"] if cfo_why else
+                                 (f"{drivers[0]['label']} is the largest driver "
+                                  f"(${drivers[0]['dollars_monthly']:,.0f}/month)." if drivers else
+                                  (f"{top.get('item')} is the biggest waste line (${float(top.get('waste_cost') or 0):,.0f} last week)." if top else "No waste flagged this week."))),
+                             "why_confidence": (cfo_why or {}).get("confidence"),
+                             "state": "bad" if (crit or (fc_target and fc_pct and fc_pct > fc_target)) else ("warn" if recoverable > 0 else "good"),
+                             "spark": [], "spark_label": None,
+                             "attention": bool(crit) or recoverable >= 200 or bool(fc_target and fc_pct and fc_pct > fc_target),
+                             "sample": False, "last_data": r.get("inventory_updated_at")})
             ask.append("Where are my biggest food cost opportunities?")
 
     # ── Marketing ───────────────────────────────────────────────────────────

@@ -59,9 +59,23 @@ Web `#panel-labor` header shows Sales/Labor as the two headline numbers, the lab
 
 ## Food Cost (Inventory)
 
-**Files**: `inventory.py`, `inventory_ledger.py`. Panel id is historically `#panel-inventory` (predates the "Food Cost" rename).
+**Files**: `inventory.py` (waste/overstock/reorder), `inventory_ledger.py` (the stock ledger, recipes, menu margins, portion variance), `cogs.py` (actual food cost %), `waste_trend.py` (the trend engine), `food_cost_intelligence.py` (the CFO layer). Panel id is historically `#panel-inventory` (predates the "Food Cost" rename).
 
 Weekly ingredient counts → waste cost, price-drift detection (this week's unit cost vs last), monthly waste projection, purchase-order drafting. CSV shape: `item,category,par_level,current_stock,unit_cost,avg_daily_usage,last_order_qty,waste_last_week`.
+
+**The five engines and who reads them.** Four financial engines existed and the AI saw one — it narrated waste and could not say whether food cost was over target or which dish was eating the margin. `food_cost_intelligence` is the layer that joins them: it ranks the drivers, projects prime cost, and feeds all of it into both the insight prompt and the root-cause pass.
+
+**Invariants (audit #14 — the CFO layer)**:
+- `inventory_history` is written by a SCHEDULED job (`scheduler.run_food_cost_snapshots`, 05:00), not by a page render. The weekly waste series, the multi-week price trends, the price-spike alert and the opening/closing values behind food cost % all read that table — when its only writer was the AI insight on page view, all four were functions of whether the owner opened the tab, and a week nobody looked at was ABSENT from the series rather than zero in it.
+- There is ONE week-over-week implementation, `waste_trend`'s ISO-week series. `week_end` is today's date, so "the previous snapshot row" is whenever the owner last looked — that was being labelled "vs last week" and a dollar forecast was built on it.
+- A forecast is only projected when `waste_trend`'s own confidence and anomaly checks allow it, and it is STORED (`forecast_log`) and later scored. A forecast nobody checks costs nothing to get wrong.
+- The waste-rate denominator is what was actually received over the same seven days (`cogs.purchases_in_window`), never the sum of each item's last order — that covers a different period per item and usually a longer one than the numerator.
+- Two different windows, kept apart: `week_start`/`week_end` label the WASTE period (always the trailing seven days); `counted_to`/`window_age_days`/`stock_basis` say how far the CURRENT STOCK figures can be trusted.
+- Every displayed annual figure is the displayed monthly times twelve. Round once, derive the rest.
+- Drivers are ranked in Python — dollars, then confidence, then ease — and the prompt is told not to re-rank them. Each carries evidence, a confidence, a difficulty and what happens if it is ignored.
+- A cause is only ever stated from a stored diagnosis whose validator rejects any driver it was not given (`_validate_diagnosis`), the same discipline `verify_figures` applies to numbers.
+- A projection returns nothing rather than substituting a zero, and says which component is missing. `profitability_projection` is PRIME COST, not net profit, and its basis says the labor share came from the shift analysis's own period.
+- The inferred-waste gap is attributed per ingredient and per dish (`inventory_ledger.inferred_variance`) — it is over-portioning, prep loss or shrink, and aggregating it to one restaurant-wide dollar figure produced the one number an owner could not act on.
 
 ---
 

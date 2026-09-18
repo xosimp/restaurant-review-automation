@@ -187,9 +187,83 @@ struct FoodCostAnalytics: Decodable {
     /// older server (which didn't send it) still decodes, and defaults to
     /// live — absent means the old behaviour, not "assume it's fake".
     let isLive: Bool?
+    /// Actual food cost % — COGS over net sales against the restaurant's own
+    /// target. The module's namesake number: computed by `cogs.py` all along,
+    /// exposed on its own endpoint, and never once requested by this app, so
+    /// the phone showed a waste analysis with no way to see the percentage it
+    /// was about.
+    let cogs: FoodCostCOGS?
+    /// The share of what sold that a recipe actually accounts for. A dish
+    /// with no recipe depletes nothing, so its ingredients read as never
+    /// used — this says how far the rest of this payload can be trusted.
+    let recipeCoverage: RecipeCoverage?
+    /// Counted waste versus waste inferred from a count coming in under
+    /// expectation. An owner can act on the first and can only count more
+    /// carefully on the second; they were indistinguishable here.
+    let wasteSplit: WasteSplit?
+    /// Whether the window label came from real count dates, and how old the
+    /// newest count is. It used to be hardcoded to "today back six days"
+    /// regardless of when anything was counted.
+    let windowFromCounts: Bool?
+    let windowAgeDays: Int?
+    let projectionBasis: String?
+    let purchasesBasis: String?
+    let totalPurchased: Double?
+
+    struct FoodCostCOGS: Decodable {
+        let ok: Bool
+        let pct: Double?
+        let target: Double?
+        let label: String?
+        let tone: String?
+        let variancePts: Double?
+        let basis: String?
+        let missing: [MissingComponent]?
+
+        struct MissingComponent: Decodable, Hashable {
+            let component: String
+            let why: String
+        }
+        enum CodingKeys: String, CodingKey {
+            case ok, pct, target, label, tone, basis, missing
+            case variancePts = "variance_pts"
+        }
+    }
+
+    struct RecipeCoverage: Decodable {
+        let coveragePct: Double?
+        let uncoveredCount: Int?
+        let windowDays: Int?
+        let hasData: Bool?
+        enum CodingKeys: String, CodingKey {
+            case coveragePct = "coverage_pct"
+            case uncoveredCount = "uncovered_count"
+            case windowDays = "window_days"
+            case hasData = "has_data"
+        }
+    }
+
+    struct WasteSplit: Decodable {
+        let counted: Double?
+        let inferred: Double?
+        let inferredPct: Double?
+        let hasData: Bool?
+        enum CodingKeys: String, CodingKey {
+            case counted, inferred
+            case inferredPct = "inferred_pct"
+            case hasData = "has_data"
+        }
+    }
 
     enum CodingKeys: String, CodingKey {
-        case ok, overstock
+        case ok, overstock, cogs
+        case recipeCoverage = "recipe_coverage"
+        case wasteSplit = "waste_split"
+        case windowFromCounts = "window_from_counts"
+        case windowAgeDays = "window_age_days"
+        case projectionBasis = "projection_basis"
+        case purchasesBasis = "purchases_basis"
+        case totalPurchased = "total_purchased"
         case insightIntro = "insight_intro"
         case insightRecommendations = "insight_recommendations"
         case insightForecast = "insight_forecast"
@@ -242,4 +316,133 @@ struct FoodCostAnalytics: Decodable {
     /// on file they are an extrapolation from one data point, and the chart
     /// already refuses to draw on less — the hero had no equivalent test.
     func annualFiguresAreSupported(weeksOfHistory: Int) -> Bool { weeksOfHistory >= 4 }
+}
+
+
+// MARK: - The CFO read
+
+/// GET /mobile/api/food-cost/cfo — the step after the position.
+///
+/// Everything else in this module answers "what is my food cost". This
+/// answers "what is driving it, what is it worth, and what do I do first" —
+/// the questions an operator actually opens the module with, and the ones
+/// the app had no payload for.
+struct FoodCostCFO: Decodable {
+    let ok: Bool
+    let brief: Brief?
+    let diagnosis: Diagnosis?
+    let drivers: Drivers?
+    let profitability: Profitability?
+    /// Which kind of claim each part is making — measured, computed,
+    /// inferred, forecast or suggestion. A measured percentage, an inferred
+    /// cause and a month-end projection used to arrive as prose of equal
+    /// authority.
+    let claimKinds: [String: String]?
+
+    enum CodingKeys: String, CodingKey {
+        case ok, brief, diagnosis, drivers, profitability
+        case claimKinds = "claim_kinds"
+    }
+
+    struct Drivers: Decodable {
+        let available: Bool
+        let drivers: [Driver]
+        let totalMonthly: Double?
+        let reason: String?
+        enum CodingKeys: String, CodingKey {
+            case available, drivers, reason
+            case totalMonthly = "total_monthly"
+        }
+    }
+
+    /// One driver of cost movement. Ranked server-side by dollars, then
+    /// confidence, then ease — the app renders that order and never re-sorts.
+    struct Driver: Decodable, Identifiable, Hashable {
+        let kind: String
+        let label: String
+        let dollarsMonthly: Double
+        let confidence: String
+        let difficulty: String
+        let evidence: String
+        let ifIgnored: String
+        var id: String { "\(kind)-\(label)" }
+        enum CodingKeys: String, CodingKey {
+            case kind, label, confidence, difficulty, evidence
+            case dollarsMonthly = "dollars_monthly"
+            case ifIgnored = "if_ignored"
+        }
+    }
+
+    struct Diagnosis: Decodable {
+        let headline: String?
+        let cause: String?
+        let alternativeCause: String?
+        let whatWouldConfirm: String?
+        let recommendedAction: String?
+        let expectedOutcome: String?
+        let confidence: String?
+        let dollarsAtStake: Double?
+        let operationalEvidence: [OperationalEvidence]?
+        let ageHours: Double?
+        let stale: Bool?
+
+        struct OperationalEvidence: Decodable, Hashable {
+            let module: String
+            let metric: String
+            let value: String
+        }
+        enum CodingKeys: String, CodingKey {
+            case headline, cause, confidence, stale
+            case alternativeCause = "alternative_cause"
+            case whatWouldConfirm = "what_would_confirm"
+            case recommendedAction = "recommended_action"
+            case expectedOutcome = "expected_outcome"
+            case dollarsAtStake = "dollars_at_stake"
+            case operationalEvidence = "operational_evidence"
+            case ageHours = "age_hours"
+        }
+        var confidenceBand: String { (confidence ?? "low").lowercased() }
+    }
+
+    /// Month-to-date prime cost projected to month end. Always a forecast,
+    /// always with its basis, and absent entirely when any of COGS, labor or
+    /// POS sales is missing — a projection built on a substituted zero looks
+    /// exactly like a real one.
+    struct Profitability: Decodable {
+        let available: Bool
+        let reason: String?
+        let primeCostPct: Double?
+        let foodCostPct: Double?
+        let laborPct: Double?
+        let projectedSales: Double?
+        let projectedPrimeCost: Double?
+        let prevMonthPrimePct: Double?
+        let dollarsVsLastMonth: Double?
+        let direction: String?
+        let daysElapsed: Int?
+        let basis: String?
+        enum CodingKeys: String, CodingKey {
+            case available, reason, direction, basis
+            case primeCostPct = "prime_cost_pct"
+            case foodCostPct = "food_cost_pct"
+            case laborPct = "labor_pct"
+            case projectedSales = "projected_sales"
+            case projectedPrimeCost = "projected_prime_cost"
+            case prevMonthPrimePct = "prev_month_prime_pct"
+            case dollarsVsLastMonth = "dollars_vs_last_month"
+            case daysElapsed = "days_elapsed"
+        }
+    }
+
+    struct Brief: Decodable {
+        let trust: Trust?
+        struct Trust: Decodable {
+            let recipeCoveragePct: Double?
+            let inferredWastePct: Double?
+            enum CodingKeys: String, CodingKey {
+                case recipeCoveragePct = "recipe_coverage_pct"
+                case inferredWastePct = "inferred_waste_pct"
+            }
+        }
+    }
 }

@@ -6851,6 +6851,47 @@ def food_cost_cogs(current_user):
         return jsonify(ok=False, pct=None, error=_safe_err(e)), 500
 
 
+@client_bp.route("/api/food-cost/cfo")
+@login_required
+def food_cost_cfo(current_user):
+    """The CFO read: the ranked cost drivers, the stored root cause, the
+    month-end profitability projection, and the eight answers a morning brief
+    owes an owner.
+
+    Everything here is measured or explicitly reported as unmeasurable. The
+    diagnosis is READ, never generated — producing one is a Sonnet call over
+    the drivers and belongs on the scheduler, not on a page load.
+    """
+    import food_cost_intelligence as _fci
+    rid = current_user["restaurant_id"]
+    try:
+        brief = _fci.executive_brief(rid)
+        diag = _fci.get_diagnosis(rid, include_stale=True)
+        return jsonify(
+            ok=True,
+            brief=brief,
+            diagnosis=diag,
+            drivers=_fci.cost_drivers(rid),
+            profitability=brief.get("profitability"),
+            # What KIND of claim each part of this payload is making.
+            # ai_guard.CLAIM_KINDS exists for exactly this; the food-cost web
+            # payload shipped none of it, so a measured food cost %, an
+            # inferred cause and a month-end projection all arrived as prose
+            # of equal authority.
+            claim_kinds={
+                "food_cost_pct": "measured",
+                "drivers": "computed",
+                "why": "inferred",
+                "profitability": "forecast",
+                "money_involved": "forecast",
+                "recommended_action": "suggestion",
+                "trust": "measured",
+            },
+        )
+    except Exception as e:
+        return jsonify(ok=False, error=_safe_err(e)), 500
+
+
 @client_bp.route("/api/food-cost/waste-sources")
 @login_required
 def food_cost_waste_sources(current_user):

@@ -1592,6 +1592,71 @@ def init_db(db_path: str = DB_PATH):
             UNIQUE(restaurant_id, category, window_days)
         )""",
         "CREATE INDEX IF NOT EXISTS idx_review_diagnoses ON review_diagnoses(restaurant_id, generated_at)",
+
+        # ── Food cost intelligence ─────────────────────────────────────────
+        #
+        # inventory_history was written by exactly one thing: the AI insight,
+        # on page render. So the weekly waste series, the multi-week price
+        # trends, the price-spike alert and the opening/closing snapshots
+        # behind food cost % were all functions of whether the owner happened
+        # to open the tab. A week nobody looked at is not a zero in the trend
+        # chart, it is ABSENT from it. `source` says which rows were written
+        # by the scheduled job and which by a page view, so a render-time
+        # write can upsert on top of the day's scheduled row instead of
+        # competing with it.
+        "ALTER TABLE inventory_history ADD COLUMN source TEXT",
+        "ALTER TABLE inventory_history ADD COLUMN inv_value REAL",
+        # week_end is queried per restaurant, ordered, and bucketed by ISO
+        # week on every trend read; it had no index at all.
+        "CREATE INDEX IF NOT EXISTS idx_inv_history_rid_week ON inventory_history(restaurant_id, week_end)",
+
+        # One stored root-cause diagnosis per restaurant per window.
+        #
+        # The module could say "waste is $420 this week" and stopped there.
+        # Nothing said WHY the cost moved, and no prompt in the food-cost path
+        # asked. This is the CFO's paragraph: the driver, what it cost, the
+        # alternative explanation, what would confirm it, and the reviews of
+        # the ledger it rests on.
+        """CREATE TABLE IF NOT EXISTS food_cost_diagnoses (
+            id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id        INTEGER NOT NULL REFERENCES restaurants(id),
+            window_days          INTEGER NOT NULL,
+            headline             TEXT    NOT NULL,
+            cause                TEXT    NOT NULL,
+            alternative_cause    TEXT,
+            what_would_confirm   TEXT,
+            drivers_json         TEXT,   -- the ranked cost drivers this rests on
+            operational_evidence TEXT,   -- JSON [{module, metric, value}]
+            confidence           TEXT,   -- high|medium|low
+            recommended_action   TEXT,
+            expected_outcome     TEXT,
+            dollars_at_stake     REAL,
+            generated_at         TEXT    NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(restaurant_id, window_days)
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_food_cost_diagnoses ON food_cost_diagnoses(restaurant_id, generated_at)",
+
+        # Every forecast this module states, stored so it can be scored.
+        #
+        # The weekly waste FORECAST line was emitted and never compared to
+        # what happened. A forecast nobody scores is a claim with no cost to
+        # being wrong, which is the opposite of what a CFO's projection is
+        # for. `actual` and `error_pct` are filled in by the scheduler once
+        # the period it predicted has closed.
+        """CREATE TABLE IF NOT EXISTS forecast_log (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id  INTEGER NOT NULL REFERENCES restaurants(id),
+            kind           TEXT    NOT NULL,   -- 'waste_week' | 'profitability_month'
+            horizon_end    TEXT    NOT NULL,   -- the date this predicts through
+            predicted      REAL    NOT NULL,
+            basis          TEXT,
+            actual         REAL,
+            error_pct      REAL,
+            scored_at      TEXT,
+            created_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(restaurant_id, kind, horizon_end)
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_forecast_log ON forecast_log(restaurant_id, kind, horizon_end)",
     ]
     for m in migrations:
         try:

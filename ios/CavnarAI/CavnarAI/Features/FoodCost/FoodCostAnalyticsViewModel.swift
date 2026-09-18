@@ -7,6 +7,10 @@ final class FoodCostAnalyticsViewModel {
     var analytics: FoodCostAnalytics?
     var trend: [FoodCostTrendWeek] = []
     var trendTarget: FoodCostTrendTarget?
+    /// The CFO read — ranked cost drivers, the stored root cause, and the
+    /// month-end prime-cost projection. Best-effort like the trend: a failure
+    /// here removes one card, it does not empty the tab.
+    var cfo: FoodCostCFO?
     var isLoading = false
     /// Why the last load failed, when it did. `try?` used to swallow the
     /// error and assign nil over previously good data, so a server failure
@@ -61,6 +65,7 @@ final class FoodCostAnalyticsViewModel {
         // a tab and a blank page, so it keeps whatever was already on screen
         // and reports why rather than assigning nil over it.
         async let trendResult: FoodCostTrend? = try? client.send("/mobile/api/food-cost/trend")
+        async let cfoResult: FoodCostCFO? = try? client.send("/mobile/api/food-cost/cfo")
         do {
             let fresh: FoodCostAnalytics = try await client.send("/mobile/api/food-cost/analytics")
             analytics = fresh
@@ -74,5 +79,20 @@ final class FoodCostAnalyticsViewModel {
         let trendPayload = await trendResult
         trend = trendPayload?.weeks ?? []
         trendTarget = trendPayload?.target
+        let cfoPayload = await cfoResult
+        cfo = (cfoPayload?.ok == true) ? cfoPayload : nil
+    }
+
+    /// The drivers, in the order the server ranked them. Never re-sorted
+    /// here: the ranking is dollars, then confidence, then ease, and it is
+    /// computed server-side precisely so two clients cannot disagree about
+    /// which opportunity is the biggest.
+    var drivers: [FoodCostCFO.Driver] { cfo?.drivers?.drivers ?? [] }
+
+    /// Renders only when there is something measured to render. An owner
+    /// whose numbers do not yet support a cause should see the position and
+    /// stop, never a cause produced to fill a card.
+    var hasCFORead: Bool {
+        !drivers.isEmpty || (cfo?.diagnosis?.cause?.isEmpty == false)
     }
 }

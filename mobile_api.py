@@ -1735,6 +1735,36 @@ def mobile_food_cost_cogs(current_user):
         return jsonify(ok=False, pct=None, error=f"Couldn't work out food cost %: {e}"), 500
 
 
+@mobile_bp.route("/food-cost/cfo")
+@mobile_login_required
+def mobile_food_cost_cfo(current_user):
+    """The CFO read — the web twin of /api/food-cost/cfo.
+
+    iOS called analytics and trend and nothing else, so the phone — where an
+    owner actually reads a morning brief — showed no food cost %, no recipe
+    coverage and no counted-vs-inferred waste split. All three were computed
+    and exposed; nothing on the phone asked for them.
+    """
+    import food_cost_intelligence as _fci
+    rid = current_user["restaurant_id"]
+    try:
+        brief = _fci.executive_brief(rid)
+        return jsonify(
+            ok=True,
+            brief=brief,
+            diagnosis=_fci.get_diagnosis(rid, include_stale=True),
+            drivers=_fci.cost_drivers(rid),
+            profitability=brief.get("profitability"),
+            claim_kinds={
+                "food_cost_pct": "measured", "drivers": "computed", "why": "inferred",
+                "profitability": "forecast", "money_involved": "forecast",
+                "recommended_action": "suggestion", "trust": "measured",
+            },
+        )
+    except Exception as e:
+        return jsonify(ok=False, error=_safe_err(e)), 500
+
+
 @mobile_bp.route("/food-cost/menu-item-price", methods=["POST"])
 @mobile_login_required
 def mobile_set_menu_item_price(current_user):
@@ -1873,6 +1903,35 @@ def mobile_receive_purchase_order(current_user, po_id):
     return jsonify(ok=True)
 
 
+def _food_cost_trust_block(rid):
+    """food cost %, recipe coverage and the counted/inferred waste split.
+
+    Three separate endpoints already served these and iOS called none of
+    them, so the phone showed a confident waste analysis with no way to see
+    the percentage it was about, how much of the sold menu the usage figures
+    actually covered, or how much of the "waste" was really a miscount. Each
+    is best-effort: a failure here must not take the analytics screen down
+    with it, so each returns None rather than raising.
+    """
+    out = {"cogs": None, "recipe_coverage": None, "waste_split": None}
+    try:
+        import cogs as _cogs
+        out["cogs"] = _cogs.build_food_cost_pct(rid)
+    except Exception:
+        pass
+    try:
+        import inventory_ledger as _il
+        out["recipe_coverage"] = _il.recipe_coverage(rid)
+    except Exception:
+        pass
+    try:
+        import inventory_ledger as _il2
+        out["waste_split"] = _il2.waste_sources(rid)
+    except Exception:
+        pass
+    return out
+
+
 @mobile_bp.route("/food-cost/analytics")
 @mobile_login_required
 def mobile_food_cost_analytics(current_user):
@@ -1936,6 +1995,23 @@ def mobile_food_cost_analytics(current_user):
             week_start=analysis.get("week_start", ""),
             week_end=analysis.get("week_end", ""),
             last_updated=analysis.get("last_updated", ""),
+            # The window label used to be hardcoded to "today back six days"
+            # regardless of when anything was counted. These two say whether
+            # it came from real count dates and how old the newest one is, so
+            # the phone can stop presenting a three-week-old count as the
+            # last seven days.
+            window_from_counts=analysis.get("window_from_counts", False),
+            window_age_days=analysis.get("window_age_days", 0),
+            projection_basis=analysis.get("projection_basis", ""),
+            purchases_basis=analysis.get("purchases_basis", ""),
+            total_purchased=analysis.get("total_purchased", 0),
+            # Folded into this call rather than left as three more round
+            # trips iOS never made. The COGS figure is the module's namesake
+            # number, coverage says how far the rest of this payload can be
+            # trusted, and the waste split separates money wasted from a
+            # counting gap — an owner can act on the first and only count
+            # more carefully on the second.
+            **_food_cost_trust_block(rid),
         )
     except Exception as e:
         return jsonify(ok=False, error=_safe_err(e), insight="Analysis unavailable — check back shortly.",

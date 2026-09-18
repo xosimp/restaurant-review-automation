@@ -32,12 +32,18 @@ RANGE_WEEKS = {"8w": 8, "13w": 13, "26w": 26, "all": None}
 WEEKS_FOR_COMPARISON = 2
 WEEKS_FOR_TREND = 4
 
+# Kept in step with models.init_db's declaration, including the columns the
+# SELECT below names — this only ever runs on a database that predates that
+# declaration, and a create missing a selected column turns the safety net
+# into the failure it was meant to prevent.
 _SCHEMA = """CREATE TABLE IF NOT EXISTS inventory_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     restaurant_id INTEGER NOT NULL,
     waste_json TEXT,
     week_end    TEXT,
     items_json  TEXT,
+    source      TEXT,
+    inv_value   REAL,
     saved_at    TEXT DEFAULT (datetime('now'))
 )"""
 
@@ -60,7 +66,7 @@ def _label(d):
     return f"{d.month}/{d.day}"
 
 
-def _week_from_row(week_end, waste_json, items_json):
+def _week_from_row(week_end, waste_json, items_json, inv_value_col=None):
     """One chart week from one stored snapshot. Per-item detail (costs by
     item and by category, the purchase total behind the waste rate) only
     exists when the snapshot carried items_json — older rows and seeded
@@ -95,6 +101,14 @@ def _week_from_row(week_end, waste_json, items_json):
         week["rate"] = round(_f(data.get("waste_rate_pct")), 1)
     if data.get("inventory_value"):
         week["inv_value"] = round(_f(data.get("inventory_value")), 2)
+    # The scheduled snapshot writes the counted stock value into its own
+    # column. cogs.inventory_value_near needs exactly this to bracket a COGS
+    # window, and before the column existed it could only be recovered by
+    # re-summing items_json — so a snapshot row without per-item detail
+    # contributed no opening or closing value and food cost % silently
+    # refused to compute.
+    if inv_value_col not in (None, 0):
+        week["inv_value"] = round(_f(inv_value_col), 2)
 
     items = None
     if items_json:
@@ -169,13 +183,13 @@ def load_waste_history(restaurant_id, limit=None, db_path=None):
             cutoff = first_day_of[ordered_keys[-limit]]
         if cutoff:
             rows = conn.execute(
-                "SELECT week_end, waste_json, items_json FROM inventory_history "
+                "SELECT week_end, waste_json, items_json, inv_value FROM inventory_history "
                 "WHERE restaurant_id=? AND week_end >= ? ORDER BY week_end ASC",
                 (restaurant_id, cutoff),
             ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT week_end, waste_json, items_json FROM inventory_history "
+                "SELECT week_end, waste_json, items_json, inv_value FROM inventory_history "
                 "WHERE restaurant_id=? AND week_end IS NOT NULL ORDER BY week_end ASC",
                 (restaurant_id,),
             ).fetchall()
@@ -186,7 +200,8 @@ def load_waste_history(restaurant_id, limit=None, db_path=None):
     order = []
     for row in rows:
         week = _week_from_row(row["week_end"], row["waste_json"],
-                              row["items_json"] if "items_json" in row.keys() else None)
+                              row["items_json"] if "items_json" in row.keys() else None,
+                              row["inv_value"] if "inv_value" in row.keys() else None)
         if not week:
             continue
         iso = date.fromisoformat(week["week_end"]).isocalendar()
