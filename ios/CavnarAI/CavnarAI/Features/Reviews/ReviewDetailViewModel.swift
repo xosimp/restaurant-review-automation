@@ -19,11 +19,11 @@ final class ReviewDetailViewModel {
     /// posting when it genuinely is. It used to read isSubmitting directly
     /// and said "Posting…" while a regenerate was running underneath it.
     var isApproving = false
-    /// True while a draft is being written by Claude — the very first
-    /// auto-draft (ensureDraftIfNeeded) and every manual Regenerate both
-    /// route through regenerateDraft(), which sets this for the duration
-    /// of either. The draft box shows the composing-lines animation
-    /// instead of the (stale) old draft while this is true.
+    /// True while a draft is being written by Claude — both the explicit
+    /// "Write a reply" button on an undrafted review and every manual
+    /// Regenerate route through regenerateDraft(), which sets this for the
+    /// duration of either. The draft box shows the composing-lines
+    /// animation instead of the (stale) old draft while this is true.
     var isGeneratingDraft = false
     var errorMessage: String?
     /// Set to true once approve/skip succeeds — the detail view watches this
@@ -90,12 +90,24 @@ final class ReviewDetailViewModel {
     private struct ApproveResponse: Decodable {
         let ok: Bool
         let autoPosted: Bool?
+        /// Set when the reply was approved but the Google post itself
+        /// failed. The post runs synchronously server-side now, so
+        /// autoPosted == false with a postError is a real, finished
+        /// failure — not "still working". Without decoding it the app
+        /// showed a plain "Approved" banner and the owner had no way to
+        /// know the reply never reached Google, or to try again.
+        let postError: String?
 
         enum CodingKeys: String, CodingKey {
             case ok
             case autoPosted = "auto_posted"
+            case postError = "post_error"
         }
     }
+
+    /// Non-nil when the last approve/retry approved the reply but could not
+    /// publish it — the view shows the reason and a Retry posting button.
+    var postFailure: String?
 
     func approve() async {
         // Flush any pending debounced edit first so what gets posted matches
@@ -117,9 +129,12 @@ final class ReviewDetailViewModel {
             )
             Haptic.success()
             let status = (response.autoPosted == true) ? "posted" : "approved"
+            postFailure = response.postError
             finalStatus = status
             currentStatus = status
-            didComplete = true
+            // A failed post keeps the owner on this screen, where the retry
+            // is, instead of popping back to the list as a plain success.
+            didComplete = (response.postError == nil)
         } catch let error as APIClient.APIError where error.isRetryable {
             await PendingWriteQueue.shared.enqueue(
                 path: "/mobile/api/reviews/\(review.id)/approve",
@@ -168,17 +183,16 @@ final class ReviewDetailViewModel {
         let error: String?
     }
 
-    /// Server-side drafting normally runs as a batch job (see scheduler.py's
-    /// daily fetch, which drafts every newly-ingested pending review) rather
-    /// than on-demand — a review opened before that job has reached it has
-    /// no draft yet. From the client's perspective there's no reason to ever
-    /// show a blank box requiring a manual tap first, so a genuinely-missing
-    /// draft is filled in automatically the moment the review is opened,
-    /// using the same regenerate-draft endpoint the button already calls.
-    func ensureDraftIfNeeded() async {
-        guard editedDraft.isEmpty else { return }
-        await regenerateDraft()
-    }
+    /// Whether this review is waiting on a draft that nobody has asked for
+    /// yet — the view offers a "Write a reply" button rather than spending
+    /// a model call on its own.
+    ///
+    /// This used to auto-fire regenerateDraft() on open. Drafting is a
+    /// Sonnet call billed against the restaurant's own AI budget, so simply
+    /// browsing the inbox and tapping into N undrafted reviews spent N
+    /// calls, silently, with no user intent behind any of them — and the
+    /// web asks for an explicit click for exactly that reason.
+    var needsDraft: Bool { editedDraft.isEmpty }
 
     /// Note: this route (like save-draft below) always answers HTTP 200 and
     /// signals failure only via the `ok`/`error` fields in the body — mirrors
@@ -335,6 +349,39 @@ final class ReviewDetailViewModel {
             return false
         } catch {
             errorMessage = "Couldn't delete that review."
+            return false
+        }
+    }
+
+    /// Re-attempts the Google post for a reply that was approved but never
+    /// published. Same endpoint the web's "Retry posting" button uses.
+    @discardableResult
+    func retryPost() async -> Bool {
+        isSubmitting = true
+        errorMessage = nil
+        defer { isSubmitting = false }
+        do {
+            let response: ApproveResponse = try await client.send(
+                "/mobile/api/reviews/\(review.id)/retry-post", method: .post
+            )
+            guard response.ok else {
+                errorMessage = "Couldn't retry — try again."
+                return false
+            }
+            if response.autoPosted == true {
+                Haptic.success()
+                postFailure = nil
+                currentStatus = "posted"
+                finalStatus = "posted"
+                return true
+            }
+            postFailure = response.postError ?? "Google isn't connected yet."
+            return false
+        } catch let error as APIClient.APIError {
+            errorMessage = error.message
+            return false
+        } catch {
+            errorMessage = "Couldn't retry — try again."
             return false
         }
     }

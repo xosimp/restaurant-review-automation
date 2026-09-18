@@ -17,7 +17,25 @@ struct SentimentRiverChart: View {
             } overlay: {
                 legend
             }
+            // A Canvas draws pixels and exposes nothing to VoiceOver, so
+            // this chart simply did not exist for a screen-reader user.
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Sentiment by week")
+            .accessibilityValue(spokenSummary)
         }
+    }
+
+    /// The shape of the trend in a sentence, since the drawing can't be read.
+    private var spokenSummary: String {
+        guard let latest = weeks.last else { return "No reviews yet." }
+        let total = weeks.reduce(0) { $0 + $1.total }
+        var parts = ["\(total) reviews over \(weeks.count) weeks"]
+        parts.append("most recent week: \(latest.positive) positive, \(latest.neutral) neutral, \(latest.negative) negative")
+        if let first = weeks.first(where: { $0.total > 0 }), first.avgRating > 0, latest.avgRating > 0 {
+            let direction = latest.avgRating > first.avgRating ? "up" : (latest.avgRating < first.avgRating ? "down" : "flat")
+            parts.append("average rating \(direction), \(String(format: "%.1f", first.avgRating)) to \(String(format: "%.1f", latest.avgRating)) stars")
+        }
+        return parts.joined(separator: ". ") + "."
     }
 
     private var legend: some View {

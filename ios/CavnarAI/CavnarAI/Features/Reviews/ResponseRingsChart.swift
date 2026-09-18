@@ -19,7 +19,19 @@ struct ResponseRingsChart: View {
             CavnarAnimatedCanvas(duration: 2.6, height: 230, replayKey: "\(performance.total)-\(performance.approvedAsIs)-\(performance.edited)") { ctx, size, t, _ in
                 draw(&ctx, size: size, t: t)
             }
+            // Canvas output is invisible to VoiceOver — the three rings are
+            // the whole content of this card, so they get spoken instead.
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Response performance, last \(performance.days) days")
+            .accessibilityValue(spokenSummary)
         }
+    }
+
+    private var spokenSummary: String {
+        guard performance.total > 0 else { return "No approved replies in this window." }
+        return "\(Int(responseRate * 100)) percent answered. "
+            + "Of \(responded) replies, \(performance.approvedAsIs) went out as written, "
+            + "\(performance.edited) were edited and \(performance.regenerated) regenerated."
     }
 
     private func draw(_ ctx: inout GraphicsContext, size: CGSize, t: Double) {

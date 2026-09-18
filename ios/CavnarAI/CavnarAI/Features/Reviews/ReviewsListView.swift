@@ -13,6 +13,7 @@ struct ReviewsListView: View {
     @State private var subTab: ReviewsSubTab = .inbox
     @State private var showingSendRequest = false
     @State private var clock = CavnarEntranceClock()
+    @State private var analyticsLoaded = false
     @Environment(DeepLinkRouter.self) private var deepLinkRouter
 
     var body: some View {
@@ -75,8 +76,14 @@ struct ReviewsListView: View {
             await viewModel.load()
             openDeepLinkIfNeeded()
         }
-        .task {
-            await analyticsViewModel.load()
+        // Analytics is five requests, one of them an LLM call. It used to
+        // fire on every Reviews open whether or not the owner ever looked
+        // at the tab — so the app paid for a Haiku insight per visit to the
+        // inbox. Loads when the tab is actually selected, once.
+        .onChange(of: subTab) { _, tab in
+            guard tab == .analytics, !analyticsLoaded else { return }
+            analyticsLoaded = true
+            Task { await analyticsViewModel.load() }
         }
     }
 
@@ -92,6 +99,20 @@ struct ReviewsListView: View {
                 List {
                     // Same chips as the web inbox, plus search — the web
                     // had both and the phone had neither.
+                    Section {
+                        // The reputation summary. ReviewStats was modelled
+                        // in full and then called from nowhere, so the
+                        // phone's Reviews tab opened with no rating, no
+                        // response rate and no urgent count while the web
+                        // showed all four — the "understand my reputation
+                        // in ten seconds" test failed here and passed there.
+                        if let stats = viewModel.stats {
+                            ReviewsStatStrip(stats: stats)
+                                .listRowBackground(Color.clear)
+                                .listRowSeparator(.hidden)
+                                .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 14, trailing: 16))
+                        }
+                    }
                     Section {
                         inboxFilters
                             .listRowBackground(Color.clear)
@@ -132,6 +153,19 @@ struct ReviewsListView: View {
                     // gradient instead of blending into it.
                     .listRowBackground(Color.clear)
                     .listRowSeparatorTint(Color.cavnarPaper3)
+                    // The next page loads when the last row appears rather
+                    // than the whole history arriving on every refresh.
+                    .task {
+                        if review.id == viewModel.filteredReviews.last?.id {
+                            await viewModel.loadMore()
+                        }
+                    }
+                    }
+                    if viewModel.isLoadingMore {
+                        HStack { Spacer(); ProgressView(); Spacer() }
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                            .accessibilityLabel("Loading more reviews")
                     }
                 }
                 .listStyle(.plain)
@@ -244,6 +278,15 @@ struct ReviewRow: View {
                         .font(.cavnarBody(14))
                         .foregroundStyle(Color.cavnarInk3)
                         .lineLimit(2)
+                    if !review.isAnalysed {
+                        // Unanalysed reviews reach the inbox now; saying so
+                        // beats showing the "neutral" sentiment they were
+                        // never actually assigned.
+                        Text("Analysis pending")
+                            .font(.cavnarBody(11.5, weight: 600))
+                            .foregroundStyle(Color.cavnarInk3)
+                            .italic()
+                    }
                 }
             }
             Spacer(minLength: 0)
@@ -257,6 +300,22 @@ struct ReviewRow: View {
                 .foregroundStyle(Color.cavnarInk3)
         }
         .padding(.vertical, 4)
+        // One element with a sentence, rather than six unlabelled pieces.
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilitySummary)
+        .accessibilityHint("Opens the review and its reply")
+    }
+
+    private var accessibilitySummary: String {
+        var parts: [String] = []
+        parts.append("\(review.rating ?? 0) star review")
+        parts.append("by \(review.author ?? "Anonymous")")
+        if review.isUrgent { parts.append("urgent") }
+        parts.append(StatusPill.spokenStatus(review.responseStatus))
+        if !review.isAnalysed { parts.append("analysis pending") }
+        if let date = review.formattedDate { parts.append(date) }
+        if let text = review.text, !text.isEmpty { parts.append(text) }
+        return parts.joined(separator: ", ")
     }
 }
 
@@ -271,6 +330,13 @@ struct StarRatingView: View {
     @State private var lit = false
 
     var body: some View {
+        stars
+            // VoiceOver read "star fill, star fill, star fill, star, star".
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("\(rating) out of 5 stars")
+    }
+
+    private var stars: some View {
         HStack(spacing: animated ? 2 : 1) {
             ForEach(0..<5, id: \.self) { index in
                 let filled = index < rating
@@ -317,10 +383,25 @@ struct StatusPill: View {
         }
     }
 
+    /// Spoken form for VoiceOver — "Live" alone doesn't say live where.
+    static func spokenStatus(_ status: String) -> String {
+        switch status {
+        case "posted": return "live on the platform"
+        case "approved": return "approved, not yet posted"
+        case "drafted": return "reply drafted, waiting for you"
+        case "skipped": return "skipped"
+        default: return "no reply yet"
+        }
+    }
+
+    // Blue = live on the platform, green = approved. This was the other way
+    // round here while the web used blue for posted and green for approved,
+    // so the same two states were shown in each other's colours depending
+    // on which screen the owner happened to be looking at.
     private var background: Color {
         switch status {
-        case "posted": return .cavnarGreenBg
-        case "approved": return .cavnarBlueBg
+        case "posted": return .cavnarBlueBg
+        case "approved": return .cavnarGreenBg
         case "drafted": return .cavnarAmberBg
         case "skipped": return .cavnarPaper3
         default: return .cavnarEmber.opacity(0.1)
@@ -329,8 +410,8 @@ struct StatusPill: View {
 
     private var foreground: Color {
         switch status {
-        case "posted": return .cavnarGreen
-        case "approved": return .cavnarBlue
+        case "posted": return .cavnarBlue
+        case "approved": return .cavnarGreen
         case "drafted": return .cavnarAmber
         case "skipped": return .cavnarInk3
         default: return .cavnarEmber

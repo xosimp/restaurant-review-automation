@@ -64,7 +64,12 @@ def invalidate_insight_cache(restaurant_id, prefixes=None):
     restaurant id, so they are matched by prefix rather than by equality.
     """
     prefixes = prefixes or ("labor-insight:", "mobile-labor-insight:",
-                            "inv-insight:", "mobile-inv-insight:")
+                            "inv-insight:", "mobile-inv-insight:",
+                            # Was missing, so a freshly-approved reply or a
+                            # new review left the Reviews read stale for the
+                            # rest of its TTL — and Home reads that same
+                            # cache entry.
+                            "review-insight:")
     suffix = str(restaurant_id)
     for key in [k for k in _insight_cache
                 if any(k == p + suffix or k.startswith(p + suffix + ":") for p in prefixes)]:

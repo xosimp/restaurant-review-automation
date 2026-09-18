@@ -30,6 +30,11 @@ struct FilteredReviewsView: View {
                     }
                     .listRowBackground(Color.clear)
                     .listRowSeparatorTint(Color.cavnarPaper3)
+                    // Paged like the main inbox — a busy category on a
+                    // restaurant with years of history is not one response.
+                    .task {
+                        if review.id == viewModel.reviews.last?.id { await viewModel.loadMore() }
+                    }
                 }
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)

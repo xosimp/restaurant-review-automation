@@ -32,7 +32,14 @@ struct TopicHeatGridChart: View {
                                 Haptic.light()
                                 onSelect?(row)
                             }
-                            .accessibilityLabel("\(row.label), \(row.total) mentions")
+                            // The grid itself is Canvas-drawn, so the row's
+                            // sentiment split only exists in pixels — it goes
+                            // in the label rather than being lost.
+                            .accessibilityElement()
+                            .accessibilityLabel("\(row.label), \(row.total) mentions, "
+                                                + "\(row.weeks.reduce(0) { $0 + $1.positive }) positive, "
+                                                + "\(row.weeks.reduce(0) { $0 + $1.negative }) negative")
+                            .accessibilityHint("Shows the reviews behind this topic")
                             .accessibilityAddTraits(.isButton)
                     }
                     Spacer(minLength: 0)

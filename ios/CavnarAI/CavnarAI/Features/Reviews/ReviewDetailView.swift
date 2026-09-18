@@ -107,9 +107,7 @@ struct ReviewDetailView: View {
         .task {
             await viewModel.loadTemplates()
         }
-        .task {
-            await viewModel.ensureDraftIfNeeded()
-        }
+
         .sheet(isPresented: $showingTemplates) {
             TemplatePickerSheet(templates: viewModel.templates) { template in
                 viewModel.applyTemplate(template)
@@ -243,7 +241,28 @@ struct ReviewDetailView: View {
                         .stroke(Color.cavnarAmber.opacity(0.35), lineWidth: 1)
                 )
             }
-            if viewModel.isGeneratingDraft {
+            if viewModel.needsDraft && !viewModel.isGeneratingDraft {
+                // Explicit, like the web's "Draft a reply". Opening a review
+                // no longer spends a Sonnet call on its own.
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("No reply drafted yet")
+                        .font(.cavnarBody(13, weight: 700))
+                        .tracking(0.6)
+                        .textCase(.uppercase)
+                        .foregroundStyle(Color.cavnarEmber)
+                    Button {
+                        Haptic.light()
+                        Task { await viewModel.regenerateDraft() }
+                    } label: {
+                        Label("Write a reply with Cavnar", systemImage: "sparkles")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(CavnarGlassButtonStyle(isProminent: true, isDisabled: viewModel.isSubmitting))
+                }
+                .padding(14)
+                .background(Color.cavnarEmber.opacity(0.12))
+                .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+            } else if viewModel.isGeneratingDraft {
                 // "Composing" — an ember caret writing each line into place
                 // while Claude drafts the reply (see CavnarMotion). Covers
                 // the very first auto-draft AND a manual Regenerate tap —
@@ -286,16 +305,58 @@ struct ReviewDetailView: View {
         Group {
             switch viewModel.currentStatus {
             case "posted":
+                // Blue for live-on-the-platform, green for approved —
+                // matching the web, which had them the other way round here.
                 completedBanner(
-                    "Posted", icon: "checkmark.circle.fill", color: .cavnarGreen, background: .cavnarGreenBg,
-                    undoLabel: "Retract from Google", isDestructiveUndo: true
+                    "Posted", icon: "checkmark.circle.fill", color: .cavnarBlue, background: .cavnarBlueBg,
+                    // Retract only where it can actually work: posted AND
+                    // google AND a review_name our own auto-post set
+                    // (server-computed can_retract). It was offered on every
+                    // posted review, including Yelp ones, and every one of
+                    // those failed with "only supported for auto-posted
+                    // Google replies".
+                    undoLabel: viewModel.review.canRetract ? "Retract from Google" : nil,
+                    isDestructiveUndo: true
                 ) {
                     showingRetractConfirm = true
                 }
             case "approved":
                 VStack(spacing: 10) {
+                    // The reply was approved but Google refused it. The
+                    // post runs synchronously server-side, so this is a
+                    // finished failure, not work still in flight — it used
+                    // to show a plain "Approved" with no sign anything had
+                    // gone wrong and no way to try again.
+                    if let failure = viewModel.postFailure {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label("Couldn't post to Google", systemImage: "exclamationmark.triangle.fill")
+                                .font(.cavnarBody(14.5, weight: 700))
+                                .foregroundStyle(Color.cavnarRed)
+                            Text(failure)
+                                .font(.cavnarBody(13))
+                                .foregroundStyle(Color.cavnarInk3)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Button {
+                                Haptic.light()
+                                Task {
+                                    if await viewModel.retryPost() {
+                                        onCompleted(viewModel.currentStatus)
+                                    }
+                                }
+                            } label: {
+                                Label("Retry posting", systemImage: "arrow.clockwise")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(CavnarGlassButtonStyle(isProminent: true, isDisabled: viewModel.isSubmitting))
+                        }
+                        .padding(14)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.cavnarRedBg)
+                        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+                        .accessibilityElement(children: .contain)
+                    }
                     completedBanner(
-                        "Approved", icon: "checkmark.circle.fill", color: .cavnarBlue, background: .cavnarBlueBg,
+                        "Approved", icon: "checkmark.circle.fill", color: .cavnarGreen, background: .cavnarGreenBg,
                         undoLabel: "Undo"
                     ) {
                         Task {
@@ -338,9 +399,12 @@ struct ReviewDetailView: View {
         }
     }
 
+    /// undoLabel nil hides the undo action entirely — used where the
+    /// action exists in principle but cannot succeed for this review (a
+    /// Retract with no Google reply of ours behind it).
     private func completedBanner(
         _ text: String, icon: String, color: Color, background: Color,
-        undoLabel: String, isDestructiveUndo: Bool = false,
+        undoLabel: String?, isDestructiveUndo: Bool = false,
         undo: @escaping () -> Void
     ) -> some View {
         VStack(spacing: 10) {
@@ -356,7 +420,7 @@ struct ReviewDetailView: View {
 
             if viewModel.isSubmitting {
                 CavnarWorkingLine(width: 80)
-            } else {
+            } else if let undoLabel {
                 Button(undoLabel, role: isDestructiveUndo ? .destructive : nil) {
                     undo()
                 }

@@ -35,6 +35,16 @@ struct ReviewsAnalyticsSection: View {
                     CavnarCaveat.unverifiedFigures(viewModel.unsupportedFigures)
                 }
 
+                // The AI read itself. It was fetched on every open and then
+                // never rendered — so the app paid for a Haiku call, threw
+                // the answer away, and could still show the caveat above
+                // referring to a passage that was not on screen.
+                if let insight = viewModel.insight, !insight.isEmpty {
+                    insightCard(insight)
+                } else if viewModel.isLoading {
+                    insightSkeleton
+                }
+
                 if let performance = viewModel.performance {
                     ResponseRingsChart(performance: performance)
                 } else if viewModel.isLoading {
@@ -67,6 +77,109 @@ struct ReviewsAnalyticsSection: View {
         .navigationDestination(item: $selectedTopic) { topic in
             FilteredReviewsView(title: topic.label, category: topic.category)
         }
+    }
+
+    // MARK: - The AI read
+
+    /// The endpoint writes 3-4 prefixed lines (📊 this week / ⚠️ watch /
+    /// ✅ do today / 🔮 next week). Each becomes its own row with a symbol,
+    /// and the forecast gets a separate tinted block — the same separation
+    /// the web makes, because a prediction sitting in the same visual
+    /// weight as a measured figure reads as another measured figure.
+    private func insightCard(_ insight: String) -> some View {
+        let lines = insight
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        return VStack(alignment: .leading, spacing: 12) {
+            Text("Cavnar AI's read on your reviews")
+                .font(.cavnarBody(11, weight: 700))
+                .tracking(1.1)
+                .textCase(.uppercase)
+                .foregroundStyle(Color.cavnarEmber)
+            ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                let parsed = Self.parseInsightLine(line)
+                if parsed.isForecast {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Forecast")
+                            .font(.cavnarBody(9.5, weight: 700))
+                            .tracking(0.8)
+                            .textCase(.uppercase)
+                            .foregroundStyle(Color.cavnarEmber)
+                        Text(parsed.text)
+                            .font(.cavnarBody(14.5))
+                            .italic()
+                            .foregroundStyle(Color.cavnarInk2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.leading, 10)
+                    .padding(.vertical, 6)
+                    .overlay(alignment: .leading) {
+                        Rectangle().fill(Color.cavnarEmber).frame(width: 2)
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("Forecast. \(parsed.text)")
+                } else {
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                        Image(systemName: parsed.symbol)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(parsed.tint)
+                            .accessibilityHidden(true)
+                        Text(parsed.text)
+                            .font(.cavnarBody(14.5))
+                            .foregroundStyle(Color.cavnarInk2)
+                            .lineSpacing(3)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel(parsed.text)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background(Color.cavnarEmber.opacity(0.09))
+        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+    }
+
+    private struct ParsedInsightLine {
+        let symbol: String
+        let tint: Color
+        let text: String
+        let isForecast: Bool
+    }
+
+    /// Maps the line's emoji prefix onto an SF Symbol. Unknown prefixes keep
+    /// their text and fall back to a neutral bullet rather than being
+    /// dropped — the passage is the point, the icon is decoration.
+    private static func parseInsightLine(_ line: String) -> ParsedInsightLine {
+        let table: [(String, String, Color, Bool)] = [
+            ("📊", "chart.bar.fill", .cavnarBlue, false),
+            ("⚠️", "exclamationmark.triangle.fill", .cavnarAmber, false),
+            ("⚠", "exclamationmark.triangle.fill", .cavnarAmber, false),
+            ("✅", "checkmark.circle.fill", .cavnarGreen, false),
+            ("🚨", "exclamationmark.octagon.fill", .cavnarRed, false),
+            ("💡", "lightbulb.fill", .cavnarAmber, false),
+            ("🔮", "sparkles", .cavnarEmber, true),
+        ]
+        for (prefix, symbol, tint, forecast) in table where line.hasPrefix(prefix) {
+            let body = line.dropFirst(prefix.count)
+                .trimmingCharacters(in: CharacterSet(charactersIn: " \u{FE0F}"))
+            return ParsedInsightLine(symbol: symbol, tint: tint, text: body, isForecast: forecast)
+        }
+        return ParsedInsightLine(symbol: "circle.fill", tint: .cavnarInk3, text: line, isForecast: false)
+    }
+
+    private var insightSkeleton: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            CavnarSkeletonBar(height: 11, widthFraction: 0.45)
+            CavnarSkeletonBar(height: 12, widthFraction: 0.95)
+            CavnarSkeletonBar(height: 12, widthFraction: 0.85)
+            CavnarSkeletonBar(height: 12, widthFraction: 0.7)
+        }
+        .padding(16)
+        .background(Color.cavnarEmber.opacity(0.09))
+        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
     }
 
     // MARK: - Loading skeletons

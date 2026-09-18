@@ -85,14 +85,13 @@ def get_recurring_themes(restaurant_id: int) -> str:
         return ""
 
 
-# Account -> Profile -> "How the AI writes for you". A preset is a short
-# steer layered onto the owner's own voice notes, not a replacement.
-TONE_PRESETS = {
-    "warm": " Tone: warm and personal, like the owner wrote it themselves.",
-    "professional": " Tone: polished and professional; courteous, no slang, no exclamation marks.",
-    "playful": " Tone: light and playful, with a little personality — never sarcastic.",
-    "concise": " Tone: brief and direct — two or three sentences at most.",
-}
+# Tone presets are gone. They were "Account -> Profile -> How the AI writes
+# for you", that UI was deliberately removed (tests/test_account_panel.py
+# and tests/test_web_parity.py both assert tone_preset can no longer be set
+# from any surface), and the `tone` parameter here was passed by no caller
+# — so the constant, the parameter and the prompt fragment were all dead
+# code pointing at a screen that no longer exists. The restaurant's own
+# voice_notes are the steer now.
 LANGUAGE_NAMES = {"en": "English", "es": "Spanish", "fr": "French", "it": "Italian", "pt": "Portuguese", "de": "German"}
 
 
@@ -103,8 +102,7 @@ def draft_response(review_id: int, rating: int, text: str,
                    sign_off: str = None,
                    never_say: str = None,
                    urgency: str = "normal",
-                   language: str = None,
-                   tone: str = None) -> str:
+                   language: str = None) -> str:
 
     # Extract reviewer first name if available
     reviewer_name = ""
@@ -183,7 +181,7 @@ def draft_response(review_id: int, rating: int, text: str,
 {UNTRUSTED_NOTE}
 
 Platform: {platform_note}
-Voice: {voice_notes or "Warm, genuine, never corporate. Always invite guests back."}{TONE_PRESETS.get(tone or "", "")}
+Voice: {voice_notes or "Warm, genuine, never corporate. Always invite guests back."}
 Sign off as: {sign_off_name}
 {reviewer_line}
 Length: {length_note}{never_note}{style_block}{theme_note}{health_note}

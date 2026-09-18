@@ -3,7 +3,7 @@ import Foundation
 /// Decodes one row from GET /mobile/api/reviews (models.get_reviews_data() —
 /// a raw `SELECT * FROM reviews` dict). Only the fields the app's UI
 /// actually uses are modeled; Codable silently ignores the rest (fetched_at,
-/// review_name, processed, deleted_at, draft_edited, regenerate_count,
+/// review_name, deleted_at, draft_edited, regenerate_count,
 /// response_action, ...) rather than needing every column mirrored here.
 struct Review: Codable, Identifiable, Hashable {
     let id: Int
@@ -27,9 +27,18 @@ struct Review: Codable, Identifiable, Hashable {
     // forever, because the fetch was insert-only.
     let editedAt: String?
     let originalRating: Int?
+    /// Server-computed: posted AND google AND a real review_name.
+    let canRetractFlag: Bool?
+    /// False while the review is still waiting on Claude's analysis — its
+    /// sentiment, categories and urgency are all absent, and showing it as
+    /// "neutral" claimed a reading nobody made.
+    let processed: Bool?
+
+    var isAnalysed: Bool { processed ?? true }
 
     enum CodingKeys: String, CodingKey {
-        case id, platform, author, rating, text, sentiment, urgency, categories
+        case id, platform, author, rating, text, sentiment, urgency, categories, processed
+        case canRetractFlag = "can_retract"
         case reviewDate = "review_date"
         case draftResponse = "draft_response"
         case responseStatus = "response_status"
@@ -48,6 +57,19 @@ struct Review: Codable, Identifiable, Hashable {
     }
 
     var isAwaitingApproval: Bool { responseStatus == "drafted" }
+    /// Still sitting in the owner's queue: a drafted reply waiting on a
+    /// decision, or a review with no draft yet. This is what "To approve"
+    /// means on the server (models.get_reviews_data) and now on the web —
+    /// the phone's version was drafted-only, so a review whose draft had
+    /// not been written yet was missing from the chip that counts the work.
+    var isInQueue: Bool { responseStatus == "pending" || responseStatus == "drafted" }
+    /// Whether Retract can possibly succeed, computed server-side. The app
+    /// cannot derive it: review_name (the Business Profile resource our own
+    /// auto-post sets) is deliberately not decoded here, so the detail
+    /// screen offered "Retract from Google" on every posted review —
+    /// including Yelp ones, and including imported reviews that were never
+    /// posted by us — and every one of those 400s.
+    var canRetract: Bool { canRetractFlag ?? false }
     var isPosted: Bool { responseStatus == "posted" }
     var isApproved: Bool { responseStatus == "approved" }
     var isUrgent: Bool { urgency == "high" }
@@ -111,13 +133,20 @@ struct Review: Codable, Identifiable, Hashable {
 
     /// A copy with a new status — used to reflect an approve/skip result in
     /// the list immediately, without a full reload from the server.
+    ///
+    /// A Google review that just became "posted" did so through our own
+    /// auto-post, which is precisely the thing that gives it a review_name
+    /// — so it becomes retractable here rather than waiting for a refresh
+    /// to learn that from the server.
     func withStatus(_ newStatus: String) -> Review {
-        Review(
+        let retractable = (newStatus == "posted" && platform == "google") ? true : canRetractFlag
+        return Review(
             id: id, platform: platform, author: author, rating: rating, text: text,
             reviewDate: reviewDate, sentiment: sentiment, urgency: urgency,
             draftResponse: draftResponse, responseStatus: newStatus, categories: categories,
             draftNeedsReview: draftNeedsReview, draftReviewReason: draftReviewReason,
-            editedAt: editedAt, originalRating: originalRating
+            editedAt: editedAt, originalRating: originalRating,
+            canRetractFlag: retractable, processed: processed
         )
     }
 }
