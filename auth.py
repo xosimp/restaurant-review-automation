@@ -1790,8 +1790,25 @@ def update_password(user_id: int, new_password: str, db_path: str = DB_PATH):
     conn.commit()
     conn.close()
 
+# Roles an owner can give a login on their own team, with what the owner
+# sees them called. 'client' is the stored value for an owner login (see the
+# note in invite_team_member); a second one is a co-owner with every right the
+# first has. 'owner' (the multi-location login) and 'employee' (PIN staff) are
+# never assigned from here.
+TEAM_ROLES = {"client": "Co-owner", "manager": "Manager", "member": "Teammate"}
+_PRINCIPAL_ROLES = ("client", "owner")
+
+
+def _principal_count(conn, restaurant_id, excluding=None):
+    """Active, non-admin owner logins at this restaurant."""
+    return conn.execute(
+        "SELECT COUNT(*) FROM users WHERE restaurant_id=? AND is_active=1 AND is_admin=0 "
+        "AND COALESCE(NULLIF(role,''),'client') IN ('client','owner') AND id != ?",
+        (restaurant_id, excluding or -1)).fetchone()[0]
+
+
 def invite_team_member(restaurant_id: int, name: str, email: str,
-                       db_path: str = DB_PATH) -> dict:
+                       db_path: str = DB_PATH, role: str = "member") -> dict:
     """Self-serve version of what Will already does by hand for every
     client's primary login: create_user() already accepts an existing
     restaurant_id (its only two callers just always happen to pass a
@@ -1800,6 +1817,8 @@ def invite_team_member(restaurant_id: int, name: str, email: str,
     same create_user() call. Returns {"ok": True, "user_id", "username",
     "temp_password"} on success, or {"ok": False, "error": "..."} on a
     duplicate username/email — never raises."""
+    if role not in TEAM_ROLES:
+        return {"ok": False, "error": "Pick Co-owner, Manager or Teammate."}
     email = email.lower().strip()
     base = (email.split("@")[0] or name.lower().replace(" ", "")).strip() or "member"
     username = "".join(c for c in base if c.isalnum()) or "member"
@@ -1824,12 +1843,12 @@ def invite_team_member(restaurant_id: int, name: str, email: str,
     # the whole Team feature was invisible and 403'd for every real account.
     # The distinction that actually matters is "primary login vs. someone
     # that login invited", and that's what this value records.
-    set_user_role(user_id, "member", db_path=db_path)
+    set_user_role(user_id, role, db_path=db_path)
     # An invited teammate also gets a membership, so authorization for this
     # login resolves through the same Identity → Tenant → Role path every
     # other account now uses rather than falling back to users.role.
     try:
-        upsert_membership(user_id, restaurant_id, "member", employee_name=name,
+        upsert_membership(user_id, restaurant_id, role, employee_name=name,
                           db_path=db_path)
     except Exception as exc:
         # The login still works (get_session_user falls back to users.role),
@@ -1842,7 +1861,8 @@ def invite_team_member(restaurant_id: int, name: str, email: str,
                                 context=f"user_id={user_id} restaurant_id={restaurant_id}")
         except Exception:
             print(f"[invite_team_member] membership write failed for {user_id}: {exc}")
-    return {"ok": True, "user_id": user_id, "username": candidate, "temp_password": temp_password}
+    return {"ok": True, "user_id": user_id, "username": candidate, "temp_password": temp_password,
+            "role": role}
 
 
 def set_can_manage_team(restaurant_id: int, user_id: int, allowed: bool,
@@ -1861,6 +1881,44 @@ def set_can_manage_team(restaurant_id: int, user_id: int, allowed: bool,
         return cur.rowcount > 0
     finally:
         conn.close()
+
+
+def set_team_role(restaurant_id: int, user_id: int, role: str, acting_user_id: int,
+                  db_path: str = DB_PATH) -> str:
+    """Make a login on this restaurant a Co-owner, Manager or Teammate.
+    Returns the new role; raises TeamAccessError (owner-facing text) for a
+    role outside TEAM_ROLES, your own login, another restaurant's login, a
+    staff or admin login, or demoting the last owner.
+
+    users.role and the restaurant's membership row are written together:
+    get_session_user reads the membership first, so updating only users.role
+    would leave the old role in force. Both are read per request, so the
+    change applies on that person's next click."""
+    if role not in TEAM_ROLES:
+        raise TeamAccessError("Pick Co-owner, Manager or Teammate.")
+    if user_id == acting_user_id:
+        raise TeamAccessError("You can't change your own role.")
+    conn = get_conn(db_path)
+    try:
+        u = conn.execute("SELECT COALESCE(NULLIF(role,''),'client') AS role, is_admin FROM users "
+                         "WHERE id=? AND restaurant_id=? AND is_active=1", (user_id, restaurant_id)).fetchone()
+        if not u:
+            raise TeamAccessError("That login isn't on this restaurant's team.")
+        if u["is_admin"] or u["role"] not in TEAM_ROLES:
+            raise TeamAccessError("That login's role can't be changed here.")
+        if u["role"] in _PRINCIPAL_ROLES and role not in _PRINCIPAL_ROLES \
+                and _principal_count(conn, restaurant_id, excluding=user_id) == 0:
+            raise TeamAccessError("Every restaurant needs at least one owner.")
+        conn.execute("UPDATE users SET role=? WHERE id=?", (role, user_id))
+        try:
+            conn.execute("UPDATE memberships SET role=?, updated_at=datetime('now') "
+                         "WHERE user_id=? AND restaurant_id=?", (role, user_id, restaurant_id))
+        except sqlite3.OperationalError:
+            pass    # a database predating memberships: users.role is the whole story
+        conn.commit()
+    finally:
+        conn.close()
+    return role
 
 
 def get_team_members(restaurant_id: int, db_path: str = DB_PATH) -> list[dict]:
@@ -1901,6 +1959,13 @@ def revoke_team_member(restaurant_id: int, user_id: int, acting_user_id: int,
     if active_count <= 1:
         conn.close()
         return {"ok": False, "error": "Can't remove the only remaining login."}
+    # With co-owners, one owner can remove another — but never the last one,
+    # or the restaurant is left with nobody who can administer it.
+    target_role = conn.execute("SELECT COALESCE(NULLIF(role,''),'client') AS r FROM users WHERE id=?",
+                               (user_id,)).fetchone()["r"]
+    if target_role in _PRINCIPAL_ROLES and _principal_count(conn, restaurant_id, excluding=user_id) == 0:
+        conn.close()
+        return {"ok": False, "error": "Can't remove the only owner."}
     conn.execute("UPDATE users SET is_active=0 WHERE id=?", (user_id,))
     conn.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
     conn.commit()

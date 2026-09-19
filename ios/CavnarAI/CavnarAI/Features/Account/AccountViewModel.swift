@@ -56,6 +56,7 @@ final class AccountViewModel {
     // Team (invite / manage access)
     var teamMembers: [TeamMember] = []
     var teamAccessOptions: [TeamAccessOption] = []
+    var teamRoleOptions: [TeamRoleOption] = []
     var canEditTeamAccess = false
     var teamAccessError: String?
     var isLoadingTeam = false
@@ -615,10 +616,12 @@ final class AccountViewModel {
         let ok: Bool
         let members: [TeamMember]
         let accessOptions: [TeamAccessOption]?
+        let roleOptions: [TeamRoleOption]?
         let canEditAccess: Bool?
         enum CodingKeys: String, CodingKey {
             case ok, members
             case accessOptions = "access_options"
+            case roleOptions = "role_options"
             case canEditAccess = "can_edit_access"
         }
     }
@@ -630,9 +633,35 @@ final class AccountViewModel {
             let response: TeamResponse = try await client.send("/mobile/api/account/team", hapticOnError: false)
             teamMembers = response.members
             teamAccessOptions = response.accessOptions ?? []
+            teamRoleOptions = response.roleOptions ?? []
             canEditTeamAccess = response.canEditAccess ?? false
         } catch {
             // Non-fatal — sheet just shows an empty state.
+        }
+    }
+
+    private struct RoleBody: Encodable { let role: String }
+
+    /// Co-owner, Manager or Teammate. Reloads the team on success, since a
+    /// role change also changes what access switches apply.
+    @discardableResult
+    func setTeamRole(_ userID: Int, role: String) async -> Bool {
+        teamAccessError = nil
+        do {
+            let r: AccessResponse = try await client.send(
+                "/mobile/api/account/team/\(userID)/role", method: .post, body: RoleBody(role: role))
+            guard r.ok else {
+                teamAccessError = r.error ?? "Couldn't change their role."
+                return false
+            }
+            await loadTeam()
+            return true
+        } catch let error as APIClient.APIError {
+            teamAccessError = error.message
+            return false
+        } catch {
+            teamAccessError = "Couldn't change their role."
+            return false
         }
     }
 
@@ -685,17 +714,17 @@ final class AccountViewModel {
         }
     }
 
-    private struct InviteBody: Encodable { let name: String; let email: String }
+    private struct InviteBody: Encodable { let name: String; let email: String; let role: String }
     private struct InviteResponse: Decodable { let ok: Bool; let error: String? }
 
     @discardableResult
-    func inviteTeamMember(name: String, email: String) async -> Bool {
+    func inviteTeamMember(name: String, email: String, role: String = "manager") async -> Bool {
         isInvitingTeamMember = true
         inviteTeamError = nil
         defer { isInvitingTeamMember = false }
         do {
             let response: InviteResponse = try await client.send(
-                "/mobile/api/account/team/invite", method: .post, body: InviteBody(name: name, email: email)
+                "/mobile/api/account/team/invite", method: .post, body: InviteBody(name: name, email: email, role: role)
             )
             if response.ok {
                 await loadTeam()

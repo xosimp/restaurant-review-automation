@@ -149,24 +149,36 @@ def send_urgent_alert(restaurant_name, owner_email, urgent_reviews):
         log.error(f"Urgent alert failed for {restaurant_name}: {e}")
 
 
-def get_owner_email(restaurant_id):
-    """Get the owner's email from users table (most reliable source)."""
+def get_owner_emails(restaurant_id):
+    """Every active owner login's email for this restaurant — co-owners
+    included — oldest first. Falls back to the restaurant's owner_email when
+    no owner login exists. A restaurant run by two partners gets the owner
+    mail to both; an unordered LIMIT 1 used to send it to one of them (and
+    could pick a manager)."""
     from models import get_conn, get_restaurant
     conn = get_conn()
-    # The account's principal login, not whichever login happens to come
-    # back first — an unordered LIMIT 1 could hand the owner's digest (food
-    # cost, and loss signals that can name a manager) to a manager.
-    row = conn.execute(
+    rows = conn.execute(
         "SELECT email FROM users WHERE restaurant_id=? AND is_admin=0 "
         "AND COALESCE(is_active,1)=1 AND COALESCE(NULLIF(role,''),'client') IN ('client','owner') "
-        "ORDER BY id LIMIT 1",
+        "AND email IS NOT NULL AND email != '' ORDER BY id",
         (restaurant_id,)
-    ).fetchone()
+    ).fetchall()
     conn.close()
-    if row:
-        return row["email"]
+    emails = []
+    for r in rows:
+        e = r["email"].strip().lower()
+        if e not in emails:
+            emails.append(e)
+    if emails:
+        return emails
     r = get_restaurant(restaurant_id)
-    return r.owner_email if r else None
+    return [r.owner_email] if r and r.owner_email else []
+
+
+def get_owner_email(restaurant_id):
+    """The first owner's email — for callers that address one person."""
+    emails = get_owner_emails(restaurant_id)
+    return emails[0] if emails else None
 
 
 def run_daily_fetch():
@@ -450,8 +462,8 @@ def run_weekly_digests():
             if not restaurant:
                 continue
 
-            owner_email = get_owner_email(rid)
-            if not owner_email:
+            owner_emails = get_owner_emails(rid)
+            if not owner_emails:
                 log.warning(f"No email for {restaurant.name}, skipping")
                 continue
 
@@ -470,20 +482,29 @@ def run_weekly_digests():
                 html = render_html(report, restaurant.name, owner_name=owner_name, restaurant_id=restaurant.id,
                                    owner_view=True)
                 _resend.api_key = _resend_key()
-                _resend.Emails.send({
-                    "from": f"Cavnar AI <{_from_email()}>",
-                    "to": [owner_email],
-                    "subject": f"Your weekly review digest \u2014 {restaurant.name}",
-                    "html": _html_doc(html),
-                })
-                log.info(f"Digest sent to {owner_email} for {restaurant.name}")
-                try:
-                    from models import log_email as _le
-                    _le(restaurant.id, "digest", owner_email, f"Weekly digest — {restaurant.name}")
-                except Exception: pass
+                # One send per owner — co-owners each get their own copy
+                # rather than a shared To: line.
+                for owner_email in owner_emails:
+                    try:
+                        _resend.Emails.send({
+                            "from": f"Cavnar AI <{_from_email()}>",
+                            "to": [owner_email],
+                            "subject": f"Your weekly review digest \u2014 {restaurant.name}",
+                            "html": _html_doc(html),
+                        })
+                    except Exception as se:
+                        log.error(f"Digest send to {owner_email} failed for {restaurant.name}: {se}")
+                        _ops.capture(se, job="weekly_digest", context=f"restaurant_id={rid}")
+                        continue
+                    log.info(f"Digest sent to {owner_email} for {restaurant.name}")
+                    try:
+                        from models import log_email as _le
+                        _le(restaurant.id, "digest", owner_email, f"Weekly digest — {restaurant.name}")
+                    except Exception: pass
                 try:
                     from webhooks import fire_webhook as _fw_rep
-                    _fw_rep(restaurant.id, "report.weekly", {"restaurant": restaurant.name, "email": owner_email})
+                    _fw_rep(restaurant.id, "report.weekly", {"restaurant": restaurant.name,
+                                                             "email": owner_emails[0]})
                 except Exception: pass
             except Exception as e:
                 log.error(f"Digest failed for {restaurant.name}: {e}")

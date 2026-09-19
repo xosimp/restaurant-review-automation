@@ -577,3 +577,82 @@ def test_the_team_list_shows_each_managers_access_and_brief(team_app, db_path):
     assert row["access_grantable"] and row["access"] == [] and row["morning_brief"] is False
     assert {o["key"] for o in body["access_options"]} == {"foodcost.view", "loss.view"}
     assert body["can_edit_access"] is True
+
+
+# ── co-owners and roles ────────────────────────────────────────────────────
+
+def test_an_owner_invites_a_co_owner_who_can_do_everything(team_app, db_path, monkeypatch):
+    monkeypatch.setattr("emails.send_team_invite_email", lambda *a, **k: None)
+    rid = _rid(db_path, module_inventory=1)
+    erik, eh = _login(db_path, rid, "erik", "client")
+    r = team_app.post("/mobile/api/account/team/invite", headers=eh,
+                      json={"name": "Jim", "email": "jim@x.com", "role": "client"})
+    assert r.status_code == 200 and r.get_json()["role"] == "client"
+    jim = r.get_json()["user_id"]
+    jh = {"Authorization": f"Bearer {auth.create_session(jim, db_path=db_path)}"}
+    assert team_app.get("/mobile/api/loss-signals", headers=jh).status_code == 200
+    assert team_app.get("/mobile/api/food-cost/dish-scorecard", headers=jh).status_code == 200
+    body = team_app.get("/mobile/api/account/team", headers=jh).get_json()
+    assert body["can_edit_access"] is True, "a co-owner manages the team too"
+
+
+def test_a_role_change_applies_on_the_next_request(team_app, db_path):
+    rid = _rid(db_path, module_inventory=1)
+    erik, eh = _login(db_path, rid, "erik", "client")
+    gm, gh = _login(db_path, rid, "gm", "member")
+    conn = get_conn(db_path)
+    conn.execute("INSERT INTO memberships (user_id, restaurant_id, role) VALUES (?,?, 'member')", (gm, rid))
+    conn.commit(); conn.close()
+    r = team_app.post(f"/mobile/api/account/team/{gm}/role", headers=eh, json={"role": "manager"})
+    assert r.status_code == 200 and r.get_json()["role_label"] == "Manager"
+    # A member reads food cost (legacy); a manager doesn't until granted — so
+    # this 403 proves the new role, including the membership row, took effect.
+    assert team_app.get("/mobile/api/food-cost/dish-scorecard", headers=gh).status_code == 403
+
+
+def test_the_last_owner_can_never_be_demoted_or_removed(team_app, db_path):
+    rid = _rid(db_path)
+    erik, eh = _login(db_path, rid, "erik", "client")
+    jim, jh = _login(db_path, rid, "jim", "client")
+    # Two owners: Erik may demote Jim...
+    assert team_app.post(f"/mobile/api/account/team/{jim}/role", headers=eh,
+                         json={"role": "manager"}).status_code == 200
+    # ...but Jim, now a manager, can't change anything, and nobody changes
+    # their own role.
+    assert team_app.post(f"/mobile/api/account/team/{erik}/role", headers=jh,
+                         json={"role": "member"}).status_code == 403
+    assert team_app.post(f"/mobile/api/account/team/{erik}/role", headers=eh,
+                         json={"role": "member"}).status_code == 400
+    # Directly at the auth layer: demoting or removing the only owner fails.
+    with pytest.raises(auth.TeamAccessError):
+        auth.set_team_role(rid, erik, "manager", acting_user_id=jim, db_path=db_path)
+    assert auth.revoke_team_member(rid, erik, jim, db_path=db_path)["ok"] is False
+
+
+def test_roles_are_a_fixed_list(team_app, db_path):
+    rid = _rid(db_path)
+    erik, eh = _login(db_path, rid, "erik", "client")
+    gm, _ = _login(db_path, rid, "gm", "manager")
+    for bad in ("owner", "admin", "employee", ""):
+        assert team_app.post(f"/mobile/api/account/team/{gm}/role", headers=eh,
+                             json={"role": bad}).status_code == 400
+    assert team_app.post("/mobile/api/account/team/invite", headers=eh,
+                         json={"name": "X", "email": "x@x.com", "role": "owner"}).status_code == 400
+
+
+def test_the_weekly_digest_goes_to_every_owner(db_path, monkeypatch):
+    import scheduler
+    monkeypatch.setattr(models, "get_conn", lambda *a, **k: sqlite_conn(db_path))
+    auth.init_auth(db_path=db_path)
+    rid = _rid(db_path)
+    for name, role in (("erik", "client"), ("jim", "client"), ("gm", "manager")):
+        _login(db_path, rid, name, role)
+    assert scheduler.get_owner_emails(rid) == ["erik@x.com", "jim@x.com"]
+    assert scheduler.get_owner_email(rid) == "erik@x.com"
+
+
+def sqlite_conn(path):
+    import sqlite3
+    c = sqlite3.connect(path)
+    c.row_factory = sqlite3.Row
+    return c

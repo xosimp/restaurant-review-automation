@@ -7427,6 +7427,12 @@ def account_team_can_manage(current_user, user_id):
     return _m("mobile_set_can_manage_team")(current_user, user_id)
 
 
+@client_bp.route("/api/account/team/<int:user_id>/role", methods=["POST"])
+@login_required
+def account_team_role(current_user, user_id):
+    return _m("mobile_set_team_role")(current_user, user_id)
+
+
 @client_bp.route("/api/account/team/<int:user_id>/access", methods=["POST"])
 @login_required
 def account_team_access(current_user, user_id):

@@ -11,6 +11,7 @@ struct AccountTeamDetailView: View {
     @State private var pendingRevoke: TeamMember?
     @State private var postedLabel: String?
     @State private var pendingLossGrant: TeamMember?
+    @State private var pendingCoOwner: TeamMember?
 
     /// One on/off setting: a tappable pill, not a native Toggle (its height
     /// breaks the kit's row rhythm — see AccountSheetKit).
@@ -47,8 +48,31 @@ struct AccountTeamDetailView: View {
                         ForEach(Array(viewModel.teamMembers.enumerated()), id: \.element.id) { index, member in
                             AccountKVRow(label: member.username, showsDivider: index < viewModel.teamMembers.count - 1) {
                                 HStack(spacing: 8) {
-                                    AccountPill(text: member.roleLabel, on: member.role != "member")
-                                    if !member.isYou && (member.role == "member" || member.role == "manager") {
+                                    if viewModel.canEditTeamAccess && (member.roleEditable ?? false) {
+                                        Menu {
+                                            ForEach(viewModel.teamRoleOptions) { option in
+                                                Button {
+                                                    if option.key == "client" {
+                                                        pendingCoOwner = member
+                                                    } else {
+                                                        Task { await viewModel.setTeamRole(member.id, role: option.key) }
+                                                    }
+                                                } label: {
+                                                    if option.key == member.role {
+                                                        Label(option.label, systemImage: "checkmark")
+                                                    } else {
+                                                        Text(option.label)
+                                                    }
+                                                }
+                                            }
+                                        } label: {
+                                            AccountPill(text: member.roleLabel, on: member.role != "member")
+                                        }
+                                        .accessibilityLabel("Role for \(member.username): \(member.roleLabel)")
+                                    } else {
+                                        AccountPill(text: member.roleLabel, on: member.role != "member")
+                                    }
+                                    if !member.isYou && viewModel.canEditTeamAccess {
                                         AccountActionChip(symbol: "xmark", tone: .cavnarRed, accessibilityLabel: "Remove \(member.username)") {
                                             pendingRevoke = member
                                         }
@@ -122,6 +146,25 @@ struct AccountTeamDetailView: View {
                 Text("They'll be signed out immediately and won't be able to log back in.")
             }
             .confirmationDialog(
+                pendingCoOwner.map { "Make \($0.username) a co-owner?" } ?? "",
+                isPresented: Binding(get: { pendingCoOwner != nil }, set: { if !$0 { pendingCoOwner = nil } }),
+                titleVisibility: .visible
+            ) {
+                Button("Make co-owner") {
+                    guard let member = pendingCoOwner else { return }
+                    Task {
+                        if await viewModel.setTeamRole(member.id, role: "client") {
+                            Haptic.success()
+                            postedLabel = "\(member.username) is a co-owner"
+                        }
+                        pendingCoOwner = nil
+                    }
+                }
+                Button("Cancel", role: .cancel) { pendingCoOwner = nil }
+            } message: {
+                Text("They'll be able to do everything you can — manage the team, settings and every number.")
+            }
+            .confirmationDialog(
                 pendingLossGrant.map { "Show comps & voids to \($0.username)?" } ?? "",
                 isPresented: Binding(get: { pendingLossGrant != nil }, set: { if !$0 { pendingLossGrant = nil } }),
                 titleVisibility: .visible
@@ -149,8 +192,15 @@ private struct InviteTeamMemberSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
     @State private var email = ""
+    @State private var role = "manager"
     @State private var postedLabel: String?
     @FocusState private var focusedField: InviteField?
+
+    private let roleChoices: [(key: String, label: String, hint: String)] = [
+        ("manager", "Manager", "Sees what you open"),
+        ("client", "Co-owner", "Everything"),
+        ("member", "Teammate", "Basic"),
+    ]
 
     private var canSubmit: Bool {
         !viewModel.isInvitingTeamMember && !name.trimmingCharacters(in: .whitespaces).isEmpty && email.contains("@")
@@ -167,6 +217,21 @@ private struct InviteTeamMemberSheet: View {
                     AccountField(label: "Name", text: $name, focus: $focusedField, field: .name)
                     AccountField(label: "Email", text: $email, focus: $focusedField, field: .email, keyboardType: .emailAddress, showsDivider: false)
 
+                    AccountSection(kicker: "Role") {
+                        ForEach(Array(roleChoices.enumerated()), id: \.element.key) { index, choice in
+                            Button {
+                                Haptic.light()
+                                role = choice.key
+                            } label: {
+                                AccountKVRow(label: choice.label, showsDivider: index < roleChoices.count - 1) {
+                                    AccountPill(text: role == choice.key ? "Selected" : choice.hint, on: role == choice.key)
+                                }
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+
                     if let error = viewModel.inviteTeamError {
                         Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
                     }
@@ -174,7 +239,7 @@ private struct InviteTeamMemberSheet: View {
                     VStack(spacing: 10) {
                         Button {
                             Task {
-                                if await viewModel.inviteTeamMember(name: name, email: email) {
+                                if await viewModel.inviteTeamMember(name: name, email: email, role: role) {
                                     Haptic.success()
                                     postedLabel = "Invite sent"
                                 }

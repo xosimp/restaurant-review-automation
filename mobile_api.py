@@ -4580,8 +4580,16 @@ def mobile_get_team(current_user):
         m["access"] = sorted(a.get("grants") or ())
         m["access_grantable"] = a.get("role") in GRANTABLE_ROLES
         m["morning_brief"] = bool(a.get("morning_brief"))
+    from auth import TEAM_ROLES
+    for m in members:
+        # On a person, an owner login reads "Owner" — "Co-owner" is the name
+        # of the choice in the role picker, not of the restaurant's owner.
+        m["role_label"] = ("Owner" if m.get("role") in ("client", "owner", None, "")
+                           else TEAM_ROLES.get(m.get("role"), "Teammate"))
+        m["role_editable"] = m.get("role") in TEAM_ROLES and not m["is_you"]
     return jsonify(ok=True, members=members,
                    access_options=[{"key": k, "label": v} for k, v in GRANTABLE.items()],
+                   role_options=[{"key": k, "label": v} for k, v in TEAM_ROLES.items()],
                    can_edit_access=has_permission(current_user, TEAM_INVITE))
 
 
@@ -4603,8 +4611,11 @@ def mobile_invite_team_member(current_user):
     email = (data.get("email") or "").strip()
     if not name or "@" not in email:
         return jsonify(ok=False, error="Enter a name and a valid email."), 400
-    from auth import invite_team_member
-    result = invite_team_member(current_user["restaurant_id"], name, email)
+    from auth import invite_team_member, TEAM_ROLES
+    role = (data.get("role") or "member").strip()
+    if role not in TEAM_ROLES:
+        return jsonify(ok=False, error="Pick Co-owner, Manager or Teammate."), 400
+    result = invite_team_member(current_user["restaurant_id"], name, email, role=role)
     if not result.get("ok"):
         return jsonify(ok=False, error=result.get("error", "Couldn't add that teammate.")), 400
     try:
@@ -4621,8 +4632,9 @@ def mobile_invite_team_member(current_user):
         log_email(current_user["restaurant_id"], "team_invite", email, f"You've been added to {restaurant.name}")
     except Exception:
         pass
-    _log_account_event(current_user["restaurant_id"], "team_member_invited", current_user, detail=email)
-    return jsonify(ok=True, user_id=result["user_id"], username=result["username"])
+    _log_account_event(current_user["restaurant_id"], "team_member_invited", current_user,
+                       detail=f"{email}:{role}")
+    return jsonify(ok=True, user_id=result["user_id"], username=result["username"], role=role)
 
 
 @mobile_bp.route("/account/team/<int:user_id>/revoke", methods=["POST"])
@@ -4919,6 +4931,30 @@ def mobile_set_can_manage_team(current_user, user_id):
     _log_account_event(current_user["restaurant_id"], "team_access_changed", current_user,
                        detail=f"{user_id}:{'on' if allowed else 'off'}")
     return jsonify(ok=True, can_manage_team=allowed)
+
+
+@mobile_bp.route("/account/team/<int:user_id>/role", methods=["POST"])
+@mobile_login_required
+def mobile_set_team_role(current_user, user_id):
+    """Co-owner, Manager or Teammate. Owner only; never your own role, never
+    the last owner (auth.set_team_role)."""
+    from permissions import TEAM_INVITE, has_permission
+    if not has_permission(current_user, TEAM_INVITE):
+        return jsonify(ok=False, error="Only an owner can change roles."), 403
+    from auth import set_team_role, TeamAccessError, TEAM_ROLES
+    role = str((request.get_json(silent=True) or {}).get("role") or "")
+    rid = current_user["restaurant_id"]
+    try:
+        new_role = set_team_role(rid, user_id, role, current_user["id"])
+    except TeamAccessError as e:
+        return jsonify(ok=False, error=e.message), 400
+    _log_account_event(rid, "team_role_changed", current_user, detail=f"{user_id}:{new_role}")
+    try:
+        import home_brief
+        home_brief.invalidate(rid)
+    except Exception:
+        pass
+    return jsonify(ok=True, role=new_role, role_label=TEAM_ROLES[new_role])
 
 
 @mobile_bp.route("/account/team/<int:user_id>/access", methods=["POST"])

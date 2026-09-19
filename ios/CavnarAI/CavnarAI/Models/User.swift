@@ -19,10 +19,10 @@ struct User: Codable, Equatable {
         case isAdmin = "is_admin"
     }
 
-    /// The restaurant's own login (role 'client', the backend default) or
-    /// Will's multi-restaurant login ('owner') — anyone who isn't an invited
-    /// teammate ('member'). The first cut checked == "owner", which no client
-    /// login has, so the Team row never appeared for anyone (and the server
-    /// 403'd them too). See auth.py's invite_team_member for the vocabulary.
-    var isOwner: Bool { role != "member" }
+    /// An owner login: 'client' (a restaurant's owner or co-owner — the
+    /// backend default, so an empty role counts) or 'owner' (the
+    /// multi-location login). Matches permissions.TEAM_INVITE server-side.
+    /// Was `role != "member"`, which also counted managers — who then saw
+    /// owner-only controls the server refuses them.
+    var isOwner: Bool { role.isEmpty || role == "client" || role == "owner" || isAdmin }
 }

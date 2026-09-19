@@ -295,6 +295,10 @@ struct TeamMember: Decodable, Identifiable {
     /// Whether this login's role can take grants (managers and teammates).
     let accessGrantable: Bool?
     var morningBrief: Bool?
+    /// What the owner sees this login called ("Co-owner", "Manager", …).
+    let serverRoleLabel: String?
+    /// Whether an owner may change this login's role here.
+    let roleEditable: Bool?
 
     enum CodingKeys: String, CodingKey {
         case id, username, email, role, access
@@ -303,15 +307,28 @@ struct TeamMember: Decodable, Identifiable {
         case isYou = "is_you"
         case accessGrantable = "access_grantable"
         case morningBrief = "morning_brief"
+        case serverRoleLabel = "role_label"
+        case roleEditable = "role_editable"
     }
 
     var roleLabel: String {
+        if let serverRoleLabel { return serverRoleLabel }
         switch role {
         case "manager": return "Manager"
-        case "member": return "Member"
+        case "member": return "Teammate"
         default: return "Owner"
         }
     }
+
+    var isOwnerRole: Bool { role == "client" || role == "owner" }
+}
+
+/// A role an owner can give a login: key is what's stored ("client" is a
+/// co-owner), label is what's shown.
+struct TeamRoleOption: Decodable, Identifiable, Hashable {
+    let key: String
+    let label: String
+    var id: String { key }
 }
 
 /// One thing an owner can open to a manager (Account → Team).
