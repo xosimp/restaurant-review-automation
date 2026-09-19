@@ -299,6 +299,54 @@ def _do_invoice_apply(u, import_id):
     return out, (200 if out.get("ok") else 409)
 
 
+# ── the action queue ──────────────────────────────────────────────────────────
+
+def _do_actions(u):
+    """Everything still open for this login, most pressing first."""
+    import action_queue
+    return {"ok": True, **action_queue.items(_rid(u), viewer=u, today=_local_today(u))}, 200
+
+
+def _do_action_snooze(u):
+    import action_queue
+    b = _body()
+    key = (b.get("key") or "").strip()
+    if not key:
+        return {"ok": False, "error": "Which item?"}, 400
+    out = action_queue.snooze(_rid(u), key, days=b.get("days") or action_queue.SNOOZE_DAYS,
+                              user_id=u.get("id"), today=_local_today(u))
+    return {"ok": True, **out}, 200
+
+
+# ── close-out ─────────────────────────────────────────────────────────────────
+
+def _do_closeout_get(u):
+    """Tonight's close-out (or the last one filed), and the questions to
+    answer. Any console login may read and write it: the person who closes
+    is usually not the owner."""
+    import closeout
+    from models import get_restaurant
+    r = get_restaurant(_rid(u))
+    day = closeout.business_date_for(r)
+    return {"ok": True, "business_date": day.isoformat(),
+            "closeout": closeout.get(_rid(u), day.isoformat()),
+            "previous": closeout.latest(_rid(u), before=(day.isoformat())),
+            "fields": list(closeout.FIELDS)}, 200
+
+
+def _do_closeout_save(u):
+    import closeout
+    from models import get_restaurant
+    b = _body()
+    try:
+        entry = closeout.save(_rid(u), b, user_id=u.get("id"),
+                              submitted_by=(u.get("username") or "").title() or None,
+                              restaurant=get_restaurant(_rid(u)))
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}, 400
+    return {"ok": True, "closeout": entry}, 200
+
+
 # ── labor: demand ─────────────────────────────────────────────────────────────
 
 def _do_demand(u):
@@ -409,6 +457,10 @@ _ROUTES = [
     ("/food-cost/invoices", ["POST"], _do_invoice_scan, "invoice_scan"),
     ("/food-cost/invoices/<int:import_id>", ["GET"], _do_invoice_get, "invoice_get"),
     ("/food-cost/invoices/<int:import_id>/apply", ["POST"], _do_invoice_apply, "invoice_apply"),
+    ("/actions", ["GET"], _do_actions, "actions_list"),
+    ("/actions/snooze", ["POST"], _do_action_snooze, "actions_snooze"),
+    ("/closeout", ["GET"], _do_closeout_get, "closeout_get"),
+    ("/closeout", ["POST"], _do_closeout_save, "closeout_save"),
     ("/labor/demand", ["GET"], _do_demand, "demand"),
     ("/labor/auto-draft", ["GET"], _do_auto_draft_get, "auto_draft_get"),
     ("/labor/auto-draft", ["POST"], _do_auto_draft_set, "auto_draft_set"),

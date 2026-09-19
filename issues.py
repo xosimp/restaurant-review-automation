@@ -469,3 +469,122 @@ def tick(db_path=DB_PATH, now=None):
                 conn.close()
             escalated += 1
     return {"held_sent": sent_held, "escalated": escalated}
+
+
+# How long after opening an unfinished opening checklist becomes an issue.
+# Before this nothing watched them: the checklists existed, staff ticked
+# them, and an owner only found out they hadn't by walking in.
+CHECKLIST_GRACE_HOURS = 1
+
+
+def open_from_signals(restaurant_id, db_path=DB_PATH, today=None):
+    """Turn today's operational signals into owned work.
+
+    Bad reviews became issues from the day the loop shipped; everything else
+    stayed an alert nobody was accountable for. The same three signals the
+    daily alerts already compute — what the kitchen is out of, labour over
+    target, and money going in the bin — now land on the routed manager with
+    a name against them.
+
+    Needs a routed manager, like every other auto-issue: no routing, no
+    issues. One per signal per day (source_key), so a signal that persists
+    does not re-text anyone.
+    """
+    from datetime import date as _date
+    if "manager" not in get_routing(restaurant_id, db_path):
+        return []
+    from models import get_restaurant
+    r = get_restaurant(restaurant_id)
+    if not r:
+        return []
+    today = today or _date.today()
+    stamp = today.isoformat()
+    opened = []
+
+    def _open(kind, title, detail, severity="normal", key=None):
+        issue, token = create_issue(restaurant_id, kind, title, detail=detail, severity=severity,
+                                    source_key=key, db_path=db_path)
+        if token:
+            opened.append(issue)
+
+    if getattr(r, "module_inventory", 0):
+        try:
+            from inventory import load_inventory_for_restaurant, analysis_for
+            items, is_live = load_inventory_for_restaurant(restaurant_id)
+            if is_live and items:
+                analysis = (analysis_for(restaurant_id, items=items, is_live=True) or (None, None, {}))[2]
+                low = [x["item"] for x in (analysis.get("critical_low") or [])]
+                if low:
+                    _open("stock", f"{len(low)} item{'' if len(low) == 1 else 's'} critically low",
+                          "Running out today: " + ", ".join(low[:8]) +
+                          ("…" if len(low) > 8 else "") + ". Order or 86 before service.",
+                          severity="high" if len(low) >= 3 else "normal",
+                          key=f"stock:{stamp}")
+        except Exception as e:
+            _capture(e, "issue_signals_stock", restaurant_id)
+
+    if getattr(r, "module_labor", 0):
+        try:
+            from labor import analyse_shifts_for_restaurant
+            labor = analyse_shifts_for_restaurant(restaurant_id) or {}
+            target = float(getattr(r, "labor_target_pct", 30) or 30)
+            pct = labor.get("labor_pct")
+            if labor.get("is_live") and pct is not None and float(pct) - target >= 3:
+                _open("labor", f"Labour {float(pct):.1f}% against a {target:.0f}% target",
+                      "Last week ran over. Trim the overstaffed days in next week's schedule "
+                      "before it is published.", key=f"labor:{today.strftime('%G-W%V')}")
+        except Exception as e:
+            _capture(e, "issue_signals_labor", restaurant_id)
+    return opened
+
+
+def open_from_checklists(restaurant_id, db_path=DB_PATH, now_local=None):
+    """An opening checklist still unfinished an hour after opening becomes
+    the manager's issue. Nothing watched these before."""
+    from datetime import date as _date
+    if "manager" not in get_routing(restaurant_id, db_path):
+        return []
+    from models import get_restaurant, get_todays_tasks
+    r = get_restaurant(restaurant_id)
+    if not r:
+        return []
+    from time_utils import restaurant_now
+    local = now_local or restaurant_now(r, naive=True)
+    from notify import _open_window
+    window = _open_window(r, local.strftime("%A"))
+    if not window or not window[0]:
+        return []                      # hours not configured: nothing to be late for
+    open_h, open_m = window[0]
+    opened_at = local.replace(hour=open_h, minute=open_m, second=0, microsecond=0)
+    from datetime import timedelta as _td
+    if local < opened_at + _td(hours=CHECKLIST_GRACE_HOURS):
+        return []                      # still inside the grace period
+    conn = get_conn(db_path)
+    try:
+        roles = [x[0] for x in conn.execute(
+            "SELECT DISTINCT role FROM task_templates WHERE restaurant_id=? AND is_active=1",
+            (restaurant_id,)).fetchall()]
+    finally:
+        conn.close()
+    outstanding = []
+    for role in roles:
+        for t in get_todays_tasks(restaurant_id, role, task_date=local.date().isoformat(), db_path=db_path):
+            if not t["done"]:
+                outstanding.append(f"{role}: {t['label']}")
+    if not outstanding:
+        return []
+    issue, token = create_issue(
+        restaurant_id, "checklist",
+        f"{len(outstanding)} opening task{'' if len(outstanding) == 1 else 's'} not ticked off",
+        detail="Still open an hour after opening — " + "; ".join(outstanding[:8]) +
+               ("…" if len(outstanding) > 8 else ""),
+        source_key=f"checklist:{local.date().isoformat()}", db_path=db_path)
+    return [issue] if token else []
+
+
+def _capture(exc, job, restaurant_id):
+    try:
+        import ops
+        ops.capture(exc, job=job, context=f"restaurant_id={restaurant_id}")
+    except Exception:
+        pass

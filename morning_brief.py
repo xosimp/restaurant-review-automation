@@ -216,6 +216,19 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
                       "text": f"Worth reviewing: {f['headline']}.",
                       "ask": "Show me the comp and void pattern from last week."})
 
+    # ── last night, in the closer's own words ──
+    # The only account of a service this product cannot see (the POS syncs
+    # at 3am). Placed high on purpose: it is the one thing here a person
+    # wrote rather than a number that was measured.
+    import closeout
+    co = _safe(closeout.latest, restaurant_id, today, db_path=db_path)
+    if co and (co.get("business_date") or "") >= (today - timedelta(days=1)).isoformat():
+        summary = closeout.summarise(co)
+        if summary:
+            lines.append({"key": "closeout", "tone": "action" if co.get("went_wrong") else "neutral",
+                          "text": summary,
+                          "ask": "What should I do about last night's close-out?"})
+
     # ── waiting on a reply ── (the owner's own inbox, before service)
     if getattr(restaurant, "module_reviews", 0) and "reviews" not in denied:
         rs = _safe(_reviews_waiting, restaurant_id, db_path) or {}

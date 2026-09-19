@@ -5948,6 +5948,10 @@ def mobile_ask_opening(current_user):
                                      viewer=current_user)
         _lines = _brief.get("lines") or []
         if _lines:
+            # Worst first, the same ranking the push uses: an open issue or a
+            # result that landed is what the owner has not dealt with yet.
+            _rank = {"bad": 0, "action": 1, "good": 2, "neutral": 3}
+            _lines = sorted(_lines, key=lambda l: _rank.get(l.get("tone"), 9))
             _tone = {"bad": "critical", "action": "important", "good": "good", "neutral": "watch"}
             return jsonify(
                 ok=True,

@@ -1697,16 +1697,19 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
   var GOALTONE={met:'good',moving_right_way:'good',moving_wrong_way:'critical',missed:'critical',flat:'watch',unknown:'watch'};
   var RESULTTONE={improved:'good',worsened:'critical'};
   function hbFollow(){
-    var got={},left=4;
+    var got={},left=6;
     function done(k,v){got[k]=v;left--;if(!left)renderFollow(got);}
     function get(k,url){fetch(url,{credentials:'same-origin'}).then(function(r){return r.ok?r.json():null;}).then(function(d){done(k,d&&d.ok?d:null);}).catch(function(){done(k,null);});}
     get('brief','/api/morning-brief');get('issues','/api/issues?status=unresolved');get('goals','/api/goals');get('outcomes','/api/outcomes');
+    get('actions','/api/actions');get('closeout','/api/closeout');
   }
   function renderFollow(g){
     var el=document.getElementById('hb-follow');if(!el)return;
     var lines=(g.brief&&g.brief.brief&&g.brief.brief.lines)||[],iss=(g.issues&&g.issues.issues)||[],gl=(g.goals&&g.goals.goals)||[];
     var res=((g.outcomes&&g.outcomes.outcomes)||[]).filter(function(o){return o.summary;});
-    if(!lines.length&&!iss.length&&!gl.length&&!res.length){el.innerHTML='';return;}
+    var acts=(g.actions&&g.actions.items)||[];
+    window._hbCloseout=g.closeout||null;
+    if(!lines.length&&!iss.length&&!gl.length&&!res.length&&!acts.length){el.innerHTML=renderCloseout();return;}
     var h='<div class="hb-act">';
     h+='<div><h3><span>This morning\'s brief</span></h3>';
     if(!lines.length)h+='<div class="hb-empty">Your brief fills in as your numbers come in.</div>';
@@ -1718,8 +1721,64 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     if(gl.length){h+='<h3 style="margin-top:22px"><span>Goals</span></h3>';for(var k=0;k<Math.min(gl.length,3);k++){var o=gl[k];h+='<div class="hb-row '+(GOALTONE[o.state]||'watch')+'"><span class="d"></span><span class="t wrap">'+num(o.summary||o.label)+'</span></div>';}}
     if(res.length){h+='<h3 style="margin-top:22px"><span>What your changes did</span></h3>';for(var m=0;m<Math.min(res.length,3);m++){var r=res[m];h+='<div class="hb-row '+(RESULTTONE[r.verdict]||'watch')+'"><span class="d"></span><span class="t wrap">'+num(r.summary)+'</span></div>';}
       h+='<div class="hb-empty" style="font-size:12px">'+esc((g.outcomes&&g.outcomes.caveat)||'')+'</div>';}
-    el.innerHTML=h+'</div></div>';
+    h+='</div></div>';
+    // Everything still open, in one list — the answer to "what's left?", which
+    // used to mean opening six screens (workflow audit #8).
+    if(acts.length){
+      h+='<div class="hb-act" style="grid-template-columns:1fr"><div><h3><span>Still open</span><span class="hb-empty" style="padding:0">'+acts.length+'</span></h3>';
+      for(var a=0;a<acts.length;a++){var x=acts[a];
+        h+='<div class="hb-row '+esc(x.severity)+'"><span class="d"></span><span class="t wrap">'+num(x.title)+(x.detail?' <span class="m">'+num(x.detail)+'</span>':'')+'</span>'
+          +(x.action&&x.action.route?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="hbActionDo(\''+esc(x.action.route)+'\',this)">'+esc(x.action.label)+'</button>':'')
+          +(x.action&&x.action.module?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="hbOpen(\''+esc(x.action.module)+'\')">'+esc(x.action.label)+'</button>':'')
+          +'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="hbSnooze(\''+esc(x.key)+'\',this)">Not today</button></div>';}
+      h+='</div></div>';
+    }
+    h+=renderCloseout();
+    el.innerHTML=h;
   }
+  // The 60 seconds at the end of the night the numbers can't see: the POS
+  // syncs at 3am, so the closer's own words are the only account of tonight
+  // (workflow audit #7). It appears in tomorrow's brief.
+  function renderCloseout(){
+    var c=window._hbCloseout;if(!c||!c.ok)return '';
+    var e=c.closeout||{};
+    var field=function(id,label,ph,val){
+      return '<div class="ac-field"><label for="'+id+'">'+esc(label)+'</label>'
+           + '<input class="ac-input" id="'+id+'" placeholder="'+esc(ph)+'" value="'+esc(val||'')+'"></div>';
+    };
+    return '<div class="hb-act" style="grid-template-columns:1fr"><div>'
+         + '<h3><span>Close-out — '+esc(c.business_date)+'</span>'+(e.created_at?'<span class="hb-empty" style="padding:0">filed by '+esc(e.submitted_by||'a manager')+'</span>':'')+'</h3>'
+         + '<div class="hb-empty" style="padding:0 0 10px">Whoever closes writes four lines. They lead tomorrow morning\'s brief.</div>'
+         + '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px">'
+         + field('co-well','What went well','A section ran clean',e.went_well)
+         + field('co-wrong','What went wrong','Ticket times over 20 min',e.went_wrong)
+         + field('co-86','What we ran out of','Salmon, house red',e.eighty_sixed)
+         + field('co-call','Who didn\'t make it','Dana — called out',e.callouts)
+         + '</div><div style="margin-top:12px"><button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="hbSaveCloseout(this)">'+(e.created_at?'Update the handoff':'Hand off the night')+'</button></div>'
+         + '</div></div>';
+  }
+  window.hbSaveCloseout=function(btn){
+    var v=function(id){var el=document.getElementById(id);return el?el.value:'';};
+    var body={went_well:v('co-well'),went_wrong:v('co-wrong'),eighty_sixed:v('co-86'),callouts:v('co-call')};
+    var done=(typeof cbtnBusy==='function')?cbtnBusy(btn,'Saving…'):function(){};
+    fetch('/api/closeout',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+      .then(function(r){return r.json();}).then(function(d){done();
+        if(d&&d.ok){toast('Handed off — it leads tomorrow\'s brief','success');hbFollow();}
+        else toast((d&&d.error)||'Could not save that','error');})
+      .catch(function(){done();toast('Could not save that','error');});
+  };
+  window.hbSnooze=function(key,btn){
+    if(btn)btn.disabled=true;
+    fetch('/api/actions/snooze',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:key})})
+      .then(function(r){return r.json();}).then(function(d){if(d&&d.ok)hbFollow();else if(btn)btn.disabled=false;})
+      .catch(function(){if(btn)btn.disabled=false;});
+  };
+  window.hbActionDo=function(route,btn){
+    if(btn)btn.disabled=true;
+    fetch(route,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:'{}'})
+      .then(function(r){return r.json();}).then(function(d){if(d&&d.ok)hbFollow();else{if(btn)btn.disabled=false;toast((d&&d.error)||'Could not do that','error');}})
+      .catch(function(){if(btn)btn.disabled=false;});
+  };
   window.hbResolveIssue=function(id,btn){
     if(btn)btn.disabled=true;
     fetch('/api/issues/'+id+'/resolve',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:'{}'})

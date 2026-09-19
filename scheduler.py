@@ -1726,7 +1726,7 @@ def scheduler_loop():
             # manager. Only where the owner has set routing up.
             if _ops.claim_period("issue_scan", f"{today}-{now.hour}"):
                 from strategy_jobs import run_issue_scan
-                _ops.run_job("issue_scan", run_issue_scan)
+                _ops.run_job("issue_scan", run_issue_scan, local_hour=10)
 
             # Every tick — an alert held through lunch or dinner service goes
             # out as soon as that rush ends (notify.rush_release_at).

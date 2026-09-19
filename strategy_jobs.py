@@ -61,16 +61,35 @@ def run_loss_sync(db_path=DB_PATH):
     return {"synced": synced, "not_supported": unsupported}
 
 
-def run_issue_scan(db_path=DB_PATH):
+def run_issue_scan(db_path=DB_PATH, local_hour=None):
+    """Reviews hourly; the daily operational signals and the opening
+    checklist once a day at `local_hour` in the restaurant's own timezone
+    (None = no gate, for a direct call)."""
     import issues, ops
+    from time_utils import restaurant_now
     opened = 0
     for r in _restaurants(db_path):
-        if not getattr(r, "module_reviews", 0):
-            continue
+        if getattr(r, "module_reviews", 0):
+            try:
+                opened += len(issues.open_from_reviews(r.id, db_path=db_path) or [])
+            except Exception as e:
+                ops.capture(e, job="issue_scan", context=f"restaurant_id={r.id}")
         try:
-            opened += len(issues.open_from_reviews(r.id, db_path=db_path) or [])
+            local = restaurant_now(r, naive=True)
+            # The checklist is time-of-day sensitive, so it runs every pass —
+            # its own grace period decides when it is late (issues.
+            # open_from_checklists), and source_key keeps it to one a day.
+            opened += len(issues.open_from_checklists(r.id, db_path=db_path, now_local=local) or [])
         except Exception as e:
-            ops.capture(e, job="issue_scan", context=f"restaurant_id={r.id}")
+            ops.capture(e, job="issue_checklists", context=f"restaurant_id={r.id}")
+        if local_hour is not None:
+            import scheduler
+            if not scheduler.local_due(r, local_hour, claim_key="issue_signals"):
+                continue
+        try:
+            opened += len(issues.open_from_signals(r.id, db_path=db_path) or [])
+        except Exception as e:
+            ops.capture(e, job="issue_signals", context=f"restaurant_id={r.id}")
     return {"opened": opened}
 
 

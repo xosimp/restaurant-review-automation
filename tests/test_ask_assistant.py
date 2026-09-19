@@ -123,8 +123,10 @@ def test_the_opening_is_the_morning_briefs_own_lines(client, db_path):
                         {"key": "fix_first", "text": "If you only do one thing: fix Friday service",
                          "tone": "action", "ask": "Walk me through this"},
                     ])
+    # Worst first, whatever order the brief built them in (audit #15).
     assert [b["title"] for b in body["briefing"]][:2] == [
         "Open issues: 1 unacknowledged", "If you only do one thing: fix Friday service"]
+    assert [b["severity"] for b in body["briefing"]][:2] == ["critical", "important"]
     assert body["suggestions"][0] == "What issues are still open?"
     assert body["headline"] == "1 thing needs you today."
 

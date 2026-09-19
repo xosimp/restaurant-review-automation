@@ -1747,6 +1747,36 @@ def init_db(db_path: str = DB_PATH):
         # Supplier invoices read from a photo. Every extracted line is kept
         # with what was actually applied, so a wrong price can be traced to
         # the invoice it came from.
+        # "Not today" on an action-queue item. Deliberately a date, not a
+        # dismissal: the queue is what is still open, and something snoozed
+        # is still open tomorrow.
+        """CREATE TABLE IF NOT EXISTS action_snoozes (
+            restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
+            key             TEXT NOT NULL,
+            until_date      TEXT NOT NULL,
+            snoozed_by      INTEGER,
+            created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (restaurant_id, key)
+        )""",
+
+        # The manager's 60-second handoff at close. The product cannot see
+        # today's service — the POS syncs at 3am — so the only account of
+        # what happened is the person who was there. It feeds the next
+        # morning's brief.
+        """CREATE TABLE IF NOT EXISTS close_outs (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
+            business_date   TEXT NOT NULL,
+            submitted_by    TEXT,
+            user_id         INTEGER,
+            went_well       TEXT,
+            went_wrong      TEXT,
+            eighty_sixed    TEXT,
+            callouts        TEXT,
+            created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(restaurant_id, business_date)
+        )""",
+
         # An alert that arrived mid-service, held until the rush ends. See
         # notify.rush_release_at: interrupting a manager at 12:15 with a
         # two-star review helps nobody, and the same alert at 2:30 is acted on.
