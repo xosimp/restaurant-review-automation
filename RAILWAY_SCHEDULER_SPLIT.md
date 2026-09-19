@@ -56,8 +56,21 @@ deliberate and unchanged (the web app being up is a different question from
 the worker being up). It now becomes a genuine cross-service signal: a stale
 heartbeat means the worker service is down, not that the web service is sick.
 
-## Worker count
+## Worker count — leave it at 1
 
-Raising the web service past `--workers 1` is a separate decision and needs
-the plan's memory ceiling first — each worker loads the whole app. Do the
-connection work (already landed) before touching it.
+This is NOT the same as the scheduler split, and it is not safe yet.
+
+Three limits live in process memory, so every gunicorn worker keeps its own
+copy and N workers multiply each limit by N:
+
+  * `auth_routes._login_attempts` — the login brute-force limiter
+  * `client_api._order_send_last` — the supplier-email cooldown, so a double
+    tap can email a supplier twice
+  * `ai_utils._ai_call_log` — the per-user AI rate limit
+
+Move those into the database first. And there is no load reason to hurry:
+Railway's usage page for the Sep 2026 billing period showed ~19 vCPU-minutes
+of CPU in total, under a dollar of memory, and a volume of roughly 60-70 MB
+that includes 14 days of backups. The scheduler split is the change that
+relieves the real contention (the SQLite writer lock); more workers would add
+writers, not remove them.

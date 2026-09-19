@@ -117,6 +117,13 @@ A deletion is only "verified" when the trace is written down alongside it.
   `RUN_SCHEDULER_IN_WEB=0` plus the `worker.py` service moves it out. See
   `RAILWAY_SCHEDULER_SPLIT.md`. The single-runner guarantee is
   `ops.acquire_scheduler_lease()`, not the worker count.
+- **Do not raise gunicorn `--workers` past 1** until these process-local
+  dicts are moved into the database: `auth_routes._login_attempts` (login
+  brute-force limiter), `client_api._order_send_last` (supplier-email
+  cooldown) and `ai_utils._ai_call_log` (AI rate limit). Each worker gets its
+  own copy, so two workers silently double every one of those limits — the
+  first is a security control. Railway usage (Sep 2026) showed ~19 vCPU-minutes
+  of CPU for the whole billing period, so there is no load reason to do it yet.
 - **Static assets have no cache-busting** (`/static/cavnar-orb.js`, bare
   path). Do not add a far-future `max-age` until they are hashed or
   versioned, or a JS fix will be stranded in browser caches.
