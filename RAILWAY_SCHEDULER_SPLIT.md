@@ -1,64 +1,68 @@
-# Splitting the scheduler onto its own Railway service
+# The scheduler and Railway: what can and cannot be split
 
-Audit #17, P0-2. The web service runs `gunicorn --workers 1 --threads 4` and
-the background scheduler runs as a **thread inside that same process**, so
-three things share one runtime: request handling, every background job, and
-SQLite's single writer.
+## Do NOT create a second Railway service for the scheduler
 
-## Why it matters
+An earlier version of this file said to run `worker.py` as its own Railway
+service attached to the same volume. **That is impossible on Railway, and
+following it would silently stop every scheduled job.** Railway's volume docs:
 
-* A job holding the write lock makes request threads wait out a 30-second
-  busy timeout.
-* Jobs run sequentially in one loop, so a slow one delays every other.
-* Daily jobs are gated on `now.hour`. **A job that overruns an hour means
-  later hours are never observed and those jobs are silently skipped for the
-  day.** At a thousand restaurants the per-cluster Sonnet pass in
-  `run_review_diagnoses` can plausibly do that to the 08:00 review fetch.
+> "Each service can only have a single volume" · "Replicas cannot be used with
+> volumes" · "we prevent multiple deployments from being active and mounted to
+> the same service"
 
-## Why this is safe
+What would actually happen:
 
-The single-runner guarantee was never gunicorn's to give. `ops.acquire_
-scheduler_lease()` is database-backed and elects exactly one runner across
-however many processes exist — a second instance idles and takes over only if
-the holder stops heartbeating. That is why running both during the migration
-is fine, and why unsetting one variable is the rollback.
+1. The worker service would have no volume, so `models.DB_PATH` falls back to
+   `./reviews.db` — a new, **empty** database inside the worker's own
+   container.
+2. The scheduler lease lives in that database (`ops.acquire_scheduler_lease`
+   → `scheduler_lease` table), so each service would win its own lease and
+   believe it was the only runner.
+3. Setting `RUN_SCHEDULER_IN_WEB=0` on the web service would then leave the
+   worker as the only scheduler — running every job against zero restaurants.
+   Review fetches, digests, diagnoses and the nightly backup would stop on the
+   real data, with nothing failing loudly.
 
-## Steps
+A separate scheduler service only becomes possible once the database is over
+the network (Postgres), not a file on a volume.
 
-1. **Deploy the current code.** `worker.py` and the `RUN_SCHEDULER_IN_WEB`
-   flag ship inactive: the default is `1`, so the web process keeps running
-   the scheduler exactly as it does today. Nothing changes yet.
+## What the original concern was, and what actually addresses it
 
-2. **Create a second Railway service** from the same repo:
-   - Start command: `python worker.py`
-   - **Attach THE SAME VOLUME** as the web service, mounted at the same path.
-     Railway exposes it as `RAILWAY_VOLUME_MOUNT_PATH`, which is what
-     `models.DB_PATH` reads. A separate volume would give the worker its own
-     empty SQLite file and the two would diverge silently — this is the one
-     step that must not be got wrong.
-   - Copy every environment variable from the web service.
+Audit #17 (P0-2) listed three problems with the scheduler running as a thread
+inside the gunicorn web process:
 
-3. **Watch both run.** The lease means only one is working. `/health` on the
-   web service reports `scheduler_heartbeat_age_minutes`; the worker's logs
-   show either "lease acquired — this process is now the runner" or
-   "standing by".
+| Problem | Fixed by a same-container second process? | Real fix |
+|---|---|---|
+| Scheduler writes hold SQLite's single writer lock; requests wait | **No** — same file either way | Postgres |
+| A job overrunning an hour makes later `now.hour ==` jobs skip for the day | **No** — it is the gating logic | Catch-up gating in `scheduler.py` (code change) |
+| Scheduler shares the web process: a web-worker restart kills a job mid-run; its Python work competes for the GIL | **Yes** | Run `worker.py` as a second process in the same service |
 
-4. **Set `RUN_SCHEDULER_IN_WEB=0` on the WEB service only.** The web process
-   stops starting its scheduler thread and becomes purely a request server.
+## Option: a second process in the SAME service
 
-5. **Rollback, if needed:** remove `RUN_SCHEDULER_IN_WEB` from the web service
-   and redeploy. The web process resumes the work and the worker idles.
+This does work, because both processes run in one container and see the one
+volume. The lease still elects a single runner.
 
-## After the split
+Start command (railway.json `deploy.startCommand`):
 
-`/health` still returns 200 when the scheduler heartbeat is stale — that is
-deliberate and unchanged (the web app being up is a different question from
-the worker being up). It now becomes a genuine cross-service signal: a stale
-heartbeat means the worker service is down, not that the web service is sick.
+```
+sh -c '(while true; do python worker.py; sleep 5; done) & exec gunicorn hosted_dashboard:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120 --keep-alive 5 --log-level info'
+```
+
+plus the variable `RUN_SCHEDULER_IN_WEB=0` on the service.
+
+- The `while true` loop restarts the worker if it ever exits.
+- `exec gunicorn` makes gunicorn the process Railway watches; if it dies the
+  container restarts, taking the worker with it.
+- **Rollback:** remove `RUN_SCHEDULER_IN_WEB` and restore the old start
+  command. Either one alone is also safe — with the variable unset the web
+  process runs its own scheduler thread too, and the lease lets only one work.
+
+Honest value: modest. CPU for a whole billing period was ~19 vCPU-minutes, so
+GIL contention is not a problem today; the gain is that a job is no longer
+killed when gunicorn recycles its worker. Worth doing only alongside the
+catch-up gating fix, which addresses the problem that actually loses work.
 
 ## Worker count — leave it at 1
-
-This is NOT the same as the scheduler split, and it is not safe yet.
 
 Three limits live in process memory, so every gunicorn worker keeps its own
 copy and N workers multiply each limit by N:
@@ -68,9 +72,6 @@ copy and N workers multiply each limit by N:
     tap can email a supplier twice
   * `ai_utils._ai_call_log` — the per-user AI rate limit
 
-Move those into the database first. And there is no load reason to hurry:
-Railway's usage page for the Sep 2026 billing period showed ~19 vCPU-minutes
-of CPU in total, under a dollar of memory, and a volume of roughly 60-70 MB
-that includes 14 days of backups. The scheduler split is the change that
-relieves the real contention (the SQLite writer lock); more workers would add
-writers, not remove them.
+Move those into the database first. There is no load reason to hurry: the Sep
+2026 billing period showed ~19 vCPU-minutes of CPU, under a dollar of memory,
+and a volume of roughly 60-70 MB including 14 days of backups.

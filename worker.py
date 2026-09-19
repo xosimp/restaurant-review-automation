@@ -13,29 +13,21 @@ one runtime:
     for the day — at a thousand restaurants, the per-cluster Sonnet pass in
     run_review_diagnoses can plausibly do that to the 08:00 review fetch.
 
-Splitting the scheduler onto its own Railway service fixes all three without
-touching a line of job code, because the single-runner guarantee was never
-gunicorn's to give: `ops.acquire_scheduler_lease()` is database-backed and
-already elects exactly one runner across however many processes exist.
+A separate PROCESS fixes only the third kind of problem — the scheduler sharing
+the web process, so a gunicorn worker recycle kills a job mid-run. It does
+not relieve the SQLite writer lock (same file either way) or the hour-skipping
+(that is the `now.hour ==` gating in scheduler.py). Running more than one
+process is safe because the single-runner guarantee is
+`ops.acquire_scheduler_lease()`, which is database-backed.
 
 DEPLOYMENT
 ----------
-Create a second Railway service from this same repo with:
-
-    startCommand:  python worker.py
-    volume:        THE SAME VOLUME as the web service, mounted at the same
-                   path (RAILWAY_VOLUME_MOUNT_PATH). Both processes open the
-                   same SQLite file; a second volume would be a second,
-                   silently diverging database.
-    env:           identical to the web service.
-
-Then set RUN_SCHEDULER_IN_WEB=0 on the WEB service, so it stops starting its
-own scheduler thread.
-
-The order is safe either way round: run both for a while and the lease means
-only one is actually working — the other idles and takes over if the holder
-stops heartbeating. That is also the rollback: unset the variable and the web
-process resumes the work.
+Run this as a SECOND PROCESS IN THE SAME Railway service as the web app, never
+as a separate service. Railway volumes cannot be shared between services
+("Each service can only have a single volume"), so a separate service would
+open an empty ./reviews.db of its own, win its own lease in it, and — once the
+web process stopped scheduling — leave every real job unrun. See
+RAILWAY_SCHEDULER_SPLIT.md for the exact start command and rollback.
 """
 import logging
 import os

@@ -855,11 +855,11 @@ except Exception as _boot_e:
 # The scheduler runs in this process by default, which is how it has always
 # worked and what a single-service deployment needs.
 #
-# Set RUN_SCHEDULER_IN_WEB=0 once worker.py is deployed as its own Railway
-# service, so the web process stops doing background work: a job holding
-# SQLite's single writer lock makes request threads wait out a 30-second busy
-# timeout, and a job that overruns an hour causes later hour-gated jobs to be
-# skipped for the day (audit #17).
+# Set RUN_SCHEDULER_IN_WEB=0 only when worker.py runs as a second process in
+# THIS SAME Railway service (see RAILWAY_SCHEDULER_SPLIT.md). Never as a
+# separate service: Railway volumes cannot be shared between services, so a
+# separate worker would schedule against an empty database of its own while
+# this process, told not to schedule, left every real job unrun.
 #
 # Running BOTH is safe and is the intended migration path — ops.acquire_
 # scheduler_lease() elects exactly one runner across processes, so the loser
