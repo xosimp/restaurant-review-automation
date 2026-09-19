@@ -406,7 +406,9 @@ def _do_morning_brief(u):
     return {"ok": True,
             "brief": morning_brief.build(_rid(u), restaurant=r, today=_local_today(u), viewer=u),
             "settings": {"enabled": bool(getattr(r, "morning_brief_enabled", 1)),
-                         "hour": int(getattr(r, "morning_brief_hour", 7) or 7)},
+                         "hour": int(getattr(r, "morning_brief_hour", 7) or 7),
+                         "hold_alerts": bool(getattr(r, "alert_hold_during_service", 1)),
+                         "preshift_nudge_hour": int(getattr(r, "preshift_nudge_hour", 0) or 0)},
             "can_edit": _principal(u)}, 200
 
 
@@ -428,6 +430,16 @@ def _do_morning_brief_settings(u):
             return {"ok": False, "error": f"Pick an hour between 4 and "
                                           f"{morning_brief.LATEST_SEND_HOUR - 1}."}, 400
         fields["morning_brief_hour"] = hour
+    if "hold_alerts" in b:
+        fields["alert_hold_during_service"] = 1 if b["hold_alerts"] else 0
+    if "preshift_nudge_hour" in b:
+        try:
+            nudge = int(b["preshift_nudge_hour"] or 0)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "preshift_nudge_hour must be a whole number"}, 400
+        if nudge and not (12 <= nudge <= 20):
+            return {"ok": False, "error": "Pick an hour between noon and 8pm, or off."}, 400
+        fields["preshift_nudge_hour"] = nudge
     if not fields:
         return {"ok": False, "error": "Nothing to change."}, 400
     update_restaurant(_rid(u), fields)

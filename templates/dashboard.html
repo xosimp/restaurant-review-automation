@@ -4951,6 +4951,10 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
               <div class="c"><select id="as-route-manager" onchange="saveIssueRouting('manager')" aria-label="Issues go to"></select></div></div>
             <div class="ac-row"><div class="l"><b>If nobody responds, escalate to</b><span id="as-route-esc-note">After two hours unacknowledged.</span></div>
               <div class="c"><select id="as-route-escalation" onchange="saveIssueRouting('escalation')" aria-label="Escalate to"></select></div></div>
+            <div class="ac-row"><div class="l"><b>Hold alerts through service</b><span>A two-star review at 12:15 can\u2019t be acted on until the rush is over. Held alerts arrive when it ends; health alerts never wait.</span></div>
+              <div class="c"><label class="ac-switch"><input type="checkbox" id="as-hold-alerts" onchange="saveMorningBrief()" aria-label="Hold alerts through service"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
+            <div class="ac-row"><div class="l"><b>Text the manager tonight\u2019s lineup notes</b><span>The staff briefing, sent to whoever issues are routed to, with a link to read it with the team.</span></div>
+              <div class="c"><select id="as-preshift-hour" onchange="saveMorningBrief()" aria-label="Lineup notes hour"></select></div></div>
             <div class="ac-row" id="as-autodraft-row" hidden><div class="l"><b>Draft next week&rsquo;s schedule for me</b><span>Every Thursday, if you haven&rsquo;t built one. A draft only &mdash; nothing goes to staff until you publish.</span></div>
               <div class="c"><label class="ac-switch"><input type="checkbox" id="as-autodraft" onchange="saveAutoDraft()" aria-label="Draft next week's schedule"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
           </div>
@@ -10772,6 +10776,13 @@ function loadOpsSettings() {
     }
     sel.innerHTML = h;
     document.getElementById('as-mb-enabled').checked = !!d.settings.enabled;
+    document.getElementById('as-hold-alerts').checked = d.settings.hold_alerts !== false;
+    var ps = document.getElementById('as-preshift-hour'), ph = '<option value="0">Off</option>';
+    for (var n = 12; n <= 20; n++) {
+      var nl = (n === 12 ? '12 pm' : (n - 12) + ' pm');
+      ph += '<option value="' + n + '"' + (d.settings.preshift_nudge_hour === n ? ' selected' : '') + '>' + nl + '</option>';
+    }
+    ps.innerHTML = ph;
   }).catch(function() {});
   fetch('/api/issues/routing', {credentials: 'same-origin'}).then(function(r) { return r.json(); }).then(function(d) {
     if (!d || !d.ok) return;
@@ -10798,8 +10809,10 @@ function loadOpsSettings() {
 function saveMorningBrief() {
   asPost('/api/morning-brief/settings', {
     enabled: document.getElementById('as-mb-enabled').checked,
-    hour: parseInt(document.getElementById('as-mb-hour').value, 10)
-  }, 'as-ops-status', 'Morning brief saved');
+    hour: parseInt(document.getElementById('as-mb-hour').value, 10),
+    hold_alerts: document.getElementById('as-hold-alerts').checked,
+    preshift_nudge_hour: parseInt(document.getElementById('as-preshift-hour').value, 10)
+  }, 'as-ops-status', 'Saved');
 }
 
 function saveIssueRouting(role) {

@@ -23,6 +23,10 @@ def _redirect(db_path, monkeypatch):
     for mod in (models, notify):
         monkeypatch.setattr(mod, "get_conn", lambda *a, **k: real(db_path), raising=False)
     monkeypatch.setattr(models, "DB_PATH", db_path)
+    # Alert CONTENT and channels, not timing: without this the suite fails
+    # only when it happens to run during lunch or dinner, when a live alert
+    # is held until the rush ends (notify.rush_release_at).
+    monkeypatch.setattr(notify, "rush_release_at", lambda *a, **k: None)
     yield
 
 

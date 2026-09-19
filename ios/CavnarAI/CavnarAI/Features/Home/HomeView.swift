@@ -10,6 +10,7 @@ import SwiftUI
 /// HomeObsidianField — black stone with light moving across it — instead
 /// of the old ember aurora.
 struct HomeView: View {
+    @State private var followThrough = HomeFollowThroughViewModel()
     @Environment(SessionStore.self) private var sessionStore
     @Environment(DeepLinkRouter.self) private var deepLinkRouter
     // Owned by RootView (see its homeViewModel) so the loaded summary
@@ -141,6 +142,17 @@ struct HomeView: View {
                                     .padding(.top, 30)
                                     .belowFold(heroAppeared, delay: 0.74)
                             }
+
+                            // What is still open, the goals, what the
+                            // owner's changes did, and tonight's handoff —
+                            // the accountability loop, which used to exist
+                            // only on the web (workflow audit #5).
+                            HomeFollowThrough(viewModel: followThrough) { module in
+                                navigate(to: ModuleRoute(key: module, label: moduleLabel(module, in: summary)))
+                            }
+                            .padding(.horizontal, 20)
+                            .padding(.top, 30)
+                            .belowFold(heroAppeared, delay: 0.8)
 
                             // Clears the FAB's reserved band above the tab
                             // bar plus its own footprint, so the last

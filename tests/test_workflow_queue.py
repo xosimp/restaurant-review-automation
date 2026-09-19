@@ -148,3 +148,46 @@ def test_a_stale_close_out_is_not_todays_news(db_path):
     lines = {l["key"] for l in morning_brief.build(rid, today=date(2026, 9, 21),
                                                    db_path=db_path)["lines"]}
     assert "closeout" not in lines
+
+
+# ── the lineup nudge (workflow audit #11) ─────────────────────────────────
+
+def test_the_lineup_nudge_texts_the_routed_manager_not_staff(db_path, monkeypatch):
+    """Staff phone numbers carry no SMS consent; the routed manager's does."""
+    import issues, preshift, strategy_jobs, time_utils, auth
+    auth.init_auth(db_path=db_path)
+    rid = _rid(db_path)
+    models.update_restaurant(rid, {"preshift_nudge_hour": 16}, db_path=db_path)
+    conn = get_conn(db_path)
+    cid = conn.execute("INSERT INTO alert_contacts (restaurant_id, name, phone, sms_consent) "
+                       "VALUES (?, 'GM', '+15555550100', 1)", (rid,)).lastrowid
+    conn.commit(); conn.close()
+    issues.set_routing(rid, "manager", cid, db_path=db_path)
+    monkeypatch.setattr(preshift, "build", lambda *a, **k: {"items": [
+        {"kind": "watch", "text": "Watch service speed tonight."}]})
+    monkeypatch.setattr(time_utils, "restaurant_now", lambda r, naive=False: datetime(2026, 9, 21, 16, 10))
+    sent = []
+    monkeypatch.setattr("notify.send_sms", lambda to, msg, use_case="alert": sent.append((to, msg)) or True)
+    assert strategy_jobs.run_preshift_nudge(db_path=db_path)["sent"] == 1
+    assert sent[0][0] == "+15555550100" and "lineup notes" in sent[0][1] and "/staff/r/" in sent[0][1]
+    assert strategy_jobs.run_preshift_nudge(db_path=db_path)["sent"] == 0, "once a day"
+
+
+def test_the_nudge_is_off_by_default_and_silent_with_nothing_to_say(db_path, monkeypatch):
+    import issues, preshift, strategy_jobs, time_utils, auth
+    auth.init_auth(db_path=db_path)
+    rid = _rid(db_path)
+    monkeypatch.setattr(time_utils, "restaurant_now", lambda r, naive=False: datetime(2026, 9, 21, 16, 10))
+    sent = []
+    monkeypatch.setattr("notify.send_sms", lambda *a, **k: sent.append(a) or True)
+    assert strategy_jobs.run_preshift_nudge(db_path=db_path)["sent"] == 0, "off by default"
+
+    models.update_restaurant(rid, {"preshift_nudge_hour": 16}, db_path=db_path)
+    conn = get_conn(db_path)
+    cid = conn.execute("INSERT INTO alert_contacts (restaurant_id, name, phone, sms_consent) "
+                       "VALUES (?, 'GM', '+15555550100', 1)", (rid,)).lastrowid
+    conn.commit(); conn.close()
+    issues.set_routing(rid, "manager", cid, db_path=db_path)
+    monkeypatch.setattr(preshift, "build", lambda *a, **k: {"items": []})
+    assert strategy_jobs.run_preshift_nudge(db_path=db_path)["sent"] == 0, "nothing to say"
+    assert sent == []

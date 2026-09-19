@@ -1737,6 +1737,8 @@ def scheduler_loop():
                 _ops.run_job("intraday_capture", run_intraday_capture)
                 _ops.run_job("pre_dinner_pulse", run_pre_dinner_pulse)
                 _ops.run_job("coverage_check", run_coverage_check)
+                from strategy_jobs import run_preshift_nudge
+                _ops.run_job("preshift_nudge", run_preshift_nudge)
 
             # Every tick — an alert held through lunch or dinner service goes
             # out as soon as that rush ends (notify.rush_release_at).

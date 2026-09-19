@@ -69,6 +69,10 @@ def test_empty_text_does_not_crash():
 @pytest.fixture(autouse=True)
 def _no_network(monkeypatch):
     monkeypatch.setattr(notify, "_resend_key", lambda: "")
+    # These tests are about the TEXT of an alert, not when it goes out. Run
+    # during lunch or dinner they would otherwise be held until the rush
+    # ends (notify.rush_release_at) and assert against an empty outbox.
+    monkeypatch.setattr(notify, "rush_release_at", lambda *a, **k: None)
 
 
 def _restaurant(db_path, **kw):

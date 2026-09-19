@@ -22,6 +22,7 @@ and the cadence all live in the loop.
   run_coverage_check        service — scheduled staff who have not clocked in
 """
 import logging
+import os
 import uuid
 
 from models import get_conn, DB_PATH
@@ -269,3 +270,51 @@ def run_coverage_check(db_path=DB_PATH):
         except Exception as e:
             ops.capture(e, job="coverage_check", context=f"restaurant_id={r.id}")
     return {"opened": opened}
+
+
+def run_preshift_nudge(db_path=DB_PATH):
+    """Text the routed manager that tonight's lineup notes are ready, at the
+    hour the owner chose (restaurants.preshift_nudge_hour; 0 = off).
+
+    It goes to the MANAGER, not to staff: the pre-shift briefing is on the
+    staff portal, and staff phone numbers carry no SMS consent — the one
+    consented, routed number is the manager's. Nothing is sent when the
+    briefing has nothing to say.
+    """
+    import issues, ops, preshift
+    from time_utils import restaurant_now
+    import scheduler
+    sent = 0
+    for r in _restaurants(db_path):
+        hour = int(getattr(r, "preshift_nudge_hour", 0) or 0)
+        if not hour:
+            continue
+        local = restaurant_now(r, naive=True)
+        if not scheduler.local_due(r, hour, until=hour + 2, claim_key="preshift_nudge",
+                                   now_local=local):
+            continue
+        try:
+            brief = preshift.build(r.id, day=local.date(), db_path=db_path)
+            items = brief.get("items") or []
+            if not items:
+                continue
+            routing = issues.get_routing(r.id, db_path)
+            manager = routing.get("manager")
+            if not manager or not manager.get("phone"):
+                continue
+            from models import is_in_quiet_hours
+            if is_in_quiet_hours(r.id, db_path=db_path):
+                continue
+            from auth import get_or_create_staff_portal_token
+            from notify import send_sms
+            token = get_or_create_staff_portal_token(r.id, db_path=db_path)
+            base = (os.getenv("BASE_URL") or "https://dashboard.cavnar.ai").rstrip("/")
+            lead = items[0]["text"]
+            msg = (f"Cavnar AI · tonight's lineup notes are ready ({len(items)} point"
+                   f"{'' if len(items) == 1 else 's'}): {lead} Read them with the team: "
+                   f"{base}/staff/r/{token}")
+            if send_sms(manager["phone"], msg[:320], use_case="alert"):
+                sent += 1
+        except Exception as e:
+            ops.capture(e, job="preshift_nudge", context=f"restaurant_id={r.id}")
+    return {"sent": sent}

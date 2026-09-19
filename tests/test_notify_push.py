@@ -15,6 +15,11 @@ from models import (
 def _no_network(monkeypatch):
     # Guards _send_alert_email() into a no-op print instead of a real Resend call.
     monkeypatch.setattr(notify, "_resend_key", lambda: "")
+    # Alert CONTENT and channels, not timing: without this the suite fails
+    # only when it happens to run during lunch or dinner, when a live alert
+    # is held until the rush ends (notify.rush_release_at).
+    monkeypatch.setattr(notify, "rush_release_at", lambda *a, **k: None)
+
 
 
 def _restaurant(db_path, **kw):

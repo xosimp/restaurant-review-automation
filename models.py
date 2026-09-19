@@ -355,6 +355,10 @@ class Restaurant:
     # notify.rush_release_at. On by default; an owner who wants everything
     # the moment it lands can turn it off.
     alert_hold_during_service: int       = 1
+    # Hour (restaurant-local) to text the routed manager that tonight's
+    # lineup notes are ready. 0 = off, which is the default: nobody asked
+    # for another text.
+    preshift_nudge_hour: int             = 0
     morning_brief_enabled: int           = 1
     morning_brief_hour: int              = 7
     auto_draft_schedule: int             = 0
@@ -691,6 +695,7 @@ def ensure_columns(db_path: str = DB_PATH):
         # phone, and a brief that has to be discovered in settings is a brief
         # nobody gets. Hour is restaurant-local.
         ("restaurants", "alert_hold_during_service", "INTEGER DEFAULT 1"),
+        ("restaurants", "preshift_nudge_hour", "INTEGER DEFAULT 0"),
         ("restaurants", "morning_brief_enabled", "INTEGER DEFAULT 1"),
         ("restaurants", "morning_brief_hour", "INTEGER DEFAULT 7"),
         # Weekly schedule auto-draft: OFF unless asked for. It spends AI and
@@ -3026,7 +3031,8 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH):
         "section_count","daypart_split","delivery_pct","role_minimums_json","sched_notes","email_theme",
         "latitude","longitude","weather_cache_json","weather_cached_at",
         "geocode_failed_at",
-        "alert_hold_during_service", "morning_brief_enabled", "morning_brief_hour",
+        "alert_hold_during_service", "preshift_nudge_hour",
+        "morning_brief_enabled", "morning_brief_hour",
         "auto_draft_schedule", "external_scheduling_tool",
     }
     updates = {k: v for k, v in fields.items() if k in allowed}
@@ -3340,6 +3346,8 @@ def _restaurant_from_row(row) -> Restaurant:
         weather_cache_json=row["weather_cache_json"]   if "weather_cache_json" in row.keys() else None,
         weather_cached_at=row["weather_cached_at"]     if "weather_cached_at" in row.keys() else None,
         geocode_failed_at=row["geocode_failed_at"]     if "geocode_failed_at" in row.keys() else None,
+        preshift_nudge_hour=(row["preshift_nudge_hour"] if "preshift_nudge_hour" in row.keys()
+                             and row["preshift_nudge_hour"] is not None else 0),
         alert_hold_during_service=(row["alert_hold_during_service"]
                                    if "alert_hold_during_service" in row.keys()
                                    and row["alert_hold_during_service"] is not None else 1),
