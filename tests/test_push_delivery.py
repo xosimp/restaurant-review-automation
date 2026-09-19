@@ -1,8 +1,16 @@
-"""push.py — APNs delivery, mirroring test_webhook_delivery.py's structure:
-retry-with-backoff, per-delivery logging, and auto-disable-by-deletion after
-repeated failures, plus the one real deviation from the webhook pattern —
-an APNs "this token is permanently dead" response deletes it immediately
-instead of waiting out the failure counter."""
+"""push.py — APNs delivery: retry-with-backoff, per-delivery logging, and
+the three different things a failure can mean.
+
+A failed send is classified before it is acted on (push._classify):
+
+  dead     — Apple says the token will never work: deleted on the spot.
+  provider — our signing key, our apns-topic, our network, or Apple's own
+             trouble. Says nothing about the device, so it must never
+             advance the failure counter. Ten alerts sent during an expired
+             .p8 used to delete EVERY device at EVERY restaurant.
+  token    — an unclassified 4xx. Counted, and at the threshold the token is
+             PARKED (disabled_reason), not deleted, so the next app launch
+             re-registers it."""
 import os
 
 import pytest
@@ -39,6 +47,10 @@ def _no_real_jwt(monkeypatch):
 
 
 def _fake_httpx_client(status_code=200, reason=None, raises=None):
+    """A stand-in for push._client()'s shared HTTP/2 client. One client is
+    reused across deliveries now (a TLS handshake per notification was the
+    first thing to break at scale), so tests patch the accessor rather than
+    httpx.Client itself."""
     calls = []
 
     class _Resp:
@@ -49,22 +61,18 @@ def _fake_httpx_client(status_code=200, reason=None, raises=None):
             return {"reason": reason} if reason else {}
 
     class _Client:
-        def __init__(self, *a, **kw):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *a):
-            return False
-
         def post(self, url, content=None, headers=None):
             calls.append((url, content, headers))
             if raises:
                 raise raises
             return _Resp()
 
-    return _Client, calls
+    client = _Client()
+    return (lambda: client), calls
+
+
+def _use(monkeypatch, fake_client):
+    monkeypatch.setattr(push, "_client", fake_client)
 
 
 def _register(db_path, uid, rid, token="a" * 64, environment="production"):
@@ -79,7 +87,7 @@ def test_successful_delivery_logs_one_row(db_path, rid, uid, monkeypatch):
     token_row = _register(db_path, uid, rid)
 
     fake_client, calls = _fake_httpx_client(status_code=200)
-    monkeypatch.setattr("httpx.Client", fake_client)
+    _use(monkeypatch, fake_client)
 
     result = _deliver(token_row, "1star", "1-star review", "Ann left a 1-star review", None, db_path=db_path)
 
@@ -101,7 +109,7 @@ def test_failed_delivery_retries_three_times_with_backoff(db_path, rid, uid, mon
     token_row = _register(db_path, uid, rid)
 
     fake_client, calls = _fake_httpx_client(status_code=500)
-    monkeypatch.setattr("httpx.Client", fake_client)
+    _use(monkeypatch, fake_client)
 
     result = _deliver(token_row, "1star", "title", "body", None, db_path=db_path)
 
@@ -117,7 +125,7 @@ def test_network_exception_is_recorded_as_error(db_path, rid, uid, monkeypatch):
     token_row = _register(db_path, uid, rid)
 
     fake_client, calls = _fake_httpx_client(raises=ConnectionError("refused"))
-    monkeypatch.setattr("httpx.Client", fake_client)
+    _use(monkeypatch, fake_client)
 
     result = _deliver(token_row, "1star", "title", "body", None, db_path=db_path)
     assert result["ok"] is False
@@ -131,8 +139,8 @@ def test_consecutive_failures_accumulate_across_calls(db_path, rid, uid, monkeyp
     init_push(db_path=db_path)
     _register(db_path, uid, rid)
 
-    fake_client, calls = _fake_httpx_client(status_code=500)
-    monkeypatch.setattr("httpx.Client", fake_client)
+    fake_client, calls = _fake_httpx_client(status_code=400, reason="SomethingNew")
+    _use(monkeypatch, fake_client)
 
     for _ in range(3):
         token_row = get_device_tokens(rid, db_path=db_path)[0]  # re-fetch — failures accumulate
@@ -144,22 +152,95 @@ def test_consecutive_failures_accumulate_across_calls(db_path, rid, uid, monkeyp
     assert row["consecutive_failures"] == 3
 
 
-def test_token_deleted_after_auto_disable_threshold(db_path, rid, uid, monkeypatch):
+def test_a_provider_failure_never_advances_the_token_counter(db_path, rid, uid, monkeypatch):
+    """THE P0. An expired signing key, a missing apns-topic or an APNs
+    outage is our problem, not the device's. Counting those was what
+    deleted every registered device after ten alerts — a silent, permanent
+    unsubscribe nobody asked for and nothing reported."""
     _no_sleep(monkeypatch)
     _no_real_jwt(monkeypatch)
     init_push(db_path=db_path)
     _register(db_path, uid, rid)
 
-    fake_client, calls = _fake_httpx_client(status_code=500)
-    monkeypatch.setattr("httpx.Client", fake_client)
+    for status, reason in ((403, "ExpiredProviderToken"), (400, "MissingTopic"),
+                           (500, ""), (429, "TooManyRequests")):
+        fake_client, _ = _fake_httpx_client(status_code=status, reason=reason)
+        _use(monkeypatch, fake_client)
+        for _ in range(_AUTO_DISABLE_AFTER + 2):
+            rows = get_device_tokens(rid, db_path=db_path)
+            assert rows, f"token deleted by {status} {reason!r}"
+            _deliver(rows[0], "1star", "title", "body", None, db_path=db_path)
+        row = get_device_tokens(rid, db_path=db_path)[0]
+        assert row["consecutive_failures"] == 0, f"{status} {reason!r} advanced the counter"
+        assert row["disabled_reason"] is None
+
+
+def test_an_expired_provider_token_forces_a_fresh_jwt(db_path, rid, uid, monkeypatch):
+    """403 ExpiredProviderToken with a 50-minute JWT cache meant all three
+    retries re-sent the same dead token, and so did every push for the rest
+    of the window."""
+    _no_sleep(monkeypatch)
+    init_push(db_path=db_path)
+    token_row = _register(db_path, uid, rid)
+    minted = []
+
+    def _mint():
+        minted.append(1)
+        return f"jwt-{len(minted)}"
+
+    monkeypatch.setattr(push, "_provider_jwt", _mint)
+    fake_client, calls = _fake_httpx_client(status_code=403, reason="ExpiredProviderToken")
+    _use(monkeypatch, fake_client)
+
+    _deliver(token_row, "1star", "title", "body", None, db_path=db_path)
+
+    assert len(calls) == 3
+    assert [c[2]["authorization"] for c in calls] == ["bearer jwt-1", "bearer jwt-2", "bearer jwt-3"]
+
+
+def test_unconfigured_apns_names_itself_instead_of_killing_tokens(db_path, rid, uid, monkeypatch):
+    _no_sleep(monkeypatch)
+    init_push(db_path=db_path)
+    token_row = _register(db_path, uid, rid)
+    monkeypatch.delenv("APNS_KEY_ID", raising=False)
+    monkeypatch.delenv("APNS_TEAM_ID", raising=False)
+    monkeypatch.delenv("APNS_PRIVATE_KEY", raising=False)
+    push.invalidate_provider_jwt()
+    fake_client, calls = _fake_httpx_client(status_code=200)
+    _use(monkeypatch, fake_client)
+
+    result = _deliver(token_row, "1star", "title", "body", None, db_path=db_path)
+
+    assert result["ok"] is False
+    assert calls == []                      # never even attempted
+    assert "APNS_KEY_ID" in result["error"]
+    assert get_device_tokens(rid, db_path=db_path)  # and the device survives
+
+
+def test_token_is_parked_not_deleted_at_the_threshold(db_path, rid, uid, monkeypatch):
+    """Deleting it made push permanently dead until the owner happened to
+    relaunch. Parking keeps the row, so a fix plus one launch restores it —
+    and get_device_tokens(for_delivery=True) stops sending meanwhile."""
+    _no_sleep(monkeypatch)
+    _no_real_jwt(monkeypatch)
+    init_push(db_path=db_path)
+    _register(db_path, uid, rid)
+
+    fake_client, calls = _fake_httpx_client(status_code=400, reason="SomethingNew")
+    _use(monkeypatch, fake_client)
 
     for _ in range(_AUTO_DISABLE_AFTER):
         rows = get_device_tokens(rid, db_path=db_path)
-        if not rows:
-            break
         _deliver(rows[0], "1star", "title", "body", None, db_path=db_path)
 
-    assert get_device_tokens(rid, db_path=db_path) == []  # deleted, not just disabled
+    rows = get_device_tokens(rid, db_path=db_path)
+    assert len(rows) == 1
+    assert rows[0]["disabled_reason"]
+    assert get_device_tokens(rid, db_path=db_path, for_delivery=True) == []
+
+    # A relaunch re-registers and clears it.
+    register_device_token(uid, rid, rows[0]["apns_token"], "production", db_path=db_path)
+    assert len(get_device_tokens(rid, db_path=db_path, for_delivery=True)) == 1
 
 
 def test_permanent_failure_reason_deletes_token_on_first_failure(db_path, rid, uid, monkeypatch):
@@ -172,7 +253,7 @@ def test_permanent_failure_reason_deletes_token_on_first_failure(db_path, rid, u
     token_row = _register(db_path, uid, rid)
 
     fake_client, calls = _fake_httpx_client(status_code=410, reason="Unregistered")
-    monkeypatch.setattr("httpx.Client", fake_client)
+    _use(monkeypatch, fake_client)
 
     result = _deliver(token_row, "1star", "title", "body", None, db_path=db_path)
 
@@ -193,7 +274,7 @@ def test_successful_delivery_resets_consecutive_failures(db_path, rid, uid, monk
     token_row = get_device_tokens(rid, db_path=db_path)[0]
 
     fake_client, calls = _fake_httpx_client(status_code=200)
-    monkeypatch.setattr("httpx.Client", fake_client)
+    _use(monkeypatch, fake_client)
 
     _deliver(token_row, "1star", "title", "body", None, db_path=db_path)
 

@@ -151,10 +151,17 @@ def run_auto_draft_schedules(db_path=DB_PATH):
             continue
         drafted += 1
         try:
-            import push
+            import notify, push
+            # The owner's task, not the line cook's: a teammate with the app
+            # was told to review and publish a schedule they cannot publish.
+            # morning_brief.recipients is the same audience the brief uses.
+            import morning_brief
+            audience = {u["id"] for u in morning_brief.recipients(r.id, db_path)}
+            notify.record_notification(r.id, "schedule_drafted", db_path=db_path)
             push.fire_push(r.id, "schedule_drafted", "Next week's schedule is drafted",
                            "Review it and publish when it looks right — nothing has gone to "
-                           "your staff yet.", data={})
+                           "your staff yet.", data={}, db_path=db_path,
+                           user_ids=audience or None)
         except Exception as e:
             ops.capture(e, job="auto_draft_schedule_push", context=f"restaurant_id={r.id}")
     return {"drafted": drafted, "skipped": skipped}
@@ -232,6 +239,8 @@ def run_pre_dinner_pulse(db_path=DB_PATH):
             if not audience:
                 continue
             word = "behind" if p["direction"] == "behind" else "ahead of"
+            import notify
+            notify.record_notification(r.id, "intraday_pulse", db_path=db_path)
             push.fire_push(
                 r.id, "intraday_pulse",
                 f"{abs(p['pct']):.0f}% {word} a typical {p['weekday']}",

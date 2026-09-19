@@ -1581,10 +1581,61 @@ def test_notifications_returns_module_and_review_id_and_marks_seen(client, db_pa
     assert by_type["labor_over"]["review_id"] is None
     assert by_type["labor_over"]["module"] == "labor"
 
+    # Read state is per LOGIN now (notification_reads), not one stamp on the
+    # restaurant that a co-owner could clear for their partner.
     conn = get_conn(db_path)
-    row = conn.execute("SELECT notifications_seen_at FROM restaurants WHERE id=?", (rid,)).fetchone()
+    row = conn.execute("SELECT seen_at FROM notification_reads WHERE restaurant_id=?", (rid,)).fetchone()
     conn.close()
-    assert row["notifications_seen_at"] is not None
+    assert row is not None and row["seen_at"]
+
+
+def test_unread_count_sees_an_alert_fired_after_reading_today(client, db_path):
+    """The badge was mathematically incapable of counting today's alerts.
+
+    alert_log.fired_at is datetime('now') — "2026-09-19 11:00:00" — and the
+    read mark was written with isoformat's 'T'. The unread query is a TEXT
+    comparison, and ' ' (0x20) sorts below 'T' (0x54), so every alert fired
+    on the same calendar date as the last read compared as OLDER than it and
+    was counted already-seen. An owner who checked notifications each morning
+    never saw a badge for anything that happened that day.
+
+    The old test used a year-2000 stamp, which is the one shape of input the
+    bug cannot reach.
+    """
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+
+    client.get("/mobile/api/notifications", headers=_auth_headers(token))  # read now
+
+    conn = get_conn(db_path)
+    conn.execute(
+        "INSERT INTO alert_log (restaurant_id, alert_type, fired_at) "
+        "VALUES (?,?, datetime('now', '+2 minutes'))", (rid, "1star"))
+    conn.commit()
+    conn.close()
+
+    resp = client.get("/mobile/api/notifications/unread-count", headers=_auth_headers(token))
+    assert resp.get_json()["count"] == 1
+
+
+def test_one_logins_read_does_not_clear_anothers_badge(client, db_path):
+    """Erik owns Simple EJ's with Jim. Erik opening the bell used to mark the
+    restaurant read, so Jim's badge cleared for alerts he had never seen."""
+    from models import mark_notifications_seen, unread_notification_count
+    rid = _restaurant(db_path)
+    conn = get_conn(db_path)
+    conn.execute("INSERT INTO alert_log (restaurant_id, alert_type) VALUES (?,?)", (rid, "1star"))
+    conn.commit()
+    conn.close()
+
+    erik, jim = 101, 102
+    assert unread_notification_count(erik, rid, db_path) == 1
+    assert unread_notification_count(jim, rid, db_path) == 1
+
+    mark_notifications_seen(erik, rid, db_path)
+
+    assert unread_notification_count(erik, rid, db_path) == 0
+    assert unread_notification_count(jim, rid, db_path) == 1
 
 
 def test_notifications_unread_count_requires_auth(client):
@@ -2726,6 +2777,9 @@ def test_ai_visibility_drop_alert(client, db_path, monkeypatch):
                 json={"alert_ai_visibility_drop": True, "urgent_via_email": True, "digest_day": "monday"})
     from models import record_ai_visibility_run
     emails_sent = []
+    # Daily alerts are held through service now; this asserts the send, not
+    # the timing (test_alert_amplification.py covers the hold).
+    monkeypatch.setattr(notify, "rush_release_at", lambda *a, **kw: None)
     monkeypatch.setattr(notify, "_send_alert_email", lambda *a, **kw: emails_sent.append(a[1]) or True)
     monkeypatch.setattr("push.fire_push", lambda *a, **kw: None)
     # Runs now carry their sample. The score is appearances over questions

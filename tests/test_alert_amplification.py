@@ -127,9 +127,46 @@ def test_daily_alerts_stop_at_the_ceiling_on_unlimited(db_path):
 
 def test_both_daily_alert_jobs_actually_call_the_gate():
     """A regression guard on the wiring, not the logic: it is easy to add a
-    sixth daily alert type and forget the gate the other five now share."""
+    sixth daily alert type and forget the gate the other five now share.
+
+    The gate used to be repeated inside each job's own _fire() closure.
+    Both now go through notify.raise_alert(), which is the only thing that
+    may raise a non-review alert — so the guard follows it there, and also
+    pins that raise_alert itself still checks the cap AND the rush."""
     import inspect
     src = inspect.getsource(notify)
     for fn in ("check_daily_alerts", "check_extra_daily_alerts"):
         body = src.split(f"def {fn}(")[1].split("\ndef ")[0]
-        assert "_daily_alert_suppressed(" in body, f"{fn} fires without checking the cap"
+        assert "raise_alert(" in body, f"{fn} fires without going through raise_alert"
+        assert "deliver_alert(" not in body, f"{fn} delivers directly, skipping the gate"
+
+    gate = inspect.getsource(notify.raise_alert)
+    assert "_daily_alert_suppressed(" in gate, "raise_alert fires without checking the cap"
+    assert "rush_release_at(" in gate, "raise_alert fires without checking for a rush"
+
+
+def test_a_daily_alert_raised_mid_rush_is_held_not_sent(db_path, monkeypatch):
+    """Daily alerts were the only ones with no rush holding. They run at
+    10am, so it almost never bit — but a scheduler that catches up at 12:30
+    (the gate allows through 2pm local) used to buzz a manager on the floor."""
+    rid = _restaurant(db_path)
+    monkeypatch.setattr(notify, "_daily_alert_suppressed", lambda *a, **k: False)
+    monkeypatch.setattr(notify, "rush_release_at",
+                        lambda *a, **k: datetime.datetime(2026, 9, 19, 18, 30,
+                                                          tzinfo=datetime.timezone.utc))
+    delivered = []
+    monkeypatch.setattr(notify, "deliver_alert", lambda *a, **k: delivered.append(a))
+
+    assert notify.raise_alert(rid, "labor_over", "sms", "subject", "<p>html</p>",
+                              db_path=db_path, value=34.1) is True
+
+    assert delivered == []
+    conn = models.get_conn(db_path)
+    row = conn.execute("SELECT alert_type, value, sent_at FROM alert_holds WHERE restaurant_id=?",
+                       (rid,)).fetchone()
+    conn.close()
+    assert row["alert_type"] == "labor_over"
+    # The figure has to survive the hold: _waste_alert_worsened compares the
+    # next week's number against what the last alert actually fired on.
+    assert row["value"] == 34.1
+    assert row["sent_at"] is None

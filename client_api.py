@@ -6307,58 +6307,128 @@ def _do_group_locations(current_user):
 _NOTIFICATION_LABELS = {
     "1star":            "1★ review received",
     "2star":            "2★ review received",
+    "3star":            "3★ review received",
     "5star":            "5★ review received",
+    "any_review":       "New review",
     "health":           "Health/safety mention",
+    "edit_downgrade":   "A guest lowered their review",
+    "resp_approved":    "Your reply went out",
     "neg_spike":        "Negative review spike",
     "negative_trend":   "Rating declining trend",
     "no_response":      "Unresponded review (48h)",
+    "unresponded":      "Unresponded review (48h)",
     "rating_threshold": "Rating below threshold",
     "labor_over":       "Labor % over target",
+    "coverage":         "Someone hasn't clocked in",
+    "food_waste":       "Food waste flagged",
+    "critical_low":     "Running out before delivery",
+    "price_spike":      "Ingredient price climbing",
+    "ai_visibility_drop": "AI visibility dropped",
     "login":            "New sign-in",
+    "staff_signin":     "Staff portal sign-in",
+    "issue":            "An issue was opened",
+    "issue_escalated":  "An issue was escalated",
+    "outcome_achieved": "A change you made paid off",
+    "demand_opportunity": "A quiet night worth filling",
     "morning_brief":    "Morning brief",
+    "daily_briefing":   "Your day, in one place",
     "intraday_pulse":   "Today vs a typical day",
+    "closing_summary":  "How tonight went",
+    "weekly_review":    "Your week",
+    "monthly_review":   "Your month",
     "schedule_drafted": "Next week's schedule drafted",
 }
 
-# Which module a notification's "view" action should open — every alert
-# type is review/rating-driven except labor_over. Review-specific types
-# also carry a review_id (see the SELECT below) so the client can jump
-# straight to that review instead of just the Reviews tab in general.
+# Which module a notification's "view" action should open. The keys are the
+# web tab ids (?tab=), and iOS DeepLinkRouter maps the same strings.
+#
+# Nine types that actually fire had no entry here and no label either, so
+# .get(type, "reviews") sent a food-cost alert to Reviews while .get(type,
+# type) printed the raw column value — an owner's notification list read
+# "ai_visibility_drop" and "critical_low".
 _NOTIFICATION_MODULE = {
-    "1star": "reviews", "2star": "reviews", "5star": "reviews", "health": "reviews",
-    "neg_spike": "reviews", "no_response": "reviews",
-    "negative_trend": "reviews", "rating_threshold": "reviews",
-    "labor_over": "labor",
-    # The brief and the pre-dinner pulse are cross-module reads that open
-    # the assistant on their own question rather than a module (iOS
-    # DeepLinkRouter does the same).
-    "morning_brief": "ask", "intraday_pulse": "ask",
-    "schedule_drafted": "labor",
-    # Not a product module — the web dashboard's bell dropdown reads this
-    # field directly (see its own routing); iOS's DeepLinkRouter has its
-    # own "login" special-case since it has no Account/Security "module".
-    "login": "account",
+    "1star": "reviews", "2star": "reviews", "3star": "reviews", "5star": "reviews",
+    "any_review": "reviews", "health": "reviews", "edit_downgrade": "reviews",
+    "resp_approved": "reviews", "neg_spike": "reviews", "no_response": "reviews",
+    "unresponded": "reviews", "negative_trend": "reviews", "rating_threshold": "reviews",
+    "labor_over": "labor", "schedule_drafted": "labor", "coverage": "labor",
+    "food_waste": "inventory", "critical_low": "inventory", "price_spike": "inventory",
+    "ai_visibility_drop": "competitor",
+    "demand_opportunity": "marketing",
+    # Cross-module reads that arrive with their own question, so they open
+    # the assistant rather than guessing a module (iOS does the same).
+    "morning_brief": "ask", "daily_briefing": "ask", "intraday_pulse": "ask",
+    "closing_summary": "ask", "weekly_review": "ask", "monthly_review": "ask",
+    "outcome_achieved": "ask",
+    "issue": "account", "issue_escalated": "account",
+    # Not a product module — the web dashboard's bell reads this field
+    # directly; iOS's DeepLinkRouter has its own "login" special-case.
+    "login": "account", "staff_signin": "account",
+}
+
+# Which module permission a row needs before it is shown. A teammate whose
+# role cannot open Labor or Food Cost was still shown "Labor % over target"
+# and "Food waste flagged" in the bell — the role scoping applied to Ask and
+# Home never reached the notification list.
+_NOTIFICATION_MODULE_KEY = {
+    "reviews": "reviews", "labor": "labor", "inventory": "inventory",
+    "marketing": "marketing", "competitor": "intel",
 }
 
 
-def _do_get_notifications(restaurant_id):
+def _do_get_notifications(restaurant_id, viewer=None, limit=40):
+    """The notification history, newest first, scoped to what this login may
+    see and carrying the priority both clients rank by."""
     try:
+        import push as _push
         conn = get_conn()
         rows = conn.execute(
-            """SELECT alert_type, review_id, fired_at FROM alert_log
+            """SELECT alert_type, review_id, fired_at, priority FROM alert_log
                WHERE restaurant_id=?
-               ORDER BY fired_at DESC LIMIT 20""",
-            (restaurant_id,)
+               ORDER BY fired_at DESC, id DESC LIMIT ?""",
+            (restaurant_id, int(limit))
         ).fetchall()
+        seen_at = None
+        if viewer and viewer.get("id"):
+            from models import notifications_seen_at
+            seen_at = notifications_seen_at(viewer["id"], restaurant_id)
         conn.close()
-        items = [{"type": r["alert_type"],
-                  "label": _NOTIFICATION_LABELS.get(r["alert_type"], r["alert_type"]),
-                  "fired_at": r["fired_at"],
-                  "review_id": r["review_id"],
-                  "module": _NOTIFICATION_MODULE.get(r["alert_type"], "reviews")} for r in rows]
+        items = []
+        for r in rows:
+            module = _NOTIFICATION_MODULE.get(r["alert_type"], "reviews")
+            if not _sees(viewer, module):
+                continue
+            priority = r["priority"]
+            if priority is None:
+                priority = _push.priority_of(r["alert_type"])
+            items.append({
+                "type": r["alert_type"],
+                "label": _NOTIFICATION_LABELS.get(r["alert_type"],
+                                                  r["alert_type"].replace("_", " ").capitalize()),
+                "fired_at": r["fired_at"],
+                "review_id": r["review_id"],
+                "module": module,
+                "priority": priority,
+                "urgent": priority <= _push.P1_ACT_NOW,
+                "unread": bool(seen_at is None or (r["fired_at"] or "") > seen_at),
+            })
         return {"ok": True, "notifications": items}, 200
     except Exception as e:
+        print(f"[notifications] load failed for rid={restaurant_id}: {e}")
         return {"ok": False, "notifications": [], "error": "Couldn't load notifications right now."}, 200
+
+
+def _sees(viewer, module):
+    """Whether this login may see a row about `module`. No viewer means an
+    internal/admin caller, which sees everything."""
+    if not viewer or module not in _NOTIFICATION_MODULE_KEY:
+        return True
+    try:
+        from permissions import has_permission, MODULE_VIEW_PERMISSIONS
+        need = MODULE_VIEW_PERMISSIONS.get(_NOTIFICATION_MODULE_KEY[module])
+        return has_permission(viewer, need) if need else True
+    except Exception:
+        return True
 
 
 @client_bp.route("/api/switch-location", methods=["POST"])
@@ -6381,8 +6451,26 @@ def group_locations(current_user):
 @client_bp.route("/api/notifications")
 @login_required
 def get_notifications(current_user):
-    payload, status = _do_get_notifications(current_user["restaurant_id"])
+    payload, status = _do_get_notifications(current_user["restaurant_id"], viewer=current_user)
+    if payload.get("ok"):
+        try:
+            from models import mark_notifications_seen
+            mark_notifications_seen(current_user["id"], current_user["restaurant_id"])
+        except Exception:
+            pass
     return jsonify(**payload), status
+
+
+@client_bp.route("/api/notifications/unread-count")
+@login_required
+def get_notifications_unread_count(current_user):
+    """Per-LOGIN, so a co-owner opening the bell no longer clears their
+    partner's badge — and it reads through models.unread_notification_count,
+    which compares timestamps in one format. The web bell kept its own
+    localStorage mark, so the two clients never agreed either."""
+    from models import unread_notification_count
+    return jsonify(ok=True, count=unread_notification_count(
+        current_user["id"], current_user["restaurant_id"]))
 
 
 # ── Startup ───────────────────────────────────────────────────────────────────

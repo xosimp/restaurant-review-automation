@@ -1271,35 +1271,28 @@ def mobile_review_request_stats(current_user):
 @mobile_bp.route("/notifications")
 @mobile_login_required
 def mobile_notifications(current_user):
-    import datetime as _dt
-    payload, status = _capi._do_get_notifications(current_user["restaurant_id"])
-    # Mark as seen — same stamp-on-read behavior as Changelog (see
-    # mobile_changelog below), so the bell's unread badge clears once the
-    # client has actually opened the list, not before.
-    update_restaurant(current_user["restaurant_id"], {
-        "notifications_seen_at": _dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
-    })
+    payload, status = _capi._do_get_notifications(
+        current_user["restaurant_id"], viewer=current_user)
+    # Mark as seen — per LOGIN now, not per restaurant. The old stamp lived
+    # on restaurants.notifications_seen_at, so one co-owner opening the list
+    # cleared the other's badge; and it was written in isoformat while
+    # alert_log.fired_at uses SQLite's space separator, which made the
+    # unread count structurally blind to anything fired today.
+    if payload.get("ok"):
+        try:
+            from models import mark_notifications_seen
+            mark_notifications_seen(current_user["id"], current_user["restaurant_id"])
+        except Exception:
+            pass
     return jsonify(**payload), status
 
 
 @mobile_bp.route("/notifications/unread-count")
 @mobile_login_required
 def mobile_notifications_unread_count(current_user):
-    rid = current_user["restaurant_id"]
-    restaurant = get_restaurant(rid)
-    since = restaurant.notifications_seen_at if restaurant else None
-    conn = get_conn()
-    if since:
-        count = conn.execute(
-            "SELECT COUNT(*) FROM alert_log WHERE restaurant_id=? AND fired_at > ?",
-            (rid, since)
-        ).fetchone()[0]
-    else:
-        count = conn.execute(
-            "SELECT COUNT(*) FROM alert_log WHERE restaurant_id=?", (rid,)
-        ).fetchone()[0]
-    conn.close()
-    return jsonify(ok=True, count=count)
+    from models import unread_notification_count
+    return jsonify(ok=True, count=unread_notification_count(
+        current_user["id"], current_user["restaurant_id"]))
 
 
 # ── Changelog ─────────────────────────────────────────────────────────────

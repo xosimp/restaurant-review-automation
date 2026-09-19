@@ -189,26 +189,77 @@ def alert_recipients(owner_email: str, restaurant_id: int = None, db_path: str =
 
 
 def _send_alert_email(owner_email: str, subject: str, html: str, restaurant_id: int = None) -> bool:
-    """Send an alert email via Resend. Returns True on success."""
-    if not _resend_key() or not owner_email:
-        print(f"[notify] Resend not configured — would email {owner_email}: {subject}")
+    """Send an alert email. Returns True when at least one copy went out.
+
+    Goes through emails.deliver() — the single choke point — rather than
+    calling the Resend SDK directly, which is what this did for the life of
+    the alert system. Three things were missing as a result, all of them the
+    reason that choke point exists: the SUPPRESSION list (a hard-bounced or
+    complained address kept receiving alerts indefinitely, which is how a
+    sending domain's reputation goes and takes every other email with it),
+    RETRY on a transient Resend failure, and an email_log row — so "did my
+    1-star alert actually send?" had no answer anywhere in the product.
+
+    One send per recipient rather than one with several To: addresses:
+    suppression, the flood guard and the log are all per-recipient, and a
+    multi-address payload only ever gets checked against the first.
+    """
+    if not owner_email:
         return False
-    try:
-        import resend as _r
-        _r.api_key = _resend_key()
-        _r.Emails.send({
+    from emails import deliver as _deliver
+    sent = 0
+    for address in alert_recipients(owner_email, restaurant_id):
+        result = _deliver(email_type="alert", restaurant_id=restaurant_id, payload={
             "from": f"Cavnar AI Alerts <{_from_email()}>",
-            "to": alert_recipients(owner_email, restaurant_id),
+            "to": [address],
             "subject": subject,
             "html": _html_doc(html),
         })
-        return True
-    except Exception as e:
-        print(f"[notify] Email send failed: {e}")
-        return False
+        if getattr(result, "ok", False):
+            sent += 1
+    return sent > 0
 
 
-def _alert_email_html(restaurant_name: str, headline: str, body_lines: list, cta_label: str = "View on dashboard", restaurant_id: int = None) -> str:
+# Which dashboard tab an alert is actually about. The keys are the web tab
+# ids (switchTab / ?tab=), so an alert email's button can land on the screen
+# that answers it. Every alert email used to link to the dashboard ROOT,
+# which put the owner back at Home to go and find the thing themselves — the
+# opposite of what the morning brief's own "Ask about this →" links do.
+ALERT_TAB = {
+    "health": "reviews", "1star": "reviews", "2star": "reviews", "3star": "reviews",
+    "5star": "reviews", "any_review": "reviews", "neg_spike": "reviews",
+    "edit_downgrade": "reviews", "resp_approved": "reviews", "unresponded": "reviews",
+    "no_response": "reviews", "negative_trend": "reviews", "rating_threshold": "reviews",
+    "labor_over": "labor", "schedule_drafted": "labor", "coverage": "labor",
+    "food_waste": "inventory", "critical_low": "inventory", "price_spike": "inventory",
+    "ai_visibility_drop": "competitor",
+    "login": "account", "staff_signin": "account",
+}
+
+
+def alert_url(alert_type=None, review_id=None) -> str:
+    """The dashboard URL that answers this alert."""
+    base = (os.getenv("BASE_URL") or "https://dashboard.cavnar.ai").rstrip("/")
+    tab = ALERT_TAB.get(alert_type or "")
+    if not tab:
+        return base
+    url = f"{base}/?tab={tab}"
+    if review_id and tab == "reviews":
+        url += f"&review={int(review_id)}"
+    return url
+
+
+# The CTA href is stamped in at DELIVERY, not at build: the alert type and
+# review id are known there and only there, and an alert held through a rush
+# is stored as html in alert_holds and resolved when it is finally released.
+CTA_PLACEHOLDER = "https://cavnar.invalid/cta"
+
+
+def _resolve_cta(html: str, alert_type: str = None, review_id: int = None) -> str:
+    return (html or "").replace(CTA_PLACEHOLDER, alert_url(alert_type, review_id))
+
+
+def _alert_email_html(restaurant_name: str, headline: str, body_lines: list, cta_label: str = "View on dashboard", restaurant_id: int = None, cta_url: str = None) -> str:
     def _safe(s): return _html.escape(str(s)) if s else ""
     # Light, always. This used to read restaurants.email_theme — a column the
     # web dashboard silently POSTs its OWN dark-mode switch into on every page
@@ -230,7 +281,7 @@ def _alert_email_html(restaurant_name: str, headline: str, body_lines: list, cta
   <h3 style="font-size:16px;font-weight:600;margin:0 0 12px;color:{text_primary}">{_safe(headline)}</h3>
   {body_html}
   <div style="margin-top:20px">
-    <a href="https://dashboard.cavnar.ai"
+    <a href="{_html.escape(cta_url or CTA_PLACEHOLDER, quote=True)}"
        style="display:inline-block;background:#c84b2f;color:white;padding:11px 22px;
               border-radius:8px;text-decoration:none;font-size:13px;font-weight:600">
       {cta_label} &#8594;
@@ -450,6 +501,42 @@ def _sms_safe_excerpt(raw_text: str, limit: int = 60) -> tuple:
     return cleaned, ""
 
 
+_CTA_TOKENS = ("dashboard.cavnar.ai", "cavnar.ai")
+
+
+def _squash(s: str) -> str:
+    return "".join(ch for ch in (s or "").lower() if ch.isalnum())
+
+
+def push_body(sms_text: str, subject: str = None) -> str:
+    """The SMS copy, minus the parts that exist only because it is an SMS.
+
+    Push carried sms_text verbatim, so a lock screen read
+
+        🔴 1★ review — Simple EJ's                    <- title
+        🔴 1★ Review — Simple EJ's                    <- body, line 1
+        Sarah: "waited 45 minutes and the food was cold"
+        Respond now · dashboard.cavnar.ai
+
+    — the restaurant named three times and a web address offered to a phone
+    that already has the app. A text message needs both because it has no
+    title and nowhere to tap; a notification has both.
+    """
+    lines = [l.strip() for l in (sms_text or "").splitlines() if l.strip()]
+    head = _squash(subject)[:16]
+    out = []
+    for i, line in enumerate(lines):
+        for token in _CTA_TOKENS:
+            line = line.replace(token, "")
+        line = line.strip().strip("·-—").strip()
+        if not line:
+            continue
+        if i == 0 and head and _squash(line)[:16] == head:
+            continue
+        out.append(line)
+    return " ".join(out) or (subject or "")
+
+
 def _neg_spike_count(restaurant_id: int, db_path: str = DB_PATH) -> int:
     """Negative reviews a guest actually WROTE in the last seven days.
 
@@ -510,25 +597,63 @@ def _already_alerted_spike(restaurant_id: int, db_path: str = DB_PATH) -> bool:
 
 
 def _log_alert(restaurant_id: int, alert_type: str, review_id: int = None, db_path: str = DB_PATH,
-               value: float = None):
-    """`value` records the figure the alert fired on, so a later run can ask
+               value: float = None, priority: int = None):
+    """One row in the notification history, which is also what the daily cap
+    and the hard ceiling count.
+
+    `value` records the figure the alert fired on, so a later run can ask
     whether the condition actually worsened instead of re-firing on the same
-    standing level (see _waste_alert_worsened)."""
+    standing level (see _waste_alert_worsened). `priority` is the executive
+    tier (push.PRIORITY) — stored so both notification centers can rank and
+    filter without re-deriving it, and so a later change to the map doesn't
+    silently rewrite history.
+    """
+    if priority is None:
+        from push import priority_of
+        priority = priority_of(alert_type)
+    sql = ("INSERT INTO alert_log (restaurant_id, alert_type, review_id, value, priority) "
+           "VALUES (?,?,?,?,?)")
+    args = (restaurant_id, alert_type, review_id, value, priority)
     conn = models.get_conn(db_path)
-    _ensure_alert_value_column(conn)
-    conn.execute(
-        "INSERT INTO alert_log (restaurant_id, alert_type, review_id, value) VALUES (?,?,?,?)",
-        (restaurant_id, alert_type, review_id, value),
-    )
-    conn.commit()
-    conn.close()
+    try:
+        try:
+            conn.execute(sql, args)
+        except Exception:
+            # init_db owns these columns now; this is the self-healing retry
+            # for a database opened before it ran (ai_utils._ensure_usage_schema
+            # is the same pattern). No DDL on the happy path.
+            _ensure_alert_value_column(conn)
+            conn.execute(sql, args)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def record_notification(restaurant_id: int, alert_type: str, review_id: int = None,
+                        db_path: str = DB_PATH, value: float = None):
+    """History row for a notification sent OUTSIDE the alert layer.
+
+    The morning brief, the pre-dinner pulse, the drafted schedule, an issue
+    and a coverage gap all push straight through push.fire_push and wrote no
+    alert_log row — so the product's single best notifications were the ones
+    an owner could never find again. Both notification centers already
+    carried labels and routing rules for them, matching nothing.
+
+    These do not count toward the daily cap (models.NON_ALERT_TYPES).
+    """
+    try:
+        _log_alert(restaurant_id, alert_type, review_id, db_path=db_path, value=value)
+    except Exception as e:
+        print(f"[notify] could not record {alert_type} for rid={restaurant_id}: {e}")
 
 
 def _ensure_alert_value_column(conn):
-    try:
-        conn.execute("ALTER TABLE alert_log ADD COLUMN value REAL")
-    except Exception:
-        pass  # already there
+    for ddl in ("ALTER TABLE alert_log ADD COLUMN value REAL",
+                "ALTER TABLE alert_log ADD COLUMN priority INTEGER"):
+        try:
+            conn.execute(ddl)
+        except Exception:
+            pass  # already there
 
 
 def _waste_alert_worsened(restaurant_id: int, total: float, db_path: str = DB_PATH,
@@ -717,7 +842,7 @@ def rush_release_at(restaurant_id, alert_type=None, db_path: str = DB_PATH, now_
 
 
 def hold_alert(restaurant_id, alert_type, sms_text, subject, html, release_at,
-               review_id=None, db_path: str = DB_PATH):
+               review_id=None, db_path: str = DB_PATH, value: float = None):
     """Queue an alert for after the rush.
 
     Deduped against what is already waiting: the alert_log row that normally
@@ -736,9 +861,9 @@ def hold_alert(restaurant_id, alert_type, sms_text, subject, html, release_at,
             return
         conn.execute(
             "INSERT INTO alert_holds (restaurant_id, alert_type, subject, html, sms_text, "
-            "review_id, release_at) VALUES (?,?,?,?,?,?,?)",
+            "review_id, release_at, value) VALUES (?,?,?,?,?,?,?,?)",
             (restaurant_id, alert_type, subject, html, sms_text, review_id,
-             release_at.strftime("%Y-%m-%d %H:%M:%S")))
+             release_at.strftime("%Y-%m-%d %H:%M:%S"), value))
         conn.commit()
     finally:
         conn.close()
@@ -782,7 +907,8 @@ def release_due_alerts(db_path: str = DB_PATH, now_utc=None):
         per_restaurant[rid] = per_restaurant.get(rid, 0) + 1
         try:
             deliver_alert(h["restaurant_id"], h["alert_type"], h["sms_text"], h["subject"],
-                          h["html"], review_id=h["review_id"], db_path=db_path)
+                          h["html"], review_id=h["review_id"], db_path=db_path,
+                          value=h.get("value"))
             sent += 1
         except Exception as e:
             print(f"[notify] held alert {h['id']} failed: {e}")
@@ -832,21 +958,34 @@ def brief_pushed_today(restaurant_id, db_path: str = DB_PATH):
         return False
 
 
-def _email_alert(restaurant_id, owner_email, subject, html, alert_type, db_path: str = DB_PATH):
+def _email_alert(restaurant_id, owner_email, subject, html, alert_type, db_path: str = DB_PATH,
+                 review_id: int = None):
     """Send an alert email unless the morning brief already covered it on the
-    owner's phone today. Returns True when it sent."""
+    owner's phone today. Returns True when it sent.
+
+    Also the one place the CTA button's href is resolved — see
+    CTA_PLACEHOLDER. Every email path reaches this function, including a
+    held alert released hours later, so there is no way to send one that
+    still points at the dashboard root."""
     if alert_type in BRIEF_COVERED_TYPES and brief_pushed_today(restaurant_id, db_path):
         print(f"[notify] rid={restaurant_id} {alert_type} email folded into today's brief")
         return False
-    return _send_alert_email(owner_email, subject, html, restaurant_id=restaurant_id)
+    resolved = _resolve_cta(html, alert_type, review_id)
+    return _send_alert_email(owner_email, subject, resolved, restaurant_id=restaurant_id)
 
 
 def deliver_alert(restaurant_id: int, alert_type: str, sms_text: str, subject: str,
-                  html: str, review_id: int = None, db_path: str = DB_PATH):
+                  html: str, review_id: int = None, db_path: str = DB_PATH,
+                  value: float = None):
     """Send one alert on whichever channels this restaurant has on for that
     type, log it, and fire the webhook. The single delivery path: an alert
     raised now goes straight here, and one held through a rush comes here
     when the rush ends (release_due_alerts).
+
+    The daily operational alerts (labor, waste, stock, price, visibility,
+    trend, threshold) reach this too, through raise_alert() below. They used
+    to run two bespoke _fire() closures instead, which is why they were the
+    only alerts with no rush holding, no resolved CTA link and no priority.
 
     Deliberately does NOT re-check quiet hours or the daily cap. Those are
     checked when the alert is RAISED; re-checking at release would drop a
@@ -889,40 +1028,93 @@ def deliver_alert(restaurant_id: int, alert_type: str, sms_text: str, subject: s
         "5star":     ("al_5star_sms",   "al_5star_email",   "al_5star_push"),
         "neg_spike": ("al_spike_sms",   "al_spike_email",   "al_spike_push"),
         "unresponded":("al_unres_sms",  "al_unres_email",   "al_unres_push"),
+        # check_no_response_alerts pushes and logs "no_response" while
+        # _email_alert is handed "unresponded" — the same alert under two
+        # names. Both map here so neither path can fall through to the
+        # health default below.
+        "no_response":("al_unres_sms",  "al_unres_email",   "al_unres_push"),
+        # The daily operational alerts have no per-type channel columns —
+        # the owner opted in by alert_negative_trend / alert_labor_over /
+        # alert_food_waste / alert_ai_visibility_drop, and the channel
+        # question is answered by the global SMS and email switches alone.
+        # None means "no per-type gate", not "off".
+        "negative_trend":     (None, None, None),
+        "rating_threshold":   (None, None, None),
+        "labor_over":         (None, None, None),
+        "food_waste":         (None, None, None),
+        "critical_low":       (None, None, None),
+        "price_spike":        (None, None, None),
+        "ai_visibility_drop": (None, None, None),
     }
+    # An unmapped type used to land on the HEALTH triplet — the most
+    # permissive channel set in the system, and the one the quiet-hours
+    # bypass is attached to. A type nobody has classified should not
+    # inherit the loudest settings an owner has; the unresponded triplet is
+    # the ordinary-alert default.
     sms_col, email_col, push_col = type_map.get(
-        alert_type, ("al_health_sms", "al_health_email", "al_health_push")
+        alert_type, ("al_unres_sms", "al_unres_email", "al_unres_push")
     )
-    via_sms   = global_sms   and bool(_col(sms_col,   0))
-    via_email = global_email and bool(_col(email_col, 1))
+    def _on(column, default):
+        return True if column is None else bool(_col(column, default))
+
+    via_sms   = global_sms   and _on(sms_col,   0)
+    via_email = global_email and _on(email_col, 1)
     # Push has no global on/off switch the way SMS/email do (urgent_via_sms/
     # urgent_via_email exist because those channels cost money per message;
     # push doesn't, so the per-type toggle alone is the gate) — and it's a
     # no-op anyway if the owner never registered a device.
-    via_push  = bool(_col(push_col, 1))
+    via_push  = _on(push_col, 1)
     if via_sms and contacts:
         for c in contacts:
             send_sms(c["phone"], sms_text)
     if via_email and owner_email:
-        _email_alert(restaurant_id, owner_email, subject, html, alert_type, db_path)
-    if via_push:
-        try:
-            from push import fire_push as _fp
-            _fp(restaurant_id, alert_type, subject, sms_text,
-                data={"alert_type": alert_type, "review_id": review_id})
-        except Exception:
-            pass
+        _email_alert(restaurant_id, owner_email, subject, html, alert_type, db_path,
+                     review_id=review_id)
+    # Logged BEFORE the push, not after: the push payload now carries the
+    # app-icon badge, which is this login's unread count over alert_log. A
+    # push sent first badges the phone with a number that excludes the very
+    # alert it is announcing.
+    #
     # db_path from the enclosing fire_review_alerts() call — this used
     # to fall back to _log_alert's own stale default, silently logging (or,
     # on a machine/CI runner with no local reviews.db, crashing) against
     # the wrong database regardless of what db_path the caller actually
     # passed in.
-    _log_alert(restaurant_id, alert_type, review_id, db_path=db_path)
+    _log_alert(restaurant_id, alert_type, review_id, db_path=db_path, value=value)
+    if via_push:
+        try:
+            from push import fire_push as _fp
+            _fp(restaurant_id, alert_type, subject, push_body(sms_text, subject),
+                data={"alert_type": alert_type, "review_id": review_id}, db_path=db_path)
+        except Exception:
+            pass
     try:
         from webhooks import fire_webhook as _fw
-        _fw(restaurant_id, "alert.fired", {"alert_type": alert_type, "review_id": review_id})
+        _fw(restaurant_id, "alert.fired", {"alert_type": alert_type, "review_id": review_id}, db_path)
+        if alert_type == "labor_over":
+            _fw(restaurant_id, "labor.over_target", {"alert_type": alert_type}, db_path)
     except Exception:
         pass
+
+
+def raise_alert(restaurant_id: int, alert_type: str, sms_text: str, subject: str, html: str,
+                review_id: int = None, db_path: str = DB_PATH, value: float = None) -> bool:
+    """Raise one alert: quiet hours / daily cap / hard ceiling, then hold it
+    if service is mid-rush, else deliver it now. Returns False when it was
+    suppressed outright.
+
+    blast() inside fire_review_alerts() is the review-side twin of this; the
+    daily jobs call this one. Both end at deliver_alert."""
+    if _daily_alert_suppressed(restaurant_id, alert_type, db_path):
+        return False
+    release_at = rush_release_at(restaurant_id, alert_type, db_path)
+    if release_at is not None:
+        hold_alert(restaurant_id, alert_type, sms_text, subject, html, release_at,
+                   review_id=review_id, db_path=db_path, value=value)
+        return True
+    deliver_alert(restaurant_id, alert_type, sms_text, subject, html,
+                  review_id=review_id, db_path=db_path, value=value)
+    return True
 
 
 def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: list,
@@ -1267,14 +1459,15 @@ def fire_response_approved_alert(restaurant_id: int, review_id: int,
             cta_label="See the review", restaurant_id=restaurant_id,
         )
         if r["owner_email"] and (r["al_1star_email"] if "al_1star_email" in r.keys() else 1):
-            _send_alert_email(r["owner_email"], subject, html, restaurant_id=restaurant_id)
+            _email_alert(restaurant_id, r["owner_email"], subject, html, "resp_approved",
+                         db_path, review_id=review_id)
+        _log_alert(restaurant_id, "resp_approved", review_id, db_path=db_path)
         try:
             from push import fire_push as _fp
             _fp(restaurant_id, "resp_approved", subject, body,
-                data={"alert_type": "resp_approved", "review_id": review_id})
+                data={"alert_type": "resp_approved", "review_id": review_id}, db_path=db_path)
         except Exception:
             pass
-        _log_alert(restaurant_id, "resp_approved", review_id, db_path=db_path)
     except Exception as e:
         print(f"[notify] resp_approved alert error rid={restaurant_id}: {e}")
 
@@ -1376,15 +1569,15 @@ def check_no_response_alerts(db_path: str = DB_PATH, local_hour: int = None):
             _email_alert(rid, owner_email, f"⏰ Unresponded reviews — {name}", html,
                          "unresponded", db_path)
 
+        _log_alert(rid, "no_response", db_path=db_path)
         if via_push:
             try:
                 from push import fire_push as _fp
-                _fp(rid, "no_response", f"⏰ Unresponded reviews — {name}", sms,
-                    data={"alert_type": "no_response"})
+                _subject = f"⏰ Unresponded reviews — {name}"
+                _fp(rid, "no_response", _subject, push_body(sms, _subject),
+                    data={"alert_type": "no_response"}, db_path=db_path)
             except Exception:
                 pass
-
-        _log_alert(rid, "no_response", db_path=db_path)
         try:
             from webhooks import fire_webhook as _fw
             _fw(rid, "alert.fired", {"alert_type": "no_response"}, db_path)
@@ -1440,37 +1633,12 @@ def check_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
         if via_email and not owner_email:
             print(f"[notify] rid={rid} has email alerts on but no owner_email — email suppressed")
 
-        contacts = get_alert_contacts(rid, sms_consent_only=True, db_path=db_path) if via_sms else []
-
         def _fire(sms_text, subject, html, alert_type):
-            if _daily_alert_suppressed(rid, alert_type, db_path):
-                return
-            if via_sms and contacts:
-                for c in contacts:
-                    send_sms(c["phone"], sms_text)
-            if via_email and owner_email:
-                _email_alert(rid, owner_email, subject, html, alert_type, db_path)
-            # These three alert types predate push and never had their own
-            # al_*_push toggle columns added (unlike health/1star/2star/5star/
-            # spike/unresponded, which each have one) — rather than fire
-            # silently push-less forever, push here the same way blast()
-            # does: no per-channel gate, since push has no owner cost the
-            # way SMS/email do and the restaurant already opted into this
-            # alert type via alert_negative_trend/alert_rating_threshold/
-            # alert_labor_over above. A no-op if no device is registered.
-            try:
-                from push import fire_push as _fp
-                _fp(rid, alert_type, subject, sms_text, data={"alert_type": alert_type})
-            except Exception:
-                pass
-            _log_alert(rid, alert_type, db_path=db_path)
-            try:
-                from webhooks import fire_webhook as _fw
-                _fw(rid, "alert.fired", {"alert_type": alert_type}, db_path)
-                if alert_type == "labor_over":
-                    _fw(rid, "labor.over_target", {"alert_type": alert_type}, db_path)
-            except Exception:
-                pass
+            # One delivery path for every alert in the product. This used to
+            # be a bespoke closure that sent SMS, email, push, log and
+            # webhook itself — which is why these alert types were the only
+            # ones with no rush holding and no resolved CTA link.
+            raise_alert(rid, alert_type, sms_text, subject, html, db_path=db_path)
 
         def _already_alerted(alert_type):
             # A 7-day window, not 24h — this job runs once a day, so a
@@ -1689,8 +1857,6 @@ def check_extra_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
         if _gated_out(rid, local_hour, "extra_alerts", db_path):
             continue
         owner_email = r["owner_email"] or ""
-        via_sms, via_email = bool(r["urgent_via_sms"]), bool(r["urgent_via_email"])
-        contacts = get_alert_contacts(rid, sms_consent_only=True, db_path=db_path) if via_sms else []
 
         def _recent(alert_type):
             c2 = models.get_conn(db_path)
@@ -1700,20 +1866,8 @@ def check_extra_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
             return row is not None
 
         def _fire(alert_type, sms_text, subject, lines, value=None):
-            if _daily_alert_suppressed(rid, alert_type, db_path):
-                return
             html = _alert_email_html(name, subject, lines, restaurant_id=rid)
-            if via_sms:
-                for c in contacts:
-                    send_sms(c["phone"], sms_text)
-            if via_email and owner_email:
-                _email_alert(rid, owner_email, subject, html, alert_type, db_path)
-            try:
-                from push import fire_push
-                fire_push(rid, alert_type, subject, sms_text, data={"alert_type": alert_type}, db_path=db_path)
-            except Exception:
-                pass
-            _log_alert(rid, alert_type, db_path=db_path, value=value)
+            raise_alert(rid, alert_type, sms_text, subject, html, db_path=db_path, value=value)
 
         # ── Food waste ────────────────────────────────────────
         if r["alert_food_waste"] and not _recent("food_waste"):

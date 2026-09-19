@@ -20,13 +20,46 @@ from models import get_conn, DB_PATH
 
 # Same meaning as webhooks.py's _AUTO_DISABLE_AFTER: a token that's failed
 # this many consecutive deliveries for reasons OTHER than the fast-path
-# "definitely dead" APNs responses below gets deleted too — no visibility
+# "definitely dead" APNs responses below gets parked too — no visibility
 # into a broken token otherwise, and nothing to gain from retrying forever.
 _AUTO_DISABLE_AFTER = 10
 
 # APNs responses that mean "this token will never be valid again" — no point
 # waiting for _AUTO_DISABLE_AFTER consecutive failures, delete on the first.
 _PERMANENT_FAILURE_REASONS = {"BadDeviceToken", "Unregistered", "DeviceTokenNotForTopic"}
+
+# Failures that are OURS, not the token's: a bad or expired signing key, a
+# missing/incorrect apns-topic, a rejected environment, an APNs outage, a
+# network drop. None of these say anything about the device, so none of them
+# may advance the failure counter.
+#
+# This is the P0 from the notifications audit. _AUTO_DISABLE_AFTER used to
+# count every non-permanent failure, and one fire_push is one consecutive
+# failure — so ten alerts sent while the .p8 was expired, or while
+# APNS_BUNDLE_ID was unset (it defaulted to ""), deleted EVERY registered
+# device at EVERY restaurant. Push then stayed dead until each owner happened
+# to relaunch the app, with nothing anywhere saying why.
+_PROVIDER_FAILURE_REASONS = {
+    "ExpiredProviderToken", "InvalidProviderToken", "MissingProviderToken",
+    "TooManyProviderTokenUpdates", "MissingTopic", "BadTopic", "TopicDisallowed",
+    "BadCertificateEnvironment", "BadCertificate", "Forbidden",
+    "InternalServerError", "ServiceUnavailable", "TooManyRequests", "Shutdown",
+}
+
+# Reasons that mean the cached provider JWT must be thrown away before the
+# next attempt. Retrying a 403 with the same dead token just burns the
+# remaining attempts.
+_JWT_REMINT_REASONS = {"ExpiredProviderToken", "InvalidProviderToken", "TooManyProviderTokenUpdates"}
+
+# Alert types where several genuinely distinct events happen in one day, so
+# the date-keyed collapse id would silently overwrite all but the last.
+_UNCOLLAPSIBLE_TYPES = {"login", "staff_signin", "issue", "issue_escalated", "coverage"}
+
+
+class PushNotConfigured(RuntimeError):
+    """APNS_KEY_ID / APNS_TEAM_ID / APNS_PRIVATE_KEY missing. Raised rather
+    than signing with an empty key, so the failure names itself instead of
+    arriving as a wall of 403s that look like dead devices."""
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS device_tokens (
@@ -89,17 +122,117 @@ def remove_device_token(apns_token, db_path=DB_PATH):
     conn.close()
 
 
-def get_device_tokens(restaurant_id, db_path=DB_PATH):
+def get_device_tokens(restaurant_id, db_path=DB_PATH, for_delivery=False):
+    """Every registered device for this restaurant.
+
+    `for_delivery=True` drops the ones parked by repeated failures — sending
+    to them is what filled push_deliveries with noise and, before the fix
+    above, is what eventually deleted them. A parked token comes back on its
+    own the next time the app launches and re-registers (register_device_token
+    clears both the counter and the reason)."""
     conn = get_conn(db_path)
-    rows = conn.execute(
-        "SELECT * FROM device_tokens WHERE restaurant_id=?", (restaurant_id,)
-    ).fetchall()
+    sql = "SELECT * FROM device_tokens WHERE restaurant_id=?"
+    if for_delivery:
+        sql += " AND disabled_reason IS NULL"
+    rows = conn.execute(sql, (restaurant_id,)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
 
+# ── Executive priority ──────────────────────────────────────────────────────
+#
+# Lives here rather than in notify.py because push.py is the lower layer —
+# notify, morning_brief, strategy_jobs and both clients all read it, and
+# push.py imports nothing of theirs. One number decides three things: whether
+# the phone may break a Focus mode, how long APNs keeps trying, and how the
+# notification centers rank and badge a row.
+P0_CRITICAL   = 0   # someone could get hurt, or the business is at risk now
+P1_ACT_NOW    = 1   # fixable while it still matters, and only while it does
+P2_OPPORTUNITY= 2   # money on the table, worth today
+P3_INFO       = 3   # worth knowing, not worth interrupting for
+P4_SUMMARY    = 4   # the brief, the digest, the month
+P5_LOW        = 5   # background, never buzzes
+
+PRIORITY = {
+    "health": P0_CRITICAL,
+    "coverage": P1_ACT_NOW, "issue": P1_ACT_NOW, "issue_escalated": P1_ACT_NOW,
+    "critical_low": P1_ACT_NOW,
+    "1star": P2_OPPORTUNITY, "2star": P2_OPPORTUNITY, "neg_spike": P2_OPPORTUNITY,
+    "edit_downgrade": P2_OPPORTUNITY, "price_spike": P2_OPPORTUNITY,
+    "intraday_pulse": P2_OPPORTUNITY, "labor_over": P2_OPPORTUNITY,
+    "food_waste": P2_OPPORTUNITY, "rating_threshold": P2_OPPORTUNITY,
+    "no_response": P2_OPPORTUNITY, "unresponded": P2_OPPORTUNITY,
+    "daily_briefing": P2_OPPORTUNITY,
+    "3star": P3_INFO, "5star": P3_INFO, "resp_approved": P3_INFO,
+    "schedule_drafted": P3_INFO, "login": P3_INFO, "staff_signin": P3_INFO,
+    "negative_trend": P3_INFO, "outcome_achieved": P3_INFO,
+    "morning_brief": P4_SUMMARY, "closing_summary": P4_SUMMARY,
+    "weekly_review": P4_SUMMARY, "monthly_review": P4_SUMMARY,
+    "any_review": P5_LOW, "ai_visibility_drop": P5_LOW, "demand_opportunity": P5_LOW,
+}
+# An unmapped type is informational, not urgent. The old code had no priority
+# at all and deliver_alert's unknown-type fallback was the HEALTH channel
+# triplet — the most permissive default in the system.
+DEFAULT_PRIORITY = P3_INFO
+
+
+def priority_of(alert_type) -> int:
+    return PRIORITY.get(alert_type, DEFAULT_PRIORITY)
+
+
+# Only P0/P1 may pierce a Focus mode (needs the time-sensitive entitlement,
+# set in project.yml). P4/P5 are delivered quietly to Notification Center.
+_INTERRUPTION = {P0_CRITICAL: "time-sensitive", P1_ACT_NOW: "time-sensitive",
+                 P4_SUMMARY: "passive", P5_LOW: "passive"}
+
+# How long APNs should keep trying for a phone that is off or out of signal.
+# Unset, this was Apple's default rather than a decision, and a pre-dinner
+# pulse delivered at 11pm is worse than one not delivered at all.
+_EXPIRY_SECONDS = {
+    P0_CRITICAL: 24 * 3600,   # still worth knowing tomorrow
+    P1_ACT_NOW: 4 * 3600,     # worthless once the shift it was about is over
+    P2_OPPORTUNITY: 12 * 3600,
+    P3_INFO: 12 * 3600,
+    P4_SUMMARY: 6 * 3600,     # a morning brief arriving at 6pm is noise
+    P5_LOW: 6 * 3600,
+}
+
+# UNNotificationCategory identifiers the app registers (PushManager.swift).
+# A category is what lets an owner act from the lock screen instead of
+# unlocking, finding the module and starting again.
+CATEGORY_REVIEW = "CAVNAR_REVIEW"     # Respond
+CATEGORY_BRIEF  = "CAVNAR_BRIEF"      # Ask about this
+CATEGORY_ISSUE  = "CAVNAR_ISSUE"      # Open
+_BRIEF_TYPES = {"morning_brief", "intraday_pulse", "closing_summary",
+                "weekly_review", "monthly_review", "daily_briefing"}
+_ISSUE_TYPES = {"issue", "issue_escalated", "coverage", "critical_low"}
+
+
+def _category(alert_type, data) -> str:
+    if alert_type in _BRIEF_TYPES or (data or {}).get("ask_prompt"):
+        return CATEGORY_BRIEF
+    if alert_type in _ISSUE_TYPES:
+        return CATEGORY_ISSUE
+    if (data or {}).get("review_id"):
+        return CATEGORY_REVIEW
+    return ""
+
+
 _jwt_cache = {"token": None, "minted_at": 0}
 _JWT_MAX_AGE = 50 * 60  # Apple allows up to 60 min; regenerate a bit early
+_jwt_lock = threading.Lock()
+
+
+def invalidate_provider_jwt():
+    """Drop the cached signing token so the next attempt mints a fresh one.
+
+    APNs answers a stale JWT with 403 ExpiredProviderToken. Without this the
+    retry loop re-sent the same dead token twice more and burned all three
+    attempts, and the 50-minute cache meant every push for the rest of that
+    window failed the same way."""
+    with _jwt_lock:
+        _jwt_cache["token"] = None
+        _jwt_cache["minted_at"] = 0
 
 
 def _provider_jwt():
@@ -110,19 +243,34 @@ def _provider_jwt():
     now = time.time()
     if _jwt_cache["token"] and (now - _jwt_cache["minted_at"]) < _JWT_MAX_AGE:
         return _jwt_cache["token"]
-    import jwt as _pyjwt
     key_id = os.getenv("APNS_KEY_ID")
     team_id = os.getenv("APNS_TEAM_ID")
     private_key = os.getenv("APNS_PRIVATE_KEY", "").replace("\\n", "\n")
+    # Named, not signed-with-nothing. An empty key produced a token APNs
+    # rejects, which read downstream as ten dead devices rather than as one
+    # missing environment variable.
+    missing = [n for n, v in (("APNS_KEY_ID", key_id), ("APNS_TEAM_ID", team_id),
+                              ("APNS_PRIVATE_KEY", private_key)) if not v]
+    if missing:
+        raise PushNotConfigured("APNs is not configured: " + ", ".join(missing) + " unset")
+    import jwt as _pyjwt
     token = _pyjwt.encode(
         {"iss": team_id, "iat": int(now)},
         private_key,
         algorithm="ES256",
         headers={"kid": key_id},
     )
-    _jwt_cache["token"] = token
-    _jwt_cache["minted_at"] = now
+    with _jwt_lock:
+        _jwt_cache["token"] = token
+        _jwt_cache["minted_at"] = now
     return token
+
+
+def _bundle_id():
+    """The apns-topic. Defaults to the real bundle id, matching
+    mobile_api.py's Sign-in-with-Apple check — this used to default to "",
+    which APNs rejects as MissingTopic on every single send."""
+    return os.getenv("APNS_BUNDLE_ID", "ai.cavnar.CavnarAI")
 
 
 def _apns_host(environment):
@@ -146,8 +294,19 @@ def _collapse_id(restaurant_id, alert_type, data) -> str:
     """
     parts = [str(restaurant_id), str(alert_type or "alert")]
     review_id = (data or {}).get("review_id")
-    if review_id:
+    explicit = (data or {}).get("collapse_key")
+    if explicit:
+        parts.append(str(explicit))
+    elif review_id:
         parts.append(f"r{review_id}")
+    elif alert_type in _UNCOLLAPSIBLE_TYPES:
+        # Several of these happen in one day and each one is its own event.
+        # Keyed on the date, a second sign-in REPLACED the first on the lock
+        # screen: an owner with three staff sign-ins and two dashboard logins
+        # saw one notification, and the security value of the feature went
+        # with the ones it overwrote.
+        import uuid
+        parts.append(uuid.uuid4().hex[:12])
     else:
         parts.append(datetime.now(timezone.utc).strftime("%Y%m%d"))
     key = "-".join(parts)
@@ -157,10 +316,94 @@ def _collapse_id(restaurant_id, alert_type, data) -> str:
     return key
 
 
+def _classify(status, reason):
+    """('dead' | 'provider' | 'token') for one failed attempt.
+
+    'dead'     — Apple says this token will never work: delete it.
+    'provider' — our key, our topic, our network, or Apple's own trouble.
+                 Says nothing about the device, so it must NOT advance the
+                 failure counter (this is the audit's P0).
+    'token'    — an unclassified 4xx. Counted, and at the threshold the
+                 token is PARKED rather than deleted.
+    """
+    if reason in _PERMANENT_FAILURE_REASONS:
+        return "dead"
+    if reason in _PROVIDER_FAILURE_REASONS:
+        return "provider"
+    if status in (0, 403, 429) or status >= 500:
+        return "provider"
+    return "token"
+
+
+# One capture per reason per window, so an expired key across 50 restaurants
+# writes one job_failures row an hour rather than hundreds.
+_PROVIDER_ALARM_WINDOW = 3600
+_provider_alarms = {}
+
+
+def _alarm_provider_failure(error, db_path):
+    key = str(error)[:80]
+    now = time.time()
+    with _executor_lock:
+        if now - _provider_alarms.get(key, 0) < _PROVIDER_ALARM_WINDOW:
+            return
+        _provider_alarms[key] = now
+    try:
+        import ops
+        ops.capture(RuntimeError(f"APNs provider failure: {error}"),
+                    job="push_provider", context="every device is affected, not one",
+                    db_path=db_path)
+    except Exception:
+        pass
+
+
+_http_client = None
+
+
+def _client():
+    """One shared HTTP/2 client for every delivery.
+
+    Each _deliver used to open its own, so every notification paid a fresh
+    TLS handshake to Apple — the thing that becomes the bottleneck long
+    before SQLite does. httpx.Client is thread-safe, and the pool below is
+    bounded at four workers anyway."""
+    global _http_client
+    if _http_client is None:
+        with _executor_lock:
+            if _http_client is None:
+                import httpx
+                _http_client = httpx.Client(http2=True, timeout=5)
+    return _http_client
+
+
+def _badge_for(device_token_row, db_path):
+    """This login's unread count, for the app icon. The app asked for badge
+    authorization from the first launch and nothing ever set one."""
+    try:
+        from models import unread_notification_count
+        return unread_notification_count(int(device_token_row.get("user_id") or 0),
+                                         int(device_token_row["restaurant_id"]), db_path)
+    except Exception:
+        return None
+
+
 def _deliver(device_token_row, alert_type, title, body, data, db_path=DB_PATH):
-    import httpx
-    bundle_id = __import__("os").getenv("APNS_BUNDLE_ID", "")
+    priority = priority_of(alert_type)
     aps = {"alert": {"title": title, "body": body}, "sound": "default"}
+    level = _INTERRUPTION.get(priority)
+    if level:
+        aps["interruption-level"] = level
+    category = _category(alert_type, data)
+    if category:
+        aps["category"] = category
+    # Ranks Cavnar's own notifications against each other in a summary.
+    aps["relevance-score"] = round(max(0.0, 1.0 - priority / 5.0), 2)
+    # One thread per restaurant: five alerts group under one header instead
+    # of stacking as five unrelated banners.
+    aps["thread-id"] = f"cavnar-{device_token_row.get('restaurant_id')}"
+    badge = _badge_for(device_token_row, db_path)
+    if badge is not None:
+        aps["badge"] = badge
     try:
         rid = device_token_row["restaurant_id"] if "restaurant_id" in device_token_row.keys() else None
         if rid:
@@ -169,30 +412,24 @@ def _deliver(device_token_row, alert_type, title, body, data, db_path=DB_PATH):
             _c.close()
             if _r and _r["push_sound"] == 0:
                 aps.pop("sound", None)
-            # Health/safety mentions that opt out of quiet hours also break
-            # through the phone's Focus modes (Time Sensitive — needs the
-            # matching entitlement on the app, see project.yml).
-            if alert_type == "health" and _r and _r["alert_health_bypass_quiet"]:
-                aps["interruption-level"] = "time-sensitive"
+            # A P0 that has NOT opted out of quiet hours stays a normal
+            # banner — the entitlement exists for the owner who asked to be
+            # woken, not for every health mention.
+            if alert_type == "health" and not (_r and _r["alert_health_bypass_quiet"]):
+                aps.pop("interruption-level", None)
     except Exception:
         pass
     payload = {
         "aps": aps,
-        "cavnar": {"alert_type": alert_type, **(data or {})},
+        "cavnar": {"alert_type": alert_type, "priority": priority, **(data or {})},
     }
     payload_bytes = json.dumps(payload, separators=(",", ":")).encode()
     url = f"https://{_apns_host(device_token_row['environment'])}/3/device/{device_token_row['apns_token']}"
-    headers = {
-        "authorization": f"bearer {_provider_jwt()}",
-        "apns-topic": bundle_id,
-        "apns-push-type": "alert",
-        "apns-collapse-id": _collapse_id(device_token_row.get("restaurant_id"), alert_type, data),
-        "content-type": "application/json",
-    }
+    expiry = int(time.time()) + _EXPIRY_SECONDS.get(priority, 12 * 3600)
     status = 0
     ok = False
     error = None
-    permanent_failure = False
+    verdict = None
     backoffs = [0, 2, 6]
     attempts = 0
     for delay in backoffs:
@@ -200,24 +437,45 @@ def _deliver(device_token_row, alert_type, title, body, data, db_path=DB_PATH):
             time.sleep(delay)
         attempts += 1
         try:
-            with httpx.Client(http2=True, timeout=5) as client:
-                resp = client.post(url, content=payload_bytes, headers=headers)
+            headers = {
+                "authorization": f"bearer {_provider_jwt()}",
+                "apns-topic": _bundle_id(),
+                "apns-push-type": "alert",
+                "apns-collapse-id": _collapse_id(device_token_row.get("restaurant_id"), alert_type, data),
+                # 5 lets Apple batch a summary with the phone's power state;
+                # 10 is immediate. Nothing below P4 should cost battery.
+                "apns-priority": "5" if priority >= P4_SUMMARY else "10",
+                "apns-expiration": str(expiry),
+                "content-type": "application/json",
+            }
+            resp = _client().post(url, content=payload_bytes, headers=headers)
             status = resp.status_code
             if status == 200:
                 ok = True
+                verdict = None
                 break
             try:
                 reason = resp.json().get("reason", "")
             except Exception:
                 reason = ""
             error = reason or f"HTTP {status}"
-            if reason in _PERMANENT_FAILURE_REASONS:
-                permanent_failure = True
+            verdict = _classify(status, reason)
+            if reason in _JWT_REMINT_REASONS:
+                invalidate_provider_jwt()
+            if verdict == "dead":
                 break
+        except PushNotConfigured as e:
+            # No key, no point retrying 2 more times against the same env.
+            error, status, verdict = str(e)[:300], 0, "provider"
+            break
         except Exception as e:
             error = str(e)[:300]
             print(f"[push] delivery error (token={device_token_row['apns_token'][:12]}...): {e}")
             status = 0
+            verdict = "provider"
+
+    if not ok and verdict == "provider":
+        _alarm_provider_failure(error, db_path)
 
     try:
         conn = get_conn(db_path)
@@ -229,20 +487,32 @@ def _deliver(device_token_row, alert_type, title, body, data, db_path=DB_PATH):
         )
         if ok:
             conn.execute(
-                "UPDATE device_tokens SET last_success_at=datetime('now'), consecutive_failures=0 WHERE id=?",
+                "UPDATE device_tokens SET last_success_at=datetime('now'), consecutive_failures=0, "
+                "disabled_reason=NULL WHERE id=?",
                 (device_token_row["id"],)
             )
-        elif permanent_failure:
+        elif verdict == "dead":
             # Apple has told us this token will never work again — delete it
             # immediately rather than waiting out _AUTO_DISABLE_AFTER.
             conn.execute("DELETE FROM device_tokens WHERE id=?", (device_token_row["id"],))
+        elif verdict == "provider":
+            # Nothing about this device is wrong. Leave the counter alone.
+            pass
         else:
             row = conn.execute(
                 "SELECT consecutive_failures FROM device_tokens WHERE id=?", (device_token_row["id"],)
             ).fetchone()
             failures = (row["consecutive_failures"] or 0) + 1 if row else 1
             if failures >= _AUTO_DISABLE_AFTER:
-                conn.execute("DELETE FROM device_tokens WHERE id=?", (device_token_row["id"],))
+                # PARKED, not deleted. get_device_tokens(for_delivery=True)
+                # skips it, and the next app launch re-registers and clears
+                # it — so a bad patch costs an owner one relaunch, not a
+                # permanent silent unsubscribe they never asked for.
+                conn.execute(
+                    "UPDATE device_tokens SET consecutive_failures=?, disabled_reason=? WHERE id=?",
+                    (failures, f"{_AUTO_DISABLE_AFTER} consecutive failures ({error})"[:200],
+                     device_token_row["id"])
+                )
             else:
                 conn.execute(
                     "UPDATE device_tokens SET consecutive_failures=? WHERE id=?",
@@ -312,7 +582,7 @@ def fire_push(restaurant_id, alert_type, title, body, data=None, db_path=DB_PATH
     pass it — None keeps the everyone-at-the-restaurant behaviour."""
     global _queued
     try:
-        tokens = get_device_tokens(restaurant_id, db_path)
+        tokens = get_device_tokens(restaurant_id, db_path, for_delivery=True)
         if user_ids is not None:
             allowed = {int(u) for u in user_ids}
             tokens = [t for t in tokens if int(t.get("user_id") or 0) in allowed]

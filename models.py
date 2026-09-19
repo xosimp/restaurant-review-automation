@@ -743,8 +743,20 @@ def ensure_columns(db_path: str = DB_PATH):
         ("ingredients", "supplier_email", "TEXT"),
         # Changelog seen state
         ("restaurants", "changelog_seen_at", "TEXT"),
-        # Notifications (alert_log) seen state — same stamp-on-read pattern
+        # Notifications (alert_log) seen state — same stamp-on-read pattern.
+        # Superseded by the per-login notification_reads table (two co-owners
+        # share one restaurant row, so one of them opening the bell cleared
+        # the other's badge). Kept as the fallback for a login that has never
+        # opened the list, and so an old client build keeps working.
         ("restaurants", "notifications_seen_at", "TEXT"),
+        # What an alert_log row fired on (notify._log_alert) and how urgent it
+        # is (notify.PRIORITY). Both were added lazily on the write path
+        # before; owned by init_db now, per the no-DDL-on-a-request rule.
+        ("alert_log", "value", "REAL"),
+        ("alert_log", "priority", "INTEGER"),
+        # The figure a held daily alert fired on, so releasing it after the
+        # rush still records what _waste_alert_worsened compares against.
+        ("alert_holds", "value", "REAL"),
         # Alert DND / throttle
         ("restaurants", "alert_quiet_start", "TEXT"),
         ("restaurants", "alert_quiet_end",   "TEXT"),
@@ -1129,6 +1141,20 @@ def init_db(db_path: str = DB_PATH):
             fired_at      TEXT NOT NULL DEFAULT (datetime('now'))
         )""",
         "CREATE INDEX IF NOT EXISTS idx_alert_log_restaurant ON alert_log(restaurant_id, fired_at)",
+        # Per-LOGIN notification read state. restaurants.notifications_seen_at
+        # was one stamp for the whole restaurant, so a co-owner opening the
+        # bell cleared their partner's unread badge — and the two clients
+        # disagreed anyway, since the web bell kept its own localStorage copy.
+        # seen_at is written in SQLite's own "%Y-%m-%d %H:%M:%S" so it
+        # compares correctly against alert_log.fired_at: the old ISO 'T'
+        # stamp sorted BELOW every same-day fired_at (' ' < 'T'), which made
+        # the unread count structurally incapable of seeing today's alerts.
+        """CREATE TABLE IF NOT EXISTS notification_reads (
+            user_id       INTEGER NOT NULL,
+            restaurant_id INTEGER NOT NULL,
+            seen_at       TEXT    NOT NULL,
+            PRIMARY KEY (user_id, restaurant_id)
+        )""",
         # One row per restaurant per day — the mobile Home tab's "Total value
         # delivered" sparkline needs real history to plot, and the figure
         # itself is computed fresh on every request rather than stored
@@ -1812,7 +1838,8 @@ def init_db(db_path: str = DB_PATH):
             review_id       INTEGER,
             release_at      TEXT NOT NULL,
             created_at      TEXT NOT NULL DEFAULT (datetime('now')),
-            sent_at         TEXT
+            sent_at         TEXT,
+            value           REAL
         )""",
         "CREATE INDEX IF NOT EXISTS idx_alert_holds_due ON alert_holds(sent_at, release_at)",
 
@@ -6890,6 +6917,20 @@ def is_in_quiet_hours(restaurant_id: int, db_path: str = DB_PATH) -> bool:
     except Exception:
         return False
 
+# alert_log is two things at once: the notification HISTORY both clients
+# read, and the tally the daily cap and the hard ceiling are counted from.
+# The advisory notifications write history rows so they stop being invisible
+# to the bell — but they must not consume an owner's "max 3 alerts a day",
+# because they are not alerts: the brief is one a day by construction, the
+# pulse only fires when the day is genuinely off, and an issue text goes to
+# a manager, not to the owner whose cap it would otherwise spend.
+NON_ALERT_TYPES = (
+    "morning_brief", "intraday_pulse", "closing_summary", "weekly_review",
+    "monthly_review", "daily_briefing", "schedule_drafted", "outcome_achieved",
+    "issue", "issue_escalated", "coverage", "demand_opportunity",
+)
+
+
 def count_alerts_today(restaurant_id: int, db_path: str = DB_PATH) -> int:
     """Alerts sent so far in the RESTAURANT's own day.
 
@@ -6910,11 +6951,76 @@ def count_alerts_today(restaurant_id: int, db_path: str = DB_PATH) -> int:
         # Never let a timezone lookup turn into "no cap at all".
         since = datetime.now(timezone.utc).strftime("%Y-%m-%d 00:00:00")
     conn = get_conn(db_path)
+    placeholders = ",".join("?" * len(NON_ALERT_TYPES))
     row = conn.execute(
-        "SELECT COUNT(*) as c FROM alert_log WHERE restaurant_id=? AND fired_at >= ?",
-        (restaurant_id, since)
+        f"SELECT COUNT(*) as c FROM alert_log WHERE restaurant_id=? AND fired_at >= ? "
+        f"AND alert_type NOT IN ({placeholders})",
+        (restaurant_id, since, *NON_ALERT_TYPES)
     ).fetchone()
     conn.close()
+    return row["c"] if row else 0
+
+
+# ── Notification read state (per login) ──────────────────────────────────────
+#
+# Written in SQLite's own timestamp format, deliberately. alert_log.fired_at
+# is `datetime('now')` — "2026-09-19 11:00:00" — and the unread query is a
+# TEXT comparison. The previous stamp used isoformat's 'T' separator, and
+# ' ' (0x20) sorts below 'T' (0x54), so EVERY alert fired on the same
+# calendar date as the last read compared as older than the read and was
+# counted as already seen. The badge could only ever show yesterday's news.
+
+def _now_sql() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def mark_notifications_seen(user_id: int, restaurant_id: int, db_path: str = DB_PATH) -> str:
+    """Stamp this login's read mark. Returns the stamp written."""
+    stamp = _now_sql()
+    conn = get_conn(db_path)
+    try:
+        conn.execute(
+            "INSERT INTO notification_reads (user_id, restaurant_id, seen_at) VALUES (?,?,?) "
+            "ON CONFLICT(user_id, restaurant_id) DO UPDATE SET seen_at=excluded.seen_at",
+            (int(user_id), int(restaurant_id), stamp))
+        conn.commit()
+    finally:
+        conn.close()
+    return stamp
+
+
+def notifications_seen_at(user_id: int, restaurant_id: int, db_path: str = DB_PATH):
+    """This login's read mark, falling back to the restaurant-wide stamp for
+    a login that has never opened the list on this build. The fallback is
+    normalised out of the old ISO 'T' form so it compares correctly."""
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT seen_at FROM notification_reads WHERE user_id=? AND restaurant_id=?",
+            (int(user_id), int(restaurant_id))).fetchone()
+        if row and row["seen_at"]:
+            return row["seen_at"]
+        legacy = conn.execute(
+            "SELECT notifications_seen_at FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
+    finally:
+        conn.close()
+    value = legacy["notifications_seen_at"] if legacy else None
+    return value.replace("T", " ")[:19] if value else None
+
+
+def unread_notification_count(user_id: int, restaurant_id: int, db_path: str = DB_PATH) -> int:
+    since = notifications_seen_at(user_id, restaurant_id, db_path)
+    conn = get_conn(db_path)
+    try:
+        if since:
+            row = conn.execute(
+                "SELECT COUNT(*) AS c FROM alert_log WHERE restaurant_id=? AND fired_at > ?",
+                (restaurant_id, since)).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT COUNT(*) AS c FROM alert_log WHERE restaurant_id=?", (restaurant_id,)).fetchone()
+    finally:
+        conn.close()
     return row["c"] if row else 0
 
 

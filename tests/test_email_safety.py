@@ -66,6 +66,7 @@ def test_every_send_site_goes_through_a_guarded_path():
     Resend SDK — both blocked above. A new raw urllib/httpx send would
     slip past the guard, so it fails here."""
     import glob
+    import re
     offenders = []
     for path in glob.glob("*.py"):
         src = open(path, encoding="utf-8").read()
@@ -75,7 +76,15 @@ def test_every_send_site_goes_through_a_guarded_path():
         # Raw SDK sends — every one of these is blocked by conftest's
         # resend.Emails.send patch. A new file appearing here means a new
         # send path someone should route through emails.deliver instead.
-        if "resend.Emails.send" in src and path not in (
+        #
+        # Matched on `.Emails.send`, not the literal "resend.Emails.send".
+        # The old substring missed every ALIASED import, and notify.py —
+        # the file that sends every review, health, labor and waste alert —
+        # was exactly that: `import resend as _r` then `_r.Emails.send(...)`.
+        # It sat outside this allowlist for the life of the alert system,
+        # bypassing suppression, retry and email_log, and this test reported
+        # green the whole time.
+        if re.search(r"\.Emails\.send\s*\(", src) and path not in (
                 "admin_routes.py", "webhook_routes.py", "audit_app.py", "mobile_api.py",
                 "auth_routes.py", "ops.py", "scheduler.py", "client_api.py"):
             offenders.append(path + " (raw SDK send)")

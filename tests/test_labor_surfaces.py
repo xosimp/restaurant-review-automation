@@ -182,8 +182,16 @@ def _alerting_restaurant(db_path):
     return 1
 
 
+def _no_rush(monkeypatch):
+    """Daily alerts are held through lunch and dinner service now, so these
+    assert nothing at all when the suite happens to run at 12:15 or 18:30.
+    The holding itself is covered in test_alert_amplification.py."""
+    monkeypatch.setattr(notify, "rush_release_at", lambda *a, **kw: None)
+
+
 def _fire(monkeypatch, db_path):
     sent = []
+    _no_rush(monkeypatch)
     monkeypatch.setattr(notify, "_send_alert_email",
                         lambda to, subject, html, **kw: sent.append((subject, html)))
     monkeypatch.setattr("push.fire_push", lambda *a, **kw: None)
@@ -223,6 +231,7 @@ def test_the_alert_names_the_period_it_is_about(monkeypatch, db_path):
     start = (date.today() - timedelta(days=8)).isoformat()
     models.save_labor_snapshot(rid, start, end, 38.0, 3800, 10000, db_path=db_path)
     texts = []
+    _no_rush(monkeypatch)
     monkeypatch.setattr(notify, "_send_alert_email", lambda *a, **kw: None)
     monkeypatch.setattr("push.fire_push",
                         lambda rid_, kind, subject, body, **kw: texts.append(body))

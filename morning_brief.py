@@ -410,6 +410,10 @@ def deliver(restaurant_id, restaurant=None, today=None, db_path=DB_PATH):
             pt = push_text(brief, name)
             lead = next((l for l in brief["lines"] if l["tone"] == "action"), brief["lines"][0])
             # This person's devices only: two recipients can hold different briefs.
+            # History first: the push payload carries this login's unread
+            # badge, counted over alert_log.
+            import notify as _notify
+            _notify.record_notification(restaurant_id, "morning_brief", db_path=db_path)
             push.fire_push(restaurant_id, "morning_brief", pt["title"], pt["body"],
                            data={"ask_prompt": lead["ask"]}, db_path=db_path, user_ids={u["id"]})
             pushed += 1
