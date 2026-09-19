@@ -27,6 +27,13 @@ from models import get_conn, DB_PATH
 DEFAULT_ESCALATE_MINUTES = 120
 AUTO_REVIEW_MAX_RATING = 2
 AUTO_REVIEW_LOOKBACK_HOURS = 48
+# The review itself must be recent, not just recently fetched: connecting
+# Google imports the whole review history with a fresh fetched_at, and every
+# old 1-star review would otherwise text the manager on day one.
+AUTO_REVIEW_MAX_AGE_DAYS = 3
+# And however many qualify, one scan opens at most this many — a bad night
+# is one conversation with the manager, not a dozen texts.
+AUTO_REVIEW_MAX_PER_SCAN = 3
 ROLES = ("manager", "escalation")
 
 
@@ -165,8 +172,11 @@ def create_issue(restaurant_id, kind, title, detail=None, severity="normal", sou
         issue_id = cur.lastrowid
     finally:
         conn.close()
-    token = _mint_link(issue_id, assignee_contact_id, db_path=db_path)
-    if notify:
+    # No assignee, no link: a link is a credential for one person, and an
+    # unassigned issue has nobody to hold it. Assigning it later mints one.
+    token = _mint_link(issue_id, assignee_contact_id, db_path=db_path) \
+        if assignee_contact_id is not None else None
+    if notify and token:
         _notify(issue_id, token, db_path=db_path)
     return _public(get_issue(restaurant_id, issue_id, db_path)), token
 
@@ -177,9 +187,10 @@ def _restaurant_name(restaurant_id):
     return (r.location_name or r.name) if r else "your restaurant"
 
 
-def _notify(issue_id, token, db_path=DB_PATH):
-    """Text the assignee. Held (not dropped) during the owner's quiet hours —
-    the tick sends it when they end. Returns True when a text went out."""
+def _sendable(issue_id, db_path=DB_PATH):
+    """The issue row with its assignee's phone when a text may go out NOW,
+    else None: no consented phone, already notified, resolved, or quiet hours
+    (held, not dropped — the tick sends it when they end)."""
     from models import is_in_quiet_hours
     conn = get_conn(db_path)
     try:
@@ -190,15 +201,17 @@ def _notify(issue_id, token, db_path=DB_PATH):
     finally:
         conn.close()
     if not r or not r["phone"] or r["notified_at"] or r["status"] == "resolved":
+        return None
+    if is_in_quiet_hours(r["restaurant_id"], db_path=db_path):
+        return None
+    return r
+
+
+def _notify(issue_id, token, db_path=DB_PATH):
+    """Text the assignee their link. Returns True when a text went out."""
+    r = _sendable(issue_id, db_path)
+    if not r or not token:
         return False
-    try:
-        if is_in_quiet_hours(r["restaurant_id"], db_path=db_path):
-            return False
-    except TypeError:
-        if is_in_quiet_hours(r["restaurant_id"]):
-            return False
-    if not token:
-        return False          # a held issue re-mints its link in tick()
     from notify import send_sms
     where = _restaurant_name(r["restaurant_id"])
     msg = (f"Cavnar AI · {where}: {r['title']}. Assigned to you — "
@@ -361,17 +374,25 @@ def open_from_reviews(restaurant_id, db_path=DB_PATH):
     who owns them, not something that starts texting phones on its own."""
     if "manager" not in get_routing(restaurant_id, db_path):
         return []
-    since = (datetime.utcnow() - timedelta(hours=AUTO_REVIEW_LOOKBACK_HOURS)).strftime("%Y-%m-%d %H:%M:%S")
     conn = get_conn(db_path)
     try:
+        # datetime() on both sides: fetched_at is ISO with a 'T' and
+        # review_date is sometimes a bare date, and a raw string comparison
+        # against a space-separated cutoff is wrong for both.
         rows = conn.execute(
             "SELECT id, rating, author, text, specific_complaint FROM reviews WHERE restaurant_id=? "
-            "AND deleted_at IS NULL AND rating<=? AND fetched_at>=?",
-            (restaurant_id, AUTO_REVIEW_MAX_RATING, since)).fetchall()
+            "AND deleted_at IS NULL AND rating<=? "
+            "AND datetime(fetched_at) >= datetime('now', ?) "
+            "AND datetime(review_date) >= datetime('now', ?) "
+            "AND NOT EXISTS (SELECT 1 FROM ops_issues o WHERE o.restaurant_id=reviews.restaurant_id "
+            "                AND o.source_key='review:' || reviews.id) "
+            "ORDER BY rating ASC, id DESC",
+            (restaurant_id, AUTO_REVIEW_MAX_RATING, f"-{AUTO_REVIEW_LOOKBACK_HOURS} hours",
+             f"-{AUTO_REVIEW_MAX_AGE_DAYS} days")).fetchall()
     finally:
         conn.close()
     opened = []
-    for r in rows:
+    for r in rows[:AUTO_REVIEW_MAX_PER_SCAN]:
         what = r["specific_complaint"] or (r["text"] or "")[:140]
         issue, token = create_issue(
             restaurant_id, "review",
@@ -400,21 +421,23 @@ def tick(db_path=DB_PATH, now=None):
             "FROM ops_issues i JOIN issue_routing r ON r.restaurant_id=i.restaurant_id AND r.role='escalation' "
             "JOIN alert_contacts c ON c.id=r.contact_id AND c.restaurant_id=i.restaurant_id "
             "AND COALESCE(c.sms_consent,0)=1 "
-            "WHERE i.status='open' AND i.notified_at IS NOT NULL AND i.escalated_at IS NULL").fetchall()
+            "WHERE i.status='open' AND i.notified_at IS NOT NULL AND i.escalated_at IS NULL "
+            # Escalating to the person who already has it texts them twice.
+            "AND r.contact_id != COALESCE(i.assignee_contact_id, -1)").fetchall()
     finally:
         conn.close()
 
     sent_held = 0
     for h in held:
-        # A held issue's link was never sent and its token is unrecoverable
-        # (only the hash is stored), so it gets a fresh one.
-        conn = get_conn(db_path)
-        try:
-            contact = conn.execute("SELECT assignee_contact_id FROM ops_issues WHERE id=?",
-                                   (h["id"],)).fetchone()["assignee_contact_id"]
-        finally:
-            conn.close()
-        token = _mint_link(h["id"], contact, db_path=db_path)
+        # Checked BEFORE minting. A held issue's link was never sent and its
+        # token is unrecoverable (only the hash is stored), so it needs a
+        # fresh one — but only when a text can actually go out. Minting first
+        # added a link row every tick for the whole of quiet hours, and
+        # forever for an assignee whose consent was later withdrawn.
+        r = _sendable(h["id"], db_path)
+        if not r:
+            continue
+        token = _mint_link(h["id"], r["assignee_contact_id"], db_path=db_path)
         if _notify(h["id"], token, db_path=db_path):
             sent_held += 1
 
@@ -426,12 +449,8 @@ def tick(db_path=DB_PATH, now=None):
             continue
         if now - notified < timedelta(minutes=int(s["escalate_after_minutes"] or DEFAULT_ESCALATE_MINUTES)):
             continue
-        try:
-            if is_in_quiet_hours(s["restaurant_id"], db_path=db_path):
-                continue
-        except TypeError:
-            if is_in_quiet_hours(s["restaurant_id"]):
-                continue
+        if is_in_quiet_hours(s["restaurant_id"], db_path=db_path):
+            continue
         # The escalation contact gets their OWN link. The assignee's stays
         # valid — bringing in the regional manager must not lock the local
         # one out of the issue they were given.

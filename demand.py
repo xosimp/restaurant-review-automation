@@ -93,7 +93,7 @@ def yesterday_vs_typical(restaurant_id, today=None, db_path=DB_PATH):
 def slow_days(restaurant_id, db_path=DB_PATH):
     """Weekdays that run materially below this restaurant's typical day."""
     import labor
-    fc = labor.build_demand_forecast(restaurant_id, weeks=LOOKBACK_WEEKS)
+    fc = labor.build_demand_forecast(restaurant_id, weeks=LOOKBACK_WEEKS, db_path=db_path)
     if not fc.get("ok"):
         return {"available": False, "reason": fc.get("reason", "not enough history")}
     slow = [d for d in fc.get("days", [])
@@ -131,13 +131,18 @@ def prep_list(restaurant_id, day=None, db_path=DB_PATH, limit=15):
         return {"available": False, "day": day.isoformat(),
                 "reason": "no dish-level sales on file for this weekday yet"}
 
-    per_dish = {}
-    for r in sales:
-        per_dish.setdefault(r["menu_item_id"], []).append(float(r["q"] or 0))
-    expected = {mid: _median(v) for mid, v in per_dish.items() if len(v) >= 2}
-    if not expected:
+    # Zero-filled across every past weekday that had ANY dish sales: a dish
+    # that sold on 2 of 8 Fridays sold nothing on the other 6, and a median of
+    # only the days it appeared would forecast it as a Friday staple.
+    dates = sorted({r["business_date"] for r in sales})
+    if len(dates) < 2:
         return {"available": False, "day": day.isoformat(),
                 "reason": "fewer than two past weekdays of dish sales"}
+    sold = {}
+    for r in sales:
+        sold.setdefault(r["menu_item_id"], {})[r["business_date"]] = float(r["q"] or 0)
+    expected = {mid: _median([by_date.get(d, 0.0) for d in dates]) for mid, by_date in sold.items()}
+    expected = {mid: q for mid, q in expected.items() if q}
 
     need = {}
     for rec in recipes:

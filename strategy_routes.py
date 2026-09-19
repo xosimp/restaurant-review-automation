@@ -67,6 +67,17 @@ def _forbidden(msg="Only the account owner can see this."):
     return {"ok": False, "error": msg}, 403
 
 
+def _limited(u, bucket, max_calls, window_secs):
+    """Per-restaurant limiter for routes that text a phone or run a paid
+    model. The daily AI budget stops runaway spend; this stops one screen
+    (or one script) from texting a manager twenty times in a minute."""
+    from ai_utils import ai_rate_limited
+    return ai_rate_limited(f"{bucket}:{_rid(u)}", max_calls=max_calls, window_secs=window_secs)
+
+
+_SLOW_DOWN = ({"ok": False, "error": "That's a lot in a short time — wait a few minutes and try again."}, 429)
+
+
 # ── issues ────────────────────────────────────────────────────────────────────
 
 def _do_issues_list(u):
@@ -83,6 +94,8 @@ def _do_issue_create(u):
     if not title:
         return {"ok": False, "error": "Give the issue a title."}, 400
     contact = b.get("assignee_contact_id")
+    if _limited(u, "issue_text", 20, 3600):
+        return _SLOW_DOWN
     try:
         issue, _token = issues.create_issue(
             _rid(u), "manual", title, detail=(b.get("detail") or "").strip() or None,
@@ -104,6 +117,8 @@ def _do_issue_resolve(u, issue_id):
 
 def _do_issue_reassign(u, issue_id):
     import issues
+    if _limited(u, "issue_text", 20, 3600):
+        return _SLOW_DOWN
     try:
         out = issues.reassign(_rid(u), issue_id, int(_body().get("contact_id")))
     except (ValueError, TypeError) as e:
@@ -241,6 +256,8 @@ def _do_invoice_scan(u):
     f = request.files.get("file")
     if not f:
         return {"ok": False, "error": "Attach a photo or PDF of the invoice."}, 400
+    if _limited(u, "invoice_scan", 10, 600):
+        return _SLOW_DOWN
     data = f.read()
     media_type = (f.mimetype or "").lower()
     if media_type == "image/jpg":

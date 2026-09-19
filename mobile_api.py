@@ -4931,7 +4931,9 @@ def mobile_send_test_digest(current_user):
         from reporter import build_report_from_db, render_html
         import resend as _resend
         report = build_report_from_db(rid, restaurant.name, days=7)
-        html = render_html(report, restaurant.name, owner_name=restaurant.owner_name, restaurant_id=rid)
+        from permissions import has_permission as _hp_dg, TEAM_INVITE as _ti_dg
+        html = render_html(report, restaurant.name, owner_name=restaurant.owner_name, restaurant_id=rid,
+                           owner_view=bool(current_user.get("is_admin")) or _hp_dg(current_user, _ti_dg))
         _resend.api_key = _resend_key()
         _resend.Emails.send({
             "from": f"Cavnar AI <{_from_email()}>",

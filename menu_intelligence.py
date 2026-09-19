@@ -181,7 +181,6 @@ def reprice_suggestions(restaurant_id, db_path=DB_PATH):
     import inventory_ledger
     menu = {e["id"]: e for e in (inventory_ledger.menu_profitability(restaurant_id).get("priced") or [])}
 
-    from business_intelligence import _same_thing
     conn = get_conn(db_path)
     try:
         ingredients = [dict(r) for r in conn.execute(
@@ -193,13 +192,17 @@ def reprice_suggestions(restaurant_id, db_path=DB_PATH):
     finally:
         conn.close()
 
+    from invoices import match_ingredient
     by_dish = {}
     for w in rises:
+        # Exact name first; otherwise the strict matcher invoices use (every
+        # word of the ingredient's name present, one unique winner). A shared
+        # word is NOT enough here: "chicken" alone would reprice every
+        # chicken-breast dish off a chicken-thigh price rise.
         exact = [i for i in ingredients if i["name"].strip().lower() == w["item"].strip().lower()]
-        match = exact or [i for i in ingredients if _same_thing(w["item"], i["name"])]
-        if len(match) != 1:
+        ing = exact[0] if len(exact) == 1 else (None if exact else match_ingredient(w["item"], ingredients))
+        if not ing:
             continue          # ambiguous or unknown ingredient — not evidence
-        ing = match[0]
         per_unit = w["new_price"] - w["old_price"]
         for rec in (r for r in recipes if r["ingredient_id"] == ing["id"]):
             dish = menu.get(rec["menu_item_id"])
@@ -242,7 +245,10 @@ def reprice_suggestions(restaurant_id, db_path=DB_PATH):
                               "no sales mix yet — per-plate figure only"),
         })
         out.append(d)
-    out.sort(key=lambda d: -(d["monthly_margin_lost"] or d["increase_per_plate"]))
+    # Dollars a month first; per-plate-only rows (no sales mix) after them —
+    # the two are different units and must not be sorted against each other.
+    out.sort(key=lambda d: (d["monthly_margin_lost"] is None,
+                            -(d["monthly_margin_lost"] or d["increase_per_plate"])))
     return {
         "available": True,
         "suggestions": out,

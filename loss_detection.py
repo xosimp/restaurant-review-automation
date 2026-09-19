@@ -141,12 +141,16 @@ def signals(restaurant_id, today=None, db_path=DB_PATH):
                     if hist and weeks_seen >= 1.0 else None)
         entry = {"kind": kind, "week_amount": amount, "week_events": events,
                  "weekly_baseline": baseline, "flags": []}
-        if baseline and amount >= MIN_WEEK_DOLLARS and events >= MIN_EVENTS \
+        # `baseline is not None`, not truthiness: a measured zero baseline is
+        # the strongest possible contrast (weeks of no comps, then a real
+        # week of them), and a truthiness test silently skipped exactly it.
+        if baseline is not None and amount >= MIN_WEEK_DOLLARS and events >= MIN_EVENTS \
                 and amount >= baseline * SPIKE_MULTIPLE:
+            vs = (f"{amount / baseline:.1f}× their usual week (${amount:,.0f} vs about ${baseline:,.0f})"
+                  if baseline > 0 else f"${amount:,.0f} after {weeks_seen:.0f} weeks with none")
             entry["flags"].append({
                 "type": "spike",
-                "headline": f"{kind.capitalize()}s ran {amount / baseline:.1f}× their usual week "
-                            f"(${amount:,.0f} vs about ${baseline:,.0f})",
+                "headline": f"{kind.capitalize()}s ran {vs}",
                 "alternative": ALTERNATIVES[kind]})
         # Who approved them.
         who = {}

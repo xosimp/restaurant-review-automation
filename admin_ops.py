@@ -374,7 +374,10 @@ def _churn_risk(r, d, last_active, completeness):
         return {"level": "n/a", "reasons": []}
     rid, reasons, points = r["id"], [], 0
     idle = _age_days(last_active)
-    if idle is None or idle >= 30:
+    joined = _age_days(r.get("created_at"))
+    if joined is not None and joined < 14 and (idle is None or idle >= joined):
+        pass    # still onboarding: no activity yet is not disengagement
+    elif idle is None or idle >= 30:
         reasons.append("no owner activity in 30+ days" if idle is not None else "never active"); points += 3
     elif idle >= 14:
         reasons.append(f"no owner activity in {int(idle)} days"); points += 2

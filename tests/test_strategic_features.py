@@ -466,3 +466,28 @@ def test_a_failing_block_drops_only_that_block(db_path, monkeypatch):
         "open": 0, "acknowledged": 1, "resolved_last_7_days": 0})
     html = "".join(reporter._follow_through_sections(rid))
     assert "1 in hand" in html
+
+
+def test_the_loss_block_needs_an_owner_view(db_path, monkeypatch):
+    """The preview digest goes to whoever is signed in — managers included —
+    and a loss signal can name the approving manager."""
+    import reporter, loss_detection
+    rid = _rid(db_path)
+    monkeypatch.setattr(loss_detection, "signals", lambda *a, **k: {
+        "flagged": [{"headline": "One manager (POS id 7) approved 80% of comps", "alternative": "x"}],
+        "note": "not a finding of wrongdoing"})
+    assert "POS id 7" not in "".join(reporter._follow_through_sections(rid))
+    assert "POS id 7" in "".join(reporter._follow_through_sections(rid, owner_view=True))
+
+
+def test_the_preshift_briefing_never_quotes_a_guest(db_path, monkeypatch):
+    """A complaint as written can name an employee."""
+    import preshift, review_intelligence, labor
+    rid = _rid(db_path, module_reviews=1)
+    monkeypatch.setattr(labor, "build_demand_forecast", lambda *a, **k: {"days": []})
+    monkeypatch.setattr(review_intelligence, "complaint_clusters", lambda *a, **k: [
+        {"category": "service_speed", "mentions": 5, "weekday": {"value": "Friday"},
+         "complaints": [{"complaint": "our server Jake ignored us for 20 minutes"}]}])
+    from datetime import date
+    text = " ".join(i["text"] for i in preshift.build(rid, day=date(2026, 9, 18))["items"])
+    assert "service speed" in text and "Jake" not in text

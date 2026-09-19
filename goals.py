@@ -66,8 +66,12 @@ def progress(restaurant_id, db_path=DB_PATH, today=None):
     today = today or date.today()
     conn = get_conn(db_path)
     try:
+        # Achieved goals stay visible for a week: closing one is the win the
+        # owner should hear about, and dropping it from every surface the
+        # moment it closed meant nobody ever did.
         rows = [dict(r) for r in conn.execute(
-            "SELECT * FROM owner_goals WHERE restaurant_id=? AND status='active' ORDER BY id",
+            "SELECT * FROM owner_goals WHERE restaurant_id=? AND (status='active' OR "
+            "(status='achieved' AND achieved_at >= datetime('now','-7 days'))) ORDER BY id",
             (restaurant_id,)).fetchall()]
     finally:
         conn.close()
@@ -79,7 +83,9 @@ def progress(restaurant_id, db_path=DB_PATH, today=None):
         g.update({"label": info["label"], "unit": info["unit"],
                   "lower_is_better": info["lower_is_better"],
                   "current": current, "current_detail": now["detail"]})
-        if current is None:
+        if g["status"] == "achieved":
+            g["state"] = "met"
+        elif current is None:
             g["state"] = "unknown"
         elif _met(info, current, g["target"]):
             g["state"] = "met"
@@ -98,19 +104,30 @@ def progress(restaurant_id, db_path=DB_PATH, today=None):
 
 
 def mark_achieved(restaurant_id, db_path=DB_PATH, today=None):
-    """Close goals that have been met over a full trailing window. Scheduler
-    entry point; returns the goals it closed, for the brief to announce."""
+    """Close goals that have been met over a full trailing window — one that
+    began after the goal was set. Without that, a goal set while the number
+    was already on target closed itself the next morning. Scheduler entry
+    point; returns the goals it closed."""
+    today = today or date.today()
     closed = []
     for g in progress(restaurant_id, db_path=db_path, today=today):
-        if g["state"] == "met":
-            conn = get_conn(db_path)
-            try:
-                conn.execute("UPDATE owner_goals SET status='achieved', achieved_at=datetime('now') "
-                             "WHERE id=? AND status='active'", (g["id"],))
-                conn.commit()
-            finally:
-                conn.close()
-            closed.append(g)
+        if g["status"] != "active" or g["state"] != "met":
+            continue
+        window = metrics.describe(g["metric"])["default_window_days"]
+        try:
+            set_on = date.fromisoformat(str(g["created_at"])[:10])
+        except ValueError:
+            continue
+        if (today - set_on).days < window:
+            continue
+        conn = get_conn(db_path)
+        try:
+            conn.execute("UPDATE owner_goals SET status='achieved', achieved_at=datetime('now') "
+                         "WHERE id=? AND status='active'", (g["id"],))
+            conn.commit()
+        finally:
+            conn.close()
+        closed.append(g)
     return closed
 
 

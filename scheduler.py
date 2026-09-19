@@ -153,8 +153,13 @@ def get_owner_email(restaurant_id):
     """Get the owner's email from users table (most reliable source)."""
     from models import get_conn, get_restaurant
     conn = get_conn()
+    # The account's principal login, not whichever login happens to come
+    # back first — an unordered LIMIT 1 could hand the owner's digest (food
+    # cost, and loss signals that can name a manager) to a manager.
     row = conn.execute(
-        "SELECT email FROM users WHERE restaurant_id=? AND is_admin=0 LIMIT 1",
+        "SELECT email FROM users WHERE restaurant_id=? AND is_admin=0 "
+        "AND COALESCE(is_active,1)=1 AND COALESCE(NULLIF(role,''),'client') IN ('client','owner') "
+        "ORDER BY id LIMIT 1",
         (restaurant_id,)
     ).fetchone()
     conn.close()
@@ -462,7 +467,8 @@ def run_weekly_digests():
                     continue
 
                 owner_name = restaurant.sign_off_name or restaurant.owner_email.split("@")[0].title()
-                html = render_html(report, restaurant.name, owner_name=owner_name, restaurant_id=restaurant.id)
+                html = render_html(report, restaurant.name, owner_name=owner_name, restaurant_id=restaurant.id,
+                                   owner_view=True)
                 _resend.api_key = _resend_key()
                 _resend.Emails.send({
                     "from": f"Cavnar AI <{_from_email()}>",

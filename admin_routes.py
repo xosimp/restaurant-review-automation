@@ -1658,7 +1658,8 @@ def test_digest(restaurant_id, current_user):
         import resend as _resend
         owner_email = restaurant.owner_email
         report = build_report_from_db(restaurant_id, restaurant.name, days=7)
-        html = render_html(report, restaurant.name, owner_name=restaurant.owner_name, restaurant_id=restaurant_id)
+        html = render_html(report, restaurant.name, owner_name=restaurant.owner_name, restaurant_id=restaurant_id,
+                           owner_view=True)
         _resend.api_key = _resend_key()
         _resend.Emails.send({
             "from": f"Cavnar AI <{_from_email()}>",

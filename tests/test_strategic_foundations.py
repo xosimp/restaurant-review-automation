@@ -476,3 +476,196 @@ def test_sync_writes_a_zero_row_for_every_day_it_asked_about(db_path, monkeypatc
     n = conn.execute("SELECT COUNT(*) AS n FROM pos_loss_daily WHERE restaurant_id=?", (rid,)).fetchone()["n"]
     conn.close()
     assert n == 7 * len(ld.KINDS), "asked about 7 days x 3 kinds — every one recorded, zeros included"
+
+
+# ── re-audit: issue loop hardening ─────────────────────────────────────────
+
+def _links(db_path, issue_id):
+    conn = get_conn(db_path)
+    n = conn.execute("SELECT COUNT(*) FROM issue_links WHERE issue_id=?", (issue_id,)).fetchone()[0]
+    conn.close()
+    return n
+
+
+def _bad_review(db_path, rid, review_date, rating=1):
+    import uuid
+    conn = get_conn(db_path)
+    conn.execute("INSERT INTO reviews (restaurant_id, platform, external_id, author, rating, text, "
+                 "review_date, fetched_at, processed) VALUES (?,?,?,?,?,?,?,?,1)",
+                 (rid, "google", uuid.uuid4().hex[:12], "Guest", rating, "Cold food, rude host",
+                  review_date, datetime.utcnow().isoformat(timespec="seconds")))
+    conn.commit(); conn.close()
+
+
+def test_connecting_google_does_not_text_the_manager_about_old_reviews(db_path, sms):
+    """A first connect imports review history with a fresh fetched_at."""
+    import issues
+    rid = _rid(db_path)
+    issues.set_routing(rid, "manager", _contact(db_path, rid))
+    for days_ago in (40, 200, 500):
+        _bad_review(db_path, rid, (date.today() - timedelta(days=days_ago)).isoformat())
+    assert issues.open_from_reviews(rid) == [] and sms == []
+
+
+def test_one_scan_opens_at_most_a_few_issues(db_path, sms):
+    import issues
+    rid = _rid(db_path)
+    issues.set_routing(rid, "manager", _contact(db_path, rid))
+    for _ in range(8):
+        _bad_review(db_path, rid, datetime.utcnow().isoformat(timespec="seconds"))
+    assert len(issues.open_from_reviews(rid)) == issues.AUTO_REVIEW_MAX_PER_SCAN
+    assert len(sms) == issues.AUTO_REVIEW_MAX_PER_SCAN
+
+
+def test_a_held_issue_does_not_mint_a_link_every_tick(db_path, sms, monkeypatch):
+    import issues
+    rid = _rid(db_path)
+    issues.set_routing(rid, "manager", _contact(db_path, rid))
+    monkeypatch.setattr("models.is_in_quiet_hours", lambda *a, **k: True)
+    issue, _ = issues.create_issue(rid, "manual", "Overnight: freezer alarm")
+    before = _links(db_path, issue["id"])
+    for _ in range(10):
+        issues.tick()
+    assert _links(db_path, issue["id"]) == before
+
+
+def test_escalation_never_texts_the_person_who_already_has_it(db_path, sms):
+    import issues
+    rid = _rid(db_path)
+    same = _contact(db_path, rid, "Only Manager", "+15555550199")
+    issues.set_routing(rid, "manager", same)
+    issues.set_routing(rid, "escalation", same, escalate_after_minutes=30)
+    issues.create_issue(rid, "manual", "Short a cook tonight")
+    assert issues.tick(now=datetime.utcnow() + timedelta(minutes=45))["escalated"] == 0
+    assert len(sms) == 1
+
+
+def test_an_unassigned_issue_has_no_link(db_path, sms):
+    import issues
+    rid = _rid(db_path)
+    issue, token = issues.create_issue(rid, "manual", "Nobody routed yet")
+    assert token is None and _links(db_path, issue["id"]) == 0 and sms == []
+
+
+# ── re-audit: demand, goals, metric keys ───────────────────────────────────
+
+def test_prep_list_counts_the_days_a_dish_did_not_sell_as_zero(db_path):
+    """A dish sold on 2 of 6 past Fridays is not a Friday staple."""
+    import demand
+    rid = _rid(db_path)
+    conn = get_conn(db_path)
+    staple = conn.execute("INSERT INTO menu_items (restaurant_id, name) VALUES (?, 'Pizza')", (rid,)).lastrowid
+    rare = conn.execute("INSERT INTO menu_items (restaurant_id, name) VALUES (?, 'Special')", (rid,)).lastrowid
+    flour = conn.execute("INSERT INTO ingredients (restaurant_id, name, unit, current_stock) "
+                         "VALUES (?, 'Flour', 'lb', 0)", (rid,)).lastrowid
+    lobster = conn.execute("INSERT INTO ingredients (restaurant_id, name, unit, current_stock) "
+                           "VALUES (?, 'Lobster', 'ea', 0)", (rid,)).lastrowid
+    conn.execute("INSERT INTO recipe_ingredients (menu_item_id, ingredient_id, qty_per_unit) VALUES (?,?,1)",
+                 (staple, flour))
+    conn.execute("INSERT INTO recipe_ingredients (menu_item_id, ingredient_id, qty_per_unit) VALUES (?,?,1)",
+                 (rare, lobster))
+    target = date(2026, 9, 25)                       # a Friday
+    for w in range(1, 7):
+        d = (target - timedelta(weeks=w)).isoformat()
+        conn.execute("INSERT INTO menu_item_sales (restaurant_id, menu_item_id, business_date, qty_sold) "
+                     "VALUES (?,?,?,40)", (rid, staple, d))
+        if w <= 2:
+            conn.execute("INSERT INTO menu_item_sales (restaurant_id, menu_item_id, business_date, qty_sold) "
+                         "VALUES (?,?,?,10)", (rid, rare, d))
+    conn.commit(); conn.close()
+    out = demand.prep_list(rid, target)
+    names = {i["ingredient"]: i["expected_use"] for i in out["items"]}
+    assert names.get("Flour") == 40
+    assert "Lobster" not in names, "median of [10,10,0,0,0,0] is 0"
+
+
+def test_a_goal_already_on_target_is_not_closed_the_next_morning(db_path):
+    import goals
+    rid = _rid(db_path)
+    for i in range(1, 15):
+        _sales_day(db_path, rid, _day(-i), 1000, 250)       # 25% labour
+    g = goals.set_goal(rid, "labor_pct", 30)
+    assert g["state"] == "met"
+    assert goals.mark_achieved(rid) == []
+    # Once a full window has passed since it was set, it closes as achieved.
+    conn = get_conn(db_path)
+    conn.execute("UPDATE owner_goals SET created_at=datetime('now','-40 days') WHERE id=?", (g["id"],))
+    conn.commit(); conn.close()
+    closed = goals.mark_achieved(rid)
+    assert [c["id"] for c in closed] == [g["id"]]
+
+
+def test_an_achieved_goal_stays_visible_for_a_week(db_path):
+    import goals
+    rid = _rid(db_path)
+    g = goals.set_goal(rid, "labor_pct", 30)
+    conn = get_conn(db_path)
+    conn.execute("UPDATE owner_goals SET status='achieved', achieved_at=datetime('now') WHERE id=?", (g["id"],))
+    conn.commit(); conn.close()
+    shown = [x for x in goals.progress(rid) if x["id"] == g["id"]]
+    assert shown and shown[0]["state"] == "met"
+
+
+def test_a_weekday_goal_needs_a_real_weekday():
+    import metrics
+    assert metrics.known("weekday_sales:tuesday")
+    assert not metrics.known("weekday_sales:Funday")
+    assert not metrics.known("weekday_sales")
+
+
+# ── re-audit: the morning brief reaches principals only ────────────────────
+
+def test_the_brief_is_pushed_only_to_principal_logins(db_path, monkeypatch):
+    import auth, morning_brief, push
+    monkeypatch.setattr(auth, "get_conn", lambda *a, **k: models.get_conn(db_path), raising=False)
+    auth.init_auth(db_path=db_path)
+    push.init_push(db_path=db_path) if hasattr(push, "init_push") else None
+    rid = _rid(db_path)
+    owner = auth.create_user(rid, "own", "own@x.com", "pw", db_path=db_path)
+    mgr = auth.create_user(rid, "mgr", "mgr@x.com", "pw", db_path=db_path)
+    conn = get_conn(db_path)
+    conn.execute("UPDATE users SET role='manager' WHERE id=?", (mgr,))
+    for uid, tok in ((owner, "tok-owner"), (mgr, "tok-mgr")):
+        conn.execute("INSERT INTO device_tokens (user_id, restaurant_id, apns_token) VALUES (?,?,?)",
+                     (uid, rid, tok))
+    conn.commit(); conn.close()
+    assert morning_brief._principal_user_ids(rid, db_path) == {owner}
+    sent = []
+    monkeypatch.setattr(push, "fire_push", lambda *a, **k: sent.append(k.get("user_ids")))
+    monkeypatch.setattr(morning_brief, "build", lambda *a, **k: {
+        "date": "2026-09-19", "lines": [{"key": "loss", "text": "Worth reviewing: x", "tone": "bad", "ask": "?"}]})
+    r = models.get_restaurant(rid, db_path=db_path)
+    assert morning_brief.deliver(rid, restaurant=r, db_path=db_path)["sent"] == "push"
+    assert sent == [{owner}]
+
+
+def test_a_spike_against_a_measured_zero_baseline_is_flagged(db_path):
+    """Weeks of no comps, then $500 of them, is the clearest spike there is —
+    a truthiness test on the baseline used to skip exactly this case."""
+    import loss_detection as ld
+    rid = _rid(db_path)
+    _synced_baseline(db_path, rid, "comp", 0, 0)
+    _seed_loss(db_path, rid, _day(-2), "comp", 500, 12,
+               {"11": {"amount": 260, "events": 6}, "12": {"amount": 240, "events": 6}})
+    comp = next(k for k in ld.signals(rid)["kinds"] if k["kind"] == "comp")
+    spike = [f for f in comp["flags"] if f["type"] == "spike"]
+    assert spike and "with none" in spike[0]["headline"]
+
+
+def test_a_price_rise_on_one_cut_does_not_reprice_another(db_path, monkeypatch):
+    import menu_intelligence as mi, inventory, inventory_ledger
+    rid = _rid(db_path)
+    conn = get_conn(db_path)
+    breast = conn.execute("INSERT INTO ingredients (restaurant_id, name, unit, unit_cost) "
+                          "VALUES (?, 'Chicken Breast', 'lb', 5)", (rid,)).lastrowid
+    dish = conn.execute("INSERT INTO menu_items (restaurant_id, name) VALUES (?, 'Parm')", (rid,)).lastrowid
+    conn.execute("INSERT INTO recipe_ingredients (menu_item_id, ingredient_id, qty_per_unit) VALUES (?,?,1)",
+                 (dish, breast))
+    conn.commit(); conn.close()
+    monkeypatch.setattr(inventory, "load_inventory_for_restaurant", lambda rid: ([{"item": "x"}], True))
+    monkeypatch.setattr(inventory, "compute_item_trends", lambda *a, **k: {})
+    monkeypatch.setattr(inventory, "build_price_watch", lambda t: [
+        {"item": "Chicken Thighs", "change_pct": 40, "old_price": 2.0, "new_price": 2.8}])
+    monkeypatch.setattr(inventory_ledger, "menu_profitability", lambda rid: {"priced": [
+        {"id": dish, "name": "Parm", "sell_price": 18.0, "plate_cost": 6.0, "units_sold": 100}]})
+    assert mi.reprice_suggestions(rid)["suggestions"] == []

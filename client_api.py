@@ -6214,7 +6214,9 @@ def send_test_digest_web(current_user):
         from reporter import build_report_from_db, render_html
         from emails import deliver, _from_email
         report = build_report_from_db(rid, restaurant.name, days=7)
-        html = render_html(report, restaurant.name, owner_name=restaurant.owner_name, restaurant_id=rid)
+        from permissions import has_permission as _hp_dg, TEAM_INVITE as _ti_dg
+        html = render_html(report, restaurant.name, owner_name=restaurant.owner_name, restaurant_id=rid,
+                           owner_view=bool(current_user.get("is_admin")) or _hp_dg(current_user, _ti_dg))
         result = deliver({
             "from": f"Cavnar AI <{_from_email()}>",
             "to": [to_email],

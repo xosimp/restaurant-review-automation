@@ -301,13 +301,21 @@ def _run_delivery(token_row, alert_type, title, body, data, db_path):
             _queued -= 1
 
 
-def fire_push(restaurant_id, alert_type, title, body, data=None, db_path=DB_PATH):
+def fire_push(restaurant_id, alert_type, title, body, data=None, db_path=DB_PATH, user_ids=None):
     """Fire push to every device registered for this restaurant, on a bounded
     background pool — never blocks the caller. Mirrors webhooks.fire_webhook()'s
-    fire-and-forget shape."""
+    fire-and-forget shape.
+
+    `user_ids` narrows delivery to those logins' devices. Every device at a
+    restaurant includes managers' and teammates' phones, so anything carrying
+    owner-only content (the morning brief's prime cost and loss signals) must
+    pass it — None keeps the everyone-at-the-restaurant behaviour."""
     global _queued
     try:
         tokens = get_device_tokens(restaurant_id, db_path)
+        if user_ids is not None:
+            allowed = {int(u) for u in user_ids}
+            tokens = [t for t in tokens if int(t.get("user_id") or 0) in allowed]
         for token_row in tokens:
             with _executor_lock:
                 if _queued >= _MAX_PUSH_QUEUED:

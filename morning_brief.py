@@ -64,8 +64,9 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH):
         else:
             tone = "neutral"
             text = f"Yesterday: {_money(y['actual'])}, a normal {y['weekday']}."
-        lines.append({"key": "yesterday", "text": text, "tone": tone,
-                      "ask": f"Why was yesterday's {y['weekday']} {y['direction']} a normal one?"})
+        ask = (f"Why was yesterday's {y['weekday']} {y['direction']} a normal one?" if y["off"]
+               else f"How did yesterday compare to a normal {y['weekday']}?")
+        lines.append({"key": "yesterday", "text": text, "tone": tone, "ask": ask})
 
     # ── prime cost ──
     if getattr(restaurant, "module_inventory", 0):
@@ -170,6 +171,29 @@ def _email_html(brief, restaurant_name):
             f'from your own data. Open Cavnar AI and ask about any line.</p>')
 
 
+def _principal_user_ids(restaurant_id, db_path=DB_PATH):
+    """Active logins at this restaurant that administer the account (owner /
+    client — the TEAM_INVITE holders). Admin logins are excluded: Will's own
+    test devices are not the restaurant's owner."""
+    from permissions import permissions_for, TEAM_INVITE
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("SELECT id, role, is_admin FROM users WHERE restaurant_id=? "
+                            "AND COALESCE(is_active,1)=1", (restaurant_id,)).fetchall()
+        # A multi-location owner's login lives on the group's base restaurant,
+        # not on each location — the same group match the location switcher uses.
+        rows += conn.execute(
+            "SELECT u.id, u.role, u.is_admin FROM users u "
+            "JOIN restaurants b ON b.id=u.restaurant_id JOIN restaurants r ON r.id=? "
+            "WHERE u.role='owner' AND COALESCE(u.is_active,1)=1 AND b.location_group IS NOT NULL "
+            "AND b.location_group=r.location_group AND b.owner_email=r.owner_email",
+            (restaurant_id,)).fetchall()
+    finally:
+        conn.close()
+    return {int(r["id"]) for r in rows
+            if not r["is_admin"] and TEAM_INVITE in permissions_for(r["role"])}
+
+
 def deliver(restaurant_id, restaurant=None, today=None, db_path=DB_PATH):
     """Build and send. Push when the owner has the app on a device; email
     otherwise — never both, because a brief that arrives twice is one the
@@ -181,12 +205,17 @@ def deliver(restaurant_id, restaurant=None, today=None, db_path=DB_PATH):
         return {"sent": None, "reason": "nothing measured to report yet"}
     name = restaurant.location_name or restaurant.name
     import push
-    tokens = _safe(push.get_device_tokens, restaurant_id, db_path) or []
+    # The brief carries owner-only content — prime cost, and loss signals that
+    # can name an approving manager — so it goes to the account's principal
+    # logins' phones only, never to every device at the restaurant.
+    principals = _principal_user_ids(restaurant_id, db_path)
+    tokens = [t for t in (_safe(push.get_device_tokens, restaurant_id, db_path) or [])
+              if int(t.get("user_id") or 0) in principals and not t.get("disabled_reason")]
     if tokens:
         pt = push_text(brief, name)
         lead = next((l for l in brief["lines"] if l["tone"] == "action"), brief["lines"][0])
         push.fire_push(restaurant_id, "morning_brief", pt["title"], pt["body"],
-                       data={"ask_prompt": lead["ask"]}, db_path=db_path)
+                       data={"ask_prompt": lead["ask"]}, db_path=db_path, user_ids=principals)
         return {"sent": "push", "lines": len(brief["lines"])}
     if restaurant.owner_email:
         from emails import deliver as _deliver, _branded_email, _from_email

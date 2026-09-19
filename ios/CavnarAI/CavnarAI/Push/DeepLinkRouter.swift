@@ -59,9 +59,13 @@ final class DeepLinkRouter {
     }
 
     // Mirrors client_api.py's _NOTIFICATION_MODULE — every alert type is
-    // review/rating-driven except labor_over, which has no review to jump
-    // to at all.
+    // review/rating-driven except the labor ones: labor_over, and
+    // schedule_drafted (strategy_jobs' Thursday auto-draft), whose draft is
+    // waiting in Labor's schedule history.
     private static func moduleKey(for alertType: String) -> String {
-        alertType == "labor_over" ? "labor" : "reviews"
+        switch alertType {
+        case "labor_over", "schedule_drafted": return "labor"
+        default: return "reviews"
+        }
     }
 }

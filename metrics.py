@@ -154,11 +154,8 @@ def _weekly_waste(rid, start, end, param, db_path):
 def _food_cost_pct(rid, start, end, param, db_path):
     import cogs
     days = (date.fromisoformat(_d(end)) - date.fromisoformat(_d(start))).days + 1
-    try:
-        out = cogs.build_food_cost_pct(rid, days=days, db_path=db_path,
-                                       today=date.fromisoformat(_d(end)))
-    except TypeError:
-        out = cogs.build_food_cost_pct(rid, days=days)
+    out = cogs.build_food_cost_pct(rid, days=days, db_path=db_path,
+                                   today=date.fromisoformat(_d(end)))
     if not out or not out.get("ok"):
         why = "; ".join(m.get("why", "") for m in (out or {}).get("missing") or []) or "not computable"
         return None, why
@@ -189,8 +186,19 @@ def parse(key):
     return base, (param or None)
 
 
+_WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+
+
 def known(key) -> bool:
-    return parse(key)[0] in _REGISTRY
+    """A metric key that can actually be measured. A parameterised key must
+    carry a usable parameter: "weekday_sales:Funday" would be accepted as a
+    goal and then read "unknown" forever."""
+    base, param = parse(key)
+    if base not in _REGISTRY:
+        return False
+    if base == "weekday_sales":
+        return (param or "").strip().capitalize() in _WEEKDAYS
+    return True
 
 
 def describe(key) -> dict:

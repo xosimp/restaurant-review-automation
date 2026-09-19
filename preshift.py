@@ -69,11 +69,12 @@ def build(restaurant_id, day=None, db_path=DB_PATH):
                 days = [c["weekday"]["value"]]
             if weekday not in days:
                 continue
-            said = [x["complaint"] for x in (c.get("complaints") or []) if x.get("complaint")][:2]
-            quote = f" — guests mentioned: {'; '.join(said)}" if said else ""
+            # The theme only — never the guests' own words. A complaint as
+            # written ("our server Jake ignored us") can name someone on the
+            # team, and read out at lineup that is a reprimand in public.
             items.append({"kind": "watch",
                           "text": f"Watch {c['category'].replace('_', ' ')} tonight: it has come up in "
-                                  f"{c['mentions']} recent reviews, mostly on {' and '.join(days)}s{quote}."})
+                                  f"{c['mentions']} recent reviews, mostly on {' and '.join(days)}s."})
             break
 
     # ── running low ──
