@@ -45,17 +45,30 @@ def _safe(fn, *a, **k):
         return None
 
 
-def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH):
+def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=None):
     """The brief as structured lines. Each line: {"key", "text", "tone", "ask"}.
-    tone is good | bad | neutral | action."""
+    tone is good | bad | neutral | action.
+
+    `viewer` is the login it is for (a current_user-shaped dict). A manager's
+    brief is built from what THEY may see — the same viewer_restaurant Ask
+    uses, so a module their role can't read (and its dollars in the money
+    ranking) is left out, and comps & voids appear only with LOSS_VIEW. None
+    means the owner's full view."""
     from models import get_restaurant
+    from permissions import has_permission, LOSS_VIEW
     import demand, issues, outcomes, goals
+    from ask_cavnar_tools import viewer_restaurant, metric_visible
     restaurant = restaurant or get_restaurant(restaurant_id)
+    if viewer is not None:
+        restaurant = viewer_restaurant(restaurant, viewer)
+    denied = getattr(restaurant, "_ask_denied", frozenset())
+    sees_loss = viewer is None or has_permission(viewer, LOSS_VIEW)
     today = today or date.today()
     lines = []
 
-    # ── yesterday ──
-    y = _safe(demand.yesterday_vs_typical, restaurant_id, today=today, db_path=db_path)
+    # ── yesterday ── (daily sales live in the Labor module's history)
+    y = (_safe(demand.yesterday_vs_typical, restaurant_id, today=today, db_path=db_path)
+         if "labor" not in denied else None)
     if y and y.get("available"):
         if y["off"]:
             tone = "good" if y["direction"] == "above" else "bad"
@@ -107,14 +120,18 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH):
                       "ask": "What issues are still open and who has them?"})
 
     # ── what came back ──
-    for r in (_safe(outcomes.recent_results, restaurant_id, days=1, db_path=db_path, today=today) or [])[:2]:
+    results = [r for r in (_safe(outcomes.recent_results, restaurant_id, days=1, db_path=db_path,
+                                  today=today) or []) if metric_visible(restaurant, r.get("metric"))]
+    for r in results[:2]:
         lines.append({"key": f"outcome:{r['id']}",
                       "tone": {"improved": "good", "worsened": "bad"}.get(r.get("verdict"), "neutral"),
                       "text": "Result: " + outcomes.summarise(r),
                       "ask": f"Tell me more about the result of: {r['title']}"})
 
     # ── goals ──
-    for g in (_safe(goals.progress, restaurant_id, db_path=db_path, today=today) or [])[:2]:
+    visible_goals = [g for g in (_safe(goals.progress, restaurant_id, db_path=db_path, today=today) or [])
+                     if metric_visible(restaurant, g.get("metric"))]
+    for g in visible_goals[:2]:
         if g["state"] == "unknown":
             continue
         lines.append({"key": f"goal:{g['id']}",
@@ -123,16 +140,16 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH):
                       "text": "Goal — " + goals.summarise(g),
                       "ask": f"How do I hit my {g['label'].lower()} goal?"})
 
-    # ── loss signals (owner only — never routed to a manager) ──
+    # ── loss signals — the owner, or a manager explicitly granted LOSS_VIEW ──
     import loss_detection
-    ls = _safe(loss_detection.signals, restaurant_id, today=today, db_path=db_path)
+    ls = _safe(loss_detection.signals, restaurant_id, today=today, db_path=db_path) if sees_loss else None
     for f in ((ls or {}).get("flagged") or [])[:1]:
         lines.append({"key": "loss", "tone": "bad",
                       "text": f"Worth reviewing: {f['headline']}.",
                       "ask": "Show me the comp and void pattern from last week."})
 
     # ── today ──
-    fc = _safe(demand.forecast_day, restaurant_id, today, db_path=db_path)
+    fc = _safe(demand.forecast_day, restaurant_id, today, db_path=db_path) if "labor" not in denied else None
     if fc and fc.get("available"):
         lines.append({"key": "today", "tone": "neutral",
                       "text": f"Today looks like a typical {fc['weekday']}: about {_money(fc['typical_sales'])} "
@@ -171,63 +188,98 @@ def _email_html(brief, restaurant_name):
             f'from your own data. Open Cavnar AI and ask about any line.</p>')
 
 
-def _principal_user_ids(restaurant_id, db_path=DB_PATH):
-    """Active logins at this restaurant that administer the account (owner /
-    client — the TEAM_INVITE holders). Admin logins are excluded: Will's own
-    test devices are not the restaurant's owner."""
-    from permissions import permissions_for, TEAM_INVITE
+def recipients(restaurant_id, db_path=DB_PATH):
+    """Everyone who gets this restaurant's brief: its console logins whose
+    brief preference is on (owners and managers by default — the point is
+    that the people running the floor start the day informed), plus the
+    group owner whose login lives on another location. Never employees (PIN
+    identities, no console) and never admin logins. Each carries the grants
+    their brief is built with."""
+    from auth import _grants_for, morning_brief_default
+    from permissions import CONSOLE_ROLES, normalize_role
     conn = get_conn(db_path)
     try:
-        rows = conn.execute("SELECT id, role, is_admin FROM users WHERE restaurant_id=? "
-                            "AND COALESCE(is_active,1)=1", (restaurant_id,)).fetchall()
-        # A multi-location owner's login lives on the group's base restaurant,
-        # not on each location — the same group match the location switcher uses.
-        rows += conn.execute(
-            "SELECT u.id, u.role, u.is_admin FROM users u "
+        rows = [dict(r) for r in conn.execute(
+            "SELECT id, role, is_admin, email FROM users WHERE restaurant_id=? AND COALESCE(is_active,1)=1",
+            (restaurant_id,)).fetchall()]
+        # A multi-location owner's login lives on the group's base restaurant.
+        rows += [dict(r) for r in conn.execute(
+            "SELECT u.id, u.role, u.is_admin, u.email FROM users u "
             "JOIN restaurants b ON b.id=u.restaurant_id JOIN restaurants r ON r.id=? "
             "WHERE u.role='owner' AND COALESCE(u.is_active,1)=1 AND b.location_group IS NOT NULL "
-            "AND b.location_group=r.location_group AND b.owner_email=r.owner_email",
-            (restaurant_id,)).fetchall()
+            "AND b.location_group=r.location_group AND b.owner_email=r.owner_email AND b.id != r.id",
+            (restaurant_id,)).fetchall()]
+        try:
+            prefs = {r["user_id"]: r["morning_brief"] for r in conn.execute(
+                "SELECT user_id, morning_brief FROM login_prefs WHERE restaurant_id=?", (restaurant_id,))}
+        except Exception:
+            prefs = {}
+        out, seen = [], set()
+        for u in rows:
+            if u["id"] in seen or u["is_admin"] or normalize_role(u["role"]) not in CONSOLE_ROLES:
+                continue
+            seen.add(u["id"])
+            on = morning_brief_default(u["role"]) if prefs.get(u["id"]) is None else bool(prefs[u["id"]])
+            if not on:
+                continue
+            u["grants"] = _grants_for(conn, u["id"], restaurant_id)
+            u["restaurant_id"] = restaurant_id
+            out.append(u)
     finally:
         conn.close()
-    return {int(r["id"]) for r in rows
-            if not r["is_admin"] and TEAM_INVITE in permissions_for(r["role"])}
+    return out
+
+
+def _view_key(user):
+    """Two logins with the same view get the same brief — built once."""
+    from permissions import has_permission, LOSS_VIEW, MODULE_VIEW_PERMISSIONS
+    return (frozenset(k for k, p in MODULE_VIEW_PERMISSIONS.items() if has_permission(user, p)),
+            has_permission(user, LOSS_VIEW))
 
 
 def deliver(restaurant_id, restaurant=None, today=None, db_path=DB_PATH):
-    """Build and send. Push when the owner has the app on a device; email
-    otherwise — never both, because a brief that arrives twice is one the
-    owner learns to ignore. Returns what was sent."""
+    """Build and send each recipient THEIR brief. Push to that person's own
+    devices when they have the app; email them otherwise — never both,
+    because a brief that arrives twice is one people learn to ignore.
+    Returns counts."""
     from models import get_restaurant
-    restaurant = restaurant or get_restaurant(restaurant_id)
-    brief = build(restaurant_id, restaurant=restaurant, today=today, db_path=db_path)
-    if not brief["lines"]:
-        return {"sent": None, "reason": "nothing measured to report yet"}
-    name = restaurant.location_name or restaurant.name
     import push
-    # The brief carries owner-only content — prime cost, and loss signals that
-    # can name an approving manager — so it goes to the account's principal
-    # logins' phones only, never to every device at the restaurant.
-    principals = _principal_user_ids(restaurant_id, db_path)
-    tokens = [t for t in (_safe(push.get_device_tokens, restaurant_id, db_path) or [])
-              if int(t.get("user_id") or 0) in principals and not t.get("disabled_reason")]
-    if tokens:
-        pt = push_text(brief, name)
-        lead = next((l for l in brief["lines"] if l["tone"] == "action"), brief["lines"][0])
-        push.fire_push(restaurant_id, "morning_brief", pt["title"], pt["body"],
-                       data={"ask_prompt": lead["ask"]}, db_path=db_path, user_ids=principals)
-        return {"sent": "push", "lines": len(brief["lines"])}
-    if restaurant.owner_email:
-        from emails import deliver as _deliver, _branded_email, _from_email
-        result = _deliver(email_type="send_morning_brief", restaurant_id=restaurant_id, payload={
-            "from": f"Cavnar AI <{_from_email()}>", "to": [restaurant.owner_email],
-            "subject": f"Your morning brief — {name}",
-            "html": _branded_email(_email_html(brief, name))})
-        # Read .ok explicitly rather than leaning on SendResult.__bool__, so
-        # the intent survives if that dunder ever changes.
-        ok = bool(getattr(result, "ok", False))
-        return {"sent": "email" if ok else None, "lines": len(brief["lines"])}
-    return {"sent": None, "reason": "no device and no owner email"}
+    restaurant = restaurant or get_restaurant(restaurant_id)
+    name = restaurant.location_name or restaurant.name
+    people = recipients(restaurant_id, db_path)
+    if not people:
+        return {"sent": 0, "reason": "nobody is set to receive it"}
+    devices = {}
+    for t in (_safe(push.get_device_tokens, restaurant_id, db_path) or []):
+        if not t.get("disabled_reason"):
+            devices.setdefault(int(t.get("user_id") or 0), []).append(t)
+    built, pushed, emailed, empty = {}, 0, 0, 0
+    for u in people:
+        key = _view_key(u)
+        if key not in built:
+            built[key] = build(restaurant_id, restaurant=restaurant, today=today, db_path=db_path, viewer=u)
+        brief = built[key]
+        if not brief["lines"]:
+            empty += 1
+            continue
+        if devices.get(u["id"]):
+            pt = push_text(brief, name)
+            lead = next((l for l in brief["lines"] if l["tone"] == "action"), brief["lines"][0])
+            # This person's devices only: two recipients can hold different briefs.
+            push.fire_push(restaurant_id, "morning_brief", pt["title"], pt["body"],
+                           data={"ask_prompt": lead["ask"]}, db_path=db_path, user_ids={u["id"]})
+            pushed += 1
+        elif u.get("email"):
+            from emails import deliver as _deliver, _branded_email, _from_email
+            result = _deliver(email_type="send_morning_brief", restaurant_id=restaurant_id, payload={
+                "from": f"Cavnar AI <{_from_email()}>", "to": [u["email"]],
+                "subject": f"Your morning brief — {name}",
+                "html": _branded_email(_email_html(brief, name))})
+            # Read .ok explicitly rather than leaning on SendResult.__bool__.
+            if getattr(result, "ok", False):
+                emailed += 1
+    return {"sent": pushed + emailed, "push": pushed, "email": emailed, "empty": empty,
+            "recipients": len(people)}
 
 
 def run_due(db_path=DB_PATH, now_utc=None):

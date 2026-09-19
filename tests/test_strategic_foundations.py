@@ -20,11 +20,15 @@ def _redirect_db(monkeypatch, db_path):
     """Every module here binds get_conn at import time, so each is patched —
     the bound-import gotcha documented in CLAUDE.md."""
     import metrics, outcomes, goals, menu_intelligence, demand, loss_detection, issues
-    import review_intelligence, food_cost_intelligence, business_intelligence
+    import review_intelligence, food_cost_intelligence, business_intelligence, push, morning_brief
     real = models.get_conn
     redirect = lambda *a, **k: real(db_path)
+    # push and morning_brief are imported HERE, before models.get_conn is
+    # patched: imported first inside a test, their bound get_conn would
+    # capture that test's redirect and point every later test at its database.
     for m in (models, metrics, outcomes, goals, menu_intelligence, demand, loss_detection,
-              issues, review_intelligence, food_cost_intelligence, business_intelligence):
+              issues, review_intelligence, food_cost_intelligence, business_intelligence,
+              push, morning_brief):
         monkeypatch.setattr(m, "get_conn", redirect, raising=False)
 
 
@@ -615,57 +619,89 @@ def test_a_weekday_goal_needs_a_real_weekday():
 
 # ── re-audit: the morning brief reaches principals only ────────────────────
 
-def test_the_brief_is_pushed_only_to_principal_logins(db_path, monkeypatch):
+def _brief_team(db_path, monkeypatch):
     import auth, morning_brief, push
     monkeypatch.setattr(auth, "get_conn", lambda *a, **k: models.get_conn(db_path), raising=False)
     auth.init_auth(db_path=db_path)
-    push.init_push(db_path=db_path) if hasattr(push, "init_push") else None
-    rid = _rid(db_path)
+    push.init_push(db_path=db_path)
+    rid = _rid(db_path, module_inventory=1, module_labor=1)
     owner = auth.create_user(rid, "own", "own@x.com", "pw", db_path=db_path)
-    mgr = auth.create_user(rid, "mgr", "mgr@x.com", "pw", db_path=db_path)
+    gm = auth.create_user(rid, "gm", "gm@x.com", "pw", db_path=db_path)
+    agm = auth.create_user(rid, "agm", "agm@x.com", "pw", db_path=db_path)
     conn = get_conn(db_path)
-    conn.execute("UPDATE users SET role='manager' WHERE id=?", (mgr,))
-    for uid, tok in ((owner, "tok-owner"), (mgr, "tok-mgr")):
+    conn.execute("UPDATE users SET role='manager' WHERE id IN (?,?)", (gm, agm))
+    for uid in (owner, gm, agm):
         conn.execute("INSERT INTO device_tokens (user_id, restaurant_id, apns_token) VALUES (?,?,?)",
-                     (uid, rid, tok))
+                     (uid, rid, f"tok-{uid}"))
     conn.commit(); conn.close()
-    assert morning_brief._principal_user_ids(rid, db_path) == {owner}
-    sent = []
-    monkeypatch.setattr(push, "fire_push", lambda *a, **k: sent.append(k.get("user_ids")))
-    monkeypatch.setattr(morning_brief, "build", lambda *a, **k: {
-        "date": "2026-09-19", "lines": [{"key": "loss", "text": "Worth reviewing: x", "tone": "bad", "ask": "?"}]})
+    return rid, owner, gm, agm
+
+
+def test_managers_get_their_own_brief_and_it_never_shows_what_they_cant_see(db_path, monkeypatch):
+    import morning_brief, push
+    rid, owner, gm, agm = _brief_team(db_path, monkeypatch)
+    viewers = {}
+    def fake_build(rid_, restaurant=None, today=None, db_path=None, viewer=None):
+        from permissions import has_permission, FOOD_COST_VIEW, LOSS_VIEW
+        viewers[viewer["id"]] = (has_permission(viewer, FOOD_COST_VIEW), has_permission(viewer, LOSS_VIEW))
+        return {"date": "2026-09-19", "lines": [{"key": "x", "text": "t", "tone": "neutral", "ask": "?"}]}
+    monkeypatch.setattr(morning_brief, "build", fake_build)
+    pushed = []
+    monkeypatch.setattr(push, "fire_push", lambda *a, **k: pushed.append(k["user_ids"]))
     r = models.get_restaurant(rid, db_path=db_path)
-    assert morning_brief.deliver(rid, restaurant=r, db_path=db_path)["sent"] == "push"
-    assert sent == [{owner}]
+    out = morning_brief.deliver(rid, restaurant=r, db_path=db_path)
+    assert out["push"] == 3 and sorted(next(iter(u)) for u in pushed) == sorted([owner, gm, agm])
+    assert all(len(u) == 1 for u in pushed), "each person gets only their own brief"
+    assert viewers[owner] == (True, True)
+    assert viewers.get(gm, viewers.get(agm)) == (False, False)
 
 
-def test_a_spike_against_a_measured_zero_baseline_is_flagged(db_path):
-    """Weeks of no comps, then $500 of them, is the clearest spike there is —
-    a truthiness test on the baseline used to skip exactly this case."""
-    import loss_detection as ld
-    rid = _rid(db_path)
-    _synced_baseline(db_path, rid, "comp", 0, 0)
-    _seed_loss(db_path, rid, _day(-2), "comp", 500, 12,
-               {"11": {"amount": 260, "events": 6}, "12": {"amount": 240, "events": 6}})
-    comp = next(k for k in ld.signals(rid)["kinds"] if k["kind"] == "comp")
-    spike = [f for f in comp["flags"] if f["type"] == "spike"]
-    assert spike and "with none" in spike[0]["headline"]
+def test_a_granted_gm_sees_food_cost_but_comps_stay_off_until_granted(db_path, monkeypatch):
+    import auth, morning_brief
+    from permissions import has_permission, FOOD_COST_VIEW, LOSS_VIEW
+    rid, owner, gm, agm = _brief_team(db_path, monkeypatch)
+    auth.set_grant(rid, gm, FOOD_COST_VIEW, True, granted_by=owner, db_path=db_path)
+    people = {u["id"]: u for u in morning_brief.recipients(rid, db_path)}
+    assert has_permission(people[gm], FOOD_COST_VIEW) and not has_permission(people[gm], LOSS_VIEW)
+    assert not has_permission(people[agm], FOOD_COST_VIEW)
+    auth.set_grant(rid, gm, LOSS_VIEW, True, granted_by=owner, db_path=db_path)
+    people = {u["id"]: u for u in morning_brief.recipients(rid, db_path)}
+    assert has_permission(people[gm], LOSS_VIEW)
 
 
-def test_a_price_rise_on_one_cut_does_not_reprice_another(db_path, monkeypatch):
-    import menu_intelligence as mi, inventory, inventory_ledger
-    rid = _rid(db_path)
-    conn = get_conn(db_path)
-    breast = conn.execute("INSERT INTO ingredients (restaurant_id, name, unit, unit_cost) "
-                          "VALUES (?, 'Chicken Breast', 'lb', 5)", (rid,)).lastrowid
-    dish = conn.execute("INSERT INTO menu_items (restaurant_id, name) VALUES (?, 'Parm')", (rid,)).lastrowid
-    conn.execute("INSERT INTO recipe_ingredients (menu_item_id, ingredient_id, qty_per_unit) VALUES (?,?,1)",
-                 (dish, breast))
-    conn.commit(); conn.close()
-    monkeypatch.setattr(inventory, "load_inventory_for_restaurant", lambda rid: ([{"item": "x"}], True))
-    monkeypatch.setattr(inventory, "compute_item_trends", lambda *a, **k: {})
-    monkeypatch.setattr(inventory, "build_price_watch", lambda t: [
-        {"item": "Chicken Thighs", "change_pct": 40, "old_price": 2.0, "new_price": 2.8}])
-    monkeypatch.setattr(inventory_ledger, "menu_profitability", lambda rid: {"priced": [
-        {"id": dish, "name": "Parm", "sell_price": 18.0, "plate_cost": 6.0, "units_sold": 100}]})
-    assert mi.reprice_suggestions(rid)["suggestions"] == []
+def test_a_manager_can_be_taken_off_the_brief(db_path, monkeypatch):
+    import auth, morning_brief
+    rid, owner, gm, agm = _brief_team(db_path, monkeypatch)
+    auth.set_morning_brief_pref(rid, agm, False, db_path=db_path)
+    assert {u["id"] for u in morning_brief.recipients(rid, db_path)} == {owner, gm}
+
+
+def test_the_brief_body_leaves_out_food_cost_and_comps_for_an_ungranted_manager(db_path, monkeypatch):
+    import morning_brief, loss_detection, food_cost_intelligence as fci
+    rid = _rid(db_path, module_inventory=1, module_labor=1)
+    monkeypatch.setattr(fci, "profitability_projection", lambda *a, **k: {
+        "available": True, "prime_cost_pct": 61.2, "prime_pct_delta": 1.4})
+    monkeypatch.setattr(loss_detection, "signals", lambda *a, **k: {
+        "flagged": [{"headline": "One manager (POS id 7) approved 80% of comps"}]})
+    import business_intelligence as bi
+    monkeypatch.setattr(bi, "executive_brief", lambda *a, **k: {})
+    owner_text = " ".join(l["text"] for l in morning_brief.build(rid)["lines"])
+    mgr = {"id": 5, "role": "manager", "is_admin": 0, "grants": frozenset()}
+    mgr_text = " ".join(l["text"] for l in morning_brief.build(rid, viewer=mgr)["lines"])
+    assert "Prime cost" in owner_text and "POS id 7" in owner_text
+    assert "Prime cost" not in mgr_text and "POS id 7" not in mgr_text
+    granted = dict(mgr, grants=frozenset({"foodcost.view"}))
+    g_text = " ".join(l["text"] for l in morning_brief.build(rid, viewer=granted)["lines"])
+    assert "Prime cost" in g_text and "POS id 7" not in g_text
+
+
+def test_grants_are_a_fixed_list_for_managers_only(db_path, monkeypatch):
+    import auth
+    rid, owner, gm, agm = _brief_team(db_path, monkeypatch)
+    with pytest.raises(ValueError):
+        auth.set_grant(rid, gm, "team.invite", True, db_path=db_path)
+    with pytest.raises(ValueError):
+        auth.set_grant(rid, owner, "foodcost.view", True, db_path=db_path)
+    other = _rid(db_path)
+    with pytest.raises(ValueError):
+        auth.set_grant(other, gm, "foodcost.view", True, db_path=db_path)

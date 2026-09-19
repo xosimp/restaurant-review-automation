@@ -92,6 +92,23 @@ MODULE_VIEW_PERMISSIONS = {
 
 _ALL_MODULES = frozenset(MODULE_VIEW_PERMISSIONS.values())
 
+# Comp, void and refund patterns (loss_detection.py). Its own permission, not
+# part of FOOD_COST_VIEW: a loss signal can name the manager who approved the
+# comps, so an owner opening the numbers to a GM is a separate decision from
+# opening this — and the manager being granted it may be the one it names.
+LOSS_VIEW = "loss.view"
+
+# What an owner may grant an individual login on top of its role, per
+# location (permission_grants). A fixed list on purpose: administering logins,
+# billing and switching locations are never grantable.
+GRANTABLE = {
+    FOOD_COST_VIEW: "Food cost & margins",
+    LOSS_VIEW: "Comps & voids",
+}
+# Roles a grant can be given to. Owners already hold everything; employees
+# are PIN identities with no console at all.
+GRANTABLE_ROLES = frozenset({"manager", "member"})
+
 # Employee-scoped. Each of these is limited server-side to the acting
 # identity's own membership — see the staff routes, which derive the
 # employee name from the session and never from the request.
@@ -112,6 +129,7 @@ ALL_PERMISSIONS = frozenset({
     TASKS_VIEW_OWN,
     TASKS_COMPLETE_OWN,
     PROFILE_MANAGE_OWN,
+    LOSS_VIEW,
 }) | _ALL_MODULES
 
 
@@ -136,11 +154,11 @@ ROLE_PERMISSIONS = {
     # Everything, plus the location switcher. The only role client_api's
     # _do_switch_location / _do_group_locations and home_brief's group brief
     # have ever accepted.
-    ROLE_OWNER: _CONSOLE_BASE | {LOCATION_SWITCH, TEAM_INVITE, TEAM_REVOKE, TEAM_MESSAGE},
+    ROLE_OWNER: _CONSOLE_BASE | {LOCATION_SWITCH, TEAM_INVITE, TEAM_REVOKE, TEAM_MESSAGE, LOSS_VIEW},
 
     # The primary per-restaurant login: everything except switching between
     # locations, which it is refused today.
-    ROLE_CLIENT: _CONSOLE_BASE | {TEAM_INVITE, TEAM_REVOKE, TEAM_MESSAGE},
+    ROLE_CLIENT: _CONSOLE_BASE | {TEAM_INVITE, TEAM_REVOKE, TEAM_MESSAGE, LOSS_VIEW},
 
     # New. Runs the floor: writes the schedule, answers reviews, posts
     # marketing, reads competitor intel, and is in the manager DM thread —
@@ -221,7 +239,15 @@ def has_permission(user, permission: str) -> bool:
         return False
     if user.get("is_admin"):
         return True
-    return permission in permissions_for(user.get("role"))
+    if permission in permissions_for(user.get("role")):
+        return True
+    # Owner-granted extras for this login at the location it is acting in
+    # (auth.get_session_user loads them per request). Only GRANTABLE
+    # permissions count, and only on a role a grant may be given to, so a
+    # stray row can never hand out anything beyond the fixed list.
+    return (permission in GRANTABLE
+            and normalize_role(user.get("role")) in GRANTABLE_ROLES
+            and permission in (user.get("grants") or ()))
 
 
 def require_all(user, *perms) -> bool:

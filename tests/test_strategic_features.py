@@ -270,13 +270,28 @@ def _as(monkeypatch, rid, role="client"):
                                  "username": "u", "email": "u@x.com"})
 
 
-def test_loss_signals_routing_and_the_brief_are_owner_only(client, db_path, monkeypatch):
+def test_comps_and_routing_are_owner_only_unless_granted(client, db_path, monkeypatch):
     rid = _rid(db_path)
     for role, want in (("manager", 403), ("member", 403), ("client", 200), ("owner", 200)):
         _as(monkeypatch, rid, role)
-        for path in ("/api/loss-signals", "/api/issues/routing", "/api/morning-brief"):
+        for path in ("/api/loss-signals", "/api/issues/routing"):
             assert client.get(path).status_code == want, (role, path)
 
+
+def test_a_manager_gets_their_own_brief_but_cannot_change_its_settings(client, db_path, monkeypatch):
+    rid = _rid(db_path)
+    _as(monkeypatch, rid, "manager")
+    body = client.get("/api/morning-brief").get_json()
+    assert body["ok"] and body["can_edit"] is False
+    assert client.post("/api/morning-brief/settings", json={"hour": 6}).status_code == 403
+
+
+def test_a_granted_manager_can_open_comps_and_voids(client, db_path, monkeypatch):
+    rid = _rid(db_path)
+    monkeypatch.setattr(auth, "get_current_user", lambda: {
+        "id": 5, "restaurant_id": rid, "is_admin": 0, "role": "manager",
+        "grants": frozenset({"loss.view"}), "username": "gm", "email": "gm@x.com"})
+    assert client.get("/api/loss-signals").status_code == 200
 
 def test_a_manager_never_sees_food_cost_goals_or_invoices(client, db_path, monkeypatch):
     import goals
@@ -491,3 +506,74 @@ def test_the_preshift_briefing_never_quotes_a_guest(db_path, monkeypatch):
     from datetime import date
     text = " ".join(i["text"] for i in preshift.build(rid, day=date(2026, 9, 18))["items"])
     assert "service speed" in text and "Jake" not in text
+
+
+# ── owner-granted access, end to end through real sessions ─────────────────
+
+@pytest.fixture
+def team_app(db_path, monkeypatch):
+    import mobile_api, client_api, push
+    from strategy_routes import strategy_mobile_bp
+    auth.init_auth(db_path=db_path)
+    for m in (mobile_api, client_api):
+        monkeypatch.setattr(m, "get_conn", lambda *a, **k: models.get_conn(db_path), raising=False)
+    app = Flask(__name__, template_folder="../templates")
+    app.register_blueprint(mobile_api.mobile_bp)
+    app.register_blueprint(strategy_mobile_bp)
+    return app.test_client()
+
+
+def _login(db_path, rid, name, role):
+    uid = auth.create_user(rid, name, f"{name}@x.com", "pw", db_path=db_path)
+    conn = get_conn(db_path)
+    conn.execute("UPDATE users SET role=? WHERE id=?", (role, uid))
+    conn.commit(); conn.close()
+    return uid, {"Authorization": f"Bearer {auth.create_session(uid, db_path=db_path)}"}
+
+
+def test_owner_grants_food_cost_to_the_gm_and_it_applies_on_the_next_request(team_app, db_path):
+    rid = _rid(db_path, module_inventory=1, module_labor=1)
+    owner, oh = _login(db_path, rid, "erik", "client")
+    gm, gh = _login(db_path, rid, "gm", "manager")
+    path = "/mobile/api/food-cost/dish-scorecard"
+    assert team_app.get(path, headers=gh).status_code == 403
+    r = team_app.post(f"/mobile/api/account/team/{gm}/access", headers=oh,
+                      json={"permission": "foodcost.view", "enabled": True})
+    assert r.status_code == 200 and r.get_json()["access"] == ["foodcost.view"]
+    assert team_app.get(path, headers=gh).status_code == 200
+    assert team_app.get("/mobile/api/loss-signals", headers=gh).status_code == 403, \
+        "comps & voids are a separate grant"
+    team_app.post(f"/mobile/api/account/team/{gm}/access", headers=oh,
+                  json={"permission": "foodcost.view", "enabled": False})
+    assert team_app.get(path, headers=gh).status_code == 403
+
+
+def test_only_the_owner_changes_access(team_app, db_path):
+    rid = _rid(db_path, module_inventory=1)
+    owner, oh = _login(db_path, rid, "erik", "client")
+    gm, gh = _login(db_path, rid, "gm", "manager")
+    agm, _ = _login(db_path, rid, "agm", "manager")
+    for target in (gm, agm):
+        r = team_app.post(f"/mobile/api/account/team/{target}/access", headers=gh,
+                          json={"permission": "foodcost.view", "enabled": True})
+        assert r.status_code == 403
+    other = _rid(db_path, name="Other")
+    stranger, _ = _login(db_path, other, "stranger", "manager")
+    r = team_app.post(f"/mobile/api/account/team/{stranger}/access", headers=oh,
+                      json={"permission": "foodcost.view", "enabled": True})
+    assert r.status_code == 400
+    r = team_app.post(f"/mobile/api/account/team/{gm}/access", headers=oh,
+                      json={"permission": "team.invite", "enabled": True})
+    assert r.status_code == 400
+
+
+def test_the_team_list_shows_each_managers_access_and_brief(team_app, db_path):
+    rid = _rid(db_path, module_inventory=1)
+    owner, oh = _login(db_path, rid, "erik", "client")
+    gm, _ = _login(db_path, rid, "gm", "manager")
+    team_app.post(f"/mobile/api/account/team/{gm}/access", headers=oh, json={"morning_brief": False})
+    body = team_app.get("/mobile/api/account/team", headers=oh).get_json()
+    row = next(m for m in body["members"] if m["id"] == gm)
+    assert row["access_grantable"] and row["access"] == [] and row["morning_brief"] is False
+    assert {o["key"] for o in body["access_options"]} == {"foodcost.view", "loss.view"}
+    assert body["can_edit_access"] is True

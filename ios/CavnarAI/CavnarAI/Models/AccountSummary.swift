@@ -290,13 +290,35 @@ struct TeamMember: Decodable, Identifiable {
     let createdAt: String
     let lastLogin: String?
     let isYou: Bool
+    /// Owner-granted extras beyond the role (permissions.GRANTABLE keys).
+    var access: [String]?
+    /// Whether this login's role can take grants (managers and teammates).
+    let accessGrantable: Bool?
+    var morningBrief: Bool?
 
     enum CodingKeys: String, CodingKey {
-        case id, username, email, role
+        case id, username, email, role, access
         case createdAt = "created_at"
         case lastLogin = "last_login"
         case isYou = "is_you"
+        case accessGrantable = "access_grantable"
+        case morningBrief = "morning_brief"
     }
+
+    var roleLabel: String {
+        switch role {
+        case "manager": return "Manager"
+        case "member": return "Member"
+        default: return "Owner"
+        }
+    }
+}
+
+/// One thing an owner can open to a manager (Account → Team).
+struct TeamAccessOption: Decodable, Identifiable {
+    let key: String
+    let label: String
+    var id: String { key }
 }
 
 struct BillingInvoice: Decodable, Identifiable {

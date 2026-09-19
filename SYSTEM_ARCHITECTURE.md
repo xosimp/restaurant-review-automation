@@ -95,7 +95,7 @@ A pure evaluation layer with no I/O: `ShiftContext` (what happened) → per-dime
 - `outcome_evaluations` — daily 6am CT+: closes outcome trackers whose window ended, marks met goals.
 - `auto_draft_schedule` — Thursday 6am CT+: drafts next week's schedule for `auto_draft_schedule=1` restaurants with no `external_scheduling_tool` and no schedule in the last 5 days. A draft in Schedule History only; the push is sent only when the job row says `done`.
 - `issue_scan` — hourly: bad reviews → issues where a manager is routed.
-- Every tick: `issues.tick()` (held notifications, one escalation) and `morning_brief.run_due()` (per-restaurant local hour, claimed per restaurant per day).
+- Every tick: `issues.tick()` (held notifications, one escalation) and `morning_brief.run_due()` (per-restaurant local hour, claimed per restaurant per day). The brief goes to every recipient in `morning_brief.recipients()` — owners and managers by default, per-login opt-out in `login_prefs` — each built from that person's own permissions (built once per distinct view) and pushed to that person's devices only, or emailed.
 
 **Loop hazard (fixed Sep 19 2026):** never assign to a name inside `scheduler_loop` that is also a module helper it calls — Python makes it local for the whole function. `_due = run_due_posts(...)` did exactly that and every tick died on `UnboundLocalError`. `tests/test_scheduler_catchup.py` now drives a real tick.
 

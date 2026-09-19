@@ -4570,11 +4570,19 @@ def mobile_toggle_marketing_opt_out(current_user):
 @mobile_bp.route("/account/team")
 @mobile_login_required
 def mobile_get_team(current_user):
-    from auth import get_team_members
+    from auth import get_team_members, get_team_access
+    from permissions import GRANTABLE, GRANTABLE_ROLES, TEAM_INVITE, has_permission
     members = get_team_members(current_user["restaurant_id"])
+    access = get_team_access(current_user["restaurant_id"])
     for m in members:
         m["is_you"] = (m["id"] == current_user["id"])
-    return jsonify(ok=True, members=members)
+        a = access.get(m["id"]) or {}
+        m["access"] = sorted(a.get("grants") or ())
+        m["access_grantable"] = a.get("role") in GRANTABLE_ROLES
+        m["morning_brief"] = bool(a.get("morning_brief"))
+    return jsonify(ok=True, members=members,
+                   access_options=[{"key": k, "label": v} for k, v in GRANTABLE.items()],
+                   can_edit_access=has_permission(current_user, TEAM_INVITE))
 
 
 @mobile_bp.route("/account/team/invite", methods=["POST"])
@@ -4913,6 +4921,43 @@ def mobile_set_can_manage_team(current_user, user_id):
     return jsonify(ok=True, can_manage_team=allowed)
 
 
+@mobile_bp.route("/account/team/<int:user_id>/access", methods=["POST"])
+@mobile_login_required
+def mobile_set_team_access(current_user, user_id):
+    """What one manager may see beyond their role, and whether they get the
+    morning brief. Body: {"permission": <GRANTABLE key>, "enabled": bool}
+    and/or {"morning_brief": bool}. Owner only; takes effect on the
+    manager's next request (grants are read per request)."""
+    from permissions import TEAM_INVITE, has_permission
+    if not has_permission(current_user, TEAM_INVITE):
+        return jsonify(ok=False, error="Only the account owner can change what teammates see."), 403
+    data = request.get_json(silent=True) or {}
+    rid = current_user["restaurant_id"]
+    from auth import set_grant, set_morning_brief_pref, get_team_access, TeamAccessError
+    try:
+        if "permission" in data:
+            if user_id == current_user["id"]:
+                return jsonify(ok=False, error="You can't change your own access."), 400
+            set_grant(rid, user_id, str(data.get("permission") or ""), bool(data.get("enabled")),
+                      granted_by=current_user["id"])
+            _log_account_event(rid, "team_access_changed", current_user,
+                               detail=f"{user_id}:{data.get('permission')}:{'on' if data.get('enabled') else 'off'}")
+        if "morning_brief" in data:
+            set_morning_brief_pref(rid, user_id, bool(data.get("morning_brief")))
+            _log_account_event(rid, "team_brief_changed", current_user,
+                               detail=f"{user_id}:{'on' if data.get('morning_brief') else 'off'}")
+    except TeamAccessError as e:
+        return jsonify(ok=False, error=e.message), 400
+    # What this person sees changes now; don't serve them a cached Home.
+    try:
+        import home_brief
+        home_brief.invalidate(rid)
+    except Exception:
+        pass
+    a = get_team_access(rid).get(user_id) or {}
+    return jsonify(ok=True, access=sorted(a.get("grants") or ()), morning_brief=bool(a.get("morning_brief")))
+
+
 @mobile_bp.route("/account/send-test-digest", methods=["POST"])
 @mobile_login_required
 def mobile_send_test_digest(current_user):
@@ -4932,9 +4977,9 @@ def mobile_send_test_digest(current_user):
         from reporter import build_report_from_db, render_html
         import resend as _resend
         report = build_report_from_db(rid, restaurant.name, days=7)
-        from permissions import has_permission as _hp_dg, TEAM_INVITE as _ti_dg
+        from permissions import has_permission as _hp_dg, LOSS_VIEW as _lv_dg
         html = render_html(report, restaurant.name, owner_name=restaurant.owner_name, restaurant_id=rid,
-                           owner_view=bool(current_user.get("is_admin")) or _hp_dg(current_user, _ti_dg))
+                           owner_view=_hp_dg(current_user, _lv_dg))
         _resend.api_key = _resend_key()
         _resend.Emails.send({
             "from": f"Cavnar AI <{_from_email()}>",

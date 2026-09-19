@@ -11,10 +11,11 @@ PERMISSIONS
   * Module gating comes from the path, as everywhere else: /food-cost/... is
     the Food Cost module plus FOOD_COST_VIEW (so a manager never sees margins
     or invoice prices), /labor/... is Labor. See auth._MODULE_PREFIXES.
-  * Loss signals, issue routing and the morning brief are PRINCIPAL-only —
-    the logins that administer the account (owner/client, TEAM_INVITE).
-    Loss signals name approving managers; showing them to a manager is
-    exactly wrong. Routing decides who gets texted.
+  * Loss signals need LOSS_VIEW: owners hold it, and an owner may grant it
+    to a manager (permission_grants) — a signal can name the approving
+    manager, so it is a deliberate per-person choice. Issue routing and the
+    brief's send settings are principal-only (TEAM_INVITE). The brief itself
+    is built per viewer from what that login may see.
   * Goals and outcomes on food-cost metrics are hidden from a login without
     FOOD_COST_VIEW, the same line the Food Cost tab draws.
 
@@ -334,22 +335,31 @@ def _do_auto_draft_set(u):
 
 # ── principal-only ────────────────────────────────────────────────────────────
 
+def _loss_viewer(u):
+    from permissions import has_permission, LOSS_VIEW
+    return has_permission(u, LOSS_VIEW)
+
+
 def _do_loss_signals(u):
-    if not _principal(u):
-        return _forbidden()
+    if not _loss_viewer(u):
+        return _forbidden("Comps & voids are visible to the owner, or to a manager the owner has "
+                          "given access.")
     import loss_detection
     return {"ok": True, **loss_detection.signals(_rid(u))}, 200
 
 
 def _do_morning_brief(u):
-    if not _principal(u):
-        return _forbidden()
+    """This login's own brief — built from what THEY may see, the same way
+    it is delivered to them. The send settings are the restaurant's, so only
+    the owner may change them (can_edit)."""
     import morning_brief
     from models import get_restaurant
     r = get_restaurant(_rid(u))
-    return {"ok": True, "brief": morning_brief.build(_rid(u), restaurant=r, today=_local_today(u)),
+    return {"ok": True,
+            "brief": morning_brief.build(_rid(u), restaurant=r, today=_local_today(u), viewer=u),
             "settings": {"enabled": bool(getattr(r, "morning_brief_enabled", 1)),
-                         "hour": int(getattr(r, "morning_brief_hour", 7) or 7)}}, 200
+                         "hour": int(getattr(r, "morning_brief_hour", 7) or 7)},
+            "can_edit": _principal(u)}, 200
 
 
 def _do_morning_brief_settings(u):

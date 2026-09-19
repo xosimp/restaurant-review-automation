@@ -107,6 +107,8 @@ Attention items a user has dismissed from the Home brief, so a handled issue doe
 - `issue_routing` — PK (restaurant_id, role ∈ manager|escalation) → consented contact, `escalate_after_minutes`.
 - `pos_loss_daily` — PK (restaurant_id, business_date, kind); zero rows are written for every day×kind asked about, so absence means "never asked".
 - `invoice_imports` — one scanned invoice: `image_sha` (dedupe), `lines_json` (proposal), `applied_json` (old→new costs), `applied_at` (set once).
+- `permission_grants` (auth schema) — PK (user_id, restaurant_id, permission); owner-granted extras beyond a role, `permissions.GRANTABLE` only (foodcost.view, loss.view).
+- `login_prefs` (auth schema) — PK (user_id, restaurant_id); `morning_brief` NULL = role default (owners and managers on, teammates off).
 - `restaurants` columns: `morning_brief_enabled`, `morning_brief_hour`, `auto_draft_schedule`, `external_scheduling_tool` (all four touch points).
 
 ## Intel

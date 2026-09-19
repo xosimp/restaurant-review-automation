@@ -203,6 +203,28 @@ CREATE TABLE IF NOT EXISTS portal_nonces (
 );
 CREATE INDEX IF NOT EXISTS idx_portal_nonces_created
     ON portal_nonces(created_at);
+
+-- Owner-granted extras for one login at one location, on top of its role —
+-- permissions.GRANTABLE only. Read on every request (get_session_user), so a
+-- revoke takes effect on the manager's next click, not their next sign-in.
+CREATE TABLE IF NOT EXISTS permission_grants (
+    user_id         INTEGER NOT NULL REFERENCES users(id),
+    restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
+    permission      TEXT    NOT NULL,
+    granted_by      INTEGER,
+    granted_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (user_id, restaurant_id, permission)
+);
+
+-- Per-login, per-location delivery choices. morning_brief NULL means the
+-- role default (owners and managers receive it).
+CREATE TABLE IF NOT EXISTS login_prefs (
+    user_id         INTEGER NOT NULL REFERENCES users(id),
+    restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
+    morning_brief   INTEGER,
+    updated_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (user_id, restaurant_id)
+);
 """
 
 # Indexes that reference columns added by the ALTER migrations below, so they
@@ -2107,6 +2129,104 @@ _SESSION_USER_SQL_NO_MEMBERSHIP = """
 """
 
 
+def _grants_for(conn, user_id, restaurant_id):
+    """This login's owner-granted permissions at the location it is acting
+    in. On the connection get_session_user already holds; a database without
+    the table (an old fixture) simply has no grants."""
+    try:
+        return frozenset(r[0] for r in conn.execute(
+            "SELECT permission FROM permission_grants WHERE user_id=? AND restaurant_id=?",
+            (user_id, restaurant_id)).fetchall())
+    except Exception:
+        return frozenset()
+
+
+class TeamAccessError(ValueError):
+    """A refusal from set_grant / set_morning_brief_pref, worded for the
+    owner. Routes return .message and nothing else: only this class's own
+    text ever reaches a client, never an arbitrary exception's str()."""
+    @property
+    def message(self):
+        return self.args[0] if self.args else "Couldn't update their access."
+
+
+def get_team_access(restaurant_id, db_path: str = DB_PATH) -> dict:
+    """{user_id: {"grants": set, "morning_brief": bool}} for every login at
+    this restaurant — what Account → Team shows next to each person."""
+    from permissions import GRANTABLE_ROLES, normalize_role
+    conn = get_conn(db_path)
+    try:
+        users = conn.execute("SELECT id, role FROM users WHERE restaurant_id=? AND is_active=1",
+                             (restaurant_id,)).fetchall()
+        grants = conn.execute("SELECT user_id, permission FROM permission_grants WHERE restaurant_id=?",
+                              (restaurant_id,)).fetchall()
+        prefs = {r["user_id"]: r["morning_brief"] for r in conn.execute(
+            "SELECT user_id, morning_brief FROM login_prefs WHERE restaurant_id=?", (restaurant_id,))}
+    finally:
+        conn.close()
+    out = {}
+    for u in users:
+        out[u["id"]] = {"grants": set(), "role": normalize_role(u["role"]),
+                        "morning_brief": morning_brief_default(u["role"])
+                        if prefs.get(u["id"]) is None else bool(prefs[u["id"]])}
+    for g in grants:
+        if g["user_id"] in out and out[g["user_id"]]["role"] in GRANTABLE_ROLES:
+            out[g["user_id"]]["grants"].add(g["permission"])
+    return out
+
+
+def morning_brief_default(role) -> bool:
+    """Owners and managers get the morning brief unless someone turns it off;
+    legacy teammates only when turned on."""
+    from permissions import normalize_role
+    return normalize_role(role) in ("owner", "client", "manager")
+
+
+def set_grant(restaurant_id, user_id, permission, enabled, granted_by=None, db_path: str = DB_PATH):
+    """Grant or revoke one GRANTABLE permission for a login at this restaurant.
+    Raises ValueError for anything outside the fixed list, a login at another
+    restaurant, or a role that can't take grants."""
+    from permissions import GRANTABLE, GRANTABLE_ROLES, normalize_role
+    if permission not in GRANTABLE:
+        raise TeamAccessError("that access can't be granted")
+    conn = get_conn(db_path)
+    try:
+        u = conn.execute("SELECT role FROM users WHERE id=? AND restaurant_id=? AND is_active=1",
+                         (user_id, restaurant_id)).fetchone()
+        if not u:
+            raise TeamAccessError("that login isn't on this restaurant's team")
+        if normalize_role(u["role"]) not in GRANTABLE_ROLES:
+            raise TeamAccessError("owners already see everything; staff logins can't be granted access")
+        if enabled:
+            conn.execute("INSERT OR IGNORE INTO permission_grants (user_id, restaurant_id, permission, "
+                         "granted_by) VALUES (?,?,?,?)", (user_id, restaurant_id, permission, granted_by))
+        else:
+            conn.execute("DELETE FROM permission_grants WHERE user_id=? AND restaurant_id=? AND permission=?",
+                         (user_id, restaurant_id, permission))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def set_morning_brief_pref(restaurant_id, user_id, enabled, db_path: str = DB_PATH):
+    conn = get_conn(db_path)
+    try:
+        u = conn.execute("SELECT role FROM users WHERE id=? AND restaurant_id=? AND is_active=1",
+                         (user_id, restaurant_id)).fetchone()
+        if not u:
+            raise TeamAccessError("that login isn't on this restaurant's team")
+        from permissions import CONSOLE_ROLES, normalize_role
+        if normalize_role(u["role"]) not in CONSOLE_ROLES:
+            raise TeamAccessError("staff logins use the staff portal's pre-shift briefing instead")
+        conn.execute("INSERT INTO login_prefs (user_id, restaurant_id, morning_brief, updated_at) "
+                     "VALUES (?,?,?,datetime('now')) ON CONFLICT(user_id, restaurant_id) DO UPDATE SET "
+                     "morning_brief=excluded.morning_brief, updated_at=excluded.updated_at",
+                     (user_id, restaurant_id, 1 if enabled else 0))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def get_session_user(token: str, db_path: str = DB_PATH) -> Optional[dict]:
     if not token:
         return None
@@ -2166,8 +2286,12 @@ def get_session_user(token: str, db_path: str = DB_PATH) -> Optional[dict]:
     else:
         conn.execute("UPDATE sessions SET last_active=datetime('now') WHERE token=?", (hash_session_token(token),))
     conn.commit()
-    conn.close()
     user = dict(row)
+    acting_rid = (user.get("active_restaurant_id")
+                  if user.get("role") == "owner" and user.get("active_restaurant_id")
+                  else user.get("restaurant_id"))
+    user["grants"] = _grants_for(conn, user["id"], acting_rid)
+    conn.close()
     # For owners, active_restaurant_id in session overrides their base restaurant_id
     if user.get("role") == "owner" and user.get("active_restaurant_id"):
         user["base_restaurant_id"] = user["restaurant_id"]

@@ -10687,7 +10687,7 @@ function loadAccountSettings() {
 // routing are owner-only; the server answers 403 and the card never shows).
 function loadOpsSettings() {
   fetch('/api/morning-brief', {credentials: 'same-origin'}).then(function(r) { return r.json(); }).then(function(d) {
-    if (!d || !d.ok) return;
+    if (!d || !d.ok || !d.can_edit) return;
     var card = document.getElementById('as-ops-card');
     if (card) card.hidden = false;
     var sel = document.getElementById('as-mb-hour'), h = '';
@@ -13319,10 +13319,21 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     jget('/api/account/team',function(d){
       if(!d.ok){el.textContent='Could not load your team.';return;}
       window._acctData=window._acctData||{};window._acctData.team=(d.members||[]).length;if(window.acctHealthRefresh)acctHealthRefresh();
+      var opts=d.access_options||[];
       el.innerHTML=(d.members||[]).map(function(m){
-        var role=m.role==='member'?'Teammate':(m.role==='owner'?'Owner':'Account owner');
+        var role=m.role==='member'?'Teammate':(m.role==='manager'?'Manager':(m.role==='owner'?'Owner':'Account owner'));
         var right=m.is_you?'<span style="color:var(--ink3)">you</span>':((window._cuRole!=='member')?'<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="revokeTeam('+m.id+',this)">Remove</button>':'');
-        return '<div class="ac-row"><div class="l"><b>'+esc(m.username)+'</b><span>'+esc(m.email||'')+' · '+role+(m.last_login?' · last in '+ago(m.last_login):' · never signed in')+'</span></div><div class="c">'+right+'</div></div>';
+        var row='<div class="ac-row"><div class="l"><b>'+esc(m.username)+'</b><span>'+esc(m.email||'')+' · '+role+(m.last_login?' · last in '+ago(m.last_login):' · never signed in')+'</span></div><div class="c">'+right+'</div></div>';
+        // What this manager sees beyond their role, and whether the morning
+        // brief reaches them. Owner-only controls; managers see neither.
+        if(d.can_edit_access&&m.access_grantable&&!m.is_you){
+          var sw=function(label,checked,onchange){return '<label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink2)"><span class="ac-switch"><input type="checkbox"'+(checked?' checked':'')+' onchange="'+onchange+'" aria-label="'+esc(label)+' for '+esc(m.username)+'"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></span>'+esc(label)+'</label>';};
+          var bits=[];
+          for(var i=0;i<opts.length;i++){bits.push(sw(opts[i].label,(m.access||[]).indexOf(opts[i].key)>=0,'setTeamAccess('+m.id+',\''+opts[i].key+'\',this)'));}
+          bits.push(sw('Morning brief',m.morning_brief,'setTeamBrief('+m.id+',this)'));
+          row+='<div style="display:flex;flex-wrap:wrap;gap:10px 22px;padding:2px 0 12px">'+bits.join('')+'</div>';
+        }
+        return row;
       }).join('')||'Just you so far.';
     });
   };
@@ -13331,6 +13342,13 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     if(!name||email.indexOf('@')<0){toast('Enter a name and a valid email','error');return;}
     var done=busy(btn,'Adding…');
     jsend('/api/account/team/invite',{name:name,email:email},function(d){done();if(d.ok){toast('Added — they’ve been emailed a temporary password','success');document.getElementById('team-name').value='';document.getElementById('team-email').value='';loadTeam();}else toast(d.error||'Could not add them','error');});
+  };
+  window.setTeamAccess=function(id,key,box){
+    if(key==='loss.view'&&box.checked&&!confirm('Comps & voids can name the manager who approved them — including this person. Turn it on?')){box.checked=false;return;}
+    jsend('/api/account/team/'+id+'/access',{permission:key,enabled:box.checked},function(d){if(d.ok)toast('Access updated','success');else{box.checked=!box.checked;toast(d.error||'Could not update','error');}});
+  };
+  window.setTeamBrief=function(id,box){
+    jsend('/api/account/team/'+id+'/access',{morning_brief:box.checked},function(d){if(d.ok)toast(box.checked?'They’ll get the morning brief':'Morning brief off for them','success');else{box.checked=!box.checked;toast(d.error||'Could not update','error');}});
   };
   window.revokeTeam=function(id,btn){if(!confirm('Remove this teammate’s access? They’ll be signed out everywhere.'))return;var done=busy(btn,'…');jsend('/api/account/team/'+id+'/revoke',{},function(d){done();if(d.ok){toast('Access removed','success');loadTeam();}else toast(d.error||'Could not remove','error');});};
   // ── Staff accounts (employee PIN portal) ──

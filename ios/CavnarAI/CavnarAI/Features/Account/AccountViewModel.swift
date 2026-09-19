@@ -55,6 +55,9 @@ final class AccountViewModel {
 
     // Team (invite / manage access)
     var teamMembers: [TeamMember] = []
+    var teamAccessOptions: [TeamAccessOption] = []
+    var canEditTeamAccess = false
+    var teamAccessError: String?
     var isLoadingTeam = false
     var isInvitingTeamMember = false
     var inviteTeamError: String?
@@ -608,7 +611,17 @@ final class AccountViewModel {
                           failure: "Couldn't make a new code.")
     }
 
-    private struct TeamResponse: Decodable { let ok: Bool; let members: [TeamMember] }
+    private struct TeamResponse: Decodable {
+        let ok: Bool
+        let members: [TeamMember]
+        let accessOptions: [TeamAccessOption]?
+        let canEditAccess: Bool?
+        enum CodingKeys: String, CodingKey {
+            case ok, members
+            case accessOptions = "access_options"
+            case canEditAccess = "can_edit_access"
+        }
+    }
 
     func loadTeam() async {
         isLoadingTeam = true
@@ -616,8 +629,59 @@ final class AccountViewModel {
         do {
             let response: TeamResponse = try await client.send("/mobile/api/account/team", hapticOnError: false)
             teamMembers = response.members
+            teamAccessOptions = response.accessOptions ?? []
+            canEditTeamAccess = response.canEditAccess ?? false
         } catch {
             // Non-fatal — sheet just shows an empty state.
+        }
+    }
+
+    private struct AccessBody: Encodable {
+        let permission: String?
+        let enabled: Bool?
+        let morningBrief: Bool?
+        enum CodingKeys: String, CodingKey {
+            case permission, enabled
+            case morningBrief = "morning_brief"
+        }
+    }
+    private struct AccessResponse: Decodable {
+        let ok: Bool
+        let access: [String]?
+        let morningBrief: Bool?
+        let error: String?
+        enum CodingKeys: String, CodingKey {
+            case ok, access, error
+            case morningBrief = "morning_brief"
+        }
+    }
+
+    /// Open or close one area (food cost, comps & voids) to a manager, or
+    /// turn their morning brief on/off. Updates that row from the server's
+    /// answer rather than trusting the tap.
+    @discardableResult
+    func setTeamAccess(_ userID: Int, permission: String? = nil, enabled: Bool? = nil,
+                       morningBrief: Bool? = nil) async -> Bool {
+        teamAccessError = nil
+        do {
+            let r: AccessResponse = try await client.send(
+                "/mobile/api/account/team/\(userID)/access", method: .post,
+                body: AccessBody(permission: permission, enabled: enabled, morningBrief: morningBrief))
+            guard r.ok else {
+                teamAccessError = r.error ?? "Couldn't update their access."
+                return false
+            }
+            if let i = teamMembers.firstIndex(where: { $0.id == userID }) {
+                teamMembers[i].access = r.access ?? []
+                teamMembers[i].morningBrief = r.morningBrief
+            }
+            return true
+        } catch let error as APIClient.APIError {
+            teamAccessError = error.message
+            return false
+        } catch {
+            teamAccessError = "Couldn't update their access."
+            return false
         }
     }
 

@@ -10,6 +10,23 @@ struct AccountTeamDetailView: View {
     @State private var showingInvite = false
     @State private var pendingRevoke: TeamMember?
     @State private var postedLabel: String?
+    @State private var pendingLossGrant: TeamMember?
+
+    /// One on/off setting: a tappable pill, not a native Toggle (its height
+    /// breaks the kit's row rhythm — see AccountSheetKit).
+    private func accessRow(label: String, on: Bool, showsDivider: Bool,
+                           set: @escaping (Bool) -> Void) -> some View {
+        AccountKVRow(label: label, showsDivider: showsDivider) {
+            Button {
+                Haptic.light()
+                set(!on)
+            } label: {
+                AccountPill(text: on ? "On" : "Off", on: on)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(label): \(on ? "on" : "off")")
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -30,12 +47,40 @@ struct AccountTeamDetailView: View {
                         ForEach(Array(viewModel.teamMembers.enumerated()), id: \.element.id) { index, member in
                             AccountKVRow(label: member.username, showsDivider: index < viewModel.teamMembers.count - 1) {
                                 HStack(spacing: 8) {
-                                    AccountPill(text: member.role == "member" ? "Member" : "Owner", on: member.role != "member")
-                                    if !member.isYou && member.role == "member" {
+                                    AccountPill(text: member.roleLabel, on: member.role != "member")
+                                    if !member.isYou && (member.role == "member" || member.role == "manager") {
                                         AccountActionChip(symbol: "xmark", tone: .cavnarRed, accessibilityLabel: "Remove \(member.username)") {
                                             pendingRevoke = member
                                         }
                                     }
+                                }
+                            }
+                        }
+                    }
+
+                    if let error = viewModel.teamAccessError {
+                        Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
+                    }
+
+                    // What each manager sees beyond their role, and whether
+                    // the morning brief reaches them. Owner only.
+                    if viewModel.canEditTeamAccess {
+                        ForEach(viewModel.teamMembers.filter { ($0.accessGrantable ?? false) && !$0.isYou }) { member in
+                            AccountSection(kicker: "\(member.username) sees") {
+                                ForEach(viewModel.teamAccessOptions) { option in
+                                    accessRow(label: option.label,
+                                              on: (member.access ?? []).contains(option.key),
+                                              showsDivider: true) { newValue in
+                                        if option.key == "loss.view" && newValue {
+                                            pendingLossGrant = member
+                                            return
+                                        }
+                                        Task { await viewModel.setTeamAccess(member.id, permission: option.key, enabled: newValue) }
+                                    }
+                                }
+                                accessRow(label: "Morning brief", on: member.morningBrief ?? false,
+                                          showsDivider: false) { newValue in
+                                    Task { await viewModel.setTeamAccess(member.id, morningBrief: newValue) }
                                 }
                             }
                         }
@@ -75,6 +120,22 @@ struct AccountTeamDetailView: View {
                 Button("Cancel", role: .cancel) { pendingRevoke = nil }
             } message: {
                 Text("They'll be signed out immediately and won't be able to log back in.")
+            }
+            .confirmationDialog(
+                pendingLossGrant.map { "Show comps & voids to \($0.username)?" } ?? "",
+                isPresented: Binding(get: { pendingLossGrant != nil }, set: { if !$0 { pendingLossGrant = nil } }),
+                titleVisibility: .visible
+            ) {
+                Button("Turn on") {
+                    guard let member = pendingLossGrant else { return }
+                    Task {
+                        await viewModel.setTeamAccess(member.id, permission: "loss.view", enabled: true)
+                        pendingLossGrant = nil
+                    }
+                }
+                Button("Cancel", role: .cancel) { pendingLossGrant = nil }
+            } message: {
+                Text("These patterns can name the manager who approved the comps — including this person.")
             }
             .cavnarPostedOverlay(postedLabel, onFinished: { postedLabel = nil })
         }

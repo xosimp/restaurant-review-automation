@@ -6218,9 +6218,9 @@ def send_test_digest_web(current_user):
         from reporter import build_report_from_db, render_html
         from emails import deliver, _from_email
         report = build_report_from_db(rid, restaurant.name, days=7)
-        from permissions import has_permission as _hp_dg, TEAM_INVITE as _ti_dg
+        from permissions import has_permission as _hp_dg, LOSS_VIEW as _lv_dg
         html = render_html(report, restaurant.name, owner_name=restaurant.owner_name, restaurant_id=rid,
-                           owner_view=bool(current_user.get("is_admin")) or _hp_dg(current_user, _ti_dg))
+                           owner_view=_hp_dg(current_user, _lv_dg))
         result = deliver({
             "from": f"Cavnar AI <{_from_email()}>",
             "to": [to_email],
@@ -7425,6 +7425,12 @@ def labor_team_thresholds(current_user):
 @login_required
 def account_team_can_manage(current_user, user_id):
     return _m("mobile_set_can_manage_team")(current_user, user_id)
+
+
+@client_bp.route("/api/account/team/<int:user_id>/access", methods=["POST"])
+@login_required
+def account_team_access(current_user, user_id):
+    return _m("mobile_set_team_access")(current_user, user_id)
 
 
 @client_bp.route("/api/account/staff")
