@@ -98,6 +98,14 @@ Attention items a user has dismissed from the Home brief, so a handled issue doe
 
 `ingredients`, `ingredient_stock_events`, `inventory_history`, `menu_items`, `recipe_ingredients`, `purchase_orders`, `statements`.
 
+## The owner's day
+
+- `alert_holds` — an alert raised mid-service, waiting for the rush to end (`release_at` UTC, `sent_at` once handled or dropped).
+- `close_outs` — one per restaurant per business date; a close-out filed after midnight belongs to the night before.
+- `action_snoozes` — PK (restaurant_id, key); "not today" is a date, never a dismissal.
+- `pos_intraday` — PK (restaurant_id, business_date, captured_hour); net sales so far, and the same weekday/hour profile it builds for later weeks.
+- `restaurants` columns: `alert_hold_during_service` (default on), `preshift_nudge_hour` (0 = off).
+
 ## Strategic foundations
 
 - `recommendation_outcomes` — one tracked change: metric, baseline window/value/detail, `evaluate_on`, verdict. Partial unique index on (restaurant_id, source_key) while `status='tracking'`.

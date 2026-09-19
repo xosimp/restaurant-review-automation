@@ -132,6 +132,19 @@ Two halves:
 
 ---
 
+## The owner's day (workflow audit #19)
+
+**Files**: `closeout.py`, `action_queue.py`, `intraday.py`, `monthly_review.py`, plus the day-shaped parts of `notify.py`, `morning_brief.py`, `issues.py` and `strategy_jobs.py`.
+
+**Design stance**: the product is useful before service and after it, and must not interrupt during it.
+- **Before opening** — the brief is the one morning surface. It carries yesterday, prime cost, the one thing to do, open issues, results, goals, comps (owner only), last night's close-out, reviews waiting, what's running low, next week's schedule from Thursday, the quiet weekday (Mondays), and today with weather and any holiday. Home and the Ask opening are built from the same lines; the email's lines each link into Ask (`?ask=`).
+- **During service** — non-critical alerts raised in a rush (11:30–13:30, 17:30–20:30 local, clipped to opening hours) are held and released when it ends, three per restaurant per pass, dropped if 12h stale (`notify.rush_release_at`, `alert_holds`). Health alerts never wait. `intraday.py` captures net sales hourly where the POS can be read during service (Toast; RPOWER is month-at-a-time and says so), which also builds the hour-level profile that never existed — one push before dinner only when the day is materially off, and only after three same-weekday readings at that hour. A scheduled person not clocked in 15 minutes in becomes the manager's issue.
+- **After close** — `closeout.py` is the manager's four-line handoff; it leads the next brief.
+- **Still open** — `action_queue.py` gathers issues, replies owed, unanswered Ask proposals, unapplied invoices, dishes priced below cost and next week's schedule, each with what finishes it; "not today" snoozes to tomorrow (`action_snoozes`), nothing dismisses silently.
+- **Monthly** — `monthly_review.py` reads the month against the one before, with results, goals and next month's three priorities.
+
+**Timing**: everything an owner reads runs at that hour in the RESTAURANT's timezone (`scheduler.local_due`, `notify._gated_out`), attempted hourly and claimed per restaurant per local day.
+
 ## Strategic foundations (audit #18)
 
 **Files**: `metrics.py`, `outcomes.py`, `goals.py`, `menu_intelligence.py`, `demand.py`, `loss_detection.py`, `issues.py`, `invoices.py`, `morning_brief.py`, `preshift.py`, `strategy_routes.py` (HTTP, web + mobile twins + the public `/i/<token>` issue page), `strategy_jobs.py` (scheduled half).

@@ -89,6 +89,12 @@ A pure evaluation layer with no I/O: `ShiftContext` (what happened) → per-dime
 3. Confidence (how much data backed the score) is tracked separately from the score itself — a high-confidence 60 and a low-confidence 60 are reported differently.
 `SUBSTANTIVE_DIMENSIONS` gates the "fatigue alone can't produce a score" rule. The what-if / swap evaluator (`_SwapIndex`) only considers same-role swaps and is bounded (`MAX_CANDIDATE_EVALUATIONS`) so it stays O(1)-ish per legality check rather than re-scanning the whole schedule.
 
+## The day's jobs (workflow audit #19)
+
+Owner-facing jobs are attempted **hourly** and gated per restaurant on its own local hour, once per local day: `weekly_digest` (9am), `monthly_summary` (9am on the local 1st), `onboarding` (10am), the daily alert checks (10am, `notify._gated_out`) and `issue_signals` (10am). Infrastructure jobs keep their Chicago-time daily claims.
+
+Every tick: `notify.release_due_alerts()` (alerts held through a rush). Every 20 minutes: `intraday_capture` (hourly per restaurant while open), `pre_dinner_pulse` (4pm local, one push when the day is materially off), `coverage_check` (scheduled staff not clocked in), `preshift_nudge` (the hour the owner picked, off by default).
+
 ## Strategic jobs (`strategy_jobs.py`, gated in `scheduler.scheduler_loop`)
 
 - `loss_sync` — daily after `pos_sync` (3am CT+): comps/voids/refunds into `pos_loss_daily`; an unsupported POS is normal, not a failure.

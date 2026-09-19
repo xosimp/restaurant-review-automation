@@ -56,6 +56,9 @@ Per-integration connect/disconnect/status: Google Business, Instagram, Toast, Sq
 ### Home (`/api/home/brief`, `/api/home/brief/group`, `/mobile/api/home`)
 The deterministic Home-tab payload — see `home_brief.py`. `?fresh=1` forces recompute past the 60s per-restaurant cache. `/group` returns every location in an owner's `location_group` side by side.
 
+### The owner's day (`strategy_routes.py`, web + mobile twins)
+`actions` (everything still open, filtered by what the reader may see), `actions/snooze` `{key, days}`, `closeout` (GET tonight's + the questions, POST the four lines). `morning-brief` now returns the caller's own brief plus `can_edit`; `morning-brief/settings` also takes `hold_alerts` and `preshift_nudge_hour`.
+
 ### Strategic foundations (`strategy_routes.py`, each at `/api/…` and `/mobile/api/…`)
 `issues` (GET list / POST create), `issues/<id>/resolve`, `issues/<id>/reassign`, `issues/routing` (GET/POST, principal-only), `goals` (GET/POST), `goals/<id>/end`, `outcomes` (GET/POST), `outcomes/<id>/abandon`, `metrics`, `food-cost/dish-scorecard`, `food-cost/reprice`, `food-cost/invoices` (GET list / POST multipart `file`), `food-cost/invoices/<id>`, `food-cost/invoices/<id>/apply`, `labor/demand?day=`, `labor/auto-draft` (GET/POST), `loss-signals` (LOSS_VIEW: owners, or a manager granted it), `morning-brief` (the caller's own brief) + `morning-brief/settings` (principal-only). Team roles: `POST /api/account/team/invite` takes `role` (client | manager | member); `POST /api/account/team/<id>/role` `{role}` (owner-only) and its `/mobile/api` twin. Team access: `POST /api/account/team/<id>/access` and `/mobile/api/account/team/<id>/access` — `{permission, enabled}` and/or `{morning_brief}`, owner-only. Public: `GET/POST /i/<token>` (issue link; GET is side-effect free, POST `action=ack|resolve`). Staff portal: `GET /staff/api/preshift`.
 
