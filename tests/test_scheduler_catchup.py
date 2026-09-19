@@ -121,10 +121,27 @@ def test_every_daily_job_keeps_its_once_per_day_claim():
     claim key is what stops a widened gate re-running it every tick."""
     body = _loop_body()
     for job in ("backup_db", "pos_sync", "inventory_depletion", "food_cost_snapshots",
-                "review_diagnoses", "food_cost_diagnoses", "ops_digest", "weekly_digest",
-                "daily_alerts", "onboarding", "optin_invite", "refresh_tokens",
-                "marketing_metrics_sync"):
+                "review_diagnoses", "food_cost_diagnoses", "ops_digest", "optin_invite",
+                "refresh_tokens", "marketing_metrics_sync"):
         assert re.search(r'claim_period\("%s", str\(today\)\)' % job, body), job
+
+
+def test_owner_facing_jobs_are_attempted_hourly_and_claimed_per_restaurant():
+    """Anything an owner reads runs at that hour in the RESTAURANT's
+    timezone, so the loop has to look every hour and the once-a-day guard
+    moves inside, per restaurant (scheduler.local_due / notify._gated_out)."""
+    body = _loop_body()
+    for job in ("weekly_digest", "daily_alerts", "monthly_summary", "onboarding"):
+        assert re.search(r'claim_period\("%s", f"\{today\}-\{now\.hour\}"\)' % job, body), job
+    import scheduler, notify, inspect
+    assert "claim_key=\"weekly_digest\"" in inspect.getsource(scheduler.run_weekly_digests)
+    assert "claim_key=\"monthly_summary\"" in inspect.getsource(scheduler.run_monthly_summaries)
+    assert "claim_key=\"onboarding\"" in inspect.getsource(scheduler.run_onboarding_sequence)
+    assert "run_onboarding_sequence, local_hour=10" in body
+    assert "local_hour=10" in inspect.getsource(scheduler.run_daily_alert_checks)
+    for fn in (notify.check_daily_alerts, notify.check_extra_daily_alerts,
+               notify.check_no_response_alerts):
+        assert "_gated_out(" in inspect.getsource(fn), fn.__name__
 
 
 # ── the loop itself has to survive a tick ─────────────────────────────────────

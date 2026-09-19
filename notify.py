@@ -623,6 +623,270 @@ def send_staff_signin_alert(restaurant_id: int, restaurant_name: str, owner_emai
 
 # ── Main alert dispatch ───────────────────────────────────────
 
+
+# ── Service-hours holding ───────────────────────────────────────────────────
+# Reviews are fetched at 8am, noon, 4pm and 8pm (scheduler.py), so two of the
+# four slots land inside a rush. Quiet hours do not cover this: they are
+# unset for most restaurants (models.is_in_quiet_hours returns False with no
+# window configured) and they exist for the night, not for service. A
+# two-star review at 12:15 cannot be acted on until the rush is over, and
+# buzzing a manager on the floor teaches them to ignore the phone. Held
+# alerts go out as soon as the rush ends (release_due_alerts, every tick).
+RUSH_WINDOWS = (("11:30", "13:30"), ("17:30", "20:30"))
+# The one alert worth interrupting service for.
+RUSH_EXEMPT_TYPES = {"health"}
+
+
+def _hhmm(text):
+    h, m = str(text).split(":")
+    return int(h), int(m)
+
+
+def _parse_setting_time(value):
+    """'11:00am' / '9:30pm' / '17:30' -> (hour, minute), or None."""
+    raw = str(value or "").strip().lower().replace(" ", "")
+    if not raw:
+        return None
+    ampm = None
+    for suffix in ("am", "pm"):
+        if raw.endswith(suffix):
+            ampm, raw = suffix, raw[:-2]
+            break
+    parts = raw.split(":")
+    try:
+        hour = int(parts[0])
+        minute = int(parts[1]) if len(parts) > 1 else 0
+    except (ValueError, IndexError):
+        return None
+    if ampm == "pm" and hour < 12:
+        hour += 12
+    if ampm == "am" and hour == 12:
+        hour = 0
+    return (hour, minute) if 0 <= hour <= 23 and 0 <= minute <= 59 else None
+
+
+def _open_window(restaurant, weekday_name):
+    """((open_h, open_m), (close_h, close_m)) for this weekday, or None when
+    the restaurant has not configured hours."""
+    import json as _json
+
+    def _load(raw):
+        try:
+            return _json.loads(raw) if raw else {}
+        except Exception:
+            return {}
+
+    opens = _parse_setting_time(_load(getattr(restaurant, "open_times_json", None)).get(weekday_name))
+    closes = _parse_setting_time(_load(getattr(restaurant, "close_times_json", None)).get(weekday_name))
+    return (opens, closes) if (opens or closes) else None
+
+
+def rush_release_at(restaurant_id, alert_type=None, db_path: str = DB_PATH, now_local=None):
+    """When this alert should be delivered instead of now (UTC), or None to
+    send immediately. Fails open — a failure here sends now, which is what
+    every restaurant had before holding existed."""
+    if alert_type in RUSH_EXEMPT_TYPES:
+        return None
+    try:
+        from datetime import time as _time, timezone as _timezone
+        from time_utils import restaurant_now, restaurant_tz
+        r = models.get_restaurant(restaurant_id, db_path)
+        if r is not None and not bool(getattr(r, "alert_hold_during_service", 1)):
+            return None
+        local = now_local or restaurant_now(r, naive=True)
+        window = _open_window(r, local.strftime("%A")) if r is not None else None
+        for start, end in RUSH_WINDOWS:
+            s_h, s_m = _hhmm(start)
+            e_h, e_m = _hhmm(end)
+            begins = local.replace(hour=s_h, minute=s_m, second=0, microsecond=0)
+            ends = local.replace(hour=e_h, minute=e_m, second=0, microsecond=0)
+            if not (begins <= local < ends):
+                continue
+            if window:
+                opens, closes = window
+                # Closed through this window: not a rush.
+                if opens and local.time() < _time(*opens):
+                    continue
+                if closes and local.time() >= _time(*closes):
+                    continue
+            return ends.replace(tzinfo=restaurant_tz(r)).astimezone(_timezone.utc)
+        return None
+    except Exception as e:
+        print(f"[notify] rush check failed for rid={restaurant_id}: {e}")
+        return None
+
+
+def hold_alert(restaurant_id, alert_type, sms_text, subject, html, release_at,
+               review_id=None, db_path: str = DB_PATH):
+    conn = models.get_conn(db_path)
+    try:
+        conn.execute(
+            "INSERT INTO alert_holds (restaurant_id, alert_type, subject, html, sms_text, "
+            "review_id, release_at) VALUES (?,?,?,?,?,?,?)",
+            (restaurant_id, alert_type, subject, html, sms_text, review_id,
+             release_at.strftime("%Y-%m-%d %H:%M:%S")))
+        conn.commit()
+    finally:
+        conn.close()
+    print(f"[notify] rid={restaurant_id} {alert_type} held until {release_at:%H:%M} UTC — mid-service")
+
+
+def release_due_alerts(db_path: str = DB_PATH, now_utc=None):
+    """Scheduler entry point: send everything whose rush has ended. A hold is
+    marked sent whether or not delivery worked, so a failing channel can't
+    replay the same alert every five minutes."""
+    from datetime import datetime as _dt, timezone as _timezone
+    now_utc = now_utc or _dt.now(_timezone.utc)
+    conn = models.get_conn(db_path)
+    try:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT * FROM alert_holds WHERE sent_at IS NULL AND release_at <= ? "
+            "ORDER BY id LIMIT 200", (now_utc.strftime("%Y-%m-%d %H:%M:%S"),)).fetchall()]
+    finally:
+        conn.close()
+    sent = 0
+    for h in rows:
+        try:
+            deliver_alert(h["restaurant_id"], h["alert_type"], h["sms_text"], h["subject"],
+                          h["html"], review_id=h["review_id"], db_path=db_path)
+            sent += 1
+        except Exception as e:
+            print(f"[notify] held alert {h['id']} failed: {e}")
+            try:
+                import ops
+                ops.capture(e, job="release_held_alerts", context=f"hold_id={h['id']}")
+            except Exception:
+                pass
+        conn = models.get_conn(db_path)
+        try:
+            conn.execute("UPDATE alert_holds SET sent_at=datetime('now') WHERE id=?", (h["id"],))
+            conn.commit()
+        finally:
+            conn.close()
+    return {"released": sent}
+
+
+
+# Alert types the morning brief's own lines already cover. When the brief
+# reached the owner's phone this morning, these skip EMAIL only — the owner
+# still gets the push and any SMS they turned on, and their inbox gets one
+# Cavnar email in the morning instead of three.
+BRIEF_COVERED_TYPES = {"labor_over", "food_waste", "negative_trend",
+                       "rating_threshold", "ai_visibility_drop", "unresponded"}
+
+
+def brief_pushed_today(restaurant_id, db_path: str = DB_PATH):
+    """True when this restaurant's morning brief was delivered by push today
+    (its own local date) — the owner has the app and has already read today's
+    numbers there."""
+    try:
+        from time_utils import restaurant_now_by_id
+        day = restaurant_now_by_id(restaurant_id, naive=True).date().isoformat()
+        conn = models.get_conn(db_path)
+        try:
+            row = conn.execute(
+                "SELECT 1 FROM push_deliveries WHERE restaurant_id=? AND alert_type='morning_brief' "
+                "AND ok=1 AND date(created_at) >= ? LIMIT 1", (restaurant_id, day)).fetchone()
+        finally:
+            conn.close()
+        return bool(row)
+    except Exception:
+        return False
+
+
+def _email_alert(restaurant_id, owner_email, subject, html, alert_type, db_path: str = DB_PATH):
+    """Send an alert email unless the morning brief already covered it on the
+    owner's phone today. Returns True when it sent."""
+    if alert_type in BRIEF_COVERED_TYPES and brief_pushed_today(restaurant_id, db_path):
+        print(f"[notify] rid={restaurant_id} {alert_type} email folded into today's brief")
+        return False
+    return _send_alert_email(owner_email, subject, html, restaurant_id=restaurant_id)
+
+
+def deliver_alert(restaurant_id: int, alert_type: str, sms_text: str, subject: str,
+                  html: str, review_id: int = None, db_path: str = DB_PATH):
+    """Send one alert on whichever channels this restaurant has on for that
+    type, log it, and fire the webhook. The single delivery path: an alert
+    raised now goes straight here, and one held through a rush comes here
+    when the rush ends (release_due_alerts).
+
+    Deliberately does NOT re-check quiet hours or the daily cap. Those are
+    checked when the alert is RAISED; re-checking at release would drop a
+    held alert whose release happens to land in a window it was never
+    subject to.
+    """
+    conn = models.get_conn(db_path)
+    try:
+        row = conn.execute("SELECT * FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return
+    global_sms = bool(row["urgent_via_sms"])
+    global_email = bool(row["urgent_via_email"])
+    contacts = get_alert_contacts(restaurant_id, sms_consent_only=True, db_path=db_path) if global_sms else []
+    owner_email = row["owner_email"] or ""
+
+    def _col(name, default=1):
+        try:
+            v = row[name]
+            return 1 if v is None else int(v)
+        except Exception:
+            return default
+
+        return
+    # Per-type channel flags (fall back to 1 so old data keeps working)
+    type_map = {
+        "health":    ("al_health_sms",  "al_health_email",  "al_health_push"),
+        "1star":     ("al_1star_sms",   "al_1star_email",   "al_1star_push"),
+        "2star":     ("al_2star_sms",   "al_2star_email",   "al_2star_push"),
+        "3star":     ("al_3star_sms",   "al_3star_email",   "al_3star_push"),
+        # "any review" and the approval confirmation are low-stakes
+        # informational types — they ride the 1-star channel matrix
+        # rather than adding two more toggle triplets to the settings
+        # screen for something the owner opted into by name already.
+        "any_review":   ("al_1star_sms", "al_1star_email", "al_1star_push"),
+        "resp_approved":("al_1star_sms", "al_1star_email", "al_1star_push"),
+        "edit_downgrade":("al_1star_sms", "al_1star_email", "al_1star_push"),
+        "5star":     ("al_5star_sms",   "al_5star_email",   "al_5star_push"),
+        "neg_spike": ("al_spike_sms",   "al_spike_email",   "al_spike_push"),
+        "unresponded":("al_unres_sms",  "al_unres_email",   "al_unres_push"),
+    }
+    sms_col, email_col, push_col = type_map.get(
+        alert_type, ("al_health_sms", "al_health_email", "al_health_push")
+    )
+    via_sms   = global_sms   and bool(_col(sms_col,   0))
+    via_email = global_email and bool(_col(email_col, 1))
+    # Push has no global on/off switch the way SMS/email do (urgent_via_sms/
+    # urgent_via_email exist because those channels cost money per message;
+    # push doesn't, so the per-type toggle alone is the gate) — and it's a
+    # no-op anyway if the owner never registered a device.
+    via_push  = bool(_col(push_col, 1))
+    if via_sms and contacts:
+        for c in contacts:
+            send_sms(c["phone"], sms_text)
+    if via_email and owner_email:
+        _email_alert(restaurant_id, owner_email, subject, html, alert_type, db_path)
+    if via_push:
+        try:
+            from push import fire_push as _fp
+            _fp(restaurant_id, alert_type, subject, sms_text,
+                data={"alert_type": alert_type, "review_id": review_id})
+        except Exception:
+            pass
+    # db_path from the enclosing fire_review_alerts() call — this used
+    # to fall back to _log_alert's own stale default, silently logging (or,
+    # on a machine/CI runner with no local reviews.db, crashing) against
+    # the wrong database regardless of what db_path the caller actually
+    # passed in.
+    _log_alert(restaurant_id, alert_type, review_id, db_path=db_path)
+    try:
+        from webhooks import fire_webhook as _fw
+        _fw(restaurant_id, "alert.fired", {"alert_type": alert_type, "review_id": review_id})
+    except Exception:
+        pass
+
+
 def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: list,
                        db_path: str = DB_PATH, edited_reviews: list = None):
     """
@@ -719,56 +983,16 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
     def blast(sms_text: str, subject: str, html: str, alert_type: str, review_id: int = None):
         if _check_dnd(alert_type):
             return
-        # Per-type channel flags (fall back to 1 so old data keeps working)
-        type_map = {
-            "health":    ("al_health_sms",  "al_health_email",  "al_health_push"),
-            "1star":     ("al_1star_sms",   "al_1star_email",   "al_1star_push"),
-            "2star":     ("al_2star_sms",   "al_2star_email",   "al_2star_push"),
-            "3star":     ("al_3star_sms",   "al_3star_email",   "al_3star_push"),
-            # "any review" and the approval confirmation are low-stakes
-            # informational types — they ride the 1-star channel matrix
-            # rather than adding two more toggle triplets to the settings
-            # screen for something the owner opted into by name already.
-            "any_review":   ("al_1star_sms", "al_1star_email", "al_1star_push"),
-            "resp_approved":("al_1star_sms", "al_1star_email", "al_1star_push"),
-            "edit_downgrade":("al_1star_sms", "al_1star_email", "al_1star_push"),
-            "5star":     ("al_5star_sms",   "al_5star_email",   "al_5star_push"),
-            "neg_spike": ("al_spike_sms",   "al_spike_email",   "al_spike_push"),
-            "unresponded":("al_unres_sms",  "al_unres_email",   "al_unres_push"),
-        }
-        sms_col, email_col, push_col = type_map.get(
-            alert_type, ("al_health_sms", "al_health_email", "al_health_push")
-        )
-        via_sms   = global_sms   and bool(_col(sms_col,   0))
-        via_email = global_email and bool(_col(email_col, 1))
-        # Push has no global on/off switch the way SMS/email do (urgent_via_sms/
-        # urgent_via_email exist because those channels cost money per message;
-        # push doesn't, so the per-type toggle alone is the gate) — and it's a
-        # no-op anyway if the owner never registered a device.
-        via_push  = bool(_col(push_col, 1))
-        if via_sms and contacts:
-            for c in contacts:
-                send_sms(c["phone"], sms_text)
-        if via_email and owner_email:
-            _send_alert_email(owner_email, subject, html, restaurant_id=restaurant_id)
-        if via_push:
-            try:
-                from push import fire_push as _fp
-                _fp(restaurant_id, alert_type, subject, sms_text,
-                    data={"alert_type": alert_type, "review_id": review_id})
-            except Exception:
-                pass
-        # db_path from the enclosing fire_review_alerts() call — this used
-        # to fall back to _log_alert's own stale default, silently logging (or,
-        # on a machine/CI runner with no local reviews.db, crashing) against
-        # the wrong database regardless of what db_path the caller actually
-        # passed in.
-        _log_alert(restaurant_id, alert_type, review_id, db_path=db_path)
-        try:
-            from webhooks import fire_webhook as _fw
-            _fw(restaurant_id, "alert.fired", {"alert_type": alert_type, "review_id": review_id})
-        except Exception:
-            pass
+        # Mid-service? Hold it until the rush ends instead of buzzing a
+        # manager on the floor. The DND and cap checks above have already
+        # run, so a held alert is one that WOULD have gone out.
+        release_at = rush_release_at(restaurant_id, alert_type, db_path)
+        if release_at is not None:
+            hold_alert(restaurant_id, alert_type, sms_text, subject, html, release_at,
+                       review_id=review_id, db_path=db_path)
+            return
+        deliver_alert(restaurant_id, alert_type, sms_text, subject, html,
+                      review_id=review_id, db_path=db_path)
 
     for review in new_reviews:
         rating   = review.rating or 0
@@ -1017,7 +1241,32 @@ def fire_response_approved_alert(restaurant_id: int, review_id: int,
         print(f"[notify] resp_approved alert error rid={restaurant_id}: {e}")
 
 
-def check_no_response_alerts(db_path: str = DB_PATH):
+
+def _gated_out(restaurant_id, local_hour, claim_key, db_path: str = DB_PATH, until=14):
+    """True when this restaurant should be skipped this pass.
+
+    `local_hour=None` means "no gate" — the function runs for everyone, which
+    is what a direct call (a test, an admin re-run) wants. The scheduler
+    passes an hour instead: it attempts these checks every hour, and each
+    restaurant is served at that hour in ITS OWN timezone, once per local
+    day. Before this they all fired at 10am Chicago, so a Pacific client was
+    alerted at 8am and an Eastern one at 11am.
+    """
+    if local_hour is None:
+        return False
+    try:
+        import ops
+        from time_utils import restaurant_now_by_id
+        local = restaurant_now_by_id(restaurant_id, naive=True)
+        if not (local_hour <= local.hour < until):
+            return True
+        return not ops.claim_period(f"{claim_key}:{restaurant_id}", local.date().isoformat())
+    except Exception:
+        # Fail open: alert rather than silently skip a day.
+        return False
+
+
+def check_no_response_alerts(db_path: str = DB_PATH, local_hour: int = None):
     """
     Called daily by the scheduler. Fires alerts for restaurants with negative
     reviews unresponded for 48+ hours. Fires both email and SMS per restaurant flags.
@@ -1041,6 +1290,8 @@ def check_no_response_alerts(db_path: str = DB_PATH):
 
     for row in rows:
         rid         = row["restaurant_id"]
+        if _gated_out(rid, local_hour, "no_response_alerts", db_path):
+            continue
         name        = row["name"]
         n           = row["overdue_count"]
         _unres_sms   = row["al_unres_sms"] if "al_unres_sms" in row.keys() else 1
@@ -1084,7 +1335,8 @@ def check_no_response_alerts(db_path: str = DB_PATH):
                 send_sms(c["phone"], sms)
 
         if via_email and owner_email:
-            _send_alert_email(owner_email, f"⏰ Unresponded reviews — {name}", html, restaurant_id=rid)
+            _email_alert(rid, owner_email, f"⏰ Unresponded reviews — {name}", html,
+                         "unresponded", db_path)
 
         if via_push:
             try:
@@ -1121,7 +1373,7 @@ def _short_period(start, end) -> str:
     return f"{a.strftime('%b %-d')}-{b.strftime('%b %-d')}"
 
 
-def check_daily_alerts(db_path: str = DB_PATH):
+def check_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
     """
     Daily check for negative trend, rating threshold, and labor over target.
     Called once per day by the scheduler alongside check_no_response_alerts.
@@ -1140,6 +1392,9 @@ def check_daily_alerts(db_path: str = DB_PATH):
 
     for r in restaurants:
         rid         = r["id"]
+        # 10am where the restaurant is (the scheduler attempts this hourly).
+        if _gated_out(rid, local_hour, "daily_alerts", db_path):
+            continue
         name        = r["name"]
         via_sms     = bool(r["urgent_via_sms"])
         via_email   = bool(r["urgent_via_email"])
@@ -1156,7 +1411,7 @@ def check_daily_alerts(db_path: str = DB_PATH):
                 for c in contacts:
                     send_sms(c["phone"], sms_text)
             if via_email and owner_email:
-                _send_alert_email(owner_email, subject, html, restaurant_id=rid)
+                _email_alert(rid, owner_email, subject, html, alert_type, db_path)
             # These three alert types predate push and never had their own
             # al_*_push toggle columns added (unlike health/1star/2star/5star/
             # spike/unresponded, which each have one) — rather than fire
@@ -1377,7 +1632,7 @@ def _ai_visibility_drop(runs: list):
     return s_now, s_prev, int(round(moved))
 
 
-def check_extra_daily_alerts(db_path: str = DB_PATH):
+def check_extra_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
     """The two daily triggers added by the settings audit — food waste and
     an AI-visibility drop — run right after check_daily_alerts(). Same
     7-day repeat window, same three channels (email to owner + extra
@@ -1393,6 +1648,8 @@ def check_extra_daily_alerts(db_path: str = DB_PATH):
 
     for r in restaurants:
         rid, name = r["id"], r["name"]
+        if _gated_out(rid, local_hour, "extra_alerts", db_path):
+            continue
         owner_email = r["owner_email"] or ""
         via_sms, via_email = bool(r["urgent_via_sms"]), bool(r["urgent_via_email"])
         contacts = get_alert_contacts(rid, sms_consent_only=True, db_path=db_path) if via_sms else []
@@ -1412,7 +1669,7 @@ def check_extra_daily_alerts(db_path: str = DB_PATH):
                 for c in contacts:
                     send_sms(c["phone"], sms_text)
             if via_email and owner_email:
-                _send_alert_email(owner_email, subject, html, restaurant_id=rid)
+                _email_alert(rid, owner_email, subject, html, alert_type, db_path)
             try:
                 from push import fire_push
                 fire_push(rid, alert_type, subject, sms_text, data={"alert_type": alert_type}, db_path=db_path)

@@ -461,6 +461,9 @@ def run_weekly_digests():
             restaurant = get_restaurant(rid)
             if not restaurant:
                 continue
+            # 9am in the restaurant's own timezone, once per day.
+            if not local_due(restaurant, 9, claim_key="weekly_digest"):
+                continue
 
             owner_emails = get_owner_emails(rid)
             if not owner_emails:
@@ -811,6 +814,27 @@ SCHEDULER_TICK_SECONDS = int(os.getenv("SCHEDULER_TICK_SECONDS", "300"))
 # claim_period key still guarantees it runs at most once. So an on-time day
 # behaves exactly as before, and a late day runs the job late instead of not
 # at all.
+def local_due(restaurant, hour, until=14, claim_key=None, now_local=None):
+    """True when it is `hour` or later (and before `until`) in THIS
+    restaurant's own timezone, and nothing has claimed it today.
+
+    The loop ticks on Chicago time, which is right for infrastructure jobs
+    and wrong for anything an owner reads: a Pacific client's "9am digest"
+    arrived at 7am local, and a "10am" alert at 8am. Per-restaurant jobs
+    gate on this instead, exactly as morning_brief.run_due does, so each
+    restaurant is served at its own hour and the claim keeps it to once a
+    day however many ticks observe the window.
+    """
+    from time_utils import restaurant_now
+    local = now_local or restaurant_now(restaurant, naive=True)
+    if not (hour <= local.hour < until):
+        return False
+    if claim_key is None:
+        return True
+    return _ops.claim_period(f"{claim_key}:{getattr(restaurant, 'id', restaurant)}",
+                             local.date().isoformat())
+
+
 def _due(now, hour, until=24):
     """True from `hour` (inclusive) until `until` (exclusive), local time."""
     return hour <= now.hour < until
@@ -1014,10 +1038,11 @@ def backup_db():
             pass
 
 
-def run_onboarding_sequence():
+def run_onboarding_sequence(local_hour: int = None):
     """
     Check all active clients and send the right onboarding email based on days since signup.
-    Runs daily at 10am. Skips clients who already received each email (UNIQUE constraint).
+    Runs at 10am in each restaurant's own timezone. Skips clients who already
+    received each email (UNIQUE constraint).
     Only sends to clients with billing_status in ('trial', 'active').
     """
     from datetime import datetime, timedelta
@@ -1038,6 +1063,11 @@ def run_onboarding_sequence():
             continue
         # Need an email address
         if not r.owner_email:
+            continue
+        # 10am in the restaurant's own timezone, once a day — the loop
+        # attempts this hourly. local_hour=None (a direct call: a test, an
+        # admin re-run) is never time-gated, matching notify._gated_out.
+        if local_hour is not None and not local_due(r, local_hour, claim_key="onboarding"):
             continue
         # Need a signup date
         if not r.created_at:
@@ -1307,17 +1337,18 @@ def run_weekly_ai_visibility():
 
 
 def run_daily_alert_checks():
-    """10am — unresponded, trend/threshold/labor, food waste and visibility
-    alerts, then the retention purge. A failure in one must not take the rest
-    down with it, which is why each is wrapped separately rather than the
-    whole block sharing one except."""
+    """Unresponded, trend/threshold/labor, food waste and visibility alerts,
+    then the retention purge. Attempted hourly; each restaurant is served at
+    10am in its own timezone (notify._gated_out), once per local day. A
+    failure in one must not take the rest down with it, which is why each is
+    wrapped separately rather than the whole block sharing one except."""
     from notify import check_no_response_alerts, check_daily_alerts, check_extra_daily_alerts
     out = {}
     for name, fn in (("no_response", check_no_response_alerts),
                      ("daily", check_daily_alerts),
                      ("extra_daily", check_extra_daily_alerts)):
         try:
-            fn()
+            fn(local_hour=10)
             out[name] = "ok"
         except Exception as e:
             out[name] = f"failed: {e}"
@@ -1500,6 +1531,11 @@ def run_monthly_summaries():
         if not r.owner_email or r.billing_status in ('internal', 'churned'):
             skipped += 1
             continue
+        # 9am local on the 1st, not 9am Chicago — and the restaurant's own
+        # date, so a Pacific client isn't summarised a day early.
+        if not local_due(r, 9, claim_key="monthly_summary"):
+            skipped += 1
+            continue
         if getattr(r, "marketing_emails_opt_out", 0):
             skipped += 1
             continue
@@ -1634,7 +1670,10 @@ def scheduler_loop():
             if _due(now, 8) and _ops.claim_period("ops_digest", str(today)):
                 _ops.run_job("ops_failure_digest", _ops.send_failure_digest)
 
-            if _due(now, 9) and _ops.claim_period("weekly_digest", str(today)):
+            # Attempted hourly: each restaurant is gated on ITS 9am inside
+            # (local_due), so one Chicago-timed daily claim would serve only
+            # the restaurants whose local hour happened to match.
+            if _ops.claim_period("weekly_digest", f"{today}-{now.hour}"):
                 log.info("Running weekly digest check...")
                 _ops.run_job("weekly_digests", run_weekly_digests)
 
@@ -1644,19 +1683,19 @@ def scheduler_loop():
                 _ops.run_job("stale_inventory", check_stale_inventory)
 
             # 10am daily — no-response + trend/threshold/labor alerts
-            if _due(now, 10) and _ops.claim_period("daily_alerts", str(today)):
+            if _ops.claim_period("daily_alerts", f"{today}-{now.hour}"):
                 log.info("Running daily alert checks...")
                 _ops.run_job("daily_alerts", run_daily_alert_checks)
 
             # 1st of the month at 9am — send monthly summary to all active clients
-            if now.day == 1 and _due(now, 9) and _ops.claim_period("monthly_summary", str(today)):
+            if _ops.claim_period("monthly_summary", f"{today}-{now.hour}"):
                 log.info("Running monthly summary emails...")
                 _ops.run_job("monthly_summary", run_monthly_summaries)
 
-            if _due(now, 10) and _ops.claim_period("onboarding", str(today)):
+            if _ops.claim_period("onboarding", f"{today}-{now.hour}"):
                 # 10am daily — onboarding email sequence
                 log.info("Running onboarding sequence check...")
-                _ops.run_job("onboarding_emails", run_onboarding_sequence)
+                _ops.run_job("onboarding_emails", run_onboarding_sequence, local_hour=10)
 
             if _due(now, 11) and now.weekday() == 0 and _ops.claim_period("inactive_clients", str(today)):
                 # Monday 11am — inactive client check
@@ -1688,6 +1727,14 @@ def scheduler_loop():
             if _ops.claim_period("issue_scan", f"{today}-{now.hour}"):
                 from strategy_jobs import run_issue_scan
                 _ops.run_job("issue_scan", run_issue_scan)
+
+            # Every tick — an alert held through lunch or dinner service goes
+            # out as soon as that rush ends (notify.rush_release_at).
+            try:
+                import notify as _notify_rel
+                _notify_rel.release_due_alerts()
+            except Exception as e:
+                _ops.capture(e, job="release_held_alerts")
 
             # Every tick — issue escalations and held notifications need
             # minutes, not hours; morning briefs go at each restaurant's own
