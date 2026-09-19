@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Pushed from Account's "Alerts & digest" row. The old inline card only
 /// exposed 7 of the 12 settings the backend actually stores (missing
@@ -19,6 +20,9 @@ struct AccountAlertsDetailView: View {
     @State private var quietStart: Date
     @State private var quietEnd: Date
     @State private var testDigestLabel: String?
+    @State private var pushDenied = false
+    @State private var brief = BriefSettings()
+    @State private var briefLoaded = false
     private enum AlertsField: Hashable { case extraEmails, contactName(Int), contactPhone(Int) }
     @FocusState private var focusedField: AlertsField?
 
@@ -84,6 +88,24 @@ struct AccountAlertsDetailView: View {
                 }
 
                 AccountSection(kicker: "Push notifications") {
+                    // A denial is permanent and silent — iOS will not show
+                    // the system prompt a second time, so an owner who
+                    // tapped "Don't Allow" once was unreachable by push
+                    // forever with nothing anywhere saying why. Every switch
+                    // below it would have been a lie.
+                    if pushDenied {
+                        CavnarCaveat(
+                            title: "Notifications are turned off for Cavnar AI",
+                            detail: "iOS won't ask again, so nothing below can reach your phone until you turn them back on in Settings."
+                        )
+                        AccountActionRow(label: "Open Settings",
+                                         detail: "Notifications → Cavnar AI → Allow Notifications",
+                                         symbol: "arrow.up.forward") {
+                            if let url = URL(string: UIApplication.openSettingsURLString) {
+                                UIApplication.shared.open(url)
+                            }
+                        }
+                    }
                     pushRow("1-star reviews", $draft.al1starPush, on: draft.alert1star)
                     pushRow("2-star reviews", $draft.al2starPush, on: draft.alert2star)
                     pushRow("5-star reviews", $draft.al5starPush, on: draft.alert5star)
@@ -95,6 +117,43 @@ struct AccountAlertsDetailView: View {
                         .font(.cavnarBody(14))
                         .foregroundStyle(Color.cavnarInk3.opacity(0.8))
                         .padding(.vertical, 9)
+                }
+
+                // The morning brief had no settings screen on the phone at
+                // all — an owner who runs Cavnar from iOS could not change
+                // the hour it arrives, stop alerts buzzing mid-service, or
+                // turn on the lineup nudge. All three are the same
+                // /morning-brief/settings twin the web dashboard uses.
+                if briefLoaded && brief.canEdit {
+                    AccountSection(kicker: "Morning brief & issues") {
+                        AccountSwitchRow(
+                            label: "Morning brief",
+                            detail: "Yesterday, what to fix first, and what is waiting on you — to your phone, or email if the app isn't installed.",
+                            isOn: Binding(get: { brief.enabled },
+                                          set: { brief.enabled = $0; saveBrief() })
+                        )
+                        AccountKVRow(label: "Send it at") {
+                            Picker("", selection: Binding(get: { brief.hour },
+                                                          set: { brief.hour = $0; saveBrief() })) {
+                                ForEach(4..<12, id: \.self) { Text(Self.hourLabel($0)).tag($0) }
+                            }
+                            .labelsHidden().tint(Color.cavnarEmber)
+                        }
+                        AccountSwitchRow(
+                            label: "Hold alerts through service",
+                            detail: "A two-star review at 12:15 can't be acted on until the rush is over. Held alerts arrive when it ends; health mentions never wait.",
+                            isOn: Binding(get: { brief.holdAlerts },
+                                          set: { brief.holdAlerts = $0; saveBrief() })
+                        )
+                        AccountKVRow(label: "Lineup notes to the manager", showsDivider: false) {
+                            Picker("", selection: Binding(get: { brief.preshiftNudgeHour },
+                                                          set: { brief.preshiftNudgeHour = $0; saveBrief() })) {
+                                Text("Off").tag(0)
+                                ForEach(12..<21, id: \.self) { Text(Self.hourLabel($0)).tag($0) }
+                            }
+                            .labelsHidden().tint(Color.cavnarEmber)
+                        }
+                    }
                 }
 
                 AccountSection(kicker: "Quiet hours") {
@@ -265,6 +324,77 @@ struct AccountAlertsDetailView: View {
         .accountSheetChrome("Alerts")
         .keyboardDoneToolbar { focusedField = nil }
         .cavnarPostedOverlay(postedLabel) { dismiss() }
+        .task {
+            await PushManager.shared.refreshAuthorization()
+            pushDenied = PushManager.shared.authorizationDenied
+            await loadBrief()
+        }
+        }
+    }
+
+    // MARK: - Morning brief & issues
+
+    /// The restaurant's brief settings, from the same /morning-brief
+    /// twin the web dashboard reads. Kept separate from `draft` because
+    /// they are a different endpoint with a different permission: only a
+    /// principal may change them (`canEdit`).
+    struct BriefSettings: Decodable {
+        var enabled = true
+        var hour = 7
+        var holdAlerts = true
+        var preshiftNudgeHour = 0
+        var canEdit = false
+
+        private enum Outer: String, CodingKey { case settings, canEdit = "can_edit" }
+        private enum Inner: String, CodingKey {
+            case enabled, hour
+            case holdAlerts = "hold_alerts"
+            case preshiftNudgeHour = "preshift_nudge_hour"
+        }
+
+        init() {}
+
+        init(from decoder: Decoder) throws {
+            let outer = try decoder.container(keyedBy: Outer.self)
+            canEdit = (try? outer.decode(Bool.self, forKey: .canEdit)) ?? false
+            let inner = try outer.nestedContainer(keyedBy: Inner.self, forKey: .settings)
+            enabled = (try? inner.decode(Bool.self, forKey: .enabled)) ?? true
+            hour = (try? inner.decode(Int.self, forKey: .hour)) ?? 7
+            holdAlerts = (try? inner.decode(Bool.self, forKey: .holdAlerts)) ?? true
+            preshiftNudgeHour = (try? inner.decode(Int.self, forKey: .preshiftNudgeHour)) ?? 0
+        }
+    }
+
+    private struct BriefPayload: Encodable {
+        let enabled: Bool
+        let hour: Int
+        let hold_alerts: Bool
+        let preshift_nudge_hour: Int
+    }
+
+    private static func hourLabel(_ hour: Int) -> String {
+        if hour == 0 { return "Off" }
+        if hour == 12 { return "12pm" }
+        return hour < 12 ? "\(hour)am" : "\(hour - 12)pm"
+    }
+
+    private func loadBrief() async {
+        // The brief itself rides along in this response; only the settings
+        // are wanted here, and a failure leaves the section hidden rather
+        // than showing switches that would not save.
+        if let loaded: BriefSettings = try? await APIClient.shared.send("/mobile/api/morning-brief") {
+            brief = loaded
+        }
+        briefLoaded = true
+    }
+
+    private func saveBrief() {
+        let payload = BriefPayload(enabled: brief.enabled, hour: brief.hour,
+                                   hold_alerts: brief.holdAlerts,
+                                   preshift_nudge_hour: brief.preshiftNudgeHour)
+        Task {
+            let _: APIClient.EmptyResponse? = try? await APIClient.shared.send(
+                "/mobile/api/morning-brief/settings", method: .post, body: payload)
         }
     }
 

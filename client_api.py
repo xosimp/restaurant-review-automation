@@ -4143,6 +4143,12 @@ def _normalize_phone(raw):
     return None
 
 
+# The per-alert-type push switches, in the order the settings screens list
+# them. deliver_alert reads these columns; both clients now write them.
+_PUSH_COLUMNS = ("al_1star_push", "al_2star_push", "al_5star_push",
+                 "al_health_push", "al_spike_push", "al_unres_push")
+
+
 @client_bp.route("/api/alert-settings", methods=["GET"])
 @login_required
 def get_alert_settings(current_user):
@@ -4172,6 +4178,13 @@ def get_alert_settings(current_user):
         "alert_quiet_end":       getattr(r, "alert_quiet_end", None),
         "alert_max_per_day":     getattr(r, "alert_max_per_day", 0),
     }
+    # Per-type push switches. These columns have existed and been honoured by
+    # deliver_alert since push shipped, and iOS has had switches for them —
+    # the web dashboard had none, so an owner who manages Cavnar from a
+    # laptop could not turn a single push off.
+    for col in _PUSH_COLUMNS:
+        settings[col] = 1 if getattr(r, col, 1) is None else int(getattr(r, col, 1))
+    settings["push_sound"] = 1 if getattr(r, "push_sound", 1) is None else int(getattr(r, "push_sound", 1))
     return jsonify(ok=True, contacts=contacts, settings=settings)
 
 
@@ -4227,6 +4240,8 @@ def save_alert_settings(current_user):
         "alert_quiet_start":     data.get("alert_quiet_start") or None,
         "alert_quiet_end":       data.get("alert_quiet_end") or None,
         "alert_max_per_day":     int(data.get("alert_max_per_day") or 0),
+        **{col: int(bool(data.get(col, True))) for col in _PUSH_COLUMNS},
+        "push_sound":            0 if data.get("push_sound") is False else 1,
     })
     return jsonify(ok=True)
 

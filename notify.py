@@ -1097,23 +1097,147 @@ def deliver_alert(restaurant_id: int, alert_type: str, sms_text: str, subject: s
         pass
 
 
-def raise_alert(restaurant_id: int, alert_type: str, sms_text: str, subject: str, html: str,
-                review_id: int = None, db_path: str = DB_PATH, value: float = None) -> bool:
-    """Raise one alert: quiet hours / daily cap / hard ceiling, then hold it
-    if service is mid-rush, else deliver it now. Returns False when it was
-    suppressed outright.
+# ── The morning batch ───────────────────────────────────────────────────────
+#
+# At 10am local, run_daily_alert_checks runs three functions in sequence that
+# between them can raise eight alert types. Each used to send its own SMS, its
+# own email and its own push. A single week of understaffing — labour over
+# target, waste up, an ingredient climbing, the rating slipping, two reviews
+# unanswered — arrived as five notifications describing one story.
+#
+# An advisor sends one. These types are collected across the whole pass and
+# delivered together, worst first; each still writes its own alert_log row, so
+# the 7-day repeat windows and the history are unchanged.
+DAILY_BATCH_TYPES = {
+    "negative_trend", "rating_threshold", "labor_over", "food_waste",
+    "critical_low", "price_spike", "ai_visibility_drop", "no_response",
+}
+
+_batch = None
+
+
+class _Pending:
+    __slots__ = ("alert_type", "sms_text", "subject", "lines", "value")
+
+    def __init__(self, alert_type, sms_text, subject, lines, value):
+        self.alert_type, self.sms_text = alert_type, sms_text
+        self.subject, self.lines, self.value = subject, lines or [], value
+
+
+def begin_daily_batch():
+    """Start collecting. Idempotent, and safe to call when one is already
+    open (the scheduler runs one pass at a time behind the lease)."""
+    global _batch
+    _batch = {}
+
+
+def flush_daily_batch(db_path: str = DB_PATH):
+    """Send what was collected: one notification per restaurant when more
+    than one thing fired, otherwise exactly what would have gone before."""
+    global _batch
+    pending, _batch = (_batch or {}), None
+    out = {"restaurants": 0, "combined": 0, "single": 0}
+    for rid, items in pending.items():
+        if not items:
+            continue
+        out["restaurants"] += 1
+        try:
+            if len(items) == 1:
+                out["single"] += 1
+                _deliver_pending(rid, items[0], db_path)
+            else:
+                out["combined"] += 1
+                _deliver_combined(rid, items, db_path)
+        except Exception as e:
+            print(f"[notify] daily batch failed for rid={rid}: {e}")
+            try:
+                import ops
+                ops.capture(e, job="daily_batch", context=f"restaurant_id={rid}", db_path=db_path)
+            except Exception:
+                pass
+    return out
+
+
+def _deliver_pending(restaurant_id, item, db_path):
+    html = _alert_email_html(_restaurant_name(restaurant_id), item.subject, item.lines,
+                             restaurant_id=restaurant_id)
+    _deliver_or_hold(restaurant_id, item.alert_type, item.sms_text, item.subject, html,
+                     db_path=db_path, value=item.value)
+
+
+def _restaurant_name(restaurant_id):
+    try:
+        r = models.get_restaurant(restaurant_id)
+        return (r.location_name or r.name) if r else "your restaurant"
+    except Exception:
+        return "your restaurant"
+
+
+def _deliver_combined(restaurant_id, items, db_path):
+    """One notification for the whole morning, worst first."""
+    from push import priority_of
+    items.sort(key=lambda i: (priority_of(i.alert_type), i.alert_type))
+    name = _restaurant_name(restaurant_id)
+    lead = items[0]
+    n = len(items)
+    subject = f"{n} things to look at this morning — {name}"
+    # The lead item leads: an owner reading only the banner should still come
+    # away with the most expensive thing on the list.
+    sms_text = (f"Cavnar AI · {name}: {n} things this morning. "
+                f"First: {(lead.lines[0] if lead.lines else lead.subject)}")
+    lines = []
+    for item in items:
+        headline = _html.escape(item.subject)
+        detail = item.lines[0] if item.lines else ""
+        lines.append(f"<strong>{headline}</strong>" + (f"<br>{detail}" if detail else ""))
+    lines.append("Everything above is from your own data over the last week. "
+                 "Open Cavnar AI and ask about any of it.")
+    html = _alert_email_html(name, f"Your morning, in one place", lines,
+                             cta_label="Open the dashboard", restaurant_id=restaurant_id)
+    _deliver_or_hold(restaurant_id, "daily_briefing", _strip_tags(sms_text), subject, html,
+                     db_path=db_path)
+    # Each folded type still records itself, so next week's repeat windows
+    # (_already_alerted / _recent) and the history behave exactly as before.
+    for item in items:
+        _log_alert(restaurant_id, item.alert_type, db_path=db_path, value=item.value)
+
+
+def _strip_tags(text: str) -> str:
+    import re as _re
+    return _html.unescape(_re.sub(r"<[^>]+>", "", text or "")).strip()
+
+
+def _deliver_or_hold(restaurant_id, alert_type, sms_text, subject, html,
+                     db_path=DB_PATH, value=None, review_id=None):
+    release_at = rush_release_at(restaurant_id, alert_type, db_path)
+    if release_at is not None:
+        hold_alert(restaurant_id, alert_type, sms_text, subject, html, release_at,
+                   review_id=review_id, db_path=db_path, value=value)
+        return
+    deliver_alert(restaurant_id, alert_type, sms_text, subject, html,
+                  review_id=review_id, db_path=db_path, value=value)
+
+
+def raise_alert(restaurant_id: int, alert_type: str, sms_text: str, subject: str,
+                html: str = None, review_id: int = None, db_path: str = DB_PATH,
+                value: float = None, lines: list = None) -> bool:
+    """Raise one alert: quiet hours / daily cap / hard ceiling, then either
+    collect it into this morning's batch, hold it through a rush, or deliver
+    it now. Returns False when it was suppressed outright.
 
     blast() inside fire_review_alerts() is the review-side twin of this; the
     daily jobs call this one. Both end at deliver_alert."""
     if _daily_alert_suppressed(restaurant_id, alert_type, db_path):
         return False
-    release_at = rush_release_at(restaurant_id, alert_type, db_path)
-    if release_at is not None:
-        hold_alert(restaurant_id, alert_type, sms_text, subject, html, release_at,
-                   review_id=review_id, db_path=db_path, value=value)
+    if _batch is not None and alert_type in DAILY_BATCH_TYPES:
+        _batch.setdefault(restaurant_id, []).append(
+            _Pending(alert_type, sms_text, subject, lines, value))
         return True
-    deliver_alert(restaurant_id, alert_type, sms_text, subject, html,
-                  review_id=review_id, db_path=db_path, value=value)
+    if html is None:
+        html = _alert_email_html(_restaurant_name(restaurant_id), subject, lines or [],
+                                 restaurant_id=restaurant_id)
+    _deliver_or_hold(restaurant_id, alert_type, sms_text, subject, html,
+                     db_path=db_path, value=value, review_id=review_id)
     return True
 
 
@@ -1525,14 +1649,6 @@ def check_no_response_alerts(db_path: str = DB_PATH, local_hour: int = None):
             continue
         name        = row["name"]
         n           = row["overdue_count"]
-        _unres_sms   = row["al_unres_sms"] if "al_unres_sms" in row.keys() else 1
-        _unres_email = row["al_unres_email"] if "al_unres_email" in row.keys() else 1
-        _unres_push  = row["al_unres_push"] if "al_unres_push" in row.keys() else 1
-        via_sms     = bool(row["urgent_via_sms"]) and bool(_unres_sms)
-        via_email   = bool(row["urgent_via_email"]) and bool(_unres_email)
-        via_push    = bool(_unres_push)
-        owner_email = row["owner_email"] or ""
-
         # 24h dedup
         conn2 = models.get_conn(db_path)
         already = conn2.execute("""
@@ -1549,40 +1665,16 @@ def check_no_response_alerts(db_path: str = DB_PATH, local_hour: int = None):
             f"⏰ {name}: {n} negative {review_word} with no response for 48+ hours.\n"
             f"dashboard.cavnar.ai"
         )
-        html = _alert_email_html(
-            name,
-            f"⏰ {n} negative {review_word} still unresponded",
-            [
-                f"<strong>{n} negative {review_word}</strong> have been waiting for a response for over 48 hours.",
-                "Responding promptly helps protect your rating.",
-            ],
-            cta_label="View & respond",
-            restaurant_id=rid,
-        )
-
-        if via_sms:
-            contacts = get_alert_contacts(rid, sms_consent_only=True, db_path=db_path)
-            for c in contacts:
-                send_sms(c["phone"], sms)
-
-        if via_email and owner_email:
-            _email_alert(rid, owner_email, f"⏰ Unresponded reviews — {name}", html,
-                         "unresponded", db_path)
-
-        _log_alert(rid, "no_response", db_path=db_path)
-        if via_push:
-            try:
-                from push import fire_push as _fp
-                _subject = f"⏰ Unresponded reviews — {name}"
-                _fp(rid, "no_response", _subject, push_body(sms, _subject),
-                    data={"alert_type": "no_response"}, db_path=db_path)
-            except Exception:
-                pass
-        try:
-            from webhooks import fire_webhook as _fw
-            _fw(rid, "alert.fired", {"alert_type": "no_response"}, db_path)
-        except Exception:
-            pass
+        # Through raise_alert like every other non-review alert: it was the
+        # last one still hand-rolling its own SMS/email/push/log/webhook, and
+        # so the last one with no quiet-hours check, no cap, no ceiling and
+        # no rush hold. Its channel gates (al_unres_*) are in deliver_alert's
+        # type_map under both the names this alert has been called.
+        raise_alert(rid, "no_response", sms, f"⏰ Unresponded reviews — {name}", lines=[
+            f"<strong>{n} negative {review_word}</strong> have been waiting for a "
+            f"response for over 48 hours.",
+            "Responding promptly helps protect your rating.",
+        ], db_path=db_path)
 
 
 # A labor snapshot older than this is history, not news. The alert used to
@@ -1633,12 +1725,17 @@ def check_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
         if via_email and not owner_email:
             print(f"[notify] rid={rid} has email alerts on but no owner_email — email suppressed")
 
-        def _fire(sms_text, subject, html, alert_type):
+        def _fire(sms_text, subject, lines, alert_type):
             # One delivery path for every alert in the product. This used to
             # be a bespoke closure that sent SMS, email, push, log and
             # webhook itself — which is why these alert types were the only
             # ones with no rush holding and no resolved CTA link.
-            raise_alert(rid, alert_type, sms_text, subject, html, db_path=db_path)
+            #
+            # `lines` rather than a built html body: when several of these
+            # fire in the same 10am pass they are folded into one morning
+            # notification, and that needs the sentences, not a finished
+            # email (see DAILY_BATCH_TYPES).
+            raise_alert(rid, alert_type, sms_text, subject, lines=lines, db_path=db_path)
 
         def _already_alerted(alert_type):
             # A 7-day window, not 24h — this job runs once a day, so a
@@ -1689,17 +1786,11 @@ def check_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
                         f"({avgs[0]:.1f} → {avgs[1]:.1f} → {avgs[2]:.1f}★).\n"
                         f"dashboard.cavnar.ai"
                     )
-                    html = _alert_email_html(
-                        name,
-                        "📉 Rating declining for 3 consecutive weeks",
-                        [
-                            f"Weekly average ratings have dropped 3 weeks in a row: "
-                            f"<strong>{avgs[0]:.1f} → {avgs[1]:.1f} → {avgs[2]:.1f}★</strong>",
-                            "This trend warrants a closer look at what guests are saying.",
-                        ],
-                        restaurant_id=rid,
-                    )
-                    _fire(sms, f"📉 Rating trend down — {name}", html, "negative_trend")
+                    _fire(sms, f"📉 Rating trend down — {name}", [
+                        f"Weekly average ratings have dropped 3 weeks in a row: "
+                        f"<strong>{avgs[0]:.1f} → {avgs[1]:.1f} → {avgs[2]:.1f}★</strong>",
+                        "This trend warrants a closer look at what guests are saying.",
+                    ], "negative_trend")
 
         # ── Rating drops below threshold ───────────────────────
         if r["alert_rating_threshold"] and not _already_alerted("rating_threshold"):
@@ -1711,18 +1802,11 @@ def check_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
                     f"(below your {floor:.1f}★ threshold).\n"
                     f"dashboard.cavnar.ai"
                 )
-                html = _alert_email_html(
-                    name,
-                    f"⚠️ Google rating dropped below {floor:.1f}★",
-                    [
-                        f"Current Google rating: <strong>{gbp_rating:.1f}★</strong> — "
-                        f"below your alert threshold of {floor:.1f}★.",
-                        "Responding to recent negative reviews can help recover your score.",
-                    ],
-                    cta_label="Review & respond",
-                    restaurant_id=rid,
-                )
-                _fire(sms, f"⚠️ Rating below threshold — {name}", html, "rating_threshold")
+                _fire(sms, f"⚠️ Rating below threshold — {name}", [
+                    f"Current Google rating: <strong>{gbp_rating:.1f}★</strong> — "
+                    f"below your alert threshold of {floor:.1f}★.",
+                    "Responding to recent negative reviews can help recover your score.",
+                ], "rating_threshold")
 
         # ── Labor over target ──────────────────────────────────
         if r["alert_labor_over"] and not _already_alerted("labor_over"):
@@ -1753,18 +1837,11 @@ def check_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
                         f"{over_by}pts over your {target:.0f}% target.\n"
                         f"dashboard.cavnar.ai"
                     )
-                    html = _alert_email_html(
-                        name,
-                        f"💸 Labor over target — {actual:.1f}% vs {target:.0f}% goal",
-                        [
-                            f"Most recent labor period: <strong>{actual:.1f}%</strong> — "
-                            f"<strong>{over_by} points over</strong> your {target:.0f}% target.",
-                            f"Period: {recent['period_start']} – {recent['period_end']}",
-                        ],
-                        cta_label="View labor dashboard",
-                        restaurant_id=rid,
-                    )
-                    _fire(sms, f"💸 Labor over target — {name}", html, "labor_over")
+                    _fire(sms, f"💸 Labor over target — {name}", [
+                        f"Most recent labor period: <strong>{actual:.1f}%</strong> — "
+                        f"<strong>{over_by} points over</strong> your {target:.0f}% target.",
+                        f"Period: {recent['period_start']} – {recent['period_end']}",
+                    ], "labor_over")
 
 
 def health_bypasses_quiet_hours(restaurant_id: int, db_path: str = DB_PATH) -> bool:
@@ -1866,8 +1943,8 @@ def check_extra_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
             return row is not None
 
         def _fire(alert_type, sms_text, subject, lines, value=None):
-            html = _alert_email_html(name, subject, lines, restaurant_id=rid)
-            raise_alert(rid, alert_type, sms_text, subject, html, db_path=db_path, value=value)
+            raise_alert(rid, alert_type, sms_text, subject, lines=lines,
+                        db_path=db_path, value=value)
 
         # ── Food waste ────────────────────────────────────────
         if r["alert_food_waste"] and not _recent("food_waste"):

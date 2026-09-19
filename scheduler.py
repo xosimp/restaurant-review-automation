@@ -1342,8 +1342,14 @@ def run_daily_alert_checks():
     10am in its own timezone (notify._gated_out), once per local day. A
     failure in one must not take the rest down with it, which is why each is
     wrapped separately rather than the whole block sharing one except."""
+    import notify as _notify
     from notify import check_no_response_alerts, check_daily_alerts, check_extra_daily_alerts
     out = {}
+    # Collect across all three, then send once per restaurant. These eight
+    # alert types describe the same week of trading, and arriving separately
+    # is what teaches an owner to swipe Cavnar away without reading — taking
+    # the morning brief with it. See notify.DAILY_BATCH_TYPES.
+    _notify.begin_daily_batch()
     for name, fn in (("no_response", check_no_response_alerts),
                      ("daily", check_daily_alerts),
                      ("extra_daily", check_extra_daily_alerts)):
@@ -1354,6 +1360,15 @@ def run_daily_alert_checks():
             out[name] = f"failed: {e}"
             log.error(f"Alert check {name} failed: {e}")
             _ops.capture(e, job="daily_alerts", context=name)
+    try:
+        # Always flushed, even when a check above raised: anything already
+        # collected is an alert that passed every gate, and dropping it
+        # because a later, unrelated check failed would be silent loss.
+        out["batch"] = _notify.flush_daily_batch()
+    except Exception as e:
+        out["batch"] = f"failed: {e}"
+        log.error(f"Daily alert batch flush failed: {e}")
+        _ops.capture(e, job="daily_alerts", context="batch flush")
     try:
         from models import purge_expired_reviews
         purged = purge_expired_reviews()

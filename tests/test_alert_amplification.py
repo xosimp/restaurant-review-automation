@@ -142,7 +142,23 @@ def test_both_daily_alert_jobs_actually_call_the_gate():
 
     gate = inspect.getsource(notify.raise_alert)
     assert "_daily_alert_suppressed(" in gate, "raise_alert fires without checking the cap"
-    assert "rush_release_at(" in gate, "raise_alert fires without checking for a rush"
+    # raise_alert either collects into the morning batch or hands off to
+    # _deliver_or_hold; the rush check lives there so both the immediate
+    # path and the batch flush go through it.
+    assert "_deliver_or_hold(" in gate, "raise_alert delivers without the rush check"
+    for fn in (notify._deliver_or_hold, notify._deliver_pending, notify._deliver_combined):
+        src_fn = inspect.getsource(fn)
+        assert "_deliver_or_hold(" in src_fn or "rush_release_at(" in src_fn, \
+            f"{fn.__name__} can send mid-service"
+
+
+def test_check_no_response_also_goes_through_the_gate():
+    """The last alert still hand-rolling its own SMS/email/push/log/webhook,
+    and so the last one with no quiet hours, no cap, no ceiling, no hold."""
+    import inspect
+    body = inspect.getsource(notify.check_no_response_alerts)
+    assert "raise_alert(" in body
+    assert "send_sms(" not in body and "fire_push" not in body
 
 
 def test_a_daily_alert_raised_mid_rush_is_held_not_sent(db_path, monkeypatch):

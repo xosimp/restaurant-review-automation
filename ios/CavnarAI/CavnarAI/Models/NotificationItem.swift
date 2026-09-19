@@ -8,12 +8,23 @@ struct NotificationItem: Codable, Identifiable {
     let label: String
     let firedAt: String
     let reviewId: Int?
+    /// The executive tier (push.PRIORITY). 0 is a health or safety mention;
+    /// 5 is background. Optional so an older build talking to a newer
+    /// backend — or the reverse — degrades to "informational" rather than
+    /// failing to decode the whole list.
+    let priority: Int?
+    /// P0/P1: only worth anything while it can still be acted on.
+    let urgent: Bool?
+    let unread: Bool?
 
     enum CodingKeys: String, CodingKey {
-        case type, label
+        case type, label, priority, urgent, unread
         case firedAt = "fired_at"
         case reviewId = "review_id"
     }
+
+    var isUrgent: Bool { urgent ?? ((priority ?? 3) <= 1) }
+    var isUnread: Bool { unread ?? false }
 
     var id: String { "\(type)-\(firedAt)" }
 

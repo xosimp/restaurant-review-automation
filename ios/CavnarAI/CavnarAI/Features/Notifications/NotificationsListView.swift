@@ -42,6 +42,10 @@ final class NotificationsListViewModel {
             // notifications yet."
             if response.ok {
                 notifications = response.notifications
+                // Reading the list is what clears the app icon's number.
+                // The backend sends an unread count with every push now and
+                // nothing was clearing it, so it could only ever go up.
+                PushManager.shared.clearBadge()
             } else {
                 errorMessage = response.error ?? "Couldn't load notifications."
             }
@@ -133,10 +137,16 @@ struct NotificationsListView: View {
                             deepLinkRouter.handleNotificationTap(alertType: item.type, reviewId: item.reviewId)
                             dismiss()
                         } label: {
-                            HStack {
+                            HStack(spacing: 10) {
+                                // The ember is spent on P0/P1 only — the
+                                // things that stop being worth anything once
+                                // the shift they were about is over.
+                                Circle()
+                                    .fill(item.isUrgent ? Color.cavnarEmber : Color.cavnarInk3.opacity(0.25))
+                                    .frame(width: 6, height: 6)
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(item.label)
-                                        .font(.cavnarBody(14, weight: 600))
+                                        .font(.cavnarBody(14, weight: item.isUnread ? 700 : 600))
                                         .foregroundStyle(Color.cavnarInk)
                                     Text(item.relativeFiredAt)
                                         .font(.cavnarBody(14))

@@ -174,6 +174,18 @@ html{background:var(--bg-base);min-height:100%}
 [data-theme="dark"] input[type="number"]{color-scheme:dark}
 /* Reduce order pill — light green bg unreadable in dark mode */
 [data-theme="dark"] .pill[style*="background:#e8f4f0"]{background:#0c2318!important;color:#4ead7a!important}
+/* Notification bell rows — a row is a button now, so its presentation lives
+   here rather than inline (tests/test_button_system.py). The ember dot marks
+   P0/P1: the alerts that are only worth anything while they can still be
+   acted on. */
+.notif-row{width:100%;text-align:left;padding:9px 14px;border:none;border-bottom:1px solid var(--paper3);display:flex;align-items:center;gap:9px;background:transparent;cursor:pointer}
+.notif-row:hover{background:var(--paper2)}
+.notif-row.is-unread{background:var(--paper2)}
+.notif-row .nd{flex-shrink:0;width:6px;height:6px;border-radius:50%;background:var(--paper3);display:block}
+.notif-row.is-urgent .nd{background:var(--ember)}
+.notif-row .nl{flex:1;min-width:0;font-size:12px;color:var(--ink);font-weight:500}
+.notif-row.is-unread .nl{font-weight:600}
+.notif-row .nt{font-size:11px;color:var(--ink3);white-space:nowrap;flex-shrink:0}
 /* Toast notifications */
 [data-theme="dark"] .toast{background:#2a2520!important;color:var(--ink)!important;box-shadow:0 8px 28px rgba(0,0,0,.5)!important}
 [data-theme="dark"] .toast.toast-success{background:#0c2318!important;color:#6fcf97!important;border-left-color:#2d6a4f!important}
@@ -10637,6 +10649,17 @@ function openAlertsModal() {
     document.getElementById('al-rating-floor').value  = s.alert_rating_floor || 4.0;
     var laborEl = document.getElementById('al-labor-over');
     if (laborEl) laborEl.checked = !!s.alert_labor_over;
+    var pushMap = {'al-push-1star':'al_1star_push','al-push-2star':'al_2star_push',
+                   'al-push-5star':'al_5star_push','al-push-health':'al_health_push',
+                   'al-push-spike':'al_spike_push','al-push-unres':'al_unres_push',
+                   'al-push-sound':'push_sound'};
+    for (var pk in pushMap) {
+      if (!pushMap.hasOwnProperty(pk)) continue;
+      var pel = document.getElementById(pk);
+      // Absent means on: these default to 1 in the schema, and an older
+      // payload without the key must not read as "switched off".
+      if (pel) pel.checked = (s[pushMap[pk]] === undefined ? true : !!s[pushMap[pk]]);
+    }
     document.getElementById('al-via-sms').checked   = !!s.urgent_via_sms;
     document.getElementById('al-via-email').checked = !!s.urgent_via_email;
     document.getElementById('al-any-review').checked    = !!s.alert_any_review;
@@ -10921,6 +10944,15 @@ function saveAlertSettings() {
     alert_quiet_end:       document.getElementById('al-quiet-end').value || null,
     alert_max_per_day:     parseInt(document.getElementById('al-max-per-day').value) || 0
   };
+  var pushSave = {'al-push-1star':'al_1star_push','al-push-2star':'al_2star_push',
+                  'al-push-5star':'al_5star_push','al-push-health':'al_health_push',
+                  'al-push-spike':'al_spike_push','al-push-unres':'al_unres_push',
+                  'al-push-sound':'push_sound'};
+  for (var sk in pushSave) {
+    if (!pushSave.hasOwnProperty(sk)) continue;
+    var sel = document.getElementById(sk);
+    if (sel) payload[pushSave[sk]] = sel.checked;
+  }
   var msg = document.getElementById('alerts-save-msg');
   msg.style.display = 'inline';
   msg.style.color = 'var(--ink3)';
@@ -12731,17 +12763,26 @@ document.addEventListener('click', function(e) {
 });
 
 // ── In-app notifications ───────────────────────────────────────────────────
+// ES5 only, colours from CSS variables only (see DESIGN_SYSTEM.md).
 (function(){
-  var STORAGE_KEY = 'notif_read_at_{{ restaurant.id }}';
-  var _loaded = false;
   var _items  = [];
+  var _busy   = false;
 
   function timeAgo(iso) {
-    var diff = Math.floor((Date.now() - new Date(iso + 'Z').getTime()) / 1000);
+    if (!iso) return '';
+    var t = Date.parse(String(iso).replace(' ', 'T') + 'Z');
+    if (isNaN(t)) return iso;
+    var diff = Math.floor((Date.now() - t) / 1000);
     if (diff < 60)   return 'just now';
     if (diff < 3600) return Math.floor(diff/60) + 'm ago';
     if (diff < 86400) return Math.floor(diff/3600) + 'h ago';
     return Math.floor(diff/86400) + 'd ago';
+  }
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];
+    });
   }
 
   function renderList() {
@@ -12754,31 +12795,88 @@ document.addEventListener('click', function(e) {
     var html = '';
     for (var i = 0; i < _items.length; i++) {
       var n = _items[i];
-      html += '<div style="padding:9px 14px;border-bottom:1px solid var(--paper3);display:flex;align-items:center;justify-content:space-between;gap:10px">'
-            + '<span style="font-size:12px;color:var(--ink);font-weight:500">' + n.label + '</span>'
-            + '<span style="font-size:11px;color:var(--ink3);white-space:nowrap;flex-shrink:0">' + timeAgo(n.fired_at) + '</span>'
-            + '</div>';
+      // An ember dot marks P0/P1 — the things that are only worth anything
+      // while they can still be acted on.
+      var mods = (n.unread ? ' is-unread' : '') + (n.urgent ? ' is-urgent' : '');
+      html += '<button type="button" class="cbtn cbtn-text notif-row' + mods + '" data-idx="' + i + '">'
+            + '<i class="nd"></i>'
+            + '<span class="nl">' + esc(n.label) + '</span>'
+            + '<span class="nt">' + esc(timeAgo(n.fired_at)) + '</span>'
+            + '</button>';
     }
     list.innerHTML = html;
   }
 
+  // Every row carries the module (and review, when there is one) the alert is
+  // about. The list used to render plain divs with no handler at all, so an
+  // owner read "Labor % over target" and then went to find it themselves.
+  function openNotification(n) {
+    document.getElementById('notif-panel').style.display = 'none';
+    if (!n) return;
+    if (n.module === 'ask') {
+      if (typeof switchTab === 'function') {
+        var ab = document.getElementById('tab-home');
+        if (ab) switchTab('home', ab);
+      }
+      return;
+    }
+    var btn = document.getElementById('tab-' + n.module);
+    if (btn && typeof switchTab === 'function') {
+      switchTab(n.module, btn);
+      if (n.review_id && typeof window.rvFocusReview === 'function') {
+        window.rvFocusReview(n.review_id);
+      }
+    }
+  }
+
+  function setBadge(count) {
+    var el = document.getElementById('notif-badge');
+    if (!el) return;
+    if (count > 0) {
+      el.style.display = 'block';
+      el.classList.remove('cm-pop'); void el.offsetWidth; el.classList.add('cm-pop');
+    } else {
+      el.style.display = 'none';
+    }
+  }
+
+  function refreshBadge() {
+    fetch('/api/notifications/unread-count').then(function(r){ return r.json(); }).then(function(d){
+      setBadge((d && d.count) || 0);
+    }).catch(function(){});
+  }
+
+  // No _loaded latch: the list used to be fetched once per page load and then
+  // never again, so a dashboard left open all afternoon showed the morning's
+  // alerts. Read state lives on the server now (notification_reads), shared
+  // with the phone, instead of in this browser's localStorage.
   function loadNotifications() {
-    if (_loaded) return;
+    if (_busy) return;
+    _busy = true;
     fetch('/api/notifications').then(function(r){ return r.json(); }).then(function(d){
-      _loaded = true;
-      _items = d.notifications || [];
+      _busy = false;
+      _items = (d && d.notifications) || [];
       renderList();
-      // badge: any alert newer than last-read time
-      var readAt = parseInt(localStorage.getItem(STORAGE_KEY) || '0', 10);
-      var hasNew = _items.some(function(n){ return new Date(n.fired_at + 'Z').getTime() > readAt; });
-      // "Alert Fired" — the badge pops in with one ember ripple rather than
-      // just being there.
-      if (hasNew) { var _nb = document.getElementById('notif-badge'); _nb.style.display = 'block'; _nb.classList.remove('cm-pop'); void _nb.offsetWidth; _nb.classList.add('cm-pop'); }
+      setBadge(0);          // GET /api/notifications marks them read
     }).catch(function(){
-      _loaded = true;
-      document.getElementById('notif-list').innerHTML = '<div style="padding:12px 14px;font-size:12px;color:var(--ink3)">Could not load alerts.</div>';
+      _busy = false;
+      var list = document.getElementById('notif-list');
+      if (list) list.innerHTML = '<div style="padding:12px 14px;font-size:12px;color:var(--ink3)">Could not load alerts.</div>';
     });
   }
+
+  document.addEventListener('click', function(e) {
+    var row = e.target && e.target.closest ? e.target.closest('.notif-row') : null;
+    if (row) {
+      openNotification(_items[parseInt(row.getAttribute('data-idx'), 10)]);
+      return;
+    }
+    var wrap = document.getElementById('notif-wrap');
+    if (wrap && !wrap.contains(e.target)) {
+      var panel = document.getElementById('notif-panel');
+      if (panel) panel.style.display = 'none';
+    }
+  });
 
   window._openHdrPanel = function(panel) {
     panel.style.display = 'block';
@@ -12790,25 +12888,12 @@ document.addEventListener('click', function(e) {
   window.toggleNotifPanel = function() {
     var panel = document.getElementById('notif-panel');
     var open  = panel.style.display !== 'none';
-    if (open) { panel.style.display = 'none'; } else { window._openHdrPanel(panel); }
-    if (!open) {
-      loadNotifications();
-      // mark as read
-      localStorage.setItem(STORAGE_KEY, Date.now().toString());
-      document.getElementById('notif-badge').style.display = 'none';
-    }
+    if (open) { panel.style.display = 'none'; return; }
+    window._openHdrPanel(panel);
+    loadNotifications();
   };
 
-  // close panel when clicking outside
-  document.addEventListener('click', function(e) {
-    var wrap = document.getElementById('notif-wrap');
-    if (wrap && !wrap.contains(e.target)) {
-      document.getElementById('notif-panel').style.display = 'none';
-    }
-  });
-
-  // load in background to set badge on page load
-  setTimeout(loadNotifications, 1500);
+  setTimeout(refreshBadge, 1500);
 })();
 
 // ── Team messages (manager DMs) ─────────────────────────────────────────────
@@ -13209,6 +13294,18 @@ document.addEventListener('click', function(e) {
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:15px;color:var(--ink)"><input type="checkbox" id="al-labor-over" style="accent-color:var(--ember)"> Labor cost exceeds budget target</label>
       </div>
       {% endif %}
+
+      <div style="font-size:14px;font-weight:600;color:var(--ink3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.06em">On your phone</div>
+      <div style="display:flex;flex-direction:column;gap:7px;margin-bottom:6px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:15px;color:var(--ink)"><input type="checkbox" id="al-push-1star" style="accent-color:var(--ember)"> 1&#9733; reviews</label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:15px;color:var(--ink)"><input type="checkbox" id="al-push-2star" style="accent-color:var(--ember)"> 2&#9733; reviews</label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:15px;color:var(--ink)"><input type="checkbox" id="al-push-5star" style="accent-color:var(--ember)"> 5&#9733; reviews</label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:15px;color:var(--ink)"><input type="checkbox" id="al-push-health" style="accent-color:var(--ember)"> Health or safety mention</label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:15px;color:var(--ink)"><input type="checkbox" id="al-push-spike" style="accent-color:var(--ember)"> Negative review spike</label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:15px;color:var(--ink)"><input type="checkbox" id="al-push-unres" style="accent-color:var(--ember)"> Unresponded review (48h)</label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:15px;color:var(--ink)"><input type="checkbox" id="al-push-sound" style="accent-color:var(--ember)"> Play a sound</label>
+      </div>
+      <div style="font-size:13px;color:var(--ink3);margin-bottom:14px;line-height:1.5">Push doesn&rsquo;t need text or email turned on &mdash; it costs nothing to send, so it&rsquo;s switched per alert type here. Holding alerts through service lives in <b>Morning brief &amp; issues</b>.</div>
     </div>
 
     <!-- Weekly digest -->

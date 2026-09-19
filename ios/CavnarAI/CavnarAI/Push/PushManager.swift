@@ -13,6 +13,28 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
 
     var router: DeepLinkRouter?
 
+    /// Whether the phone will actually show anything. A denial is permanent
+    /// and silent: the app never asked, so an owner who tapped "Don't Allow"
+    /// once was unreachable by push forever and nothing anywhere said so —
+    /// not the app, not the backend, not Will. Account reads this to offer a
+    /// way back (AccountAlertsDetailView).
+    private(set) var authorizationDenied = false
+
+    /// Categories are what let an owner act from the lock screen instead of
+    /// unlocking, finding the module and starting again. The identifiers
+    /// match push.py's CATEGORY_* constants.
+    private static let reviewCategory = "CAVNAR_REVIEW"
+    private static let briefCategory  = "CAVNAR_BRIEF"
+    private static let issueCategory  = "CAVNAR_ISSUE"
+    private static let openAction     = "CAVNAR_OPEN"
+    private static let askAction      = "CAVNAR_ASK"
+
+    /// The system prompt used to fire within seconds of the first login,
+    /// before the owner had seen a single number. Asking on the second open
+    /// means they have seen what the app does first — and Account can ask
+    /// for it directly at any time (see `promptNow`).
+    private static let launchCountKey = "cavnar.launchCount"
+
     /// mainTabs is torn down and rebuilt on every Face ID unlock, so its
     /// .task fires many times a day — and the token has not changed between
     /// them. Registering once per launch drops a dozen redundant authenticated
@@ -35,13 +57,76 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
     func requestAuthorizationAndRegister() {
         guard !hasRegisteredThisLaunch else { return }
         hasRegisteredThisLaunch = true
-        UNUserNotificationCenter.current().delegate = self
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
-            guard granted else { return }
+        let center = UNUserNotificationCenter.current()
+        center.delegate = self
+        center.setNotificationCategories(Self.categories)
+
+        let defaults = UserDefaults.standard
+        let launches = defaults.integer(forKey: Self.launchCountKey) + 1
+        defaults.set(launches, forKey: Self.launchCountKey)
+
+        center.getNotificationSettings { settings in
             Task { @MainActor in
-                UIApplication.shared.registerForRemoteNotifications()
+                switch settings.authorizationStatus {
+                case .denied:
+                    // Surfaced in Account rather than retried: iOS will not
+                    // show the prompt again, so only Settings can undo it.
+                    self.authorizationDenied = true
+                case .notDetermined:
+                    self.authorizationDenied = false
+                    guard launches >= 2 else { return }
+                    await self.promptNow()
+                default:
+                    self.authorizationDenied = false
+                    UIApplication.shared.registerForRemoteNotifications()
+                    await self.flushPendingToken()
+                }
             }
         }
+    }
+
+    /// Ask for permission now. Called on the second app open, and directly
+    /// from Account when the owner asks for notifications themselves.
+    @discardableResult
+    func promptNow() async -> Bool {
+        let granted = (try? await UNUserNotificationCenter.current()
+            .requestAuthorization(options: [.alert, .sound, .badge])) ?? false
+        authorizationDenied = !granted
+        if granted {
+            UIApplication.shared.registerForRemoteNotifications()
+        }
+        return granted
+    }
+
+    /// Re-read the real state — the owner may have changed it in Settings
+    /// while the app was backgrounded.
+    func refreshAuthorization() async {
+        let settings = await UNUserNotificationCenter.current().notificationSettings()
+        authorizationDenied = settings.authorizationStatus == .denied
+        if settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional {
+            UIApplication.shared.registerForRemoteNotifications()
+        }
+    }
+
+    private static var categories: Set<UNNotificationCategory> {
+        let open = UNNotificationAction(identifier: openAction, title: "Open", options: [.foreground])
+        let respond = UNNotificationAction(identifier: openAction, title: "Respond", options: [.foreground])
+        let ask = UNNotificationAction(identifier: askAction, title: "Ask about this", options: [.foreground])
+        return [
+            UNNotificationCategory(identifier: reviewCategory, actions: [respond],
+                                   intentIdentifiers: [], options: []),
+            UNNotificationCategory(identifier: briefCategory, actions: [ask],
+                                   intentIdentifiers: [], options: []),
+            UNNotificationCategory(identifier: issueCategory, actions: [open],
+                                   intentIdentifiers: [], options: []),
+        ]
+    }
+
+    /// Clear the app icon badge. The backend now sends the unread count on
+    /// every push (push.py `_badge_for`); nothing cleared it, and a number
+    /// that only ever goes up is a number people stop reading.
+    func clearBadge() {
+        UNUserNotificationCenter.current().setBadgeCount(0)
     }
 
     func didRegister(deviceToken: Data) {
@@ -138,6 +223,11 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
         // field, never executed, but there's no reason to accept an
         // arbitrarily long payload into one.
         let askPrompt = (cavnar["ask_prompt"] as? String).map { String($0.prefix(300)) }
+        // Every action we register is .foreground and lands on the same
+        // screen the notification itself does, so the action identifier
+        // changes nothing here — it is the tap that matters. Dismissals are
+        // ignored rather than routed.
+        guard response.actionIdentifier != UNNotificationDismissActionIdentifier else { return }
         await MainActor.run {
             router?.handleNotificationTap(alertType: alertType, reviewId: reviewId, askPrompt: askPrompt)
         }
