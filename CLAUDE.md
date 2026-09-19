@@ -16,6 +16,7 @@ relevant one before exploring code:
 | `DATABASE_SCHEMA.md` | Tables and their invariants |
 | `API_REFERENCE.md` | Routes, web and mobile |
 | `PROMPT_LIBRARY.md` | Every model call: which model, what input, what guard |
+| `DESIGN_SYSTEM.md` | UI/UX: tokens, type, spacing, components, motion |
 | `TESTING.md` | How the suite is organised |
 | `PROJECT_CONTEXT.md` / `ROADMAP.md` | Product state and direction |
 
@@ -95,6 +96,11 @@ A deletion is only "verified" when the trace is written down alongside it.
 - **Restart the local backend** (`PORT=5050 python3 hosted_dashboard.py`)
   after any backend edit — the user tests against it from a real device over
   ngrok.
+- **UI work starts from `DESIGN_SYSTEM.md`.** It is the source of truth for
+  colour, type, spacing, cards, buttons, charts, forms, tables, empty states
+  and motion, on web and iOS. Do not introduce a new UI pattern unless no
+  existing one fits — and if none does, document the new one there in the
+  same commit.
 - **Inline JS is ES5 only**, enforced by `tests/test_frontend_rules.py`.
   Colours come from CSS variables only, enforced by `scripts/check_colors.py`.
   Every web button carries `.cbtn`, enforced by `tests/test_button_system.py`.
