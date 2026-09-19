@@ -428,3 +428,38 @@ def test_the_dropped_alert_is_logged_against_this_test_s_own_db_not_the_default_
     rows = conn.execute("SELECT job, error FROM job_failures").fetchall()
     conn.close()
     assert len(rows) == 1 and rows[0]["job"] == "fire_push"
+
+
+def test_the_collapse_id_is_stable_across_one_deliverys_retries(db_path, rid, uid, monkeypatch):
+    """Its entire job. A client-side timeout often means Apple took the push
+    and the response was lost, so the retries must carry the same key — a key
+    recomputed per attempt turns one event into three banners."""
+    _no_sleep(monkeypatch)
+    _no_real_jwt(monkeypatch)
+    init_push(db_path=db_path)
+    token_row = _register(db_path, uid, rid)
+
+    fake_client, calls = _fake_httpx_client(status_code=500)
+    _use(monkeypatch, fake_client)
+
+    _deliver(token_row, "staff_signin", "t", "b", None, db_path=db_path)
+
+    keys = [c[2]["apns-collapse-id"] for c in calls]
+    assert len(keys) == 3 and len(set(keys)) == 1
+
+
+def test_two_sign_ins_in_one_day_are_two_notifications(db_path, rid, uid, monkeypatch):
+    """Keyed on the date, the second sign-in REPLACED the first on the lock
+    screen — and the security value of the feature went with it."""
+    _no_sleep(monkeypatch)
+    _no_real_jwt(monkeypatch)
+    init_push(db_path=db_path)
+    token_row = _register(db_path, uid, rid)
+
+    fake_client, calls = _fake_httpx_client(status_code=200)
+    _use(monkeypatch, fake_client)
+
+    _deliver(token_row, "login", "t", "b", None, db_path=db_path)
+    _deliver(token_row, "login", "t", "b", None, db_path=db_path)
+
+    assert calls[0][2]["apns-collapse-id"] != calls[1][2]["apns-collapse-id"]

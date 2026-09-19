@@ -1759,6 +1759,10 @@ def scheduler_loop():
                 # still picture the room.
                 from strategy_jobs import run_closing_summary
                 _ops.run_job("closing_summary", run_closing_summary)
+                # A quiet night two days out, once a week — the one area of
+                # the product that produced no notification at all.
+                from strategy_jobs import run_demand_opportunity
+                _ops.run_job("demand_opportunity", run_demand_opportunity)
 
             # Every tick — an alert held through lunch or dinner service goes
             # out as soon as that rush ends (notify.rush_release_at).

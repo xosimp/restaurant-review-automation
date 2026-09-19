@@ -19,6 +19,13 @@ final class DeepLinkRouter {
     var pendingAskPrompt: String?
 
     func handleNotificationTap(alertType: String, reviewId: Int?, askPrompt: String? = nil) {
+        // What the product knew was how many notifications it SENT. Whether
+        // any of them were worth sending had no answer anywhere — not for
+        // the owner, not for Will. Best effort: a failure here must never
+        // interfere with actually opening the thing.
+        if !alertType.isEmpty {
+            Task { await Self.recordOpen(alertType) }
+        }
         // Both of these are cross-module reads that arrive WITH a question
         // (data.ask_prompt), so they open the assistant on it rather than
         // guessing a module to drop the owner into.
@@ -46,6 +53,14 @@ final class DeepLinkRouter {
         pendingTab = .modules
         pendingModuleKey = Self.moduleKey(for: alertType)
         pendingReviewID = reviewId
+    }
+
+    private struct OpenedBody: Encodable { let type: String }
+
+    private static func recordOpen(_ alertType: String) async {
+        let _: APIClient.EmptyResponse? = try? await APIClient.shared.send(
+            "/mobile/api/notifications/opened", method: .post,
+            body: OpenedBody(type: alertType), hapticOnError: false)
     }
 
     func consumePendingReviewID() -> Int? {

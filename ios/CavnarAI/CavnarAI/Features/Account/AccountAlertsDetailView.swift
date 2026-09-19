@@ -23,6 +23,9 @@ struct AccountAlertsDetailView: View {
     @State private var pushDenied = false
     @State private var brief = BriefSettings()
     @State private var briefLoaded = false
+    @State private var nudge: EngagementSuggestion?
+    @State private var testPushLabel: String?
+    @State private var sendingTestPush = false
     private enum AlertsField: Hashable { case extraEmails, contactName(Int), contactPhone(Int) }
     @FocusState private var focusedField: AlertsField?
 
@@ -106,6 +109,22 @@ struct AccountAlertsDetailView: View {
                             }
                         }
                     }
+                    // One sentence about what is being sent and never
+                    // opened. A suggestion, never an automatic change:
+                    // reading a banner leaves no tap behind, so switching
+                    // alerts off on tap data alone would quietly silence
+                    // ones an owner reads every day.
+                    if let nudge {
+                        CavnarCaveat(
+                            title: "\(nudge.delivered) \u{201C}\(nudge.label)\u{201D} alerts in the last \(nudge.days) days",
+                            detail: "You haven't opened one of them. Want to stop pushing these to your phone?"
+                        )
+                        AccountActionRow(label: "Stop pushing these",
+                                         detail: "Still logged, still in your notifications list.",
+                                         symbol: "bell.slash") {
+                            applyNudge(nudge)
+                        }
+                    }
                     pushRow("1-star reviews", $draft.al1starPush, on: draft.alert1star)
                     pushRow("2-star reviews", $draft.al2starPush, on: draft.alert2star)
                     pushRow("5-star reviews", $draft.al5starPush, on: draft.alert5star)
@@ -113,6 +132,16 @@ struct AccountAlertsDetailView: View {
                     pushRow("Negative review spike", $draft.alSpikePush, on: draft.alertNegSpike)
                     pushRow("Unresponded review (48h)", $draft.alUnresPush, on: draft.alertNoResponse)
                     AccountSwitchRow(label: "Play a sound", isOn: $draft.pushSound)
+                    // "Is push actually working on my phone?" had no answer
+                    // short of reaching into the database. This login's own
+                    // devices only — a test that buzzes a manager's phone
+                    // is not a test.
+                    AccountActionRow(
+                        label: "Send me a test notification",
+                        detail: testPushLabel ?? "Goes to this phone only.",
+                        symbol: "paperplane.fill",
+                        busy: sendingTestPush
+                    ) { Task { await sendTestPush() } }
                     Text("Push doesn't need text/email alerts turned on — it's free to send, so it's gated per-alert-type here instead. Trend, labor, waste and visibility alerts push automatically once enabled.")
                         .font(.cavnarBody(14))
                         .foregroundStyle(Color.cavnarInk3.opacity(0.8))
@@ -328,8 +357,81 @@ struct AccountAlertsDetailView: View {
             await PushManager.shared.refreshAuthorization()
             pushDenied = PushManager.shared.authorizationDenied
             await loadBrief()
+            await loadNudge()
         }
         }
+    }
+
+    // MARK: - Test push
+
+    private struct TestPushResponse: Decodable {
+        let ok: Bool
+        let sent: Int?
+        let error: String?
+    }
+
+    private func sendTestPush() async {
+        sendingTestPush = true
+        defer { sendingTestPush = false }
+        do {
+            let response: TestPushResponse = try await APIClient.shared.send(
+                "/mobile/api/account/send-test-push", method: .post)
+            if response.ok {
+                Haptic.success()
+                testPushLabel = "Sent — it should arrive in a second"
+            } else {
+                testPushLabel = response.error ?? "Apple did not accept it."
+            }
+        } catch let error as APIClient.APIError {
+            testPushLabel = error.message
+        } catch {
+            testPushLabel = "Couldn't send a test notification."
+        }
+    }
+
+    // MARK: - What you never open
+
+    struct EngagementSuggestion: Decodable, Identifiable {
+        let alertType: String
+        let label: String
+        let delivered: Int
+        let days: Int
+        let pushColumn: String
+
+        var id: String { alertType }
+
+        enum CodingKeys: String, CodingKey {
+            case label, delivered, days
+            case alertType = "alert_type"
+            case pushColumn = "push_column"
+        }
+    }
+
+    private struct EngagementResponse: Decodable {
+        let ok: Bool
+        let suggestions: [EngagementSuggestion]
+    }
+
+    private func loadNudge() async {
+        guard let response: EngagementResponse = try? await APIClient.shared.send(
+            "/mobile/api/notifications/engagement") else { return }
+        nudge = response.ok ? response.suggestions.first : nil
+    }
+
+    /// Flips the switch the owner would have flipped themselves, and leaves
+    /// the save button to confirm it — nothing here writes on its own.
+    private func applyNudge(_ suggestion: EngagementSuggestion) {
+        switch suggestion.pushColumn {
+        case "al_1star_push": draft.al1starPush = false
+        case "al_2star_push": draft.al2starPush = false
+        case "al_5star_push": draft.al5starPush = false
+        case "al_health_push": draft.alHealthPush = false
+        case "al_spike_push": draft.alSpikePush = false
+        case "al_unres_push": draft.alUnresPush = false
+        default: break
+        }
+        nudge = nil
+        Haptic.light()
     }
 
     // MARK: - Morning brief & issues

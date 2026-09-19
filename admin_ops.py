@@ -805,8 +805,27 @@ def notifications(limit=200):
     caps = _rows(conn, "SELECT id AS restaurant_id, name AS restaurant, alert_max_per_day AS cap FROM restaurants WHERE COALESCE(alert_max_per_day,0) > 0 ORDER BY name")
     scheduled = _rows(conn, "SELECT p.id, p.restaurant_id, r.name AS restaurant, p.platform, p.content_type, p.topic, p.scheduled_for, p.status, p.error, p.attempts FROM marketing_scheduled_posts p LEFT JOIN restaurants r ON r.id=p.restaurant_id ORDER BY p.scheduled_for DESC LIMIT 60")
     today_push = _one(conn, "SELECT SUM(CASE WHEN ok=1 THEN 1 ELSE 0 END) AS sent, SUM(CASE WHEN ok=0 THEN 1 ELSE 0 END) AS failed FROM push_deliveries WHERE created_at >= ?", (today,)) or {}
+    # Whether any of it was worth sending. Everything above counts what went
+    # OUT; this is the first thing in the product that counts what came back.
+    # Thirty days rather than seven: several of these types fire weekly, so a
+    # seven-day open rate for them is one notification wide.
+    month = _iso(now - timedelta(days=30))
+    engagement = _rows(conn,
+        "SELECT a.alert_type, COUNT(*) AS delivered, "
+        "(SELECT COUNT(*) FROM notification_opens o WHERE o.alert_type=a.alert_type "
+        " AND o.opened_at >= ?) AS opened "
+        "FROM alert_log a WHERE a.fired_at >= ? GROUP BY a.alert_type ORDER BY delivered DESC",
+        (month, month))
+    for row in engagement:
+        row["open_rate"] = (round(100.0 * row["opened"] / row["delivered"], 1)
+                            if row["delivered"] else None)
+    ignored = [r for r in engagement
+               if r["delivered"] >= 20 and not r["opened"]]
     conn.close()
-    return {"ok": True, "pushes": pushes, "devices": devices, "alerts": alerts, "by_type": by_type, "storms": storms, "caps": caps, "scheduled_posts": scheduled, "today_push": today_push}
+    return {"ok": True, "pushes": pushes, "devices": devices, "alerts": alerts,
+            "by_type": by_type, "storms": storms, "caps": caps,
+            "scheduled_posts": scheduled, "today_push": today_push,
+            "engagement": engagement, "ignored": ignored}
 
 
 def billing():

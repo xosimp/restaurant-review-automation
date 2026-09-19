@@ -1149,6 +1149,25 @@ def init_db(db_path: str = DB_PATH):
         # compares correctly against alert_log.fired_at: the old ISO 'T'
         # stamp sorted BELOW every same-day fired_at (' ' < 'T'), which made
         # the unread count structurally incapable of seeing today's alerts.
+        # Which notifications actually get opened, per login per type. The
+        # product could say how many notifications it SENT and nothing about
+        # whether any of them were worth sending — so the one question an
+        # owner would ask ("is this thing useful?") had no answer, and
+        # neither did the one Will would ask about a client.
+        #
+        # Deliberately NOT used to suppress anything automatically: reading a
+        # banner on a lock screen is engagement and leaves no tap behind, so
+        # inferring "they ignore these" from taps alone would quietly switch
+        # off alerts an owner reads every day. It powers a SUGGESTION the
+        # owner accepts or ignores (notify.engagement_report).
+        """CREATE TABLE IF NOT EXISTS notification_opens (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id INTEGER NOT NULL,
+            user_id       INTEGER,
+            alert_type    TEXT NOT NULL,
+            opened_at     TEXT NOT NULL DEFAULT (datetime('now'))
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_notification_opens ON notification_opens(restaurant_id, alert_type, opened_at)",
         """CREATE TABLE IF NOT EXISTS notification_reads (
             user_id       INTEGER NOT NULL,
             restaurant_id INTEGER NOT NULL,
@@ -7022,6 +7041,45 @@ def unread_notification_count(user_id: int, restaurant_id: int, db_path: str = D
     finally:
         conn.close()
     return row["c"] if row else 0
+
+
+def record_notification_open(restaurant_id: int, alert_type: str, user_id: int = None,
+                             db_path: str = DB_PATH):
+    """One row when a notification is actually opened."""
+    if not alert_type:
+        return
+    conn = get_conn(db_path)
+    try:
+        conn.execute(
+            "INSERT INTO notification_opens (restaurant_id, user_id, alert_type) VALUES (?,?,?)",
+            (restaurant_id, user_id, str(alert_type)[:64]))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def notification_engagement(restaurant_id: int, days: int = 60, db_path: str = DB_PATH) -> list:
+    """[{alert_type, delivered, opened}] over the window, busiest first.
+
+    `delivered` counts alert_log rows — one per notification raised, which
+    is the number an owner experienced, rather than push_deliveries' one row
+    per device.
+    """
+    since = f"-{int(days)} days"
+    conn = get_conn(db_path)
+    try:
+        sent = {r["alert_type"]: r["n"] for r in conn.execute(
+            "SELECT alert_type, COUNT(*) AS n FROM alert_log WHERE restaurant_id=? "
+            "AND fired_at >= datetime('now', ?) GROUP BY alert_type", (restaurant_id, since))}
+        opened = {r["alert_type"]: r["n"] for r in conn.execute(
+            "SELECT alert_type, COUNT(*) AS n FROM notification_opens WHERE restaurant_id=? "
+            "AND opened_at >= datetime('now', ?) GROUP BY alert_type", (restaurant_id, since))}
+    finally:
+        conn.close()
+    rows = [{"alert_type": t, "delivered": n, "opened": opened.get(t, 0)}
+            for t, n in sent.items()]
+    rows.sort(key=lambda r: -r["delivered"])
+    return rows
 
 
 def get_response_templates(restaurant_id: int, db_path: str = DB_PATH) -> list:

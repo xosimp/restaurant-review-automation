@@ -1287,6 +1287,27 @@ def mobile_notifications(current_user):
     return jsonify(**payload), status
 
 
+@mobile_bp.route("/notifications/opened", methods=["POST"])
+@mobile_login_required
+def mobile_mark_notification_opened(current_user):
+    """Twin of the web route — one row when a notification is opened."""
+    from models import record_notification_open
+    data = request.get_json(silent=True) or {}
+    record_notification_open(current_user["restaurant_id"], data.get("type") or "",
+                             user_id=current_user["id"])
+    return jsonify(ok=True)
+
+
+@mobile_bp.route("/notifications/engagement")
+@mobile_login_required
+def mobile_notifications_engagement(current_user):
+    import notify
+    rows = notify.engagement_report(current_user["restaurant_id"])
+    for row in rows:
+        row["label"] = _capi._NOTIFICATION_LABELS.get(row["alert_type"], row["alert_type"])
+    return jsonify(ok=True, suggestions=rows)
+
+
 @mobile_bp.route("/notifications/unread-count")
 @mobile_login_required
 def mobile_notifications_unread_count(current_user):
@@ -5022,6 +5043,28 @@ def mobile_send_test_digest(current_user):
         return jsonify(ok=True, email=to_email)
     except Exception as e:
         return jsonify(ok=False, error=_safe_err(e)), 500
+
+
+@mobile_bp.route("/account/send-test-push", methods=["POST"])
+@mobile_login_required
+def mobile_send_test_push(current_user):
+    """Send one test notification to this login's own devices.
+
+    The self-serve twin of "Send me a preview digest". There was no way to
+    answer "is push actually working for me?" short of reaching into the
+    database — and the same question about a client needed a shell. Scoped
+    to the CALLER's devices, never the restaurant's: a test that buzzes a
+    manager's phone is not a test.
+
+    Runs inline rather than on the background pool, so the answer is what
+    APNs actually said instead of "we tried".
+    """
+    from push import send_test_push
+    result = send_test_push(current_user["restaurant_id"], current_user["id"])
+    if not result.get("ok"):
+        return jsonify(ok=False, error=result.get("error") or "Apple did not accept it.",
+                       devices=result.get("devices", 0)), 400
+    return jsonify(ok=True, devices=result["devices"], sent=result["sent"])
 
 
 @mobile_bp.route("/account/email-history")

@@ -186,6 +186,9 @@ html{background:var(--bg-base);min-height:100%}
 .notif-row .nl{flex:1;min-width:0;font-size:12px;color:var(--ink);font-weight:500}
 .notif-row.is-unread .nl{font-weight:600}
 .notif-row .nt{font-size:11px;color:var(--ink3);white-space:nowrap;flex-shrink:0}
+/* The engagement nudge in the alerts modal */
+.al-nudge{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;border:1px solid var(--paper3);border-left:3px solid var(--ember);border-radius:8px;font-size:13px;color:var(--ink2);line-height:1.5}
+.al-nudge span{flex:1;min-width:200px}
 /* Bell: day headings and the needs-you filter */
 .notif-day{padding:8px 14px 4px;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3)}
 .notif-filter{display:flex;gap:4px;padding:8px 10px;border-bottom:1px solid var(--paper3)}
@@ -4979,7 +4982,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
         </div>
         <div class="ac-card span" id="email-history-card">
           <div class="ac-card-h"><div><h3>Email history</h3><p>Everything Cavnar AI has sent for you, and whether it landed.</p></div>
-            <div class="r"><button onclick="sendTestDigest(this)" class="cbtn cbtn-soft cbtn-sm">Send me a preview digest</button></div></div>
+            <div class="r"><button onclick="sendTestPush(this)" class="cbtn cbtn-soft cbtn-sm">Send me a test push</button> <button onclick="sendTestDigest(this)" class="cbtn cbtn-soft cbtn-sm">Send me a preview digest</button></div></div>
           <div id="eh-body" class="ac-list">Loading&hellip;</div>
         </div>
       </div>
@@ -10628,8 +10631,40 @@ function generateFromCal(type, topic) {
   genContent(true);
 }
 // ── Alert Settings ────────────────────────────────────────────
+// One sentence about what an owner is being sent and never opens. A
+// SUGGESTION, never an automatic change: reading a banner on a lock screen
+// is engagement and leaves no tap behind, so switching alerts off on tap
+// data alone would quietly silence alerts someone reads every day.
+function loadAlertEngagement() {
+  var box = document.getElementById('al-engagement');
+  if (!box) return;
+  box.style.display = 'none';
+  box.innerHTML = '';
+  fetch('/api/notifications/engagement').then(function(r){ return r.json(); }).then(function(d){
+    if (!d || !d.ok || !d.suggestions || !d.suggestions.length) return;
+    var s = d.suggestions[0];
+    box.innerHTML = '<div class="al-nudge">'
+      + '<span>' + s.delivered + ' &ldquo;' + s.label + '&rdquo; alerts in the last '
+      + s.days + ' days, and you haven&rsquo;t opened one. Stop pushing them to your phone?</span>'
+      + '<button type="button" class="cbtn cbtn-soft cbtn-sm" id="al-nudge-yes">Stop pushing these</button>'
+      + '</div>';
+    var yes = document.getElementById('al-nudge-yes');
+    if (yes) yes.onclick = function() {
+      var map = {'al_1star_push':'al-push-1star','al_2star_push':'al-push-2star',
+                 'al_5star_push':'al-push-5star','al_health_push':'al-push-health',
+                 'al_spike_push':'al-push-spike','al_unres_push':'al-push-unres'};
+      var el = document.getElementById(map[s.push_column]);
+      if (el) { el.checked = false; }
+      box.style.display = 'none';
+      toast('Switched off — save to confirm', 'success');
+    };
+    box.style.display = 'block';
+  }).catch(function(){});
+}
+
 function openAlertsModal() {
   var modal = document.getElementById('alerts-modal');
+  loadAlertEngagement();
   modal.style.display = 'flex';
   document.getElementById('al-sms-consent').checked = false;
   var msg = document.getElementById('alerts-save-msg');
@@ -10832,6 +10867,28 @@ function loadOpsSettings() {
     if (row && !d.external_tool) row.hidden = false;
     document.getElementById('as-autodraft').checked = !!d.enabled;
   }).catch(function() {});
+}
+
+// "Is push actually working on my phone?" had no answer short of reaching
+// into the database. Scoped to this login's own devices — a test that buzzes
+// a manager's phone is not a test.
+function sendTestPush(btn) {
+  var label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Sending…';
+  fetch('/api/account/send-test-push', {method: 'POST', credentials: 'same-origin'})
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      btn.disabled = false;
+      btn.textContent = label;
+      if (d.ok) toast('Sent to ' + d.sent + ' device' + (d.sent === 1 ? '' : 's'), 'success');
+      else toast(d.error || 'Could not send', 'error');
+    })
+    .catch(function(){
+      btn.disabled = false;
+      btn.textContent = label;
+      toast('Could not send', 'error');
+    });
 }
 
 function saveMorningBrief() {
@@ -12858,6 +12915,12 @@ document.addEventListener('click', function(e) {
   function openNotification(n) {
     document.getElementById('notif-panel').style.display = 'none';
     if (!n) return;
+    // What the product knew was how many it SENT. Whether any of them were
+    // worth sending had no answer anywhere.
+    fetch('/api/notifications/opened', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({type: n.type})
+    }).catch(function(){});
     if (n.module === 'ask') {
       if (typeof switchTab === 'function') {
         var ab = document.getElementById('tab-home');
@@ -13360,6 +13423,7 @@ document.addEventListener('click', function(e) {
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:15px;color:var(--ink)"><input type="checkbox" id="al-push-unres" style="accent-color:var(--ember)"> Unresponded review (48h)</label>
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:15px;color:var(--ink)"><input type="checkbox" id="al-push-sound" style="accent-color:var(--ember)"> Play a sound</label>
       </div>
+      <div id="al-engagement" style="display:none;margin-bottom:12px"></div>
       <div style="font-size:13px;color:var(--ink3);margin-bottom:14px;line-height:1.5">Push doesn&rsquo;t need text or email turned on &mdash; it costs nothing to send, so it&rsquo;s switched per alert type here. Holding alerts through service lives in <b>Morning brief &amp; issues</b>.</div>
     </div>
 

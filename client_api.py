@@ -6476,6 +6476,45 @@ def get_notifications(current_user):
     return jsonify(**payload), status
 
 
+@client_bp.route("/api/account/send-test-push", methods=["POST"])
+@login_required
+def send_test_push_route(current_user):
+    """Web twin of the mobile route — same scoping, same inline delivery.
+    Useful from a laptop precisely because the phone being tested is the one
+    that cannot be used to trigger the test."""
+    from push import send_test_push
+    result = send_test_push(current_user["restaurant_id"], current_user["id"])
+    if not result.get("ok"):
+        return jsonify(ok=False, error=result.get("error") or "Apple did not accept it.",
+                       devices=result.get("devices", 0)), 400
+    return jsonify(ok=True, devices=result["devices"], sent=result["sent"])
+
+
+@client_bp.route("/api/notifications/opened", methods=["POST"])
+@login_required
+def mark_notification_opened(current_user):
+    """One row when a notification is actually opened. The product could say
+    how many it sent and nothing about whether any were worth sending."""
+    from models import record_notification_open
+    data = request.get_json(silent=True) or {}
+    record_notification_open(current_user["restaurant_id"], data.get("type") or "",
+                             user_id=current_user["id"])
+    return jsonify(ok=True)
+
+
+@client_bp.route("/api/notifications/engagement")
+@login_required
+def notifications_engagement(current_user):
+    """Types this restaurant gets a lot of and never opens — the raw material
+    for one sentence in Account, not an automatic change."""
+    import notify
+    from client_api import _NOTIFICATION_LABELS as _labels
+    rows = notify.engagement_report(current_user["restaurant_id"])
+    for row in rows:
+        row["label"] = _labels.get(row["alert_type"], row["alert_type"])
+    return jsonify(ok=True, suggestions=rows)
+
+
 @client_bp.route("/api/notifications/unread-count")
 @login_required
 def get_notifications_unread_count(current_user):

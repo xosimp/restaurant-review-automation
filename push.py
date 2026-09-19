@@ -14,6 +14,7 @@ import json
 import os
 import threading
 import time
+import uuid
 from datetime import datetime, timezone
 
 from models import get_conn, DB_PATH
@@ -305,7 +306,6 @@ def _collapse_id(restaurant_id, alert_type, data) -> str:
         # screen: an owner with three staff sign-ins and two dashboard logins
         # saw one notification, and the security value of the feature went
         # with the ones it overwrote.
-        import uuid
         parts.append(uuid.uuid4().hex[:12])
     else:
         parts.append(datetime.now(timezone.utc).strftime("%Y%m%d"))
@@ -426,6 +426,11 @@ def _deliver(device_token_row, alert_type, title, body, data, db_path=DB_PATH):
     payload_bytes = json.dumps(payload, separators=(",", ":")).encode()
     url = f"https://{_apns_host(device_token_row['environment'])}/3/device/{device_token_row['apns_token']}"
     expiry = int(time.time()) + _EXPIRY_SECONDS.get(priority, 12 * 3600)
+    # Computed ONCE, outside the retry loop. Its whole job is to be stable
+    # across the retries of one alert — a client-side timeout often means
+    # Apple took the push and the response was lost, and a key that changed
+    # per attempt would turn that into two or three banners for one event.
+    collapse_id = _collapse_id(device_token_row.get("restaurant_id"), alert_type, data)
     status = 0
     ok = False
     error = None
@@ -441,7 +446,7 @@ def _deliver(device_token_row, alert_type, title, body, data, db_path=DB_PATH):
                 "authorization": f"bearer {_provider_jwt()}",
                 "apns-topic": _bundle_id(),
                 "apns-push-type": "alert",
-                "apns-collapse-id": _collapse_id(device_token_row.get("restaurant_id"), alert_type, data),
+                "apns-collapse-id": collapse_id,
                 # 5 lets Apple batch a summary with the phone's power state;
                 # 10 is immediate. Nothing below P4 should cost battery.
                 "apns-priority": "5" if priority >= P4_SUMMARY else "10",
@@ -569,6 +574,43 @@ def _run_delivery(token_row, alert_type, title, body, data, db_path):
     finally:
         with _executor_lock:
             _queued -= 1
+
+
+def send_test_push(restaurant_id, user_id, db_path=DB_PATH):
+    """Send one test notification to THIS login's own devices, synchronously,
+    and report what APNs actually said.
+
+    Everything else here is fire-and-forget on a background pool, which is
+    right for an alert and useless for "is push working for this client?" —
+    that question had no answer short of reaching into the database. Runs
+    inline so the caller can be told the truth, and uses a real alert type so
+    the phone renders it exactly as it would render the real thing: same
+    category, same thread, same badge, same sound setting.
+
+    Returns {"ok", "devices", "sent", "failures": [...]}.
+    """
+    tokens = [t for t in get_device_tokens(restaurant_id, db_path, for_delivery=True)
+              if int(t.get("user_id") or 0) == int(user_id)]
+    if not tokens:
+        return {"ok": False, "devices": 0, "sent": 0, "failures": [],
+                "error": "No device registered for your login. Open the Cavnar AI app on "
+                         "your phone, allow notifications, and try again."}
+    sent, failures = 0, []
+    for token_row in tokens:
+        result = _deliver(
+            token_row, "test_push", "Test notification",
+            "If you can read this, push is working. Nothing was sent to anyone else.",
+            # A distinct collapse key per test. Keyed on the date like every
+            # other review-less alert, a second test the same day would
+            # silently replace the first on the lock screen — which reads
+            # exactly like "it didn't work".
+            {"collapse_key": uuid.uuid4().hex[:12]}, db_path)
+        if result.get("ok"):
+            sent += 1
+        else:
+            failures.append(result.get("error") or f"HTTP {result.get('status')}")
+    return {"ok": sent > 0, "devices": len(tokens), "sent": sent, "failures": failures,
+            "error": None if sent else (failures[0] if failures else "Apple did not accept it.")}
 
 
 def fire_push(restaurant_id, alert_type, title, body, data=None, db_path=DB_PATH, user_ids=None):

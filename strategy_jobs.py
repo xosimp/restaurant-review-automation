@@ -438,6 +438,56 @@ def _closing_text(summary, note):
     return title, " ".join(l for l in lines if l)[:300] or "Open Cavnar AI for the detail."
 
 
+# Once a week at most. A "quiet night coming up" that arrives every day is
+# a calendar, not an opportunity.
+DEMAND_OPPORTUNITY_HOUR = 10
+
+
+def run_demand_opportunity(db_path=DB_PATH):
+    """A quiet night two days out, while there is still time to fill it.
+
+    Marketing and demand were the one area of the product that produced no
+    notification at all — an owner had to go and look, and the whole point
+    of a slow Tuesday is that it is knowable in advance. P5: informational,
+    never buzzes, and folded into nothing because it is a genuine one-a-week
+    thing rather than part of the morning battery.
+    """
+    import demand, ops, push
+    from time_utils import restaurant_now
+    sent = 0
+    for r in _restaurants(db_path):
+        if not getattr(r, "module_marketing", 0):
+            continue
+        local = restaurant_now(r, naive=True)
+        if not (DEMAND_OPPORTUNITY_HOUR <= local.hour < DEMAND_OPPORTUNITY_HOUR + 4):
+            continue
+        # Claimed on the ISO WEEK, not the date — scheduler.local_due claims
+        # per day, which for a weekly job would mean one every morning.
+        if not ops.claim_period(f"demand_opportunity:{r.id}", local.strftime("%G-W%V")):
+            continue
+        try:
+            out = demand.quiet_night_ahead(r.id, today=local.date(), db_path=db_path)
+            if not out.get("available"):
+                continue
+            import morning_brief, notify
+            audience = {u["id"] for u in morning_brief.recipients(r.id, db_path)}
+            if not audience:
+                continue
+            notify.record_notification(r.id, "demand_opportunity", db_path=db_path,
+                                       value=float(out["typical_sales"]))
+            push.fire_push(
+                r.id, "demand_opportunity",
+                f"{out['weekday']} is usually your quietest night",
+                f"About ${out['typical_sales']:,.0f}, {out['below_average_pct']:.0f}% under a "
+                f"typical day across {out['samples']} of them. Two days to do something about it.",
+                data={"ask_prompt": f"What could fill {out['weekday']} night?"},
+                db_path=db_path, user_ids=audience)
+            sent += 1
+        except Exception as e:
+            ops.capture(e, job="demand_opportunity", context=f"restaurant_id={r.id}")
+    return {"sent": sent}
+
+
 def run_preshift_nudge(db_path=DB_PATH):
     """Text the routed manager that tonight's lineup notes are ready, at the
     hour the owner chose (restaurants.preshift_nudge_hour; 0 = off).

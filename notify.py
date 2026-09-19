@@ -629,6 +629,56 @@ def _log_alert(restaurant_id: int, alert_type: str, review_id: int = None, db_pa
         conn.close()
 
 
+# How many of one type an owner has to have received, over how long, before
+# there is anything to say about whether they read them. Deliberately large:
+# this drives a suggestion an owner can act on, and a suggestion made on thin
+# evidence is worse than none.
+ENGAGEMENT_WINDOW_DAYS = 60
+ENGAGEMENT_MIN_DELIVERED = 10
+
+# Never suggested away, whatever the numbers say. An owner who has not opened
+# a health alert in sixty days has had a good sixty days.
+ENGAGEMENT_NEVER_QUIET = {"health", "coverage", "critical_low", "issue",
+                          "issue_escalated", "morning_brief"}
+
+# The per-type push column an owner would switch off, so the suggestion has
+# somewhere to land.
+ENGAGEMENT_PUSH_COLUMN = {
+    "1star": "al_1star_push", "2star": "al_2star_push", "5star": "al_5star_push",
+    "neg_spike": "al_spike_push", "no_response": "al_unres_push",
+    "unresponded": "al_unres_push", "health": "al_health_push",
+}
+
+
+def engagement_report(restaurant_id: int, db_path: str = DB_PATH) -> list:
+    """Notification types this restaurant receives a lot of and never opens.
+
+    [{alert_type, label, delivered, days, push_column}] — the raw material
+    for ONE sentence in Account: "34 five-star alerts in the last 60 days,
+    none opened. Move them into the morning brief?"
+
+    Deliberately a suggestion and not an automatic downgrade. Reading a
+    banner on a lock screen is engagement and leaves no tap behind, so
+    switching alerts off on tap data alone would quietly silence alerts an
+    owner reads every single day. The owner decides; the product just
+    notices and says what it noticed.
+    """
+    from models import notification_engagement
+    out = []
+    for row in notification_engagement(restaurant_id, ENGAGEMENT_WINDOW_DAYS, db_path):
+        alert_type = row["alert_type"]
+        if alert_type in ENGAGEMENT_NEVER_QUIET:
+            continue
+        if row["opened"] or row["delivered"] < ENGAGEMENT_MIN_DELIVERED:
+            continue
+        column = ENGAGEMENT_PUSH_COLUMN.get(alert_type)
+        if not column:
+            continue
+        out.append({"alert_type": alert_type, "delivered": row["delivered"],
+                    "days": ENGAGEMENT_WINDOW_DAYS, "push_column": column})
+    return out
+
+
 def record_notification(restaurant_id: int, alert_type: str, review_id: int = None,
                         db_path: str = DB_PATH, value: float = None):
     """History row for a notification sent OUTSIDE the alert layer.

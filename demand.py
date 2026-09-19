@@ -164,3 +164,36 @@ def prep_list(restaurant_id, day=None, db_path=DB_PATH, limit=15):
             "items": rows[:limit], "dishes_forecast": len(expected),
             "note": ("A usage forecast from each dish's typical sales on this weekday times its "
                      "recipe. It does not model sub-recipes or batch sizes.")}
+
+
+# Far enough ahead that a guest-club send, a post or a staffing change can
+# still be made; close enough that the forecast is about a real night.
+OPPORTUNITY_LEAD_DAYS = 2
+
+
+def quiet_night_ahead(restaurant_id, today=None, db_path=DB_PATH):
+    """The night coming up that is reliably this restaurant's quietest, when
+    there is still time to do something about it.
+
+    Marketing and demand were the one area of the product that produced no
+    notification at all: an owner had to go and look, and the whole point of
+    a slow Tuesday is that it is knowable in advance. Same honesty as
+    everything else here — a weekday with too little history is not called
+    slow, and a restaurant whose days are all within normal variation gets
+    nothing rather than a manufactured opportunity.
+    """
+    today = today or date.today()
+    target = today + timedelta(days=OPPORTUNITY_LEAD_DAYS)
+    weekday = target.strftime("%A")
+    slow = slow_days(restaurant_id, db_path=db_path)
+    if not slow.get("available"):
+        return {"available": False, "reason": slow.get("reason", "not enough history")}
+    match = next((d for d in slow.get("slow_days") or [] if d.get("day") == weekday), None)
+    if not match:
+        return {"available": False, "reason": f"{weekday} is not one of the quiet ones"}
+    fc = forecast_day(restaurant_id, target, db_path=db_path)
+    if not fc.get("available"):
+        return {"available": False, "reason": fc.get("reason")}
+    return {"available": True, "date": target.isoformat(), "weekday": weekday,
+            "typical_sales": fc["typical_sales"], "samples": fc["samples"],
+            "below_average_pct": abs(match.get("vs_average_pct") or 0)}
