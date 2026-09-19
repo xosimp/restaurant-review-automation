@@ -195,3 +195,61 @@ def coverage_gaps(restaurant_id, now_local=None, db_path=DB_PATH, restaurant=Non
         missing.append({**s, "minutes_late": int((local - due).total_seconds() // 60)})
     return {"available": True, "provider": provider, "missing": missing,
             "scheduled": len(scheduled), "clocked_in": len(here)}
+
+
+def day_total(restaurant_id, day, db_path=DB_PATH):
+    """The last net-sales reading captured for a business date, and the hour
+    it was taken. That last reading IS the day's total — capture() writes a
+    running figure, so the final one is the day."""
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT net_sales, captured_hour FROM pos_intraday WHERE restaurant_id=? AND "
+            "business_date=? ORDER BY captured_hour DESC LIMIT 1",
+            (restaurant_id, day.isoformat())).fetchone()
+    finally:
+        conn.close()
+    return (row["net_sales"], row["captured_hour"]) if row else (None, None)
+
+
+def closing_summary(restaurant_id, day=None, db_path=DB_PATH, restaurant=None):
+    """How tonight went, against a typical same weekday.
+
+    The morning brief tells an owner how YESTERDAY went. Nothing told them how
+    TODAY went, while they still remember the room — which is the one moment
+    the number means something specific rather than being a figure in a table.
+
+    Same honesty rules as pulse(): a comparison is withheld until there are
+    MIN_PROFILE_SAMPLES same-weekday closes to compare against, and a POS that
+    cannot be read during service says so instead of guessing.
+    """
+    from models import get_restaurant
+    from time_utils import restaurant_now
+    restaurant = restaurant or get_restaurant(restaurant_id)
+    day = day or restaurant_now(restaurant, naive=True).date()
+    weekday = day.strftime("%A")
+    net, hour = day_total(restaurant_id, day, db_path)
+    if net is None:
+        return {"available": False, "reason": "nothing captured from the POS today"}
+    conn = get_conn(db_path)
+    try:
+        # One figure per past same-weekday: that day's own last reading.
+        # The bare net_sales alongside MAX() is SQLite's documented
+        # min/max-picks-the-row behaviour, not an accident.
+        history = [r["net_sales"] for r in conn.execute(
+            "SELECT MAX(captured_hour) AS h, net_sales FROM pos_intraday "
+            "WHERE restaurant_id=? AND weekday=? AND business_date<? "
+            "GROUP BY business_date ORDER BY business_date DESC LIMIT 8",
+            (restaurant_id, weekday, day.isoformat())).fetchall()]
+    finally:
+        conn.close()
+    out = {"available": False, "weekday": weekday, "net_sales": round(float(net), 2),
+           "hour": hour, "samples": len(history)}
+    if len(history) < MIN_PROFILE_SAMPLES:
+        out["reason"] = f"only {len(history)} past {weekday}s to compare with"
+        return out
+    typical = _median(history)
+    pct = round((net / typical - 1) * 100, 1) if typical else None
+    out.update({"available": True, "typical": round(typical, 2), "pct": pct,
+                "direction": "behind" if (pct or 0) < 0 else "ahead"})
+    return out

@@ -186,6 +186,11 @@ html{background:var(--bg-base);min-height:100%}
 .notif-row .nl{flex:1;min-width:0;font-size:12px;color:var(--ink);font-weight:500}
 .notif-row.is-unread .nl{font-weight:600}
 .notif-row .nt{font-size:11px;color:var(--ink3);white-space:nowrap;flex-shrink:0}
+/* Bell: day headings and the needs-you filter */
+.notif-day{padding:8px 14px 4px;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3)}
+.notif-filter{display:flex;gap:4px;padding:8px 10px;border-bottom:1px solid var(--paper3)}
+.notif-filter-btn{flex:1;padding:5px 8px;border:1px solid var(--paper3);border-radius:6px;font-size:11px;font-weight:600;color:var(--ink3);background:transparent;cursor:pointer}
+.notif-filter-btn.is-on{color:var(--ember);border-color:var(--ember)}
 /* Toast notifications */
 [data-theme="dark"] .toast{background:#2a2520!important;color:var(--ink)!important;box-shadow:0 8px 28px rgba(0,0,0,.5)!important}
 [data-theme="dark"] .toast.toast-success{background:#0c2318!important;color:#6fcf97!important;border-left-color:#2d6a4f!important}
@@ -12765,8 +12770,9 @@ document.addEventListener('click', function(e) {
 // ── In-app notifications ───────────────────────────────────────────────────
 // ES5 only, colours from CSS variables only (see DESIGN_SYSTEM.md).
 (function(){
-  var _items  = [];
-  var _busy   = false;
+  var _items      = [];
+  var _busy       = false;
+  var _urgentOnly = false;
 
   function timeAgo(iso) {
     if (!iso) return '';
@@ -12785,6 +12791,21 @@ document.addEventListener('click', function(e) {
     });
   }
 
+  // "Today" / "Yesterday" / "Tuesday" / "12 Sep" — the heading a row groups
+  // under. Twenty rows in one flat list reads as an audit log; the same rows
+  // under a day heading read as what happened when.
+  function dayGroup(iso) {
+    var t = Date.parse(String(iso).replace(' ', 'T') + 'Z');
+    if (isNaN(t)) return 'Earlier';
+    var d = new Date(t), now = new Date();
+    var startOf = function(x){ return new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime(); };
+    var days = Math.round((startOf(now) - startOf(d)) / 86400000);
+    if (days <= 0) return 'Today';
+    if (days === 1) return 'Yesterday';
+    if (days < 7) return ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][d.getDay()];
+    return d.getDate() + ' ' + ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()];
+  }
+
   function renderList() {
     var list = document.getElementById('notif-list');
     if (!list) return;
@@ -12792,13 +12813,37 @@ document.addEventListener('click', function(e) {
       list.innerHTML = '<div style="padding:12px 14px;font-size:12px;color:var(--ink3)">No alerts yet.</div>';
       return;
     }
-    var html = '';
-    for (var i = 0; i < _items.length; i++) {
-      var n = _items[i];
+    var shown = [], i;
+    for (i = 0; i < _items.length; i++) {
+      if (!_urgentOnly || _items[i].urgent) shown.push(_items[i]);
+    }
+    var filterBar = '';
+    var anyUrgent = false;
+    for (i = 0; i < _items.length; i++) { if (_items[i].urgent) { anyUrgent = true; break; } }
+    if (anyUrgent) {
+      // A busy week is mostly things already dealt with; the two or three
+      // that still need someone are what the bell was opened for.
+      filterBar = '<div class="notif-filter">'
+        + '<button type="button" class="cbtn cbtn-text notif-filter-btn' + (_urgentOnly ? '' : ' is-on') + '" data-filter="all">Everything</button>'
+        + '<button type="button" class="cbtn cbtn-text notif-filter-btn' + (_urgentOnly ? ' is-on' : '') + '" data-filter="urgent">Needs you</button>'
+        + '</div>';
+    }
+    if (!shown.length) {
+      list.innerHTML = filterBar + '<div style="padding:12px 14px;font-size:12px;color:var(--ink3)">Nothing needs you right now.</div>';
+      return;
+    }
+    var html = filterBar, lastDay = null;
+    for (i = 0; i < shown.length; i++) {
+      var n = shown[i];
+      var day = dayGroup(n.fired_at);
+      if (day !== lastDay) {
+        html += '<div class="notif-day">' + esc(day) + '</div>';
+        lastDay = day;
+      }
       // An ember dot marks P0/P1 — the things that are only worth anything
       // while they can still be acted on.
       var mods = (n.unread ? ' is-unread' : '') + (n.urgent ? ' is-urgent' : '');
-      html += '<button type="button" class="cbtn cbtn-text notif-row' + mods + '" data-idx="' + i + '">'
+      html += '<button type="button" class="cbtn cbtn-text notif-row' + mods + '" data-id="' + esc(n.type + '|' + n.fired_at) + '">'
             + '<i class="nd"></i>'
             + '<span class="nl">' + esc(n.label) + '</span>'
             + '<span class="nt">' + esc(timeAgo(n.fired_at)) + '</span>'
@@ -12866,9 +12911,19 @@ document.addEventListener('click', function(e) {
   }
 
   document.addEventListener('click', function(e) {
-    var row = e.target && e.target.closest ? e.target.closest('.notif-row') : null;
+    if (!e.target || !e.target.closest) return;
+    var filter = e.target.closest('.notif-filter-btn');
+    if (filter) {
+      _urgentOnly = filter.getAttribute('data-filter') === 'urgent';
+      renderList();
+      return;
+    }
+    var row = e.target.closest('.notif-row');
     if (row) {
-      openNotification(_items[parseInt(row.getAttribute('data-idx'), 10)]);
+      var key = row.getAttribute('data-id');
+      for (var i = 0; i < _items.length; i++) {
+        if (_items[i].type + '|' + _items[i].fired_at === key) { openNotification(_items[i]); return; }
+      }
       return;
     }
     var wrap = document.getElementById('notif-wrap');

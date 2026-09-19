@@ -54,6 +54,25 @@ struct NotificationItem: Codable, Identifiable {
         guard let date = Self.firedAtFormatter.value.date(from: firedAt) else { return firedAt }
         return Self.relativeFormatter.value.localizedString(for: date, relativeTo: Date())
     }
+
+    var firedAtDate: Date? { Self.firedAtFormatter.value.date(from: firedAt) }
+
+    /// "Today" / "Yesterday" / "Tuesday" / "12 Sep" — the heading this row
+    /// groups under. A flat list of twenty rows reads as an audit log; the
+    /// same rows under a day heading read as what happened when.
+    var dayGroup: String {
+        guard let date = firedAtDate else { return "Earlier" }
+        let calendar = Calendar.current
+        if calendar.isDateInToday(date) { return "Today" }
+        if calendar.isDateInYesterday(date) { return "Yesterday" }
+        let formatter = DateFormatter()
+        if let days = calendar.dateComponents([.day], from: date, to: Date()).day, days < 7 {
+            formatter.dateFormat = "EEEE"
+        } else {
+            formatter.dateFormat = "d MMM"
+        }
+        return formatter.string(from: date)
+    }
 }
 
 /// Decodes one entry from GET /mobile/api/group-locations (owner-role

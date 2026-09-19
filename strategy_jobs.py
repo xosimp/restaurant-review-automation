@@ -38,17 +38,71 @@ def _restaurants(db_path=DB_PATH):
         yield r
 
 
+# A result worth interrupting for. Below this, "it moved a little" is a line
+# in the monthly review, not a notification.
+OUTCOME_WORTH_TELLING = 100.0   # dollars a month
+
+
 def run_outcome_evaluations(db_path=DB_PATH):
     import outcomes, goals, ops
-    closed = outcomes.evaluate_due(db_path=db_path)
-    closed = len(closed) if isinstance(closed, (list, tuple)) else int(closed or 0)
+    results = outcomes.evaluate_due(db_path=db_path) or []
+    closed = len(results) if isinstance(results, (list, tuple)) else int(results or 0)
+    told = _tell_owners_what_worked(results if isinstance(results, list) else [], db_path)
     achieved = 0
     for r in _restaurants(db_path):
         try:
             achieved += len(goals.mark_achieved(r.id, db_path=db_path) or [])
         except Exception as e:
             ops.capture(e, job="goals_mark_achieved", context=f"restaurant_id={r.id}")
-    return {"outcomes_closed": closed, "goals_achieved": achieved}
+    return {"outcomes_closed": closed, "goals_achieved": achieved, "wins_told": told}
+
+
+def _tell_owners_what_worked(results, db_path):
+    """Tell an owner when a change they made paid off.
+
+    This is the only notification in the product that is about money the
+    owner ALREADY made rather than money they are losing, and it is the one
+    that makes every other recommendation worth reading. evaluate_due has
+    computed it daily since outcomes shipped and nobody was ever told.
+
+    One per restaurant per pass, the biggest — five separate "this worked"
+    pushes on the same morning is how a win becomes noise.
+    """
+    import ops, push
+    best = {}
+    for row in results:
+        if not isinstance(row, dict) or row.get("verdict") != "improved":
+            continue
+        dollars = row.get("dollars_monthly")
+        if not dollars or abs(float(dollars)) < OUTCOME_WORTH_TELLING:
+            continue
+        rid = row.get("restaurant_id")
+        if rid is None:
+            continue
+        if abs(float(dollars)) > abs(float(best.get(rid, {}).get("dollars_monthly") or 0)):
+            best[rid] = row
+    told = 0
+    for rid, row in best.items():
+        try:
+            import morning_brief, notify, outcomes as _outcomes
+            audience = {u["id"] for u in morning_brief.recipients(rid, db_path)}
+            if not audience:
+                continue
+            dollars = abs(float(row["dollars_monthly"]))
+            notify.record_notification(rid, "outcome_achieved", db_path=db_path,
+                                       value=dollars)
+            push.fire_push(
+                rid, "outcome_achieved",
+                f"That one worked — about ${dollars:,.0f}/month",
+                f"{row.get('title') or 'The change you made'}: "
+                f"{row.get('metric_label') or row.get('metric')} improved over the "
+                f"window you set. {_outcomes.CAUSATION_CAVEAT}",
+                data={"ask_prompt": f"What did {row.get('title') or 'that change'} actually do?"},
+                db_path=db_path, user_ids=audience)
+            told += 1
+        except Exception as e:
+            ops.capture(e, job="outcome_win_push", context=f"restaurant_id={rid}")
+    return told
 
 
 def run_loss_sync(db_path=DB_PATH):
@@ -285,6 +339,103 @@ def run_coverage_check(db_path=DB_PATH):
         except Exception as e:
             ops.capture(e, job="coverage_check", context=f"restaurant_id={r.id}")
     return {"opened": opened}
+
+
+def _close_hour(r, local):
+    """The hour this restaurant is done for the night, rounded up past any
+    half hour, or 22 when it hasn't set hours."""
+    from notify import _open_window
+    window = _open_window(r, local.strftime("%A"))
+    closes = window[1] if window else None
+    if not closes:
+        return DEFAULT_SERVICE_HOURS[1] - 1
+    hour = closes[0] + (1 if closes[1] else 0)
+    return min(hour, 23)
+
+
+def run_closing_summary(db_path=DB_PATH):
+    """How tonight went, sent once the doors are shut.
+
+    The morning brief tells an owner how YESTERDAY went. Nothing told them
+    how TODAY went, while they can still picture the room — which is the one
+    moment the number means something specific instead of being a figure in
+    a table. Pairs it with the close-out handoff, so whatever the closing
+    manager wrote reaches the owner the same night rather than at 7am.
+
+    P4: passive, no sound, no Focus break. It is a summary, not an alert.
+    """
+    import closeout, intraday, ops, push, scheduler
+    from models import is_in_quiet_hours
+    from time_utils import restaurant_now
+    sent = 0
+    for r in _restaurants(db_path):
+        if not getattr(r, "morning_brief_enabled", 1):
+            continue
+        local = restaurant_now(r, naive=True)
+        hour = _close_hour(r, local)
+        if not scheduler.local_due(r, hour, until=min(hour + 2, 24),
+                                   claim_key="closing_summary", now_local=local):
+            continue
+        # An owner who asked not to be disturbed at night meant this too.
+        # It is in tomorrow's brief either way.
+        if is_in_quiet_hours(r.id, db_path=db_path):
+            continue
+        try:
+            day = closeout.business_date_for(r, now_local=local)
+            summary = intraday.closing_summary(r.id, day=day, db_path=db_path, restaurant=r)
+            note = closeout.get(r.id, day, db_path=db_path)
+            title, body = _closing_text(summary, note)
+            if not title:
+                continue
+            import morning_brief, notify
+            audience = {u["id"] for u in morning_brief.recipients(r.id, db_path)}
+            if not audience:
+                continue
+            notify.record_notification(r.id, "closing_summary", db_path=db_path)
+            push.fire_push(r.id, "closing_summary", title, body,
+                           data={"ask_prompt": f"How did {day.strftime('%A')} actually go?"},
+                           db_path=db_path, user_ids=audience)
+            sent += 1
+        except Exception as e:
+            ops.capture(e, job="closing_summary", context=f"restaurant_id={r.id}")
+    return {"sent": sent}
+
+
+def _closing_text(summary, note):
+    """(title, body), or (None, None) when there is nothing worth sending.
+
+    Nothing worth sending is a real outcome: a night with no POS reading and
+    no close-out is a night Cavnar has nothing to say about, and saying it
+    anyway is how a summary becomes something people turn off.
+    """
+    lines = []
+    if summary.get("available"):
+        pct = summary.get("pct") or 0
+        word = "behind" if summary["direction"] == "behind" else "ahead of"
+        if abs(pct) < 5:
+            title = f"${summary['net_sales']:,.0f} — about a normal {summary['weekday']}"
+        else:
+            title = (f"${summary['net_sales']:,.0f} — {abs(pct):.0f}% {word} "
+                     f"a typical {summary['weekday']}")
+        lines.append(f"Against about ${summary['typical']:,.0f} on the last "
+                     f"{summary['samples']} {summary['weekday']}s.")
+    elif summary.get("net_sales") is not None:
+        title = f"${summary['net_sales']:,.0f} tonight"
+        lines.append(summary.get("reason") or "")
+    else:
+        title = None
+    if note:
+        for field, label in (("went_wrong", "Went wrong"), ("eighty_sixed", "86'd"),
+                             ("callouts", "Call-outs")):
+            value = (note.get(field) or "").strip()
+            if value:
+                lines.append(f"{label}: {value}")
+        if title is None and any((note.get(f) or "").strip() for f in
+                                 ("went_well", "went_wrong", "eighty_sixed", "callouts")):
+            title = "Tonight's handover is in"
+    if title is None:
+        return None, None
+    return title, " ".join(l for l in lines if l)[:300] or "Open Cavnar AI for the detail."
 
 
 def run_preshift_nudge(db_path=DB_PATH):

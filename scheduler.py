@@ -1754,6 +1754,11 @@ def scheduler_loop():
                 _ops.run_job("coverage_check", run_coverage_check)
                 from strategy_jobs import run_preshift_nudge
                 _ops.run_job("preshift_nudge", run_preshift_nudge)
+                # How tonight went, once the doors are shut — the one part
+                # of the day nothing reported on while the owner could
+                # still picture the room.
+                from strategy_jobs import run_closing_summary
+                _ops.run_job("closing_summary", run_closing_summary)
 
             # Every tick — an alert held through lunch or dinner service goes
             # out as soon as that rush ends (notify.rush_release_at).

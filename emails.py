@@ -1592,6 +1592,63 @@ def send_reactivation_email(to_email: str, restaurant_name: str, owner_name: str
         print(f"send_reactivation_email failed: {e}")
 
 
+def _weekly_review_sections(restaurant_id):
+    """The week read as a business week rather than a review count.
+
+    The digest is the one thing Cavnar AI sends every single week, so it is
+    also the clearest statement the product makes about what it thinks
+    matters — and it said "reviews". These blocks go above the review
+    content, in the same voice as the monthly. Deterministic; see
+    weekly_review.py. Every block is independently guarded, so a module with
+    nothing to say drops out instead of printing a zero.
+    """
+    if not restaurant_id:
+        return []
+    import html as _html
+    out = []
+    try:
+        import weekly_review
+        review = weekly_review.build(restaurant_id)
+    except Exception as e:
+        print(f"[weekly] review build failed: {e}")
+        return []
+
+    def _list(items):
+        return "<br>".join(_html.escape(str(i)) for i in items if i)
+
+    try:
+        body = weekly_review.lines(review)
+        if body:
+            out.append(report_eyebrow("The week against " + review["compared_with"])
+                       + report_paragraph(_html.escape(weekly_review.headline(review)))
+                       + report_paragraph(_list(body))
+                       + report_paragraph(f'<span style="font-size:12.5px;color:{BRAND["muted"]}">'
+                                          f'{_html.escape(weekly_review.WINDOW_CAVEAT)}</span>'))
+    except Exception as e:
+        print(f"[weekly] metrics block failed: {e}")
+    try:
+        import outcomes as _o
+        if review.get("results"):
+            out.append(report_eyebrow("What your changes did")
+                       + report_paragraph(_list(_o.summarise(r) for r in review["results"][:3]))
+                       + report_paragraph(f'<span style="font-size:12.5px;color:{BRAND["muted"]}">'
+                                          f'{_html.escape(_o.CAUSATION_CAVEAT)}</span>'))
+    except Exception as e:
+        print(f"[weekly] results block failed: {e}")
+    try:
+        if review.get("priorities"):
+            def _money(p):
+                if p.get("is_range"):
+                    return f"${p['monthly_low']:,.0f}-${p['monthly_high']:,.0f}/month"
+                return f"${p['monthly']:,.0f}/month" if p.get("monthly") else ""
+            out.append(report_eyebrow("Worth your time this week")
+                       + report_paragraph(_list(
+                           f"{p['label']} — {_money(p)}" for p in review["priorities"])))
+    except Exception as e:
+        print(f"[weekly] priorities block failed: {e}")
+    return out
+
+
 def _monthly_review_sections(restaurant_id):
     """The month read like a P&L rather than counted: how the headline
     numbers moved against the month before, what the owner's own changes

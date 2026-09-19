@@ -727,6 +727,20 @@ def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = No
 
     sections = [report_paragraph(_html.escape(ai_headline))]
 
+    # ── The week as a business week ────────────────────────────────────────
+    # This digest is the one thing Cavnar AI sends every single week, and it
+    # opened with a review count — so the clearest weekly statement the
+    # product made about what matters was "reviews". The monthly email was
+    # rebuilt to read like a P&L; these blocks are the same four questions
+    # over seven days, in the same voice, above the review content. Owner
+    # view only: they carry money, and a manager's digest should not.
+    if owner_view:
+        try:
+            from emails import _weekly_review_sections
+            sections.extend(_weekly_review_sections(restaurant_id or report.restaurant_id))
+        except Exception as e:
+            print(f"[digest] weekly review sections failed: {e}")
+
     # ── Review Intelligence ────────────────────────────────────────────────
     sections.append(
         report_eyebrow("Review Intelligence", tag=rating_label, tag_color=rating_color) +

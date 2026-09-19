@@ -103,6 +103,26 @@ struct NotificationsListView: View {
     @Environment(DeepLinkRouter.self) private var deepLinkRouter
     @Environment(\.dismiss) private var dismiss
     @State private var clock = CavnarEntranceClock()
+    /// Twenty rows in one flat list is an audit log. A busy week is mostly
+    /// things that have already been dealt with, and the two or three that
+    /// still need someone are what an owner opened this for.
+    @State private var urgentOnly = false
+
+    private var shown: [NotificationItem] {
+        urgentOnly ? viewModel.notifications.filter(\.isUrgent) : viewModel.notifications
+    }
+
+    /// Day headings, newest first, preserving the server's ordering within
+    /// each day.
+    private var grouped: [(String, [NotificationItem])] {
+        var order: [String] = []
+        var byDay: [String: [NotificationItem]] = [:]
+        for item in shown {
+            if byDay[item.dayGroup] == nil { order.append(item.dayGroup) }
+            byDay[item.dayGroup, default: []].append(item)
+        }
+        return order.map { ($0, byDay[$0] ?? []) }
+    }
 
     var body: some View {
         NavigationStack {
@@ -131,7 +151,20 @@ struct NotificationsListView: View {
                     )
                     .padding(.top, 40)
                 } else {
-                    List(Array(viewModel.notifications.enumerated()), id: \.element.id) { index, item in
+                    List {
+                        if viewModel.notifications.contains(where: \.isUrgent) {
+                            Picker("", selection: $urgentOnly) {
+                                Text("Everything").tag(false)
+                                Text("Needs you").tag(true)
+                            }
+                            .pickerStyle(.segmented)
+                            .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 10, trailing: 0))
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                        }
+                        ForEach(grouped, id: \.0) { day, items in
+                            Section {
+                                ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                         Button {
                             Haptic.light()
                             deepLinkRouter.handleNotificationTap(alertType: item.type, reviewId: item.reviewId)
@@ -160,6 +193,14 @@ struct NotificationsListView: View {
                         }
                         .buttonStyle(.plain)
                         .cavnarRowEntrance(index: index, clock: clock)
+                                }
+                            } header: {
+                                Text(day)
+                                    .font(.cavnarBody(13, weight: 700))
+                                    .foregroundStyle(Color.cavnarInk3)
+                                    .textCase(nil)
+                            }
+                        }
                     }
                     .listStyle(.plain)
                     .scrollContentBackground(.hidden)
