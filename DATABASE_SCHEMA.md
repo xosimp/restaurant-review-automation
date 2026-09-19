@@ -79,13 +79,21 @@ Durable facts an owner has told the assistant across conversations. `(restaurant
 ## Alerts / Notifications
 
 ### `alert_log`
-Every alert that has fired: `restaurant_id`, `alert_type`, optional `review_id`, `fired_at`. Read back by both the notification badge and Ask Cavnar's `read_alerts` tool — "outstanding" is computed by joining to the linked review's `response_status`, not stored as a separate flag.
+Every notification that has fired: `restaurant_id`, `alert_type`, optional `review_id`, `fired_at`, `value` (the figure it fired on), `priority` (`push.PRIORITY`, P0–P5, stamped at write time). Read back by both notification centers and Ask Cavnar's `read_alerts` tool — "outstanding" is computed by joining to the linked review's `response_status`, not stored as a separate flag.
+
+It is two things at once: the HISTORY both clients read, and the tally the daily cap and the 50/day ceiling are counted from. The advisory types in `models.NON_ALERT_TYPES` (brief, pulse, closing summary, drafted schedule, issues, coverage, outcome wins, the `daily_briefing` wrapper) write history rows but are excluded from `count_alerts_today` — they are not alerts, and an issue text goes to a manager rather than to the owner whose cap it would spend.
+
+### `alert_holds`
+Alerts raised mid-service, waiting for the rush to end: `alert_type`, `subject`, `html`, `sms_text`, `review_id`, `value`, `release_at`, `sent_at`. `release_due_alerts` sends at most `MAX_RELEASE_PER_RESTAURANT` per pass and drops anything `HOLD_MAX_LATE_HOURS` past its release.
+
+### `notification_reads` / `notification_opens`
+Per-LOGIN read state (PK `user_id, restaurant_id`) and per-type open events. `seen_at` is written in SQLite's own `"%Y-%m-%d %H:%M:%S"` **deliberately** — the old stamp on `restaurants.notifications_seen_at` used isoformat's `T`, and since the unread query is a TEXT comparison and `' ' < 'T'`, every alert fired on the same date as the last read counted as already seen. The badge could only ever show yesterday.
 
 ### `alert_contacts`
 Who gets alerted and on which channels (email/SMS/push), per restaurant — separate from the login `users` table since an alert recipient need not have dashboard access.
 
 ### `device_tokens` / `push_deliveries`
-APNs tokens per user/restaurant; delivery attempts and outcomes for push.
+APNs tokens per user/restaurant; delivery attempts and outcomes for push. `disabled_reason` PARKS a token rather than deleting it — `get_device_tokens(for_delivery=True)` skips it and the next app launch re-registers and clears it. Only Apple's own "this token is gone" (`_PERMANENT_FAILURE_REASONS`) deletes a row.
 
 ### `home_dismissals`
 Attention items a user has dismissed from the Home brief, so a handled issue doesn't keep resurfacing.

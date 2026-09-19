@@ -134,7 +134,9 @@ Two halves:
 
 ## The owner's day (workflow audit #19)
 
-**Files**: `closeout.py`, `action_queue.py`, `intraday.py`, `monthly_review.py`, plus the day-shaped parts of `notify.py`, `morning_brief.py`, `issues.py` and `strategy_jobs.py`.
+**Files**: `closeout.py`, `action_queue.py`, `intraday.py`, `monthly_review.py`, `weekly_review.py`, plus the day-shaped parts of `notify.py`, `morning_brief.py`, `issues.py` and `strategy_jobs.py`.
+
+`weekly_review.py` and `monthly_review.py` are the same four questions at two cadences — what moved and what it is worth, what the owner's own changes did, where the goals stand, what is worth their time next — and they deliberately share a voice. The weekly blocks ride above the review digest (`reporter.render_html`, owner view only, since they carry money). `intraday.closing_summary` is the third: how tonight went, sent at close.
 
 **Design stance**: the product is useful before service and after it, and must not interrupt during it.
 - **Before opening** — the brief is the one morning surface. It carries yesterday, prime cost, the one thing to do, open issues, results, goals, comps (owner only), last night's close-out, reviews waiting, what's running low, next week's schedule from Thursday, the quiet weekday (Mondays), and today with weather and any holiday. Home and the Ask opening are built from the same lines; the email's lines each link into Ask (`?ask=`).
