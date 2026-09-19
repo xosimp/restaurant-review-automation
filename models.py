@@ -1747,6 +1747,23 @@ def init_db(db_path: str = DB_PATH):
         # Supplier invoices read from a photo. Every extracted line is kept
         # with what was actually applied, so a wrong price can be traced to
         # the invoice it came from.
+        # Net sales so far today, captured hourly during service. Nothing
+        # in this product could see a day while it was happening — the POS
+        # syncs at 3am — and there is no hour-level history to compare a
+        # running total against, so this builds one: after a few weeks the
+        # same weekday at the same hour is a real baseline.
+        """CREATE TABLE IF NOT EXISTS pos_intraday (
+            restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
+            business_date   TEXT NOT NULL,
+            captured_hour   INTEGER NOT NULL,
+            weekday         TEXT NOT NULL,
+            net_sales       REAL NOT NULL,
+            provider        TEXT,
+            created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (restaurant_id, business_date, captured_hour)
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_pos_intraday_profile ON pos_intraday(restaurant_id, weekday, captured_hour)",
+
         # "Not today" on an action-queue item. Deliberately a date, not a
         # dismissal: the queue is what is still open, and something snoozed
         # is still open tomorrow.

@@ -1592,6 +1592,70 @@ def send_reactivation_email(to_email: str, restaurant_name: str, owner_name: str
         print(f"send_reactivation_email failed: {e}")
 
 
+def _monthly_review_sections(restaurant_id):
+    """The month read like a P&L rather than counted: how the headline
+    numbers moved against the month before, what the owner's own changes
+    did, where their goals stand, and the three things worth fixing next.
+
+    Deterministic — see monthly_review.py. Every block is optional and
+    independently guarded, so a module with nothing to say drops out instead
+    of printing a zero.
+    """
+    if not restaurant_id:
+        return []
+    import html as _html
+    out = []
+    try:
+        import monthly_review
+        review = monthly_review.build(restaurant_id)
+    except Exception as e:
+        print(f"[monthly] review build failed: {e}")
+        return []
+
+    def _list(items):
+        return "<br>".join(_html.escape(str(i)) for i in items if i)
+
+    try:
+        body = monthly_review.lines(review)
+        if body:
+            out.append(report_eyebrow("The month against " + review["compared_with"])
+                       + report_paragraph(_html.escape(monthly_review.headline(review)))
+                       + report_paragraph(_list(body)))
+    except Exception as e:
+        print(f"[monthly] metrics block failed: {e}")
+    try:
+        import outcomes as _o
+        if review.get("results"):
+            out.append(report_eyebrow("What your changes did")
+                       + report_paragraph(_list(_o.summarise(r) for r in review["results"][:4]))
+                       + report_paragraph(f'<span style="font-size:12.5px;color:{BRAND["muted"]}">'
+                                          f'{_html.escape(_o.CAUSATION_CAVEAT)}</span>'))
+    except Exception as e:
+        print(f"[monthly] results block failed: {e}")
+    try:
+        import goals as _g
+        if review.get("goals"):
+            out.append(report_eyebrow("Goals")
+                       + report_paragraph(_list(_g.summarise(x) for x in review["goals"][:4])))
+    except Exception as e:
+        print(f"[monthly] goals block failed: {e}")
+    try:
+        if review.get("priorities"):
+            def _money(p):
+                if p.get("is_range"):
+                    return f"${p['monthly_low']:,.0f}-${p['monthly_high']:,.0f}/month"
+                return f"${p['monthly']:,.0f}/month" if p.get("monthly") else ""
+            out.append(report_eyebrow("Worth your time next month")
+                       + report_paragraph(_list(
+                           f"{p['label']} — {_money(p)}" for p in review["priorities"]))
+                       + report_paragraph(f'<span style="font-size:12.5px;color:{BRAND["muted"]}">'
+                                          f'These come from different measurements and are not '
+                                          f'added together.</span>'))
+    except Exception as e:
+        print(f"[monthly] priorities block failed: {e}")
+    return out
+
+
 def send_monthly_summary_email(to_email: str, restaurant_name: str, owner_name: str = None,
                                 restaurant_id: int = None,
                                 has_reviews: bool = True, has_labor: bool = False,
@@ -1734,11 +1798,12 @@ def send_monthly_summary_email(to_email: str, restaurant_name: str, owner_name: 
             "to": [to_email],
             "subject": f"{month_name} at {restaurant_name} — your Cavnar AI summary",
             "html": report_shell(
-                kicker="Monthly Summary",
+                kicker="Monthly Review",
                 title=restaurant_name,
                 subtitle=f"{month_name} {year} &nbsp;&middot;&nbsp; for {first}",
-                sections=[report_paragraph(summary_paragraph), stats_section,
-                          lines_section, action_section],
+                sections=([report_paragraph(summary_paragraph)]
+                          + _monthly_review_sections(restaurant_id)
+                          + [stats_section, lines_section, action_section]),
                 cta_label="Open your dashboard →",
             ),
         })

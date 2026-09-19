@@ -15,6 +15,11 @@ and the cadence all live in the loop.
   run_auto_draft_schedules  weekly  — draft next week's schedule for owners who
                                       opted in; a DRAFT in Schedule History,
                                       never published to staff
+  run_intraday_capture      hourly  — net sales so far today, while a POS that
+                                      can be read during service is open
+  run_pre_dinner_pulse      daily   — one push before dinner when the day is
+                                      materially off a typical same weekday
+  run_coverage_check        service — scheduled staff who have not clocked in
 """
 import logging
 import uuid
@@ -152,3 +157,115 @@ def run_auto_draft_schedules(db_path=DB_PATH):
         except Exception as e:
             ops.capture(e, job="auto_draft_schedule_push", context=f"restaurant_id={r.id}")
     return {"drafted": drafted, "skipped": skipped}
+
+
+def _open_now(r, local):
+    """True when the restaurant is inside its own opening hours (and its
+    hours are configured at all)."""
+    from notify import _open_window
+    window = _open_window(r, local.strftime("%A"))
+    if not window:
+        return False
+    opens, closes = window
+    if opens and local.time() < __import__("datetime").time(*opens):
+        return False
+    if closes and local.time() >= __import__("datetime").time(*closes):
+        return False
+    return True
+
+
+def run_intraday_capture(db_path=DB_PATH):
+    """Snapshot net sales so far, once an hour, while the restaurant is open.
+    Each snapshot is also the baseline for the same weekday in later weeks —
+    no hour-level history existed to compare a running day against."""
+    import intraday, ops
+    from time_utils import restaurant_now
+    captured = skipped = 0
+    for r in _restaurants(db_path):
+        local = restaurant_now(r, naive=True)
+        if not _open_now(r, local):
+            skipped += 1
+            continue
+        if not ops.claim_period(f"intraday:{r.id}", f"{local.date().isoformat()}-{local.hour}"):
+            continue
+        try:
+            captured += 1 if intraday.capture(r.id, now_local=local, db_path=db_path,
+                                              restaurant=r).get("ok") else 0
+        except Exception as e:
+            ops.capture(e, job="intraday_capture", context=f"restaurant_id={r.id}")
+    return {"captured": captured, "closed": skipped}
+
+
+# The one interruption of the working day this product allows itself: late
+# enough that the lunch numbers are in, early enough to change tonight's
+# staffing, prep or a text to the guest club.
+PULSE_HOUR = 16
+
+
+def run_pre_dinner_pulse(db_path=DB_PATH):
+    """One push before dinner, and only when today is materially off a
+    typical same weekday at this hour. A pulse that fires every day is a
+    notification people turn off."""
+    import intraday, ops, push, scheduler
+    from time_utils import restaurant_now
+    sent = 0
+    for r in _restaurants(db_path):
+        local = restaurant_now(r, naive=True)
+        if not scheduler.local_due(r, PULSE_HOUR, until=PULSE_HOUR + 2,
+                                   claim_key="pre_dinner_pulse", now_local=local):
+            continue
+        try:
+            p = intraday.pulse(r.id, now_local=local, db_path=db_path, restaurant=r)
+            if not p.get("available") or not p.get("off"):
+                continue
+            # The people who already get the morning brief — owners, and
+            # managers the owner put on it. Same audience, same day's numbers.
+            import morning_brief
+            audience = {u["id"] for u in morning_brief.recipients(r.id, db_path)}
+            if not audience:
+                continue
+            word = "behind" if p["direction"] == "behind" else "ahead of"
+            push.fire_push(
+                r.id, "intraday_pulse",
+                f"{abs(p['pct']):.0f}% {word} a typical {p['weekday']}",
+                f"${p['net_sales']:,.0f} by {p['hour']}:00 against about ${p['typical']:,.0f} "
+                f"on the last {p['samples']} {p['weekday']}s.",
+                data={"ask_prompt": f"Why is today running {word} a normal {p['weekday']}?"},
+                db_path=db_path, user_ids=audience)
+            sent += 1
+        except Exception as e:
+            ops.capture(e, job="pre_dinner_pulse", context=f"restaurant_id={r.id}")
+    return {"sent": sent}
+
+
+def run_coverage_check(db_path=DB_PATH):
+    """A scheduled person who hasn't clocked in becomes the routed manager's
+    issue — the one staffing problem that is still fixable while it matters.
+    One issue per person per day (source_key)."""
+    import intraday, issues, ops
+    from time_utils import restaurant_now
+    opened = 0
+    for r in _restaurants(db_path):
+        if not getattr(r, "module_labor", 0):
+            continue
+        local = restaurant_now(r, naive=True)
+        if not _open_now(r, local):
+            continue
+        if "manager" not in issues.get_routing(r.id, db_path):
+            continue
+        try:
+            gaps = intraday.coverage_gaps(r.id, now_local=local, db_path=db_path, restaurant=r)
+            for m in (gaps.get("missing") or []):
+                issue, token = issues.create_issue(
+                    r.id, "coverage",
+                    f"{m['employee']} hasn't clocked in",
+                    detail=f"Scheduled {m['shift_start']} as {m['role']} — "
+                           f"{m['minutes_late']} minutes ago, with no clock-in on the POS.",
+                    severity="high",
+                    source_key=f"coverage:{local.date().isoformat()}:{m['employee'].lower()}",
+                    db_path=db_path)
+                if token:
+                    opened += 1
+        except Exception as e:
+            ops.capture(e, job="coverage_check", context=f"restaurant_id={r.id}")
+    return {"opened": opened}

@@ -28,7 +28,8 @@ PROVIDER_API = ("is_connected", "sync_to_db", "build_shifts_csv")
 # but no item-level detail, and a provider that cannot answer must say so
 # rather than return an empty list, because "nothing sold" and "I can't see
 # what sold" lead to opposite conclusions everywhere downstream.
-DATA_API = ("fetch_business_days", "fetch_order_selections", "fetch_loss_lines")
+DATA_API = ("fetch_business_days", "fetch_order_selections", "fetch_loss_lines",
+            "fetch_sales_today", "fetch_clock_ins_today")
 
 
 def _load_providers():
@@ -169,3 +170,36 @@ def fetch_loss_lines(restaurant_id, start_date, end_date):
     if fn is None:
         raise POSCapabilityError(f"{name} does not report comps and voids yet")
     return fn(restaurant_id, start_date, end_date), name
+
+
+def fetch_sales_today(restaurant_id, business_date):
+    """Net sales SO FAR today, from a POS that can be asked during service.
+
+    Returns (net_sales, provider). Raises POSCapabilityError where the POS
+    cannot answer intraday — RPOWER's API is month-at-a-time (vendor
+    confirmed), so a mid-service figure from it does not exist. Never
+    returns 0 for "don't know": a restaurant told it has done no business
+    by 5pm would act on it.
+    """
+    name, mod = connected_provider(restaurant_id)
+    if not mod:
+        raise POSCapabilityError("no POS connected")
+    fn = getattr(mod, "fetch_sales_today", None)
+    if fn is None:
+        raise POSCapabilityError(f"{name} cannot be read during service")
+    return fn(restaurant_id, business_date), name
+
+
+def fetch_clock_ins_today(restaurant_id, business_date):
+    """Who has clocked in today: [{"employee", "role", "clocked_in_at"}].
+
+    Returns (rows, provider); raises POSCapabilityError where the POS has no
+    live labour feed.
+    """
+    name, mod = connected_provider(restaurant_id)
+    if not mod:
+        raise POSCapabilityError("no POS connected")
+    fn = getattr(mod, "fetch_clock_ins_today", None)
+    if fn is None:
+        raise POSCapabilityError(f"{name} has no live clock-in feed")
+    return fn(restaurant_id, business_date), name

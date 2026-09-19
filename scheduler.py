@@ -1728,6 +1728,16 @@ def scheduler_loop():
                 from strategy_jobs import run_issue_scan
                 _ops.run_job("issue_scan", run_issue_scan, local_hour=10)
 
+            # During service — the only part of the product that can see a
+            # day while it is happening (Toast reads; RPOWER is month-at-a-
+            # time and says so). Capture is hourly per restaurant, the pulse
+            # is one push before dinner, coverage runs while they're open.
+            if _ops.claim_period("intraday", f"{today}-{now.hour}-{now.minute // 20}"):
+                from strategy_jobs import run_intraday_capture, run_pre_dinner_pulse, run_coverage_check
+                _ops.run_job("intraday_capture", run_intraday_capture)
+                _ops.run_job("pre_dinner_pulse", run_pre_dinner_pulse)
+                _ops.run_job("coverage_check", run_coverage_check)
+
             # Every tick — an alert held through lunch or dinner service goes
             # out as soon as that rush ends (notify.rush_release_at).
             try:

@@ -686,3 +686,32 @@ def test_credentials(client_id: str, client_secret: str, restaurant_guid: str) -
         return {"ok": False, "error": f"Auth failed ({e.response.status_code}) — check client ID and secret"}
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+def fetch_sales_today(restaurant_id: int, business_date: date) -> float:
+    """Net sales so far today. Toast's businessDay figure updates through
+    service, which is what makes a mid-afternoon read possible at all."""
+    sales = fetch_business_days(restaurant_id, business_date, business_date) or {}
+    value = sales.get(business_date.isoformat())
+    if value is None:
+        raise KeyError("Toast returned no business day for today")
+    return float(value)
+
+
+def fetch_clock_ins_today(restaurant_id: int, business_date: date) -> list:
+    """Everyone clocked in today: [{"employee", "role", "clocked_in_at"}].
+
+    Names come from the same Toast employee record build_shifts_csv uses, so
+    they match the names in a generated schedule."""
+    rows = []
+    for entry in fetch_time_entries(restaurant_id, business_date, business_date) or []:
+        emp = entry.get("employee") or {}
+        first = (emp.get("firstName") or "").strip()
+        last = (emp.get("lastName") or "").strip()
+        name = f"{first} {last}".strip()
+        if not name:
+            continue
+        rows.append({"employee": name,
+                     "role": (entry.get("jobReference") or {}).get("name", "Staff"),
+                     "clocked_in_at": entry.get("inDate")})
+    return rows
