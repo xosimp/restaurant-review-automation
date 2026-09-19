@@ -191,3 +191,24 @@ def test_a_laptop_never_runs_the_scheduler_unless_told_to(monkeypatch):
 class _NoThread:
     def start(self):
         pass
+
+
+def test_a_released_lease_is_taken_over_at_once_not_after_it_goes_stale(tmp_path, monkeypatch):
+    """Every redeploy left the new process idle for up to 30 minutes behind
+    the old one's lease. Releasing on exit hands it over on the next tick."""
+    import models, ops
+    db = str(tmp_path / "lease.db")
+    models.init_db(db_path=db)
+    monkeypatch.setattr(models, "get_conn", lambda *a, **k: _conn(db))
+    assert ops.acquire_scheduler_lease(owner="old")
+    assert not ops.acquire_scheduler_lease(owner="new"), "held and fresh: the new one waits"
+    assert not ops.release_scheduler_lease(owner="someone-else"), "only the holder can release"
+    assert ops.release_scheduler_lease(owner="old")
+    assert ops.acquire_scheduler_lease(owner="new")
+
+
+def _conn(path):
+    import sqlite3
+    c = sqlite3.connect(path)
+    c.row_factory = sqlite3.Row
+    return c

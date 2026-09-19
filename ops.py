@@ -428,6 +428,30 @@ def acquire_scheduler_lease(owner: str = None, stale_seconds: int = None) -> boo
         return True
 
 
+def release_scheduler_lease(owner: str = None) -> bool:
+    """Give the lease up on a clean exit, so the next process takes over on
+    its next tick instead of waiting out SCHEDULER_LEASE_STALE_SECONDS.
+
+    Nothing did this, so every redeploy — Railway starts the new container,
+    then SIGTERMs the old one — left the new process idling for up to 30
+    minutes behind a dead holder's lease: no fetches, alerts or briefs in
+    that window, repeated on every push. Only releases a lease this process
+    actually holds.
+    """
+    owner = owner or _LEASE_OWNER
+    try:
+        from models import get_conn
+        conn = get_conn()
+        cur = conn.execute("UPDATE scheduler_lease SET owner=NULL, heartbeat_at=NULL "
+                           "WHERE id=1 AND owner=?", (owner,))
+        conn.commit()
+        conn.close()
+        return cur.rowcount == 1
+    except Exception as e:
+        log.error(f"release_scheduler_lease failed: {e}")
+        return False
+
+
 def scheduler_lease_holder():
     """Who currently owns the lease, for the admin console and for tests."""
     try:

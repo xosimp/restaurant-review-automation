@@ -45,12 +45,18 @@ _stopping = False
 
 
 def _handle_stop(signum, _frame):
-    """Railway sends SIGTERM on redeploy. Log it and let the process exit so
-    the lease lapses promptly and the next deploy picks the work up, rather
-    than the new instance waiting out a stale heartbeat."""
+    """Railway sends SIGTERM on redeploy. Release the lease, then exit, so
+    the next instance picks the work up on its next tick. Exiting alone did
+    not do that: a lease only lapses once its heartbeat is
+    SCHEDULER_LEASE_STALE_SECONDS old, so the new instance idled behind it."""
     global _stopping
     _stopping = True
     log.info("received signal %s — shutting down", signum)
+    try:
+        import ops
+        ops.release_scheduler_lease()
+    except Exception:
+        log.exception("could not release the scheduler lease")
     sys.exit(0)
 
 

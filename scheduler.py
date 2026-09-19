@@ -1740,6 +1740,11 @@ def start_scheduler():
         return None
     t = threading.Thread(target=scheduler_loop, daemon=True)
     t.start()
+    # A redeploy SIGTERMs this process; gunicorn exits the worker cleanly and
+    # atexit runs, so the replacement takes the lease on its next tick rather
+    # than 30 minutes later (ops.release_scheduler_lease).
+    import atexit
+    atexit.register(_ops.release_scheduler_lease)
     log.info("Scheduler thread started")
     return t
 
