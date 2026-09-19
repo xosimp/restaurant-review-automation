@@ -13,8 +13,22 @@ final class DeepLinkRouter {
     var pendingTab: AppTab?
     var pendingModuleKey: String?
     var pendingReviewID: Int?
+    /// A question to prefill in Ask Cavnar. Set by the morning brief push,
+    /// whose lines each carry the question an owner would ask about them.
+    /// Prefilled, never auto-sent: the owner decides whether to ask it.
+    var pendingAskPrompt: String?
 
-    func handleNotificationTap(alertType: String, reviewId: Int?) {
+    func handleNotificationTap(alertType: String, reviewId: Int?, askPrompt: String? = nil) {
+        // The morning brief isn't about one module — it's a cross-module
+        // read — so it opens the assistant on its lead question rather than
+        // guessing a module to drop the owner into.
+        if alertType == "morning_brief" {
+            pendingTab = .ask
+            pendingModuleKey = nil
+            pendingReviewID = nil
+            if let askPrompt, !askPrompt.isEmpty { pendingAskPrompt = askPrompt }
+            return
+        }
         // "login" isn't a product module — it has nowhere to deep-link to
         // inside Modules, so this switches to Account (where Security,
         // and the sign-in notifications setting that fired it, live)

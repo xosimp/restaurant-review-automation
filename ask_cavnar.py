@@ -925,6 +925,15 @@ _TOOL_LABELS = {
     "approve_all_reviews": "Gathering the replies awaiting approval",
     "send_guest_campaign": "Drafting the guest text",
     "generate_schedule": "Preparing the schedule build",
+    "read_dish_scorecard": "Scoring your dishes",
+    "read_reprice_suggestions": "Checking which prices need to move",
+    "read_demand_forecast": "Forecasting the day",
+    "read_open_issues": "Checking what's still open",
+    "read_goals": "Checking your goals",
+    "read_outcomes": "Checking what your changes did",
+    "set_goal": "Setting that goal",
+    "track_outcome": "Starting to measure that",
+    "create_issue": "Getting that issue ready to assign",
 }
 
 

@@ -348,6 +348,15 @@ struct RootView: View {
         .onChange(of: deepLinkRouter.pendingTab) { _, tab in
             if let tab { selectedTab = tab }
         }
+        // Observed on the prompt itself rather than the tab: a second brief
+        // tapped while Ask is already selected doesn't change pendingTab, so
+        // a tab observer would silently drop it.
+        .onChange(of: deepLinkRouter.pendingAskPrompt) { _, prompt in
+            guard let prompt else { return }
+            selectedTab = .ask
+            askCavnarViewModel.question = prompt
+            deepLinkRouter.pendingAskPrompt = nil
+        }
     }
 
     // .sensoryFeedback(trigger:) instead of .onChange(of: selectedTab) {

@@ -134,8 +134,12 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
         // backend is still the authority on whether this review belongs to
         // this account; this is shape validation, not authorization (audit 1.9).
         let reviewId = (cavnar["review_id"] as? Int).flatMap { $0 > 0 ? $0 : nil }
+        // Bounded like Ask's own input: the prompt is prefilled into a text
+        // field, never executed, but there's no reason to accept an
+        // arbitrarily long payload into one.
+        let askPrompt = (cavnar["ask_prompt"] as? String).map { String($0.prefix(300)) }
         await MainActor.run {
-            router?.handleNotificationTap(alertType: alertType, reviewId: reviewId)
+            router?.handleNotificationTap(alertType: alertType, reviewId: reviewId, askPrompt: askPrompt)
         }
     }
 }

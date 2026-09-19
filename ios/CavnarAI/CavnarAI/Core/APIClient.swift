@@ -50,6 +50,10 @@ actor APIClient {
 
     private let baseURL: URL
     private let session: URLSession
+    /// Uploads only. The main session caps a whole transfer at 45s, which is
+    /// right for reads and wrong for sending a photo that the server then
+    /// reads with a model; same ephemeral config and pinning otherwise.
+    private let uploadSession: URLSession
     private var token: String?
     private var onSessionExpired: (@Sendable () -> Void)?
 
@@ -78,6 +82,12 @@ actor APIClient {
             let delegate = AppEnvironment.isProductionHost ? PinnedSessionDelegate() : nil
             self.session = URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
         }
+        let uploadConfig = URLSessionConfiguration.ephemeral
+        uploadConfig.timeoutIntervalForRequest = 60
+        uploadConfig.timeoutIntervalForResource = 150
+        uploadConfig.waitsForConnectivity = false
+        let uploadDelegate = AppEnvironment.isProductionHost ? PinnedSessionDelegate() : nil
+        self.uploadSession = URLSession(configuration: uploadConfig, delegate: uploadDelegate, delegateQueue: nil)
     }
 
     func setToken(_ token: String?) {
@@ -148,6 +158,51 @@ actor APIClient {
             throw classified
         }
 
+        return try await finish(data: data, response: response, hapticOnError: hapticOnError)
+    }
+
+    /// Uploads one file as multipart/form-data (field name `file`) — invoice
+    /// photos today. Same auth, status handling and decoding as `send`;
+    /// never retried on a guess, because the server runs a paid model on it.
+    func upload<Response: Decodable>(
+        _ path: String,
+        fileData: Data,
+        filename: String,
+        mimeType: String,
+        timeout: TimeInterval = 120
+    ) async throws -> Response {
+        var request = try buildRequest(path: path, method: HTTPMethod.post.rawValue, body: nil, query: [:])
+        let boundary = "cavnar-\(UUID().uuidString)"
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = timeout
+        var body = Data()
+        body.append(Data("--\(boundary)\r\n".utf8))
+        body.append(Data("Content-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\n".utf8))
+        body.append(Data("Content-Type: \(mimeType)\r\n\r\n".utf8))
+        body.append(fileData)
+        body.append(Data("\r\n--\(boundary)--\r\n".utf8))
+        request.httpBody = body
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await Self.perform(request, on: uploadSession, mayRetry: false)
+        } catch {
+            if Task.isCancelled || error is CancellationError || (error as? URLError)?.code == .cancelled {
+                throw CancellationError()
+            }
+            let offline = await MainActor.run { !NetworkMonitor.shared.isOnline }
+            let classified = Self.classify(error, deviceIsOffline: offline)
+            await Haptic.error()
+            throw classified
+        }
+        return try await finish(data: data, response: response, hapticOnError: true)
+    }
+
+    /// Status handling and decoding shared by `send` and `upload`.
+    private func finish<Response: Decodable>(
+        data: Data, response: URLResponse, hapticOnError: Bool
+    ) async throws -> Response {
         guard let http = response as? HTTPURLResponse else {
             if hapticOnError { await Haptic.error() }
             throw APIError(message: "No response from server")

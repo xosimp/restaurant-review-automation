@@ -2879,6 +2879,7 @@ def mobile_guest_campaign_send(current_user):
                 link_token = made["token"]
         result = send_campaign(rid, message, segment=data.get("segment") or "all",
                                link_token=link_token)
+        _capi._track_campaign_outcome(rid, data, result, current_user.get("id"))
         # send_campaign reports its own ok — it refuses outside the guest-text
         # quiet-hours window rather than sending a marketing text at midnight.
         return jsonify(**result), 200

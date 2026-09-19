@@ -417,6 +417,8 @@ def _ensure_usage_columns(conn):
 _MODEL_PRICING = {
     "claude-haiku-4-5-20251001": (1.00, 5.00),
     "claude-sonnet-5": (3.00, 15.00),
+    # invoices.py reads prices off photos with the most capable model.
+    "claude-opus-5": (5.00, 25.00),
     # Perplexity sonar, per million tokens. Audit #7 found this vendor was
     # entirely outside the ledger and the budget — the $10/day and
     # $1,500/month ceilings bound Claude only, while AI visibility could fire

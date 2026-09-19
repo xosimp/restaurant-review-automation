@@ -245,6 +245,18 @@ app.register_blueprint(rpower_bp)
 app.register_blueprint(status_bp)
 app.register_blueprint(mobile_bp)
 
+# Issues, goals, outcomes, menu, invoices, demand, loss, morning brief — web
+# half is CSRF-protected like client_bp; the mobile half is bearer-token like
+# mobile_bp; the /i/<token> issue page is a public link whose token is the
+# credential (no session, no cookie jar to double-submit from).
+from strategy_routes import strategy_bp, strategy_mobile_bp, issue_link_bp
+if not getattr(strategy_bp, "_csrf_wired", False):
+    csrf_protect(strategy_bp)
+    strategy_bp._csrf_wired = True
+app.register_blueprint(strategy_bp)
+app.register_blueprint(strategy_mobile_bp)
+app.register_blueprint(issue_link_bp)
+
 # The staff portal. Deliberately NOT in the csrf_protect tuple above: its
 # sign-in POST happens before any session exists (there is no cookie jar to
 # double-submit from yet), and every authenticated call it makes is a JSON

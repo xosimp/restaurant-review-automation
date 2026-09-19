@@ -459,6 +459,61 @@ def fetch_business_days(restaurant_id: int, start_date, end_date) -> dict:
     return out
 
 
+def _loss_kind(row: dict, types: dict):
+    """comp | void | refund, or None for an ordinary sale."""
+    if row.get("voided"):
+        return "void"
+    st = types.get(str(row.get("slstype_mid"))) or {}
+    if st.get("type_comp"):
+        return "comp"
+    if st.get("type_refund") or st.get("type_return"):
+        return "refund"
+    return None
+
+
+def fetch_loss_lines(restaurant_id: int, start_date, end_date) -> list:
+    """Every comp, void and refund line over a business-date range.
+
+    Fields come from RPOWER's documented ticketsales response: `voided`,
+    `slstype_mid` (resolved through sales_types), `mgr_mid` (the manager who
+    approved a comp or refund), `voidmgr_mid` and `voidrsn_mid` (who voided it
+    and why), `shift`, `qty`, `price`, `regular_price`, `sales`.
+
+    The APPROVER is the attribution, not the server. That is the loss-
+    prevention convention and it is also the fair one: a comp is a manager's
+    decision, and the data says whose.
+
+    UNVERIFIED until the first live sync: whether a comp line's `sales` is
+    zero, negative or the comped value. The amount below prefers
+    regular_price x qty (what the item would have sold for) and falls back to
+    |sales| — stated to the owner as "as reported by RPOWER".
+    """
+    token, base = _ctx(restaurant_id)
+    types = sales_types(restaurant_id)
+    out = []
+    for chunk_start, chunk_end in _chunk_range(start_date, end_date):
+        rows = _paged(token, "ticketsales/getbybusinessdate", {
+            **base, "startdate": _d(chunk_start), "enddate": _d(chunk_end),
+            "sortorder": "date"})
+        for row in rows:
+            kind = _loss_kind(row, types)
+            if not kind:
+                continue
+            qty = abs(float(row.get("qty") or 1) or 1)
+            unit = row.get("regular_price")
+            if unit in (None, "", 0):
+                unit = row.get("price")
+            try:
+                amount = abs(float(unit)) * qty if unit not in (None, "") else abs(float(row.get("sales") or 0))
+            except (TypeError, ValueError):
+                amount = abs(float(row.get("sales") or 0))
+            approver = row.get("voidmgr_mid") if kind == "void" else row.get("mgr_mid")
+            out.append({"business_date": _biz_date(row.get("date")), "kind": kind,
+                        "amount": round(amount, 2), "approver": str(approver) if approver else None,
+                        "reason": row.get("voidrsn_mid"), "shift": row.get("shift")})
+    return out
+
+
 def fetch_order_selections(restaurant_id: int, business_date) -> list:
     """One business date's sold items, in toast.fetch_order_selections' shape:
     [{"item": {"guid": <menuitem_mid>}, "quantity": n}, ...].

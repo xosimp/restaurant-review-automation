@@ -1,8 +1,10 @@
-import os, json, smtplib, html as _html
+import os, json, smtplib, logging, html as _html
 from datetime import datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from models import get_reviews_since, save_weekly_report, WeeklyReport
+
+log = logging.getLogger(__name__)
 
 
 def _html_doc(fragment, bg="#f7f4ef"):
@@ -562,6 +564,66 @@ Rules:
             pass
         return {}
 
+def _follow_through_sections(restaurant_id):
+    """The executive-review half of the weekly digest: what came of the
+    changes the owner made, where the goals stand, whether issues got
+    handled, and any comp/void pattern worth a look.
+
+    Deterministic — every line is read from the module that measures it, so
+    this half of the email cannot state a figure the data doesn't carry. The
+    digest goes to the owner only, which is why the loss signal may appear
+    here and never in anything a manager receives. Each block is optional
+    and independently guarded: a failure drops that block, never the email.
+    """
+    from emails import BRAND, report_eyebrow, report_paragraph
+    out = []
+    if not restaurant_id:
+        return out
+
+    def _list(lines):
+        return "<br>".join(_html.escape(l) for l in lines)
+
+    try:
+        import outcomes
+        res = outcomes.recent_results(restaurant_id, days=7) or []
+        if res:
+            out.append(report_eyebrow("What your changes did") + report_paragraph(
+                _list(outcomes.summarise(r) for r in res[:4]))
+                + report_paragraph(f'<span style="font-size:12.5px;color:{BRAND["muted"]}">'
+                                   f'{_html.escape(outcomes.CAUSATION_CAVEAT)}</span>'))
+    except Exception as e:
+        log.warning("digest outcomes block failed: %s", e)
+    try:
+        import goals
+        gl = [g for g in (goals.progress(restaurant_id) or []) if g.get("state") != "unknown"]
+        if gl:
+            out.append(report_eyebrow("Goals") + report_paragraph(_list(goals.summarise(g) for g in gl[:4])))
+    except Exception as e:
+        log.warning("digest goals block failed: %s", e)
+    try:
+        import issues
+        sm = issues.summary(restaurant_id)
+        if sm and (sm["open"] or sm["acknowledged"] or sm.get("resolved_last_7_days")):
+            bits = [f"{sm.get('resolved_last_7_days', 0)} resolved this week",
+                    f"{sm['acknowledged']} in hand", f"{sm['open']} not yet acknowledged"]
+            out.append(report_eyebrow("Issues", BRAND["bad"] if sm["open"] else None)
+                       + report_paragraph(_html.escape(", ".join(bits) + ".")))
+    except Exception as e:
+        log.warning("digest issues block failed: %s", e)
+    try:
+        import loss_detection
+        ls = loss_detection.signals(restaurant_id) or {}
+        flagged = ls.get("flagged") or []
+        if flagged:
+            out.append(report_eyebrow("Comps & voids — worth a look", BRAND["bad"]) + report_paragraph(
+                _list(f"{f['headline']}. Could also be {f['alternative']}." for f in flagged[:3]))
+                + report_paragraph(f'<span style="font-size:12.5px;color:{BRAND["muted"]}">'
+                                   f'{_html.escape(ls.get("note") or "")}</span>'))
+    except Exception as e:
+        log.warning("digest loss block failed: %s", e)
+    return out
+
+
 def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = None,
                 restaurant_id: int = None) -> str:
     """The weekly digest, on the same layout as every other Cavnar AI email.
@@ -723,6 +785,8 @@ def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = No
             report_quote(
                 _html.escape((top_pos.author or "Guest")[:24]),
                 "★" * top_pos.rating, snip(top_pos.text), BRAND["good"]))
+
+    sections.extend(_follow_through_sections(restaurant_id or report.restaurant_id))
 
     if ai_summary.get("action"):
         sections.append(report_action("This week's move", _html.escape(ai_summary["action"])))

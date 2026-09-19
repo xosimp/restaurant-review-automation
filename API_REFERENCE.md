@@ -56,6 +56,9 @@ Per-integration connect/disconnect/status: Google Business, Instagram, Toast, Sq
 ### Home (`/api/home/brief`, `/api/home/brief/group`, `/mobile/api/home`)
 The deterministic Home-tab payload — see `home_brief.py`. `?fresh=1` forces recompute past the 60s per-restaurant cache. `/group` returns every location in an owner's `location_group` side by side.
 
+### Strategic foundations (`strategy_routes.py`, each at `/api/…` and `/mobile/api/…`)
+`issues` (GET list / POST create), `issues/<id>/resolve`, `issues/<id>/reassign`, `issues/routing` (GET/POST, principal-only), `goals` (GET/POST), `goals/<id>/end`, `outcomes` (GET/POST), `outcomes/<id>/abandon`, `metrics`, `food-cost/dish-scorecard`, `food-cost/reprice`, `food-cost/invoices` (GET list / POST multipart `file`), `food-cost/invoices/<id>`, `food-cost/invoices/<id>/apply`, `labor/demand?day=`, `labor/auto-draft` (GET/POST), `loss-signals` (principal-only), `morning-brief` + `morning-brief/settings` (principal-only). Public: `GET/POST /i/<token>` (issue link; GET is side-effect free, POST `action=ack|resolve`). Staff portal: `GET /staff/api/preshift`.
+
 ### Webhooks (`/api/webhook*` outbound config, `/webhooks/*` inbound)
 `GET /api/webhook` (current config or null), `POST /api/webhook` (save + return a secret), `POST /api/webhook/test` (fire a test delivery), `DELETE /api/webhook` (remove). Inbound: Stripe and Twilio webhook receivers, signature-verified, event-id de-duped (`stripe_events_seen`).
 

@@ -172,7 +172,19 @@ def _load_everything():
     alerts = per_rid("SELECT restaurant_id, COUNT(*) AS fired_7d, MAX(fired_at) AS last_at FROM alert_log WHERE fired_at >= ? GROUP BY restaurant_id", (week,))
     webhooks = per_rid("SELECT restaurant_id, url, is_active, consecutive_failures, last_status, last_fired_at, disabled_reason FROM webhooks")
     client_data = per_rid("SELECT restaurant_id, shifts_csv IS NOT NULL AND shifts_csv != '' AS has_shifts, inventory_csv IS NOT NULL AND inventory_csv != '' AS has_inventory, updated_at FROM client_data")
-    ingredients = per_rid("SELECT restaurant_id, COUNT(*) AS n FROM ingredients GROUP BY restaurant_id")
+    ingredients = per_rid("SELECT restaurant_id, COUNT(*) AS n, MAX(updated_at) AS cost_updated_at "
+                          "FROM ingredients WHERE COALESCE(is_active,1)=1 GROUP BY restaurant_id")
+    recipes = per_rid("""SELECT mi.restaurant_id AS restaurant_id, COUNT(DISTINCT mi.id) AS items,
+                                COUNT(DISTINCT ri.menu_item_id) AS mapped
+                         FROM menu_items mi LEFT JOIN recipe_ingredients ri ON ri.menu_item_id=mi.id
+                         GROUP BY mi.restaurant_id""")
+    labor_days = per_rid("SELECT restaurant_id, COUNT(DISTINCT date) AS n, MAX(date) AS last FROM labor_daily_history "
+                         "WHERE date >= date('now','-30 days') AND sales > 0 GROUP BY restaurant_id")
+    contacts = per_rid("SELECT restaurant_id, COUNT(*) AS n, SUM(COALESCE(sms_consent,0)) AS consented "
+                       "FROM alert_contacts GROUP BY restaurant_id")
+    routing = per_rid("SELECT restaurant_id, COUNT(*) AS n FROM issue_routing GROUP BY restaurant_id")
+    stale_issues = per_rid("SELECT restaurant_id, COUNT(*) AS n FROM ops_issues WHERE status='open' "
+                           "AND created_at <= datetime('now','-24 hours') GROUP BY restaurant_id")
     marketing = per_rid("SELECT restaurant_id, COUNT(*) AS pieces, MAX(created_at) AS last_at FROM marketing_content_log GROUP BY restaurant_id")
     sched_posts = per_rid("SELECT restaurant_id, SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed, SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) AS pending FROM marketing_scheduled_posts GROUP BY restaurant_id")
     schedules = per_rid("SELECT restaurant_id, MAX(generated_at) AS last_at, COUNT(*) AS n FROM schedule_history GROUP BY restaurant_id")
@@ -187,6 +199,8 @@ def _load_everything():
     return dict(now=now, rests=rests, users=by_rid, reviews=reviews, ai_month=ai_month, ai_today=ai_today,
                 ai_prev=ai_prev, ai_week=ai_week, ai_failed_week=ai_failed_week, emails=emails, pushes=pushes, tokens=tokens, alerts=alerts,
                 webhooks=webhooks, client_data=client_data, ingredients=ingredients, marketing=marketing,
+                recipes=recipes, labor_days=labor_days, contacts=contacts, routing=routing,
+                stale_issues=stale_issues,
                 sched_posts=sched_posts, schedules=schedules, logins=logins, sessions=sessions, guests=guests,
                 job_failures=job_failures, resolved=resolved)
 
@@ -303,6 +317,84 @@ def _onboarding_for(r, d, owner):
             "complete": done == len(steps), "dismissed": bool(r.get("onboarding_dismissed"))}
 
 
+# ── data completeness & churn risk ──────────────────────────────────────────
+# Every insight the product sells is only as good as the data under it, and a
+# client whose data quietly stopped arriving is the client who decides the
+# product "doesn't do much". Both reads here are rule-based and show their
+# reasons — an admin must be able to say WHY a location scored what it did.
+
+def _data_completeness(r, d):
+    """{"score": 0-100 | None, "checks": [{key, label, ok, detail}]} over the
+    checks that apply to this location's modules. None when none apply."""
+    rid = r["id"]
+    checks = []
+
+    def add(key, label, ok, detail):
+        checks.append({"key": key, "label": label, "ok": bool(ok), "detail": detail})
+
+    if r.get("module_reviews"):
+        add("reviews", "Google reviews connected", r.get("gmb_refresh_token") or r.get("reviews_live"),
+            "reviews fetch automatically" if (r.get("gmb_refresh_token") or r.get("reviews_live"))
+            else "no live review source")
+    pos_fresh = r.get("toast_last_synced") or r.get("square_last_synced") or r.get("clover_last_synced")
+    if r.get("module_labor") or r.get("module_inventory"):
+        add("pos", "POS syncing", pos_fresh and (_age_days(pos_fresh) or 99) <= 3,
+            f"last sync {_since(pos_fresh)}" if pos_fresh else "no POS sync on record")
+    if r.get("module_labor"):
+        n = (d["labor_days"].get(rid) or {}).get("n") or 0
+        add("labor", "Daily sales & labor, last 30 days", n >= 14, f"{n} of 30 days on file")
+    if r.get("module_inventory"):
+        rc = d["recipes"].get(rid) or {}
+        items, mapped = rc.get("items") or 0, rc.get("mapped") or 0
+        add("recipes", "Menu mapped to recipes", items and mapped / items >= 0.6,
+            f"{mapped} of {items} menu items have recipes" if items else "no menu items")
+        ing = d["ingredients"].get(rid) or {}
+        age = _age_days(ing.get("cost_updated_at"))
+        add("costs", "Ingredient costs current", ing.get("n") and age is not None and age <= 30,
+            (f"{ing.get('n')} ingredients, costs last touched {_since(ing.get('cost_updated_at'))}"
+             if ing.get("n") else "no ingredients"))
+    ct = d["contacts"].get(rid) or {}
+    add("contacts", "Someone consented to alert texts", (ct.get("consented") or 0) > 0,
+        f"{ct.get('consented') or 0} of {ct.get('n') or 0} contacts consented")
+    add("routing", "Issues routed to a manager", (d["routing"].get(rid) or {}).get("n"),
+        "set" if (d["routing"].get(rid) or {}).get("n") else "bad reviews don't reach anyone on the floor")
+    add("app", "Owner has the app", (d["tokens"].get(rid) or {}).get("devices"),
+        "push-enabled device on file" if (d["tokens"].get(rid) or {}).get("devices") else "no device — briefs go by email")
+    if not checks:
+        return {"score": None, "checks": []}
+    return {"score": round(100 * sum(c["ok"] for c in checks) / len(checks)), "checks": checks}
+
+
+def _churn_risk(r, d, last_active, completeness):
+    """{"level": low|medium|high|n/a, "reasons": [...]}. Signals, not a model:
+    each reason is a fact an admin can check and act on."""
+    users = d["users"].get(r["id"], [])
+    admin_home = bool(users) and all(u.get("is_admin") for u in users)
+    if r.get("billing_status") in ("internal", "churned", "canceled") or r.get("is_demo") or admin_home:
+        return {"level": "n/a", "reasons": []}
+    rid, reasons, points = r["id"], [], 0
+    idle = _age_days(last_active)
+    if idle is None or idle >= 30:
+        reasons.append("no owner activity in 30+ days" if idle is not None else "never active"); points += 3
+    elif idle >= 14:
+        reasons.append(f"no owner activity in {int(idle)} days"); points += 2
+    wk = (d["ai_week"].get(rid) or {}).get("calls") or 0
+    prev = (d["ai_prev"].get(rid) or {}).get("calls") or 0
+    if prev >= 5 and wk < prev * 0.5:
+        reasons.append(f"usage fell from {prev} to {wk} AI actions week over week"); points += 1
+    score = (completeness or {}).get("score")
+    if score is not None and score < 50:
+        reasons.append(f"data completeness {score}% — insights are thin"); points += 1
+    if r.get("billing_status") == "past_due":
+        reasons.append("billing past due"); points += 2
+    if (d["reviews"].get(rid) or {}).get("urgent_stale"):
+        reasons.append("urgent reviews unanswered 2+ days"); points += 1
+    if (d["stale_issues"].get(rid) or {}).get("n"):
+        reasons.append("issues open 24h+ with nobody acknowledging"); points += 1
+    level = "high" if points >= 4 else "medium" if points >= 2 else "low"
+    return {"level": level, "reasons": reasons}
+
+
 def location_record(r, d):
     """The one health record for a location. Everything else is a view of it."""
     rid = r["id"]
@@ -324,6 +416,8 @@ def location_record(r, d):
     sp = d["sched_posts"].get(rid, {})
 
     issues = _issues_for(r, d, owner, integrations, modules, onboarding, last_active)
+    completeness = _data_completeness(r, d)
+    churn = _churn_risk(r, d, last_active, completeness)
     worst = max([i["severity_rank"] for i in issues] + [0])
     health = {0: "healthy", 1: "warning", 2: "critical"}[worst]
     if r.get("billing_status") in ("churned", "canceled") or (owner and not owner.get("is_active")):
@@ -374,6 +468,8 @@ def location_record(r, d):
         "internal_notes": r.get("internal_notes"),
         "issues": issues,
         "health": health,
+        "data_completeness": completeness,
+        "churn_risk": churn,
     }
 
 

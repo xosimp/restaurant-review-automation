@@ -62,6 +62,13 @@
   .load{color:var(--ink3);font-size:14px;padding:8px 0}
   .err{color:var(--red);font-size:14px}
 
+  .brief{background:var(--card);border:1px solid var(--line);border-left:3px solid var(--ember2);
+         border-radius:12px;padding:14px 16px;margin-bottom:22px}
+  .brief .item{font-size:14.5px;line-height:1.5;padding:6px 0;border-top:1px solid var(--line)}
+  .brief .item:first-of-type{border-top:0}
+  .brief .tag{font-size:10.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;
+              color:var(--ink3);display:block;margin-bottom:2px}
+
   .pinform{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
   .pinform label{display:block;font-size:13px;color:var(--ink3);margin:10px 0 5px}
   .pinform input{width:100%;background:#0f0f0f;border:1px solid var(--line);border-radius:8px;
@@ -84,6 +91,7 @@
   </div>
 
   <section id="tab-schedule" class="on">
+    <div id="brief-body"></div>
     <div id="sched-body" class="load">Loading your shifts…</div>
   </section>
 
@@ -136,6 +144,22 @@
       }
     });
   }
+
+  // ── Before service ──────────────────────────────────────────────────────
+  // Staff-safe by construction (preshift.py): relative volume, what guests
+  // have raised, what is running low. No money, no names. An empty or failed
+  // briefing shows nothing rather than an error — it is a bonus, not the page.
+  var BRIEF_TAGS = {volume: 'Volume', watch: 'Watch', stock: '86 risk', event: 'Today', weather: 'Weather'};
+  fetch('/staff/api/preshift').then(function(r){ return r.json(); }).then(function(d){
+    if (!d.ok || !d.items || !d.items.length) return;
+    var html = '<h2>Before service</h2><div class="brief">';
+    for (var i = 0; i < d.items.length; i++) {
+      var it = d.items[i];
+      html += '<div class="item"><span class="tag">' + esc(BRIEF_TAGS[it.kind] || it.kind) + '</span>'
+            + esc(it.text) + '</div>';
+    }
+    $('brief-body').innerHTML = html + '</div>';
+  }).catch(function(){});
 
   // ── Schedule ────────────────────────────────────────────────────────────
   fetch('/staff/api/shifts').then(function(r){ return r.json(); }).then(function(d){

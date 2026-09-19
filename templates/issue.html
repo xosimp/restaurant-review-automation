@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<title>{{ issue.title }} — {{ issue.restaurant_name }}</title>
+<link rel="stylesheet" href="/static/css/cavnar-buttons.css">
+<style>
+  :root{
+    --paper:#0c0c0c; --card:#151515; --line:#262626;
+    --ink:#f0ebe0; --ink2:#cdbfa9; --ink3:#8f847b;
+    --ember:#d4583a; --ember2:#e8956a; --green:#4ead7a; --red:#e05555;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);
+       font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;
+       -webkit-font-smoothing:antialiased;padding:26px 18px 60px}
+  .wrap{max-width:520px;margin:0 auto}
+  .kicker{font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember2)}
+  h1{font-size:23px;line-height:1.2;margin:9px 0 6px;letter-spacing:-.01em}
+  .status{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
+          padding:4px 9px;border-radius:999px;border:1px solid var(--line);color:var(--ink2)}
+  .status.high{border-color:var(--red);color:var(--red)}
+  .status.done{border-color:var(--green);color:var(--green)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin:18px 0}
+  .detail{font-size:15px;line-height:1.55;color:var(--ink2);white-space:pre-wrap}
+  .meta{font-size:13px;color:var(--ink3);margin-top:10px}
+  label{display:block;font-size:13px;color:var(--ink3);margin:0 0 6px}
+  textarea{width:100%;min-height:90px;background:var(--paper);border:1px solid var(--line);border-radius:8px;
+           padding:11px 13px;color:var(--ink);font-family:inherit;font-size:15px;resize:vertical}
+  .ok{color:var(--green);font-size:15px;font-weight:600}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="kicker">{{ issue.restaurant_name }}</div>
+  <h1>{{ issue.title }}</h1>
+  {% if issue.status == 'resolved' %}
+    <span class="status done">Resolved</span>
+  {% elif issue.severity == 'high' %}
+    <span class="status high">Urgent · {{ issue.status }}</span>
+  {% else %}
+    <span class="status">{{ issue.status }}</span>
+  {% endif %}
+
+  {% if issue.detail %}
+  <div class="card"><div class="detail">{{ issue.detail }}</div>
+    <div class="meta">Opened {{ issue.created_at }}{% if issue.assignee_name %} · assigned to {{ issue.assignee_name }}{% endif %}</div>
+  </div>
+  {% endif %}
+
+  {% if issue.status == 'resolved' %}
+    <div class="card">
+      <div class="ok">{% if done == 'resolve' %}Marked resolved — thank you.{% else %}This issue is already closed.{% endif %}</div>
+      {% if issue.resolution_note %}<div class="meta">{{ issue.resolution_note }}</div>{% endif %}
+    </div>
+  {% else %}
+    {% if issue.status == 'open' %}
+    <form class="card" method="post" action="/i/{{ token }}">
+      <input type="hidden" name="action" value="ack">
+      <p class="meta" style="margin-top:0">Let the owner know you've got it — until someone does, it escalates.</p>
+      <button type="submit" class="cbtn cbtn-primary">I'm on it</button>
+    </form>
+    {% elif done == 'ack' %}
+    <div class="card"><div class="ok">Got it — the owner can see you're on it.</div></div>
+    {% endif %}
+    <form class="card" method="post" action="/i/{{ token }}">
+      <input type="hidden" name="action" value="resolve">
+      <p class="meta" style="margin-top:0">When it's handled, close it here.</p>
+      <label for="note">What did you do? (optional)</label>
+      <textarea id="note" name="note" maxlength="500"></textarea>
+      <div style="margin-top:14px">
+        <button type="submit" class="cbtn cbtn-secondary">Mark resolved</button>
+      </div>
+    </form>
+  {% endif %}
+</div>
+</body>
+</html>

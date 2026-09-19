@@ -686,11 +686,12 @@ def test_every_write_tool_points_at_a_route_that_actually_exists():
     from client_api import client_bp
     from mobile_api import mobile_bp
     from social_routes import social_bp
+    from strategy_routes import strategy_bp, strategy_mobile_bp
 
     # admin_bp too: refresh-competitor-intel lives there but is
     # @login_required, not admin-gated, so clients legitimately call it.
     probe_app = Flask(__name__)
-    for bp in (client_bp, mobile_bp, social_bp, admin_bp):
+    for bp in (client_bp, mobile_bp, social_bp, admin_bp, strategy_bp, strategy_mobile_bp):
         probe_app.register_blueprint(bp)
     rules = [str(r) for r in probe_app.url_map.iter_rules()]
 

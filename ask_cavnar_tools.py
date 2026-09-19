@@ -961,6 +961,73 @@ def _read_menu(restaurant_id, limit=30):
     }
 
 
+def _read_dish_scorecard(restaurant_id):
+    import menu_intelligence
+    return menu_intelligence.dish_scorecard(restaurant_id)
+
+
+def _read_reprice_suggestions(restaurant_id):
+    import menu_intelligence
+    return menu_intelligence.reprice_suggestions(restaurant_id)
+
+
+def _read_demand(restaurant_id, day=None):
+    import demand
+    from datetime import date as _d
+    from time_utils import restaurant_now_by_id
+    try:
+        when = _d.fromisoformat(day) if day else restaurant_now_by_id(restaurant_id, naive=True).date()
+    except ValueError:
+        return {"error": "day must be YYYY-MM-DD"}
+    return {"day": when.isoformat(), "forecast": demand.forecast_day(restaurant_id, when),
+            "slow_days": demand.slow_days(restaurant_id),
+            "prep": demand.prep_list(restaurant_id, when)}
+
+
+def _read_open_issues(restaurant_id):
+    import issues
+    rows = issues.list_issues(restaurant_id, status="unresolved", limit=20)
+    return {"summary": issues.summary(restaurant_id),
+            "issues": [{k: r.get(k) for k in ("id", "title", "severity", "status", "assignee_name",
+                                              "created_at", "acknowledged_at", "escalated_at")}
+                       for r in rows],
+            "routing_set_up": bool(issues.get_routing(restaurant_id))}
+
+
+def _read_goals(restaurant_id):
+    import goals
+    return {"goals": [{**g, "summary": goals.summarise(g)} for g in goals.progress(restaurant_id)]}
+
+
+def _read_outcomes(restaurant_id):
+    import outcomes
+    closed = [dict(r, summary=outcomes.summarise(r))
+              for r in outcomes.list_outcomes(restaurant_id, limit=20) if r.get("status") != "tracking"]
+    return {"tracking": outcomes.progress(restaurant_id), "results": closed,
+            "caveat": outcomes.CAUSATION_CAVEAT}
+
+
+def _set_goal(restaurant_id, metric=None, target=None, deadline=None, note=None):
+    import goals
+    try:
+        g = goals.set_goal(restaurant_id, metric, target, deadline=deadline, note=note)
+    except ValueError as e:
+        return {"error": str(e)}
+    return {"ok": True, "goal": g, "summary": goals.summarise(g)}
+
+
+def _track_outcome(restaurant_id, title=None, metric=None, source_key=None):
+    import outcomes
+    if not title or not metric:
+        return {"error": "title and metric are required"}
+    try:
+        o = outcomes.record(restaurant_id, "ask", source_key or f"ask:{title.lower()[:80]}",
+                            title, metric)
+    except ValueError as e:
+        return {"error": str(e)}
+    return {"ok": True, "outcome": o}
+
+
 # ── Tool registry ───────────────────────────────────────────────────────────
 # `kind` drives everything: "read" executes, "write" only ever proposes.
 
@@ -1386,6 +1453,130 @@ TOOLS = [
         },
     },
 
+    {
+        "kind": "read",
+        "fn": _read_dish_scorecard,
+        "module": "module_inventory",
+        "spec": {
+            "name": "read_dish_scorecard",
+            "description": (
+                "Every dish scored on margin AND what guests say about it: plate cost, food cost %, "
+                "units sold, contribution, review mentions (positive/negative) and one suggested "
+                "action (fix, cut, reprice, promote). Use for 'which dishes should I cut/push/fix', "
+                "'what's my best dish', menu engineering, or any question joining the menu to reviews."
+            ),
+            "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
+        },
+    },
+    {
+        "kind": "read",
+        "fn": _read_reprice_suggestions,
+        "module": "module_inventory",
+        "spec": {
+            "name": "read_reprice_suggestions",
+            "description": (
+                "Dishes whose plate cost rose because an ingredient price rose, with the price "
+                "that would restore the dish's previous food cost % and the monthly margin being "
+                "lost meanwhile. Use for 'should I raise prices', 'what do I charge for X now', "
+                "'which dishes did the price increase hit'."
+            ),
+            "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
+        },
+    },
+    {
+        "kind": "read",
+        "fn": _read_demand,
+        "module": "module_labor",
+        "spec": {
+            "name": "read_demand_forecast",
+            "description": (
+                "Expected sales for a day (median of recent same weekdays, with a range), the "
+                "restaurant's reliably slow weekdays, and a prep list for that day from typical dish "
+                "sales and recipes. Use for 'how busy will Friday be', 'what should we prep', "
+                "'which nights are slow', and before proposing a slow-night promotion."
+            ),
+            "input_schema": {"type": "object", "additionalProperties": False, "properties": {
+                "day": {"type": "string", "description": "YYYY-MM-DD; defaults to today."}}},
+        },
+    },
+    {
+        "kind": "read",
+        "fn": _read_open_issues,
+        "module": None,
+        "spec": {
+            "name": "read_open_issues",
+            "description": (
+                "Open operational issues, who each is assigned to, whether they have acknowledged it, "
+                "and whether it escalated. Use for 'what's still open', 'did anyone handle X', "
+                "'who has the bad-review follow-up'."
+            ),
+            "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
+        },
+    },
+    {
+        "kind": "read",
+        "fn": _read_goals,
+        "module": None,
+        "spec": {
+            "name": "read_goals",
+            "description": "The owner's active goals and whether each is on track, met, or slipping.",
+            "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
+        },
+    },
+    {
+        "kind": "read",
+        "fn": _read_outcomes,
+        "module": None,
+        "spec": {
+            "name": "read_outcomes",
+            "description": (
+                "What happened after changes the owner committed to: each tracker's metric before "
+                "and after, and an interim reading for ones still running. Before/after, not proven "
+                "cause — always pass the caveat on. Use for 'did that work', 'what came of X'."
+            ),
+            "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
+        },
+    },
+    {
+        # Private to the account, reversible (a new goal replaces the old
+        # one), and sends nothing — same footing as change_setting.
+        "kind": "action",
+        "fn": _set_goal,
+        "module": None,
+        "spec": {
+            "name": "set_goal",
+            "description": (
+                "Set a goal the owner stated (no confirmation needed — private and replaceable). "
+                "Only when the owner states a target themselves; never invent one. metric: labor_pct | food_cost_pct | sales | avg_rating | weekly_waste | weekday_sales:<Weekday> (e.g. weekday_sales:Tuesday) | complaints:<category> (e.g. complaints:slow_service). "
+                "target is in the metric's own unit (percent points, dollars per day, stars)."
+            ),
+            "input_schema": {"type": "object", "required": ["metric", "target"],
+                             "additionalProperties": False, "properties": {
+                "metric": {"type": "string"},
+                "target": {"type": "number"},
+                "deadline": {"type": "string", "description": "YYYY-MM-DD, optional."},
+                "note": {"type": "string"}}},
+        },
+    },
+    {
+        "kind": "action",
+        "fn": _track_outcome,
+        "module": None,
+        "spec": {
+            "name": "track_outcome",
+            "description": (
+                "Start measuring the effect of a change the owner says they are making "
+                "(no confirmation — it only measures). The baseline is taken now and a before/after "
+                "result comes back when the window closes. metric: labor_pct | food_cost_pct | sales | avg_rating | weekly_waste | weekday_sales:<Weekday> (e.g. weekday_sales:Tuesday) | complaints:<category> (e.g. complaints:slow_service)."
+            ),
+            "input_schema": {"type": "object", "required": ["title", "metric"],
+                             "additionalProperties": False, "properties": {
+                "title": {"type": "string", "description": "The change, in the owner's words."},
+                "metric": {"type": "string"},
+                "source_key": {"type": "string"}}},
+        },
+    },
+
     # ── Write tools: proposal only ──────────────────────────────────────────
     # Each carries the route the client calls on confirm. Nothing here runs
     # server-side from a model decision.
@@ -1526,7 +1717,36 @@ TOOLS = [
                 "Always include the exact message you are proposing so they can read it before agreeing."
             ),
             "input_schema": {"type": "object", "required": ["message"], "properties": {
-                "message": {"type": "string", "description": "The exact SMS body to send."}}},
+                "message": {"type": "string", "description": "The exact SMS body to send."},
+                "target_day": {"type": "string",
+                               "enum": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday",
+                                        "Saturday", "Sunday"],
+                               "description": "When the campaign exists to lift one slow weekday "
+                                              "(see read_demand_forecast), that weekday — its sales "
+                                              "are then tracked before and after."}}},
+        },
+    },
+    {
+        # Texts a person, so it is proposed, never performed.
+        "kind": "write",
+        "confirm": True,
+        "route": {"web": "/api/issues", "mobile": "/mobile/api/issues", "method": "POST"},
+        "summary": "Open an issue and text it to the assigned manager",
+        "module": None,
+        "spec": {
+            "name": "create_issue",
+            "description": (
+                "Propose opening an operational issue and texting it to the manager the owner has "
+                "routed issues to (or a named alert contact). Does NOT send — the owner confirms. "
+                "Use when the owner wants someone to own a problem ('make sure someone deals with "
+                "this review', 'have the GM look at the walk-in')."
+            ),
+            "input_schema": {"type": "object", "required": ["title"], "properties": {
+                "title": {"type": "string"},
+                "detail": {"type": "string"},
+                "severity": {"type": "string", "enum": ["normal", "high"]},
+                "assignee_contact_id": {"type": "integer",
+                                        "description": "Optional; defaults to the routed manager."}}},
         },
     },
     {

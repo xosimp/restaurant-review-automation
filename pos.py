@@ -28,7 +28,7 @@ PROVIDER_API = ("is_connected", "sync_to_db", "build_shifts_csv")
 # but no item-level detail, and a provider that cannot answer must say so
 # rather than return an empty list, because "nothing sold" and "I can't see
 # what sold" lead to opposite conclusions everywhere downstream.
-DATA_API = ("fetch_business_days", "fetch_order_selections")
+DATA_API = ("fetch_business_days", "fetch_order_selections", "fetch_loss_lines")
 
 
 def _load_providers():
@@ -152,3 +152,20 @@ def fetch_order_selections(restaurant_id, business_date):
             f"{name} does not report item-level sales through Cavnar yet, so recipe "
             f"depletion and menu discovery cannot run for this restaurant")
     return fn(restaurant_id, business_date), name
+
+
+def fetch_loss_lines(restaurant_id, start_date, end_date):
+    """Comps, voids and refunds per line, from whichever POS can report them.
+
+    Returns (rows, provider_name). Raises POSCapabilityError when the POS
+    cannot — only RPOWER's documented ticketsales carries the approving
+    manager (mgr_mid / voidmgr_mid) today — rather than returning [], which
+    would read as a restaurant that never comped anything.
+    """
+    name, mod = connected_provider(restaurant_id)
+    if not mod:
+        raise POSCapabilityError("no POS connected")
+    fn = getattr(mod, "fetch_loss_lines", None)
+    if fn is None:
+        raise POSCapabilityError(f"{name} does not report comps and voids yet")
+    return fn(restaurant_id, start_date, end_date), name

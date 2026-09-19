@@ -101,7 +101,7 @@ Two halves:
 
 ## Ask Cavnar
 
-**Files**: `ask_cavnar.py` (context snapshot builder + `ask_with_tools`), `ask_cavnar_tools.py` (the tool registry, 43 tools), `business_intelligence.py` (the cross-module layer), `home_brief.py` (feeds the opening briefing).
+**Files**: `ask_cavnar.py` (context snapshot builder + `ask_with_tools`), `ask_cavnar_tools.py` (the tool registry, 52 tools), `business_intelligence.py` (the cross-module layer), `home_brief.py` (feeds the opening briefing).
 
 **Design stance**: an AI-powered restaurant COO, not a chatbot wrapper. Every question gets a fresh `build_context()` snapshot (identity, sibling locations, alerts, memory, module data the restaurant's tier actually has) plus a filtered tool list (`tool_specs(restaurant)` — a tool tagged with a module the restaurant doesn't have is never offered, so the model can't call it and produce an empty-result apology).
 
@@ -125,6 +125,21 @@ Two halves:
 **Don't touch casually**: the module-gating in `tool_specs()`, and the read/write split — a tool that reaches an outside effect (email, public post, scheduled deletion) must be `write`, never `read`/`action`. `auto_approve` and `data_retention` are write tools for exactly this reason. And never call `client_api._do_ai_visibility` from the context path: on a cache miss it fires live Perplexity queries.
 
 ---
+
+## Strategic foundations (audit #18)
+
+**Files**: `metrics.py`, `outcomes.py`, `goals.py`, `menu_intelligence.py`, `demand.py`, `loss_detection.py`, `issues.py`, `invoices.py`, `morning_brief.py`, `preshift.py`, `strategy_routes.py` (HTTP, web + mobile twins + the public `/i/<token>` issue page), `strategy_jobs.py` (scheduled half).
+
+**Design stance**: every number is measured, never generated. `metrics.py` is the one registry of "what can be measured before and after" (unknown is `None`, never 0; each metric has a noise band below which the verdict is `no_clear_change`). `outcomes.py` tracks a committed change against that metric and always carries `CAUSATION_CAVEAT` — before/after, not proven cause. `goals.py` holds one active target per metric.
+- **Menu**: `menu_intelligence.dish_scorecard` joins margin (inventory_ledger) to review dish mentions; `reprice_suggestions` refuses sample inventory and only proposes a price that restores the previous food-cost %.
+- **Demand**: `demand.py` forecasts from medians of the same weekday; slow days and a prep list follow from it.
+- **Loss**: `loss_detection.py` — comps/voids/refunds from POSes that report them (RPOWER); a spike needs 2× baseline AND $75 AND 4 events; approver concentration attributes to the APPROVING manager. Worded "worth reviewing", never an accusation, and **owner-only** everywhere (routes, digest, brief — never a manager).
+- **Issues**: `issues.py` — an issue texts a consented alert contact a tokenised link (one link per person, hash-only storage); GET on the link has no side effect (link previews), the assignee taps "I'm on it" / "Mark resolved"; unacknowledged issues escalate once; quiet hours hold the text. Bad reviews open issues automatically only where the owner routed a manager.
+- **Invoices**: see `PROMPT_LIBRARY.md` — the model transcribes, Python proposes, the owner confirms.
+- **Morning brief**: deterministic lines, pushed (or emailed) at the restaurant's own hour, never after 2pm local; every line carries an Ask prompt.
+- **Pre-shift**: `preshift.py` for the staff portal — relative volume, complaint watch, running-low items, holiday, weather. No money, no individuals.
+
+**Permissions**: `/food-cost/*` paths inherit Food Cost gating (a manager never sees invoice prices or margins); goals/outcomes on food-cost metrics are filtered the same way; loss signals, issue routing and the morning brief are principal-only (`TEAM_INVITE` holders).
 
 ## Admin (Will-only)
 

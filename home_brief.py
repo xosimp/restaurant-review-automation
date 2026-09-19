@@ -928,12 +928,27 @@ def _location_record(conn, r, now):
     avg30 = rs.get("avg30"); prev = rs.get("avg_prev")
     if avg30 and prev and (rs.get("n30") or 0) >= 3 and avg30 - prev <= -0.3:
         issues.append({"severity": "important", "text": f"Rating slipped to {avg30:.1f}★ (from {prev:.1f}★)", "module": "reviews"})
+    # Accountability: issues nobody has picked up. Counted, not listed — the
+    # portfolio row says WHERE follow-through is slipping; the issue list at
+    # that location says what.
+    try:
+        oi = conn.execute(
+            "SELECT SUM(status='open') AS open_n, SUM(status='acknowledged') AS ack_n, "
+            "SUM(status='open' AND created_at <= datetime('now','-2 hours')) AS stale_n "
+            "FROM ops_issues WHERE restaurant_id=?", (rid,)).fetchone()
+        open_issues = {"open": int(oi["open_n"] or 0), "acknowledged": int(oi["ack_n"] or 0),
+                       "stale": int(oi["stale_n"] or 0)}
+    except Exception:
+        open_issues = None
+    if open_issues and open_issues["stale"]:
+        issues.append({"severity": "important", "module": "issues",
+                       "text": f"{_plural(open_issues['stale'], 'issue')} unacknowledged for 2h+"})
     rank = {"critical": 3, "important": 2, "watch": 1}
     worst = max((rank[i["severity"]] for i in issues), default=0)
     health = {3: "critical", 2: "important", 1: "watch", 0: "healthy"}[worst]
     issues.sort(key=lambda i: -rank[i["severity"]])
     return {"id": rid, "name": r.get("location_name") or r["name"], "restaurant_name": r["name"], "health": health,
-            "issues": issues, "attention": len(issues),
+            "issues": issues, "attention": len(issues), "open_issues": open_issues,
             "reviews": {"total": total, "rating_30d": avg30, "reviews_30d": int(rs.get("n30") or 0), "rating_prev": prev,
                         "response_rate": rate, "urgent": int(rs.get("urgent") or 0), "awaiting": int(rs.get("awaiting") or 0), "low_7d": int(rs.get("low7") or 0)},
             "labor": labor, "inventory": inv,

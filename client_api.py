@@ -6012,6 +6012,27 @@ def guest_campaign_draft(current_user):
         ops.capture(e, job="guest_campaign_draft", context=f"restaurant_id={rid}")
         return jsonify(ok=False, error="Couldn't draft a message right now — try again in a moment."), 500
 
+_WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+
+
+def _track_campaign_outcome(rid, data, result, user_id):
+    """A campaign aimed at a slow weekday starts an outcome tracker on that
+    weekday's sales — only once it has actually SENT. Recording on the Ask
+    confirmation instead would track a campaign that quiet hours or an empty
+    segment then refused. Best-effort: tracking never fails the send."""
+    day = (data.get("target_day") or "").strip().capitalize()
+    if day not in _WEEKDAYS or not (result or {}).get("ok"):
+        return
+    try:
+        import outcomes
+        from datetime import date as _d
+        outcomes.record(rid, "slow_day_campaign", f"campaign:{day}:{_d.today().isoformat()}",
+                        f"Guest text to lift {day}s", f"weekday_sales:{day}", user_id=user_id)
+    except Exception as e:
+        import ops
+        ops.capture(e, job="campaign_outcome", context=f"restaurant_id={rid}")
+
+
 @client_bp.route("/api/guest-campaign/send", methods=["POST"])
 @login_required
 def guest_campaign_send(current_user):
@@ -6039,6 +6060,7 @@ def guest_campaign_send(current_user):
                 link_token = made["token"]
         result = send_campaign(rid, message, segment=data.get("segment") or "all",
                                link_token=link_token)
+        _track_campaign_outcome(rid, data, result, current_user.get("id"))
         # send_campaign reports its own ok — it refuses outside the guest-text
         # quiet-hours window rather than sending a marketing text at midnight.
         return jsonify(**result), 200

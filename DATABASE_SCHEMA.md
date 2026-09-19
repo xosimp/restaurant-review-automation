@@ -98,6 +98,17 @@ Attention items a user has dismissed from the Home brief, so a handled issue doe
 
 `ingredients`, `ingredient_stock_events`, `inventory_history`, `menu_items`, `recipe_ingredients`, `purchase_orders`, `statements`.
 
+## Strategic foundations
+
+- `recommendation_outcomes` — one tracked change: metric, baseline window/value/detail, `evaluate_on`, verdict. Partial unique index on (restaurant_id, source_key) while `status='tracking'`.
+- `owner_goals` — target per metric, one `active` per metric (older rows become `replaced`).
+- `ops_issues` — issue, assignee contact, status open→acknowledged→resolved, `escalation_contact_id`, `escalated_at`, `resolution_note`. Timestamps UTC `YYYY-MM-DD HH:MM:SS`.
+- `issue_links` — `token_hash` → (issue, contact, purpose). One link per person; tokens are never stored.
+- `issue_routing` — PK (restaurant_id, role ∈ manager|escalation) → consented contact, `escalate_after_minutes`.
+- `pos_loss_daily` — PK (restaurant_id, business_date, kind); zero rows are written for every day×kind asked about, so absence means "never asked".
+- `invoice_imports` — one scanned invoice: `image_sha` (dedupe), `lines_json` (proposal), `applied_json` (old→new costs), `applied_at` (set once).
+- `restaurants` columns: `morning_brief_enabled`, `morning_brief_hour`, `auto_draft_schedule`, `external_scheduling_tool` (all four touch points).
+
 ## Intel
 
 `competitor_snapshots` (week-over-week diffed), `ai_visibility_runs` / `ai_visibility_query_runs` (Perplexity-backed "do LLMs mention us" checks, `answered`/`appeared` columns per query).

@@ -1547,6 +1547,12 @@ def scheduler_loop():
                 log.info("Running nightly Toast POS sync...")
                 _ops.run_job("pos_sync", run_toast_sync)
 
+            # 3am+ — comps/voids/refunds from POSes that report them. After
+            # pos_sync so the same night's data is settled first.
+            if _due(now, 3) and _ops.claim_period("loss_sync", str(today)):
+                from strategy_jobs import run_loss_sync
+                _ops.run_job("loss_sync", run_loss_sync)
+
             if _due(now, 5) and _ops.claim_period("inventory_depletion", str(today)):
                 log.info("Running nightly ingredient depletion sync...")
                 _ops.run_job("inventory_depletion", run_daily_depletion_sync)
@@ -1569,6 +1575,18 @@ def scheduler_loop():
             if _due(now, 6) and _ops.claim_period("food_cost_diagnoses", str(today)):
                 log.info("Running food cost root-cause diagnoses...")
                 _ops.run_job("food_cost_diagnoses", run_food_cost_diagnoses)
+
+            # 6am+ — close outcome trackers whose window ended and mark met
+            # goals, before the morning briefs (7am+ local) announce them.
+            if _due(now, 6) and _ops.claim_period("outcome_evaluations", str(today)):
+                from strategy_jobs import run_outcome_evaluations
+                _ops.run_job("outcome_evaluations", run_outcome_evaluations)
+
+            # Thursday 6am+ — draft next week's schedule for owners who opted
+            # in. A draft in Schedule History; nothing reaches staff.
+            if _due(now, 6) and now.weekday() == 3 and _ops.claim_period("auto_draft_schedule", str(today)):
+                from strategy_jobs import run_auto_draft_schedules
+                _ops.run_job("auto_draft_schedule", run_auto_draft_schedules)
 
             if _due(now, 4) and _ops.claim_period("marketing_metrics_sync", str(today)):
                 log.info("Running marketing metrics sync...")
@@ -1637,6 +1655,26 @@ def scheduler_loop():
             if _ops.claim_period("review_request_followups", f"{today}-{now.hour}"):
                 from guest_marketing import run_review_request_followups
                 _ops.run_job("review_request_followups", run_review_request_followups)
+
+            # Hourly — a fresh bad review becomes an issue for the routed
+            # manager. Only where the owner has set routing up.
+            if _ops.claim_period("issue_scan", f"{today}-{now.hour}"):
+                from strategy_jobs import run_issue_scan
+                _ops.run_job("issue_scan", run_issue_scan)
+
+            # Every tick — issue escalations and held notifications need
+            # minutes, not hours; morning briefs go at each restaurant's own
+            # local hour and claim themselves per restaurant per day.
+            try:
+                import issues as _issues
+                _issues.tick()
+            except Exception as e:
+                _ops.capture(e, job="issues_tick")
+            try:
+                import morning_brief as _mb
+                _mb.run_due()
+            except Exception as e:
+                _ops.capture(e, job="morning_brief")
 
             # Every tick — publish anything whose scheduled slot has arrived.
             # This is why the loop no longer sleeps for an hour: a post the

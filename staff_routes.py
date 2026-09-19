@@ -367,6 +367,21 @@ def api_me(current_user):
     })
 
 
+@staff_bp.route("/api/preshift")
+@staff_login_required
+def api_preshift(current_user):
+    """Today's lineup briefing — see preshift.py. Staff-safe by construction:
+    no money and no individuals, so it is the same for every employee."""
+    rid, _name = _staff_context(current_user)
+    import preshift
+    try:
+        return jsonify(ok=True, **preshift.build(rid))
+    except Exception as e:
+        import ops
+        ops.capture(e, job="preshift", context=f"restaurant_id={rid}")
+        return jsonify(ok=True, items=[])
+
+
 @staff_bp.route("/api/shifts")
 @staff_login_required
 def api_shifts(current_user):

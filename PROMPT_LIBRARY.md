@@ -57,6 +57,9 @@ Model: Sonnet (`ASK_CAVNAR_MODEL`), tool-calling enabled (`ask_with_tools`), `ma
 ### Sales-audit notes (`sales_audit_notes_ai.py`, `sales_audit_cheatsheet.py`)
 Model: Haiku/Sonnet. Input: what Will observed during an in-person audit visit. Output: structured notes / a cheat-sheet for the pitch. Internal tool, not client-facing — lower stakes on hallucination but still grounded in what was actually entered.
 
+### Invoice extraction (`invoices.py`)
+Model: Opus (`INVOICE_MODEL`, default `claude-opus-5`) — the one call site where a misread digit flows straight into every plate cost, so it uses the most capable model; weekly, low volume. Input: one supplier invoice as an `image` block (JPEG/PNG/WebP/GIF) or a `document` block (PDF), ≤4.5 MB. Output: structured JSON via `output_config.format` (`json_schema`: supplier, invoice_date, invoice_total, lines[description, quantity, unit, unit_price, line_total], every numeric field nullable). The prompt forbids estimating a missing number (null instead) and skips non-product lines. **The model only transcribes.** Matching to ingredients, unit conversion, the qty×price=total check, the >40% "unit mix-up" guard and the lines-vs-total check are all Python (`invoices.propose`), and nothing is written until the owner confirms each line (`invoices.apply`, once per import). `stop_reason` `refusal`/`max_tokens` become owner-facing errors. Same file twice (sha256) is never read twice.
+
 ## Guardrails that apply to every call site
 
 - **Budget enforced before the call fires** (`ai_utils.ai_budget_exceeded` / `global_monthly_budget`) — both a global monthly ceiling and a per-restaurant check for unpaid/trial accounts.

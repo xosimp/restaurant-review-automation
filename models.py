@@ -351,6 +351,10 @@ class Restaurant:
     # retry re-billed Google on every call — 570 requests for one restaurant
     # in eight days (audit #17).
     geocode_failed_at: Optional[str]     = None
+    morning_brief_enabled: int           = 1
+    morning_brief_hour: int              = 7
+    auto_draft_schedule: int             = 0
+    external_scheduling_tool: Optional[str] = None   # "Fourth", "7shifts" — a scheduler they already pay for
     email_theme: Optional[str]           = "dark"  # 'dark' or 'light' — drives weekly digest email theme
     inventory_updated_at: Optional[str]  = None
     temp_password: Optional[str]         = None
@@ -679,6 +683,16 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "weather_cache_json", "TEXT"),
         ("restaurants", "weather_cached_at", "TEXT"),
         ("restaurants", "geocode_failed_at", "TEXT"),
+        # Morning brief (audit #18): on by default — it is the owner's own
+        # phone, and a brief that has to be discovered in settings is a brief
+        # nobody gets. Hour is restaurant-local.
+        ("restaurants", "morning_brief_enabled", "INTEGER DEFAULT 1"),
+        ("restaurants", "morning_brief_hour", "INTEGER DEFAULT 7"),
+        # Weekly schedule auto-draft: OFF unless asked for. It spends AI and
+        # writes a draft, and a restaurant already on Fourth or 7shifts does
+        # not want one.
+        ("restaurants", "auto_draft_schedule", "INTEGER DEFAULT 0"),
+        ("restaurants", "external_scheduling_tool", "TEXT"),
         ("restaurants", "email_theme", "TEXT DEFAULT 'dark'"),
         ("restaurants", "inventory_updated_at", "TEXT"),
         ("restaurants", "gbp_rating", "REAL"),
@@ -1603,6 +1617,144 @@ def init_db(db_path: str = DB_PATH):
         # the only reader; only created_at and (restaurant_id, created_at)
         # existed.
         "CREATE INDEX IF NOT EXISTS idx_ai_usage_action ON ai_usage(action, model)",
+
+        # ── Strategic feature audit (#18) ─────────────────────────────────
+        # Whether a recommendation the owner acted on actually moved the
+        # number it was aimed at. Baseline is snapshotted when they commit to
+        # it, the same metric is re-measured after the window, and the
+        # verdict respects each metric's noise band (see metrics.compare).
+        """CREATE TABLE IF NOT EXISTS recommendation_outcomes (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
+            source          TEXT NOT NULL,
+            source_key      TEXT NOT NULL,
+            title           TEXT NOT NULL,
+            metric          TEXT NOT NULL,
+            baseline_value  REAL,
+            baseline_start  TEXT,
+            baseline_end    TEXT,
+            baseline_detail TEXT,
+            started_on      TEXT NOT NULL,
+            evaluate_on     TEXT NOT NULL,
+            after_value     REAL,
+            after_start     TEXT,
+            after_end       TEXT,
+            verdict         TEXT,
+            delta           REAL,
+            dollars_monthly REAL,
+            status          TEXT NOT NULL DEFAULT 'tracking',
+            created_by      INTEGER,
+            created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_outcomes_restaurant ON recommendation_outcomes(restaurant_id, status)",
+        # One live tracker per recommendation — committing to the same fix
+        # twice must not double-count it.
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_outcomes_tracking ON recommendation_outcomes"
+        "(restaurant_id, source_key) WHERE status='tracking'",
+
+        # Structured goals. They used to exist only as free text in
+        # ask_memory ("wants labour under 26%"), which the assistant could
+        # quote but nothing could measure.
+        """CREATE TABLE IF NOT EXISTS owner_goals (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
+            metric          TEXT NOT NULL,
+            target          REAL NOT NULL,
+            deadline        TEXT,
+            baseline_value  REAL,
+            baseline_detail TEXT,
+            status          TEXT NOT NULL DEFAULT 'active',
+            note            TEXT,
+            created_by      INTEGER,
+            created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+            achieved_at     TEXT
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_goals_restaurant ON owner_goals(restaurant_id, status)",
+
+        # The accountability loop: an issue has an owner, is acknowledged,
+        # is resolved, and escalates when nobody picks it up. Asked for by a
+        # regional manager in so many words ("AI alerts via phone to hold
+        # local managers accountable"); nothing in the product assigned,
+        # acknowledged or escalated anything before this.
+        """CREATE TABLE IF NOT EXISTS ops_issues (
+            id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id         INTEGER NOT NULL REFERENCES restaurants(id),
+            kind                  TEXT NOT NULL,
+            source_key            TEXT,
+            title                 TEXT NOT NULL,
+            detail                TEXT,
+            severity              TEXT NOT NULL DEFAULT 'normal',
+            assignee_contact_id   INTEGER,
+            assignee_name         TEXT,
+            status                TEXT NOT NULL DEFAULT 'open',
+            created_by            INTEGER,
+            created_at            TEXT NOT NULL DEFAULT (datetime('now')),
+            notified_at           TEXT,
+            acknowledged_at       TEXT,
+            resolved_at           TEXT,
+            resolution_note       TEXT,
+            escalated_at          TEXT,
+            escalation_contact_id INTEGER
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_issues_restaurant ON ops_issues(restaurant_id, status, created_at)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_issues_source ON ops_issues(restaurant_id, source_key) "
+        "WHERE source_key IS NOT NULL",
+        # One link PER PERSON, not one per issue. With a single token on the
+        # issue, escalating or reassigning had to replace it — and the
+        # original assignee's link silently stopped working the moment
+        # someone else was brought in.
+        """CREATE TABLE IF NOT EXISTS issue_links (
+            token_hash   TEXT PRIMARY KEY,
+            issue_id     INTEGER NOT NULL REFERENCES ops_issues(id),
+            contact_id   INTEGER,
+            purpose      TEXT NOT NULL DEFAULT 'assignee',
+            created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_issue_links_issue ON issue_links(issue_id)",
+        # Who issues go to at each location, and who they escalate to.
+        # References consented alert_contacts rows rather than holding its
+        # own phone numbers, so every number texted has already been through
+        # the SMS consent path.
+        """CREATE TABLE IF NOT EXISTS issue_routing (
+            restaurant_id  INTEGER NOT NULL REFERENCES restaurants(id),
+            role           TEXT NOT NULL,
+            contact_id     INTEGER NOT NULL,
+            escalate_after_minutes INTEGER DEFAULT 120,
+            updated_at     TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (restaurant_id, role)
+        )""",
+
+        # Comps, voids and refunds per business date, from the POS. Stored
+        # rather than re-queried, per RPOWER's own ask that integrators
+        # "download and archive the data".
+        """CREATE TABLE IF NOT EXISTS pos_loss_daily (
+            restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
+            business_date   TEXT NOT NULL,
+            kind            TEXT NOT NULL,
+            amount          REAL NOT NULL DEFAULT 0,
+            events          INTEGER NOT NULL DEFAULT 0,
+            by_approver     TEXT,
+            provider        TEXT,
+            synced_at       TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (restaurant_id, business_date, kind)
+        )""",
+
+        # Supplier invoices read from a photo. Every extracted line is kept
+        # with what was actually applied, so a wrong price can be traced to
+        # the invoice it came from.
+        """CREATE TABLE IF NOT EXISTS invoice_imports (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
+            supplier        TEXT,
+            invoice_date    TEXT,
+            image_sha       TEXT,
+            lines_json      TEXT,
+            applied_json    TEXT,
+            created_by      INTEGER,
+            created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+            applied_at      TEXT
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_invoice_imports_restaurant ON invoice_imports(restaurant_id, created_at)",
 
         # One stored root-cause diagnosis per (restaurant, category, window).
         #
@@ -2805,6 +2957,8 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH):
         "section_count","daypart_split","delivery_pct","role_minimums_json","sched_notes","email_theme",
         "latitude","longitude","weather_cache_json","weather_cached_at",
         "geocode_failed_at",
+        "morning_brief_enabled", "morning_brief_hour",
+        "auto_draft_schedule", "external_scheduling_tool",
     }
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
@@ -3117,6 +3271,13 @@ def _restaurant_from_row(row) -> Restaurant:
         weather_cache_json=row["weather_cache_json"]   if "weather_cache_json" in row.keys() else None,
         weather_cached_at=row["weather_cached_at"]     if "weather_cached_at" in row.keys() else None,
         geocode_failed_at=row["geocode_failed_at"]     if "geocode_failed_at" in row.keys() else None,
+        morning_brief_enabled=(row["morning_brief_enabled"] if "morning_brief_enabled" in row.keys()
+                               and row["morning_brief_enabled"] is not None else 1),
+        morning_brief_hour=(row["morning_brief_hour"] if "morning_brief_hour" in row.keys()
+                            and row["morning_brief_hour"] is not None else 7),
+        auto_draft_schedule=(row["auto_draft_schedule"] if "auto_draft_schedule" in row.keys()
+                             and row["auto_draft_schedule"] is not None else 0),
+        external_scheduling_tool=row["external_scheduling_tool"] if "external_scheduling_tool" in row.keys() else None,
     )
 
 
@@ -7876,6 +8037,7 @@ EMAIL_TYPE_LABELS = {
     "send_reactivation_email":        "Welcome back",
     "send_bug_report_email":          "Bug report",
     "send_signup_admin_alert":        "New signup (internal)",
+    "send_morning_brief":             "Morning brief",
 }
 
 

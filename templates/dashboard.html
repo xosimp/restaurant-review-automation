@@ -1266,6 +1266,8 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-row:first-of-type{border-top:none}
 .hb-row .d{width:9px;height:9px;border-radius:50%;background:var(--ink3);flex-shrink:0;box-shadow:0 0 8px currentColor}
 .hb-row.critical .d{background:var(--hb-bad);color:var(--hb-bad)}.hb-row.important .d{background:var(--hb-warn);color:var(--hb-warn)}.hb-row.watch .d{background:var(--ink3);color:transparent}
+.hb-row.good .d{background:var(--hb-good);color:var(--hb-good)}
+.hb-row .t.wrap{white-space:normal;line-height:1.45}
 .hb-row .t{flex:1;min-width:0;font-size:15px;font-weight:600;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .hb-row .no{font-family:'Space Grotesk',sans-serif;font-size:18px;font-weight:600;color:var(--ember);width:26px;flex-shrink:0}
 .hb-row .m{font-size:12px;color:var(--ink3);white-space:nowrap}
@@ -1682,9 +1684,48 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     h+='<section class="hb-hero" id="hb-hero" aria-label="Value delivered"></section>';
     h+=renderSignals(d);
     h+=renderActions(d);
+    h+='<section id="hb-follow" aria-label="Follow-through"></section>';
     body.innerHTML='<div class="hb-fade">'+h+'</div>';
     if(document.getElementById('hb-hero'))renderHero(d);
+    hbFollow();
   }
+  // ── follow-through: today's brief, open issues, goals, results ────────────
+  // Four small reads, rendered together once all have answered. Each is
+  // optional — a 403 (a manager login has no morning brief) or a failure
+  // simply leaves that column out, it never blanks Home.
+  var TONE={bad:'critical',action:'important',good:'good',neutral:'watch'};
+  var GOALTONE={met:'good',moving_right_way:'good',moving_wrong_way:'critical',missed:'critical',flat:'watch',unknown:'watch'};
+  var RESULTTONE={improved:'good',worsened:'critical'};
+  function hbFollow(){
+    var got={},left=4;
+    function done(k,v){got[k]=v;left--;if(!left)renderFollow(got);}
+    function get(k,url){fetch(url,{credentials:'same-origin'}).then(function(r){return r.ok?r.json():null;}).then(function(d){done(k,d&&d.ok?d:null);}).catch(function(){done(k,null);});}
+    get('brief','/api/morning-brief');get('issues','/api/issues?status=unresolved');get('goals','/api/goals');get('outcomes','/api/outcomes');
+  }
+  function renderFollow(g){
+    var el=document.getElementById('hb-follow');if(!el)return;
+    var lines=(g.brief&&g.brief.brief&&g.brief.brief.lines)||[],iss=(g.issues&&g.issues.issues)||[],gl=(g.goals&&g.goals.goals)||[];
+    var res=((g.outcomes&&g.outcomes.outcomes)||[]).filter(function(o){return o.summary;});
+    if(!lines.length&&!iss.length&&!gl.length&&!res.length){el.innerHTML='';return;}
+    var h='<div class="hb-act">';
+    h+='<div><h3><span>This morning\'s brief</span></h3>';
+    if(!lines.length)h+='<div class="hb-empty">Your brief fills in as your numbers come in.</div>';
+    for(var i=0;i<lines.length;i++){var l=lines[i];h+='<div class="hb-row '+(TONE[l.tone]||'watch')+'"><span class="d"></span><span class="t wrap">'+num(l.text)+'</span><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-ask="'+esc(l.ask)+'">Ask →</button></div>';}
+    h+='</div><div>';
+    h+='<h3><span>Open issues</span></h3>';
+    if(!iss.length)h+='<div class="hb-clear"><span class="ok">✓</span><span>Nothing open.</span></div>';
+    for(var j=0;j<Math.min(iss.length,4);j++){var x=iss[j];h+='<div class="hb-row '+(x.status==='open'?(x.severity==='high'?'critical':'important'):'watch')+'"><span class="d"></span><span class="t" title="'+esc(x.detail||'')+'">'+esc(x.title)+'</span><span class="m">'+esc(x.assignee_name||'unassigned')+' · '+esc(x.status==='acknowledged'?'on it':x.status)+'</span><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="hbResolveIssue('+x.id+',this)">Resolve</button></div>';}
+    if(gl.length){h+='<h3 style="margin-top:22px"><span>Goals</span></h3>';for(var k=0;k<Math.min(gl.length,3);k++){var o=gl[k];h+='<div class="hb-row '+(GOALTONE[o.state]||'watch')+'"><span class="d"></span><span class="t wrap">'+num(o.summary||o.label)+'</span></div>';}}
+    if(res.length){h+='<h3 style="margin-top:22px"><span>What your changes did</span></h3>';for(var m=0;m<Math.min(res.length,3);m++){var r=res[m];h+='<div class="hb-row '+(RESULTTONE[r.verdict]||'watch')+'"><span class="d"></span><span class="t wrap">'+num(r.summary)+'</span></div>';}
+      h+='<div class="hb-empty" style="font-size:12px">'+esc((g.outcomes&&g.outcomes.caveat)||'')+'</div>';}
+    el.innerHTML=h+'</div></div>';
+  }
+  window.hbResolveIssue=function(id,btn){
+    if(btn)btn.disabled=true;
+    fetch('/api/issues/'+id+'/resolve',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:'{}'})
+      .then(function(r){return r.json();}).then(function(d){if(d&&d.ok)hbFollow();else{if(btn)btn.disabled=false;if(typeof toast==='function')toast((d&&d.error)||'Couldn\'t resolve that','error');}})
+      .catch(function(){if(btn)btn.disabled=false;});
+  };
   // ── consolidated (all locations) ──────────────────────────────────────────
   function renderGroup(g){
     var k=document.getElementById('hb-kicker');if(k)k.textContent=dateKicker()+' · '+g.group_name+' · all locations';
@@ -3130,6 +3171,19 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .fc2-ledger .r .v{font-family:'Space Grotesk',sans-serif;font-size:14.5px;font-weight:700;color:var(--red);text-align:right;white-space:nowrap}
 .fc2-ledger .r .v.amber{color:var(--hb-warn)}
 .fc2-sec{margin-top:34px;padding-top:22px}
+.fc2-mt{width:100%;border-collapse:collapse;font-size:14px}
+.fc2-mt th{font-size:10.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);text-align:left;padding:8px 10px 8px 0;border-bottom:1px solid var(--hb-line)}
+.fc2-mt td{padding:10px 10px 10px 0;border-bottom:1px solid var(--hb-line2);color:var(--ink);vertical-align:top}
+.fc2-mt td.r,.fc2-mt th.r{text-align:right}
+.fc2-mt .why{font-size:12.5px;color:var(--ink3);margin-top:2px}
+.fc2-act{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:3px 8px;border-radius:999px;border:1px solid var(--hb-line);color:var(--ink3)}
+.fc2-act.urgent,.fc2-act.fix{border-color:var(--red);color:var(--red)}
+.fc2-act.cut{border-color:var(--amber);color:var(--amber)}
+.fc2-act.promote{border-color:var(--green);color:var(--green)}
+.fc2-act.reprice{border-color:var(--ember);color:var(--ember)}
+.fc2-inv-note{font-size:12.5px;color:var(--amber);margin-top:2px}
+.fc2-inv-in{width:92px;background:transparent;border:1px solid var(--hb-line);border-radius:6px;padding:5px 7px;color:var(--ink);font-family:'Space Grotesk',sans-serif;font-size:14px;text-align:right}
+.fc2-inv-sel{max-width:180px;background:transparent;border:1px solid var(--hb-line);border-radius:6px;padding:5px 7px;color:var(--ink);font-size:13px}
 .fc2-sec .hd{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:8px}
 .fc2-sec .hd h2{font-family:'Clash Display',sans-serif;font-weight:500;font-size:23.5px;letter-spacing:-.01em;color:var(--ink);margin:4px 0 0}
 .fc2-sec .hd .sub{font-size:14px;color:var(--ink3);margin-top:3px}
@@ -3360,6 +3414,18 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     <div class="lb2-sg"><div class="k"><span>Tied-up capital · overstocked</span></div><div class="v"><span class="hb-num">${{ _ostock_total|int|format_num }}</span><small>sitting over par</small></div>
       <div class="fc2-ledger" id="fc2-ledger-stock"></div>
       <div class="cap"><span>current stock vs. par level</span></div></div>
+  </div>
+
+  <div class="fc2-sec" id="fc2-menu">
+    <div class="hd"><div><div class="hb-kicker">Menu · margin and what guests say</div><h2>Your dishes, scored</h2><div class="sub">Each dish's margin next to what reviews say about it, with one move for each. Built from your recipes, POS sales and review mentions.</div></div></div>
+    <div id="fc2-score-body"><div class="hb-load" style="height:80px;justify-content:center"><canvas class="hb-orb" data-orb-state="working" width="32" height="32"></canvas></div></div>
+    <div id="fc2-reprice-body"></div>
+  </div>
+
+  <div class="fc2-sec" id="fc2-invoice">
+    <div class="hd"><div><div class="hb-kicker">Invoices · keep ingredient costs current</div><h2>Scan a supplier invoice</h2><div class="sub">Photo or PDF. Cavnar reads the prices and proposes updates — nothing changes until you confirm each line.</div></div>
+      <div><input type="file" id="fc2-inv-file" accept="image/jpeg,image/png,image/webp,application/pdf" style="display:none" onchange="fc2InvoiceScan(this)"><button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="document.getElementById('fc2-inv-file').click()">Upload invoice</button></div></div>
+    <div id="fc2-inv-body"></div>
   </div>
 
   <div class="fc2-sec" id="fc2-orders">
@@ -4798,6 +4864,22 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
               <div class="c"><label class="ac-switch"><input type="checkbox" id="as-marketing" onchange="saveMarketingOptOut()" aria-label="Product update emails"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
           </div>
           <div class="ac-status" id="as-data-status" style="margin-top:8px"></div>
+        </div>
+        <div class="ac-card" id="as-ops-card" hidden>
+          <div class="ac-card-h"><div><h3>Morning brief &amp; issues</h3><p>What reaches you before service, and who a problem goes to.</p></div></div>
+          <div class="ac-rows">
+            <div class="ac-row"><div class="l"><b>Morning brief</b><span>Yesterday, prime cost, the one thing to do first &mdash; to your phone, or email if the app isn&rsquo;t installed.</span></div>
+              <div class="c"><label class="ac-switch"><input type="checkbox" id="as-mb-enabled" onchange="saveMorningBrief()" aria-label="Morning brief"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
+            <div class="ac-row"><div class="l"><b>Send it at</b><span>Your restaurant&rsquo;s local time.</span></div>
+              <div class="c"><select id="as-mb-hour" onchange="saveMorningBrief()" aria-label="Morning brief hour"></select></div></div>
+            <div class="ac-row"><div class="l"><b>Issues go to</b><span>Texted a link when a bad review lands or you open an issue. Only contacts who consented to texts can be picked.</span></div>
+              <div class="c"><select id="as-route-manager" onchange="saveIssueRouting('manager')" aria-label="Issues go to"></select></div></div>
+            <div class="ac-row"><div class="l"><b>If nobody responds, escalate to</b><span id="as-route-esc-note">After two hours unacknowledged.</span></div>
+              <div class="c"><select id="as-route-escalation" onchange="saveIssueRouting('escalation')" aria-label="Escalate to"></select></div></div>
+            <div class="ac-row" id="as-autodraft-row" hidden><div class="l"><b>Draft next week&rsquo;s schedule for me</b><span>Every Thursday, if you haven&rsquo;t built one. A draft only &mdash; nothing goes to staff until you publish.</span></div>
+              <div class="c"><label class="ac-switch"><input type="checkbox" id="as-autodraft" onchange="saveAutoDraft()" aria-label="Draft next week's schedule"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
+          </div>
+          <div class="ac-status" id="as-ops-status" style="margin-top:8px"></div>
         </div>
         <div class="ac-card span" id="email-history-card">
           <div class="ac-card-h"><div><h3>Email history</h3><p>Everything Cavnar AI has sent for you, and whether it landed.</p></div>
@@ -10600,6 +10682,62 @@ function loadAccountSettings() {
   }).catch(function() {});
 }
 
+// ── Morning brief, issue routing, schedule auto-draft ───────────────────────
+// The card stays hidden for a login that can't configure these (the brief and
+// routing are owner-only; the server answers 403 and the card never shows).
+function loadOpsSettings() {
+  fetch('/api/morning-brief', {credentials: 'same-origin'}).then(function(r) { return r.json(); }).then(function(d) {
+    if (!d || !d.ok) return;
+    var card = document.getElementById('as-ops-card');
+    if (card) card.hidden = false;
+    var sel = document.getElementById('as-mb-hour'), h = '';
+    for (var i = 5; i <= 13; i++) {
+      var lbl = (i < 12 ? i + ' am' : (i === 12 ? '12 pm' : (i - 12) + ' pm'));
+      h += '<option value="' + i + '"' + (d.settings.hour === i ? ' selected' : '') + '>' + lbl + '</option>';
+    }
+    sel.innerHTML = h;
+    document.getElementById('as-mb-enabled').checked = !!d.settings.enabled;
+  }).catch(function() {});
+  fetch('/api/issues/routing', {credentials: 'same-origin'}).then(function(r) { return r.json(); }).then(function(d) {
+    if (!d || !d.ok) return;
+    var roles = ['manager', 'escalation'];
+    for (var j = 0; j < roles.length; j++) {
+      var role = roles[j], cur = (d.routing[role] || {}).contact_id;
+      var h = '<option value="">' + (role === 'manager' ? 'Nobody — don’t open issues' : 'Nobody') + '</option>';
+      for (var k = 0; k < d.contacts.length; k++) {
+        var c = d.contacts[k];
+        h += '<option value="' + c.id + '"' + (c.id === cur ? ' selected' : '') + (c.sms_consent ? '' : ' disabled') + '>'
+           + _ehEsc(c.name || ('Contact ' + c.id)) + (c.sms_consent ? '' : ' (no text consent)') + '</option>';
+      }
+      document.getElementById('as-route-' + role).innerHTML = h;
+    }
+  }).catch(function() {});
+  fetch('/api/labor/auto-draft', {credentials: 'same-origin'}).then(function(r) { return r.json(); }).then(function(d) {
+    if (!d || !d.ok) return;
+    var row = document.getElementById('as-autodraft-row');
+    if (row && !d.external_tool) row.hidden = false;
+    document.getElementById('as-autodraft').checked = !!d.enabled;
+  }).catch(function() {});
+}
+
+function saveMorningBrief() {
+  asPost('/api/morning-brief/settings', {
+    enabled: document.getElementById('as-mb-enabled').checked,
+    hour: parseInt(document.getElementById('as-mb-hour').value, 10)
+  }, 'as-ops-status', 'Morning brief saved');
+}
+
+function saveIssueRouting(role) {
+  var v = document.getElementById('as-route-' + role).value;
+  asPost('/api/issues/routing', {role: role, contact_id: v ? parseInt(v, 10) : null},
+         'as-ops-status', 'Issue routing saved');
+}
+
+function saveAutoDraft() {
+  asPost('/api/labor/auto-draft', {enabled: document.getElementById('as-autodraft').checked},
+         'as-ops-status', 'Saved');
+}
+
 function asPost(url, body, statusId, okMsg) {
   return fetch(url, {
     method: 'POST',
@@ -12087,12 +12225,91 @@ function revokeOtherSessions(btn){
     });
   };
 
+  // ── Food Cost: dish scorecard, reprice suggestions, invoice scanning ──────
+  var _fcMenuLoaded = false;
+  function _fcEsc(v){return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+  function _fcMoney(v,dp){return v==null?'—':'$'+Number(v).toFixed(dp==null?2:dp);}
+  function loadFcMenu(){
+    var sb=document.getElementById('fc2-score-body');if(!sb)return;
+    fetch('/api/food-cost/dish-scorecard',{credentials:'same-origin'}).then(function(r){return r.json();}).then(function(d){
+      if(!d||!d.ok){var sec=document.getElementById('fc2-menu');if(sec)sec.style.display='none';return;}
+      var rows=d.dishes||[];
+      if(!rows.length){sb.innerHTML='<div class="hb-empty">'+_fcEsc(d.reason||'Map recipes to your menu items to score them.')+'</div>';return;}
+      var h='<div class="fc2-table-scroll"><table class="fc2-mt"><thead><tr><th>Dish</th><th class="r">Price</th><th class="r">Food cost</th><th class="r">Sold</th><th class="r">Guests</th><th>Move</th></tr></thead><tbody>';
+      var ACT={urgent:'Protect',fix:'Fix',cut:'Cut',reprice:'Reprice',promote:'Promote',review:'Review'};
+      for(var i=0;i<rows.length;i++){var x=rows[i],pm=x.positive_mentions||0,nm=x.negative_mentions||0;
+        h+='<tr><td><b>'+_fcEsc(x.name)+'</b>'+(x.why?'<div class="why">'+_fcEsc(x.why)+'</div>':'')+'</td>'
+          +'<td class="r hb-num">'+_fcMoney(x.sell_price)+'</td>'
+          +'<td class="r hb-num">'+(x.food_cost_pct!=null?Number(x.food_cost_pct).toFixed(1)+'%':'—')+'</td>'
+          +'<td class="r hb-num">'+(x.units_sold!=null?x.units_sold:'—')+'</td>'
+          +'<td class="r hb-num">'+((pm||nm)?('+'+pm+' / −'+nm):'<span style="color:var(--ink3)">—</span>')+'</td>'
+          +'<td>'+(x.action?'<span class="fc2-act '+_fcEsc(x.action)+'">'+_fcEsc(ACT[x.action]||x.action)+'</span>':'')+'</td></tr>';}
+      sb.innerHTML=h+'</tbody></table></div>';
+    }).catch(function(){sb.innerHTML='<div class="hb-empty">Couldn\'t load the scorecard.</div>';});
+    fetch('/api/food-cost/reprice',{credentials:'same-origin'}).then(function(r){return r.json();}).then(function(d){
+      var el=document.getElementById('fc2-reprice-body');if(!el||!d||!d.ok)return;
+      var sg=d.suggestions||[];if(!sg.length)return;
+      var h='<h3 class="hb-kicker" style="margin:26px 0 8px">Prices to revisit · ingredient costs moved</h3><div class="fc2-table-scroll"><table class="fc2-mt"><thead><tr><th>Dish</th><th>Because</th><th class="r">Now</th><th class="r">To restore margin</th><th class="r">Lost / mo</th></tr></thead><tbody>';
+      for(var i=0;i<sg.length;i++){var x=sg[i];
+        var why=[];for(var j=0;j<(x.drivers||[]).length;j++){var dr=x.drivers[j];why.push(_fcEsc(dr.ingredient)+(dr.change_pct!=null?' +'+Number(dr.change_pct).toFixed(0)+'%':''));}
+        h+='<tr><td><b>'+_fcEsc(x.dish)+'</b></td><td>'+why.join(', ')+'</td>'
+          +'<td class="r hb-num">'+_fcMoney(x.sell_price)+'</td><td class="r hb-num">'+_fcMoney(x.suggested_price)+'</td><td class="r hb-num">'+_fcMoney(x.monthly_margin_lost,0)+'</td></tr>';}
+      h+='</tbody></table></div>'+(d.assumption?'<div class="hb-empty" style="font-size:12px">'+_fcEsc(d.assumption)+'</div>':'');
+      el.innerHTML=h;
+    }).catch(function(){});
+  }
+  var _fcInv=null;
+  window.fc2InvoiceScan=function(inp){
+    var f=inp&&inp.files&&inp.files[0];if(!f)return;
+    var body=document.getElementById('fc2-inv-body');
+    body.innerHTML='<div class="hb-load" style="height:80px;justify-content:center"><canvas class="hb-orb" data-orb-state="working" width="32" height="32"></canvas><span style="margin-left:10px;color:var(--ink3)">Reading the invoice…</span></div>';
+    var fd=new FormData();fd.append('file',f);
+    fetch('/api/food-cost/invoices',{method:'POST',credentials:'same-origin',body:fd}).then(function(r){return r.json();}).then(function(d){
+      inp.value='';
+      if(!d||!d.ok){body.innerHTML='<div class="hb-empty" style="color:var(--red)">'+_fcEsc((d&&d.error)||'Couldn\'t read that invoice.')+'</div>';return;}
+      _fcInv=d.invoice;renderInvoice();
+    }).catch(function(){inp.value='';body.innerHTML='<div class="hb-empty" style="color:var(--red)">Couldn\'t upload that file.</div>';});
+  };
+  function renderInvoice(){
+    var body=document.getElementById('fc2-inv-body'),v=_fcInv;if(!body||!v)return;
+    var opts='<option value="">— pick —</option>';
+    for(var k=0;k<(v.ingredients||[]).length;k++){var ing=v.ingredients[k];opts+='<option value="'+ing.id+'">'+_fcEsc(ing.name)+(ing.unit?' ('+_fcEsc(ing.unit)+')':'')+'</option>';}
+    var h='<div class="hb-kicker" style="margin-bottom:6px">'+_fcEsc(v.supplier||'Supplier not read')+(v.invoice_date?' · '+_fcEsc(v.invoice_date):'')+(v.duplicate?' · already scanned':'')+'</div>';
+    if(v.total_check&&!v.total_check.plausible)h+='<div class="fc2-inv-note">Lines add up to '+_fcMoney(v.total_check.lines_sum)+' against an invoice total of '+_fcMoney(v.total_check.invoice_total)+' — some lines may be misread. Check them against the paper.</div>';
+    if(v.applied_at){h+='<div class="hb-clear"><span class="ok">✓</span><span>Applied '+_fcEsc(v.applied_at)+'.</span></div>';body.innerHTML=h;return;}
+    h+='<div class="fc2-table-scroll"><table class="fc2-mt"><thead><tr><th></th><th>Invoice line</th><th>Ingredient</th><th class="r">Now</th><th class="r">New cost</th></tr></thead><tbody>';
+    for(var i=0;i<v.lines.length;i++){var l=v.lines[i];
+      h+='<tr><td><input type="checkbox" data-inv-line="'+i+'"'+(l.selected?' checked':'')+'></td>'
+        +'<td><b>'+_fcEsc(l.description)+'</b><div class="why">'+(l.quantity!=null?_fcEsc(l.quantity)+' ':'')+_fcEsc(l.unit||'')+(l.unit_price!=null?' @ '+_fcMoney(l.unit_price):'')+(l.line_total!=null?' = '+_fcMoney(l.line_total):'')+'</div>'+(l.note?'<div class="fc2-inv-note">'+_fcEsc(l.note)+'</div>':'')+'</td>'
+        +'<td><select class="fc2-inv-sel" data-inv-ing="'+i+'">'+opts.replace('value="'+l.ingredient_id+'"','value="'+l.ingredient_id+'" selected')+'</select></td>'
+        +'<td class="r hb-num">'+_fcMoney(l.current_cost,4)+'</td>'
+        +'<td class="r"><input class="fc2-inv-in" type="number" step="0.0001" min="0" data-inv-cost="'+i+'" value="'+(l.proposed_cost!=null?l.proposed_cost:'')+'"></td></tr>';}
+    h+='</tbody></table></div><div style="margin-top:14px;display:flex;gap:10px;align-items:center"><button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="fc2InvoiceApply()">Update checked costs</button><span id="fc2-inv-msg" style="font-size:13px;color:var(--ink3)"></span></div>';
+    body.innerHTML=h;
+  }
+  window.fc2InvoiceApply=function(){
+    var v=_fcInv;if(!v)return;var sel=[],msg=document.getElementById('fc2-inv-msg');
+    var boxes=document.querySelectorAll('[data-inv-line]');
+    for(var i=0;i<boxes.length;i++){if(!boxes[i].checked)continue;var idx=boxes[i].getAttribute('data-inv-line');
+      var ing=document.querySelector('[data-inv-ing="'+idx+'"]'),cost=document.querySelector('[data-inv-cost="'+idx+'"]');
+      if(!ing||!ing.value||!cost||!(parseFloat(cost.value)>0)){if(msg){msg.style.color='var(--red)';msg.textContent='Line '+(parseInt(idx,10)+1)+' needs an ingredient and a cost.';}return;}
+      sel.push({index:parseInt(idx,10),ingredient_id:parseInt(ing.value,10),unit_cost:parseFloat(cost.value)});}
+    if(!sel.length){if(msg){msg.style.color='var(--red)';msg.textContent='Check at least one line.';}return;}
+    fetch('/api/food-cost/invoices/'+v.id+'/apply',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({lines:sel})})
+      .then(function(r){return r.json();}).then(function(d){
+        if(!d||!d.ok){if(msg){msg.style.color='var(--red)';msg.textContent=(d&&d.error)||'Couldn\'t update.';}return;}
+        v.applied_at='just now';renderInvoice();
+        if(typeof toast==='function')toast(d.updated.length+' ingredient cost'+(d.updated.length===1?'':'s')+' updated','success');
+      }).catch(function(){if(msg){msg.style.color='var(--red)';msg.textContent='Couldn\'t reach Cavnar.';}});
+  };
+
   // Load on account tab open
   var _whLoaded = false;
   var _origSwitchTab = window.switchTab;
   window.switchTab = function(n, btn) {
     _origSwitchTab(n, btn);
-    if (n === 'account' && !_whLoaded) { _whLoaded = true; loadWebhook(); }
+    if (n === 'account' && !_whLoaded) { _whLoaded = true; loadWebhook(); if (typeof loadOpsSettings === 'function') loadOpsSettings(); }
+    if (n === 'inventory' && !_fcMenuLoaded) { _fcMenuLoaded = true; loadFcMenu(); }
     if (n === 'marketing' && !_gcLoaded) {
       _gcLoaded = true;
       loadGuestContactsSummary();

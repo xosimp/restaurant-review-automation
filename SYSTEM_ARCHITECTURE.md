@@ -89,6 +89,16 @@ A pure evaluation layer with no I/O: `ShiftContext` (what happened) → per-dime
 3. Confidence (how much data backed the score) is tracked separately from the score itself — a high-confidence 60 and a low-confidence 60 are reported differently.
 `SUBSTANTIVE_DIMENSIONS` gates the "fatigue alone can't produce a score" rule. The what-if / swap evaluator (`_SwapIndex`) only considers same-role swaps and is bounded (`MAX_CANDIDATE_EVALUATIONS`) so it stays O(1)-ish per legality check rather than re-scanning the whole schedule.
 
+## Strategic jobs (`strategy_jobs.py`, gated in `scheduler.scheduler_loop`)
+
+- `loss_sync` — daily after `pos_sync` (3am CT+): comps/voids/refunds into `pos_loss_daily`; an unsupported POS is normal, not a failure.
+- `outcome_evaluations` — daily 6am CT+: closes outcome trackers whose window ended, marks met goals.
+- `auto_draft_schedule` — Thursday 6am CT+: drafts next week's schedule for `auto_draft_schedule=1` restaurants with no `external_scheduling_tool` and no schedule in the last 5 days. A draft in Schedule History only; the push is sent only when the job row says `done`.
+- `issue_scan` — hourly: bad reviews → issues where a manager is routed.
+- Every tick: `issues.tick()` (held notifications, one escalation) and `morning_brief.run_due()` (per-restaurant local hour, claimed per restaurant per day).
+
+**Loop hazard (fixed Sep 19 2026):** never assign to a name inside `scheduler_loop` that is also a module helper it calls — Python makes it local for the whole function. `_due = run_due_posts(...)` did exactly that and every tick died on `UnboundLocalError`. `tests/test_scheduler_catchup.py` now drives a real tick.
+
 ## Notification system
 
 Three delivery channels, one firing decision layer:

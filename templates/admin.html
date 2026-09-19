@@ -397,6 +397,7 @@ const CF = [
   ['onboarding','Onboarding', r=>!r.onboarding.complete && !r.onboarding.dismissed], ['integration','Integration issue', r=>r.integration_health==='error'],
   ['ai','AI issue', r=>r.issues.some(i=>/ai_/.test(i.key))], ['email','Email issue', r=>r.email.failed_7d>0], ['push','Notification issue', r=>r.push.failed_7d>0||r.push.disabled>0],
   ['stale','Data stale', r=>r.modules.some(m=>m.state==='stale'||m.state==='no_data')], ['usage','High usage', r=>r.ai.cost_30d>10||r.ai.calls_30d>150],
+  ['churn','Churn risk: high', r=>(r.churn_risk||{}).level==='high'], ['thin','Data < 50% complete', r=>((r.data_completeness||{}).score??100)<50],
   ['inactive','Inactive 14d+', r=>{const d=parseTs(r.last_active); return !d || (Date.now()-d)>14*864e5;}], ['new','Joined 30d', r=>{const d=parseTs(r.created_at); return d && (Date.now()-d)<30*864e5;}]
 ];
 async function clientsView(){
@@ -414,6 +415,8 @@ async function clientsView(){
       {h:'Locs', key:'locs', r:true, val:r=>_clients.filter(x=>x.brand===r.brand).length, cell:r=>`<span class="num">${_clients.filter(x=>x.brand===r.brand).length}</span>`},
       {h:'Billing', key:'billing', val:r=>r.billing.status, cell:r=>`${bill(r.billing.status)}${r.billing.monthly?'<div class="dim num">'+fmtUSD(r.billing.monthly)+'/mo</div>':''}`},
       {h:'Onboarding', key:'onb', val:r=>r.onboarding.done/(r.onboarding.total||1), cell:r=>r.onboarding.complete?'<span class="b ok nodot">done</span>':`<span class="num">${r.onboarding.done}/${r.onboarding.total}</span>${r.onboarding.dismissed?' <span class="dim">hidden</span>':''}`},
+      {h:'Complete', key:'complete', r:true, val:r=>(r.data_completeness||{}).score??-1, cell:r=>{const sc=(r.data_completeness||{}).score; return sc==null?'<span class="dim">—</span>':`<span class="chip ${sc>=75?'ok':sc>=50?'':'warn'}"><span class="num">${sc}%</span></span>`;}},
+      {h:'Churn risk', key:'churn', val:r=>({high:3,medium:2,low:1}[(r.churn_risk||{}).level]||0), cell:r=>{const c=r.churn_risk||{}; return c.level==='n/a'||!c.level?'<span class="dim">—</span>':`<span class="chip ${c.level==='high'?'warn':c.level==='medium'?'':'ok'}" title="${esc((c.reasons||[]).join(' · '))}">${esc(c.level)}</span>`;}},
       {h:'Integrations', cell:r=>r.integrations.map(intchip).join('')||'<span class="dim">none</span>'},
       {h:'Modules', cell:r=>r.modules.filter(m=>m.enabled).map(modchip).join('')||'<span class="dim">none</span>'},
       {h:'Data', key:'fresh', val:r=>parseTs(r.freshness.reviews||r.freshness.pos)?.getTime()||0, cell:r=>{const t=r.freshness.reviews||r.freshness.pos; const a=parseTs(t); const stale=!a||(Date.now()-a)>3*864e5; return `<span class="${stale?'chip warn':'chip ok'}">${a?ago(t):'never'}</span>`;}},
@@ -695,6 +698,8 @@ async function clientView(id, qs){
     <div class="grid g6" style="margin-bottom:14px">${kpi(fmtN(c.reviews.total),'Reviews','',c.reviews.awaiting+' awaiting')}${kpi(fmtN(c.ai.calls_30d),'AI calls · 30d','',fmtUSD(c.ai.cost_30d,2))}${kpi(fmtN(c.email.sent_7d),'Emails · 7d',c.email.failed_7d?'bad':'',c.email.failed_7d?c.email.failed_7d+' failed':'')}${kpi(fmtN(c.push.devices),'Devices',c.push.disabled?'bad':'',c.push.disabled?c.push.disabled+' dead':'')}${kpi(fmtN(c.alerts_7d),'Alerts · 7d')}${kpi(fmtN(c.guests),'Text club guests')}</div>
     <div class="grid g2">
       <div>${issuesTable(c.issues.map(i=>({...i, restaurant:c.name})), {id:'ci-t'})}
+        <div class="card" style="margin-top:12px"><div class="ch"><h2>Data completeness</h2><span class="num">${(c.data_completeness||{}).score==null?'—':(c.data_completeness.score+'%')}</span></div><div class="cb"><div class="steps">${((c.data_completeness||{}).checks||[]).map(k=>`<div><span class="${k.ok?'ok':'no'}">${k.ok?'✓':'○'}</span><span style="${k.ok?'color:var(--ink4)':''}">${esc(k.label)}</span> <span class="dim">${esc(k.detail||'')}</span></div>`).join('')}</div></div></div>
+        <div class="card" style="margin-top:12px"><div class="ch"><h2>Churn risk</h2><span class="chip ${(c.churn_risk||{}).level==='high'?'warn':''}">${esc((c.churn_risk||{}).level||'—')}</span></div><div class="cb">${((c.churn_risk||{}).reasons||[]).length?`<div class="steps">${c.churn_risk.reasons.map(x=>`<div><span class="no">•</span><span>${esc(x)}</span></div>`).join('')}</div>`:'<span class="dim">No risk signals.</span>'}</div></div>
         <div class="card" style="margin-top:12px"><div class="ch"><h2>Onboarding</h2><span class="num">${c.onboarding.done}/${c.onboarding.total}</span></div><div class="cb"><div class="steps">${c.onboarding.steps.map(s=>`<div><span class="${s.done?'ok':'no'}">${s.done?'✓':'○'}</span><span style="${s.done?'color:var(--ink4)':''}">${esc(s.label)}</span></div>`).join('')}</div></div></div></div>
       <div class="card"><div class="ch"><h2>Profile</h2><a class="sub" href="/admin/client-settings/${c.id}">edit in settings →</a></div><div class="cb"><div class="kv">
         <span class="k">Logins</span><span>${c.logins.map(l=>`<span class="chip ${l.is_active?'':'off'}">${esc(l.username)} · ${esc(l.role)}${l.last_login?' · '+ago(l.last_login):' · never'}</span>`).join(' ')||'—'}</span>
