@@ -5935,6 +5935,38 @@ def mobile_ask_opening(current_user):
     """
     import home_brief
     rid = current_user["restaurant_id"]
+    # One morning surface: the assistant opens with the SAME lines the
+    # morning brief sent, in the same order, so the push, the email, Home
+    # and Ask all say one thing. Home's attention list is the fallback for a
+    # login with no brief (or a brief with nothing measured yet).
+    try:
+        import morning_brief
+        from models import get_restaurant as _gr_open
+        from time_utils import restaurant_now_by_id as _rn_open
+        _r = _gr_open(rid)
+        _brief = morning_brief.build(rid, restaurant=_r, today=_rn_open(rid, naive=True).date(),
+                                     viewer=current_user)
+        _lines = _brief.get("lines") or []
+        if _lines:
+            _tone = {"bad": "critical", "action": "important", "good": "good", "neutral": "watch"}
+            return jsonify(
+                ok=True,
+                briefing=[{"severity": _tone.get(l["tone"], "watch"), "title": l["text"],
+                           "detail": None, "module": None, "ask": l.get("ask")}
+                          for l in _lines[:5]],
+                suggestions=[l["ask"] for l in _lines if l.get("ask")][:5] or _FALLBACK_ASK_SUGGESTIONS,
+                headline=_opening_headline_from_brief(_lines),
+                since_label=None, changes=[],
+                greeting_name=(getattr(_r, "owner_name", "") or "").split(" ")[0] or None,
+                restaurant=getattr(_r, "name", None),
+                location=getattr(_r, "location_name", None),
+            ), 200
+    except Exception as e:
+        try:
+            import ops
+            ops.capture(e, job="ask_opening_brief", context=f"restaurant_id={rid}")
+        except Exception:
+            pass
     try:
         payload, status = home_brief.build_home_brief(current_user)
         if status != 200:
@@ -5987,6 +6019,19 @@ _FALLBACK_ASK_SUGGESTIONS = [
     "How are my reviews doing?",
     "How do I get my labor cost down?",
 ]
+
+
+def _opening_headline_from_brief(lines):
+    """One line naming the state of the business, from the brief's own tones.
+    Leads with what is unresolved — an open issue or a result that landed —
+    because that is what the owner has not dealt with yet."""
+    bad = [l for l in lines if l["tone"] == "bad"]
+    action = [l for l in lines if l["tone"] == "action"]
+    if bad:
+        return f"{len(bad)} thing{'' if len(bad) == 1 else 's'} need{'s' if len(bad) == 1 else ''} you today."
+    if action:
+        return "Nothing urgent. One thing worth doing first."
+    return "Quiet morning — nothing urgent."
 
 
 def _opening_headline(payload, briefing):

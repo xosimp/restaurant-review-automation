@@ -1765,7 +1765,18 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     }).catch(function(){_hbLoading=false;var b=document.getElementById('hb-body');if(b)b.innerHTML='<div class="hb-err"><span>Couldn\'t reach Cavnar — check your connection.</span><button class="cbtn cbtn-secondary cbtn-sm" onclick="hbLoad(true)">Try again</button></div>';});
   };
   window.hbRefresh=function(){if(!_hbLoadedAt||Date.now()-_hbLoadedAt>5*60*1000)hbLoad(false);};
-  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',function(){hbLoad(false);});else hbLoad(false);
+  // A "Ask about this →" link in the morning-brief email lands here with the
+  // question in the query string (morning_brief._ask_url). Ask it once Home
+  // is up, then clean the URL so a refresh doesn't ask again.
+  function hbAskFromUrl(){
+    var m=/[?&]ask=([^&]+)/.exec(window.location.search||'');
+    if(!m)return;
+    var q='';
+    try{q=decodeURIComponent(m[1].replace(/\+/g,' '));}catch(e){q='';}
+    if(window.history&&window.history.replaceState)window.history.replaceState({},'',window.location.pathname+window.location.hash);
+    if(q)setTimeout(function(){hbAsk(q);},400);
+  }
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',function(){hbLoad(false);hbAskFromUrl();});else {hbLoad(false);hbAskFromUrl();}
   document.addEventListener('visibilitychange',function(){if(!document.hidden&&document.getElementById('panel-home').classList.contains('active'))hbRefresh();});
 })();
 </script>

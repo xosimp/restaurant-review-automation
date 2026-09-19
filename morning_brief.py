@@ -21,6 +21,7 @@ happen here by construction. Each line carries an "ask" prompt so a tap opens
 Ask Cavnar on exactly that question.
 """
 import logging
+import os
 from datetime import date, datetime, timedelta
 
 from models import get_conn, DB_PATH
@@ -43,6 +44,73 @@ def _safe(fn, *a, **k):
     except Exception as e:
         log.warning("morning_brief: %s failed: %s", getattr(fn, "__name__", fn), e)
         return None
+
+
+
+def _reviews_waiting(restaurant_id, db_path=DB_PATH):
+    """Reviews with no reply yet, and how many of those are 2 stars or
+    worse. The same statuses the Reviews inbox counts as outstanding."""
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) AS waiting, SUM(rating <= 2) AS urgent FROM reviews "
+            "WHERE restaurant_id=? AND deleted_at IS NULL "
+            "AND response_status IN ('pending','drafted')", (restaurant_id,)).fetchone()
+    finally:
+        conn.close()
+    return {"waiting": int(row["waiting"] or 0), "urgent": int(row["urgent"] or 0)} if row else {}
+
+
+def _critical_low(restaurant_id):
+    """Items the inventory analysis calls critically low — live data only, so
+    a restaurant still on sample figures is never told to order anything."""
+    from inventory import load_inventory_for_restaurant, analysis_for
+    items, is_live = load_inventory_for_restaurant(restaurant_id)
+    if not is_live or not items:
+        return []
+    analysis = (analysis_for(restaurant_id, items=items, is_live=True) or (None, None, {}))[2]
+    return [x["item"] for x in (analysis.get("critical_low") or [])]
+
+
+def _schedule_drafted_recently(restaurant_id, db_path=DB_PATH, days=5):
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT 1 FROM schedule_history WHERE restaurant_id=? AND "
+                           "generated_at >= datetime('now', ?) LIMIT 1",
+                           (restaurant_id, f"-{days} days")).fetchone()
+    finally:
+        conn.close()
+    return bool(row)
+
+
+def _day_context(restaurant, day):
+    """", 88° and sunny — Labor Day" — the weather and the calendar, appended
+    to the day's line. Returns "" when neither is known."""
+    bits = []
+    try:
+        import weather
+        rows = weather.get_forecast_for_week(restaurant, [day.isoformat()]) or []
+        if rows:
+            w = rows[0]
+            piece = str(w.get("short_forecast") or "").lower()
+            if w.get("high_f"):
+                piece = f"{w['high_f']}° and {piece}" if piece else f"a high of {w['high_f']}°"
+            if w.get("precip_pct"):
+                piece += f", {w['precip_pct']}% chance of rain"
+            if piece:
+                bits.append(piece)
+    except Exception as e:
+        log.warning("morning_brief weather failed: %s", e)
+    try:
+        from marketing import get_upcoming_holidays
+        stamp = day.strftime("(%b %d)")
+        upcoming = get_upcoming_holidays(datetime.combine(day, datetime.min.time())) or ""
+        todays = [h.replace(stamp, "").strip() for h in upcoming.split(", ") if stamp in h]
+        if todays:
+            bits.append(todays[0])
+    except Exception as e:
+        log.warning("morning_brief holidays failed: %s", e)
+    return (" — " + " · ".join(bits)) if bits else ""
 
 
 def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=None):
@@ -148,13 +216,59 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
                       "text": f"Worth reviewing: {f['headline']}.",
                       "ask": "Show me the comp and void pattern from last week."})
 
+    # ── waiting on a reply ── (the owner's own inbox, before service)
+    if getattr(restaurant, "module_reviews", 0) and "reviews" not in denied:
+        rs = _safe(_reviews_waiting, restaurant_id, db_path) or {}
+        if rs.get("waiting"):
+            urgent = rs.get("urgent") or 0
+            extra = f", {urgent} of them 2 stars or worse" if urgent else ""
+            lines.append({"key": "reviews", "tone": "bad" if urgent else "action",
+                          "text": f"{rs['waiting']} review{'' if rs['waiting'] == 1 else 's'} "
+                                  f"waiting on a reply{extra}.",
+                          "ask": "Which reviews still need a reply, and what should I say?"})
+
+    # ── running low ── (what the kitchen will hit today, not next week)
+    if getattr(restaurant, "module_inventory", 0) and "inventory" not in denied:
+        low = _safe(_critical_low, restaurant_id) or []
+        if low:
+            named = ", ".join(low[:3]) + (f" and {len(low) - 3} more" if len(low) > 3 else "")
+            lines.append({"key": "stock", "tone": "bad",
+                          "text": f"Running low: {named}.",
+                          "ask": "What do I need to order today?"})
+
+    # ── next week's schedule ── (Thursday onward, if nothing is drafted yet)
+    if getattr(restaurant, "module_labor", 0) and "labor" not in denied and today.weekday() >= 3:
+        if not _safe(_schedule_drafted_recently, restaurant_id, db_path):
+            lines.append({"key": "schedule", "tone": "action",
+                          "text": "Next week's schedule hasn't been built yet.",
+                          "ask": "Build next week's schedule."})
+
+    # ── a slow day worth acting on ──
+    if getattr(restaurant, "module_labor", 0) and "labor" not in denied:
+        sd = _safe(demand.slow_days, restaurant_id, db_path=db_path) or {}
+        slow = (sd.get("slow_days") or [])[:1]
+        if slow:
+            d = slow[0]
+            lines.append({"key": "slow_day", "tone": "neutral",
+                          "text": f"{d['day']}s run about {abs(d['vs_average_pct'])}% under a normal day.",
+                          "ask": f"How do I fill {d['day']}s?"})
+
     # ── today ──
     fc = _safe(demand.forecast_day, restaurant_id, today, db_path=db_path) if "labor" not in denied else None
     if fc and fc.get("available"):
         lines.append({"key": "today", "tone": "neutral",
-                      "text": f"Today looks like a typical {fc['weekday']}: about {_money(fc['typical_sales'])} "
-                              f"(range {_money(fc['low'])}-{_money(fc['high'])} over {fc['samples']} weeks).",
+                      "text": (f"Today looks like a typical {fc['weekday']}: about {_money(fc['typical_sales'])} "
+                               f"(range {_money(fc['low'])}-{_money(fc['high'])} over {fc['samples']} weeks)"
+                               + (_day_context(restaurant, today) or "") + "."),
                       "ask": "What should I focus on before service today?"})
+    elif restaurant is not None:
+        # No forecast yet, but the weather and the calendar are still worth
+        # knowing — and they are the only "today" the first weeks have.
+        context = _day_context(restaurant, today)
+        if context:
+            lines.append({"key": "today", "tone": "neutral",
+                          "text": "Today" + context + ".",
+                          "ask": "What should I focus on before service today?"})
     return {"restaurant_id": restaurant_id, "date": today.isoformat(), "lines": lines}
 
 
@@ -171,6 +285,14 @@ def push_text(brief, restaurant_name):
     return {"title": f"Good morning — {restaurant_name}", "body": body[:230]}
 
 
+def _ask_url(prompt):
+    """A link that opens the dashboard and asks that question — the email's
+    version of the push's one-tap into Ask (dashboard.html reads ?ask=)."""
+    from urllib.parse import quote
+    base = (os.getenv("BASE_URL") or "https://dashboard.cavnar.ai").rstrip("/")
+    return f"{base}/?ask={quote(prompt or '', safe='')}"
+
+
 def _email_html(brief, restaurant_name):
     import html
     dot = {"good": "#2d6a4f", "bad": "#c0392b", "action": "#c84b2f", "neutral": "#7a736a"}
@@ -178,7 +300,13 @@ def _email_html(brief, restaurant_name):
         f'<tr><td style="padding:10px 0;border-top:1px solid #ece7dd;vertical-align:top;width:14px">'
         f'<div style="width:8px;height:8px;border-radius:4px;background:{dot.get(l["tone"], "#7a736a")};'
         f'margin-top:6px"></div></td><td style="padding:10px 0 10px 8px;border-top:1px solid #ece7dd;'
-        f'font-size:15px;line-height:1.55;color:#1a1714">{html.escape(l["text"])}</td></tr>'
+        f'font-size:15px;line-height:1.55;color:#1a1714">{html.escape(l["text"])}'
+        # Every line is a question you can ask about it — the email's
+        # equivalent of tapping the push, which opens Ask on that line.
+        + (f'<br><a href="{html.escape(_ask_url(l.get("ask")), quote=True)}" '
+           f'style="font-size:13px;color:#c84b2f;text-decoration:none">Ask about this &rarr;</a>'
+           if l.get("ask") else "")
+        + '</td></tr>'
         for l in brief["lines"])
     return (f'<p style="font-size:12px;letter-spacing:1px;text-transform:uppercase;color:#7a736a;'
             f'margin:0 0 6px">{html.escape(restaurant_name)} · {brief["date"]}</p>'

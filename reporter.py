@@ -613,6 +613,31 @@ def _follow_through_sections(restaurant_id, owner_view=False):
     except Exception as e:
         log.warning("digest issues block failed: %s", e)
     try:
+        import menu_intelligence
+        sg = (menu_intelligence.reprice_suggestions(restaurant_id) or {}).get("suggestions") or []
+        # Only the ones worth a conversation: a dollar a month of lost margin
+        # is not a weekly-review item.
+        worth = [x for x in sg if (x.get("monthly_margin_lost") or 0) >= 25][:3]
+        if worth:
+            out.append(report_eyebrow("Prices to revisit") + report_paragraph(_list(
+                f"{x['dish']}: {(x.get('drivers') or [{}])[0].get('ingredient', 'ingredient costs')} "
+                f"rose, about ${x['monthly_margin_lost']:,.0f}/month of margin — "
+                f"${x['suggested_price']:.2f} restores the old food cost %"
+                for x in worth if x.get("suggested_price"))))
+    except Exception as e:
+        log.warning("digest reprice block failed: %s", e)
+    try:
+        import demand
+        slow = (demand.slow_days(restaurant_id) or {}).get("slow_days") or []
+        if slow:
+            d = slow[0]
+            out.append(report_eyebrow("Your quietest day") + report_paragraph(_html.escape(
+                f"{d['day']}s run about {abs(d['vs_average_pct'])}% under a normal day "
+                f"({d['samples']} weeks of history). A text to the guest club aimed at that "
+                f"day is the cheapest thing that moves it — Cavnar tracks what it does.")))
+    except Exception as e:
+        log.warning("digest slow-day block failed: %s", e)
+    try:
         import loss_detection
         ls = (loss_detection.signals(restaurant_id) or {}) if owner_view else {}
         flagged = ls.get("flagged") or []

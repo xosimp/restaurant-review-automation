@@ -61,9 +61,16 @@ def _token(client, db_path, rid):
     return {"Authorization": "Bearer " + resp.get_json()["token"]}
 
 
-def _opening(client, db_path, rid, payload):
-    """Drive the route with a known home_brief payload."""
-    import home_brief
+def _opening(client, db_path, rid, payload, brief_lines=None):
+    """Drive the route with a known home_brief payload.
+
+    The opening prefers the morning brief's own lines (one morning surface —
+    workflow audit #3); `brief_lines=None` means "no brief", which is what
+    exercises this Home-derived fallback.
+    """
+    import home_brief, morning_brief
+    orig_build = morning_brief.build
+    morning_brief.build = lambda *a, **k: {"date": "2026-09-21", "lines": brief_lines or []}
     headers = _token(client, db_path, rid)
     import mobile_api as m
     m.home_brief = None  # the route imports it itself; make sure that import is the patched one
@@ -74,6 +81,7 @@ def _opening(client, db_path, rid, payload):
         return client.get("/mobile/api/ask-cavnar/opening", headers=headers).get_json()
     finally:
         home_brief.build_home_brief = orig
+        morning_brief.build = orig_build
 
 
 # ── 1 + 2. the opening: a briefing and questions drawn from real signals ──
@@ -102,6 +110,23 @@ def test_the_briefing_puts_the_worst_thing_first(client, db_path):
     })
     assert [b["severity"] for b in body["briefing"]] == ["critical", "important", "watch", "good"]
     assert body["headline"]
+
+
+def test_the_opening_is_the_morning_briefs_own_lines(client, db_path):
+    """One morning surface: the push, the email, Home and Ask all say the
+    same thing in the same order (workflow audit #3)."""
+    rid = _restaurant(db_path)
+    body = _opening(client, db_path, rid, {"attention": [], "wins": [], "ask_suggestions": ["home q"]},
+                    brief_lines=[
+                        {"key": "issues", "text": "Open issues: 1 unacknowledged", "tone": "bad",
+                         "ask": "What issues are still open?"},
+                        {"key": "fix_first", "text": "If you only do one thing: fix Friday service",
+                         "tone": "action", "ask": "Walk me through this"},
+                    ])
+    assert [b["title"] for b in body["briefing"]][:2] == [
+        "Open issues: 1 unacknowledged", "If you only do one thing: fix Friday service"]
+    assert body["suggestions"][0] == "What issues are still open?"
+    assert body["headline"] == "1 thing needs you today."
 
 
 def test_a_broken_home_brief_still_opens_the_panel(client, db_path):
