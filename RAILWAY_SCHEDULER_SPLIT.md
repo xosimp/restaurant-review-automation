@@ -34,7 +34,7 @@ inside the gunicorn web process:
 | Problem | Fixed by a same-container second process? | Real fix |
 |---|---|---|
 | Scheduler writes hold SQLite's single writer lock; requests wait | **No** — same file either way | Postgres |
-| A job overrunning an hour makes later `now.hour ==` jobs skip for the day | **No** — it is the gating logic | Catch-up gating in `scheduler.py` (code change) |
+| A job overrunning an hour makes later `now.hour ==` jobs skip for the day | **No** — it is the gating logic | **Done** (Sep 2026): catch-up gating in `scheduler.py` — `_due` / `_latest_slot` |
 | Scheduler shares the web process: a web-worker restart kills a job mid-run; its Python work competes for the GIL | **Yes** | Run `worker.py` as a second process in the same service |
 
 ## Option: a second process in the SAME service

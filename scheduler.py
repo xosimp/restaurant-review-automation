@@ -771,6 +771,42 @@ def run_marketing_metrics_sync():
 SCHEDULER_TICK_SECONDS = int(os.getenv("SCHEDULER_TICK_SECONDS", "300"))
 
 
+# Catch-up gating (audit #17, P0-2).
+#
+# Every daily job used to be gated on `now.hour == H`: it ran only if a tick
+# happened to land inside that one hour. The loop is sequential, so a job that
+# ran long — or a deploy, a crash, or the lease changing hands at the wrong
+# moment — meant later hours were never observed and those jobs silently did
+# not run that day. Nothing failed; the review fetch, the digest or the
+# nightly backup just didn't happen.
+#
+# `_due` makes a job eligible from its hour until `until`, and the per-day
+# claim_period key still guarantees it runs at most once. So an on-time day
+# behaves exactly as before, and a late day runs the job late instead of not
+# at all.
+def _due(now, hour, until=24):
+    """True from `hour` (inclusive) until `until` (exclusive), local time."""
+    return hour <= now.hour < until
+
+
+def _latest_slot(now, slots):
+    """The most recent slot at or before now, or None before the first.
+
+    For multi-slot jobs (the 8/12/16/20 review fetch). Catching up claims only
+    the LATEST missed slot, so an outage spanning two slots produces one fetch,
+    not two back to back.
+    """
+    passed = [h for h in slots if h <= now.hour]
+    return max(passed) if passed else None
+
+
+# The opt-in invite texts guests. It checks guest quiet hours itself and
+# DEFERS inside them — but a deferred run still spends the day's single claim,
+# and tomorrow's run scans a different business date, so those guests would
+# never be invited. Its catch-up window closes well before quiet hours begin.
+OPTIN_INVITE_LATEST_HOUR = 20
+
+
 # Backups keep this many days of local snapshots on the Railway volume.
 BACKUP_RETAIN_DAYS = int(os.getenv("BACKUP_RETAIN_DAYS", "14"))
 
@@ -1491,94 +1527,98 @@ def scheduler_loop():
 
             # Monday 6am — run competitor analysis for all clients
             # 2am daily — backup DB to email
-            if now.hour == 2 and _ops.claim_period("backup_db", str(today)):
+            if _due(now, 2) and _ops.claim_period("backup_db", str(today)):
                 log.info("Running daily DB backup...")
                 _ops.run_job("backup_db", backup_db)
                 # Straight after the backup, so the pruned rows are in it.
                 _ops.run_job("prune_ledgers", _ops.prune_ledgers)
 
-            if now.hour == 6 and now.weekday() == 0 and _ops.claim_period("competitor_analysis", str(today)):
+            if _due(now, 6) and now.weekday() == 0 and _ops.claim_period("competitor_analysis", str(today)):
                 log.info("Running weekly competitor analysis...")
                 _ops.run_job("competitor_analysis", run_weekly_competitor_analysis)
 
             # An hour after the competitor run, so the two weekly Intel jobs
             # do not compete for the same minute.
-            if now.hour == 7 and now.weekday() == 0 and _ops.claim_period("ai_visibility", str(today)):
+            if _due(now, 7) and now.weekday() == 0 and _ops.claim_period("ai_visibility", str(today)):
                 log.info("Running weekly AI visibility checks...")
                 _ops.run_job("ai_visibility", run_weekly_ai_visibility)
 
-            if now.hour == 3 and _ops.claim_period("pos_sync", str(today)):
+            if _due(now, 3) and _ops.claim_period("pos_sync", str(today)):
                 log.info("Running nightly Toast POS sync...")
                 _ops.run_job("pos_sync", run_toast_sync)
 
-            if now.hour == 5 and _ops.claim_period("inventory_depletion", str(today)):
+            if _due(now, 5) and _ops.claim_period("inventory_depletion", str(today)):
                 log.info("Running nightly ingredient depletion sync...")
                 _ops.run_job("inventory_depletion", run_daily_depletion_sync)
 
-            if now.hour == 4 and _ops.claim_period("marketing_metrics_sync", str(today)):
+            # ── 5-6am chain: snapshot, then both root-cause passes ──
+            # Placed straight after the depletion sync rather than where their
+            # hour would suggest, because under catch-up gating several jobs
+            # can come due in ONE tick and they then run in the order they
+            # appear here. The snapshot must follow depletion, the food cost
+            # diagnosis must follow the snapshot, and the 9am digest must
+            # follow both diagnoses — which it did not, positionally, before.
+            if _due(now, 5) and _ops.claim_period("food_cost_snapshots", str(today)):
+                log.info("Writing food cost snapshots...")
+                _ops.run_job("food_cost_snapshots", run_food_cost_snapshots)
+
+            if _due(now, 6) and _ops.claim_period("review_diagnoses", str(today)):
+                log.info("Running review root-cause diagnoses...")
+                _ops.run_job("review_diagnoses", run_review_diagnoses)
+
+            if _due(now, 6) and _ops.claim_period("food_cost_diagnoses", str(today)):
+                log.info("Running food cost root-cause diagnoses...")
+                _ops.run_job("food_cost_diagnoses", run_food_cost_diagnoses)
+
+            if _due(now, 4) and _ops.claim_period("marketing_metrics_sync", str(today)):
                 log.info("Running marketing metrics sync...")
                 _ops.run_job("marketing_metrics_sync", run_marketing_metrics_sync)
 
-            if now.hour == 7 and _ops.claim_period("refresh_tokens", str(today)):
+            if _due(now, 7) and _ops.claim_period("refresh_tokens", str(today)):
                 log.info("Refreshing expiring IG/FB tokens...")
                 _ops.run_job("refresh_tokens", refresh_expiring_tokens)
 
             # Fetch every 4 hours: 8am, 12pm, 4pm, 8pm Chicago time
-            if now.hour in (8, 12, 16, 20) and _ops.claim_period("review_fetch", f"{today}-{now.hour}"):
-                log.info(f"Running review fetch (every 4hr) at {now.hour}:00 CT...")
+            _fetch_slot = _latest_slot(now, (8, 12, 16, 20))
+            if _fetch_slot is not None and _ops.claim_period("review_fetch", f"{today}-{_fetch_slot}"):
+                log.info(f"Running review fetch for the {_fetch_slot}:00 CT slot "
+                         f"(now {now.hour}:{now.minute:02d})...")
                 _ops.run_job("review_fetch", run_daily_fetch)
 
             # 8am daily — operator failure digest (only sends if something failed)
-            if now.hour == 8 and _ops.claim_period("ops_digest", str(today)):
+            if _due(now, 8) and _ops.claim_period("ops_digest", str(today)):
                 _ops.run_job("ops_failure_digest", _ops.send_failure_digest)
 
-            if now.hour == 9 and _ops.claim_period("weekly_digest", str(today)):
+            if _due(now, 9) and _ops.claim_period("weekly_digest", str(today)):
                 log.info("Running weekly digest check...")
                 _ops.run_job("weekly_digests", run_weekly_digests)
 
-            if now.hour == 10 and now.weekday() == 0 and _ops.claim_period("stale_inventory", str(today)):
+            if _due(now, 10) and now.weekday() == 0 and _ops.claim_period("stale_inventory", str(today)):
                 # Monday 10am — check for stale inventory data
                 log.info("Running stale inventory check...")
                 _ops.run_job("stale_inventory", check_stale_inventory)
 
             # 10am daily — no-response + trend/threshold/labor alerts
-            if now.hour == 10 and _ops.claim_period("daily_alerts", str(today)):
+            if _due(now, 10) and _ops.claim_period("daily_alerts", str(today)):
                 log.info("Running daily alert checks...")
                 _ops.run_job("daily_alerts", run_daily_alert_checks)
 
-            # 6am daily — root-cause diagnoses, before the owner opens the app
-            # and before the 9am weekly digest reads them.
-            if now.hour == 6 and _ops.claim_period("review_diagnoses", str(today)):
-                log.info("Running review root-cause diagnoses...")
-                _ops.run_job("review_diagnoses", run_review_diagnoses)
-
-            # 5:30-ish daily, straight after the depletion sync at 5 — the
-            # snapshot has to be written from post-sync numbers, and the
-            # diagnosis at 6 has to read the snapshot.
-            if now.hour == 5 and _ops.claim_period("food_cost_snapshots", str(today)):
-                log.info("Writing food cost snapshots...")
-                _ops.run_job("food_cost_snapshots", run_food_cost_snapshots)
-
-            if now.hour == 6 and _ops.claim_period("food_cost_diagnoses", str(today)):
-                log.info("Running food cost root-cause diagnoses...")
-                _ops.run_job("food_cost_diagnoses", run_food_cost_diagnoses)
-
             # 1st of the month at 9am — send monthly summary to all active clients
-            if now.day == 1 and now.hour == 9 and _ops.claim_period("monthly_summary", str(today)):
+            if now.day == 1 and _due(now, 9) and _ops.claim_period("monthly_summary", str(today)):
                 log.info("Running monthly summary emails...")
                 _ops.run_job("monthly_summary", run_monthly_summaries)
 
-            if now.hour == 10 and _ops.claim_period("onboarding", str(today)):
+            if _due(now, 10) and _ops.claim_period("onboarding", str(today)):
                 # 10am daily — onboarding email sequence
                 log.info("Running onboarding sequence check...")
                 _ops.run_job("onboarding_emails", run_onboarding_sequence)
 
-            if now.hour == 11 and now.weekday() == 0 and _ops.claim_period("inactive_clients", str(today)):
+            if _due(now, 11) and now.weekday() == 0 and _ops.claim_period("inactive_clients", str(today)):
                 # Monday 11am — inactive client check
                 log.info("Running inactive client check...")
                 _ops.run_job("inactive_clients", check_inactive_clients)
 
-            if now.hour == 11 and _ops.claim_period("optin_invite", str(today)):
+            if _due(now, 11, until=OPTIN_INVITE_LATEST_HOUR) and _ops.claim_period("optin_invite", str(today)):
                 # 11am daily — invite guests Toast identified yesterday to
                 # opt in for themselves. Yesterday, not today: Toast's
                 # business day doesn't end at midnight, so today's is still
