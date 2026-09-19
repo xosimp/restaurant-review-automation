@@ -23,7 +23,8 @@ from models import create_restaurant, Restaurant, get_conn
 def _redirect_db(monkeypatch, db_path):
     real_get_conn = models.get_conn
     redirect = lambda *a, **k: real_get_conn(db_path)
-    for mod in (models, auth, client_api, tools):
+    import goals, outcomes, metrics
+    for mod in (models, auth, client_api, tools, goals, outcomes, metrics):
         monkeypatch.setattr(mod, "get_conn", redirect, raising=False)
     monkeypatch.setattr(models, "DB_PATH", db_path)
     # The 5/min Ask Cavnar limiter is process-global and keyed by restaurant
@@ -1077,7 +1078,7 @@ def test_the_stream_event_carries_the_orb_state(client, db_path, monkeypatch):
     parse must include `state`, not just `label`."""
     rid = _restaurant(db_path)
     _login_as(monkeypatch, rid)
-    def fake_ask(restaurant, question, history=None, on_progress=None):
+    def fake_ask(restaurant, question, history=None, on_progress=None, **kw):
         on_progress("Reading your reviews", "searching")
         return "answer", False, []
     monkeypatch.setattr("ask_cavnar.ask_with_tools", fake_ask)
@@ -1086,3 +1087,119 @@ def test_the_stream_event_carries_the_orb_state(client, db_path, monkeypatch):
     events = [json.loads(line[6:]) for line in body.split("\n") if line.startswith("data: ")]
     progress = [e for e in events if e["type"] == "progress"]
     assert progress and progress[0]["state"] == "searching" and progress[0]["label"] == "Reading your reviews"
+
+
+# ── Ask follows the login's role, not just the restaurant's plan ─────────
+
+def _full_plan(db_path):
+    return _restaurant(db_path, module_reviews=1, module_labor=1, module_inventory=1, module_marketing=1)
+
+
+_MANAGER = {"id": 9, "role": "manager", "is_admin": 0}
+_OWNER = {"id": 7, "role": "client", "is_admin": 0}
+
+
+def test_a_manager_view_drops_food_cost_and_keeps_the_rest(db_path):
+    r = models.get_restaurant(_full_plan(db_path), db_path=db_path)
+    view = tools.viewer_restaurant(r, _MANAGER)
+    assert view.module_inventory == 0 and view.module_labor == 1 and view.module_reviews == 1
+    assert r.module_inventory == 1, "the real restaurant object is never altered"
+    names = {s["name"] for s in tools.tool_specs(view)}
+    assert not names & {"read_food_cost", "read_menu_margins", "read_dish_scorecard",
+                        "read_reprice_suggestions", "send_supplier_order"}
+    assert {"read_schedule", "read_reviews"} <= names
+    assert "read_food_cost" in {s["name"] for s in tools.tool_specs(tools.viewer_restaurant(r, _OWNER))}
+
+
+def test_a_tool_the_manager_was_not_offered_still_refuses_to_run(db_path):
+    """The offered list is not the permission check — execution is."""
+    r = models.get_restaurant(_full_plan(db_path), db_path=db_path)
+    out = json.loads(tools.run_read_tool("read_food_cost", r.id, {},
+                                         restaurant=tools.viewer_restaurant(r, _MANAGER)))
+    assert "not available" in out["error"]
+
+
+def test_a_manager_cannot_set_or_read_a_food_cost_goal_through_ask(db_path):
+    import goals
+    r = models.get_restaurant(_full_plan(db_path), db_path=db_path)
+    goals.set_goal(r.id, "food_cost_pct", 28)
+    view = tools.viewer_restaurant(r, _MANAGER)
+    assert "error" in json.loads(tools.run_read_tool("set_goal", r.id,
+                                 {"metric": "food_cost_pct", "target": 25}, restaurant=view))
+    assert json.loads(tools.run_read_tool("read_goals", r.id, {}, restaurant=view))["goals"] == []
+    owner = json.loads(tools.run_read_tool("read_goals", r.id, {}, restaurant=tools.viewer_restaurant(r, _OWNER)))
+    assert [g["metric"] for g in owner["goals"]] == ["food_cost_pct"]
+
+
+def test_the_model_cannot_smuggle_in_a_viewer(db_path):
+    """`_viewer` is ours; a tool input carrying one is dropped."""
+    import goals
+    r = models.get_restaurant(_full_plan(db_path), db_path=db_path)
+    view = tools.viewer_restaurant(r, _MANAGER)
+    out = json.loads(tools.run_read_tool("set_goal", r.id, {"metric": "food_cost_pct", "target": 25,
+                                                          "_viewer": None}, restaurant=view))
+    assert "error" in out and goals.progress(r.id) == []
+
+
+def test_a_manager_asking_never_sees_food_cost_in_the_snapshot_or_tools(db_path, monkeypatch):
+    r = models.get_restaurant(_full_plan(db_path), db_path=db_path)
+    ask_cavnar.invalidate_context()
+    monkeypatch.setattr(ask_cavnar, "_CONTEXT_BUILDERS", tuple(
+        (attr, (lambda rid: "FOOD COST SECRET 31.4%") if attr == "module_inventory" else (lambda rid: ""))
+        for attr, _ in ask_cavnar._CONTEXT_BUILDERS))
+    monkeypatch.setattr(ask_cavnar, "_cross_module_context", lambda *a, **k: "")
+    seen = []
+    def fake_create(*a, **kw):
+        seen.append(kw)
+        return _Msg("end_turn", [])
+    monkeypatch.setattr(ask_cavnar, "create_with_retry", fake_create)
+    monkeypatch.setattr(ask_cavnar, "extract_text", lambda m: "ok")
+
+    # Owner first, so a cache keyed by restaurant alone would serve the
+    # owner's snapshot to the manager straight after.
+    ask_cavnar.ask_with_tools(r, "how are we doing?", user=_OWNER)
+    assert "FOOD COST SECRET" in json.dumps(seen[-1]["system"])
+    ask_cavnar.ask_with_tools(r, "how are we doing?", user=_MANAGER)
+    assert "FOOD COST SECRET" not in json.dumps(seen[-1]["system"])
+    assert "read_food_cost" not in {t["name"] for t in seen[-1]["tools"]}
+
+
+def test_a_write_tool_outside_the_role_is_not_proposed(db_path, monkeypatch):
+    r = models.get_restaurant(_full_plan(db_path), db_path=db_path)
+    calls = {"n": 0}
+    def fake_create(*a, **kw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return _Msg("tool_use", [_Block("send_supplier_order", {"supplier_email": "o@f.test"})])
+        return _Msg("end_turn", [])
+    monkeypatch.setattr(ask_cavnar, "create_with_retry", fake_create)
+    monkeypatch.setattr(ask_cavnar, "extract_text", lambda m: "ok")
+    _, _, proposals, _ = ask_cavnar.ask_with_tools(r, "send the order", user=_MANAGER)
+    assert proposals == []
+
+
+def test_the_ask_routes_pass_the_login_through(db_path, monkeypatch):
+    """All four Ask routes, web and mobile, stream and not: a route that forgot
+    `user=` would quietly fall back to the unrestricted view."""
+    import mobile_api
+    seen = []
+    monkeypatch.setattr(client_api, "_do_ask_cavnar",
+                        lambda *a, **k: (seen.append(k.get("user")) or ({"ok": True}, 200)))
+    monkeypatch.setattr(client_api, "_ask_cavnar_stream_response",
+                        lambda *a, **k: (seen.append(k.get("user")) or ({"ok": True}, 200)))
+    rid = _full_plan(db_path)
+    manager = {"id": 9, "restaurant_id": rid, "role": "manager", "is_admin": 0,
+               "username": "m", "email": "m@x.test"}
+    monkeypatch.setattr(auth, "get_current_user", lambda: manager)
+    monkeypatch.setattr(auth, "get_session_user", lambda *a, **k: manager, raising=False)
+    app = Flask(__name__, template_folder="../templates")
+    app.register_blueprint(client_bp)
+    app.register_blueprint(mobile_api.mobile_bp)
+    c = app.test_client()
+    body = {"question": "margins?"}
+    hdr = {"Authorization": "Bearer t"}
+    c.post("/api/ask-cavnar", json=body)
+    c.post("/api/ask-cavnar/stream", json=body)
+    c.post("/mobile/api/ask-cavnar", json=body, headers=hdr)
+    c.post("/mobile/api/ask-cavnar/stream", json=body, headers=hdr)
+    assert len(seen) == 4 and all(u and u.get("role") == "manager" for u in seen), seen

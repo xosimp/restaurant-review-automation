@@ -230,6 +230,15 @@ def _build(current_user):
     now = datetime.now(timezone.utc)
     local_now = restaurant_now(restaurant)
     active = get_active_modules(restaurant)
+    # Bought is not the same as allowed: a shift manager at a full-plan
+    # restaurant still may not read Food Cost (permissions.ROLE_MANAGER), and
+    # Home — and the Ask opening, which is built from this payload — must
+    # drop every module the role can't see, exactly as its routes refuse it.
+    if not current_user.get("is_admin"):
+        from permissions import MODULE_VIEW_PERMISSIONS, has_permission
+        active = [m for m in active
+                  if m["key"] not in MODULE_VIEW_PERMISSIONS
+                  or has_permission(current_user, MODULE_VIEW_PERMISSIONS[m["key"]])]
     active_keys = {m["key"] for m in active}
     conn = get_conn()
     r = _one(conn, "SELECT * FROM restaurants WHERE id=?", (rid,)) or {}

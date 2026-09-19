@@ -516,7 +516,7 @@ def test_the_business_snapshot_reports_every_module_it_actually_read(db_path, mo
         return _reply("Friday is the thing to look at.")
 
     monkeypatch.setattr(ask_cavnar, "create_with_retry", _fake)
-    monkeypatch.setattr(tools, "run_read_tool", lambda name, rid, inp: json.dumps(
+    monkeypatch.setattr(tools, "run_read_tool", lambda name, rid, inp, **kw: json.dumps(
         {"has_data": True, "modules_consulted": ["reviews", "food_cost", "labor"]}))
 
     _a, _t, _p, meta = ask_cavnar.ask_with_tools(r, "why did profits drop?")

@@ -265,3 +265,17 @@ def test_home_dates_are_m_d_yy_and_ask_uses_data_attributes(db_path):
     # carries the full current date on its own ("September 16, 2026") — the
     # restaurant's own name directly under its own header was noise.
     assert "{{ now }}" in panel and "now_mdy" not in panel
+
+
+def test_a_manager_home_leaves_out_food_cost(db_path):
+    """Bought is not allowed: a manager at a full-plan restaurant sees no
+    Food Cost on Home — nor in the Ask opening, which is built from this."""
+    rid = _seed(db_path)
+    owner, _ = home_brief.build_home_brief(_user(rid, uid=1), fresh=True)
+    mgr, _ = home_brief.build_home_brief(_user(rid, uid=2, role="manager"), fresh=True)
+    assert "inventory" in {s["key"] for s in owner["snapshot"]}
+    assert "inventory" not in {s["key"] for s in mgr["snapshot"]}
+    assert all(x.get("module") != "inventory"
+               for key in ("attention", "recommendations", "freshness", "brief")
+               for x in (mgr.get(key) or []) if isinstance(x, dict))
+    assert "labor" in {s["key"] for s in mgr["snapshot"]}

@@ -657,7 +657,7 @@ _DIAGNOSIS_CADENCE_NOTE = (
 )
 
 
-def _read_business_snapshot(restaurant_id):
+def _read_business_snapshot(restaurant_id, _viewer=None):
     """Every module's executive read, plus what lines up between them.
 
     The tool audit #15 said had to exist. An owner asking "why did profits
@@ -674,7 +674,9 @@ def _read_business_snapshot(restaurant_id):
     """
     import business_intelligence as bi
     try:
-        brief = bi.executive_brief(restaurant_id)
+        # The viewer's copy, so a module this login can't read is "not on
+        # this plan" here too — including its dollars in the money ranking.
+        brief = bi.executive_brief(restaurant_id, restaurant=_viewer)
     except Exception as e:
         log.warning("read_business_snapshot failed: %s", e)
         return {"has_data": False, "note": f"Could not read across modules: {e}"}
@@ -994,21 +996,27 @@ def _read_open_issues(restaurant_id):
             "routing_set_up": bool(issues.get_routing(restaurant_id))}
 
 
-def _read_goals(restaurant_id):
+def _read_goals(restaurant_id, _viewer=None):
     import goals
-    return {"goals": [{**g, "summary": goals.summarise(g)} for g in goals.progress(restaurant_id)]}
+    return {"goals": [{**g, "summary": goals.summarise(g)} for g in goals.progress(restaurant_id)
+                      if metric_visible(_viewer, g.get("metric"))]}
 
 
-def _read_outcomes(restaurant_id):
+def _read_outcomes(restaurant_id, _viewer=None):
     import outcomes
     closed = [dict(r, summary=outcomes.summarise(r))
-              for r in outcomes.list_outcomes(restaurant_id, limit=20) if r.get("status") != "tracking"]
-    return {"tracking": outcomes.progress(restaurant_id), "results": closed,
+              for r in outcomes.list_outcomes(restaurant_id, limit=20)
+              if r.get("status") != "tracking" and metric_visible(_viewer, r.get("metric"))]
+    return {"tracking": [r for r in outcomes.progress(restaurant_id)
+                         if metric_visible(_viewer, r.get("metric"))],
+            "results": closed,
             "caveat": outcomes.CAUSATION_CAVEAT}
 
 
-def _set_goal(restaurant_id, metric=None, target=None, deadline=None, note=None):
+def _set_goal(restaurant_id, metric=None, target=None, deadline=None, note=None, _viewer=None):
     import goals
+    if not metric_visible(_viewer, metric):
+        return {"error": "Food cost goals are for logins that can see food cost."}
     try:
         g = goals.set_goal(restaurant_id, metric, target, deadline=deadline, note=note)
     except ValueError as e:
@@ -1016,8 +1024,10 @@ def _set_goal(restaurant_id, metric=None, target=None, deadline=None, note=None)
     return {"ok": True, "goal": g, "summary": goals.summarise(g)}
 
 
-def _track_outcome(restaurant_id, title=None, metric=None, source_key=None):
+def _track_outcome(restaurant_id, title=None, metric=None, source_key=None, _viewer=None):
     import outcomes
+    if not metric_visible(_viewer, metric):
+        return {"error": "Food cost tracking is for logins that can see food cost."}
     if not title or not metric:
         return {"error": "title and metric are required"}
     try:
@@ -1038,6 +1048,7 @@ TOOLS = [
         # number, and it replaces six single-module calls with one.
         "kind": "read",
         "fn": _read_business_snapshot,
+        "wants_viewer": True,
         "module": None,
         "spec": {
             "name": "read_business_snapshot",
@@ -1516,6 +1527,7 @@ TOOLS = [
     {
         "kind": "read",
         "fn": _read_goals,
+        "wants_viewer": True,
         "module": None,
         "spec": {
             "name": "read_goals",
@@ -1526,6 +1538,7 @@ TOOLS = [
     {
         "kind": "read",
         "fn": _read_outcomes,
+        "wants_viewer": True,
         "module": None,
         "spec": {
             "name": "read_outcomes",
@@ -1542,6 +1555,7 @@ TOOLS = [
         # one), and sends nothing — same footing as change_setting.
         "kind": "action",
         "fn": _set_goal,
+        "wants_viewer": True,
         "module": None,
         "spec": {
             "name": "set_goal",
@@ -1561,6 +1575,7 @@ TOOLS = [
     {
         "kind": "action",
         "fn": _track_outcome,
+        "wants_viewer": True,
         "module": None,
         "spec": {
             "name": "track_outcome",
@@ -1846,6 +1861,65 @@ TOOLS = [
 _BY_NAME = {t["spec"]["name"]: t for t in TOOLS}
 
 
+# ── Who is asking ───────────────────────────────────────────────────────────
+# Ask used to see the RESTAURANT and never the person: a shift manager, whom
+# every Food Cost route refuses (FOOD_COST_VIEW), could ask for margins and
+# get them. The fix is one object: the restaurant as this login may see it —
+# a copy with every module the role can't read switched off. Everything that
+# already honours module flags (build_context, business_intelligence,
+# tool_specs) then hides those modules with no second list to keep in step.
+
+# Tools with no module flag that still read a module, by permission key.
+_INTEL_TOOLS = {"read_competitors", "read_ai_visibility", "refresh_competitors"}
+# Metrics that are the Food Cost module's numbers wherever they appear.
+_FOOD_METRICS = {"food_cost_pct", "weekly_waste"}
+_MODULE_FLAGS = {"reviews": "module_reviews", "labor": "module_labor",
+                 "inventory": "module_inventory", "marketing": "module_marketing"}
+
+
+def viewer_restaurant(restaurant, user):
+    """`restaurant` as `user` may see it in Ask. `user` is the auth
+    decorators' current_user dict; None means no role restriction (the
+    scheduler, tests, admin tooling). Fails closed: a role lookup that
+    errors hides every module rather than showing all of them."""
+    import dataclasses
+    denied = set()
+    if user is not None and not user.get("is_admin"):
+        try:
+            from permissions import MODULE_VIEW_PERMISSIONS, has_permission
+            denied = {k for k, perm in MODULE_VIEW_PERMISSIONS.items() if not has_permission(user, perm)}
+        except Exception:
+            denied = set(_MODULE_FLAGS) | {"intel"}
+    view = dataclasses.replace(restaurant, **{_MODULE_FLAGS[k]: 0 for k in denied if k in _MODULE_FLAGS})
+    view._ask_denied = frozenset(denied)
+    return view
+
+
+def _denied(restaurant):
+    return getattr(restaurant, "_ask_denied", frozenset()) if restaurant is not None else frozenset()
+
+
+def metric_visible(restaurant, metric):
+    """A goal/outcome metric this viewer may see or set."""
+    base = (metric or "").split(":", 1)[0]
+    return not (base in _FOOD_METRICS and "inventory" in _denied(restaurant))
+
+
+def tool_allowed(name, restaurant):
+    """Whether `restaurant` (a viewer_restaurant, or a plain one) may use
+    this tool. The single test behind both the offered list and execution."""
+    t = _BY_NAME.get(name)
+    if not t:
+        return False
+    if restaurant is None:
+        return True
+    if t.get("module") and not getattr(restaurant, t["module"], 0):
+        return False
+    if name in _INTEL_TOOLS and "intel" in _denied(restaurant):
+        return False
+    return True
+
+
 def tool_specs(restaurant=None):
     """The `tools` array passed to the API.
 
@@ -1857,10 +1931,7 @@ def tool_specs(restaurant=None):
     """
     if restaurant is None:
         return [t["spec"] for t in TOOLS]
-    return [
-        t["spec"] for t in TOOLS
-        if not t.get("module") or getattr(restaurant, t["module"], 0)
-    ]
+    return [t["spec"] for t in TOOLS if tool_allowed(t["spec"]["name"], restaurant)]
 
 
 def is_write_tool(name):
@@ -1902,7 +1973,7 @@ def _mark_untrusted(node):
     return node
 
 
-def run_read_tool(name, restaurant_id, tool_input):
+def run_read_tool(name, restaurant_id, tool_input, restaurant=None):
     """Execute a read tool. Returns a JSON string for the tool_result block.
 
     Errors come back as content rather than raising: a tool that fails
@@ -1914,7 +1985,14 @@ def run_read_tool(name, restaurant_id, tool_input):
     # confirmation step, which is the whole point of the separate kind.
     if not tool or tool["kind"] not in ("read", "action"):
         return json.dumps({"error": f"unknown read tool: {name}"})
-    kwargs = {k: v for k, v in (tool_input or {}).items() if v is not None}
+    # Enforced here as well as in the offered list: the model can name a tool
+    # it was never offered, and a list is not a permission check.
+    if not tool_allowed(name, restaurant):
+        return json.dumps({"error": f"{name} is not available to this login"})
+    # Model input never carries the viewer: a leading underscore is ours.
+    kwargs = {k: v for k, v in (tool_input or {}).items() if v is not None and not str(k).startswith("_")}
+    if tool.get("wants_viewer"):
+        kwargs["_viewer"] = restaurant
     try:
         payload = tool["fn"](restaurant_id, **kwargs)
         if name in _UNTRUSTED_CONTENT_TOOLS and isinstance(payload, dict):

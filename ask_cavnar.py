@@ -576,7 +576,8 @@ def invalidate_context(restaurant_id=None):
     if restaurant_id is None:
         _CONTEXT_CACHE.clear()
     else:
-        _CONTEXT_CACHE.pop(int(restaurant_id), None)
+        for key in [k for k in _CONTEXT_CACHE if k[0] == int(restaurant_id)]:
+            _CONTEXT_CACHE.pop(key, None)
 
 
 def build_context(restaurant):
@@ -588,7 +589,11 @@ def build_context(restaurant):
     described as empty — that keeps the model from being asked to reason
     about data that was never going to exist for this client."""
     import time
-    cached = _CONTEXT_CACHE.get(restaurant.id)
+    # Keyed by what the viewer may see as well as by restaurant: an owner's
+    # snapshot served from cache to a manager a minute later would carry
+    # every figure the manager's copy leaves out.
+    key = (restaurant.id, tuple(sorted(getattr(restaurant, "_ask_denied", ()))))
+    cached = _CONTEXT_CACHE.get(key)
     if cached and (time.time() - cached[0]) < _CONTEXT_TTL_SECONDS:
         return cached[1]
 
@@ -632,7 +637,7 @@ def build_context(restaurant):
     # back to a bare placeholder the way it used to for a restaurant with
     # zero active modules — date/holiday/identity info isn't module-gated.
     context = "\n".join(parts)
-    _CONTEXT_CACHE[restaurant.id] = (time.time(), context)
+    _CONTEXT_CACHE[key] = (time.time(), context)
     return context
 
 
@@ -937,7 +942,7 @@ _TOOL_LABELS = {
 }
 
 
-def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=False):
+def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=False, user=None):
     """Ask Cavnar, with the ability to look things up and to propose actions.
 
     Returns (answer_text, truncated, proposals, meta).
@@ -972,6 +977,12 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
                 pass
     import ask_cavnar_tools as tools
 
+    # From here on `restaurant` is the ASKER's view of it: modules their role
+    # can't read are switched off, so the snapshot, the offered tools, the
+    # cross-module money and every tool call leave them out. `user` is None
+    # only for callers with no login behind them.
+    if user is not None:
+        restaurant = tools.viewer_restaurant(restaurant, user)
     context = build_context(restaurant)
     depth = _depth_for(question, brief=brief)
     system_blocks = _system_blocks(restaurant.name, context, depth)
@@ -1038,6 +1049,11 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
         for block in calls:
             tools_used.append(block.name)
             if tools.is_write_tool(block.name):
+                if not tools.tool_allowed(block.name, restaurant):
+                    results.append({"type": "tool_result", "tool_use_id": block.id,
+                                    "content": json.dumps({"error": f"{block.name} is not available "
+                                                                    "to this login"})})
+                    continue
                 _progress(_TOOL_LABELS.get(block.name, "Preparing that action"), "shaping")
                 proposal = tools.build_proposal(block.name, block.input)
                 if proposal is None:
@@ -1075,7 +1091,7 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
                     _progress(_TOOL_LABELS.get(
                         block.name, "Making that change" if is_action else "Looking that up"),
                         "working" if is_action else "searching")
-                payload = tools.run_read_tool(block.name, restaurant.id, block.input)
+                payload = tools.run_read_tool(block.name, restaurant.id, block.input, restaurant=restaurant)
                 # Every figure the model is handed becomes fair game for it to
                 # quote, so the verification corpus has to include tool output
                 # as well as the snapshot.

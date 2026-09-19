@@ -580,7 +580,7 @@ def test_do_ask_cavnar_route_forwards_truncated_flag(db_path, monkeypatch):
     r = _restaurant(db_path)
     monkeypatch.setattr(client_api, "get_restaurant", lambda rid: r)
     monkeypatch.setattr(ask_cavnar, "ask_with_tools",
-                        lambda restaurant, question, history=None, surface="web", on_progress=None:
+                        lambda restaurant, question, history=None, surface="web", on_progress=None, **kw:
                             ("cut off mid-", True, [], {}))
 
     payload, status = client_api._do_ask_cavnar(r.id, "How do I get labor down?")

@@ -105,6 +105,8 @@ Two halves:
 
 **Design stance**: an AI-powered restaurant COO, not a chatbot wrapper. Every question gets a fresh `build_context()` snapshot (identity, sibling locations, alerts, memory, module data the restaurant's tier actually has) plus a filtered tool list (`tool_specs(restaurant)` — a tool tagged with a module the restaurant doesn't have is never offered, so the model can't call it and produce an empty-result apology).
 
+**Role scoping**: Ask answers as the asker, not as the restaurant. Every route (web/mobile, stream/non-stream) passes `current_user`; `ask_with_tools(..., user=)` swaps in `ask_cavnar_tools.viewer_restaurant(restaurant, user)` — a copy with every module the role can't read (`permissions.MODULE_VIEW_PERMISSIONS`) switched off — so the snapshot, the cross-module money, the offered tools and every tool call leave it out. `run_read_tool` re-checks `tool_allowed` (the offered list is not the permission check); food-cost metrics in goals/outcomes are filtered via `metric_visible`. The context cache is keyed by (restaurant, denied modules). Home (`home_brief._build`) and the Ask opening built from it filter the same way.
+
 **Tool kinds** (`TOOLS` registry, each entry `{kind, fn, module, spec}`):
 - `read` — executes immediately, returns data (e.g. `read_schedule`, `read_team`, `read_alerts`, `remember`, `forget`).
 - `action` — executes immediately, no confirmation (reserved for low-stakes/reversible calls).
