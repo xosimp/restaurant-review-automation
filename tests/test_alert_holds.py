@@ -160,3 +160,54 @@ def test_without_the_app_the_alert_email_still_arrives(db_path, monkeypatch):
     monkeypatch.setattr(notify, "_send_alert_email", lambda *a, **k: sent.append(a[1]) or True)
     notify._email_alert(rid, "o@x.test", "Labor over", "<p>x</p>", "labor_over", db_path)
     assert sent == ["Labor over"]
+
+
+def test_a_rush_of_held_alerts_is_released_a_few_at_a_time(db_path, monkeypatch):
+    """Releasing a bad lunch's worth of alerts at 13:30 is the burst this
+    feature exists to prevent."""
+    rid = _rid(db_path)
+    sent = []
+    monkeypatch.setattr(notify, "deliver_alert", lambda *a, **k: sent.append(a[1]))
+    past = datetime.now(timezone.utc) - timedelta(minutes=1)
+    for i in range(7):
+        # Seven different reviews — the same one twice is deduped, which has
+        # its own test.
+        notify.hold_alert(rid, "2star", f"sms {i}", "s", "<p>h</p>", past,
+                          review_id=100 + i, db_path=db_path)
+    assert notify.release_due_alerts(db_path=db_path)["released"] == notify.MAX_RELEASE_PER_RESTAURANT
+    assert notify.release_due_alerts(db_path=db_path)["released"] == notify.MAX_RELEASE_PER_RESTAURANT
+    assert notify.release_due_alerts(db_path=db_path)["released"] == 1
+    assert len(sent) == 7, "all of them go out, just not at once"
+
+
+def test_a_hold_stranded_by_an_outage_is_dropped_not_delivered_late(db_path, monkeypatch):
+    """Yesterday's lunch alert arriving tomorrow morning is noise — by then
+    it is in the brief."""
+    rid = _rid(db_path)
+    sent = []
+    monkeypatch.setattr(notify, "deliver_alert", lambda *a, **k: sent.append(a[1]))
+    stale = datetime.now(timezone.utc) - timedelta(hours=notify.HOLD_MAX_LATE_HOURS + 1)
+    notify.hold_alert(rid, "2star", "sms", "s", "<p>h</p>", stale, db_path=db_path)
+    out = notify.release_due_alerts(db_path=db_path)
+    assert out["released"] == 0 and out["dropped_stale"] == 1 and sent == []
+    conn = get_conn(db_path)
+    assert conn.execute("SELECT COUNT(*) FROM alert_holds WHERE sent_at IS NULL").fetchone()[0] == 0
+    conn.close()
+
+
+def test_the_same_alert_is_not_queued_twice_while_it_waits(db_path, monkeypatch):
+    """The log that stops a repeat is written on DELIVERY, so a condition
+    still true at the next fetch would queue itself again."""
+    rid = _rid(db_path)
+    release = datetime.now(timezone.utc) + timedelta(minutes=30)
+    notify.hold_alert(rid, "neg_spike", "sms", "s", "<p>h</p>", release, db_path=db_path)
+    notify.hold_alert(rid, "neg_spike", "sms", "s", "<p>h</p>", release, db_path=db_path)
+    conn = get_conn(db_path)
+    assert conn.execute("SELECT COUNT(*) FROM alert_holds").fetchone()[0] == 1
+    conn.close()
+    # A different review is a different alert, and still queues.
+    notify.hold_alert(rid, "1star", "sms", "s", "<p>h</p>", release, review_id=7, db_path=db_path)
+    notify.hold_alert(rid, "1star", "sms", "s", "<p>h</p>", release, review_id=8, db_path=db_path)
+    conn = get_conn(db_path)
+    assert conn.execute("SELECT COUNT(*) FROM alert_holds").fetchone()[0] == 3
+    conn.close()

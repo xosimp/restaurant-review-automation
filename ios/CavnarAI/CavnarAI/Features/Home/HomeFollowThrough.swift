@@ -14,8 +14,11 @@ import Observation
 
 struct ActionItem: Decodable, Identifiable {
     struct Action: Decodable {
+        /// The same endpoint on each client — the web and mobile APIs have
+        /// different prefixes, so the server hands over both.
+        struct Route: Decodable { let web: String?; let mobile: String? }
         let label: String
-        let route: String?
+        let route: Route?
         let method: String?
         let module: String?
     }
@@ -153,7 +156,7 @@ final class HomeFollowThroughViewModel {
     }
 
     func run(_ item: ActionItem) async {
-        guard let route = item.action?.route else { return }
+        guard let route = item.action?.route?.mobile else { return }
         let done: OKResponse? = try? await client.send(route, method: .post, retryTransient: false)
         if done?.ok == true { await Haptic.success() }
         await load()
@@ -270,7 +273,7 @@ struct HomeFollowThrough: View {
                     if let action = item.action {
                         Button {
                             Haptic.light()
-                            if action.route != nil {
+                            if action.route?.mobile != nil {
                                 Task { await viewModel.run(item) }
                             } else if let module = action.module {
                                 onOpenModule(module)

@@ -97,8 +97,10 @@ def test_a_slow_weekday_is_named_with_a_way_to_act_on_it(db_path, monkeypatch):
     rid = _rid(db_path, module_labor=1)
     monkeypatch.setattr(demand, "slow_days", lambda *a, **k: {
         "available": True, "slow_days": [{"day": "Tuesday", "vs_average_pct": -22, "samples": 8}]})
-    line = _lines(rid, db_path)["slow_day"]
+    # Mondays only — the quiet weekday doesn't change overnight.
+    line = _lines(rid, db_path, today=date(2026, 9, 21))["slow_day"]
     assert "Tuesdays run about 22% under" in line["text"] and "Tuesday" in line["ask"]
+    assert "slow_day" not in _lines(rid, db_path, today=date(2026, 9, 23))
 
 
 def test_a_manager_without_food_cost_sees_neither_stock_nor_prices(db_path, monkeypatch):

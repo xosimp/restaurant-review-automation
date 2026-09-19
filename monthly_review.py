@@ -17,7 +17,7 @@ the second is true stops trusting the rest.
 """
 import calendar
 import logging
-from datetime import date
+from datetime import date, timedelta
 
 import metrics
 
@@ -49,8 +49,8 @@ def build(restaurant_id, today=None, restaurant=None, db_path=None):
     db_path = db_path or DB_PATH
     today = today or date.today()
     restaurant = restaurant or get_restaurant(restaurant_id)
-    last_start, last_end = month_bounds((today.replace(day=1) - __import__("datetime").timedelta(days=1)))
-    prev_start, prev_end = month_bounds(last_start - __import__("datetime").timedelta(days=1))
+    last_start, last_end = month_bounds(today.replace(day=1) - timedelta(days=1))
+    prev_start, prev_end = month_bounds(last_start - timedelta(days=1))
 
     rows = []
     for key in HEADLINE_METRICS:

@@ -122,15 +122,20 @@ def pulse(restaurant_id, now_local=None, db_path=DB_PATH, restaurant=None):
 
 def _todays_scheduled(restaurant_id, day, db_path=DB_PATH):
     """[{employee, role, shift_start}] from the most recent generated
-    schedule that covers today."""
+    schedule that actually covers today."""
     from models import get_schedule_history, get_schedule_history_detail
-    from labor import employee_shifts_from_csv
-    history = get_schedule_history(restaurant_id, db_path=db_path) or []
-    if not history:
-        return []
-    detail = get_schedule_history_detail(history[0]["id"], restaurant_id, db_path=db_path)
-    csv_text = (detail or {}).get("schedule_csv") or ""
+    # The MOST RECENT schedule is not necessarily today's: from Thursday the
+    # newest one is next week's (the auto-draft), and reading only that left
+    # coverage blind for the rest of the week. Walk back until one actually
+    # covers today.
     rows = []
+    for entry in (get_schedule_history(restaurant_id, db_path=db_path) or [])[:4]:
+        detail = get_schedule_history_detail(entry["id"], restaurant_id, db_path=db_path)
+        csv_text = (detail or {}).get("schedule_csv") or ""
+        if day.isoformat() in csv_text:
+            break
+    else:
+        return []
     for line in csv_text.split("\n")[1:]:
         parts = [p.strip().strip('"') for p in line.split(",")]
         if len(parts) < 5 or not parts[2]:

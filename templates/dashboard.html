@@ -1728,7 +1728,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       h+='<div class="hb-act" style="grid-template-columns:1fr"><div><h3><span>Still open</span><span class="hb-empty" style="padding:0">'+acts.length+'</span></h3>';
       for(var a=0;a<acts.length;a++){var x=acts[a];
         h+='<div class="hb-row '+esc(x.severity)+'"><span class="d"></span><span class="t wrap">'+num(x.title)+(x.detail?' <span class="m">'+num(x.detail)+'</span>':'')+'</span>'
-          +(x.action&&x.action.route?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="hbActionDo(\''+esc(x.action.route)+'\',this)">'+esc(x.action.label)+'</button>':'')
+          +(x.action&&x.action.route?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="hbActionDo(\''+esc(x.action.route.web)+'\',this)">'+esc(x.action.label)+'</button>':'')
           +(x.action&&x.action.module?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="hbOpen(\''+esc(x.action.module)+'\')">'+esc(x.action.label)+'</button>':'')
           +'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="hbSnooze(\''+esc(x.key)+'\',this)">Not today</button></div>';}
       h+='</div></div>';

@@ -73,8 +73,9 @@ def items(restaurant_id, viewer=None, db_path=DB_PATH, today=None, restaurant=No
     """Everything still open, most pressing first.
 
     Each item: {key, kind, title, detail, severity, module, action, count}.
-    `action` names what finishes it — a route the client already has, or a
-    question for Ask — never a new mechanism.
+    `action` names what finishes it — a route the client already has (as
+    {"web", "mobile"}, since the two clients have different prefixes) or a
+    module to open — never a new mechanism.
     """
     from models import get_restaurant
     today = today or date.today()
@@ -93,7 +94,12 @@ def items(restaurant_id, viewer=None, db_path=DB_PATH, today=None, restaurant=No
             add(f"issue:{i['id']}", "issue", i["title"],
                 "critical" if (waiting and i["severity"] == "high") else
                 ("important" if waiting else "watch"),
-                {"label": "Resolve", "route": f"/api/issues/{i['id']}/resolve", "method": "POST"},
+                # Both halves, like an Ask proposal's route: the web client
+                # posts the web path and the app the mobile one. A single
+                # path 404s on whichever client it wasn't written for.
+                {"label": "Resolve", "method": "POST",
+                 "route": {"web": f"/api/issues/{i['id']}/resolve",
+                           "mobile": f"/mobile/api/issues/{i['id']}/resolve"}},
                 detail=(f"{i['assignee_name']} has it" if i.get("assignee_name") else "Unassigned")
                        + (", not acknowledged yet" if waiting else ""),
                 module="issues")
@@ -122,10 +128,18 @@ def items(restaurant_id, viewer=None, db_path=DB_PATH, today=None, restaurant=No
     try:
         conn = get_conn(db_path)
         try:
+            # Confirming or dismissing writes its OWN row rather than
+            # updating the proposal, so "still proposed" means no later row
+            # settled it — without this the queue kept asking about
+            # something the owner had already confirmed.
             rows = conn.execute(
-                "SELECT action, summary, MAX(created_at) AS at, COUNT(*) AS n FROM ask_cavnar_actions "
-                "WHERE restaurant_id=? AND outcome='proposed' AND created_at >= datetime('now','-7 days') "
-                "GROUP BY action, summary ORDER BY at DESC LIMIT 5", (restaurant_id,)).fetchall()
+                "SELECT p.action, p.summary, MAX(p.created_at) AS at FROM ask_cavnar_actions p "
+                "WHERE p.restaurant_id=? AND p.outcome='proposed' "
+                "AND p.created_at >= datetime('now','-7 days') "
+                "AND NOT EXISTS (SELECT 1 FROM ask_cavnar_actions s WHERE s.restaurant_id=p.restaurant_id "
+                "                AND s.action=p.action AND s.outcome!='proposed' "
+                "                AND s.created_at >= p.created_at) "
+                "GROUP BY p.action, p.summary ORDER BY at DESC LIMIT 5", (restaurant_id,)).fetchall()
         finally:
             conn.close()
         for r in rows:

@@ -257,7 +257,10 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
                           "ask": "Build next week's schedule."})
 
     # ── a slow day worth acting on ──
-    if getattr(restaurant, "module_labor", 0) and "labor" not in denied:
+    # Mondays only: which weekday is quiet does not change overnight, and a
+    # line that says the same thing every morning is one people stop
+    # reading. It is also in the weekly digest.
+    if getattr(restaurant, "module_labor", 0) and "labor" not in denied and today.weekday() == 0:
         sd = _safe(demand.slow_days, restaurant_id, db_path=db_path) or {}
         slow = (sd.get("slow_days") or [])[:1]
         if slow:

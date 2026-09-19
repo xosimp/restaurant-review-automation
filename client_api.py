@@ -6315,6 +6315,9 @@ _NOTIFICATION_LABELS = {
     "rating_threshold": "Rating below threshold",
     "labor_over":       "Labor % over target",
     "login":            "New sign-in",
+    "morning_brief":    "Morning brief",
+    "intraday_pulse":   "Today vs a typical day",
+    "schedule_drafted": "Next week's schedule drafted",
 }
 
 # Which module a notification's "view" action should open — every alert
@@ -6326,6 +6329,11 @@ _NOTIFICATION_MODULE = {
     "neg_spike": "reviews", "no_response": "reviews",
     "negative_trend": "reviews", "rating_threshold": "reviews",
     "labor_over": "labor",
+    # The brief and the pre-dinner pulse are cross-module reads that open
+    # the assistant on their own question rather than a module (iOS
+    # DeepLinkRouter does the same).
+    "morning_brief": "ask", "intraday_pulse": "ask",
+    "schedule_drafted": "labor",
     # Not a product module — the web dashboard's bell dropdown reads this
     # field directly (see its own routing); iOS's DeepLinkRouter has its
     # own "login" special-case since it has no Account/Security "module".

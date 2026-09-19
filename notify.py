@@ -718,8 +718,22 @@ def rush_release_at(restaurant_id, alert_type=None, db_path: str = DB_PATH, now_
 
 def hold_alert(restaurant_id, alert_type, sms_text, subject, html, release_at,
                review_id=None, db_path: str = DB_PATH):
+    """Queue an alert for after the rush.
+
+    Deduped against what is already waiting: the alert_log row that normally
+    stops a repeat is only written when an alert is DELIVERED, so a
+    condition still true at the next fetch (a negative-review spike, say)
+    would queue a second copy of itself and both would arrive together.
+    """
     conn = models.get_conn(db_path)
     try:
+        existing = conn.execute(
+            "SELECT 1 FROM alert_holds WHERE restaurant_id=? AND alert_type=? AND sent_at IS NULL "
+            "AND COALESCE(review_id, -1)=COALESCE(?, -1)",
+            (restaurant_id, alert_type, review_id)).fetchone()
+        if existing:
+            print(f"[notify] rid={restaurant_id} {alert_type} already waiting — not queued twice")
+            return
         conn.execute(
             "INSERT INTO alert_holds (restaurant_id, alert_type, subject, html, sms_text, "
             "review_id, release_at) VALUES (?,?,?,?,?,?,?)",
@@ -731,12 +745,23 @@ def hold_alert(restaurant_id, alert_type, sms_text, subject, html, release_at,
     print(f"[notify] rid={restaurant_id} {alert_type} held until {release_at:%H:%M} UTC — mid-service")
 
 
+# Most a single restaurant gets in one release pass. A bad lunch can hold
+# several alerts; releasing them all at 13:30 is the burst this feature
+# exists to avoid. The rest go out on the following ticks, minutes apart.
+MAX_RELEASE_PER_RESTAURANT = 3
+# A hold this far past its release is stale — an alert from yesterday's
+# lunch arriving tomorrow morning (a scheduler outage) is noise, and its
+# content is in the brief by then.
+HOLD_MAX_LATE_HOURS = 12
+
+
 def release_due_alerts(db_path: str = DB_PATH, now_utc=None):
     """Scheduler entry point: send everything whose rush has ended. A hold is
     marked sent whether or not delivery worked, so a failing channel can't
     replay the same alert every five minutes."""
-    from datetime import datetime as _dt, timezone as _timezone
+    from datetime import datetime as _dt, timedelta as _td, timezone as _timezone
     now_utc = now_utc or _dt.now(_timezone.utc)
+    stale_before = (now_utc - _td(hours=HOLD_MAX_LATE_HOURS)).strftime("%Y-%m-%d %H:%M:%S")
     conn = models.get_conn(db_path)
     try:
         rows = [dict(r) for r in conn.execute(
@@ -744,8 +769,17 @@ def release_due_alerts(db_path: str = DB_PATH, now_utc=None):
             "ORDER BY id LIMIT 200", (now_utc.strftime("%Y-%m-%d %H:%M:%S"),)).fetchall()]
     finally:
         conn.close()
-    sent = 0
+    sent, dropped, per_restaurant = 0, 0, {}
     for h in rows:
+        rid = h["restaurant_id"]
+        if h["release_at"] < stale_before:
+            _mark_sent(h["id"], db_path)
+            dropped += 1
+            print(f"[notify] hold {h['id']} dropped — {HOLD_MAX_LATE_HOURS}h past its release")
+            continue
+        if per_restaurant.get(rid, 0) >= MAX_RELEASE_PER_RESTAURANT:
+            continue                      # the rest ride the next tick
+        per_restaurant[rid] = per_restaurant.get(rid, 0) + 1
         try:
             deliver_alert(h["restaurant_id"], h["alert_type"], h["sms_text"], h["subject"],
                           h["html"], review_id=h["review_id"], db_path=db_path)
@@ -757,13 +791,17 @@ def release_due_alerts(db_path: str = DB_PATH, now_utc=None):
                 ops.capture(e, job="release_held_alerts", context=f"hold_id={h['id']}")
             except Exception:
                 pass
-        conn = models.get_conn(db_path)
-        try:
-            conn.execute("UPDATE alert_holds SET sent_at=datetime('now') WHERE id=?", (h["id"],))
-            conn.commit()
-        finally:
-            conn.close()
-    return {"released": sent}
+        _mark_sent(h["id"], db_path)
+    return {"released": sent, "dropped_stale": dropped}
+
+
+def _mark_sent(hold_id, db_path: str = DB_PATH):
+    conn = models.get_conn(db_path)
+    try:
+        conn.execute("UPDATE alert_holds SET sent_at=datetime('now') WHERE id=?", (hold_id,))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 

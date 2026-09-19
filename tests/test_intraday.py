@@ -176,3 +176,16 @@ def test_a_no_show_becomes_the_managers_issue_once(db_path, monkeypatch):
     assert strategy_jobs.run_coverage_check(db_path=db_path)["opened"] == 0, "one per person per day"
     opened = issues.list_issues(rid, db_path=db_path)[0]
     assert opened["severity"] == "high" and "Dana K" in opened["title"]
+
+
+def test_coverage_reads_the_schedule_that_covers_today_not_the_newest(db_path, monkeypatch):
+    """From Thursday the newest schedule is next week's auto-draft. Reading
+    only that left coverage blind for the rest of the week."""
+    import intraday, pos
+    rid = _rid(db_path)
+    today = date(2026, 9, 21)
+    _schedule(db_path, rid, today, [("Dana K", "Server", "11:00am")])
+    _schedule(db_path, rid, today + timedelta(days=7), [("Jordan P", "Cook", "10:00am")])
+    monkeypatch.setattr(pos, "fetch_clock_ins_today", lambda rid_, d: ([], "toast"))
+    out = intraday.coverage_gaps(rid, now_local=datetime(2026, 9, 21, 11, 30), db_path=db_path)
+    assert [m["employee"] for m in out["missing"]] == ["Dana K"]

@@ -191,3 +191,36 @@ def test_the_nudge_is_off_by_default_and_silent_with_nothing_to_say(db_path, mon
     monkeypatch.setattr(preshift, "build", lambda *a, **k: {"items": []})
     assert strategy_jobs.run_preshift_nudge(db_path=db_path)["sent"] == 0, "nothing to say"
     assert sent == []
+
+
+def test_every_queue_action_works_on_both_clients(db_path):
+    """The web and mobile APIs have different prefixes — an action carrying
+    one path 404s on the other client."""
+    import action_queue, issues
+    rid = _rid(db_path)
+    conn = get_conn(db_path)
+    cid = conn.execute("INSERT INTO alert_contacts (restaurant_id, name, phone, sms_consent) "
+                       "VALUES (?, 'GM', '+15555550100', 1)", (rid,)).lastrowid
+    conn.commit(); conn.close()
+    issues.set_routing(rid, "manager", cid, db_path=db_path)
+    issues.create_issue(rid, "manual", "Walk-in is warm", db_path=db_path)
+    for item in action_queue.items(rid, db_path=db_path)["items"]:
+        route = (item["action"] or {}).get("route")
+        if route is None:
+            assert item["action"].get("module"), "an action must route somewhere"
+            continue
+        assert route["web"].startswith("/api/")
+        assert route["mobile"] == "/mobile" + route["web"]
+
+
+def test_a_proposal_the_owner_already_answered_leaves_the_queue(db_path):
+    """Confirming writes its own row rather than updating the proposal."""
+    import action_queue
+    rid = _rid(db_path)
+    models.log_ask_action(rid, "send_supplier_order", summary="Order from Fresh Co",
+                          outcome="proposed", db_path=db_path)
+    keys = lambda: [i["key"] for i in action_queue.items(rid, db_path=db_path)["items"]]
+    assert "proposal:send_supplier_order" in keys()
+    models.log_ask_action(rid, "send_supplier_order", summary="Order from Fresh Co",
+                          outcome="confirmed", db_path=db_path)
+    assert "proposal:send_supplier_order" not in keys()

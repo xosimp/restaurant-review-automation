@@ -160,13 +160,19 @@ def run_auto_draft_schedules(db_path=DB_PATH):
     return {"drafted": drafted, "skipped": skipped}
 
 
+# Used only when a restaurant hasn't set its hours: without a fallback the
+# intraday features would silently never run for them, which reads exactly
+# like the POS not being supported.
+DEFAULT_SERVICE_HOURS = (10, 23)
+
+
 def _open_now(r, local):
-    """True when the restaurant is inside its own opening hours (and its
-    hours are configured at all)."""
+    """True when the restaurant is inside its opening hours, or inside a
+    plain daytime window when it hasn't set any."""
     from notify import _open_window
     window = _open_window(r, local.strftime("%A"))
     if not window:
-        return False
+        return DEFAULT_SERVICE_HOURS[0] <= local.hour < DEFAULT_SERVICE_HOURS[1]
     opens, closes = window
     if opens and local.time() < __import__("datetime").time(*opens):
         return False

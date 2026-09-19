@@ -19,10 +19,10 @@ final class DeepLinkRouter {
     var pendingAskPrompt: String?
 
     func handleNotificationTap(alertType: String, reviewId: Int?, askPrompt: String? = nil) {
-        // The morning brief isn't about one module — it's a cross-module
-        // read — so it opens the assistant on its lead question rather than
+        // Both of these are cross-module reads that arrive WITH a question
+        // (data.ask_prompt), so they open the assistant on it rather than
         // guessing a module to drop the owner into.
-        if alertType == "morning_brief" {
+        if alertType == "morning_brief" || alertType == "intraday_pulse" {
             pendingTab = .ask
             pendingModuleKey = nil
             pendingReviewID = nil
