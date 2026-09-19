@@ -113,6 +113,10 @@ A deletion is only "verified" when the trace is written down alongside it.
   every table. `ai_utils._ensure_usage_schema` is the pattern where a lazy
   table is unavoidable: once per database per process, with a self-healing
   retry if a write later fails on a missing column.
+- **The scheduler only runs on Railway** (`scheduler.scheduling_allowed()`):
+  a local backend has its own SQLite file and lease but production's Resend
+  and Twilio keys, so a local scheduler re-sends real briefs, digests, alerts
+  and issue texts. `ALLOW_LOCAL_SCHEDULER=1` overrides it deliberately.
 - **Deployment shape.** The scheduler runs in the web process by default.
   **Never run it as a separate Railway service**: volumes cannot be shared
   between services, so it would schedule against an empty database while the

@@ -881,8 +881,9 @@ _RUN_SCHEDULER_IN_WEB = os.getenv("RUN_SCHEDULER_IN_WEB", "1").strip().lower() n
 if _RUN_SCHEDULER_IN_WEB:
     try:
         from scheduler import start_scheduler as _ss
-        _ss()
-        print("Scheduler started OK")
+        # Returns None off Railway: see scheduler.scheduling_allowed.
+        if _ss() is not None:
+            print("Scheduler started OK")
     except Exception as _e:
         print(f"Scheduler start error: {_e}")
 else:

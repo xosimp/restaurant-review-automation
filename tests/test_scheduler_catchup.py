@@ -170,3 +170,24 @@ def test_no_module_helper_is_shadowed_inside_the_loop():
     local = set(scheduler.scheduler_loop.__code__.co_varnames)
     helpers = {n for n, v in vars(scheduler).items() if callable(v) and n.startswith("_")}
     assert not (local & helpers), local & helpers
+
+
+def test_a_laptop_never_runs_the_scheduler_unless_told_to(monkeypatch):
+    """A local dev server shares production's email/SMS keys but not its
+    database or lease, so a local scheduler sent every brief and digest twice."""
+    import scheduler
+    for var in ("RAILWAY_ENVIRONMENT", "RAILWAY_PROJECT_ID", "ALLOW_LOCAL_SCHEDULER"):
+        monkeypatch.delenv(var, raising=False)
+    started = []
+    monkeypatch.setattr(scheduler.threading, "Thread", lambda **kw: started.append(kw) or _NoThread())
+    assert scheduler.start_scheduler() is None and started == []
+    monkeypatch.setenv("RAILWAY_ENVIRONMENT", "production")
+    assert scheduler.start_scheduler() is not None and len(started) == 1
+    monkeypatch.delenv("RAILWAY_ENVIRONMENT")
+    monkeypatch.setenv("ALLOW_LOCAL_SCHEDULER", "1")
+    assert scheduler.start_scheduler() is not None
+
+
+class _NoThread:
+    def start(self):
+        pass

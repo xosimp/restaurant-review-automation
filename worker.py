@@ -67,7 +67,11 @@ def main():
 
     # Imported after init_db so a job module reading schema at import time
     # sees a migrated database.
-    from scheduler import scheduler_loop
+    from scheduler import scheduler_loop, scheduling_allowed
+    if not scheduling_allowed():
+        log.error("not on Railway — refusing to run the scheduler (set ALLOW_LOCAL_SCHEDULER=1 "
+                  "to override; jobs send real email and SMS)")
+        return
 
     log.info("starting scheduler loop (lease-elected — a second instance idles)")
     while not _stopping:

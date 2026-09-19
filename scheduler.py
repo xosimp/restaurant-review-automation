@@ -1714,7 +1714,30 @@ def scheduler_loop():
         time.sleep(SCHEDULER_TICK_SECONDS)
 
 
+def scheduling_allowed():
+    """Whether this process may run scheduled jobs at all.
+
+    Only on Railway, unless ALLOW_LOCAL_SCHEDULER=1 says otherwise. A local
+    dev server has its own SQLite file — and therefore its own scheduler
+    lease — but the same Resend and Twilio keys as production, so it ran every
+    job a second time against a copy of real restaurants: a second morning
+    brief at 7:52, a second "one week in" at 1:39pm, a failure digest about
+    the dev machine's own errors. Morning briefs, digests, alerts and issue
+    texts reach real people; a laptop must never be a second sender.
+    """
+    if os.getenv("ALLOW_LOCAL_SCHEDULER", "").strip().lower() in ("1", "true", "yes"):
+        return True
+    # Railway sets all of these on every deploy; any one is enough.
+    return any(os.getenv(v) for v in ("RAILWAY_PROJECT_ID", "RAILWAY_SERVICE_ID",
+                                       "RAILWAY_ENVIRONMENT", "RAILWAY_ENVIRONMENT_NAME"))
+
+
 def start_scheduler():
+    if not scheduling_allowed():
+        log.warning("Scheduler NOT started: not on Railway. Set ALLOW_LOCAL_SCHEDULER=1 to run "
+                    "jobs locally — they send real email and SMS.")
+        print("Scheduler not started (local) — set ALLOW_LOCAL_SCHEDULER=1 to run jobs here")
+        return None
     t = threading.Thread(target=scheduler_loop, daemon=True)
     t.start()
     log.info("Scheduler thread started")
