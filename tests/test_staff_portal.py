@@ -9,6 +9,11 @@ the console stays closed to it.
 import pytest
 from flask import Flask
 
+# Inside the ±1 day task window, whatever day the suite runs. A literal date
+# here aged out of that window and turned both 403 checks into 400s.
+from datetime import date as _date
+_TODAY = _date.today().isoformat()
+
 import auth
 import client_api
 import mobile_api
@@ -222,10 +227,10 @@ def test_an_employee_cannot_check_off_another_roles_task(client, db_path):
     _sign_in_staff(client, db_path, rid, uid)
 
     resp = client.post("/staff/api/tasks/complete",
-                       json={"template_id": other["id"], "task_date": "2026-09-14", "done": True})
+                       json={"template_id": other["id"], "task_date": _TODAY, "done": True})
     assert resp.status_code == 403
     from models import get_todays_tasks
-    assert get_todays_tasks(rid, "Line Cook", task_date="2026-09-14",
+    assert get_todays_tasks(rid, "Line Cook", task_date=_TODAY,
                             db_path=db_path)[0]["done"] is False
 
 
@@ -238,7 +243,7 @@ def test_an_employee_cannot_check_off_another_restaurants_task(client, db_path):
     _sign_in_staff(client, db_path, rid_a, uid)
 
     resp = client.post("/staff/api/tasks/complete",
-                       json={"template_id": foreign["id"], "task_date": "2026-09-14", "done": True})
+                       json={"template_id": foreign["id"], "task_date": _TODAY, "done": True})
     assert resp.status_code == 403
 
 

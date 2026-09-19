@@ -1644,9 +1644,13 @@ def scheduler_loop():
             try:
                 from marketing_publish import run_due_posts
                 _base = (os.getenv("BASE_URL") or "https://dashboard.cavnar.ai").rstrip("/")
-                _due = run_due_posts(base_url=_base)
-                if _due.get("published") or _due.get("failed"):
-                    log.info(f"Scheduled posts: {_due}")
+                # Not named `_due`: any assignment to a name inside this
+                # function makes it local for the WHOLE function, so the
+                # `_due(now, H)` gates above would raise UnboundLocalError on
+                # every tick and no scheduled job would ever run.
+                _posts = run_due_posts(base_url=_base)
+                if _posts.get("published") or _posts.get("failed"):
+                    log.info(f"Scheduled posts: {_posts}")
             except Exception as e:
                 log.error(f"Scheduled post run failed: {e}")
 

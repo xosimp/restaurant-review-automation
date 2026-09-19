@@ -6,6 +6,7 @@ job silently did not run that day. These pin the replacement: eligible from
 the hour onward, still at most once per day, and in an order that respects
 the dependencies the hours were quietly encoding.
 """
+import pytest
 import pathlib
 import re
 from datetime import datetime
@@ -124,3 +125,48 @@ def test_every_daily_job_keeps_its_once_per_day_claim():
                 "daily_alerts", "onboarding", "optin_invite", "refresh_tokens",
                 "marketing_metrics_sync"):
         assert re.search(r'claim_period\("%s", str\(today\)\)' % job, body), job
+
+
+# ── the loop itself has to survive a tick ─────────────────────────────────────
+
+class _StopLoop(BaseException):
+    """Raised from the stubbed sleep to leave the infinite loop after one tick.
+    BaseException so the loop's own `except Exception` can't swallow it."""
+
+
+def test_one_full_tick_runs_without_a_loop_error(monkeypatch):
+    """Drive one real tick of scheduler_loop with every job stubbed out.
+
+    The catch-up gates call the module helper `_due(now, H)`, and later in the
+    same function the post publisher's result was assigned to a variable also
+    called `_due`. That made `_due` local to the whole function, so the very
+    first gate raised UnboundLocalError, the loop's catch-all logged
+    "Scheduler loop error", and no scheduled job ran at all. Every existing
+    test called `_due` directly and passed. Only running the loop catches it.
+    """
+    import scheduler
+    errors = []
+    monkeypatch.setattr(scheduler.log, "error", lambda msg, *a, **k: errors.append(str(msg)))
+    monkeypatch.setattr(scheduler._ops, "acquire_scheduler_lease", lambda *a, **k: True)
+    # Nothing claims, so no job body runs — this exercises the gates only.
+    monkeypatch.setattr(scheduler._ops, "claim_period", lambda *a, **k: False)
+    import marketing_publish
+    monkeypatch.setattr(marketing_publish, "run_due_posts", lambda **k: {})
+    monkeypatch.setattr(scheduler, "record_scheduler_heartbeat", lambda *a, **k: None, raising=False)
+    monkeypatch.setattr(scheduler, "run_health_checks", lambda *a, **k: None, raising=False)
+
+    def _stop(_seconds):
+        raise _StopLoop()
+    monkeypatch.setattr(scheduler.time, "sleep", _stop)
+    with pytest.raises(_StopLoop):
+        scheduler.scheduler_loop()
+    assert not [e for e in errors if "Scheduler loop error" in e], errors
+
+
+def test_no_module_helper_is_shadowed_inside_the_loop():
+    """The structural form of the same guard: no name the loop assigns may
+    also be a module-level function it calls."""
+    import scheduler
+    local = set(scheduler.scheduler_loop.__code__.co_varnames)
+    helpers = {n for n, v in vars(scheduler).items() if callable(v) and n.startswith("_")}
+    assert not (local & helpers), local & helpers
