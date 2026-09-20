@@ -343,6 +343,26 @@ def run_daily_fetch():
                         # expired refresh token used to land here and be
                         # indistinguishable from "nothing new today".
                         gmb_failed_reason = "Google refresh token is no longer valid (revoked, or expired)"
+                        # Tell the OWNER, once a week. Until now this reached
+                        # Will's failure digest and status_manager, while the
+                        # owner's dashboard kept showing last week's reviews
+                        # with a freshness stamp nobody reads.
+                        try:
+                            if _ops.claim_period(f"connection_lost:{rid}",
+                                                 _chi_now().strftime("%G-W%V")):
+                                import notify as _nf
+                                _nf.raise_alert(
+                                    rid, "connection_lost",
+                                    f"Cavnar AI: your Google connection needs reconnecting — "
+                                    f"reviews stopped syncing for {restaurant.name}.",
+                                    f"Google needs reconnecting — {restaurant.name}",
+                                    lines=["Google has stopped honouring the connection this account "
+                                           "uses to read your reviews. Nothing is lost — new reviews "
+                                           "are being read the slower way — but replies cannot post "
+                                           "until it is reconnected.",
+                                           "Open Account → Connections and choose Google."])
+                        except Exception as _cl:
+                            log.warning(f"connection_lost alert failed for {rid}: {_cl}")
                     else:
                         loc_id = restaurant.gmb_location_id
                         acct_id = restaurant.gmb_account_id
@@ -631,8 +651,15 @@ def run_weekly_digests():
             unique.append(row)
 
         log.info(f"Weekly digests for {len(unique)} restaurant(s) on {today.title()}")
-        sent_to = set()
+        from reporter import render_group_html
 
+        # Pass 1: build every due report and bucket it by owner address.
+        # Pass 2: one email per address — a single location gets the digest
+        # it always got; several get every location in one shell
+        # (reporter.render_group_html). The dedup-by-address that lived here
+        # solved "three identical-looking digests" by dropping two
+        # restaurants' weeks on the floor; the monthly, meanwhile, sent three.
+        by_email = {}
         for row in unique:
             rid = row["id"]
             restaurant = get_restaurant(rid)
@@ -641,60 +668,64 @@ def run_weekly_digests():
             # 9am in the restaurant's own timezone, once per day.
             if not local_due(restaurant, 9, claim_key="weekly_digest"):
                 continue
-
             owner_emails = get_owner_emails(rid)
             if not owner_emails:
                 log.warning(f"No email for {restaurant.name}, skipping")
                 continue
-
             try:
                 report = build_report_from_db(rid, restaurant.name, days=7)
-                # Only skip if reviews-only client AND no reviews this week.
-                # Full system clients always get a digest (labor/inventory
-                # data still valuable).
                 has_other_modules = (restaurant.module_labor or
                                      restaurant.module_inventory or
                                      restaurant.module_marketing)
                 if report.total_reviews == 0 and not has_other_modules:
                     log.info(f"No reviews this week for {restaurant.name} — skipping digest")
                     continue
-
-                owner_name = _emails.greeting_name(restaurant)
-                html = render_html(report, restaurant.name, owner_name=owner_name,
-                                   restaurant_id=restaurant.id, owner_view=True)
                 for owner_email in owner_emails:
                     key = (owner_email or "").strip().lower()
-                    if key in sent_to:
-                        log.info(f"Digest already sent to {owner_email} this pass — "
-                                 f"skipping the copy for {restaurant.name}")
+                    if not key:
                         continue
-                    sent_to.add(key)
-                    # Through emails.deliver, not the raw SDK: the most-sent
-                    # client email in the product was also the only one with
-                    # no suppression check, no retry and a hand-written log
-                    # line. A hard-bounced owner address kept receiving it.
-                    result = _emails.deliver(email_type="digest", restaurant_id=rid, payload={
-                        "from": _emails.sender("client"),
-                        "to": [owner_email],
-                        "subject": f"Your week at {restaurant.name}",
-                        "preheader": _emails.digest_preheader(report, restaurant),
-                        "html": _html_doc(html),
-                    })
-                    if getattr(result, "ok", False):
-                        log.info(f"Digest sent to {owner_email} for {restaurant.name}")
-                    else:
-                        log.error(f"Digest send to {owner_email} failed for "
-                                  f"{restaurant.name}: {result.error}")
-                        _ops.capture(RuntimeError(result.error or "digest send failed"),
-                                     job="weekly_digest", context=f"restaurant_id={rid}")
-                try:
-                    from webhooks import fire_webhook as _fw_rep
-                    _fw_rep(restaurant.id, "report.weekly", {"restaurant": restaurant.name,
-                                                             "email": owner_emails[0]})
-                except Exception: pass
+                    by_email.setdefault(key, {"to": owner_email, "items": []})
+                    by_email[key]["items"].append((restaurant, report))
             except Exception as e:
-                log.error(f"Digest failed for {restaurant.name}: {e}")
+                log.error(f"Digest build failed for {restaurant.name}: {e}")
                 _ops.capture(e, job="weekly_digest", context=f"restaurant_id={rid}")
+
+        for key, bucket in by_email.items():
+            items = bucket["items"]
+            first_rest, first_rep = items[0]
+            try:
+                owner_name = _emails.greeting_name(first_rest)
+                if len(items) == 1:
+                    html = render_html(first_rep, first_rest.name, owner_name=owner_name,
+                                       restaurant_id=first_rest.id, owner_view=True)
+                    subject = f"Your week at {first_rest.name}"
+                    preheader = _emails.digest_preheader(first_rep, first_rest)
+                else:
+                    html = render_group_html(items, owner_name=owner_name,
+                                             group_name=getattr(first_rest, "location_group", None))
+                    subject = f"Your week across {len(items)} locations"
+                    preheader = "Every location, one email — strongest and weakest first."
+                result = _emails.deliver(email_type="digest", restaurant_id=first_rest.id, payload={
+                    "from": _emails.sender("client"),
+                    "to": [bucket["to"]],
+                    "subject": subject,
+                    "preheader": preheader,
+                    "html": _html_doc(html),
+                })
+                if getattr(result, "ok", False):
+                    log.info(f"Digest sent to {bucket['to']} covering {len(items)} location(s)")
+                else:
+                    log.error(f"Digest send to {bucket['to']} failed: {result.error}")
+                    _ops.capture(RuntimeError(result.error or "digest send failed"),
+                                 job="weekly_digest", context=f"restaurant_id={first_rest.id}")
+                for rest, _rep in items:
+                    try:
+                        from webhooks import fire_webhook as _fw_rep
+                        _fw_rep(rest.id, "report.weekly", {"restaurant": rest.name, "email": bucket["to"]})
+                    except Exception: pass
+            except Exception as e:
+                log.error(f"Digest failed for {bucket['to']}: {e}")
+                _ops.capture(e, job="weekly_digest", context=f"restaurant_id={first_rest.id}")
 
     except Exception as e:
         log.error(f"Weekly digest error: {e}")
@@ -1323,8 +1354,7 @@ def run_onboarding_sequence(local_hour: int = None):
         # Onboarding day-2/7/30 are all product-tips/marketing content, not
         # transactional — the one flag gates all three from this single
         # early-continue, same as the owner_email/created_at guards above.
-        if getattr(r, "marketing_emails_opt_out", 0):
-            continue
+        _opted_out = bool(getattr(r, "marketing_emails_opt_out", 0))
 
         # parse_stored_dt normalises both stored shapes (naive SQLite
         # datetimes and offset-aware isoformat strings) to naive local.
@@ -1351,6 +1381,8 @@ def run_onboarding_sequence(local_hour: int = None):
         # ">=" would mail a "getting started" note to clients who signed up
         # months ago. An upper bound keeps a late/paused scheduler catching
         # up without ever backfilling stale onboarding at a settled client.
+        if _opted_out and days_since < 60:
+            continue
         if 2 <= days_since <= 6 and "day_2" not in already_sent:
             try:
                 send_onboarding_day2(
@@ -1426,6 +1458,29 @@ def run_onboarding_sequence(local_hour: int = None):
                 log.info(f"Onboarding day 30 sent to {r.owner_email} ({r.name})")
             except Exception as e:
                 log.error(f"Onboarding day 30 failed for {r.name}: {e}")
+
+        # Days 60, 90, 180 — the lifecycle after onboarding. The retention
+        # audit found nothing spoke to an owner between the day-30 check-in
+        # and a cancellation email. These carry the business review (what is
+        # now measurable, the first record window, the six-month ledger), so
+        # like the monthly they are gated on monthly_review_enabled and NOT
+        # on the marketing opt-out — the day-30 gate above already sent us
+        # past that `continue` for opted-out clients, so re-check here.
+        for _day in (60, 90, 180):
+            _key = f"day_{_day}"
+            if _day <= days_since <= _day + 14 and _key not in already_sent:
+                if not getattr(r, "monthly_review_enabled", 1):
+                    mark_onboarding_sent(r.id, _key)      # respected, not deferred
+                    break
+                try:
+                    from emails import send_lifecycle_email
+                    send_lifecycle_email(_day, to_email=r.owner_email, restaurant_name=r.name,
+                                         owner_name=r.owner_name, restaurant_id=r.id)
+                    mark_onboarding_sent(r.id, _key)
+                    log.info(f"Lifecycle day {_day} sent to {r.owner_email} ({r.name})")
+                except Exception as e:
+                    log.error(f"Lifecycle day {_day} failed for {r.name}: {e}")
+                break
 
 
 def check_inactive_clients():
@@ -1534,6 +1589,75 @@ def check_inactive_clients():
         log.info(f"Inactive client alert sent — {len(inactive)} client(s)")
     except Exception as e:
         log.error(f"check_inactive_clients email failed: {e}")
+
+
+def send_while_away_nudges():
+    """Tell an owner who has gone quiet what happened while they were away.
+
+    check_inactive_clients has flagged a 14-day silence to Will since it
+    shipped. The owner heard nothing — and an owner who stopped opening the
+    app is exactly the one who does not know it drafted nine replies and
+    caught a waste spike in the meantime. Once per 30 days per person, only
+    when there is something real to show, and through strategy_jobs._reach
+    so it is push-or-email, never both, and respects the briefing budget.
+    """
+    from datetime import timedelta
+    from models import get_all_restaurants, get_conn, DB_PATH
+    from strategy_jobs import _reach
+    sent = 0
+    now = _chi_now()
+    for r in get_all_restaurants():
+        if getattr(r, "billing_status", "trial") not in ("trial", "active"):
+            continue
+        try:
+            conn = get_conn()
+            row = conn.execute("SELECT MAX(last_login) AS ll FROM users WHERE restaurant_id=? "
+                               "AND is_admin=0 AND is_active=1", (r.id,)).fetchone()
+            last = parse_stored_dt(row["ll"]) if row and row["ll"] else None
+            if last is None or (now - last).days < 14:
+                conn.close(); continue
+            since = last.strftime("%Y-%m-%d %H:%M:%S")
+            def n(sql, *a):
+                try:
+                    return int(conn.execute(sql, a).fetchone()[0] or 0)
+                except Exception:
+                    return 0
+            drafted = n("SELECT COUNT(*) FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL "
+                        "AND draft_response IS NOT NULL AND fetched_at>=?", r.id, since)
+            arrived = n("SELECT COUNT(*) FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL "
+                        "AND fetched_at>=?", r.id, since)
+            waiting = n("SELECT COUNT(*) FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL "
+                        "AND response_status IN ('pending','drafted')", r.id)
+            alerts = n("SELECT COUNT(*) FROM alert_log WHERE restaurant_id=? AND fired_at>=?", r.id, since)
+            conn.close()
+            if not (drafted or arrived or alerts):
+                continue
+            if not _ops.claim_period(f"while_away:{r.id}", now.strftime("%Y-%m")):
+                continue
+            days = (now - last).days
+            lines = []
+            if arrived:
+                lines.append(f"{arrived} new review{'s' if arrived != 1 else ''} came in"
+                             + (f"; {drafted} {'have' if drafted != 1 else 'has'} a reply drafted in your voice"
+                                if drafted else "") + ".")
+            if waiting:
+                lines.append(f"{waiting} {'are' if waiting != 1 else 'is'} waiting on your approval.")
+            if alerts:
+                lines.append(f"{alerts} alert{'s' if alerts != 1 else ''} fired while you were away.")
+            try:
+                import good_news as _gn
+                for g in (_gn.all_good_news(r.id, limit=1) or []):
+                    lines.append(g["summary"])
+            except Exception:
+                pass
+            title = f"While you were away — {days} days at {r.location_name or r.name}"
+            if _reach(r.id, "while_away", title, " ".join(lines[:2]),
+                      {"ask_prompt": "What did I miss while I was away?"},
+                      DB_PATH, subject=title, lines=lines, email_type="while_away"):
+                sent += 1
+        except Exception as e:
+            _ops.capture(e, job="while_away", context=f"restaurant_id={r.id}")
+    return {"sent": sent}
 
 
 # ── Jobs that used to live inline in scheduler_loop ──────────────────────────
@@ -1986,6 +2110,7 @@ def scheduler_loop():
                 # Monday 11am — inactive client check
                 log.info("Running inactive client check...")
                 _ops.run_job("inactive_clients", check_inactive_clients)
+                _ops.run_job("while_away", send_while_away_nudges)
 
             if _due(now, 11, until=OPTIN_INVITE_LATEST_HOUR) and _ops.claim_period("optin_invite", str(today)):
                 # 11am daily — invite guests Toast identified yesterday to

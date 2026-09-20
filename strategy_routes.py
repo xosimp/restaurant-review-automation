@@ -543,6 +543,7 @@ def _do_morning_brief(u):
             "settings": {"enabled": bool(getattr(r, "morning_brief_enabled", 1)),
                          "hour": int(getattr(r, "morning_brief_hour", 7) or 7),
                          "hold_alerts": bool(getattr(r, "alert_hold_during_service", 1)),
+                         "briefing_level": getattr(r, "briefing_level", None) or "normal",
                          "preshift_nudge_hour": int(getattr(r, "preshift_nudge_hour", 0) or 0)},
             "can_edit": _principal(u)}, 200
 
@@ -567,6 +568,11 @@ def _do_morning_brief_settings(u):
         fields["morning_brief_hour"] = hour
     if "hold_alerts" in b:
         fields["alert_hold_during_service"] = 1 if b["hold_alerts"] else 0
+    if "briefing_level" in b:
+        level = str(b["briefing_level"] or "").lower()
+        if level not in ("calm", "normal", "all"):
+            return {"ok": False, "error": "briefing_level must be calm, normal or all"}, 400
+        fields["briefing_level"] = level
     if "preshift_nudge_hour" in b:
         try:
             nudge = int(b["preshift_nudge_hour"] or 0)

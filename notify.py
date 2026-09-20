@@ -240,8 +240,54 @@ ALERT_TAB = {
     "labor_over": "labor", "schedule_drafted": "labor", "coverage": "labor",
     "food_waste": "inventory", "critical_low": "inventory", "price_spike": "inventory",
     "ai_visibility_drop": "competitor",
-    "login": "account", "staff_signin": "account",
+    "login": "account", "staff_signin": "account", "connection_lost": "account",
+    "while_away": "reviews",
 }
+
+# ── the briefing budget ───────────────────────────────────────────────────────
+# Alerts have quiet hours, a per-type toggle, an owner cap and a hard
+# ceiling. Briefings — the morning brief, the pre-dinner pulse, the closing
+# summary, a drafted schedule, a coverage gap, a demand opportunity — had
+# none of it: NON_ALERT_TYPES exempts them from the ceiling, and the
+# retention audit counted six a day for a POS-connected owner. One setting,
+# three levels, enforced at every briefing send.
+BRIEFING_ALWAYS = frozenset({"morning_brief", "outcome_achieved", "milestone", "while_away",
+                             "connection_lost"})
+BRIEFING_CALM = BRIEFING_ALWAYS | {"closing_summary", "schedule_drafted"}
+BRIEFING_NORMAL_PER_DAY = 4
+
+
+def briefing_allowed(restaurant_id: int, alert_type: str, db_path: str = DB_PATH) -> bool:
+    """Whether one more briefing may go to this owner today.
+
+    calm    — the daily brief, results, milestones, the close, a drafted
+              schedule. Nothing during service.
+    normal  — everything, at most BRIEFING_NORMAL_PER_DAY a day; the
+              always-set never counts against it.
+    all     — everything, no budget (what shipped before this existed).
+
+    Fails OPEN like the alert ceiling: a bookkeeping error must not silence
+    the morning brief.
+    """
+    if alert_type in BRIEFING_ALWAYS:
+        return True
+    try:
+        from models import get_restaurant, count_briefings_today
+        r = get_restaurant(restaurant_id, db_path)
+        level = (getattr(r, "briefing_level", None) or "normal").lower()
+        if level == "all":
+            return True
+        if level == "calm":
+            return alert_type in BRIEFING_CALM
+        n = count_briefings_today(restaurant_id, db_path)
+        if n >= BRIEFING_NORMAL_PER_DAY:
+            print(f"[notify] rid={restaurant_id} {alert_type} held — briefing budget "
+                  f"({n}/{BRIEFING_NORMAL_PER_DAY}) reached")
+            return False
+        return True
+    except Exception as e:
+        print(f"[notify] briefing budget check failed for rid={restaurant_id}: {e}")
+        return True
 
 
 def alert_url(alert_type=None, review_id=None) -> str:

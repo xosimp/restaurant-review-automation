@@ -340,3 +340,79 @@ def get_value_history(restaurant_id: int, days: int = 30, db_path: str = DB_PATH
     """, (restaurant_id,)).fetchall()
     conn.close()
     return [{"date": r["snapshot_date"], "value": r["total_value"]} for r in rows]
+
+
+# ── the ledger: what has been done, since the account began ─────────────────
+
+def ledger(restaurant_id, db_path=None):
+    """Distinct work counted since sign-up — not dollars, not estimates.
+
+    The retention audit found the product compounds (replies learn from
+    approved examples, the assistant remembers, shift profiles accumulate)
+    and never says so: the only "since you started" surface was the value
+    hero, which reads "Nothing measured yet" for any account that has not
+    pressed Track. This is the other half — the plain count of things done,
+    which needs no button and cannot be argued with.
+
+    Every figure counts DISTINCT work (the ROI audit's rule): replies are
+    reviews with a draft, not draft attempts; schedules are distinct weeks,
+    not rows in schedule_history; months are calendar months with activity.
+    """
+    from models import get_conn, DB_PATH
+    db_path = db_path or DB_PATH
+    conn = get_conn(db_path)
+    try:
+        def one(sql, *a):
+            try:
+                r = conn.execute(sql, a).fetchone()
+                return int((r[0] if r else 0) or 0)
+            except Exception:
+                return 0
+        started = None
+        try:
+            row = conn.execute("SELECT created_at FROM restaurants WHERE id=?",
+                               (restaurant_id,)).fetchone()
+            started = (row[0] or "")[:10] if row else None
+        except Exception:
+            pass
+        out = {
+            "started": started,
+            "replies_drafted": one("SELECT COUNT(*) FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL "
+                                   "AND draft_response IS NOT NULL", restaurant_id),
+            "replies_posted": one("SELECT COUNT(*) FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL "
+                                  "AND response_status='posted'", restaurant_id),
+            "reviews_watched": one("SELECT COUNT(*) FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL",
+                                   restaurant_id),
+            "schedules_built": one("SELECT COUNT(DISTINCT week_start) FROM schedule_history "
+                                   "WHERE restaurant_id=? AND week_start IS NOT NULL", restaurant_id),
+            "alerts_sent": one("SELECT COUNT(*) FROM alert_log WHERE restaurant_id=?", restaurant_id),
+            "issues_resolved": one("SELECT COUNT(*) FROM ops_issues WHERE restaurant_id=? AND status='resolved'",
+                                   restaurant_id),
+            "outcomes_measured": one("SELECT COUNT(*) FROM recommendation_outcomes WHERE restaurant_id=? "
+                                     "AND status='evaluated'", restaurant_id),
+            "milestones": one("SELECT COUNT(*) FROM milestones WHERE restaurant_id=?", restaurant_id),
+            "months_active": one("SELECT COUNT(DISTINCT substr(fired_at,1,7)) FROM alert_log "
+                                 "WHERE restaurant_id=?", restaurant_id),
+        }
+    finally:
+        conn.close()
+    return out
+
+
+def ledger_lines(led):
+    """The ledger as sentences, largest first, zeros omitted."""
+    items = [
+        (led.get("replies_drafted", 0), "review {n} drafted in your voice", "review replies drafted in your voice"),
+        (led.get("replies_posted", 0), "reply posted to Google", "replies posted to Google"),
+        (led.get("schedules_built", 0), "week's schedule built", "weeks' schedules built"),
+        (led.get("alerts_sent", 0), "alert sent before it became a problem", "alerts sent before they became problems"),
+        (led.get("issues_resolved", 0), "issue resolved with a name on it", "issues resolved with a name on them"),
+        (led.get("outcomes_measured", 0), "change measured before and after", "changes measured before and after"),
+    ]
+    out = []
+    for n, one_form, many_form in sorted(items, key=lambda x: -x[0]):
+        if n <= 0:
+            continue
+        label = one_form.replace("{n}", "reply") if n == 1 else many_form
+        out.append(f"{n:,} {label}")
+    return out

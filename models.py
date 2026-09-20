@@ -361,6 +361,9 @@ class Restaurant:
     preshift_nudge_hour: int             = 0
     morning_brief_enabled: int           = 1
     morning_brief_hour: int              = 7
+    # How much unprompted briefing the owner wants: calm | normal | all.
+    # Alerts have a hard ceiling; briefings (NON_ALERT_TYPES) had none.
+    briefing_level: str                  = "normal"
     auto_draft_schedule: int             = 0
     external_scheduling_tool: Optional[str] = None   # "Fourth", "7shifts" — a scheduler they already pay for
     email_theme: Optional[str]           = "dark"  # 'dark' or 'light' — drives weekly digest email theme
@@ -703,6 +706,7 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "preshift_nudge_hour", "INTEGER DEFAULT 0"),
         ("restaurants", "morning_brief_enabled", "INTEGER DEFAULT 1"),
         ("restaurants", "morning_brief_hour", "INTEGER DEFAULT 7"),
+        ("restaurants", "briefing_level", "TEXT DEFAULT 'normal'"),
         # Weekly schedule auto-draft: OFF unless asked for. It spends AI and
         # writes a draft, and a restaurant already on Fourth or 7shifts does
         # not want one.
@@ -3160,7 +3164,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "latitude","longitude","weather_cache_json","weather_cached_at",
         "geocode_failed_at",
         "alert_hold_during_service", "preshift_nudge_hour",
-        "morning_brief_enabled", "morning_brief_hour",
+        "morning_brief_enabled", "morning_brief_hour", "briefing_level",
         "auto_draft_schedule", "external_scheduling_tool",
     }
     updates = {k: v for k, v in fields.items() if k in allowed}
@@ -3504,6 +3508,8 @@ def _restaurant_from_row(row) -> Restaurant:
                                and row["morning_brief_enabled"] is not None else 1),
         morning_brief_hour=(row["morning_brief_hour"] if "morning_brief_hour" in row.keys()
                             and row["morning_brief_hour"] is not None else 7),
+        briefing_level=(row["briefing_level"] if "briefing_level" in row.keys()
+                        and row["briefing_level"] else "normal"),
         auto_draft_schedule=(row["auto_draft_schedule"] if "auto_draft_schedule" in row.keys()
                              and row["auto_draft_schedule"] is not None else 0),
         external_scheduling_tool=row["external_scheduling_tool"] if "external_scheduling_tool" in row.keys() else None,
@@ -7050,7 +7056,33 @@ NON_ALERT_TYPES = (
     "morning_brief", "intraday_pulse", "closing_summary", "weekly_review",
     "monthly_review", "daily_briefing", "schedule_drafted", "outcome_achieved",
     "issue", "issue_escalated", "coverage", "demand_opportunity",
+    "while_away", "connection_lost",
 )
+
+
+def count_briefings_today(restaurant_id: int, db_path: str = DB_PATH) -> int:
+    """Briefing-style notifications sent so far in the restaurant's own day —
+    the NON_ALERT_TYPES rows count_alerts_today deliberately excludes.
+
+    The retention audit found twelve types exempt from the 50/day ceiling
+    with no budget of their own: a POS-connected owner could receive a
+    morning brief, a pre-shift nudge, a pre-dinner pulse, a coverage push, a
+    demand opportunity and a closing summary in one day, none of which
+    counted. notify.briefing_allowed reads this."""
+    from time_utils import restaurant_now_by_id
+    day = restaurant_now_by_id(restaurant_id, naive=True).date().isoformat()
+    placeholders = ",".join("?" * len(NON_ALERT_TYPES))
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(
+            f"SELECT COUNT(*) AS n FROM alert_log WHERE restaurant_id=? "
+            f"AND substr(fired_at,1,10)=? AND alert_type IN ({placeholders})",
+            (restaurant_id, day, *NON_ALERT_TYPES)).fetchone()
+        return int((row["n"] if row else 0) or 0)
+    except Exception:
+        return 0
+    finally:
+        conn.close()
 
 
 def count_alerts_today(restaurant_id: int, db_path: str = DB_PATH) -> int:

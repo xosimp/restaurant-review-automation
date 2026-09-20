@@ -5669,6 +5669,8 @@ svg:hover .hb-xh{opacity:1}
               <div class="c"><label class="ac-switch"><input type="checkbox" id="as-hold-alerts" onchange="saveMorningBrief()" aria-label="Hold alerts through service"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
             <div class="ac-row"><div class="l"><b>Text the manager tonight\u2019s lineup notes</b><span>The staff briefing, sent to whoever issues are routed to, with a link to read it with the team.</span></div>
               <div class="c"><select id="as-preshift-hour" onchange="saveMorningBrief()" aria-label="Lineup notes hour"></select></div></div>
+            <div class="ac-row"><div><div class="ac-row-l">How much to hear from Cavnar AI</div><div class="ac-note">Calm is the brief, results and the close. Normal adds the pre-dinner pulse, coverage and opportunities, up to four a day. Everything is what it says.</div></div>
+              <div class="c"><select id="as-briefing-level" onchange="saveMorningBrief()" aria-label="Briefing level"><option value="calm">Calm</option><option value="normal">Normal</option><option value="all">Everything</option></select></div></div>
             <div class="ac-row" id="as-autodraft-row" hidden><div class="l"><b>Draft next week&rsquo;s schedule for me</b><span>Every Thursday, if you haven&rsquo;t built one. A draft only &mdash; nothing goes to staff until you publish.</span></div>
               <div class="c"><label class="ac-switch"><input type="checkbox" id="as-autodraft" onchange="saveAutoDraft()" aria-label="Draft next week's schedule"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
           </div>
@@ -11539,6 +11541,8 @@ function loadOpsSettings() {
       ph += '<option value="' + n + '"' + (d.settings.preshift_nudge_hour === n ? ' selected' : '') + '>' + nl + '</option>';
     }
     ps.innerHTML = ph;
+    var bl = document.getElementById('as-briefing-level');
+    if (bl) bl.value = d.settings.briefing_level || 'normal';
   }).catch(function() {});
   fetch('/api/issues/routing', {credentials: 'same-origin'}).then(function(r) { return r.json(); }).then(function(d) {
     if (!d || !d.ok) return;
@@ -11589,7 +11593,8 @@ function saveMorningBrief() {
     enabled: document.getElementById('as-mb-enabled').checked,
     hour: parseInt(document.getElementById('as-mb-hour').value, 10),
     hold_alerts: document.getElementById('as-hold-alerts').checked,
-    preshift_nudge_hour: parseInt(document.getElementById('as-preshift-hour').value, 10)
+    preshift_nudge_hour: parseInt(document.getElementById('as-preshift-hour').value, 10),
+    briefing_level: (document.getElementById('as-briefing-level') || {}).value || 'normal'
   }, 'as-ops-status', 'Saved');
 }
 

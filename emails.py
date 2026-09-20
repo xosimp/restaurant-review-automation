@@ -2453,3 +2453,139 @@ def send_bug_report_email(restaurant_name: str, from_email: str, message: str, m
       <div style="font-size:14px;color:#0e0c0a;line-height:1.6;background:#f7f4ef;padding:14px;border-radius:8px;margin-bottom:16px">{safe}</div>
       <table style="font-size:13px;border-collapse:collapse">{rows}</table>
     """)
+
+
+# ── Lifecycle after day 30 ───────────────────────────────────────────────────
+# The retention audit found lifecycle mail stopped at the day-30 check-in:
+# from month two the only proactive non-alert touches were the digest and
+# the monthly. These land at 60, 90 and 180 days and are built from real
+# figures, not tips — what is now measurable, the first record window, and
+# the six-month ledger. Gated on monthly_review_enabled like the monthly
+# (they carry the business review), never on the marketing opt-out.
+
+LIFECYCLE_DAYS = (60, 90, 180)
+
+
+def _lifecycle_figures(restaurant_id):
+    """Everything a lifecycle email may say, measured. Missing is None."""
+    out = {"value": None, "news": [], "ledger": None, "trailing": {}}
+    try:
+        import value_delivered as _vd
+        out["value"] = _vd.breakdown(restaurant_id)
+        out["ledger"] = _vd.ledger(restaurant_id)
+    except Exception as e:
+        print(f"[lifecycle] value unavailable: {e}")
+    try:
+        import good_news as _gn
+        out["news"] = _gn.all_good_news(restaurant_id, limit=2) or []
+    except Exception as e:
+        print(f"[lifecycle] good news unavailable: {e}")
+    try:
+        import metrics as _m
+        from models import get_restaurant as _gr
+        r = _gr(restaurant_id)
+        keys = ["avg_rating"] if getattr(r, "module_reviews", 0) else []
+        if getattr(r, "module_labor", 0):
+            keys += ["labor_pct", "sales"]
+        if getattr(r, "module_inventory", 0):
+            keys += ["food_cost_pct"]
+        for k in keys:
+            t = _m.trailing(restaurant_id, k)
+            out["trailing"][k] = {"value": t["value"], "detail": t["detail"], "label": _m.describe(k)["label"],
+                                  "unit": _m.describe(k)["unit"]}
+    except Exception as e:
+        print(f"[lifecycle] trailing unavailable: {e}")
+    return out
+
+
+def _fmt_metric(v, unit):
+    if v is None:
+        return None
+    if unit == "$":
+        return f"${v:,.0f}"
+    if unit == "★":
+        return f"{v:.2f}★"
+    return f"{v:g}{unit}"
+
+
+def send_lifecycle_email(day: int, to_email: str, restaurant_name: str, owner_name: str = None,
+                         restaurant_id: int = None):
+    """Day 60 — what's now measurable. Day 90 — the first record window.
+    Day 180 — six months, the ledger. Each says only what was measured."""
+    if not _resend_key() or day not in LIFECYCLE_DAYS or not restaurant_id:
+        return
+    try:
+        import html as _h
+        first = owner_name.split()[0] if owner_name else "there"
+        f = _lifecycle_figures(restaurant_id)
+        val = f["value"] or {}
+        delivered = (val.get("delivered") or {})
+        avoided = (val.get("avoided") or {})
+        sections = []
+
+        # What can now be read. A metric with a trailing value is a metric
+        # the product can measure a goal or an outcome against.
+        readable = [(k, t) for k, t in (f["trailing"] or {}).items() if t.get("value") is not None]
+        unreadable = [t["label"] for k, t in (f["trailing"] or {}).items() if t.get("value") is None]
+        if readable:
+            stats = [(_fmt_metric(t["value"], t["unit"]), t["label"]) for k, t in readable]
+            sections.append(report_eyebrow("Where you stand today") + report_stats(stats))
+        if unreadable and day == 60:
+            sections.append(report_paragraph(
+                f'<span style="font-size:13px;color:{BRAND["muted"]}">Not yet measurable: '
+                f'{_h.escape(", ".join(unreadable))}. Each lights up with its own data — a shift export, '
+                f'a count, a synced POS.</span>'))
+
+        # What got better on its own.
+        if f["news"]:
+            sections.append(report_eyebrow("What got better")
+                            + report_paragraph("<br><br>".join(_h.escape(n["summary"]) for n in f["news"])))
+
+        # What the tracked changes did.
+        if delivered.get("wins"):
+            line = (f"<strong>${delivered['monthly']:,.0f} a month</strong> measured across "
+                    f"{delivered['wins']} change{'s' if delivered['wins'] != 1 else ''}")
+            if delivered.get("annual"):
+                line += f" — about ${delivered['annual']:,.0f} a year if it holds"
+            sections.append(report_eyebrow("Measured results") + report_paragraph(line + ".")
+                            + report_paragraph(f'<span style="font-size:12.5px;color:{BRAND["muted"]}">'
+                                               f'{_h.escape(delivered.get("caveat") or "")}</span>'))
+        elif day == 60:
+            sections.append(report_eyebrow("Measured results") + report_paragraph(
+                "Nothing measured yet — and that is the one figure on this page you control. "
+                "Press <strong>Track this</strong> on a recommendation and the product takes a baseline "
+                "that day and reads it again in a few weeks."))
+
+        # The ledger, which needs no button.
+        led = f["ledger"] or {}
+        import value_delivered as _vd
+        lines = _vd.ledger_lines(led)
+        if lines:
+            sections.append(report_eyebrow("Since you started" if day == 180 else "Done so far")
+                            + report_paragraph("<br>".join(_h.escape(l) for l in lines)))
+        if avoided.get("hours"):
+            sections.append(report_paragraph(
+                f'<span style="font-size:13px;color:{BRAND["muted"]}">About {avoided["hours"]:.0f} hours of '
+                f'your work, done for you, at stated rates — an estimate, not a measurement.</span>'))
+
+        heads = {60: "Two months in — what Cavnar AI can now measure",
+                 90: "Three months in — your first records",
+                 180: "Six months with Cavnar AI"}
+        pre = {60: "What is measurable now, and what is not yet.",
+               90: "Enough history for a record to mean something.",
+               180: "The ledger, since the day you started."}
+        html_body = report_shell(kicker=f"Day {day}", title=heads[day],
+                                 subtitle=_h.escape(restaurant_name),
+                                 sections=sections or [report_paragraph(
+                                     "Nothing to report yet — this fills in as data arrives.")],
+                                 cta_label="Open your dashboard →")
+        deliver(email_type=f"send_lifecycle_day{day}", restaurant_id=restaurant_id, payload={
+            "from": sender("will"),
+            "to": [to_email],
+            "subject": f"{heads[day]} — {restaurant_name}",
+            "preheader": pre[day],
+            "html": html_body,
+        })
+        print(f"Lifecycle day {day} sent to {to_email}")
+    except Exception as e:
+        print(f"send_lifecycle_email({day}) failed: {e}")

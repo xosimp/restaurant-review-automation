@@ -657,9 +657,16 @@ def _follow_through_sections(restaurant_id, owner_view=False):
     return out
 
 
-def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = None,
-                restaurant_id: int = None, owner_view: bool = False) -> str:
-    """The weekly digest, on the same layout as every other Cavnar AI email.
+def _digest_parts(report: WeeklyReport, restaurant_name: str, owner_name: str = None,
+                  restaurant_id: int = None, owner_view: bool = False) -> dict:
+    """The weekly digest's sections for ONE restaurant, without the shell.
+
+    Split out of render_html so a multi-location owner can get every
+    location in one email (render_group_html) — the dedup-by-address in
+    scheduler.run_weekly_digests used to solve "three identical-looking
+    digests" by dropping two restaurants' weeks on the floor.
+
+    The weekly digest, on the same layout as every other Cavnar AI email.
 
     Two things were wrong with this and both were structural. It rendered
     DARK while everything else Cavnar AI sends is a light card — not because
@@ -876,10 +883,60 @@ def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = No
     week_label = (_rnbi_html(restaurant_id or report.restaurant_id)
                   .strftime("Week of %B %-d, %Y"))
 
+    return {"sections": sections, "week_label": week_label, "location_label": location_label,
+            "rating": report.avg_rating, "total": report.total_reviews}
+
+
+def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = None,
+                restaurant_id: int = None, owner_view: bool = False) -> str:
+    """One restaurant's digest in the standard shell."""
+    from emails import report_shell
+    p = _digest_parts(report, restaurant_name, owner_name, restaurant_id, owner_view)
     return report_shell(
         kicker="Weekly Digest",
         title=_html.escape(restaurant_name),
-        subtitle=f"{week_label}{location_label}",
+        subtitle=f"{p['week_label']}{p['location_label']}",
+        sections=p["sections"],
+        cta_label="Open your dashboard →",
+    )
+
+
+def render_group_html(items: list, owner_name: str = None, group_name: str = None) -> str:
+    """Every location an owner runs, in one email: a portfolio line on top,
+    then each location's own sections under its own eyebrow.
+
+    `items` is [(restaurant, WeeklyReport)]. The portfolio line is the same
+    read home_brief's group brief makes — strongest and weakest by rating —
+    so the email and the dashboard agree on which location needs the
+    owner first.
+    """
+    from emails import BRAND, report_shell, report_eyebrow, report_rule, report_paragraph
+    parts = []
+    for rest, rep in items:
+        parts.append((rest, _digest_parts(rep, rest.name, owner_name, rest.id, True)))
+    rated = [(r, p) for r, p in parts if p.get("rating")]
+    sections = []
+    if len(rated) >= 2:
+        best = max(rated, key=lambda x: x[1]["rating"])
+        worst = min(rated, key=lambda x: x[1]["rating"])
+        sections.append(report_paragraph(
+            f"Across {len(items)} locations this week: "
+            f"<strong>{_html.escape(best[0].location_name or best[0].name)}</strong> led at "
+            f"{best[1]['rating']:.1f}&#9733;, "
+            f"<strong>{_html.escape(worst[0].location_name or worst[0].name)}</strong> trailed at "
+            f"{worst[1]['rating']:.1f}&#9733;."))
+    for i, (rest, p) in enumerate(parts):
+        if i:
+            sections.append(report_rule(30))
+        label = rest.location_name or rest.name
+        tag = f"{p['rating']:.1f}&#9733;" if p.get("rating") else None
+        sections.append(report_eyebrow(_html.escape(label), color=BRAND["ember"], tag=tag))
+        sections.extend(p["sections"])
+    week_label = parts[0][1]["week_label"] if parts else ""
+    return report_shell(
+        kicker=f"Weekly Digest · {len(items)} locations",
+        title=_html.escape(group_name or items[0][0].name),
+        subtitle=week_label,
         sections=sections,
         cta_label="Open your dashboard →",
     )

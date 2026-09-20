@@ -240,6 +240,8 @@ def run_auto_draft_schedules(db_path=DB_PATH):
             # morning_brief.recipients is the same audience the brief uses.
             import morning_brief
             audience = {u["id"] for u in morning_brief.recipients(r.id, db_path)}
+            if not notify.briefing_allowed(r.id, "schedule_drafted", db_path):
+                continue
             notify.record_notification(r.id, "schedule_drafted", db_path=db_path)
             push.fire_push(r.id, "schedule_drafted", "Next week's schedule is drafted",
                            "Review it and publish when it looks right — nothing has gone to "
@@ -323,6 +325,8 @@ def run_pre_dinner_pulse(db_path=DB_PATH):
                 continue
             word = "behind" if p["direction"] == "behind" else "ahead of"
             import notify
+            if not notify.briefing_allowed(r.id, "intraday_pulse", db_path):
+                continue
             notify.record_notification(r.id, "intraday_pulse", db_path=db_path)
             push.fire_push(
                 r.id, "intraday_pulse",
@@ -383,6 +387,8 @@ def _reach(restaurant_id, alert_type, title, body, data, db_path, subject=None,
     Returns the number of people reached.
     """
     import morning_brief, notify, push
+    if not notify.briefing_allowed(restaurant_id, alert_type, db_path):
+        return 0
     people = morning_brief.recipients(restaurant_id, db_path)
     if not people:
         return 0
@@ -551,6 +557,8 @@ def run_demand_opportunity(db_path=DB_PATH):
             import morning_brief, notify
             audience = {u["id"] for u in morning_brief.recipients(r.id, db_path)}
             if not audience:
+                continue
+            if not notify.briefing_allowed(r.id, "demand_opportunity", db_path):
                 continue
             notify.record_notification(r.id, "demand_opportunity", db_path=db_path,
                                        value=float(out["typical_sales"]))
