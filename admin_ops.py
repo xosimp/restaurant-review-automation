@@ -12,11 +12,14 @@ single restaurant itself) → LOCATION (a restaurants row). Health only ever
 rolls UP: a brand is as healthy as its worst location.
 """
 import json
+import logging
 import os
 import re
 from datetime import datetime, timedelta
 
 from models import get_conn, get_restaurant
+
+log = logging.getLogger(__name__)
 
 # MRR by module count. This used to be its own {1: 349, 2: 649, ...} literal,
 # which is how the 2- and 3-module prices ended up living in three places and
@@ -365,6 +368,11 @@ def _data_completeness(r, d):
     return {"score": round(100 * sum(c["ok"] for c in checks) / len(checks)), "checks": checks}
 
 
+# A live reviews restaurant should be fetched every four hours. This is
+# generous against that: past it, the pass is genuinely not reaching them.
+FETCH_STALE_HOURS = int(os.getenv("FETCH_STALE_HOURS", "12"))
+
+
 def _churn_risk(r, d, last_active, completeness):
     """{"level": low|medium|high|n/a, "reasons": [...]}. Signals, not a model:
     each reason is a fact an admin can check and act on."""
@@ -657,6 +665,42 @@ def overview():
         issues.insert(0, {"key": key, "restaurant_id": None, "restaurant": "Platform", "brand": "Platform", "location_name": None, "owner": None,
                           "title": f"Job `{job}` failed {len(fs)}× in 24h", "detail": (fs[0]["error"] or "")[:160], "severity": "critical" if len(fs) >= 5 else "warning",
                           "severity_rank": 2 if len(fs) >= 5 else 1, "since": _since(fs[-1]["created_at"]), "since_at": fs[-1]["created_at"], "action": "Open jobs", "action_route": None})
+    # FLEET COVERAGE. Every signal above answers "did something fail?"; none
+    # answered "did something not happen?". The review fetch is now bounded
+    # in time (scheduler.FETCH_MAX_SECONDS), which is correct, but it means
+    # a pass can legitimately end without reaching everyone — and an
+    # unreached restaurant looks exactly like a restaurant with no new
+    # reviews. This is the one check that can tell them apart, and it is the
+    # difference between noticing at 9am and hearing it from the owner.
+    stale_fetch = []
+    for r in recs:
+        if r["is_demo"] or r["is_admin_home"] or r["billing"]["status"] in ("internal", "churned", "canceled"):
+            continue
+        if not (r.get("modules") and any(m["key"] == "reviews" and m["enabled"] for m in r["modules"])):
+            continue
+        last = (r.get("freshness") or {}).get("reviews")
+        age = _age_hours(last)
+        # Never fetched is only a problem once the account is past setup;
+        # _onboarding_for already knows when that is.
+        if age is None and (r.get("created_at") or "") > _iso(now - timedelta(days=3)):
+            continue
+        if age is None or age > FETCH_STALE_HOURS:
+            stale_fetch.append((r, age))
+    if stale_fetch and "fleet:fetch_coverage" not in d["resolved"]:
+        worst = max((a for _r, a in stale_fetch if a is not None), default=None)
+        names = ", ".join(r["name"] for r, _a in stale_fetch[:4])
+        issues.insert(0, {
+            "key": "fleet:fetch_coverage", "restaurant_id": None, "restaurant": "Platform",
+            "brand": "Platform", "location_name": None, "owner": None,
+            "title": f"{len(stale_fetch)} restaurant{'' if len(stale_fetch) == 1 else 's'} "
+                     f"not fetched in over {FETCH_STALE_HOURS}h",
+            "detail": (f"{names}{'…' if len(stale_fetch) > 4 else ''}. "
+                       f"Nothing failed — the pass did not reach them."),
+            "severity": "critical" if len(stale_fetch) > max(3, len(recs) // 10) else "warning",
+            "severity_rank": 2 if len(stale_fetch) > max(3, len(recs) // 10) else 1,
+            "since": f"{int(worst)}h" if worst else "never", "since_at": None,
+            "action": "Open jobs", "action_route": None})
+
     if hb is None or hb > 15:
         issues.insert(0, {"key": "scheduler", "restaurant_id": None, "restaurant": "Platform", "brand": "Platform", "location_name": None, "owner": None,
                           "title": "Scheduler heartbeat is stale" if hb is not None else "Scheduler has never stamped a heartbeat", "detail": f"{int(hb)} minutes" if hb else None,
@@ -681,6 +725,24 @@ def overview():
         "attention": sum(1 for i in issues), "critical": sum(1 for i in issues if i["severity"] == "critical"),
         "scheduler_heartbeat_minutes": hb,
     }
+    # Latency and error rate. Rolling, in-process, reset on deploy — see
+    # http_layer.request_metrics for why it is not a table.
+    try:
+        from http_layer import request_metrics
+        rm = request_metrics()
+        kpis.update({"rpm": rm["rpm"], "error_rate": rm["error_rate"],
+                     "server_error_rate": rm["server_error_rate"],
+                     "p50_ms": rm["p50_ms"], "p95_ms": rm["p95_ms"]})
+        if rm["requests"] >= 20 and rm["server_error_rate"] >= 5.0:
+            issues.insert(0, {
+                "key": "platform:error_rate", "restaurant_id": None, "restaurant": "Platform",
+                "brand": "Platform", "location_name": None, "owner": None,
+                "title": f"{rm['server_error_rate']:.0f}% of requests are 5xx",
+                "detail": f"{rm['requests']} requests in the last {rm['window_seconds'] // 60} minutes.",
+                "severity": "critical", "severity_rank": 2, "since": "now", "since_at": None,
+                "action": "Open jobs", "action_route": None})
+    except Exception as e:
+        log.warning("request metrics unavailable: %s", e)
     return {"ok": True, "kpis": kpis, "issues": issues[:60], "activity": activity(limit=30, d=d)["events"],
             "brands": [{k: v for k, v in b.items() if k != "locations"} | {"location_ids": [l["id"] for l in b["locations"]]} for b in _brands(recs)],
             "generated_at": _iso(now)}

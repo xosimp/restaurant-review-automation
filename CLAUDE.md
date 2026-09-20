@@ -148,6 +148,18 @@ A deletion is only "verified" when the trace is written down alongside it.
   own copy, so two workers silently double every one of those limits — the
   first is a security control. Railway usage (Sep 2026) showed ~19 vCPU-minutes
   of CPU for the whole billing period, so there is no load reason to do it yet.
+- **Every outbound HTTP call names a timeout**, enforced by
+  `scripts/check_timeouts.py`. With `--workers 1 --threads 4`, one call
+  waiting on the OS's TCP behaviour is a quarter of the platform.
+- **Work that iterates every restaurant must be bounded and resumable.**
+  `run_daily_fetch` is the pattern: a worker pool, a wall-clock bound, and a
+  cursor in `job_cursors` so the next pass starts where the last one
+  stopped. A time bound without a cursor is worse than no bound — it starves
+  the same tail every pass.
+- **Recovery lives in `RECOVERY.md`.** The local backup snapshot is
+  deliberately NOT redacted (it never leaves the volume and is the restore
+  artifact); only the emailed copy is. Do not reintroduce redaction on the
+  local path.
 - **Static assets have no cache-busting** (`/static/cavnar-orb.js`, bare
   path). Do not add a far-future `max-age` until they are hashed or
   versioned, or a JS fix will be stranded in browser caches.

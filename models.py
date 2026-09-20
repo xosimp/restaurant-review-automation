@@ -1044,6 +1044,9 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE restaurants ADD COLUMN staff_signin_notify INTEGER DEFAULT 0",
         "ALTER TABLE restaurants ADD COLUMN marketing_emails_opt_out INTEGER DEFAULT 0",
         "ALTER TABLE restaurants ADD COLUMN monthly_review_enabled INTEGER DEFAULT 1",
+        # Optimistic concurrency. Bumped by every update_restaurant write;
+        # only compared against when a caller passes expected_version.
+        "ALTER TABLE restaurants ADD COLUMN row_version INTEGER DEFAULT 0",
         "ALTER TABLE restaurants ADD COLUMN alert_health_bypass_quiet INTEGER DEFAULT 0",
         "ALTER TABLE restaurants ADD COLUMN alert_food_waste INTEGER DEFAULT 0",
         "ALTER TABLE restaurants ADD COLUMN alert_ai_visibility_drop INTEGER DEFAULT 0",
@@ -3054,8 +3057,49 @@ def create_restaurant(r: Restaurant, db_path: str = DB_PATH) -> int:
     return rid
 
 
-def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH):
-    """Update any restaurant fields by dict."""
+class StaleWrite(RuntimeError):
+    """Raised when a caller's copy of a restaurant row has moved on.
+
+    Only ever raised for callers that OPT IN by passing expected_version —
+    see update_restaurant. Everything else keeps last-write-wins, which is
+    correct for the many single-field writes in this codebase (a POS sync
+    stamping toast_last_synced has nothing to conflict with).
+    """
+
+    def __init__(self, current_version):
+        super().__init__("Someone else changed these settings while you were editing. "
+                         "Reload and make your change again.")
+        self.current_version = current_version
+
+
+def restaurant_version(restaurant_id: int, db_path: str = DB_PATH) -> int:
+    """The row's current version, for a caller that wants to detect a
+    conflicting write later."""
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT row_version FROM restaurants WHERE id=?",
+                           (restaurant_id,)).fetchone()
+        return int((row["row_version"] if row and row["row_version"] is not None else 0))
+    except Exception:
+        return 0
+    finally:
+        conn.close()
+
+
+def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
+                      expected_version: int = None):
+    """Update any restaurant fields by dict.
+
+    `expected_version` makes the write conditional: if the row has changed
+    since the caller read it, nothing is written and StaleWrite is raised.
+    Two managers on the settings screen, or a manual edit landing during a
+    POS sync, otherwise silently discard one side — there was no version
+    column and no compare-and-swap anywhere on this table, while the sales
+    audit tool three files away has had an optimistic version counter since
+    it shipped.
+
+    Omitting it keeps the previous behaviour exactly.
+    """
     allowed = {
         "name","owner_email","google_place_id","yelp_business_id","voice_notes",
         "neighborhood","vibe","known_for","sign_off_name","never_say",
@@ -3097,11 +3141,31 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH):
     if not updates:
         return
     set_clause = ", ".join(f"{k}=?" for k in updates)
-    values = list(updates.values()) + [restaurant_id]
+    # The version bump rides in the SAME statement as the update, so it
+    # cannot be skipped by an early return and cannot race a reader.
+    set_clause += ", row_version=COALESCE(row_version,0)+1"
+    values = list(updates.values())
     conn = get_conn(db_path)
-    conn.execute(f"UPDATE restaurants SET {set_clause} WHERE id=?", values)
-    conn.commit()
-    conn.close()
+    try:
+        if expected_version is None:
+            conn.execute(f"UPDATE restaurants SET {set_clause} WHERE id=?",
+                         values + [restaurant_id])
+        else:
+            cur = conn.execute(
+                f"UPDATE restaurants SET {set_clause} "
+                f"WHERE id=? AND COALESCE(row_version,0)=?",
+                values + [restaurant_id, int(expected_version)])
+            if cur.rowcount == 0:
+                row = conn.execute("SELECT row_version FROM restaurants WHERE id=?",
+                                   (restaurant_id,)).fetchone()
+                conn.close()
+                raise StaleWrite(int((row["row_version"] or 0) if row else 0))
+        conn.commit()
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
     # get_restaurant is memoised for the life of a request, so a settings POST
     # that writes and then re-reads in the same request would otherwise be
     # served the row as it was before its own write.

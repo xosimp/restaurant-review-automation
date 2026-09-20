@@ -10,6 +10,7 @@ the same retry behavior instead of each reimplementing it inconsistently.
 """
 import os
 import sqlite3
+import threading
 import time
 import anthropic
 
@@ -257,6 +258,95 @@ def note_ai_spend(cost_usd, restaurant_id=None):
             _budget_cache[key] = (ts, spend + cost_usd)
 
 
+# ── circuit breaker ─────────────────────────────────────────────────────────
+#
+# Retry is the right answer to ONE failed call and the wrong answer to a
+# provider outage. With retries=2 and a 1.5^n backoff, every call during a
+# Claude outage costs three attempts and ~4 seconds of held thread before it
+# fails — on a deployment with four request threads, and with a scheduler
+# pass that makes one call per new review across every restaurant. The
+# retries do not help (the provider is down) and the waiting is what turns
+# somebody else's outage into ours.
+#
+# So: after CB_FAILURE_THRESHOLD consecutive exhausted-retry failures, stop
+# calling for CB_OPEN_SECONDS and fail immediately with a message that says
+# what is actually happening. One probe is allowed through when the window
+# expires; a success closes the breaker.
+#
+# Process-local on purpose. It must be readable on the hot path without a
+# database round trip, and the state it protects is this process's threads.
+# A budget stop is NOT a provider failure and never trips it.
+CB_FAILURE_THRESHOLD = int(os.getenv("AI_BREAKER_THRESHOLD", "5"))
+CB_OPEN_SECONDS = int(os.getenv("AI_BREAKER_OPEN_SECONDS", "60"))
+
+_breakers = {}
+_breaker_lock = threading.Lock()
+
+
+class AIProviderDown(RuntimeError):
+    """Raised instead of calling a provider that just failed repeatedly."""
+
+
+def breaker_state(provider="anthropic"):
+    """(state, seconds_remaining) — "closed", "open" or "probing"."""
+    with _breaker_lock:
+        b = _breakers.get(provider)
+        if not b or not b.get("open_until"):
+            return "closed", 0
+        remaining = b["open_until"] - time.time()
+        if remaining <= 0:
+            return "probing", 0
+        return "open", round(remaining, 1)
+
+
+def _breaker_check(provider):
+    """Raise if the breaker is open. Lets exactly one probe through after."""
+    with _breaker_lock:
+        b = _breakers.get(provider)
+        if not b or not b.get("open_until"):
+            return
+        if time.time() < b["open_until"]:
+            raise AIProviderDown(
+                "Cavnar's AI provider is not responding right now. Nothing is lost — "
+                "try again in a minute.")
+        # Window expired: allow this one call through as the probe.
+        b["open_until"] = 0.0
+        b["failures"] = CB_FAILURE_THRESHOLD - 1
+
+
+def _breaker_record(provider, ok):
+    with _breaker_lock:
+        b = _breakers.setdefault(provider, {"failures": 0, "open_until": 0.0})
+        if ok:
+            b["failures"] = 0
+            b["open_until"] = 0.0
+            return
+        b["failures"] += 1
+        if b["failures"] >= CB_FAILURE_THRESHOLD:
+            b["open_until"] = time.time() + CB_OPEN_SECONDS
+            try:
+                import ops
+                from datetime import datetime as _dt, timezone as _tz
+                # One line per open window, not one per rejected call.
+                if ops.claim_period(f"ai_breaker:{provider}",
+                                    _dt.now(_tz.utc).strftime("%Y-%m-%dT%H:%M")):
+                    ops.capture(
+                        AIProviderDown(f"{provider}: {b['failures']} consecutive failures — "
+                                       f"calls paused for {CB_OPEN_SECONDS}s"),
+                        job="ai_breaker", context=provider)
+            except Exception:
+                pass
+
+
+def reset_breaker(provider=None):
+    """Test hook and an operator escape hatch."""
+    with _breaker_lock:
+        if provider:
+            _breakers.pop(provider, None)
+        else:
+            _breakers.clear()
+
+
 def user_facing_error(exc, fallback="Couldn't get an answer right now — try again in a moment."):
     """The message to show an owner when an AI call failed.
 
@@ -273,6 +363,8 @@ def user_facing_error(exc, fallback="Couldn't get an answer right now — try ag
     """
     if isinstance(exc, AIBudgetExceeded):
         return str(exc), 429
+    if isinstance(exc, AIProviderDown):
+        return str(exc), 503
     return fallback, 502
 
 
@@ -305,6 +397,7 @@ def create_with_retry(client, retries=2, backoff=1.5, restaurant_id=None, action
             f"AI is paused — this account has reached its {over}. "
             "Contact will@cavnar.ai if this looks wrong."
         )
+    _breaker_check("anthropic")
     attempt = 0
     while True:
         try:
@@ -316,6 +409,7 @@ def create_with_retry(client, retries=2, backoff=1.5, restaurant_id=None, action
             message = client.messages.create(**kwargs)
             _log_usage_safe(message, kwargs.get("model", "unknown"), restaurant_id, action,
                             latency_ms=int((time.time() - _started) * 1000))
+            _breaker_record("anthropic", True)
             return message
         except _RETRYABLE as e:
             attempt += 1
@@ -329,6 +423,10 @@ def create_with_retry(client, retries=2, backoff=1.5, restaurant_id=None, action
                                 context=str(kwargs.get("model", "unknown")))
                 except Exception:
                     pass
+                # Only an EXHAUSTED retry budget counts toward the breaker:
+                # one transient 429 that the retry absorbed is the system
+                # working, not a provider that is down.
+                _breaker_record("anthropic", False)
                 raise
             time.sleep(backoff ** attempt)
         except Exception as e:

@@ -19,8 +19,11 @@ Two concerns, both measured in audit #17:
   JSON carrying one restaurant's labor cost and revenue.
 """
 import gzip
+import threading
+import time
+from collections import deque
 
-from flask import request
+from flask import g, request
 
 _COMPRESSIBLE = ("text/html", "text/css", "text/plain", "text/xml",
                  "application/json", "application/javascript",
@@ -123,10 +126,96 @@ def add_cache_headers(response):
     return response
 
 
+# ── request metrics ─────────────────────────────────────────────────────────
+#
+# The resiliency audit found no latency or error-rate signal anywhere: "is
+# the site slow?" had no answer but a customer complaint, and the platform
+# serves every request through gunicorn's four threads, so saturation is the
+# failure mode most likely to arrive first and the one nothing could see.
+#
+# A rolling in-process window rather than a table. Writing a row per request
+# to the same SQLite file the requests are contending for would make the
+# thing it measures worse; this costs a deque append and is read by the
+# admin console on demand. It resets on deploy, which is acceptable for
+# "how are we doing right now" and is why the slow-request log is separate.
+_WINDOW_SECONDS = 300
+_SLOW_MS = 2000
+_MAX_SAMPLES = 5000
+_SLOW_KEEP = 25
+
+_samples = deque(maxlen=_MAX_SAMPLES)
+_slowest = deque(maxlen=_SLOW_KEEP)
+_metrics_lock = threading.Lock()
+
+
+def _record_request(response):
+    started = getattr(g, "_req_started", None)
+    if started is None:
+        return response
+    elapsed_ms = (time.time() - started) * 1000.0
+    try:
+        # The RULE, not the path: /api/reviews/1234 and /api/reviews/5678 are
+        # one endpoint, and keying on the raw path makes every id its own
+        # row and the aggregate meaningless.
+        rule = request.url_rule.rule if request.url_rule else "(unmatched)"
+    except Exception:
+        rule = "(unknown)"
+    now = time.time()
+    with _metrics_lock:
+        _samples.append((now, elapsed_ms, response.status_code, rule))
+        if elapsed_ms >= _SLOW_MS:
+            _slowest.append({"at": now, "ms": round(elapsed_ms), "rule": rule,
+                             "status": response.status_code})
+    return response
+
+
+def _start_timer():
+    g._req_started = time.time()
+
+
+def request_metrics(window_seconds=_WINDOW_SECONDS):
+    """{requests, rpm, error_rate, p50_ms, p95_ms, slowest[]} over the window."""
+    cutoff = time.time() - window_seconds
+    with _metrics_lock:
+        rows = [r for r in _samples if r[0] >= cutoff]
+        slow = list(_slowest)
+    if not rows:
+        return {"requests": 0, "rpm": 0.0, "error_rate": 0.0, "server_error_rate": 0.0,
+                "p50_ms": None, "p95_ms": None, "window_seconds": window_seconds,
+                "slowest": slow[-_SLOW_KEEP:]}
+    times = sorted(r[1] for r in rows)
+    def pct(p):
+        if not times:
+            return None
+        return round(times[min(len(times) - 1, int(len(times) * p))], 1)
+    errors = sum(1 for r in rows if r[2] >= 400)
+    server = sum(1 for r in rows if r[2] >= 500)
+    return {
+        "requests": len(rows),
+        "rpm": round(len(rows) / (window_seconds / 60.0), 1),
+        "error_rate": round(errors / len(rows) * 100, 1),
+        "server_error_rate": round(server / len(rows) * 100, 1),
+        "p50_ms": pct(0.50), "p95_ms": pct(0.95),
+        "window_seconds": window_seconds,
+        "slowest": slow[-_SLOW_KEEP:],
+    }
+
+
+def reset_metrics():
+    """Test hook."""
+    with _metrics_lock:
+        _samples.clear()
+        _slowest.clear()
+
+
 def register(app):
-    """Attach both handlers. Order matters: cache headers are set on the
+    """Attach the handlers. Order matters: cache headers are set on the
     response object, compression rewrites its body — running compression last
-    means it sees the final headers."""
+    means it sees the final headers. The timer starts before_request and is
+    read first on the way out, so it measures the handler rather than the
+    compression this module also does."""
+    app.before_request(_start_timer)
+    app.after_request(_record_request)
     app.after_request(add_cache_headers)
     app.after_request(compress_response)
     return app

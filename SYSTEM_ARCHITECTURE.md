@@ -75,6 +75,34 @@ Browser/iOS ──HTTPS──▶ gunicorn (Railway) ──▶ Flask app (hosted_
 
 One SQLite file (`reviews.db`), WAL mode, on a Railway persistent volume. `models.get_conn(db_path)` opens a tracked connection (`_TrackedConnection`, weak-referenced so a leaked connection can be swept by `close_thread_connections()` on request teardown). Schema is created by `init_db()` and additively migrated by `ensure_columns()` — both run on every boot; there is no separate migration-runner or version table, ordinary `ALTER TABLE ADD COLUMN` guarded by `try/except`. Full table list and shapes: `DATABASE_SCHEMA.md`.
 
+## Failure & resiliency (audit #21)
+
+**Bounds, because the platform is one process with four request threads.**
+
+| Bound | Where | Why |
+|---|---|---|
+| `FETCH_WORKERS` / `FETCH_MAX_SECONDS` + `job_cursors` | `scheduler.py` | A serial pass over every restaurant ran for hours and never reached the tail; the cursor stops the bound from starving the same tail every pass |
+| `ASK_MAX_CONCURRENT` | `client_api.py` | Ask spawned an unbounded daemon thread per request |
+| `MAX_CSV_ROWS` | `client_api.py` | Parse/analyse/store run synchronously in a request |
+| `CB_FAILURE_THRESHOLD` / `CB_OPEN_SECONDS` | `ai_utils.py` | Retry is the wrong answer to a provider outage |
+| `timeout=` on every outbound call | enforced by `scripts/check_timeouts.py` | One hung call is 25% of capacity |
+| `_claim_fallback` | `ops.py` | `claim_period` and the scheduler lease both fail open on the same dependency |
+
+**Signals.** `/health` reports db, scheduler heartbeat **and disk** (a full
+volume fails writes while reads succeed). `status_manager.health_snapshot`
+holds the body so it is testable without booting the app.
+`http_layer.request_metrics` is a rolling in-process latency/error window.
+`admin_ops.overview` raises platform issues for job failures, a stale
+scheduler, a 5xx spike, and **fetch coverage** — the one check that can tell
+"no new reviews" apart from "never reached".
+
+**Concurrency.** `update_restaurant(..., expected_version=)` is optimistic
+locking on the restaurants row; omitting it keeps last-write-wins.
+
+**Recovery.** `RECOVERY.md`.
+
+---
+
 ## Scheduling / background jobs (`scheduler.py`)
 
 A single `scheduler_loop()` running in a background thread, woken on an interval, that checks a `scheduler_lease` row before doing anything — one worker holds the lease and runs the jobs; the others no-op. Each job type also claims its period in `job_period_claims` before starting (claim-before-work), so a slow run and a subsequent tick can't both fire the same job. Failures are recorded in `job_failures`/`job_runs` rather than silently retried into a notification storm. Key jobs: `run_daily_fetch` (reviews/labor/inventory pull), `run_weekly_digests`, `check_daily_alerts` / `check_extra_daily_alerts`, `run_onboarding_sequence`, `run_monthly_summaries`, `backup_db` (writes a redacted, consistent snapshot and prunes old ones), `run_toast_sync` / `run_daily_depletion_sync`, `run_weekly_competitor_analysis`, `run_weekly_ai_visibility`.

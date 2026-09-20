@@ -1110,7 +1110,19 @@ def backup_db():
         os.makedirs(backup_dir, exist_ok=True)
         local_path = os.path.join(backup_dir, filename)
         _write_consistent_snapshot(local_path)
-        _redact_snapshot(local_path)
+        # The LOCAL snapshot is NOT redacted, deliberately.
+        #
+        # It was, and that quietly made it useless as the thing it exists to
+        # be. Redaction deletes sessions, device_tokens, trusted_devices and
+        # the 2FA backup codes, and nulls every OAuth credential — Google
+        # Business Profile, Toast, Instagram, Stripe. Restoring from it
+        # brought the data back and severed every integration for every
+        # client, by hand, with no runbook.
+        #
+        # And it protected nothing: this file sits on the same Railway
+        # volume as reviews.db itself, with identical exposure. Redaction is
+        # about what LEAVES the server, so it now happens on a throwaway
+        # copy made for the email and nowhere else. See RECOVERY.md.
         size_kb = round(os.path.getsize(local_path) / 1024, 1)
         log.info(f"backup_db: local snapshot {local_path} ({size_kb} KB)")
         _prune_old_backups(backup_dir)
@@ -1136,9 +1148,15 @@ def backup_db():
         log.warning("backup_db: RESEND_API_KEY not set — local snapshot kept, email skipped")
         return
 
+    redacted_path = local_path + ".redacted"
     try:
         from cryptography.fernet import Fernet
-        with open(local_path, "rb") as f:
+        import shutil as _shutil
+        # Redact a COPY. The email is the artifact that leaves the server;
+        # the local snapshot stays whole so a restore is a restore.
+        _shutil.copy2(local_path, redacted_path)
+        _redact_snapshot(redacted_path)
+        with open(redacted_path, "rb") as f:
             payload = Fernet(key.encode()).encrypt(f.read())
         enc_name = filename + ".enc"
         size_kb = round(len(payload) / 1024, 1)
@@ -1174,6 +1192,15 @@ def backup_db():
             _ops.capture(e, job="backup_db", context="email")
         except Exception:
             pass
+    finally:
+        # The redacted copy exists only to be encrypted and attached. Leaving
+        # it on the volume would double the backup directory's size and put a
+        # second, restore-useless file next to every real snapshot.
+        try:
+            if os.path.exists(redacted_path):
+                os.unlink(redacted_path)
+        except OSError as e:
+            log.warning(f"backup_db: could not remove {redacted_path}: {e}")
 
 
 # An owner who has signed in this many times has found their way around.

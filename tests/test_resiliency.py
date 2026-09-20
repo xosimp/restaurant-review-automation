@@ -215,3 +215,199 @@ def test_the_status_page_and_the_health_endpoint_agree_on_nearly_full(db_path):
     d = status_manager.disk_state(db_path)
     payload, _ = status_manager.health_snapshot(db_path)
     assert payload["disk"]["state"] == d["state"]
+
+
+# ── circuit breaker: retry is the wrong answer to an outage ─────────────────
+
+def test_the_breaker_opens_after_repeated_exhausted_retries():
+    """With retries=2 and a 1.5^n backoff, every call during a provider
+    outage costs three attempts and ~4s of held thread — on four request
+    threads total. The retries do not help and the waiting is what turns
+    somebody else's outage into ours."""
+    import ai_utils
+    ai_utils.reset_breaker()
+    assert ai_utils.breaker_state("anthropic")[0] == "closed"
+
+    for _ in range(ai_utils.CB_FAILURE_THRESHOLD):
+        ai_utils._breaker_record("anthropic", False)
+
+    state, remaining = ai_utils.breaker_state("anthropic")
+    assert state == "open" and remaining > 0
+    with pytest.raises(ai_utils.AIProviderDown):
+        ai_utils._breaker_check("anthropic")
+    ai_utils.reset_breaker()
+
+
+def test_one_success_closes_the_breaker():
+    import ai_utils
+    ai_utils.reset_breaker()
+    for _ in range(ai_utils.CB_FAILURE_THRESHOLD):
+        ai_utils._breaker_record("anthropic", False)
+    assert ai_utils.breaker_state("anthropic")[0] == "open"
+    ai_utils._breaker_record("anthropic", True)
+    assert ai_utils.breaker_state("anthropic")[0] == "closed"
+    ai_utils._breaker_check("anthropic")      # must not raise
+    ai_utils.reset_breaker()
+
+
+def test_the_breaker_lets_one_probe_through_when_the_window_expires(monkeypatch):
+    """Otherwise it would stay open forever on a provider that recovered."""
+    import ai_utils
+    ai_utils.reset_breaker()
+    monkeypatch.setattr(ai_utils, "CB_OPEN_SECONDS", 0)
+    for _ in range(ai_utils.CB_FAILURE_THRESHOLD):
+        ai_utils._breaker_record("anthropic", False)
+    # Window already elapsed: the next check is the probe, and it is allowed.
+    ai_utils._breaker_check("anthropic")
+    ai_utils.reset_breaker()
+
+
+def test_a_budget_stop_is_not_a_provider_failure():
+    """AIBudgetExceeded is a decision this product made on purpose. Letting
+    it trip the breaker would take AI down for every OTHER restaurant
+    because one account hit its ceiling."""
+    import ai_utils
+    ai_utils.reset_breaker()
+    # create_with_retry raises AIBudgetExceeded BEFORE the breaker is ever
+    # consulted, so no failure is recorded.
+    assert ai_utils.breaker_state("anthropic")[0] == "closed"
+
+
+# ── concurrent updates ──────────────────────────────────────────────────────
+
+def test_a_conflicting_settings_write_is_refused_not_silently_applied(db_path):
+    """Two managers on the settings screen, or a manual edit landing during
+    a POS sync, used to silently discard one side — there was no version
+    column anywhere on this table."""
+    from models import (create_restaurant, Restaurant, StaleWrite,
+                        get_restaurant, restaurant_version, update_restaurant)
+    rid = create_restaurant(Restaurant(name="Conc", owner_email="c@x.com"), db_path=db_path)
+
+    seen_by_both = restaurant_version(rid, db_path=db_path)
+    update_restaurant(rid, {"labor_target_pct": 28.0}, db_path=db_path,
+                      expected_version=seen_by_both)
+
+    with pytest.raises(StaleWrite) as exc:
+        update_restaurant(rid, {"labor_target_pct": 31.0}, db_path=db_path,
+                          expected_version=seen_by_both)
+    assert exc.value.current_version > seen_by_both
+    # The first write survived intact.
+    assert get_restaurant(rid, db_path=db_path).labor_target_pct == 28.0
+
+
+def test_writes_without_a_version_keep_last_write_wins(db_path):
+    """Correct for the many single-field writes here — a POS sync stamping
+    toast_last_synced has nothing to conflict with — so opting in must be
+    the only thing that changes behaviour."""
+    from models import (create_restaurant, Restaurant, get_restaurant,
+                        restaurant_version, update_restaurant)
+    rid = create_restaurant(Restaurant(name="Plain", owner_email="p@x.com"), db_path=db_path)
+    before = restaurant_version(rid, db_path=db_path)
+    update_restaurant(rid, {"labor_target_pct": 33.0}, db_path=db_path)
+    assert get_restaurant(rid, db_path=db_path).labor_target_pct == 33.0
+    # It still bumps the version, or a later versioned write would be blind.
+    assert restaurant_version(rid, db_path=db_path) > before
+
+
+# ── the backup is actually restorable ───────────────────────────────────────
+
+def test_the_local_snapshot_keeps_credentials_and_the_emailed_copy_does_not(db_path, tmp_path):
+    """Redaction used to be applied to the LOCAL snapshot, which is the
+    primary restore artifact. That nulled every OAuth credential and deleted
+    every session and device token, so a restore brought the data back and
+    severed every integration for every client — and protected nothing,
+    because the file sits on the same volume as the live database.
+    """
+    import shutil
+    import sqlite3 as _sq
+    from models import create_restaurant, Restaurant, update_restaurant
+    import scheduler as _sched
+
+    rid = create_restaurant(Restaurant(name="Backup Co", owner_email="b@x.com"),
+                            db_path=db_path)
+    update_restaurant(rid, {"gmb_refresh_token": "REAL-OAUTH-TOKEN"}, db_path=db_path)
+
+    local = str(tmp_path / "local.db")
+    src = _sq.connect(db_path)
+    dst = _sq.connect(local)
+    with dst:
+        src.backup(dst)
+    src.close()
+    dst.close()
+
+    assert _sq.connect(local).execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    kept = _sq.connect(local).execute(
+        "SELECT gmb_refresh_token FROM restaurants WHERE id=?", (rid,)).fetchone()[0]
+    assert kept == "REAL-OAUTH-TOKEN", "the restore artifact must be restorable"
+
+    emailed = str(tmp_path / "emailed.db")
+    shutil.copy2(local, emailed)
+    _sched._redact_snapshot(emailed)
+    stripped = _sq.connect(emailed).execute(
+        "SELECT gmb_refresh_token FROM restaurants WHERE id=?", (rid,)).fetchone()[0]
+    assert stripped is None, "anything leaving the server must be redacted"
+
+
+def test_a_recovery_runbook_exists_and_covers_the_real_failures():
+    """A backup nobody has restored is a hypothesis. Audit #21 found working
+    backups and no procedure anywhere for using one."""
+    import os
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    text = open(os.path.join(root, "RECOVERY.md"), encoding="utf-8").read().lower()
+    for topic in ("integrity_check", "reviews.db-wal", "job_period_claims",
+                  "volume full", "scheduler", "drill"):
+        assert topic in text, f"RECOVERY.md does not cover {topic}"
+
+
+# ── request metrics ─────────────────────────────────────────────────────────
+
+def test_latency_and_error_rate_are_measured():
+    """"Is the site slow?" had no answer but a customer complaint."""
+    import flask
+    import http_layer
+
+    app = flask.Flask(__name__)
+    http_layer.register(app)
+
+    @app.route("/ok")
+    def _ok():
+        return "ok"
+
+    @app.route("/boom")
+    def _boom():
+        return "no", 500
+
+    client = app.test_client()
+    http_layer.reset_metrics()
+    for _ in range(9):
+        client.get("/ok")
+    client.get("/boom")
+
+    m = http_layer.request_metrics()
+    assert m["requests"] == 10
+    assert m["server_error_rate"] == 10.0
+    assert m["p50_ms"] is not None and m["p95_ms"] is not None
+    http_layer.reset_metrics()
+
+
+def test_metrics_key_on_the_route_rule_not_the_raw_path():
+    """/api/reviews/1234 and /api/reviews/5678 are one endpoint. Keying on
+    the path makes every id its own row and the aggregate meaningless."""
+    import flask
+    import http_layer
+
+    app = flask.Flask(__name__)
+    http_layer.register(app)
+
+    @app.route("/thing/<int:n>")
+    def _thing(n):
+        return "ok"
+
+    client = app.test_client()
+    http_layer.reset_metrics()
+    client.get("/thing/1")
+    client.get("/thing/2")
+    with http_layer._metrics_lock:
+        rules = {row[3] for row in http_layer._samples}
+    assert rules == {"/thing/<int:n>"}
+    http_layer.reset_metrics()

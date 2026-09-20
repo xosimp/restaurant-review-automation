@@ -104,7 +104,11 @@ def test_docusign_tabs_and_admin_role(monkeypatch):
             return {"envelopeId": "env1", "status": "sent"}
 
     import requests
-    monkeypatch.setattr(requests, "post", lambda url, headers=None, json=None: sent.update(body=json) or _Resp())
+    # **kwargs so the stub keeps matching requests.post's real signature —
+    # it grew a timeout= in resiliency audit #21, and a stub that pins the
+    # exact arguments fails on a change that is not the test's subject.
+    monkeypatch.setattr(requests, "post",
+                        lambda url, headers=None, json=None, **kw: sent.update(body=json) or _Resp())
     r = d.send_contract("erik@example.com", "Erik", "Simple EJ's", 4, "all")
     assert r["ok"] and r["envelope_id"] == "env1"
     roles = {x["roleName"]: x for x in sent["body"]["templateRoles"]}
