@@ -20,6 +20,12 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
     /// way back (AccountAlertsDetailView).
     private(set) var authorizationDenied = false
 
+    /// Never asked yet. On a fresh install the system prompt waits for the
+    /// second open (see launchCountKey), so on launch one there has to be a
+    /// way to ask for it — otherwise the deferral is a trap: no prompt, no
+    /// token, and nothing in Account offering either.
+    private(set) var authorizationUndetermined = false
+
     /// Categories are what let an owner act from the lock screen instead of
     /// unlocking, finding the module and starting again. The identifiers
     /// match push.py's CATEGORY_* constants.
@@ -72,12 +78,15 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
                     // Surfaced in Account rather than retried: iOS will not
                     // show the prompt again, so only Settings can undo it.
                     self.authorizationDenied = true
+                    self.authorizationUndetermined = false
                 case .notDetermined:
                     self.authorizationDenied = false
+                    self.authorizationUndetermined = true
                     guard launches >= 2 else { return }
                     await self.promptNow()
                 default:
                     self.authorizationDenied = false
+                    self.authorizationUndetermined = false
                     UIApplication.shared.registerForRemoteNotifications()
                     await self.flushPendingToken()
                 }
@@ -92,8 +101,10 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
         let granted = (try? await UNUserNotificationCenter.current()
             .requestAuthorization(options: [.alert, .sound, .badge])) ?? false
         authorizationDenied = !granted
+        authorizationUndetermined = false
         if granted {
             UIApplication.shared.registerForRemoteNotifications()
+            await flushPendingToken()
         }
         return granted
     }
@@ -103,8 +114,10 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
     func refreshAuthorization() async {
         let settings = await UNUserNotificationCenter.current().notificationSettings()
         authorizationDenied = settings.authorizationStatus == .denied
+        authorizationUndetermined = settings.authorizationStatus == .notDetermined
         if settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional {
             UIApplication.shared.registerForRemoteNotifications()
+            await flushPendingToken()
         }
     }
 

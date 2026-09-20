@@ -21,6 +21,7 @@ struct AccountAlertsDetailView: View {
     @State private var quietEnd: Date
     @State private var testDigestLabel: String?
     @State private var pushDenied = false
+    @State private var pushUndetermined = false
     @State private var brief = BriefSettings()
     @State private var briefLoaded = false
     @State private var nudge: EngagementSuggestion?
@@ -106,6 +107,25 @@ struct AccountAlertsDetailView: View {
                                          symbol: "arrow.up.forward") {
                             if let url = URL(string: UIApplication.openSettingsURLString) {
                                 UIApplication.shared.open(url)
+                            }
+                        }
+                    } else if pushUndetermined {
+                        // The system prompt waits for the second app open so
+                        // it doesn't fire before the owner has seen a single
+                        // number. Without this row that deferral is a trap on
+                        // a fresh install: no prompt, no token, and nothing
+                        // anywhere offering either.
+                        CavnarCaveat(
+                            title: "Nothing can reach your phone yet",
+                            detail: "Cavnar AI hasn't asked for permission to send notifications. None of the switches below do anything until it has."
+                        )
+                        AccountActionRow(label: "Allow notifications",
+                                         detail: "Asks iOS now.",
+                                         symbol: "bell.badge") {
+                            Task {
+                                await PushManager.shared.promptNow()
+                                pushDenied = PushManager.shared.authorizationDenied
+                                pushUndetermined = PushManager.shared.authorizationUndetermined
                             }
                         }
                     }
@@ -356,6 +376,7 @@ struct AccountAlertsDetailView: View {
         .task {
             await PushManager.shared.refreshAuthorization()
             pushDenied = PushManager.shared.authorizationDenied
+            pushUndetermined = PushManager.shared.authorizationUndetermined
             await loadBrief()
             await loadNudge()
         }
