@@ -255,12 +255,30 @@ def _provider_jwt():
     if missing:
         raise PushNotConfigured("APNs is not configured: " + ", ".join(missing) + " unset")
     import jwt as _pyjwt
-    token = _pyjwt.encode(
-        {"iss": team_id, "iat": int(now)},
-        private_key,
-        algorithm="ES256",
-        headers={"kid": key_id},
-    )
+    try:
+        token = _pyjwt.encode(
+            {"iss": team_id, "iat": int(now)},
+            private_key,
+            algorithm="ES256",
+            headers={"kid": key_id},
+        )
+    except Exception as e:
+        # A set-but-unparseable key surfaced as cryptography's raw "Unable to
+        # load PEM file ... InvalidData(Invalid symbol 226, offset 0)", which
+        # names neither the variable nor the cause. Byte 226 is the first of
+        # a UTF-8 bullet: production had a MASKED rendering of the .p8 stored
+        # as the key itself — 200 bullet characters where the base64 body
+        # should be, PEM headers intact. Push had therefore never worked, and
+        # under the old failure handling each attempt counted toward deleting
+        # the device, so there was nothing left to notice it with.
+        body = "".join(private_key.splitlines()[1:-1])
+        if body and not any(c.isalnum() for c in body):
+            raise PushNotConfigured(
+                "APNS_PRIVATE_KEY is a masked placeholder, not a key: the PEM headers are "
+                "there but the body is all bullet characters. Re-paste the .p8 from the "
+                "file itself, never from a screen that renders it as dots."
+            ) from e
+        raise PushNotConfigured(f"APNS_PRIVATE_KEY is not a usable .p8 private key: {e}") from e
     with _jwt_lock:
         _jwt_cache["token"] = token
         _jwt_cache["minted_at"] = now

@@ -463,3 +463,30 @@ def test_two_sign_ins_in_one_day_are_two_notifications(db_path, rid, uid, monkey
     _deliver(token_row, "login", "t", "b", None, db_path=db_path)
 
     assert calls[0][2]["apns-collapse-id"] != calls[1][2]["apns-collapse-id"]
+
+
+def test_a_masked_key_names_itself(monkeypatch):
+    """Production stored a MASKED RENDERING of the .p8 as the key: PEM
+    headers intact, 200 bullet characters where the base64 body should be.
+    Push had therefore never worked, and cryptography's raw complaint —
+    "Unable to load PEM file ... Invalid symbol 226, offset 0" — named
+    neither the variable nor the cause."""
+    monkeypatch.setenv("APNS_KEY_ID", "5NN4WK66VN")
+    monkeypatch.setenv("APNS_TEAM_ID", "8DW8XL63K6")
+    monkeypatch.setenv("APNS_PRIVATE_KEY",
+                       "-----BEGIN PRIVATE KEY-----\n" + ("•" * 64 + "\n") * 3
+                       + "•" * 8 + "\n-----END PRIVATE KEY-----")
+    push.invalidate_provider_jwt()
+
+    with pytest.raises(push.PushNotConfigured, match="masked placeholder"):
+        push._provider_jwt()
+
+
+def test_an_unset_key_still_names_the_variable(monkeypatch):
+    monkeypatch.delenv("APNS_PRIVATE_KEY", raising=False)
+    monkeypatch.setenv("APNS_KEY_ID", "k")
+    monkeypatch.setenv("APNS_TEAM_ID", "t")
+    push.invalidate_provider_jwt()
+
+    with pytest.raises(push.PushNotConfigured, match="APNS_PRIVATE_KEY"):
+        push._provider_jwt()
