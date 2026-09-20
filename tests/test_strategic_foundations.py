@@ -116,9 +116,9 @@ def test_an_outcome_is_evaluated_only_after_its_window_and_says_what_moved(db_pa
     import outcomes
     rid = _rid(db_path)
     start = date.today() - timedelta(days=40)
-    for i in range(28):              # baseline: 30% labour
+    for i in range(28):              # baseline: 30% labor
         _sales_day(db_path, rid, (start - timedelta(days=28) + timedelta(days=i)).isoformat(), 1000, 300)
-    for i in range(28):              # after: 25% labour
+    for i in range(28):              # after: 25% labor
         _sales_day(db_path, rid, (start + timedelta(days=i)).isoformat(), 1000, 250)
     o = outcomes.record(rid, "ask", "k1", "Cut Tuesday close", "labor_pct", today=start)
     assert outcomes.evaluate(o["id"], today=start + timedelta(days=5)) is None, "too early"
@@ -158,7 +158,7 @@ def test_a_goal_reports_met_moving_or_unknown(db_path):
 
 
 def test_one_active_goal_per_metric(db_path):
-    """Two live targets for labour % are two answers to 'am I on track'."""
+    """Two live targets for labor % are two answers to 'am I on track'."""
     import goals
     rid = _rid(db_path)
     goals.set_goal(rid, "labor_pct", 27)
@@ -587,7 +587,7 @@ def test_a_goal_already_on_target_is_not_closed_the_next_morning(db_path):
     import goals
     rid = _rid(db_path)
     for i in range(1, 15):
-        _sales_day(db_path, rid, _day(-i), 1000, 250)       # 25% labour
+        _sales_day(db_path, rid, _day(-i), 1000, 250)       # 25% labor
     g = goals.set_goal(rid, "labor_pct", 30)
     assert g["state"] == "met"
     assert goals.mark_achieved(rid) == []

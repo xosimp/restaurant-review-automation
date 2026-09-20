@@ -252,7 +252,7 @@ def _do_value(u):
     against what has since been measured.
 
     Food-cost dollars are filtered the same way goals and outcomes are: a
-    manager without FOOD_COST_VIEW sees the labour and reviews halves and
+    manager without FOOD_COST_VIEW sees the labor and reviews halves and
     not the margin ones.
     """
     import value_delivered
@@ -482,7 +482,7 @@ def _do_good_news(u):
     from models import get_restaurant
     # Every module this login may not see, not just food cost. An earlier
     # version denied {"inventory"} alone, which left a manager without the
-    # Labor permission reading sales and labour-percentage records — the
+    # Labor permission reading sales and labor-percentage records — the
     # same class of leak the ROI audit found in /api/value, where the
     # breakdown was filtered and the headline total was not.
     #

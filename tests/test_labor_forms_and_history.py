@@ -71,9 +71,14 @@ def test_hb_sh_has_a_real_css_rule():
     and a bare <small> glued right onto it."""
     css = _src()
     assert re.search(r"\.hb-sh\{[^}]*display:flex", css)
-    assert re.search(r"\.hb-sh h2\{[^}]*font-size:22px", css)
+    # A floor, not an exact size: the rule exists and is a section heading
+    # (DESIGN_SYSTEM.md §2 puts Clash section headings at 22–23.5px). The
+    # Home redesign moved it to the top of that range to sit with Food
+    # Cost's; pinning 22 exactly would fail the fix it was written to prove.
+    h2 = re.search(r"\.hb-sh h2\{([^}]*)\}", css)
+    assert h2 and float(re.search(r"font-size:([\d.]+)px", h2.group(1)).group(1)) >= 22
     m = re.search(r"\.hb-sh h2 small\{([^}]*)\}", css)
-    assert m and int(re.search(r"font-size:(\d+)px", m.group(1)).group(1)) >= 14
+    assert m and float(re.search(r"font-size:([\d.]+)px", m.group(1)).group(1)) >= 14
 
 
 def test_schedule_buttons_sit_below_the_heading_not_beside_it():

@@ -1171,7 +1171,7 @@ document.documentElement.classList.add('pjs-loading');
 </div>
 
 <!-- VALUE STRIP — measured, avoided, available. Never summed into each other.
-     This replaced a "Total value delivered" banner whose labour and food-cost
+     This replaced a "Total value delivered" banner whose labor and food-cost
      components were the GAP TO TARGET: money still being lost, counted as
      money delivered. See value_delivered.py for the full account. The strip
      was also display:none with nothing ever showing it, so the web had no
@@ -1229,21 +1229,21 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 [data-theme="dark"] #panel-home{--hb-line:rgba(240,235,224,.14);--hb-line2:rgba(240,235,224,.07);--hb-tint:rgba(224,100,68,.09);--hb-tint2:rgba(224,100,68,.16);--hb-field:rgba(255,255,255,.05)}
 .hb-wrap{max-width:1120px;margin:0 auto;padding:30px 32px 56px;position:relative;z-index:1}
 .hb-num,.hb-num *{font-family:'Space Grotesk',sans-serif!important;font-variant-numeric:tabular-nums}
-.hb-kicker{font-size:10.5px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--ember)}
+.hb-kicker{font-size:11.5px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--ember)}
 .hb-h1{font-family:'Clash Display',sans-serif;font-weight:500;font-size:clamp(30px,3.2vw,40px);line-height:1.04;letter-spacing:-.012em;color:var(--ink);margin:8px 0 8px;text-wrap:balance}
 .hb-h1{word-spacing:.14em}
 .hb-h1 .hb-head{color:var(--ink3)}
 .hb-h1 .hb-head.bad{color:var(--hb-bad)}.hb-h1 .hb-head.warn{color:var(--hb-warn)}.hb-h1 .hb-head.good{color:var(--hb-good)}.hb-h1 .hb-head.neutral{color:var(--ink2)}
-.hb-sub{font-size:13px;color:var(--ink3);display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.hb-sub{font-size:14.5px;color:var(--ink3);display:flex;gap:6px;align-items:center;flex-wrap:wrap}
 /* Shared section-header row (Inbox, Schedule, History, ...) — this had no
    rule of its own at all, so "optimized to your X% target..." rendered
    glued directly onto the h2 text before it with no gap and whatever size
    a bare <small> happens to inherit, rather than the kicker+title+subtitle
    hierarchy every other section on the page actually uses. */
 .hb-sh{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap;margin-top:34px;padding-top:22px;border-top:1px solid var(--hb-line)}
-.hb-sh .k{font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember)}
-.hb-sh h2{font-family:'Clash Display',sans-serif;font-size:22px;font-weight:500;color:var(--ink);margin-top:5px;display:flex;align-items:baseline;flex-wrap:wrap;gap:10px}
-.hb-sh h2 small{font-family:'Apfel Grotezk',sans-serif;font-size:14px;font-weight:400;color:var(--ink3)}
+.hb-sh .k{font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember)}
+.hb-sh h2{font-family:'Clash Display',sans-serif;font-size:23.5px;font-weight:500;color:var(--ink);margin-top:5px;display:flex;align-items:baseline;flex-wrap:wrap;gap:10px}
+.hb-sh h2 small{font-family:'Apfel Grotezk',sans-serif;font-size:15.5px;font-weight:400;color:var(--ink3)}
 .hb-sub .sep{color:var(--ink3);opacity:.5}
 .hb-refresh{background:none;border:none;color:var(--ink3);font-family:inherit;font-size:12px;cursor:pointer;padding:0;display:inline-flex;gap:5px;align-items:center}
 .hb-refresh:hover{color:var(--ember)}
@@ -1259,9 +1259,9 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 .hb-chip{display:inline-flex;align-items:center;gap:8px;padding:8px 13px 8px 11px;border-radius:999px;border:1px solid var(--bg-base);background:linear-gradient(180deg,rgba(255,255,255,.07),rgba(255,255,255,.02));box-shadow:0 10px 24px rgba(0,0,0,.45),0 3px 8px rgba(0,0,0,.35);cursor:pointer;font-family:inherit;color:var(--ink);white-space:nowrap;transition:transform .12s ease,box-shadow .12s ease}
 html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(255,255,255,.8),rgba(255,255,255,.45))}
 .hb-chip:hover{transform:translateY(-1px);box-shadow:0 14px 32px rgba(0,0,0,.5),0 4px 10px rgba(0,0,0,.4)}
-.hb-chip .v{font-family:'Space Grotesk',sans-serif;font-size:14px;font-weight:700;letter-spacing:-.01em}
+.hb-chip .v{font-family:'Space Grotesk',sans-serif;font-size:15.5px;font-weight:700;letter-spacing:-.01em}
 .hb-chip .v .stat-n{font-size:14px}
-.hb-chip .l{font-size:11.5px;font-weight:600;color:var(--ink2)}
+.hb-chip .l{font-size:13px;font-weight:600;color:var(--ink2)}
 .hb-chip .dot{position:relative;width:8px;height:8px;flex-shrink:0}
 .hb-chip .dot i{position:absolute;inset:0;border-radius:50%;background:var(--ember);box-shadow:0 0 6px var(--ember)}
 .hb-chip .dot b{position:absolute;inset:-4px;border-radius:50%;background:var(--ember);opacity:.35;animation:hbBreath 2.2s ease-in-out infinite}
@@ -1287,14 +1287,14 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-sig{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0;margin-top:34px;padding-top:24px;border-top:1px solid var(--hb-line)}
 .hb-sg{padding:0 26px 0 0;margin-right:26px;border-right:1px solid var(--hb-line2);min-width:0;cursor:pointer;border-radius:8px}
 .hb-sg:last-child{border-right:none;margin-right:0;padding-right:0}
-.hb-sg .k{font-size:10.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);display:flex;justify-content:space-between}
-.hb-sg .k i{font-style:normal;color:var(--ember);font-weight:700;letter-spacing:.06em;font-size:10px}
-.hb-sg .v{font-family:'Space Grotesk',sans-serif;font-size:34px;font-weight:600;letter-spacing:-.025em;line-height:1;color:var(--ink);margin:8px 0 2px;display:flex;align-items:baseline;gap:8px}
-.hb-sg .v small{font-family:'Apfel Grotezk',sans-serif;font-size:12px;font-weight:400;letter-spacing:0;color:var(--ink3)}
-.hb-sg .v .dl{font-size:12px;font-weight:600;letter-spacing:0}
+.hb-sg .k{font-size:11.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);display:flex;justify-content:space-between}
+.hb-sg .k i{font-style:normal;color:var(--ember);font-weight:700;letter-spacing:.06em;font-size:11px}
+.hb-sg .v{font-family:'Space Grotesk',sans-serif;font-size:38px;font-weight:600;letter-spacing:-.025em;line-height:1;color:var(--ink);margin:8px 0 2px;display:flex;align-items:baseline;gap:8px}
+.hb-sg .v small{font-family:'Apfel Grotezk',sans-serif;font-size:13.5px;font-weight:400;letter-spacing:0;color:var(--ink3)}
+.hb-sg .v .dl{font-size:13.5px;font-weight:600;letter-spacing:0}
 .hb-sg .v .dl.good{color:var(--hb-good)}.hb-sg .v .dl.bad{color:var(--hb-bad)}
 .hb-sg svg{display:block;width:100%;height:86px;margin-top:10px;overflow:visible}
-.hb-sg .cap{font-size:11.5px;color:var(--ink3);margin-top:6px;display:flex;justify-content:space-between;gap:10px}
+.hb-sg .cap{font-size:13px;color:var(--ink3);margin-top:6px;display:flex;justify-content:space-between;gap:10px}
 .hb-sg.sample .v{color:var(--ink3)}
 .hb-sg.sample .ph{height:86px;margin-top:10px;border-radius:8px;background:repeating-linear-gradient(135deg,var(--hb-line2) 0 6px,transparent 6px 14px);display:flex;align-items:center;justify-content:center}
 /* action lines */
@@ -1307,28 +1307,28 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-row.critical .d{background:var(--hb-bad);color:var(--hb-bad)}.hb-row.important .d{background:var(--hb-warn);color:var(--hb-warn)}.hb-row.watch .d{background:var(--ink3);color:transparent}
 .hb-row.good .d{background:var(--hb-good);color:var(--hb-good)}
 .hb-row .t.wrap{white-space:normal;line-height:1.45}
-.hb-row .t{flex:1;min-width:0;font-size:15px;font-weight:600;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hb-row .t{flex:1;min-width:0;font-size:16px;font-weight:600;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .hb-row .no{font-family:'Space Grotesk',sans-serif;font-size:18px;font-weight:600;color:var(--ember);width:26px;flex-shrink:0}
-.hb-row .m{font-size:12px;color:var(--ink3);white-space:nowrap}
+.hb-row .m{font-size:13.5px;color:var(--ink3);white-space:nowrap}
 .hb-x{background:none;border:none;color:var(--ink3);font-size:14px;cursor:pointer;padding:2px 6px;border-radius:4px;opacity:0;transition:opacity .12s}
 .hb-row:hover .hb-x{opacity:1}.hb-x:hover{color:var(--ember);background:var(--hb-tint)}
-.hb-clear{display:flex;align-items:center;gap:12px;padding:10px 0;color:var(--ink2);font-size:14px}
+.hb-clear{display:flex;align-items:center;gap:12px;padding:10px 0;color:var(--ink2);font-size:15.5px}
 .hb-clear .ok{width:28px;height:28px;border-radius:50%;background:var(--green-bg);color:var(--hb-good);display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:0 0 12px rgba(45,106,79,.35)}
-.hb-empty{font-size:13px;color:var(--ink3);padding:8px 0}
+.hb-empty{font-size:14.5px;color:var(--ink3);padding:8px 0}
 .hb-ask{display:flex;gap:8px;margin-top:8px}
-.hb-ask input{flex:1;height:38px;border:1px solid var(--hb-line);border-radius:8px;padding:0 12px;font-family:inherit;font-size:13px;background:var(--hb-field);color:var(--ink)}
+.hb-ask input{flex:1;height:42px;border:1px solid var(--hb-line);border-radius:8px;padding:0 14px;font-family:inherit;font-size:15px;background:var(--hb-field);color:var(--ink)}
 .hb-ask input::placeholder{color:var(--ink3)}
 .hb-ask input:focus{border-color:var(--ember);outline:none;box-shadow:0 0 0 3px rgba(200,75,47,.14)}
 .hb-sugg{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
-.hb-sugg button{background:none;border:1px solid var(--hb-line);border-radius:999px;padding:5px 11px;font-family:inherit;font-size:11.5px;color:var(--ink2);cursor:pointer}
+.hb-sugg button{background:none;border:1px solid var(--hb-line);border-radius:999px;padding:6px 13px;font-family:inherit;font-size:13px;color:var(--ink2);cursor:pointer}
 .hb-sugg button:hover{border-color:var(--ember);color:var(--ember)}
 .hb-askout{margin-top:12px;display:flex;flex-direction:column;gap:8px;max-height:360px;overflow-y:auto;padding-right:4px}
-.hb-msg{font-size:13px;line-height:1.55;white-space:pre-wrap;max-width:92%;padding:8px 12px;border-radius:12px}
+.hb-msg{font-size:14.5px;line-height:1.55;white-space:pre-wrap;max-width:92%;padding:8px 12px;border-radius:12px}
 .hb-msg.me{align-self:flex-end;background:var(--ember);color:#fff;border-bottom-right-radius:3px}
 .hb-msg.ai{align-self:flex-start;color:var(--ink);background:var(--hb-tint);border-bottom-left-radius:3px}
 .hb-msg.hb-think{color:var(--ink3);display:flex;align-items:center;gap:10px}
 .hb-tdot{width:8px;height:8px;border-radius:50%;background:var(--ember);box-shadow:0 0 8px var(--ember);animation:hbBreath 1.4s ease-in-out infinite;display:inline-block}
-.hb-askfoot{margin-top:8px;font-size:12px}
+.hb-askfoot{margin-top:10px;font-size:13.5px}
 /* locations */
 .hb-locs{display:flex;gap:6px;flex-wrap:wrap;margin:16px 0 0}
 .hb-loc{display:inline-flex;align-items:center;gap:8px;padding:7px 12px;border-radius:999px;border:1px solid var(--hb-line);background:transparent;cursor:pointer;font-family:inherit;font-size:12.5px;color:var(--ink);transition:background .12s ease}
@@ -1351,7 +1351,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 /* welcome */
 .hb-welcome{margin-top:26px;padding-left:22px;border-left:3px solid var(--ember)}
 .hb-welcome h2{font-family:'Clash Display',sans-serif;font-size:24px;font-weight:500;margin:4px 0 6px;color:var(--ink)}
-.hb-welcome p{font-size:15px;color:var(--ink2);line-height:1.6;margin:0;max-width:620px}
+.hb-welcome p{font-size:16px;color:var(--ink2);line-height:1.6;margin:0;max-width:620px}
 /* motion */
 /* Only the thin line is drawn with a dash offset; the blurred glow and the
    fill fade in on opacity (compositor work, no per-frame filter re-raster). */
@@ -1406,13 +1406,15 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-card.lift{cursor:pointer}
 .hb-card.lift:hover{transform:translateY(-2px);box-shadow:0 2px 5px rgba(14,12,10,.06),0 22px 40px -20px rgba(14,12,10,.22)}
 [data-theme="dark"] .hb-card.lift:hover{box-shadow:var(--elev-2)}
-.hb-card.hero{padding:28px 30px;border-radius:20px;overflow:hidden}
+.hb-card.hero{padding:30px 32px;border-radius:20px;overflow:hidden}
+#hb-focus{margin-top:28px}
+#panel-home .hb-sh{margin-bottom:16px}
 .hb-card.hero:before{content:'';position:absolute;inset:-1px;background:radial-gradient(560px 240px at 0% 0%,var(--hb-tint2),transparent 62%);pointer-events:none}
 .hb-card.hero>*{position:relative}
 .hb-card.rail{border-left:3px solid var(--hb-warn)}
 .hb-card.rail.good{border-left-color:var(--hb-good)}
 .hb-card.rail.ember{border-left-color:var(--ember)}
-.hb-h3{font-size:10.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin:0 0 10px;display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+.hb-h3{font-size:11.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin:0 0 10px;display:flex;justify-content:space-between;align-items:baseline;gap:10px}
 .hb-h3 .cnt{font-family:'Space Grotesk',sans-serif;letter-spacing:0;color:var(--ink3);font-weight:600}
 .hb-grid{display:grid;gap:16px;margin-top:16px}
 .hb-grid.c2{grid-template-columns:minmax(0,7fr) minmax(0,5fr)}
@@ -1427,61 +1429,65 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-sig.cards .hb-sg:hover{transform:translateY(-2px);box-shadow:0 2px 5px rgba(14,12,10,.06),0 22px 40px -20px rgba(14,12,10,.22)}
 [data-theme="dark"] .hb-sig.cards .hb-sg:hover{box-shadow:var(--elev-2)}
 /* today's focus */
-.hb-focus .lead{font-family:'Clash Display',sans-serif;font-size:clamp(22px,2.3vw,28px);font-weight:500;line-height:1.16;letter-spacing:-.01em;color:var(--ink);margin:8px 0 10px;text-wrap:balance;max-width:820px}
+.hb-focus .lead{font-family:'Clash Display',sans-serif;font-size:clamp(26px,2.8vw,34px);font-weight:500;line-height:1.16;letter-spacing:-.01em;color:var(--ink);margin:8px 0 10px;text-wrap:balance;max-width:820px}
 .hb-focus.clear .lead{color:var(--hb-good)}
-.hb-focus .why{font-size:14.5px;color:var(--ink2);line-height:1.55;max-width:720px}
+.hb-focus .why{font-size:16px;color:var(--ink2);line-height:1.55;max-width:720px}
 .hb-focus .ev{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
 /* Direct child only: num() wraps every digit run in its own <span class="hb-num">,
    and a descendant selector here turned each number into a chip inside the chip. */
-.hb-focus .ev>span{font-size:12px;color:var(--ink2);background:var(--hb-inner);border:1px solid var(--hb-line2);border-radius:999px;padding:5px 12px;line-height:1.4}
+.hb-focus .ev>span{font-size:13.5px;color:var(--ink2);background:var(--hb-inner);border:1px solid var(--hb-line2);border-radius:999px;padding:5px 12px;line-height:1.4}
 .hb-focus .ev>span .hb-num{color:var(--ink);font-weight:600}
 .hb-focus .ft{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:20px}
-.hb-focus .money{font-family:'Space Grotesk',sans-serif;font-size:30px;font-weight:600;letter-spacing:-.025em;color:var(--ink);line-height:1}
-.hb-focus .money small{font-family:'Apfel Grotezk',sans-serif;font-size:12px;color:var(--ink3);font-weight:400;letter-spacing:0;margin-left:7px}
+.hb-focus .money{font-family:'Space Grotesk',sans-serif;font-size:34px;font-weight:600;letter-spacing:-.025em;color:var(--ink);line-height:1}
+.hb-focus .money small{font-family:'Apfel Grotezk',sans-serif;font-size:13.5px;color:var(--ink3);font-weight:400;letter-spacing:0;margin-left:7px}
 .hb-focus .ft .sp{flex:1}
 .hb-focus .ft .also{display:inline-flex;align-items:center;gap:12px;flex-wrap:wrap}
-.hb-focus .ft .also .m{font-size:13px;font-weight:600;color:var(--ink2);padding:6px 11px;border-radius:999px;background:var(--hb-inner);border:1px solid var(--hb-line2)}
+.hb-focus .ft .also .m{font-size:14.5px;font-weight:600;color:var(--ink2);padding:6px 11px;border-radius:999px;background:var(--hb-inner);border:1px solid var(--hb-line2)}
 /* a link between two modules — the "across your restaurant" mark */
 .hb-join{display:flex;align-items:center;margin:6px 0 16px;flex-wrap:wrap;row-gap:8px}
-.hb-join .mod{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink);background:var(--hb-inner);border:1px solid var(--hb-line2);border-radius:999px;padding:7px 13px;white-space:nowrap}
-.hb-join .ln{flex:0 0 48px;height:1px;background:linear-gradient(90deg,var(--ember2),var(--ember));position:relative}
-.hb-join .ln:after{content:'';position:absolute;right:-1px;top:-3px;width:7px;height:7px;border-radius:50%;background:var(--ember);box-shadow:0 0 8px var(--ember);animation:hbBreath 2.2s ease-in-out infinite}
+.hb-join .mod{font-size:12.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink);background:var(--hb-inner);border:1px solid var(--hb-line2);border-radius:999px;padding:7px 13px;white-space:nowrap}
+.hb-join .ln{flex:0 0 64px;height:2px;margin:0 2px;background:linear-gradient(90deg,var(--ember2),var(--ember),var(--ember2));position:relative;border-radius:2px}
+.hb-join .ln:before,.hb-join .ln:after{content:'';position:absolute;left:50%;top:50%;width:11px;height:11px;margin:-5.5px 0 0 -5.5px;border-radius:50%;background:var(--ember)}
+.hb-join .ln:before{box-shadow:0 0 14px 4px var(--ember);animation:hbGlow 2s ease-in-out infinite}
+.hb-join .ln:after{opacity:.55;animation:hbHalo 2s ease-out infinite}
+@keyframes hbHalo{0%{transform:scale(1);opacity:.55}100%{transform:scale(3.6);opacity:0}}
+@keyframes hbGlow{0%,100%{box-shadow:0 0 10px 2px var(--ember)}50%{box-shadow:0 0 18px 6px var(--ember)}}
 /* numbered recommendation cards */
 .hb-recs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-top:14px}
 .hb-rec{display:flex;flex-direction:column;gap:8px;padding:18px 18px 16px;min-height:150px}
 .hb-rec .top{display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
-.hb-rec .no{font-family:'Space Grotesk',sans-serif;font-size:22px;font-weight:600;letter-spacing:-.02em;color:var(--ember);line-height:1}
-.hb-rec .t{font-size:15px;font-weight:600;color:var(--ink);line-height:1.35}
-.hb-rec .ev{font-size:12.5px;color:var(--ink3);line-height:1.45}
+.hb-rec .no{font-family:'Space Grotesk',sans-serif;font-size:26px;font-weight:600;letter-spacing:-.02em;color:var(--ember);line-height:1}
+.hb-rec .t{font-size:16.5px;font-weight:600;color:var(--ink);line-height:1.35}
+.hb-rec .ev{font-size:14px;color:var(--ink3);line-height:1.45}
 .hb-rec .ft{display:flex;gap:6px;align-items:center;margin-top:auto;padding-top:10px;flex-wrap:wrap}
 .hb-rec .hb-x{opacity:.5}.hb-rec:hover .hb-x{opacity:1}
 /* receipt strip */
 .hb-rcpt{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin-top:14px}
 .hb-rcpt .it{display:flex;align-items:flex-start;gap:12px;padding:14px 16px;border-radius:12px;background:var(--hb-inner);border:1px solid var(--hb-line2)}
 .hb-rcpt .ok{width:26px;height:26px;border-radius:50%;background:var(--green-bg);color:var(--hb-good);display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:0 0 10px rgba(45,106,79,.3)}
-.hb-rcpt .t{font-size:13.5px;color:var(--ink2);line-height:1.45;min-width:0}
+.hb-rcpt .t{font-size:15px;color:var(--ink2);line-height:1.45;min-width:0}
 .hb-rcpt .t strong{color:var(--ink);font-weight:600}
-.hb-rcpt .m{font-size:10.5px;color:var(--ink3);margin-top:4px;letter-spacing:.1em;text-transform:uppercase;font-weight:700}
+.hb-rcpt .m{font-size:11.5px;color:var(--ink3);margin-top:4px;letter-spacing:.1em;text-transform:uppercase;font-weight:700}
 /* the brief as a timeline */
 .hb-tl{position:relative;padding-left:24px;margin-top:2px}
 .hb-tl:before{content:'';position:absolute;left:4px;top:12px;bottom:12px;width:1px;background:var(--hb-line)}
 .hb-tl .it{position:relative;display:flex;gap:12px;align-items:flex-start;padding:9px 0}
 .hb-tl .it .d{position:absolute;left:-24px;top:15px;width:9px;height:9px;border-radius:50%;background:var(--ink3);box-shadow:0 0 8px currentColor;color:transparent}
 .hb-tl .it.critical .d{background:var(--hb-bad);color:var(--hb-bad)}.hb-tl .it.important .d{background:var(--hb-warn);color:var(--hb-warn)}.hb-tl .it.good .d{background:var(--hb-good);color:var(--hb-good)}
-.hb-tl .it .t{flex:1;min-width:0;font-size:14.5px;font-weight:500;color:var(--ink2);line-height:1.5}
+.hb-tl .it .t{flex:1;min-width:0;font-size:16px;font-weight:500;color:var(--ink2);line-height:1.5}
 .hb-tl .it .t strong{color:var(--ink);font-weight:600}
 /* stat tiles */
 .hb-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:4px}
 .hb-stat{padding:14px 16px;border-radius:12px;background:var(--hb-inner);border:1px solid var(--hb-line2);min-width:0}
-.hb-stat .k{font-size:10.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3)}
-.hb-stat .v{font-family:'Space Grotesk',sans-serif;font-size:24px;font-weight:600;letter-spacing:-.02em;color:var(--ink);margin-top:7px;line-height:1;white-space:nowrap}
-.hb-stat .v small{font-family:'Apfel Grotezk',sans-serif;font-size:11px;font-weight:400;letter-spacing:0;color:var(--ink3);margin-left:4px}
-.hb-stat .s{font-size:12px;color:var(--ink3);margin-top:7px;line-height:1.4}
+.hb-stat .k{font-size:11.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3)}
+.hb-stat .v{font-family:'Space Grotesk',sans-serif;font-size:28px;font-weight:600;letter-spacing:-.02em;color:var(--ink);margin-top:7px;line-height:1;white-space:nowrap}
+.hb-stat .v small{font-family:'Apfel Grotezk',sans-serif;font-size:12.5px;font-weight:400;letter-spacing:0;color:var(--ink3);margin-left:4px}
+.hb-stat .s{font-size:13.5px;color:var(--ink3);margin-top:7px;line-height:1.4}
 .hb-stat.good .v{color:var(--hb-good)}.hb-stat.ember .v{color:var(--ember)}
 /* goal progress */
 .hb-goal{padding:9px 0}
 .hb-goal+.hb-goal{border-top:1px solid var(--hb-line2)}
-.hb-goal .l{display:flex;justify-content:space-between;gap:10px;font-size:13.5px;color:var(--ink2);line-height:1.4}
+.hb-goal .l{display:flex;justify-content:space-between;gap:10px;font-size:15px;color:var(--ink2);line-height:1.4}
 .hb-goal .l b{font-family:'Space Grotesk',sans-serif;font-weight:600;color:var(--ink);white-space:nowrap}
 .hb-goal .bar{height:6px;border-radius:999px;background:var(--hb-line2);margin-top:8px;overflow:hidden}
 .hb-goal .bar i{display:block;height:100%;border-radius:999px;background:var(--ember);width:0;transition:width .9s cubic-bezier(.2,.9,.3,1)}
@@ -1491,14 +1497,14 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-chk:first-of-type{border-top:none}
 .hb-chk .d{width:9px;height:9px;border-radius:50%;background:var(--ink3);flex-shrink:0;margin-top:6px;box-shadow:0 0 8px currentColor;color:transparent}
 .hb-chk.critical .d{background:var(--hb-bad);color:var(--hb-bad)}.hb-chk.important .d{background:var(--hb-warn);color:var(--hb-warn)}
-.hb-chk .t{flex:1;min-width:0;font-size:14.5px;font-weight:600;color:var(--ink);line-height:1.45}
-.hb-chk .t .m{display:block;font-size:12px;color:var(--ink3);font-weight:400;margin-top:2px}
+.hb-chk .t{flex:1;min-width:0;font-size:16px;font-weight:600;color:var(--ink);line-height:1.45}
+.hb-chk .t .m{display:block;font-size:13.5px;color:var(--ink3);font-weight:400;margin-top:2px}
 .hb-chk .a{display:flex;gap:4px;flex-shrink:0;align-items:center}
 /* staggered reveal — entrance only, 420ms, no overshoot (DESIGN_SYSTEM §11) */
 .hb-rise{opacity:0;transform:translateY(6px);animation:hbRise .42s cubic-bezier(.2,.9,.3,1) forwards;animation-delay:calc(var(--i,0)*70ms)}
 @keyframes hbRise{to{opacity:1;transform:none}}
 .hb-focus .lead .hb-num,.hb-tl .t .hb-num,.hb-rec .t .hb-num,.hb-rcpt .t .hb-num,.hb-chk .t .hb-num{color:var(--ember)}
-@media (prefers-reduced-motion:reduce){.hb-rise,.hb-join .ln:after{animation:none!important;opacity:1;transform:none}.hb-goal .bar i{transition:none}.hb-card.lift:hover,.hb-sig.cards .hb-sg:hover{transform:none}}
+@media (prefers-reduced-motion:reduce){.hb-rise{animation:none!important;opacity:1;transform:none}.hb-join .ln:before,.hb-join .ln:after{animation:none!important}.hb-join .ln:after{opacity:0}.hb-goal .bar i{transition:none}.hb-card.lift:hover,.hb-sig.cards .hb-sg:hover{transform:none}}
 @media (max-width:1000px){.hb-grid.c2,.hb-grid.c3,.hb-recs,.hb-sig.cards{grid-template-columns:1fr}.hb-card.hero{padding:22px 20px}.hb-sig.cards .hb-sg{border-bottom:none;margin-bottom:0;padding:20px 22px 18px}}
 </style>
 
@@ -1735,7 +1741,13 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       }).catch(function(){viaJson();});
     }catch(e){viaJson();}
   }
-  window.hbAsk=function(q){q=(q||'').trim();if(!q)return;askInline(q);};
+  // Every "Ask about this" on the page lands the owner IN the Ask card:
+  // scroll it into view and put the caret there, then ask. Without this the
+  // answer rendered a screen and a half below the button that asked for it.
+  window.hbAsk=function(q){q=(q||'').trim();if(!q)return;
+    var i=document.getElementById('hb-ask-in');
+    if(i&&i.scrollIntoView){i.scrollIntoView({behavior:reduced()?'auto':'smooth',block:'center'});try{i.focus({preventScroll:true});}catch(e){i.focus();}}
+    askInline(q);};
   window.hbAskSubmit=function(){var i=document.getElementById('hb-ask-in');if(!i)return;var q=i.value.trim();if(!q){i.focus();return;}i.value='';hbAsk(q);};
   window.hbAskFull=function(){var panel=document.getElementById('ask-cavnar-panel');if(panel&&panel.style.display!=='flex'&&typeof toggleAskCavnar==='function')toggleAskCavnar();};
   document.addEventListener('click',function(e){
@@ -1860,7 +1872,14 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     var ff=g&&g.cross&&g.cross.fix_first;
     var byKey={};for(var i=0;i<lines.length;i++)byKey[lines[i].key]=lines[i];
     var lead='',why='',ev=[],money='',ask='',kick='Today’s focus',clear=false,mods=[];
+    var alt='',confirm='';
     if(ff&&ff.what){kick='If you only do one thing';ask='Walk me through this: '+ff.what;ev=(ff.evidence||[]).slice(0,3);mods=ff.modules||[];
+      // When the lead IS a cross-module link, this card owns it entirely -
+      // the confirm step and the innocent reading come here, and
+      // renderConnections skips it, so the same finding is never on the
+      // page twice.
+      var lk=null,lks=(g&&g.cross&&g.cross.links)||[];for(var li=0;li<lks.length;li++)if(lks[li].headline===ff.what)lk=lks[li];
+      if(lk){confirm=lk.confirm_by||ff.confirm_by||'';if(lk.alternative)alt+='<div style="margin-bottom:10px"><strong>Could also be:</strong> '+num(lk.alternative)+'</div>';if(lk.not_a_cause)alt+='<div style="opacity:.8">'+num(lk.not_a_cause)+'</div>';}
       // fix_first is a full sentence when two modules agree, but a bare
       // label ("Food cost drivers") when it is the top of the money
       // ranking - and a label set in 28px Clash reads as a section title,
@@ -1880,8 +1899,10 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     if(mods.length>1){h+='<div class="hb-join">';for(var m=0;m<mods.length;m++){if(m)h+='<span class="ln"></span>';h+='<span class="mod">'+esc(MODLABEL[mods[m]]||mods[m])+'</span>';}h+='</div>';}
     h+='<div class="lead">'+num(lead)+'</div>';
     if(why)h+='<div class="why">'+num(why)+'</div>';
+    if(confirm)h+='<div class="why"><strong>To confirm:</strong> '+num(confirm)+'</div>';
     if(ev.length){h+='<div class="ev">';for(var e=0;e<ev.length;e++)h+='<span>'+num(ev[e])+'</span>';h+='</div>';}
     h+='<div class="ft">'+(money?'<div class="money hb-num">'+money+'</div>':'')+'<span class="sp"></span>';
+    if(alt)h+='<button type="button" class="cbtn cbtn-secondary" data-explain="'+esc(alt)+'" data-explain-title="What else could explain it" data-explain-kicker="A question, not a finding">Could also be…</button>';
     // The most urgent item's action always lives here. When the lead IS
     // that item the button stands alone; when the lead is a finding, the
     // item is named beside its button so "Reply now" is not floating under
@@ -2028,7 +2049,11 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
   // it - all of which the payload already carried.
   function renderConnections(c){
     if(!c)return '';
-    var ls=c.links||[];
+    // The focus card already leads with fix_first, which IS links[0] when
+    // there is a link. Rendering it here too put the same finding on the
+    // page twice, a screen apart. This section shows the rest.
+    var lead=(c.fix_first&&c.fix_first.what)||'';
+    var ls=(c.links||[]).filter(function(l){return l.headline!==lead;});
     if(!ls.length)return '';
     // The second hero moment on the page: the module pills joined by a lit
     // line, the finding in Clash, the evidence as chips. It is a QUESTION,
@@ -2046,7 +2071,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     if(l.confirm_by)h+='<div class="why"><strong>To confirm:</strong> '+num(l.confirm_by)+'</div>';
     var ev=l.evidence||[];
     if(ev.length){h+='<div class="ev">';for(var e=0;e<ev.length;e++)h+='<span>'+num(ev[e])+'</span>';h+='</div>';}
-    h+='<div class="ft"><span class="sp"></span>'+(alt?'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-explain="'+esc(alt)+'" data-explain-title="What else could explain it">Could also be…</button>':'')+'<button type="button" class="cbtn cbtn-text cbtn-inline" data-ask="'+esc('Tell me more about this: '+l.headline)+'">Ask about this →</button></div>';
+    h+='<div class="ft"><span class="sp"></span>'+(alt?'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-explain="'+esc(alt)+'" data-explain-title="What else could explain it" data-explain-kicker="A question, not a finding">Could also be…</button>':'')+'<button type="button" class="cbtn cbtn-text cbtn-inline" data-ask="'+esc('Tell me more about this: '+l.headline)+'">Ask about this →</button></div>';
     if(ls.length>1){
       h+='<div class="hb-h3" style="margin-top:22px"><span>Also</span></div>';
       for(var i=1;i<ls.length;i++){var x=ls[i];var body='';

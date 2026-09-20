@@ -335,7 +335,7 @@ def _read_email_history(restaurant_id, limit=10):
 def _read_shifts(restaurant_id, employee=None, limit=20):
     """The actual roster and logged shifts.
 
-    Without this the assistant could see aggregate labour percentages and
+    Without this the assistant could see aggregate labor percentages and
     an (often empty) schedule_history, but not who actually works here —
     so it told restaurants with three weeks of shift data on file that they
     had "no staff added" and refused to act.
@@ -820,7 +820,7 @@ def _read_ai_visibility(restaurant_id):
 
 
 def _read_labor_detail(restaurant_id, weeks=8):
-    """Per-day labour, not just the overstaffed/understaffed counts — which
+    """Per-day labor, not just the overstaffed/understaffed counts — which
     is what "which day is killing me?" actually needs."""
     from models import get_labor_daily, get_labor_history
     try:
@@ -1054,7 +1054,7 @@ TOOLS = [
             "name": "read_business_snapshot",
             "description": (
                 "THE WHOLE BUSINESS IN ONE CALL: every module's executive read (reviews, food "
-                "cost, labour, marketing, AI visibility), the cross-module links between them "
+                "cost, labor, marketing, AI visibility), the cross-module links between them "
                 "with the evidence and an alternative explanation for each, and the monthly "
                 "dollars at stake ranked across modules. Call this FIRST for any question "
                 "about profit, money, priorities, causes, 'what should I focus on', 'why did "
@@ -1366,7 +1366,7 @@ TOOLS = [
         "module": "module_labor",
         "spec": {
             "name": "read_labor_detail",
-            "description": "Labour day by day and week by week — for 'which day is costing me most' rather than the overall percentage.",
+            "description": "Labor day by day and week by week — for 'which day is costing me most' rather than the overall percentage.",
             "input_schema": {"type": "object", "properties": {
                 "weeks": {"type": "integer", "description": "Weeks of history (default 8)."}}},
         },

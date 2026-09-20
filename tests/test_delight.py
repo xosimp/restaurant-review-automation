@@ -249,7 +249,7 @@ def test_good_news_denies_every_module_the_login_lacks_not_just_food_cost(db_pat
     rid = _restaurant(db_path)
     denied = _denied_for(strategy_routes, monkeypatch, _owner(rid), rid)
     assert "labor" in denied, (
-        "a login without LABOR_VIEW must not be shown sales or labour records")
+        "a login without LABOR_VIEW must not be shown sales or labor records")
 
 
 def test_good_news_still_hides_margins_from_a_manager(db_path, monkeypatch):

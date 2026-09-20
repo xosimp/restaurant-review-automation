@@ -95,7 +95,7 @@ def test_value_is_attributed_to_the_module_that_earned_it(db_path):
     """Owners buy modules one at a time. "Which of the four I pay for is
     paying for itself" had no answer before this."""
     rid = _restaurant(db_path)
-    _evaluated(db_path, rid, "Labour", "labor_pct", 400.0)
+    _evaluated(db_path, rid, "Labor", "labor_pct", 400.0)
     _evaluated(db_path, rid, "Waste", "weekly_waste", 100.0)
     v = outcomes.total_value(rid, db_path=db_path)
     assert v["by_module"] == {"labor": 400.0, "inventory": 100.0}
@@ -289,8 +289,8 @@ def test_denied_modules_are_removed_before_the_total_is_summed(db_path):
 
 def test_best_ever_respects_denied_modules(db_path):
     rid = _restaurant(db_path)
-    _evaluated(db_path, rid, "Labour win", "labor_pct", 100.0)
+    _evaluated(db_path, rid, "Labor win", "labor_pct", 100.0)
     _evaluated(db_path, rid, "Huge margin win", "food_cost_pct", 900.0)
     assert outcomes.best_ever(rid, db_path=db_path)["title"] == "Huge margin win"
     limited = outcomes.best_ever(rid, db_path=db_path, denied_modules={"inventory"})
-    assert limited["title"] == "Labour win"
+    assert limited["title"] == "Labor win"

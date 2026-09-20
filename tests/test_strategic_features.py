@@ -464,12 +464,12 @@ def test_the_digest_adds_goals_issues_and_nothing_when_there_is_nothing(db_path,
     rid = _rid(db_path)
     assert reporter._follow_through_sections(rid) == []
     monkeypatch.setattr(goals, "progress", lambda *a, **k: [
-        {"state": "moving_right_way", "label": "Labour %", "metric": "labor_pct"}])
-    monkeypatch.setattr(goals, "summarise", lambda g: "Labour % 29.1% against a 28% target")
+        {"state": "moving_right_way", "label": "Labor %", "metric": "labor_pct"}])
+    monkeypatch.setattr(goals, "summarise", lambda g: "Labor % 29.1% against a 28% target")
     monkeypatch.setattr(issues, "summary", lambda *a, **k: {
         "open": 1, "acknowledged": 2, "resolved_last_7_days": 3, "oldest_open_hours": 5})
     html = "".join(reporter._follow_through_sections(rid))
-    assert "Labour % 29.1%" in html and "3 resolved this week" in html
+    assert "Labor % 29.1%" in html and "3 resolved this week" in html
     assert "not yet acknowledged" in html
 
 

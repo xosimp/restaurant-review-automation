@@ -1723,7 +1723,7 @@ def init_db(db_path: str = DB_PATH):
         "(restaurant_id, source_key) WHERE status='tracking'",
 
         # Structured goals. They used to exist only as free text in
-        # ask_memory ("wants labour under 26%"), which the assistant could
+        # ask_memory ("wants labor under 26%"), which the assistant could
         # quote but nothing could measure.
         """CREATE TABLE IF NOT EXISTS owner_goals (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,

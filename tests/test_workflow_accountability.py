@@ -55,7 +55,7 @@ def test_critically_low_stock_becomes_the_managers_issue(db_path, monkeypatch):
     assert issues.open_from_signals(rid, db_path=db_path) == []
 
 
-def test_labour_over_target_becomes_an_issue_once_a_week(db_path, monkeypatch):
+def test_labor_over_target_becomes_an_issue_once_a_week(db_path, monkeypatch):
     import issues, labor
     rid = _rid(db_path, module_labor=1)
     _routed(db_path, rid)
@@ -67,7 +67,7 @@ def test_labour_over_target_becomes_an_issue_once_a_week(db_path, monkeypatch):
     assert issues.open_from_signals(rid, db_path=db_path) == [], "one per week, not per day"
 
 
-def test_sample_labour_data_never_opens_an_issue(db_path, monkeypatch):
+def test_sample_labor_data_never_opens_an_issue(db_path, monkeypatch):
     import issues, labor
     rid = _rid(db_path, module_labor=1)
     _routed(db_path, rid)

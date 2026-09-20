@@ -7,7 +7,7 @@ WHAT THIS USED TO BE, and why it was replaced (ROI audit, Sep 2026).
 the sum of four numbers, and three of them could not survive being read
 aloud to the owner paying for them:
 
-  * labour "value" was `potential_savings_monthly` — the gap ABOVE the
+  * labor "value" was `potential_savings_monthly` — the gap ABOVE the
     owner's target. That is money still being LOST, counted as money
     delivered. The arithmetic ran backwards: a restaurant that fixed its
     scheduling watched its Total Value Delivered FALL, and the worst-run
@@ -19,7 +19,7 @@ aloud to the owner paying for them:
     anything was posted again.
 
 and the sum added lifetime cumulative figures (reviews, marketing) to
-monthly run-rates (labour, food cost), which business_intelligence.py
+monthly run-rates (labor, food cost), which business_intelligence.py
 refuses to do three files away: "the money lines are deliberately never
 summed — a measured cost, a scheduling gap and an elasticity forecast are
 not addends."
@@ -37,7 +37,7 @@ and never added together:
                 rate is a STATED assumption, carried in the payload so the
                 UI can show it, and counted only for work that actually
                 happened.
-  opportunity   the old labour/food-cost figures, under their real name:
+  opportunity   the old labor/food-cost figures, under their real name:
                 money on the table, not money in hand.
   surfaced      what the alerts raised carried in dollars. Putting a problem
                 in front of someone is not the same as their having fixed
@@ -222,7 +222,7 @@ def avoided(restaurant_id: int, db_path: str = DB_PATH, denied_modules=None) -> 
 # ── 3. Opportunity: money on the table, under its real name ─────────────────
 
 def opportunity(restaurant_id: int, db_path: str = DB_PATH, denied_modules=None) -> dict:
-    """The labour and food-cost figures that used to be called "delivered".
+    """The labor and food-cost figures that used to be called "delivered".
 
     Unchanged arithmetic, honest label. Both are gaps against a target —
     what the restaurant could still recover, which is the opposite of what

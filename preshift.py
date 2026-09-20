@@ -13,7 +13,7 @@ good GM gives at lineup, assembled from data the product already holds:
 
 Two rules, because this is shown to staff rather than to the owner:
 
-  NO MONEY. Sales, labour cost and margins are the owner's business. Busyness
+  NO MONEY. Sales, labor cost and margins are the owner's business. Busyness
   is expressed relative to a normal day, never in dollars.
 
   NO INDIVIDUALS. Complaint themes are shared, never attributed to anyone —

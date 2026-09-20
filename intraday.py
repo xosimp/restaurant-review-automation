@@ -1,12 +1,12 @@
 """
 intraday.py — the only part of the product that can see a day happening.
 
-Everything else here reads yesterday: the POS syncs at 3am, labour settles
+Everything else here reads yesterday: the POS syncs at 3am, labor settles
 after the pay period, reviews arrive days late. So between opening and close
 an owner got nothing from Cavnar that they couldn't get by looking around
 the room — which is exactly the stretch of the day they are working.
 
-Toast can be asked during service (businessDay net sales, and the labour
+Toast can be asked during service (businessDay net sales, and the labor
 timeEntries feed). RPOWER cannot: the vendor confirmed month-at-a-time
 extracts, so for those restaurants this module honestly reports that it
 can't see today rather than guessing.

@@ -114,7 +114,7 @@ def test_no_links_when_one_module_has_nothing(db_path):
     assert bi.correlations(rid) == []
 
 
-def test_a_complaint_weekday_links_to_a_lean_labour_day(db_path, monkeypatch):
+def test_a_complaint_weekday_links_to_a_lean_labor_day(db_path, monkeypatch):
     rid = _restaurant(db_path)
     for i, when in enumerate(_fridays(4)):
         _negative_review(db_path, rid, f"fri-{i}", when, ["service"])
@@ -127,9 +127,9 @@ def test_a_complaint_weekday_links_to_a_lean_labour_day(db_path, monkeypatch):
                    "potential_savings_monthly": 0, "labor_target": 30, "period_days": 28})
 
     links = bi.correlations(rid)
-    labour_links = [l for l in links if l["kind"] == "reviews_x_labor"]
-    assert labour_links, "a concentrated complaint weekday on the leanest day should link"
-    link = labour_links[0]
+    labor_links = [l for l in links if l["kind"] == "reviews_x_labor"]
+    assert labor_links, "a concentrated complaint weekday on the leanest day should link"
+    link = labor_links[0]
     assert "Friday" in link["headline"]
     assert "leanest" not in link["headline"], "no superlative the data cannot support"
     assert link["modules"] == ["reviews", "labor"]
@@ -158,7 +158,7 @@ def test_a_lean_day_link_never_states_a_cause(db_path, monkeypatch):
     assert link["confirm_by"], "every link says what would settle it"
 
 
-def test_a_labour_day_barely_below_average_is_not_called_lean(db_path, monkeypatch):
+def test_a_labor_day_barely_below_average_is_not_called_lean(db_path, monkeypatch):
     """Under LEAN_DAY_MIN_GAP_PTS the difference is noise, and naming a day
     on it would be inventing the pattern."""
     rid = _restaurant(db_path)
@@ -172,7 +172,7 @@ def test_a_labour_day_barely_below_average_is_not_called_lean(db_path, monkeypat
     assert [l for l in bi.correlations(rid) if l["kind"] == "reviews_x_labor"] == []
 
 
-def test_sample_labour_data_never_produces_a_link(db_path, monkeypatch):
+def test_sample_labor_data_never_produces_a_link(db_path, monkeypatch):
     """load_shifts_for_restaurant falls back to a bundled sample roster so the
     Labor tab isn't blank. Linking a real review to an invented Friday would
     be the worst output this module could produce."""
@@ -403,7 +403,7 @@ def test_a_single_dominant_day_reads_as_that_day():
     assert bi._concentration_phrase(single) == "100% on Friday"
 
 
-def test_labour_at_target_is_reported_as_such_not_as_too_short(db_path, monkeypatch):
+def test_labor_at_target_is_reported_as_such_not_as_too_short(db_path, monkeypatch):
     """A zero here is a result, not a missing measurement. Reporting "period
     too short" when the real answer is "you are at target" tells an owner to
     go and sync more data to answer a question that is already answered."""
@@ -417,7 +417,7 @@ def test_labour_at_target_is_reported_as_such_not_as_too_short(db_path, monkeypa
     assert "too short" not in reason
 
 
-def test_a_genuinely_short_labour_period_still_says_too_short(db_path, monkeypatch):
+def test_a_genuinely_short_labor_period_still_says_too_short(db_path, monkeypatch):
     rid = _restaurant(db_path)
     monkeypatch.setattr(bi, "gather", lambda *a, **k: {
         "reviews": None, "food_cost": None, "marketing": None, "visibility": None,

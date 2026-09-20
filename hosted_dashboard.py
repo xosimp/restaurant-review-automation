@@ -538,7 +538,7 @@ def index(current_user):
     # ── Value: measured, avoided, available ───────────────────────────────────
     # This block used to compute the banner's "Total Value Delivered" inline,
     # and value_delivered.py carried a second copy of the same arithmetic by
-    # explicit admission. Both were wrong in the same way: labour and food
+    # explicit admission. Both were wrong in the same way: labor and food
     # cost contributed their GAP TO TARGET — money the restaurant was still
     # losing — as money delivered, so the figure fell when an owner fixed
     # their scheduling and peaked for the worst-run restaurant on the
@@ -559,7 +559,7 @@ def index(current_user):
 
     # Labor-tab context figures. These are NOT value delivered and never were
     # — they stay here because the Labor tab renders them as context beside
-    # the labour percentage, which is an honest use of them.
+    # the labor percentage, which is an honest use of them.
     _labor_monthly = int(round(labor.get("potential_savings_monthly", 0) or 0))
     _period_days = labor.get("period_days") or labor.get("date_range", {}).get("days") or 0
     _monthly_sales_est = (labor.get("total_sales", 0) / _period_days * 30) if _period_days else 0

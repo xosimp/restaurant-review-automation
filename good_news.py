@@ -2,7 +2,7 @@
 good_news.py — the things that got better, that nobody was told about.
 
 Every detector in this product looks for trouble. `notify.py` fires on 1-star
-reviews, labour over target, waste, price spikes and visibility drops;
+reviews, labor over target, waste, price spikes and visibility drops;
 `issues.py` tracks what is unresolved; `business_intelligence.money_at_stake`
 ranks what is being lost. The delight audit found the consequence: a
 restaurant that quietly improves is told nothing, and the only notification
@@ -10,7 +10,7 @@ in the product about money already made
 (`strategy_jobs._tell_owners_what_worked`) requires the owner to have pressed
 "Track this" on a recommendation first.
 
-So an owner whose Fridays stopped generating complaints, whose labour has
+So an owner whose Fridays stopped generating complaints, whose labor has
 been under target for six weeks, or who just had the best month of sales
 since they signed up, hears exactly the same from Cavnar AI as one whose
 numbers are flat. They conclude the improvement was theirs and the software

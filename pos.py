@@ -194,7 +194,7 @@ def fetch_clock_ins_today(restaurant_id, business_date):
     """Who has clocked in today: [{"employee", "role", "clocked_in_at"}].
 
     Returns (rows, provider); raises POSCapabilityError where the POS has no
-    live labour feed.
+    live labor feed.
     """
     name, mod = connected_provider(restaurant_id)
     if not mod:

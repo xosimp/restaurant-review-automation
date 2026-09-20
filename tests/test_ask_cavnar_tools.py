@@ -876,14 +876,14 @@ def test_tools_returning_only_internal_data_are_not_labelled(db_path):
 
 def test_tools_are_filtered_to_the_modules_a_restaurant_owns(db_path):
     """The full set is ~2,750 tokens on every call, paid even for "what time
-    do we open?" — and offering a labour tool to a reviews-only client
+    do we open?" — and offering a labor tool to a reviews-only client
     invites a call that can only return nothing."""
     from models import Restaurant
     reviews_only = Restaurant(name="R", owner_email="r@x.test", module_reviews=1,
                               module_labor=0, module_inventory=0, module_marketing=0)
     names = {s["name"] for s in tools.tool_specs(reviews_only)}
     assert "read_reviews" in names
-    assert "read_shifts" not in names          # labour
+    assert "read_shifts" not in names          # labor
     assert "send_supplier_order" not in names  # inventory
     assert "send_guest_campaign" not in names  # marketing
     assert "change_setting" in names           # untagged, always available

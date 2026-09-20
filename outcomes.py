@@ -4,7 +4,7 @@ outcomes.py — did the recommendation work?
 Every module in this product recommends things. Nothing ever checked whether
 the owner did one and whether the number it was aimed at moved. That left the
 product unable to say the one sentence that justifies it — "you trimmed Monday
-lunch, labour moved 1.8 points, that's about $410 a month" — and left the
+lunch, labor moved 1.8 points, that's about $410 a month" — and left the
 assistant unable to learn which of its suggestions work for this restaurant.
 
 The shape is deliberately simple:

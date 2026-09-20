@@ -492,7 +492,7 @@ def open_from_signals(restaurant_id, db_path=DB_PATH, today=None):
 
     Bad reviews became issues from the day the loop shipped; everything else
     stayed an alert nobody was accountable for. The same three signals the
-    daily alerts already compute — what the kitchen is out of, labour over
+    daily alerts already compute — what the kitchen is out of, labor over
     target, and money going in the bin — now land on the routed manager with
     a name against them.
 
@@ -540,7 +540,7 @@ def open_from_signals(restaurant_id, db_path=DB_PATH, today=None):
             target = float(getattr(r, "labor_target_pct", 30) or 30)
             pct = labor.get("labor_pct")
             if labor.get("is_live") and pct is not None and float(pct) - target >= 3:
-                _open("labor", f"Labour {float(pct):.1f}% against a {target:.0f}% target",
+                _open("labor", f"Labor {float(pct):.1f}% against a {target:.0f}% target",
                       "Last week ran over. Trim the overstaffed days in next week's schedule "
                       "before it is published.", key=f"labor:{today.strftime('%G-W%V')}")
         except Exception as e:

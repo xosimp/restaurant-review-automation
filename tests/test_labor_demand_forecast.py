@@ -129,7 +129,7 @@ def test_no_block_at_all_when_there_is_nothing_to_say(db_path):
 # ── Optional-column tolerance ────────────────────────────────────────────
 
 def test_overtime_risk_survives_a_csv_without_actual_hours():
-    """actual_hours is optional everywhere else — the labour-cost and
+    """actual_hours is optional everywhere else — the labor-cost and
     role-summary passes both read it with .get(... or 0). The overtime-risk
     block used a hard subscript, so any shifts source omitting the column
     raised KeyError and took down the whole schedule generation.

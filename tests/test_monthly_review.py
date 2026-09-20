@@ -44,18 +44,18 @@ def test_the_month_is_compared_with_the_one_before(db_path):
     _month(db_path, rid, 2026, 8, sales=4000, labor_cost=1400)     # 35%
     review = monthly_review.build(rid, today=date(2026, 9, 1), db_path=db_path)
     assert review["month"] == "August 2026" and review["compared_with"] == "July"
-    labour = next(m for m in review["metrics"] if m["key"] == "labor_pct")
-    assert labour["value"] == 35.0 and labour["previous"] == 30.0
-    assert labour["verdict"] == "worsened"
-    assert "Labour %" in monthly_review.headline(review)
+    labor = next(m for m in review["metrics"] if m["key"] == "labor_pct")
+    assert labor["value"] == 35.0 and labor["previous"] == 30.0
+    assert labor["verdict"] == "worsened"
+    assert "Labor %" in monthly_review.headline(review)
 
 
 def test_an_unmeasurable_month_says_so_instead_of_reporting_no_change(db_path):
     import monthly_review
     rid = _rid(db_path)
     review = monthly_review.build(rid, today=date(2026, 9, 1), db_path=db_path)
-    labour = next(m for m in review["metrics"] if m["key"] == "labor_pct")
-    assert labour["value"] is None and labour["verdict"] == "unknown"
+    labor = next(m for m in review["metrics"] if m["key"] == "labor_pct")
+    assert labor["value"] is None and labor["verdict"] == "unknown"
     assert "not measurable" in " ".join(monthly_review.lines(review))
     assert "Not enough data" in monthly_review.headline(review)
 

@@ -914,7 +914,7 @@ _TOOL_LABELS = {
     "read_review_diagnosis": "Working out what's causing it",
     "read_food_cost_drivers": "Working out where the money is going",
     "read_ai_visibility": "Checking your AI search visibility",
-    "read_labor_detail": "Breaking labour down by day",
+    "read_labor_detail": "Breaking labor down by day",
     "read_schedule_history": "Pulling up past schedules",
     "set_staff_contact": "Saving that contact",
     "generate_marketing_content": "Writing that for you",
@@ -1006,7 +1006,7 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
     # This is the corpus the answer's figures are checked against, and it has
     # to be everything: the snapshot alone is not enough, because a tool
     # result is a legitimate source for a number the snapshot never carried,
-    # and neither is snapshot+tools, because "as I said, labour was 31.4%"
+    # and neither is snapshot+tools, because "as I said, labor was 31.4%"
     # quotes a figure from earlier in the conversation. A corpus missing any
     # of the three turns a correct citation into a false alarm.
     seen_corpus = [context] + [m["content"] for m in messages if isinstance(m.get("content"), str)]

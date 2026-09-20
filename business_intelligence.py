@@ -50,7 +50,7 @@ log = logging.getLogger(__name__)
 _WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday",
              "Saturday", "Sunday")
 
-# How far a weekday's labour percentage must sit below the period average
+# How far a weekday's labor percentage must sit below the period average
 # before it is described as "the leanest day". Below this the difference is
 # noise and naming a day would be inventing a pattern.
 LEAN_DAY_MIN_GAP_PTS = 2.0
@@ -199,7 +199,7 @@ def gather(restaurant_id: int, restaurant=None, db_path: str = DB_PATH) -> dict:
     if _on("module_labor"):
         from labor import analyse_shifts_for_restaurant
         out["labor"] = _safe("labor", lambda: analyse_shifts_for_restaurant(restaurant_id), degraded)
-        # Sample shift data is not this restaurant's labour. The Labor tab
+        # Sample shift data is not this restaurant's labor. The Labor tab
         # shows it so the module isn't blank before the first upload; reading
         # it here would put invented days into an executive answer.
         if out["labor"] and not out["labor"].get("is_live"):
@@ -283,7 +283,7 @@ def _visibility(restaurant_id, db_path=DB_PATH):
 # ── the links ──────────────────────────────────────────────────────────────
 
 def _lean_days(labor):
-    """Weekdays whose labour percentage runs materially below this
+    """Weekdays whose labor percentage runs materially below this
     restaurant's own weekday average, with the gap in points.
 
     Not "understaffed" — labor.py is explicit that this data cannot tell
@@ -354,7 +354,7 @@ def correlations(restaurant_id: int, data: dict = None, restaurant=None,
                     # small false claim inside an otherwise sound finding is
                     # the kind an owner never thinks to check.
                     "headline": (f"{c['mentions']} {_cat(c['category'])} complaints concentrate on "
-                                 f"{day}, which runs {lean[day]} points leaner on labour "
+                                 f"{day}, which runs {lean[day]} points leaner on labor "
                                  f"than this restaurant's weekday average"),
                     "evidence": [
                         # A weekday PAIR's share covers both days, so it must
@@ -366,7 +366,7 @@ def correlations(restaurant_id: int, data: dict = None, restaurant=None,
                         f"{c['mentions']} negative reviews naming {_cat(c['category'])} over "
                         f"{c['window_days']} days, {_concentration_phrase(c)}",
                         f"{day} averages {lean[day]} points below this restaurant's own "
-                        f"weekday average labour percentage",
+                        f"weekday average labor percentage",
                     ],
                     "review_ids": (c.get("review_ids") or [])[:5],
                     # labor.py:974 — the data cannot distinguish lean from
@@ -378,7 +378,7 @@ def correlations(restaurant_id: int, data: dict = None, restaurant=None,
                     "confirm_by": (f"Check whether {day} covers rose while hours stayed flat, "
                                    f"and read the {day} reviews against that shift's roster."),
                     "alternative": ("The same day may simply be the busiest, which raises both "
-                                    "complaint volume and sales-per-labour-hour independently."),
+                                    "complaint volume and sales-per-labor-hour independently."),
                 })
                 break
 
@@ -391,7 +391,7 @@ def correlations(restaurant_id: int, data: dict = None, restaurant=None,
                 "headline": (f"{waste_day} carries both the {_cat(c['category'])} complaints and "
                              f"{int(_f(waste_share) * 100)}% of the week's waste"),
                 "evidence": [
-                    # Same rule as the labour link: a pair's share covers both
+                    # Same rule as the labor link: a pair's share covers both
                     # days and must not be reported against the one day this
                     # link matched on.
                     f"{c['mentions']} negative reviews naming {_cat(c['category'])}, "
@@ -500,10 +500,10 @@ def money_at_stake(restaurant_id: int, data: dict = None, restaurant=None,
                             "reason": "period too short to project a monthly figure"})
     else:
         # A zero is not a missing measurement here, and reporting it as "too
-        # short" was simply the wrong sentence: labour at or under target has
+        # short" was simply the wrong sentence: labor at or under target has
         # nothing above target to recover, which is a result worth saying.
         unavailable.append({"module": "labor",
-                            "reason": "labour is at or under target — nothing above it to recover"})
+                            "reason": "labor is at or under target — nothing above it to recover"})
 
     # revenue_at_risk returns a RANGE and a direction, never a point figure —
     # it is an elasticity forecast, not a measurement. Collapsing it to one

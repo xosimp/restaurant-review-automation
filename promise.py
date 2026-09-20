@@ -6,7 +6,7 @@ could prove ROI to a PROSPECT and not to a CLIENT.
 sales_audit_engine.py is the most rigorous financial model in this codebase.
 It cites the National Restaurant Association's Operations Data Abstract, it
 returns low/likely/high ranges rather than one falsely precise figure, it
-refuses to double-count (overtime sits inside labour dollars, waste inside
+refuses to double-count (overtime sits inside labor dollars, waste inside
 food cost, bar variance inside pour cost), it states its recovery shares,
 and a category with missing inputs comes back "insufficient" rather than
 guessed. Will has to defend every number of it across a table from an owner.
@@ -25,7 +25,7 @@ measurable metric, it puts three things side by side:
 and nothing else. It does not claim the product caused the movement — the
 same CAUSATION_CAVEAT that governs every outcome governs this, and more so
 over a year. It does not score itself. An owner reading "we estimated
-$18k–$34k a year from labour; you were at 34.2% then and 31.1% now" can do
+$18k–$34k a year from labor; you were at 34.2% then and 31.1% now" can do
 the arithmetic that matters to them, which is the only honest version of
 this comparison.
 

@@ -46,7 +46,7 @@ struct ValueChartCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             // "TOTAL VALUE DELIVERED" until the ROI audit, when the figure
-            // behind it stopped being labour's gap-to-target plus food
+            // behind it stopped being labor's gap-to-target plus food
             // cost's recoverable waste — money the restaurant was still
             // LOSING — and became only what outcomes.py measured before and
             // after. The label has to say which of those it is.

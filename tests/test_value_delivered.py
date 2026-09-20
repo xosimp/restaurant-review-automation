@@ -3,7 +3,7 @@
 both read them on every Home load).
 
 The ROI audit (Sep 2026) replaced what "Total Value Delivered" meant. It was
-reviews-responded x $5 PLUS labour's potential_savings_monthly PLUS food
+reviews-responded x $5 PLUS labor's potential_savings_monthly PLUS food
 cost's recoverable_monthly — and the last two are gaps ABOVE target, money
 the restaurant is still losing. The headline is now only what was measured;
 cost avoidance and opportunity are separate figures with their own names.

@@ -1158,7 +1158,7 @@ def deliver_alert(restaurant_id: int, alert_type: str, sms_text: str, subject: s
 #
 # At 10am local, run_daily_alert_checks runs three functions in sequence that
 # between them can raise eight alert types. Each used to send its own SMS, its
-# own email and its own push. A single week of understaffing — labour over
+# own email and its own push. A single week of understaffing — labor over
 # target, waste up, an ingredient climbing, the rating slipping, two reviews
 # unanswered — arrived as five notifications describing one story.
 #

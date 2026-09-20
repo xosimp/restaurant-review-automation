@@ -33,7 +33,7 @@ def _restaurant(db_path, **kw):
 
 
 def _days(db_path, rid, start, n, sales=2000.0, labor_ratio=0.30):
-    """n consecutive days of sales + labour ending (start + n - 1)."""
+    """n consecutive days of sales + labor ending (start + n - 1)."""
     conn = get_conn(db_path)
     for i in range(n):
         d = start + timedelta(days=i)
@@ -140,7 +140,7 @@ def test_streak_counts_completed_weeks_under_the_owners_target(db_path):
     rid = _restaurant(db_path, labor_target_pct=30.0)
     today = date.today()
     monday = today - timedelta(days=today.weekday())
-    # Six completed weeks, all at 25% labour.
+    # Six completed weeks, all at 25% labor.
     _days(db_path, rid, monday - timedelta(days=42), 42, labor_ratio=0.25)
     s = [x for x in good_news.streaks(rid, today=today, db_path=db_path)
          if x["metric"] == "labor_pct"]

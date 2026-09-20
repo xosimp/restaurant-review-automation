@@ -1,7 +1,7 @@
 """
 goals.py — the owner's targets, measured.
 
-Goals used to exist only as free text in ask_memory — "wants labour under
+Goals used to exist only as free text in ask_memory — "wants labor under
 26% by October" — which the assistant could quote back but nothing could
 measure. A goal here names a metric from metrics.py, a target and an optional
 deadline, and its progress is read from the same definitions outcome tracking
@@ -30,7 +30,7 @@ def set_goal(restaurant_id, metric, target, deadline=None, note=None, user_id=No
     base = metrics.trailing(restaurant_id, metric, db_path=db_path)
     conn = get_conn(db_path)
     try:
-        # One active goal per metric: two live targets for labour % is two
+        # One active goal per metric: two live targets for labor % is two
         # answers to "am I on track", and they would disagree.
         conn.execute("UPDATE owner_goals SET status='replaced' WHERE restaurant_id=? AND metric=? "
                      "AND status='active'", (restaurant_id, metric))

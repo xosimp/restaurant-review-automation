@@ -5,7 +5,7 @@ The monthly email counted reviews. An owner closing a month asks four
 questions instead: did the business make more or less money than last
 month, what moved, what did the changes I made actually do, and what should
 I fix next month. All four are already measured somewhere in this product —
-prime cost (food_cost_intelligence), labour and sales (metrics), results
+prime cost (food_cost_intelligence), labor and sales (metrics), results
 (outcomes), goals (goals), and the ranked money (business_intelligence) —
 and nothing joined them.
 

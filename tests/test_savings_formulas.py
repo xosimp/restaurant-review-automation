@@ -112,7 +112,7 @@ def test_under_target_labor_has_no_savings():
 def test_the_headline_figure_is_measured_results_not_the_gap_to_target(monkeypatch):
     """The ROI audit's central finding, pinned.
 
-    "Total Value Delivered" used to be reviews-responded x $5, PLUS labour's
+    "Total Value Delivered" used to be reviews-responded x $5, PLUS labor's
     potential_savings_monthly, PLUS recoverable food cost. The last two are
     gaps ABOVE target: money the restaurant is still losing. Counting them as
     delivered ran the arithmetic backwards - fixing your scheduling LOWERED

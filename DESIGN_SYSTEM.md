@@ -82,9 +82,9 @@ tabular figures wherever digits line up in a column.
 |---|---|---|
 | Page title | 25–38px | `.hb-h1`, hero figures, `AccountHero` |
 | Section heading | 22–23.5px Clash | `.fc2-sec .hd h2`, sheet titles |
-| Body | 14–15.5px | `.ac-row`, list rows, `.cavnarBody(15)` |
-| Secondary | 13–14px | `.ac-note`, `.hb-empty`, row subtitles |
-| Caption | 11.5–12.5px | `.hb-tbl .iss`, metadata |
+| Body | 14–16px | `.ac-row`, list rows, `.hb-row .t`, `.hb-tl .t`, `.cavnarBody(15)` |
+| Secondary | 13–14.5px | `.ac-note`, `.hb-empty`, `.hb-focus .ev`, row subtitles |
+| Caption | 11.5–13px | `.hb-tbl .iss`, `.hb-sg .cap`, metadata |
 | **Kicker** | 10–13.5px, weight 700, `letter-spacing:.12–.16em`, UPPERCASE | `.hb-kicker` (ember), `.hb-tbl th` and `.ac-card h3` (ink3), `AccountKicker` |
 
 Keep sizes uniform across modules. The Account scale (15 / 16 / 22) is the

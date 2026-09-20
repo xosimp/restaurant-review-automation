@@ -3,7 +3,7 @@ metrics.py — one definition of each business number, measured over any window.
 
 Goal tracking and outcome tracking both ask the same question — "what was
 this number over that stretch of time?" — and if each answered it its own
-way, "labour was 28% when you started and 26% now" could be two different
+way, "labor was 28% when you started and 26% now" could be two different
 28%s. So both read from here.
 
 Every metric returns (value, detail) where value is None when the number
@@ -44,7 +44,7 @@ def _labor_pct(rid, start, end, param, db_path):
     finally:
         conn.close()
     if not row or not row["n"] or not _f(row["sales"]):
-        return None, "no days with both labour and sales in this window"
+        return None, "no days with both labor and sales in this window"
     return round(_f(row["labor"]) / _f(row["sales"]) * 100, 1), f"{row['n']} days"
 
 
@@ -163,7 +163,7 @@ def _loss_rate(kind):
     A RATE, not a total: comps fall on a quiet week without anything having
     changed. The denominator is the same labor_daily_history sales every
     other metric here uses, so "comps are 2% of sales" means the same 2%
-    the labour percentage is measured against.
+    the labor percentage is measured against.
     """
     def fn(rid, start, end, param, db_path):
         conn = get_conn(db_path)
@@ -204,10 +204,10 @@ def _food_cost_pct(rid, start, end, param, db_path):
 # key -> (function, label, unit, lower_is_better, noise, default window days)
 #
 # `noise` is the smallest move that counts as a move. Below it the honest
-# reading is "no clear change", because weekly labour percentages wobble by
+# reading is "no clear change", because weekly labor percentages wobble by
 # half a point on their own and a rating wobbles by a tenth of a star.
 _REGISTRY = {
-    "labor_pct":     (_labor_pct,     "Labour %",           "%",    True,  0.5,  28),
+    "labor_pct":     (_labor_pct,     "Labor %",           "%",    True,  0.5,  28),
     "food_cost_pct": (_food_cost_pct, "Food cost %",        "%",    True,  1.0,  28),
     "sales":         (_sales,         "Sales per day",      "$",    False, 0.05, 28),
     "weekday_sales": (_weekday_sales, "Sales on",           "$",    False, 0.08, 56),
@@ -314,7 +314,7 @@ def monthly_dollars(restaurant_id, key, delta, db_path=DB_PATH):
         return None
     base, _ = parse(key)
     if base in ("labor_pct", "food_cost_pct", "comp_rate", "void_rate"):
-        # A point of labour, food cost, comps or voids is worth a point of
+        # A point of labor, food cost, comps or voids is worth a point of
         # monthly sales. Comps and voids are already a share of the same
         # sales denominator, so they convert identically.
         s = trailing(restaurant_id, "sales", days=28, db_path=db_path)["value"]

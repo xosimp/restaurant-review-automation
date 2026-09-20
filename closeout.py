@@ -2,7 +2,7 @@
 closeout.py — the 60 seconds at the end of the night that the data can't see.
 
 Every number this product reads about a service arrives the next morning:
-the POS syncs at 3am, reviews land days later, labour is settled after the
+the POS syncs at 3am, reviews land days later, labor is settled after the
 pay period. So the one account of what actually happened tonight is the
 person who was standing in it, and nothing asked them.
 
