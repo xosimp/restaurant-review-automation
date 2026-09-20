@@ -106,6 +106,9 @@ final class HomeFollowThroughViewModel {
     /// The one milestone to celebrate, if any. Cleared as soon as it is
     /// shown and marked seen, so it cannot reappear on the next refresh.
     var pendingMilestone: Milestones.Item?
+    var lossFlags: [LossSignals.Flag] = []
+    var lossWeek: [String] = []
+    var lossNote: String?
     /// Recommendations the owner has started measuring in this session, so
     /// the button can read "Tracking" without a round trip.
     var tracked: Set<String> = []
@@ -258,6 +261,31 @@ final class HomeFollowThroughViewModel {
         let caveat: String?
     }
 
+    /// GET /mobile/api/loss-signals — comps, voids and refunds against
+    /// their own eight-week baseline.
+    ///
+    /// Owner-level, or a manager the owner explicitly granted LOSS_VIEW:
+    /// a signal can name the approving manager, so the server returns 403
+    /// otherwise and `nil` here is normal rather than an error.
+    ///
+    /// `alternative` is not optional decoration. loss_detection attributes
+    /// to the APPROVER because a comp is a manager's decision, and ships an
+    /// innocent explanation for every signal — rendering a headline without
+    /// it turns a question into an accusation about a named person.
+    struct LossSignals: Decodable {
+        struct Flag: Decodable, Identifiable {
+            let type: String?
+            let headline: String
+            let alternative: String?
+            var id: String { headline }
+        }
+        let ok: Bool
+        let available: Bool?
+        let week: [String]?
+        let flagged: [Flag]?
+        let note: String?
+    }
+
     /// GET /mobile/api/milestones — moments worth marking. `unseen` drives
     /// the one-time celebration; the row is the once-ever guarantee, so
     /// marking it seen here holds on the web too.
@@ -287,6 +315,7 @@ final class HomeFollowThroughViewModel {
         async let x: CrossModule? = try? client.send("/mobile/api/cross-module", hapticOnError: false)
         async let n: GoodNews? = try? client.send("/mobile/api/good-news", hapticOnError: false)
         async let ms: Milestones? = try? client.send("/mobile/api/milestones", hapticOnError: false)
+        async let ls: LossSignals? = try? client.send("/mobile/api/loss-signals", hapticOnError: false)
         actions = (await a)?.items ?? []
         goals = (await g)?.goals ?? []
         let outcomes = await o
@@ -303,6 +332,10 @@ final class HomeFollowThroughViewModel {
         // Only ever offer one, and only one that has not been shown on any
         // device — the server's UNIQUE row is what makes that true.
         pendingMilestone = (await ms)?.unseen?.first
+        let loss = await ls
+        lossFlags = (loss?.available == true) ? (loss?.flagged ?? []) : []
+        lossWeek = loss?.week ?? []
+        lossNote = loss?.note
     }
 
     private struct TrackBody: Encodable {
@@ -478,6 +511,8 @@ struct HomeFollowThrough: View {
 
             connectionsCard
 
+            lossCard
+
             closeOutCard
         }
         .task { await viewModel.load() }
@@ -518,6 +553,49 @@ struct HomeFollowThrough: View {
                 if let caveat = viewModel.goodNewsCaveat {
                     CavnarCaveat(title: "News, not a receipt", detail: caveat)
                         .padding(.top, 10)
+                }
+            }
+            .cavnarCard()
+        }
+    }
+
+    /// Comps, voids and refunds running above their own baseline, and any
+    /// one manager accounting for most of a kind's dollars.
+    ///
+    /// The innocent explanation is rendered with the same weight as the
+    /// signal, never behind a disclosure. This card names a person's POS id
+    /// next to a percentage, and an owner reading that without "they may
+    /// simply have worked the busiest shifts" will reach a conclusion the
+    /// data does not support.
+    @ViewBuilder
+    private var lossCard: some View {
+        if !viewModel.lossFlags.isEmpty {
+            HomeSectionHeader(kicker: "Comps, voids and refunds", title: "Worth reviewing",
+                              trailing: viewModel.lossWeek.count == 2 ? viewModel.lossWeek[1] : nil)
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(viewModel.lossFlags.enumerated()), id: \.element.id) { index, flag in
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(alignment: .top, spacing: 12) {
+                            Circle().fill(Color.cavnarAmber).frame(width: 8, height: 8)
+                                .padding(.top, 6)
+                            HomeMixedText.make(flag.headline, size: 14.5, weight: 600,
+                                               color: .cavnarInk)
+                            Spacer(minLength: 0)
+                        }
+                        if let alt = flag.alternative {
+                            HomeMixedText.make("Could also be: " + alt, size: 12.5, weight: 500,
+                                               color: .cavnarInk3)
+                                .padding(.leading, 20)
+                        }
+                        if index < viewModel.lossFlags.count - 1 {
+                            Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
+                        }
+                    }
+                    .padding(.vertical, 11)
+                }
+                if let note = viewModel.lossNote {
+                    CavnarCaveat(title: "A pattern, not a finding", detail: note)
+                        .padding(.top, 6)
                 }
             }
             .cavnarCard()

@@ -143,6 +143,17 @@ struct HomeView: View {
                                     .belowFold(heroAppeared, delay: 0.74)
                             }
 
+                            // The first session. Every other block below
+                            // needs data this account does not have yet,
+                            // so the one true thing the product can say
+                            // has to come from outside it.
+                            if let look = summary.firstLook, !look.isEmpty {
+                                HomeFirstLook(lines: look)
+                                    .padding(.horizontal, 20)
+                                    .padding(.top, 30)
+                                    .belowFold(heroAppeared, delay: 0.6)
+                            }
+
                             // What Cavnar recommends, each with the button
                             // that starts measuring it. The server has sent
                             // these on every /mobile/api/home response since

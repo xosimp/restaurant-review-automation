@@ -1842,6 +1842,45 @@ def _weekly_review_sections(restaurant_id):
                            f"{p['label']} — {_money(p)}" for p in review["priorities"])))
     except Exception as e:
         print(f"[weekly] priorities block failed: {e}")
+    # What two modules saw that neither could see alone. The digest is the
+    # one thing Cavnar AI sends every week, so it is where the finding no
+    # single-module tool can make belongs — and it is the clearest argument
+    # for having more than one module on the plan.
+    #
+    # One link only. `correlations` returns [] far more often than not, and
+    # a week with three is a week where the section would read as a list of
+    # theories rather than the one thing worth a look.
+    try:
+        import business_intelligence as _bi
+        links = _bi.correlations(restaurant_id) or []
+        if links:
+            link = links[0]
+            block = (report_eyebrow("What connects")
+                     + report_paragraph(f'<strong>{_html.escape(link["headline"])}</strong>')
+                     + report_paragraph(_list(link.get("evidence") or [])))
+            if link.get("confirm_by"):
+                block += report_paragraph("To confirm: " + _html.escape(link["confirm_by"]))
+            # The innocent reading travels with the signal, never behind a
+            # link the reader has to choose to follow.
+            caution = link.get("not_a_cause") or link.get("alternative")
+            if caution:
+                block += report_paragraph(f'<span style="font-size:12.5px;color:{BRAND["muted"]}">'
+                                          f'{_html.escape(caution)}</span>')
+            out.append(block)
+    except Exception as e:
+        print(f"[weekly] cross-module block failed: {e}")
+    # Records, streaks, and complaints that stopped. Everything else in this
+    # email is a problem or a target.
+    try:
+        import good_news as _gn
+        news = _gn.all_good_news(restaurant_id, limit=2) or []
+        if news:
+            out.append(report_eyebrow("What got better")
+                       + report_paragraph(_list(n["summary"] for n in news))
+                       + report_paragraph(f'<span style="font-size:12.5px;color:{BRAND["muted"]}">'
+                                          f'{_html.escape(_gn.CAVEAT)}</span>'))
+    except Exception as e:
+        print(f"[weekly] good news block failed: {e}")
     return out
 
 

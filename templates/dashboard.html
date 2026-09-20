@@ -1722,11 +1722,33 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     for(var i=0;i<c.locations.length;i++){var l=c.locations[i];h+='<button role="listitem" class="hb-loc '+esc(l.health)+(l.active&&_hbScope!=='group'?' active':'')+'" onclick="hbSwitchLoc('+l.id+',\''+esc(l.name)+'\')" title="'+esc(l.top_issue||'Healthy')+'"><span class="d"></span><span>'+esc(l.name)+'</span>'+(l.attention?'<span class="n hb-num">'+l.attention+'</span>':'')+'</button>';}
     return h+'</div>';
   }
-  function renderWelcome(d){var e=d.empty_state;if(!e)return '';return '<section class="hb-welcome" aria-label="Welcome"><div class="hb-kicker">Getting started</div><h2>'+esc(e.title)+'</h2><p>'+esc(e.body)+'</p></section>';}
+  // The first session. Everything else on Home needs data this account does
+  // not have yet, so this is the one screen where saying something true
+  // about the business has to come from outside it - Google's own rating
+  // and the comparable restaurants nearest them (first_look.py), the same
+  // first look the welcome email leads with.
+  function renderWelcome(d){
+    var e=d.empty_state;if(!e)return '';
+    var h='<section class="hb-welcome" aria-label="Welcome"><div class="hb-kicker">Getting started</div><h2>'+esc(e.title)+'</h2>';
+    var fl=e.first_look||[];
+    if(fl.length){
+      // The section already carries the ember rule, so this block gets the
+      // kicker and nothing else - a second border inside the first reads as
+      // a card inside a card.
+      h+='<div style="margin:0 0 14px"><div class="hb-kicker" style="margin-bottom:6px">What I can already see</div>';
+      for(var i=0;i<fl.length;i++)h+='<p style="margin:0 0 6px">'+num(fl[i])+'</p>';
+      h+='</div>';
+    }
+    return h+'<p>'+esc(e.body)+'</p></section>';
+  }
   function render(d){
     _hbData=d;renderTop(d);
     var body=document.getElementById('hb-body');if(!body)return;
     var h=renderLocations(d);
+    // Dead code until the delight audit: renderWelcome was defined and
+    // never called, so a brand-new account's first screen skipped the one
+    // block written for it.
+    h+=renderWelcome(d);
     h+='<section class="hb-hero" id="hb-hero" aria-label="Value delivered"></section>';
     h+=renderSignals(d);
     h+=renderReceipts(d);
@@ -1744,12 +1766,37 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
   var GOALTONE={met:'good',moving_right_way:'good',moving_wrong_way:'critical',missed:'critical',flat:'watch',unknown:'watch'};
   var RESULTTONE={improved:'good',worsened:'critical'};
   function hbFollow(){
-    var got={},left=10;
+    var got={},left=11;
     function done(k,v){got[k]=v;left--;if(!left)renderFollow(got);}
     function get(k,url){fetch(url,{credentials:'same-origin'}).then(function(r){return r.ok?r.json():null;}).then(function(d){done(k,d&&d.ok?d:null);}).catch(function(){done(k,null);});}
     get('brief','/api/morning-brief');get('issues','/api/issues?status=unresolved');get('goals','/api/goals');get('outcomes','/api/outcomes');
     get('actions','/api/actions');get('closeout','/api/closeout');get('value','/api/value');
     get('cross','/api/cross-module');get('news','/api/good-news');get('miles','/api/milestones');
+    get('loss','/api/loss-signals');
+  }
+  // ── comps, voids and refunds ──────────────────────────────────────────────
+  // loss_detection has measured these against an 8-week baseline since it
+  // shipped, /api/loss-signals has served them, and no client rendered one:
+  // an owner met it as a single capped line in the morning brief, or not at
+  // all. It is the most differentiated thing in the product.
+  //
+  // Every word here is deliberately "worth reviewing". The module attributes
+  // to the APPROVER because a comp is a manager's decision, and it ships an
+  // innocent explanation for every signal - rendering the headline without
+  // its alternative reading would turn a question into an accusation about a
+  // named person.
+  function renderLoss(l){
+    if(!l||!l.available)return '';
+    var flags=l.flagged||[];
+    if(!flags.length)return '';
+    var h='<div class="hb-act" style="grid-template-columns:1fr"><div><h3><span>Worth reviewing</span>'
+      +'<span class="hb-empty" style="padding:0">comps, voids and refunds · '+esc((l.week||[])[0]||'')+' to '+esc((l.week||[])[1]||'')+'</span></h3>';
+    for(var i=0;i<flags.length;i++){var f=flags[i];
+      h+='<div class="hb-row important"><span class="d"></span><span class="t wrap">'+num(f.headline)+'</span></div>';
+      if(f.alternative)h+='<div class="hb-empty" style="font-size:12px;padding:0 0 8px 23px">Could also be: '+num(f.alternative)+'</div>';
+    }
+    if(l.note)h+='<div class="hb-empty" style="font-size:12px">'+esc(l.note)+'</div>';
+    return h+'</div></div>';
   }
   // ── what two modules saw that neither could see alone ─────────────────────
   // business_intelligence.correlations() has produced these since audit #15
@@ -1919,6 +1966,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     h+=renderValue(g.value);
     h+='</div></div>';
     h+=conn;
+    h+=renderLoss(g.loss);
     // Everything still open, in one list — the answer to "what's left?", which
     // used to mean opening six screens (workflow audit #8).
     if(acts.length){

@@ -812,8 +812,29 @@ def _build(current_user):
     has_any_data = bool(rstats.get("total")) or labor_live or inv_live or bool(mkt.get("last_at") if mkt else False)
     empty_state = None
     if not has_any_data:
-        empty_state = {"kind": "new_account", "title": f"Welcome{', ' + (restaurant.owner_name or current_user.get('username') or '') if (restaurant.owner_name or current_user.get('username')) else ''}.",
-                       "body": "Your brief fills in as data arrives: reviews the moment Google is connected, labor once shifts are in, food cost after a first count. Start with the checklist."}
+        # "Start with the checklist" pointed at a checklist retired in Sep
+        # 2026 (_setup_checklist returns [] unconditionally), so the first
+        # thing a new owner read told them to use something that is not on
+        # the screen.
+        #
+        # What replaces it is the same first look the welcome email leads
+        # with: Google's own rating for this restaurant and how it sits
+        # against the comparable places nearest it. It costs a Places call
+        # on a screen that by definition has nothing else to render, and it
+        # means the first session says something true about the business
+        # rather than describing what will happen later.
+        _look_lines = []
+        if r.get("google_place_id"):
+            try:
+                import first_look
+                _look_lines = first_look.lines(first_look.build(r["google_place_id"]))
+            except Exception as _fle:
+                print(f"[home] first look unavailable: {_fle}")
+        empty_state = {"kind": "new_account",
+                       "title": f"Welcome{', ' + (restaurant.owner_name or current_user.get('username') or '') if (restaurant.owner_name or current_user.get('username')) else ''}.",
+                       "body": ("Your brief fills in as data arrives: reviews the moment Google is "
+                                "connected, labor once shifts are in, food cost after a first count."),
+                       "first_look": _look_lines}
 
     dismissed_recs = [r for r in recs if r["key"] in dismissed]
     recs = [r for r in recs if r["key"] not in dismissed]

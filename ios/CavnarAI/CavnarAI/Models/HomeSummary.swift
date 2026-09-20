@@ -43,6 +43,11 @@ struct HomeSummary: Codable {
     // phone. Without a tracker nothing ever reaches outcomes.record, which
     // is what eventually produces "that one worked, about $420/month".
     let recommendations: [HomeRecommendation]?
+    // The first session only. Google's own rating and how it sits against
+    // the comparable restaurants nearest this one, for the screen where
+    // every other block is empty by definition. The server returns [] the
+    // moment the account has data of its own.
+    let firstLook: [String]?
 
     enum CodingKeys: String, CodingKey {
         case username
@@ -60,6 +65,7 @@ struct HomeSummary: Codable {
         case weeklyReceipts = "weekly_receipts"
         case setupChecklist = "setup_checklist"
         case recommendations
+        case firstLook = "first_look"
     }
 }
 

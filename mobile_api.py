@@ -1018,7 +1018,33 @@ def _do_mobile_home(current_user):
         # Home's hero subline and its closing receipt — see the helpers.
         "overnight": _home_overnight(rid),
         "weekly_receipts": _home_weekly_receipts(rid, active_keys, inv if inv_live else {}),
+        # The first session, when every other block on this screen is empty
+        # by definition. Google's own rating and how it sits against the
+        # comparable restaurants nearest this one — the same first look the
+        # welcome email leads with. Empty for any account that has data of
+        # its own, so it costs a Places call only on the screen that would
+        # otherwise have nothing on it.
+        "first_look": _home_first_look(restaurant, rstats, labor, inv),
     }, 200
+
+
+def _home_first_look(restaurant, rstats, labor, inv):
+    """What can be said about this restaurant before it has data here.
+
+    Returns [] the moment the account has anything of its own: a first look
+    is for the first session, and an owner three months in does not need to
+    be told their Google rating by the product that has been analysing it.
+    """
+    has_own_data = bool((rstats or {}).get("total")) or bool((labor or {}).get("is_live")) \
+        or bool((inv or {}).get("is_live"))
+    if has_own_data or not getattr(restaurant, "google_place_id", None):
+        return []
+    try:
+        import first_look
+        return first_look.lines(first_look.build(restaurant.google_place_id))
+    except Exception as e:
+        print(f"[home] first look unavailable: {e}")
+        return []
 
 
 @mobile_bp.route("/home")
