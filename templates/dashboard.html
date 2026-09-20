@@ -1738,12 +1738,67 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
   var GOALTONE={met:'good',moving_right_way:'good',moving_wrong_way:'critical',missed:'critical',flat:'watch',unknown:'watch'};
   var RESULTTONE={improved:'good',worsened:'critical'};
   function hbFollow(){
-    var got={},left=6;
+    var got={},left=7;
     function done(k,v){got[k]=v;left--;if(!left)renderFollow(got);}
     function get(k,url){fetch(url,{credentials:'same-origin'}).then(function(r){return r.ok?r.json():null;}).then(function(d){done(k,d&&d.ok?d:null);}).catch(function(){done(k,null);});}
     get('brief','/api/morning-brief');get('issues','/api/issues?status=unresolved');get('goals','/api/goals');get('outcomes','/api/outcomes');
-    get('actions','/api/actions');get('closeout','/api/closeout');
+    get('actions','/api/actions');get('closeout','/api/closeout');get('value','/api/value');
   }
+  // What Cavnar AI has been worth. Four figures that are never added to each
+  // other - a measurement, an estimate, a gap and an alert total are not
+  // addends (see value_delivered.py).
+  function renderValue(v){
+    if(!v)return '';
+    var d=v.delivered||{},av=v.avoided||{},op=v.opportunity||{},sf=v.surfaced||{},pr=v.promise||null;
+    if(!d.wins&&!d.in_flight&&!(av.hours>0)&&!(op.monthly>0))return '';
+    var h='<h3 style="margin-top:22px"><span>What Cavnar AI has been worth</span></h3>';
+    if(d.wins>0){
+      h+='<div class="hb-row good"><span class="d"></span><span class="t wrap"><strong>$'+num2(d.monthly)+'/month</strong> measured across '+d.wins+' change'+(d.wins===1?'':'s')+(d.annual?' - about $'+num2(d.annual)+' a year if it holds':'')+'</span></div>';
+      if(d.biggest)h+='<div class="hb-row watch"><span class="d"></span><span class="t wrap">Biggest so far: '+num(d.biggest.summary)+'</span></div>';
+    } else {
+      h+='<div class="hb-row watch"><span class="d"></span><span class="t wrap">Nothing measured yet.'+(d.in_flight?' '+d.in_flight+' change'+(d.in_flight===1?'':'s')+' being measured now.':' Track a recommendation and its result lands here.')+'</span></div>';
+    }
+    // The denominator, always. "2 results" reads differently when 8 others
+    // came back unreadable.
+    if(d.evaluated>0&&(d.unmeasurable>0||d.no_clear_change>0)){
+      var bits=[];
+      if(d.no_clear_change>0)bits.push(d.no_clear_change+' showed no clear change');
+      if(d.unmeasurable>0)bits.push(d.unmeasurable+" couldn't be measured");
+      h+='<div class="hb-empty" style="font-size:12px">Of '+d.evaluated+' finished: '+bits.join(', ')+'.</div>';
+    }
+    if(av.hours>0||av.dollars>0){
+      var parts=[];
+      if(av.hours>0)parts.push(Math.round(av.hours)+' hours of work done for you');
+      if(av.dollars>0)parts.push('$'+num2(av.dollars)+" you'd otherwise have paid for");
+      h+='<div class="hb-row watch"><span class="d"></span><span class="t wrap">'+esc(parts.join(' - '))+'</span><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="hbToggle(\'hb-avoided\',this)">How?</button></div>';
+      h+='<div id="hb-avoided" class="hb-empty" style="display:none;font-size:12px">';
+      for(var ai=0;ai<av.items.length;ai++){var it=av.items[ai];
+        var amt=[];if(it.dollars)amt.push('$'+num2(it.dollars));if(it.hours)amt.push(it.hours+' hrs');
+        h+='<div style="margin-bottom:6px">'+esc(it.label)+(amt.length?' - '+esc(amt.join(', ')):'')+'<br><span style="opacity:.75">at '+esc(it.rate)+', '+esc(it.basis)+'</span></div>';}
+      h+='<div style="opacity:.75">Estimates at stated rates, not measurements.</div></div>';
+    }
+    if(sf.dollars>0)h+='<div class="hb-row watch"><span class="d"></span><span class="t wrap">$'+num2(sf.dollars)+' of problems put in front of you in the last '+sf.days+' days, across '+sf.alerts+' alerts</span></div>';
+    if(op.monthly>0)h+='<div class="hb-row important"><span class="d"></span><span class="t wrap"><strong>$'+num2(op.monthly)+'/month</strong> still on the table - available, not captured</span></div>';
+    if(pr&&pr.available&&pr.promised_annual&&pr.promised_annual.low){
+      h+='<div class="hb-empty" style="font-size:12px">At your audit on '+esc(pr.audit_date)+' we estimated $'+num2(pr.promised_annual.low)+'-$'+num2(pr.promised_annual.high)+' a year was available. <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="hbToggle(\'hb-promise\',this)">See how it went</button></div>';
+      h+='<div id="hb-promise" class="hb-empty" style="display:none;font-size:12px">';
+      for(var pi=0;pi<pr.categories.length;pi++){var c=pr.categories[pi];
+        if(c.note){h+='<div style="margin-bottom:6px">'+esc(c.label)+': '+esc(c.note)+'</div>';continue;}
+        if(c.then==null||c.now==null)continue;
+        var pm=(c.promised_low||c.promised_high)?(' <span style="opacity:.75">(we estimated $'+num2(c.promised_low)+'-$'+num2(c.promised_high)+'/yr)</span>'):'';
+        h+='<div style="margin-bottom:6px">'+esc(c.metric_label)+': '+esc(String(c.then))+esc(c.unit||'')+' at the audit, '+esc(String(c.now))+esc(c.unit||'')+' now'+pm+'</div>';}
+      h+='<div style="opacity:.75">'+esc(pr.caveat||'')+'</div></div>';
+    }
+    if(d.caveat)h+='<div class="hb-empty" style="font-size:12px">'+esc(d.caveat)+'</div>';
+    return h;
+  }
+  function num2(n){return (Math.round(n||0)).toLocaleString();}
+  window.hbToggle=function(id,btn){
+    var el=document.getElementById(id);if(!el)return;
+    var open=el.style.display!=='none';
+    el.style.display=open?'none':'block';
+    if(btn)btn.setAttribute('aria-expanded',open?'false':'true');
+  };
   function renderFollow(g){
     var el=document.getElementById('hb-follow');if(!el)return;
     var lines=(g.brief&&g.brief.brief&&g.brief.brief.lines)||[],iss=(g.issues&&g.issues.issues)||[],gl=(g.goals&&g.goals.goals)||[];
@@ -1762,6 +1817,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     if(gl.length){h+='<h3 style="margin-top:22px"><span>Goals</span></h3>';for(var k=0;k<Math.min(gl.length,3);k++){var o=gl[k];h+='<div class="hb-row '+(GOALTONE[o.state]||'watch')+'"><span class="d"></span><span class="t wrap">'+num(o.summary||o.label)+'</span></div>';}}
     if(res.length){h+='<h3 style="margin-top:22px"><span>What your changes did</span></h3>';for(var m=0;m<Math.min(res.length,3);m++){var r=res[m];h+='<div class="hb-row '+(RESULTTONE[r.verdict]||'watch')+'"><span class="d"></span><span class="t wrap">'+num(r.summary)+'</span></div>';}
       h+='<div class="hb-empty" style="font-size:12px">'+esc((g.outcomes&&g.outcomes.caveat)||'')+'</div>';}
+    h+=renderValue(g.value);
     h+='</div></div>';
     // Everything still open, in one list — the answer to "what's left?", which
     // used to mean opening six screens (workflow audit #8).

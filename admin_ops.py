@@ -394,6 +394,27 @@ def _churn_risk(r, d, last_active, completeness):
         reasons.append("urgent reviews unanswered 2+ days"); points += 1
     if (d["stale_issues"].get(rid) or {}).get("n"):
         reasons.append("issues open 24h+ with nobody acknowledging"); points += 1
+
+    # VALUE DELIVERED, not just activity. Every signal above measures whether
+    # the owner is USING the product; none measured whether it had been worth
+    # anything to them. A fully engaged client who has been shown nothing
+    # they can point at scored "low risk" right up to the renewal call, and
+    # that is the client who actually leaves. Only counted once the account
+    # is old enough to have closed a tracker — a three-week-old restaurant
+    # with no measured results is normal, not a warning.
+    if joined is not None and joined >= 90:
+        try:
+            import outcomes
+            v = outcomes.total_value(rid)
+            if not v["wins"] and not v["in_flight"]:
+                reasons.append("nothing measured in %d days — no result to show at renewal"
+                               % int(joined)); points += 2
+            elif not v["wins"]:
+                reasons.append("%d change%s being measured, none has landed yet"
+                               % (v["in_flight"], "" if v["in_flight"] == 1 else "s")); points += 1
+        except Exception:
+            pass
+
     level = "high" if points >= 4 else "medium" if points >= 2 else "low"
     return {"level": level, "reasons": reasons}
 

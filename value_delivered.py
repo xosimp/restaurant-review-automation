@@ -24,7 +24,7 @@ refuses to do three files away: "the money lines are deliberately never
 summed — a measured cost, a scheduling gap and an elasticity forecast are
 not addends."
 
-WHAT IT IS NOW. Three figures, each measured its own way, each labelled,
+WHAT IT IS NOW. Four figures, each measured its own way, each labelled,
 and never added together:
 
   delivered     what MEASURED improvements are worth per month. Sourced
@@ -39,10 +39,13 @@ and never added together:
                 happened.
   opportunity   the old labour/food-cost figures, under their real name:
                 money on the table, not money in hand.
+  surfaced      what the alerts raised carried in dollars. Putting a problem
+                in front of someone is not the same as their having fixed
+                it, so it is its own figure too.
 
 An owner asking "what has this been worth" gets the first. An owner asking
-"what is still available" gets the third. Nothing in this file claims the
-second is the first.
+"what is still available" gets the third. Nothing in this file claims any
+of them is any other.
 """
 import models
 from models import get_restaurant, get_review_stats, DB_PATH
@@ -163,14 +166,23 @@ def avoided(restaurant_id: int, db_path: str = DB_PATH) -> dict:
                     "rate": f"${AGENCY_MONTHLY:,.0f}/month", "basis": AGENCY_BASIS})
 
         if restaurant.module_labor:
-            schedules = _scalar(conn, "SELECT COUNT(*) FROM schedule_history "
-                                      "WHERE restaurant_id=?", (restaurant_id,))
-            if schedules:
+            # DISTINCT WEEKS, not rows. schedule_history keeps a row per
+            # generated draft — the weekly auto-draft job writes one every
+            # week, and every regeneration writes another. A week scheduled
+            # five times saved one schedule's worth of work, not five.
+            # Counting rows produced 5,672 "schedules" and 8,508 hours for a
+            # single restaurant, which is the same unbounded accrual the old
+            # marketing figure was guilty of.
+            weeks = _scalar(conn, "SELECT COUNT(DISTINCT week_start) FROM schedule_history "
+                                  "WHERE restaurant_id=? AND week_start IS NOT NULL",
+                            (restaurant_id,))
+            if weeks:
                 items.append({
-                    "key": "schedules", "label": f"{schedules:,} schedules built",
+                    "key": "schedules",
+                    "label": f"{weeks:,} week{'' if weeks == 1 else 's'} of schedule built",
                     "dollars": None,
-                    "hours": round(schedules * SCHEDULE_MINUTES / 60.0, 1),
-                    "rate": f"{SCHEDULE_MINUTES} min each",
+                    "hours": round(weeks * SCHEDULE_MINUTES / 60.0, 1),
+                    "rate": f"{SCHEDULE_MINUTES} min a week",
                     "basis": "building a week's schedule by hand"})
 
         if restaurant.module_inventory:
@@ -245,12 +257,25 @@ def opportunity(restaurant_id: int, db_path: str = DB_PATH) -> dict:
 
 # ── The whole picture ───────────────────────────────────────────────────────
 
+def surfaced(restaurant_id: int, days: int = 30, db_path: str = DB_PATH) -> dict:
+    """What the alerts raised this month were worth, from the dollars they
+    already carried. A fourth figure, and a fourth thing not summed into the
+    others: putting a problem in front of someone is not the same as their
+    having fixed it."""
+    try:
+        from models import money_surfaced
+        return money_surfaced(restaurant_id, days=days, db_path=db_path)
+    except Exception:
+        return {"days": days, "items": [], "dollars": 0.0, "alerts": 0}
+
+
 def breakdown(restaurant_id: int, db_path: str = DB_PATH) -> dict:
-    """All three figures, never summed. Every Home surface reads this."""
+    """All four figures, never summed. Every Home surface reads this."""
     return {
         "delivered": delivered(restaurant_id, db_path=db_path),
         "avoided": avoided(restaurant_id, db_path=db_path),
         "opportunity": opportunity(restaurant_id, db_path=db_path),
+        "surfaced": surfaced(restaurant_id, db_path=db_path),
     }
 
 

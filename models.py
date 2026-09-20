@@ -7071,6 +7071,39 @@ def record_notification_open(restaurant_id: int, alert_type: str, user_id: int =
         conn.close()
 
 
+def money_surfaced(restaurant_id: int, days: int = 30, db_path: str = DB_PATH) -> dict:
+    """What the alerts Cavnar AI raised were worth, in the dollars they
+    already carried.
+
+    notify.record_notification has stamped alert_log.value since the
+    notification audit, and the column was read in exactly one place — a
+    food-waste repeat-suppression comparison in notify.py. Every valued
+    alert already knew its own dollar figure and nothing ever added them up,
+    so "Cavnar AI put $4,100 of problems in front of you this month" could
+    not be said despite being sitting in a column.
+
+    Counted per ALERT, which is what the owner experienced. Alert types
+    without a dollar value (a login, a staff sign-in) contribute nothing and
+    are not counted as zero-value alerts — they simply are not money.
+    """
+    since = f"-{int(days)} days"
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(
+            f"SELECT alert_type, COUNT(*) AS n, COALESCE(SUM(value),0) AS total "
+            f"FROM alert_log WHERE restaurant_id=? AND value IS NOT NULL "
+            f"AND fired_at >= datetime('now','{since}') "
+            f"GROUP BY alert_type ORDER BY total DESC",
+            (restaurant_id,)).fetchall()
+    finally:
+        conn.close()
+    items = [{"alert_type": r["alert_type"], "count": r["n"],
+              "dollars": round(float(r["total"] or 0), 2)} for r in rows]
+    return {"days": int(days), "items": items,
+            "dollars": round(sum(i["dollars"] for i in items), 2),
+            "alerts": sum(i["count"] for i in items)}
+
+
 def notification_engagement(restaurant_id: int, days: int = 60, db_path: str = DB_PATH) -> list:
     """[{alert_type, delivered, opened}] over the window, busiest first.
 

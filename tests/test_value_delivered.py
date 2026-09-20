@@ -85,14 +85,15 @@ def test_unknown_restaurant_returns_zero(db_path):
 
 # ── the three figures stay apart ────────────────────────────────────────────
 
-def test_breakdown_keeps_the_three_figures_separate(db_path):
+def test_breakdown_keeps_the_figures_separate(db_path):
     """business_intelligence refuses to sum a measured cost against a
     forecast; this refuses to sum a measurement against an estimate against
-    a gap. Nothing here may collapse into one number."""
+    a gap against an alert total. Nothing here may collapse into one
+    number."""
     rid = _reviews_only(db_path)
     _responded_review(db_path, rid, "r1")
     b = breakdown(rid, db_path=db_path)
-    assert set(b) == {"delivered", "avoided", "opportunity"}
+    assert set(b) == {"delivered", "avoided", "opportunity", "surfaced"}
     # The headline reads only the measured half.
     assert b["delivered"]["monthly"] == 0
     assert b["avoided"]["dollars"] > 0
@@ -140,3 +141,25 @@ def test_history_scoped_to_own_restaurant(db_path):
     record_value_snapshot(rid_a, 500, db_path=db_path)
     history_b = get_value_history(rid_b, db_path=db_path)
     assert history_b == []
+
+def test_a_week_rescheduled_five_times_is_one_week_of_work_saved(db_path):
+    """schedule_history keeps a row per generated draft: the weekly
+    auto-draft job writes one every week and every regeneration writes
+    another. Counting rows gave a single restaurant 5,672 "schedules" and
+    8,508 hours saved - the same unbounded accrual the old marketing figure
+    was guilty of. Found by running it against a real database rather than
+    a fixture."""
+    rid = _restaurant(db_path, module_reviews=0, module_labor=1,
+                      module_inventory=0, module_marketing=0)
+    conn = get_conn(db_path)
+    for _ in range(5):
+        conn.execute("INSERT INTO schedule_history (restaurant_id, week_start) VALUES (?,?)",
+                     (rid, "2026-09-07"))
+    conn.execute("INSERT INTO schedule_history (restaurant_id, week_start) VALUES (?,?)",
+                 (rid, "2026-09-14"))
+    conn.commit()
+    conn.close()
+
+    item = next(i for i in avoided(rid, db_path=db_path)["items"] if i["key"] == "schedules")
+    assert "2 weeks" in item["label"]
+    assert item["hours"] == round(2 * 90 / 60.0, 1)
