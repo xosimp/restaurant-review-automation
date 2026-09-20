@@ -12,6 +12,7 @@ Jobs:
   8:00am weekly — send weekly digest to clients on their chosen day
 """
 import os, threading, time, logging, html as _html
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from status_manager import record_scheduler_heartbeat, run_health_checks
 import emails as _emails
 import ops as _ops
@@ -180,6 +181,68 @@ def get_owner_email(restaurant_id):
     """The first owner's email — for callers that address one person."""
     emails = get_owner_emails(restaurant_id)
     return emails[0] if emails else None
+
+
+# ── review fetch bounds ─────────────────────────────────────────────────────
+#
+# The pass is network-bound: a Google fetch, then a Claude analysis and a
+# draft per NEW review. Parallelism here buys wall-clock without buying CPU.
+# Kept modest on purpose — every worker writes to one SQLite file, and the
+# model API has its own rate limits that a wide fan-out turns into 429s.
+FETCH_WORKERS = int(os.getenv("FETCH_WORKERS", "6"))
+
+# Stop before the next scheduled slot rather than running into it. The slots
+# are four hours apart; this leaves an hour of headroom.
+FETCH_MAX_SECONDS = int(os.getenv("FETCH_MAX_SECONDS", str(3 * 3600)))
+
+# Where the last bounded pass stopped, so the next one starts there instead
+# of at the top of the list again. Without this, a pass that can only reach
+# 400 of 900 restaurants reaches the SAME 400 every time and the other 500
+# are never fetched at all — the failure mode the bound would otherwise
+# introduce while fixing the runaway one.
+_FETCH_CURSOR_KEY = "review_fetch_cursor"
+
+
+def _fetch_order(ids):
+    """The live restaurant ids, rotated so the ones skipped last time lead."""
+    if not ids:
+        return []
+    try:
+        from models import get_conn
+        conn = get_conn()
+        conn.execute("CREATE TABLE IF NOT EXISTS job_cursors ("
+                     "key TEXT PRIMARY KEY, value TEXT, updated_at TEXT "
+                     "NOT NULL DEFAULT (datetime('now')))")
+        conn.commit()
+        row = conn.execute("SELECT value FROM job_cursors WHERE key=?",
+                           (_FETCH_CURSOR_KEY,)).fetchone()
+        conn.close()
+        last = int(row["value"]) if row and str(row["value"]).isdigit() else None
+    except Exception as e:
+        log.warning(f"_fetch_order: cursor unreadable ({e}) — starting at the top")
+        last = None
+    ordered = sorted(ids)
+    if last is None or last not in ordered:
+        return ordered
+    cut = ordered.index(last) + 1
+    return ordered[cut:] + ordered[:cut]
+
+
+def _remember_fetch_cursor(order, processed):
+    """Record the last restaurant this pass actually covered."""
+    if not order or processed <= 0:
+        return
+    last = order[min(processed, len(order)) - 1]
+    try:
+        from models import get_conn
+        conn = get_conn()
+        conn.execute("INSERT INTO job_cursors (key, value, updated_at) VALUES (?,?,datetime('now')) "
+                     "ON CONFLICT(key) DO UPDATE SET value=excluded.value, "
+                     "updated_at=excluded.updated_at", (_FETCH_CURSOR_KEY, str(last)))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        log.warning(f"_remember_fetch_cursor failed: {e}")
 
 
 def run_daily_fetch():
@@ -431,15 +494,62 @@ def run_daily_fetch():
         # anywhere in the body above — a locked database on save_reviews, a
         # get_restaurant that raised — ended the cycle for every restaurant
         # after it, silently, behind a single log line.
-        for row in live:
-            try:
-                _process_restaurant(row)
-            except Exception as e:
-                log.error(f"Review cycle failed for restaurant {row['id']}: {e}")
-                _ops.capture(e, job="review_fetch", context=f"restaurant_id={row['id']}")
+        #
+        # It was also strictly SERIAL and unbounded in time. Each restaurant
+        # is one Google fetch plus a Claude analysis and a draft per new
+        # review — overwhelmingly network wait — so at a few hundred
+        # restaurants a pass ran for hours, the 8am/12pm/4pm/8pm slots
+        # collapsed into one continuous run, and the restaurants at the end
+        # of the list were simply never reached. Nothing reported that,
+        # because nothing failed: an unreached restaurant and a restaurant
+        # with no new reviews looked identical.
+        #
+        # Two bounds now, and a cursor so neither one starves anybody:
+        #   FETCH_MAX_SECONDS  — stop cleanly before the next slot.
+        #   FETCH_WORKERS      — I/O-bound fan-out, small enough to stay well
+        #                        under SQLite's writer contention and the
+        #                        model API's rate limits.
+        # _process_restaurant opens and closes its own connection per call
+        # and shares no SQLite handle across calls, which is what makes it
+        # safe on a worker thread — sqlite3 connections are not thread-safe
+        # and this codebase's prevailing get_conn()/close() shape is exactly
+        # what keeps that true here.
+        order = _fetch_order([r["id"] for r in live])
+        by_id = {r["id"]: r for r in live}
+        started_at = time.time()
+        done, ran_out = 0, False
+        with ThreadPoolExecutor(max_workers=FETCH_WORKERS) as pool:
+            futures = {}
+            for rid in order:
+                if time.time() - started_at > FETCH_MAX_SECONDS:
+                    ran_out = True
+                    break
+                futures[pool.submit(_process_restaurant, by_id[rid])] = rid
+            for fut in as_completed(futures):
+                rid = futures[fut]
+                try:
+                    fut.result()
+                    done += 1
+                except Exception as e:
+                    log.error(f"Review cycle failed for restaurant {rid}: {e}")
+                    _ops.capture(e, job="review_fetch", context=f"restaurant_id={rid}")
+        _remember_fetch_cursor(order, done)
+        if ran_out:
+            # Not a failure — a bound working as intended — but the operator
+            # needs to know the pass did not cover everyone, because the
+            # symptom for the restaurants it missed is silence.
+            log.warning(f"run_daily_fetch: stopped after {done}/{len(live)} "
+                        f"restaurants at the {FETCH_MAX_SECONDS}s bound")
+            _ops.capture(
+                RuntimeError(f"Review fetch covered {done} of {len(live)} restaurants "
+                             f"before the {FETCH_MAX_SECONDS}s bound. The rest start "
+                             f"the next pass — see _fetch_order."),
+                job="review_fetch", context="time_bound")
+        return {"restaurants": len(live), "processed": done, "hit_time_bound": ran_out}
 
     except Exception as e:
         log.error(f"Daily fetch error: {e}")
+
 
 
 def run_weekly_digests():

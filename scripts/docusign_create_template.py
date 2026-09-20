@@ -56,11 +56,14 @@ def main():
     tok = d.get_access_token()
     api = f"{d.BASE_URL}/restapi/v2.1/accounts/{d.ACCOUNT_ID}"
     h = {"Authorization": "Bearer " + tok, "Content-Type": "application/json"}
-    r = requests.post(api + "/templates", headers=h, json=build_body())
+    r = requests.post(api + "/templates", headers=h, json=build_body(),
+                      timeout=d.DOCUSIGN_TIMEOUT)
     if r.status_code not in (200, 201):
         sys.exit("template create failed: %s %s" % (r.status_code, r.text[:500]))
     tid = r.json()["templateId"]
-    v = requests.get(f"{api}/templates/{tid}", headers=h, params={"include": "recipients,tabs"}).json()
+    v = requests.get(f"{api}/templates/{tid}", headers=h,
+                     params={"include": "recipients,tabs"},
+                     timeout=d.DOCUSIGN_TIMEOUT).json()
     for s in v.get("recipients", {}).get("signers", []):
         tabs = s.get("tabs") or {}
         print("  role", s["roleName"], "order", s.get("routingOrder"),

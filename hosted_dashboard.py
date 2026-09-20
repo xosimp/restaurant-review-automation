@@ -131,35 +131,25 @@ def health():
     never appeared. Checking it from a REQUEST thread is the only place that
     can see it.
 
-    Deliberately still 200 when the scheduler is stale: the web app is up and
-    serving, and returning 500 here would make Railway restart-loop a
-    container that is fine. The signal goes in the body and on the status
-    page, where the operator digest and /status can act on it.
+    Deliberately still 200 when the scheduler is stale, and likewise when
+    the volume is filling: the web app is up and serving, and failing the
+    healthcheck would put a deploy problem on top of a real one. The signal
+    goes in the body and on the status page, where the operator digest and
+    /status can act on it. The one 500 is an unreadable database — the case
+    where a new deployment genuinely should not replace a working one.
+
+    The body lives in status_manager.health_snapshot so it can be tested:
+    importing THIS module boots the database, seeds demo data, starts the
+    scheduler thread and re-runs csrf_protect on already-registered
+    blueprints, which is the same reason http_layer.py was extracted.
     """
-    try:
-        conn = get_conn()
-        conn.execute("SELECT 1").fetchone()
-        conn.close()
-    except Exception as e:
-        return jsonify(status="error", db=str(e)), 500
-
-    scheduler_state, age = "ok", None
-    try:
-        from status_manager import check_scheduler_liveness, SCHEDULER_STALE_MINUTES
-        age = check_scheduler_liveness()
-        if age is None:
-            scheduler_state = "unknown"
-        elif age > SCHEDULER_STALE_MINUTES:
-            scheduler_state = "stale"
-    except Exception:
-        scheduler_state = "unknown"
-
-    payload = {"status": "ok", "db": "ok", "scheduler": scheduler_state}
+    from status_manager import health_snapshot
+    payload, status = health_snapshot()
+    if status != 200:
+        return jsonify(**payload), status
     sha = os.getenv("RAILWAY_GIT_COMMIT_SHA") or os.getenv("GIT_COMMIT") or ""
     if sha:
         payload["build"] = sha[:12]
-    if age is not None:
-        payload["scheduler_heartbeat_age_minutes"] = round(age, 1)
     return jsonify(**payload), 200
 
 @app.template_filter("format_num")

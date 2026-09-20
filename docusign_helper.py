@@ -51,6 +51,15 @@ def consent_url(base_url: str = None) -> str:
     return f"https://{auth_host(base_url)}/oauth/auth?{q}"
 
 
+# Every outbound call here is timed out. These were the only three requests
+# in the codebase without one (AST-checked: 43 of 46 already had it), and
+# with gunicorn running --workers 1 --threads 4 a single hung DocuSign call
+# holds a quarter of the platform's total request capacity until the TCP
+# stack gives up, which can be minutes. Signing is interactive, so the
+# budget is generous but finite.
+DOCUSIGN_TIMEOUT = (5, 30)   # (connect, read) seconds
+
+
 def get_access_token() -> str:
     """Get a DocuSign access token using JWT authentication."""
     import jwt
@@ -81,7 +90,7 @@ def get_access_token() -> str:
     resp = requests.post(auth_url, data={
         "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
         "assertion": token,
-    })
+    }, timeout=DOCUSIGN_TIMEOUT)
 
     if resp.status_code != 200:
         raise Exception(f"DocuSign auth failed: {resp.status_code} {resp.text}")
@@ -169,6 +178,7 @@ def send_contract(
         f"{api_base}/envelopes",
         headers=headers,
         json=envelope,
+        timeout=DOCUSIGN_TIMEOUT,
     )
 
     if resp.status_code not in (200, 201):
@@ -189,6 +199,7 @@ def get_envelope_status(envelope_id: str) -> dict:
     resp = requests.get(
         f"{BASE_URL}/restapi/v2.1/accounts/{ACCOUNT_ID}/envelopes/{envelope_id}",
         headers={"Authorization": f"Bearer {access_token}"},
+        timeout=DOCUSIGN_TIMEOUT,
     )
     if resp.status_code != 200:
         return {"ok": False, "error": resp.text}

@@ -116,6 +116,12 @@ def _record_run_end(run_id, started, ok, error=None, db_path=None):
         log.error(f"_record_run_end({run_id}) failed: {e}")
 
 
+# Process-local backstop for claim_period when the database cannot be
+# written. Deliberately a plain set with a ceiling: it only has to survive
+# the outage, not a restart.
+_claim_fallback = set()
+_CLAIM_FALLBACK_MAX = 500
+
 _PERIOD_CLAIM_SQL = """CREATE TABLE IF NOT EXISTS job_period_claims (
     job_key    TEXT PRIMARY KEY,
     claimed_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -142,6 +148,19 @@ def claim_period(job: str, period: str) -> bool:
     restarts. Fails OPEN (returns True) if the bookkeeping table is
     unreachable — a scheduler that silently stops working is worse than one
     that occasionally repeats.
+
+    But "occasionally repeats" was doing more work than it looked like. The
+    scheduler ticks every 300 seconds, and acquire_scheduler_lease fails
+    open too, on the SAME dependency: a database that is up enough to serve
+    reads and down enough to refuse this write drops both guards at once,
+    and every due job re-runs on every tick for as long as it lasts. For a
+    daily digest that is twelve identical emails an hour to every client.
+    --workers 1 is the only thing that has kept it theoretical.
+
+    So the fall-back is a process-local memo rather than an open door. It is
+    not durable — that is the whole reason the table exists — but it bounds
+    a bookkeeping outage to one run per job per period per process instead
+    of one per tick, while still letting the work happen.
     """
     key = f"{job}:{period}"
     try:
@@ -164,8 +183,16 @@ def claim_period(job: str, period: str) -> bool:
         conn.close()
         return claimed
     except Exception as e:
-        log.error(f"claim_period({key}) failed, allowing run: {e}")
-        return True
+        first_time = key not in _claim_fallback
+        _claim_fallback.add(key)
+        if len(_claim_fallback) > _CLAIM_FALLBACK_MAX:
+            # Bounded: a long outage across many jobs must not grow this
+            # without limit. Dropping the oldest re-opens the door for that
+            # job, which is the same failure this already tolerates.
+            _claim_fallback.pop()
+        log.error(f"claim_period({key}) failed, {'allowing' if first_time else 'refusing'} "
+                  f"run from process memory: {e}")
+        return first_time
 
 
 # ── async request-scoped jobs (schedule generation, competitor intel) ───────

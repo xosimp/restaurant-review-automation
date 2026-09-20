@@ -187,24 +187,116 @@ def _check_storage():
     write and every caller in this codebase catches broadly, so it looks like
     a hundred unrelated small failures rather than one cause.
     """
+    d = disk_state()
+    if d["state"] == "unknown":
+        update_service_status("storage", "degraded",
+                              f"Could not read volume capacity: {d.get('error', '')}")
+        return
+    free_mb, pct_free = d["free_mb"], d["pct_free"]
+
+    detail = f"{free_mb:,.0f} MB free ({pct_free:.0f}%)"
+    if d["state"] == "critical":
+        update_service_status("storage", "outage", f"Volume almost full — {detail}. Writes will start failing.")
+        _page_operator("storage_critical",
+                       f"Volume almost full — {detail}. SQLite writes will start failing; "
+                       f"reads will keep working, so this will look like a hundred "
+                       f"unrelated small errors rather than one cause.")
+    elif d["state"] == "low":
+        update_service_status("storage", "degraded", f"Volume filling up — {detail}")
+        _page_operator("storage_low", f"Volume filling up — {detail}")
+    else:
+        update_service_status("storage", "operational", None)
+
+
+def _page_operator(key, message):
+    """Put a status-page outage into the operator's failure digest.
+
+    update_service_status writes the status page and stops there, so the two
+    conditions this module detects that nobody is watching for — a filling
+    volume and a dead scheduler — were visible only to someone who already
+    suspected something and went looking. ops.capture routes them into
+    job_failures, which the 8am digest reads.
+
+    Claimed per day per key so a condition that persists for a week is one
+    line in each morning's digest rather than one every scheduler tick.
+    """
+    try:
+        import ops
+        from datetime import date
+        if ops.claim_period(f"status_page:{key}", date.today().isoformat()):
+            ops.capture(RuntimeError(message), job=f"status_{key}", context="status_manager")
+    except Exception as e:
+        log.warning("could not page operator for %s: %s", key, e)
+
+
+def disk_state(db_path=None):
+    """Free space on the volume the database lives on, as a state plus the
+    numbers behind it.
+
+    Shared by _check_storage (which writes the status page) and the /health
+    endpoint (which is what an uptime monitor actually polls), so the two
+    cannot disagree about what "nearly full" means.
+    """
     import shutil
     from models import DB_PATH
     try:
-        target = os.path.dirname(os.path.abspath(DB_PATH)) or "."
+        target = os.path.dirname(os.path.abspath(db_path or DB_PATH)) or "."
         usage = shutil.disk_usage(target)
         free_mb = usage.free / (1024 * 1024)
         pct_free = (usage.free / usage.total * 100) if usage.total else 100.0
     except Exception as e:
-        update_service_status("storage", "degraded", f"Could not read volume capacity: {str(e)[:80]}")
-        return
-
-    detail = f"{free_mb:,.0f} MB free ({pct_free:.0f}%)"
+        return {"state": "unknown", "error": str(e)[:80]}
+    state = "ok"
     if free_mb < 50 or pct_free < 2:
-        update_service_status("storage", "outage", f"Volume almost full — {detail}. Writes will start failing.")
+        state = "critical"
     elif free_mb < 250 or pct_free < 10:
-        update_service_status("storage", "degraded", f"Volume filling up — {detail}")
-    else:
-        update_service_status("storage", "operational", None)
+        state = "low"
+    return {"state": state, "free_mb": round(free_mb), "pct_free": round(pct_free, 1)}
+
+
+def health_snapshot(db_path=None):
+    """(payload, http_status) for the /health endpoint.
+
+    Extracted from hosted_dashboard for the same reason http_layer was:
+    importing that module boots the database, seeds demo data, starts the
+    scheduler thread and re-runs csrf_protect on already-registered
+    blueprints, so anything living there cannot be tested directly.
+
+    Only ONE condition is a 500: a database that cannot be read. That is the
+    case where a new deployment genuinely should not be promoted over a
+    working one. Everything else — a stale scheduler, a filling volume — is
+    a 200 carrying the signal, because the web app is up and serving and
+    failing the healthcheck would replace a real problem with a deploy
+    problem on top of it.
+    """
+    from models import get_conn, DB_PATH
+    try:
+        conn = get_conn(db_path or DB_PATH)
+        conn.execute("SELECT 1").fetchone()
+        conn.close()
+    except Exception as e:
+        return {"status": "error", "db": str(e)}, 500
+
+    disk = disk_state(db_path)
+
+    scheduler_state, age = "ok", None
+    try:
+        age = check_scheduler_liveness()
+        if age is None:
+            scheduler_state = "unknown"
+        elif age > SCHEDULER_STALE_MINUTES:
+            scheduler_state = "stale"
+    except Exception:
+        scheduler_state = "unknown"
+
+    overall = "ok"
+    if disk["state"] in ("critical", "low") or scheduler_state == "stale":
+        overall = "degraded"
+
+    payload = {"status": overall, "db": "ok", "scheduler": scheduler_state, "disk": disk}
+    if age is not None:
+        payload["scheduler_heartbeat_age_minutes"] = round(age, 1)
+    return payload, 200
 
 
 def run_health_checks():

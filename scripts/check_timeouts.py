@@ -1,0 +1,97 @@
+#!/usr/bin/env python3
+"""
+check_timeouts.py — every outbound HTTP call names its own timeout.
+
+The resiliency audit (Sep 2026) found three DocuSign calls with no timeout
+among 46 outbound requests. On its own that is a small oversight; in this
+deployment it is not.
+
+Railway runs the app as:
+
+    gunicorn --workers 1 --threads 4 --timeout 120
+
+Four threads is the platform's entire concurrent request capacity. A
+`requests` call with no timeout waits on the operating system's TCP
+behaviour, which for a black-holed connection can be minutes. One such call
+holds 25% of the platform; four hold all of it, and gunicorn's own
+--timeout does not rescue a gthread worker whose threads are merely blocked
+rather than wedged. The failure looks like a total outage caused by a
+third party the product barely uses.
+
+The rule is mechanical and has no exceptions worth encoding:
+
+    A call to requests.<verb>() or httpx.<verb>() passes `timeout=`.
+
+A session object with a default timeout would satisfy the intent but not
+this check; if one is ever introduced, add it to _SESSION_FACTORIES rather
+than loosening the rule.
+
+Run: python3 scripts/check_timeouts.py   (exit 1 on violations)
+"""
+import ast
+import os
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+SKIP_DIRS = {".git", "__pycache__", ".claude", "node_modules", "ios",
+             "venv", ".venv", "backups", "tests"}
+
+# Module aliases that resolve to a real HTTP client.
+HTTP_MODULES = {"requests", "_requests", "httpx", "_httpx"}
+VERBS = {"get", "post", "put", "delete", "patch", "head", "options", "request"}
+
+# If a pre-configured session/client with a baked-in timeout is ever added,
+# name it here — a bare verb on it is then fine.
+_SESSION_FACTORIES = set()
+
+
+def offenders():
+    out = []
+    for root, dirs, files in os.walk(ROOT):
+        dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
+        for name in sorted(files):
+            if not name.endswith(".py"):
+                continue
+            path = os.path.join(root, name)
+            try:
+                tree = ast.parse(open(path, encoding="utf-8").read())
+            except (SyntaxError, UnicodeDecodeError):
+                continue
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                fn = node.func
+                if not isinstance(fn, ast.Attribute) or fn.attr not in VERBS:
+                    continue
+                owner = fn.value
+                if not isinstance(owner, ast.Name):
+                    continue
+                if owner.id in _SESSION_FACTORIES:
+                    continue
+                if owner.id not in HTTP_MODULES:
+                    continue
+                if any(k.arg == "timeout" for k in node.keywords if k.arg):
+                    continue
+                # **kwargs may carry it; that is not checkable and is rare
+                # enough that flagging it is the right default.
+                rel = os.path.relpath(path, ROOT)
+                out.append((rel, node.lineno, f"{owner.id}.{fn.attr}"))
+    return out
+
+
+def main():
+    bad = offenders()
+    if not bad:
+        print("timeout lint OK — every outbound HTTP call names a timeout")
+        return 0
+    print(f"{len(bad)} outbound HTTP call(s) with no timeout:\n")
+    for rel, lineno, call in bad:
+        print(f"  {rel}:{lineno}  {call}()")
+    print("\nWith --workers 1 --threads 4, one hung call is a quarter of the")
+    print("platform. Pass timeout=(connect, read).")
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

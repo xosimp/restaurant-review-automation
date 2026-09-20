@@ -33,6 +33,20 @@ from ai_guard import safe_error as _safe_err
 _insight_cache = {}
 _INSIGHT_TTL = 300  # 5 minutes
 
+# The most rows one CSV import will process inline. A year of shifts for a
+# 40-person restaurant is roughly 15,000 rows, so this is generous for real
+# data and still bounded: parse, analyse and store all run synchronously in
+# the request, and the deployment has four request threads in total.
+MAX_CSV_ROWS = 25_000
+
+# How many Ask answers may be generated at once in this process. Each holds a
+# daemon thread and an open model conversation that can run several tool
+# rounds. Sized above gunicorn's --threads 4 so it never rejects a request
+# the server could actually serve today, while still being a real ceiling if
+# the worker count changes.
+ASK_MAX_CONCURRENT = int(os.getenv("ASK_MAX_CONCURRENT", "8"))
+_ASK_SLOTS = threading.BoundedSemaphore(ASK_MAX_CONCURRENT)
+
 def _cache_get(key):
     entry = _insight_cache.get(key)
     if entry and (datetime.utcnow() - entry[0]).total_seconds() < _INSIGHT_TTL:
@@ -1542,9 +1556,14 @@ def _do_ask_cavnar(restaurant_id, question, history=None, user_id=None, conversa
                 "proposals": proposals or [], "conversation_id": conversation_id,
                 **_ask_meta(meta)}, 200
     except Exception as e:
-        import ops
-        ops.capture(e, job="ask_cavnar", context=f"restaurant_id={restaurant_id}")
-        return {"ok": False, "error": "Couldn't get an answer right now — try again in a moment."}, 500
+        from ai_utils import AIBudgetExceeded, user_facing_error
+        msg, status = user_facing_error(e)
+        # A budget stop is a decision this product made on purpose, not a
+        # fault — it does not belong in the failure digest beside real ones.
+        if not isinstance(e, AIBudgetExceeded):
+            import ops
+            ops.capture(e, job="ask_cavnar", context=f"restaurant_id={restaurant_id}")
+        return {"ok": False, "error": msg}, status
 
 
 @client_bp.route("/api/ask-cavnar", methods=["POST"])
@@ -1622,13 +1641,31 @@ def _ask_cavnar_stream_response(rid, uid, question, conversation_id=None, new_co
                         "truncated": truncated, "proposals": proposals or [],
                         "conversation_id": cid, **_ask_meta(meta)})
         except Exception as e:
-            import ops
-            ops.capture(e, job="ask_cavnar_stream", context=f"restaurant_id={rid}")
-            events.put({"type": "error", "error": "Couldn't get an answer right now — try again."})
+            from ai_utils import AIBudgetExceeded, user_facing_error
+            msg, _status = user_facing_error(e, "Couldn't get an answer right now — try again.")
+            if not isinstance(e, AIBudgetExceeded):
+                import ops
+                ops.capture(e, job="ask_cavnar_stream", context=f"restaurant_id={rid}")
+            events.put({"type": "error", "error": msg})
         finally:
+            _ASK_SLOTS.release()
             events.put(None)
 
-    threading.Thread(target=work, daemon=True).start()
+    # Bounded. Every Ask request used to spawn an unbounded daemon thread;
+    # concurrency was limited only incidentally, by gunicorn's four request
+    # threads. That coupling is not a design — raise --threads, or add a
+    # client that opens several streams, and thread creation is unbounded
+    # against a model API with its own rate limits. The semaphore makes the
+    # ceiling explicit and releases in the worker's finally.
+    if not _ASK_SLOTS.acquire(blocking=False):
+        def _busy():
+            events.put({"type": "error", "error": (
+                "Cavnar is answering a few other questions right now — "
+                "try again in a moment.")})
+            events.put(None)
+        threading.Thread(target=_busy, daemon=True).start()
+    else:
+        threading.Thread(target=work, daemon=True).start()
 
     def generate():
         while True:
@@ -4329,11 +4366,6 @@ def client_upload_data(current_user):
     import io, csv as _csv
     from models import save_client_data, log_email
 
-    # File size limit: 5MB max
-    file = request.files.get("file")
-    if file and file.content_length and file.content_length > 5 * 1024 * 1024:
-        return jsonify(ok=False, error="File too large. Maximum size is 5MB."), 413
-
     restaurant_id = current_user["restaurant_id"]
     data_type     = request.form.get("data_type")  # "shifts" or "inventory"
 
@@ -4352,13 +4384,30 @@ def client_upload_data(current_user):
     if not csv_content.strip():
         return jsonify(ok=False, error="File appears empty")
 
-    # Validate it parses
+    # Validate it parses.
+    #
+    # The size guard that used to sit at the top of this function read
+    # request.files.get("file") while the upload arrives as "csv_file", so it
+    # never fired on anything; Flask's MAX_CONTENT_LENGTH (5 MB, set in
+    # hosted_dashboard) was doing the whole job silently. That leaves the
+    # real limit: 5 MB of valid CSV is roughly 100,000 shift rows, and
+    # everything downstream of here — parse, analyse, store — runs
+    # SYNCHRONOUSLY inside the request, on a deployment with four request
+    # threads in total and a 120-second gunicorn timeout. A single large
+    # upload is a quarter of the platform for as long as it takes.
     try:
         rows = list(_csv.DictReader(io.StringIO(csv_content)))
         if not rows:
             return jsonify(ok=False, error="CSV has no data rows")
     except Exception as e:
         return jsonify(ok=False, error=f"Could not parse CSV: {e}")
+
+    if len(rows) > MAX_CSV_ROWS:
+        return jsonify(ok=False, error=(
+            f"That file has {len(rows):,} rows — this import handles up to "
+            f"{MAX_CSV_ROWS:,} at a time. Split it by date range and upload "
+            f"the parts, or send it to will@cavnar.ai and we'll load it for you."
+        )), 413
 
     # Validate required columns exist
     headers = [h.strip().lower() for h in (rows[0].keys() if rows else [])]

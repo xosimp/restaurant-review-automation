@@ -257,6 +257,25 @@ def note_ai_spend(cost_usd, restaurant_id=None):
             _budget_cache[key] = (ts, spend + cost_usd)
 
 
+def user_facing_error(exc, fallback="Couldn't get an answer right now — try again in a moment."):
+    """The message to show an owner when an AI call failed.
+
+    AIBudgetExceeded carries a deliberately written, actionable sentence
+    ("AI is paused — this account has reached its monthly budget. Contact
+    will@cavnar.ai if this looks wrong."). The resiliency audit found it was
+    caught specifically in exactly ONE place in the product — the invoice
+    scanner — so everywhere else, including Ask, a budget-paused account was
+    told "try again", forever, about a condition that retrying cannot clear.
+
+    Returns (message, http_status). 429 for a budget stop, because it is a
+    rate/quota condition the caller should not hammer; the fallback keeps
+    whatever the call site already decided.
+    """
+    if isinstance(exc, AIBudgetExceeded):
+        return str(exc), 429
+    return fallback, 502
+
+
 def create_with_retry(client, retries=2, backoff=1.5, restaurant_id=None, action=None, **kwargs):
     """client.messages.create(**kwargs) with exponential backoff on
     transient failures. Raises the last exception if all attempts fail.
