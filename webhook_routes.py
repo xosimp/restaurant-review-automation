@@ -215,6 +215,24 @@ def _set_billing_status(restaurant_id: int, status: str, reason: str = ""):
         return False
 
 
+def _paused_until(sub) -> str:
+    """The ISO date Stripe will resume collecting, or "" when the
+    subscription is not paused. pause_collection is a dict while a pause
+    is in force and None otherwise; resumes_at is a unix timestamp, or
+    absent for an open-ended pause, which we hold as paused with no date."""
+    pc = (sub or {}).get("pause_collection")
+    if not pc:
+        return ""
+    ts = pc.get("resumes_at") if isinstance(pc, dict) else None
+    if ts:
+        from datetime import datetime, timezone
+        try:
+            return datetime.fromtimestamp(int(ts), tz=timezone.utc).date().isoformat()
+        except (TypeError, ValueError, OSError):
+            pass
+    return "open"
+
+
 def _sibling_restaurant_ids(restaurant_id: int):
     """Every location that shares this restaurant's location_group.
 
@@ -387,8 +405,21 @@ def stripe_webhook():
         if rid:
             granted = _apply_module_entitlement(rid, meta.get("module_keys", ""))
             # Stripe's own subscription status is authoritative for access.
-            if status in ("active", "trialing"):
+            paused_until = _paused_until(sub)
+            if paused_until:
+                # A pause (self-serve, or set in the Stripe dashboard) leaves
+                # status "active" with pause_collection set. This event fires
+                # for the pause itself, so reading status alone would undo a
+                # pause seconds after it was made. When Stripe reaches
+                # resumes_at it clears pause_collection and fires again, and
+                # the branch below brings the account back on its own.
+                for _rid in _sibling_restaurant_ids(rid):
+                    update_restaurant(_rid, {"billing_status": "paused", "paused_until": paused_until})
+                print(f"billing_status=paused until {paused_until} for {rid} (subscription.updated)")
+            elif status in ("active", "trialing"):
                 _set_billing_status(rid, "active", "subscription.updated")
+                for _rid in _sibling_restaurant_ids(rid):
+                    update_restaurant(_rid, {"paused_until": None})
             elif status == "past_due":
                 _set_billing_status(rid, "past_due", "subscription.updated")
             elif status in ("canceled", "unpaid", "incomplete_expired"):

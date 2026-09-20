@@ -2638,6 +2638,32 @@ def _console_denied(user):
         return True
 
 
+def _billing_blocked_page(user):
+    """A page navigation while the subscription is paused or lapsed.
+
+    This used to return the JSON the fetch() calls get, so an owner who
+    paused from Billing & subscription saw a raw error blob on the next
+    reload — and the Resume button lives on the page they could no longer
+    load. A paused owner gets the date and the button; a lapsed one gets
+    the message and Will's address; a manager gets the message and who
+    to ask. /api/account/resume is billing-exempt for exactly this page.
+    """
+    from flask import render_template
+    paused = paused_until = None
+    can_resume = False
+    try:
+        from models import get_restaurant
+        r = get_restaurant(user["restaurant_id"])
+        paused = (getattr(r, "billing_status", "") or "").lower() == "paused"
+        paused_until = getattr(r, "paused_until", None)
+        from permissions import has_permission, TEAM_INVITE
+        can_resume = bool(paused and has_permission(user, TEAM_INVITE))
+    except Exception:
+        pass
+    return render_template("billing_paused.html", paused=paused, paused_until=paused_until,
+                           can_resume=can_resume, message=_BILLING_BLOCKED_MESSAGE), 402
+
+
 def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
@@ -2653,6 +2679,8 @@ def login_required(f):
                 return _jsonify_cd(ok=False, error=_STAFF_WRONG_DOOR, staff_account=True), 403
             return redirect(url_for("staff.portal_home"))
         if _billing_blocked(user):
+            if not _wants_json_response():
+                return _billing_blocked_page(user)
             from flask import jsonify as _jsonify_bb
             return _jsonify_bb(ok=False, error=_BILLING_BLOCKED_MESSAGE,
                                billing_inactive=True), 402

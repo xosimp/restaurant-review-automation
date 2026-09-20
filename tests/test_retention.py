@@ -603,3 +603,112 @@ def test_the_monthly_review_route_is_registered_on_both_sides():
     paths = {(p, tuple(m)) for p, m, *_ in strategy_routes._ROUTES}
     assert ("/monthly-review", ("GET",)) in paths
     assert ("/account/pause", ("POST",)) in paths and ("/account/resume", ("POST",)) in paths
+
+
+# ── the two things the pause implementation itself could have broken ─────────
+
+def test_stripe_reports_a_pause_as_active_and_the_webhook_reads_pause_collection():
+    """Stripe leaves status "active" while pause_collection is set, and it
+    fires subscription.updated for the pause itself. Reading status alone
+    would flip the account back to active seconds after it paused."""
+    import webhook_routes as wr
+    from datetime import datetime, timezone
+    ts = int(datetime(2026, 10, 20, 12, tzinfo=timezone.utc).timestamp())
+    assert wr._paused_until({"status": "active", "pause_collection": {"behavior": "void", "resumes_at": ts}}) == "2026-10-20"
+    assert wr._paused_until({"status": "active", "pause_collection": {"behavior": "void"}}) == "open"
+    assert wr._paused_until({"status": "active", "pause_collection": None}) == ""
+    assert wr._paused_until({"status": "active"}) == ""
+
+
+def _stripe_app(monkeypatch, event):
+    import webhook_routes as wr
+    from flask import Flask
+    real = models.get_conn
+    monkeypatch.setattr(wr, "get_conn", lambda *a, **k: real(models.DB_PATH))
+    # The stripe library is a production dependency, not a test one: stand
+    # in for the one call the route makes.
+    import sys, types
+    fake = types.ModuleType("stripe")
+    fake.Webhook = type("W", (), {"construct_event": staticmethod(lambda *a, **k: event)})
+    monkeypatch.setitem(sys.modules, "stripe", fake)
+    monkeypatch.setattr(wr, "send_alert", lambda *a, **k: None, raising=False)
+    app = Flask(__name__)
+    app.register_blueprint(wr.webhook_bp)
+    return app.test_client()
+
+
+def test_the_pause_survives_stripes_own_subscription_updated_event(db_path, monkeypatch):
+    import strategy_routes as sr
+    monkeypatch.setattr(models, "DB_PATH", db_path)
+    sr_, _ = _pause_env(monkeypatch, db_path)
+    rid = _restaurant(db_path, stripe_customer_id="cus_p")
+    monkeypatch.setattr(sr, "_body", lambda: {"days": 30})
+    assert sr._do_pause(_owner(rid))[1] == 200
+    until = models.get_restaurant(rid, db_path=db_path).paused_until
+    from datetime import datetime, timezone
+    ts = int(datetime.fromisoformat(until).replace(tzinfo=timezone.utc).timestamp())
+    ev = {"id": "evt_pause_1", "type": "customer.subscription.updated",
+          "data": {"object": {"id": "sub_1", "customer": "cus_p", "status": "active",
+                              "metadata": {"restaurant_id": str(rid)},
+                              "pause_collection": {"behavior": "void", "resumes_at": ts}}}}
+    c = _stripe_app(monkeypatch, ev)
+    assert c.post("/stripe-webhook", data=b"{}", headers={"Stripe-Signature": "t"}).status_code == 200
+    r = models.get_restaurant(rid, db_path=db_path)
+    assert r.billing_status == "paused" and r.paused_until == until
+    # Stripe reaches resumes_at: pause_collection clears, the same event
+    # fires, and the account comes back without anyone touching it.
+    ev2 = dict(ev, id="evt_resume_1")
+    ev2["data"] = {"object": dict(ev["data"]["object"], pause_collection=None)}
+    c = _stripe_app(monkeypatch, ev2)
+    assert c.post("/stripe-webhook", data=b"{}", headers={"Stripe-Signature": "t"}).status_code == 200
+    r = models.get_restaurant(rid, db_path=db_path)
+    assert r.billing_status == "active" and r.paused_until is None
+
+
+def _blocked_page_client(monkeypatch, rid, role):
+    import auth
+    from flask import Flask
+    real = models.get_conn
+    monkeypatch.setattr(auth, "get_conn", lambda *a, **k: real(models.DB_PATH), raising=False)
+    monkeypatch.setattr(auth, "get_current_user",
+                        lambda: {"id": 1, "restaurant_id": rid, "is_admin": 0, "username": "o", "role": role})
+    app = Flask(__name__, template_folder="../templates")
+
+    @app.route("/")
+    @auth.login_required
+    def home(current_user):
+        return "dashboard"
+
+    @app.route("/api/thing")
+    @auth.login_required
+    def thing(current_user):
+        return "{}"
+    return app.test_client()
+
+
+def test_a_paused_owner_sees_a_page_with_the_date_and_a_resume_button_not_json(db_path, monkeypatch):
+    monkeypatch.setattr(models, "DB_PATH", db_path)
+    rid = _restaurant(db_path)
+    from models import update_restaurant
+    update_restaurant(rid, {"billing_status": "paused", "paused_until": "2026-10-20"}, db_path=db_path)
+    c = _blocked_page_client(monkeypatch, rid, "owner")
+    resp = c.get("/")
+    assert resp.status_code == 402 and resp.mimetype == "text/html"
+    html = resp.get_data(as_text=True)
+    assert 'id="resume-btn"' in html and 'data-iso="2026-10-20"' in html and "/api/account/resume" in html
+    # The fetch() calls the dashboard makes still get JSON, which is what
+    # their error handling expects.
+    j = c.get("/api/thing")
+    assert j.status_code == 402 and j.get_json()["billing_inactive"] is True
+    # A manager cannot resume and is told who can.
+    html = _blocked_page_client(monkeypatch, rid, "manager").get("/").get_data(as_text=True)
+    assert 'id="resume-btn"' not in html and "account owner can resume" in html
+
+
+def test_a_lapsed_owner_sees_the_message_and_wills_address(db_path, monkeypatch):
+    monkeypatch.setattr(models, "DB_PATH", db_path)
+    rid = _restaurant(db_path)
+    from models import update_restaurant
+    update_restaurant(rid, {"billing_status": "churned"}, db_path=db_path)
+    html = _blocked_page_client(monkeypatch, rid, "owner").get("/").get_data(as_text=True)
+    assert "no longer active" in html and "mailto:will@cavnar.ai" in html and 'id="resume-btn"' not in html

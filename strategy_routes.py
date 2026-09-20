@@ -554,7 +554,14 @@ def _do_pause(u):
     if (r.billing_status or "").lower() == "paused":
         return {"ok": False, "error": "Already paused."}, 409
     resumes = datetime.now(timezone.utc) + timedelta(days=days)
-    stripe_mod = _stripe_client()
+    try:
+        stripe_mod = _stripe_client()
+    except Exception as e:
+        # A key without the library (or the reverse) must not pause the
+        # product while Stripe keeps collecting.
+        import ops
+        ops.capture(e, job="pause_subscription", context=f"restaurant_id={rid}")
+        return {"ok": False, "error": "Stripe isn't reachable from this server — nothing changed. Reply to Will."}, 502
     if stripe_mod and r.stripe_customer_id:
         try:
             sub = _active_subscription(stripe_mod, r.stripe_customer_id)
@@ -603,7 +610,12 @@ def _do_resume(u):
     r = get_restaurant(rid)
     if not r or (r.billing_status or "").lower() != "paused":
         return {"ok": False, "error": "Not paused."}, 409
-    stripe_mod = _stripe_client()
+    try:
+        stripe_mod = _stripe_client()
+    except Exception as e:
+        import ops
+        ops.capture(e, job="resume_subscription", context=f"restaurant_id={rid}")
+        return {"ok": False, "error": "Stripe isn't reachable from this server — reply to Will."}, 502
     if stripe_mod and r.stripe_customer_id:
         try:
             sub = _active_subscription(stripe_mod, r.stripe_customer_id)
