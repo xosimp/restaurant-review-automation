@@ -14,6 +14,103 @@ def _from_email(): return os.getenv("FROM_EMAIL", "will@cavnar.ai")
 log = logging.getLogger(__name__)
 
 
+# ── Sender identity ─────────────────────────────────────────────────────────
+#
+# One address, and until now ten display names on it: "Cavnar AI",
+# "Cavnar AI Alerts", "Cavnar AI Ops", "Cavnar AI Backups", "Cavnar AI Labor
+# Alerts", "Will Cavnar", "Will", plus the restaurant's own name. Mailbox
+# providers cluster reputation and thread by sender, so ten names is ten
+# weaker signals instead of one strong one, and an owner scanning an inbox
+# cannot learn to recognise a sender that changes every time.
+#
+# Three, with a reason each:
+SENDERS = {
+    "client": "Cavnar AI",       # anything an owner or their team receives
+    "ops": "Cavnar AI Ops",      # internal, to Will — never to a client
+    "will": "Will Cavnar",       # the few genuinely first-person emails
+}
+
+
+def sender(kind: str = "client") -> str:
+    """The From header. `kind` is an audience, not a topic — an alert and a
+    digest are both "client", because to the recipient they are both Cavnar
+    AI writing to them."""
+    return f"{SENDERS.get(kind, SENDERS['client'])} <{_from_email()}>"
+
+
+def greeting_name(restaurant) -> str:
+    """The owner's first name, or None when we genuinely do not know it.
+
+    This used to fall back to `owner_email.split("@")[0].title()`, which
+    greeted an owner without a sign_off_name as "Cavnarwill" — the first
+    word of the most-sent email in the product. An honest "there" is better
+    than a mangled mailbox name.
+    """
+    for candidate in (getattr(restaurant, "sign_off_name", None),
+                      getattr(restaurant, "owner_name", None)):
+        value = (candidate or "").strip()
+        if value:
+            return value.split()[0]
+    return None
+
+
+# Zero-width characters padding the preheader so the body's first words do
+# not bleed into the inbox preview after it.
+_PREHEADER_PAD = "&#847;&zwnj;&nbsp;" * 40
+
+
+def with_preheader(html: str, text: str) -> str:
+    """Inject the inbox preview line.
+
+    Not one email in this product set one, so Gmail and Apple Mail showed
+    whatever text happened to follow the wordmark — usually nothing useful.
+    It is the second line an owner reads, before they open anything, and it
+    was free.
+    """
+    if not text:
+        return html
+    import html as _h
+    block = (f'<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;'
+             f'font-size:1px;line-height:1px;color:#f7f4ef;opacity:0">'
+             f'{_h.escape(text)}{_PREHEADER_PAD}</div>')
+    if "<body" in html:
+        idx = html.index(">", html.index("<body")) + 1
+        return html[:idx] + block + html[idx:]
+    return block + html
+
+
+def digest_preheader(report, restaurant) -> str:
+    """The one line worth showing in the inbox before the digest is opened.
+
+    Deterministic, and it leads with money where money moved — the weekly
+    review's own headline — falling back to what the week's reviews did.
+    Never a greeting: "Hi Erik" as preview text wastes the only line an
+    owner reads before deciding whether to open it.
+    """
+    try:
+        import weekly_review
+        review = weekly_review.build(getattr(restaurant, "id", None))
+        moved = [m for m in review["metrics"] if m["verdict"] in ("improved", "worsened")]
+        if moved:
+            lead = max(moved, key=lambda m: abs(m.get("monthly_dollars") or 0))
+            if lead.get("monthly_dollars"):
+                direction = "worth" if lead["verdict"] == "improved" else "costing"
+                return (f"{lead['label']} moved — {direction} about "
+                        f"${abs(lead['monthly_dollars']):,.0f}/month if it holds.")
+            return weekly_review.headline(review)
+    except Exception as e:
+        log.warning("digest preheader failed for restaurant %s: %s",
+                    getattr(restaurant, "id", None), e)
+    try:
+        n = report.total_reviews
+        if n:
+            return (f"{n} review{'s' if n != 1 else ''} this week, "
+                    f"averaging {report.avg_rating:.1f}\u2605.")
+    except Exception:
+        pass
+    return "Your week, measured from your own data."
+
+
 def generate_email_personalization(context: str, fallback: str, restaurant_id: int = None,
                                    brief: bool = False) -> str:
     """Ask Claude for one short, warm paragraph personalizing an onboarding/
@@ -92,7 +189,7 @@ def send_2fa_code(to_email: str, restaurant_name: str, code: str, owner_name: st
 </div>
     """
     try:
-        _res = deliver(email_type="send_2fa_code", payload={"from": f"Cavnar AI <{_from_email()}>", "to": [to_email],
+        _res = deliver(email_type="send_2fa_code", payload={"from": sender("client"), "to": [to_email],
                   "subject": f"Your Cavnar AI verification code: {code}", "html": _html_document(html)})
         return _res
     except Exception as e:
@@ -145,7 +242,7 @@ def send_login_notification(to_email: str, restaurant_name: str,
 </div>
     """
     try:
-        _res = deliver(email_type="send_login_notification", payload={"from": f"Cavnar AI <{_from_email()}>", "to": [to_email],
+        _res = deliver(email_type="send_login_notification", payload={"from": sender("client"), "to": [to_email],
                   "subject": f"New sign-in to your Cavnar AI dashboard", "html": _html_document(html)})
         return _res
     except Exception as e:
@@ -214,6 +311,11 @@ def deliver(payload: dict = None, restaurant_id=None, email_type=None, log_send:
     import requests as _requests
 
     key = _resend_key()
+    # Lifted out before the payload reaches Resend, which has no such field.
+    preheader = payload.pop("preheader", None) if isinstance(payload, dict) else None
+    if preheader:
+        payload = dict(payload)
+        payload["html"] = with_preheader(payload.get("html") or "", preheader)
     to = payload.get("to")
     to_email = (to[0] if isinstance(to, (list, tuple)) and to else to) or ""
     subject = payload.get("subject", "")
@@ -898,7 +1000,7 @@ def send_payment_email(to_email, restaurant_name, tier=None,
             except Exception:
                 pass 
         deliver(email_type="send_payment_email", payload={
-            "from": f"Will Cavnar <{_from_email()}>",
+            "from": sender("will"),
             "to": [to_email],
             "subject": f"Your Cavnar AI payment link — {restaurant_name}",
             "html": _html_document(f"""
@@ -1019,7 +1121,7 @@ def send_welcome_email(to_email, restaurant_name, username, password,
 </div>
 </div>"""
     deliver(email_type="send_welcome_email", payload={
-        "from": f"Will Cavnar <{_from_email()}>",
+        "from": sender("will"),
         "to": [to_email],
         "subject": f"Your Cavnar AI dashboard is live — {restaurant_name}",
         "html": _html_document(html),
@@ -1175,7 +1277,7 @@ def send_team_invite_email(to_email, restaurant_name, username, password, invite
 </div>
 </div>"""
     deliver(email_type="send_team_invite_email", payload={
-        "from": f"Will Cavnar <{_from_email()}>",
+        "from": sender("will"),
         "to": [to_email],
         "subject": f"You've been added to {restaurant_name}'s Cavnar AI dashboard",
         "html": _html_document(html),
@@ -1385,7 +1487,7 @@ def send_onboarding_day2(to_email: str, restaurant_name: str, owner_name: str = 
                    if callout else "")
 
         deliver(email_type="send_onboarding_day2", restaurant_id=restaurant_id, payload={
-            "from": f"Will Cavnar <{_from_email()}>",
+            "from": sender("will"),
             "to": [to_email],
             "subject": f"Getting started with your Cavnar AI dashboard",
             "html": _html_document(f"""
@@ -1517,7 +1619,7 @@ def send_onboarding_day7(to_email: str, restaurant_name: str, owner_name: str = 
         body_paragraph = generate_email_personalization(ai_context, fallback_paragraph, restaurant_id=restaurant_id)
 
         deliver(email_type="send_onboarding_day7", restaurant_id=restaurant_id, payload={
-            "from": f"Will Cavnar <{_from_email()}>",
+            "from": sender("will"),
             "to": [to_email],
             "subject": f"One week in — how's the dashboard feeling?",
             "html": _html_document(f"""
@@ -1560,7 +1662,7 @@ def send_reactivation_email(to_email: str, restaurant_name: str, owner_name: str
     try:
         first = owner_name.split()[0] if owner_name else "there"
         deliver(email_type="send_reactivation_email", payload={
-            "from": f"Will Cavnar <{_from_email()}>",
+            "from": sender("will"),
             "to": [to_email],
             "subject": f"Welcome back to Cavnar AI — {restaurant_name}",
             "html": _html_document(f"""
@@ -1619,11 +1721,15 @@ def _weekly_review_sections(restaurant_id):
     try:
         body = weekly_review.lines(review)
         if body:
-            out.append(report_eyebrow("The week against " + review["compared_with"])
-                       + report_paragraph(_html.escape(weekly_review.headline(review)))
-                       + report_paragraph(_list(body))
-                       + report_paragraph(f'<span style="font-size:12.5px;color:{BRAND["muted"]}">'
-                                          f'{_html.escape(weekly_review.WINDOW_CAVEAT)}</span>'))
+            block = (report_eyebrow("The week against " + review["compared_with"])
+                     + report_paragraph(_html.escape(weekly_review.headline(review)))
+                     + report_paragraph(_list(body)))
+            cost = weekly_review.cost_of_waiting(review)
+            if cost:
+                block += report_paragraph(f'<strong>{_html.escape(cost)}</strong>')
+            block += report_paragraph(f'<span style="font-size:12.5px;color:{BRAND["muted"]}">'
+                                      f'{_html.escape(weekly_review.WINDOW_CAVEAT)}</span>')
+            out.append(block)
     except Exception as e:
         print(f"[weekly] metrics block failed: {e}")
     try:
@@ -1675,9 +1781,14 @@ def _monthly_review_sections(restaurant_id):
     try:
         body = monthly_review.lines(review)
         if body:
-            out.append(report_eyebrow("The month against " + review["compared_with"])
-                       + report_paragraph(_html.escape(monthly_review.headline(review)))
-                       + report_paragraph(_list(body)))
+            block = (report_eyebrow("The month against " + review["compared_with"])
+                     + report_paragraph(_html.escape(monthly_review.headline(review)))
+                     + report_paragraph(_list(body)))
+            cost = monthly_review.cost_of_waiting(review)
+            if cost:
+                block += report_paragraph(
+                    f'<strong>{_html.escape(cost)}</strong>')
+            out.append(block)
     except Exception as e:
         print(f"[monthly] metrics block failed: {e}")
     try:
@@ -1851,7 +1962,7 @@ def send_monthly_summary_email(to_email: str, restaurant_name: str, owner_name: 
             ai_context, fallback_paragraph, restaurant_id=restaurant_id, brief=True)
 
         deliver(email_type="send_monthly_summary_email", restaurant_id=restaurant_id, payload={
-            "from": f"Will Cavnar <{_from_email()}>",
+            "from": sender("will"),
             "to": [to_email],
             "subject": f"{month_name} at {restaurant_name} — your Cavnar AI summary",
             "html": report_shell(
@@ -1935,7 +2046,7 @@ def send_onboarding_day30(to_email: str, restaurant_name: str, owner_name: str =
         body_paragraph = generate_email_personalization(ai_context, fallback_paragraph, restaurant_id=restaurant_id)
 
         deliver(email_type="send_onboarding_day30", restaurant_id=restaurant_id, payload={
-            "from": f"Will Cavnar <{_from_email()}>",
+            "from": sender("will"),
             "to": [to_email],
             "subject": f"30 days of Cavnar AI — a quick check-in",
             "html": _html_document(f"""
@@ -2010,7 +2121,7 @@ def send_password_changed_email(to_email: str, restaurant_name: str, owner_name:
     </div>
     """
     try:
-        _res = deliver(email_type="send_password_changed_email", payload={"from": f"Cavnar AI <{_from_email()}>", "to": [to_email],
+        _res = deliver(email_type="send_password_changed_email", payload={"from": sender("client"), "to": [to_email],
                   "subject": "Your Cavnar AI password was changed", "html": _html_document(html)})
         return _res
     except Exception as e:
@@ -2049,7 +2160,7 @@ def send_email_changed_email(to_email: str, restaurant_name: str, new_email: str
     </div>
     """
     try:
-        _res = deliver(email_type="send_email_changed_email", payload={"from": f"Cavnar AI <{_from_email()}>", "to": [to_email],
+        _res = deliver(email_type="send_email_changed_email", payload={"from": sender("client"), "to": [to_email],
                   "subject": "Your Cavnar AI sign-in email was changed", "html": _html_document(html)})
         return _res
     except Exception as e:
@@ -2084,7 +2195,7 @@ def send_payment_failed_client_email(to_email: str, restaurant_name: str, amount
     </div>
     """
     try:
-        _res = deliver(email_type="send_payment_failed_client_email", payload={"from": f"Will Cavnar <{_from_email()}>", "to": [to_email],
+        _res = deliver(email_type="send_payment_failed_client_email", payload={"from": sender("will"), "to": [to_email],
                   "subject": f"Payment issue — {restaurant_name}", "html": _html_document(html)})
         return _res
     except Exception as e:

@@ -341,3 +341,95 @@ Rules:
 7. Reduced motion has a still fallback; inline JS is ES5.
 8. The same feature reads the same on web and iOS — same words, same order,
    same figures.
+
+---
+
+## Email
+
+The third surface, and until the email audit (Sep 19 2026) the only one this
+document did not govern — which is why 22 client-facing emails ended up
+built across three unrelated frames, 14 of them as bespoke inline HTML, with
+231 hex values re-typed that `emails.BRAND` already names.
+
+Email is **not** the web app in a mail client. Three things are genuinely
+different and none of them are style choices:
+
+- **Light mode only, always.** Never read a theme column. `notify.py`'s
+  `_alert_email_html` documents the incident: the web dashboard POSTs its own
+  dark-mode switch to `/api/theme`, that column was read here, and a client
+  who preferred a dark dashboard started getting dark alert emails they never
+  asked for while every other Cavnar email stayed a light card.
+- **Inline styles, tables, no CSS variables.** Mail clients strip
+  `<style>` and know nothing about `var(--ember)`. This is the one surface
+  where a literal colour is correct — it just has to come from `BRAND`.
+- **No web fonts.** `_SANS` (system stack) for text, `_NUM`
+  (`'Space Grotesk'` with a system fallback) for figures, matching the
+  product's rule that every number is set in Space Grotesk.
+
+### Colour
+
+`emails.BRAND` is the palette. Use the token, never the hex:
+
+```python
+f'<p style="color:{BRAND["body"]}">…</p>'     # yes
+f'<p style="color:#4a443d">…</p>'             # no — that IS BRAND["body"]
+```
+
+`scripts/check_email_tokens.py` enforces this as a ratchet: the count of
+duplicated literals may never rise. Migrate the ones you touch and lower
+`BASELINE`.
+
+| Token | Use |
+|---|---|
+| `paper` `card` `border` `rule` | page ground, card, card edge, hairline |
+| `strong` `ink` `body` `muted` | headline, text, body copy, captions |
+| `ember` `ember2` | the one accent — spend it on a single CTA or a status stripe |
+| `good` `warn` `bad` | verdicts only, never decoration; `_TINT` gives each a background |
+
+### Frames
+
+Three exist. Pick by what the email *is*, not by which is nearest:
+
+1. **`report_shell(kicker, title, subtitle, sections, cta_label, cta_url)`** —
+   anything an owner reads for information. The digest, the monthly review,
+   the closing summary. Compose the body from `report_eyebrow`,
+   `report_paragraph`, `report_stats`, `report_lines`, `report_quote`,
+   `report_action`, `report_rule`. **New reporting email starts here.**
+2. **`_branded_email(inner_html)`** — short transactional mail: a code, a
+   confirmation, a link. Wordmark, one white card, seal footer.
+3. **Bespoke** — legacy. 14 emails still are. Not a starting point; migrate
+   onto `report_shell` when you touch one.
+
+Widths are 560px (`report_shell`) and 480px (`_branded_email`). Do not
+introduce a third.
+
+### Every client email owes the reader
+
+- **A preheader.** `emails.deliver()` takes a `preheader` key and injects it
+  hidden at the top of the body. It is the second line an owner reads, before
+  opening anything. Never a greeting — lead with the substance
+  (`emails.digest_preheader` leads with whichever metric moved most in
+  dollars).
+- **A subject with no emoji.** On a locked phone an emoji-led subject reads
+  as a consumer app. Internal mail to Will keeps its glyphs; it is a triage
+  queue.
+- **One sender.** `emails.sender("client" | "ops" | "will")`. Ten display
+  names on one address is ten weak reputation signals and a sender nobody
+  learns to recognise.
+- **The cost of waiting, where there is one.** `weekly_review.cost_of_waiting`
+  and `monthly_review.cost_of_waiting` state what another period of a
+  *worsened* metric costs, in dollars, and say nothing when nothing worsened
+  or no dollar figure exists.
+- **An unsubscribe, if it is marketing.** Applied centrally in
+  `emails.deliver` for `_MARKETING_TYPES` — visible footer plus
+  `List-Unsubscribe-Post`, which is what gets Gmail to show its own affordance
+  instead of the spam button. Security and operational mail must never carry
+  one.
+
+### Never
+
+- A figure a model produced that was not verified against its input
+  (`ai_guard.unsupported_figures` / `verify_figures`).
+- A raw `resend.Emails.send` for client mail — `emails.deliver()` owns retry,
+  suppression, the flood guard and `email_log`.
+- A restaurant's name as the display name on Will's address.

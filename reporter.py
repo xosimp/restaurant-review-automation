@@ -232,9 +232,11 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
         # rather than that one caused the other. A 90-day co-movement in a
         # restaurant is a prompt to go look, not a finding.
         correlation_context = ""
+        # Bound before the try: the import below can fail, and `signals` is
+        # read again after the except when the digest is assembled.
+        signals = []
         try:
             from notify import MIN_TREND_REVIEWS_PER_WEEK as _MIN_WK_RPT
-            signals = []
             _classified = pos + neg
             _enough_reviews = _classified >= _MIN_WK_RPT * 2
             _lab, _inv, _mkt = _facts["labor"], _facts["inventory"], _facts["marketing"]
@@ -278,8 +280,8 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
                     "\n\nCross-module observations (these are CO-MOVEMENTS, not established "
                     "causes — if you mention one, say the two moved together, never that one "
                     "caused the other):\n" + "\n".join(f"- {s}" for s in signals))
-        except Exception:
-            pass
+        except Exception as _corr_err:
+            print(f"[digest] correlation block failed: {_corr_err}")
 
         # The review module's own root-cause diagnosis, if one exists. This is
         # the difference between a digest that says "food quality was your top
@@ -555,6 +557,10 @@ Rules:
         # copy, never generated — see the module_instruction comment.
         if module_gap_lines:
             parsed["_data_gaps"] = module_gap_lines
+        # Carried out so render_html can show them even when the model
+        # ignored them — they are measured, not generated.
+        if signals:
+            parsed["_correlations"] = signals
         return parsed
     except Exception as e:
         try:
@@ -722,10 +728,35 @@ def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = No
 
     ai_summary = generate_ai_digest_summary(report, restaurant_name, owner_name,
                                             restaurant_id=restaurant_id)
-    ai_headline = (ai_summary.get("headline")
-                   or f"Here's the week at {restaurant_name}, {first_name}.")
+    # The AI headline when there is one. When the model call fails it
+    # returns {}, and this used to fall back to "Here's the week at X,
+    # Erik." — a greeting with no information, in the opening slot of the
+    # most-sent email in the product. The deterministic weekly headline is
+    # measured from the same data and says something.
+    ai_headline = ai_summary.get("headline")
+    if not ai_headline:
+        try:
+            import weekly_review as _wr
+            ai_headline = _wr.headline(_wr.build(restaurant_id or report.restaurant_id))
+        except Exception as _hl_err:
+            print(f"[digest] deterministic headline failed: {_hl_err}")
+            ai_headline = f"Here's the week at {restaurant_name}, {first_name}."
 
     sections = [report_paragraph(_html.escape(ai_headline))]
+
+    # Cross-module co-movements. These are MEASURED (floats compared to
+    # floats in generate_ai_digest_summary), not generated — they were only
+    # ever passed to the model as prompt context, so a model failure threw
+    # away the one part of this email that relates two modules to each
+    # other. Rendered here so they survive it.
+    _correlations = ai_summary.get("_correlations") or []
+    if _correlations:
+        sections.append(
+            report_eyebrow("Moving together")
+            + report_paragraph("<br><br>".join(_html.escape(c) for c in _correlations[:2]))
+            + report_paragraph(f'<span style="font-size:12.5px;color:{BRAND["muted"]}">'
+                               f'Co-movements, not proven causes — two things moved in the '
+                               f'same weeks.</span>'))
 
     # ── The week as a business week ────────────────────────────────────────
     # This digest is the one thing Cavnar AI sends every single week, and it

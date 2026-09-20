@@ -52,6 +52,13 @@ TWILIO_OTP_MESSAGING_SERVICE_SID = os.getenv("TWILIO_OTP_MESSAGING_SERVICE_SID",
 # Read fresh at call time — see emails.py for why binding these at import
 # time is a silent-total-failure mode.
 def _resend_key(): return os.getenv("RESEND_API_KEY", "")
+
+
+def emails_sender(kind="client"):
+    """One sender identity for everything an owner receives — see
+    emails.SENDERS. Imported lazily for the same reason _html_doc is."""
+    from emails import sender
+    return sender(kind)
 def _from_email(): return os.getenv("FROM_EMAIL", "will@cavnar.ai")
 
 HEALTH_KEYWORDS = [
@@ -210,7 +217,7 @@ def _send_alert_email(owner_email: str, subject: str, html: str, restaurant_id: 
     sent = 0
     for address in alert_recipients(owner_email, restaurant_id):
         result = _deliver(email_type="alert", restaurant_id=restaurant_id, payload={
-            "from": f"Cavnar AI Alerts <{_from_email()}>",
+            "from": emails_sender("client"),
             "to": [address],
             "subject": subject,
             "html": _html_doc(html),
@@ -1432,7 +1439,7 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
                 cta_label="Respond now",
                 restaurant_id=restaurant_id,
             )
-            blast(sms, f"🚨 Health alert — {restaurant_name}", html, "health", review.id)
+            blast(sms, f"Health or safety mention — {restaurant_name}", html, "health", review.id)
             continue
 
         # 1★ alert
@@ -1453,7 +1460,7 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
                 cta_label="Respond now",
                 restaurant_id=restaurant_id,
             )
-            blast(sms, f"🔴 1★ review — {restaurant_name}", html, "1star", review.id)
+            blast(sms, f"1-star review — {restaurant_name}", html, "1star", review.id)
 
         # 5★ alert
         elif rating == 5 and row["alert_5star"]:
@@ -1474,7 +1481,7 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
                 cta_label="View & respond",
                 restaurant_id=restaurant_id,
             )
-            blast(sms, f"⭐ 5★ review — {restaurant_name}", html, "5star", review.id)
+            blast(sms, f"5-star review — {restaurant_name}", html, "5star", review.id)
 
         # 3★ alert — the one rating with no path at all before. A 3-star
         # "waited 45 minutes and the food was cold" is the review an owner
@@ -1496,7 +1503,7 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
                 ],
                 restaurant_id=restaurant_id,
             )
-            blast(sms, f"🟡 3★ review — {restaurant_name}", html, "3star", review.id)
+            blast(sms, f"3-star review — {restaurant_name}", html, "3star", review.id)
 
         # 2★ alert
         elif rating == 2 and row["alert_2star"]:
@@ -1515,7 +1522,7 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
                 ],
                 restaurant_id=restaurant_id,
             )
-            blast(sms, f"🟠 2★ review — {restaurant_name}", html, "2star", review.id)
+            blast(sms, f"2-star review — {restaurant_name}", html, "2star", review.id)
 
         # Any review — the catch-all toggle. Settable in Account → Alerts
         # (client_api.py) since it shipped, and read by nothing until now,
@@ -1537,7 +1544,7 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
                 ],
                 restaurant_id=restaurant_id,
             )
-            blast(sms, f"💬 New review — {restaurant_name}", html, "any_review", review.id)
+            blast(sms, f"New review — {restaurant_name}", html, "any_review", review.id)
 
     # A guest lowered their own rating — every bit as much a reputation
     # event as a new bad review, and previously silent.
@@ -1565,7 +1572,7 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
             cta_label="Open the review",
             restaurant_id=restaurant_id,
         )
-        blast(sms, f"📉 Review edited down — {restaurant_name}", html, "edit_downgrade", review.id)
+        blast(sms, f"A guest lowered their review — {restaurant_name}", html, "edit_downgrade", review.id)
 
     # Negative spike — once per batch, 24h dedup
     if row["alert_neg_spike"] and not _already_alerted_spike(restaurant_id, db_path):
@@ -1589,7 +1596,7 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
                 ],
                 restaurant_id=restaurant_id,
             )
-            blast(sms, f"⚠️ Negative spike — {restaurant_name}", html, "neg_spike")
+            blast(sms, f"Negative review spike — {restaurant_name}", html, "neg_spike")
 
 
 def fire_response_approved_alert(restaurant_id: int, review_id: int,
@@ -1625,7 +1632,7 @@ def fire_response_approved_alert(restaurant_id: int, review_id: int,
         rating = (review["rating"] if review else None) or ""
         platform = ((review["platform"] or "google") if review else "google").title()
         verb = f"published to {platform}" if posted else "approved"
-        subject = f"✅ Reply {verb} — {name}"
+        subject = f"Reply {verb} — {name}"
         body = f"Your reply to {author}'s {rating}★ review was {verb}."
         html = _alert_email_html(
             name, f"✅ Reply {verb}",
@@ -1720,7 +1727,7 @@ def check_no_response_alerts(db_path: str = DB_PATH, local_hour: int = None):
         # so the last one with no quiet-hours check, no cap, no ceiling and
         # no rush hold. Its channel gates (al_unres_*) are in deliver_alert's
         # type_map under both the names this alert has been called.
-        raise_alert(rid, "no_response", sms, f"⏰ Unresponded reviews — {name}", lines=[
+        raise_alert(rid, "no_response", sms, f"Reviews waiting on a reply — {name}", lines=[
             f"<strong>{n} negative {review_word}</strong> have been waiting for a "
             f"response for over 48 hours.",
             "Responding promptly helps protect your rating.",
@@ -1836,7 +1843,7 @@ def check_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
                         f"({avgs[0]:.1f} → {avgs[1]:.1f} → {avgs[2]:.1f}★).\n"
                         f"dashboard.cavnar.ai"
                     )
-                    _fire(sms, f"📉 Rating trend down — {name}", [
+                    _fire(sms, f"Rating declining — {name}", [
                         f"Weekly average ratings have dropped 3 weeks in a row: "
                         f"<strong>{avgs[0]:.1f} → {avgs[1]:.1f} → {avgs[2]:.1f}★</strong>",
                         "This trend warrants a closer look at what guests are saying.",
@@ -1852,7 +1859,7 @@ def check_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
                     f"(below your {floor:.1f}★ threshold).\n"
                     f"dashboard.cavnar.ai"
                 )
-                _fire(sms, f"⚠️ Rating below threshold — {name}", [
+                _fire(sms, f"Rating below your threshold — {name}", [
                     f"Current Google rating: <strong>{gbp_rating:.1f}★</strong> — "
                     f"below your alert threshold of {floor:.1f}★.",
                     "Responding to recent negative reviews can help recover your score.",
@@ -1887,7 +1894,7 @@ def check_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
                         f"{over_by}pts over your {target:.0f}% target.\n"
                         f"dashboard.cavnar.ai"
                     )
-                    _fire(sms, f"💸 Labor over target — {name}", [
+                    _fire(sms, f"Labor over target — {name}", [
                         f"Most recent labor period: <strong>{actual:.1f}%</strong> — "
                         f"<strong>{over_by} points over</strong> your {target:.0f}% target.",
                         f"Period: {recent['period_start']} – {recent['period_end']}",

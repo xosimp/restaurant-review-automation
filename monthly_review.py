@@ -157,3 +157,26 @@ def lines(review):
                  if p.get("delta") else "")
         out.append(f"Prime cost is running at {p['pct']:.1f}% of sales{drift}.")
     return out
+
+
+def cost_of_waiting(review) -> str:
+    """What another month of this costs, in dollars, or "" when nothing
+    measured moved far enough to put a number on.
+
+    No email in this product answered "what happens if I ignore this" — the
+    one sentence that separates an advisor from a dashboard. It is not a
+    new measurement: monthly_dollars is already computed per metric, and
+    this states the consequence of leaving it where it is.
+
+    Only ever said about a metric that WORSENED, and only when there is a
+    dollar figure behind it. "Nothing got worse" needs no warning, and a
+    warning without a number is the generic nudge this is meant to replace.
+    """
+    worse = [m for m in review["metrics"]
+             if m["verdict"] == "worsened" and m.get("monthly_dollars")]
+    if not worse:
+        return ""
+    lead = max(worse, key=lambda m: abs(m["monthly_dollars"]))
+    return (f"If {lead['label'].lower()} stays where it is, that is about "
+            f"${abs(lead['monthly_dollars']):,.0f} a month — roughly "
+            f"${abs(lead['monthly_dollars']) * 12:,.0f} over a year.")

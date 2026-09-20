@@ -620,7 +620,7 @@ def send_failure_digest():
             for f in failures
         )
         _resend.Emails.send({
-            "from": f"Cavnar AI Ops <{os.getenv('FROM_EMAIL', 'will@cavnar.ai')}>",
+            "from": __import__("emails").sender("ops"),
             "to": [will],
             "subject": (f"⚠ {total} background job failure{'s' if total != 1 else ''} in the last 24h"
                         + (f" · {len(stuck)} stuck" if stuck else "")) if failures

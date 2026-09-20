@@ -13,6 +13,7 @@ Jobs:
 """
 import os, threading, time, logging, html as _html
 from status_manager import record_scheduler_heartbeat, run_health_checks
+import emails as _emails
 import ops as _ops
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo as _ZI_sch
@@ -99,7 +100,7 @@ def send_urgent_alert(restaurant_name, owner_email, urgent_reviews):
 </div>"""
 
         _resend.Emails.send({
-            "from": f"Cavnar AI Alerts <{_from_email()}>",
+            "from": _emails.sender("client"),
             "to": [owner_email],
             "subject": f"\u26a0 Urgent review alert \u2014 {restaurant_name}",
             "html": _html_doc(f"""
@@ -442,21 +443,40 @@ def run_daily_fetch():
 
 
 def run_weekly_digests():
-    """Send weekly digest to all restaurants scheduled for today."""
+    """Send the weekly digest to every owner scheduled for today.
+
+    Deduplicated by ADDRESS across the whole pass, not per restaurant. A
+    multi-location owner has one login per location sharing one owner_email,
+    each location claims its own weekly_digest period, and each sent its own
+    copy — so running three restaurants meant three identical-looking digests
+    landing in one inbox on one morning. The per-restaurant dedup that was
+    here proves the case was considered; the cross-location one was missed.
+
+    Restaurants are deduplicated too: get_restaurants_for_digest JOINs users
+    without grouping, so a restaurant with three logins comes back three
+    times. The claim_period below hid that (rows 2 and 3 lose the claim), at
+    the cost of a wasted get_restaurant per row.
+    """
     try:
         from models import get_restaurants_for_digest, get_restaurant
         from reporter import build_report_from_db, render_html
-        import resend as _resend
 
         today = _chi_now().strftime("%A").lower()
         scheduled = get_restaurants_for_digest(today)
-
         if not scheduled:
             return
 
-        log.info(f"Weekly digests for {len(scheduled)} restaurant(s) on {today.title()}")
-
+        seen_rids, unique = set(), []
         for row in scheduled:
+            if row["id"] in seen_rids:
+                continue
+            seen_rids.add(row["id"])
+            unique.append(row)
+
+        log.info(f"Weekly digests for {len(unique)} restaurant(s) on {today.title()}")
+        sent_to = set()
+
+        for row in unique:
             rid = row["id"]
             restaurant = get_restaurant(rid)
             if not restaurant:
@@ -472,8 +492,9 @@ def run_weekly_digests():
 
             try:
                 report = build_report_from_db(rid, restaurant.name, days=7)
-                # Only skip if reviews-only client AND no reviews this week
-                # Full system clients always get a digest (labor/inventory data still valuable)
+                # Only skip if reviews-only client AND no reviews this week.
+                # Full system clients always get a digest (labor/inventory
+                # data still valuable).
                 has_other_modules = (restaurant.module_labor or
                                      restaurant.module_inventory or
                                      restaurant.module_marketing)
@@ -481,29 +502,34 @@ def run_weekly_digests():
                     log.info(f"No reviews this week for {restaurant.name} — skipping digest")
                     continue
 
-                owner_name = restaurant.sign_off_name or restaurant.owner_email.split("@")[0].title()
-                html = render_html(report, restaurant.name, owner_name=owner_name, restaurant_id=restaurant.id,
-                                   owner_view=True)
-                _resend.api_key = _resend_key()
-                # One send per owner — co-owners each get their own copy
-                # rather than a shared To: line.
+                owner_name = _emails.greeting_name(restaurant)
+                html = render_html(report, restaurant.name, owner_name=owner_name,
+                                   restaurant_id=restaurant.id, owner_view=True)
                 for owner_email in owner_emails:
-                    try:
-                        _resend.Emails.send({
-                            "from": f"Cavnar AI <{_from_email()}>",
-                            "to": [owner_email],
-                            "subject": f"Your weekly review digest \u2014 {restaurant.name}",
-                            "html": _html_doc(html),
-                        })
-                    except Exception as se:
-                        log.error(f"Digest send to {owner_email} failed for {restaurant.name}: {se}")
-                        _ops.capture(se, job="weekly_digest", context=f"restaurant_id={rid}")
+                    key = (owner_email or "").strip().lower()
+                    if key in sent_to:
+                        log.info(f"Digest already sent to {owner_email} this pass — "
+                                 f"skipping the copy for {restaurant.name}")
                         continue
-                    log.info(f"Digest sent to {owner_email} for {restaurant.name}")
-                    try:
-                        from models import log_email as _le
-                        _le(restaurant.id, "digest", owner_email, f"Weekly digest — {restaurant.name}")
-                    except Exception: pass
+                    sent_to.add(key)
+                    # Through emails.deliver, not the raw SDK: the most-sent
+                    # client email in the product was also the only one with
+                    # no suppression check, no retry and a hand-written log
+                    # line. A hard-bounced owner address kept receiving it.
+                    result = _emails.deliver(email_type="digest", restaurant_id=rid, payload={
+                        "from": _emails.sender("client"),
+                        "to": [owner_email],
+                        "subject": f"Your week at {restaurant.name}",
+                        "preheader": _emails.digest_preheader(report, restaurant),
+                        "html": _html_doc(html),
+                    })
+                    if getattr(result, "ok", False):
+                        log.info(f"Digest sent to {owner_email} for {restaurant.name}")
+                    else:
+                        log.error(f"Digest send to {owner_email} failed for "
+                                  f"{restaurant.name}: {result.error}")
+                        _ops.capture(RuntimeError(result.error or "digest send failed"),
+                                     job="weekly_digest", context=f"restaurant_id={rid}")
                 try:
                     from webhooks import fire_webhook as _fw_rep
                     _fw_rep(restaurant.id, "report.weekly", {"restaurant": restaurant.name,
@@ -511,9 +537,11 @@ def run_weekly_digests():
                 except Exception: pass
             except Exception as e:
                 log.error(f"Digest failed for {restaurant.name}: {e}")
+                _ops.capture(e, job="weekly_digest", context=f"restaurant_id={rid}")
 
     except Exception as e:
         log.error(f"Weekly digest error: {e}")
+        _ops.capture(e, job="weekly_digest", context="outer")
 
 
 def check_stale_inventory():
@@ -586,7 +614,7 @@ def check_stale_inventory():
 
         _resend.api_key = _resend_key()
         _resend.Emails.send({
-            "from": f"Cavnar AI <{_from_email()}>",
+            "from": _emails.sender("client"),
             "to": [os.getenv("WILL_EMAIL", "will@cavnar.ai")],
             "subject": f"⚠ Stale inventory data — {len(stale)} client(s) need updating",
             "html": _html_doc(f"""
@@ -1008,7 +1036,7 @@ def backup_db():
         import resend as _resend
         _resend.api_key = _resend_key()
         _resend.Emails.send({
-            "from": f"Cavnar AI Backups <{_from_email()}>",
+            "from": _emails.sender("ops"),
             "to":   [WILL_EMAIL],
             "subject": f"Daily DB backup — {timestamp} ({size_kb} KB, encrypted)",
             "html": _html_doc(f"""

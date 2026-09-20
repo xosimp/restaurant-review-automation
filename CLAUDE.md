@@ -101,6 +101,9 @@ A deletion is only "verified" when the trace is written down alongside it.
   and motion, on web and iOS. Do not introduce a new UI pattern unless no
   existing one fits — and if none does, document the new one there in the
   same commit.
+- **Email colours come from `emails.BRAND`**, enforced as a ratchet by
+  `scripts/check_email_tokens.py`. Email is light-mode only, inline-styled,
+  and governed by `DESIGN_SYSTEM.md` → Email.
 - **Inline JS is ES5 only**, enforced by `tests/test_frontend_rules.py`.
   Colours come from CSS variables only, enforced by `scripts/check_colors.py`.
   Every web button carries `.cbtn`, enforced by `tests/test_button_system.py`.

@@ -84,22 +84,16 @@ def _tell_owners_what_worked(results, db_path):
     told = 0
     for rid, row in best.items():
         try:
-            import morning_brief, notify, outcomes as _outcomes
-            audience = {u["id"] for u in morning_brief.recipients(rid, db_path)}
-            if not audience:
-                continue
+            import outcomes as _outcomes
             dollars = abs(float(row["dollars_monthly"]))
-            notify.record_notification(rid, "outcome_achieved", db_path=db_path,
-                                       value=dollars)
-            push.fire_push(
-                rid, "outcome_achieved",
-                f"That one worked — about ${dollars:,.0f}/month",
-                f"{row.get('title') or 'The change you made'}: "
-                f"{row.get('metric_label') or row.get('metric')} improved over the "
-                f"window you set. {_outcomes.CAUSATION_CAVEAT}",
-                data={"ask_prompt": f"What did {row.get('title') or 'that change'} actually do?"},
-                db_path=db_path, user_ids=audience)
-            told += 1
+            body = (f"{row.get('title') or 'The change you made'}: "
+                    f"{row.get('metric_label') or row.get('metric')} improved over the "
+                    f"window you set. {_outcomes.CAUSATION_CAVEAT}")
+            if _reach(rid, "outcome_achieved",
+                      f"That one worked — about ${dollars:,.0f}/month", body,
+                      {"ask_prompt": f"What did {row.get('title') or 'that change'} actually do?"},
+                      db_path, subject="A change you made paid off"):
+                told += 1
         except Exception as e:
             ops.capture(e, job="outcome_win_push", context=f"restaurant_id={rid}")
     return told
@@ -341,6 +335,61 @@ def run_coverage_check(db_path=DB_PATH):
     return {"opened": opened}
 
 
+def _reach(restaurant_id, alert_type, title, body, data, db_path, subject=None,
+           lines=None, email_type=None):
+    """Push to the people who have the app, email the ones who don't.
+
+    morning_brief.deliver established this — push OR email, never both,
+    because a brief that arrives twice is one people learn to ignore. The
+    closing summary and the outcome win were written push-only, so an owner
+    without the app simply never learned their change had paid off. Same
+    audience either way (morning_brief.recipients).
+
+    Returns the number of people reached.
+    """
+    import morning_brief, notify, push
+    people = morning_brief.recipients(restaurant_id, db_path)
+    if not people:
+        return 0
+    devices = {}
+    for token in (push.get_device_tokens(restaurant_id, db_path, for_delivery=True) or []):
+        devices.setdefault(int(token.get("user_id") or 0), []).append(token)
+
+    notify.record_notification(restaurant_id, alert_type, db_path=db_path)
+    pushed = {u["id"] for u in people if devices.get(u["id"])}
+    if pushed:
+        push.fire_push(restaurant_id, alert_type, title, body, data=data,
+                       db_path=db_path, user_ids=pushed)
+    reached = len(pushed)
+
+    emailed = [u for u in people if u["id"] not in pushed and u.get("email")]
+    if emailed:
+        import html as _h
+        import emails as _emails
+        from models import get_restaurant
+        restaurant = get_restaurant(restaurant_id)
+        name = (restaurant.location_name or restaurant.name) if restaurant else "your restaurant"
+        body_html = _emails.report_shell(
+            kicker=name,
+            title=title,
+            subtitle="",
+            sections=[_emails.report_paragraph(_h.escape(line))
+                      for line in (lines or [body])],
+        )
+        for user in emailed:
+            result = _emails.deliver(
+                email_type=email_type or alert_type, restaurant_id=restaurant_id, payload={
+                    "from": _emails.sender("client"),
+                    "to": [user["email"]],
+                    "subject": f"{subject or title} — {name}",
+                    "preheader": body[:120],
+                    "html": body_html,
+                })
+            if getattr(result, "ok", False):
+                reached += 1
+    return reached
+
+
 def _close_hour(r, local):
     """The hour this restaurant is done for the night, rounded up past any
     half hour, or 22 when it hasn't set hours."""
@@ -387,15 +436,10 @@ def run_closing_summary(db_path=DB_PATH):
             title, body = _closing_text(summary, note)
             if not title:
                 continue
-            import morning_brief, notify
-            audience = {u["id"] for u in morning_brief.recipients(r.id, db_path)}
-            if not audience:
-                continue
-            notify.record_notification(r.id, "closing_summary", db_path=db_path)
-            push.fire_push(r.id, "closing_summary", title, body,
-                           data={"ask_prompt": f"How did {day.strftime('%A')} actually go?"},
-                           db_path=db_path, user_ids=audience)
-            sent += 1
+            if _reach(r.id, "closing_summary", title, body,
+                      {"ask_prompt": f"How did {day.strftime('%A')} actually go?"},
+                      db_path, subject="How tonight went"):
+                sent += 1
         except Exception as e:
             ops.capture(e, job="closing_summary", context=f"restaurant_id={r.id}")
     return {"sent": sent}
