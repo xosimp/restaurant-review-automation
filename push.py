@@ -532,8 +532,17 @@ def _deliver(device_token_row, alert_type, title, body, data, db_path=DB_PATH):
                                  (other, device_token_row["id"]))
                     conn.commit()
                     conn.close()
-                except Exception:
-                    pass
+                except Exception as e:
+                    # Not optional: losing this write means every later push
+                    # to this device keeps guessing the wrong host first and
+                    # paying two round-trips to reach Apple.
+                    try:
+                        import ops
+                        ops.capture(e, job="push_environment_fix",
+                                    context=f"device_token_id={device_token_row['id']}",
+                                    db_path=db_path)
+                    except Exception:
+                        pass
                 print(f"[push] token {device_token_row['id']} was registered as "
                       f"{device_token_row['environment']}, actually {other} — corrected")
         except Exception as e:
