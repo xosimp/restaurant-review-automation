@@ -494,7 +494,12 @@ def test_plain_english_is_not_set_in_the_number_face():
 def test_the_closeout_uses_the_pages_own_date_format():
     """M/D/YY everywhere. This card printed the raw ISO business_date."""
     src = _dashboard()
-    assert "'<h3><span>Close-out — '+mdy(c.business_date)+'</span>'" in src
+    # The card was rebuilt in the Home redesign; the rule it pins is the
+    # same - the business date goes through mdy(), never straight out.
+    start = src.find("function renderCloseout(")
+    body = src[start:src.find("window.hbSaveCloseout", start)]
+    assert "mdy(c.business_date)" in body
+    assert "esc(c.business_date)" not in body
 
 
 def test_the_celebration_is_no_longer_gated_on_localstorage():

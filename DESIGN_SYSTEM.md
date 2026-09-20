@@ -142,6 +142,27 @@ with `AccountPill`, `AccountChip`, `AccountStatTile`, `AccountValue`.
 "separate object". Spend them on the one thing that needs lifting; a page of
 identical cards flattens the hierarchy.
 
+**Home below the hero (`hb-card` family, `dashboard.html`).** One surface,
+built from the same `--surface` / `--elev-1` / `--line-hi` staircase as
+every other card on the site, and a small set of shapes that sit on it —
+each chosen so no two adjacent sections share a silhouette:
+
+| Shape | Class | Used for |
+|---|---|---|
+| Card | `.hb-card` (+ `.lift` hover, `.rail` / `.rail.good` / `.rail.ember` accent edge) | Needs attention, Ask, Open issues, Goals, results, worth, still open, close-out |
+| Hero card | `.hb-card.hero.hb-focus` — ember radial in the corner, Clash `.lead`, `.why`, `.ev` chips, `.ft` footer with `.money` | **Today's focus** and **What connects** only. Two per page, never more. |
+| Module join | `.hb-join` — pills joined by a lit ember line | The cross-module mark on a hero card |
+| Numbered card | `.hb-card.hb-rec` in `.hb-recs` (3-up) | Recommendations, with Track this |
+| Receipt strip | `.hb-rcpt .it` — check + sentence + module | What Cavnar AI did — finished things must not look like a to-do |
+| Timeline | `.hb-tl .it` with a tone dot on a rail | The morning brief, read once top to bottom |
+| Stat tile | `.hb-stats .hb-stat` (+ `.good` / `.ember`) | Four *kinds* of number that must never be added together |
+| Goal bar | `.hb-goal .bar i` (width from `data-w`) | Progress from baseline to target; no bar when the baseline is unreadable |
+| Checklist | `.hb-chk` | Still open |
+| Section header | `.hb-sh` — `.k` kicker (ember, or `.dim`) + Clash `h2 small` | Between the big moments; the hairline is the rhythm |
+
+Entrances are `.hb-rise` with `--i` for a 70ms stagger, 420ms, no overshoot.
+The list row `.hb-row` stays for what is genuinely a list.
+
 ---
 
 ## 5. Buttons
