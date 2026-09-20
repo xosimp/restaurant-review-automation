@@ -1,17 +1,48 @@
-"""value_delivered.py — the "Total Value Delivered" figure shown on the web
-dashboard's Home banner and (new) the mobile Home tab: the dollar value
-Cavnar AI has generated or saved this restaurant, summed across whichever
-modules are active.
+"""value_delivered.py — what Cavnar AI has actually been worth to this
+restaurant, and what it has not.
 
-compute_total_value_delivered() mirrors hosted_dashboard.py's index() route
-(its inline savings_breakdown computation) rather than being a shared
-extraction of it — that route's version feeds many other template fields
-off the same intermediate values (labor_annual, labor_vs_industry_monthly,
-sales_lift_yr, ...), so pulling only the "total" piece out from under it
-would mean either dragging all those unrelated fields along for no reason,
-or refactoring a large, currently-working, production code path just to
-save ~20 lines here. Duplicating this one isolated formula was the lower-
-risk option.
+WHAT THIS USED TO BE, and why it was replaced (ROI audit, Sep 2026).
+
+"Total Value Delivered" on the web Home banner and the mobile Home tab was
+the sum of four numbers, and three of them could not survive being read
+aloud to the owner paying for them:
+
+  * labour "value" was `potential_savings_monthly` — the gap ABOVE the
+    owner's target. That is money still being LOST, counted as money
+    delivered. The arithmetic ran backwards: a restaurant that fixed its
+    scheduling watched its Total Value Delivered FALL, and the worst-run
+    restaurant on the platform showed the biggest number.
+  * food cost "value" was `recoverable_monthly` — the same inversion, waste
+    still being thrown away.
+  * marketing "value" was `months_active * 1500`, triggered by a single
+    generated post ever and accruing every month afterwards whether or not
+    anything was posted again.
+
+and the sum added lifetime cumulative figures (reviews, marketing) to
+monthly run-rates (labour, food cost), which business_intelligence.py
+refuses to do three files away: "the money lines are deliberately never
+summed — a measured cost, a scheduling gap and an elasticity forecast are
+not addends."
+
+WHAT IT IS NOW. Three figures, each measured its own way, each labelled,
+and never added together:
+
+  delivered     what MEASURED improvements are worth per month. Sourced
+                entirely from outcomes.py: a tracker with a baseline taken
+                before the change, a re-measure after, and a move that
+                cleared the metric's own noise band. Carries the causation
+                caveat everywhere it is rendered.
+  avoided       work the product did that the owner would otherwise have
+                paid someone for. Cost avoidance, not measurement — every
+                rate is a STATED assumption, carried in the payload so the
+                UI can show it, and counted only for work that actually
+                happened.
+  opportunity   the old labour/food-cost figures, under their real name:
+                money on the table, not money in hand.
+
+An owner asking "what has this been worth" gets the first. An owner asking
+"what is still available" gets the third. Nothing in this file claims the
+second is the first.
 """
 import models
 from models import get_restaurant, get_review_stats, DB_PATH
@@ -29,90 +60,222 @@ from models import get_restaurant, get_review_stats, DB_PATH
 # value_snapshots" on a clean checkout with no such file — exactly what
 # GitHub Actions' CI runner hit on every push (confirmed Sep 7 2026).
 
+# ── Stated assumptions ──────────────────────────────────────────────────────
+# Every rate below is an ASSUMPTION, not a measurement. Each travels with the
+# figure it produces (see `avoided()`) so the owner reads the rate next to
+# the number rather than being asked to trust it. Change one here and every
+# surface changes with it — there is no second copy.
+REPLY_RATE = 5.00        # per review reply
+REPLY_RATE_BASIS = "what a managed review-response service charges per reply"
+REPLY_MINUTES = 6        # to read a review and write a considered reply
+AGENCY_MONTHLY = 1500.0  # per month content was actually produced
+AGENCY_BASIS = "a part-time social media manager, for months content was actually produced"
+SCHEDULE_MINUTES = 90    # to build a week's schedule by hand
+INVOICE_MINUTES = 12     # to key one supplier invoice in by hand
 
-def compute_total_value_delivered(restaurant_id: int, db_path: str = DB_PATH) -> int:
-    """Reviews-response value ($5/response) + labor scheduling savings
-    (monthly, normalized by the synced period) + recoverable food cost
-    (monthly, waste above each category's tolerance band) + marketing
-    agency-equivalent value — each counted only when its module is active
-    and its data is live. Matches hosted_dashboard.py's
-    savings_breakdown['total'] exactly."""
+
+def _scalar(conn, sql, args):
+    row = conn.execute(sql, args).fetchone()
+    return (row[0] if row else 0) or 0
+
+
+# ── 1. Delivered: measured, realised, caveated ──────────────────────────────
+
+def delivered(restaurant_id: int, db_path: str = DB_PATH) -> dict:
+    """What measured improvements are worth per month, and the honest
+    denominator beside it.
+
+    Never a bare number. `wins` against `evaluated` is the difference
+    between "two things worked" and "two of eleven things worked", and an
+    owner shown only the first stops trusting the second time.
+    """
+    import outcomes
+    v = outcomes.total_value(restaurant_id, db_path=db_path)
+    best = outcomes.best_ever(restaurant_id, db_path=db_path)
+    return {
+        "monthly": v["monthly"],
+        "annual": v["annual"],
+        "wins": v["wins"],
+        "evaluated": v["evaluated"],
+        "in_flight": v["in_flight"],
+        "unmeasurable": v["unmeasurable"],
+        "no_clear_change": v["no_clear_change"],
+        "by_module": v["by_module"],
+        "biggest": ({"title": best["title"],
+                     "monthly": round(abs(float(best["dollars_monthly"])), 2),
+                     "metric": best.get("metric_label") or best["metric"],
+                     "summary": outcomes.summarise(best)} if best else None),
+        "caveat": v["caveat"],
+        "basis": "measured before and after each change, over the metric's own window",
+    }
+
+
+# ── 2. Avoided: cost avoidance, every rate stated ───────────────────────────
+
+def avoided(restaurant_id: int, db_path: str = DB_PATH) -> dict:
+    """Work the product did that someone would otherwise have been paid for,
+    and the hours behind it.
+
+    Cost avoidance is a weaker claim than measurement and is kept apart from
+    it for that reason. Two rules hold every line here honest:
+
+      COUNT ONLY WORK THAT HAPPENED. Replies actually posted, months content
+      was actually produced, schedules actually built, invoices actually
+      read. The old marketing figure accrued $1,500 every month forever off
+      one generated post; this counts the months.
+
+      CARRY THE RATE. Every item ships `rate` and `basis` so the number is
+      shown with its assumption attached, and an owner who disagrees with
+      the rate can see exactly what to discount.
+    """
     restaurant = get_restaurant(restaurant_id, db_path=db_path)
     if not restaurant:
-        return 0
+        return {"items": [], "dollars": 0.0, "hours": 0.0}
 
-    reviews_value = 0
-    if restaurant.module_reviews:
-        rstats = get_review_stats(restaurant_id)
-        reviews_value = int(rstats.get("responded", 0)) * 5
+    items = []
+    conn = models.get_conn(db_path)
+    try:
+        if restaurant.module_reviews:
+            replies = int((get_review_stats(restaurant_id) or {}).get("responded", 0) or 0)
+            if replies:
+                items.append({
+                    "key": "replies", "label": f"{replies:,} review replies written",
+                    "dollars": round(replies * REPLY_RATE, 2),
+                    "hours": round(replies * REPLY_MINUTES / 60.0, 1),
+                    "rate": f"${REPLY_RATE:,.2f} each", "basis": REPLY_RATE_BASIS})
 
-    labor_value = 0
+        if restaurant.module_marketing:
+            # Months in which content was ACTUALLY produced — not months
+            # since signup. One post in month one no longer bills the owner's
+            # goodwill for every month after it.
+            months = _scalar(conn,
+                             "SELECT COUNT(DISTINCT substr(created_at,1,7)) "
+                             "FROM marketing_content_log WHERE restaurant_id=?",
+                             (restaurant_id,))
+            posts = _scalar(conn, "SELECT COUNT(*) FROM marketing_content_log "
+                                  "WHERE restaurant_id=?", (restaurant_id,))
+            if months:
+                items.append({
+                    "key": "content",
+                    "label": f"{posts:,} posts written across {months} "
+                             f"{'month' if months == 1 else 'months'}",
+                    "dollars": round(months * AGENCY_MONTHLY, 2), "hours": None,
+                    "rate": f"${AGENCY_MONTHLY:,.0f}/month", "basis": AGENCY_BASIS})
+
+        if restaurant.module_labor:
+            schedules = _scalar(conn, "SELECT COUNT(*) FROM schedule_history "
+                                      "WHERE restaurant_id=?", (restaurant_id,))
+            if schedules:
+                items.append({
+                    "key": "schedules", "label": f"{schedules:,} schedules built",
+                    "dollars": None,
+                    "hours": round(schedules * SCHEDULE_MINUTES / 60.0, 1),
+                    "rate": f"{SCHEDULE_MINUTES} min each",
+                    "basis": "building a week's schedule by hand"})
+
+        if restaurant.module_inventory:
+            invoices = _scalar(conn, "SELECT COUNT(*) FROM invoice_imports "
+                                     "WHERE restaurant_id=? AND applied_at IS NOT NULL",
+                               (restaurant_id,))
+            if invoices:
+                items.append({
+                    "key": "invoices", "label": f"{invoices:,} invoices read and applied",
+                    "dollars": None,
+                    "hours": round(invoices * INVOICE_MINUTES / 60.0, 1),
+                    "rate": f"{INVOICE_MINUTES} min each",
+                    "basis": "keying one supplier invoice in by hand"})
+    except Exception:
+        # A missing table on an old database must not take the Home page
+        # down over a secondary figure.
+        pass
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    return {
+        "items": items,
+        "dollars": round(sum(i["dollars"] or 0 for i in items), 2),
+        "hours": round(sum(i["hours"] or 0 for i in items), 1),
+        "basis": "work the product did, at stated rates — an estimate, not a measurement",
+    }
+
+
+# ── 3. Opportunity: money on the table, under its real name ─────────────────
+
+def opportunity(restaurant_id: int, db_path: str = DB_PATH) -> dict:
+    """The labour and food-cost figures that used to be called "delivered".
+
+    Unchanged arithmetic, honest label. Both are gaps against a target —
+    what the restaurant could still recover, which is the opposite of what
+    it has already banked.
+    """
+    restaurant = get_restaurant(restaurant_id, db_path=db_path)
+    if not restaurant:
+        return {"items": [], "monthly": 0.0}
+    items = []
     if restaurant.module_labor:
         try:
             from labor import analyse_shifts_for_restaurant
             labor = analyse_shifts_for_restaurant(restaurant_id)
-            # Sample shifts (no upload, no POS sync yet) are not the
-            # restaurant's savings — count labor only once it's live.
-            # Per-month figure normalized by the synced period (labor.py) —
-            # never the whole-period gap times a weeks-per-month constant.
-            labor_value = int(round(labor.get("potential_savings_monthly", 0) or 0)) if labor.get("is_live") else 0
+            # Sample shifts are not the restaurant's own numbers.
+            if labor.get("is_live"):
+                v = float(labor.get("potential_savings_monthly", 0) or 0)
+                if v > 0:
+                    items.append({"key": "labor", "label": "Scheduling against your target",
+                                  "monthly": round(v, 2), "module": "labor"})
         except Exception:
-            labor_value = 0
-
-    inv_value = 0
+            pass
     if restaurant.module_inventory:
         try:
             from inventory import analysis_for
-            items, _live, inv = analysis_for(restaurant_id)
-            inv_value = int(inv.get("recoverable_monthly", 0)) if _live else 0
+            _items, live, inv = analysis_for(restaurant_id)
+            if live:
+                v = float(inv.get("recoverable_monthly", 0) or 0)
+                if v > 0:
+                    items.append({"key": "inventory", "label": "Waste above tolerance",
+                                  "monthly": round(v, 2), "module": "inventory"})
         except Exception:
-            inv_value = 0
-
-    mkt_value = 0
-    if restaurant.module_marketing:
-        try:
-            mkt_value = _marketing_agency_value(restaurant_id, db_path)
-        except Exception:
-            mkt_value = 0
-
-    return reviews_value + labor_value + inv_value + mkt_value
+            pass
+    return {"items": items,
+            "monthly": round(sum(i["monthly"] for i in items), 2),
+            "basis": "gaps against your own targets — available, not captured"}
 
 
-def _marketing_agency_value(restaurant_id: int, db_path: str) -> int:
-    """$1,500/mo social-media-manager baseline, only once content has
-    actually been generated — same rule as the web dashboard."""
-    conn = models.get_conn(db_path)
-    conn.execute("""CREATE TABLE IF NOT EXISTS marketing_content_log (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, restaurant_id INTEGER NOT NULL,
-        content_type TEXT, topic TEXT, post_id TEXT, post_platform TEXT,
-        created_at TEXT DEFAULT (datetime('now')))""")
-    generated = conn.execute(
-        "SELECT COUNT(*) FROM marketing_content_log WHERE restaurant_id=?", (restaurant_id,)
-    ).fetchone()[0] or 0
-    created_row = conn.execute(
-        "SELECT created_at FROM restaurants WHERE id=?", (restaurant_id,)
-    ).fetchone()
-    conn.close()
+# ── The whole picture ───────────────────────────────────────────────────────
 
-    months_active = 1
-    if created_row and created_row[0]:
-        from datetime import datetime as _dt
-        try:
-            created = _dt.fromisoformat(created_row[0][:10])
-            now = _dt.now()
-            months_active = max(1, (now.year - created.year) * 12 + (now.month - created.month))
-        except Exception:
-            months_active = 1
+def breakdown(restaurant_id: int, db_path: str = DB_PATH) -> dict:
+    """All three figures, never summed. Every Home surface reads this."""
+    return {
+        "delivered": delivered(restaurant_id, db_path=db_path),
+        "avoided": avoided(restaurant_id, db_path=db_path),
+        "opportunity": opportunity(restaurant_id, db_path=db_path),
+    }
 
-    return months_active * 1500 if generated > 0 else 0
+
+def compute_total_value_delivered(restaurant_id: int, db_path: str = DB_PATH) -> int:
+    """The headline figure: measured monthly dollars, and nothing else.
+
+    Kept under its original name because the web banner, the mobile Home
+    payload and the value snapshots all call it. What changed is what it
+    MEANS — it is now only what was measured, so it is a number that can be
+    defended line by line, and for most restaurants it starts at zero and
+    grows as trackers close. That is the true state, and the old figure's
+    only advantage was that it was never true.
+    """
+    try:
+        return int(round(delivered(restaurant_id, db_path=db_path)["monthly"]))
+    except Exception:
+        return 0
 
 
 def record_value_snapshot(restaurant_id: int, total_value: int, db_path: str = DB_PATH):
-    """Upserts today's total — called opportunistically from the mobile
-    Home endpoint, so the first Home-tab load of each day records that
-    day's figure. No separate scheduled job: a restaurant whose owner never
-    opens the app that day simply doesn't get a data point for it, which is
-    fine for a "how's this trending" sparkline."""
+    """Upserts today's total — called opportunistically from the Home
+    endpoints, so the first Home load of each day records that day's figure.
+    No separate scheduled job: a restaurant whose owner never opens the app
+    that day simply doesn't get a data point, which is fine for a "how's
+    this trending" sparkline."""
     conn = models.get_conn(db_path)
     conn.execute("""
         INSERT INTO value_snapshots (restaurant_id, snapshot_date, total_value)

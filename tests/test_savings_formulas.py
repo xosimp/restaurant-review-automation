@@ -12,6 +12,7 @@ from types import SimpleNamespace
 
 import inventory
 import labor
+import models
 import value_delivered
 
 
@@ -108,24 +109,71 @@ def test_under_target_labor_has_no_savings():
     assert a["potential_savings"] == 0 and a["potential_savings_weekly"] == 0 and a["potential_savings_monthly"] == 0
 
 
-def test_total_value_delivered_uses_the_normalized_figures(monkeypatch):
+def test_the_headline_figure_is_measured_results_not_the_gap_to_target(monkeypatch):
+    """The ROI audit's central finding, pinned.
+
+    "Total Value Delivered" used to be reviews-responded x $5, PLUS labour's
+    potential_savings_monthly, PLUS recoverable food cost. The last two are
+    gaps ABOVE target: money the restaurant is still losing. Counting them as
+    delivered ran the arithmetic backwards - fixing your scheduling LOWERED
+    your Total Value Delivered, and the worst-run restaurant on the platform
+    showed the biggest number.
+
+    The headline is now only what outcomes.py actually measured.
+    """
     monkeypatch.setattr(value_delivered, "get_restaurant", lambda rid, db_path=None: SimpleNamespace(
         module_reviews=1, module_labor=1, module_inventory=1, module_marketing=0))
     monkeypatch.setattr(value_delivered, "get_review_stats", lambda rid: {"responded": 3})
     monkeypatch.setattr(labor, "analyse_shifts_for_restaurant", lambda rid: {
-        "is_live": True, "potential_savings": 4000.0, "potential_savings_weekly": 2000.0, "potential_savings_monthly": 8666.67})
-    # Every food-cost surface now goes through inventory.analysis_for, which
-    # resolves delivery_days and upcoming_holidays itself so the page, the
-    # weekly email, the alert engine and the supplier order can no longer
-    # compute different answers for the same restaurant.
+        "is_live": True, "potential_savings": 4000.0, "potential_savings_weekly": 2000.0,
+        "potential_savings_monthly": 8666.67})
     monkeypatch.setattr(inventory, "analysis_for",
                         lambda rid, items=None, is_live=None: ([], True, {"recoverable_monthly": 150}))
-    total = value_delivered.compute_total_value_delivered(1)
-    assert total == 3 * 5 + 8667 + 150
-    # a sample (not live) labor set counts nothing
-    monkeypatch.setattr(labor, "analyse_shifts_for_restaurant", lambda rid: {
-        "is_live": False, "potential_savings": 4000.0, "potential_savings_monthly": 8666.67})
-    assert value_delivered.compute_total_value_delivered(1) == 15 + 150
+
+    import outcomes
+    # Nothing measured yet: an $8,817/month gap is not value delivered.
+    monkeypatch.setattr(outcomes, "total_value", lambda rid, db_path=None: {
+        "monthly": 0.0, "annual": 0.0, "wins": 0, "evaluated": 0, "in_flight": 2,
+        "unmeasurable": 0, "no_clear_change": 0, "by_module": {}, "caveat": "c"})
+    monkeypatch.setattr(outcomes, "best_ever", lambda rid, db_path=None: None)
+    assert value_delivered.compute_total_value_delivered(1) == 0
+
+    # ...and it is still reported, under its own name, as opportunity.
+    opp = value_delivered.opportunity(1)
+    assert opp["monthly"] == round(8666.67 + 150, 2)
+
+    # One measured win is what the headline counts.
+    monkeypatch.setattr(outcomes, "total_value", lambda rid, db_path=None: {
+        "monthly": 410.0, "annual": 4920.0, "wins": 1, "evaluated": 3, "in_flight": 1,
+        "unmeasurable": 1, "no_clear_change": 1, "by_module": {"labor": 410.0}, "caveat": "c"})
+    assert value_delivered.compute_total_value_delivered(1) == 410
+
+
+def test_cost_avoidance_counts_work_that_happened_and_carries_its_rate(monkeypatch):
+    """The marketing figure used to be months_since_signup x $1,500, fired by
+    a single generated post ever - so one post in month one billed $18,000 of
+    "value" by month twelve. It now counts the months content was produced,
+    and every rate ships with the number."""
+    monkeypatch.setattr(value_delivered, "get_restaurant", lambda rid, db_path=None: SimpleNamespace(
+        module_reviews=1, module_labor=0, module_inventory=0, module_marketing=1))
+    monkeypatch.setattr(value_delivered, "get_review_stats", lambda rid: {"responded": 4})
+
+    class _Conn:
+        def execute(self, sql, args=()):
+            n = 2 if "DISTINCT substr" in sql else 9
+            return SimpleNamespace(fetchone=lambda: [n])
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(models, "get_conn", lambda db_path=None: _Conn())
+    out = value_delivered.avoided(1)
+    by = {i["key"]: i for i in out["items"]}
+    assert by["content"]["dollars"] == 2 * value_delivered.AGENCY_MONTHLY
+    assert by["replies"]["dollars"] == 4 * value_delivered.REPLY_RATE
+    # Every item states the assumption it rests on.
+    for item in out["items"]:
+        assert item["rate"] and item["basis"]
 
 
 # ── labor savings cannot be conjured from missing sales ─────────────────────

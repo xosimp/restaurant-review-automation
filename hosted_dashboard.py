@@ -545,47 +545,57 @@ def index(current_user):
         mkt_stats = {"generated": 0, "published": 0, "this_month": 0,
                      "months_active": 1, "agency_value": 0, "avg_per_month": 0}
 
-    # ── Total savings breakdown ────────────────────────────────────────────────
-    # Reviews value: each managed response saves ~$5 vs outsourcing to a rep service
-    _reviews_value = int(rstats.get("responded", 0)) * 5
-    # Labor value: scheduling savings monthly; if below industry avg, use vs-industry figure
+    # ── Value: measured, avoided, available ───────────────────────────────────
+    # This block used to compute the banner's "Total Value Delivered" inline,
+    # and value_delivered.py carried a second copy of the same arithmetic by
+    # explicit admission. Both were wrong in the same way: labour and food
+    # cost contributed their GAP TO TARGET — money the restaurant was still
+    # losing — as money delivered, so the figure fell when an owner fixed
+    # their scheduling and peaked for the worst-run restaurant on the
+    # platform. See value_delivered.py's docstring for the full account.
+    #
+    # There is now ONE implementation, and the three figures it returns are
+    # never summed into each other.
+    _mod_l = int(restaurant.module_labor or 0)
+    try:
+        from value_delivered import breakdown as _value_breakdown
+        value = _value_breakdown(rid)
+    except Exception as _ve:
+        print(f"[value] breakdown unavailable: {_ve}")
+        value = {"delivered": {"monthly": 0, "wins": 0, "evaluated": 0, "in_flight": 0,
+                               "by_module": {}, "biggest": None, "caveat": ""},
+                 "avoided": {"items": [], "dollars": 0, "hours": 0},
+                 "opportunity": {"items": [], "monthly": 0}}
+
+    # Labor-tab context figures. These are NOT value delivered and never were
+    # — they stay here because the Labor tab renders them as context beside
+    # the labour percentage, which is an honest use of them.
     _labor_monthly = int(round(labor.get("potential_savings_monthly", 0) or 0))
-    # When on/under target, compute what they're saving vs. 32% industry average
     _period_days = labor.get("period_days") or labor.get("date_range", {}).get("days") or 0
     _monthly_sales_est = (labor.get("total_sales", 0) / _period_days * 30) if _period_days else 0
     _labor_vs_industry_monthly = max(0, int((0.32 - labor.get("overall_labor_pct", 32) / 100) * _monthly_sales_est))
     _labor_vs_industry_annual  = _labor_vs_industry_monthly * 12
-    # Banner value = scheduling savings (only claimed when platform identified over-target spend)
-    # The vs-industry figure belongs on the Labor tab as context, not in "Total Value Delivered"
-    # Sample shifts/inventory are never the restaurant's own savings — the
-    # banner (and value_delivered.py, which mirrors this) count them only
-    # once the data is live.
-    _labor_value = _labor_monthly if labor.get("is_live") else 0
+    _inv_value = int(inv.get("recoverable_monthly", 0)) if inv.get("is_live") else 0
     # Revenue lift from responding to reviews — 3.1% of annual sales (Cornell HBS research)
     _sales_lift_yr = int(_monthly_sales_est * 12 * 0.031) if _monthly_sales_est > 10000 else 0
-    # Inventory value: monthly recoverable waste
-    _inv_value = int(inv.get("recoverable_monthly", 0)) if inv.get("is_live") else 0
-    # Marketing value: agency equivalent already computed
-    _mkt_value = mkt_stats["agency_value"]
-    # Only count modules that are active
-    _mod_r = int(restaurant.module_reviews or 0)
-    _mod_l = int(restaurant.module_labor or 0)
-    _mod_i = int(restaurant.module_inventory or 0)
-    _mod_m = int(restaurant.module_marketing or 0)
     savings_breakdown = {
-        "reviews":   _reviews_value if _mod_r else 0,
-        "labor":     _labor_value   if _mod_l else 0,
-        "inventory": _inv_value     if _mod_i else 0,
-        "marketing": _mkt_value     if _mod_m else 0,
-        "total":     ((_reviews_value if _mod_r else 0) +
-                      (_labor_value   if _mod_l else 0) +
-                      (_inv_value     if _mod_i else 0) +
-                      (_mkt_value     if _mod_m else 0)),
-        # Monthly recurring savings (labor + inventory are monthly; reviews/marketing already cumulative)
+        # The banner: measured monthly dollars only.
+        "total":            int(round((value["delivered"] or {}).get("monthly") or 0)),
+        "wins":             (value["delivered"] or {}).get("wins") or 0,
+        "in_flight":        (value["delivered"] or {}).get("in_flight") or 0,
+        "avoided_dollars":  int(round((value["avoided"] or {}).get("dollars") or 0)),
+        "avoided_hours":    (value["avoided"] or {}).get("hours") or 0,
+        # The Reviews tab shows its own cost-avoidance line. Read from the
+        # same place as everything else so the rate has one definition.
+        "reviews_avoided":  int(round(next((i["dollars"] or 0)
+                                           for i in (value["avoided"] or {}).get("items") or []
+                                           if i.get("key") == "replies"), 0)),
+        "opportunity":      int(round((value["opportunity"] or {}).get("monthly") or 0)),
+        # Labor-tab context, unchanged.
         "labor_monthly":    _labor_monthly if _mod_l else 0,
-        "inv_monthly":      _inv_value     if _mod_i else 0,
+        "inv_monthly":      _inv_value     if int(restaurant.module_inventory or 0) else 0,
         "labor_annual":     int(_labor_monthly * 12) if _mod_l else 0,
-        "inv_annual":       int(_inv_value * 12)     if _mod_i else 0,
+        "inv_annual":       int(_inv_value * 12)     if int(restaurant.module_inventory or 0) else 0,
         "labor_overtime":   labor_overtime_cost       if _mod_l else 0,
         "labor_vs_industry_monthly": _labor_vs_industry_monthly if _mod_l else 0,
         "labor_vs_industry_annual":  _labor_vs_industry_annual  if _mod_l else 0,

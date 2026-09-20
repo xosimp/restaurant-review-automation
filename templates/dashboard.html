@@ -1160,44 +1160,45 @@ document.documentElement.classList.add('pjs-loading');
     <span id="tab-indicator"></span>
 </div>
 
-<!-- TOTAL SAVINGS WIDGET -->
+<!-- VALUE STRIP — measured, avoided, available. Never summed into each other.
+     This replaced a "Total value delivered" banner whose labour and food-cost
+     components were the GAP TO TARGET: money still being lost, counted as
+     money delivered. See value_delivered.py for the full account. The strip
+     was also display:none with nothing ever showing it, so the web had no
+     value surface at all. -->
 {% set _sb = savings_breakdown or {} %}
-<div id="global-savings-banner" style="display:none;background:linear-gradient(135deg,#0d2b1a 0%,#0a1f13 100%);border-bottom:1px solid #1a3d24;padding:12px 28px;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">
-  <div style="display:flex;align-items:center;gap:8px">
-    <span style="font-size:16px">💰</span>
+{% set _show_value = (_sb.wins and _sb.wins > 0) or (_sb.in_flight and _sb.in_flight > 0) or (_sb.opportunity and _sb.opportunity > 0) or (_sb.avoided_hours and _sb.avoided_hours > 0) %}
+<div id="global-savings-banner" style="display:{{ 'flex' if _show_value else 'none' }};background:linear-gradient(135deg,#0d2b1a 0%,#0a1f13 100%);border-bottom:1px solid #1a3d24;padding:12px 28px;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">
+  <div style="display:flex;align-items:center;gap:10px">
     <div>
-      <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#6fcf97;margin-bottom:1px">Total value delivered</div>
-      <div id="global-savings-total" style="font-family:'Space Grotesk',sans-serif;font-size:22px;font-weight:700;color:white;letter-spacing:-0.5px">${{_sb.total|format_num if _sb.total else '0'}}</div>
+      <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#6fcf97;margin-bottom:1px">Measured results</div>
+      {% if _sb.wins and _sb.wins > 0 %}
+      <div id="global-savings-total" style="font-family:'Space Grotesk',sans-serif;font-size:22px;font-weight:700;color:white;letter-spacing:-0.5px">${{_sb.total|format_num}}<span style="font-size:12px;font-weight:600;color:#9bdcb5">/mo</span></div>
+      <div style="font-size:11px;color:#9bdcb5">from <span class="hb-num">{{ _sb.wins }}</span> measured {{ 'change' if _sb.wins == 1 else 'changes' }}{% if _sb.in_flight %} · <span class="hb-num">{{ _sb.in_flight }}</span> still being measured{% endif %}</div>
+      {% else %}
+      <div id="global-savings-total" style="font-family:'Space Grotesk',sans-serif;font-size:17px;font-weight:700;color:white;letter-spacing:-0.3px">Nothing measured yet</div>
+      <div style="font-size:11px;color:#9bdcb5">{% if _sb.in_flight %}<span class="hb-num">{{ _sb.in_flight }}</span> {{ 'change' if _sb.in_flight == 1 else 'changes' }} being measured now.{% else %}Track a recommendation and its result lands here.{% endif %}</div>
+      {% endif %}
     </div>
   </div>
-  <div style="display:flex;gap:20px;flex-wrap:wrap">
-    <div id="global-reviews-chip" style="text-align:center;display:{% if _sb.reviews and _sb.reviews > 0 %}block{% else %}none{% endif %}">
-      <div id="global-reviews-amt" style="font-size:14px;font-weight:700;color:white">${{_sb.reviews|format_num if _sb.reviews else '0'}}</div>
-      <div style="font-size:10px;color:#6fcf97;letter-spacing:.5px;text-transform:uppercase">Reviews</div>
-    </div>
-    {% if _sb.labor and _sb.labor > 0 %}
+  <div style="display:flex;gap:22px;flex-wrap:wrap">
+    {% if _sb.avoided_hours and _sb.avoided_hours > 0 %}
     <div style="text-align:center">
-      <div style="font-size:14px;font-weight:700;color:white">${{_sb.labor|format_num}}</div>
-      <div style="font-size:10px;color:#6fcf97;letter-spacing:.5px;text-transform:uppercase">Labor</div>
+      <div style="font-size:14px;font-weight:700;color:white"><span class="hb-num">{{ _sb.avoided_hours|round|int }}</span> hrs</div>
+      <div style="font-size:10px;color:#6fcf97;letter-spacing:.5px;text-transform:uppercase">Work done for you</div>
     </div>
     {% endif %}
-    {% if _sb.inventory and _sb.inventory > 0 %}
+    {% if _sb.opportunity and _sb.opportunity > 0 %}
     <div style="text-align:center">
-      <div style="font-size:14px;font-weight:700;color:white">${{_sb.inventory|format_num}}</div>
-      <div style="font-size:10px;color:#6fcf97;letter-spacing:.5px;text-transform:uppercase">Inventory/mo</div>
+      <div style="font-size:14px;font-weight:700;color:white">${{ _sb.opportunity|format_num }}<span style="font-size:10px;color:#9bdcb5">/mo</span></div>
+      <div style="font-size:10px;color:#6fcf97;letter-spacing:.5px;text-transform:uppercase">Still on the table</div>
     </div>
     {% endif %}
-    {% if _sb.marketing and _sb.marketing > 0 %}
-    <div style="text-align:center">
-      <div style="font-size:14px;font-weight:700;color:white">${{_sb.marketing|format_num}}</div>
-      <div style="font-size:10px;color:#6fcf97;letter-spacing:.5px;text-transform:uppercase">Marketing</div>
-    </div>
-    {% endif %}
+    <button class="cbtn cbtn-text cbtn-sm" style="color:#9bdcb5" onclick="hbOpen('home')">See the detail →</button>
   </div>
 </div>
 <script>
-var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing or 0)}};
-var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and savings_breakdown.sales_lift_yr else 125000}};
+var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and savings_breakdown.sales_lift_yr else 0}};
 </script>
 
 <!-- HOME -->
@@ -1613,6 +1614,20 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     }).catch(function(){if(typeof toast==='function')toast('Network error','error');});
   };
   // ── header ────────────────────────────────────────────────────────────────
+  // Start measuring a recommendation. The baseline is taken server-side at
+  // the moment this posts - nothing about the card's own numbers is sent,
+  // so the measurement cannot inherit a stale figure off the screen.
+  window.hbTrack=function(btn,key,title,metric){
+    if(btn){btn.disabled=true;btn.textContent='Starting...';}
+    fetch('/api/outcomes',{method:'POST',headers:{'Content-Type':'application/json','X-CSRFToken':'{{csrf_token}}'},
+      body:JSON.stringify({source:'recommendation',source_key:key,title:title,metric:metric})})
+    .then(function(r){return r.json();}).then(function(d){
+      if(!d.ok){if(btn){btn.disabled=false;btn.textContent='Track this';}if(typeof toast==='function')toast(d.error||'Could not start tracking','error');return;}
+      if(btn){btn.textContent='Tracking';}
+      var when=(d.outcome&&d.outcome.evaluate_on)?(' - result on '+d.outcome.evaluate_on):'';
+      if(typeof toast==='function')toast('Measuring from today'+when,'success');
+    }).catch(function(){if(btn){btn.disabled=false;btn.textContent='Track this';}if(typeof toast==='function')toast('Network error','error');});
+  };
   function renderTop(d){
     var c=d.context||{};
     var k=document.getElementById('hb-kicker');
@@ -1682,7 +1697,12 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     for(var i=0;i<Math.min(items.length,3);i++){var a=items[i];h+='<div class="hb-row '+esc(a.severity)+'"><span class="d"></span><span class="t" title="'+esc(a.detail||'')+'">'+num(a.title)+'</span><span class="m">'+esc(MODLABEL[a.module]||'')+'</span><button class="cbtn '+(a.severity==='critical'||a.action.kind==='publish_replies'?'cbtn-primary':'cbtn-secondary')+' cbtn-sm" onclick="hbAct(\''+esc(a.action.kind)+'\',\''+esc(a.action.module||'')+'\',this)">'+esc(a.action.label)+'</button></div>';}
     h+='<h3 style="margin-top:26px"><span>Cavnar recommends</span>'+(hid.length?'<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="hbDismiss(\''+esc(hid[0].key).replace(/'/g,'\\\'')+'\',true)">restore hidden</button>':'')+'</h3>';
     if(!recs.length)h+='<div class="hb-empty">Nothing to recommend yet — that changes as your data grows.</div>';
-    for(var j=0;j<Math.min(recs.length,3);j++){var r=recs[j];h+='<div class="hb-row"><span class="no hb-num">0'+(j+1)+'</span><span class="t" title="'+esc(r.why||'')+'">'+num(r.title)+'</span><span class="m hb-num">'+esc((r.evidence||'').split(' · ')[0].slice(0,42))+'</span><button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="hbOpen(\''+esc(r.module)+'\')">'+esc(MODLABEL[r.module]||r.action_label)+' →</button><button class="hb-x" title="Hide for two weeks" aria-label="Hide" onclick="hbDismiss(\''+esc(r.key).replace(/'/g,'\\\'')+'\')">✕</button></div>';}
+    for(var j=0;j<Math.min(recs.length,3);j++){var r=recs[j];
+      // A recommendation that names a metric can be measured. Tracking takes
+      // the baseline NOW, so the button has to be here on the card rather
+      // than on a settings screen the owner visits a week later.
+      var trk = r.metric ? '<button class="cbtn cbtn-secondary cbtn-sm" title="Take a baseline now and measure this in a few weeks" onclick="hbTrack(this,\''+esc(r.key).replace(/'/g,'\\\'')+'\',\''+esc(r.title).replace(/'/g,'\\\'')+'\',\''+esc(r.metric)+'\')">Track this</button>' : '';
+      h+='<div class="hb-row"><span class="no hb-num">0'+(j+1)+'</span><span class="t" title="'+esc(r.why||'')+'">'+num(r.title)+'</span><span class="m hb-num">'+esc((r.evidence||'').split(' · ')[0].slice(0,42))+'</span>'+trk+'<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="hbOpen(\''+esc(r.module)+'\')">'+esc(MODLABEL[r.module]||r.action_label)+' →</button><button class="hb-x" title="Hide for two weeks" aria-label="Hide" onclick="hbDismiss(\''+esc(r.key).replace(/'/g,'\\\'')+'\')">✕</button></div>';}
     h+='</div><div><h3><span>Ask Cavnar AI</span></h3><div class="hb-ask"><input id="hb-ask-in" type="text" placeholder="Why did labor go up this week?" aria-label="Ask Cavnar AI"><button type="button" class="cbtn cbtn-primary cbtn-sm" data-ask-submit="1">Ask</button></div>';
     if(sg.length){h+='<div class="hb-sugg">';for(var s=0;s<Math.min(sg.length,3);s++){h+='<button type="button" data-ask="'+esc(sg[s])+'">'+esc(sg[s])+'</button>';}h+='</div>';}
     h+='<div id="hb-ask-out" class="hb-askout" hidden aria-live="polite"></div><div class="hb-askfoot"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-ask-full="1">Open the full chat →</button></div>';
@@ -2139,7 +2159,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
    because the rating pill can be Google's all-time figure OR our average
    over the reviews we actually hold, and both were displayed unlabelled;
    `unanalysed` exists because when it is non-zero the sentiment split and
-   the topic charts cover fewer reviews than the totals beside them. #}{% if rstats.official_review_count and not rstats.is_full_history %}<span class="sep">·</span><span title="Google's own all-time rating is over every review ever left; ours is over the reviews Cavnar holds.">avg over <span class="hb-num">{{ rstats.total }}</span> of <span class="hb-num">{{ rstats.official_review_count }}</span> reviews</span>{% endif %}{% if rstats.unanalysed %}<span class="sep">·</span><span style="color:var(--hb-warn)" title="Sentiment and topic charts only cover analysed reviews."><span class="hb-num">{{ rstats.unanalysed }}</span> not yet analysed</span>{% endif %}{% if savings_breakdown and savings_breakdown.reviews > 0 %}<span class="sep">·</span><span><span class="hb-num" id="review-savings-amt">${{ savings_breakdown.reviews|format_num }}</span> saved on <span id="review-savings-count" class="hb-num">{{ rstats.responded }}</span> replies</span>{% endif %}</div>
+   the topic charts cover fewer reviews than the totals beside them. #}{% if rstats.official_review_count and not rstats.is_full_history %}<span class="sep">·</span><span title="Google's own all-time rating is over every review ever left; ours is over the reviews Cavnar holds.">avg over <span class="hb-num">{{ rstats.total }}</span> of <span class="hb-num">{{ rstats.official_review_count }}</span> reviews</span>{% endif %}{% if rstats.unanalysed %}<span class="sep">·</span><span style="color:var(--hb-warn)" title="Sentiment and topic charts only cover analysed reviews."><span class="hb-num">{{ rstats.unanalysed }}</span> not yet analysed</span>{% endif %}{% if savings_breakdown and savings_breakdown.reviews_avoided > 0 %}<span class="sep">·</span><span title="At $5 a reply — what a managed review-response service charges. An estimate, not a measurement."><span class="hb-num" id="review-savings-amt">${{ savings_breakdown.reviews_avoided|format_num }}</span> of reply writing on <span id="review-savings-count" class="hb-num">{{ rstats.responded }}</span> replies</span>{% endif %}</div>
       <span id="stat-this-month-n" hidden>{{ rstats.this_month }}</span><span id="stat-rr-detail" hidden></span><span id="review-savings-rate" hidden></span><strong id="rr-sent-mo-inline" hidden></strong><strong id="rr-sent-total-inline" hidden></strong>
     </div>
     <div class="hb-pulse">
@@ -6847,7 +6867,7 @@ function updateReviewStats(){
     }
     if(labelEl){ labelEl.textContent=label; labelEl.style.background=color; }
     if(pctEl)  { pctEl.textContent=rrate+'%'; pctEl.style.color=color; }
-    if(countEl){ var _liftStr = gSalesLiftYr >= 1000 ? ('$'+Math.round(gSalesLiftYr/1000)+'k/yr') : '$125k/yr'; countEl.innerHTML=(d.responded||d.posted)+' of '+d.total+' reviews responded to — restaurants that respond see <strong style="color:var(--ink)">35% higher return rates</strong> on average. This 3.1% sales lift can mean an additional <strong style="color:var(--ink)">'+_liftStr+'</strong> for your restaurant. <span class="calc-tip calc-tip-light calc-tip-up" style="display:inline-flex;vertical-align:middle;margin-top:0"><svg class="tip-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="5.5" r="1" fill="currentColor"/><rect x="7.1" y="7.5" width="1.8" height="4.5" rx="0.9" fill="currentColor"/></svg><span class="tip-text">Sources: Harvard Business School study on restaurant review responses (35% return rate lift); Cornell Center for Hospitality Research — 3.1% revenue increase per unit response rate improvement at casual dining.</span></span>'; }
+    if(countEl){ var _lift = (gSalesLiftYr >= 1000) ? ('<strong style="color:var(--ink)">$'+Math.round(gSalesLiftYr/1000)+'k/yr</strong> against your own sales') : 'a figure we can put on your sales once they are synced'; countEl.innerHTML=(d.responded||d.posted)+' of '+d.total+' reviews responded to — restaurants that respond see <strong style="color:var(--ink)">35% higher return rates</strong> on average, and a 3.1% sales lift: '+_lift+'. <span class="calc-tip calc-tip-light calc-tip-up" style="display:inline-flex;vertical-align:middle;margin-top:0"><svg class="tip-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="5.5" r="1" fill="currentColor"/><rect x="7.1" y="7.5" width="1.8" height="4.5" rx="0.9" fill="currentColor"/></svg><span class="tip-text">Sources: Harvard Business School study on restaurant review responses (35% return rate lift); Cornell Center for Hospitality Research — 3.1% revenue increase per unit response rate improvement at casual dining.</span></span>'; }
     // Shift card background red→neutral→green as response rate improves
     var rateCard = document.getElementById('rate-card');
     maybeShowCongrats(rrate);
@@ -7002,16 +7022,11 @@ function updateReviewStats(){
       }
     }
 
-    // ── Global savings banner ──────────────────────────────
-    var reviewSavingsGlobal = (d.responded || 0) * 5;
-    var totalSavings = reviewSavingsGlobal + (_staticSavings || 0);
-    var globalBanner   = document.getElementById('global-savings-banner');
-    var globalTotal    = document.getElementById('global-savings-total');
-    var globalRevChip  = document.getElementById('global-reviews-chip');
-    var globalRevAmt   = document.getElementById('global-reviews-amt');
-    if(globalBanner){
-      globalBanner.style.display = 'none';
-    }
+    // ── Value strip ────────────────────────────────────────
+    // Rendered server-side from measured outcomes (see value_delivered.py).
+    // It deliberately does NOT move when review stats poll: a reply count is
+    // not a measured result, and the old code recomputed the banner total
+    // from responded x 5 on every 15-second poll.
 
     // ── Review savings bar ─────────────────────────────────
     var savingsBar  = document.getElementById('review-savings-bar');

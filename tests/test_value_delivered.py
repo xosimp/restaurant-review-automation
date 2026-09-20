@@ -1,20 +1,28 @@
-"""value_delivered.py — the "Total Value Delivered" figure and its daily
-snapshot history (see mobile_api.py's _do_mobile_home, which calls both on
-every Home-tab load)."""
+"""value_delivered.py — the three value figures and the daily snapshot history
+(see mobile_api.py's _do_mobile_home and hosted_dashboard.py's index, which
+both read them on every Home load).
+
+The ROI audit (Sep 2026) replaced what "Total Value Delivered" meant. It was
+reviews-responded x $5 PLUS labour's potential_savings_monthly PLUS food
+cost's recoverable_monthly — and the last two are gaps ABOVE target, money
+the restaurant is still losing. The headline is now only what was measured;
+cost avoidance and opportunity are separate figures with their own names.
+"""
 import pytest
 
 import models
 from models import create_restaurant, Restaurant, Review, save_reviews, get_conn
-from value_delivered import compute_total_value_delivered, record_value_snapshot, get_value_history
+from value_delivered import (avoided, breakdown, compute_total_value_delivered,
+                             delivered, get_value_history, opportunity,
+                             record_value_snapshot, REPLY_RATE)
 
 
 @pytest.fixture(autouse=True)
 def _redirect_db(monkeypatch, db_path):
-    """compute_total_value_delivered() calls models.get_review_stats(), which
-    has no db_path param and always resolves models.py's own module-level
-    get_conn — patching it here is the only way to keep that nested call
-    scoped to the test db. See test_mobile_api.py's _redirect_db for the
-    identical gotcha."""
+    """avoided() calls models.get_review_stats(), which has no db_path param
+    and always resolves models.py's own module-level get_conn — patching it
+    here is the only way to keep that nested call scoped to the test db. See
+    test_mobile_api.py's _redirect_db for the identical gotcha."""
     real_get_conn = models.get_conn
     monkeypatch.setattr(models, "get_conn", lambda *a, **k: real_get_conn(db_path))
 
@@ -36,34 +44,78 @@ def _responded_review(db_path, rid, external_id="rev1"):
 
 
 def _reviews_only(db_path, **kw):
-    """Isolates the reviews-value term — labor/inventory fall back to synthetic
-    sample-data savings (matching the web dashboard) whenever a restaurant has
-    no live CSV connected, so leaving those modules on would couple these
-    reviews-specific assertions to that unrelated sample-data constant."""
     return _restaurant(db_path, module_labor=0, module_inventory=0, module_marketing=0, **kw)
 
+
+# ── the headline ────────────────────────────────────────────────────────────
 
 def test_fresh_restaurant_has_zero_value_delivered(db_path):
     rid = _reviews_only(db_path)
     assert compute_total_value_delivered(rid, db_path=db_path) == 0
 
 
-def test_responded_reviews_count_at_5_dollars_each(db_path):
+def test_written_replies_are_cost_avoidance_not_measured_value(db_path):
+    """Writing two replies is real work and worth saying — but it is not a
+    measured improvement to the business, and the headline must not move for
+    it. This is the line the old implementation crossed."""
     rid = _reviews_only(db_path)
     _responded_review(db_path, rid, "r1")
     _responded_review(db_path, rid, "r2")
-    assert compute_total_value_delivered(rid, db_path=db_path) == 10
+
+    assert compute_total_value_delivered(rid, db_path=db_path) == 0
+    av = avoided(rid, db_path=db_path)
+    replies = next(i for i in av["items"] if i["key"] == "replies")
+    assert replies["dollars"] == 2 * REPLY_RATE
+    assert replies["hours"] > 0
+    # The rate is carried, never implied.
+    assert "$5" in replies["rate"] and replies["basis"]
 
 
 def test_reviews_value_excluded_when_module_disabled(db_path):
     rid = _reviews_only(db_path, module_reviews=0)
     _responded_review(db_path, rid, "r1")
-    assert compute_total_value_delivered(rid, db_path=db_path) == 0
+    assert avoided(rid, db_path=db_path)["items"] == []
 
 
 def test_unknown_restaurant_returns_zero(db_path):
     assert compute_total_value_delivered(999999, db_path=db_path) == 0
+    assert avoided(999999, db_path=db_path)["items"] == []
+    assert opportunity(999999, db_path=db_path)["monthly"] == 0
 
+
+# ── the three figures stay apart ────────────────────────────────────────────
+
+def test_breakdown_keeps_the_three_figures_separate(db_path):
+    """business_intelligence refuses to sum a measured cost against a
+    forecast; this refuses to sum a measurement against an estimate against
+    a gap. Nothing here may collapse into one number."""
+    rid = _reviews_only(db_path)
+    _responded_review(db_path, rid, "r1")
+    b = breakdown(rid, db_path=db_path)
+    assert set(b) == {"delivered", "avoided", "opportunity"}
+    # The headline reads only the measured half.
+    assert b["delivered"]["monthly"] == 0
+    assert b["avoided"]["dollars"] > 0
+    # And each says what it rests on.
+    assert b["delivered"]["basis"] and b["avoided"]["basis"] and b["opportunity"]["basis"]
+
+
+def test_delivered_carries_the_causation_caveat(db_path):
+    rid = _reviews_only(db_path)
+    import outcomes
+    assert outcomes.CAUSATION_CAVEAT in delivered(rid, db_path=db_path)["caveat"]
+
+
+def test_delivered_reports_its_own_denominator(db_path):
+    """"$400 from two results" means something different when eight other
+    trackers came back unknown, so the counts travel with the total."""
+    rid = _reviews_only(db_path)
+    d = delivered(rid, db_path=db_path)
+    for key in ("wins", "evaluated", "in_flight", "unmeasurable", "no_clear_change"):
+        assert key in d
+
+
+# ── snapshots ───────────────────────────────────────────────────────────────
 
 def test_snapshot_round_trips_through_history(db_path):
     rid = _restaurant(db_path)

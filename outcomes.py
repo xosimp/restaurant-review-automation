@@ -210,6 +210,92 @@ def recent_results(restaurant_id, days=7, db_path=DB_PATH, today=None):
             if (r.get("evaluate_on") or "") >= since]
 
 
+# A module key for every metric, so a realised result can be attributed back
+# to the module that earned it. Owners buy modules one at a time; "which of
+# the four I pay for is paying for itself" had no answer without this.
+METRIC_MODULE = {
+    "labor_pct": "labor", "sales": "labor", "weekday_sales": "marketing",
+    "food_cost_pct": "inventory", "weekly_waste": "inventory",
+    "avg_rating": "reviews", "complaints": "reviews",
+    "comp_rate": "labor", "void_rate": "labor",
+}
+
+
+def module_of(metric) -> str:
+    """Which module a metric belongs to, for value attribution."""
+    base, _ = metrics.parse(metric)
+    return METRIC_MODULE.get(base, "other")
+
+
+def realised(restaurant_id, db_path=DB_PATH, since=None):
+    """Every evaluated tracker that actually IMPROVED and carries dollars.
+
+    This is the one honest basis for "what has Cavnar AI been worth": each
+    row was measured over a named window before the change and the same
+    window after, and cleared its metric's own noise band to be called an
+    improvement at all. `since` is an ISO date filtering on evaluate_on.
+    """
+    rows = []
+    for r in list_outcomes(restaurant_id, status="evaluated", limit=500, db_path=db_path):
+        if r.get("verdict") != "improved" or not r.get("dollars_monthly"):
+            continue
+        if since and (r.get("evaluate_on") or "") < str(since)[:10]:
+            continue
+        rows.append(r)
+    return rows
+
+
+def total_value(restaurant_id, db_path=DB_PATH, since=None):
+    """What measured improvements are worth, per month, with the honest
+    denominator alongside.
+
+    Deliberately NOT one bare number. `monthly` is the sum of the improved
+    trackers' monthly dollars; `tracked` and `unmeasurable` say how much of
+    what the owner committed to could be read at all, because a total of
+    $400 from two results means something different when eight other
+    trackers came back unknown.
+
+    Summing here is legitimate where business_intelligence.money_at_stake
+    refuses to: these are all the same claim kind (measured, before/after,
+    per month) over the same restaurant, not a measured cost added to an
+    elasticity forecast.
+    """
+    wins = realised(restaurant_id, db_path=db_path, since=since)
+    evaluated = [r for r in list_outcomes(restaurant_id, status="evaluated", limit=500,
+                                          db_path=db_path)
+                 if not since or (r.get("evaluate_on") or "") >= str(since)[:10]]
+    tracking = list_outcomes(restaurant_id, status="tracking", limit=500, db_path=db_path)
+    by_module = {}
+    for r in wins:
+        m = module_of(r["metric"])
+        by_module[m] = round(by_module.get(m, 0.0) + abs(float(r["dollars_monthly"])), 2)
+    return {
+        "monthly": round(sum(abs(float(r["dollars_monthly"])) for r in wins), 2),
+        "annual": round(sum(abs(float(r["dollars_monthly"])) for r in wins) * 12, 2),
+        "wins": len(wins),
+        "evaluated": len(evaluated),
+        "in_flight": len(tracking),
+        "unmeasurable": len([r for r in evaluated if r.get("verdict") in (None, "unknown")]),
+        "no_clear_change": len([r for r in evaluated if r.get("verdict") == "no_clear_change"]),
+        "by_module": by_module,
+        "caveat": CAUSATION_CAVEAT,
+    }
+
+
+def best_ever(restaurant_id, db_path=DB_PATH):
+    """The single biggest measured win, all time — the answer to "which
+    recommendation created the biggest impact".
+
+    strategy_jobs picks the biggest of ONE daily pass to notify on; that is
+    a different question and deliberately stays where it is. This one has
+    no time window and no dollar floor.
+    """
+    wins = realised(restaurant_id, db_path=db_path)
+    if not wins:
+        return None
+    return max(wins, key=lambda r: abs(float(r["dollars_monthly"])))
+
+
 def summarise(r) -> str:
     """One honest sentence for a finished tracker."""
     label = r.get("metric_label") or r["metric"]

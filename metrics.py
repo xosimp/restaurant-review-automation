@@ -151,6 +151,45 @@ def _weekly_waste(rid, start, end, param, db_path):
     return round(_f(row["cost"]) / max(days, 1) * 7, 2), f"{row['n']} waste events, per week"
 
 
+def _loss_rate(kind):
+    """comps / voids as a percentage of sales over the window.
+
+    loss_detection has measured real dollars per day since it shipped
+    (pos_loss_daily) and none of it was measurable as a metric, so an owner
+    who tightened comp approval had no way to prove it worked — the one
+    module whose numbers are already in dollars was the one module outcome
+    tracking could not read.
+
+    A RATE, not a total: comps fall on a quiet week without anything having
+    changed. The denominator is the same labor_daily_history sales every
+    other metric here uses, so "comps are 2% of sales" means the same 2%
+    the labour percentage is measured against.
+    """
+    def fn(rid, start, end, param, db_path):
+        conn = get_conn(db_path)
+        try:
+            row = conn.execute(
+                "SELECT COALESCE(SUM(amount),0) AS amt, COALESCE(SUM(events),0) AS n "
+                "FROM pos_loss_daily WHERE restaurant_id=? AND kind=? "
+                "AND business_date>=? AND business_date<=?",
+                (rid, kind, _d(start), _d(end))).fetchone()
+            sales = conn.execute(
+                "SELECT SUM(sales) AS s, COUNT(*) AS n FROM labor_daily_history "
+                "WHERE restaurant_id=? AND date>=? AND date<=? AND sales IS NOT NULL AND sales > 0",
+                (rid, _d(start), _d(end))).fetchone()
+        finally:
+            conn.close()
+        # No synced loss rows at all is unknown, not zero: a POS that does
+        # not report comps looks identical to a restaurant with none.
+        if not row or not (row["n"] or 0):
+            return None, f"no {kind} data synced in this window"
+        if not sales or not _f(sales["s"]):
+            return None, "no sales in this window to measure against"
+        return round(_f(row["amt"]) / _f(sales["s"]) * 100, 2), \
+            f"{int(row['n'])} {kind}s over {sales['n']} days of sales"
+    return fn
+
+
 def _food_cost_pct(rid, start, end, param, db_path):
     import cogs
     days = (date.fromisoformat(_d(end)) - date.fromisoformat(_d(start))).days + 1
@@ -175,10 +214,24 @@ _REGISTRY = {
     "avg_rating":    (_avg_rating,    "Average rating",     "★",    False, 0.1,  30),
     "complaints":    (_complaints,    "Complaint share",    "%",    True,  3.0,  60),
     "weekly_waste":  (_weekly_waste,  "Waste per week",     "$",    True,  0.10, 28),
+    # Comps and voids as a share of sales. The noise band is wide on
+    # purpose: a single large comp moves a small restaurant's week, and
+    # this is the one metric where a false "improved" reads as an
+    # accusation that someone was over-comping and stopped.
+    "comp_rate":     (_loss_rate("comp"), "Comps",          "%",    True,  0.3,  28),
+    "void_rate":     (_loss_rate("void"), "Voids",          "%",    True,  0.3,  28),
 }
 
 # Relative noise: these are fractions of the baseline, not absolute amounts.
 _RELATIVE_NOISE = {"sales", "weekday_sales", "weekly_waste"}
+
+# ONE calendar. A per-day figure was being annualised at 30 days a month
+# while a per-week figure used 52/12 weeks — which is 30.33 days. Two
+# constants for one month meant a daily saving and a weekly saving of the
+# same size came out different, and inventory.WEEKS_PER_MONTH (52/12) is
+# the one the rest of the product already uses.
+WEEKS_PER_MONTH = 52.0 / 12.0
+DAYS_PER_MONTH = WEEKS_PER_MONTH * 7.0
 
 
 def parse(key):
@@ -260,18 +313,21 @@ def monthly_dollars(restaurant_id, key, delta, db_path=DB_PATH):
     if delta is None:
         return None
     base, _ = parse(key)
-    if base in ("labor_pct", "food_cost_pct"):
-        # A point of labour or food cost is worth a point of monthly sales.
+    if base in ("labor_pct", "food_cost_pct", "comp_rate", "void_rate"):
+        # A point of labour, food cost, comps or voids is worth a point of
+        # monthly sales. Comps and voids are already a share of the same
+        # sales denominator, so they convert identically.
         s = trailing(restaurant_id, "sales", days=28, db_path=db_path)["value"]
         if s is None:
             return None
         info = describe(key)
         sign = -1 if info["lower_is_better"] else 1
-        return round(sign * delta / 100 * s * 30, 2)
+        return round(sign * delta / 100 * s * DAYS_PER_MONTH, 2)
     if base == "sales":
-        return round(delta * 30, 2)
+        return round(delta * DAYS_PER_MONTH, 2)
     if base == "weekday_sales":
-        return round(delta * 4.33, 2)
+        # One weekday recurs WEEKS_PER_MONTH times a month, not DAYS.
+        return round(delta * WEEKS_PER_MONTH, 2)
     if base == "weekly_waste":
-        return round(-delta * 4.33, 2)
+        return round(-delta * WEEKS_PER_MONTH, 2)
     return None

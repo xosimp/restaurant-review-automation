@@ -359,9 +359,22 @@ def _build(current_user):
     def add_win(key, title, detail, module):
         wins.append({"key": key, "title": title, "detail": detail, "module": module})
 
-    def add_rec(key, title, why, evidence, impact, module, timeframe, strength="moderate", action_label=None):
+    def add_rec(key, title, why, evidence, impact, module, timeframe, strength="moderate",
+                action_label=None, metric=None):
+        """`metric` is what would have to move for this recommendation to have
+        worked. It is what makes the card trackable: the client posts it to
+        /api/outcomes, which takes the baseline now and re-measures when the
+        window closes.
+
+        A recommendation with no honest metric carries None and renders
+        without a Track control. Inventing one — pointing "post more this
+        week" at sales — would produce a tracker that reads every unrelated
+        thing that moved sales as proof the post worked, which is worse than
+        not measuring it.
+        """
         recs.append({"key": key, "title": title, "why": why, "evidence": evidence, "impact": impact, "module": module,
-                     "timeframe": timeframe, "strength": strength, "action_label": action_label or "Open " + {"inventory": "Food Cost"}.get(module, module.title())})
+                     "timeframe": timeframe, "strength": strength, "metric": metric,
+                     "action_label": action_label or "Open " + {"inventory": "Food Cost"}.get(module, module.title())})
 
     def add_change(text, tone, module, at=None):
         changes.append({"text": text, "tone": tone, "module": module, "at": at})
@@ -465,12 +478,14 @@ def _build(current_user):
         # recommendations
         if awaiting >= 3:
             add_rec("publish_drafts", f"Publish the {awaiting} drafted replies", "Answered reviews rank higher and reassure the next guest reading them.",
-                    f"{awaiting} replies drafted in your voice · {rate:.0f}% of reviews currently answered", "Reputation · response rate", "reviews", "Today", "strong", "Publish now")
+                    f"{awaiting} replies drafted in your voice · {rate:.0f}% of reviews currently answered", "Reputation · response rate", "reviews", "Today", "strong", "Publish now",
+                    metric="avg_rating")
         if top_issues and total >= 10:
             lbl, cnt = top_issues[0]['label'], int(top_issues[0].get('count') or 0)
             if cnt >= 3:
                 add_rec(f"top_issue:{lbl}", f"Look into {lbl.lower()} — it's the most-mentioned complaint", "Repeat themes in negative reviews are the fixable kind.",
-                        f"{lbl} raised in {cnt} reviews over 90 days", "Reviews · rating", "reviews", "This week", "strong" if cnt >= 5 else "moderate", "See the reviews")
+                        f"{lbl} raised in {cnt} reviews over 90 days", "Reviews · rating", "reviews", "This week", "strong" if cnt >= 5 else "moderate", "See the reviews",
+                        metric=f"complaints:{lbl.lower()}")
         # changes
         if (reviews_since.get("n") or 0) > 0:
             n = reviews_since["n"]
@@ -534,7 +549,8 @@ def _build(current_user):
                 if mean and worst_pct - mean >= 4 and worst_pct > labor_target:
                     add_rec(f"trim_day:{worst_day}", f"Trim {worst_day} staffing", f"{worst_day} runs {worst_pct - mean:.0f} pts above your other days without the sales to justify it.",
                             f"{worst_day} labor {worst_pct:.1f}% vs {mean:.1f}% average · target {labor_target:.0f}%", "Labor · weekly cost", "labor", "Next schedule",
-                            "strong" if worst_pct - mean >= 6 else "moderate", "Rebuild the schedule")
+                            "strong" if worst_pct - mean >= 6 else "moderate", "Rebuild the schedule",
+                            metric="labor_pct")
             if delta is not None and delta >= 1.5:
                 add_change(f"Labor % rose {delta:+.1f} pts vs the previous period ({pct:.1f}%)", "bad", "labor")
             elif delta is not None and delta <= -1.5:
@@ -614,11 +630,13 @@ def _build(current_user):
                         f"${d0['dollars_monthly']:,.0f}/month · {d0['confidence']} confidence · "
                         f"{d0['difficulty']} effort · {d0['evidence']}",
                         "Food cost · margin", "inventory", "This week",
-                        "strong" if d0["dollars_monthly"] >= 150 else "moderate", "See the numbers")
+                        "strong" if d0["dollars_monthly"] >= 150 else "moderate", "See the numbers",
+                        metric="food_cost_pct")
             elif top and float(top.get("waste_cost") or 0) >= 40:
                 add_rec(f"cut_waste:{top.get('item', 'item')}", f"Cut {top.get('item', 'top-item')} waste", f"It's the single biggest line in last week's waste — {top.get('waste_pct', 0)}% of what you ordered.",
                         f"${float(top.get('waste_cost') or 0):,.0f} wasted last week · ${recoverable:,.0f}/mo recoverable across items", "Food cost · margin", "inventory", "Next order",
-                        "strong" if float(top.get("waste_cost") or 0) >= 100 else "moderate", "Adjust the order")
+                        "strong" if float(top.get("waste_cost") or 0) >= 100 else "moderate", "Adjust the order",
+                        metric="weekly_waste")
 
             # The brief line leads with the margin position when it can be
             # measured, and falls back to recoverable waste when it cannot.
