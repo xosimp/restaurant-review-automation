@@ -8,6 +8,9 @@ and the cadence all live in the loop.
 
   run_outcome_evaluations   daily   — close outcome trackers whose window ended,
                                       and mark goals whose target is met
+  run_milestones            daily   — fire the once-ever moments (savings tiers,
+                                      anniversaries, goals met, every review
+                                      answered) and notify on the big ones
   run_loss_sync             daily   — pull comps/voids/refunds from POSes that
                                       report them (RPOWER today)
   run_issue_scan            hourly  — open an issue for a fresh bad review,
@@ -97,6 +100,38 @@ def _tell_owners_what_worked(results, db_path):
         except Exception as e:
             ops.capture(e, job="outcome_win_push", context=f"restaurant_id={rid}")
     return told
+
+
+def run_milestones(db_path=DB_PATH):
+    """Mark the moments worth marking, and tell the owner about the ones
+    worth interrupting for.
+
+    Every detector is idempotent by construction — milestones.fire() only
+    ever returns a row the first time — so this is safe to run daily and
+    produces nothing on almost every day, which is the point.
+
+    NOT everything that fires gets a push. An anniversary and a goal met
+    are worth a notification; a savings tier is worth one because it is the
+    product proving its own case. A record is deliberately NOT pushed from
+    here: good_news already puts one in the morning brief, and a record
+    plus a brief line plus a milestone is the same news three times.
+    """
+    import milestones, ops
+    fired = pushed = 0
+    for r in _restaurants(db_path):
+        try:
+            for m in (milestones.check_all(r.id, restaurant=r, db_path=db_path) or []):
+                fired += 1
+                if m.get("kind") not in ("savings", "anniversary", "goal"):
+                    continue
+                if _reach(r.id, "milestone", m["title"], m.get("body") or "",
+                          {"ask_prompt": f"Tell me more about this: {m['title']}"},
+                          db_path, subject=m["title"], email_type="milestone"):
+                    milestones.mark_notified(r.id, m["key"], db_path=db_path)
+                    pushed += 1
+        except Exception as e:
+            ops.capture(e, job="milestones", context=f"restaurant_id={r.id}")
+    return {"fired": fired, "notified": pushed}
 
 
 def run_loss_sync(db_path=DB_PATH):

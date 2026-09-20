@@ -1741,6 +1741,32 @@ def init_db(db_path: str = DB_PATH):
         )""",
         "CREATE INDEX IF NOT EXISTS idx_goals_restaurant ON owner_goals(restaurant_id, status)",
 
+        # Moments worth marking, each fired at most once ever. The UNIQUE
+        # index IS the once-only guarantee: milestones.fire() does an INSERT
+        # and treats an IntegrityError as "already celebrated", the same
+        # shape ops.claim_period uses for jobs.
+        #
+        # This replaces a localStorage flag. The one celebration the product
+        # had (the 100% response-rate modal) was gated on
+        # localStorage['cavnar_congrats_shown'], so it re-fired on every new
+        # browser and was lost on a cleared cache — a "this will not appear
+        # again" promise the storage could not keep.
+        """CREATE TABLE IF NOT EXISTS milestones (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
+            kind            TEXT NOT NULL,
+            key             TEXT NOT NULL,
+            title           TEXT NOT NULL,
+            body            TEXT,
+            value           REAL,
+            data            TEXT,
+            notified_at     TEXT,
+            seen_at         TEXT,
+            created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+        )""",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_milestones ON milestones(restaurant_id, key)",
+        "CREATE INDEX IF NOT EXISTS idx_milestones_restaurant ON milestones(restaurant_id, created_at)",
+
         # The accountability loop: an issue has an owner, is acknowledged,
         # is resolved, and escalates when nobody picks it up. Asked for by a
         # regional manager in so many words ("AI alerts via phone to hold

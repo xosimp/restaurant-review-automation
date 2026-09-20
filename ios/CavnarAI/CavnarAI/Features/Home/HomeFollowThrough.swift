@@ -100,6 +100,15 @@ final class HomeFollowThroughViewModel {
     var closeOutDate: String?
     var caveat: String?
     var value: ValueSummary?
+    var links: [CrossModule.Link] = []
+    var goodNews: [GoodNews.Item] = []
+    var goodNewsCaveat: String?
+    /// The one milestone to celebrate, if any. Cleared as soon as it is
+    /// shown and marked seen, so it cannot reappear on the next refresh.
+    var pendingMilestone: Milestones.Item?
+    /// Recommendations the owner has started measuring in this session, so
+    /// the button can read "Tracking" without a round trip.
+    var tracked: Set<String> = []
     var isLoading = false
     var errorMessage: String?
 
@@ -165,11 +174,104 @@ final class HomeFollowThroughViewModel {
         }
         struct Opportunity: Decodable { let monthly: Double? }
         struct Surfaced: Decodable { let dollars: Double?; let alerts: Int?; let days: Int? }
+        /// What was estimated at the in-person sales audit, against what has
+        /// since been measured. This is the product keeping — or failing to
+        /// keep — a promise it made at a table, and it shipped web-only:
+        /// /api/value has carried it since the ROI audit and this struct
+        /// simply did not decode it. Owner-level; the server omits it for a
+        /// login without TEAM_INVITE, so `nil` is normal and not an error.
+        struct Promise: Decodable {
+            struct Annual: Decodable { let low: Double?; let high: Double? }
+            struct Category: Decodable {
+                let label: String?
+                let metricLabel: String?
+                let unit: String?
+                let then: Double?
+                let now: Double?
+                let promisedLow: Double?
+                let promisedHigh: Double?
+                let note: String?
+                enum CodingKeys: String, CodingKey {
+                    case label, unit, then, now, note
+                    case metricLabel = "metric_label"
+                    case promisedLow = "promised_low"
+                    case promisedHigh = "promised_high"
+                }
+            }
+            let available: Bool?
+            let auditDate: String?
+            let promisedAnnual: Annual?
+            let categories: [Category]?
+            let caveat: String?
+            enum CodingKeys: String, CodingKey {
+                case available, categories, caveat
+                case auditDate = "audit_date"
+                case promisedAnnual = "promised_annual"
+            }
+        }
         let ok: Bool
         let delivered: Delivered?
         let avoided: Avoided?
         let opportunity: Opportunity?
         let surfaced: Surfaced?
+        let promise: Promise?
+    }
+
+    /// GET /mobile/api/cross-module — what two modules saw that neither
+    /// could see alone. Every field the web card shows, because the honesty
+    /// furniture (what would confirm it, what else explains it) is not
+    /// optional decoration: the link is a question, and rendering only the
+    /// headline turns it into a finding.
+    struct CrossModule: Decodable {
+        struct Link: Decodable, Identifiable {
+            let kind: String?
+            let headline: String
+            let modules: [String]?
+            let evidence: [String]?
+            let confirmBy: String?
+            let alternative: String?
+            let notACause: String?
+            var id: String { headline }
+            enum CodingKeys: String, CodingKey {
+                case kind, headline, modules, evidence, alternative
+                case confirmBy = "confirm_by"
+                case notACause = "not_a_cause"
+            }
+        }
+        let ok: Bool
+        let links: [Link]?
+    }
+
+    /// GET /mobile/api/good-news — records, streaks and complaints that
+    /// stopped.
+    struct GoodNews: Decodable {
+        struct Item: Decodable, Identifiable {
+            let kind: String
+            let key: String
+            let headline: String
+            let summary: String?
+            let module: String?
+            var id: String { key }
+        }
+        let ok: Bool
+        let items: [Item]?
+        let caveat: String?
+    }
+
+    /// GET /mobile/api/milestones — moments worth marking. `unseen` drives
+    /// the one-time celebration; the row is the once-ever guarantee, so
+    /// marking it seen here holds on the web too.
+    struct Milestones: Decodable {
+        struct Item: Decodable, Identifiable {
+            let kind: String
+            let key: String
+            let title: String
+            let body: String?
+            var id: String { key }
+        }
+        let ok: Bool
+        let items: [Item]?
+        let unseen: [Item]?
     }
 
     /// Every block is optional: a login without an endpoint's permission, or
@@ -182,6 +284,9 @@ final class HomeFollowThroughViewModel {
         async let o: OutcomesResponse? = try? client.send("/mobile/api/outcomes", hapticOnError: false)
         async let c: CloseOutResponse? = try? client.send("/mobile/api/closeout", hapticOnError: false)
         async let v: ValueSummary? = try? client.send("/mobile/api/value", hapticOnError: false)
+        async let x: CrossModule? = try? client.send("/mobile/api/cross-module", hapticOnError: false)
+        async let n: GoodNews? = try? client.send("/mobile/api/good-news", hapticOnError: false)
+        async let ms: Milestones? = try? client.send("/mobile/api/milestones", hapticOnError: false)
         actions = (await a)?.items ?? []
         goals = (await g)?.goals ?? []
         let outcomes = await o
@@ -191,6 +296,75 @@ final class HomeFollowThroughViewModel {
         closeOut = close?.closeout
         closeOutDate = close?.businessDate
         value = await v
+        links = (await x)?.links ?? []
+        let news = await n
+        goodNews = news?.items ?? []
+        goodNewsCaveat = news?.caveat
+        // Only ever offer one, and only one that has not been shown on any
+        // device — the server's UNIQUE row is what makes that true.
+        pendingMilestone = (await ms)?.unseen?.first
+    }
+
+    private struct TrackBody: Encodable {
+        let source: String
+        let sourceKey: String
+        let title: String
+        let metric: String
+        enum CodingKeys: String, CodingKey {
+            case source, title, metric
+            case sourceKey = "source_key"
+        }
+    }
+    private struct TrackResponse: Decodable {
+        struct Outcome: Decodable {
+            let evaluateOn: String?
+            enum CodingKeys: String, CodingKey { case evaluateOn = "evaluate_on" }
+        }
+        let ok: Bool
+        let outcome: Outcome?
+        let warning: String?
+        let error: String?
+    }
+
+    /// Start measuring a recommendation. The baseline is taken server-side
+    /// at the moment this posts — nothing about the card's own numbers is
+    /// sent, so the measurement cannot inherit a stale figure off the
+    /// screen. Same contract as the web's hbTrack.
+    @discardableResult
+    func track(_ rec: HomeRecommendation) async -> String? {
+        guard let metric = rec.metric else { return nil }
+        do {
+            let r: TrackResponse = try await client.send(
+                "/mobile/api/outcomes", method: .post,
+                body: TrackBody(source: "recommendation", sourceKey: rec.key,
+                                title: rec.title, metric: metric),
+                retryTransient: false)
+            guard r.ok else {
+                errorMessage = r.error ?? "Couldn't start tracking that."
+                return nil
+            }
+            tracked.insert(rec.key)
+            await Haptic.success()
+            await load()
+            if let warning = r.warning { return warning }
+            if let on = r.outcome?.evaluateOn { return "Measuring from today — result on \(on)" }
+            return "Measuring from today"
+        } catch let error as APIClient.APIError {
+            errorMessage = error.message
+            return nil
+        } catch {
+            errorMessage = "Couldn't start tracking that."
+            return nil
+        }
+    }
+
+    private struct SeenBody: Encodable { let key: String }
+
+    func markMilestoneSeen(_ m: Milestones.Item) async {
+        pendingMilestone = nil
+        _ = try? await client.send("/mobile/api/milestones/seen", method: .post,
+                                   body: SeenBody(key: m.key),
+                                   hapticOnError: false) as OKResponse
     }
 
     private struct SnoozeBody: Encodable { let key: String }
@@ -298,13 +472,111 @@ struct HomeFollowThrough: View {
                 .cavnarCard()
             }
 
+            goodNewsCard
+
             valueCard
+
+            connectionsCard
 
             closeOutCard
         }
         .task { await viewModel.load() }
         .sheet(isPresented: $showingCloseOut) {
             CloseOutSheet(viewModel: viewModel)
+        }
+    }
+
+    /// What got better. Everything else on this screen looks for trouble —
+    /// a restaurant that quietly improved used to hear exactly the same
+    /// from Cavnar AI as one that did not.
+    @ViewBuilder
+    private var goodNewsCard: some View {
+        if !viewModel.goodNews.isEmpty {
+            HomeSectionHeader(kicker: "Measured", title: "What got better")
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(viewModel.goodNews.prefix(4).enumerated()), id: \.element.id) { index, item in
+                    VStack(spacing: 0) {
+                        HStack(alignment: .top, spacing: 12) {
+                            Circle().fill(Color.cavnarGreen).frame(width: 8, height: 8)
+                                .padding(.top, 6)
+                            VStack(alignment: .leading, spacing: 3) {
+                                HomeMixedText.make(item.headline, size: 14.5, weight: 700,
+                                                   color: .cavnarInk)
+                                if let summary = item.summary {
+                                    HomeMixedText.make(summary, size: 12.5, weight: 500,
+                                                       color: .cavnarInk3)
+                                }
+                            }
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.vertical, 11)
+                        if index < min(viewModel.goodNews.count, 4) - 1 {
+                            Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
+                        }
+                    }
+                }
+                if let caveat = viewModel.goodNewsCaveat {
+                    CavnarCaveat(title: "News, not a receipt", detail: caveat)
+                        .padding(.top, 10)
+                }
+            }
+            .cavnarCard()
+        }
+    }
+
+    /// Two modules agreeing is the strongest evidence this platform can
+    /// produce, and the one finding no single-module tool can reach. It is
+    /// a QUESTION, not a finding — so the evidence, what would confirm it
+    /// and what else would explain it travel with the headline rather than
+    /// hiding behind a chevron.
+    @ViewBuilder
+    private var connectionsCard: some View {
+        if !viewModel.links.isEmpty {
+            HomeSectionHeader(kicker: "Across your modules", title: "What connects",
+                              trailing: "\(viewModel.links.count)")
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(viewModel.links.enumerated()), id: \.element.id) { index, link in
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(alignment: .top, spacing: 12) {
+                            Circle().fill(Color.cavnarAmber).frame(width: 8, height: 8)
+                                .padding(.top, 6)
+                            VStack(alignment: .leading, spacing: 4) {
+                                HomeMixedText.make(link.headline, size: 14.5, weight: 700,
+                                                   color: .cavnarInk)
+                                if let modules = link.modules, !modules.isEmpty {
+                                    Text(modules.map { $0.capitalized }.joined(separator: " + "))
+                                        .font(.cavnarBody(11, weight: 700))
+                                        .tracking(1.0)
+                                        .foregroundStyle(Color.cavnarInk3)
+                                }
+                            }
+                            Spacer(minLength: 0)
+                        }
+                        if let evidence = link.evidence, !evidence.isEmpty {
+                            VStack(alignment: .leading, spacing: 4) {
+                                ForEach(evidence, id: \.self) { line in
+                                    HomeMixedText.make("· " + line, size: 12.5, weight: 500,
+                                                       color: .cavnarInk3)
+                                }
+                            }
+                            .padding(.leading, 20)
+                        }
+                        if let confirm = link.confirmBy {
+                            HomeMixedText.make("To confirm: " + confirm, size: 12.5, weight: 600,
+                                               color: .cavnarInk2)
+                                .padding(.leading, 20)
+                        }
+                        if let alt = link.notACause ?? link.alternative {
+                            CavnarCaveat(title: "A question, not a finding", detail: alt)
+                        }
+                        if index < viewModel.links.count - 1 {
+                            Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
+                        }
+                    }
+                    .padding(.vertical, 11)
+                }
+            }
+            .cavnarCard()
         }
     }
 
@@ -345,9 +617,55 @@ struct HomeFollowThrough: View {
                     CavnarCaveat(title: "Before and after, not proof", detail: caveat)
                         .padding(.top, 10)
                 }
+                promiseBlock(v.promise)
             }
             .cavnarCard()
         }
+    }
+
+    /// "At your audit on March 3 we estimated $40k–$70k a year was
+    /// available. Here is what happened." The product keeping — or failing
+    /// to keep — a promise it made in person, which is the strongest thing
+    /// it can say and shipped web-only until now.
+    @ViewBuilder
+    private func promiseBlock(_ promise: HomeFollowThroughViewModel.ValueSummary.Promise?) -> some View {
+        if let p = promise, p.available == true,
+           let annual = p.promisedAnnual, let low = annual.low, low > 0 {
+            VStack(alignment: .leading, spacing: 8) {
+                Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
+                    .padding(.vertical, 6)
+                Text("THE PROMISE")
+                    .font(.cavnarBody(11, weight: 700))
+                    .tracking(1.4)
+                    .foregroundStyle(Color.cavnarEmber2)
+                HomeMixedText.make(
+                    "At your audit on \(p.auditDate ?? "sign-up") we estimated "
+                    + "\(Self.money(low))–\(Self.money(annual.high ?? low)) a year was available.",
+                    size: 14, weight: 600, color: .cavnarInk)
+                ForEach(Array((p.categories ?? []).enumerated()), id: \.offset) { _, c in
+                    if let note = c.note {
+                        HomeMixedText.make("\(c.label ?? c.metricLabel ?? ""): \(note)",
+                                           size: 12.5, weight: 500, color: .cavnarInk3)
+                    } else if let then = c.then, let now = c.now {
+                        HomeMixedText.make(
+                            "\(c.metricLabel ?? c.label ?? ""): \(Self.trim(then))\(c.unit ?? "") "
+                            + "at the audit, \(Self.trim(now))\(c.unit ?? "") now",
+                            size: 12.5, weight: 500, color: .cavnarInk3)
+                    }
+                }
+                if let caveat = p.caveat {
+                    CavnarCaveat(title: "What was estimated, against what was measured",
+                                 detail: caveat)
+                }
+            }
+            .padding(.top, 4)
+        }
+    }
+
+    /// 27.0 reads as a measurement; 27 reads as a number someone typed.
+    /// Both are wrong for the other one, so trim only the trailing zero.
+    private static func trim(_ v: Double) -> String {
+        v == v.rounded() ? String(Int(v)) : String(format: "%.1f", v)
     }
 
     private static func money(_ v: Double) -> String {

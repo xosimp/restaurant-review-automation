@@ -36,6 +36,13 @@ struct HomeSummary: Codable {
     // The web Home's getting-started card. Empty once every step is done
     // or the owner dismissed it — see mobile_api._setup_checklist.
     let setupChecklist: [HomeSetupStep]?
+    // What Cavnar recommends, from home_brief. The server has sent these on
+    // every /mobile/api/home response since Home shipped and the app never
+    // decoded them, so the one button that starts an outcome tracker
+    // ("Track this") existed only on the web — and the owner is on the
+    // phone. Without a tracker nothing ever reaches outcomes.record, which
+    // is what eventually produces "that one worked, about $420/month".
+    let recommendations: [HomeRecommendation]?
 
     enum CodingKeys: String, CodingKey {
         case username
@@ -52,7 +59,21 @@ struct HomeSummary: Codable {
         case overnight
         case weeklyReceipts = "weekly_receipts"
         case setupChecklist = "setup_checklist"
+        case recommendations
     }
+}
+
+/// One line from home_brief's "Cavnar recommends". `metric` is what makes it
+/// trackable: a recommendation that names a metric can be measured before
+/// and after, and one that doesn't can only be read.
+struct HomeRecommendation: Codable, Identifiable, Hashable {
+    let key: String
+    let title: String
+    let why: String?
+    let evidence: String?
+    let module: String?
+    let metric: String?
+    var id: String { key }
 }
 
 struct HomeSetupStep: Codable, Identifiable, Hashable {

@@ -977,6 +977,10 @@ RUNNABLE_JOBS = {
     "inactive_clients":        {"cadence": "Mon 11am", "what": "Flag clients who haven't signed in", "target": ("scheduler", "check_inactive_clients"), "sends": True},
     "toast_optin_invites":     {"cadence": "daily, for yesterday", "what": "Text opt-in invites to yesterday's Toast guests", "target": ("guest_marketing", "run_toast_optin_invites"), "sends": True},
     "review_request_followups":{"cadence": "hourly", "what": "Text post-visit review requests", "target": ("guest_marketing", "run_review_request_followups"), "sends": True},
+    # Safe to run on demand despite "sends": every milestone fires at most
+    # once ever (UNIQUE on restaurant_id + key), so a second run notifies
+    # nobody.
+    "milestones":              {"cadence": "7am daily", "what": "Fire savings / anniversary / goal milestones", "target": ("strategy_jobs", "run_milestones"), "sends": True},
     "ops_failure_digest":      {"cadence": "8am daily", "what": "Email Will the failure digest", "target": ("ops", "send_failure_digest"), "sends": True},
     "backup_db":               {"cadence": "2am nightly", "what": "Back the SQLite database up", "target": ("scheduler", "backup_db")},
 }

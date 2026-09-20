@@ -1118,8 +1118,40 @@ def _log_payment_email(to_email, restaurant_name, module_count):
 
 def send_welcome_email(to_email, restaurant_name, username, password,
                        module_reviews=0, module_labor=0,
-                       module_inventory=0, module_marketing=0):
-    """Send branded welcome email to new client with their login credentials."""
+                       module_inventory=0, module_marketing=0,
+                       google_place_id=None):
+    """Send branded welcome email to new client with their login credentials.
+
+    `google_place_id` turns this from a credentials handoff into the first
+    thing Cavnar AI ever tells an owner about their own restaurant. The
+    delight audit found day one was a password and an empty dashboard: the
+    first email with any business content was the day-2 tip, and the first
+    real number waited on a review fetch. first_look reads Google Places
+    with the ID that was just typed into the new-client form, so the account
+    can say something true about the business the moment it exists.
+
+    Best-effort and silent on failure — a Places outage costs the paragraph,
+    never the credentials.
+    """
+    first_look_html = ""
+    if google_place_id:
+        try:
+            import first_look as _fl
+            import html as _html
+            look_lines = _fl.lines(_fl.build(google_place_id))
+            if look_lines:
+                rows = "".join(
+                    f'<p style="font-size:14px;color:{BRAND["body"]};line-height:1.7;'
+                    f'margin:0 0 8px">{_html.escape(line)}</p>'
+                    for line in look_lines)
+                first_look_html = (
+                    f'<div style="border-left:3px solid {BRAND["ember"]};padding:2px 0 2px 14px;'
+                    f'margin:0 0 20px">'
+                    f'<p style="font-size:11px;color:{BRAND["muted"]};margin:0 0 8px;'
+                    f'letter-spacing:1px;text-transform:uppercase;font-weight:600">'
+                    f'What I can already see</p>{rows}</div>')
+        except Exception as e:
+            print(f"[welcome] first look unavailable: {e}")
     # Build module list
     active_modules = []
     if module_reviews:  active_modules.append("Review Intelligence")
@@ -1145,6 +1177,7 @@ def send_welcome_email(to_email, restaurant_name, username, password,
   <p style="font-size:15px;line-height:1.6;margin-bottom:16px">
     Hi — your Cavnar AI dashboard for <strong>{restaurant_name}</strong> is live and ready to use.
   </p>
+  {first_look_html}
   <div style="background:#f7f4ef;border-radius:8px;padding:16px 20px;margin-bottom:20px">
     <p style="font-size:13px;color:#7a736a;margin:0 0 10px;text-transform:uppercase;letter-spacing:1px;font-weight:600">Your login details</p>
     <p style="font-size:14px;margin:0 0 6px"><strong>URL:</strong> <a href="https://dashboard.cavnar.ai" style="color:#c84b2f">dashboard.cavnar.ai</a></p>

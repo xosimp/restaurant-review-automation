@@ -143,6 +143,24 @@ struct HomeView: View {
                                     .belowFold(heroAppeared, delay: 0.74)
                             }
 
+                            // What Cavnar recommends, each with the button
+                            // that starts measuring it. The server has sent
+                            // these on every /mobile/api/home response since
+                            // Home shipped and the app ignored them, so the
+                            // loop that ends in "that one worked, about
+                            // $420/month" could only be STARTED at a desk
+                            // (delight audit).
+                            if let recs = summary.recommendations, !recs.isEmpty {
+                                HomeRecommendations(recommendations: recs,
+                                                    viewModel: followThrough) { module in
+                                    navigate(to: ModuleRoute(key: module,
+                                                             label: moduleLabel(module, in: summary)))
+                                }
+                                .padding(.horizontal, 20)
+                                .padding(.top, 30)
+                                .belowFold(heroAppeared, delay: 0.78)
+                            }
+
                             // What is still open, the goals, what the
                             // owner's changes did, and tonight's handoff —
                             // the accountability loop, which used to exist
@@ -182,8 +200,23 @@ struct HomeView: View {
                 // the publish worked, but its own confirmation had nowhere
                 // left to render.
                 .cavnarPostedOverlay(postedLabel) { postedLabel = nil }
+                // The milestone moment. Screen-level for the same reason
+                // the posted overlay is: the card that triggered it can be
+                // swapped out by the reload underneath. It appears at most
+                // once ever per milestone — the server row is the
+                // guarantee — and dismissing it marks it seen everywhere,
+                // including the web.
+                .overlay {
+                    if let milestone = followThrough.pendingMilestone {
+                        MilestoneMoment(milestone: milestone) {
+                            Task { await followThrough.markMilestoneSeen(milestone) }
+                        }
+                        .transition(.opacity)
+                    }
+                }
             }
             .animation(.easeOut(duration: 0.2), value: pendingPublish != nil)
+            .animation(.easeOut(duration: 0.25), value: followThrough.pendingMilestone?.key)
             .navigationDestination(for: ModuleRoute.self) { route in
                 ModuleDestinationView(moduleKey: route.key, moduleLabel: route.label)
             }

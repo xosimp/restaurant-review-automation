@@ -440,6 +440,73 @@ def _do_loss_signals(u):
     return {"ok": True, **loss_detection.signals(_rid(u))}, 200
 
 
+def _do_cross_module(u):
+    """What two modules saw that neither could see alone.
+
+    `business_intelligence.correlations()` has existed since audit #15 and
+    had exactly one consumer — `executive_brief`, which had no route. So the
+    single finding this platform can produce that no single-module tool can
+    ("your Friday complaints fall on your leanest Friday") reached an owner
+    only as one compressed line in the morning brief, or if the Ask model
+    happened to choose the tool. This is that surface.
+
+    Returns [] often and deliberately. `correlations` cannot manufacture a
+    link — both sides must already have cleared their own module's floor —
+    so an empty list means the modules genuinely do not agree on anything,
+    which is the common and correct outcome.
+    """
+    import business_intelligence as bi
+    from models import get_restaurant
+    from ask_cavnar_tools import viewer_restaurant
+    # Built from what THIS login may see, the same way the brief is. A
+    # manager without FOOD_COST_VIEW must not read a margin link.
+    r = viewer_restaurant(get_restaurant(_rid(u)), u)
+    brief = bi.executive_brief(_rid(u), restaurant=r)
+    return {"ok": True,
+            "links": brief.get("links") or [],
+            "fix_first": brief.get("fix_first"),
+            "modules_consulted": brief.get("modules_consulted") or [],
+            "modules_off": brief.get("modules_off") or [],
+            "unanswered": brief.get("unanswered") or []}, 200
+
+
+def _do_good_news(u):
+    """Records, streaks and complaints that stopped.
+
+    The counterpart to /loss-signals: everything else in this product looks
+    for trouble. Filtered by the same rule as goals and outcomes — a manager
+    without FOOD_COST_VIEW is not congratulated on a margin record.
+    """
+    import good_news
+    from models import get_restaurant
+    denied = set() if _sees_food(u) else {"inventory"}
+    items = good_news.all_good_news(_rid(u), today=_local_today(u),
+                                    restaurant=get_restaurant(_rid(u)),
+                                    denied_modules=denied)
+    return {"ok": True, "items": items, "caveat": good_news.CAVEAT}, 200
+
+
+def _do_milestones(u):
+    """Moments worth marking, newest first, plus anything not yet shown.
+
+    `unseen` drives the one-time in-app moment; the client marks it seen so
+    the promise that it appears once is kept across devices — which the
+    localStorage flag it replaces could not do.
+    """
+    import milestones
+    return {"ok": True,
+            "items": milestones.recent(_rid(u), limit=10),
+            "unseen": milestones.recent(_rid(u), limit=3, unseen_only=True)}, 200
+
+
+def _do_milestone_seen(u):
+    import milestones
+    key = (_body().get("key") or "").strip()
+    if not key:
+        return {"ok": False, "error": "Which milestone?"}, 400
+    return {"ok": True, "marked": milestones.mark_seen(_rid(u), key)}, 200
+
+
 def _do_morning_brief(u):
     """This login's own brief — built from what THEY may see, the same way
     it is delivered to them. The send settings are the restaurant's, so only
@@ -522,6 +589,10 @@ _ROUTES = [
     ("/labor/auto-draft", ["GET"], _do_auto_draft_get, "auto_draft_get"),
     ("/labor/auto-draft", ["POST"], _do_auto_draft_set, "auto_draft_set"),
     ("/loss-signals", ["GET"], _do_loss_signals, "loss_signals"),
+    ("/cross-module", ["GET"], _do_cross_module, "cross_module"),
+    ("/good-news", ["GET"], _do_good_news, "good_news"),
+    ("/milestones", ["GET"], _do_milestones, "milestones_list"),
+    ("/milestones/seen", ["POST"], _do_milestone_seen, "milestone_seen"),
     ("/morning-brief", ["GET"], _do_morning_brief, "morning_brief"),
     ("/morning-brief/settings", ["POST"], _do_morning_brief_settings, "morning_brief_settings"),
 ]

@@ -196,6 +196,20 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
                       "text": "Result: " + outcomes.summarise(r),
                       "ask": f"Tell me more about the result of: {r['title']}"})
 
+    # ── what got better on its own ──
+    # outcomes (above) covers what the owner deliberately committed to.
+    # good_news covers what improved without anyone pressing a button —
+    # which, for a restaurant that fixed something because they read it in
+    # one of these briefs, is most of it. One line at most: a brief that
+    # opens with three congratulations is a brief nobody reads to the end.
+    import good_news
+    news = _safe(good_news.all_good_news, restaurant_id, today=today, db_path=db_path,
+                 restaurant=restaurant, denied_modules=set(denied), limit=1) or []
+    for n in news[:1]:
+        lines.append({"key": n["key"], "tone": "good",
+                      "text": n["headline"] + ".",
+                      "ask": f"Tell me more about this: {n['headline']}"})
+
     # ── goals ──
     visible_goals = [g for g in (_safe(goals.progress, restaurant_id, db_path=db_path, today=today) or [])
                      if metric_visible(restaurant, g.get("metric"))]
@@ -285,7 +299,70 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
             lines.append({"key": "today", "tone": "neutral",
                           "text": "Today" + context + ".",
                           "ask": "What should I focus on before service today?"})
+
+    # ── nothing needs you ──
+    #
+    # An empty brief used to mean no push at all (push_text returns None on
+    # an empty list), so a perfect day was rewarded with silence — and
+    # silence is indistinguishable from a dead integration. An owner cannot
+    # tell "all clear" from "Cavnar stopped working", and the second is what
+    # they assume once it has happened twice.
+    #
+    # It has to be earned. Telling an account with no Google connection and
+    # no shifts uploaded that nothing needs them is a lie: nothing was
+    # checked. `_watching` names what was actually read, so the line can only
+    # appear when there was something to read — and it says what, so the
+    # reassurance is verifiable rather than a platitude.
+    if not lines:
+        watching = _watching(restaurant, restaurant_id, denied, db_path)
+        if watching:
+            lines.append({"key": "all_clear", "tone": "good",
+                          "text": "Nothing needs you this morning. "
+                                  + _watching_text(watching) + ".",
+                          "ask": "What are you watching for me right now?"})
     return {"restaurant_id": restaurant_id, "date": today.isoformat(), "lines": lines}
+
+
+def _watching(restaurant, restaurant_id, denied, db_path):
+    """Which modules actually have data to watch, for the all-clear line.
+
+    A module switched on but never fed is NOT watching anything and must not
+    appear here. That distinction is the whole difference between "all
+    clear" and "nothing is connected".
+    """
+    out = []
+    if getattr(restaurant, "module_reviews", 0) and "reviews" not in denied:
+        if (getattr(restaurant, "gmb_refresh_token", None)
+                or getattr(restaurant, "reviews_live", 0)):
+            out.append("reviews")
+    if getattr(restaurant, "module_labor", 0) and "labor" not in denied:
+        conn = get_conn(db_path)
+        try:
+            row = conn.execute("SELECT 1 FROM labor_daily_history WHERE restaurant_id=? "
+                               "AND date >= date('now','-14 days') LIMIT 1",
+                               (restaurant_id,)).fetchone()
+        except Exception:
+            row = None
+        finally:
+            conn.close()
+        if row:
+            out.append("labor")
+    if getattr(restaurant, "module_inventory", 0) and "inventory" not in denied:
+        try:
+            from inventory import load_inventory_for_restaurant
+            _items, is_live = load_inventory_for_restaurant(restaurant_id)
+            if is_live:
+                out.append("food cost")
+        except Exception:
+            pass
+    return out
+
+
+def _watching_text(watching):
+    names = list(watching)
+    if len(names) == 1:
+        return f"I'm watching {names[0]}"
+    return "I'm watching " + ", ".join(names[:-1]) + f" and {names[-1]}"
 
 
 def push_text(brief, restaurant_name):

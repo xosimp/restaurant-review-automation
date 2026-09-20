@@ -155,6 +155,18 @@ def create_client(current_user):
             "module_inventory":_flag("module_inventory"),
             "module_marketing":_flag("module_marketing"),
             "temp_password":   data.get("password",""),
+            # A Place ID IS the reviews connection until Google OAuth is
+            # done — fetcher.fetch_google reads it directly. reviews_live
+            # defaulted to 0 and was settable only from the settings page,
+            # so scheduler.run_daily_fetch's
+            # "WHERE reviews_live=1 OR gmb_refresh_token IS NOT NULL"
+            # skipped every new client until someone remembered the
+            # checkbox. The owner's first session was a working dashboard
+            # with nothing in it, and nothing said why. The Place ID was
+            # already validated against place_id_conflict above, so turning
+            # this on is exactly as safe as the ID that was just accepted.
+            "reviews_live":    1 if ((data.get("google_place_id") or "").strip()
+                                     and _flag("module_reviews", 1)) else 0,
         })
 
         # Auto-fetch menu notes from Google Places if place ID provided
@@ -1639,6 +1651,7 @@ def resend_welcome_email(restaurant_id, current_user):
             module_labor=restaurant.module_labor,
             module_inventory=restaurant.module_inventory,
             module_marketing=restaurant.module_marketing,
+            google_place_id=restaurant.google_place_id,
         )
 
         return jsonify(ok=True, email=restaurant.owner_email)

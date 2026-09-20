@@ -786,6 +786,7 @@ def docusign_webhook():
                         module_labor=int(r.get("module_labor") or 0),
                         module_inventory=int(r.get("module_inventory") or 0),
                         module_marketing=int(r.get("module_marketing") or 0),
+                        google_place_id=r.get("google_place_id"),
                     )
                     # Clear temp password from DB after sending
                     try:

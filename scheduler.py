@@ -1922,6 +1922,14 @@ def scheduler_loop():
                 from strategy_jobs import run_outcome_evaluations
                 _ops.run_job("outcome_evaluations", run_outcome_evaluations)
 
+            # 7am — after outcome evaluations, which is what moves the
+            # measured-dollars figure the savings tiers read. Running it
+            # first would mean a tier crossed today is not noticed until
+            # tomorrow.
+            if _due(now, 7) and _ops.claim_period("milestones", str(today)):
+                from strategy_jobs import run_milestones
+                _ops.run_job("milestones", run_milestones)
+
             # Thursday 6am+ — draft next week's schedule for owners who opted
             # in. A draft in Schedule History; nothing reaches staff.
             if _due(now, 6) and now.weekday() == 3 and _ops.claim_period("auto_draft_schedule", str(today)):
