@@ -566,12 +566,20 @@ def run_daily_fetch():
         # what keeps that true here.
         order = _fetch_order([r["id"] for r in live])
         by_id = {r["id"]: r for r in live}
+
         def _failed(row, e):
             log.error(f"Review cycle failed for restaurant {row['id']}: {e}")
             _ops.capture(e, job="review_fetch", context=f"restaurant_id={row['id']}")
 
         done, ran_out = bounded_map([by_id[rid] for rid in order], _process_restaurant,
                                     FETCH_WORKERS, FETCH_MAX_SECONDS, on_error=_failed)
+        # `done` counts SUCCESSES, so a pass with failures leaves the cursor
+        # short of what it attempted and those restaurants lead the next
+        # pass. That is deliberate — a failed fetch should be retried, and
+        # re-fetching is free (save_reviews only appends on a successful
+        # insert against UNIQUE(restaurant_id, platform, external_id)). It
+        # cannot starve the tail: the cursor still advances by the number
+        # that succeeded, which is the whole list when nothing is wrong.
         _remember_fetch_cursor(order, done)
         if ran_out:
             # Not a failure — a bound working as intended — but the operator
