@@ -757,6 +757,12 @@ def ensure_columns(db_path: str = DB_PATH):
         # The figure a held daily alert fired on, so releasing it after the
         # rush still records what _waste_alert_worsened compares against.
         ("alert_holds", "value", "REAL"),
+        # Engagement, kept SEPARATE from email_log.status so an open does not
+        # overwrite the delivery state. Only populated when open/click
+        # tracking is enabled on the Resend side; no events simply means no
+        # timestamps, never a wrong one.
+        ("email_log", "opened_at", "TEXT"),
+        ("email_log", "clicked_at", "TEXT"),
         # Alert DND / throttle
         ("restaurants", "alert_quiet_start", "TEXT"),
         ("restaurants", "alert_quiet_end",   "TEXT"),
@@ -8212,6 +8218,60 @@ def get_email_suppressions(limit: int = 200, db_path: str = DB_PATH) -> list:
     finally:
         conn.close()
     return [dict(r) for r in rows]
+
+
+def mark_email_engagement(message_id: str, kind: str, db_path: str = DB_PATH) -> bool:
+    """Stamp the first open or click for a sent email.
+
+    FIRST, not latest: "did this land" is the question, and a mail client
+    that re-fetches images on every scroll would otherwise rewrite the
+    timestamp all day. Deliberately not written to `status`, which is the
+    DELIVERY state — an open must not erase the fact that it was delivered.
+
+    Read these as a floor, not a measurement. Apple Mail Privacy Protection
+    pre-fetches images, which counts as an open nobody performed, and a
+    reader with images off is a real read that never registers. Useful for
+    "nobody has opened this type in 30 days"; useless for a precise rate.
+    """
+    column = {"opened": "opened_at", "clicked": "clicked_at"}.get(kind)
+    if not (message_id and column):
+        return False
+    conn = get_conn(db_path)
+    try:
+        cur = conn.execute(
+            f"UPDATE email_log SET {column}=datetime('now') "
+            f"WHERE message_id=? AND {column} IS NULL", (message_id,))
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def email_engagement(restaurant_id: int = None, days: int = 30, db_path: str = DB_PATH) -> list:
+    """[{email_type, sent, opened, clicked}] over the window, busiest first.
+
+    The product could say how many emails it SENT and nothing about whether
+    any were worth sending — the same blind spot notification_opens closed
+    for push.
+    """
+    sql = ("SELECT email_type, COUNT(*) AS sent, "
+           "SUM(CASE WHEN opened_at IS NOT NULL THEN 1 ELSE 0 END) AS opened, "
+           "SUM(CASE WHEN clicked_at IS NOT NULL THEN 1 ELSE 0 END) AS clicked "
+           "FROM email_log WHERE sent_at >= datetime('now', ?) AND status != 'failed'")
+    args = [f"-{int(days)} days"]
+    if restaurant_id is not None:
+        sql += " AND restaurant_id=?"
+        args.append(restaurant_id)
+    sql += " GROUP BY email_type ORDER BY sent DESC"
+    conn = get_conn(db_path)
+    try:
+        rows = [dict(r) for r in conn.execute(sql, args).fetchall()]
+    finally:
+        conn.close()
+    for row in rows:
+        row["open_rate"] = (round(100.0 * (row["opened"] or 0) / row["sent"], 1)
+                            if row["sent"] else None)
+    return rows
 
 
 def mark_email_delivery_event(message_id: str, status: str, detail: str = None, db_path: str = DB_PATH):

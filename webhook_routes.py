@@ -916,6 +916,14 @@ def resend_webhook():
     if status:
         mark_email_delivery_event(message_id, status, detail)
 
+    # Engagement is recorded separately from delivery state — an open must
+    # not erase the fact that the mail was delivered. See
+    # models.mark_email_engagement for why these are a floor, not a rate.
+    engagement = {"email.opened": "opened", "email.clicked": "clicked"}.get(etype)
+    if engagement:
+        from models import mark_email_engagement
+        mark_email_engagement(message_id, engagement)
+
     if etype in _SUPPRESS_EVENTS:
         for addr in recipients:
             suppress_email(addr, _SUPPRESS_EVENTS[etype], detail)

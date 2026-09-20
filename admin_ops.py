@@ -789,9 +789,22 @@ def emails(limit=200):
     daily = _rows(conn, "SELECT substr(sent_at,1,10) AS day, COUNT(*) AS n, SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed FROM email_log WHERE sent_at >= ? GROUP BY day ORDER BY day", (_iso(now - timedelta(days=30)),))
     storms = _rows(conn, "SELECT to_email, COUNT(*) AS n FROM email_log WHERE sent_at >= ? GROUP BY to_email HAVING n >= 8 ORDER BY n DESC", (today,))
     suppressed = _rows(conn, "SELECT * FROM email_suppressions ORDER BY rowid DESC LIMIT 50")
+    # Whether any of it was worth sending. Everything above counts what went
+    # OUT. Read as a floor, not a rate — Apple Mail pre-fetches images (an
+    # open nobody performed) and a reader with images off never registers.
+    engagement = _rows(conn,
+        "SELECT email_type, COUNT(*) AS sent, "
+        "SUM(CASE WHEN opened_at IS NOT NULL THEN 1 ELSE 0 END) AS opened, "
+        "SUM(CASE WHEN clicked_at IS NOT NULL THEN 1 ELSE 0 END) AS clicked "
+        "FROM email_log WHERE sent_at >= ? AND status != 'failed' "
+        "GROUP BY email_type ORDER BY sent DESC", (_iso(now - timedelta(days=30)),))
+    for row in engagement:
+        row["open_rate"] = (round(100.0 * (row["opened"] or 0) / row["sent"], 1)
+                            if row["sent"] else None)
     totals = _one(conn, "SELECT COUNT(*) AS n, SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed FROM email_log WHERE sent_at >= ?", (today,)) or {}
     conn.close()
-    return {"ok": True, "rows": rows, "by_type": by_type, "daily": daily, "storms": storms, "suppressed": suppressed, "today": totals}
+    return {"ok": True, "rows": rows, "by_type": by_type, "daily": daily, "storms": storms,
+            "suppressed": suppressed, "today": totals, "engagement": engagement}
 
 
 def notifications(limit=200):

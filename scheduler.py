@@ -1066,6 +1066,42 @@ def backup_db():
             pass
 
 
+# An owner who has signed in this many times has found their way around.
+# The day-7 email is "here is what you are missing", and sending that to
+# someone using the product daily is the clearest possible signal that
+# nobody is reading what they do.
+ONBOARDING_SETTLED_LOGINS = 3
+
+
+def _onboarding_engagement(restaurant_id):
+    """(logins, days_since_last_login) for this restaurant's own logins.
+
+    Onboarding sent identically to an owner who has never signed in and one
+    who signs in every morning. Both got "here's what you're missing" on
+    day 7.
+    """
+    try:
+        from models import get_conn as _gc
+        conn = _gc()
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) AS logins, MAX(last_login) AS last "
+                "FROM users WHERE restaurant_id=? AND is_admin=0 AND last_login IS NOT NULL",
+                (restaurant_id,)).fetchone()
+        finally:
+            conn.close()
+        if not row or not row["last"]:
+            return 0, None
+        from datetime import datetime as _dt
+        last = _dt.strptime(str(row["last"])[:19].replace("T", " "), "%Y-%m-%d %H:%M:%S")
+        return int(row["logins"] or 0), (_dt.utcnow() - last).days
+    except Exception as e:
+        # Fail toward sending: a settled client receiving one extra tip email
+        # is a smaller failure than a new client receiving no onboarding.
+        log.warning(f"onboarding engagement lookup failed for {restaurant_id}: {e}")
+        return 0, None
+
+
 def run_onboarding_sequence(local_hour: int = None):
     """
     Check all active clients and send the right onboarding email based on days since signup.
@@ -1147,6 +1183,15 @@ def run_onboarding_sequence(local_hour: int = None):
 
         # Day 7 — same windowing rationale as day 2 above.
         elif 7 <= days_since <= 29 and "day_7" not in already_sent:
+            # "Here's what you're missing" to someone who signs in every
+            # morning is the clearest possible sign nobody reads what they
+            # do. Marked sent, not deferred: they are past needing it.
+            _logins, _days_idle = _onboarding_engagement(r.id)
+            if _logins >= ONBOARDING_SETTLED_LOGINS and (_days_idle or 99) <= 7:
+                mark_onboarding_sent(r.id, "day_7")
+                log.info(f"Onboarding day 7 skipped for {r.name} — "
+                         f"{_logins} logins, last {_days_idle}d ago")
+                continue
             try:
                 # Pull actual activity stats for personalization
                 try:

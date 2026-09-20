@@ -109,11 +109,20 @@ def test_a_normal_night_is_named_as_one(db_path, rid):
 
 # ── outcome achieved ────────────────────────────────────────────────────────
 
+def _with_a_phone(monkeypatch, pushed):
+    """An owner who has the app. _reach pushes to them and emails nobody."""
+    monkeypatch.setattr("push.fire_push",
+                        lambda rid_, kind, title, body, **k: pushed.append((title, body)))
+    monkeypatch.setattr("push.get_device_tokens",
+                        lambda *a, **k: [{"user_id": 1, "id": 1}])
+    monkeypatch.setattr("morning_brief.recipients",
+                        lambda *a, **k: [{"id": 1, "email": "erik@x.test"}])
+    monkeypatch.setattr("notify.record_notification", lambda *a, **k: None)
+
+
 def test_only_a_real_win_is_worth_a_notification(db_path, rid, monkeypatch):
     pushed = []
-    monkeypatch.setattr("push.fire_push", lambda *a, **k: pushed.append(a))
-    monkeypatch.setattr("morning_brief.recipients", lambda *a, **k: [{"id": 1}])
-    monkeypatch.setattr("notify.record_notification", lambda *a, **k: None)
+    _with_a_phone(monkeypatch, pushed)
 
     told = strategy_jobs._tell_owners_what_worked([
         {"restaurant_id": rid, "verdict": "improved", "dollars_monthly": 40.0,
@@ -129,10 +138,7 @@ def test_the_biggest_win_is_the_one_told(db_path, rid, monkeypatch):
     """Five 'this worked' pushes on the same morning is how a win becomes
     noise."""
     pushed = []
-    monkeypatch.setattr("push.fire_push",
-                        lambda rid_, kind, title, body, **k: pushed.append((title, body)))
-    monkeypatch.setattr("morning_brief.recipients", lambda *a, **k: [{"id": 1}])
-    monkeypatch.setattr("notify.record_notification", lambda *a, **k: None)
+    _with_a_phone(monkeypatch, pushed)
 
     told = strategy_jobs._tell_owners_what_worked([
         {"restaurant_id": rid, "verdict": "improved", "dollars_monthly": 320.0,
@@ -150,9 +156,35 @@ def test_the_biggest_win_is_the_one_told(db_path, rid, monkeypatch):
     assert "not proven cause" in body
 
 
+def test_an_owner_without_the_app_is_emailed_instead(db_path, rid, monkeypatch):
+    """The win was push-only, so an owner without the app never learned a
+    change had paid off. morning_brief.deliver's push-OR-email pattern is
+    the one this follows."""
+    sent = []
+    monkeypatch.setattr("push.fire_push", lambda *a, **k: pytest.fail("should not push"))
+    monkeypatch.setattr("push.get_device_tokens", lambda *a, **k: [])
+    monkeypatch.setattr("morning_brief.recipients",
+                        lambda *a, **k: [{"id": 1, "email": "erik@x.test"}])
+    monkeypatch.setattr("notify.record_notification", lambda *a, **k: None)
+
+    class _Ok:
+        ok = True
+    monkeypatch.setattr("emails.deliver",
+                        lambda **kw: sent.append(kw["payload"]) or _Ok())
+
+    told = strategy_jobs._tell_owners_what_worked([
+        {"restaurant_id": rid, "verdict": "improved", "dollars_monthly": 900.0,
+         "title": "Cut Tuesday prep", "metric_label": "Labor %"}], db_path)
+
+    assert told == 1 and len(sent) == 1
+    assert "paid off" in sent[0]["subject"]
+    assert sent[0]["preheader"]
+
+
 def test_a_win_with_nobody_to_tell_is_not_sent(db_path, rid, monkeypatch):
     pushed = []
     monkeypatch.setattr("push.fire_push", lambda *a, **k: pushed.append(a))
+    monkeypatch.setattr("push.get_device_tokens", lambda *a, **k: [])
     monkeypatch.setattr("morning_brief.recipients", lambda *a, **k: [])
 
     told = strategy_jobs._tell_owners_what_worked([

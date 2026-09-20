@@ -179,3 +179,85 @@ def test_design_system_governs_email():
     assert "\n## Email\n" in doc
     for rule in ("report_shell", "preheader", "Light mode only", "BRAND"):
         assert rule in doc, f"DESIGN_SYSTEM.md → Email says nothing about {rule}"
+
+
+# ── engagement ──────────────────────────────────────────────────────────────
+
+def test_an_open_does_not_erase_the_delivery_state(db_path):
+    """status is the DELIVERY state. Writing "opened" into it would lose the
+    fact that it was delivered, and the two answer different questions."""
+    models.init_email_log(db_path=db_path)
+    models.log_email(1, "digest", "erik@x.test", "Your week", db_path=db_path,
+                     message_id="m-1", status="delivered")
+    assert models.mark_email_engagement("m-1", "opened", db_path=db_path) is True
+
+    conn = models.get_conn(db_path)
+    row = conn.execute("SELECT status, opened_at, clicked_at FROM email_log "
+                       "WHERE message_id='m-1'").fetchone()
+    conn.close()
+    assert row["status"] == "delivered"
+    assert row["opened_at"] and row["clicked_at"] is None
+
+
+def test_only_the_first_open_is_recorded(db_path):
+    """A client that re-fetches images on every scroll would otherwise
+    rewrite the timestamp all day."""
+    models.init_email_log(db_path=db_path)
+    models.log_email(1, "digest", "erik@x.test", "s", db_path=db_path, message_id="m-2")
+    assert models.mark_email_engagement("m-2", "opened", db_path=db_path) is True
+    assert models.mark_email_engagement("m-2", "opened", db_path=db_path) is False
+
+
+def test_engagement_rate_is_per_type(db_path):
+    models.init_email_log(db_path=db_path)
+    for i in range(4):
+        models.log_email(1, "digest", "erik@x.test", "s", db_path=db_path,
+                         message_id=f"d{i}")
+    models.mark_email_engagement("d0", "opened", db_path=db_path)
+    models.log_email(1, "send_2fa_code", "erik@x.test", "s", db_path=db_path, message_id="t0")
+
+    rows = {r["email_type"]: r for r in models.email_engagement(1, db_path=db_path)}
+    assert rows["digest"]["sent"] == 4 and rows["digest"]["opened"] == 1
+    assert rows["digest"]["open_rate"] == 25.0
+    assert rows["send_2fa_code"]["opened"] == 0
+
+
+def test_a_bad_engagement_kind_is_refused(db_path):
+    """The column name is interpolated into SQL — it may only ever come from
+    the fixed map, never from the webhook payload."""
+    models.init_email_log(db_path=db_path)
+    models.log_email(1, "digest", "e@x.test", "s", db_path=db_path, message_id="m-3")
+    assert models.mark_email_engagement("m-3", "status='x'--", db_path=db_path) is False
+
+
+# ── onboarding ──────────────────────────────────────────────────────────────
+
+def test_day_seven_is_skipped_for_an_owner_already_using_it(db_path, monkeypatch):
+    """"Here's what you're missing" to someone who signs in every morning is
+    the clearest possible sign nobody reads what they send."""
+    import datetime as _dt
+    from auth import create_user, init_auth
+    init_auth(db_path=db_path)
+    rid = models.create_restaurant(
+        models.Restaurant(name="Busy Co", owner_email="o@x.test"), db_path=db_path)
+    uid = create_user(rid, "owner", "o@x.test", "correct-horse", db_path=db_path)
+
+    real = models.get_conn
+    monkeypatch.setattr(scheduler, "log", scheduler.log)
+    monkeypatch.setattr(models, "get_conn", lambda *a, **k: real(db_path))
+
+    conn = real(db_path)
+    conn.execute("UPDATE users SET last_login=? WHERE id=?",
+                 (_dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), uid))
+    conn.commit(); conn.close()
+
+    logins, days_idle = scheduler._onboarding_engagement(rid)
+    assert logins >= 1 and days_idle == 0
+
+
+def test_engagement_lookup_fails_toward_sending(monkeypatch):
+    """A settled client getting one extra tip email is a smaller failure
+    than a new client getting no onboarding at all."""
+    monkeypatch.setattr(models, "get_conn",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("db down")))
+    assert scheduler._onboarding_engagement(1) == (0, None)
