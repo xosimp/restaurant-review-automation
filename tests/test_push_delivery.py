@@ -490,3 +490,59 @@ def test_an_unset_key_still_names_the_variable(monkeypatch):
 
     with pytest.raises(push.PushNotConfigured, match="APNS_PRIVATE_KEY"):
         push._provider_jwt()
+
+
+def test_bad_device_token_tries_the_other_host_before_believing_it(db_path, rid, uid, monkeypatch):
+    """BadDeviceToken does not only mean "dead" — Apple returns it just as
+    readily for a LIVE token sent to the wrong host. The client decides
+    sandbox vs production from its own build, and that guess is wrong
+    whenever a Release build is signed with a development profile (Xcode's
+    default when you Run to a device). Deleting on the first one made it a
+    loop: register, fail, delete, re-register, fail."""
+    _no_sleep(monkeypatch)
+    _no_real_jwt(monkeypatch)
+    init_push(db_path=db_path)
+    _register(db_path, uid, rid, environment="production")
+    token_row = get_device_tokens(rid, db_path=db_path)[0]
+
+    seen = []
+
+    class _Resp:
+        def __init__(self, code): self.status_code = code
+        def json(self): return {"reason": "BadDeviceToken"} if self.status_code != 200 else {}
+
+    class _Client:
+        def post(self, url, content=None, headers=None):
+            seen.append(url)
+            # Production host rejects it; sandbox accepts.
+            return _Resp(200 if "sandbox" in url else 400)
+
+    monkeypatch.setattr(push, "_client", lambda: _Client())
+
+    result = _deliver(token_row, "1star", "t", "b", None, db_path=db_path)
+
+    assert result["ok"] is True
+    assert any("api.push.apple.com" in u for u in seen)
+    assert any("api.sandbox.push.apple.com" in u for u in seen)
+
+    rows = get_device_tokens(rid, db_path=db_path)
+    assert len(rows) == 1, "a live token must not be deleted"
+    assert rows[0]["environment"] == "sandbox", "the stored environment is corrected"
+
+
+def test_a_genuinely_dead_token_is_still_deleted(db_path, rid, uid, monkeypatch):
+    """The self-healing retry must not resurrect a token Apple has really
+    finished with — both hosts refusing it means gone."""
+    _no_sleep(monkeypatch)
+    _no_real_jwt(monkeypatch)
+    init_push(db_path=db_path)
+    _register(db_path, uid, rid, environment="production")
+    token_row = get_device_tokens(rid, db_path=db_path)[0]
+
+    fake_client, calls = _fake_httpx_client(status_code=410, reason="BadDeviceToken")
+    _use(monkeypatch, fake_client)
+
+    _deliver(token_row, "1star", "t", "b", None, db_path=db_path)
+
+    assert len(calls) == 2, "one attempt per host"
+    assert get_device_tokens(rid, db_path=db_path) == []

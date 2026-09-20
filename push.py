@@ -442,7 +442,8 @@ def _deliver(device_token_row, alert_type, title, body, data, db_path=DB_PATH):
         "cavnar": {"alert_type": alert_type, "priority": priority, **(data or {})},
     }
     payload_bytes = json.dumps(payload, separators=(",", ":")).encode()
-    url = f"https://{_apns_host(device_token_row['environment'])}/3/device/{device_token_row['apns_token']}"
+    environment = device_token_row["environment"]
+    url = f"https://{_apns_host(environment)}/3/device/{device_token_row['apns_token']}"
     expiry = int(time.time()) + _EXPIRY_SECONDS.get(priority, 12 * 3600)
     # Computed ONCE, outside the retry loop. Its whole job is to be stable
     # across the retries of one alert — a client-side timeout often means
@@ -496,6 +497,47 @@ def _deliver(device_token_row, alert_type, title, body, data, db_path=DB_PATH):
             print(f"[push] delivery error (token={device_token_row['apns_token'][:12]}...): {e}")
             status = 0
             verdict = "provider"
+
+    # BadDeviceToken does not only mean "this token is dead" — Apple returns
+    # it just as readily for a LIVE token sent to the wrong host. The client
+    # decides sandbox vs production from its own build, and that guess is
+    # wrong whenever a Release build is signed with a development profile
+    # (Xcode's default when you Run to a device), which yields a sandbox
+    # token from a build that reports itself as production.
+    #
+    # Deleting on the first BadDeviceToken made that unrecoverable in a loop:
+    # register, fail, delete, re-register on next launch, fail again. So try
+    # the other host once before believing Apple, and correct the stored
+    # environment when it works.
+    if not ok and error == "BadDeviceToken":
+        other = "sandbox" if environment == "production" else "production"
+        alt_url = f"https://{_apns_host(other)}/3/device/{device_token_row['apns_token']}"
+        try:
+            resp = _client().post(alt_url, content=payload_bytes, headers={
+                "authorization": f"bearer {_provider_jwt()}",
+                "apns-topic": _bundle_id(),
+                "apns-push-type": "alert",
+                "apns-collapse-id": collapse_id,
+                "apns-priority": "5" if priority >= P4_SUMMARY else "10",
+                "apns-expiration": str(expiry),
+                "content-type": "application/json",
+            })
+            attempts += 1
+            if resp.status_code == 200:
+                ok, status, error, verdict = True, 200, None, None
+                environment = other
+                try:
+                    conn = get_conn(db_path)
+                    conn.execute("UPDATE device_tokens SET environment=? WHERE id=?",
+                                 (other, device_token_row["id"]))
+                    conn.commit()
+                    conn.close()
+                except Exception:
+                    pass
+                print(f"[push] token {device_token_row['id']} was registered as "
+                      f"{device_token_row['environment']}, actually {other} — corrected")
+        except Exception as e:
+            print(f"[push] alternate-host retry failed: {e}")
 
     if not ok and verdict == "provider":
         _alarm_provider_failure(error, db_path)

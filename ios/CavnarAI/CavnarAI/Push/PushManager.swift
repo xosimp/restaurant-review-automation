@@ -156,14 +156,48 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
 
     func didRegister(deviceToken: Data) {
         let tokenString = deviceToken.map { String(format: "%02x", $0) }.joined()
-        #if DEBUG
-        let environment = "sandbox"
-        #else
-        let environment = "production"
-        #endif
-        pendingToken = (tokenString, environment)
+        pendingToken = (tokenString, Self.apnsEnvironment)
         Task { await flushPendingToken() }
     }
+
+    /// Which APNs host this token belongs to, read from the entitlement that
+    /// actually decides it.
+    ///
+    /// This was `#if DEBUG`, on the assumption that a build configuration
+    /// tracks its aps-environment. It does not. The entitlement comes from
+    /// the PROVISIONING PROFILE, and Xcode signs with a development profile
+    /// when you Run to a device — including a Release build. That yields a
+    /// sandbox token from a build that confidently reports "production", the
+    /// backend sends it to api.push.apple.com, and Apple answers
+    /// BadDeviceToken. Which reads exactly like a dead device.
+    ///
+    /// embedded.mobileprovision is the profile the app was actually signed
+    /// with, so its aps-environment is the truth. Simulator builds have no
+    /// profile; they fall back to the build configuration, which is right
+    /// there because the simulator cannot receive remote push anyway.
+    static let apnsEnvironment: String = {
+        if let url = Bundle.main.url(forResource: "embedded", withExtension: "mobileprovision"),
+           let data = try? Data(contentsOf: url),
+           let text = String(data: data, encoding: .isoLatin1),
+           let start = text.range(of: "<?xml"),
+           let end = text.range(of: "</plist>") {
+            let plist = String(text[start.lowerBound..<end.upperBound])
+            if let plistData = plist.data(using: .isoLatin1),
+               let parsed = try? PropertyListSerialization.propertyList(
+                   from: plistData, options: [], format: nil) as? [String: Any],
+               let entitlements = parsed["Entitlements"] as? [String: Any],
+               let aps = entitlements["aps-environment"] as? String {
+                // Apple spells it "development"; APNs hosts are named
+                // sandbox/production, which is what device_tokens stores.
+                return aps == "production" ? "production" : "sandbox"
+            }
+        }
+        #if DEBUG
+        return "sandbox"
+        #else
+        return "production"
+        #endif
+    }()
 
     private struct DeviceTokenBody: Encodable {
         let apnsToken: String
@@ -209,13 +243,7 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
         registeredToken = nil
     }
 
-    private var currentEnvironment: String {
-        #if DEBUG
-        "sandbox"
-        #else
-        "production"
-        #endif
-    }
+    private var currentEnvironment: String { Self.apnsEnvironment }
 
     /// Show the banner even while the app is open — an owner mid-task
     /// should still see "1★ review received" rather than it silently
