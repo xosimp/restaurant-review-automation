@@ -5616,6 +5616,14 @@ def mobile_send_referral(current_user):
     return _admin.send_referral.__wrapped__(current_user=current_user)
 
 
+@mobile_bp.route("/home/dismiss", methods=["POST"])
+@mobile_login_required
+def mobile_home_dismiss(current_user):
+    """Twin of /api/home/dismiss: hide (two weeks), done, not for us. The
+    web has had all three; the phone could only Track."""
+    return _capi.home_dismiss_api.__wrapped__(current_user=current_user)
+
+
 @mobile_bp.route("/account/dismiss-onboarding", methods=["POST"])
 @mobile_login_required
 def mobile_dismiss_onboarding(current_user):

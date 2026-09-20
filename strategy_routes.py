@@ -263,6 +263,15 @@ def _do_value(u):
     # dollars straight back by subtraction.
     denied = set() if _metric_visible(u, "food_cost_pct") else {"inventory"}
     out = value_delivered.breakdown(rid, denied_modules=denied)
+    # Distinct work since sign-up. Needs no button and carries no dollars,
+    # so it is not filtered by module permission — a manager may know the
+    # product drafted 200 replies.
+    try:
+        led = value_delivered.ledger(rid)
+        out["ledger"] = dict(led, lines=value_delivered.ledger_lines(led))
+    except Exception as e:
+        import ops
+        ops.capture(e, job="value_ledger", context=f"restaurant_id={rid}")
 
     # The audit comparison is owner-level: it carries whole-business dollars
     # and what Will quoted at the table.

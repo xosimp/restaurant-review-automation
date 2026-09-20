@@ -21,14 +21,18 @@ struct HomeRecommendations: View {
     var onOpenModule: (String) -> Void
 
     @State private var toast: String?
+    /// Keys answered in this session, so the card drops out without a
+    /// reload.
+    @State private var answered: Set<String> = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HomeSectionHeader(kicker: "Worth your time", title: "Cavnar recommends")
+            HomeSectionHeader(kicker: "Worth your time", title: "Cavnar AI recommends")
             VStack(spacing: 0) {
-                ForEach(Array(recommendations.prefix(3).enumerated()), id: \.element.id) { index, rec in
+                let shown = recommendations.filter { !answered.contains($0.key) }.prefix(3)
+                ForEach(Array(shown.enumerated()), id: \.element.id) { index, rec in
                     row(rec, number: index + 1,
-                        showsDivider: index < min(recommendations.count, 3) - 1)
+                        showsDivider: index < shown.count - 1)
                 }
             }
             .cavnarCard()
@@ -79,6 +83,23 @@ struct HomeRecommendations: View {
                             } label: {
                                 Text("Open \(module.capitalized)")
                                     .font(.cavnarBody(13, weight: 600))
+                                    .foregroundStyle(Color.cavnarInk3)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        Spacer(minLength: 0)
+                        // Two answers that are not "hide for a fortnight".
+                        ForEach(["done", "not_for_us"], id: \.self) { kind in
+                            Button {
+                                Haptic.light()
+                                Task {
+                                    if let message = await viewModel.answer(rec, kind: kind) {
+                                        withAnimation { answered.insert(rec.key); toast = message }
+                                    }
+                                }
+                            } label: {
+                                Text(kind == "done" ? "Done" : "Not for us")
+                                    .font(.cavnarBody(12.5, weight: 600))
                                     .foregroundStyle(Color.cavnarInk3)
                             }
                             .buttonStyle(.plain)

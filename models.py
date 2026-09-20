@@ -461,6 +461,7 @@ class Restaurant:
     alert_extra_emails: Optional[str] = None # comma list; alert + digest emails also go here
     push_sound: int                  = 1     # 0 = silent pushes
     auto_approve_5star: int          = 0     # auto-approve (and post) drafted 5-star responses
+    auto_approve_4star: int          = 0     # ...and 4-star, under the same cap and the same urgency gate
     auto_approve_daily_cap: int      = 5
     auto_approve_paused: int         = 0     # kill switch — keeps the rule configured but off
     open_times_json: Optional[str]   = None  # {"Monday":"11:00am",...}; close_times_json already exists
@@ -1057,6 +1058,7 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE restaurants ADD COLUMN alert_extra_emails TEXT",
         "ALTER TABLE restaurants ADD COLUMN push_sound INTEGER DEFAULT 1",
         "ALTER TABLE restaurants ADD COLUMN auto_approve_5star INTEGER DEFAULT 0",
+        "ALTER TABLE restaurants ADD COLUMN auto_approve_4star INTEGER DEFAULT 0",
         "ALTER TABLE restaurants ADD COLUMN auto_approve_daily_cap INTEGER DEFAULT 5",
         "ALTER TABLE restaurants ADD COLUMN auto_approve_paused INTEGER DEFAULT 0",
         "ALTER TABLE restaurants ADD COLUMN open_times_json TEXT",
@@ -3138,7 +3140,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "last_active_tab","last_activity","owner_name","owner_phone","digest_day","digest_enabled","menu_notes","menu_url","skip_holidays","custom_competitors",
         "two_fa_enabled","two_fa_code","two_fa_expires","two_fa_device_token","two_fa_pending","two_fa_method","login_notify","staff_signin_notify","marketing_emails_opt_out","monthly_review_enabled","timezone","onboarding_dismissed",
         "alert_health_bypass_quiet","alert_food_waste","alert_ai_visibility_drop","alert_extra_emails","push_sound",
-        "auto_approve_5star","auto_approve_daily_cap","auto_approve_paused","open_times_json",
+        "auto_approve_5star","auto_approve_4star","auto_approve_daily_cap","auto_approve_paused","open_times_json",
         "response_language","tone_preset","data_retention_months",
         "toast_client_id","toast_client_secret","toast_restaurant_guid",
         "rpower_token","rpower_cg","rpower_store_mid","rpower_store_name",
@@ -3397,6 +3399,7 @@ def _restaurant_from_row(row) -> Restaurant:
         alert_extra_emails=row["alert_extra_emails"] if "alert_extra_emails" in row.keys() else None,
         push_sound=row["push_sound"] if "push_sound" in row.keys() and row["push_sound"] is not None else 1,
         auto_approve_5star=row["auto_approve_5star"] if "auto_approve_5star" in row.keys() else 0,
+        auto_approve_4star=row["auto_approve_4star"] if "auto_approve_4star" in row.keys() else 0,
         auto_approve_daily_cap=row["auto_approve_daily_cap"] if "auto_approve_daily_cap" in row.keys() and row["auto_approve_daily_cap"] is not None else 5,
         auto_approve_paused=row["auto_approve_paused"] if "auto_approve_paused" in row.keys() else 0,
         open_times_json=row["open_times_json"] if "open_times_json" in row.keys() else None,
@@ -7860,7 +7863,7 @@ def count_auto_approved_today(restaurant_id: int, db_path: str = DB_PATH) -> int
     return int(row["n"]) if row else 0
 
 
-def auto_approve_candidates(restaurant_id: int, db_path: str = DB_PATH) -> list:
+def auto_approve_candidates(restaurant_id: int, db_path: str = DB_PATH, ratings=(5,)) -> list:
     """Drafted, unapproved 5-star reviews — the only thing the auto-approve
     rule is ever allowed to touch.
 
@@ -7876,14 +7879,14 @@ def auto_approve_candidates(restaurant_id: int, db_path: str = DB_PATH) -> list:
     conn = get_conn(db_path)
     rows = conn.execute("""
         SELECT id, draft_response FROM reviews
-        WHERE restaurant_id=? AND rating=5 AND response_status='drafted'
+        WHERE restaurant_id=? AND rating IN ({placeholders}) AND response_status='drafted'
           AND draft_response IS NOT NULL AND deleted_at IS NULL
           AND COALESCE(urgency, 'normal') != 'high'
           -- A draft flagged for stating an action the restaurant may not
           -- have taken is exactly what must not be published unread.
           AND COALESCE(draft_needs_review, 0) = 0
         ORDER BY fetched_at ASC
-    """, (restaurant_id,)).fetchall()
+    """.replace("{placeholders}", ",".join("?" * len(ratings))), (restaurant_id, *ratings)).fetchall()
     conn.close()
     return [{"id": r["id"], "draft_response": r["draft_response"]} for r in rows]
 
@@ -7951,7 +7954,7 @@ def build_settings_export_json(restaurant_id: int, db_path: str = DB_PATH) -> st
         "alert_1star", "alert_2star", "alert_3star", "alert_health", "alert_neg_spike", "alert_negative_trend",
         "alert_no_response", "alert_5star", "alert_labor_over", "alert_food_waste", "alert_ai_visibility_drop",
         "alert_health_bypass_quiet", "alert_extra_emails", "push_sound", "urgent_via_email", "urgent_via_sms",
-        "alert_quiet_start", "alert_quiet_end", "auto_approve_5star", "auto_approve_daily_cap",
+        "alert_quiet_start", "alert_quiet_end", "auto_approve_5star", "auto_approve_4star", "auto_approve_daily_cap",
         "auto_approve_paused", "data_retention_months", "two_fa_enabled", "two_fa_method",
     ]
     return _json.dumps({k: getattr(r, k, None) for k in keep}, indent=2, default=str)

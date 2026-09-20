@@ -42,6 +42,62 @@ CREATE TABLE IF NOT EXISTS home_dismissals (
 """
 
 
+def _safe_readiness(rid, restaurant, r, rstats, labor_live, inv_live, mkt):
+    try:
+        return readiness(rid, restaurant, r, rstats, labor_live, inv_live, mkt)
+    except Exception as e:
+        print(f"[home] readiness unavailable: {e}")
+        return None
+
+
+def readiness(rid, restaurant, r, rstats, labor_live, inv_live, mkt):
+    """What is connected, and what the product can therefore measure.
+
+    admin_ops computes completeness and churn risk for Will; the owner had
+    no equivalent, so a thin dashboard read as a thin product rather than a
+    missing count. Per module: connected (data is flowing), what is
+    measurable right now (metrics.trailing has a value), and — when it is
+    not — the one action that would light it up. Never a score: a number
+    here would be a grade on the owner, and the point is the next step.
+    """
+    import metrics
+    mods = []
+    def measurable(keys):
+        out = []
+        for k in keys:
+            try:
+                if metrics.trailing(rid, k)["value"] is not None:
+                    out.append(metrics.describe(k)["label"])
+            except Exception:
+                pass
+        return out
+    if getattr(restaurant, "module_reviews", 0):
+        connected = bool(r.get("gmb_refresh_token") or r.get("reviews_live"))
+        mods.append({"key": "reviews", "label": "Reviews", "connected": connected,
+                     "measurable": measurable(["avg_rating"]) if connected else [],
+                     "next": None if connected else "Connect Google in Account",
+                     "module": "account"})
+    if getattr(restaurant, "module_labor", 0):
+        mods.append({"key": "labor", "label": "Labor", "connected": bool(labor_live),
+                     "measurable": measurable(["labor_pct", "sales"]) if labor_live else [],
+                     "next": None if labor_live else "Sync your POS or upload a shift export",
+                     "module": "labor"})
+    if getattr(restaurant, "module_inventory", 0):
+        mods.append({"key": "inventory", "label": "Food Cost", "connected": bool(inv_live),
+                     "measurable": measurable(["food_cost_pct", "weekly_waste"]) if inv_live else [],
+                     "next": None if inv_live else "Enter a first count",
+                     "module": "inventory"})
+    if getattr(restaurant, "module_marketing", 0):
+        posting = bool((mkt or {}).get("last_at"))
+        mods.append({"key": "marketing", "label": "Marketing", "connected": posting,
+                     "measurable": [], "next": None if posting else "Generate a first post",
+                     "module": "marketing"})
+    on = [m for m in mods if m["connected"]]
+    return {"modules": mods, "connected": len(on), "total": len(mods),
+            "measurable": sorted({x for m in on for x in m["measurable"]}),
+            "complete": all(m["connected"] for m in mods) if mods else False}
+
+
 def _dismissed_keys(conn, rid):
     try:
         conn.execute(_DISMISS_SQL)
@@ -50,20 +106,33 @@ def _dismissed_keys(conn, rid):
         return {}
 
 
-def dismiss(rid, key, kind="recommendation", user_id=None, days=_DISMISS_DAYS):
+# How long each kind of dismissal holds. "Hide" comes back in a fortnight if
+# still true — the retention audit counted a rejected recommendation
+# resurfacing nine times in six months with no way to say why. "Done" and
+# "not for us" are answers, and an answer should not be asked again.
+_DISMISS_DAYS_BY_KIND = {"recommendation": _DISMISS_DAYS, "done": 3650, "not_for_us": 3650}
+DISMISS_KINDS = tuple(_DISMISS_DAYS_BY_KIND)
+
+
+def dismiss(rid, key, kind="recommendation", user_id=None, days=None):
     """Hide one recommendation for this restaurant. Keys carry their subject
     ("trim_day:Monday", "cut_waste:Salmon Fillet"), so a different day or
-    item is a new recommendation and comes through."""
+    item is a new recommendation and comes through.
+
+    kind: recommendation (two weeks) | done | not_for_us (effectively for
+    good). Returns the row's expiry so the client can say which."""
     key = (key or "").strip()[:120]
     if not key:
         return {"ok": False, "error": "Missing key"}
+    kind = kind if kind in _DISMISS_DAYS_BY_KIND else "recommendation"
+    days = days or _DISMISS_DAYS_BY_KIND[kind]
     conn = get_conn()
     conn.execute(_DISMISS_SQL)
     conn.execute("INSERT INTO home_dismissals (restaurant_id, key, kind, dismissed_by, expires_at) VALUES (?,?,?,?, datetime('now', ?))",
                  (rid, key, kind, user_id, f"+{int(days)} days"))
     conn.commit(); conn.close()
     invalidate(rid)
-    return {"ok": True, "key": key, "days": int(days)}
+    return {"ok": True, "key": key, "kind": kind, "days": int(days)}
 
 
 def undismiss(rid, key):
@@ -892,8 +961,11 @@ def _build(current_user):
         "waste": ([{"item": w.get("item"), "cost": float(w.get("waste_cost") or 0)} for w in (inv.get("waste_items") or [])[:5]] if inv_live else []),
     }
 
+    readiness = _safe_readiness(rid, restaurant, r, rstats, labor_live, inv_live, mkt)
+
     payload = {
         "ok": True,
+        "readiness": readiness,
         "charts": charts,
         "generated_at": _iso(now),
         "local_now": local_now.isoformat(),

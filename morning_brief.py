@@ -300,6 +300,27 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
                           "text": "Today" + context + ".",
                           "ask": "What should I focus on before service today?"})
 
+    # ── one thing the reviews alone can say ──
+    # A reviews-only brief had three possible lines and the retention audit
+    # put the week-5 engagement drop on exactly that repetition. Rotate one
+    # read from review_intelligence by weekday, so Tuesday's brief is not
+    # Monday's with the date changed. Each is measured; each carries an ask.
+    if getattr(restaurant, "module_reviews", 0) and "reviews" not in denied:
+        extra = _safe(_review_variety, restaurant_id, today, db_path)
+        if extra:
+            lines.append(extra)
+
+    # ── what another module would let me say ──
+    # Mondays only, and only when something real is off: the brief already
+    # knows which modules are not on the plan (business_intelligence's
+    # modules_off) and never said what one would add. Phrased as what the
+    # product could measure, not as a pitch — and never on a day the brief
+    # is already long.
+    if today.weekday() == 0 and len(lines) <= 4:
+        unlock = _safe(_unlock_line, restaurant, eb)
+        if unlock:
+            lines.append(unlock)
+
     # ── nothing needs you ──
     #
     # An empty brief used to mean no push at all (push_text returns None on
@@ -321,6 +342,68 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
                                   + _watching_text(watching) + ".",
                           "ask": "What are you watching for me right now?"})
     return {"restaurant_id": restaurant_id, "date": today.isoformat(), "lines": lines}
+
+
+_UNLOCK = {
+    "labor": ("With Labor connected I could tell you which day runs leanest against your "
+              "complaints, and what a schedule built to your target would save.",
+              "What would the Labor module let you see for my restaurant?"),
+    "food_cost": ("With Food Cost connected I could tell you which item is quietly the biggest "
+                  "line in last week's waste, and what your prime cost is doing month to month.",
+                  "What would the Food Cost module let you see for my restaurant?"),
+    "marketing": ("With Marketing connected I could draft this week's post in your voice from "
+                  "the reviews that came in.",
+                  "What would the Marketing module do for my restaurant?"),
+}
+
+
+def _unlock_line(restaurant, eb):
+    off = (eb or {}).get("modules_off") or []
+    for m in ("labor", "food_cost", "marketing"):
+        if m in off and m in _UNLOCK:
+            text, ask = _UNLOCK[m]
+            return {"key": f"unlock:{m}", "tone": "neutral", "text": text, "ask": ask}
+    return None
+
+
+def _review_variety(restaurant_id, today, db_path):
+    """One rotating line from review_intelligence, by weekday. Returns None
+    when the read has nothing measured — an empty read must not become a
+    sentence. Shapes are review_intelligence's own: rating_trend carries
+    direction/first/latest; daypart_breakdown a by_daypart list, worst
+    first, with negative_pct withheld under the floor; severity_breakdown
+    tiers ordered most-severe first."""
+    import review_intelligence as ri
+    wd = today.weekday()
+    if wd in (1, 4):                                    # Tue, Fri: the trend
+        t = ri.rating_trend(restaurant_id, weeks=8, db_path=db_path) or {}
+        d = t.get("direction")
+        if d in ("up", "down") and t.get("first") is not None and t.get("latest") is not None:
+            return {"key": "rv:trend", "tone": "good" if d == "up" else "bad",
+                    "text": f"Your weekly rating has been {'climbing' if d == 'up' else 'slipping'} "
+                            f"over the last 8 weeks — {t['first']:.1f} to {t['latest']:.1f}.",
+                    "ask": "What is driving my rating trend?"}
+    if wd in (2, 5):                                    # Wed, Sat: dayparts
+        d = ri.daypart_breakdown(restaurant_id, db_path=db_path) or {}
+        for e in (d.get("by_daypart") or []):
+            if e.get("negative_pct") is not None and e["negative_pct"] >= 30:
+                name = str(e.get("daypart") or "").replace("_", " ")
+                return {"key": "rv:daypart", "tone": "bad",
+                        "text": f"{name.capitalize()} draws the most complaints — "
+                                f"{e['negative_pct']}% of its {e['total']} reviews are negative.",
+                        "ask": f"What are guests saying about {name}?"}
+            break                                        # sorted worst first
+    if wd == 3:                                         # Thu: severity
+        sv = ri.severity_breakdown(restaurant_id, db_path=db_path) or {}
+        for tier in (sv.get("tiers") or []):
+            if tier.get("total"):
+                return {"key": "rv:severity", "tone": "neutral",
+                        "text": f"Of the complaints in the last {sv.get('days', 90)} days, "
+                                f"{tier['total']} {'was' if tier['total'] == 1 else 'were'} "
+                                f"{tier.get('label', tier.get('key'))}"
+                                + (f" — {tier['open']} still open." if tier.get("open") else "."),
+                        "ask": "Which complaints should I take most seriously?"}
+    return None
 
 
 def _watching(restaurant, restaurant_id, denied, db_path):

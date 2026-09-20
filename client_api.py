@@ -6774,13 +6774,16 @@ def _do_auto_approve(rid, data, current_user=None):
         cap = 5
     enabled = bool((data or {}).get("enabled"))
     paused = bool((data or {}).get("paused"))
+    include_4star = bool((data or {}).get("include_4star"))
     update_restaurant(rid, {
         "auto_approve_5star": int(enabled),
+        "auto_approve_4star": int(enabled and include_4star),
         "auto_approve_daily_cap": cap,
         "auto_approve_paused": int(paused),
     })
     log_account_event(rid, "auto_approve_changed", current_user,
-                      detail=("on" if enabled else "off") + (", paused" if paused else "") + f", cap {cap}/day")
+                      detail=("on" if enabled else "off") + (" incl. 4-star" if enabled and include_4star else "")
+                             + (", paused" if paused else "") + f", cap {cap}/day")
     return {"ok": True}, 200
 
 
@@ -6910,6 +6913,7 @@ def _account_settings_payload(rid):
         "ok": True,
         "auto_approve": {
             "enabled": bool(getattr(r, "auto_approve_5star", 0)),
+            "include_4star": bool(getattr(r, "auto_approve_4star", 0)),
             "daily_cap": int(getattr(r, "auto_approve_daily_cap", 5) or 5),
             "paused": bool(getattr(r, "auto_approve_paused", 0)),
         },
@@ -7108,6 +7112,13 @@ def send_supplier_order(current_user):
         except Exception as e:
             failed.append({"supplier_email": group["supplier_email"], "error": _safe_err(e)})
             continue
+        try:
+            import outcomes as _oc
+            _oc.observe(rid, "supplier_order_sent", detail=group.get("supplier_name") or None,
+                        user_id=current_user.get("id"))
+        except Exception as _oe:
+            import ops as _ops_o
+            _ops_o.capture(_oe, job="observe_order", context=f"restaurant_id={rid}")
         try:
             from emails import send_supplier_order_email
             send_supplier_order_email(
@@ -7377,6 +7388,16 @@ def publish_schedule_api(current_user):
     contacts = {c["employee_name"].lower(): c for c in get_staff_contacts(rid)}
     base_url = (os.getenv("BASE_URL") or "https://dashboard.cavnar.ai").rstrip("/")
 
+    # The owner is acting. Measure what it does to labor % over the next
+    # window, whether or not they ever pressed Track (outcomes.observe).
+    try:
+        import outcomes as _oc
+        _oc.observe(rid, "schedule_published", detail=f"week of {row['week_start']}",
+                    user_id=current_user.get("id"))
+    except Exception as _oe:
+        import ops as _ops_o
+        _ops_o.capture(_oe, job="observe_schedule", context=f"restaurant_id={rid}")
+
     sent, unreachable, failed = [], [], []
     for name in employees_in_schedule(row["schedule_csv"]):
         contact = contacts.get(name.lower()) or {}
@@ -7482,7 +7503,25 @@ def home_dismiss_api(current_user):
         return jsonify(ok=False, error="Missing key"), 400
     if data.get("undo"):
         return jsonify(**home_brief.undismiss(current_user["restaurant_id"], key))
-    return jsonify(**home_brief.dismiss(current_user["restaurant_id"], key, kind=(data.get("kind") or "recommendation")[:40], user_id=current_user.get("id")))
+    kind = (data.get("kind") or "recommendation")[:40]
+    out = home_brief.dismiss(current_user["restaurant_id"], key, kind=kind, user_id=current_user.get("id"))
+    # "Done" on a recommendation that names a metric is an owner saying
+    # they acted. That is exactly what Track this records, so record it:
+    # source "observed", baseline now, re-measured when the window closes.
+    # Nothing is invented — a recommendation with no honest metric records
+    # nothing, the same rule the Track button follows.
+    if out.get("ok") and kind == "done" and data.get("metric") and data.get("title"):
+        try:
+            import outcomes
+            if outcomes.known_metric(data["metric"]):
+                o = outcomes.record(current_user["restaurant_id"], "observed", key,
+                                    str(data["title"])[:200], data["metric"],
+                                    user_id=current_user.get("id"))
+                out["outcome"] = {"id": o.get("id"), "evaluate_on": o.get("evaluate_on")}
+        except Exception as e:
+            import ops
+            ops.capture(e, job="home_dismiss_done", context=f"key={key}")
+    return jsonify(**out)
 
 
 @client_bp.route("/api/home")

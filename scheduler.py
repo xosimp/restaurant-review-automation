@@ -2263,7 +2263,10 @@ def auto_approve_five_stars(rid: int, restaurant) -> int:
     approved = 0
     from ai_guard import check_public_reply
     never_say = getattr(restaurant, "never_say", "") or ""
-    for candidate in auto_approve_candidates(rid):
+    # 4-star joins the rule only when the owner turned it on. Same cap, same
+    # urgency and needs-review gates; negative reviews never go here.
+    ratings = (4, 5) if getattr(restaurant, "auto_approve_4star", 0) else (5,)
+    for candidate in auto_approve_candidates(rid, ratings=ratings):
         if cap and done_today + approved >= cap:
             break
         review_id = candidate["id"]

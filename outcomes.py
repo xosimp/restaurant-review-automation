@@ -42,6 +42,49 @@ def _row(r):
     return d
 
 
+def known_metric(metric):
+    return metrics.known(metric)
+
+
+# An owner action the product can see — a schedule published, a supplier
+# order sent — is an owner acting on what the product told them, whether or
+# not they pressed Track. The retention audit put the empty value ledger on
+# exactly that gap: the honest number was honest and small because it
+# needed a button. observe() records the action as an outcome with source
+# "observed", at most once per metric per calendar month, and never while
+# another tracker on the same metric is already in flight (two trackers on
+# labor % would double-count the same move).
+OBSERVED_ACTIONS = {
+    "schedule_published": ("labor_pct", "Published a schedule"),
+    "supplier_order_sent": ("food_cost_pct", "Sent a supplier order from the draft"),
+}
+
+
+def observe(restaurant_id, action, detail=None, user_id=None, db_path=DB_PATH, today=None):
+    """Record an observed owner action as an outcome. Returns the tracker,
+    or None when nothing was recorded (unknown action, a tracker already in
+    flight on that metric, or this month's already observed)."""
+    spec = OBSERVED_ACTIONS.get(action)
+    if not spec:
+        return None
+    metric, title = spec
+    today = today or date.today()
+    conn = get_conn(db_path)
+    try:
+        live = conn.execute(
+            "SELECT 1 FROM recommendation_outcomes WHERE restaurant_id=? AND metric=? "
+            "AND status='tracking' LIMIT 1", (restaurant_id, metric)).fetchone()
+    finally:
+        conn.close()
+    if live:
+        return None
+    key = f"observed:{action}:{today.strftime('%Y-%m')}"
+    if detail:
+        title = f"{title} — {str(detail)[:80]}"
+    return record(restaurant_id, "observed", key, title, metric, user_id=user_id,
+                  db_path=db_path, today=today)
+
+
 def record(restaurant_id, source, source_key, title, metric, user_id=None,
            window_days=None, db_path=DB_PATH, today=None):
     """Start tracking one recommendation the owner has committed to.

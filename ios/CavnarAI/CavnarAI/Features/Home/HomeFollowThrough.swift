@@ -212,12 +212,17 @@ final class HomeFollowThroughViewModel {
                 case promisedAnnual = "promised_annual"
             }
         }
+        /// Distinct work since sign-up — counts, not dollars. Needs no
+        /// button, so it is the one "since you started" figure every
+        /// account has on day one.
+        struct Ledger: Decodable { let started: String?; let lines: [String]? }
         let ok: Bool
         let delivered: Delivered?
         let avoided: Avoided?
         let opportunity: Opportunity?
         let surfaced: Surfaced?
         let promise: Promise?
+        let ledger: Ledger?
     }
 
     /// GET /mobile/api/cross-module — what two modules saw that neither
@@ -389,6 +394,39 @@ final class HomeFollowThroughViewModel {
             errorMessage = "Couldn't start tracking that."
             return nil
         }
+    }
+
+    private struct DismissBody: Encodable {
+        let key: String
+        let kind: String
+        let title: String?
+        let metric: String?
+    }
+
+    /// "Done" or "Not for us" on a recommendation. Done with a metric
+    /// records an observed outcome — the same thing Track this does — so
+    /// acting on a recommendation without pressing Track no longer leaves
+    /// the value ledger empty. Returns a line for the confirmation.
+    func answer(_ rec: HomeRecommendation, kind: String) async -> String? {
+        struct Resp: Decodable {
+            struct Outcome: Decodable {
+                let evaluateOn: String?
+                enum CodingKeys: String, CodingKey { case evaluateOn = "evaluate_on" }
+            }
+            let ok: Bool; let outcome: Outcome?; let error: String?
+        }
+        do {
+            let r: Resp = try await client.send(
+                "/mobile/api/home/dismiss", method: .post,
+                body: DismissBody(key: rec.key, kind: kind,
+                                  title: kind == "done" ? rec.title : nil,
+                                  metric: kind == "done" ? rec.metric : nil),
+                retryTransient: false)
+            guard r.ok else { errorMessage = r.error ?? "Couldn\u{2019}t save that."; return nil }
+            await Haptic.success()
+            if kind == "done", let on = r.outcome?.evaluateOn { return "Marked done — measuring from today, result on \(on)" }
+            return kind == "done" ? "Marked done" : "Noted — it won\u{2019}t come back"
+        } catch { errorMessage = "Couldn\u{2019}t save that."; return nil }
     }
 
     private struct SeenBody: Encodable { let key: String }
@@ -696,6 +734,18 @@ struct HomeFollowThrough: View {
                         .padding(.top, 10)
                 }
                 promiseBlock(v.promise)
+                if let lines = v.ledger?.lines, !lines.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("SINCE YOU STARTED")
+                            .font(.cavnarBody(11, weight: 700))
+                            .tracking(1.4)
+                            .foregroundStyle(Color.cavnarInk3)
+                            .padding(.top, 10)
+                        ForEach(lines.prefix(6), id: \.self) { line in
+                            HomeMixedText.make(line, size: 13.5, weight: 500, color: .cavnarInk2)
+                        }
+                    }
+                }
             }
             .cavnarCard()
         }

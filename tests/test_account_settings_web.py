@@ -54,7 +54,9 @@ def test_auto_approve_is_visible_and_settable_from_the_web(client, db_path, monk
 
     # It starts off, and the web can now actually see that.
     shown = client.get("/api/account-settings").get_json()
-    assert shown["auto_approve"] == {"enabled": False, "daily_cap": 5, "paused": False}
+    # include_4star joined the rule in the retention work: 4-star under the
+    # same cap and the same urgency gate, off unless the rule itself is on.
+    assert shown["auto_approve"] == {"enabled": False, "include_4star": False, "daily_cap": 5, "paused": False}
 
     resp = client.post("/api/account-settings/auto-approve",
                        json={"enabled": True, "daily_cap": 12, "paused": False})

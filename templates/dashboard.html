@@ -1452,6 +1452,13 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-join .ln:after{opacity:.55;animation:hbHalo 2s ease-out infinite}
 @keyframes hbHalo{0%{transform:scale(1);opacity:.55}100%{transform:scale(3.6);opacity:0}}
 @keyframes hbGlow{0%,100%{box-shadow:0 0 10px 2px var(--ember)}50%{box-shadow:0 0 18px 6px var(--ember)}}
+/* readiness: connected vs not, one line */
+.hb-ready{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}
+.hb-ready .it{display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--ink3);background:var(--hb-inner);border:1px solid var(--hb-line2);border-radius:999px;padding:6px 12px 6px 10px}
+.hb-ready .it b{color:var(--ink2);font-weight:600}
+.hb-ready .it i{width:7px;height:7px;border-radius:50%;background:var(--ink3);flex-shrink:0}
+.hb-ready .it.on i{background:var(--hb-good2);box-shadow:0 0 8px var(--hb-good2)}
+.hb-ready .it.off{border-style:dashed}
 /* numbered recommendation cards */
 .hb-recs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-top:14px}
 .hb-rec{display:flex;flex-direction:column;gap:8px;padding:18px 18px 16px;min-height:150px}
@@ -1461,6 +1468,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-rec .ev{font-size:14px;color:var(--ink3);line-height:1.45}
 .hb-rec .ft{display:flex;gap:6px;align-items:center;margin-top:auto;padding-top:10px;flex-wrap:wrap}
 .hb-rec .hb-x{opacity:.5}.hb-rec:hover .hb-x{opacity:1}
+.hb-rec-ans{margin-left:auto;display:inline-flex;gap:2px;opacity:.55;transition:opacity .18s ease}.hb-rec:hover .hb-rec-ans{opacity:1}
 /* receipt strip */
 .hb-rcpt{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin-top:14px}
 .hb-rcpt .it{display:flex;align-items:flex-start;gap:12px;padding:14px 16px;border-radius:12px;background:var(--hb-inner);border:1px solid var(--hb-line2)}
@@ -1476,6 +1484,10 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-tl .it.critical .d{background:var(--hb-bad);color:var(--hb-bad)}.hb-tl .it.important .d{background:var(--hb-warn);color:var(--hb-warn)}.hb-tl .it.good .d{background:var(--hb-good);color:var(--hb-good)}
 .hb-tl .it .t{flex:1;min-width:0;font-size:16px;font-weight:500;color:var(--ink2);line-height:1.5}
 .hb-tl .it .t strong{color:var(--ink);font-weight:600}
+/* the ledger: sentences with the count in Space Grotesk */
+.hb-ledger{display:flex;flex-wrap:wrap;gap:8px}
+.hb-ledger span{font-size:13.5px;color:var(--ink2);background:var(--hb-inner);border:1px solid var(--hb-line2);border-radius:999px;padding:6px 12px}
+.hb-ledger span .hb-num{color:var(--ink);font-weight:700}
 /* stat tiles */
 .hb-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:4px}
 .hb-stat{padding:14px 16px;border-radius:12px;background:var(--hb-inner);border:1px solid var(--hb-line2);min-width:0}
@@ -1876,7 +1888,7 @@ svg:hover .hb-xh{opacity:1}
     // Values come off the element, so an apostrophe in a recommendation's
     // title is just a character rather than a broken JS string literal.
     else if(t.hasAttribute('data-track-key'))hbTrack(t,t.getAttribute('data-track-key'),t.getAttribute('data-track-title'),t.getAttribute('data-track-metric'));
-    else if(t.hasAttribute('data-dismiss-key'))hbDismiss(t.getAttribute('data-dismiss-key'),t.getAttribute('data-undo')==='1');
+    else if(t.hasAttribute('data-dismiss-key'))hbDismiss(t.getAttribute('data-dismiss-key'),t.getAttribute('data-undo')==='1',t.getAttribute('data-dismiss-kind'),t.getAttribute('data-track-title'),t.getAttribute('data-track-metric'));
     else if(t.hasAttribute('data-open-module'))hbOpen(t.getAttribute('data-open-module'));
     else if(t.hasAttribute('data-explain'))hbExplain(t.getAttribute('data-explain-title'),t.getAttribute('data-explain'),t.getAttribute('data-explain-kicker'));
     else hbAsk(t.getAttribute('data-ask'));
@@ -1886,10 +1898,13 @@ svg:hover .hb-xh{opacity:1}
   window.hbSwitchLoc=function(rid,name){if(typeof switchLocation==='function')switchLocation(rid,name);};
   window.hbScope=function(scope){_hbScope=scope;_hbLoadedAt=0;hbLoad(false);};
   window.hbRange=function(r){_hbRange=r;if(_hbData)renderHero(_hbData);};
-  window.hbDismiss=function(key,undo){
-    fetch('/api/home/dismiss',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:key,undo:!!undo})}).then(function(r){return r.json();}).then(function(d){
+  window.hbDismiss=function(key,undo,kind,title,metric){
+    var body={key:key,undo:!!undo};
+    if(kind){body.kind=kind;if(kind==='done'&&metric){body.title=title;body.metric=metric;}}
+    fetch('/api/home/dismiss',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.json();}).then(function(d){
       if(!d.ok){if(typeof toast==='function')toast(d.error||'Couldn\'t update that','error');return;}
-      if(typeof toast==='function')toast(undo?'Recommendation restored':'Hidden for two weeks','success');
+      var msg=undo?'Recommendation restored':(kind==='done'?(d.outcome?'Marked done - measuring from today, result on '+d.outcome.evaluate_on:'Marked done'):(kind==='not_for_us'?'Noted - it won\'t come back':'Hidden for two weeks'));
+      if(typeof toast==='function')toast(msg,'success');
       _hbLoadedAt=0;hbLoad(false);
     }).catch(function(){if(typeof toast==='function')toast('Network error','error');});
   };
@@ -2058,7 +2073,12 @@ svg:hover .hb-xh{opacity:1}
       var trk=r.metric?'<button type="button" class="cbtn cbtn-secondary cbtn-sm" title="Take a baseline now and measure this in a few weeks" data-track-key="'+esc(r.key)+'" data-track-title="'+esc(r.title)+'" data-track-metric="'+esc(r.metric)+'">Track this</button>':'';
       h+='<div class="hb-card hb-rec hb-rise'+(isNew?' new':'')+'" style="--i:'+j+'"><div class="top"><span class="no">0'+(j+1+(skip||0))+'</span><button type="button" class="hb-x" title="Hide for two weeks" aria-label="Hide" data-dismiss-key="'+esc(r.key)+'">✕</button></div>'
         +'<div class="t" title="'+esc(r.why||'')+'">'+num(r.title)+'</div>'+(r.evidence?'<div class="ev">'+num(r.evidence)+'</div>':'')
-        +'<div class="ft">'+trk+'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-open-module="'+esc(r.module)+'">'+esc(MODLABEL[r.module]||r.action_label)+' →</button></div></div>';}
+        +'<div class="ft">'+trk+'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-open-module="'+esc(r.module)+'">'+esc(MODLABEL[r.module]||r.action_label)+' →</button>'
+        // Two answers that are not "hide for a fortnight". Done records an
+        // observed outcome when the card names a metric - the same thing
+        // Track this does - so acting on a recommendation without pressing
+        // Track no longer leaves the value ledger empty.
+        +'<span class="hb-rec-ans"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dismiss-key="'+esc(r.key)+'" data-dismiss-kind="done" data-track-title="'+esc(r.title)+'" data-track-metric="'+esc(r.metric||'')+'">Done</button><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dismiss-key="'+esc(r.key)+'" data-dismiss-kind="not_for_us">Not for us</button></span></div></div>';}
     try{var keep={};for(var sk in seen)if(seen.hasOwnProperty(sk))keep[sk]=1;for(var nk in seenNow)if(seenNow.hasOwnProperty(nk))keep[nk]=1;localStorage.setItem('cavnar_recs_seen',JSON.stringify(keep));}catch(e){}
     return h+'</div></div>';
   }
@@ -2090,6 +2110,18 @@ svg:hover .hb-xh{opacity:1}
   // about the business has to come from outside it - Google's own rating
   // and the comparable restaurants nearest them (first_look.py), the same
   // first look the welcome email leads with.
+  // What is connected, and therefore what can be measured. admin_ops
+  // computed this for Will; the owner had no equivalent, so a thin dashboard
+  // read as a thin product rather than a missing count. Hidden once every
+  // module on the plan is flowing - a complete account should not carry a
+  // permanent status bar.
+  function renderReadiness(d){
+    var r=d.readiness;if(!r||!r.modules||!r.modules.length||r.complete)return '';
+    var h='<div class="hb-ready">';
+    for(var i=0;i<r.modules.length;i++){var m=r.modules[i];
+      h+='<span class="it '+(m.connected?'on':'off')+'"><i></i><b>'+esc(m.label)+'</b>'+(m.connected?(m.measurable.length?' · reading '+esc(m.measurable.join(', ').toLowerCase()):' · connected'):'')+(m.next?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-open-module="'+esc(m.module)+'">'+esc(m.next)+' →</button>':'')+'</span>';}
+    return h+'</div>';
+  }
   function renderWelcome(d){
     var e=d.empty_state;if(!e)return '';
     var h='<section class="hb-welcome" aria-label="Welcome"><div class="hb-kicker">Getting started</div><h2>'+esc(e.title)+'</h2>';
@@ -2112,6 +2144,7 @@ svg:hover .hb-xh{opacity:1}
     // never called, so a brand-new account's first screen skipped the one
     // block written for it.
     h+=renderWelcome(d);
+    h+=renderReadiness(d);
     h+='<section class="hb-hero" id="hb-hero" aria-label="Value delivered"></section>';
     h+=renderSignals(d);
     // Order below the hero is the order of value: the one thing today, then
@@ -2304,6 +2337,12 @@ svg:hover .hb-xh{opacity:1}
     if(op.monthly>0)h+='<div class="hb-stat ember"><div class="k">Still on the table</div><div class="v hb-num"><span class="cu" data-n="'+Math.round(op.monthly)+'" data-p="$">$'+num2(op.monthly)+'</span><small>/mo</small></div><div class="s">available, not captured</div></div>';
     h+='</div>';
     if(d.wins>0&&d.biggest)h+='<div class="hb-row good" style="margin-top:14px"><span class="d"></span><span class="t wrap">Biggest so far: '+num(d.biggest.summary)+'</span></div>';
+    // Distinct work since sign-up - counts, not dollars, so it needs no
+    // button and cannot be argued with. The product compounds; this is
+    // where it says so.
+    var led=v.ledger||{},ll=led.lines||[];
+    if(ll.length){h+='<div class="hb-h3" style="margin-top:18px"><span>Since you started'+(led.started?' · '+esc(mdy(led.started)):'')+'</span></div><div class="hb-ledger">';
+      for(var li=0;li<Math.min(ll.length,6);li++)h+='<span>'+num(ll[li])+'</span>';h+='</div>';}
     // The denominator, always. "2 results" reads differently when 8 others
     // came back unreadable.
     if(d.evaluated>0&&(d.unmeasurable>0||d.no_clear_change>0)){
@@ -5694,6 +5733,8 @@ svg:hover .hb-xh{opacity:1}
           <div class="ac-rows">
             <div class="ac-row"><div class="l"><b>Turn on auto-approve</b><span>Only 5-star reviews. Everything else still waits for you.</span></div>
               <div class="c"><label class="ac-switch"><input type="checkbox" id="as-auto-enabled" onchange="acctCapMeter()" aria-label="Turn on auto-approve"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
+            <div class="ac-row"><div class="l"><b>Include 4-star reviews</b><span>Same ceiling, same rule: anything the analyser flags still waits for you. Never 3 stars or below.</span></div>
+              <div class="c"><label class="ac-switch"><input type="checkbox" id="as-auto-4star" onchange="acctCapMeter()" aria-label="Include 4-star reviews"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
             <div class="ac-row"><div class="l"><b>Most replies per day</b><span>A ceiling, so a busy weekend can&rsquo;t post fifty replies unread.</span></div>
               <div class="c"><label class="ac-lbl" for="as-auto-cap" style="position:absolute;left:-9999px">Most replies per day</label><input class="ac-input ac-num" type="number" id="as-auto-cap" min="1" max="50" value="5" oninput="acctCapMeter()" style="width:86px;text-align:center"></div></div>
             <div class="ac-row"><div class="l"><b>Pause it for now</b><span>Keeps the rule and the cap; nothing posts until you unpause.</span></div>
@@ -11503,6 +11544,7 @@ function loadAccountSettings() {
     document.getElementById('as-auto-enabled').checked = !!a.enabled;
     document.getElementById('as-auto-cap').value = a.daily_cap || 5;
     document.getElementById('as-auto-paused').checked = !!a.paused;
+    var a4 = document.getElementById('as-auto-4star'); if (a4) a4.checked = !!a.include_4star;
 
     var h = d.hours || {};
     buildAccountHoursGrid(h.open || {}, h.close || {});
@@ -11624,7 +11666,8 @@ function saveAutoApprove() {
   asPost('/api/account-settings/auto-approve', {
     enabled: document.getElementById('as-auto-enabled').checked,
     daily_cap: parseInt(document.getElementById('as-auto-cap').value, 10) || 5,
-    paused: document.getElementById('as-auto-paused').checked
+    paused: document.getElementById('as-auto-paused').checked,
+    include_4star: !!(document.getElementById('as-auto-4star') || {}).checked
   }, 'as-auto-status', 'Saved').then(function() { loadAccountSettings(); });
 }
 

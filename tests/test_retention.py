@@ -300,3 +300,146 @@ def test_the_fetch_raises_connection_lost_on_a_revoked_token():
     tail = src[i:i + 1500]
     assert 'claim_period(f"connection_lost:{rid}"' in tail
     assert '"connection_lost"' in tail and "Account" in tail
+
+
+# ── part 2: value and engagement ─────────────────────────────────────────────
+
+def _days(db_path, rid, start, n, sales=2000.0, labor_ratio=0.30):
+    conn = get_conn(db_path)
+    for i in range(n):
+        d = start + timedelta(days=i)
+        conn.execute("INSERT OR REPLACE INTO labor_daily_history "
+                     "(restaurant_id, date, day_of_week, sales, labor_cost) VALUES (?,?,?,?,?)",
+                     (rid, d.isoformat(), d.strftime("%A"), sales, sales * labor_ratio))
+    conn.commit()
+    conn.close()
+
+
+def test_observe_records_an_owner_action_once_a_month(db_path):
+    """A published schedule is an owner acting. It becomes a labor % tracker
+    with no button pressed — and a second publish the same month does not
+    become a second tracker on the same metric."""
+    import outcomes
+    rid = _restaurant(db_path, module_labor=1)
+    _days(db_path, rid, date.today() - timedelta(days=40), 40)
+    first = outcomes.observe(rid, "schedule_published", detail="week of 2026-09-21", db_path=db_path)
+    assert first and first["source"] == "observed" and first["metric"] == "labor_pct"
+    assert "Published a schedule" in first["title"]
+    assert outcomes.observe(rid, "schedule_published", db_path=db_path) is None
+
+
+def test_observe_never_doubles_a_tracker_already_in_flight(db_path):
+    """Two trackers on one metric would count the same move twice."""
+    import outcomes
+    rid = _restaurant(db_path, module_labor=1)
+    _days(db_path, rid, date.today() - timedelta(days=40), 40)
+    outcomes.record(rid, "recommendation", "trim_day:Monday", "Trim Monday", "labor_pct", db_path=db_path)
+    assert outcomes.observe(rid, "schedule_published", db_path=db_path) is None
+
+
+def test_observe_ignores_unknown_actions(db_path):
+    import outcomes
+    assert outcomes.observe(_restaurant(db_path), "owner_sneezed", db_path=db_path) is None
+
+
+def test_done_and_not_for_us_do_not_come_back_in_a_fortnight(db_path):
+    import home_brief
+    rid = _restaurant(db_path)
+    hide = home_brief.dismiss(rid, "trim_day:Monday")
+    done = home_brief.dismiss(rid, "cut_waste:Salmon", kind="done")
+    never = home_brief.dismiss(rid, "post_this_week", kind="not_for_us")
+    assert hide["days"] == home_brief._DISMISS_DAYS
+    assert done["days"] > 365 and never["days"] > 365
+    assert done["kind"] == "done" and never["kind"] == "not_for_us"
+
+
+def test_an_unknown_dismiss_kind_falls_back_to_hide(db_path):
+    import home_brief
+    out = home_brief.dismiss(_restaurant(db_path), "x", kind="forever")
+    assert out["kind"] == "recommendation" and out["days"] == home_brief._DISMISS_DAYS
+
+
+def test_the_mobile_dismiss_twin_exists():
+    import inspect
+    import mobile_api
+    src = inspect.getsource(mobile_api)
+    assert '@mobile_bp.route("/home/dismiss", methods=["POST"])' in src
+    assert "_capi.home_dismiss_api.__wrapped__" in src
+
+
+def test_a_rating_record_needs_three_priors_not_five():
+    import good_news
+    assert good_news.MIN_PRIOR_BY_METRIC["avg_rating"] == 3
+    assert good_news.MIN_PRIOR_PERIODS == 5
+
+
+def test_readiness_names_the_next_step_and_hides_when_complete(db_path):
+    import home_brief
+    from models import get_restaurant
+    rid = _restaurant(db_path, module_labor=1, module_inventory=0, module_marketing=0)
+    r = get_restaurant(rid)
+    row = {"gmb_refresh_token": None, "reviews_live": 0}
+    out = home_brief.readiness(rid, r, row, {}, False, False, {})
+    by = {m["key"]: m for m in out["modules"]}
+    assert by["reviews"]["connected"] is False and "Google" in by["reviews"]["next"]
+    assert by["labor"]["connected"] is False and by["labor"]["next"]
+    assert out["complete"] is False and out["connected"] == 0
+    row["reviews_live"] = 1
+    out = home_brief.readiness(rid, r, row, {}, True, False, {})
+    assert out["complete"] is True and out["connected"] == 2
+
+
+def test_readiness_is_never_a_score():
+    """A number here would be a grade on the owner; the point is the next
+    step."""
+    import inspect
+    import home_brief
+    src = inspect.getsource(home_brief.readiness)
+    assert "score" not in src.replace("Never a score", "")
+
+
+def test_four_star_candidates_only_when_asked(db_path):
+    from models import auto_approve_candidates
+    rid = _restaurant(db_path)
+    conn = get_conn(db_path)
+    for ext, rating in (("a", 5), ("b", 4), ("c", 3)):
+        conn.execute("INSERT INTO reviews (restaurant_id, platform, external_id, rating, text, sentiment, "
+                     "processed, response_status, draft_response, review_date, fetched_at) "
+                     "VALUES (?,?,?,?,?,?,1,'drafted','ok',date('now'),datetime('now'))",
+                     (rid, "google", ext, rating, "t", "positive"))
+    conn.commit()
+    conn.close()
+    assert len(auto_approve_candidates(rid, db_path)) == 1
+    assert len(auto_approve_candidates(rid, db_path, ratings=(4, 5))) == 2
+    # Three stars is never a candidate, whatever is asked for.
+    assert len(auto_approve_candidates(rid, db_path, ratings=(3, 4, 5))) == 3  # the query obeys; the caller must not ask
+    import inspect, scheduler
+    src = inspect.getsource(scheduler.auto_approve_five_stars)
+    assert "ratings = (4, 5) if getattr(restaurant, \"auto_approve_4star\", 0) else (5,)" in src
+
+
+def test_four_star_is_off_unless_auto_approve_is_on(db_path):
+    """Turning the 4-star switch on with the rule off must not store a live
+    4-star flag waiting for the day the rule is enabled."""
+    import client_api
+    from models import get_restaurant
+    rid = _restaurant(db_path)
+    client_api._do_auto_approve(rid, {"enabled": False, "include_4star": True})
+    assert get_restaurant(rid, db_path).auto_approve_4star == 0
+    client_api._do_auto_approve(rid, {"enabled": True, "include_4star": True})
+    assert get_restaurant(rid, db_path).auto_approve_4star == 1
+
+
+def test_unlock_line_names_the_first_module_off_the_plan():
+    import morning_brief
+    line = morning_brief._unlock_line(None, {"modules_off": ["food_cost", "marketing"]})
+    assert line["key"] == "unlock:food_cost" and line["ask"]
+    assert morning_brief._unlock_line(None, {"modules_off": []}) is None
+
+
+def test_ledger_rides_on_the_value_route(db_path, monkeypatch):
+    import strategy_routes
+    rid = _restaurant(db_path)
+    monkeypatch.setattr(strategy_routes, "_metric_visible", lambda u, m: True)
+    payload, _ = strategy_routes._do_value({"id": 1, "restaurant_id": rid, "role": "client", "is_admin": False})
+    assert "ledger" in payload and "lines" in payload["ledger"]

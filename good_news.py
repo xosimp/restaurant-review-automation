@@ -66,6 +66,14 @@ CAVEAT = ("Measured from your own numbers. A record says the number moved, "
 # Below this many prior comparable windows, "best ever" means "best of two".
 MIN_PRIOR_PERIODS = 5
 
+# Per-metric floors where the default is wrong in one direction. Reviews
+# arrive from day one on every account, and a rating window is 30 days —
+# five priors meant the first "best rating" could not land before month
+# six, which the retention audit put squarely in the churn window. Three
+# priors on rating is a quarter of history, and the noise band
+# (metrics.compare) still refuses a tie or a wobble.
+MIN_PRIOR_BY_METRIC = {"avg_rating": 3}
+
 # How far back to look for a record, in windows. Six of a 28-day window is
 # about half a year, which is as far back as most of these accounts go.
 LOOKBACK_PERIODS = 12
@@ -172,7 +180,7 @@ def records(restaurant_id, today=None, db_path=DB_PATH, keys=None,
         current = measured[0] if measured else None
         prior = measured[1:]
         # Rule 1: no history, no record.
-        if not current or len(prior) < MIN_PRIOR_PERIODS:
+        if not current or len(prior) < MIN_PRIOR_BY_METRIC.get(key, MIN_PRIOR_PERIODS):
             continue
 
         better = (lambda a, b: a < b) if info["lower_is_better"] else (lambda a, b: a > b)
