@@ -99,6 +99,7 @@ final class HomeFollowThroughViewModel {
     var closeOut: CloseOutEntry?
     var closeOutDate: String?
     var caveat: String?
+    var value: ValueSummary?
     var isLoading = false
     var errorMessage: String?
 
@@ -126,6 +127,51 @@ final class HomeFollowThroughViewModel {
     }
     private struct OKResponse: Decodable { let ok: Bool; let error: String? }
 
+    /// GET /mobile/api/value. Four figures that are never added to each
+    /// other — see value_delivered.py. Decoded leniently: an older backend
+    /// that does not serve this route leaves `value` nil and the section
+    /// simply does not appear.
+    struct ValueSummary: Decodable {
+        struct Delivered: Decodable {
+            let monthly: Double?
+            let annual: Double?
+            let wins: Int?
+            let evaluated: Int?
+            let inFlight: Int?
+            let unmeasurable: Int?
+            let noClearChange: Int?
+            let biggest: Biggest?
+            let caveat: String?
+            struct Biggest: Decodable { let title: String?; let monthly: Double?; let summary: String? }
+            enum CodingKeys: String, CodingKey {
+                case monthly, annual, wins, evaluated, biggest, caveat
+                case inFlight = "in_flight"
+                case unmeasurable
+                case noClearChange = "no_clear_change"
+            }
+        }
+        struct Avoided: Decodable {
+            struct Item: Decodable {
+                let key: String?
+                let label: String?
+                let dollars: Double?
+                let hours: Double?
+                let rate: String?
+                let basis: String?
+            }
+            let items: [Item]?
+            let dollars: Double?
+            let hours: Double?
+        }
+        struct Opportunity: Decodable { let monthly: Double? }
+        struct Surfaced: Decodable { let dollars: Double?; let alerts: Int?; let days: Int? }
+        let ok: Bool
+        let delivered: Delivered?
+        let avoided: Avoided?
+        let opportunity: Opportunity?
+        let surfaced: Surfaced?
+    }
+
     /// Every block is optional: a login without an endpoint's permission, or
     /// a module it can't see, simply shows fewer rows rather than an error.
     func load() async {
@@ -135,6 +181,7 @@ final class HomeFollowThroughViewModel {
         async let g: GoalsResponse? = try? client.send("/mobile/api/goals", hapticOnError: false)
         async let o: OutcomesResponse? = try? client.send("/mobile/api/outcomes", hapticOnError: false)
         async let c: CloseOutResponse? = try? client.send("/mobile/api/closeout", hapticOnError: false)
+        async let v: ValueSummary? = try? client.send("/mobile/api/value", hapticOnError: false)
         actions = (await a)?.items ?? []
         goals = (await g)?.goals ?? []
         let outcomes = await o
@@ -143,6 +190,7 @@ final class HomeFollowThroughViewModel {
         let close = await c
         closeOut = close?.closeout
         closeOutDate = close?.businessDate
+        value = await v
     }
 
     private struct SnoozeBody: Encodable { let key: String }
@@ -250,12 +298,102 @@ struct HomeFollowThrough: View {
                 .cavnarCard()
             }
 
+            valueCard
+
             closeOutCard
         }
         .task { await viewModel.load() }
         .sheet(isPresented: $showingCloseOut) {
             CloseOutSheet(viewModel: viewModel)
         }
+    }
+
+    /// What Cavnar AI has been worth. Four figures, never added together —
+    /// a measurement, an estimate at stated rates, an alert total and a gap
+    /// against target are not addends (see value_delivered.py).
+    @ViewBuilder
+    private var valueCard: some View {
+        if let v = viewModel.value, let d = v.delivered,
+           (d.wins ?? 0) > 0 || (d.inFlight ?? 0) > 0
+            || (v.avoided?.hours ?? 0) > 0 || (v.opportunity?.monthly ?? 0) > 0 {
+            HomeSectionHeader(kicker: "Worth", title: "What Cavnar AI has been worth")
+            VStack(alignment: .leading, spacing: 0) {
+                if (d.wins ?? 0) > 0 {
+                    lineRow(Self.deliveredLine(d), tone: .cavnarGreen, showsDivider: true)
+                    if let big = d.biggest?.summary {
+                        lineRow("Biggest so far: " + big, tone: .cavnarInk3, showsDivider: true)
+                    }
+                } else {
+                    lineRow(Self.nothingMeasuredLine(d), tone: .cavnarInk3, showsDivider: true)
+                }
+                if let denom = Self.denominatorLine(d) {
+                    lineRow(denom, tone: .cavnarInk3, showsDivider: true)
+                }
+                if let av = v.avoided, let line = Self.avoidedLine(av) {
+                    lineRow(line, tone: .cavnarInk3, showsDivider: true)
+                }
+                if let sf = v.surfaced, let dollars = sf.dollars, dollars > 0 {
+                    lineRow("\(Self.money(dollars)) of problems put in front of you across "
+                            + "\(sf.alerts ?? 0) alerts in the last \(sf.days ?? 30) days",
+                            tone: .cavnarInk3, showsDivider: true)
+                }
+                if let op = v.opportunity?.monthly, op > 0 {
+                    lineRow("\(Self.money(op))/month still on the table — available, not captured",
+                            tone: .cavnarEmber, showsDivider: false)
+                }
+                if let caveat = d.caveat {
+                    CavnarCaveat(title: "Before and after, not proof", detail: caveat)
+                        .padding(.top, 10)
+                }
+            }
+            .cavnarCard()
+        }
+    }
+
+    private static func money(_ v: Double) -> String {
+        let f = NumberFormatter()
+        f.numberStyle = .decimal
+        f.maximumFractionDigits = 0
+        return "$" + (f.string(from: NSNumber(value: v)) ?? String(Int(v)))
+    }
+
+    private static func deliveredLine(_ d: HomeFollowThroughViewModel.ValueSummary.Delivered) -> String {
+        let wins = d.wins ?? 0
+        var s = "\(money(d.monthly ?? 0))/month measured across \(wins) change"
+        if wins != 1 { s += "s" }
+        if let annual = d.annual, annual > 0 {
+            s += " — about \(money(annual)) a year if it holds"
+        }
+        return s + "."
+    }
+
+    private static func nothingMeasuredLine(_ d: HomeFollowThroughViewModel.ValueSummary.Delivered) -> String {
+        let n = d.inFlight ?? 0
+        if n > 0 {
+            return "Nothing measured yet. \(n) change\(n == 1 ? "" : "s") being measured now."
+        }
+        return "Nothing measured yet. Track a recommendation and its result lands here."
+    }
+
+    /// The denominator always travels with the total: "2 results" reads
+    /// differently when 8 others came back unreadable.
+    private static func denominatorLine(_ d: HomeFollowThroughViewModel.ValueSummary.Delivered) -> String? {
+        let evaluated = d.evaluated ?? 0
+        let unknown = d.unmeasurable ?? 0
+        let flat = d.noClearChange ?? 0
+        guard evaluated > 0, unknown > 0 || flat > 0 else { return nil }
+        var bits: [String] = []
+        if flat > 0 { bits.append("\(flat) showed no clear change") }
+        if unknown > 0 { bits.append("\(unknown) couldn't be measured") }
+        return "Of \(evaluated) finished: " + bits.joined(separator: ", ") + "."
+    }
+
+    private static func avoidedLine(_ av: HomeFollowThroughViewModel.ValueSummary.Avoided) -> String? {
+        var bits: [String] = []
+        if let h = av.hours, h > 0 { bits.append("\(Int(h.rounded())) hours of work done for you") }
+        if let d = av.dollars, d > 0 { bits.append("\(money(d)) you'd otherwise have paid for") }
+        guard !bits.isEmpty else { return nil }
+        return bits.joined(separator: " · ") + " (estimates at stated rates)"
     }
 
     private func actionRow(_ item: ActionItem, showsDivider: Bool) -> some View {

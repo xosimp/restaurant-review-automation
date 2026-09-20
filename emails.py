@@ -1878,6 +1878,53 @@ def _monthly_review_sections(restaurant_id):
                                           f'added together.</span>'))
     except Exception as e:
         print(f"[monthly] priorities block failed: {e}")
+    # What the product has been worth, on the one email an owner reads with
+    # their P&L open. Kept LAST and kept honest: a month with nothing
+    # measured says so rather than reaching for the opportunity figure,
+    # which is what the old Home banner did.
+    try:
+        import value_delivered as _vd
+        v = _vd.breakdown(restaurant_id)
+        d, av = v["delivered"], v["avoided"]
+        bits = []
+        if d["wins"]:
+            bits.append(f"Measured results: ${d['monthly']:,.0f}/month across "
+                        f"{d['wins']} change{'' if d['wins'] == 1 else 's'}"
+                        + (f" — about ${d['annual']:,.0f} a year if they hold." if d["annual"] else "."))
+            if d.get("biggest"):
+                bits.append(f"Biggest so far: {d['biggest']['summary']}")
+        elif d["in_flight"]:
+            bits.append(f"{d['in_flight']} change{'' if d['in_flight'] == 1 else 's'} "
+                        f"still being measured — results land here when their windows close.")
+        if av["hours"]:
+            bits.append(f"About {av['hours']:,.0f} hours of work done for you, at stated rates.")
+        if v["surfaced"]["dollars"]:
+            bits.append(f"${v['surfaced']['dollars']:,.0f} of problems put in front of you "
+                        f"across {v['surfaced']['alerts']} alerts in the last 30 days.")
+        if v["opportunity"]["monthly"]:
+            bits.append(f"${v['opportunity']['monthly']:,.0f}/month still on the table — "
+                        f"available, not captured.")
+        if bits:
+            out.append(report_eyebrow("What Cavnar AI has been worth")
+                       + report_paragraph(_list(bits))
+                       + report_paragraph(f'<span style="font-size:12.5px;color:{BRAND["muted"]}">'
+                                          f'These are four different measurements and are not '
+                                          f'added together. {_html.escape(d["caveat"])}</span>'))
+    except Exception as e:
+        print(f"[monthly] value block failed: {e}")
+    # The audit, measured. Only where one is linked — see promise.py.
+    try:
+        import promise as _p
+        cmp = _p.compare(restaurant_id)
+        if cmp.get("available"):
+            lines_ = _p.lines(cmp)
+            if lines_:
+                out.append(report_eyebrow(f"Your audit, {cmp['audit_date']}")
+                           + report_paragraph(_list(lines_))
+                           + report_paragraph(f'<span style="font-size:12.5px;color:{BRAND["muted"]}">'
+                                              f'{_html.escape(cmp["caveat"])}</span>'))
+    except Exception as e:
+        print(f"[monthly] promise block failed: {e}")
     return out
 
 
@@ -1914,13 +1961,23 @@ def send_monthly_summary_email(to_email: str, restaurant_name: str, owner_name: 
         r_marketing = owned("marketing", has_marketing)
 
         # ── Reviews, from this restaurant's own reviews table ──────────────
+        #
+        # Bounded to the SAME calendar month monthly_review measures over.
+        # This used to run from (the 1st of this month - 30 days) to now,
+        # which is neither last month nor the last 30 days: it spilled into
+        # today. The email then printed that average beside the review
+        # section's own average for the real month, so one message could
+        # carry two different answers to "what was my rating last month".
         total = pos = neg = 0
         avg = 0.0
         if r_reviews and restaurant_id:
             try:
                 from models import get_reviews_since
-                month_start = now.replace(day=1, hour=0, minute=0, second=0) - timedelta(days=30)
-                reviews = get_reviews_since(restaurant_id, month_start.isoformat())
+                import monthly_review as _mr
+                m_start, m_end = _mr.month_bounds(now.replace(day=1).date() - timedelta(days=1))
+                reviews = [r for r in get_reviews_since(restaurant_id, m_start.isoformat())
+                           if m_start.isoformat() <= str(getattr(r, "review_date", "") or "")[:10]
+                           <= m_end.isoformat()]
                 total = len(reviews)
                 if total:
                     avg = round(sum(r.rating for r in reviews) / total, 1)
