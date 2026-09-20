@@ -245,6 +245,56 @@ def _remember_fetch_cursor(order, processed):
         log.warning(f"_remember_fetch_cursor failed: {e}")
 
 
+def bounded_map(items, fn, workers, max_seconds, on_error=None):
+    """Run `fn` over `items` with a worker pool and a wall-clock budget.
+
+    Returns (completed_count, hit_bound).
+
+    A BOUNDED IN-FLIGHT WINDOW, not submit-everything-then-wait. Submitting
+    the whole list up front and checking the clock in the submit loop does
+    not bound anything: submission is instant, so the check never fires and
+    every item is queued regardless — the pass then runs as long as it runs,
+    which is the behaviour the bound exists to stop. That was the first
+    implementation here, and it was caught by testing the bound rather than
+    assuming it.
+
+    Work is handed out only as a worker frees up, so the clock is consulted
+    between real units of work and the run stops within roughly one item of
+    the budget. Items already running are always allowed to finish — killing
+    a restaurant's fetch halfway through is how you get partial state.
+    """
+    pending = list(items)
+    if not pending:
+        return 0, False
+    done, hit_bound = 0, False
+    started = time.time()
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        in_flight = {}
+
+        def _fill():
+            while pending and len(in_flight) < max(1, workers):
+                item = pending.pop(0)
+                in_flight[pool.submit(fn, item)] = item
+
+        _fill()
+        while in_flight:
+            for fut in as_completed(list(in_flight)):
+                item = in_flight.pop(fut)
+                try:
+                    fut.result()
+                    done += 1
+                except Exception as e:
+                    if on_error:
+                        on_error(item, e)
+                break      # re-evaluate the budget after every completion
+            if time.time() - started > max_seconds:
+                if pending:
+                    hit_bound = True
+                pending = []
+            _fill()
+    return done, hit_bound
+
+
 def run_daily_fetch():
     """Fetch reviews for all live clients, analyse, draft, alert on urgent."""
     try:
@@ -516,23 +566,12 @@ def run_daily_fetch():
         # what keeps that true here.
         order = _fetch_order([r["id"] for r in live])
         by_id = {r["id"]: r for r in live}
-        started_at = time.time()
-        done, ran_out = 0, False
-        with ThreadPoolExecutor(max_workers=FETCH_WORKERS) as pool:
-            futures = {}
-            for rid in order:
-                if time.time() - started_at > FETCH_MAX_SECONDS:
-                    ran_out = True
-                    break
-                futures[pool.submit(_process_restaurant, by_id[rid])] = rid
-            for fut in as_completed(futures):
-                rid = futures[fut]
-                try:
-                    fut.result()
-                    done += 1
-                except Exception as e:
-                    log.error(f"Review cycle failed for restaurant {rid}: {e}")
-                    _ops.capture(e, job="review_fetch", context=f"restaurant_id={rid}")
+        def _failed(row, e):
+            log.error(f"Review cycle failed for restaurant {row['id']}: {e}")
+            _ops.capture(e, job="review_fetch", context=f"restaurant_id={row['id']}")
+
+        done, ran_out = bounded_map([by_id[rid] for rid in order], _process_restaurant,
+                                    FETCH_WORKERS, FETCH_MAX_SECONDS, on_error=_failed)
         _remember_fetch_cursor(order, done)
         if ran_out:
             # Not a failure — a bound working as intended — but the operator

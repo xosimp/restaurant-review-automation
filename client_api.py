@@ -1665,7 +1665,21 @@ def _ask_cavnar_stream_response(rid, uid, question, conversation_id=None, new_co
             events.put(None)
         threading.Thread(target=_busy, daemon=True).start()
     else:
-        threading.Thread(target=work, daemon=True).start()
+        try:
+            threading.Thread(target=work, daemon=True).start()
+        except Exception as _te:
+            # Thread creation itself failing is the memory-pressure case this
+            # semaphore exists for, and it is the one path where the slot is
+            # held by a worker that will never reach its finally.
+            _ASK_SLOTS.release()
+            import ops
+            ops.capture(_te, job="ask_cavnar_stream", context=f"restaurant_id={rid}")
+
+            def _failed():
+                events.put({"type": "error", "error": (
+                    "Cavnar is under heavy load right now — try again in a moment.")})
+                events.put(None)
+            threading.Thread(target=_failed, daemon=True).start()
 
     def generate():
         while True:

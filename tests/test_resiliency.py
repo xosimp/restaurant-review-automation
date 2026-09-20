@@ -89,6 +89,52 @@ def test_the_fetch_starts_where_the_last_bounded_pass_stopped(db_path):
     assert scheduler._fetch_order(ids) == [40, 10, 20, 30]
 
 
+def test_the_time_bound_actually_stops_the_pass(db_path):
+    """The FIRST implementation of this bound did nothing.
+
+    It submitted every restaurant to the pool up front and checked the clock
+    inside the submit loop — but submission is instant, so the check never
+    fired and the pass ran exactly as long as it always had. Caught by
+    testing the bound instead of assuming it, which is the only reason this
+    test exists.
+    """
+    seen = []
+
+    def slow(i):
+        time.sleep(0.2)
+        seen.append(i)
+
+    done, hit_bound = scheduler.bounded_map(list(range(10)), slow,
+                                            workers=2, max_seconds=0.7)
+    assert hit_bound is True
+    assert 0 < done < 10, "the bound must stop the run, not just observe it"
+
+
+def test_an_unbounded_run_completes_everything(db_path):
+    done, hit_bound = scheduler.bounded_map(list(range(6)), lambda i: None,
+                                            workers=3, max_seconds=60)
+    assert (done, hit_bound) == (6, False)
+
+
+def test_one_item_failing_does_not_stop_the_rest(db_path):
+    """A locked database on one restaurant used to end the cycle for every
+    restaurant after it."""
+    errors = []
+
+    def sometimes(i):
+        if i == 2:
+            raise RuntimeError("locked")
+
+    done, hit_bound = scheduler.bounded_map(
+        list(range(5)), sometimes, workers=2, max_seconds=60,
+        on_error=lambda item, e: errors.append(item))
+    assert done == 4 and errors == [2] and hit_bound is False
+
+
+def test_bounded_map_handles_an_empty_list(db_path):
+    assert scheduler.bounded_map([], lambda i: None, 2, 60) == (0, False)
+
+
 def test_a_cursor_pointing_at_a_departed_restaurant_does_not_wedge(db_path):
     scheduler._remember_fetch_cursor([10, 20], 2)
     # 20 has since been deleted; the pass must still cover everyone.

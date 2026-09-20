@@ -209,11 +209,18 @@ def reset_metrics():
 
 
 def register(app):
-    """Attach the handlers. Order matters: cache headers are set on the
-    response object, compression rewrites its body — running compression last
-    means it sees the final headers. The timer starts before_request and is
-    read first on the way out, so it measures the handler rather than the
-    compression this module also does."""
+    """Attach the handlers. Order matters, and Flask runs after_request
+    functions in REVERSE registration order — verified, not assumed — so
+    the execution order here is: compression, cache headers, then the
+    metric.
+
+    That means the recorded latency INCLUDES this module's own compression,
+    which is correct: it is time the client spends waiting on the server.
+    Measuring only the view function would report a number nobody
+    experiences.
+
+    Compression still runs before cache headers so it sees the final
+    headers."""
     app.before_request(_start_timer)
     app.after_request(_record_request)
     app.after_request(add_cache_headers)
