@@ -7193,6 +7193,28 @@ def food_cost_menu_profitability(current_user):
         return jsonify(ok=False, error=f"Couldn't work out menu margins: {e}"), 500
 
 
+def track_reprice(rid, user_id=None):
+    """Repricing a dish is a deliberate commitment to move food cost, so it
+    starts measuring itself — the same shape as _track_campaign_outcome, and
+    only AFTER the write actually landed.
+
+    Keyed on the MONTH, so changing six prices in a week is one tracker
+    ("the prices you changed in September") rather than six. Six trackers on
+    one metric would all read the same movement and report it six times.
+    Best-effort: measurement never fails a price change.
+    """
+    try:
+        import outcomes
+        from datetime import date as _d
+        month = _d.today().strftime("%Y-%m")
+        outcomes.record(rid, "reprice", f"reprice:{month}",
+                        f"Menu prices changed in {_d.today().strftime('%B')}",
+                        "food_cost_pct", user_id=user_id)
+    except Exception as e:
+        import ops
+        ops.capture(e, job="reprice_outcome", context=f"restaurant_id={rid}")
+
+
 @client_bp.route("/api/food-cost/menu-item-price", methods=["POST"])
 @login_required
 def set_menu_item_price(current_user):
@@ -7204,6 +7226,7 @@ def set_menu_item_price(current_user):
         return jsonify(ok=False, error="Which menu item?"), 400
     if not _il.set_menu_item_price(current_user["restaurant_id"], item_id, data.get("sell_price")):
         return jsonify(ok=False, error="Couldn't set that price — check the item and the amount."), 400
+    track_reprice(current_user["restaurant_id"], current_user.get("id"))
     return jsonify(ok=True)
 
 

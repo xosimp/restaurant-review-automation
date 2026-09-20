@@ -162,6 +162,43 @@ Two halves:
 
 **Permissions**: `/food-cost/*` paths inherit Food Cost gating (a manager never sees invoice prices or margins); goals/outcomes on food-cost metrics are filtered the same way; loss signals, issue routing and the morning brief are principal-only (`TEAM_INVITE` holders).
 
+## Customer value / ROI (audit #20)
+
+**Files**: `value_delivered.py` (the four figures), `outcomes.py`
+(`total_value`, `best_ever`, `realised`, `module_of`), `promise.py` (the
+sales audit, measured), `metrics.py` (`comp_rate`/`void_rate`),
+`models.money_surfaced`.
+
+**Design stance**: the product must be able to say what it has been worth
+without saying anything it cannot defend line by line.
+
+- **Four figures, never summed.** `delivered` is measured before/after from
+  outcomes and carries `CAUSATION_CAVEAT`. `avoided` is cost avoidance with
+  every rate stated in the payload. `surfaced` is what the alerts carried in
+  dollars. `opportunity` is the gap against target — money available, not
+  banked. Adding any two of them mixes a measurement with an estimate.
+- **The denominator travels with the total.** Every surface that prints
+  "$X across N changes" also prints how many finished trackers came back
+  unmeasurable or flat.
+- **A recommendation is trackable when it names a metric.** `home_brief`'s
+  `add_rec(metric=)` is what puts a "Track this" control on the card; four
+  of the nine carry `None` because no honest metric fits, and they render
+  without one.
+- **Count work that happened, not time that passed.** The marketing figure
+  was `months_since_signup × $1,500` off one post; schedules were counted
+  per generated DRAFT (5,672 of them for one restaurant). Distinct months
+  with content, distinct weeks scheduled.
+- **`promise.compare`** puts the sales audit's own range beside where the
+  metric stood then and stands now, and stops. It does not score itself, and
+  a category with no metric in this product (bar, waitlist, marketing
+  revenue) says so rather than being dropped or zeroed.
+
+**Don't touch casually**: the separation of the four figures, and
+`metrics.DAYS_PER_MONTH`/`WEEKS_PER_MONTH` — one calendar, derived from
+52/12, matching `inventory.WEEKS_PER_MONTH`.
+
+---
+
 ## Admin (Will-only)
 
 **Files**: `admin_routes.py`, `admin_ops.py` (data layer), `admin_events.py`.

@@ -104,6 +104,15 @@ A deletion is only "verified" when the trace is written down alongside it.
 - **Email colours come from `emails.BRAND`**, enforced as a ratchet by
   `scripts/check_email_tokens.py`. Email is light-mode only, inline-styled,
   and governed by `DESIGN_SYSTEM.md` → Email.
+- **Value delivered is only what was measured.** `value_delivered.py`
+  returns four figures — `delivered` (from `outcomes.py`, before/after,
+  caveated), `avoided` (cost avoidance at STATED rates, counted only for
+  work that happened), `surfaced` (dollars the alerts carried) and
+  `opportunity` (gaps against target) — and **they are never summed into
+  each other**. An opportunity figure must never be rendered as delivered
+  value: that was the bug, and it made the number rise as the restaurant
+  got worse. Any new "value" component states its rate inline and counts
+  distinct work, never rows or months-since-signup.
 - **Inline JS is ES5 only**, enforced by `tests/test_frontend_rules.py`.
   Colours come from CSS variables only, enforced by `scripts/check_colors.py`.
   Every web button carries `.cbtn`, enforced by `tests/test_button_system.py`.

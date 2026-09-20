@@ -1792,6 +1792,7 @@ def mobile_set_menu_item_price(current_user):
         return jsonify(ok=False, error="Which menu item?"), 400
     if not _il.set_menu_item_price(current_user["restaurant_id"], item_id, data.get("sell_price")):
         return jsonify(ok=False, error="Couldn't set that price — check the item and the amount."), 400
+    _capi.track_reprice(current_user["restaurant_id"], current_user.get("id"))
     return jsonify(ok=True)
 
 
