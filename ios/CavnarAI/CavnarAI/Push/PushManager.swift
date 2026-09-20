@@ -61,8 +61,19 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
     private(set) var registeredToken: String?
 
     func requestAuthorizationAndRegister() {
+        // NOT marked handled here. It used to be, at the top, before this
+        // knew whether it had actually registered — so the .notDetermined
+        // early return below burned the launch: no prompt, no
+        // registerForRemoteNotifications, no APNs token, and every later
+        // flushPendingToken() a no-op because nothing was ever queued. An
+        // owner who then allowed notifications in iOS Settings stayed
+        // unregistered until the next cold launch, and the backend
+        // truthfully reported "no device registered for your login".
+        //
+        // Cheap to re-enter: getNotificationSettings is local, and the
+        // authorized path is what sets the flag. mainTabs rebuilds on every
+        // Face ID unlock, which is now exactly when we want another look.
         guard !hasRegisteredThisLaunch else { return }
-        hasRegisteredThisLaunch = true
         let center = UNUserNotificationCenter.current()
         center.delegate = self
         center.setNotificationCategories(Self.categories)
@@ -87,6 +98,7 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
                 default:
                     self.authorizationDenied = false
                     self.authorizationUndetermined = false
+                    self.hasRegisteredThisLaunch = true
                     UIApplication.shared.registerForRemoteNotifications()
                     await self.flushPendingToken()
                 }
