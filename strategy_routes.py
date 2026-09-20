@@ -504,6 +504,148 @@ def _do_good_news(u):
     return {"ok": True, "items": items, "caveat": good_news.CAVEAT}, 200
 
 
+# ── self-serve pause ──────────────────────────────────────────────────────────
+# The only path off the product was an email to Will asking to cancel. A
+# pause is the smaller decision an owner can make for themselves: Stripe
+# collection stops (pause_collection, behaviour "void" — nothing is invoiced
+# and nothing accrues), the account moves to the product's existing "paused"
+# state, and Stripe resumes collection on the date chosen. Data keeps
+# flowing while paused — reviews are fetched on reviews_live, not billing —
+# so the day they come back the brief is current, not a month stale.
+
+PAUSE_DAYS = (14, 30, 60)
+
+
+def _stripe_client():
+    import os
+    key = os.getenv("STRIPE_SECRET_KEY", "")
+    if not key:
+        return None
+    import stripe as _stripe
+    _stripe.api_key = key
+    return _stripe
+
+
+def _active_subscription(stripe_mod, customer_id):
+    for status in ("active", "trialing", "past_due"):
+        subs = stripe_mod.Subscription.list(customer=customer_id, status=status, limit=3)
+        if subs.data:
+            return subs.data[0]
+    return None
+
+
+def _do_pause(u):
+    if not _principal(u):
+        return _forbidden("Only the account owner can pause the subscription.")
+    from datetime import datetime, timedelta, timezone
+    from models import get_restaurant, update_restaurant
+    from client_api import log_account_event
+    b = _body()
+    try:
+        days = int(b.get("days") or 30)
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "days must be a whole number"}, 400
+    if days not in PAUSE_DAYS:
+        return {"ok": False, "error": f"Pick {', '.join(str(d) for d in PAUSE_DAYS[:-1])} or {PAUSE_DAYS[-1]} days."}, 400
+    rid = _rid(u)
+    r = get_restaurant(rid)
+    if not r:
+        return {"ok": False, "error": "Restaurant not found"}, 404
+    if (r.billing_status or "").lower() == "paused":
+        return {"ok": False, "error": "Already paused."}, 409
+    resumes = datetime.now(timezone.utc) + timedelta(days=days)
+    stripe_mod = _stripe_client()
+    if stripe_mod and r.stripe_customer_id:
+        try:
+            sub = _active_subscription(stripe_mod, r.stripe_customer_id)
+            if not sub:
+                return {"ok": False, "error": "No active subscription to pause — reply to Will."}, 409
+            stripe_mod.Subscription.modify(
+                sub.id, pause_collection={"behavior": "void", "resumes_at": int(resumes.timestamp())})
+        except Exception as e:
+            import ops
+            ops.capture(e, job="pause_subscription", context=f"restaurant_id={rid}")
+            return {"ok": False, "error": "Stripe did not accept the pause — nothing changed. Reply to Will."}, 502
+    else:
+        # No Stripe on this account (a trial, or a manually billed client):
+        # the product pauses; there is no collection to stop.
+        pass
+    # Every location billed together pauses together, the way the webhook
+    # moves siblings — one owner, one subscription, one state.
+    try:
+        from webhook_routes import _sibling_restaurant_ids
+        rids = _sibling_restaurant_ids(rid)
+    except Exception:
+        rids = [rid]
+    for _r in rids:
+        update_restaurant(_r, {"billing_status": "paused", "paused_until": resumes.date().isoformat()})
+    log_account_event(rid, "subscription_paused", current_user=u, detail=f"{days} days, resumes {resumes.date().isoformat()}")
+    try:
+        import emails as _emails
+        _emails.deliver(email_type="pause_notice_ops", restaurant_id=rid, payload={
+            "from": _emails.sender("ops"), "to": [_emails._from_email()],
+            "subject": f"Paused: {r.name} — {days} days, resumes {resumes.date().isoformat()}",
+            "preheader": "A client paused their own subscription.",
+            "html": _emails._branded_email(f"<p>{r.name} paused for {days} days from the app. Stripe resumes "
+                                           f"collection on {resumes.date().isoformat()}.</p>")})
+    except Exception as e:
+        import ops
+        ops.capture(e, job="pause_notice", context=f"restaurant_id={rid}")
+    return {"ok": True, "paused_until": resumes.date().isoformat(), "days": days}, 200
+
+
+def _do_resume(u):
+    if not _principal(u):
+        return _forbidden("Only the account owner can resume the subscription.")
+    from models import get_restaurant, update_restaurant
+    from client_api import log_account_event
+    rid = _rid(u)
+    r = get_restaurant(rid)
+    if not r or (r.billing_status or "").lower() != "paused":
+        return {"ok": False, "error": "Not paused."}, 409
+    stripe_mod = _stripe_client()
+    if stripe_mod and r.stripe_customer_id:
+        try:
+            sub = _active_subscription(stripe_mod, r.stripe_customer_id)
+            if sub:
+                stripe_mod.Subscription.modify(sub.id, pause_collection="")
+        except Exception as e:
+            import ops
+            ops.capture(e, job="resume_subscription", context=f"restaurant_id={rid}")
+            return {"ok": False, "error": "Stripe did not accept the resume — reply to Will."}, 502
+    try:
+        from webhook_routes import _sibling_restaurant_ids
+        rids = _sibling_restaurant_ids(rid)
+    except Exception:
+        rids = [rid]
+    for _r in rids:
+        update_restaurant(_r, {"billing_status": "active", "paused_until": None})
+    log_account_event(rid, "subscription_resumed", current_user=u)
+    return {"ok": True}, 200
+
+
+def _do_pause_status(u):
+    from models import get_restaurant
+    r = get_restaurant(_rid(u))
+    return {"ok": True, "paused": (getattr(r, "billing_status", "") or "").lower() == "paused",
+            "paused_until": getattr(r, "paused_until", None), "days": list(PAUSE_DAYS),
+            "can_pause": _principal(u)}, 200
+
+
+def _do_monthly_review(u):
+    """Last month, read the way an owner reads a P&L — the same build the
+    monthly email sends on the 1st, so the screen and the email agree.
+    Metrics this login may not see are left out the way goals are."""
+    import monthly_review
+    from models import get_restaurant
+    rid = _rid(u)
+    review = monthly_review.build(rid, today=_local_today(u), restaurant=get_restaurant(rid))
+    review["metrics"] = [m for m in review["metrics"] if _metric_visible(u, m.get("key"))]
+    review["results"] = [r for r in (review.get("results") or []) if _metric_visible(u, r.get("metric"))]
+    return {"ok": True, "review": review, "headline": monthly_review.headline(review),
+            "yoy": {m["key"]: monthly_review.yoy_clause(m) for m in review["metrics"]}}, 200
+
+
 def _do_milestones(u):
     """Moments worth marking, newest first, plus anything not yet shown.
 
@@ -631,6 +773,10 @@ _ROUTES = [
     ("/cross-module", ["GET"], _do_cross_module, "cross_module"),
     ("/good-news", ["GET"], _do_good_news, "good_news"),
     ("/milestones", ["GET"], _do_milestones, "milestones_list"),
+    ("/monthly-review", ["GET"], _do_monthly_review, "monthly_review"),
+    ("/account/pause", ["GET"], _do_pause_status, "pause_status"),
+    ("/account/pause", ["POST"], _do_pause, "pause"),
+    ("/account/resume", ["POST"], _do_resume, "resume"),
     ("/milestones/seen", ["POST"], _do_milestone_seen, "milestone_seen"),
     ("/morning-brief", ["GET"], _do_morning_brief, "morning_brief"),
     ("/morning-brief/settings", ["POST"], _do_morning_brief_settings, "morning_brief_settings"),

@@ -435,7 +435,117 @@ def correlations(restaurant_id: int, data: dict = None, restaurant=None,
                     })
                     break
 
+    # ── marketing × reviews: a posting month and a review-volume move ──
+    # Marketing and Intel contributed nothing to the cross-module argument:
+    # gather() read them and no link kind used them, so removing either
+    # module visibly cost the others nothing. Both links below are
+    # CO-MOVEMENTS with the same honesty furniture as the rest — a floor on
+    # each side, what would confirm it, what else explains it — and neither
+    # is a revenue attribution, which marketing has no honest data for.
+    mk = data.get("marketing") or {}
+    if (mk.get("posts_published") or 0) >= MIN_POSTS_FOR_LINK:
+        vol = _review_volume_shift(restaurant_id, db_path)
+        if vol and vol["now"] >= MIN_REVIEWS_FOR_LINK and abs(vol["pct"]) >= REVIEW_SHIFT_PCT:
+            up = vol["pct"] > 0
+            links.append({
+                "kind": "marketing_x_reviews",
+                "modules": ["marketing", "reviews"],
+                "claim_kind": "inferred",
+                "headline": (f"{mk['posts_published']} posts went out in the last 30 days and reviews "
+                             f"{'rose' if up else 'fell'} {abs(vol['pct']):.0f}% against the 30 days before"),
+                "evidence": [
+                    f"{mk['posts_published']} posts published in the last 30 days"
+                    + (f", reaching about {mk['reach']:,}" if mk.get("reach") else ""),
+                    f"{vol['now']} reviews in the last 30 days against {vol['before']} in the 30 before",
+                ],
+                "not_a_cause": ("Posts and reviews moving in the same month is a co-movement. This product "
+                                "has no click or visit data tying a post to a guest who then reviewed."),
+                "confirm_by": ("Look at whether the new reviews mention what the posts were about, and "
+                               "whether the same weeks last year moved the same way."),
+                "alternative": "A seasonal week, a holiday, or a press mention moves review volume on its own.",
+            })
+
+    # ── intel × reviews: AI visibility and the rating moving together ──
+    vis = data.get("visibility") or {}
+    if vis.get("ai_score") is not None and not vis.get("stale"):
+        prev = _previous_visibility(restaurant_id, db_path, before=vis.get("as_of"))
+        drop = (prev - vis["ai_score"]) if prev is not None else 0
+        if drop >= VISIBILITY_DROP_POINTS:
+            # The reviews brief carries clusters and diagnoses, not the
+            # trend, so read it from its own module — a first draft looked
+            # for a key that does not exist and would never have fired.
+            try:
+                import review_intelligence as _ri
+                trend = _ri.rating_trend(restaurant_id, weeks=8, db_path=db_path) or {}
+            except Exception:
+                trend = {}
+            direction = trend.get("direction")
+            if direction == "down":
+                links.append({
+                    "kind": "intel_x_reviews",
+                    "modules": ["intel", "reviews"],
+                    "claim_kind": "inferred",
+                    "headline": (f"Your AI-search visibility fell {drop:.0f} points and your weekly rating "
+                                 f"has been slipping over the same stretch"),
+                    "evidence": [
+                        f"AI visibility {prev} → {vis['ai_score']} between the last two weekly runs",
+                        f"Rating trend down over the last 8 weeks"
+                        + (f" ({trend['first']:.1f} → {trend['latest']:.1f})"
+                           if trend.get("first") and trend.get("latest") else ""),
+                    ],
+                    "not_a_cause": ("AI assistants weight recent rating and review volume, so a slipping "
+                                    "rating can lower visibility — but a competitor's new listing or a "
+                                    "profile change lowers it just as well."),
+                    "confirm_by": "Re-run the visibility check after the next fortnight of reviews and see whether it recovers with the rating.",
+                    "alternative": "A nearby competitor improved their profile, or Google changed what it shows.",
+                })
+
     return links
+
+
+# Floors for the two co-movement links above. A handful of posts against a
+# handful of reviews is two small numbers moving, not a pattern.
+MIN_POSTS_FOR_LINK = 4
+MIN_REVIEWS_FOR_LINK = 10
+REVIEW_SHIFT_PCT = 30.0
+VISIBILITY_DROP_POINTS = 15
+
+
+def _review_volume_shift(restaurant_id, db_path=DB_PATH):
+    """Reviews in the last 30 days against the 30 before, on the shared
+    review time axis. None when either window is empty."""
+    from models import REVIEW_TIME_AXIS_BARE
+    conn = get_conn(db_path)
+    try:
+        now_n = conn.execute(
+            f"SELECT COUNT(*) FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL "
+            f"AND date({REVIEW_TIME_AXIS_BARE}) >= date('now','-30 days')", (restaurant_id,)).fetchone()[0]
+        before_n = conn.execute(
+            f"SELECT COUNT(*) FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL "
+            f"AND date({REVIEW_TIME_AXIS_BARE}) >= date('now','-60 days') "
+            f"AND date({REVIEW_TIME_AXIS_BARE}) < date('now','-30 days')", (restaurant_id,)).fetchone()[0]
+    except Exception:
+        return None
+    finally:
+        conn.close()
+    if not before_n or not now_n:
+        return None
+    return {"now": int(now_n), "before": int(before_n),
+            "pct": (now_n - before_n) / before_n * 100.0}
+
+
+def _previous_visibility(restaurant_id, db_path=DB_PATH, before=None):
+    """The ai_score from the run before the latest one, or None."""
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT ai_score FROM ai_visibility_runs WHERE restaurant_id=? AND ai_score IS NOT NULL "
+            "ORDER BY created_at DESC, id DESC LIMIT 2", (restaurant_id,)).fetchall()
+    except Exception:
+        return None
+    finally:
+        conn.close()
+    return int(rows[1][0]) if len(rows) >= 2 else None
 
 
 def _concentration_phrase(c):

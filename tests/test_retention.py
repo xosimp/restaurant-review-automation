@@ -443,3 +443,163 @@ def test_ledger_rides_on_the_value_route(db_path, monkeypatch):
     monkeypatch.setattr(strategy_routes, "_metric_visible", lambda u, m: True)
     payload, _ = strategy_routes._do_value({"id": 1, "restaurant_id": rid, "role": "client", "is_admin": False})
     assert "ledger" in payload and "lines" in payload["ledger"]
+
+
+# ── self-serve pause (Phase C, #9) ───────────────────────────────────────────
+# The only path off the product was an email to Will asking to cancel. A
+# pause is the smaller decision an owner can make for themselves, and it
+# must be reachable while paused — "paused" is a blocked billing state.
+
+def _owner(rid):
+    return {"id": 1, "restaurant_id": rid, "role": "owner", "is_admin": False, "username": "o"}
+
+
+def _pause_env(monkeypatch, db_path, stripe=None):
+    import strategy_routes, webhook_routes, emails
+    real = models.get_conn
+    monkeypatch.setattr(webhook_routes, "get_conn", lambda *a, **k: real(db_path))
+    monkeypatch.setattr(strategy_routes, "_stripe_client", lambda: stripe)
+    sent = {}
+    monkeypatch.setattr(emails, "deliver", lambda **kw: sent.update(kw) or True)
+    return strategy_routes, sent
+
+
+def test_pause_moves_the_account_to_paused_with_a_resume_date(db_path, monkeypatch):
+    sr, sent = _pause_env(monkeypatch, db_path)
+    rid = _restaurant(db_path)
+    monkeypatch.setattr(sr, "_body", lambda: {"days": 30})
+    payload, status = sr._do_pause(_owner(rid))
+    assert status == 200 and payload["ok"], payload
+    r = models.get_restaurant(rid, db_path=db_path)
+    assert r.billing_status == "paused"
+    assert r.paused_until == payload["paused_until"]
+    assert (date.fromisoformat(r.paused_until) - date.today()).days in (29, 30)
+    assert sent["email_type"] == "pause_notice_ops"          # Will hears about it
+    # A paused account is a blocked one — the product goes quiet on its own.
+    assert models.subscription_allows_access(rid, db_path=db_path) is False
+    st, _ = sr._do_pause_status(_owner(rid))
+    assert st["paused"] is True and st["paused_until"] == r.paused_until
+
+
+def test_resume_clears_the_pause(db_path, monkeypatch):
+    sr, _ = _pause_env(monkeypatch, db_path)
+    rid = _restaurant(db_path)
+    monkeypatch.setattr(sr, "_body", lambda: {"days": 14})
+    sr._do_pause(_owner(rid))
+    payload, status = sr._do_resume(_owner(rid))
+    assert status == 200 and payload["ok"]
+    r = models.get_restaurant(rid, db_path=db_path)
+    assert r.billing_status == "active" and r.paused_until is None
+    assert models.subscription_allows_access(rid, db_path=db_path) is True
+
+
+def test_pause_refuses_odd_lengths_and_double_pauses(db_path, monkeypatch):
+    sr, _ = _pause_env(monkeypatch, db_path)
+    rid = _restaurant(db_path)
+    monkeypatch.setattr(sr, "_body", lambda: {"days": 7})
+    _, status = sr._do_pause(_owner(rid))
+    assert status == 400
+    monkeypatch.setattr(sr, "_body", lambda: {"days": 30})
+    assert sr._do_pause(_owner(rid))[1] == 200
+    assert sr._do_pause(_owner(rid))[1] == 409
+    assert sr._do_resume(_owner(rid))[1] == 200
+    assert sr._do_resume(_owner(rid))[1] == 409       # not paused any more
+
+
+def test_only_the_owner_can_pause(db_path, monkeypatch):
+    sr, _ = _pause_env(monkeypatch, db_path)
+    rid = _restaurant(db_path)
+    monkeypatch.setattr(sr, "_body", lambda: {"days": 30})
+    manager = dict(_owner(rid), role="manager")
+    assert sr._do_pause(manager)[1] == 403
+    assert sr._do_resume(manager)[1] == 403
+    assert sr._do_pause_status(manager)[0]["can_pause"] is False
+    assert models.get_restaurant(rid, db_path=db_path).billing_status != "paused"
+
+
+def test_pause_tells_stripe_to_stop_collecting_and_nothing_changes_if_stripe_refuses(db_path, monkeypatch):
+    calls = []
+
+    class _Sub:
+        id = "sub_1"
+
+    class _Subscription:
+        @staticmethod
+        def list(customer, status, limit):
+            return type("R", (), {"data": [_Sub()] if status == "active" else []})()
+
+        @staticmethod
+        def modify(sub_id, **kw):
+            calls.append((sub_id, kw))
+            if kw.get("pause_collection") and kw["pause_collection"] != "" and _Subscription.refuse:
+                raise RuntimeError("card_declined")
+
+    _Subscription.refuse = False
+    stripe = type("S", (), {"Subscription": _Subscription})
+    sr, _ = _pause_env(monkeypatch, db_path, stripe=stripe)
+    rid = _restaurant(db_path, stripe_customer_id="cus_1")
+    monkeypatch.setattr(sr, "_body", lambda: {"days": 60})
+    assert sr._do_pause(_owner(rid))[1] == 200
+    sub_id, kw = calls[-1]
+    assert sub_id == "sub_1" and kw["pause_collection"]["behavior"] == "void"
+    assert kw["pause_collection"]["resumes_at"] > 0
+    assert sr._do_resume(_owner(rid))[1] == 200
+    assert calls[-1][1] == {"pause_collection": ""}       # the resume un-pauses Stripe too
+
+    _Subscription.refuse = True
+    payload, status = sr._do_pause(_owner(rid))
+    assert status == 502 and "nothing changed" in payload["error"]
+    assert models.get_restaurant(rid, db_path=db_path).billing_status == "active"
+
+
+def test_the_pause_routes_stay_reachable_while_paused():
+    """auth's billing block would otherwise lock the owner out of the one
+    button that ends the pause. Mobile is covered by /mobile/api/account."""
+    import auth
+    for p in ("/api/account/pause", "/api/account/resume", "/mobile/api/account"):
+        assert any(p.startswith(x) for x in auth._BILLING_EXEMPT_PREFIXES), p
+
+
+def test_a_paused_account_gets_no_nudges(db_path, monkeypatch):
+    import strategy_jobs
+    rid = _restaurant(db_path)
+    from models import update_restaurant
+    update_restaurant(rid, {"billing_status": "paused"}, db_path=db_path)
+    reached = []
+    import morning_brief
+    monkeypatch.setattr(morning_brief, "recipients", lambda *a, **k: reached.append(1) or [])
+    assert strategy_jobs._reach(rid, "while_away", "t", "b", {}, db_path) == 0
+    assert reached == []                                  # never even asked who to reach
+
+
+def test_paused_until_survives_the_four_touch_points(db_path):
+    from models import update_restaurant
+    rid = _restaurant(db_path)
+    update_restaurant(rid, {"paused_until": "2026-10-20"}, db_path=db_path)
+    assert models.get_restaurant(rid, db_path=db_path).paused_until == "2026-10-20"
+    update_restaurant(rid, {"paused_until": None}, db_path=db_path)
+    assert models.get_restaurant(rid, db_path=db_path).paused_until is None
+
+
+# ── the monthly review on the web ────────────────────────────────────────────
+
+def test_the_monthly_review_route_carries_a_yoy_clause_per_metric(db_path, monkeypatch):
+    import strategy_routes, monthly_review
+    rid = _restaurant(db_path)
+    monkeypatch.setattr(strategy_routes, "_metric_visible", lambda u, m: True)
+    monkeypatch.setattr(strategy_routes, "_local_today", lambda u: date(2026, 9, 1))
+    fake = {"month": "August 2026", "compared_with": "July", "metrics": [
+        {"key": "labor_pct", "value": 31.0, "previous": 30.0, "unit": "pct", "verdict": "steady",
+         "year_ago": 35.0, "yoy": {"verdict": "improved", "delta": -4.0}}], "results": []}
+    monkeypatch.setattr(monthly_review, "build", lambda *a, **k: dict(fake))
+    payload, status = strategy_routes._do_monthly_review(_owner(rid))
+    assert status == 200 and payload["ok"]
+    assert payload["yoy"]["labor_pct"] == monthly_review.yoy_clause(fake["metrics"][0])
+    assert "last year" in payload["yoy"]["labor_pct"]
+
+
+def test_the_monthly_review_route_is_registered_on_both_sides():
+    import strategy_routes
+    paths = {(p, tuple(m)) for p, m, *_ in strategy_routes._ROUTES}
+    assert ("/monthly-review", ("GET",)) in paths
+    assert ("/account/pause", ("POST",)) in paths and ("/account/resume", ("POST",)) in paths

@@ -1888,7 +1888,7 @@ def _weekly_review_sections(restaurant_id):
     return out
 
 
-def _monthly_review_sections(restaurant_id):
+def _monthly_review_sections(restaurant_id, months=1):
     """The month read like a P&L rather than counted: how the headline
     numbers moved against the month before, what the owner's own changes
     did, where their goals stand, and the three things worth fixing next.
@@ -1903,7 +1903,7 @@ def _monthly_review_sections(restaurant_id):
     out = []
     try:
         import monthly_review
-        review = monthly_review.build(restaurant_id)
+        review = monthly_review.build(restaurant_id, months=months)
     except Exception as e:
         print(f"[monthly] review build failed: {e}")
         return []
@@ -1914,7 +1914,8 @@ def _monthly_review_sections(restaurant_id):
     try:
         body = monthly_review.lines(review)
         if body:
-            block = (report_eyebrow("The month against " + review["compared_with"])
+            block = (report_eyebrow(("The quarter" if review.get("months", 1) > 1 else "The month")
+                                    + " against " + review["compared_with"])
                      + report_paragraph(_html.escape(monthly_review.headline(review)))
                      + report_paragraph(_list(body)))
             cost = monthly_review.cost_of_waiting(review)
@@ -2589,3 +2590,37 @@ def send_lifecycle_email(day: int, to_email: str, restaurant_name: str, owner_na
         print(f"Lifecycle day {day} sent to {to_email}")
     except Exception as e:
         print(f"send_lifecycle_email({day}) failed: {e}")
+
+
+
+# ── Quarterly ─────────────────────────────────────────────────────────────────
+# The monthly review over three months, on the 1st of January, April, July
+# and October. A month can be moved by one party or one closed day; a
+# quarter cannot. Same build, same gate (monthly_review_enabled), and the
+# year-over-year clause lands here first because a quarter usually has one.
+
+def send_quarterly_summary_email(to_email: str, restaurant_name: str, owner_name: str = None,
+                                 restaurant_id: int = None):
+    if not _resend_key() or not restaurant_id:
+        return
+    try:
+        import html as _h
+        import monthly_review
+        review = monthly_review.build(restaurant_id, months=3)
+        sections = _monthly_review_sections(restaurant_id, months=3)
+        if not sections:
+            print(f"[quarterly] nothing to report for {restaurant_id}")
+            return
+        head = f"Your quarter — {review['month']}"
+        deliver(email_type="send_quarterly_summary", restaurant_id=restaurant_id, payload={
+            "from": sender("client"),
+            "to": [to_email],
+            "subject": f"{head} — {restaurant_name}",
+            "preheader": _h.escape(monthly_review.headline(review)),
+            "html": report_shell(kicker="Quarterly review", title=head,
+                                 subtitle=_h.escape(restaurant_name), sections=sections,
+                                 cta_label="Open your dashboard →"),
+        })
+        print(f"Quarterly summary sent to {to_email}")
+    except Exception as e:
+        print(f"send_quarterly_summary_email failed: {e}")

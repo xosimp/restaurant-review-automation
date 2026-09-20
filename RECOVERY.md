@@ -213,4 +213,12 @@ sqlite3 /tmp/drill.db "PRAGMA integrity_check; SELECT COUNT(*) FROM restaurants;
 
 Record the date of the last successful drill here:
 
-- **Last drill:** _(none yet — see audit #21)_
+- **Last drill:** 2026-09-20, **local** (not production). Newest local
+  snapshot `cavnar_ai_backup_2026-09-19.db` (8.3 MB) copied to scratch with
+  `-wal`/`-shm` removed; `PRAGMA integrity_check` → `ok`; 16 restaurants;
+  `MAX(review_date)` 2026-09-19; `MAX(fired_at)` 2026-09-15; `init_db()` ran
+  its additive migration over the snapshot and integrity was `ok` afterwards.
+  What this did NOT prove: unredaction of OAuth tokens — the local database
+  holds no `gmb_refresh_token` at all, so "0 kept" is not evidence either
+  way. **The production drill is still owed** (`railway run`, same steps);
+  do it before the next ten clients.

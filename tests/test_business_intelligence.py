@@ -425,3 +425,86 @@ def test_a_genuinely_short_labor_period_still_says_too_short(db_path, monkeypatc
         "degraded": [], "modules_off": [], "complete": True})
     reason = {u["module"]: u["reason"] for u in bi.money_at_stake(rid)["unavailable"]}["labor"]
     assert "too short" in reason
+
+
+# ── marketing × reviews and intel × reviews ──────────────────────────────────
+# Both are co-movements with floors on each side. Neither is a revenue
+# attribution — the product has no click data tying a post to a reviewer.
+
+def _plain_reviews(db_path, rid, n, days_ago, prefix):
+    now = datetime.now()
+    save_reviews([Review(restaurant_id=rid, platform="google", external_id=f"{prefix}{i}",
+                         author="G", rating=5, text="Great.",
+                         review_date=(now - timedelta(days=days_ago + (i % 20))).strftime("%Y-%m-%d %H:%M:%S"))
+                  for i in range(n)], db_path=db_path)
+
+
+def _data(rid, db_path, **over):
+    d = bi.gather(rid, db_path=db_path)
+    d.update(over)
+    return d
+
+
+def test_marketing_link_needs_posts_and_a_real_review_move(db_path):
+    rid = _restaurant(db_path)
+    _plain_reviews(db_path, rid, 10, days_ago=35, prefix="b")     # 10 in the 30 before
+    _plain_reviews(db_path, rid, 16, days_ago=2, prefix="n")      # 16 in the last 30 → +60%
+    data = _data(rid, db_path, marketing={"posts_published": bi.MIN_POSTS_FOR_LINK - 1, "reach": 900})
+    assert not [l for l in bi.correlations(rid, data=data, db_path=db_path) if l["kind"] == "marketing_x_reviews"]
+    data = _data(rid, db_path, marketing={"posts_published": bi.MIN_POSTS_FOR_LINK, "reach": 900})
+    links = [l for l in bi.correlations(rid, data=data, db_path=db_path) if l["kind"] == "marketing_x_reviews"]
+    assert len(links) == 1
+    l = links[0]
+    assert l["claim_kind"] == "inferred" and "rose 60%" in l["headline"]
+    assert "co-movement" in l["not_a_cause"] and l["confirm_by"] and l["alternative"]
+
+
+def test_marketing_link_stays_quiet_under_the_review_floor_or_a_small_move(db_path):
+    rid = _restaurant(db_path)
+    _plain_reviews(db_path, rid, 4, days_ago=35, prefix="b")
+    _plain_reviews(db_path, rid, 8, days_ago=2, prefix="n")       # +100% but only 8 now
+    data = _data(rid, db_path, marketing={"posts_published": 9})
+    assert not [l for l in bi.correlations(rid, data=data, db_path=db_path) if l["kind"] == "marketing_x_reviews"]
+    _plain_reviews(db_path, rid, 8, days_ago=35, prefix="b2")     # 12 before
+    _plain_reviews(db_path, rid, 5, days_ago=2, prefix="n2")      # 13 now → +8%
+    data = _data(rid, db_path, marketing={"posts_published": 9})
+    assert not [l for l in bi.correlations(rid, data=data, db_path=db_path) if l["kind"] == "marketing_x_reviews"]
+
+
+def _visibility_runs(db_path, rid, *scores):
+    conn = get_conn(db_path)
+    for i, s in enumerate(scores):
+        conn.execute("INSERT INTO ai_visibility_runs (restaurant_id, ai_score, gbp_score, created_at) "
+                     "VALUES (?,?,?,datetime('now', ?))", (rid, s, 50, f"-{len(scores) - i} days"))
+    conn.commit(); conn.close()
+
+
+def test_intel_link_needs_a_visibility_drop_and_a_falling_rating(db_path, monkeypatch):
+    import review_intelligence as ri
+    rid = _restaurant(db_path)
+    _visibility_runs(db_path, rid, 70, 50)                       # 20-point drop
+    monkeypatch.setattr(ri, "rating_trend", lambda *a, **k: {"direction": "down", "first": 4.6, "latest": 4.1})
+    data = _data(rid, db_path, visibility={"ai_score": 50, "stale": False, "as_of": None})
+    links = [l for l in bi.correlations(rid, data=data, db_path=db_path) if l["kind"] == "intel_x_reviews"]
+    assert len(links) == 1
+    assert "fell 20 points" in links[0]["headline"] and "4.6 → 4.1" in links[0]["evidence"][1]
+    assert "competitor" in links[0]["not_a_cause"]
+    # A steady rating: the same drop is not a link.
+    monkeypatch.setattr(ri, "rating_trend", lambda *a, **k: {"direction": "flat"})
+    assert not [l for l in bi.correlations(rid, data=data, db_path=db_path) if l["kind"] == "intel_x_reviews"]
+
+
+def test_intel_link_ignores_a_small_drop_a_stale_score_and_a_first_run(db_path, monkeypatch):
+    import review_intelligence as ri
+    rid = _restaurant(db_path)
+    monkeypatch.setattr(ri, "rating_trend", lambda *a, **k: {"direction": "down"})
+    _visibility_runs(db_path, rid, 60, 50)                       # 10 points: under the floor
+    data = _data(rid, db_path, visibility={"ai_score": 50, "stale": False})
+    assert not [l for l in bi.correlations(rid, data=data, db_path=db_path) if l["kind"] == "intel_x_reviews"]
+    _visibility_runs(db_path, rid, 80, 50)
+    stale = _data(rid, db_path, visibility={"ai_score": 50, "stale": True})
+    assert not [l for l in bi.correlations(rid, data=stale, db_path=db_path) if l["kind"] == "intel_x_reviews"]
+    rid2 = _restaurant(db_path)
+    _visibility_runs(db_path, rid2, 40)                          # one run: nothing to compare
+    data2 = _data(rid2, db_path, visibility={"ai_score": 40, "stale": False})
+    assert not [l for l in bi.correlations(rid2, data=data2, db_path=db_path) if l["kind"] == "intel_x_reviews"]

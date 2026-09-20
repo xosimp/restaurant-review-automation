@@ -2451,7 +2451,8 @@ def _wants_json_response():
 # self-service route back to paying.
 _BILLING_EXEMPT_PREFIXES = (
     "/login", "/logout", "/health", "/static/", "/privacy", "/terms",
-    "/api/billing-info", "/account", "/mobile/api/account", "/mobile/api/login",
+    "/api/billing-info", "/api/account/pause", "/api/account/resume",
+    "/account", "/mobile/api/account", "/mobile/api/login",
     "/mobile/api/logout", "/mobile/api/me", "/mobile/api/forgot-password",
     "/mobile/api/reset-password", "/admin",
 )

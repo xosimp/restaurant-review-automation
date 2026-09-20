@@ -1960,6 +1960,32 @@ def run_monthly_summaries():
     return {"sent": sent, "skipped": skipped, "failed": failed}
 
 
+def run_quarterly_summaries():
+    """1st of Jan / Apr / Jul / Oct, 9am local — the quarter that just
+    ended. Same audience and the same switch as the monthly."""
+    from emails import send_quarterly_summary_email
+    from models import get_all_restaurants
+    sent = skipped = failed = 0
+    for r in get_all_restaurants():
+        if not r.owner_email or r.billing_status in ('internal', 'churned', 'paused'):
+            skipped += 1
+            continue
+        if not local_due(r, 9, claim_key="quarterly_summary"):
+            skipped += 1
+            continue
+        if not getattr(r, "monthly_review_enabled", 1):
+            skipped += 1
+            continue
+        try:
+            send_quarterly_summary_email(to_email=r.owner_email, restaurant_name=r.name,
+                                         owner_name=r.owner_name, restaurant_id=r.id)
+            sent += 1
+        except Exception as qe:
+            failed += 1
+            _ops.capture(qe, job="quarterly_summary", context=f"restaurant_id={r.id}")
+    return {"sent": sent, "skipped": skipped, "failed": failed}
+
+
 def scheduler_loop():
     # No module-level "already ran" globals any more — every gate below is
     # ops.claim_period(), which is DB-backed and survives redeploys. See
@@ -2097,6 +2123,10 @@ def scheduler_loop():
                 _ops.run_job("daily_alerts", run_daily_alert_checks)
 
             # 1st of the month at 9am — send monthly summary to all active clients
+            if today.day == 1 and today.month in (1, 4, 7, 10) and \
+                    _ops.claim_period("quarterly_summary", f"{today}-{now.hour}"):
+                _ops.run_job("quarterly_summaries", run_quarterly_summaries)
+
             if _ops.claim_period("monthly_summary", f"{today}-{now.hour}"):
                 log.info("Running monthly summary emails...")
                 _ops.run_job("monthly_summary", run_monthly_summaries)

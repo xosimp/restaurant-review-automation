@@ -364,6 +364,9 @@ class Restaurant:
     # How much unprompted briefing the owner wants: calm | normal | all.
     # Alerts have a hard ceiling; briefings (NON_ALERT_TYPES) had none.
     briefing_level: str                  = "normal"
+    # Set by a self-serve pause: the day Stripe resumes collection, so the
+    # product can say "paused until" rather than "lapsed".
+    paused_until: str                    = None
     auto_draft_schedule: int             = 0
     external_scheduling_tool: Optional[str] = None   # "Fourth", "7shifts" — a scheduler they already pay for
     email_theme: Optional[str]           = "dark"  # 'dark' or 'light' — drives weekly digest email theme
@@ -708,6 +711,7 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "morning_brief_enabled", "INTEGER DEFAULT 1"),
         ("restaurants", "morning_brief_hour", "INTEGER DEFAULT 7"),
         ("restaurants", "briefing_level", "TEXT DEFAULT 'normal'"),
+        ("restaurants", "paused_until", "TEXT"),
         # Weekly schedule auto-draft: OFF unless asked for. It spends AI and
         # writes a draft, and a restaurant already on Fourth or 7shifts does
         # not want one.
@@ -3166,7 +3170,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "latitude","longitude","weather_cache_json","weather_cached_at",
         "geocode_failed_at",
         "alert_hold_during_service", "preshift_nudge_hour",
-        "morning_brief_enabled", "morning_brief_hour", "briefing_level",
+        "morning_brief_enabled", "morning_brief_hour", "briefing_level", "paused_until",
         "auto_draft_schedule", "external_scheduling_tool",
     }
     updates = {k: v for k, v in fields.items() if k in allowed}
@@ -3513,6 +3517,7 @@ def _restaurant_from_row(row) -> Restaurant:
                             and row["morning_brief_hour"] is not None else 7),
         briefing_level=(row["briefing_level"] if "briefing_level" in row.keys()
                         and row["briefing_level"] else "normal"),
+        paused_until=(row["paused_until"] if "paused_until" in row.keys() else None),
         auto_draft_schedule=(row["auto_draft_schedule"] if "auto_draft_schedule" in row.keys()
                              and row["auto_draft_schedule"] is not None else 0),
         external_scheduling_tool=row["external_scheduling_tool"] if "external_scheduling_tool" in row.keys() else None,

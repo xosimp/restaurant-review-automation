@@ -36,7 +36,7 @@ log = logging.getLogger(__name__)
 def _restaurants(db_path=DB_PATH):
     from models import get_all_restaurants
     for r in get_all_restaurants(db_path):
-        if (getattr(r, "billing_status", None) or "trial").lower() in ("churned", "cancelled", "canceled"):
+        if (getattr(r, "billing_status", None) or "trial").lower() in ("churned", "cancelled", "canceled", "paused"):
             continue
         yield r
 
@@ -388,6 +388,13 @@ def _reach(restaurant_id, alert_type, title, body, data, db_path, subject=None,
     """
     import morning_brief, notify, push
     if not notify.briefing_allowed(restaurant_id, alert_type, db_path):
+        return 0
+    # A paused or lapsed account asked for quiet; the jobs' own iteration
+    # filters most of these out, but a nudge fired directly (while-away,
+    # connection lost) has to check for itself.
+    from models import get_restaurant as _gr
+    _r = _gr(restaurant_id, db_path=db_path)
+    if _r and (_r.billing_status or "trial").lower() in ("paused", "churned", "cancelled", "canceled"):
         return 0
     people = morning_brief.recipients(restaurant_id, db_path)
     if not people:

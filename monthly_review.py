@@ -41,16 +41,31 @@ def _safe(fn, *a, **k):
         return None
 
 
-def build(restaurant_id, today=None, restaurant=None, db_path=None):
+def _months_back(day, n):
+    """First day of the month n months before the month `day` is in."""
+    y, m = day.year, day.month - n
+    while m <= 0:
+        y, m = y - 1, m + 12
+    return date(y, m, 1)
+
+
+def build(restaurant_id, today=None, restaurant=None, db_path=None, months=1):
     """The month that just ended: {"month", "metrics", "results", "goals",
     "priorities", "prime_cost"}. `today` is any day in the month AFTER the
-    one being reviewed (the email goes out on the 1st)."""
+    one being reviewed (the email goes out on the 1st).
+
+    months=3 reads the quarter that just ended against the quarter before
+    it — the same four questions over a longer window, so a quarter with
+    one bad week is not a bad quarter."""
     from models import get_restaurant, DB_PATH
     db_path = db_path or DB_PATH
     today = today or date.today()
     restaurant = restaurant or get_restaurant(restaurant_id)
-    last_start, last_end = month_bounds(today.replace(day=1) - timedelta(days=1))
-    prev_start, prev_end = month_bounds(last_start - timedelta(days=1))
+    months = max(1, int(months or 1))
+    last_end = today.replace(day=1) - timedelta(days=1)
+    last_start = _months_back(last_end, months - 1)
+    prev_end = last_start - timedelta(days=1)
+    prev_start = _months_back(prev_end, months - 1)
 
     rows = []
     for key in HEADLINE_METRICS:
@@ -68,6 +83,18 @@ def build(restaurant_id, today=None, restaurant=None, db_path=None):
         row = {"key": key, "label": info["label"], "unit": info["unit"],
                "value": now_v, "previous": was_v, "why": now_why,
                **metrics.compare(key, was_v, now_v)}
+        # The same month a year ago, once there is one. A month-over-month
+        # read cannot tell a seasonal dip from a slide; this can. Absent —
+        # not zero — until thirteen months of data exist, and the noise
+        # band is metrics.compare's, so a wobble is not a verdict.
+        try:
+            ago_start, ago_end = month_bounds(last_start.replace(year=last_start.year - 1))
+            ago_v, _ = metrics.measure(restaurant_id, key, ago_start.isoformat(),
+                                       ago_end.isoformat(), db_path)
+        except ValueError:
+            ago_v = None
+        row["year_ago"] = ago_v
+        row["yoy"] = metrics.compare(key, ago_v, now_v) if ago_v is not None else None
         row["monthly_dollars"] = (metrics.monthly_dollars(restaurant_id, key, row["delta"], db_path)
                                   if row["verdict"] in ("improved", "worsened") else None)
         rows.append(row)
@@ -96,9 +123,13 @@ def build(restaurant_id, today=None, restaurant=None, db_path=None):
                            "monthly_low": t.get("monthly_low"), "monthly_high": t.get("monthly_high"),
                            "is_range": t.get("is_range"), "basis": t.get("basis")})
 
-    return {"month": last_start.strftime("%B %Y"),
+    label = (last_start.strftime("%B %Y") if months == 1
+             else f"{last_start.strftime('%B')}–{last_end.strftime('%B %Y')}")
+    compared = (prev_start.strftime("%B") if months == 1
+                else f"{prev_start.strftime('%B')}–{prev_end.strftime('%B')}")
+    return {"month": label, "months": months,
             "window": [last_start.isoformat(), last_end.isoformat()],
-            "compared_with": prev_start.strftime("%B"),
+            "compared_with": compared,
             "metrics": rows, "prime_cost": prime, "results": results,
             "goals": goal_rows, "priorities": priorities,
             "fix_first": brief.get("fix_first")}
@@ -132,13 +163,27 @@ def headline(review) -> str:
     return f"{better[0]['label']} improved; {worse[0]['label'].lower()} went the other way."
 
 
+def yoy_clause(m):
+    """" — and 1.2 points under the same month last year" or "". Only when
+    last year's month could be measured and the move clears the band."""
+    y = m.get("yoy")
+    if not y or m.get("year_ago") is None or y.get("verdict") not in ("improved", "worsened"):
+        return ""
+    unit = m.get("unit") or ""
+    delta = abs(y["delta"])
+    amt = f"${delta:,.0f}" if unit == "$" else (f"{delta:.1f} points" if unit == "%" else f"{delta:g}{unit}")
+    word = ("under" if (m["value"] < m["year_ago"]) else "over")
+    return f" — {amt} {word} the same month last year"
+
+
 def lines(review):
     """Plain sentences for the email body — one per metric, then results,
     goals and what to fix. Each says what it rests on."""
     out = []
     for m in review["metrics"]:
         if m["value"] is None:
-            out.append(f"{m['label']}: not measurable last month ({m['why']}).")
+            span = "last quarter" if review.get("months", 1) > 1 else "last month"
+            out.append(f"{m['label']}: not measurable {span} ({m['why']}).")
             continue
         base = f"{m['label']}: {_fmt(m['value'], m['unit'])}"
         if m["previous"] is None:
@@ -150,7 +195,7 @@ def lines(review):
         if m.get("monthly_dollars"):
             money = f", worth about ${abs(m['monthly_dollars']):,.0f}/month"
         out.append(f"{base}, {word} {review['compared_with']}'s "
-                   f"{_fmt(m['previous'], m['unit'])}{money}.")
+                   f"{_fmt(m['previous'], m['unit'])}{money}{yoy_clause(m)}.")
     if review.get("prime_cost") and review["prime_cost"].get("pct") is not None:
         p = review["prime_cost"]
         drift = (f", {abs(p['delta']):.1f} points {'up' if p['delta'] > 0 else 'down'} on last month"
