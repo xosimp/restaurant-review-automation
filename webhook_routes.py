@@ -4,6 +4,7 @@ Registered as a Flask Blueprint in hosted_dashboard.py
 """
 from flask import Blueprint, request, jsonify, redirect
 import os
+import emails as _emails
 from datetime import datetime
 
 from models import get_conn, get_restaurant, update_restaurant, log_email
@@ -310,7 +311,7 @@ def stripe_webhook():
             import resend as _resend
             _resend.api_key = _resend_key()
             _resend.Emails.send({
-                "from": f"Cavnar AI Alerts <{FROM_EMAIL}>",
+                "from": _emails.sender("ops"),
                 "to": [WILL_EMAIL],
                 "subject": subject,
                 "html": _html_doc(f"""<div style="font-family:sans-serif;max-width:500px;margin:0 auto">
@@ -583,7 +584,7 @@ def stripe_webhook():
                             conn2.close()
                             rname = rname_row["name"] if rname_row else email
                             _resend.Emails.send({
-                                "from": f"Cavnar AI Alerts <{FROM_EMAIL}>",
+                                "from": _emails.sender("ops"),
                                 "to": [WILL_EMAIL],
                                 "subject": f"💳 New paying client — {rname}",
                                 "html": _html_doc(f"""<div style="font-family:sans-serif;max-width:500px;margin:0 auto">
@@ -609,7 +610,7 @@ def stripe_webhook():
                                 from datetime import datetime as _dt
                                 receipt_date = _dt.now().strftime("%B %d, %Y")
                                 _resend.Emails.send({
-                                    "from": f"Will Cavnar <{FROM_EMAIL}>",
+                                    "from": _emails.sender("client"),
                                     "to": [email],
                                     "subject": f"Payment confirmed — Cavnar AI",
                                     "html": _html_doc(f"""<div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">

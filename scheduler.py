@@ -1321,7 +1321,7 @@ def check_inactive_clients():
         import resend as _resend
         _resend.api_key = RESEND_API_KEY_LOCAL
         _resend.Emails.send({
-            "from": f"Cavnar AI Alerts <{FROM_EMAIL_LOCAL}>",
+            "from": _emails.sender("ops"),
             "to": [WILL_EMAIL_LOCAL],
             "subject": f"👋 {len(inactive)} inactive client{'s' if len(inactive)>1 else ''} — check in this week",
             "html": _html_doc(f"""<div style="font-family:sans-serif;max-width:580px;margin:0 auto">

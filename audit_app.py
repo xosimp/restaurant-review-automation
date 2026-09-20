@@ -383,7 +383,7 @@ def send_email(to_email, restaurant, pdf_buf):
     date_str = datetime.now().strftime("%B %d, %Y")
     resend.api_key = _resend_key()
     params = {
-        "from": f"Will Cavnar <{_from_email()}>",
+        "from": __import__("emails").sender("will"),
         "to": [to_email],
         "subject": f"Your AI Audit Report — {restaurant}",
         "html": _html_doc(f"""

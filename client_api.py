@@ -257,6 +257,14 @@ def _do_approve_all(restaurant_id, limit=25):
             "failed": failed, "remaining": int(remaining)}, 200
 
 
+
+def _emails_mod():
+    """Lazy import — emails.py reads RESEND_API_KEY at call time and importing
+    it at module scope here would re-introduce the frozen-key bug."""
+    import emails
+    return emails
+
+
 @client_bp.route("/api/reviews/approve-all", methods=["POST"])
 @login_required
 def approve_all_reviews_api(current_user):
@@ -4470,7 +4478,7 @@ def client_upload_data(current_user):
                     for f in _ot_flags
                 )
                 _resend_ot.Emails.send({
-                    "from": "Cavnar AI Labor Alerts <" + _from_ot + ">",
+                    "from": _emails_mod().sender("ops"),
                     "to": [_r_ot.owner_email],
                     "subject": "⚠ Overtime detected — " + _r_ot.name,
                     "html": _html_doc(
@@ -4527,7 +4535,7 @@ def client_upload_data(current_user):
             _resend.api_key = _resend_key
             _module = "shift schedule" if data_type == "shifts" else "inventory"
             _resend.Emails.send({
-                "from": f"Cavnar AI Alerts <{_from_email}>",
+                "from": _emails_mod().sender("ops"),
                 "to": [_will_email],
                 "subject": f"📂 {r.name} uploaded their first {_module} data",
                 "html": _html_doc(f"""<div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">

@@ -91,7 +91,7 @@ def forgot_password():
                 reset_url = f"https://dashboard.cavnar.ai/reset-password/{token}"
                 _resend.api_key = os.getenv("RESEND_API_KEY", "")
                 _resend.Emails.send({
-                    "from": f"Cavnar AI <{os.getenv('FROM_EMAIL', 'will@cavnar.ai')}>",
+                    "from": __import__("emails").sender("client"),
                     "to": [email],
                     "subject": "Reset your Cavnar AI password",
                     "html": _html_doc(f"""

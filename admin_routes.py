@@ -18,6 +18,7 @@ from auth import (create_session, get_session_user, delete_session,
                   verify_password, list_users, create_user, update_password,
                   admin_required, login_required)
 from emails import send_payment_email, send_welcome_email, create_stripe_checkout
+import emails as _emails
 
 
 def _html_doc(fragment, bg="#f7f4ef"):
@@ -770,7 +771,7 @@ def reset_password(user_id, current_user):
                 import resend as _resend
                 _resend.api_key = _resend_key()
                 _resend.Emails.send({
-                    "from": f"Will Cavnar <{_from_email()}>",
+                    "from": _emails.sender("client"),
                     "to": [row["email"]],
                     "subject": "Your Cavnar AI password has been reset",
                     "html": _html_doc(f"""<div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
@@ -1662,7 +1663,7 @@ def test_digest(restaurant_id, current_user):
                            owner_view=True)
         _resend.api_key = _resend_key()
         _resend.Emails.send({
-            "from": f"Cavnar AI <{_from_email()}>",
+            "from": _emails.sender("client"),
             "to": [owner_email],
             "subject": f"[TEST] Your weekly review digest — {restaurant.name}",
             "html": _html_doc(html),
@@ -1844,14 +1845,14 @@ def send_referral(current_user):
 </div>"""
         _resend.api_key = _resend_key()
         _resend.Emails.send({
-            "from": f"Will Cavnar <{_from_email()}>",
+            "from": _emails.sender("will"),
             "to": [ref_email],
             "subject": f"{owner_name} thinks you should check out Cavnar AI",
             "html": _html_doc(html),
         })
         # Notify Will
         _resend.Emails.send({
-            "from": f"Cavnar AI <{_from_email()}>",
+            "from": _emails.sender("client"),
             "to": [_from_email()],
             "subject": f"New referral from {referrer} — {ref_name}",
             "html": _html_doc(f"<p>{referrer} referred {ref_name} ({ref_email}).</p><p>Note: {note or 'none'}</p>"),

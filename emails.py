@@ -79,6 +79,17 @@ def with_preheader(html: str, text: str) -> str:
     return block + html
 
 
+def _monthly_preheader(restaurant_id) -> str:
+    """The month's headline, or the deterministic fallback. Never a greeting
+    — this is the line an owner reads before deciding to open it."""
+    try:
+        import monthly_review
+        return monthly_review.headline(monthly_review.build(restaurant_id))
+    except Exception as e:
+        log.warning("monthly preheader failed for %s: %s", restaurant_id, e)
+        return "Your month, measured against the one before it."
+
+
 def digest_preheader(report, restaurant) -> str:
     """The one line worth showing in the inbox before the digest is opened.
 
@@ -190,7 +201,8 @@ def send_2fa_code(to_email: str, restaurant_name: str, code: str, owner_name: st
     """
     try:
         _res = deliver(email_type="send_2fa_code", payload={"from": sender("client"), "to": [to_email],
-                  "subject": f"Your Cavnar AI verification code: {code}", "html": _html_document(html)})
+                  "subject": f"Your Cavnar AI verification code: {code}",
+                  "preheader": "Expires in 10 minutes. If this wasn't you, someone may have your password.", "html": _html_document(html)})
         return _res
     except Exception as e:
         log.warning("send_2fa_code: request to Resend failed: %s", e)
@@ -243,7 +255,8 @@ def send_login_notification(to_email: str, restaurant_name: str,
     """
     try:
         _res = deliver(email_type="send_login_notification", payload={"from": sender("client"), "to": [to_email],
-                  "subject": f"New sign-in to your Cavnar AI dashboard", "html": _html_document(html)})
+                  "subject": f"New sign-in to your Cavnar AI dashboard",
+                  "preheader": f"{ip or 'An unknown address'} — if this wasn't you, change your password now.", "html": _html_document(html)})
         return _res
     except Exception as e:
         log.warning(f"send_login_notification error: {e}")
@@ -703,9 +716,26 @@ def _branded_email(inner_html: str) -> str:
 """)
 
 
-def _send_branded(to_email: str, subject: str, inner_html: str, from_label: str = "Cavnar AI") -> bool:
-    return deliver(email_type="send_login_notification", payload={"from": f"{from_label} <{_from_email()}>", "to": [to_email],
-                    "subject": subject, "html": _branded_email(inner_html)})
+def _send_branded(to_email: str, subject: str, inner_html: str, from_label: str = "Cavnar AI",
+                  email_type: str = None, preheader: str = None,
+                  restaurant_id: int = None):
+    """The shared wrapper for short transactional mail.
+
+    `email_type` is not cosmetic. Every email through here was logged as
+    "send_login_notification" whatever it actually was, and three things read
+    that field: email_log (so seven email types were mis-attributed, and the
+    per-type open rates with them), the FLOOD GUARD (so password resets shared
+    the sign-in-notification budget instead of their own, tighter one), and
+    _SUPPRESSION_EXEMPT — which contains send_login_notification, so bug
+    reports and signup alerts were silently exempt from the suppression list
+    they should obey.
+    """
+    return deliver(email_type=email_type or "send_login_notification",
+                   restaurant_id=restaurant_id,
+                   payload={"from": sender("ops" if from_label == "Cavnar AI Ops" else "client"),
+                            "to": [to_email], "subject": subject,
+                            "preheader": preheader,
+                            "html": _branded_email(inner_html)})
 
 
 # ── Report-email kit ───────────────────────────────────────────────────────
@@ -875,7 +905,10 @@ def send_password_reset_email(to_email: str, reset_url: str) -> bool:
     """The app's Forgot Password flow. Same 1-hour link the web page's own
     inline version sends — this is that email, factored out so the mobile
     endpoint doesn't carry a second copy of the HTML."""
-    return _send_branded(to_email, "Reset your Cavnar AI password", f"""
+    return _send_branded(to_email, "Reset your Cavnar AI password",
+                          email_type="send_password_reset_email",
+                          preheader="The link works once and expires in an hour.",
+                          inner_html=f"""
         <p style="color:#0e0c0a;font-size:18px;font-weight:700;margin:0 0 12px">Reset your password</p>
         <p style="color:#3a3530;font-size:14px;line-height:1.6;margin:0 0 24px">Tap the button to choose a new password. This link expires in 1 hour.</p>
         <a href="{reset_url}" style="display:inline-block;background:#c84b2f;color:white;padding:12px 28px;border-radius:8px;text-decoration:none;font-size:14px;font-weight:600">Reset password &rarr;</a>
@@ -886,7 +919,10 @@ def send_password_reset_email(to_email: str, reset_url: str) -> bool:
 def send_password_reset_code_email(to_email: str, code: str) -> bool:
     """The app's in-app reset: a 6-digit code typed into the sheet, instead
     of the web flow's emailed link. Expires with the same 1-hour window."""
-    return _send_branded(to_email, "Your Cavnar AI reset code", f"""
+    return _send_branded(to_email, "Your Cavnar AI reset code",
+                          email_type="send_password_reset_code_email",
+                          preheader="Expires in 10 minutes.",
+                          inner_html=f"""
         <p style="color:#0e0c0a;font-size:18px;font-weight:700;margin:0 0 12px">Reset your password</p>
         <p style="color:#3a3530;font-size:14px;line-height:1.6;margin:0 0 20px">Enter this code in the app to choose a new password. It expires in 1 hour.</p>
         <div style="text-align:center;margin:0 0 20px">
@@ -903,7 +939,10 @@ def send_signup_welcome_email(to_email: str, restaurant_name: str, owner_name: s
     back to them in plaintext."""
     first = (owner_name or "").split()[0] if owner_name else ""
     greet = f"Hi {first}," if first else "Hi,"
-    return _send_branded(to_email, f"Welcome to Cavnar AI — {restaurant_name}", f"""
+    return _send_branded(to_email, f"Welcome to Cavnar AI — {restaurant_name}",
+                          email_type="send_signup_welcome_email",
+                          preheader="What happens next, and when.",
+                          inner_html=f"""
         <p style="color:#0e0c0a;font-size:18px;font-weight:700;margin:0 0 12px">{greet} your account is ready.</p>
         <p style="color:#3a3530;font-size:14px;line-height:1.6;margin:0 0 16px"><strong>{restaurant_name}</strong> is set up on Cavnar AI with a free trial of every module — Reviews, Labor, Food Cost, and Marketing. You're already signed in on the app; the same login works on the web at <a href="https://dashboard.cavnar.ai" style="color:#c84b2f">dashboard.cavnar.ai</a>.</p>
         <p style="color:#3a3530;font-size:14px;line-height:1.6;margin:0 0 24px">First thing worth doing: connect Google Business under Account &rarr; Connected apps, so reviews start flowing in.</p>
@@ -917,7 +956,10 @@ def send_signup_admin_alert(restaurant_name: str, owner_name: str, email: str, p
     client so far has been created by hand, so a signup nobody set up
     shouldn't be discovered days later in the admin list."""
     to = os.getenv("WILL_EMAIL", "will@cavnar.ai")
-    return _send_branded(to, f"New signup — {restaurant_name}", f"""
+    return _send_branded(to, f"New signup — {restaurant_name}",
+                          from_label="Cavnar AI Ops",
+                          email_type="send_signup_admin_alert",
+                          inner_html=f"""
         <p style="color:#0e0c0a;font-size:18px;font-weight:700;margin:0 0 12px">New self-serve signup</p>
         <table style="width:100%;font-size:14px;color:#3a3530;border-collapse:collapse">
           <tr><td style="padding:6px 0;color:#7a736a;width:110px">Restaurant</td><td style="padding:6px 0"><strong>{restaurant_name}</strong></td></tr>
@@ -926,7 +968,7 @@ def send_signup_admin_alert(restaurant_name: str, owner_name: str, email: str, p
           <tr><td style="padding:6px 0;color:#7a736a">Phone</td><td style="padding:6px 0"><strong>{phone or '—'}</strong></td></tr>
         </table>
         <p style="color:#7a736a;font-size:12px;margin:20px 0 0;line-height:1.6">Created on the trial tier with all four modules on. Review it in the <a href="https://dashboard.cavnar.ai/admin" style="color:#c84b2f">admin panel</a>.</p>
-    """, from_label="Cavnar AI Alerts")
+    """)
 
 
 def send_payment_email(to_email, restaurant_name, tier=None,
@@ -1003,6 +1045,7 @@ def send_payment_email(to_email, restaurant_name, tier=None,
             "from": sender("will"),
             "to": [to_email],
             "subject": f"Your Cavnar AI payment link — {restaurant_name}",
+            "preheader": "Your setup link is inside. Nothing bills until you complete it.",
             "html": _html_document(f"""
 <div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
 <div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;color:#1a1714;background:#f7f4ef;border-radius:12px;padding:32px 24px;box-sizing:border-box">
@@ -1124,6 +1167,7 @@ def send_welcome_email(to_email, restaurant_name, username, password,
         "from": sender("will"),
         "to": [to_email],
         "subject": f"Your Cavnar AI dashboard is live — {restaurant_name}",
+        "preheader": "Your sign-in details are inside. Change the password when you first log in.",
         "html": _html_document(html),
     })
 
@@ -1280,6 +1324,7 @@ def send_team_invite_email(to_email, restaurant_name, username, password, invite
         "from": sender("will"),
         "to": [to_email],
         "subject": f"You've been added to {restaurant_name}'s Cavnar AI dashboard",
+        "preheader": "Your sign-in details are inside.",
         "html": _html_document(html),
     })
 
@@ -1490,6 +1535,7 @@ def send_onboarding_day2(to_email: str, restaurant_name: str, owner_name: str = 
             "from": sender("will"),
             "to": [to_email],
             "subject": f"Getting started with your Cavnar AI dashboard",
+            "preheader": "The two things worth doing in your first week.",
             "html": _html_document(f"""
 <div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
 <div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;color:#1a1714;background:#f7f4ef;border-radius:12px;padding:32px 24px;box-sizing:border-box">
@@ -1622,6 +1668,7 @@ def send_onboarding_day7(to_email: str, restaurant_name: str, owner_name: str = 
             "from": sender("will"),
             "to": [to_email],
             "subject": f"One week in — how's the dashboard feeling?",
+            "preheader": "What your account has done so far, and what is still waiting on you.",
             "html": _html_document(f"""
 <div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
 <div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;color:#1a1714;background:#f7f4ef;border-radius:12px;padding:32px 24px;box-sizing:border-box">
@@ -1665,6 +1712,7 @@ def send_reactivation_email(to_email: str, restaurant_name: str, owner_name: str
             "from": sender("will"),
             "to": [to_email],
             "subject": f"Welcome back to Cavnar AI — {restaurant_name}",
+            "preheader": "Your dashboard is switched back on.",
             "html": _html_document(f"""
 <div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
 <div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;color:#1a1714;background:#f7f4ef;border-radius:12px;padding:32px 24px;box-sizing:border-box">
@@ -1965,6 +2013,7 @@ def send_monthly_summary_email(to_email: str, restaurant_name: str, owner_name: 
             "from": sender("will"),
             "to": [to_email],
             "subject": f"{month_name} at {restaurant_name} — your Cavnar AI summary",
+            "preheader": _monthly_preheader(restaurant_id),
             "html": report_shell(
                 kicker="Monthly Review",
                 title=restaurant_name,
@@ -2049,6 +2098,7 @@ def send_onboarding_day30(to_email: str, restaurant_name: str, owner_name: str =
             "from": sender("will"),
             "to": [to_email],
             "subject": f"30 days of Cavnar AI — a quick check-in",
+            "preheader": "A month in — what the numbers say so far.",
             "html": _html_document(f"""
 <div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
 <div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;color:#1a1714;background:#f7f4ef;border-radius:12px;padding:32px 24px;box-sizing:border-box">
@@ -2122,7 +2172,8 @@ def send_password_changed_email(to_email: str, restaurant_name: str, owner_name:
     """
     try:
         _res = deliver(email_type="send_password_changed_email", payload={"from": sender("client"), "to": [to_email],
-                  "subject": "Your Cavnar AI password was changed", "html": _html_document(html)})
+                  "subject": "Your Cavnar AI password was changed",
+                  "preheader": "If this wasn't you, contact will@cavnar.ai immediately.", "html": _html_document(html)})
         return _res
     except Exception as e:
         log.warning("send_password_changed_email: request to Resend failed: %s", e)
@@ -2161,7 +2212,8 @@ def send_email_changed_email(to_email: str, restaurant_name: str, new_email: str
     """
     try:
         _res = deliver(email_type="send_email_changed_email", payload={"from": sender("client"), "to": [to_email],
-                  "subject": "Your Cavnar AI sign-in email was changed", "html": _html_document(html)})
+                  "subject": "Your Cavnar AI sign-in email was changed",
+                  "preheader": "If this wasn't you, contact will@cavnar.ai immediately.", "html": _html_document(html)})
         return _res
     except Exception as e:
         log.warning("send_email_changed_email: request to Resend failed: %s", e)
@@ -2196,7 +2248,8 @@ def send_payment_failed_client_email(to_email: str, restaurant_name: str, amount
     """
     try:
         _res = deliver(email_type="send_payment_failed_client_email", payload={"from": sender("will"), "to": [to_email],
-                  "subject": f"Payment issue — {restaurant_name}", "html": _html_document(html)})
+                  "subject": f"Payment issue — {restaurant_name}",
+                  "preheader": "Your card was declined — your dashboard keeps running while you update it.", "html": _html_document(html)})
         return _res
     except Exception as e:
         log.warning("send_payment_failed_client_email: request to Resend failed: %s", e)
@@ -2206,7 +2259,10 @@ def send_payment_failed_client_email(to_email: str, restaurant_name: str, amount
 def send_recovery_email_code(to_email: str, code: str) -> bool:
     """Verifies a recovery address before it counts — a typo here would
     otherwise be the address that can reset the password."""
-    return _send_branded(to_email, "Confirm your Cavnar AI recovery email", f"""
+    return _send_branded(to_email, "Confirm your Cavnar AI recovery email",
+                          email_type="send_recovery_email_code",
+                          preheader="Expires in 10 minutes.",
+                          inner_html=f"""
       <h2 style="font-size:18px;font-weight:600;margin-bottom:12px;color:#0e0c0a">Confirm this recovery email</h2>
       <p style="font-size:14px;color:#4a4540;line-height:1.6;margin-bottom:20px">Enter this code in the app to finish adding this address as your recovery email. It expires in 15 minutes.</p>
       <p style="font-size:32px;font-weight:700;letter-spacing:6px;color:#c84b2f;margin:0 0 20px">{code}</p>
@@ -2223,7 +2279,10 @@ def send_account_deletion_request_email(restaurant_name: str, owner_name: str, o
     from a real in-app action instead of the owner having to know to email
     him themselves."""
     return _send_branded(os.getenv("BUG_REPORT_EMAIL", "will@cavnar.ai"),
-        f"Account deletion requested — {restaurant_name}", f"""
+        f"Account deletion requested — {restaurant_name}",
+        from_label="Cavnar AI Ops",
+        email_type="send_account_deletion_request_email",
+        inner_html=f"""
       <h2 style="font-size:18px;font-weight:600;margin-bottom:12px;color:#0e0c0a">{restaurant_name} requested account deletion</h2>
       <p style="font-size:14px;color:#4a4540;line-height:1.6;margin-bottom:16px">
         {owner_name or "The owner"} ({owner_email or "no email on file"}) tapped
@@ -2232,7 +2291,7 @@ def send_account_deletion_request_email(restaurant_name: str, owner_name: str, o
         current billing period plus 30 days from this request — reach out
         to confirm and start winding it down.
       </p>
-    """, from_label="Cavnar AI Account Requests")
+    """)
 
 
 def send_bug_report_email(restaurant_name: str, from_email: str, message: str, meta: dict) -> bool:
@@ -2242,9 +2301,13 @@ def send_bug_report_email(restaurant_name: str, from_email: str, message: str, m
     rows = "".join(f"<tr><td style='padding:4px 12px 4px 0;color:#7a736a'>{k}</td><td style='padding:4px 0'><strong>{v}</strong></td></tr>"
                    for k, v in (meta or {}).items() if v)
     safe = (message or "").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>")
-    return _send_branded(os.getenv("BUG_REPORT_EMAIL", "will@cavnar.ai"), f"Bug report — {restaurant_name}", f"""
+    return _send_branded(os.getenv("BUG_REPORT_EMAIL", "will@cavnar.ai"),
+        f"Bug report — {restaurant_name}",
+        from_label="Cavnar AI Ops",
+        email_type="send_bug_report_email",
+        inner_html=f"""
       <h2 style="font-size:18px;font-weight:600;margin-bottom:12px;color:#0e0c0a">Bug report from {restaurant_name}</h2>
       <p style="font-size:14px;color:#4a4540;line-height:1.6;margin-bottom:16px">From {from_email}</p>
       <div style="font-size:14px;color:#0e0c0a;line-height:1.6;background:#f7f4ef;padding:14px;border-radius:8px;margin-bottom:16px">{safe}</div>
       <table style="font-size:13px;border-collapse:collapse">{rows}</table>
-    """, from_label="Cavnar AI Bug Reports")
+    """)

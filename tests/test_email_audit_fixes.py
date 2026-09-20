@@ -32,13 +32,53 @@ def test_one_sender_identity_per_audience(monkeypatch):
     assert emails.sender("nonsense") == "Cavnar AI <will@cavnar.ai>"
 
 
-def test_no_alerts_or_backups_sender_survives():
-    """The variants that fragmented the sender: Alerts, Ops-on-client-mail,
-    Backups, Labor Alerts."""
-    import notify
-    src = open("notify.py").read() + open("emails.py").read()
-    for gone in ("Cavnar AI Alerts <", "Cavnar AI Backups <", "Cavnar AI Labor Alerts <"):
-        assert gone not in src, f"{gone} is still a sender"
+def test_no_ad_hoc_sender_survives_anywhere():
+    """EVERY module, not two of them.
+
+    The first version of this test read notify.py and emails.py only, and
+    passed green while eight other send sites across five files still carried
+    "Cavnar AI Alerts", "Cavnar AI Labor Alerts" and a bare "Will Cavnar" —
+    exactly the fixture-shaped test this repo has been bitten by before. The
+    rule is about every From header in the product, so the test reads every
+    file that writes one.
+    """
+    import glob
+    banned = ("Cavnar AI Alerts <", "Cavnar AI Backups <", "Cavnar AI Labor Alerts <",
+              "Cavnar AI Ops <", "Will Cavnar <", "Will <")
+    offenders = []
+    for path in glob.glob("*.py"):
+        for lineno, line in enumerate(open(path, encoding="utf-8"), 1):
+            if '"from"' not in line and "from_label" not in line:
+                continue
+            for phrase in banned:
+                if phrase in line:
+                    offenders.append(f"{path}:{lineno} {phrase.strip()}")
+    assert not offenders, ("hand-written From headers — use emails.sender(): "
+                           + ", ".join(offenders))
+
+
+def test_every_from_header_goes_through_sender():
+    """A From built by hand is how ten display names happened. The two
+    exceptions are deliberate and named here so adding a third is a
+    decision, not a drift."""
+    import glob, re
+    allowed_literals = {
+        # Guest-facing mail is sent AS the restaurant — the guest knows the
+        # restaurant, not Cavnar AI.
+        "client_api.py", "guest_email.py", "mobile_api.py",
+        # The sender helper itself.
+        "emails.py",
+    }
+    offenders = []
+    for path in glob.glob("*.py"):
+        if path in allowed_literals:
+            continue
+        for lineno, line in enumerate(open(path, encoding="utf-8"), 1):
+            m = re.search(r'"from":\s*f?"', line)
+            if m:
+                offenders.append(f"{path}:{lineno} {line.strip()[:70]}")
+    assert not offenders, ("literal From header — use emails.sender(): "
+                           + "; ".join(offenders))
 
 
 # ── preheader ───────────────────────────────────────────────────────────────
@@ -261,3 +301,55 @@ def test_engagement_lookup_fails_toward_sending(monkeypatch):
     monkeypatch.setattr(models, "get_conn",
                         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("db down")))
     assert scheduler._onboarding_engagement(1) == (0, None)
+
+
+def test_the_client_emails_carry_a_preview_line():
+    """The mechanism existed after the first pass and was wired into two
+    places out of 37 — a capability nobody uses is not a fix."""
+    import re
+    src = open("emails.py").read()
+    sends = [m.start() for m in re.finditer(r'deliver\(email_type="send_', src)]
+    assert len(sends) >= 10
+    without = []
+    for start in sends:
+        chunk = src[start:start + 800]
+        if '"preheader"' not in chunk:
+            subject = re.search(r'"subject":\s*(f?"[^"]{0,50})', chunk)
+            without.append(subject.group(1) if subject else f"@{start}")
+    assert not without, f"client emails with no preview line: {without}"
+
+
+def test_a_preheader_is_never_a_greeting():
+    """It is the line an owner reads before deciding to open. "Hi Erik"
+    spends it on nothing."""
+    import re
+    src = open("emails.py").read() + open("morning_brief.py").read()
+    for m in re.finditer(r'"preheader":\s*"([^"]{3,})"', src):
+        text = m.group(1).lower()
+        assert not text.startswith(("hi ", "hello", "hey", "good morning")), \
+            f"preheader opens on a greeting: {m.group(1)}"
+
+
+def test_branded_emails_are_logged_as_what_they_are():
+    """Every email through _send_branded was logged as
+    "send_login_notification" whatever it actually was. Three things read
+    that field — email_log (and the per-type open rates), the flood guard
+    (password resets shared the sign-in budget instead of their own tighter
+    one), and _SUPPRESSION_EXEMPT, which contains send_login_notification —
+    so bug reports and signup alerts were silently exempt from suppression.
+    """
+    import re
+    src = open("emails.py").read()
+    # Skip the definition itself — its own signature names the parameter.
+    calls = [m.start() for m in re.finditer(r"(?<!def )_send_branded\(", src)
+             if not src[max(0, m.start() - 4):m.start()].endswith("def ")]
+    untyped = [c for c in calls if "email_type=" not in src[c:c + 400]]
+    assert not untyped, f"{len(untyped)} _send_branded call(s) with no email_type"
+
+
+def test_the_ops_senders_are_not_suppression_exempt():
+    """send_login_notification is exempt by design — someone whose marketing
+    bounced must still get a security email. Bug reports are not security."""
+    assert "send_bug_report_email" not in emails._SUPPRESSION_EXEMPT
+    assert "send_signup_admin_alert" not in emails._SUPPRESSION_EXEMPT
+    assert "send_login_notification" in emails._SUPPRESSION_EXEMPT

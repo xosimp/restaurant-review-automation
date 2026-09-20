@@ -418,10 +418,14 @@ def deliver(restaurant_id, restaurant=None, today=None, db_path=DB_PATH):
                            data={"ask_prompt": lead["ask"]}, db_path=db_path, user_ids={u["id"]})
             pushed += 1
         elif u.get("email"):
-            from emails import deliver as _deliver, _branded_email, _from_email
+            from emails import deliver as _deliver, _branded_email, sender as _sender
+            lead_line = next((l for l in brief["lines"] if l["tone"] == "action"),
+                             brief["lines"][0]) if brief["lines"] else {"text": ""}
             result = _deliver(email_type="send_morning_brief", restaurant_id=restaurant_id, payload={
-                "from": f"Cavnar AI <{_from_email()}>", "to": [u["email"]],
+                "from": _sender("client"), "to": [u["email"]],
                 "subject": f"Your morning brief — {name}",
+                # The lead line, which is what the push shows too.
+                "preheader": lead_line["text"][:140] if brief["lines"] else "",
                 "html": _branded_email(_email_html(brief, name))})
             # Read .ok explicitly rather than leaning on SendResult.__bool__.
             if getattr(result, "ok", False):
