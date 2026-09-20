@@ -1624,7 +1624,12 @@ def run_monthly_summaries():
         if not local_due(r, 9, claim_key="monthly_summary"):
             skipped += 1
             continue
-        if getattr(r, "marketing_emails_opt_out", 0):
+        # NOT gated on marketing_emails_opt_out. The monthly summary carries
+        # the business review — metrics against last month, what the owner's
+        # own changes were measured to do, goals, and the three things worth
+        # fixing next — so unsubscribing from promotional mail used to cost
+        # an owner their service report. It has its own switch.
+        if not getattr(r, "monthly_review_enabled", 1):
             skipped += 1
             continue
         try:

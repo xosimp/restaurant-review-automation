@@ -446,6 +446,11 @@ class Restaurant:
     # opt-in for owners who want to watch it, not a default alarm.
     staff_signin_notify: int         = 0
     marketing_emails_opt_out: int    = 0
+    # The monthly business review. On by default and deliberately NOT part
+    # of marketing_emails_opt_out: it is a service report on a paid account
+    # (metrics vs last month, measured results, goals, what to fix next),
+    # and was silently lost by anyone unsubscribing from promotional mail.
+    monthly_review_enabled: int      = 1
     # Settings audit additions (Account tab, iOS + web)
     alert_health_bypass_quiet: int   = 0     # health/safety alerts ignore quiet hours
     alert_food_waste: int            = 0     # daily: waste flagged on several items / a real dollar amount
@@ -1038,6 +1043,7 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE restaurants ADD COLUMN login_notify INTEGER DEFAULT 0",
         "ALTER TABLE restaurants ADD COLUMN staff_signin_notify INTEGER DEFAULT 0",
         "ALTER TABLE restaurants ADD COLUMN marketing_emails_opt_out INTEGER DEFAULT 0",
+        "ALTER TABLE restaurants ADD COLUMN monthly_review_enabled INTEGER DEFAULT 1",
         "ALTER TABLE restaurants ADD COLUMN alert_health_bypass_quiet INTEGER DEFAULT 0",
         "ALTER TABLE restaurants ADD COLUMN alert_food_waste INTEGER DEFAULT 0",
         "ALTER TABLE restaurants ADD COLUMN alert_ai_visibility_drop INTEGER DEFAULT 0",
@@ -3056,7 +3062,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH):
         "hourly_rate","labor_target_pct","week_start_day","role_strength_json","shift_leader_rules_json","quality_weights_json","monthly_revenue_target","hours_notes","role_rates_json","close_times_json","role_close_buffer_json","stripe_customer_id","docusign_envelope_id","contract_status","location_group","location_name","pos_system","inventory_frequency","delivery_days","inventory_notes","food_cost_target","waste_target_pct","inventory_updated_at","temp_password","ig_token","ig_user_id","fb_page_token","fb_page_id","ig_token_expires","fb_token_expires","competitor_intel","competitor_updated_at","reviews_live","billing_status","is_demo","internal_notes","gmb_access_token","gmb_refresh_token","gmb_account_id","gmb_location_id","gmb_token_expires",
         "service_tier","module_reviews","module_labor","module_inventory","module_marketing",
         "last_active_tab","last_activity","owner_name","owner_phone","digest_day","digest_enabled","menu_notes","menu_url","skip_holidays","custom_competitors",
-        "two_fa_enabled","two_fa_code","two_fa_expires","two_fa_device_token","two_fa_pending","two_fa_method","login_notify","staff_signin_notify","marketing_emails_opt_out","timezone","onboarding_dismissed",
+        "two_fa_enabled","two_fa_code","two_fa_expires","two_fa_device_token","two_fa_pending","two_fa_method","login_notify","staff_signin_notify","marketing_emails_opt_out","monthly_review_enabled","timezone","onboarding_dismissed",
         "alert_health_bypass_quiet","alert_food_waste","alert_ai_visibility_drop","alert_extra_emails","push_sound",
         "auto_approve_5star","auto_approve_daily_cap","auto_approve_paused","open_times_json",
         "response_language","tone_preset","data_retention_months",
@@ -3290,6 +3296,7 @@ def _restaurant_from_row(row) -> Restaurant:
         login_notify=row["login_notify"] if "login_notify" in row.keys() else 0,
         staff_signin_notify=row["staff_signin_notify"] if "staff_signin_notify" in row.keys() else 0,
         marketing_emails_opt_out=row["marketing_emails_opt_out"] if "marketing_emails_opt_out" in row.keys() else 0,
+        monthly_review_enabled=row["monthly_review_enabled"] if "monthly_review_enabled" in row.keys() else 1,
         alert_health_bypass_quiet=row["alert_health_bypass_quiet"] if "alert_health_bypass_quiet" in row.keys() else 0,
         alert_food_waste=row["alert_food_waste"] if "alert_food_waste" in row.keys() else 0,
         alert_ai_visibility_drop=row["alert_ai_visibility_drop"] if "alert_ai_visibility_drop" in row.keys() else 0,
@@ -7785,6 +7792,7 @@ def build_settings_export_json(restaurant_id: int, db_path: str = DB_PATH) -> st
         "neighborhood", "vibe", "known_for", "voice_notes", "never_say", "menu_notes", "sign_off_name",
         "response_language", "tone_preset", "open_times_json", "close_times_json", "skip_holidays",
         "digest_day", "digest_enabled", "login_notify", "staff_signin_notify", "marketing_emails_opt_out",
+        "monthly_review_enabled",
         "alert_1star", "alert_2star", "alert_3star", "alert_health", "alert_neg_spike", "alert_negative_trend",
         "alert_no_response", "alert_5star", "alert_labor_over", "alert_food_waste", "alert_ai_visibility_drop",
         "alert_health_bypass_quiet", "alert_extra_emails", "push_sound", "urgent_via_email", "urgent_via_sms",

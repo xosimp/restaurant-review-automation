@@ -408,15 +408,24 @@ def deliver(payload: dict = None, restaurant_id=None, email_type=None, log_send:
     return result
 
 
-# The four templates that are product marketing rather than transactional.
+# The templates that are product marketing rather than transactional.
 # Everything else — receipts, codes, schedules, supplier orders, alerts — is
 # mail the recipient asked for by using the product, and must not carry an
 # unsubscribe that would silently turn off operational email.
+#
+# send_monthly_summary_email was in here until the ROI audit (Sep 2026) and
+# should never have been. It carries _monthly_review_sections(): the month's
+# headline metrics against the month before, what the owner's own changes
+# were measured to do, where their goals stand, the three things worth
+# fixing next, and the cost of leaving the worst one alone. That is the
+# single most ROI-dense thing the product sends, and classifying it as
+# marketing meant an owner unsubscribing from promotional mail silently
+# lost their business review. It is a service report on an account they pay
+# for — see scheduler.run_monthly_summaries for the matching opt-out change.
 _MARKETING_TYPES = {
     "send_onboarding_day2",
     "send_onboarding_day7",
     "send_onboarding_day30",
-    "send_monthly_summary_email",
 }
 
 

@@ -255,6 +255,35 @@ def api_duplicate(audit_id, current_user):
     return jsonify(ok=True, id=nid)
 
 
+@audit_bp.route("/admin/api/audits/<int:audit_id>/link", methods=["POST"])
+@admin_required
+def api_link_restaurant(audit_id, current_user):
+    """Point this audit at the account it became.
+
+    sales_audits.linked_restaurant_id existed as a column and nothing ever
+    wrote it, so the ROI model that won the deal could never be compared
+    against what the account actually did. See promise.py.
+    """
+    d = _json()
+    rid = d.get("restaurant_id")
+    if rid in (None, "", 0):
+        import promise
+        promise.link(audit_id, None)
+        return jsonify(ok=True, restaurant_id=None)
+    try:
+        rid = int(rid)
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error="restaurant_id must be a number"), 400
+    from models import get_restaurant
+    if not get_restaurant(rid):
+        return jsonify(ok=False, error="No restaurant with that id"), 404
+    if not store.get_audit(audit_id):
+        return jsonify(ok=False, error="Audit not found"), 404
+    import promise
+    promise.link(audit_id, rid)
+    return jsonify(ok=True, restaurant_id=rid)
+
+
 @audit_bp.route("/admin/api/audits/<int:audit_id>/status", methods=["POST"])
 @admin_required
 def api_status(audit_id, current_user):

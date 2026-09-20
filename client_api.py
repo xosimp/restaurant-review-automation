@@ -6766,13 +6766,27 @@ def _do_data_retention(rid, data, current_user=None):
 
 
 def _do_marketing_opt_out(rid, data, current_user=None):
-    """Gates only the non-critical automated sends (onboarding drip, monthly
-    summary) at their scheduler.py call sites — security/transactional email
-    (2FA, login notify, password/email-changed, welcome) is never affected."""
+    """Gates only the promotional onboarding drip at its scheduler.py call
+    sites — security/transactional email (2FA, login notify,
+    password/email-changed, welcome) is never affected, and neither is the
+    monthly business review, which has its own switch below. Until the ROI
+    audit this also silenced the monthly review, so an owner declining
+    promotional mail lost the one email that reports what their changes were
+    measured to do."""
     opted_out = bool((data or {}).get("opted_out"))
     update_restaurant(rid, {"marketing_emails_opt_out": int(opted_out)})
     log_account_event(rid, "marketing_emails_changed", current_user,
                       detail="off" if opted_out else "on")
+    return {"ok": True}, 200
+
+
+def _do_monthly_review_pref(rid, data, current_user=None):
+    """The monthly business review on or off. Separate from marketing mail:
+    this is a service report on a paid account."""
+    on = bool((data or {}).get("enabled"))
+    update_restaurant(rid, {"monthly_review_enabled": int(on)})
+    log_account_event(rid, "monthly_review_changed", current_user,
+                      detail="on" if on else "off")
     return {"ok": True}, 200
 
 
@@ -6843,6 +6857,7 @@ def _account_settings_payload(rid):
         },
         "data_retention_months": int(getattr(r, "data_retention_months", 0) or 0),
         "marketing_emails_opt_out": bool(getattr(r, "marketing_emails_opt_out", 0)),
+        "monthly_review_enabled": bool(getattr(r, "monthly_review_enabled", 1)),
         "login_notify": bool(getattr(r, "login_notify", 0)),
     }, 200
 
@@ -6898,6 +6913,14 @@ def save_data_retention(current_user):
 def save_marketing_opt_out(current_user):
     payload, status = _do_marketing_opt_out(current_user["restaurant_id"],
                                             request.get_json(silent=True) or {}, current_user)
+    return jsonify(**payload), status
+
+
+@client_bp.route("/api/account-settings/monthly-review", methods=["POST"])
+@login_required
+def save_monthly_review_pref(current_user):
+    payload, status = _do_monthly_review_pref(current_user["restaurant_id"],
+                                              request.get_json(silent=True) or {}, current_user)
     return jsonify(**payload), status
 
 

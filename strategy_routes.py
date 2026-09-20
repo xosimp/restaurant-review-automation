@@ -233,6 +233,52 @@ def _do_outcome_abandon(u, outcome_id):
     return {"ok": True}, 200
 
 
+def _do_value(u):
+    """What Cavnar AI has been worth, and what is still on the table.
+
+    Three figures that are never summed into each other (see
+    value_delivered.py), plus the all-time biggest measured win and — where
+    a sales audit is linked to the account — what that audit estimated
+    against what has since been measured.
+
+    Food-cost dollars are filtered the same way goals and outcomes are: a
+    manager without FOOD_COST_VIEW sees the labour and reviews halves and
+    not the margin ones.
+    """
+    import value_delivered
+    rid = _rid(u)
+    out = value_delivered.breakdown(rid)
+
+    # by_module is keyed by module; drop what this login may not see rather
+    # than handing a manager a food-cost dollar figure through the back door.
+    d = out.get("delivered") or {}
+    if not _metric_visible(u, "food_cost_pct"):
+        d["by_module"] = {k: v for k, v in (d.get("by_module") or {}).items()
+                          if k != "inventory"}
+        if d.get("biggest") and not _metric_visible(u, "food_cost_pct"):
+            import outcomes as _o
+            best = _o.best_ever(rid)
+            if best and _o.module_of(best["metric"]) == "inventory":
+                d["biggest"] = None
+        out["opportunity"] = {**(out.get("opportunity") or {}),
+                              "items": [i for i in (out.get("opportunity") or {}).get("items") or []
+                                        if i.get("module") != "inventory"]}
+        out["opportunity"]["monthly"] = round(
+            sum(i["monthly"] for i in out["opportunity"]["items"]), 2)
+
+    # The audit comparison is owner-level: it carries whole-business dollars
+    # and what Will quoted at the table.
+    try:
+        from permissions import has_permission, TEAM_INVITE
+        if has_permission(u, TEAM_INVITE):
+            import promise
+            out["promise"] = promise.compare(rid)
+    except Exception as e:
+        import ops
+        ops.capture(e, job="value_promise", context=f"restaurant_id={rid}")
+    return {"ok": True, **out}, 200
+
+
 def _do_metrics(u):
     import metrics
     keys = [k for k in ("labor_pct", "food_cost_pct", "sales", "avg_rating", "weekly_waste")
@@ -463,6 +509,7 @@ _ROUTES = [
     ("/outcomes", ["POST"], _do_outcome_record, "outcome_record"),
     ("/outcomes/<int:outcome_id>/abandon", ["POST"], _do_outcome_abandon, "outcome_abandon"),
     ("/metrics", ["GET"], _do_metrics, "metrics_list"),
+    ("/value", ["GET"], _do_value, "value_summary"),
     ("/food-cost/dish-scorecard", ["GET"], _do_dish_scorecard, "dish_scorecard"),
     ("/food-cost/reprice", ["GET"], _do_reprice, "reprice"),
     ("/food-cost/invoices", ["GET"], _do_invoice_list, "invoice_list"),

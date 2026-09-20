@@ -4581,6 +4581,15 @@ def mobile_toggle_marketing_opt_out(current_user):
     return jsonify(**payload), status
 
 
+@mobile_bp.route("/account/monthly-review", methods=["POST"])
+@mobile_login_required
+def mobile_toggle_monthly_review(current_user):
+    """See client_api._do_monthly_review_pref."""
+    payload, status = _capi._do_monthly_review_pref(current_user["restaurant_id"],
+                                                    request.get_json(silent=True) or {}, current_user)
+    return jsonify(**payload), status
+
+
 @mobile_bp.route("/account/team")
 @mobile_login_required
 def mobile_get_team(current_user):

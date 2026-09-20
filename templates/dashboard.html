@@ -383,6 +383,7 @@ body{font-family:'Apfel Grotezk',sans-serif;background:transparent;color:var(--i
 .stat-n{font-size:26px;font-weight:700;font-family:'Bricolage Grotesque',sans-serif;line-height:1;letter-spacing:-0.5px}
 *[style*="font-weight:800"]{font-family:'Bricolage Grotesque',sans-serif!important;font-weight:700!important}
 #global-savings-banner [style*="font-weight:700"]{font-family:'Bricolage Grotesque',sans-serif}
+#global-savings-banner .vs-link{background:transparent;color:#9bdcb5}
 #panel-labor strong{font-family:'Bricolage Grotesque',sans-serif}
 .stat-l{font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:.05em;margin-top:2px}
 .stat.hi .stat-n{color:var(--red)}
@@ -1194,7 +1195,7 @@ document.documentElement.classList.add('pjs-loading');
       <div style="font-size:10px;color:#6fcf97;letter-spacing:.5px;text-transform:uppercase">Still on the table</div>
     </div>
     {% endif %}
-    <button class="cbtn cbtn-text cbtn-sm" style="color:#9bdcb5" onclick="hbOpen('home')">See the detail →</button>
+    <button class="cbtn cbtn-text cbtn-sm vs-link" onclick="hbOpen('home')">See the detail →</button>
   </div>
 </div>
 <script>
@@ -4975,7 +4976,9 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
           <div class="ac-rows">
             <div class="ac-row"><div class="l"><b>Email me about new sign-ins</b><span>A note whenever someone signs in to this dashboard, with a one-tap &ldquo;this wasn&rsquo;t me&rdquo;.</span></div>
               <div class="c"><label class="ac-switch"><input type="checkbox" id="as-login-notify" onchange="saveLoginNotify()" aria-label="Email me about new sign-ins"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
-            <div class="ac-row"><div class="l"><b>Product update emails</b><span>Occasional notes about new features.</span></div>
+            <div class="ac-row"><div class="l"><b>Monthly business review</b><span>On the 1st: how last month&rsquo;s numbers moved against the month before, what your changes were measured to do, where your goals stand, and what&rsquo;s worth fixing next.</span></div>
+              <div class="c"><label class="ac-switch"><input type="checkbox" id="as-monthly-review" onchange="saveMonthlyReview()" aria-label="Monthly business review"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
+            <div class="ac-row"><div class="l"><b>Product update emails</b><span>Occasional notes about new features. Separate from your monthly review.</span></div>
               <div class="c"><label class="ac-switch"><input type="checkbox" id="as-marketing" onchange="saveMarketingOptOut()" aria-label="Product update emails"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
           </div>
           <div class="ac-status" id="as-data-status" style="margin-top:8px"></div>
@@ -10835,6 +10838,8 @@ function loadAccountSettings() {
     // The stored flag is an opt-OUT; the switch reads as "send them", so
     // it is deliberately the inverse.
     document.getElementById('as-marketing').checked = !d.marketing_emails_opt_out;
+    var _mr = document.getElementById('as-monthly-review');
+    if(_mr) _mr.checked = (d.monthly_review_enabled !== false);
     if (window.acctCapMeter) acctCapMeter();
   }).catch(function() {});
 }
@@ -10973,6 +10978,12 @@ function saveDataRetention() {
 function saveLoginNotify() {
   asPost('/api/account-settings/login-notify',
          { enabled: document.getElementById('as-login-notify').checked },
+         'as-data-status', 'Saved');
+}
+
+function saveMonthlyReview() {
+  asPost('/api/account-settings/monthly-review',
+         { enabled: document.getElementById('as-monthly-review').checked },
          'as-data-status', 'Saved');
 }
 
