@@ -305,6 +305,45 @@ def test_cross_module_is_built_from_what_this_login_may_see(db_path, monkeypatch
     assert "inventory" in getattr(view, "_ask_denied", frozenset())
 
 
+# ── prose never carries a code identifier ────────────────────────────────────
+
+def test_every_complaint_category_reads_as_words():
+    """"takeout_delivery" reached the What Connects card on the dashboard
+    looking like a variable name. Categories are snake_case identifiers —
+    right for grouping, wrong for a sentence."""
+    from analyser import CATEGORIES, category_label
+    for category in CATEGORIES:
+        label = category_label(category)
+        assert "_" not in label, f"{category} still reads as an identifier"
+        assert label and label == label.lower()
+
+
+def test_an_unmapped_category_still_reads_as_words():
+    """A category added to CATEGORIES without a label must degrade to words,
+    not to code."""
+    from analyser import category_label
+    assert category_label("private_dining_rooms") == "private dining rooms"
+
+
+def test_business_intelligence_never_interpolates_a_raw_category():
+    """The guard is mechanical: nothing in the file may put c['category']
+    straight into an f-string."""
+    import inspect
+
+    import business_intelligence as bi
+    src = inspect.getsource(bi)
+    assert "{c['category']}" not in src
+    assert '{c["category"]}' not in src
+
+
+def test_one_shared_category_vocabulary():
+    """good_news carried its own copy, which is how "wait_time" becomes
+    "wait times" on one screen and "wait time" on the next."""
+    import good_news
+    from analyser import category_label
+    assert good_news.category_label is category_label
+
+
 # ── the first look ───────────────────────────────────────────────────────────
 
 def test_first_look_says_nothing_without_data():
@@ -405,6 +444,57 @@ def test_the_web_renders_good_news():
     src = _dashboard()
     assert "function renderGoodNews(" in src
     assert "/api/good-news" in src
+
+
+def test_no_home_button_builds_a_js_string_literal_from_server_text():
+    """The Track button silently did nothing on any recommendation whose
+    title contained an apostrophe — "Look into service — it's the
+    most-mentioned complaint".
+
+    esc() turns ' into &#39;, the HTML parser turns it back into ' when it
+    reads the attribute, and the JS that reaches the engine is a syntax
+    error. The .replace(/'/g,...) written to guard this could never fire,
+    because after esc() there is no literal apostrophe left to find.
+
+    The fix is structural: values ride on data attributes and a delegated
+    listener reads them off the element, so an apostrophe is just a
+    character. This pins that no Home handler goes back to the old shape.
+
+    The rule is about FREE TEXT, not about onclick as such. hbOpen still
+    appears in onclick attributes and is fine there: its argument is a
+    module key from a closed vocabulary (TAB / MODLABEL), where an
+    apostrophe cannot occur. hbTrack and hbDismiss take a recommendation's
+    title and key, which are prose the server composes.
+    """
+    src = _dashboard()
+    for handler in ("hbTrack(", "hbDismiss("):
+        bad = f'onclick="{handler}'
+        assert bad not in src, (
+            f"{handler} is back in an onclick attribute — it carries server "
+            f"prose, which breaks the JS string literal on an apostrophe")
+    assert "data-track-key" in src and "data-dismiss-key" in src
+
+
+def test_the_value_banner_detail_link_has_somewhere_to_go():
+    """hbOpen('home') fell through to the "isn't active on this account"
+    toast, because Home is not in TAB — it is the page the link lives on."""
+    src = _dashboard()
+    assert "if(module==='home')" in src
+
+
+def test_plain_english_is_not_set_in_the_number_face():
+    """Space Grotesk is the NUMBER face (DESIGN_SYSTEM.md §2)."""
+    src = _dashboard()
+    idx = src.find("Nothing measured yet</div>")
+    assert idx > 0
+    line_start = src.rfind("<div", 0, idx)
+    assert "Space Grotesk" not in src[line_start:idx]
+
+
+def test_the_closeout_uses_the_pages_own_date_format():
+    """M/D/YY everywhere. This card printed the raw ISO business_date."""
+    src = _dashboard()
+    assert "'<h3><span>Close-out — '+mdy(c.business_date)+'</span>'" in src
 
 
 def test_the_celebration_is_no_longer_gated_on_localstorage():

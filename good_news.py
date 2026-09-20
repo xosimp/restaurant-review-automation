@@ -95,13 +95,11 @@ MAX_STREAK_WEEKS = 26
 COMPLAINT_WAS_SHARE = 8.0     # percent of all reviews in the "before" window
 COMPLAINT_NOW_SHARE = 2.0     # and under this in the "after" window
 
-from analyser import CATEGORIES as COMPLAINT_CATEGORIES
-
-_CATEGORY_LABEL = {
-    "food_quality": "food quality", "service": "service", "wait_time": "wait times",
-    "value": "value for money", "ambiance": "atmosphere", "cleanliness": "cleanliness",
-    "reservation": "reservations", "takeout_delivery": "takeout and delivery",
-}
+# One vocabulary for how a category is written, shared with
+# business_intelligence and anything else that renders one. A second copy
+# here is how "wait_time" ends up as "wait times" on one screen and "wait
+# time" on the next.
+from analyser import CATEGORIES as COMPLAINT_CATEGORIES, category_label
 
 
 def _safe(fn, *a, **k):
@@ -334,7 +332,7 @@ def stopped(restaurant_id, today=None, db_path=DB_PATH, restaurant=None,
         verdict = metrics.compare(key, was_v, now_v)
         if verdict["verdict"] != "improved":
             continue
-        label = _CATEGORY_LABEL.get(category, category.replace("_", " "))
+        label = category_label(category)
         out.append({
             "kind": "stopped",
             "key": f"stopped:{category}:{today.isoformat()}",

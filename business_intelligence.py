@@ -78,6 +78,14 @@ def _f(v, default=0.0):
         return default
 
 
+def _cat(category):
+    """A complaint category as prose. The stored values are snake_case
+    identifiers, and "takeout_delivery" was reaching the What Connects card
+    on the dashboard looking like a variable name."""
+    from analyser import category_label
+    return category_label(category)
+
+
 def _norm(text):
     """Loose match key for a dish or role named by two different modules.
 
@@ -345,7 +353,7 @@ def correlations(restaurant_id: int, data: dict = None, restaurant=None,
                     # data may not support when two days qualify — and a
                     # small false claim inside an otherwise sound finding is
                     # the kind an owner never thinks to check.
-                    "headline": (f"{c['mentions']} {c['category']} complaints concentrate on "
+                    "headline": (f"{c['mentions']} {_cat(c['category'])} complaints concentrate on "
                                  f"{day}, which runs {lean[day]} points leaner on labour "
                                  f"than this restaurant's weekday average"),
                     "evidence": [
@@ -355,7 +363,7 @@ def correlations(restaurant_id: int, data: dict = None, restaurant=None,
                         # measured figure was 80% across Friday and Saturday
                         # is a number the owner would act on and could not
                         # reproduce.
-                        f"{c['mentions']} negative reviews naming {c['category']} over "
+                        f"{c['mentions']} negative reviews naming {_cat(c['category'])} over "
                         f"{c['window_days']} days, {_concentration_phrase(c)}",
                         f"{day} averages {lean[day]} points below this restaurant's own "
                         f"weekday average labour percentage",
@@ -380,13 +388,13 @@ def correlations(restaurant_id: int, data: dict = None, restaurant=None,
                 "kind": "reviews_x_food_cost",
                 "modules": ["reviews", "food_cost"],
                 "claim_kind": "inferred",
-                "headline": (f"{waste_day} carries both the {c['category']} complaints and "
+                "headline": (f"{waste_day} carries both the {_cat(c['category'])} complaints and "
                              f"{int(_f(waste_share) * 100)}% of the week's waste"),
                 "evidence": [
                     # Same rule as the labour link: a pair's share covers both
                     # days and must not be reported against the one day this
                     # link matched on.
-                    f"{c['mentions']} negative reviews naming {c['category']}, "
+                    f"{c['mentions']} negative reviews naming {_cat(c['category'])}, "
                     f"{_concentration_phrase(c)}",
                     f"{waste_day} holds {int(_f(waste_share) * 100)}% of waste dollars against "
                     f"an even week of {int(100 / 7)}%",
@@ -412,7 +420,7 @@ def correlations(restaurant_id: int, data: dict = None, restaurant=None,
                         "kind": "reviews_x_menu",
                         "modules": ["reviews", "food_cost"],
                         "claim_kind": "inferred",
-                        "headline": (f"Guests name {dish} in {c['mentions']} {c['category']} "
+                        "headline": (f"Guests name {dish} in {c['mentions']} {_cat(c['category'])} "
                                      f"complaints, and it is also a cost driver"),
                         "evidence": [
                             f"{c['mentions']} negative reviews naming {dish}",

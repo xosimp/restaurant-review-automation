@@ -706,7 +706,7 @@ def _build(current_user):
             add_rec("post_this_week", "Get a post out this week", f"Nothing has gone live in {int(posted_age)} days; accounts that post weekly hold reach.",
                     f"last post {int(posted_age)}d ago · {mkt.get('month', 0)} pieces drafted this month", "Marketing · reach", "marketing", "This week", "moderate", "Draft a post")
         elif mkt.get("last_at") is None:
-            add_rec("first_post", "Generate your first post", "Cavnar writes it in your voice from your reviews and menu — one click.", "no marketing content yet", "Marketing · reach", "marketing", "Today", "early", "Generate a post")
+            add_rec("first_post", "Generate your first post", "Cavnar AI writes it in your voice from your reviews and menu — one click.", "no marketing content yet", "Marketing · reach", "marketing", "Today", "early", "Generate a post")
         if mkt.get("posted_since"):
             add_change(f"{_plural(mkt['posted_since'], 'scheduled post')} went live", "good", "marketing")
         for p in mkt.get("scheduled") or []:

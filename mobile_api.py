@@ -991,7 +991,12 @@ def _do_mobile_home(current_user):
                     "severity": a.get("severity"),
                     "evidence": a.get("evidence"),
                 } for a in _attn]
-            _brief_recs = _brief_payload.get("recs") or []
+            # home_brief's payload key is "recommendations". This read
+            # "recs" — a key that has never existed in it — so the mobile
+            # home response has carried an empty recommendations list since
+            # the day it shipped, and the app had nothing to render a
+            # "Track this" button against.
+            _brief_recs = _brief_payload.get("recommendations") or []
             _brief_wins = _brief_payload.get("wins") or []
         else:
             _brief_recs, _brief_wins = [], []

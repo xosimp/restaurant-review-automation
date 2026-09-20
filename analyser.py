@@ -10,6 +10,30 @@ CATEGORIES = [
     "ambiance", "cleanliness", "reservation", "takeout_delivery"
 ]
 
+# How a category is written when a person reads it. The stored values are
+# snake_case identifiers — good for grouping, wrong for a sentence — and
+# "takeout_delivery" reached the What Connects card on the dashboard looking
+# like a variable name. Anything rendering a category goes through
+# category_label(); nothing interpolates the raw key into prose.
+CATEGORY_LABELS = {
+    "food_quality": "food quality",
+    "service": "service",
+    "wait_time": "wait time",
+    "value": "value for money",
+    "ambiance": "atmosphere",
+    "cleanliness": "cleanliness",
+    "reservation": "reservations",
+    "takeout_delivery": "takeout and delivery",
+}
+
+
+def category_label(category: str) -> str:
+    """A category as prose. Falls back to the key with underscores opened
+    up, so a category added to CATEGORIES without a label here still reads
+    as words rather than code."""
+    key = (category or "").strip().lower()
+    return CATEGORY_LABELS.get(key, key.replace("_", " "))
+
 # The operational vocabulary. Every value the model may return for a
 # structured entity field is enumerated here and validated against the list,
 # for the same reason `categories` is: an un-enumerated string becomes a

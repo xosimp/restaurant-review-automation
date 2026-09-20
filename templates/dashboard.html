@@ -569,6 +569,15 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none}
 #congrats-inner p{color:#c8bfb0;font-size:13px;line-height:1.7;margin:0 0 10px}
 #congrats-inner .c-stat{background:rgba(255,255,255,.06);border-radius:8px;padding:10px 14px;margin:8px 0;font-size:12px;color:#f0ebe0;text-align:left}
 #congrats-inner .c-stat strong{color:var(--ember)}
+/* The explanation modal shares the milestone frame, left-aligned because it
+   carries a list of line items rather than one sentence. */
+#explain-modal{display:none;position:fixed;inset:0;background:rgba(14,12,10,.6);z-index:9999;align-items:center;justify-content:center;backdrop-filter:blur(3px)}
+#explain-modal.show{display:flex}
+#explain-inner{background:linear-gradient(135deg,#1a1410,#1e1a14);border:1px solid #3d2e1e;border-radius:16px;padding:30px 34px;max-width:520px;width:90%;max-height:80vh;overflow-y:auto;animation:modalIn .3s ease;position:relative;text-align:left}
+#explain-inner .c-ember{width:3px;position:absolute;left:0;top:0;bottom:0;background:var(--ember);border-radius:16px 0 0 16px}
+#explain-inner h2{color:#f0ebe0;font-size:20px;font-weight:800;margin:0 0 14px}
+#explain-inner .c-sub{color:var(--ember);font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;margin-bottom:10px}
+#explain-body{color:#c8bfb0;font-size:13px;line-height:1.65}
 .stat-flash-green{animation:flashGreen 1.8s ease forwards;}
 .two-col{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px}
 .tbl{width:100%;border-collapse:collapse;font-size:12px}
@@ -1177,16 +1186,24 @@ document.documentElement.classList.add('pjs-loading');
       <div id="global-savings-total" style="font-family:'Space Grotesk',sans-serif;font-size:22px;font-weight:700;color:white;letter-spacing:-0.5px">${{_sb.total|format_num}}<span style="font-size:12px;font-weight:600;color:#9bdcb5">/mo</span></div>
       <div style="font-size:11px;color:#9bdcb5">from <span class="hb-num">{{ _sb.wins }}</span> measured {{ 'change' if _sb.wins == 1 else 'changes' }}{% if _sb.in_flight %} · <span class="hb-num">{{ _sb.in_flight }}</span> still being measured{% endif %}</div>
       {% else %}
-      <div id="global-savings-total" style="font-family:'Space Grotesk',sans-serif;font-size:17px;font-weight:700;color:white;letter-spacing:-0.3px">Nothing measured yet</div>
+      {# Space Grotesk is the NUMBER face (DESIGN_SYSTEM.md §2). This branch
+         has no number in it, and setting a plain English sentence in the
+         numeral face is exactly the mismatch that rule exists to stop. #}
+      <div id="global-savings-total" style="font-size:17px;font-weight:700;color:white;letter-spacing:-0.3px">Nothing measured yet</div>
       <div style="font-size:11px;color:#9bdcb5">{% if _sb.in_flight %}<span class="hb-num">{{ _sb.in_flight }}</span> {{ 'change' if _sb.in_flight == 1 else 'changes' }} being measured now.{% else %}Track a recommendation and its result lands here.{% endif %}</div>
       {% endif %}
     </div>
   </div>
   <div style="display:flex;gap:22px;flex-wrap:wrap">
     {% if _sb.avoided_hours and _sb.avoided_hours > 0 %}
-    <div style="text-align:center">
+    {# "7 hrs / work done for you" said nothing about WHOSE work or WHICH
+       work. It is the hours of manual work the product did in your place —
+       replies written, schedules built, invoices read — each counted at a
+       stated rate in value_delivered.avoided(). The title carries the
+       breakdown so the figure can be checked rather than believed. #}
+    <div style="text-align:center" title="Hours of manual work Cavnar AI did instead of you — review replies, schedule drafts and invoice entry, each at a stated rate. An estimate, not a measurement.">
       <div style="font-size:14px;font-weight:700;color:white"><span class="hb-num">{{ _sb.avoided_hours|round|int }}</span> hrs</div>
-      <div style="font-size:10px;color:#6fcf97;letter-spacing:.5px;text-transform:uppercase">Work done for you</div>
+      <div style="font-size:10px;color:#6fcf97;letter-spacing:.5px;text-transform:uppercase">Of your work, done for you</div>
     </div>
     {% endif %}
     {% if _sb.opportunity and _sb.opportunity > 0 %}
@@ -1286,6 +1303,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-act h3{font-size:10.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin:0 0 6px;display:flex;justify-content:space-between;align-items:baseline}
 .hb-row{display:flex;align-items:center;gap:14px;padding:11px 0;border-top:1px solid var(--hb-line2)}
 .hb-row:first-of-type{border-top:none}
+.hb-flush .hb-row{border-top:none;padding:7px 0}
 .hb-row .d{width:9px;height:9px;border-radius:50%;background:var(--ink3);flex-shrink:0;box-shadow:0 0 8px currentColor}
 .hb-row.critical .d{background:var(--hb-bad);color:var(--hb-bad)}.hb-row.important .d{background:var(--hb-warn);color:var(--hb-warn)}.hb-row.watch .d{background:var(--ink3);color:transparent}
 .hb-row.good .d{background:var(--hb-good);color:var(--hb-good)}
@@ -1548,6 +1566,18 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
   // ── navigation + actions ──────────────────────────────────────────────────
   window.hbOpen=function(module){
     if(module==='alerts'){if(typeof toggleNotifPanel==='function')toggleNotifPanel();return;}
+    // Home is not in TAB (it is the page these links live on), so
+    // hbOpen('home') fell straight through to the "isn't active on this
+    // account" toast - which is what the value banner's "See the detail"
+    // button did on every account, including ones where the detail was
+    // right there below the fold. Scroll to it instead.
+    if(module==='home'){
+      var tb=document.getElementById('tab-home');
+      if(tb&&typeof switchTab==='function')switchTab('home',tb);
+      var target=document.getElementById('hb-follow')||document.getElementById('hb-body');
+      if(target&&target.scrollIntoView)target.scrollIntoView({behavior:'smooth',block:'start'});
+      return;
+    }
     var id=TAB[module];var btn=id&&document.getElementById(id);
     if(btn&&typeof switchTab==='function'){switchTab(module==='intel'?'competitor':module,btn);window.scrollTo(0,0);}
     else if(typeof toast==='function'){toast((MODLABEL[module]||'That module')+' isn\'t active on this account','warning');}
@@ -1576,7 +1606,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       if(d&&d.ok){_hbAskHistory.push({role:'user',content:q});_hbAskHistory.push({role:'assistant',content:answer});}
     }
     function viaJson(){
-      fetch('/api/ask-cavnar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q,history:historyToSend,surface:'home'})}).then(function(r){return r.json();}).then(finish).catch(function(){finish({ok:false,error:'Couldn\'t reach Cavnar — check your connection.'});});
+      fetch('/api/ask-cavnar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q,history:historyToSend,surface:'home'})}).then(function(r){return r.json();}).then(finish).catch(function(){finish({ok:false,error:'Couldn\'t reach Cavnar AI — check your connection.'});});
     }
     try{
       fetch('/api/ask-cavnar/stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q,conversation_id:null,surface:'home'})}).then(function(resp){
@@ -1598,9 +1628,17 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
   window.hbAskSubmit=function(){var i=document.getElementById('hb-ask-in');if(!i)return;var q=i.value.trim();if(!q){i.focus();return;}i.value='';hbAsk(q);};
   window.hbAskFull=function(){var panel=document.getElementById('ask-cavnar-panel');if(panel&&panel.style.display!=='flex'&&typeof toggleAskCavnar==='function')toggleAskCavnar();};
   document.addEventListener('click',function(e){
-    var t=e.target&&e.target.closest?e.target.closest('[data-ask],[data-ask-submit],[data-ask-full]'):null;if(!t)return;
+    var t=e.target&&e.target.closest?e.target.closest('[data-ask],[data-ask-submit],[data-ask-full],[data-track-key],[data-dismiss-key],[data-open-module],[data-explain]'):null;if(!t)return;
     e.preventDefault();
-    if(t.hasAttribute('data-ask-submit'))hbAskSubmit();else if(t.hasAttribute('data-ask-full'))hbAskFull();else hbAsk(t.getAttribute('data-ask'));
+    if(t.hasAttribute('data-ask-submit'))hbAskSubmit();
+    else if(t.hasAttribute('data-ask-full'))hbAskFull();
+    // Values come off the element, so an apostrophe in a recommendation's
+    // title is just a character rather than a broken JS string literal.
+    else if(t.hasAttribute('data-track-key'))hbTrack(t,t.getAttribute('data-track-key'),t.getAttribute('data-track-title'),t.getAttribute('data-track-metric'));
+    else if(t.hasAttribute('data-dismiss-key'))hbDismiss(t.getAttribute('data-dismiss-key'),t.getAttribute('data-undo')==='1');
+    else if(t.hasAttribute('data-open-module'))hbOpen(t.getAttribute('data-open-module'));
+    else if(t.hasAttribute('data-explain'))hbExplain(t.getAttribute('data-explain-title'),t.getAttribute('data-explain'));
+    else hbAsk(t.getAttribute('data-ask'));
   });
   document.addEventListener('keydown',function(e){if(e.key==='Enter'&&e.target&&e.target.id==='hb-ask-in'){e.preventDefault();hbAskSubmit();}});
   window.hbAct=function(kind,module,btn){if(kind==='publish_replies'){if(typeof publishAllReplies==='function')publishAllReplies(btn);return;}if(kind==='ask'){hbAsk('');return;}if(kind==='alerts'){hbOpen('alerts');return;}hbOpen(module);};
@@ -1699,16 +1737,24 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
   function renderActions(d){
     var items=d.attention||[],recs=d.recommendations||[],hid=d.dismissed||[],sg=d.ask_suggestions||[];
     var h='<div class="hb-act"><div><h3><span>Needs attention</span>'+(items.length>3?'<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="hbOpen(\'alerts\')">+'+(items.length-3)+' more</button>':'')+'</h3>';
-    if(!items.length)h+='<div class="hb-clear"><span class="ok"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span><span>All clear — Cavnar is watching.</span></div>';
+    if(!items.length)h+='<div class="hb-clear"><span class="ok"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span><span>All clear — Cavnar AI is watching.</span></div>';
     for(var i=0;i<Math.min(items.length,3);i++){var a=items[i];h+='<div class="hb-row '+esc(a.severity)+'"><span class="d"></span><span class="t" title="'+esc(a.detail||'')+'">'+num(a.title)+'</span><span class="m">'+esc(MODLABEL[a.module]||'')+'</span><button class="cbtn '+(a.severity==='critical'||a.action.kind==='publish_replies'?'cbtn-primary':'cbtn-secondary')+' cbtn-sm" onclick="hbAct(\''+esc(a.action.kind)+'\',\''+esc(a.action.module||'')+'\',this)">'+esc(a.action.label)+'</button></div>';}
-    h+='<h3 style="margin-top:26px"><span>Cavnar recommends</span>'+(hid.length?'<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="hbDismiss(\''+esc(hid[0].key).replace(/'/g,'\\\'')+'\',true)">restore hidden</button>':'')+'</h3>';
+    h+='<h3 style="margin-top:26px"><span>Cavnar AI recommends</span>'+(hid.length?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dismiss-key="'+esc(hid[0].key)+'" data-undo="1">restore hidden</button>':'')+'</h3>';
     if(!recs.length)h+='<div class="hb-empty">Nothing to recommend yet — that changes as your data grows.</div>';
     for(var j=0;j<Math.min(recs.length,3);j++){var r=recs[j];
       // A recommendation that names a metric can be measured. Tracking takes
       // the baseline NOW, so the button has to be here on the card rather
       // than on a settings screen the owner visits a week later.
-      var trk = r.metric ? '<button class="cbtn cbtn-secondary cbtn-sm" title="Take a baseline now and measure this in a few weeks" onclick="hbTrack(this,\''+esc(r.key).replace(/'/g,'\\\'')+'\',\''+esc(r.title).replace(/'/g,'\\\'')+'\',\''+esc(r.metric)+'\')">Track this</button>' : '';
-      h+='<div class="hb-row"><span class="no hb-num">0'+(j+1)+'</span><span class="t" title="'+esc(r.why||'')+'">'+num(r.title)+'</span><span class="m hb-num">'+esc((r.evidence||'').split(' · ')[0].slice(0,42))+'</span>'+trk+'<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="hbOpen(\''+esc(r.module)+'\')">'+esc(MODLABEL[r.module]||r.action_label)+' →</button><button class="hb-x" title="Hide for two weeks" aria-label="Hide" onclick="hbDismiss(\''+esc(r.key).replace(/'/g,'\\\'')+'\')">✕</button></div>';}
+      // Data attributes, never a hand-built JS string literal inside an
+      // onclick. esc() turns an apostrophe into &#39;, the HTML parser
+      // turns it back into ' when it reads the attribute, and the JS that
+      // reaches the engine is then a syntax error - so "Look into service
+      // - it's the most-mentioned complaint" produced a Track button that
+      // silently did nothing. The .replace(/'/g,...) that was meant to
+      // guard this could never fire, because after esc() there is no
+      // literal apostrophe left to find.
+      var trk = r.metric ? '<button type="button" class="cbtn cbtn-secondary cbtn-sm" title="Take a baseline now and measure this in a few weeks" data-track-key="'+esc(r.key)+'" data-track-title="'+esc(r.title)+'" data-track-metric="'+esc(r.metric)+'">Track this</button>' : '';
+      h+='<div class="hb-row"><span class="no hb-num">0'+(j+1)+'</span><span class="t" title="'+esc(r.why||'')+'">'+num(r.title)+'</span><span class="m hb-num">'+esc((r.evidence||'').split(' · ')[0].slice(0,42))+'</span>'+trk+'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-open-module="'+esc(r.module)+'">'+esc(MODLABEL[r.module]||r.action_label)+' →</button><button type="button" class="hb-x" title="Hide for two weeks" aria-label="Hide" data-dismiss-key="'+esc(r.key)+'">✕</button></div>';}
     h+='</div><div><h3><span>Ask Cavnar AI</span></h3><div class="hb-ask"><input id="hb-ask-in" type="text" placeholder="Why did labor go up this week?" aria-label="Ask Cavnar AI"><button type="button" class="cbtn cbtn-primary cbtn-sm" data-ask-submit="1">Ask</button></div>';
     if(sg.length){h+='<div class="hb-sugg">';for(var s=0;s<Math.min(sg.length,3);s++){h+='<button type="button" data-ask="'+esc(sg[s])+'">'+esc(sg[s])+'</button>';}h+='</div>';}
     h+='<div id="hb-ask-out" class="hb-askout" hidden aria-live="polite"></div><div class="hb-askfoot"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-ask-full="1">Open the full chat →</button></div>';
@@ -1870,7 +1916,11 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
     var rc=d.receipts||[],ov=(d.brief&&d.brief.overnight)||null;
     var hasOv=ov&&((ov.answered||0)>0||(ov.flagged||0)>0);
     if(!rc.length&&!hasOv)return '';
-    var h='<div class="hb-act" style="grid-template-columns:1fr"><div><h3><span>What Cavnar did for you</span></h3>';
+    // hb-flush: no rules between these rows. Every row here is the same
+    // kind of thing (something already done), so a divider separates
+    // nothing - it just draws a line through a list that reads better as
+    // one block.
+    var h='<div class="hb-act hb-flush" style="grid-template-columns:1fr"><div><h3><span>What Cavnar AI did for you</span></h3>';
     if(hasOv){
       var bits=[];
       if(ov.answered>0)bits.push(ov.answered+' repl'+(ov.answered===1?'y':'ies')+' drafted');
@@ -1908,29 +1958,50 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       var parts=[];
       if(av.hours>0)parts.push(Math.round(av.hours)+' hours of work done for you');
       if(av.dollars>0)parts.push('$'+num2(av.dollars)+" you'd otherwise have paid for");
-      h+='<div class="hb-row watch"><span class="d"></span><span class="t wrap">'+esc(parts.join(' - '))+'</span><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="hbToggle(\'hb-avoided\',this)">How?</button></div>';
-      h+='<div id="hb-avoided" class="hb-empty" style="display:none;font-size:12px">';
+      // The breakdown opens as a centred modal rather than pushing the
+      // rest of the card down the page. Expanding in place moved every row
+      // below it, so the answer to "How?" arrived while the thing that
+      // prompted the question was sliding away.
+      var avBody='';
       for(var ai=0;ai<av.items.length;ai++){var it=av.items[ai];
         var amt=[];if(it.dollars)amt.push('$'+num2(it.dollars));if(it.hours)amt.push(it.hours+' hrs');
-        h+='<div style="margin-bottom:6px">'+esc(it.label)+(amt.length?' - '+esc(amt.join(', ')):'')+'<br><span style="opacity:.75">at '+esc(it.rate)+', '+esc(it.basis)+'</span></div>';}
-      h+='<div style="opacity:.75">Estimates at stated rates, not measurements.</div></div>';
+        avBody+='<div style="margin-bottom:10px">'+esc(it.label)+(amt.length?' — '+esc(amt.join(', ')):'')+'<br><span style="opacity:.75">at '+esc(it.rate)+', '+esc(it.basis)+'</span></div>';}
+      avBody+='<div style="opacity:.75;margin-top:14px">Estimates at stated rates, not measurements.</div>';
+      h+='<div class="hb-row watch"><span class="d"></span><span class="t wrap">'+esc(parts.join(' - '))+'</span><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-explain="'+esc(avBody)+'" data-explain-title="Work done for you">How?</button></div>';
     }
     if(sf.dollars>0)h+='<div class="hb-row watch"><span class="d"></span><span class="t wrap">$'+num2(sf.dollars)+' of problems put in front of you in the last '+sf.days+' days, across '+sf.alerts+' alerts</span></div>';
     if(op.monthly>0)h+='<div class="hb-row important"><span class="d"></span><span class="t wrap"><strong>$'+num2(op.monthly)+'/month</strong> still on the table - available, not captured</span></div>';
     if(pr&&pr.available&&pr.promised_annual&&pr.promised_annual.low){
-      h+='<div class="hb-empty" style="font-size:12px">At your audit on '+esc(pr.audit_date)+' we estimated $'+num2(pr.promised_annual.low)+'-$'+num2(pr.promised_annual.high)+' a year was available. <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="hbToggle(\'hb-promise\',this)">See how it went</button></div>';
-      h+='<div id="hb-promise" class="hb-empty" style="display:none;font-size:12px">';
+      var prBody='';
       for(var pi=0;pi<pr.categories.length;pi++){var c=pr.categories[pi];
-        if(c.note){h+='<div style="margin-bottom:6px">'+esc(c.label)+': '+esc(c.note)+'</div>';continue;}
+        if(c.note){prBody+='<div style="margin-bottom:10px">'+esc(c.label)+': '+esc(c.note)+'</div>';continue;}
         if(c.then==null||c.now==null)continue;
         var pm=(c.promised_low||c.promised_high)?(' <span style="opacity:.75">(we estimated $'+num2(c.promised_low)+'-$'+num2(c.promised_high)+'/yr)</span>'):'';
-        h+='<div style="margin-bottom:6px">'+esc(c.metric_label)+': '+esc(String(c.then))+esc(c.unit||'')+' at the audit, '+esc(String(c.now))+esc(c.unit||'')+' now'+pm+'</div>';}
-      h+='<div style="opacity:.75">'+esc(pr.caveat||'')+'</div></div>';
+        prBody+='<div style="margin-bottom:10px">'+esc(c.metric_label)+': '+esc(String(c.then))+esc(c.unit||'')+' at the audit, '+esc(String(c.now))+esc(c.unit||'')+' now'+pm+'</div>';}
+      prBody+='<div style="opacity:.75;margin-top:14px">'+esc(pr.caveat||'')+'</div>';
+      h+='<div class="hb-empty" style="font-size:12px">At your audit on '+esc(pr.audit_date)+' we estimated $'+num2(pr.promised_annual.low)+'-$'+num2(pr.promised_annual.high)+' a year was available. <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-explain="'+esc(prBody)+'" data-explain-title="What we estimated, against what happened">See how it went</button></div>';
     }
     if(d.caveat)h+='<div class="hb-empty" style="font-size:12px">'+esc(d.caveat)+'</div>';
     return h;
   }
   function num2(n){return (Math.round(n||0)).toLocaleString();}
+  // A centred, branded explanation rather than an inline expand. The body
+  // is already-escaped markup built by the caller, held on a data
+  // attribute - which the HTML parser hands back verbatim, so an
+  // apostrophe in a rate or a basis is just a character.
+  window.hbExplain=function(title,body){
+    var m=document.getElementById('explain-modal');if(!m)return;
+    var t=document.getElementById('explain-title'),b=document.getElementById('explain-body');
+    if(t)t.textContent=title||'How this is counted';
+    if(b)b.innerHTML=body||'';
+    m.classList.add('show');
+  };
+  function hbCloseExplain(){var m=document.getElementById('explain-modal');if(m)m.classList.remove('show');}
+  document.addEventListener('click',function(e){
+    if(e.target&&e.target.id==='explain-close'){hbCloseExplain();return;}
+    if(e.target&&e.target.id==='explain-modal')hbCloseExplain();
+  });
+  document.addEventListener('keydown',function(e){if(e.key==='Escape')hbCloseExplain();});
   window.hbToggle=function(id,btn){
     var el=document.getElementById(id);if(!el)return;
     var open=el.style.display!=='none';
@@ -2001,7 +2072,10 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
            + '<input class="ac-input" id="'+id+'" placeholder="'+esc(ph)+'" value="'+esc(val||'')+'"></div>';
     };
     return '<div class="hb-act" style="grid-template-columns:1fr"><div>'
-         + '<h3><span>Close-out — '+esc(c.business_date)+'</span>'+(e.created_at?'<span class="hb-empty" style="padding:0">filed by '+esc(e.submitted_by||'a manager')+'</span>':'')+'</h3>'
+         // mdy() is the page's one date format (M/D/YY). This printed the
+         // raw ISO business_date, so one card on Home spoke a different
+         // date language from every other.
+         + '<h3><span>Close-out — '+mdy(c.business_date)+'</span>'+(e.created_at?'<span class="hb-empty" style="padding:0">filed by '+esc(e.submitted_by||'a manager')+'</span>':'')+'</h3>'
          + '<div class="hb-empty" style="padding:0 0 10px">Whoever closes writes four lines. They lead tomorrow morning\'s brief.</div>'
          + '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px">'
          + field('co-well','What went well','A section ran clean',e.went_well)
@@ -2075,7 +2149,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
       _hbLoading=false;
       if(!d||!d.ok){if(_hbScope==='group'){_hbScope='location';hbLoad(fresh);if(typeof toast==='function')toast((d&&d.error)||'Couldn\'t load all locations','error');return;}var b=document.getElementById('hb-body');if(b)b.innerHTML='<div class="hb-err"><span>'+esc((d&&d.error)||'Couldn\'t build your brief right now.')+'</span><button class="cbtn cbtn-secondary cbtn-sm" onclick="hbLoad(true)">Try again</button></div>';if(d&&d.session_expired)location.reload();return;}
       _hbLoadedAt=Date.now();if(d.scope==='group')renderGroup(d);else render(d);
-    }).catch(function(){_hbLoading=false;var b=document.getElementById('hb-body');if(b)b.innerHTML='<div class="hb-err"><span>Couldn\'t reach Cavnar — check your connection.</span><button class="cbtn cbtn-secondary cbtn-sm" onclick="hbLoad(true)">Try again</button></div>';});
+    }).catch(function(){_hbLoading=false;var b=document.getElementById('hb-body');if(b)b.innerHTML='<div class="hb-err"><span>Couldn\'t reach Cavnar AI — check your connection.</span><button class="cbtn cbtn-secondary cbtn-sm" onclick="hbLoad(true)">Try again</button></div>';});
   };
   window.hbRefresh=function(){if(!_hbLoadedAt||Date.now()-_hbLoadedAt>5*60*1000)hbLoad(false);};
   // A "Ask about this →" link in the morning-brief email lands here with the
@@ -2573,6 +2647,11 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
      under a food-cost record would be a figure with nothing to do with what
      was achieved. Ids rather than tag positions so filling it cannot depend
      on which paragraph comes first. -->
+<!-- The explanation modal. "How?" and "See how it went" used to expand in
+     place, which pushed every row below them down the page — so the answer
+     arrived while the figure that prompted the question was sliding out of
+     view. Same branded frame as the milestone moment below. -->
+<div id="explain-modal"><div id="explain-inner"><div class="c-ember"></div><div class="c-sub" id="explain-kicker">How this is counted</div><h2 id="explain-title"></h2><div id="explain-body"></div><button id="explain-close" class="cbtn cbtn-primary cbtn-lg cbtn-block" style="margin-top:20px">Got it</button></div></div>
 <div id="congrats-modal"><div id="congrats-inner"><div class="c-ember"></div><div class="c-sub" id="congrats-kicker">A milestone</div><h2 id="congrats-title"></h2><p id="congrats-body"></p><div id="congrats-stats"><div class="c-stat"><strong>35% higher return rates</strong> — guests who see responses come back more often</div><div class="c-stat"><strong>5–9% revenue lift</strong> per star gained — Harvard Business School research on independent restaurants</div><div class="c-stat"><strong>$125k+/yr</strong> in additional revenue possible from a 3.1% sales lift at a casual dining unit</div></div><p id="congrats-note" style="margin-top:12px;font-size:12px;color:var(--ink3)">This won't appear again.</p><button id="congrats-close" class="cbtn cbtn-primary cbtn-lg cbtn-block" style="margin-top:20px" onclick="document.getElementById('congrats-modal').classList.remove('show')">Got it</button></div></div>
 
 <!-- LABOR -->
