@@ -827,6 +827,7 @@ def _build(current_user):
         if r.get("google_place_id"):
             try:
                 import first_look
+                # Request path — details only (see first_look.PLACES_TIMEOUT).
                 _look_lines = first_look.lines(first_look.build(r["google_place_id"]))
             except Exception as _fle:
                 print(f"[home] first look unavailable: {_fle}")

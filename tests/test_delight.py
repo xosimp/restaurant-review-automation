@@ -21,6 +21,18 @@ from models import Restaurant, create_restaurant, get_conn
 def _redirect_db(monkeypatch, db_path):
     real = models.get_conn
     monkeypatch.setattr(models, "get_conn", lambda *a, **k: real(db_path))
+    # milestones.py does `from models import DB_PATH, get_conn` at module
+    # scope — the house style here, and the bound-import hazard CLAUDE.md
+    # documents. Patching models.get_conn does NOT reach that bound copy.
+    #
+    # It matters in this file specifically because these tests call ROUTE
+    # BODIES, which take no db_path (production rightly uses the real one),
+    # so the bound default is what actually runs. Without this the route
+    # read an empty database and the permission assertion below passed for
+    # the wrong reason — it saw no milestones at all.
+    import milestones
+    monkeypatch.setattr(milestones, "get_conn", lambda *a, **k: real(db_path))
+    monkeypatch.setattr(milestones, "DB_PATH", db_path)
 
 
 def _restaurant(db_path, **kw):
@@ -131,6 +143,36 @@ def test_watching_text_reads_as_a_sentence():
             == "I'm watching reviews, labor and food cost")
 
 
+def test_an_all_clear_brief_is_delivered_at_most_once_a_week(db_path):
+    """Reassurance every morning is how a brief becomes the notification
+    people swipe away — which costs them the day it says something real."""
+    import ops
+    rid = _restaurant(db_path, reviews_live=1)
+    brief = {"lines": [{"key": "all_clear", "tone": "good", "text": "…", "ask": "?"}]}
+    assert morning_brief._only_all_clear(brief)
+    # A fixed Wednesday. ISO weeks end on Sunday, so running this on a real
+    # Sunday made "tomorrow" the next week and the test passed or failed by
+    # the day it ran.
+    today = date(2026, 9, 16)
+    assert today.isoweekday() == 3
+    first = morning_brief._claim_weekly_all_clear(rid, 1, today)
+    second = morning_brief._claim_weekly_all_clear(rid, 1, today + timedelta(days=1))
+    assert first is True
+    assert second is False, "a second quiet day in the same week must stay silent"
+    # A different person still gets their own.
+    assert morning_brief._claim_weekly_all_clear(rid, 2, today) is True
+    # And next week it comes round again.
+    assert morning_brief._claim_weekly_all_clear(rid, 1, today + timedelta(days=7)) is True
+
+
+def test_a_brief_with_real_news_is_never_held_back(db_path):
+    """The weekly hold applies ONLY to a brief that says nothing else."""
+    brief = {"lines": [{"key": "all_clear"}, {"key": "reviews"}]}
+    assert morning_brief._only_all_clear(brief) is False
+    assert morning_brief._only_all_clear({"lines": [{"key": "reviews"}]}) is False
+    assert morning_brief._only_all_clear({"lines": []}) is False
+
+
 # ── the brief carries at most one piece of good news ─────────────────────────
 
 def test_the_brief_never_opens_with_three_congratulations(db_path, monkeypatch):
@@ -161,6 +203,106 @@ def test_good_news_lines_are_askable(db_path, monkeypatch):
     brief = morning_brief.build(rid, restaurant=get_restaurant(rid), db_path=db_path)
     for line in brief["lines"]:
         assert line.get("ask"), f"{line['key']} has no ask prompt"
+
+
+# ── permissions on the new surfaces ──────────────────────────────────────────
+#
+# Each of these is the same class of bug the ROI audit found in /api/value,
+# where the breakdown was filtered and the headline total was not: a manager
+# could subtract their way back to the numbers they were not shown.
+
+def _manager(rid):
+    return {"id": 2, "restaurant_id": rid, "role": "manager", "is_admin": False}
+
+
+def _owner(rid):
+    return {"id": 1, "restaurant_id": rid, "role": "client", "is_admin": False}
+
+
+def _denied_for(strategy_routes, monkeypatch, user, rid):
+    """What /good-news would hide from this login."""
+    seen = {}
+    import good_news
+    monkeypatch.setattr(good_news, "all_good_news",
+                        lambda r, **kw: seen.update(
+                            denied=set(kw.get("denied_modules") or ())) or [])
+    monkeypatch.setattr(strategy_routes, "_local_today", lambda u: date.today())
+    strategy_routes._do_good_news(user)
+    return seen["denied"]
+
+
+def test_good_news_denies_every_module_the_login_lacks_not_just_food_cost(db_path, monkeypatch):
+    """The route must delegate to viewer_restaurant rather than hand-roll a
+    food-cost-only check.
+
+    No role in ROLE_PERMISSIONS denies Labor today, so this is hardening
+    rather than a live leak — which is exactly why it needs a test that
+    fails for the right reason. Denying LABOR_VIEW directly proves the
+    route asks the permission system instead of assuming the answer.
+    """
+    import permissions
+    import strategy_routes
+    real = permissions.has_permission
+    monkeypatch.setattr(
+        permissions, "has_permission",
+        lambda u, p: False if p == permissions.LABOR_VIEW else real(u, p))
+    rid = _restaurant(db_path)
+    denied = _denied_for(strategy_routes, monkeypatch, _owner(rid), rid)
+    assert "labor" in denied, (
+        "a login without LABOR_VIEW must not be shown sales or labour records")
+
+
+def test_good_news_still_hides_margins_from_a_manager(db_path, monkeypatch):
+    import strategy_routes
+    rid = _restaurant(db_path)
+    assert "inventory" in _denied_for(strategy_routes, monkeypatch, _manager(rid), rid)
+
+
+def test_good_news_shows_the_owner_everything(db_path, monkeypatch):
+    import strategy_routes
+    seen = {}
+    import good_news
+    monkeypatch.setattr(good_news, "all_good_news",
+                        lambda rid, **kw: seen.update(denied=set(kw.get("denied_modules") or ())) or [])
+    rid = _restaurant(db_path)
+    monkeypatch.setattr(strategy_routes, "_local_today", lambda u: date.today())
+    strategy_routes._do_good_news(_owner(rid))
+    assert seen["denied"] == set()
+
+
+def test_money_milestones_are_owner_level(db_path):
+    """A savings milestone's body carries whole-business measured dollars,
+    which include food-cost results."""
+    import milestones
+    import strategy_routes
+    rid = _restaurant(db_path)
+    milestones.fire(rid, "savings", "savings:5000", "$5,000 in measured results",
+                    body="...$5,000 a year...", db_path=db_path)
+    milestones.fire(rid, "anniversary", "anniversary:3", "3 months", db_path=db_path)
+
+    payload, _ = strategy_routes._do_milestones(_manager(rid))
+    kinds = {m["kind"] for m in payload["items"]}
+    assert "savings" not in kinds, "a manager must not read whole-business dollars here"
+    assert "anniversary" in kinds, "but they still get the moments that are theirs"
+
+    payload, _ = strategy_routes._do_milestones(_owner(rid))
+    assert {"savings", "anniversary"} <= {m["kind"] for m in payload["items"]}
+
+
+def test_cross_module_is_built_from_what_this_login_may_see(db_path, monkeypatch):
+    """viewer_restaurant zeroes the module flags for anything denied, and
+    business_intelligence.gather only reads modules whose flag is on — so a
+    denied module cannot contribute a side of a link."""
+    import strategy_routes
+    seen = {}
+    import business_intelligence as bi
+    monkeypatch.setattr(bi, "executive_brief",
+                        lambda rid, restaurant=None, **kw: seen.update(r=restaurant) or {})
+    rid = _restaurant(db_path, module_inventory=1, module_labor=1)
+    strategy_routes._do_cross_module(_manager(rid))
+    view = seen["r"]
+    assert view.module_inventory == 0, "food cost must be off for a manager"
+    assert "inventory" in getattr(view, "_ask_denied", frozenset())
 
 
 # ── the first look ───────────────────────────────────────────────────────────

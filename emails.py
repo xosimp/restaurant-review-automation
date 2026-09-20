@@ -1138,7 +1138,11 @@ def send_welcome_email(to_email, restaurant_name, username, password,
         try:
             import first_look as _fl
             import html as _html
-            look_lines = _fl.lines(_fl.build(google_place_id))
+            # deep=True: two more Places calls for the neighbourhood
+            # comparison. Affordable here because nothing is waiting on
+            # this — it is sent from a Stripe webhook or an admin click,
+            # never from a request an owner is watching.
+            look_lines = _fl.lines(_fl.build(google_place_id, deep=True))
             if look_lines:
                 rows = "".join(
                     f'<p style="font-size:14px;color:{BRAND["body"]};line-height:1.7;'

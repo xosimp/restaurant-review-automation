@@ -378,13 +378,54 @@ def _module_on(restaurant, module):
 
 # ── the one call everything else makes ───────────────────────────────────────
 
+# One full pass is ~170 short-lived database reads: five metrics over twelve
+# windows, two metrics over up to twenty-six weeks, and eight complaint
+# categories over two windows each. That is fine once. It is not fine once
+# per recipient — morning_brief.deliver() rebuilds the whole brief for every
+# login that gets it, because a manager's brief is built from what THEY may
+# see, so a restaurant with three logins recomputed this three times, and
+# the scheduler does that for the whole fleet every morning.
+#
+# Keyed on what actually changes the answer: the restaurant, the day, and
+# the modules this viewer is denied. The denied set is part of the key on
+# purpose — without it a manager would read the owner's cached answer,
+# which is the whole permission boundary defeated by a dictionary.
+#
+# A short TTL rather than a day-long one so /api/good-news still reflects a
+# fresh sync within a couple of minutes.
+#
+# This is process-local, and deliberately NOT in the same category as the
+# three dicts CLAUDE.md names as blocking `--workers > 1`
+# (auth_routes._login_attempts, client_api._order_send_last,
+# ai_utils._ai_call_log). Those are LIMITS: a second worker gets its own
+# copy and silently doubles a rate limit, and the first is a security
+# control. This is a pure cache — a second worker would start cold and
+# compute the same answer. It makes that constraint no worse.
+_NEWS_CACHE = {}
+_NEWS_TTL = 120
+_NEWS_MAX = 400
+
+
 def all_good_news(restaurant_id, today=None, db_path=DB_PATH, restaurant=None,
                   denied_modules=None, limit=None):
     """Every positive signal, best first. Records outrank streaks outrank
     stopped-complaints, because a record is news and a streak is a state."""
+    import time as _time
+    key = (restaurant_id, str(today or date.today()), db_path,
+           frozenset(denied_modules or ()))
+    hit = _NEWS_CACHE.get(key)
+    if hit and _time.time() - hit[0] < _NEWS_TTL:
+        items = hit[1]
+        return items[:limit] if limit else list(items)
+
     kwargs = {"today": today, "db_path": db_path, "restaurant": restaurant,
               "denied_modules": denied_modules}
     items = ((_safe(records, restaurant_id, **kwargs) or [])
              + (_safe(streaks, restaurant_id, **kwargs) or [])
              + (_safe(stopped, restaurant_id, **kwargs) or []))
-    return items[:limit] if limit else items
+    if len(_NEWS_CACHE) >= _NEWS_MAX:
+        _NEWS_CACHE.clear()
+    _NEWS_CACHE[key] = (_time.time(), list(items))
+    # A copy either way. Handing back the cached list itself means a caller
+    # that sorts or trims it in place corrupts what the next reader sees.
+    return items[:limit] if limit else list(items)

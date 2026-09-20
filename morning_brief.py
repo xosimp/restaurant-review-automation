@@ -458,6 +458,29 @@ def _view_key(user):
             has_permission(user, LOSS_VIEW))
 
 
+def _only_all_clear(brief):
+    lines = brief.get("lines") or []
+    return len(lines) == 1 and lines[0].get("key") == "all_clear"
+
+
+def _claim_weekly_all_clear(restaurant_id, user_id, today):
+    """True for the first quiet day of this person's ISO week.
+
+    ops.claim_period is the same atomic primary-key insert the scheduler
+    uses to make a job run once per period, and it fails OPEN — so if the
+    claim table cannot be written, the reassurance is sent rather than
+    silently dropped. Sending one extra all-clear is a far smaller failure
+    than going quiet during a database problem, which is exactly the
+    condition an owner would most want to hear about.
+    """
+    import ops
+    from datetime import date as _date
+    day = today or _date.today()
+    year, week, _ = day.isocalendar()
+    return ops.claim_period(f"morning_brief_all_clear:{restaurant_id}:{user_id}",
+                            f"{year}-W{week:02d}")
+
+
 def deliver(restaurant_id, restaurant=None, today=None, db_path=DB_PATH):
     """Build and send each recipient THEIR brief. Push to that person's own
     devices when they have the app; email them otherwise — never both,
@@ -481,6 +504,19 @@ def deliver(restaurant_id, restaurant=None, today=None, db_path=DB_PATH):
             built[key] = build(restaurant_id, restaurant=restaurant, today=today, db_path=db_path, viewer=u)
         brief = built[key]
         if not brief["lines"]:
+            empty += 1
+            continue
+        # An all-clear-ONLY brief is reassurance, not news, and reassurance
+        # every single morning is how a brief becomes the notification
+        # people swipe away without reading — which costs them the day it
+        # says something real.
+        #
+        # So it is delivered at most once a week per person. Not "on
+        # Mondays": a restaurant whose Monday has real news would then never
+        # get the reassurance at all. The first quiet day of each ISO week
+        # sends it; the rest are silent. The line itself stays in the
+        # payload every day, so Home always shows it to anyone who opens it.
+        if _only_all_clear(brief) and not _claim_weekly_all_clear(restaurant_id, u["id"], today):
             empty += 1
             continue
         if devices.get(u["id"]):

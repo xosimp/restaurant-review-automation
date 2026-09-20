@@ -1940,6 +1940,15 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
   function renderFollow(g){
     var el=document.getElementById('hb-follow');if(!el)return;
     var lines=(g.brief&&g.brief.brief&&g.brief.brief.lines)||[],iss=(g.issues&&g.issues.issues)||[],gl=(g.goals&&g.goals.goals)||[];
+    // The brief carries one good-news line so the PUSH and the EMAIL are not
+    // relentlessly negative. On this screen that same sentence also has its
+    // own card below, and printing it twice on one page is how a win stops
+    // reading as a win. The card is the richer of the two (headline plus the
+    // numbers behind it), so the brief line yields here - and only here.
+    var newsKeys={};
+    var newsItems=(g.news&&g.news.items)||[];
+    for(var nk=0;nk<newsItems.length;nk++)newsKeys[newsItems[nk].key]=1;
+    lines=lines.filter(function(l){return !newsKeys[l.key];});
     var res=((g.outcomes&&g.outcomes.outcomes)||[]).filter(function(o){return o.summary;});
     var acts=(g.actions&&g.actions.items)||[];
     window._hbCloseout=g.closeout||null;

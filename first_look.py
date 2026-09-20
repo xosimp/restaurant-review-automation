@@ -28,6 +28,8 @@ TWO RULES.
   the table with ranges attached.
 """
 import logging
+import threading
+import time
 
 log = logging.getLogger(__name__)
 
@@ -35,17 +37,64 @@ log = logging.getLogger(__name__)
 # places, which is not an average of anything.
 MIN_COMPETITORS = 3
 
+# A restaurant's Google rating and its neighbourhood do not move in an hour,
+# and this runs on a REQUEST PATH. Railway serves the whole platform on
+# `gunicorn --workers 1 --threads 4`, so one uncached call holds a quarter
+# of it for as long as Google takes to answer.
+#
+# Two bounds, both deliberate:
+#
+#   * `timeout=(3, 5)` rather than the 8 the rest of competitor.py uses. A
+#     first look is a nicety; waiting eight seconds for one on the screen an
+#     owner is staring at is worse than not having it.
+#   * `deep=False` by default, which skips the nearby-restaurants lookup
+#     (two more Places calls inside get_nearby_competitors, each with its
+#     own 8s timeout — up to 24 seconds on one thread in the worst case).
+#     The neighbourhood comparison is only fetched where latency does not
+#     reach a user: the welcome email, which is sent from a webhook or an
+#     admin action, never from a page load.
+_CACHE = {}
+_CACHE_TTL = 6 * 3600
+_CACHE_LOCK = threading.Lock()
+_CACHE_MAX = 500
 
-def build(google_place_id, restaurant_id=None, timeout_ok=True):
+PLACES_TIMEOUT = (3, 5)
+
+
+def _cached(key):
+    with _CACHE_LOCK:
+        hit = _CACHE.get(key)
+        if hit and time.time() - hit[0] < _CACHE_TTL:
+            return hit[1]
+    return None
+
+
+def _remember(key, value):
+    with _CACHE_LOCK:
+        # Bounded: one entry per place id, and the platform has far fewer
+        # restaurants than this — but an unbounded process-lifetime dict is
+        # how a small cache becomes a memory leak.
+        if len(_CACHE) >= _CACHE_MAX:
+            _CACHE.clear()
+        _CACHE[key] = (time.time(), value)
+
+
+def build(google_place_id, restaurant_id=None, deep=False):
     """{"rating", "review_count", "name", "neighbourhood": {...}} or {}.
 
+    `deep=True` adds the neighbourhood comparison, at the cost of two more
+    Places calls. Only pass it off the request path.
+
     Best-effort by construction: any failure returns whatever was gathered
-    so far. This runs on the new-client path, and a Places outage must cost
-    a nicer welcome email, never the account.
+    so far. A Places outage must cost a nicer welcome, never the account.
     """
     out = {}
     if not google_place_id:
         return out
+    cache_key = f"{google_place_id}:{'deep' if deep else 'shallow'}"
+    hit = _cached(cache_key)
+    if hit is not None:
+        return hit
     try:
         import os
         import requests
@@ -57,7 +106,7 @@ def build(google_place_id, restaurant_id=None, timeout_ok=True):
             params={"place_id": google_place_id,
                     "fields": "name,rating,user_ratings_total",
                     "key": key},
-            timeout=8)
+            timeout=PLACES_TIMEOUT)
         data = r.json()
         if data.get("status") == "OK":
             res = data.get("result", {}) or {}
@@ -73,19 +122,21 @@ def build(google_place_id, restaurant_id=None, timeout_ok=True):
     except Exception as e:
         log.warning("first_look details failed: %s", e)
 
-    try:
-        from competitor import get_nearby_competitors
-        rivals = [c for c in (get_nearby_competitors(google_place_id, max_results=5) or [])
-                  if c.get("rating")]
-        if len(rivals) >= MIN_COMPETITORS:
-            avg = sum(float(c["rating"]) for c in rivals) / len(rivals)
-            out["neighbourhood"] = {
-                "count": len(rivals),
-                "avg_rating": round(avg, 1),
-                "best": max(rivals, key=lambda c: float(c["rating"]))["name"],
-            }
-    except Exception as e:
-        log.warning("first_look competitors failed: %s", e)
+    if deep:
+        try:
+            from competitor import get_nearby_competitors
+            rivals = [c for c in (get_nearby_competitors(google_place_id, max_results=5) or [])
+                      if c.get("rating")]
+            if len(rivals) >= MIN_COMPETITORS:
+                avg = sum(float(c["rating"]) for c in rivals) / len(rivals)
+                out["neighbourhood"] = {
+                    "count": len(rivals),
+                    "avg_rating": round(avg, 1),
+                    "best": max(rivals, key=lambda c: float(c["rating"]))["name"],
+                }
+        except Exception as e:
+            log.warning("first_look competitors failed: %s", e)
+    _remember(cache_key, out)
     return out
 
 

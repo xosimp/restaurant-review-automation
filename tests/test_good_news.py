@@ -338,6 +338,39 @@ def test_mark_seen_is_idempotent(db_path):
     assert milestones.mark_seen(rid, "savings:1000", db_path=db_path) is False
 
 
+def test_the_cache_never_hands_one_viewer_another_viewers_answer(db_path):
+    """The memo exists because morning_brief.deliver() rebuilds the brief
+    per recipient. If the denied set were not part of the key, the first
+    recipient to load would decide what everyone else sees — a permission
+    boundary defeated by a dictionary."""
+    rid = _restaurant(db_path)
+    today = date.today()
+    for i in range(8, 0, -1):
+        _days(db_path, rid, today - timedelta(days=28 * i - 1), 28,
+              sales=1500.0 if i > 1 else 2600.0)
+    good_news._NEWS_CACHE.clear()
+    full = good_news.all_good_news(rid, today=today, db_path=db_path)
+    limited = good_news.all_good_news(rid, today=today, db_path=db_path,
+                                      denied_modules={"labor"})
+    assert [r["metric"] for r in full if r["metric"] == "sales"]
+    assert [r["metric"] for r in limited if r["metric"] == "sales"] == []
+
+
+def test_the_cache_hands_back_a_copy(db_path):
+    """A caller that sorts or trims the result in place must not corrupt
+    what the next reader sees."""
+    rid = _restaurant(db_path)
+    today = date.today()
+    for i in range(8, 0, -1):
+        _days(db_path, rid, today - timedelta(days=28 * i - 1), 28,
+              sales=1500.0 if i > 1 else 2600.0)
+    good_news._NEWS_CACHE.clear()
+    first = good_news.all_good_news(rid, today=today, db_path=db_path)
+    n = len(first)
+    first.clear()
+    assert len(good_news.all_good_news(rid, today=today, db_path=db_path)) == n
+
+
 def test_recent_returns_unseen_only_when_asked(db_path):
     rid = _restaurant(db_path)
     milestones.fire(rid, "savings", "savings:1000", "one", db_path=db_path)

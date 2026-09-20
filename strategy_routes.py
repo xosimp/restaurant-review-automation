@@ -478,11 +478,20 @@ def _do_good_news(u):
     without FOOD_COST_VIEW is not congratulated on a margin record.
     """
     import good_news
+    from ask_cavnar_tools import viewer_restaurant
     from models import get_restaurant
-    denied = set() if _sees_food(u) else {"inventory"}
+    # Every module this login may not see, not just food cost. An earlier
+    # version denied {"inventory"} alone, which left a manager without the
+    # Labor permission reading sales and labour-percentage records — the
+    # same class of leak the ROI audit found in /api/value, where the
+    # breakdown was filtered and the headline total was not.
+    #
+    # viewer_restaurant is the single answer to "what may this login see",
+    # and it fails closed: a role lookup that errors hides everything.
+    view = viewer_restaurant(get_restaurant(_rid(u)), u)
+    denied = set(getattr(view, "_ask_denied", frozenset()))
     items = good_news.all_good_news(_rid(u), today=_local_today(u),
-                                    restaurant=get_restaurant(_rid(u)),
-                                    denied_modules=denied)
+                                    restaurant=view, denied_modules=denied)
     return {"ok": True, "items": items, "caveat": good_news.CAVEAT}, 200
 
 
@@ -494,9 +503,24 @@ def _do_milestones(u):
     localStorage flag it replaces could not do.
     """
     import milestones
+    # A savings milestone's body carries whole-business measured dollars,
+    # which include food-cost results — so it is owner-level for the same
+    # reason /api/value's promise block is. A goal milestone names the
+    # metric it was set on, which may be one this login cannot see.
+    #
+    # An anniversary and "every review answered" carry neither, so a manager
+    # still gets the moments that are genuinely theirs rather than an empty
+    # screen. Filtering by kind rather than blocking the route is the
+    # difference between a permission boundary and a wall.
+    money_kinds = {"savings", "goal"}
+    allowed = None if _principal(u) else (lambda m: m.get("kind") not in money_kinds)
+
+    def _visible(rows):
+        return rows if allowed is None else [m for m in rows if allowed(m)]
+
     return {"ok": True,
-            "items": milestones.recent(_rid(u), limit=10),
-            "unseen": milestones.recent(_rid(u), limit=3, unseen_only=True)}, 200
+            "items": _visible(milestones.recent(_rid(u), limit=10)),
+            "unseen": _visible(milestones.recent(_rid(u), limit=3, unseen_only=True))}, 200
 
 
 def _do_milestone_seen(u):
