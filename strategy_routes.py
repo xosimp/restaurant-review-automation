@@ -224,7 +224,17 @@ def _do_outcome_record(u):
                             window_days=wd)
     except ValueError as e:
         return {"ok": False, "error": str(e)}, 400
-    return {"ok": True, "outcome": o}, 200
+    # A tracker whose BASELINE could not be measured will come back "unknown"
+    # when its window closes, 28 days from now, having told the owner
+    # nothing. Still allowed — it is their change to track, and the data may
+    # arrive tomorrow — but say so at the moment they press the button
+    # rather than a month later.
+    warning = None
+    if o.get("baseline_value") is None:
+        warning = (f"Tracking started, but {(o.get('metric_label') or o['metric']).lower()} "
+                   f"can't be read right now ({o.get('baseline_detail') or 'no data'}), so "
+                   f"there may be nothing to compare against.")
+    return {"ok": True, "outcome": o, "warning": warning}, 200
 
 
 def _do_outcome_abandon(u, outcome_id):
@@ -247,24 +257,12 @@ def _do_value(u):
     """
     import value_delivered
     rid = _rid(u)
-    out = value_delivered.breakdown(rid)
-
-    # by_module is keyed by module; drop what this login may not see rather
-    # than handing a manager a food-cost dollar figure through the back door.
-    d = out.get("delivered") or {}
-    if not _metric_visible(u, "food_cost_pct"):
-        d["by_module"] = {k: v for k, v in (d.get("by_module") or {}).items()
-                          if k != "inventory"}
-        if d.get("biggest") and not _metric_visible(u, "food_cost_pct"):
-            import outcomes as _o
-            best = _o.best_ever(rid)
-            if best and _o.module_of(best["metric"]) == "inventory":
-                d["biggest"] = None
-        out["opportunity"] = {**(out.get("opportunity") or {}),
-                              "items": [i for i in (out.get("opportunity") or {}).get("items") or []
-                                        if i.get("module") != "inventory"]}
-        out["opportunity"]["monthly"] = round(
-            sum(i["monthly"] for i in out["opportunity"]["items"]), 2)
+    # Filtered BEFORE anything is summed. An earlier version of this route
+    # stripped by_module and the opportunity items but left the headline
+    # total whole, which handed a manager without FOOD_COST_VIEW the margin
+    # dollars straight back by subtraction.
+    denied = set() if _metric_visible(u, "food_cost_pct") else {"inventory"}
+    out = value_delivered.breakdown(rid, denied_modules=denied)
 
     # The audit comparison is owner-level: it carries whole-business dollars
     # and what Will quoted at the table.

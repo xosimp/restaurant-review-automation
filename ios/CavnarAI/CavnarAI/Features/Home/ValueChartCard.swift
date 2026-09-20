@@ -45,11 +45,25 @@ struct ValueChartCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("TOTAL VALUE DELIVERED")
+            // "TOTAL VALUE DELIVERED" until the ROI audit, when the figure
+            // behind it stopped being labour's gap-to-target plus food
+            // cost's recoverable waste — money the restaurant was still
+            // LOSING — and became only what outcomes.py measured before and
+            // after. The label has to say which of those it is.
+            Text("MEASURED RESULTS")
                 .font(.cavnarBody(14, weight: 700))
                 .tracking(1.5)
                 .foregroundStyle(Color.cavnarEmber2)
 
+            // A celebratory green count-up to $0 overclaims on an account
+            // that has not measured anything yet, which is most of them on
+            // day one. Zero says what it is instead.
+            if totalValue <= 0 {
+                Text("Nothing measured yet")
+                    .font(.cavnarNumber(26, weight: 600))
+                    .foregroundStyle(Color.cavnarInk)
+                    .cavnarSensitive()
+            } else {
             AnimatableNumberText(value: animatedTotal, format: Self.currencyText)
                 .font(.cavnarNumber(38, weight: 600))
                 .foregroundStyle(Color.cavnarGreen)
@@ -69,9 +83,13 @@ struct ValueChartCard: View {
                     guard hasCountedUp else { return }
                     animatedTotal = Double(newValue)
                 }
+            }
 
             Group {
-                if let delta = deltaInfo {
+                if totalValue <= 0 {
+                    Text("Track a recommendation and its result lands here")
+                        .foregroundStyle(Color.cavnarInk3)
+                } else if let delta = deltaInfo {
                     HStack(spacing: 4) {
                         Text(delta.isPositive ? "▲" : "▼")
                         Text(delta.text)

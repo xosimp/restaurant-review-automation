@@ -84,17 +84,21 @@ def _scalar(conn, sql, args):
 
 # ── 1. Delivered: measured, realised, caveated ──────────────────────────────
 
-def delivered(restaurant_id: int, db_path: str = DB_PATH) -> dict:
+def delivered(restaurant_id: int, db_path: str = DB_PATH, denied_modules=None) -> dict:
     """What measured improvements are worth per month, and the honest
     denominator beside it.
 
     Never a bare number. `wins` against `evaluated` is the difference
     between "two things worked" and "two of eleven things worked", and an
     owner shown only the first stops trusting the second time.
+
+    `denied_modules` is applied inside outcomes.total_value, BEFORE the sum.
+    Filtering the breakdown and leaving the total alone would hand a manager
+    without FOOD_COST_VIEW the margin dollars back by subtraction.
     """
     import outcomes
-    v = outcomes.total_value(restaurant_id, db_path=db_path)
-    best = outcomes.best_ever(restaurant_id, db_path=db_path)
+    v = outcomes.total_value(restaurant_id, db_path=db_path, denied_modules=denied_modules)
+    best = outcomes.best_ever(restaurant_id, db_path=db_path, denied_modules=denied_modules)
     return {
         "monthly": v["monthly"],
         "annual": v["annual"],
@@ -115,7 +119,7 @@ def delivered(restaurant_id: int, db_path: str = DB_PATH) -> dict:
 
 # ── 2. Avoided: cost avoidance, every rate stated ───────────────────────────
 
-def avoided(restaurant_id: int, db_path: str = DB_PATH) -> dict:
+def avoided(restaurant_id: int, db_path: str = DB_PATH, denied_modules=None) -> dict:
     """Work the product did that someone would otherwise have been paid for,
     and the hours behind it.
 
@@ -135,6 +139,7 @@ def avoided(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     if not restaurant:
         return {"items": [], "dollars": 0.0, "hours": 0.0}
 
+    denied = set(denied_modules or ())
     items = []
     conn = models.get_conn(db_path)
     try:
@@ -185,7 +190,7 @@ def avoided(restaurant_id: int, db_path: str = DB_PATH) -> dict:
                     "rate": f"{SCHEDULE_MINUTES} min a week",
                     "basis": "building a week's schedule by hand"})
 
-        if restaurant.module_inventory:
+        if restaurant.module_inventory and "inventory" not in denied:
             invoices = _scalar(conn, "SELECT COUNT(*) FROM invoice_imports "
                                      "WHERE restaurant_id=? AND applied_at IS NOT NULL",
                                (restaurant_id,))
@@ -216,7 +221,7 @@ def avoided(restaurant_id: int, db_path: str = DB_PATH) -> dict:
 
 # ── 3. Opportunity: money on the table, under its real name ─────────────────
 
-def opportunity(restaurant_id: int, db_path: str = DB_PATH) -> dict:
+def opportunity(restaurant_id: int, db_path: str = DB_PATH, denied_modules=None) -> dict:
     """The labour and food-cost figures that used to be called "delivered".
 
     Unchanged arithmetic, honest label. Both are gaps against a target —
@@ -239,7 +244,7 @@ def opportunity(restaurant_id: int, db_path: str = DB_PATH) -> dict:
                                   "monthly": round(v, 2), "module": "labor"})
         except Exception:
             pass
-    if restaurant.module_inventory:
+    if restaurant.module_inventory and "inventory" not in set(denied_modules or ()):
         try:
             from inventory import analysis_for
             _items, live, inv = analysis_for(restaurant_id)
@@ -269,12 +274,18 @@ def surfaced(restaurant_id: int, days: int = 30, db_path: str = DB_PATH) -> dict
         return {"days": days, "items": [], "dollars": 0.0, "alerts": 0}
 
 
-def breakdown(restaurant_id: int, db_path: str = DB_PATH) -> dict:
-    """All four figures, never summed. Every Home surface reads this."""
+def breakdown(restaurant_id: int, db_path: str = DB_PATH, denied_modules=None) -> dict:
+    """All four figures, never summed. Every Home surface reads this.
+
+    `denied_modules` is threaded into each one rather than applied to the
+    result, so a login without FOOD_COST_VIEW never receives a margin dollar
+    in any figure — including inside a total it could otherwise subtract
+    its way back through.
+    """
     return {
-        "delivered": delivered(restaurant_id, db_path=db_path),
-        "avoided": avoided(restaurant_id, db_path=db_path),
-        "opportunity": opportunity(restaurant_id, db_path=db_path),
+        "delivered": delivered(restaurant_id, db_path=db_path, denied_modules=denied_modules),
+        "avoided": avoided(restaurant_id, db_path=db_path, denied_modules=denied_modules),
+        "opportunity": opportunity(restaurant_id, db_path=db_path, denied_modules=denied_modules),
         "surfaced": surfaced(restaurant_id, db_path=db_path),
     }
 
@@ -291,7 +302,14 @@ def compute_total_value_delivered(restaurant_id: int, db_path: str = DB_PATH) ->
     """
     try:
         return int(round(delivered(restaurant_id, db_path=db_path)["monthly"]))
-    except Exception:
+    except Exception as e:
+        # Fails to 0 rather than 500ing the Home page, but never silently:
+        # this swallow hid a TypeError for a whole test run once already.
+        try:
+            import ops
+            ops.capture(e, job="value_delivered", context=f"restaurant_id={restaurant_id}")
+        except Exception:
+            pass
         return 0
 
 

@@ -1620,11 +1620,16 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
   // so the measurement cannot inherit a stale figure off the screen.
   window.hbTrack=function(btn,key,title,metric){
     if(btn){btn.disabled=true;btn.textContent='Starting...';}
-    fetch('/api/outcomes',{method:'POST',headers:{'Content-Type':'application/json','X-CSRFToken':'{{csrf_token}}'},
+    // No CSRF header here on purpose: _csrf_fetch.html wraps window.fetch and
+    // injects the real X-CSRF one on every same-origin POST. The literal
+    // 'X-CSRFToken' spelled out elsewhere in this file is vestigial - csrf.py
+    // reads X-CSRF - and it only works because of that wrapper.
+    fetch('/api/outcomes',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({source:'recommendation',source_key:key,title:title,metric:metric})})
     .then(function(r){return r.json();}).then(function(d){
       if(!d.ok){if(btn){btn.disabled=false;btn.textContent='Track this';}if(typeof toast==='function')toast(d.error||'Could not start tracking','error');return;}
       if(btn){btn.textContent='Tracking';}
+      if(d.warning){if(typeof toast==='function')toast(d.warning,'error');return;}
       var when=(d.outcome&&d.outcome.evaluate_on)?(' - result on '+d.outcome.evaluate_on):'';
       if(typeof toast==='function')toast('Measuring from today'+when,'success');
     }).catch(function(){if(btn){btn.disabled=false;btn.textContent='Track this';}if(typeof toast==='function')toast('Network error','error');});

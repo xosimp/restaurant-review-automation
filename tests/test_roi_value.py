@@ -260,3 +260,37 @@ def test_link_is_idempotent_and_reversible(db_path):
     assert promise.linked_audit(rid, db_path=db_path)["id"] == aid
     promise.link(aid, None, db_path=db_path)
     assert promise.linked_audit(rid, db_path=db_path) is None
+
+# ── permission: filter before the sum, never after ──────────────────────────
+
+def test_denied_modules_are_removed_before_the_total_is_summed(db_path):
+    """A manager without FOOD_COST_VIEW must not be able to subtract their
+    way to the margin dollars.
+
+    The first version of /api/value stripped by_module and the opportunity
+    items but left the headline total whole — so visible_total minus the
+    visible module rows WAS the food-cost figure. Filtering has to happen
+    before the sum, not on the way out.
+    """
+    rid = _restaurant(db_path)
+    _evaluated(db_path, rid, "Trimmed Mondays", "labor_pct", 400.0)
+    _evaluated(db_path, rid, "Cut food cost", "food_cost_pct", 250.0)
+
+    full = outcomes.total_value(rid, db_path=db_path)
+    assert full["monthly"] == 650.0
+
+    limited = outcomes.total_value(rid, db_path=db_path, denied_modules={"inventory"})
+    assert limited["monthly"] == 400.0
+    assert "inventory" not in limited["by_module"]
+    # and the denominator moves with it, or the missing row is inferable.
+    assert limited["evaluated"] == 1
+    assert sum(limited["by_module"].values()) == limited["monthly"]
+
+
+def test_best_ever_respects_denied_modules(db_path):
+    rid = _restaurant(db_path)
+    _evaluated(db_path, rid, "Labour win", "labor_pct", 100.0)
+    _evaluated(db_path, rid, "Huge margin win", "food_cost_pct", 900.0)
+    assert outcomes.best_ever(rid, db_path=db_path)["title"] == "Huge margin win"
+    limited = outcomes.best_ever(rid, db_path=db_path, denied_modules={"inventory"})
+    assert limited["title"] == "Labour win"

@@ -132,10 +132,10 @@ def test_the_headline_figure_is_measured_results_not_the_gap_to_target(monkeypat
 
     import outcomes
     # Nothing measured yet: an $8,817/month gap is not value delivered.
-    monkeypatch.setattr(outcomes, "total_value", lambda rid, db_path=None: {
+    monkeypatch.setattr(outcomes, "total_value", lambda rid, db_path=None, denied_modules=None: {
         "monthly": 0.0, "annual": 0.0, "wins": 0, "evaluated": 0, "in_flight": 2,
         "unmeasurable": 0, "no_clear_change": 0, "by_module": {}, "caveat": "c"})
-    monkeypatch.setattr(outcomes, "best_ever", lambda rid, db_path=None: None)
+    monkeypatch.setattr(outcomes, "best_ever", lambda rid, db_path=None, denied_modules=None: None)
     assert value_delivered.compute_total_value_delivered(1) == 0
 
     # ...and it is still reported, under its own name, as opportunity.
@@ -143,7 +143,7 @@ def test_the_headline_figure_is_measured_results_not_the_gap_to_target(monkeypat
     assert opp["monthly"] == round(8666.67 + 150, 2)
 
     # One measured win is what the headline counts.
-    monkeypatch.setattr(outcomes, "total_value", lambda rid, db_path=None: {
+    monkeypatch.setattr(outcomes, "total_value", lambda rid, db_path=None, denied_modules=None: {
         "monthly": 410.0, "annual": 4920.0, "wins": 1, "evaluated": 3, "in_flight": 1,
         "unmeasurable": 1, "no_clear_change": 1, "by_module": {"labor": 410.0}, "caveat": "c"})
     assert value_delivered.compute_total_value_delivered(1) == 410

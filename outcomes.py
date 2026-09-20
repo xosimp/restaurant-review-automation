@@ -227,25 +227,33 @@ def module_of(metric) -> str:
     return METRIC_MODULE.get(base, "other")
 
 
-def realised(restaurant_id, db_path=DB_PATH, since=None):
+def realised(restaurant_id, db_path=DB_PATH, since=None, denied_modules=None):
     """Every evaluated tracker that actually IMPROVED and carries dollars.
 
     This is the one honest basis for "what has Cavnar AI been worth": each
     row was measured over a named window before the change and the same
     window after, and cleared its metric's own noise band to be called an
     improvement at all. `since` is an ISO date filtering on evaluate_on.
+
+    `denied_modules` drops whole modules before anything is summed. It has
+    to happen HERE rather than on the way out: filtering a breakdown while
+    leaving the total intact hands a manager the food-cost dollars back by
+    subtraction.
     """
+    denied = set(denied_modules or ())
     rows = []
     for r in list_outcomes(restaurant_id, status="evaluated", limit=500, db_path=db_path):
         if r.get("verdict") != "improved" or not r.get("dollars_monthly"):
             continue
         if since and (r.get("evaluate_on") or "") < str(since)[:10]:
             continue
+        if denied and module_of(r["metric"]) in denied:
+            continue
         rows.append(r)
     return rows
 
 
-def total_value(restaurant_id, db_path=DB_PATH, since=None):
+def total_value(restaurant_id, db_path=DB_PATH, since=None, denied_modules=None):
     """What measured improvements are worth, per month, with the honest
     denominator alongside.
 
@@ -260,11 +268,17 @@ def total_value(restaurant_id, db_path=DB_PATH, since=None):
     per month) over the same restaurant, not a measured cost added to an
     elasticity forecast.
     """
-    wins = realised(restaurant_id, db_path=db_path, since=since)
+    denied = set(denied_modules or ())
+
+    def _visible(r):
+        return not denied or module_of(r["metric"]) not in denied
+
+    wins = realised(restaurant_id, db_path=db_path, since=since, denied_modules=denied)
     evaluated = [r for r in list_outcomes(restaurant_id, status="evaluated", limit=500,
                                           db_path=db_path)
-                 if not since or (r.get("evaluate_on") or "") >= str(since)[:10]]
-    tracking = list_outcomes(restaurant_id, status="tracking", limit=500, db_path=db_path)
+                 if (not since or (r.get("evaluate_on") or "") >= str(since)[:10]) and _visible(r)]
+    tracking = [r for r in list_outcomes(restaurant_id, status="tracking", limit=500,
+                                         db_path=db_path) if _visible(r)]
     by_module = {}
     for r in wins:
         m = module_of(r["metric"])
@@ -282,7 +296,7 @@ def total_value(restaurant_id, db_path=DB_PATH, since=None):
     }
 
 
-def best_ever(restaurant_id, db_path=DB_PATH):
+def best_ever(restaurant_id, db_path=DB_PATH, denied_modules=None):
     """The single biggest measured win, all time — the answer to "which
     recommendation created the biggest impact".
 
@@ -290,7 +304,7 @@ def best_ever(restaurant_id, db_path=DB_PATH):
     a different question and deliberately stays where it is. This one has
     no time window and no dollar floor.
     """
-    wins = realised(restaurant_id, db_path=db_path)
+    wins = realised(restaurant_id, db_path=db_path, denied_modules=denied_modules)
     if not wins:
         return None
     return max(wins, key=lambda r: abs(float(r["dollars_monthly"])))

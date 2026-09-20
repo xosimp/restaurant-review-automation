@@ -1344,11 +1344,21 @@ def _refresh_gia_mia_value_history(gia_mia_rid):
     a flat/straight line instead of a real trend.
 
     Walks backward from today's actual live total in strictly positive,
-    varying steps (never a backward dip — the real metric is genuinely
-    close to monotonic, since past review responses/months-active-marketing
-    never un-count), so the rightmost point always matches whatever
+    varying steps, so the rightmost point always matches whatever
     compute_total_value_delivered() returns live elsewhere on the same
     screen. Wipes and reseeds every deploy, same as _refresh_gia_mia_reviews.
+
+    DEMO ONLY, and the is_demo flag is the only gate (see the caller). This
+    is seeded content in the same sense the demo reviews are — it is not a
+    measurement and must never run for a paying account.
+
+    The monotonic assumption behind the upward walk was written for the old
+    value figure, where past review responses and months-since-signup could
+    only ever accumulate. Since the ROI audit the figure is measured
+    outcomes, which genuinely can fall — a tracker can be abandoned, and a
+    per-month win figure moves when it is re-measured. The walk stays
+    upward because that is what a demo curve should look like, not because
+    the underlying metric is monotonic any more.
     """
     try:
         import random as _rand_vh
