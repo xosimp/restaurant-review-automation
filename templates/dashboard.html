@@ -4982,7 +4982,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
         </div>
         <div class="ac-card span" id="email-history-card">
           <div class="ac-card-h"><div><h3>Email history</h3><p>Everything Cavnar AI has sent for you, and whether it landed.</p></div>
-            <div class="r"><button onclick="sendTestPush(this)" class="cbtn cbtn-soft cbtn-sm">Send me a test push</button> <button onclick="sendTestDigest(this)" class="cbtn cbtn-soft cbtn-sm">Send me a preview digest</button></div></div>
+            <div class="r"><button onclick="sendTestDigest(this)" class="cbtn cbtn-soft cbtn-sm">Send me a preview digest</button></div></div>
           <div id="eh-body" class="ac-list">Loading&hellip;</div>
         </div>
       </div>
@@ -13423,6 +13423,7 @@ document.addEventListener('click', function(e) {
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:15px;color:var(--ink)"><input type="checkbox" id="al-push-unres" style="accent-color:var(--ember)"> Unresponded review (48h)</label>
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:15px;color:var(--ink)"><input type="checkbox" id="al-push-sound" style="accent-color:var(--ember)"> Play a sound</label>
       </div>
+      <div style="margin-bottom:10px"><button type="button" onclick="sendTestPush(this)" class="cbtn cbtn-soft cbtn-sm">Send me a test notification</button> <span style="font-size:13px;color:var(--ink3)">Goes to your own devices only.</span></div>
       <div id="al-engagement" style="display:none;margin-bottom:12px"></div>
       <div style="font-size:13px;color:var(--ink3);margin-bottom:14px;line-height:1.5">Push doesn&rsquo;t need text or email turned on &mdash; it costs nothing to send, so it&rsquo;s switched per alert type here. Holding alerts through service lives in <b>Morning brief &amp; issues</b>.</div>
     </div>
