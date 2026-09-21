@@ -1455,26 +1455,10 @@ def security_txt():
     )
     return Response(content, mimetype="text/plain")
 
-@admin_bp.route("/sitemap.xml")
-def sitemap():
-    from flask import Response
-    xml = """<?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url>
-    <loc>https://cavnar.ai/</loc>
-    <changefreq>weekly</changefreq>
-    <priority>1.0</priority>
-  </url>
-</urlset>"""
-    return Response(xml, mimetype='application/xml')
-
-@admin_bp.route("/robots.txt")
-def robots():
-    from flask import Response
-    txt = """User-agent: *
-Allow: /
-Sitemap: https://cavnar.ai/sitemap.xml"""
-    return Response(txt, mimetype='text/plain')
+# /sitemap.xml and /robots.txt live on the app in hosted_dashboard.py. This
+# blueprint used to register both as well; it is registered first, so its
+# permissive robots.txt (no Disallow) was the one that served and the app's
+# `Disallow: /admin, /login, /api/` never shipped.
 
 @admin_bp.route("/og-image.png")
 def og_image():

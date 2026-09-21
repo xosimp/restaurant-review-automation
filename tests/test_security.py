@@ -322,3 +322,18 @@ def test_backup_retention_default_is_a_week_and_deps_are_pinned():
     req = open("requirements.txt").read()
     assert "flask==" in req and "werkzeug==" in req and "cryptography==" in req
     assert "pip-audit" in open(".github/workflows/ci.yml").read()
+
+
+def test_robots_and_sitemap_are_registered_once_and_robots_hides_the_app():
+    """admin_bp used to register /robots.txt and /sitemap.xml as well; it is
+    registered before the app-level routes, so its permissive robots.txt
+    (no Disallow) was the one that served."""
+    import pathlib, re
+    admin_src = pathlib.Path("admin_routes.py").read_text()
+    app_src = pathlib.Path("hosted_dashboard.py").read_text()
+    assert not re.search(r'@admin_bp\.route\("/robots\.txt"\)', admin_src)
+    assert not re.search(r'@admin_bp\.route\("/sitemap\.xml"\)', admin_src)
+    assert app_src.count('@app.route("/robots.txt")') == 1
+    robots = app_src.split('@app.route("/robots.txt")', 1)[1].split("return Response", 1)[0]
+    for path in ("/admin", "/login", "/api/"):
+        assert f"Disallow: {path}" in robots, path
