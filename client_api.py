@@ -1993,11 +1993,21 @@ brand voice. No corporate language. The whole brief must be under 60 words."""
 
 @client_bp.route("/api/labor-insight")
 @login_required
+def _labor_diagnosis_safe(rid, analysis=None):
+    """labor.diagnose over the current analysis — deterministic, so it is
+    never cached with the model's prose and never fails the route."""
+    try:
+        from labor import analyse_shifts_for_restaurant, diagnose
+        return diagnose(analysis or analyse_shifts_for_restaurant(rid))
+    except Exception:
+        return {"available": False, "reason": "could not read the shifts"}
+
+
 def labor_insight_api(current_user):
     rid = current_user["restaurant_id"]
     cached = _cache_get("labor-insight:" + str(rid))
     if cached:
-        return jsonify(insight=cached)
+        return jsonify(insight=cached, diagnosis=_labor_diagnosis_safe(rid))
     try:
         from labor import analyse_shifts_for_restaurant, get_claude_insights
         from models import get_restaurant
@@ -2012,7 +2022,7 @@ def labor_insight_api(current_user):
                                       staff_notes=_staff_notes_labor if _staff_notes_labor else None)
         formatted = format_insight_html(insight)
         _cache_set("labor-insight:" + str(rid), formatted)
-        return jsonify(insight=formatted)
+        return jsonify(insight=formatted, diagnosis=_labor_diagnosis_safe(rid, analysis))
     except Exception as e:
         import traceback; traceback.print_exc()
         stale = _insight_cache.get("labor-insight:" + str(rid))

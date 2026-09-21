@@ -2489,7 +2489,7 @@ def mobile_labor_insight(current_user):
     rid = current_user["restaurant_id"]
     cached = _capi._cache_get("mobile-labor-insight:" + str(rid))
     if cached:
-        return jsonify(ok=True, insight=cached, **_insight_json(cached))
+        return jsonify(ok=True, insight=cached, diagnosis=_capi._labor_diagnosis_safe(rid), **_insight_json(cached))
     try:
         restaurant = get_restaurant(rid)
         name = restaurant.name if restaurant else "your restaurant"
@@ -2501,7 +2501,8 @@ def mobile_labor_insight(current_user):
             staff_notes=staff_notes if staff_notes else None,
         )
         _capi._cache_set("mobile-labor-insight:" + str(rid), insight)
-        return jsonify(ok=True, insight=insight, **_insight_json(insight))
+        return jsonify(ok=True, insight=insight, diagnosis=_capi._labor_diagnosis_safe(rid, analysis),
+                       **_insight_json(insight))
     except Exception as e:
         return jsonify(ok=False, insight="Analysis unavailable — check back shortly.",
                        insight_intro="Analysis unavailable — check back shortly.",

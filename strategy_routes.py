@@ -782,6 +782,16 @@ def _do_recipe_scan(u):
     return {"ok": True, "draft": draft}, 200
 
 
+def _do_ai_visibility_queries(u):
+    from models import ai_visibility_query_history
+    return {"ok": True, **ai_visibility_query_history(_rid(u))}, 200
+
+
+def _do_marketing_diagnosis(u):
+    import guest_marketing
+    return {"ok": True, "diagnosis": guest_marketing.diagnose(_rid(u))}, 200
+
+
 def _do_memory_list(u):
     """What Ask Cavnar remembers about this restaurant, with who added it —
     so the owner can read and correct the memory that shapes every answer."""
@@ -1208,6 +1218,8 @@ _ROUTES = [
     ("/food-cost/auto-order", ["POST"], _do_auto_order_set, "auto_order_set"),
     ("/account/memory", ["GET"], _do_memory_list, "memory_list"),
     ("/account/memory/add", ["POST"], _do_memory_add, "memory_add"),
+    ("/intel/ai-visibility/queries", ["GET"], _do_ai_visibility_queries, "ai_visibility_queries"),
+    ("/marketing/diagnosis", ["GET"], _do_marketing_diagnosis, "marketing_diagnosis"),
     ("/labor/time-off", ["GET"], _do_time_off_list, "time_off_list"),
     ("/labor/time-off/<int:request_id>/decide", ["POST"], _do_time_off_decide, "time_off_decide"),
     ("/labor/covers", ["GET"], _do_covers_get, "covers_get"),

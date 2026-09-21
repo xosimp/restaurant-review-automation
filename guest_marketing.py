@@ -729,6 +729,51 @@ def campaign_history(restaurant_id, limit=20, db_path=DB_PATH) -> list:
     return [dict(r) for r in rows]
 
 
+def diagnose(restaurant_id, db_path=DB_PATH) -> dict:
+    """The campaigns' read, in the shared diagnosis shape. Deterministic:
+    the best and worst measured campaign by taps per hundred sent and, once
+    Toast attribution has run, by guests who came back. A campaign with no
+    measurement is never scored against one that has."""
+    hist = campaign_history(restaurant_id, limit=20, db_path=db_path)
+    sent = [c for c in hist if (c.get("sent_count") or 0) >= 10]
+    if len(sent) < 2:
+        return {"available": False, "reason": "fewer than two campaigns of ten or more texts — nothing to compare yet"}
+    measured = [c for c in sent if c.get("visits_matched") is not None]
+    basis = "came back" if len(measured) >= 2 else "taps"
+    pool = measured if basis == "came back" else sent
+
+    def rate(c):
+        n = (c.get("visits_matched") if basis == "came back" else c.get("clicks")) or 0
+        return n / float(c["sent_count"]) * 100
+
+    ranked = sorted(pool, key=rate, reverse=True)
+    best, worst = ranked[0], ranked[-1]
+    if rate(best) == rate(worst):
+        return {"available": True, "cause": None, "confidence": "low",
+                "summary": f"{len(pool)} campaigns measured by {basis}; none stood apart.",
+                "alternative_cause": None, "what_would_confirm": None,
+                "operational_evidence": [{"module": "marketing", "metric": f"{basis} per 100 sent", "value": f"{rate(best):.1f}"}]}
+    evidence = [{"module": "marketing", "metric": f"best campaign — {basis} per 100 sent",
+                 "value": f"{rate(best):.1f} ({best.get('segment_label') or 'everyone'}, {str(best.get('created_at') or '')[:10]})"},
+                {"module": "marketing", "metric": f"weakest campaign — {basis} per 100 sent",
+                 "value": f"{rate(worst):.1f} ({worst.get('segment_label') or 'everyone'}, {str(worst.get('created_at') or '')[:10]})"}]
+    seg_diff = (best.get("segment") or "all") != (worst.get("segment") or "all")
+    cause = (f"The {best.get('segment_label') or 'everyone'} segment answered at {rate(best):.1f} {basis} per 100 texts "
+             f"against {rate(worst):.1f} for {worst.get('segment_label') or 'everyone'}." if seg_diff else
+             f"The message sent {str(best.get('created_at') or '')[:10]} drew {rate(best):.1f} {basis} per 100 texts; "
+             f"the one on {str(worst.get('created_at') or '')[:10]} drew {rate(worst):.1f} to the same audience.")
+    alt = ("The day and hour it went out, not the audience — a Thursday-afternoon text and a Monday-morning one reach "
+           "the same people in different moods." if seg_diff else
+           "The audience had simply been texted more recently the second time; the frequency cap holds three days, not three weeks.")
+    confirm = ("Send the next campaign to the stronger segment only and read this line again in two weeks." if seg_diff else
+               "Send the stronger message's shape again on the weaker one's weekday; if it holds, it was the message.")
+    conf = "high" if basis == "came back" and len(pool) >= 4 else ("medium" if len(pool) >= 3 else "low")
+    return {"available": True, "cause": cause, "alternative_cause": alt, "what_would_confirm": confirm,
+            "operational_evidence": evidence, "confidence": conf,
+            "summary": f"{len(pool)} campaigns measured by {basis}."
+                       + ("" if basis == "came back" else " Toast check-ins have not been matched yet, so taps stand in.")}
+
+
 ATTRIBUTION_WINDOW_DAYS = 14
 
 

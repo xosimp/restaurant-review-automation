@@ -2171,6 +2171,52 @@ def send_monthly_summary_email(to_email: str, restaurant_name: str, owner_name: 
         print(f"send_monthly_summary_email failed: {e}")
 
 
+def send_monthly_group_summary_email(to_email: str, owner_name: str, restaurants: list):
+    """One monthly review for an owner with several locations (moat audit
+    #14): each location's own review sections under its name, in one
+    message, instead of three emails that each read as the whole business.
+
+    `restaurants` are Restaurant rows. Logged once per location so every
+    location's email history shows the month it was reviewed in."""
+    if not _resend_key() or len(restaurants) < 2:
+        return
+    try:
+        from datetime import datetime, timedelta
+        first = owner_name.split()[0] if owner_name else "there"
+        last_day = datetime.now().replace(day=1) - timedelta(days=1)
+        month_name, year = last_day.strftime("%B"), last_day.year
+        sections = [report_paragraph(
+            f"Here is {month_name} across your {len(restaurants)} locations, each read against its own "
+            f"month before. Nothing is added up across them — a location's number is its own.")]
+        for r in restaurants:
+            body = _monthly_review_sections(r.id)
+            sections.append(report_eyebrow(r.name))
+            if body:
+                sections.extend(body)
+            else:
+                sections.append(report_paragraph("Not enough measured data in this location for a month-over-month read yet."))
+        html = report_shell(
+            kicker="Monthly Review",
+            title=f"{len(restaurants)} locations",
+            subtitle=f"{month_name} {year} &nbsp;&middot;&nbsp; for {first}",
+            sections=sections, cta_label="Open your dashboard →")
+        names = ", ".join(r.name for r in restaurants[:3]) + ("…" if len(restaurants) > 3 else "")
+        deliver(email_type="send_monthly_summary_email", restaurant_id=restaurants[0].id, payload={
+            "from": sender("will"), "to": [to_email],
+            "subject": f"{month_name} across your {len(restaurants)} locations — your Cavnar AI summary",
+            "preheader": names, "html": html,
+        })
+        for r in restaurants[1:]:
+            try:
+                from models import log_email as _log_email
+                _log_email(r.id, "send_monthly_summary_email", to_email,
+                          f"{month_name} across your {len(restaurants)} locations — your Cavnar AI summary")
+            except Exception:
+                pass
+    except Exception as e:
+        print(f"send_monthly_group_summary_email failed: {e}")
+
+
 def send_onboarding_day30(to_email: str, restaurant_name: str, owner_name: str = None,
                            modules: list = None, restaurant_id: int = None):
     """Day 30 — 30-day check-in, celebrate milestone, soft feedback ask."""

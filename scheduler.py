@@ -1954,9 +1954,13 @@ def _push_month_ready(r):
 
 def run_monthly_summaries():
     """1st of the month, 9am — the monthly summary email to active clients."""
-    from emails import send_monthly_summary_email
+    from emails import send_monthly_summary_email, send_monthly_group_summary_email
     from models import get_all_restaurants
     sent = skipped = failed = 0
+    # One email per OWNER: a three-location owner got three, each reading
+    # as the whole business (moat audit #14). Restaurants due now are
+    # grouped by owner email; a group of one takes the single-location path.
+    due = []
     for r in get_all_restaurants():
         # 'paused' is the owner's own request for quiet — the monthly stops too.
         if not r.owner_email or r.billing_status in ('internal', 'churned', 'paused'):
@@ -1975,27 +1979,37 @@ def run_monthly_summaries():
         if not getattr(r, "monthly_review_enabled", 1):
             skipped += 1
             continue
+        due.append(r)
+    groups = {}
+    for r in due:
+        groups.setdefault((r.owner_email or "").strip().lower(), []).append(r)
+    for _email, rs in groups.items():
         try:
-            send_monthly_summary_email(
-                to_email=r.owner_email,
-                restaurant_name=r.name,
-                owner_name=r.owner_name,
-                restaurant_id=r.id,
-                has_reviews=bool(r.module_reviews),
-                has_labor=bool(r.module_labor),
-                has_inventory=bool(r.module_inventory),
-                has_marketing=bool(r.module_marketing),
-            )
-            sent += 1
-            log.info(f"Monthly summary sent to {r.name}")
-            try:
-                _push_month_ready(r)
-            except Exception as pe:
-                _ops.capture(pe, job="month_ready_push", context=f"restaurant_id={r.id}")
+            if len(rs) == 1:
+                r = rs[0]
+                send_monthly_summary_email(
+                    to_email=r.owner_email,
+                    restaurant_name=r.name,
+                    owner_name=r.owner_name,
+                    restaurant_id=r.id,
+                    has_reviews=bool(r.module_reviews),
+                    has_labor=bool(r.module_labor),
+                    has_inventory=bool(r.module_inventory),
+                    has_marketing=bool(r.module_marketing),
+                )
+            else:
+                send_monthly_group_summary_email(rs[0].owner_email, rs[0].owner_name, sorted(rs, key=lambda x: x.name))
+            sent += len(rs)
+            log.info(f"Monthly summary sent to {', '.join(x.name for x in rs)}")
+            for r in rs:
+                try:
+                    _push_month_ready(r)
+                except Exception as pe:
+                    _ops.capture(pe, job="month_ready_push", context=f"restaurant_id={r.id}")
         except Exception as me:
-            failed += 1
-            log.error(f"Monthly summary failed for {r.name}: {me}")
-            _ops.capture(me, job="monthly_summary", context=f"restaurant_id={r.id}")
+            failed += len(rs)
+            log.error(f"Monthly summary failed for {', '.join(x.name for x in rs)}: {me}")
+            _ops.capture(me, job="monthly_summary", context=f"restaurant_id={rs[0].id}")
     return {"sent": sent, "skipped": skipped, "failed": failed}
 
 

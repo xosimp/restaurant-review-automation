@@ -3302,6 +3302,15 @@ svg:hover .hb-xh{opacity:1}
 .lb2-ai{margin-top:16px;padding:16px 20px;border-radius:10px;background:var(--hb-tint);font-size:16px;line-height:1.65;color:var(--ink2)}
 .lb2-ai .tag{font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);margin-bottom:7px}
 #panel-labor #labor-insight{font-size:16px;line-height:1.65;color:var(--ink2);white-space:pre-wrap;padding-left:0}
+.diag{margin-top:12px;padding:14px 16px;border-radius:12px;background:var(--sf-recessed,var(--hb-tint));border:1px solid var(--paper3)}
+.diag-h{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3)}
+.diag-conf{font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:none;color:var(--ink3)}.diag-conf.high{color:var(--hb-good)}.diag-conf.medium{color:var(--ember2)}
+.diag-cause{font-size:16px;line-height:1.55;color:var(--ink);margin-top:6px}
+.diag-alt{font-size:14px;line-height:1.55;color:var(--ink2);margin-top:6px}.diag-alt b{color:var(--ink3);font-weight:600}
+.diag-evs{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}.diag-ev{font-size:12px;color:var(--ink3);padding:4px 9px;border-radius:999px;border:1px solid var(--paper3)}.diag-ev b{color:var(--ink)}
+.in2-queries{margin-top:14px}.in2-qgrid{display:grid;gap:6px}.in2-q{display:grid;grid-template-columns:1fr auto auto;gap:10px;align-items:center;font-size:13px;color:var(--ink2)}
+.in2-q .t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.in2-q .c{display:flex;gap:4px}.in2-q .n{color:var(--ink3);font-size:12px;min-width:34px;text-align:right}
+.in2-qc{width:9px;height:9px;border-radius:50%;background:var(--paper3);display:inline-block}.in2-qc.on{background:var(--ember);box-shadow:0 0 6px var(--ember)}.in2-qc.off{background:var(--paper3);opacity:.5}
 .lb2-sig{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0;margin-top:34px;padding-top:24px;border-top:1px solid var(--hb-line)}
 .lb2-sg{padding:0 26px 0 0;margin-right:26px;border-right:1px solid var(--hb-line2);min-width:0}
 .lb2-sg:last-child{border-right:none;margin-right:0;padding-right:0}
@@ -3486,6 +3495,7 @@ svg:hover .hb-xh{opacity:1}
     <span id="perf-period-label" hidden></span>
   </section>
   <div class="lb2-ai"><div class="tag">Cavnar AI's read on your labor</div><div class="insight-text insight-loading" id="labor-insight"><div class="hb-load"><canvas class="hb-orb" data-orb-state="composing" width="28" height="28"></canvas><span>Reading your shifts…</span></div></div></div>
+  <div class="diag" id="lb2-diag" hidden></div>
 
   <div class="lb2-sig" id="lb-panel-analytics">
     <div class="lb2-sg"><div class="k"><span>Week radar · by weekday</span><i id="lb2-radar-flag"></i></div><div class="v"><span id="lb2-radar-n" class="hb-num">—</span><small id="lb2-radar-cap">heaviest day</small></div><div id="lb2-radar"><div class="hb-load" style="height:210px;justify-content:center"><canvas class="hb-orb" data-orb-state="working" width="28" height="28"></canvas></div></div><div class="cap"><span>labor % per weekday · dashed ring = target</span></div></div>
@@ -4891,6 +4901,7 @@ svg:hover .hb-xh{opacity:1}
 
     <!-- What has already gone out. guest_campaigns has recorded every send
          since the table existed and nothing ever displayed it. -->
+    <div class="diag" id="guest-diag" hidden style="margin-top:18px"></div>
     <div id="guest-history-wrap" style="display:none;margin-top:18px;padding-top:16px;border-top:1px solid var(--paper3)">
       <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);margin-bottom:8px">Campaigns sent</div>
       <div id="guest-history-list"></div>
@@ -5313,6 +5324,7 @@ svg:hover .hb-xh{opacity:1}
       <div class="lb2-sig">
         <div class="lb2-sg"><div class="k"><span>Visibility orbit</span><i id="aiv-score-label"></i></div><div class="v"><span id="aiv-score-num" class="hb-num">—</span><small id="in2-orbit-cap">of AI searches mention you</small></div>
           <div class="in2-orbit" id="in2-orbit"></div></div>
+          <div class="in2-queries" id="in2-queries" hidden></div>
         <div class="lb2-sg"><div class="k"><span>GBP completeness</span><i id="aiv-gbp-label"></i></div><div class="v"><span id="aiv-gbp-num" class="hb-num">—</span><small id="in2-gbp-cap">of the profile fields AI reads</small></div>
           <div class="in2-gbp" id="aiv-gbp-items"></div>
           <button type="button" id="aiv-gbp-viewall" class="in2-viewall" style="display:none" onclick="in2RevealMore('aiv-gbp-items',this)"></button>
@@ -9262,6 +9274,36 @@ function loadMktInsight(){
     mktLoaded=false;
   });
 }
+// The shared diagnosis shape (reviews, labor, marketing): cause,
+// alternative, what would confirm, the figures it rests on, confidence.
+// Deterministic for labor and marketing — no prose, only figures the
+// analysis already holds — so it renders the same on every load.
+function renderDiagnosis(id,dg){
+  var el=document.getElementById(id);if(!el)return;
+  if(!dg||!dg.available||!dg.cause){el.hidden=true;return;}
+  var ev=dg.operational_evidence||[],evh='';
+  for(var i=0;i<ev.length;i++)evh+='<span class="diag-ev">'+esc(ev[i].metric||'')+' <b class="hb-num">'+esc(ev[i].value||'')+'</b></span>';
+  el.innerHTML='<div class="diag-h"><span>Most likely cause</span><span class="diag-conf '+esc(dg.confidence||'low')+'">'+esc(dg.confidence||'low')+' confidence</span></div>'
+    +'<div class="diag-cause">'+esc(dg.cause)+'</div>'
+    +(dg.alternative_cause?'<div class="diag-alt"><b>Also fits:</b> '+esc(dg.alternative_cause)+'</div>':'')
+    +(dg.what_would_confirm?'<div class="diag-alt"><b>What would tell them apart:</b> '+esc(dg.what_would_confirm)+'</div>':'')
+    +(evh?'<div class="diag-evs">'+evh+'</div>':'');
+  el.hidden=false;
+}
+function loadMarketingDiagnosis(){
+  fetch('/api/marketing/diagnosis',{credentials:'same-origin'}).then(function(r){return r.json();}).then(function(d){renderDiagnosis('guest-diag',d&&d.diagnosis);}).catch(function(){});
+}
+function in2LoadQueries(){
+  var el=document.getElementById('in2-queries');if(!el)return;
+  fetch('/api/intel/ai-visibility/queries',{credentials:'same-origin'}).then(function(r){return r.json();}).then(function(d){
+    if(!d||!d.ok||!(d.queries||[]).length){el.hidden=true;return;}
+    var runs=d.runs||[],h='<div class="hb-h3"><span>By question</span><span class="cnt">'+runs.length+' check'+(runs.length===1?'':'s')+'</span></div><div class="in2-qgrid">';
+    for(var i=0;i<d.queries.length;i++){var q=d.queries[i],cells='';
+      for(var j=0;j<q.appeared.length;j++){var a=q.appeared[j];cells+='<i class="in2-qc'+(a===true?' on':(a===false?' off':''))+'" title="'+esc(runs[j]?String(runs[j].at||'').slice(0,10):'')+'"></i>';}
+      h+='<div class="in2-q"><span class="t">'+esc(q.query)+'</span><span class="c">'+cells+'</span><span class="n hb-num">'+q.appearances+'/'+q.asked+'</span></div>';}
+    el.innerHTML=h+'</div><div class="hb-empty" style="font-size:12px;margin-top:6px">Each dot is one check, oldest first \u2014 lit when this restaurant was named in the answer. The same score can be a steady three questions or a different three every week; this is which.</div>';el.hidden=false;
+  }).catch(function(){});
+}
 function lb2LoadTimeOff(){
   var el=document.getElementById('lb2-timeoff-body');if(!el)return;
   fetch('/api/labor/time-off',{credentials:'same-origin'}).then(function(r){return r.json();}).then(function(d){
@@ -9336,6 +9378,7 @@ function loadLaborInsight(){
     if(elLaborInsight){
       var html=d.insight||'Analysis unavailable.';
       _laborInsightFull=html;
+      renderDiagnosis('lb2-diag',d.diagnosis);
       try{sessionStorage.setItem('labor_insight',html);sessionStorage.setItem('labor_insight_at',String(Date.now()));}catch(e){}
       elLaborInsight.classList.remove('insight-loading');
       typewriterEffect(elLaborInsight,html);
@@ -13981,6 +14024,7 @@ function renderSegmentHelp(){
   help.textContent = '';
 }
 function loadGuestHistory(){
+  loadMarketingDiagnosis();
   fetch('/api/guest-campaigns').then(function(r){ return r.json(); }).then(function(d){
     if(!d.ok) return;
     var wrap = document.getElementById('guest-history-wrap');
@@ -15372,6 +15416,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
   };
   window._aivRuns=[];
   window.loadAivHistory=function(){
+    in2LoadQueries();
     jget('/api/ai-visibility/history',function(d){
       var runs=((d.ok&&d.runs)||[]).slice().reverse();  // oldest → newest
       window._aivRuns=runs;

@@ -151,6 +151,75 @@ def get_week_start_day(restaurant_id: int) -> int:
         return 0
 
 
+def diagnose(analysis: dict) -> dict:
+    """The labor read in the same shape the review diagnosis uses — cause,
+    alternative_cause, what_would_confirm, operational_evidence, confidence
+    — computed from the analysis, not asked of a model (moat audit #2).
+
+    Every field is a figure the analysis already holds or a sentence built
+    from one. Confidence is the span and margin of the data, not a mood:
+    high needs 14+ days and a driver more than 3 points over target; a
+    lean period with nothing over target returns cause None and low
+    confidence rather than a manufactured problem."""
+    a = analysis or {}
+    if not a.get("total_sales") or a.get("sales_data_missing"):
+        return {"available": False, "reason": "no sales against the shifts, so there is no labor percentage to read"}
+    target = float(a.get("labor_target") or 30)
+    overall = float(a.get("overall_labor_pct") or 0)
+    period = int(a.get("period_days") or 0)
+    evidence = [{"module": "labor", "metric": "labor % over the period", "value": f"{overall}% against a {target:g}% target"}]
+    drivers = []
+    # 1. a weekday that runs over target repeatedly
+    dow = a.get("dow_summary") or {}
+    worst_day = None
+    for day, d in dow.items():
+        pct = d.get("labor_pct") if isinstance(d, dict) else None
+        if pct is not None and pct > target and (worst_day is None or pct > worst_day[1]):
+            worst_day = (day, float(pct), d.get("days") or d.get("count"))
+    if worst_day:
+        drivers.append(("weekday", worst_day[1] - target,
+                        f"{worst_day[0]}s run {worst_day[1]:.1f}% labor against the {target:g}% target — the pattern, not one bad shift.",
+                        {"module": "labor", "metric": f"{worst_day[0]} labor %", "value": f"{worst_day[1]:.1f}%"}))
+    # 2. overtime premium
+    ot = a.get("overtime_risk") or []
+    if ot:
+        names = ", ".join(sorted({str(x.get("employee") or "") for x in ot if x.get("employee")})[:3])
+        drivers.append(("overtime", 2.0,
+                        f"Overtime premium: {len(ot)} person-week{'s' if len(ot) != 1 else ''} over 40 hours ({names}) at 1.5x.",
+                        {"module": "labor", "metric": "person-weeks over 40h", "value": str(len(ot))}))
+    # 3. one role carrying the cost
+    roles = a.get("role_summary") or {}
+    if roles and a.get("total_labor_cost"):
+        top = max(roles.items(), key=lambda kv: kv[1].get("labor_cost") or 0)
+        share = (top[1].get("labor_cost") or 0) / float(a["total_labor_cost"])
+        if share >= 0.45 and len(roles) > 1:
+            drivers.append(("role", (share - 0.45) * 10,
+                            f"{top[0]} is {share:.0%} of labor cost across {top[1].get('headcount', 0)} people.",
+                            {"module": "labor", "metric": f"{top[0]} share of labor cost", "value": f"{share:.0%}"}))
+    drivers.sort(key=lambda d: d[1], reverse=True)
+    if not drivers or overall <= target:
+        return {"available": True, "cause": None,
+                "summary": f"Labor ran {overall}% against {target:g}% over {period} days — nothing over target to diagnose.",
+                "alternative_cause": None, "what_would_confirm": None,
+                "operational_evidence": evidence, "confidence": "low" if period < 14 else "medium"}
+    cause = drivers[0]
+    alt = drivers[1] if len(drivers) > 1 else None
+    evidence.append(cause[3])
+    if alt:
+        evidence.append(alt[3])
+    confirm = {
+        "weekday": f"Compare the next two {cause[2].split('s run')[0]}s' schedules to their sales before they run — one fewer opener or closer is the usual fix.",
+        "overtime": "Check whether the overtime hours fell on the busiest shifts or on the same person covering gaps — the schedule history shows which.",
+        "role": "Look at that role's headcount on the two quietest days of the week; that is where a share this high usually hides.",
+    }[cause[0]]
+    margin = overall - target
+    confidence = "high" if period >= 14 and margin > 3 else ("medium" if period >= 7 else "low")
+    return {"available": True, "cause": cause[2],
+            "alternative_cause": alt[2] if alt else "Sales ran under the period's norm, which raises the percentage without any change in staffing.",
+            "what_would_confirm": confirm, "operational_evidence": evidence, "confidence": confidence,
+            "summary": f"Labor ran {overall}% against {target:g}% over {period} days."}
+
+
 def _covers_guidance(analysis: dict) -> str:
     """What the model may say about a lean day, which depends on whether
     covers are on file. Without them the refusal stands word for word;

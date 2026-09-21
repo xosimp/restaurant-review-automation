@@ -7853,6 +7853,39 @@ def ai_visibility_query_diff(restaurant_id: int, db_path: str = DB_PATH) -> dict
             "compared": len(set(now) & set(prev))}
 
 
+def ai_visibility_query_history(restaurant_id: int, runs: int = 8, db_path: str = DB_PATH) -> dict:
+    """Each question across the last `runs` checks: {"runs": [{run_id, at}],
+    "queries": [{query, kind, appeared: [bool|None per run], appearances}]}.
+    None where a run did not ask that question. What the score hides — the
+    same 3-of-6 can be a steady three or a different three every week."""
+    init_ai_visibility_queries(db_path)
+    conn = get_conn(db_path)
+    try:
+        run_rows = conn.execute(
+            "SELECT run_id, MAX(created_at) AS at FROM ai_visibility_query_runs WHERE restaurant_id=? "
+            "GROUP BY run_id ORDER BY at DESC LIMIT ?", (restaurant_id, int(runs))).fetchall()
+        ids = [r["run_id"] for r in run_rows][::-1]
+        if not ids:
+            return {"runs": [], "queries": []}
+        marks = ",".join("?" for _ in ids)
+        rows = conn.execute(
+            f"SELECT run_id, query, query_kind, appeared FROM ai_visibility_query_runs "
+            f"WHERE restaurant_id=? AND run_id IN ({marks})", (restaurant_id, *ids)).fetchall()
+    finally:
+        conn.close()
+    by_q = {}
+    for r in rows:
+        q = by_q.setdefault(r["query"], {"query": r["query"], "kind": r["query_kind"], "appeared": [None] * len(ids)})
+        q["appeared"][ids.index(r["run_id"])] = bool(r["appeared"])
+    out = []
+    for q in by_q.values():
+        q["appearances"] = sum(1 for x in q["appeared"] if x)
+        q["asked"] = sum(1 for x in q["appeared"] if x is not None)
+        out.append(q)
+    out.sort(key=lambda q: (-q["appearances"], q["query"]))
+    return {"runs": [{"run_id": r["run_id"], "at": r["at"]} for r in reversed(run_rows)], "queries": out}
+
+
 def ai_visibility_sources(restaurant_id: int, limit: int = 20, db_path: str = DB_PATH) -> list:
     """The citation URLs the most recent run's answers were grounded in."""
     init_ai_visibility_queries(db_path)

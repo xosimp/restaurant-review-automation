@@ -415,3 +415,112 @@ def test_recipients_are_kept_and_visits_matched_once_within_the_window(db_path, 
     res = gm.run_campaign_attribution(db_path=db_path, today=date(2026, 9, 20))
     assert fetched == ["2026-09-19"] and res["visits_matched"] == 0
     assert gm.campaign_history(rid, db_path=db_path)[0]["visits_matched"] == 1
+
+
+# ── #2 one diagnosis shape, computed not composed ────────────────────────────
+
+def _analysis(**kw):
+    base = {"total_sales": 50000, "total_labor_cost": 17500, "overall_labor_pct": 35.0, "labor_target": 30,
+            "period_days": 21, "dow_summary": {"Monday": {"labor_pct": 41.0}, "Friday": {"labor_pct": 27.0}},
+            "overtime_risk": [{"employee": "Ana", "hours": 44}],
+            "role_summary": {"Server": {"labor_cost": 9000, "headcount": 6}, "Cook": {"labor_cost": 8500, "headcount": 4}}}
+    base.update(kw)
+    return base
+
+
+def test_labor_diagnosis_names_the_biggest_driver_and_says_how_to_check(db_path):
+    import labor
+    d = labor.diagnose(_analysis())
+    assert d["available"] and d["confidence"] == "high"
+    assert d["cause"].startswith("Mondays run 41.0% labor against the 30% target")
+    assert d["alternative_cause"].startswith("Overtime premium: 1 person-week")
+    assert "Monday" in d["what_would_confirm"]
+    metrics = [e["metric"] for e in d["operational_evidence"]]
+    assert "labor % over the period" in metrics and "Monday labor %" in metrics
+    # under target: no cause is manufactured
+    calm = labor.diagnose(_analysis(overall_labor_pct=28.0, dow_summary={"Monday": {"labor_pct": 29.0}}, overtime_risk=[]))
+    assert calm["available"] and calm["cause"] is None and "nothing over target" in calm["summary"]
+    # a short period is never high confidence
+    assert labor.diagnose(_analysis(period_days=5))["confidence"] == "low"
+    assert labor.diagnose({"total_sales": 0})["available"] is False
+
+
+def test_marketing_diagnosis_compares_only_measured_campaigns(db_path, monkeypatch):
+    import guest_marketing as gm
+    rows = [
+        {"id": 1, "sent_count": 40, "clicks": 8, "visits_matched": 6, "segment": "regulars", "segment_label": "Regulars", "created_at": "2026-09-01 12:00:00"},
+        {"id": 2, "sent_count": 50, "clicks": 2, "visits_matched": 1, "segment": "lapsed", "segment_label": "Lapsed", "created_at": "2026-09-08 12:00:00"},
+        {"id": 3, "sent_count": 5, "clicks": 5, "visits_matched": 5, "segment": "all", "segment_label": "Everyone", "created_at": "2026-09-10 12:00:00"},
+    ]
+    monkeypatch.setattr(gm, "campaign_history", lambda rid, limit=20, db_path=None: rows)
+    d = gm.diagnose(1)
+    assert d["available"] and "Regulars segment answered at 15.0 came back per 100 texts" in d["cause"]
+    assert "Lapsed" in d["cause"] and d["confidence"] == "low"          # only two measured
+    assert "Send the next campaign to the stronger segment" in d["what_would_confirm"]
+    # taps stand in until attribution has run, and the summary says so
+    for r in rows:
+        r["visits_matched"] = None
+    d2 = gm.diagnose(1)
+    assert "taps" in d2["summary"] and "Toast check-ins have not been matched yet" in d2["summary"]
+    monkeypatch.setattr(gm, "campaign_history", lambda rid, limit=20, db_path=None: rows[:1])
+    assert gm.diagnose(1)["available"] is False
+
+
+# ── #24 what the score hides: each question across the last checks ───────────
+
+def test_query_history_lines_up_each_question_across_runs(db_path):
+    models.init_ai_visibility_queries(db_path)
+    rid = _rid(db_path)
+    models.record_ai_visibility_queries(1, rid, [{"query": "best pizza near me", "kind": "near", "appeared": True},
+                                                 {"query": "pizza open late", "kind": "hours", "appeared": False}], db_path=db_path)
+    conn = get_conn(db_path)
+    conn.execute("UPDATE ai_visibility_query_runs SET created_at='2026-09-01 10:00:00' WHERE run_id=1")
+    conn.commit(); conn.close()
+    models.record_ai_visibility_queries(2, rid, [{"query": "best pizza near me", "kind": "near", "appeared": False},
+                                                 {"query": "family dinner downtown", "kind": "occasion", "appeared": True}], db_path=db_path)
+    out = models.ai_visibility_query_history(rid, db_path=db_path)
+    assert [r["run_id"] for r in out["runs"]] == [1, 2]
+    by = {q["query"]: q for q in out["queries"]}
+    assert by["best pizza near me"]["appeared"] == [True, False] and by["best pizza near me"]["appearances"] == 1
+    assert by["pizza open late"]["appeared"] == [False, None] and by["pizza open late"]["asked"] == 1
+    assert by["family dinner downtown"]["appeared"] == [None, True]
+    assert models.ai_visibility_query_history(rid + 9, db_path=db_path) == {"runs": [], "queries": []}
+
+
+# ── #14 one monthly email per owner ─────────────────────────────────────────
+
+def test_the_monthly_summary_goes_once_per_owner_across_locations(db_path, monkeypatch):
+    import scheduler, emails
+    a = _rid(db_path, module_labor=1)
+    b = create_restaurant(Restaurant(name="Moat Co North", owner_email="M@x.com", module_reviews=1), db_path=db_path)
+    c = create_restaurant(Restaurant(name="Other", owner_email="o@y.com", module_reviews=1), db_path=db_path)
+    monkeypatch.setattr(scheduler, "local_due", lambda r, hour, claim_key=None: True)
+    monkeypatch.setattr(scheduler, "_push_month_ready", lambda r: None)
+    singles, groups = [], []
+    monkeypatch.setattr(emails, "send_monthly_summary_email", lambda **kw: singles.append(kw["restaurant_id"]))
+    monkeypatch.setattr(emails, "send_monthly_group_summary_email", lambda to, owner, rs: groups.append((to, sorted(r.id for r in rs))))
+    scheduler.run_monthly_summaries()
+    assert singles == [c] and groups == [("m@x.com", sorted([a, b]))]
+
+
+def test_the_group_email_is_one_message_logged_for_every_location(db_path, monkeypatch):
+    import emails
+    a = _rid(db_path)
+    b = create_restaurant(Restaurant(name="Moat Co North", owner_email="m@x.com", module_reviews=1), db_path=db_path)
+    monkeypatch.setattr(emails, "_resend_key", lambda: "k")
+    monkeypatch.setattr(emails, "_monthly_review_sections", lambda rid, months=1: [f"<p>section for {rid}</p>"] if rid == a else [])
+    delivered = []
+    monkeypatch.setattr(emails, "deliver", lambda **kw: delivered.append(kw))
+    logged = []
+    monkeypatch.setattr(models, "log_email", lambda rid, et, to, subj, db_path=None, **k: logged.append((rid, et)))
+    rs = [models.get_restaurant(a, db_path=db_path), models.get_restaurant(b, db_path=db_path)]
+    emails.send_monthly_group_summary_email("m@x.com", "Mo Owner", rs)
+    assert len(delivered) == 1 and delivered[0]["restaurant_id"] == a
+    html = delivered[0]["payload"]["html"]
+    assert f"section for {a}" in html and "Moat Co North" in html and "Not enough measured data" in html
+    assert "across your 2 locations" in delivered[0]["payload"]["subject"]
+    assert logged == [(b, "send_monthly_summary_email")]
+    # a single restaurant never goes through the group path
+    delivered.clear()
+    emails.send_monthly_group_summary_email("m@x.com", "Mo", rs[:1])
+    assert delivered == []
