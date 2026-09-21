@@ -552,6 +552,90 @@ def _do_count_sheet_save(u):
             "error": None if written else "No usable lines — each needs an ingredient and a number."}, (200 if written else 400)
 
 
+def _do_recipe_drafts(u):
+    if not _sees_food(u):
+        return _forbidden("Only someone who can see food cost can review recipes.")
+    import recipes
+    return {"ok": True, "drafts": recipes.list_drafts(_rid(u))}, 200
+
+
+def _do_recipe_draft_accept(u, draft_id):
+    if not _sees_food(u):
+        return _forbidden("Only someone who can see food cost can review recipes.")
+    import recipes
+    from client_api import log_account_event
+    out = recipes.accept(_rid(u), int(draft_id), lines=_body().get("lines"), user_id=u.get("id"))
+    if out.get("ok"):
+        log_account_event(_rid(u), "recipe_accepted", current_user=u, detail=f"draft #{draft_id}, {out['written']} lines")
+    return out, (200 if out.get("ok") else 409)
+
+
+def _do_recipe_draft_reject(u, draft_id):
+    if not _sees_food(u):
+        return _forbidden("Only someone who can see food cost can review recipes.")
+    import recipes
+    out = recipes.reject(_rid(u), int(draft_id), user_id=u.get("id"))
+    return out, (200 if out.get("ok") else 409)
+
+
+def _do_recipes_import(u):
+    if not _sees_food(u):
+        return _forbidden("Only someone who can see food cost can import recipes.")
+    import recipes
+    from client_api import log_account_event
+    text = _body().get("csv") or ""
+    if len(text) > 400_000:
+        return {"ok": False, "error": "That file is too large for one import."}, 400
+    out = recipes.import_csv(_rid(u), text)
+    if out.get("ok"):
+        log_account_event(_rid(u), "recipes_imported", current_user=u, detail=f"{out['written']} lines")
+    return out, (200 if out.get("ok") else 400)
+
+
+def _do_weekly_plan_get(u):
+    from models import get_restaurant
+    r = get_restaurant(_rid(u))
+    return {"ok": True, "enabled": bool(getattr(r, "weekly_plan_enabled", 0))}, 200
+
+
+def _do_weekly_plan_set(u):
+    if not _principal(u):
+        return _forbidden("Only the account owner can turn the weekly plan on.")
+    from models import update_restaurant
+    from client_api import log_account_event
+    b = _body()
+    if "enabled" not in b:
+        return {"ok": False, "error": "Nothing to change."}, 400
+    update_restaurant(_rid(u), {"weekly_plan_enabled": 1 if b["enabled"] else 0})
+    log_account_event(_rid(u), "weekly_plan_changed", current_user=u, detail="on" if b["enabled"] else "off")
+    return _do_weekly_plan_get(u)
+
+
+SEND_DELAY_CHOICES = (0, 5, 15)
+
+
+def _do_send_delay_get(u):
+    from models import get_restaurant
+    r = get_restaurant(_rid(u))
+    return {"ok": True, "minutes": int(getattr(r, "send_delay_minutes", 0) or 0), "choices": list(SEND_DELAY_CHOICES)}, 200
+
+
+def _do_send_delay_set(u):
+    if not _principal(u):
+        return _forbidden("Only the account owner can change this.")
+    from models import update_restaurant
+    from client_api import log_account_event
+    try:
+        minutes = int(_body().get("minutes"))
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "minutes must be a number"}, 400
+    if minutes not in SEND_DELAY_CHOICES:
+        return {"ok": False, "error": f"Pick one of {', '.join(str(c) for c in SEND_DELAY_CHOICES)} minutes."}, 400
+    update_restaurant(_rid(u), {"send_delay_minutes": minutes})
+    log_account_event(_rid(u), "send_delay_changed", current_user=u, detail=f"{minutes} min")
+    return _do_send_delay_get(u)
+
+
 def _do_delayed_pending(u):
     import delayed
     return {"ok": True, "actions": delayed.pending(_rid(u))}, 200
@@ -945,6 +1029,14 @@ _ROUTES = [
     ("/activity", ["GET"], _do_activity, "activity"),
     ("/labor/auto-publish", ["GET"], _do_auto_publish_get, "auto_publish_get"),
     ("/labor/auto-publish", ["POST"], _do_auto_publish_set, "auto_publish_set"),
+    ("/food-cost/recipe-drafts", ["GET"], _do_recipe_drafts, "recipe_drafts"),
+    ("/food-cost/recipe-drafts/<int:draft_id>/accept", ["POST"], _do_recipe_draft_accept, "recipe_draft_accept"),
+    ("/food-cost/recipe-drafts/<int:draft_id>/reject", ["POST"], _do_recipe_draft_reject, "recipe_draft_reject"),
+    ("/food-cost/recipes/import", ["POST"], _do_recipes_import, "recipes_import"),
+    ("/labor/weekly-plan", ["GET"], _do_weekly_plan_get, "weekly_plan_get"),
+    ("/labor/weekly-plan", ["POST"], _do_weekly_plan_set, "weekly_plan_set"),
+    ("/account/send-delay", ["GET"], _do_send_delay_get, "send_delay_get"),
+    ("/account/send-delay", ["POST"], _do_send_delay_set, "send_delay_set"),
     ("/food-cost/count-sheet", ["GET"], _do_count_sheet_get, "count_sheet_get"),
     ("/food-cost/count-sheet", ["POST"], _do_count_sheet_save, "count_sheet_save"),
     ("/food-cost/auto-order", ["GET"], _do_auto_order_get, "auto_order_get"),

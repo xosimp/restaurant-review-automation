@@ -37,9 +37,22 @@ CREATE TABLE IF NOT EXISTS home_dismissals (
     dismissed_by INTEGER,
     dismissed_at TEXT NOT NULL DEFAULT (datetime('now')),
     expires_at TEXT NOT NULL,
+    times INTEGER NOT NULL DEFAULT 1,
     UNIQUE(restaurant_id, key) ON CONFLICT REPLACE
 )
 """
+# The row is REPLACED on a repeat hide (one row per key), so the count of
+# hides has to ride on the row itself. Existing tables gain the column at
+# boot (init_db); this is the same guard for a table created lazily before.
+_DISMISS_TIMES_ALTER = "ALTER TABLE home_dismissals ADD COLUMN times INTEGER NOT NULL DEFAULT 1"
+
+
+def _ensure_dismissals(conn):
+    conn.execute(_DISMISS_SQL)
+    try:
+        conn.execute(_DISMISS_TIMES_ALTER)
+    except Exception:
+        pass
 
 
 def _safe_readiness(rid, restaurant, r, rstats, labor_live, inv_live, mkt):
@@ -114,7 +127,18 @@ _DISMISS_DAYS_BY_KIND = {"recommendation": _DISMISS_DAYS, "done": 3650, "not_for
 DISMISS_KINDS = tuple(_DISMISS_DAYS_BY_KIND)
 
 
-def dismiss(rid, key, kind="recommendation", user_id=None, days=None):
+def times_hidden(conn, rid):
+    """{key: how many times it has been hidden, ever}. A recommendation
+    hidden twice is a question the product should ask, not re-ask."""
+    try:
+        _ensure_dismissals(conn)
+        return {r["key"]: int(r["n"] or 1) for r in conn.execute(
+            "SELECT key, COALESCE(times, 1) AS n FROM home_dismissals WHERE restaurant_id=?", (rid,)).fetchall()}
+    except Exception:
+        return {}
+
+
+def dismiss(rid, key, kind="recommendation", user_id=None, days=None, reason=None, title=None):
     """Hide one recommendation for this restaurant. Keys carry their subject
     ("trim_day:Monday", "cut_waste:Salmon Fillet"), so a different day or
     item is a new recommendation and comes through.
@@ -127,12 +151,25 @@ def dismiss(rid, key, kind="recommendation", user_id=None, days=None):
     kind = kind if kind in _DISMISS_DAYS_BY_KIND else "recommendation"
     days = days or _DISMISS_DAYS_BY_KIND[kind]
     conn = get_conn()
-    conn.execute(_DISMISS_SQL)
-    conn.execute("INSERT INTO home_dismissals (restaurant_id, key, kind, dismissed_by, expires_at) VALUES (?,?,?,?, datetime('now', ?))",
-                 (rid, key, kind, user_id, f"+{int(days)} days"))
+    _ensure_dismissals(conn)
+    prior = conn.execute("SELECT COALESCE(times, 1) AS n FROM home_dismissals WHERE restaurant_id=? AND key=?",
+                         (rid, key)).fetchone()
+    times = (int(prior["n"]) + 1) if prior else 1
+    conn.execute("INSERT INTO home_dismissals (restaurant_id, key, kind, dismissed_by, expires_at, times) "
+                 "VALUES (?,?,?,?, datetime('now', ?), ?)", (rid, key, kind, user_id, f"+{int(days)} days", times))
     conn.commit(); conn.close()
     invalidate(rid)
-    return {"ok": True, "key": key, "kind": kind, "days": int(days)}
+    # The why, remembered: "not doing X: the patio closes in October" is a
+    # preference the assistant reads back in every future answer.
+    reason = (reason or "").strip()[:200]
+    if reason:
+        try:
+            from models import remember_ask_fact
+            remember_ask_fact(rid, f"Not doing \u201c{(title or key)[:80]}\u201d: {reason}", kind="preference",
+                              source="Home", user_id=user_id)
+        except Exception:
+            pass
+    return {"ok": True, "key": key, "kind": kind, "days": int(days), "remembered": bool(reason)}
 
 
 def undismiss(rid, key):
@@ -906,6 +943,9 @@ def _build(current_user):
                                 "connected, labor once shifts are in, food cost after a first count."),
                        "first_look": _look_lines}
 
+    _times = times_hidden(conn, rid)
+    for _r in recs:
+        _r["times_hidden"] = _times.get(_r["key"], 0)
     dismissed_recs = [r for r in recs if r["key"] in dismissed]
     recs = [r for r in recs if r["key"] not in dismissed]
 

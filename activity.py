@@ -177,8 +177,16 @@ def build(restaurant_id, restaurant=None, db_path=DB_PATH, denied=frozenset()):
                             "ORDER BY created_at DESC LIMIT 1", (restaurant_id,))
             if fc and fc["created_at"] and fc["created_at"] >= week:
                 what = "this week's waste" if fc["kind"] == "waste_week" else "this month's profitability"
+                corr = ""
+                try:
+                    import food_cost_intelligence as _fci
+                    cal = _fci.forecast_calibration(restaurant_id, fc["kind"], db_path=db_path)
+                    if cal.get("available") and cal.get("factor", 1.0) != 1.0:
+                        corr = f" Earlier projections {cal['reading']}; this one is corrected for it."
+                except Exception:
+                    pass
                 entries.append({"at": _iso_z(fc["created_at"]), "module": "inventory", "kind": "projected",
-                                "text": f"Projected {what} from your counts and sales."})
+                                "text": f"Projected {what} from your counts and sales." + corr})
             counted = _one(conn, "SELECT MAX(created_at) FROM inventory_history WHERE restaurant_id=?", (restaurant_id,))
             if counted and str(counted) >= month:
                 working.append({"module": "inventory", "text": "Checking inventory trends against your last count"})

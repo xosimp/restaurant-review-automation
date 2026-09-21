@@ -145,9 +145,122 @@ def run_loss_sync(db_path=DB_PATH):
             continue
         if out.get("ok"):
             synced += 1
+            _loss_flags_to_issues(r, db_path)
         else:
             unsupported += 1
     return {"synced": synced, "not_supported": unsupported}
+
+
+def _loss_flags_to_issues(r, db_path):
+    """A comp/void concentration on one approver becomes an owner-facing
+    issue — filed, not texted (notify=False): it names a manager, so it
+    goes to the person who can review the tickets, never to the routed
+    manager who may be its subject. One per approver per week (source_key)."""
+    try:
+        import loss_detection, issues
+        sig = loss_detection.signals(r.id, db_path=db_path)
+        if not sig.get("available"):
+            return
+        week = (sig.get("week") or ["?"])[0]
+        for entry in sig.get("kinds") or []:
+            for f in entry.get("flags") or []:
+                if f.get("type") != "concentration":
+                    continue
+                issues.create_issue(
+                    r.id, "loss", f["headline"][:120],
+                    detail=f"{f.get('alternative', '')} {sig.get('note', '')}".strip(),
+                    severity="normal", source_key=f"loss:{week}:{entry['kind']}:{f.get('approver')}",
+                    notify=False, db_path=db_path)
+    except Exception as e:
+        import ops
+        ops.capture(e, job="loss_issues", context=f"restaurant_id={r.id}")
+
+
+WEEKLY_PLAN_PROMPT = (
+    "It is Monday morning. Using your tools, read this week's business snapshot, the review brief, "
+    "open issues, goals, recent outcomes and any cross-module findings. Then return ONLY a JSON array "
+    "of at most 3 objects, no prose, each: {\"title\": an imperative of at most 80 characters, "
+    "\"why\": at most 200 characters citing a figure you actually read, "
+    "\"owner\": one of \"owner\", \"manager\", \"kitchen\", \"due_days\": an integer 1-7}. "
+    "Only actions the data supports; fewer is fine; an empty array if nothing is worth a week."
+)
+
+
+def _parse_plan(answer):
+    import json, re
+    text = (answer or "").strip()
+    m = re.search(r"\[.*\]", text, re.S)
+    if not m:
+        return []
+    try:
+        items = json.loads(m.group(0))
+    except ValueError:
+        return []
+    out = []
+    for it in items if isinstance(items, list) else []:
+        if not isinstance(it, dict) or not str(it.get("title") or "").strip():
+            continue
+        try:
+            due = max(1, min(7, int(it.get("due_days") or 7)))
+        except (TypeError, ValueError):
+            due = 7
+        out.append({"title": str(it["title"]).strip()[:80], "why": str(it.get("why") or "").strip()[:200],
+                    "owner": str(it.get("owner") or "owner").lower()[:20], "due_days": due})
+    return out[:3]
+
+
+def run_weekly_plan(db_path=DB_PATH):
+    """Monday 7am local: the agent — not a script — reads the week and files
+    up to three owned actions as issues (notify=False: they appear on Home,
+    nobody is texted). The morning brief is deterministic by design; this is
+    the one place the model is asked to hold the why across modules. Off
+    unless weekly_plan_enabled; claimed per ISO week."""
+    import ops, issues
+    from time_utils import restaurant_now
+    filed = 0
+    for r in _restaurants(db_path):
+        if not getattr(r, "weekly_plan_enabled", 0):
+            continue
+        local = restaurant_now(r, naive=True)
+        if local.weekday() != 0 or not (7 <= local.hour < 11):
+            continue
+        week = local.strftime("%G-W%V")
+        if not ops.claim_period(f"weekly_plan:{r.id}", week):
+            continue
+        try:
+            from ask_cavnar import ask_with_tools
+            answer, _trunc, _props, _meta = ask_with_tools(r, WEEKLY_PLAN_PROMPT, history=[], user=None)
+            for i, item in enumerate(_parse_plan(answer)):
+                issues.create_issue(
+                    r.id, "plan", item["title"],
+                    detail=f"{item['why']} Owner: {item['owner']}. Due in {item['due_days']} days.",
+                    severity="normal", source_key=f"plan:{week}:{i}", notify=False, db_path=db_path)
+                filed += 1
+        except Exception as e:
+            ops.capture(e, job="weekly_plan", context=f"restaurant_id={r.id}")
+    return {"filed": filed}
+
+
+def run_recipe_drafts(db_path=DB_PATH):
+    """Tuesday 5am local, after the nightly depletion has created any new
+    menu items: draft recipes for dishes that have none (recipes.py), a
+    bounded number per restaurant per week. Only where Food Cost is on."""
+    import ops, recipes
+    from time_utils import restaurant_now
+    drafted = 0
+    for r in _restaurants(db_path):
+        if not getattr(r, "module_inventory", 0):
+            continue
+        local = restaurant_now(r, naive=True)
+        if local.weekday() != 1 or not (5 <= local.hour < 9):
+            continue
+        if not ops.claim_period(f"recipe_drafts:{r.id}", local.strftime("%G-W%V")):
+            continue
+        try:
+            drafted += recipes.draft_missing(r.id, db_path=db_path).get("drafted", 0)
+        except Exception as e:
+            ops.capture(e, job="recipe_drafts", context=f"restaurant_id={r.id}")
+    return {"drafted": drafted}
 
 
 def run_issue_scan(db_path=DB_PATH, local_hour=None):

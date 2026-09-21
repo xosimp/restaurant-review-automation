@@ -2263,6 +2263,16 @@ def scheduler_loop():
                 from strategy_jobs import run_auto_draft_schedules
                 _ops.run_job("auto_draft_schedule", run_auto_draft_schedules)
 
+            # Monday 7am local — the agent files the week's three actions.
+            if now.weekday() == 0 and _ops.claim_period("weekly_plan", f"{today}-{now.hour}"):
+                from strategy_jobs import run_weekly_plan
+                _ops.run_job("weekly_plan", run_weekly_plan)
+
+            # Tuesday 5am local — recipe drafts for dishes with none.
+            if now.weekday() == 1 and _ops.claim_period("recipe_drafts", f"{today}-{now.hour}"):
+                from strategy_jobs import run_recipe_drafts
+                _ops.run_job("recipe_drafts", run_recipe_drafts)
+
             # Monday 8am local, per restaurant — queue trusted supplier orders
             # with an hour to undo (strategy_jobs.run_trusted_orders).
             if now.weekday() == 0 and _ops.claim_period("trusted_orders", f"{today}-{now.hour}"):

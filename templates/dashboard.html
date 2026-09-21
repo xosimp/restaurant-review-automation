@@ -1536,6 +1536,16 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-tl .it .t{flex:1;min-width:0;font-size:16px;font-weight:500;color:var(--ink2);line-height:1.5}
 .hb-tl .it .t strong{color:var(--ink);font-weight:600}
 /* the ledger: sentences with the count in Space Grotesk */
+.fc2-recipe{padding:10px 0;border-bottom:1px solid var(--paper2)}
+.fc2-recipe-h{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;font-size:14.5px;color:var(--ink)}
+.fc2-recipe-note{font-size:12.5px;color:var(--ink3)}
+.fc2-recipe-lines{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+.fc2-recipe-ln{font-size:13px;color:var(--ink2);background:var(--hb-inner,var(--paper2));border:1px solid var(--paper3);border-radius:999px;padding:4px 10px}
+.fc2-recipe-ln.low{border-style:dashed}
+.fc2-recipe-ln i{color:var(--ember);font-style:normal;font-weight:700}
+.fc2-recipe-ft{display:flex;justify-content:flex-end;gap:10px}
+.fc2-import{margin-top:12px}
+.fc2-import summary{cursor:pointer;font-size:13.5px;color:var(--ink2)}
 .fc2-count-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:8px 16px}
 .fc2-count-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid var(--paper2)}
 .fc2-count-row .n{font-size:14px;color:var(--ink2)}
@@ -1945,7 +1955,14 @@ svg:hover .hb-xh{opacity:1}
     // Values come off the element, so an apostrophe in a recommendation's
     // title is just a character rather than a broken JS string literal.
     else if(t.hasAttribute('data-track-key'))hbTrack(t,t.getAttribute('data-track-key'),t.getAttribute('data-track-title'),t.getAttribute('data-track-metric'));
-    else if(t.hasAttribute('data-dismiss-key'))hbDismiss(t.getAttribute('data-dismiss-key'),t.getAttribute('data-undo')==='1',t.getAttribute('data-dismiss-kind'),t.getAttribute('data-track-title'),t.getAttribute('data-track-metric'));
+    else if(t.hasAttribute('data-dismiss-key')){
+      // Hidden before: the second hide is a question, not a repeat. The
+      // answer is remembered and read back in every future answer.
+      var why=null;
+      if(t.getAttribute('data-ask-why')==='1'&&t.getAttribute('data-undo')!=='1'){why=window.prompt('You\u2019ve hidden this before. Tell Cavnar AI why, so it stops suggesting it:','');}
+      hbDismiss(t.getAttribute('data-dismiss-key'),t.getAttribute('data-undo')==='1',t.getAttribute('data-dismiss-kind'),t.getAttribute('data-track-title'),t.getAttribute('data-track-metric'));
+      if(why&&why.trim()){fetch('/api/home/dismiss',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:t.getAttribute('data-dismiss-key'),kind:'not_for_us',reason:why.trim(),title:t.getAttribute('data-track-title')||''})}).catch(function(){});}
+    }
     else if(t.hasAttribute('data-open-module'))hbOpen(t.getAttribute('data-open-module'));
     else if(t.hasAttribute('data-explain'))hbExplain(t.getAttribute('data-explain-title'),t.getAttribute('data-explain'),t.getAttribute('data-explain-kicker'));
     else hbAsk(t.getAttribute('data-ask'));
@@ -2128,7 +2145,7 @@ svg:hover .hb-xh{opacity:1}
       // apostrophe into &#39;, the HTML parser turns it back, and the JS
       // that reaches the engine is a syntax error.
       var trk=r.metric?'<button type="button" class="cbtn cbtn-secondary cbtn-sm" title="Take a baseline now and measure this in a few weeks" data-track-key="'+esc(r.key)+'" data-track-title="'+esc(r.title)+'" data-track-metric="'+esc(r.metric)+'">Track this</button>':'';
-      h+='<div class="hb-card hb-rec hb-rise'+(isNew?' new':'')+'" style="--i:'+j+'"><div class="top"><span class="no">0'+(j+1+(skip||0))+'</span><button type="button" class="hb-x" title="Hide for two weeks" aria-label="Hide" data-dismiss-key="'+esc(r.key)+'">✕</button></div>'
+      h+='<div class="hb-card hb-rec hb-rise'+(isNew?' new':'')+'" style="--i:'+j+'"><div class="top"><span class="no">0'+(j+1+(skip||0))+'</span><button type="button" class="hb-x" title="Hide for two weeks" aria-label="Hide" data-dismiss-key="'+esc(r.key)+'" data-track-title="'+esc(r.title||'')+'"'+((r.times_hidden||0)>=1?' data-ask-why="1"':'')+'>✕</button></div>'
         +'<div class="t" title="'+esc(r.why||'')+'">'+num(r.title)+'</div>'+(r.evidence?'<div class="ev">'+num(r.evidence)+'</div>':'')
         +'<div class="ft">'+trk+'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-open-module="'+esc(r.module)+'">'+esc(MODLABEL[r.module]||r.action_label)+' →</button>'
         // Two answers that are not "hide for a fortnight". Done records an
@@ -4251,6 +4268,7 @@ svg:hover .hb-xh{opacity:1}
          expectation. A gap is a counting problem, not money wasted, and the
          two were indistinguishable in every figure on this page. #}
       <div id="fc2-wsrc" class="fc2-cov" hidden></div>
+      <div id="fc2-recipes" class="fc2-cov" hidden></div>
       <div id="fc2-count" class="fc2-cov" hidden></div>
     </div>
     {# The CFO read. Everything above is a position: what the waste is, what
@@ -4570,7 +4588,7 @@ svg:hover .hb-xh{opacity:1}
     fetch('/api/food-cost/send-order', {method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({supplier_email: email})
     }).then(function(r){return r.json();}).then(function(d){
-      if(d.ok){ toast('Order sent','success'); btn.textContent='Sent ✓'; loadPurchaseOrders(); }
+      if(d.ok){ toast(d.queued&&d.queued.length?('Order goes out in '+d.undo_minutes+' min \u2014 undo from the Cavnar AI strip'):'Order sent','success'); btn.textContent=d.queued&&d.queued.length?'Queued \u2713':'Sent \u2713'; loadPurchaseOrders(); }
       else { toast(d.error||'Couldn\'t send order','error'); btn.disabled=false; btn.textContent='Send'; }
     });
   }
@@ -5811,6 +5829,10 @@ svg:hover .hb-xh{opacity:1}
               <div class="c"><select id="as-briefing-level" onchange="saveMorningBrief()" aria-label="Briefing level"><option value="calm">Calm</option><option value="normal">Normal</option><option value="all">Everything</option></select></div></div>
             <div class="ac-row" id="as-autodraft-row" hidden><div class="l"><b>Draft next week&rsquo;s schedule for me</b><span>Every Thursday, if you haven&rsquo;t built one. A draft only &mdash; nothing goes to staff until you publish.</span></div>
               <div class="c"><label class="ac-switch"><input type="checkbox" id="as-autodraft" onchange="saveAutoDraft()" aria-label="Draft next week's schedule"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
+            <div class="ac-row" id="as-weeklyplan-row"><div class="l"><b>Plan my week for me</b><span>Monday mornings Cavnar AI reads the week &mdash; brief, issues, goals, results, what connects &mdash; and files up to three owned actions under Still open. Nobody is texted.</span></div>
+              <div class="c"><label class="ac-switch"><input type="checkbox" id="as-weeklyplan" onchange="saveWeeklyPlan()" aria-label="Plan my week automatically"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
+            <div class="ac-row" id="as-senddelay-row"><div class="l"><b>Give me a moment before anything goes out</b><span>A supplier order or a published schedule waits this long with an Undo in the Cavnar AI strip before it leaves the building.</span></div>
+              <div class="c"><select id="as-senddelay" class="ac-input" onchange="saveSendDelay()" aria-label="Delay before sends"><option value="0">Send now</option><option value="5">5 minutes</option><option value="15">15 minutes</option></select></div></div>
             <div class="ac-row" id="as-autoorder-row" hidden><div class="l"><b>Send orders to suppliers you&rsquo;ve used before</b><span>Monday mornings, an order to a supplier with 3+ past orders, for about what you usually spend, goes out an hour later &mdash; you&rsquo;re told, and can undo from Home. New suppliers always wait for you. <span id="as-autoorder-trust"></span></span></div>
               <div class="c"><label class="ac-switch"><input type="checkbox" id="as-autoorder" onchange="saveAutoOrder()" aria-label="Send trusted supplier orders automatically"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
             <div class="ac-row" id="as-autopublish-row" hidden><div class="l"><b>Publish it for me on Friday</b><span>Once your last 3 published schedules went out unedited, the Thursday draft goes to staff at 11am Friday &mdash; you&rsquo;re told at 9, and can undo from Home until then. <span id="as-autopublish-trust"></span></span></div>
@@ -10186,8 +10208,13 @@ function publishScheduleNow(){
       btn.disabled = false; btn.textContent = 'Send now';
       if(d.ok){
         result.style.color = '#6fcf97';
-        result.textContent = 'Sent to ' + d.sent.length + ' of ' + (d.sent.length + d.unreachable.length) + ' staff';
-        toast('Schedule sent','success');
+        if (d.queued) {
+          result.textContent = 'Goes to staff in ' + d.undo_minutes + ' min \u2014 undo from the Cavnar AI strip';
+          toast('Schedule queued','success');
+        } else {
+          result.textContent = 'Sent to ' + d.sent.length + ' of ' + (d.sent.length + d.unreachable.length) + ' staff';
+          toast('Schedule sent','success');
+        }
       } else {
         result.style.color = '#ef4444';
         result.textContent = d.error || 'Nothing sent';
@@ -10836,7 +10863,7 @@ function loadInvInsight(){
   loadWasteTrend();
   fc2LoadFoodCostPct();
   fc2LoadRecipeCoverage();
-  fc2LoadWasteSources();fc2LoadCountSheet();
+  fc2LoadWasteSources();fc2LoadCountSheet();fc2LoadRecipeDrafts();
   fc2LoadCfo();
   var fiveMin=5*60*1000;
   try{
@@ -11005,6 +11032,42 @@ function fc2LoadFoodCostPct(){
 // Opens with the ledger's expected on-hand in every box (last recount +
 // receiving − depletion); the owner corrects, not types. Saving writes a
 // recount per changed line — the same event a hand count writes.
+// ── recipe drafts from the POS ─────────────────────────────────────────────
+// Dishes the POS created that have no recipe, drafted from your own
+// ingredient list (recipes.py). Accept writes the recipe; nothing is
+// written until you do. Plus a CSV import for a whole menu at once.
+function fc2LoadRecipeDrafts(){
+  var el=document.getElementById('fc2-recipes');if(!el)return;
+  fetch('/api/food-cost/recipe-drafts',{credentials:'same-origin'}).then(function(r){return r.json();}).then(function(d){
+    if(!d||!d.ok)return;
+    var ds=d.drafts||[];
+    var h='<div class="hb-h3"><span>Recipes to confirm</span>'+(ds.length?'<span class="cnt">'+ds.length+'</span>':'')+'</div>';
+    if(!ds.length)h+='<div class="hb-empty" style="font-size:12.5px">Every dish on your POS has a recipe, or drafts arrive Tuesday mornings for any that don\u2019t.</div>';
+    for(var i=0;i<ds.length;i++){var dr=ds[i];
+      h+='<div class="fc2-recipe"><div class="fc2-recipe-h"><b>'+esc(dr.menu_item_name||('Dish #'+dr.menu_item_id))+'</b>'+(dr.note?'<span class="fc2-recipe-note">'+esc(dr.note)+'</span>':'')+'</div><div class="fc2-recipe-lines">';
+      for(var j=0;j<(dr.lines||[]).length;j++){var ln=dr.lines[j];h+='<span class="fc2-recipe-ln'+(ln.confidence==='low'?' low':'')+'">'+esc(ln.name)+' <b class="hb-num">'+esc(ln.qty)+'</b> '+esc(ln.unit||'')+(ln.confidence==='low'?' <i>?</i>':'')+'</span>';}
+      h+='</div><div class="fc2-recipe-ft"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-recipe-reject="'+esc(dr.id)+'">Not right</button><button type="button" class="cbtn cbtn-primary cbtn-sm" data-recipe-accept="'+esc(dr.id)+'">Accept recipe</button></div></div>';}
+    h+='<details class="fc2-import"><summary>Import recipes from a CSV</summary><div class="hb-empty" style="font-size:12.5px;margin:6px 0">Columns: menu_item, ingredient, qty \u2014 ingredient names must match your list; a new dish is created, an unknown ingredient is skipped and named.</div><textarea id="fc2-import-csv" rows="5" class="ac-input" style="width:100%;font-family:monospace;font-size:12px" placeholder="menu_item,ingredient,qty&#10;Margherita,Mozzarella,0.25"></textarea><div class="fc2-count-ft"><span class="ac-status" id="fc2-import-status"></span><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="fc2ImportRecipes(this)">Import</button></div></details>';
+    el.innerHTML=h;el.hidden=false;
+  }).catch(function(){});
+}
+function fc2ImportRecipes(btn){
+  var csv=(document.getElementById('fc2-import-csv')||{}).value||'';var st=document.getElementById('fc2-import-status');
+  if(!csv.trim()){if(st)st.textContent='Paste a CSV first.';return;}
+  var done=cbtnBusy(btn,'Importing\u2026');
+  fetch('/api/food-cost/recipes/import',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({csv:csv})}).then(function(r){return r.json();}).then(function(d){
+    done();if(st)st.textContent=d&&d.ok?('Imported '+d.written+' line'+(d.written===1?'':'s')+(d.skipped?' \u00b7 '+d.skipped+' skipped':'')+((d.unknown_ingredients||[]).length?' \u00b7 unknown: '+d.unknown_ingredients.join(', '):'')+'.'):((d&&d.error)||'Could not import.');
+    if(d&&d.ok)fc2LoadRecipeDrafts();
+  }).catch(function(){done();if(st)st.textContent='Could not import \u2014 check your connection.';});
+}
+document.addEventListener('click',function(e){
+  var t=e.target&&e.target.closest?e.target.closest('[data-recipe-accept],[data-recipe-reject]'):null;if(!t)return;
+  var id=t.getAttribute('data-recipe-accept')||t.getAttribute('data-recipe-reject'),accept=t.hasAttribute('data-recipe-accept');
+  var done=cbtnBusy(t,accept?'Writing\u2026':'\u2026');
+  fetch('/api/food-cost/recipe-drafts/'+encodeURIComponent(id)+'/'+(accept?'accept':'reject'),{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:'{}'}).then(function(r){return r.json();}).then(function(d){
+    done();if(typeof toast==='function')toast(d&&d.ok?(accept?'Recipe written':'Draft removed'):((d&&d.error)||'Could not do that'),d&&d.ok?'success':'error');fc2LoadRecipeDrafts();
+  }).catch(function(){done();});
+});
 function fc2LoadCountSheet(){
   var el=document.getElementById('fc2-count');if(!el)return;
   fetch('/api/food-cost/count-sheet',{credentials:'same-origin'}).then(function(r){return r.json();}).then(function(d){
@@ -11853,6 +11916,7 @@ function loadOpsSettings() {
     document.getElementById('as-autodraft').checked = !!d.enabled;
     if (!d.external_tool) loadAutoPublish();
     loadAutoOrder();
+    loadWeeklyPlanAndDelay();
   }).catch(function() {});
 }
 
@@ -11901,6 +11965,20 @@ function saveAutoDraft() {
 function saveAutoPublish() {
   asPost('/api/labor/auto-publish', {enabled: document.getElementById('as-autopublish').checked},
          'as-ops-status', 'Saved').then(function() { loadAutoPublish(); });
+}
+function saveWeeklyPlan() {
+  asPost('/api/labor/weekly-plan', {enabled: document.getElementById('as-weeklyplan').checked}, 'as-ops-status', 'Saved');
+}
+function saveSendDelay() {
+  asPost('/api/account/send-delay', {minutes: parseInt(document.getElementById('as-senddelay').value, 10) || 0}, 'as-ops-status', 'Saved');
+}
+function loadWeeklyPlanAndDelay() {
+  fetch('/api/labor/weekly-plan', {credentials: 'same-origin'}).then(function(r) { return r.json(); }).then(function(d) {
+    if (d && d.ok) document.getElementById('as-weeklyplan').checked = !!d.enabled;
+  }).catch(function() {});
+  fetch('/api/account/send-delay', {credentials: 'same-origin'}).then(function(r) { return r.json(); }).then(function(d) {
+    if (d && d.ok) document.getElementById('as-senddelay').value = String(d.minutes || 0);
+  }).catch(function() {});
 }
 function saveAutoOrder() {
   asPost('/api/food-cost/auto-order', {enabled: document.getElementById('as-autoorder').checked},

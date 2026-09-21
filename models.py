@@ -473,6 +473,12 @@ class Restaurant:
     # Queue orders to suppliers with a record, inside the usual band, with an
     # hour to undo (ordering.py).
     auto_order_trusted: int          = 0
+    # Monday: the agent reads the week and files three owned actions as
+    # issues (strategy_jobs.run_weekly_plan). Off by default.
+    weekly_plan_enabled: int         = 0
+    # Manual sends (supplier order, schedule publish) wait this many minutes
+    # with an undo before leaving the building. 0 = send now.
+    send_delay_minutes: int          = 0
     auto_approve_4star: int          = 0     # ...and 4-star, under the same cap and the same urgency gate
     auto_approve_daily_cap: int      = 5
     auto_approve_paused: int         = 0     # kill switch — keeps the rule configured but off
@@ -1081,6 +1087,34 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE restaurants ADD COLUMN auto_approve_earned INTEGER DEFAULT 0",
         "ALTER TABLE restaurants ADD COLUMN auto_publish_schedule INTEGER DEFAULT 0",
         "ALTER TABLE restaurants ADD COLUMN auto_order_trusted INTEGER DEFAULT 0",
+        # home_dismissals was created lazily by home_brief; owned here now so
+        # the repeat-hide counter exists on every database at boot.
+        """CREATE TABLE IF NOT EXISTS home_dismissals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id INTEGER NOT NULL,
+            key TEXT NOT NULL,
+            kind TEXT NOT NULL DEFAULT 'recommendation',
+            dismissed_by INTEGER,
+            dismissed_at TEXT NOT NULL DEFAULT (datetime('now')),
+            expires_at TEXT NOT NULL,
+            times INTEGER NOT NULL DEFAULT 1,
+            UNIQUE(restaurant_id, key) ON CONFLICT REPLACE
+        )""",
+        "ALTER TABLE home_dismissals ADD COLUMN times INTEGER NOT NULL DEFAULT 1",
+        "ALTER TABLE restaurants ADD COLUMN weekly_plan_enabled INTEGER DEFAULT 0",
+        "ALTER TABLE restaurants ADD COLUMN send_delay_minutes INTEGER DEFAULT 0",
+        """CREATE TABLE IF NOT EXISTS recipe_drafts (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id  INTEGER NOT NULL REFERENCES restaurants(id),
+            menu_item_id   INTEGER NOT NULL,
+            menu_item_name TEXT,
+            lines_json     TEXT    NOT NULL,
+            note           TEXT,
+            status         TEXT    NOT NULL DEFAULT 'pending',
+            created_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+            answered_at    TEXT,
+            answered_by    INTEGER
+        )""",
         """CREATE TABLE IF NOT EXISTS delayed_actions (
             id            INTEGER PRIMARY KEY AUTOINCREMENT,
             restaurant_id INTEGER NOT NULL REFERENCES restaurants(id),
@@ -2057,6 +2091,9 @@ def init_db(db_path: str = DB_PATH):
             UNIQUE(restaurant_id, kind, horizon_end)
         )""",
         "CREATE INDEX IF NOT EXISTS idx_forecast_log ON forecast_log(restaurant_id, kind, horizon_end)",
+        # Signed error, for the calibration loop (food_cost_intelligence).
+        # After the CREATE, so a fresh database gets the column too.
+        "ALTER TABLE forecast_log ADD COLUMN signed_error_pct REAL",
     ]
     for m in migrations:
         try:
@@ -3176,7 +3213,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "last_active_tab","last_activity","owner_name","owner_phone","digest_day","digest_enabled","menu_notes","menu_url","skip_holidays","custom_competitors",
         "two_fa_enabled","two_fa_code","two_fa_expires","two_fa_device_token","two_fa_pending","two_fa_method","login_notify","staff_signin_notify","marketing_emails_opt_out","monthly_review_enabled","timezone","onboarding_dismissed",
         "alert_health_bypass_quiet","alert_food_waste","alert_ai_visibility_drop","alert_extra_emails","push_sound",
-        "auto_approve_earned","auto_publish_schedule","auto_order_trusted",
+        "auto_approve_earned","auto_publish_schedule","auto_order_trusted","weekly_plan_enabled","send_delay_minutes",
         "auto_approve_5star","auto_approve_4star","auto_approve_daily_cap","auto_approve_paused","open_times_json",
         "response_language","tone_preset","data_retention_months",
         "toast_client_id","toast_client_secret","toast_restaurant_guid",
@@ -3443,6 +3480,10 @@ def _restaurant_from_row(row) -> Restaurant:
                                and row["auto_publish_schedule"] is not None else 0),
         auto_order_trusted=(row["auto_order_trusted"] if "auto_order_trusted" in row.keys()
                             and row["auto_order_trusted"] is not None else 0),
+        weekly_plan_enabled=(row["weekly_plan_enabled"] if "weekly_plan_enabled" in row.keys()
+                             and row["weekly_plan_enabled"] is not None else 0),
+        send_delay_minutes=(row["send_delay_minutes"] if "send_delay_minutes" in row.keys()
+                            and row["send_delay_minutes"] is not None else 0),
         auto_approve_daily_cap=row["auto_approve_daily_cap"] if "auto_approve_daily_cap" in row.keys() and row["auto_approve_daily_cap"] is not None else 5,
         auto_approve_paused=row["auto_approve_paused"] if "auto_approve_paused" in row.keys() else 0,
         open_times_json=row["open_times_json"] if "open_times_json" in row.keys() else None,
@@ -8068,7 +8109,7 @@ def build_settings_export_json(restaurant_id: int, db_path: str = DB_PATH) -> st
         "alert_no_response", "alert_5star", "alert_labor_over", "alert_food_waste", "alert_ai_visibility_drop",
         "alert_health_bypass_quiet", "alert_extra_emails", "push_sound", "urgent_via_email", "urgent_via_sms",
         "alert_quiet_start", "alert_quiet_end", "auto_approve_5star", "auto_approve_4star", "auto_approve_earned",
-        "auto_publish_schedule", "auto_order_trusted", "auto_approve_daily_cap",
+        "auto_publish_schedule", "auto_order_trusted", "weekly_plan_enabled", "send_delay_minutes", "auto_approve_daily_cap",
         "auto_approve_paused", "data_retention_months", "two_fa_enabled", "two_fa_method",
     ]
     return _json.dumps({k: getattr(r, k, None) for k in keep}, indent=2, default=str)

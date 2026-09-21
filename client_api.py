@@ -7192,6 +7192,20 @@ def send_supplier_order(current_user):
         return jsonify(ok=False, error="Nothing to order — no items with a supplier assigned."), 400
 
     sent, failed = [], []
+    delay = int(getattr(restaurant, "send_delay_minutes", 0) or 0)
+    if delay > 0:
+        # The owner asked for a window: the order is queued, shown in the
+        # feed with Undo, and sent by the scheduler unless cancelled.
+        import delayed
+        queued = []
+        for group in groups:
+            row = delayed.schedule(rid, "order_send",
+                                   {"supplier_email": group["supplier_email"], "draft_hash": draft.get("draft_hash")},
+                                   delay, actor=current_user,
+                                   label=f"Sending the {group.get('supplier_name') or group['supplier_email']} order "
+                                         f"(${float(group.get('total_cost') or 0):,.0f}, {len(group.get('items') or [])} items)")
+            queued.append({"action_id": row["id"], "execute_at": row["execute_at"], "supplier_email": group["supplier_email"]})
+        return jsonify(ok=True, queued=queued, sent=[], failed=[], undo_minutes=delay)
     _s, _f = _send_supplier_orders(rid, restaurant, groups, current_user)
     sent.extend(_s); failed.extend(_f)
     if not sent:
@@ -7485,8 +7499,32 @@ def _publish_schedule(restaurant_id, schedule_id=None, actor=None):
 @login_required
 def publish_schedule_api(current_user):
     data = request.get_json(silent=True) or {}
+    rid = current_user["restaurant_id"]
+    restaurant = get_restaurant(rid)
+    delay = int(getattr(restaurant, "send_delay_minutes", 0) or 0) if restaurant else 0
+    if delay > 0:
+        # The owner asked for a window before anything reaches staff.
+        conn = get_conn()
+        try:
+            if data.get("schedule_id"):
+                row = conn.execute("SELECT id, week_start FROM schedule_history WHERE id=? AND restaurant_id=?",
+                                   (int(data["schedule_id"]), rid)).fetchone()
+            else:
+                row = conn.execute("SELECT id, week_start FROM schedule_history WHERE restaurant_id=? "
+                                   "ORDER BY id DESC LIMIT 1", (rid,)).fetchone()
+        except (TypeError, ValueError):
+            return jsonify(ok=False, error="Which schedule?"), 400
+        finally:
+            conn.close()
+        if not row:
+            return jsonify(ok=False, error="Generate a schedule first — there's nothing to send yet."), 400
+        import delayed
+        act = delayed.schedule(rid, "schedule_publish", {"schedule_id": row["id"]}, delay, actor=current_user,
+                               label=f"Publishing the week of {row['week_start']} to staff")
+        return jsonify(ok=True, queued=True, action_id=act["id"], execute_at=act["execute_at"],
+                       undo_minutes=delay, sent=[], unreachable=[], failed=[])
     try:
-        out, status = _publish_schedule(current_user["restaurant_id"], data.get("schedule_id"), current_user)
+        out, status = _publish_schedule(rid, data.get("schedule_id"), current_user)
     except (TypeError, ValueError):
         return jsonify(ok=False, error="Which schedule?"), 400
     return jsonify(**out), status
@@ -7561,7 +7599,8 @@ def home_dismiss_api(current_user):
     if data.get("undo"):
         return jsonify(**home_brief.undismiss(current_user["restaurant_id"], key))
     kind = (data.get("kind") or "recommendation")[:40]
-    out = home_brief.dismiss(current_user["restaurant_id"], key, kind=kind, user_id=current_user.get("id"))
+    out = home_brief.dismiss(current_user["restaurant_id"], key, kind=kind, user_id=current_user.get("id"),
+                             reason=data.get("reason"), title=data.get("title"))
     # "Done" on a recommendation that names a metric is an owner saying
     # they acted. That is exactly what Track this records, so record it:
     # source "observed", baseline now, re-measured when the window closes.

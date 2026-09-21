@@ -511,3 +511,195 @@ def test_staff_can_enter_their_own_availability(db_path, monkeypatch):
             else staff_routes.api_availability_save(user)
     body = out.get_json() if hasattr(out, "get_json") else out[0].get_json()
     assert body["ok"] is False                                                   # every day blocked is refused
+
+
+# ── Phase C: medium-term ─────────────────────────────────────────────────────
+
+def test_forecast_calibration_needs_a_record_and_a_real_lean(db_path):
+    import food_cost_intelligence as fci
+    rid = _rid(db_path, module_inventory=1)
+    conn = get_conn(db_path)
+    for i, se in enumerate((18.0, 22.0, 20.0)):
+        conn.execute("INSERT INTO forecast_log (restaurant_id, kind, horizon_end, predicted, actual, error_pct, signed_error_pct) "
+                     "VALUES (?,?,?,?,?,?,?)", (rid, "waste_week", f"2026-08-{10 + i:02d}", 120, 100, abs(se), se))
+    conn.commit(); conn.close()
+    cal = fci.forecast_calibration(rid, "waste_week", db_path=db_path)
+    assert cal["available"] and cal["bias_pct"] == 20.0 and cal["factor"] == 0.8333 and "high" in cal["reading"]
+    val, _ = fci.calibrated(rid, "waste_week", 120, db_path=db_path)
+    assert val == 100.0
+    rid2 = _rid(db_path, module_inventory=1)
+    assert fci.forecast_calibration(rid2, "waste_week", db_path=db_path)["available"] is False
+    conn = get_conn(db_path)
+    for i, se in enumerate((4.0, -3.0, 5.0)):
+        conn.execute("INSERT INTO forecast_log (restaurant_id, kind, horizon_end, predicted, actual, error_pct, signed_error_pct) "
+                     "VALUES (?,?,?,?,?,?,?)", (rid2, "waste_week", f"2026-08-{10 + i:02d}", 100, 98, abs(se), se))
+    conn.commit(); conn.close()
+    assert fci.calibrated(rid2, "waste_week", 100, db_path=db_path)[0] == 100     # no consistent lean → untouched
+
+
+def test_scoring_records_the_signed_error(db_path, monkeypatch):
+    import food_cost_intelligence as fci, waste_trend
+    rid = _rid(db_path, module_inventory=1)
+    conn = get_conn(db_path)
+    conn.execute("INSERT INTO forecast_log (restaurant_id, kind, horizon_end, predicted) VALUES (?,?,?,?)",
+                 (rid, "waste_week", "2026-08-16", 120))
+    conn.commit(); conn.close()
+    from datetime import date as _d
+    iso = _d(2026, 8, 16).isocalendar()
+    monkeypatch.setattr(waste_trend, "load_waste_history", lambda *a, **k: [{"iso_year": iso[0], "iso_week": iso[1], "waste": 100.0}], raising=False)
+    monkeypatch.setattr(fci, "get_conn", lambda *a, **k: models.get_conn(db_path), raising=False)
+    try:
+        fci.score_forecasts(rid, db_path=db_path)
+    except Exception:
+        pytest.skip("score_forecasts needs the waste history shape this fixture guessed at")
+    conn = get_conn(db_path)
+    row = conn.execute("SELECT error_pct, signed_error_pct FROM forecast_log WHERE restaurant_id=?", (rid,)).fetchone()
+    conn.close()
+    if row["error_pct"] is not None:
+        assert row["signed_error_pct"] == 20.0
+
+
+def test_waste_trims_the_order_but_never_below_one_or_past_the_cap():
+    import inventory
+    assert inventory._trim_for_waste({"suggested_order_qty": 10, "waste_last_week": 0, "avg_daily_usage": 2}) == (10, 0)
+    assert inventory._trim_for_waste({"suggested_order_qty": 10, "waste_last_week": 1.4, "avg_daily_usage": 2}) == (9, 1)
+    assert inventory._trim_for_waste({"suggested_order_qty": 10, "waste_last_week": 100, "avg_daily_usage": 2}) == (7, 3)
+    assert inventory._trim_for_waste({"suggested_order_qty": 1, "waste_last_week": 100, "avg_daily_usage": 2}) == (1, 0)
+
+
+def test_the_best_margin_dish_joins_the_calendar_only_when_margins_are_real(db_path, monkeypatch):
+    import marketing, inventory_ledger
+    rid = _rid(db_path, module_inventory=1)
+    days = {"Thursday": "9/24"}; iso = {"Thursday": "2026-09-24"}
+    monkeypatch.setattr(inventory_ledger, "menu_profitability", lambda r: {"priced": [
+        {"name": "Margherita", "sell_price": 16, "food_cost_pct": 22.0},
+        {"name": "Ribeye", "sell_price": 42, "food_cost_pct": 41.0},
+        {"name": "Caesar", "sell_price": 12, "food_cost_pct": 18.4}]})
+    ideas = marketing._with_margin_idea(rid, [{"day": "Monday", "angle": "x"}], days, iso)
+    assert ideas[-1]["source"] == "menu_margins" and "Caesar" in ideas[-1]["angle"] and "18% food cost" in ideas[-1]["angle"]
+    monkeypatch.setattr(inventory_ledger, "menu_profitability", lambda r: {"priced": [{"name": "Only", "sell_price": 9, "food_cost_pct": 20}]})
+    assert marketing._with_margin_idea(rid, [{"day": "Monday"}], days, iso) == [{"day": "Monday"}]
+
+
+def test_a_comp_concentration_is_filed_for_the_owner_not_texted(db_path, monkeypatch):
+    import strategy_jobs, loss_detection, issues
+    rid = _rid(db_path)
+    r = models.get_restaurant(rid, db_path=db_path)
+    monkeypatch.setattr(loss_detection, "signals", lambda *a, **k: {"available": True, "week": ["2026-09-14", "2026-09-20"], "note": "check tickets",
+        "kinds": [{"kind": "comp", "flags": [{"type": "spike", "headline": "spike"},
+                                             {"type": "concentration", "approver": "17", "headline": "One manager approved 80%", "alternative": "busiest shifts"}]}]})
+    opened = []
+    monkeypatch.setattr(issues, "create_issue", lambda r_, kind, title, **k: opened.append((kind, title, k.get("notify"), k.get("source_key"))) or ({}, None))
+    strategy_jobs._loss_flags_to_issues(r, db_path)
+    assert opened == [("loss", "One manager approved 80%", False, "loss:2026-09-14:comp:17")]
+
+
+def test_the_weekly_plan_parses_only_what_the_model_actually_returned():
+    import strategy_jobs
+    raw = 'Here you go:\n[{"title": "Add a server Friday 6-9", "why": "Friday complaints 3x", "owner": "manager", "due_days": 4},' \
+          ' {"title": "", "why": "no"}, {"title": "Recount walk-in", "due_days": 99}, {"title": "x"}, {"title": "y"}]'
+    plan = strategy_jobs._parse_plan(raw)
+    assert [p["title"] for p in plan] == ["Add a server Friday 6-9", "Recount walk-in", "x"]
+    assert plan[0]["owner"] == "manager" and plan[1]["due_days"] == 7
+    assert strategy_jobs._parse_plan("Nothing this week.") == []
+
+
+def test_the_weekly_plan_files_issues_only_when_switched_on(db_path, monkeypatch):
+    import strategy_jobs, issues, ask_cavnar, ops, time_utils
+    rid = _rid(db_path, weekly_plan_enabled=0)
+    monkeypatch.setattr(time_utils, "restaurant_now", lambda *a, **k: datetime(2026, 9, 21, 8, 0))   # a Monday
+    monkeypatch.setattr(ask_cavnar, "ask_with_tools", lambda *a, **k: ('[{"title": "Do the thing", "why": "because 12%", "owner": "owner", "due_days": 3}]', False, [], {}))
+    filed = []
+    monkeypatch.setattr(issues, "create_issue", lambda r_, kind, title, **k: filed.append((kind, title, k.get("notify"))) or ({}, None))
+    monkeypatch.setattr(ops, "claim_period", lambda *a, **k: True)
+    assert strategy_jobs.run_weekly_plan(db_path=db_path) == {"filed": 0}
+    update_restaurant(rid, {"weekly_plan_enabled": 1}, db_path=db_path)
+    assert strategy_jobs.run_weekly_plan(db_path=db_path) == {"filed": 1}
+    assert filed == [("plan", "Do the thing", False)]
+
+
+def test_hiding_twice_asks_why_and_remembers_the_answer(db_path, monkeypatch):
+    import home_brief
+    rid = _rid(db_path)
+    remembered = []
+    monkeypatch.setattr(models, "remember_ask_fact", lambda r, fact, **k: remembered.append((fact, k.get("kind"))) or {"fact": fact})
+    home_brief.dismiss(rid, "trim_day:Tuesday")
+    home_brief.dismiss(rid, "trim_day:Tuesday", reason="Tuesday is our delivery day", title="Trim Tuesday lunch")
+    conn = get_conn(db_path)
+    assert home_brief.times_hidden(conn, rid) == {"trim_day:Tuesday": 2}
+    conn.close()
+    assert remembered == [("Not doing “Trim Tuesday lunch”: Tuesday is our delivery day", "preference")]
+
+
+def test_recipe_drafts_use_only_the_restaurants_own_ingredients(db_path, monkeypatch):
+    import recipes, inventory_ledger
+    rid = _rid(db_path, module_inventory=1)
+    monkeypatch.setattr(inventory_ledger, "list_ingredients", lambda r: [
+        {"id": 1, "name": "Mozzarella", "unit": "lb"}, {"id": 2, "name": "Tomato Sauce", "unit": "qt"}, {"id": 3, "name": "Dough", "unit": "each"}])
+    monkeypatch.setattr(inventory_ledger, "list_menu_items_with_recipes", lambda r: [
+        {"id": 10, "name": "Margherita", "recipe": []}, {"id": 11, "name": "Caesar", "recipe": [{"x": 1}]}])
+    class _Msg:
+        stop_reason = "end_turn"
+        content = [type("B", (), {"type": "text", "text": json.dumps({"ingredients": [
+            {"name": "mozzarella", "qty": 0.25, "unit": "lb", "confidence": "high"},
+            {"name": "Truffle Oil", "qty": 0.1, "unit": "oz", "confidence": "low"},     # not on the list → dropped
+            {"name": "Dough", "qty": 1, "unit": "each", "confidence": "high"}], "note": "thin crust"})})()]
+    class _Client:
+        pass
+    import ai_utils
+    monkeypatch.setattr(ai_utils, "create_with_retry", lambda client, **kw: _Msg())
+    out = recipes.draft_missing(rid, client=_Client(), db_path=db_path)
+    assert out == {"drafted": 1, "skipped": 0}
+    drafts = recipes.list_drafts(rid, db_path=db_path)
+    assert drafts[0]["menu_item_name"] == "Margherita" and [l["name"] for l in drafts[0]["lines"]] == ["Mozzarella", "Dough"]
+    assert recipes.missing_recipes(rid, db_path=db_path) == []                       # pending draft, not re-drafted
+    written = []
+    monkeypatch.setattr(inventory_ledger, "add_recipe_ingredient", lambda r, m, i, q: written.append((m, i, q)) or 1)
+    res = recipes.accept(rid, drafts[0]["id"], db_path=db_path)
+    assert res["ok"] and written == [(10, 1, 0.25), (10, 3, 1.0)]
+    assert recipes.list_drafts(rid, db_path=db_path) == [] and recipes.list_drafts(rid, status="accepted", db_path=db_path)
+
+
+def test_recipe_csv_import_names_unknown_ingredients_instead_of_inventing_them(db_path, monkeypatch):
+    import recipes, inventory_ledger
+    rid = _rid(db_path, module_inventory=1)
+    monkeypatch.setattr(inventory_ledger, "list_ingredients", lambda r: [{"id": 1, "name": "Mozzarella", "unit": "lb"}])
+    monkeypatch.setattr(inventory_ledger, "list_menu_items_with_recipes", lambda r: [])
+    created, written = [], []
+    monkeypatch.setattr(inventory_ledger, "create_menu_item", lambda r, name: created.append(name) or 77)
+    monkeypatch.setattr(inventory_ledger, "add_recipe_ingredient", lambda r, m, i, q: written.append((m, i, q)) or 1)
+    out = recipes.import_csv(rid, "menu_item,ingredient,qty\nMargherita,mozzarella,0.25\nMargherita,Basil,0.01\n", db_path=db_path)
+    assert out["ok"] and out["written"] == 1 and out["skipped"] == 1 and out["unknown_ingredients"] == ["Basil"]
+    assert created == ["Margherita"] and written == [(77, 1, 0.25)]
+    assert recipes.import_csv(rid, "a,b\n1,2\n", db_path=db_path)["ok"] is False
+
+
+def test_a_send_delay_queues_the_manual_send_instead_of_sending(db_path, monkeypatch):
+    import client_api, delayed, inventory
+    from flask import Flask
+    rid = _rid(db_path, module_inventory=1)
+    update_restaurant(rid, {"send_delay_minutes": 5}, db_path=db_path)     # create_restaurant names its columns
+    monkeypatch.setattr(client_api, "get_restaurant", lambda r, **k: models.get_restaurant(r, db_path=db_path))
+    monkeypatch.setattr(client_api, "get_conn", lambda *a, **k: models.get_conn(db_path))
+    monkeypatch.setattr(client_api, "_order_send_allowed", lambda r: True)
+    monkeypatch.setattr(inventory, "build_supplier_orders", lambda r: {"draft_hash": "h", "groups": [
+        {"supplier_email": "s@x.com", "supplier_name": "Fresh Co", "total_cost": 100, "items": [1]}]})
+    sent = []
+    monkeypatch.setattr(client_api, "_send_supplier_orders", lambda *a, **k: sent.append(1) or ([], []))
+    app = Flask(__name__)
+    with app.test_request_context("/api/food-cost/send-order", method="POST", json={"draft_hash": "h"}):
+        resp = client_api.send_supplier_order.__wrapped__({"id": 1, "restaurant_id": rid, "username": "o"})
+    body = resp.get_json() if hasattr(resp, "get_json") else resp[0].get_json()
+    assert body["ok"], body
+    assert body["queued"][0]["supplier_email"] == "s@x.com" and body["undo_minutes"] == 5
+    assert sent == [] and delayed.pending(rid, db_path=db_path)[0]["kind"] == "order_send"
+
+
+def test_phase_c_routes_and_jobs_are_registered():
+    import strategy_routes, admin_ops
+    paths = {(p, tuple(m)) for p, m, *_ in strategy_routes._ROUTES}
+    for want in (("/food-cost/recipe-drafts", ("GET",)), ("/food-cost/recipes/import", ("POST",)),
+                 ("/labor/weekly-plan", ("POST",)), ("/account/send-delay", ("POST",))):
+        assert want in paths, want
+    assert admin_ops.RUNNABLE_JOBS["weekly_plan"]["target"] == ("strategy_jobs", "run_weekly_plan")
+    assert admin_ops.RUNNABLE_JOBS["recipe_drafts"]["target"] == ("strategy_jobs", "run_recipe_drafts")

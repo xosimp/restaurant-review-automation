@@ -983,6 +983,8 @@ RUNNABLE_JOBS = {
     "milestones":              {"cadence": "7am daily", "what": "Fire savings / anniversary / goal milestones", "target": ("strategy_jobs", "run_milestones"), "sends": True},
     "ops_failure_digest":      {"cadence": "8am daily", "what": "Email Will the failure digest", "target": ("ops", "send_failure_digest"), "sends": True},
     "backup_db":               {"cadence": "2am nightly", "what": "Back the SQLite database up", "target": ("scheduler", "backup_db")},
+    "weekly_plan":             {"cadence": "Mon 7am local", "what": "The agent files the week's three actions as issues", "target": ("strategy_jobs", "run_weekly_plan")},
+    "recipe_drafts":           {"cadence": "Tue 5am local", "what": "Draft recipes for POS dishes that have none", "target": ("strategy_jobs", "run_recipe_drafts")},
     "trusted_orders":          {"cadence": "Mon 8am local", "what": "Queue supplier orders that have earned it, with an hour to undo", "target": ("strategy_jobs", "run_trusted_orders"), "sends": True},
     "auto_publish_schedule":   {"cadence": "Fri 9am local", "what": "Queue the unedited Thursday draft to publish at 11am", "target": ("scheduler", "run_auto_publish_schedules"), "sends": True},
     "restore_drill":           {"cadence": "2nd of Jan / Apr / Jul / Oct, after the 2am backup", "what": "Restore the newest snapshot to scratch and prove it opens, migrates and kept its tokens", "target": ("scheduler", "run_restore_drill")},

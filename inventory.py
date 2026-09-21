@@ -1043,11 +1043,16 @@ def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name:
             try:
                 import food_cost_intelligence as _fci_f
                 from datetime import date as _d_f, timedelta as _td_f
+                # The raw projection is what gets scored (so the loop stays
+                # honest); the basis records what the record said about it.
+                _corr, _cal = _fci_f.calibrated(restaurant_id, "waste_week", forecast_next_week)
                 _fci_f.record_forecast(
                     restaurant_id, "waste_week",
                     (_d_f.today() + _td_f(days=7)).isoformat(),
                     forecast_next_week,
-                    basis="week-over-week delta on the ISO-week waste series")
+                    basis="week-over-week delta on the ISO-week waste series"
+                          + (f"; prior forecasts {_cal['reading']}, corrected figure ${_corr:,.0f}"
+                             if _cal.get("available") and _cal.get("factor", 1.0) != 1.0 else ""))
             except Exception as _fe:
                 print(f"[inventory forecast log] {_fe}")
 
@@ -1255,6 +1260,25 @@ def analysis_for(restaurant_id: int, items=None, is_live=None):
 
 # ── Supplier orders ────────────────────────────────────────────────────────────
 
+WASTE_TRIM_CAP = 0.30
+
+
+def _trim_for_waste(item):
+    """(qty, trimmed_units): the suggested order less last week's waste share
+    of usage, capped at WASTE_TRIM_CAP. No waste recorded, no trim."""
+    try:
+        qty = int(item.get("suggested_order_qty") or 0)
+        waste = float(item.get("waste_last_week") or 0)
+        usage = float(item.get("avg_daily_usage") or 0) * 7
+    except (TypeError, ValueError):
+        return int(item.get("suggested_order_qty") or 0), 0
+    if qty <= 0 or waste <= 0 or usage <= 0:
+        return qty, 0
+    share = min(WASTE_TRIM_CAP, waste / usage)
+    trimmed = int(round(qty * share))
+    return max(1, qty - trimmed), trimmed
+
+
 def build_supplier_orders(restaurant_id: int, db_path: str = None) -> dict:
     """Turn the computed order list into orders that can actually be sent.
 
@@ -1294,12 +1318,17 @@ def build_supplier_orders(restaurant_id: int, db_path: str = None) -> dict:
             if int(item.get("suggested_order_qty") or 0) <= 0:
                 continue
             seen.add(name)
+            # What was thrown away last week comes off what is ordered this
+            # week — capped, so a bad week never halves an order, and named
+            # on the line so the owner sees why the number is lower.
+            qty, trimmed = _trim_for_waste(item)
             ordered.append({
                 "item": name,
                 "unit": item.get("unit") or "",
-                "qty": int(item["suggested_order_qty"]),
+                "qty": qty,
+                "trimmed_for_waste": trimmed,
                 "unit_cost": round(float(item.get("unit_cost") or 0), 2),
-                "line_cost": round(int(item["suggested_order_qty"]) * float(item.get("unit_cost") or 0), 2),
+                "line_cost": round(qty * float(item.get("unit_cost") or 0), 2),
                 "urgency": "critical" if bucket == "critical_low" else "soon",
                 "supplier_name": (item.get("supplier_name") or "").strip(),
                 "supplier_email": (item.get("supplier_email") or "").strip(),

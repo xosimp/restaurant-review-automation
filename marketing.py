@@ -549,6 +549,34 @@ def _cache_calendar(restaurant_id: int, ideas: list):
         print(log_msg)
 
 
+def _with_margin_idea(restaurant_id, ideas, days_map, iso_map):
+    """Food Cost joins the calendar: the priced dish with the best margin
+    becomes one of the week's ideas, with the figure that earned it. Only
+    when margins are real (three or more priced recipes) — a calendar
+    must never suggest featuring a dish on a margin it cannot compute."""
+    if not restaurant_id:
+        return ideas
+    try:
+        from models import get_restaurant
+        r = get_restaurant(restaurant_id)
+        if not r or not getattr(r, "module_inventory", 0):
+            return ideas
+        import inventory_ledger
+        priced = [p for p in (inventory_ledger.menu_profitability(restaurant_id).get("priced") or [])
+                  if p.get("food_cost_pct") is not None and p.get("sell_price")]
+        if len(priced) < 3:
+            return ideas
+        best = min(priced, key=lambda p: p["food_cost_pct"])
+        day = "Thursday" if "Thursday" in days_map else next(iter(days_map), "")
+        idea = {"day": day, "date": days_map.get(day, ""), "iso_date": iso_map.get(day, ""),
+                "platform": "Instagram & FB", "type": "instagram_post",
+                "angle": f"Feature {best['name']} — your best-margin plate ({best['food_cost_pct']:.0f}% food cost)",
+                "source": "menu_margins"}
+        return [i for i in ideas if i.get("source") != "menu_margins"] + [idea]
+    except Exception:
+        return ideas
+
+
 def get_content_calendar_ideas(restaurant_id: int = None, force: bool = False) -> list[dict]:
     """A week of content ideas. Generated once per restaurant per week and
     cached from then on; `force=True` is the owner explicitly asking for a
@@ -668,6 +696,7 @@ Rules:
         day_order = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"]
         ideas.sort(key=lambda x: day_order.index(x.get("day","Sunday")) if x.get("day","") in day_order else 7)
         # Attach week_range to first idea for the UI to read
+        ideas = _with_margin_idea(restaurant_id, ideas, days_map, iso_map)
         if ideas:
             ideas[0]["week_range"] = week_range
         _cache_calendar(restaurant_id, ideas)

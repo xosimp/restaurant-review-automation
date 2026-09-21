@@ -833,9 +833,13 @@ def score_forecasts(restaurant_id: int, db_path: str = DB_PATH) -> dict:
                 continue
             pred = _f(f["predicted"])
             err = round(abs(actual - pred) / pred * 100, 1) if pred > 0 else None
+            # Signed as well: (predicted − actual)/actual, so a run of
+            # forecasts that keep landing high can be read as a bias and
+            # corrected, not just reported as "often wide".
+            signed = round((pred - actual) / actual * 100, 1) if actual > 0 else None
             conn.execute(
-                "UPDATE forecast_log SET actual=?, error_pct=?, scored_at=datetime('now') WHERE id=?",
-                (round(actual, 2), err, f["id"]))
+                "UPDATE forecast_log SET actual=?, error_pct=?, signed_error_pct=?, scored_at=datetime('now') WHERE id=?",
+                (round(actual, 2), err, signed, f["id"]))
             scored += 1
         conn.commit()
     finally:
@@ -865,6 +869,42 @@ def forecast_accuracy(restaurant_id: int, kind: str = "waste_week",
             "mean_error_pct": round(mean_err, 1),
             "reading": ("close" if mean_err <= 15 else
                         "roughly right" if mean_err <= 30 else "often wide")}
+
+
+CALIBRATION_MIN_SCORED = 3
+CALIBRATION_MIN_BIAS_PCT = 10.0
+
+
+def forecast_calibration(restaurant_id: int, kind: str = "waste_week", db_path: str = DB_PATH) -> dict:
+    """The forecast error loop. Reads the signed error of the last eight
+    scored forecasts; with three or more and a mean bias past
+    CALIBRATION_MIN_BIAS_PCT, returns the factor that would have made them
+    land, so the next projection is corrected and SAYS so. Absent — never
+    a silent tweak — until the record exists."""
+    conn = get_conn(db_path)
+    rows = _rows(conn,
+        "SELECT signed_error_pct FROM forecast_log WHERE restaurant_id=? AND kind=? "
+        "AND signed_error_pct IS NOT NULL ORDER BY horizon_end DESC LIMIT 8", (restaurant_id, kind))
+    conn.close()
+    errs = [_f(r["signed_error_pct"]) for r in rows]
+    if len(errs) < CALIBRATION_MIN_SCORED:
+        return {"available": False, "scored": len(errs)}
+    bias = sum(errs) / len(errs)
+    if abs(bias) < CALIBRATION_MIN_BIAS_PCT:
+        return {"available": True, "scored": len(errs), "bias_pct": round(bias, 1), "factor": 1.0,
+                "reading": "no consistent lean"}
+    factor = round(1.0 / (1.0 + bias / 100.0), 4)
+    return {"available": True, "scored": len(errs), "bias_pct": round(bias, 1), "factor": factor,
+            "reading": f"ran {abs(bias):.0f}% {'high' if bias > 0 else 'low'} across the last {len(errs)} scored weeks"}
+
+
+def calibrated(restaurant_id: int, kind: str, predicted, db_path: str = DB_PATH):
+    """(corrected_value, calibration) — the value unchanged when there is no
+    record to correct it with."""
+    cal = forecast_calibration(restaurant_id, kind, db_path=db_path)
+    if not cal.get("available") or cal.get("factor", 1.0) == 1.0 or predicted is None:
+        return predicted, cal
+    return round(_f(predicted) * cal["factor"], 2), cal
 
 
 # ── The root-cause pass ─────────────────────────────────────────────────────
