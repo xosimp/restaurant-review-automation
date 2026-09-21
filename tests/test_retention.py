@@ -473,7 +473,8 @@ def test_pause_moves_the_account_to_paused_with_a_resume_date(db_path, monkeypat
     r = models.get_restaurant(rid, db_path=db_path)
     assert r.billing_status == "paused"
     assert r.paused_until == payload["paused_until"]
-    assert (date.fromisoformat(r.paused_until) - date.today()).days in (29, 30)
+    from time_utils import restaurant_now
+    assert (date.fromisoformat(r.paused_until) - restaurant_now(r).date()).days == 30
     assert sent["email_type"] == "pause_notice_ops"          # Will hears about it
     # A paused account is a blocked one — the product goes quiet on its own.
     assert models.subscription_allows_access(rid, db_path=db_path) is False
@@ -712,3 +713,19 @@ def test_a_lapsed_owner_sees_the_message_and_wills_address(db_path, monkeypatch)
     update_restaurant(rid, {"billing_status": "churned"}, db_path=db_path)
     html = _blocked_page_client(monkeypatch, rid, "owner").get("/").get_data(as_text=True)
     assert "no longer active" in html and "mailto:will@cavnar.ai" in html and 'id="resume-btn"' not in html
+
+
+def test_a_paused_account_is_told_it_is_paused_not_lapsed_on_every_surface(db_path, monkeypatch):
+    """The phone shows the 402 error string on its Home tab. "No longer
+    active — contact Will" to an owner who paused it themselves an hour ago
+    is the wrong sentence."""
+    monkeypatch.setattr(models, "DB_PATH", db_path)
+    rid = _restaurant(db_path)
+    from models import update_restaurant
+    update_restaurant(rid, {"billing_status": "paused", "paused_until": "2026-10-20"}, db_path=db_path)
+    j = _blocked_page_client(monkeypatch, rid, "owner").get("/api/thing").get_json()
+    assert j["paused"] is True and j["paused_until"] == "2026-10-20"
+    assert "paused until 10/20/26" in j["error"] and "no longer active" not in j["error"]
+    update_restaurant(rid, {"billing_status": "churned", "paused_until": None}, db_path=db_path)
+    j = _blocked_page_client(monkeypatch, rid, "owner").get("/api/thing").get_json()
+    assert "no longer active" in j["error"] and "paused" not in j

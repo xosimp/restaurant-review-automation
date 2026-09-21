@@ -48,6 +48,10 @@ struct HomeSummary: Codable {
     // every other block is empty by definition. The server returns [] the
     // moment the account has data of its own.
     let firstLook: [String]?
+    // What is connected and what the product can therefore measure. Per
+    // module: connected, what is readable right now, and — when it is not
+    // — the one action that would light it up. Never a score.
+    let readiness: HomeReadiness?
 
     enum CodingKeys: String, CodingKey {
         case username
@@ -66,7 +70,27 @@ struct HomeSummary: Codable {
         case setupChecklist = "setup_checklist"
         case recommendations
         case firstLook = "first_look"
+        case readiness
     }
+}
+
+/// home_brief.readiness: which modules have data flowing and what that
+/// makes measurable. `complete` hides the card — it exists to name the next
+/// step, not to grade a finished setup.
+struct HomeReadiness: Codable {
+    struct Module: Codable, Identifiable {
+        let key: String
+        let label: String
+        let connected: Bool
+        let measurable: [String]?
+        let next: String?
+        let module: String?
+        var id: String { key }
+    }
+    let modules: [Module]
+    let connected: Int?
+    let total: Int?
+    let complete: Bool?
 }
 
 /// One line from home_brief's "Cavnar recommends". `metric` is what makes it

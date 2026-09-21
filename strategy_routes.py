@@ -537,7 +537,7 @@ def _active_subscription(stripe_mod, customer_id):
 def _do_pause(u):
     if not _principal(u):
         return _forbidden("Only the account owner can pause the subscription.")
-    from datetime import datetime, timedelta, timezone
+    from datetime import timedelta
     from models import get_restaurant, update_restaurant
     from client_api import log_account_event
     b = _body()
@@ -553,7 +553,10 @@ def _do_pause(u):
         return {"ok": False, "error": "Restaurant not found"}, 404
     if (r.billing_status or "").lower() == "paused":
         return {"ok": False, "error": "Already paused."}, 409
-    resumes = datetime.now(timezone.utc) + timedelta(days=days)
+    # In the restaurant's own clock, so "paused until 10/20" is their
+    # 10/20 — and Stripe resumes at that local moment, not a UTC one.
+    from time_utils import restaurant_now
+    resumes = restaurant_now(r) + timedelta(days=days)
     try:
         stripe_mod = _stripe_client()
     except Exception as e:

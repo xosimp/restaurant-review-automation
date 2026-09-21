@@ -2638,6 +2638,38 @@ def _console_denied(user):
         return True
 
 
+def _billing_state(user):
+    """(paused, paused_until) for the blocked branches below — so a pause the
+    owner chose is never described as a lapse. Fails to (False, None)."""
+    try:
+        from models import get_restaurant
+        r = get_restaurant(user["restaurant_id"])
+        paused = (getattr(r, "billing_status", "") or "").lower() == "paused"
+        return paused, (getattr(r, "paused_until", None) if paused else None)
+    except Exception:
+        return False, None
+
+
+def _mdy(iso):
+    try:
+        y, m, d = str(iso)[:10].split("-")
+        return f"{int(m)}/{int(d)}/{y[2:]}"
+    except Exception:
+        return None
+
+
+def _billing_blocked_message(user):
+    """The lapse message, or the pause message with its resume date. The
+    phone shows this string on the Home tab, so it has to say which."""
+    paused, until = _billing_state(user)
+    if not paused:
+        return _BILLING_BLOCKED_MESSAGE, {}
+    when = _mdy(until)
+    return ((f"Your subscription is paused until {when}. " if when else "Your subscription is paused. ")
+            + "Resume any time from Account → Billing.",
+            {"paused": True, "paused_until": until})
+
+
 def _billing_blocked_page(user):
     """A page navigation while the subscription is paused or lapsed.
 
@@ -2682,8 +2714,8 @@ def login_required(f):
             if not _wants_json_response():
                 return _billing_blocked_page(user)
             from flask import jsonify as _jsonify_bb
-            return _jsonify_bb(ok=False, error=_BILLING_BLOCKED_MESSAGE,
-                               billing_inactive=True), 402
+            _msg, _extra = _billing_blocked_message(user)
+            return _jsonify_bb(ok=False, error=_msg, billing_inactive=True, **_extra), 402
         locked = _module_blocked(user)
         if locked:
             from flask import jsonify as _jsonify_ml
@@ -2734,8 +2766,8 @@ def mobile_login_required(f):
             return _jsonify_mcd(ok=False, error=_STAFF_WRONG_DOOR, staff_account=True), 403
         if _billing_blocked(user):
             from flask import jsonify as _jsonify_mbb
-            return _jsonify_mbb(ok=False, error=_BILLING_BLOCKED_MESSAGE,
-                                billing_inactive=True), 402
+            _msg, _extra = _billing_blocked_message(user)
+            return _jsonify_mbb(ok=False, error=_msg, billing_inactive=True, **_extra), 402
         locked = _module_blocked(user)
         if locked:
             from flask import jsonify as _jsonify_mml

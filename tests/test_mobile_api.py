@@ -4493,3 +4493,18 @@ def test_the_team_payload_carries_the_closer_flag(client, db_path, monkeypatch):
     body = client.get("/mobile/api/labor/team", headers=_auth_headers(token)).get_json()
     assert body["team"][0]["can_close"] is True
     assert body["capability_version"]
+
+
+def test_home_carries_readiness_with_the_next_step_for_an_unconnected_module(client, db_path):
+    """Retention #7 on the phone: per module, connected or the one action
+    that would light it up. Never a score — the payload has no number an
+    owner could read as a grade."""
+    rid = _restaurant(db_path, module_labor=1)
+    token = _login(client, db_path, rid)
+    data = client.get("/mobile/api/home", headers=_auth_headers(token)).get_json()
+    ready = data.get("readiness")
+    assert ready and isinstance(ready["modules"], list)
+    labor = next(m for m in ready["modules"] if m["key"] == "labor")
+    assert labor["connected"] is False and labor["next"] and labor["module"] == "labor"
+    assert set(ready) == {"modules", "connected", "total", "measurable", "complete"}
+    assert not any(k in ("score", "pct", "grade") for k in ready)

@@ -109,6 +109,9 @@ final class HomeFollowThroughViewModel {
     var lossFlags: [LossSignals.Flag] = []
     var lossWeek: [String] = []
     var lossNote: String?
+    /// Last month against the month before (and last year), the same build
+    /// the email on the 1st sends. Web-only until the retention re-audit.
+    var month: HomeMonthlyReview?
     /// Recommendations the owner has started measuring in this session, so
     /// the button can read "Tracking" without a round trip.
     var tracked: Set<String> = []
@@ -321,6 +324,7 @@ final class HomeFollowThroughViewModel {
         async let n: GoodNews? = try? client.send("/mobile/api/good-news", hapticOnError: false)
         async let ms: Milestones? = try? client.send("/mobile/api/milestones", hapticOnError: false)
         async let ls: LossSignals? = try? client.send("/mobile/api/loss-signals", hapticOnError: false)
+        async let mr: HomeMonthlyReview? = try? client.send("/mobile/api/monthly-review", hapticOnError: false)
         actions = (await a)?.items ?? []
         goals = (await g)?.goals ?? []
         let outcomes = await o
@@ -341,6 +345,7 @@ final class HomeFollowThroughViewModel {
         lossFlags = (loss?.available == true) ? (loss?.flagged ?? []) : []
         lossWeek = loss?.week ?? []
         lossNote = loss?.note
+        month = await mr
     }
 
     private struct TrackBody: Encodable {
@@ -546,6 +551,10 @@ struct HomeFollowThrough: View {
             goodNewsCard
 
             valueCard
+
+            if let month = viewModel.month {
+                HomeMonthlyReviewCard(month: month)
+            }
 
             connectionsCard
 

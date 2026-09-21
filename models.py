@@ -6665,7 +6665,12 @@ def get_sentiment_trend(restaurant_id, weeks=8):
     # "show the empty state" and a fake 8-bar chart is worse than none.
     if not rows:
         return []
-    today = _dt_st.now()
+    # The SQL above windows and buckets on UTC timestamps (review_date and
+    # fetched_at are stored in UTC), so "this week" has to be UTC here too.
+    # Local time put the two clocks a day apart every evening after 7pm
+    # Chicago, and across a Monday boundary that dropped a bar.
+    from datetime import timezone as _tz_st
+    today = _dt_st.now(_tz_st.utc).replace(tzinfo=None)
     monday = today - _td_st(days=today.weekday())
     first_key = min(by_key)
     result = []
@@ -7077,20 +7082,36 @@ def count_briefings_today(restaurant_id: int, db_path: str = DB_PATH) -> int:
     morning brief, a pre-shift nudge, a pre-dinner pulse, a coverage push, a
     demand opportunity and a closing summary in one day, none of which
     counted. notify.briefing_allowed reads this."""
-    from time_utils import restaurant_now_by_id
-    day = restaurant_now_by_id(restaurant_id, naive=True).date().isoformat()
+    # fired_at is UTC; comparing its date to the local date reset this
+    # budget at 7pm Chicago — the same bug count_alerts_today fixed.
+    since = _local_day_start_utc(restaurant_id)
     placeholders = ",".join("?" * len(NON_ALERT_TYPES))
     conn = get_conn(db_path)
     try:
         row = conn.execute(
             f"SELECT COUNT(*) AS n FROM alert_log WHERE restaurant_id=? "
-            f"AND substr(fired_at,1,10)=? AND alert_type IN ({placeholders})",
-            (restaurant_id, day, *NON_ALERT_TYPES)).fetchone()
+            f"AND fired_at >= ? AND alert_type IN ({placeholders})",
+            (restaurant_id, since, *NON_ALERT_TYPES)).fetchone()
         return int((row["n"] if row else 0) or 0)
     except Exception:
         return 0
     finally:
         conn.close()
+
+
+def _local_day_start_utc(restaurant_id: int) -> str:
+    """The restaurant's local midnight, expressed in UTC the way alert_log
+    stores fired_at — the one clock every per-day count must use."""
+    try:
+        from time_utils import restaurant_now_by_id, restaurant_tz
+        local_now = restaurant_now_by_id(restaurant_id)
+        if local_now.tzinfo is None:
+            local_now = local_now.replace(tzinfo=restaurant_tz(None))
+        local_midnight = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+        return local_midnight.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        # Never let a timezone lookup turn into "no cap at all".
+        return datetime.now(timezone.utc).strftime("%Y-%m-%d 00:00:00")
 
 
 def count_alerts_today(restaurant_id: int, db_path: str = DB_PATH) -> int:
@@ -7102,16 +7123,7 @@ def count_alerts_today(restaurant_id: int, db_path: str = DB_PATH) -> int:
     reset in the middle of the shift it existed to protect. fired_at is
     stored in UTC, so the local midnight is converted back to UTC to compare.
     """
-    try:
-        from time_utils import restaurant_now_by_id, restaurant_tz
-        local_now = restaurant_now_by_id(restaurant_id)
-        if local_now.tzinfo is None:
-            local_now = local_now.replace(tzinfo=restaurant_tz(None))
-        local_midnight = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
-        since = local_midnight.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-    except Exception:
-        # Never let a timezone lookup turn into "no cap at all".
-        since = datetime.now(timezone.utc).strftime("%Y-%m-%d 00:00:00")
+    since = _local_day_start_utc(restaurant_id)
     conn = get_conn(db_path)
     placeholders = ",".join("?" * len(NON_ALERT_TYPES))
     row = conn.execute(

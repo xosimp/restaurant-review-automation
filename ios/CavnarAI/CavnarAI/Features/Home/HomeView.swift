@@ -154,6 +154,19 @@ struct HomeView: View {
                                     .belowFold(heroAppeared, delay: 0.6)
                             }
 
+                            // What is connected and what that makes
+                            // measurable, with the one action that would
+                            // light up the rest. Hidden once complete.
+                            if let ready = summary.readiness {
+                                HomeReadinessCard(readiness: ready) { module in
+                                    navigate(to: ModuleRoute(key: module,
+                                                             label: moduleLabel(module, in: summary)))
+                                }
+                                .padding(.horizontal, 20)
+                                .padding(.top, 30)
+                                .belowFold(heroAppeared, delay: 0.66)
+                            }
+
                             // What Cavnar recommends, each with the button
                             // that starts measuring it. The server has sent
                             // these on every /mobile/api/home response since

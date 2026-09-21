@@ -998,11 +998,15 @@ def _do_mobile_home(current_user):
             # "Track this" button against.
             _brief_recs = _brief_payload.get("recommendations") or []
             _brief_wins = _brief_payload.get("wins") or []
+            # What is connected and what that makes measurable, with the
+            # one action that would light up the rest (home_brief.readiness).
+            # Web-only until the retention re-audit; the owner is on the phone.
+            _brief_ready = _brief_payload.get("readiness")
         else:
-            _brief_recs, _brief_wins = [], []
+            _brief_recs, _brief_wins, _brief_ready = [], [], None
     except Exception as _hbe:
         print(f"[home] brief unavailable, using local attention list: {_hbe}")
-        _brief_recs, _brief_wins = [], []
+        _brief_recs, _brief_wins, _brief_ready = [], [], None
 
     return {
         "ok": True,
@@ -1030,6 +1034,7 @@ def _do_mobile_home(current_user):
         # its own, so it costs a Places call only on the screen that would
         # otherwise have nothing on it.
         "first_look": _home_first_look(restaurant, rstats, labor, inv),
+        "readiness": _brief_ready,
     }, 200
 
 
