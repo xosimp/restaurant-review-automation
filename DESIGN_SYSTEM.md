@@ -377,6 +377,9 @@ Rules:
 | Loading | `.hb-skel`, `.hb-load` + orb, `cbtnBusy()` |
 | Empty | `.hb-empty`, `.hb-clear` |
 | Escaping | `esc()` / `num()` (numbers → `.hb-num`) |
+| Diagnosis block | `.diag` via `renderDiagnosis(id, dg)` — cause / also fits / what would tell them apart / evidence pills / confidence. One shape for reviews, labor and marketing; renders only when `dg.cause` exists |
+| Per-check dots | `.in2-qc` (`.on` lit ember, `.off` dim) in `.in2-q` rows — one dot per run, oldest first, with an `n/asked` count |
+| Decision row | `.ac-row` + `.ac-chip` answer (`done` / `not for us` / `tracking` / `measured`) — Account → What you've decided |
 
 **iOS** (`Features/…` + `DesignSystem/`)
 
@@ -388,6 +391,8 @@ Rules:
 | Pill / chip / tile | `AccountPill`, `AccountChip`, `AccountStatTile` |
 | Button | `CavnarPrimaryButtonStyle`, `CavnarSecondaryButtonStyle` |
 | Field | `AccountField`, `FloatingField`, `CavnarDropdown` |
+| Switch with its record | `AccountSwitchRow(label:detail:isOn:busy:)` — the `detail` is the owner's own record behind the switch (Automation & trust) |
+| Decide-in-place row | `TimeOffSection` row: name + dates, Deny (secondary) / Approve (primary) side by side, status text once answered |
 | Mixed text with numbers | `HomeMixedText.make(...)` |
 | Loading | `CavnarShimmerText`, `CavnarSkeletonLines`, `CavnarLoadingOrb` |
 | Success | `.cavnarPostedOverlay(label)` |

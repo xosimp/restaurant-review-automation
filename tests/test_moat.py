@@ -138,6 +138,12 @@ def test_the_phone_route_wires_the_open_to_the_tracker(db_path, monkeypatch):
     with app.test_request_context("/mobile/api/notifications/opened", method="POST", json={"type": "new_review"}):
         inner(_owner(rid))
     assert seen == [(rid, "alert_food_waste")]
+    # the web twin carries the same hook — parity is asserted at the source
+    import client_api
+    web = client_api.mark_notification_opened.__wrapped__
+    with app.test_request_context("/api/notifications/opened", method="POST", json={"type": "labor_over"}):
+        web(_owner(rid))
+    assert seen[-1] == (rid, "alert_labor_over")
 
 
 # ── #12 the weekly plan is scored in the monthly review ───────────────────────
@@ -421,7 +427,8 @@ def test_recipients_are_kept_and_visits_matched_once_within_the_window(db_path, 
 
 def _analysis(**kw):
     base = {"total_sales": 50000, "total_labor_cost": 17500, "overall_labor_pct": 35.0, "labor_target": 30,
-            "period_days": 21, "dow_summary": {"Monday": {"labor_pct": 41.0}, "Friday": {"labor_pct": 27.0}},
+            # dow_summary is the real shape analyse_shifts emits: {weekday: float}
+            "period_days": 21, "dow_summary": {"Monday": 41.0, "Friday": 27.0},
             "overtime_risk": [{"employee": "Ana", "hours": 44}],
             "role_summary": {"Server": {"labor_cost": 9000, "headcount": 6}, "Cook": {"labor_cost": 8500, "headcount": 4}}}
     base.update(kw)
@@ -430,6 +437,11 @@ def _analysis(**kw):
 
 def test_labor_diagnosis_names_the_biggest_driver_and_says_how_to_check(db_path):
     import labor
+    # pinned against the source, not a fixture: the weekday map really is floats
+    shifts = [{"employee": "A", "role": "Server", "date": "2026-09-14", "day": "Mon", "scheduled_hours": 8,
+               "actual_hours": 8, "sales": 3000, "shift_start": "10:00", "shift_end": "18:00"}]
+    real = labor.analyse_shifts(shifts, hourly_rate=20, labor_target=30)
+    assert all(isinstance(v, (int, float)) for v in real["dow_summary"].values())
     d = labor.diagnose(_analysis())
     assert d["available"] and d["confidence"] == "high"
     assert d["cause"].startswith("Mondays run 41.0% labor against the 30% target")
@@ -438,7 +450,7 @@ def test_labor_diagnosis_names_the_biggest_driver_and_says_how_to_check(db_path)
     metrics = [e["metric"] for e in d["operational_evidence"]]
     assert "labor % over the period" in metrics and "Monday labor %" in metrics
     # under target: no cause is manufactured
-    calm = labor.diagnose(_analysis(overall_labor_pct=28.0, dow_summary={"Monday": {"labor_pct": 29.0}}, overtime_risk=[]))
+    calm = labor.diagnose(_analysis(overall_labor_pct=28.0, dow_summary={"Monday": 29.0}, overtime_risk=[]))
     assert calm["available"] and calm["cause"] is None and "nothing over target" in calm["summary"]
     # a short period is never high confidence
     assert labor.diagnose(_analysis(period_days=5))["confidence"] == "low"

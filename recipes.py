@@ -218,8 +218,12 @@ def extract_from_image(restaurant_id, data, media_type, user_id=None, client=Non
     items = inventory_ledger.list_menu_items_with_recipes(restaurant_id) or []
     match = next((m for m in items if (m.get("name") or "").strip().lower() == dish.lower()), None)
     if match is None:
-        match = next((m for m in items if dish.lower() in (m.get("name") or "").lower()
-                      or (m.get("name") or "").strip().lower() in dish.lower()), None)
+        # A looser match only when it is unambiguous: "margherita" → the one
+        # "Margherita Pizza". A card that says "pizza" matches nothing rather
+        # than the first of six pizzas, and becomes its own dish to rename.
+        loose = [m for m in items if dish.lower() in (m.get("name") or "").lower()
+                 or (m.get("name") or "").strip().lower() in dish.lower()]
+        match = loose[0] if len(loose) == 1 else None
     matched = match is not None
     if match is None:
         conn = get_conn(db_path)

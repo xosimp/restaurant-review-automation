@@ -6608,6 +6608,15 @@ def mark_notification_opened(current_user):
     how many it sent and nothing about whether any were worth sending."""
     from models import record_notification_open
     data = request.get_json(silent=True) or {}
+    # Same as the phone twin: an opened alert with a metric behind it starts
+    # an observed tracker (outcomes.ALERT_METRICS), once per metric per month.
+    try:
+        import outcomes as _oc_open
+        _atype = (data.get("type") or "").strip()
+        if _atype in _oc_open.ALERT_METRICS:
+            _oc_open.observe(current_user["restaurant_id"], f"alert_{_atype}", user_id=current_user.get("id"))
+    except Exception:
+        pass
     record_notification_open(current_user["restaurant_id"], data.get("type") or "",
                              user_id=current_user["id"])
     return jsonify(ok=True)

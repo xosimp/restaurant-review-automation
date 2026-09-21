@@ -809,6 +809,8 @@ def run_campaign_attribution(db_path=DB_PATH, today=None):
         r = get_restaurant(rid)
         if not r or not getattr(r, "toast_restaurant_guid", None):
             continue
+        if (getattr(r, "billing_status", None) or "trial").lower() in ("churned", "cancelled", "canceled", "paused"):
+            continue          # no Toast calls on behalf of an account that asked for quiet
         sent_on = _date.fromisoformat(c["sent_on"])
         start = _date.fromisoformat(c["attribution_through"]) + _td(days=1) if c["attribution_through"] else sent_on
         end = min(yesterday, sent_on + _td(days=ATTRIBUTION_WINDOW_DAYS))

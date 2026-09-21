@@ -7550,6 +7550,15 @@ ACCOUNT_EVENT_LABELS = {
     "pos_disconnected": "POS disconnected",
     "supplier_order_sent": "Supplier order sent",
     "schedule_published": "Schedule sent to staff",
+    "memory_added": "Fact added to what Cavnar AI remembers",
+    "memory_forgotten": "Fact removed from what Cavnar AI remembers",
+    "time_off_decided": "Time-off request answered",
+    "covers_imported": "Cover counts entered",
+    "inventory_counted": "Inventory counted",
+    "auto_publish_changed": "Automatic schedule publishing changed",
+    "auto_order_changed": "Trusted supplier orders changed",
+    "weekly_plan_changed": "Monday plan changed",
+    "send_delay_changed": "Send delay changed",
 }
 
 

@@ -467,8 +467,12 @@ def api_time_off_request(current_user):
         return jsonify(ok=False, error="No employee name on this session."), 400
     body = request.get_json(silent=True) or {}
     import time_off
+    # "That date has passed" is judged on the restaurant's own calendar, not
+    # the server's — a request typed at 11pm Pacific is not for yesterday.
+    from time_utils import restaurant_now_by_id
     row, err = time_off.request_time_off(rid, name, body.get("start_date"), body.get("end_date"),
-                                         reason=body.get("reason"))
+                                         reason=body.get("reason"),
+                                         today=restaurant_now_by_id(rid, naive=True).date())
     if err:
         return jsonify(ok=False, error=err), 400
     from models import log_event

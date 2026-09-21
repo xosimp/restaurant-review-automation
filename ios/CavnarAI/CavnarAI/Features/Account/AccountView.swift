@@ -176,6 +176,7 @@ struct AccountView: View {
     // MARK: - Grouped settings
 
     @State private var showingProfile = false
+    @State private var showingAutomation = false
     @State private var showingSecurity = false
     @State private var showingAlerts = false
     @State private var showingConnections = false
@@ -206,9 +207,18 @@ struct AccountView: View {
                 } action: {
                     showingProfile = true
                 }
+                Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1).padding(.leading, 47)
+                settingsRow {
+                    row("Automation & trust", systemImage: "sparkles.rectangle.stack")
+                } action: {
+                    showingAutomation = true
+                }
             }
             .sheet(isPresented: $showingProfile) {
                 AccountProfileDetailView(viewModel: viewModel, profile: summary.profile)
+            }
+            .sheet(isPresented: $showingAutomation) {
+                AccountAutomationView()
             }
 
             group("Security") {

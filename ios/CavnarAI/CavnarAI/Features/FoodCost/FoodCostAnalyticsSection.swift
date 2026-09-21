@@ -15,6 +15,8 @@ struct FoodCostAnalyticsSection: View {
     @State private var showingSupplierOrder = false
     @State private var showingMenuMargins = false
     @State private var showingInvoiceScan = false
+    @State private var showingRecipes = false
+    @State private var showingCountSheet = false
     let viewModel: FoodCostAnalyticsViewModel
 
     var body: some View {
@@ -140,6 +142,12 @@ struct FoodCostAnalyticsSection: View {
         }
         .sheet(isPresented: $showingInvoiceScan) {
             InvoiceScanSheet()
+        }
+        .sheet(isPresented: $showingRecipes) {
+            RecipeDraftsSheet()
+        }
+        .sheet(isPresented: $showingCountSheet) {
+            CountSheetView()
         }
     }
 
@@ -702,6 +710,30 @@ struct FoodCostAnalyticsSection: View {
                     .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(CavnarSecondaryButtonStyle())
+                HStack(spacing: 10) {
+                    Button {
+                        Haptic.light()
+                        showingRecipes = true
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "list.bullet.clipboard").font(.system(size: 13, weight: .semibold))
+                            Text("Recipes")
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(CavnarSecondaryButtonStyle())
+                    Button {
+                        Haptic.light()
+                        showingCountSheet = true
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "checklist").font(.system(size: 13, weight: .semibold))
+                            Text("Count sheet")
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(CavnarSecondaryButtonStyle())
+                }
             }
         } else {
             // Menu margins used to live inside the order-list guard above, so
@@ -729,6 +761,30 @@ struct FoodCostAnalyticsSection: View {
                 .frame(maxWidth: .infinity)
             }
             .buttonStyle(CavnarSecondaryButtonStyle())
+            HStack(spacing: 10) {
+                Button {
+                    Haptic.light()
+                    showingRecipes = true
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "list.bullet.clipboard").font(.system(size: 13, weight: .semibold))
+                        Text("Recipes")
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(CavnarSecondaryButtonStyle())
+                Button {
+                    Haptic.light()
+                    showingCountSheet = true
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "checklist").font(.system(size: 13, weight: .semibold))
+                        Text("Count sheet")
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(CavnarSecondaryButtonStyle())
+            }
         }
     }
 

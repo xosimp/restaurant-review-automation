@@ -173,9 +173,15 @@ def diagnose(analysis: dict) -> dict:
     dow = a.get("dow_summary") or {}
     worst_day = None
     for day, d in dow.items():
-        pct = d.get("labor_pct") if isinstance(d, dict) else None
+        # dow_summary is {weekday: avg labor % as a float} (analyse_shifts);
+        # a dict form is tolerated in case a caller passes the daily detail.
+        pct = d.get("labor_pct") if isinstance(d, dict) else d
+        try:
+            pct = float(pct) if pct is not None else None
+        except (TypeError, ValueError):
+            pct = None
         if pct is not None and pct > target and (worst_day is None or pct > worst_day[1]):
-            worst_day = (day, float(pct), d.get("days") or d.get("count"))
+            worst_day = (day, pct)
     if worst_day:
         drivers.append(("weekday", worst_day[1] - target,
                         f"{worst_day[0]}s run {worst_day[1]:.1f}% labor against the {target:g}% target — the pattern, not one bad shift.",

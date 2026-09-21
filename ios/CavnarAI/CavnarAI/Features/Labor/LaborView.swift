@@ -63,6 +63,10 @@ struct LaborView: View {
                                     scrollToReveal(Self.availabilityID, proxy: proxy)
                                 }
                                 .id(Self.availabilityID)
+                                TimeOffSection(viewModel: viewModel) {
+                                    scrollToReveal(Self.timeOffID, proxy: proxy)
+                                }
+                                .id(Self.timeOffID)
                                 // Rating the team, then the targets those
                                 // ratings feed. In that order because a
                                 // target means nothing before anyone is
@@ -98,6 +102,7 @@ struct LaborView: View {
                 .cavnarEmberRefreshable {
                     await viewModel.load()
                     await viewModel.loadAvailability()
+                    await viewModel.loadTimeOff()
                     await viewModel.loadTeam()
                 }
             }
@@ -169,7 +174,10 @@ struct LaborView: View {
             await viewModel.load()
         }
         .task { await analyticsViewModel.load() }
-        .task { await viewModel.loadAvailability() }
+        .task {
+            await viewModel.loadAvailability()
+            await viewModel.loadTimeOff()
+        }
         // Loaded up front rather than on expand so both collapsed headers
         // read their real counts ("3 of 8 rated") instead of a placeholder
         // that changes the moment the section is opened.
@@ -434,6 +442,8 @@ struct LaborView: View {
     @State private var rowReplacements: [String: [ScheduleReplacement]] = [:]
 
     private static let availabilityID = "labor-availability"
+
+    private static let timeOffID = "labor-time-off"
     private static let teamID = "labor-team"
     private static let targetsID = "labor-targets"
 

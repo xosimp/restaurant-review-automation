@@ -597,6 +597,12 @@ final class LaborViewModel {
 
     var availability: [StaffAvailabilityEntry] = []
     var isLoadingAvailability = false
+    // Time-off requests from the staff portal (time_off.py), decided here.
+    var timeOff: [TimeOffRequest] = []
+    var timeOffExpanded = false
+    var timeOffBusyId: Int?
+    var timeOffError: String?
+    var timeOffPending: Int { timeOff.filter { $0.status == "pending" }.count }
     var isSavingAvailability = false
     var availabilityError: String?
 
@@ -795,6 +801,40 @@ final class LaborViewModel {
             // Silent — the availability manager is a secondary section; a
             // failed fetch just leaves the list empty rather than blocking
             // the rest of the Overview tab with an error state.
+        }
+    }
+
+    private struct TimeOffListResponse: Decodable { let ok: Bool; let requests: [TimeOffRequest] }
+    private struct TimeOffDecideBody: Encodable { let decision: String }
+    private struct TimeOffDecideResponse: Decodable { let ok: Bool; let request: TimeOffRequest?; let error: String? }
+
+    func loadTimeOff() async {
+        do {
+            let r: TimeOffListResponse = try await client.send("/mobile/api/labor/time-off", hapticOnError: false)
+            timeOff = r.requests
+            if timeOffPending > 0 { timeOffExpanded = true }
+        } catch {
+            // Silent, like availability: a secondary section.
+        }
+    }
+
+    func decideTimeOff(_ id: Int, approve: Bool) async {
+        timeOffBusyId = id; timeOffError = nil
+        defer { timeOffBusyId = nil }
+        do {
+            let r: TimeOffDecideResponse = try await client.send(
+                "/mobile/api/labor/time-off/\(id)/decide", method: .post,
+                body: TimeOffDecideBody(decision: approve ? "approve" : "deny"))
+            if r.ok, let updated = r.request {
+                if let i = timeOff.firstIndex(where: { $0.id == id }) { timeOff[i] = updated }
+                await Haptic.success()
+            } else {
+                timeOffError = r.error ?? "Couldn't decide that."
+            }
+        } catch let error as APIClient.APIError {
+            timeOffError = error.message
+        } catch {
+            timeOffError = "Couldn't decide that."
         }
     }
 
