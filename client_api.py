@@ -6763,6 +6763,14 @@ def log_account_event(restaurant_id, event_type, current_user=None, detail=None)
         pass
 
 
+def _auto_approve_trust_safe(rid):
+    try:
+        from models import auto_approve_trust
+        return {str(k): v for k, v in auto_approve_trust(rid).items()}
+    except Exception:
+        return {}
+
+
 def _do_auto_approve(rid, data, current_user=None):
     """The one rule: drafted 5-star responses get approved (and posted, when
     Google is connected) without waiting — capped per day, with a kill
@@ -6775,14 +6783,17 @@ def _do_auto_approve(rid, data, current_user=None):
     enabled = bool((data or {}).get("enabled"))
     paused = bool((data or {}).get("paused"))
     include_4star = bool((data or {}).get("include_4star"))
+    earned = bool((data or {}).get("earned"))
     update_restaurant(rid, {
         "auto_approve_5star": int(enabled),
         "auto_approve_4star": int(enabled and include_4star),
+        "auto_approve_earned": int(enabled and earned),
         "auto_approve_daily_cap": cap,
         "auto_approve_paused": int(paused),
     })
     log_account_event(rid, "auto_approve_changed", current_user,
                       detail=("on" if enabled else "off") + (" incl. 4-star" if enabled and include_4star else "")
+                             + (", earned bands" if enabled and earned else "")
                              + (", paused" if paused else "") + f", cap {cap}/day")
     return {"ok": True}, 200
 
@@ -6914,8 +6925,11 @@ def _account_settings_payload(rid):
         "auto_approve": {
             "enabled": bool(getattr(r, "auto_approve_5star", 0)),
             "include_4star": bool(getattr(r, "auto_approve_4star", 0)),
+            "earned": bool(getattr(r, "auto_approve_earned", 0)),
             "daily_cap": int(getattr(r, "auto_approve_daily_cap", 5) or 5),
             "paused": bool(getattr(r, "auto_approve_paused", 0)),
+            # The owner's own record per star band — what "earned" reads.
+            "trust": _auto_approve_trust_safe(rid),
         },
         "hours": {
             "open": _times(getattr(r, "open_times_json", None)),
@@ -7062,6 +7076,62 @@ def food_cost_order_draft(current_user):
     return jsonify(ok=True, **draft)
 
 
+def _send_supplier_orders(rid, restaurant, groups, actor):
+    """Send one purchase order per supplier group. Shared by the route and
+    delayed.py (trusted-supplier send). Returns (sent, failed)."""
+    actor = actor or {}
+    from models import record_purchase_order
+    sent, failed = [], []
+    for group in groups:
+        # The PO row is written BEFORE the email, and carries the number: an
+        # order that reached a supplier with no record of it is the worse of
+        # the two failure modes by a distance.
+        try:
+            po_number = record_purchase_order(
+                rid, group.get("supplier_name") or "", group["supplier_email"],
+                group["items"], group.get("total_cost") or 0)
+        except Exception as e:
+            failed.append({"supplier_email": group["supplier_email"], "error": _safe_err(e)})
+            continue
+        try:
+            import outcomes as _oc
+            _oc.observe(rid, "supplier_order_sent", detail=group.get("supplier_name") or None,
+                        user_id=actor.get("id"))
+        except Exception as _oe:
+            import ops as _ops_o
+            _ops_o.capture(_oe, job="observe_order", context=f"restaurant_id={rid}")
+        try:
+            from emails import send_supplier_order_email
+            send_supplier_order_email(
+                to_email=group["supplier_email"],
+                supplier_name=group.get("supplier_name") or "",
+                restaurant_name=restaurant.name,
+                po_number=po_number,
+                items=group["items"],
+                total_cost=group.get("total_cost") or 0,
+                reply_to=restaurant.owner_email or None,
+            )
+        except Exception as e:
+            from models import void_purchase_order as _void_po
+            _void_po(rid, po_number)
+            failed.append({"supplier_email": group["supplier_email"], "error": _safe_err(e)})
+            continue
+
+        from models import log_email as _log_email
+        _log_email(rid, "supplier_order", group["supplier_email"],
+                   f"Order {po_number} — {restaurant.name}")
+        # Per order, with the supplier, the number and the total — the audit
+        # line used to read "2 orders" and nothing else.
+        log_account_event(rid, "supplier_order_sent", actor,
+                          detail=f"{po_number} to {group['supplier_email']} — "
+                                 f"{len(group['items'])} items, ${group.get('total_cost') or 0:,.2f}")
+        sent.append({"po_number": po_number, "supplier_email": group["supplier_email"],
+                     "supplier_name": group.get("supplier_name") or "",
+                     "item_count": len(group["items"]), "total_cost": group.get("total_cost") or 0})
+
+    return sent, failed
+
+
 @client_bp.route("/api/food-cost/send-order", methods=["POST"])
 @login_required
 def send_supplier_order(current_user):
@@ -7101,53 +7171,8 @@ def send_supplier_order(current_user):
         return jsonify(ok=False, error="Nothing to order — no items with a supplier assigned."), 400
 
     sent, failed = [], []
-    for group in groups:
-        # The PO row is written BEFORE the email, and carries the number: an
-        # order that reached a supplier with no record of it is the worse of
-        # the two failure modes by a distance.
-        try:
-            po_number = record_purchase_order(
-                rid, group.get("supplier_name") or "", group["supplier_email"],
-                group["items"], group.get("total_cost") or 0)
-        except Exception as e:
-            failed.append({"supplier_email": group["supplier_email"], "error": _safe_err(e)})
-            continue
-        try:
-            import outcomes as _oc
-            _oc.observe(rid, "supplier_order_sent", detail=group.get("supplier_name") or None,
-                        user_id=current_user.get("id"))
-        except Exception as _oe:
-            import ops as _ops_o
-            _ops_o.capture(_oe, job="observe_order", context=f"restaurant_id={rid}")
-        try:
-            from emails import send_supplier_order_email
-            send_supplier_order_email(
-                to_email=group["supplier_email"],
-                supplier_name=group.get("supplier_name") or "",
-                restaurant_name=restaurant.name,
-                po_number=po_number,
-                items=group["items"],
-                total_cost=group.get("total_cost") or 0,
-                reply_to=restaurant.owner_email or None,
-            )
-        except Exception as e:
-            from models import void_purchase_order as _void_po
-            _void_po(rid, po_number)
-            failed.append({"supplier_email": group["supplier_email"], "error": _safe_err(e)})
-            continue
-
-        from models import log_email as _log_email
-        _log_email(rid, "supplier_order", group["supplier_email"],
-                   f"Order {po_number} — {restaurant.name}")
-        # Per order, with the supplier, the number and the total — the audit
-        # line used to read "2 orders" and nothing else.
-        log_account_event(rid, "supplier_order_sent", current_user,
-                          detail=f"{po_number} to {group['supplier_email']} — "
-                                 f"{len(group['items'])} items, ${group.get('total_cost') or 0:,.2f}")
-        sent.append({"po_number": po_number, "supplier_email": group["supplier_email"],
-                     "supplier_name": group.get("supplier_name") or "",
-                     "item_count": len(group["items"]), "total_cost": group.get("total_cost") or 0})
-
+    _s, _f = _send_supplier_orders(rid, restaurant, groups, current_user)
+    sent.extend(_s); failed.extend(_f)
     if not sent:
         # Was a 200 with ok=False, so any client branching on HTTP status read
         # a total failure to send as a success.
@@ -7350,35 +7375,35 @@ def set_staff_contact_api(current_user):
     return jsonify(ok=True)
 
 
-@client_bp.route("/api/labor/publish-schedule", methods=["POST"])
-@login_required
-def publish_schedule_api(current_user):
+def _publish_schedule(restaurant_id, schedule_id=None, actor=None):
+    """Shared by the route and delayed.py (auto-publish). Returns (payload, http_status).
+    `actor` is the user dict acting, or delayed.AUTOMATION_ACTOR."""
+    actor = actor or {}
     from models import get_staff_contacts, create_schedule_share, get_schedule_share_status
     from labor import employees_in_schedule, employee_shifts_from_csv
 
-    rid = current_user["restaurant_id"]
+    rid = restaurant_id
     restaurant = get_restaurant(rid)
     if not restaurant:
-        return jsonify(ok=False, error="Restaurant not found"), 404
+        return {"ok": False, "error": "Restaurant not found"}, 404
 
-    data = request.get_json(silent=True) or {}
     conn = get_conn()
     try:
-        if data.get("schedule_id"):
+        if schedule_id:
             row = conn.execute(
                 "SELECT id, week_start, week_end, schedule_csv FROM schedule_history WHERE id=? AND restaurant_id=?",
-                (int(data["schedule_id"]), rid)).fetchone()
+                (int(schedule_id), rid)).fetchone()
         else:
             row = conn.execute(
                 "SELECT id, week_start, week_end, schedule_csv FROM schedule_history "
                 "WHERE restaurant_id=? ORDER BY id DESC LIMIT 1", (rid,)).fetchone()
     except (TypeError, ValueError):
-        return jsonify(ok=False, error="Which schedule?"), 400
+        return {"ok": False, "error": "Which schedule?"}, 400
     finally:
         conn.close()
 
     if not row or not (row["schedule_csv"] or "").strip():
-        return jsonify(ok=False, error="Generate a schedule first — there's nothing to send yet."), 400
+        return {"ok": False, "error": "Generate a schedule first — there's nothing to send yet."}, 400
 
     schedule_id = row["id"]
     week_label = row["week_start"] or ""
@@ -7393,7 +7418,7 @@ def publish_schedule_api(current_user):
     try:
         import outcomes as _oc
         _oc.observe(rid, "schedule_published", detail=f"week of {row['week_start']}",
-                    user_id=current_user.get("id"))
+                    user_id=actor.get("id"))
     except Exception as _oe:
         import ops as _ops_o
         _ops_o.capture(_oe, job="observe_schedule", context=f"restaurant_id={rid}")
@@ -7427,12 +7452,23 @@ def publish_schedule_api(current_user):
         sent.append({"employee_name": name, "sent_to": email, "shifts": len(shifts)})
 
     if sent:
-        log_account_event(rid, "schedule_published", current_user,
+        log_account_event(rid, "schedule_published", actor,
                           detail=f"{len(sent)} to staff")
-    return jsonify(ok=bool(sent), schedule_id=schedule_id, week_label=week_label,
+    return dict(ok=bool(sent), schedule_id=schedule_id, week_label=week_label,
                    sent=sent, unreachable=unreachable, failed=failed,
                    status=get_schedule_share_status(rid, schedule_id),
-                   error=None if sent else "Nobody has an email address on file yet.")
+                   error=None if sent else "Nobody has an email address on file yet."), 200
+
+
+@client_bp.route("/api/labor/publish-schedule", methods=["POST"])
+@login_required
+def publish_schedule_api(current_user):
+    data = request.get_json(silent=True) or {}
+    try:
+        out, status = _publish_schedule(current_user["restaurant_id"], data.get("schedule_id"), current_user)
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error="Which schedule?"), 400
+    return jsonify(**out), status
 
 
 @client_bp.route("/api/labor/schedule-share-status")

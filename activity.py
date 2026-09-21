@@ -288,8 +288,16 @@ def build(restaurant_id, restaurant=None, db_path=DB_PATH, denied=frozenset()):
             c2.close()
     except Exception:
         pass
+    # What is queued to happen unless the owner says otherwise — the undo
+    # window for the product's own actions (delayed.py).
+    try:
+        import delayed
+        queued = [{"id": a["id"], "kind": a["kind"], "text": a.get("label") or a["kind"].replace("_", " "),
+                   "execute_at": a["execute_at"]} for a in delayed.pending(restaurant_id, db_path=db_path)]
+    except Exception:
+        queued = []
     return {"ok": True, "working": working, "entries": entries[:12], "memory": memory[:5],
-            "last_run": last_run, "generated_at": _iso_z(_utc(now))}
+            "queued": queued, "last_run": last_run, "generated_at": _iso_z(_utc(now))}
 
 
 def feed(restaurant_id, restaurant=None, db_path=DB_PATH, denied=frozenset()):

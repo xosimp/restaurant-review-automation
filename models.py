@@ -464,6 +464,12 @@ class Restaurant:
     alert_extra_emails: Optional[str] = None # comma list; alert + digest emails also go here
     push_sound: int                  = 1     # 0 = silent pushes
     auto_approve_5star: int          = 0     # auto-approve (and post) drafted 5-star responses
+    # Graduated trust: extend the rule to 3-star and 4-star once the owner's
+    # own edit rate on that band has earned it (auto_approve_trust).
+    auto_approve_earned: int         = 0
+    # Publish the Thursday draft to staff on Friday, with a two-hour undo,
+    # once the last few drafts went out unedited (schedule_publish_trust).
+    auto_publish_schedule: int       = 0
     auto_approve_4star: int          = 0     # ...and 4-star, under the same cap and the same urgency gate
     auto_approve_daily_cap: int      = 5
     auto_approve_paused: int         = 0     # kill switch — keeps the rule configured but off
@@ -794,6 +800,12 @@ def ensure_columns(db_path: str = DB_PATH):
         # Edited-review tracking — see save_reviews.
         ("reviews", "source_updated_at", "TEXT"),
         ("reviews", "edited_at",         "TEXT"),
+        # schedule_history's edit stamp was added lazily on the first edit
+        # (save_schedule_edit); schedule_publish_trust reads it on a fresh
+        # database, so it belongs in the startup list like everything else.
+        ("schedule_history", "quality_json", "TEXT"),
+        ("schedule_history", "edited_at",   "TEXT"),
+        ("schedule_history", "edited_by",   "TEXT"),
         ("reviews", "original_rating",   "INTEGER"),
         # A draft that generated cleanly but states something unverifiable.
         ("reviews", "draft_needs_review", "INTEGER DEFAULT 0"),
@@ -1063,6 +1075,22 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE restaurants ADD COLUMN push_sound INTEGER DEFAULT 1",
         "ALTER TABLE restaurants ADD COLUMN auto_approve_5star INTEGER DEFAULT 0",
         "ALTER TABLE restaurants ADD COLUMN auto_approve_4star INTEGER DEFAULT 0",
+        "ALTER TABLE restaurants ADD COLUMN auto_approve_earned INTEGER DEFAULT 0",
+        "ALTER TABLE restaurants ADD COLUMN auto_publish_schedule INTEGER DEFAULT 0",
+        """CREATE TABLE IF NOT EXISTS delayed_actions (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id INTEGER NOT NULL REFERENCES restaurants(id),
+            kind          TEXT    NOT NULL,
+            label         TEXT,
+            payload_json  TEXT,
+            execute_at    TEXT    NOT NULL,
+            status        TEXT    NOT NULL DEFAULT 'pending',
+            created_by    TEXT,
+            created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+            executed_at   TEXT,
+            result_json   TEXT
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_delayed_actions_due ON delayed_actions(status, execute_at)",
         "ALTER TABLE restaurants ADD COLUMN auto_approve_daily_cap INTEGER DEFAULT 5",
         "ALTER TABLE restaurants ADD COLUMN auto_approve_paused INTEGER DEFAULT 0",
         "ALTER TABLE restaurants ADD COLUMN open_times_json TEXT",
@@ -3144,6 +3172,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "last_active_tab","last_activity","owner_name","owner_phone","digest_day","digest_enabled","menu_notes","menu_url","skip_holidays","custom_competitors",
         "two_fa_enabled","two_fa_code","two_fa_expires","two_fa_device_token","two_fa_pending","two_fa_method","login_notify","staff_signin_notify","marketing_emails_opt_out","monthly_review_enabled","timezone","onboarding_dismissed",
         "alert_health_bypass_quiet","alert_food_waste","alert_ai_visibility_drop","alert_extra_emails","push_sound",
+        "auto_approve_earned","auto_publish_schedule",
         "auto_approve_5star","auto_approve_4star","auto_approve_daily_cap","auto_approve_paused","open_times_json",
         "response_language","tone_preset","data_retention_months",
         "toast_client_id","toast_client_secret","toast_restaurant_guid",
@@ -3404,6 +3433,10 @@ def _restaurant_from_row(row) -> Restaurant:
         push_sound=row["push_sound"] if "push_sound" in row.keys() and row["push_sound"] is not None else 1,
         auto_approve_5star=row["auto_approve_5star"] if "auto_approve_5star" in row.keys() else 0,
         auto_approve_4star=row["auto_approve_4star"] if "auto_approve_4star" in row.keys() else 0,
+        auto_approve_earned=(row["auto_approve_earned"] if "auto_approve_earned" in row.keys()
+                             and row["auto_approve_earned"] is not None else 0),
+        auto_publish_schedule=(row["auto_publish_schedule"] if "auto_publish_schedule" in row.keys()
+                               and row["auto_publish_schedule"] is not None else 0),
         auto_approve_daily_cap=row["auto_approve_daily_cap"] if "auto_approve_daily_cap" in row.keys() and row["auto_approve_daily_cap"] is not None else 5,
         auto_approve_paused=row["auto_approve_paused"] if "auto_approve_paused" in row.keys() else 0,
         open_times_json=row["open_times_json"] if "open_times_json" in row.keys() else None,
@@ -7069,7 +7102,7 @@ NON_ALERT_TYPES = (
     "morning_brief", "intraday_pulse", "closing_summary", "weekly_review",
     "monthly_review", "daily_briefing", "schedule_drafted", "outcome_achieved",
     "issue", "issue_escalated", "coverage", "demand_opportunity",
-    "while_away", "connection_lost",
+    "while_away", "connection_lost", "schedule_publish_pending",
 )
 
 
@@ -7880,6 +7913,63 @@ def count_auto_approved_today(restaurant_id: int, db_path: str = DB_PATH) -> int
     return int(row["n"]) if row else 0
 
 
+AUTO_APPROVE_TRUST_MIN = 10        # approved replies on a star band before it can be trusted
+AUTO_APPROVE_TRUST_EDIT_RATE = 0.10  # ...and at most this share of them edited first
+AUTO_APPROVE_EARNABLE = (3, 4, 5)   # 1- and 2-star replies are never auto-published
+
+
+def auto_approve_trust(restaurant_id: int, db_path: str = DB_PATH, days: int = 30) -> dict:
+    """Per star band, whether the owner's own history says the drafts can go
+    out unread: at least AUTO_APPROVE_TRUST_MIN approved in the window and
+    an edit rate at or under AUTO_APPROVE_TRUST_EDIT_RATE. Every approval and
+    every edit is already recorded (response_status, draft_edited); this
+    reads them back so the product stops asking for a signature it has been
+    given thirty times unchanged. Negative bands are never in the answer."""
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT rating, COUNT(*) AS n, SUM(COALESCE(draft_edited, 0)) AS edited FROM reviews "
+            "WHERE restaurant_id=? AND deleted_at IS NULL AND response_status IN ('approved','posted') "
+            "AND approved_at >= datetime('now', ?) AND rating IN (3,4,5) GROUP BY rating",
+            (restaurant_id, f"-{int(days)} days")).fetchall()
+    finally:
+        conn.close()
+    by = {int(r["rating"]): (int(r["n"] or 0), int(r["edited"] or 0)) for r in rows}
+    out = {}
+    for star in AUTO_APPROVE_EARNABLE:
+        n, e = by.get(star, (0, 0))
+        rate = (e / n) if n else None
+        out[star] = {"approved": n, "edited": e, "edit_rate": rate,
+                     "trusted": bool(n >= AUTO_APPROVE_TRUST_MIN and rate is not None
+                                     and rate <= AUTO_APPROVE_TRUST_EDIT_RATE),
+                     "needed": max(0, AUTO_APPROVE_TRUST_MIN - n)}
+    return out
+
+
+SCHEDULE_PUBLISH_TRUST_MIN = 3
+
+
+def schedule_publish_trust(restaurant_id: int, db_path: str = DB_PATH) -> int:
+    """How many of the most recent published schedules went out unedited,
+    counting back from the latest until one was edited (capped at 10). A
+    schedule counts as published when it has a share row. This is the
+    owner's own record that the Thursday draft is the schedule they run."""
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT h.id, h.edited_at FROM schedule_history h WHERE h.restaurant_id=? "
+            "AND EXISTS (SELECT 1 FROM schedule_shares s WHERE s.schedule_id=h.id) "
+            "ORDER BY h.id DESC LIMIT 10", (restaurant_id,)).fetchall()
+    finally:
+        conn.close()
+    n = 0
+    for r in rows:
+        if r["edited_at"]:
+            break
+        n += 1
+    return n
+
+
 def auto_approve_candidates(restaurant_id: int, db_path: str = DB_PATH, ratings=(5,)) -> list:
     """Drafted, unapproved 5-star reviews — the only thing the auto-approve
     rule is ever allowed to touch.
@@ -7971,7 +8061,8 @@ def build_settings_export_json(restaurant_id: int, db_path: str = DB_PATH) -> st
         "alert_1star", "alert_2star", "alert_3star", "alert_health", "alert_neg_spike", "alert_negative_trend",
         "alert_no_response", "alert_5star", "alert_labor_over", "alert_food_waste", "alert_ai_visibility_drop",
         "alert_health_bypass_quiet", "alert_extra_emails", "push_sound", "urgent_via_email", "urgent_via_sms",
-        "alert_quiet_start", "alert_quiet_end", "auto_approve_5star", "auto_approve_4star", "auto_approve_daily_cap",
+        "alert_quiet_start", "alert_quiet_end", "auto_approve_5star", "auto_approve_4star", "auto_approve_earned",
+        "auto_publish_schedule", "auto_approve_daily_cap",
         "auto_approve_paused", "data_retention_months", "two_fa_enabled", "two_fa_method",
     ]
     return _json.dumps({k: getattr(r, k, None) for k in keep}, indent=2, default=str)

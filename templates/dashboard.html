@@ -5804,6 +5804,8 @@ svg:hover .hb-xh{opacity:1}
               <div class="c"><select id="as-briefing-level" onchange="saveMorningBrief()" aria-label="Briefing level"><option value="calm">Calm</option><option value="normal">Normal</option><option value="all">Everything</option></select></div></div>
             <div class="ac-row" id="as-autodraft-row" hidden><div class="l"><b>Draft next week&rsquo;s schedule for me</b><span>Every Thursday, if you haven&rsquo;t built one. A draft only &mdash; nothing goes to staff until you publish.</span></div>
               <div class="c"><label class="ac-switch"><input type="checkbox" id="as-autodraft" onchange="saveAutoDraft()" aria-label="Draft next week's schedule"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
+            <div class="ac-row" id="as-autopublish-row" hidden><div class="l"><b>Publish it for me on Friday</b><span>Once your last 3 published schedules went out unedited, the Thursday draft goes to staff at 11am Friday &mdash; you&rsquo;re told at 9, and can undo from Home until then. <span id="as-autopublish-trust"></span></span></div>
+              <div class="c"><label class="ac-switch"><input type="checkbox" id="as-autopublish" onchange="saveAutoPublish()" aria-label="Publish the schedule automatically"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
           </div>
           <div class="ac-status" id="as-ops-status" style="margin-top:8px"></div>
         </div>
@@ -5827,6 +5829,8 @@ svg:hover .hb-xh{opacity:1}
               <div class="c"><label class="ac-switch"><input type="checkbox" id="as-auto-enabled" onchange="acctCapMeter()" aria-label="Turn on auto-approve"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
             <div class="ac-row"><div class="l"><b>Include 4-star reviews</b><span>Same ceiling, same rule: anything the analyser flags still waits for you. Never 3 stars or below.</span></div>
               <div class="c"><label class="ac-switch"><input type="checkbox" id="as-auto-4star" onchange="acctCapMeter()" aria-label="Include 4-star reviews"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
+            <div class="ac-row"><div class="l"><b>Extend it as you earn it</b><span>Once you&rsquo;ve approved 10 replies on a star band in 30 days and edited at most 1 in 10, that band goes out on its own too &mdash; 3&#9733; at most, never lower. <span id="as-auto-trust"></span></span></div>
+              <div class="c"><label class="ac-switch"><input type="checkbox" id="as-auto-earned" onchange="acctCapMeter()" aria-label="Extend auto-approve to bands you have earned"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
             <div class="ac-row"><div class="l"><b>Most replies per day</b><span>A ceiling, so a busy weekend can&rsquo;t post fifty replies unread.</span></div>
               <div class="c"><label class="ac-lbl" for="as-auto-cap" style="position:absolute;left:-9999px">Most replies per day</label><input class="ac-input ac-num" type="number" id="as-auto-cap" min="1" max="50" value="5" oninput="acctCapMeter()" style="width:86px;text-align:center"></div></div>
             <div class="ac-row"><div class="l"><b>Pause it for now</b><span>Keeps the rule and the cap; nothing posts until you unpause.</span></div>
@@ -6290,6 +6294,15 @@ function _setAskCavnarLoadingState(bubble, label, state) {
     var h = Math.round(m / 60); if (h < 24) return h + (h === 1 ? ' hour ago' : ' hours ago');
     var d = Math.round(h / 24); return d + (d === 1 ? ' day ago' : ' days ago');
   }
+  function clock(iso) { var t = Date.parse(iso || ''); if (isNaN(t)) return ''; var d = new Date(t), hh = d.getHours(), mm = d.getMinutes(); return ((hh % 12) || 12) + ':' + (mm < 10 ? '0' : '') + mm + (hh < 12 ? 'am' : 'pm'); }
+  feed.addEventListener('click', function (e) {
+    var b = e.target && e.target.closest ? e.target.closest('[data-cancel-action]') : null;
+    if (!b) return;
+    b.disabled = true; b.textContent = 'Undoing\u2026';
+    fetch('/api/actions/' + encodeURIComponent(b.getAttribute('data-cancel-action')) + '/cancel', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: '{}'})
+      .then(function (r) { return r.json(); }).then(function (d) { if (typeof toast === 'function') toast(d && d.ok ? 'Undone \u2014 nothing went out.' : ((d && d.error) || 'Could not undo'), d && d.ok ? 'success' : 'error'); load(); })
+      .catch(function () { b.disabled = false; b.textContent = 'Undo'; });
+  });
   function seenAt() { try { return localStorage.getItem('ai-feed-seen') || ''; } catch (e) { return ''; } }
   function markSeen() { try { if (data && data.generated_at) localStorage.setItem('ai-feed-seen', data.generated_at); } catch (e) {} }
   function keyOf(e) { return (e.at || '') + '|' + e.text; }
@@ -6318,6 +6331,8 @@ function _setAskCavnarLoadingState(bubble, label, state) {
       h += '<div class="sec">Recently</div>';
       for (var j = 0; j < es.length; j++) { var e = es[j], fresh = !seenKeys[keyOf(e)] && seenKeys._primed; h += '<div class="it' + (fresh ? ' in' : '') + '"><span class="d"></span><span class="t">' + nums(e.text) + '<span class="ago">' + esc(ago(e.at)) + '</span></span></div>'; }
     }
+    var qd = data.queued || [];
+    if (qd.length) { h += '<div class="sec">About to happen</div>'; for (var q = 0; q < qd.length; q++) h += '<div class="it now"><span class="d"></span><span class="t">' + nums(qd[q].text) + '<span class="ago">at ' + esc(clock(qd[q].execute_at)) + '</span></span><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-cancel-action="' + esc(qd[q].id) + '">Undo</button></div>'; }
     if (mem.length) { h += '<div class="sec">Still holding</div>'; for (var k = 0; k < mem.length; k++) h += '<div class="it mem"><span class="d"></span><span class="t">' + nums(mem[k].text) + '</span></div>'; }
     if (!w.length && !es.length && !mem.length) h += '<div class="empty">Nothing to show yet. Once data is flowing, everything Cavnar AI does for this restaurant is listed here as it happens.</div>';
     h += '<div class="ft">Every line is something that actually ran, with its time. Nothing here is generated to fill space.</div>';
@@ -11731,6 +11746,15 @@ function loadAccountSettings() {
     document.getElementById('as-auto-cap').value = a.daily_cap || 5;
     document.getElementById('as-auto-paused').checked = !!a.paused;
     var a4 = document.getElementById('as-auto-4star'); if (a4) a4.checked = !!a.include_4star;
+    var ae = document.getElementById('as-auto-earned'); if (ae) ae.checked = !!a.earned;
+    var at = document.getElementById('as-auto-trust');
+    if (at) {
+      // The owner's own record per band, from the server — never a guess.
+      var t = a.trust || {}, parts = [];
+      for (var st = 5; st >= 3; st--) { var b = t[String(st)]; if (!b) continue;
+        parts.push(st + '\u2605: ' + (b.trusted ? 'earned' : (b.needed > 0 ? (b.needed + ' more to go') : ('edited ' + Math.round((b.edit_rate || 0) * 100) + '%')))); }
+      at.textContent = parts.length ? ('Your record \u2014 ' + parts.join(' \u00b7 ') + '.') : '';
+    }
 
     var h = d.hours || {};
     buildAccountHoursGrid(h.open || {}, h.close || {});
@@ -11792,6 +11816,7 @@ function loadOpsSettings() {
     var row = document.getElementById('as-autodraft-row');
     if (row && !d.external_tool) row.hidden = false;
     document.getElementById('as-autodraft').checked = !!d.enabled;
+    if (!d.external_tool) loadAutoPublish();
   }).catch(function() {});
 }
 
@@ -11837,6 +11862,19 @@ function saveAutoDraft() {
   asPost('/api/labor/auto-draft', {enabled: document.getElementById('as-autodraft').checked},
          'as-ops-status', 'Saved');
 }
+function saveAutoPublish() {
+  asPost('/api/labor/auto-publish', {enabled: document.getElementById('as-autopublish').checked},
+         'as-ops-status', 'Saved').then(function() { loadAutoPublish(); });
+}
+function loadAutoPublish() {
+  fetch('/api/labor/auto-publish', {credentials: 'same-origin'}).then(function(r) { return r.json(); }).then(function(d) {
+    if (!d || !d.ok) return;
+    var row = document.getElementById('as-autopublish-row'); if (row) row.hidden = false;
+    document.getElementById('as-autopublish').checked = !!d.enabled;
+    var t = document.getElementById('as-autopublish-trust');
+    if (t) t.textContent = d.armed ? 'Armed \u2014 ' + d.trust + ' unedited in a row.' : ('Your record: ' + d.trust + ' of ' + d.needed + ' unedited in a row.');
+  }).catch(function() {});
+}
 
 function asPost(url, body, statusId, okMsg) {
   return fetch(url, {
@@ -11876,7 +11914,8 @@ function saveAutoApprove() {
     enabled: document.getElementById('as-auto-enabled').checked,
     daily_cap: parseInt(document.getElementById('as-auto-cap').value, 10) || 5,
     paused: document.getElementById('as-auto-paused').checked,
-    include_4star: !!(document.getElementById('as-auto-4star') || {}).checked
+    include_4star: !!(document.getElementById('as-auto-4star') || {}).checked,
+    earned: !!(document.getElementById('as-auto-earned') || {}).checked
   }, 'as-auto-status', 'Saved').then(function() { loadAccountSettings(); });
 }
 

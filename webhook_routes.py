@@ -384,6 +384,30 @@ def stripe_webhook():
                     if granted else "none in metadata — entitlement left as it was, set it in admin")
             )
         else:
+            # Nothing matched: do what the admin form would do, from the
+            # fields the session carries, and tell Will what happened rather
+            # than what to do (provisioning.py). Falls through to the old
+            # alert when it would have to guess.
+            _new = None
+            try:
+                import provisioning
+                _new = provisioning.provision_from_checkout(sess)
+            except Exception as _pe:
+                print(f"checkout provisioning failed: {_pe}")
+            if _new:
+                _granted = _apply_module_entitlement(_new, meta.get("module_keys", ""))
+                send_alert(
+                    f"✅ Provisioned from checkout — {meta.get('restaurant') or email}",
+                    f"""No restaurant matched this checkout, so one was created from it.<br><br>
+                    <strong>Restaurant id:</strong> {_new}<br>
+                    <strong>Owner:</strong> {email}<br>
+                    <strong>Stripe customer:</strong> {customer_id or '(none)'}<br>
+                    <strong>Modules:</strong> {', '.join(sorted(k.replace('module_', '') for k, v in (_granted or {}).items() if v)) or 'reviews'}<br><br>
+                    The welcome email with a temporary password went to the owner. Add the Google
+                    Place ID and the contract at
+                    <a href="https://dashboard.cavnar.ai/admin">dashboard.cavnar.ai/admin</a>."""
+                )
+                return jsonify(ok=True, provisioned=_new), 200
             send_alert(
                 "⚠ Checkout completed but no restaurant matched",
                 f"""A checkout completed and could not be reconciled.<br><br>

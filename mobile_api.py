@@ -4193,6 +4193,7 @@ def _do_mobile_account(current_user):
     from models import count_auto_approved_today
     reviews_block = {
         "auto_approve_5star": bool(getattr(restaurant, "auto_approve_5star", 0)),
+        "auto_approve_earned": bool(getattr(restaurant, "auto_approve_earned", 0)),
         "auto_approve_daily_cap": int(getattr(restaurant, "auto_approve_daily_cap", 5) or 0),
         "auto_approve_paused": bool(getattr(restaurant, "auto_approve_paused", 0)),
         "auto_approved_today": count_auto_approved_today(rid),

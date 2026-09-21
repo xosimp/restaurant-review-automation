@@ -2573,7 +2573,7 @@ def test_account_payload_includes_new_blocks(client, db_path):
     rid = _restaurant(db_path)
     token = _login(client, db_path, rid)
     data = client.get("/mobile/api/account", headers=_auth_headers(token)).get_json()
-    assert data["reviews"] == {"auto_approve_5star": False, "auto_approve_daily_cap": 5,
+    assert data["reviews"] == {"auto_approve_5star": False, "auto_approve_earned": False, "auto_approve_daily_cap": 5,
                                "auto_approve_paused": False, "auto_approved_today": 0}
     assert data["data"] == {"data_retention_months": 0}
     s = data["alerts"]["settings"]

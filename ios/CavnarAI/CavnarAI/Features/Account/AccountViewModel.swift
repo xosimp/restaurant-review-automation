@@ -1339,17 +1339,18 @@ final class AccountViewModel {
         let enabled: Bool
         let paused: Bool
         let dailyCap: Int
-        enum CodingKeys: String, CodingKey { case enabled, paused; case dailyCap = "daily_cap" }
+        let earned: Bool
+        enum CodingKeys: String, CodingKey { case enabled, paused, earned; case dailyCap = "daily_cap" }
     }
     var isSavingAutoApprove = false
     var autoApproveError: String?
 
-    func saveAutoApprove(enabled: Bool, paused: Bool, dailyCap: Int) async -> Bool {
+    func saveAutoApprove(enabled: Bool, paused: Bool, dailyCap: Int, earned: Bool = false) async -> Bool {
         isSavingAutoApprove = true; autoApproveError = nil
         defer { isSavingAutoApprove = false }
         do {
             let response: OKErrorResponse = try await client.send("/mobile/api/account/auto-approve", method: .post,
-                                                                   body: AutoApproveBody(enabled: enabled, paused: paused, dailyCap: dailyCap))
+                                                                   body: AutoApproveBody(enabled: enabled, paused: paused, dailyCap: dailyCap, earned: earned))
             if response.ok { await load(); return true }
             autoApproveError = response.error ?? "Couldn't save that."
         } catch let error as APIClient.APIError {

@@ -358,12 +358,24 @@ def run_coverage_check(db_path=DB_PATH):
             continue
         try:
             gaps = intraday.coverage_gaps(r.id, now_local=local, db_path=db_path, restaurant=r)
+            # Everyone on today's schedule is busy; the person missing is the
+            # gap. Best fits come from the same engine as the replacements
+            # screen, folded into the text the manager actually reads.
+            on_today = {str(x.get("employee") or "") for x in (gaps.get("scheduled") or [])}
             for m in (gaps.get("missing") or []):
+                fits_text = ""
+                try:
+                    import labor_replacements
+                    fits = labor_replacements.for_gap(r.id, m.get("role"), local.strftime("%A"),
+                                                      exclude=on_today | {m["employee"]}, db_path=db_path)
+                    fits_text = labor_replacements.sentence(fits)
+                except Exception as fe:
+                    ops.capture(fe, job="coverage_replacements", context=f"restaurant_id={r.id}")
                 issue, token = issues.create_issue(
                     r.id, "coverage",
                     f"{m['employee']} hasn't clocked in",
                     detail=f"Scheduled {m['shift_start']} as {m['role']} — "
-                           f"{m['minutes_late']} minutes ago, with no clock-in on the POS.",
+                           f"{m['minutes_late']} minutes ago, with no clock-in on the POS." + fits_text,
                     severity="high",
                     source_key=f"coverage:{local.date().isoformat()}:{m['employee'].lower()}",
                     db_path=db_path)

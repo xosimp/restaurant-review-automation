@@ -2024,6 +2024,56 @@ def run_quarterly_summaries():
     return {"sent": sent, "skipped": skipped, "failed": failed}
 
 
+def run_auto_publish_schedules():
+    """Friday, 9am local: queue the Thursday draft to go to staff at 11am,
+    with the two hours as the undo window — for owners who turned it on AND
+    whose last SCHEDULE_PUBLISH_TRUST_MIN published schedules went out
+    unedited. The draft must be this coming week's, untouched, and not yet
+    shared. Nothing is sent here; delayed.run_due sends it, and the owner
+    is told now so "undo" is a real choice."""
+    import delayed
+    from models import get_all_restaurants, get_conn, schedule_publish_trust, SCHEDULE_PUBLISH_TRUST_MIN
+    from time_utils import restaurant_now
+    queued = skipped = 0
+    for r in get_all_restaurants():
+        if not getattr(r, "auto_publish_schedule", 0) or not getattr(r, "module_labor", 0):
+            continue
+        if (getattr(r, "billing_status", "") or "trial") not in ("trial", "active"):
+            continue
+        local = restaurant_now(r, naive=True)
+        if local.weekday() != 4 or not local_due(r, 9, claim_key="auto_publish_schedule"):
+            skipped += 1
+            continue
+        if schedule_publish_trust(r.id) < SCHEDULE_PUBLISH_TRUST_MIN:
+            skipped += 1
+            continue
+        conn = get_conn()
+        try:
+            row = conn.execute(
+                "SELECT h.id, h.week_start FROM schedule_history h WHERE h.restaurant_id=? "
+                "AND h.week_start > ? AND h.edited_at IS NULL AND (h.schedule_csv IS NOT NULL AND h.schedule_csv != '') "
+                "AND NOT EXISTS (SELECT 1 FROM schedule_shares s WHERE s.schedule_id=h.id) "
+                "ORDER BY h.id DESC LIMIT 1", (r.id, local.date().isoformat())).fetchone()
+        finally:
+            conn.close()
+        if not row:
+            skipped += 1
+            continue
+        try:
+            action = delayed.schedule(r.id, "schedule_publish", {"schedule_id": row["id"]}, 120,
+                                      label=f"Publishing the week of {row['week_start']} to staff")
+            from strategy_jobs import _reach
+            _reach(r.id, "schedule_publish_pending",
+                   f"Next week's schedule goes to staff at 11am",
+                   f"The week of {row['week_start']} is unchanged from the draft. Undo from Home before then if you'd rather look first.",
+                   {"delayed_action_id": action["id"]}, DB_PATH,
+                   subject=f"Publishing next week's schedule at 11am — {r.name}")
+            queued += 1
+        except Exception as e:
+            _ops.capture(e, job="auto_publish_schedule", context=f"restaurant_id={r.id}")
+    return {"queued": queued, "skipped": skipped}
+
+
 def run_restore_drill():
     """Restore the newest snapshot into a scratch file and prove it.
 
@@ -2213,6 +2263,11 @@ def scheduler_loop():
                 from strategy_jobs import run_auto_draft_schedules
                 _ops.run_job("auto_draft_schedule", run_auto_draft_schedules)
 
+            # Friday 9am local, per restaurant — queue the unedited draft
+            # to publish at 11am with an undo window (run_auto_publish_schedules).
+            if now.weekday() == 4 and _ops.claim_period("auto_publish_schedule", f"{today}-{now.hour}"):
+                _ops.run_job("auto_publish_schedule", run_auto_publish_schedules)
+
             if _due(now, 4) and _ops.claim_period("marketing_metrics_sync", str(today)):
                 log.info("Running marketing metrics sync...")
                 _ops.run_job("marketing_metrics_sync", run_marketing_metrics_sync)
@@ -2338,6 +2393,16 @@ def scheduler_loop():
             except Exception as e:
                 _ops.capture(e, job="morning_brief")
 
+            # Every tick — run any delayed action whose undo window has
+            # closed (delayed.py: auto-publish, trusted-supplier send).
+            try:
+                import delayed as _delayed
+                _dl = _delayed.run_due()
+                if _dl.get("ran") or _dl.get("failed"):
+                    log.info(f"Delayed actions: {_dl}")
+            except Exception as e:
+                _ops.capture(e, job="delayed_actions")
+
             # Every tick — publish anything whose scheduled slot has arrived.
             # This is why the loop no longer sleeps for an hour: a post the
             # owner set for 11am should go out at 11am, not at 11:59.
@@ -2423,6 +2488,16 @@ def auto_approve_five_stars(rid: int, restaurant) -> int:
     # 4-star joins the rule only when the owner turned it on. Same cap, same
     # urgency and needs-review gates; negative reviews never go here.
     ratings = (4, 5) if getattr(restaurant, "auto_approve_4star", 0) else (5,)
+    # Earned: any band (3-5 only — auto_approve_trust never returns a
+    # negative band) where the owner's own edit rate says the drafts go out
+    # unchanged anyway. Measured, not assumed; re-measured every run.
+    if getattr(restaurant, "auto_approve_earned", 0):
+        try:
+            from models import auto_approve_trust
+            earned = tuple(star for star, t in auto_approve_trust(rid).items() if t["trusted"])
+            ratings = tuple(sorted(set(ratings) | set(earned)))
+        except Exception as te:
+            log.warning(f"auto-approve trust unavailable for rid={rid}: {te}")
     for candidate in auto_approve_candidates(rid, ratings=ratings):
         if cap and done_today + approved >= cap:
             break

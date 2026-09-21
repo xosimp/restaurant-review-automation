@@ -188,7 +188,11 @@ struct AutoApproveSettings: Decodable {
     let dailyCap: Int
     let paused: Bool
     let approvedToday: Int
+    /// Extend the rule to 3★/4★ once the owner's own edit rate has earned
+    /// it — measured server-side, never lower than 3★.
+    let earned: Bool?
     enum CodingKeys: String, CodingKey {
+        case earned = "auto_approve_earned"
         case enabled = "auto_approve_5star"
         case dailyCap = "auto_approve_daily_cap"
         case paused = "auto_approve_paused"

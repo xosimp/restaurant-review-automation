@@ -284,13 +284,26 @@ def acknowledge(token, db_path=DB_PATH):
 def _resolve(restaurant_id, issue_id, note, db_path):
     conn = get_conn(db_path)
     try:
-        conn.execute(
+        cur = conn.execute(
             "UPDATE ops_issues SET status='resolved', resolved_at=?, resolution_note=?, "
             "acknowledged_at=COALESCE(acknowledged_at, ?) WHERE id=? AND restaurant_id=? "
             "AND status!='resolved'", (_now(), (note or "")[:1000] or None, _now(), issue_id, restaurant_id))
         conn.commit()
+        changed = cur.rowcount == 1
+        row = conn.execute("SELECT source_key FROM ops_issues WHERE id=?", (issue_id,)).fetchone()
     finally:
         conn.close()
+    # Resolving the issue answers the recommendation that raised it. Before
+    # this, a fixed problem stayed on Home as "worth your time" until the
+    # owner also pressed Done there — two clicks for one fact. Coverage and
+    # loss keys are operational, not recommendations; they have no card.
+    key = (row["source_key"] if row else None) or ""
+    if changed and key and not key.startswith(("coverage:", "loss:", "signal:")):
+        try:
+            import home_brief
+            home_brief.dismiss(restaurant_id, key, kind="done")
+        except Exception:
+            pass
 
 
 def resolve_by_token(token, note=None, db_path=DB_PATH):

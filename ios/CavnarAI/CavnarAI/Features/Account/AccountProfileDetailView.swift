@@ -29,6 +29,7 @@ struct AccountProfileDetailView: View {
     @State private var autoApproveEnabled: Bool
     @State private var autoApprovePaused: Bool
     @State private var autoApproveCap: Int
+    @State private var autoApproveEarned: Bool
 
     private enum Field: Hashable { case ownerName, ownerPhone, voiceNotes, neverSay, menuNotes, signOff }
 
@@ -67,6 +68,7 @@ struct AccountProfileDetailView: View {
         _autoApproveEnabled = State(initialValue: auto?.enabled ?? false)
         _autoApprovePaused = State(initialValue: auto?.paused ?? false)
         _autoApproveCap = State(initialValue: auto?.dailyCap ?? 5)
+        _autoApproveEarned = State(initialValue: auto?.earned ?? false)
     }
 
     private var isOwner: Bool { sessionStore.currentUser?.isOwner == true }
@@ -342,7 +344,7 @@ struct AccountProfileDetailView: View {
     // visibly, same as 2FA's own Turn on/off.
     private func saveAutoApprove() {
         Task {
-            if await viewModel.saveAutoApprove(enabled: autoApproveEnabled, paused: autoApprovePaused, dailyCap: autoApproveCap) {
+            if await viewModel.saveAutoApprove(enabled: autoApproveEnabled, paused: autoApprovePaused, dailyCap: autoApproveCap, earned: autoApproveEarned) {
                 Haptic.success()
             }
         }
@@ -365,6 +367,17 @@ struct AccountProfileDetailView: View {
                     }
                     .tint(Color.cavnarEmber)
                 }
+                AccountSwitchRow(
+                    label: "Extend it as you earn it",
+                    isOn: Binding(get: { autoApproveEarned }, set: { on in autoApproveEarned = on; saveAutoApprove() }),
+                    busy: viewModel.isSavingAutoApprove,
+                    showsDivider: true
+                )
+                Text("Once you've approved 10 replies on a star band in 30 days and edited at most 1 in 10, that band goes out on its own too — 3★ at most, never lower.")
+                    .font(.cavnarBody(13.5))
+                    .foregroundStyle(Color.cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.bottom, 6)
                 AccountSwitchRow(
                     label: "Paused",
                     isOn: Binding(get: { autoApprovePaused }, set: { paused in autoApprovePaused = paused; saveAutoApprove() }),

@@ -56,7 +56,12 @@ def test_auto_approve_is_visible_and_settable_from_the_web(client, db_path, monk
     shown = client.get("/api/account-settings").get_json()
     # include_4star joined the rule in the retention work: 4-star under the
     # same cap and the same urgency gate, off unless the rule itself is on.
-    assert shown["auto_approve"] == {"enabled": False, "include_4star": False, "daily_cap": 5, "paused": False}
+    aa = shown["auto_approve"]
+    assert {k: aa[k] for k in ("enabled", "include_4star", "earned", "daily_cap", "paused")} == \
+        {"enabled": False, "include_4star": False, "earned": False, "daily_cap": 5, "paused": False}
+    # The owner's own record per band rides along (the automation audit's
+    # graduated trust) — never a band below 3★.
+    assert set(aa["trust"]) == {"3", "4", "5"}
 
     resp = client.post("/api/account-settings/auto-approve",
                        json={"enabled": True, "daily_cap": 12, "paused": False})

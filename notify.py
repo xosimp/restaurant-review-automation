@@ -237,7 +237,7 @@ ALERT_TAB = {
     "5star": "reviews", "any_review": "reviews", "neg_spike": "reviews",
     "edit_downgrade": "reviews", "resp_approved": "reviews", "unresponded": "reviews",
     "no_response": "reviews", "negative_trend": "reviews", "rating_threshold": "reviews",
-    "labor_over": "labor", "schedule_drafted": "labor", "coverage": "labor",
+    "labor_over": "labor", "schedule_drafted": "labor", "coverage": "labor", "schedule_publish_pending": "labor",
     "food_waste": "inventory", "critical_low": "inventory", "price_spike": "inventory",
     "ai_visibility_drop": "competitor",
     "login": "account", "staff_signin": "account", "connection_lost": "account",
@@ -253,8 +253,37 @@ ALERT_TAB = {
 # three levels, enforced at every briefing send.
 BRIEFING_ALWAYS = frozenset({"morning_brief", "outcome_achieved", "milestone", "while_away",
                              "connection_lost", "monthly_review"})
-BRIEFING_CALM = BRIEFING_ALWAYS | {"closing_summary", "schedule_drafted"}
+BRIEFING_CALM = BRIEFING_ALWAYS | {"closing_summary", "schedule_drafted", "schedule_publish_pending"}
 BRIEFING_NORMAL_PER_DAY = 4
+
+
+# ── thresholds from the restaurant's own band ────────────────────────────────
+# A 4.0★ floor and a 30% labor target were the defaults for every
+# restaurant, so a 4.7★ place never heard about a slide to 4.2 and a 24%
+# operation was "under target" all the way to 29%. When the owner has not
+# set one, the default is derived from their own last eight weeks; the
+# owner's explicit setting always wins.
+
+def baseline_rating_floor(restaurant_id, db_path=DB_PATH):
+    try:
+        import metrics
+        v = metrics.trailing(restaurant_id, "avg_rating", days=56, db_path=db_path)["value"]
+        if v is None:
+            return None
+        return round(min(4.8, max(3.0, float(v) - 0.2)), 1)
+    except Exception:
+        return None
+
+
+def baseline_labor_target(restaurant_id, db_path=DB_PATH):
+    try:
+        import metrics
+        v = metrics.trailing(restaurant_id, "labor_pct", days=56, db_path=db_path)["value"]
+        if v is None:
+            return None
+        return round(min(45.0, max(15.0, float(v) + 2.0)), 1)
+    except Exception:
+        return None
 
 
 def briefing_allowed(restaurant_id: int, alert_type: str, db_path: str = DB_PATH) -> bool:
@@ -1898,7 +1927,7 @@ def check_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
         # ── Rating drops below threshold ───────────────────────
         if r["alert_rating_threshold"] and not _already_alerted("rating_threshold"):
             gbp_rating = r["gbp_rating"]
-            floor      = r["alert_rating_floor"] or 4.0
+            floor      = r["alert_rating_floor"] or baseline_rating_floor(rid, db_path) or 4.0
             if gbp_rating is not None and gbp_rating < floor:
                 sms  = (
                     f"⚠️ {name}: Google rating dropped to {gbp_rating:.1f}★ "
@@ -1931,7 +1960,7 @@ def check_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
             c2.close()
             if recent and recent["labor_pct"] is not None:
                 actual = recent["labor_pct"]
-                target = r["labor_target_pct"] or 30.0
+                target = r["labor_target_pct"] or baseline_labor_target(rid, db_path) or 30.0
                 if actual > target:
                     over_by = round(actual - target, 1)
                     _period_label = _short_period(recent["period_start"], recent["period_end"])

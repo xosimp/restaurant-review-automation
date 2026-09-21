@@ -21,18 +21,28 @@ struct AIActivity: Decodable {
         var id: String { (at ?? "") + "|" + text }
     }
     struct LastRun: Decodable { let job: String?; let at: String? }
+    /// Something the product is about to do on its own — the undo window
+    /// (delayed.py). Cancel is a status change; nothing has gone out.
+    struct Queued: Decodable, Identifiable {
+        let id: Int
+        let kind: String?
+        let text: String
+        let executeAt: String?
+        enum CodingKeys: String, CodingKey { case id, kind, text; case executeAt = "execute_at" }
+    }
     let ok: Bool
     let working: [Line]?
     let entries: [Line]?
     let memory: [Line]?
+    let queued: [Queued]?
     let lastRun: LastRun?
     let generatedAt: String?
     enum CodingKeys: String, CodingKey {
-        case ok, working, entries, memory
+        case ok, working, entries, memory, queued
         case lastRun = "last_run"
         case generatedAt = "generated_at"
     }
-    var isEmpty: Bool { (working ?? []).isEmpty && (entries ?? []).isEmpty && (memory ?? []).isEmpty }
+    var isEmpty: Bool { (working ?? []).isEmpty && (entries ?? []).isEmpty && (memory ?? []).isEmpty && (queued ?? []).isEmpty }
 }
 
 @Observable
@@ -51,8 +61,24 @@ final class AIActivityViewModel {
     }
 
     var currentLine: String? {
+        // Something queued to happen outranks the ambient line: the owner
+        // should see "Publishing the schedule at 11am" before anything else.
+        if let q = activity?.queued?.first { return q.text }
         guard let w = activity?.working, !w.isEmpty else { return nil }
         return w[index % w.count].text
+    }
+
+    private struct OK: Decodable { let ok: Bool; let error: String? }
+
+    /// The undo. Returns the server's sentence on failure.
+    func cancel(_ q: AIActivity.Queued) async -> String? {
+        do {
+            let r: OK = try await APIClient.shared.send("/mobile/api/actions/\(q.id)/cancel", method: .post,
+                                                        body: [String: String]())
+            if r.ok { await load(force: true); return nil }
+            return r.error ?? "That already went out."
+        } catch let e as APIClient.APIError { return e.message }
+        catch { return "Couldn\u{2019}t reach Cavnar AI." }
     }
 
     func advance() {
@@ -132,12 +158,40 @@ struct BreathingDot: View {
 struct AIActivityFeedSheet: View {
     let viewModel: AIActivityViewModel
     @Environment(\.dismiss) private var dismiss
+    @State private var undoError: String?
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     if let a = viewModel.activity, !a.isEmpty {
+                        if let q = a.queued, !q.isEmpty {
+                            section("About to happen") {
+                                ForEach(q) { item in
+                                    HStack(alignment: .top, spacing: 10) {
+                                        BreathingDot(color: .cavnarEmber).padding(.top, 2)
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            HomeMixedText.make(item.text, size: 14.5, weight: 600, color: .cavnarInk)
+                                            if let at = item.executeAt, let when = Self.clock(at) {
+                                                Text("at \(when)").font(.cavnarBody(12)).foregroundStyle(Color.cavnarInk3)
+                                            }
+                                        }
+                                        Spacer(minLength: 0)
+                                        Button {
+                                            Haptic.light()
+                                            Task { if let err = await viewModel.cancel(item) { undoError = err } else { Haptic.success() } }
+                                        } label: {
+                                            Text("Undo").font(.cavnarBody(13, weight: 700)).foregroundStyle(Color.cavnarEmber2)
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                    .padding(.vertical, 8)
+                                }
+                                if let undoError {
+                                    Text(undoError).font(.cavnarBody(13)).foregroundStyle(Color.cavnarRed)
+                                }
+                            }
+                        }
                         if let w = a.working, !w.isEmpty {
                             section("Right now") {
                                 ForEach(w) { line in row(line.text, tone: .cavnarEmber, breathing: true, ago: nil) }
@@ -205,6 +259,13 @@ struct AIActivityFeedSheet: View {
             Spacer(minLength: 0)
         }
         .padding(.vertical, 8)
+    }
+
+    /// "11:00am" in the viewer's clock from an ISO-8601 UTC stamp.
+    static func clock(_ iso: String) -> String? {
+        guard let t = ISO8601DateFormatter().date(from: iso) else { return nil }
+        let f = DateFormatter(); f.dateFormat = "h:mma"; f.amSymbol = "am"; f.pmSymbol = "pm"
+        return f.string(from: t)
     }
 
     /// "12 min ago" from an ISO-8601 UTC stamp.

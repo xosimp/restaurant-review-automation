@@ -434,6 +434,40 @@ def _do_auto_draft_set(u):
     return _do_auto_draft_get(u)
 
 
+def _do_auto_publish_get(u):
+    from models import get_restaurant, schedule_publish_trust, SCHEDULE_PUBLISH_TRUST_MIN
+    r = get_restaurant(_rid(u))
+    trust = schedule_publish_trust(_rid(u))
+    return {"ok": True, "enabled": bool(getattr(r, "auto_publish_schedule", 0)),
+            "trust": trust, "needed": SCHEDULE_PUBLISH_TRUST_MIN,
+            "armed": bool(getattr(r, "auto_publish_schedule", 0)) and trust >= SCHEDULE_PUBLISH_TRUST_MIN}, 200
+
+
+def _do_auto_publish_set(u):
+    from models import update_restaurant
+    from client_api import log_account_event
+    b = _body()
+    if "enabled" not in b:
+        return {"ok": False, "error": "Nothing to change."}, 400
+    update_restaurant(_rid(u), {"auto_publish_schedule": 1 if b["enabled"] else 0})
+    log_account_event(_rid(u), "auto_publish_changed", current_user=u, detail="on" if b["enabled"] else "off")
+    return _do_auto_publish_get(u)
+
+
+def _do_delayed_pending(u):
+    import delayed
+    return {"ok": True, "actions": delayed.pending(_rid(u))}, 200
+
+
+def _do_delayed_cancel(u, action_id):
+    import delayed
+    from client_api import log_account_event
+    ok = delayed.cancel(_rid(u), int(action_id), actor=u)
+    if ok:
+        log_account_event(_rid(u), "delayed_action_cancelled", current_user=u, detail=f"#{action_id}")
+    return ({"ok": True} if ok else {"ok": False, "error": "That already went out, or was already undone."}), (200 if ok else 409)
+
+
 # ── principal-only ────────────────────────────────────────────────────────────
 
 def _loss_viewer(u):
@@ -811,6 +845,10 @@ _ROUTES = [
     ("/milestones", ["GET"], _do_milestones, "milestones_list"),
     ("/monthly-review", ["GET"], _do_monthly_review, "monthly_review"),
     ("/activity", ["GET"], _do_activity, "activity"),
+    ("/labor/auto-publish", ["GET"], _do_auto_publish_get, "auto_publish_get"),
+    ("/labor/auto-publish", ["POST"], _do_auto_publish_set, "auto_publish_set"),
+    ("/actions/pending", ["GET"], _do_delayed_pending, "delayed_pending"),
+    ("/actions/<int:action_id>/cancel", ["POST"], _do_delayed_cancel, "delayed_cancel"),
     ("/account/pause", ["GET"], _do_pause_status, "pause_status"),
     ("/account/pause", ["POST"], _do_pause, "pause"),
     ("/account/resume", ["POST"], _do_resume, "resume"),
