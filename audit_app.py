@@ -18,6 +18,7 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
 from reportlab.platypus import Flowable
 import resend
+import pricing as _pricing   # the one price list; the PDF used to hardcode launch prices
 
 from dotenv import load_dotenv
 
@@ -346,13 +347,13 @@ def generate_pdf(data):
     ],[
         Paragraph("Starter Module (1 system)", sCellBold),
         Paragraph(data.get("saving_starter","$_____"), sCellBody),
-        Paragraph("$500", sCellBody),
-        Paragraph("$300/mo", sCellBody),
+        Paragraph(f"${_pricing.STARTER['setup']:,}", sCellBody),
+        Paragraph(f"${_pricing.STARTER['monthly']:,}/mo", sCellBody),
     ],[
         Paragraph("Full System (all 4 modules)", sCellBoldW),
         Paragraph(data.get("saving_full","$_____"), sCellBodyW),
-        Paragraph("$2,000", sCellBodyW),
-        Paragraph("$1,500/mo", sCellBodyW),
+        Paragraph(f"${_pricing.FULL['setup']:,}", sCellBodyW),
+        Paragraph(f"${_pricing.FULL['monthly']:,}/mo", sCellBodyW),
     ]]
     rt = Table(rec_data, colWidths=[fw*0.36, fw*0.22, fw*0.20, fw*0.22])
     rt.setStyle(TableStyle([

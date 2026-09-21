@@ -315,17 +315,9 @@ def admin_required(f):
 # ── Data helpers ──────────────────────────────────────────────────────────────
 
 
-TIER_PRICES = {
-    "trial":             {"setup": None,     "retainer": None},
-    "starter_reviews":   {"setup": "$500",   "retainer": "$300/mo"},
-    "starter_labor":     {"setup": "$500",   "retainer": "$300/mo"},
-    "starter_inventory": {"setup": "$500",   "retainer": "$300/mo"},
-    "starter_marketing": {"setup": "$500",   "retainer": "$300/mo"},
-    "full":              {"setup": "$2,000", "retainer": "$1,500/mo"},
-}
-
-
-# create_stripe_checkout lives in emails.py (single copy, prices from pricing.py).
+# Prices live in pricing.py (single copy); create_stripe_checkout in emails.py
+# reads them from there. A stale TIER_PRICES dict with the launch prices sat
+# here unreferenced for four months.
 @app.route("/sitemap.xml")
 def sitemap():
     from flask import Response
