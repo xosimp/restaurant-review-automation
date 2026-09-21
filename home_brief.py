@@ -323,6 +323,15 @@ def invalidate(rid=None):
         _CACHE.pop(k, None)
 
 
+def _confidence_for(rid, key, metric, restaurant):
+    try:
+        import intelligence
+        c = intelligence.confidence_for(rid, str(key).split(":", 1)[0], metric=metric, restaurant=restaurant)
+        return {"score": c["score"], "band": c["band"], "caution": c["caution"]}
+    except Exception:
+        return None
+
+
 def _build(current_user):
     from models import get_review_stats, get_active_modules, get_sentiment_trend, get_top_issues, get_labor_history, is_in_quiet_hours
     from time_utils import restaurant_now
@@ -480,7 +489,14 @@ def _build(current_user):
         """
         recs.append({"key": key, "title": title, "why": why, "evidence": evidence, "impact": impact, "module": module,
                      "timeframe": timeframe, "strength": strength, "metric": metric,
-                     "action_label": action_label or "Open " + {"inventory": "Food Cost"}.get(module, module.title())})
+                     "action_label": action_label or "Open " + {"inventory": "Food Cost"}.get(module, module.title()),
+                     # The intelligence engine's confidence in THIS recommendation
+                     # for THIS restaurant (INTELLIGENCE_ENGINE.md): its own
+                     # record with this kind, what held across similar
+                     # restaurants, data completeness, recent changes. Old
+                     # clients ignore the field; low confidence is rendered as
+                     # a caution, never hidden.
+                     "confidence": _confidence_for(rid, key, metric, restaurant)})
 
     def add_change(text, tone, module, at=None):
         changes.append({"text": text, "tone": tone, "module": module, "at": at})

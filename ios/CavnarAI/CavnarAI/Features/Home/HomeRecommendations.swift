@@ -57,6 +57,14 @@ struct HomeRecommendations: View {
                     if let evidence = rec.evidence ?? rec.why {
                         HomeMixedText.make(evidence, size: 12.5, weight: 500, color: .cavnarInk3)
                     }
+                    // Low confidence is said, not hidden: the engine's own
+                    // caution sentence, in the accent so it reads as a caveat.
+                    if let c = rec.confidence, c.band == "low", let caution = c.caution {
+                        Text(caution)
+                            .font(.cavnarBody(12.5, weight: 500))
+                            .foregroundStyle(Color.cavnarEmber2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                     HStack(spacing: 14) {
                         if rec.metric != nil {
                             Button {

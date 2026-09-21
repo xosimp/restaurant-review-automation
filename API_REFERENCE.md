@@ -87,3 +87,11 @@ grep -n "'/mobile/api/labor" mobile_api.py      # mobile handler
 grep -n '"/api/labor' client_api.py             # web equivalent, if any (often `_m(...)`)
 grep -n "def mobile_labor_" mobile_api.py        # by handler name pattern
 ```
+
+## Intelligence engine
+
+- `GET /admin/api/intelligence` (admin) — the Intelligence page payload.
+- Home brief recommendations carry `confidence: {score, band, caution}`.
+- Ask tools `read_restaurant_memory`, `read_platform_intelligence`.
+- `POST /mobile/api/account/update-profile` and `POST /admin/api/brand/<id>`
+  accept `category` (taxonomy in `intelligence/categories.py`).

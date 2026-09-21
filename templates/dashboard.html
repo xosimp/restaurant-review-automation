@@ -2234,6 +2234,7 @@ svg:hover .hb-xh{opacity:1}
       var trk=r.metric?'<button type="button" class="cbtn cbtn-secondary cbtn-sm" title="Take a baseline now and measure this in a few weeks" data-track-key="'+esc(r.key)+'" data-track-title="'+esc(r.title)+'" data-track-metric="'+esc(r.metric)+'">Track this</button>':'';
       h+='<div class="hb-card hb-rec hb-rise'+(isNew?' new':'')+'" style="--i:'+j+'"><div class="top"><span class="no">0'+(j+1+(skip||0))+'</span><button type="button" class="hb-x" title="Hide for two weeks" aria-label="Hide" data-dismiss-key="'+esc(r.key)+'" data-track-title="'+esc(r.title||'')+'"'+((r.times_hidden||0)>=1?' data-ask-why="1"':'')+'>✕</button></div>'
         +'<div class="t" title="'+esc(r.why||'')+'">'+num(r.title)+'</div>'+(r.evidence?'<div class="ev">'+num(r.evidence)+'</div>':'')
+        +(r.confidence&&r.confidence.band==='low'&&r.confidence.caution?'<div class="ev hb-conf low">'+esc(r.confidence.caution)+'</div>':'')
         +'<div class="ft">'+trk+'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-open-module="'+esc(r.module)+'">'+esc(MODLABEL[r.module]||r.action_label)+' →</button>'
         // Two answers that are not "hide for a fortnight". Done records an
         // observed outcome when the card names a metric - the same thing
@@ -3302,6 +3303,7 @@ svg:hover .hb-xh{opacity:1}
 .lb2-ai{margin-top:16px;padding:16px 20px;border-radius:10px;background:var(--hb-tint);font-size:16px;line-height:1.65;color:var(--ink2)}
 .lb2-ai .tag{font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);margin-bottom:7px}
 #panel-labor #labor-insight{font-size:16px;line-height:1.65;color:var(--ink2);white-space:pre-wrap;padding-left:0}
+.hb-conf.low{color:var(--ember2);font-style:normal}
 .diag{margin-top:12px;padding:14px 16px;border-radius:12px;background:var(--sf-recessed,var(--hb-tint));border:1px solid var(--paper3)}
 .diag-h{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3)}
 .diag-conf{font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:none;color:var(--ink3)}.diag-conf.high{color:var(--hb-good)}.diag-conf.medium{color:var(--ember2)}

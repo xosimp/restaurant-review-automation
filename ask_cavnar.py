@@ -504,6 +504,25 @@ def _decisions_context(restaurant_id):
         return ""
 
 
+def _intelligence_context(restaurant_id):
+    """What this restaurant's own history says, and — only when enough
+    similar restaurants exist — where it stands among them and what held
+    across them (intelligence/). Counts and effects, never another
+    restaurant."""
+    try:
+        import intelligence
+        lines = intelligence.context_lines(restaurant_id)
+    except Exception:
+        return ""
+    if not lines:
+        return ""
+    return ("WHAT THIS RESTAURANT'S HISTORY AND RESTAURANTS LIKE IT SHOW\n"
+            "- Own-history lines are this restaurant's; cohort lines are aggregates over at least five similar "
+            "restaurants and name none. Use a pattern as support for a recommendation, never as proof about this "
+            "restaurant; say the count when you cite one.\n"
+            + "\n".join(f"- {l}" for l in lines[:10]) + "\n")
+
+
 def _commitments_context(restaurant_id):
     """What the assistant has already proposed, and what the owner did with it.
 
@@ -611,7 +630,7 @@ def build_context(restaurant):
     # None of these belongs to a module — what the owner has told the
     # assistant, what has fired, and what the assistant itself has already
     # put in front of them.
-    for always in (_memory_context, _decisions_context, _alerts_context, _commitments_context):
+    for always in (_memory_context, _decisions_context, _intelligence_context, _alerts_context, _commitments_context):
         try:
             section = always(restaurant.id)
             if section:

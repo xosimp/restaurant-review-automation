@@ -4367,6 +4367,14 @@ def mobile_update_profile(current_user):
     tz = (data.get("timezone") or "").strip()
     if tz in _valid_timezones:
         updates["timezone"] = tz
+    # Restaurant type — the cohort the intelligence engine compares this
+    # restaurant against (intelligence/categories.py). Only a value from the
+    # taxonomy, or an empty string to go back to "inferred".
+    if "category" in data:
+        from intelligence.categories import valid as _valid_category
+        cat = (data.get("category") or "").strip().lower()
+        if cat == "" or _valid_category(cat):
+            updates["category"] = cat or None
     update_restaurant(current_user["restaurant_id"], updates)
     _log_account_event(current_user["restaurant_id"], "profile_updated", current_user)
     return jsonify(ok=True)

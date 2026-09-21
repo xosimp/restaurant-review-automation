@@ -103,7 +103,17 @@ struct HomeRecommendation: Codable, Identifiable, Hashable {
     let evidence: String?
     let module: String?
     let metric: String?
+    /// The intelligence engine's confidence in this recommendation for
+    /// this restaurant (INTELLIGENCE_ENGINE.md). Optional: older servers
+    /// omit it, and the card renders exactly as before.
+    let confidence: HomeConfidence?
     var id: String { key }
+}
+
+struct HomeConfidence: Codable, Hashable {
+    let score: Double
+    let band: String
+    let caution: String?
 }
 
 struct HomeSetupStep: Codable, Identifiable, Hashable {

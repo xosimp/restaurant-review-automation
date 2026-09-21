@@ -2285,8 +2285,14 @@ def admin_delete_changelog(entry_id, current_user):
 @admin_required
 def admin_set_brand(restaurant_id, current_user):
     data = request.get_json(force=True) or {}
-    allowed = {"brand_name", "brand_color", "brand_logo_url"}
+    allowed = {"brand_name", "brand_color", "brand_logo_url", "category"}
     updates = {k: v for k, v in data.items() if k in allowed}
+    if "category" in updates:
+        from intelligence.categories import valid as _valid_category
+        cat = (updates["category"] or "").strip().lower()
+        if cat and not _valid_category(cat):
+            return jsonify(ok=False, error="Unknown category"), 400
+        updates["category"] = cat or None
     if not updates:
         return jsonify(ok=False, error="No valid fields"), 400
     update_restaurant(restaurant_id, updates)
@@ -2301,6 +2307,16 @@ def admin_set_brand(restaurant_id, current_user):
 def admin_api_overview(current_user):
     import admin_ops
     return jsonify(**admin_ops.overview())
+
+
+@admin_bp.route("/admin/api/intelligence")
+@admin_required
+def admin_api_intelligence(current_user):
+    """The Intelligence page (INTELLIGENCE_ENGINE.md): platform learning,
+    patterns, recommendation rates, benchmarks, trends. Every figure is an
+    aggregate; the payload is asserted anonymous before it leaves."""
+    from intelligence import dashboard as _dash
+    return jsonify(**_dash.build())
 
 
 @admin_bp.route("/admin/api/clients")

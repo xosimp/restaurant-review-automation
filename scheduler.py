@@ -2366,6 +2366,15 @@ def scheduler_loop():
                 _ops.run_job("toast_optin_invites",
                              lambda: run_toast_optin_invites(business_date=_d.today() - _td(days=1)))
 
+            # 3am — the intelligence engine's feature pass (bounded, resumable),
+            # then 4am learning over the materialized tables. INTELLIGENCE_ENGINE.md.
+            if _due(now, 3) and _ops.claim_period("intelligence_features", str(today)):
+                from intelligence import jobs as _intel_jobs
+                _ops.run_job("intelligence_features", _intel_jobs.run_features)
+            if _due(now, 4) and _ops.claim_period("intelligence_learning", str(today)):
+                from intelligence import jobs as _intel_jobs
+                _ops.run_job("intelligence_learning", _intel_jobs.run_learning)
+
             # Noon daily — which campaign recipients Toast saw on a later
             # check (guest_marketing.run_campaign_attribution). Reads
             # yesterday and earlier; each date fetched once per restaurant.

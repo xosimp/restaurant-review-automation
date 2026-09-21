@@ -181,3 +181,14 @@ Every fired alert is logged to `alert_log` — the durable record `ask_cavnar_to
 | Anything emailed | `emails.py` — ~27 send-sites across 10 files, one `RESEND_API_KEY` pattern to get right |
 | Dashboard JS | ES5-only, even in comments — `tests/test_frontend_rules.py` |
 | A color | Goes through a CSS variable, never a literal — `scripts/check_colors.py` |
+
+## Intelligence engine
+
+Two nightly jobs in the scheduler: `intelligence_features` at 3am (one
+feature row per active restaurant per ISO week; worker pool, wall-clock
+bound, cursor in `job_cursors`) and `intelligence_learning` at 4am
+(feedback sync → pattern discovery → benchmarks → confidence log, reading
+only the materialized `intel_*` tables). Request paths read materialized
+rows only: Home attaches a confidence band to each recommendation, Ask has
+two read tools and one context section, admin has `/admin/api/intelligence`.
+Design and privacy rules: `INTELLIGENCE_ENGINE.md`.

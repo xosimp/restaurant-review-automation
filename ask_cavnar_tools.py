@@ -969,6 +969,30 @@ def _read_dish_scorecard(restaurant_id):
     return menu_intelligence.dish_scorecard(restaurant_id)
 
 
+def _read_restaurant_memory(restaurant_id):
+    import intelligence
+    mem = intelligence.restaurant_memory(restaurant_id)
+    return {"busiest_days": mem["busiest_days"], "seasonality": mem["seasonality"],
+            "record": {"worked": mem["record"]["worked"], "ignored": mem["record"]["ignored"],
+                       "by_kind": {k: {"accepted": v["accepted"], "declined": v["declined"], "measured": v["measured"],
+                                       "improved": v["improved"], "success_rate": v["success_rate"]}
+                                   for k, v in mem["record"]["by_kind"].items()}},
+            "slopes": mem["slopes"], "features": (mem["features"] or {}).get("features"),
+            "note": "This restaurant's own history only."}
+
+
+def _read_platform_intelligence(restaurant_id):
+    import intelligence
+    from models import get_restaurant
+    r = get_restaurant(restaurant_id)
+    cohort, source = intelligence.cohort_for(r) if r else (None, None)
+    from intelligence import benchmarks as _b, patterns as _p, categories as _c
+    bands = [b for b in _b.all_for(restaurant_id, cohort=cohort)]
+    return {"cohort": cohort, "cohort_label": _c.label(cohort), "cohort_source": source,
+            "benchmarks": bands, "patterns": _p.active(cohort, limit=8),
+            "note": "Aggregates over at least five restaurants; a band marked unavailable means too few similar restaurants yet."}
+
+
 def _read_decisions(restaurant_id, limit=20):
     import decisions
     rows = decisions.history(restaurant_id, limit=int(limit or 20))
@@ -1600,6 +1624,37 @@ TOOLS = [
         },
     },
 
+    {
+        "kind": "read",
+        "fn": _read_restaurant_memory,
+        "module": None,
+        "spec": {
+            "name": "read_restaurant_memory",
+            "description": (
+                "THIS RESTAURANT'S OWN LEARNED HISTORY: busiest and quietest weekdays, seasonal peak and trough "
+                "months, which recommendation kinds measurably worked here and which the owner keeps declining, "
+                "and how its key measures are trending week to week. Its own data only. Call this before "
+                "recommending timing, staffing or a kind of action the owner may already have judged."
+            ),
+            "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
+        },
+    },
+    {
+        "kind": "read",
+        "fn": _read_platform_intelligence,
+        "module": None,
+        "spec": {
+            "name": "read_platform_intelligence",
+            "description": (
+                "WHERE THIS RESTAURANT STANDS AMONG RESTAURANTS LIKE IT, and the operational patterns that held "
+                "across them: benchmark bands (p25/median/p75) for rating, response time, labor, food cost, waste "
+                "and campaigns, plus statistically tested patterns with counts and effects. Aggregates over at "
+                "least five restaurants; never another restaurant's figures. Says 'not enough similar restaurants' "
+                "when the cohort is too small — repeat that honestly rather than guessing."
+            ),
+            "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
+        },
+    },
     {
         "kind": "read",
         "fn": _read_decisions,

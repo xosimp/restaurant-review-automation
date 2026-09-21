@@ -222,3 +222,15 @@ See `SYSTEM_ARCHITECTURE.md`'s Auth section for the model. Module-specific note:
 ## POS / Platform integrations
 
 `toast.py`/`toast_routes.py` (real, OAuth + shift/sales sync), `square.py`/`square_routes.py`, `clover.py`/`clover_routes.py` — each behind `pos.py`'s `PROVIDER_API` contract: `is_connected`, `sync_to_db`, `build_shifts_csv(restaurant_id, days=60)`. `gmb.py` (Google Business Profile), `meta_api.py` (Instagram), `weather.py` (NWS forecast, cached on the restaurant row for schedule demand-matching).
+
+## Intelligence engine (`intelligence/`)
+
+The platform's learning layer — see `INTELLIGENCE_ENGINE.md` for the full
+design. Level 1 (`features.py`, `memory.py`, `feedback.py`) is each
+restaurant's own history and serves only that restaurant. Levels 2 and 3
+(`patterns.py`, `benchmarks.py`, `trends.py`, `scoring.py`) read one
+materialized table of ratios and answer only over cohorts of at least
+`privacy.MIN_COHORT` restaurants. `confidence.py` scores every Home
+recommendation; `dashboard.py` builds the admin Intelligence page. Stance:
+nothing generated fills a gap, and `privacy.assert_anonymous` runs on every
+cross-restaurant payload.

@@ -151,3 +151,17 @@ Attention items a user has dismissed from the Home brief, so a handled issue doe
 - **`restaurant_id NOT NULL REFERENCES restaurants(id)`** on every tenant-scoped table — enforced by the FK, not just convention.
 - **Append-only tables stay append-only** (`login_history`, `ask_cavnar_actions`, `alert_log`, `capability_changes`) — they are audit trails; a "current state" view is always computed by querying the latest row, not by mutating history in place.
 - **JSON-in-a-column** (`*_json` fields on `restaurants`, `summary_json` on `schedule_history`) is used deliberately for structured settings that don't need their own table and are always read/written as a whole blob by one piece of code — not for anything queried by its internal fields.
+
+## Intelligence engine
+
+`restaurants.category` (the cohort; inferred when unset), `intel_features`
+(one row per restaurant-week of ratios, rates and counts — the only table
+cross-restaurant learning reads; no dollars, names or people),
+`intel_rec_events` (every recommendation's presented / answered / measured
+events, derived from `home_dismissals`, `recommendation_outcomes`,
+`ask_cavnar_actions` and `delayed_actions`), `intel_patterns` (discovered
+patterns with n, effect, p, q, confidence, status active|retired),
+`intel_benchmarks` (cohort × metric × week percentiles, n ≥ 5),
+`intel_confidence_log` (weekly acceptance and success by kind). Invariant:
+no row in `intel_patterns`, `intel_benchmarks` or `intel_confidence_log`
+describes fewer than `privacy.MIN_COHORT` restaurants.

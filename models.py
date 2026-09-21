@@ -526,6 +526,8 @@ class Restaurant:
     al_unres_sms:         int       = 0
     al_unres_push:        int       = 1
     changelog_seen_at: Optional[str] = None
+    # Restaurant type for the intelligence engine's cohorts (intelligence/categories.py).
+    category: Optional[str] = None
     notifications_seen_at: Optional[str] = None
     alert_quiet_start: Optional[str] = None
     alert_quiet_end:   Optional[str] = None
@@ -775,6 +777,7 @@ def ensure_columns(db_path: str = DB_PATH):
         ("staff_contacts", "pos_id", "TEXT"),
         # Changelog seen state
         ("restaurants", "changelog_seen_at", "TEXT"),
+        ("restaurants", "category", "TEXT"),
         # Notifications (alert_log) seen state — same stamp-on-read pattern.
         # Superseded by the per-login notification_reads table (two co-owners
         # share one restaurant row, so one of them opening the bell cleared
@@ -1600,6 +1603,84 @@ def init_db(db_path: str = DB_PATH):
             created_at      TEXT NOT NULL DEFAULT (datetime('now'))
         )""",
         "CREATE INDEX IF NOT EXISTS idx_staff_time_off_restaurant ON staff_time_off(restaurant_id, status, start_date)",
+        # ── Restaurant Intelligence Engine (INTELLIGENCE_ENGINE.md) ──────────
+        # One row per restaurant-week of ratios, rates and counts. This is the
+        # ONLY table cross-restaurant learning reads; it holds no names, no
+        # dollars and no people (intelligence/privacy.py).
+        """CREATE TABLE IF NOT EXISTS intel_features (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id  INTEGER NOT NULL REFERENCES restaurants(id),
+            week           TEXT    NOT NULL,
+            features_json  TEXT    NOT NULL,
+            completeness   REAL    NOT NULL DEFAULT 0,
+            computed_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(restaurant_id, week)
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_intel_features_week ON intel_features(week, restaurant_id)",
+        # Every recommendation's life: presented, answered, measured.
+        """CREATE TABLE IF NOT EXISTS intel_rec_events (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id  INTEGER NOT NULL REFERENCES restaurants(id),
+            rec_kind       TEXT    NOT NULL,
+            source_key     TEXT    NOT NULL,
+            cohort         TEXT,
+            action         TEXT    NOT NULL,
+            outcome        TEXT,
+            days_to_effect INTEGER,
+            confidence_at  REAL,
+            event_at       TEXT    NOT NULL,
+            synced_from    TEXT,
+            created_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(restaurant_id, source_key, action)
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_intel_rec_events_kind ON intel_rec_events(rec_kind, action)",
+        "CREATE INDEX IF NOT EXISTS idx_intel_rec_events_rest ON intel_rec_events(restaurant_id, event_at)",
+        # Discovered patterns: counts and effects only, never a name.
+        """CREATE TABLE IF NOT EXISTS intel_patterns (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            key            TEXT    NOT NULL UNIQUE,
+            cohort         TEXT    NOT NULL,
+            hypothesis     TEXT    NOT NULL,
+            n_with         INTEGER NOT NULL,
+            n_without      INTEGER NOT NULL,
+            effect         REAL    NOT NULL,
+            effect_unit    TEXT,
+            cohen_d        REAL,
+            p_value        REAL    NOT NULL,
+            q_value        REAL,
+            confidence     REAL    NOT NULL,
+            sentence       TEXT    NOT NULL,
+            evidence_json  TEXT,
+            status         TEXT    NOT NULL DEFAULT 'active',
+            first_seen     TEXT    NOT NULL DEFAULT (datetime('now')),
+            last_confirmed TEXT    NOT NULL DEFAULT (datetime('now')),
+            computed_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+        )""",
+        """CREATE TABLE IF NOT EXISTS intel_benchmarks (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            cohort         TEXT    NOT NULL,
+            metric         TEXT    NOT NULL,
+            week           TEXT    NOT NULL,
+            n              INTEGER NOT NULL,
+            p25            REAL,
+            p50            REAL,
+            p75            REAL,
+            mean           REAL,
+            computed_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(cohort, metric, week)
+        )""",
+        """CREATE TABLE IF NOT EXISTS intel_confidence_log (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            week            TEXT    NOT NULL,
+            cohort          TEXT    NOT NULL,
+            rec_kind        TEXT    NOT NULL,
+            n               INTEGER NOT NULL,
+            mean_confidence REAL,
+            acceptance_rate REAL,
+            success_rate    REAL,
+            computed_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(week, cohort, rec_kind)
+        )""",
         # Cover counts by day. The labor analysis had no way to tell a lean
         # day from a short-staffed one; covers are the one figure that
         # separates them (moat audit #4). Entered or imported, never inferred.
@@ -3280,7 +3361,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "al_5star_email","al_5star_sms","al_5star_push",
         "al_spike_email","al_spike_sms","al_spike_push",
         "al_unres_email","al_unres_sms","al_unres_push",
-        "changelog_seen_at","notifications_seen_at",
+        "changelog_seen_at","notifications_seen_at", "category",
         "alert_quiet_start","alert_quiet_end","alert_max_per_day",
         "brand_name","brand_color","brand_logo_url",
         "section_count","daypart_split","delivery_pct","role_minimums_json","sched_notes","email_theme",
@@ -3613,6 +3694,7 @@ def _restaurant_from_row(row) -> Restaurant:
         digest_enabled=row["digest_enabled"] if "digest_enabled" in row.keys() else 1,
         last_fetched_at=row["last_fetched_at"] if "last_fetched_at" in row.keys() else None,
         changelog_seen_at=row["changelog_seen_at"] if "changelog_seen_at" in row.keys() else None,
+        category=row["category"] if "category" in row.keys() else None,
         notifications_seen_at=row["notifications_seen_at"] if "notifications_seen_at" in row.keys() else None,
         alert_quiet_start=row["alert_quiet_start"] if "alert_quiet_start" in row.keys() else None,
         alert_quiet_end=row["alert_quiet_end"]     if "alert_quiet_end"   in row.keys() else None,
