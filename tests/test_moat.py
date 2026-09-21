@@ -410,7 +410,12 @@ def test_recipients_are_kept_and_visits_matched_once_within_the_window(db_path, 
     def fake_customers(r, day):
         fetched.append(day.isoformat())
         return [{"phone": "(312) 555-0100", "name": "Ana"}] if day.isoformat() in ("2026-09-16", "2026-09-18") else []
-    monkeypatch.setattr(toast, "fetch_order_customers", fake_customers)
+    # Attribution asks the connected provider (pos.fetch_order_customers), so
+    # the fake is a provider that answers it — not a Toast column.
+    import pos, types
+    monkeypatch.setattr(pos, "PROVIDERS", {"toast": types.SimpleNamespace(
+        is_connected=lambda r: r == rid, fetch_order_customers=fake_customers,
+        sync_to_db=lambda r: {}, build_shifts_csv=lambda r, days=60: None)})
     res = gm.run_campaign_attribution(db_path=db_path, today=date(2026, 9, 19))
     assert res == {"campaigns_checked": 1, "visits_matched": 1}
     assert fetched == ["2026-09-15", "2026-09-16", "2026-09-17", "2026-09-18"]
