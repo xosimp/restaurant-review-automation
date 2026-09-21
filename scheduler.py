@@ -1038,7 +1038,7 @@ SCHEDULER_TICK_SECONDS = int(os.getenv("SCHEDULER_TICK_SECONDS", "300"))
 # claim_period key still guarantees it runs at most once. So an on-time day
 # behaves exactly as before, and a late day runs the job late instead of not
 # at all.
-def local_due(restaurant, hour, until=14, claim_key=None, now_local=None):
+def local_due(restaurant, hour, until=14, claim_key=None, now_local=None, day=None):
     """True when it is `hour` or later (and before `until`) in THIS
     restaurant's own timezone, and nothing has claimed it today.
 
@@ -1048,9 +1048,17 @@ def local_due(restaurant, hour, until=14, claim_key=None, now_local=None):
     gate on this instead, exactly as morning_brief.run_due does, so each
     restaurant is served at its own hour and the claim keeps it to once a
     day however many ticks observe the window.
+
+    `day` restricts the window to one day of the month, in the restaurant's
+    own calendar. The monthly and quarterly summaries need it: when the
+    once-a-day guard moved in here (workflow audit 1/4/16) the loop's
+    `now.day == 1` check went with it, and the "month in review" started
+    going out every morning at 9am local.
     """
     from time_utils import restaurant_now
     local = now_local or restaurant_now(restaurant, naive=True)
+    if day is not None and local.day != day:
+        return False
     if not (hour <= local.hour < until):
         return False
     if claim_key is None:
@@ -1975,8 +1983,9 @@ def run_monthly_summaries():
             skipped += 1
             continue
         # 9am local on the 1st, not 9am Chicago — and the restaurant's own
-        # date, so a Pacific client isn't summarised a day early.
-        if not local_due(r, 9, claim_key="monthly_summary"):
+        # date, so a Pacific client isn't summarised a day early. `day=1`
+        # is the once-a-month part; the claim alone only makes it once a day.
+        if not local_due(r, 9, claim_key="monthly_summary", day=1):
             skipped += 1
             continue
         # NOT gated on marketing_emails_opt_out. The monthly summary carries
@@ -2031,7 +2040,7 @@ def run_quarterly_summaries():
         if not r.owner_email or r.billing_status in ('internal', 'churned', 'paused'):
             skipped += 1
             continue
-        if not local_due(r, 9, claim_key="quarterly_summary"):
+        if not local_due(r, 9, claim_key="quarterly_summary", day=1):
             skipped += 1
             continue
         if not getattr(r, "monthly_review_enabled", 1):
@@ -2348,6 +2357,9 @@ def scheduler_loop():
                     _ops.claim_period("quarterly_summary", f"{today}-{now.hour}"):
                 _ops.run_job("quarterly_summaries", run_quarterly_summaries)
 
+            # Attempted hourly so each restaurant is served at 9am in its own
+            # timezone; run_monthly_summaries gates on the restaurant's own
+            # 1st of the month (local_due day=1) and claims once per day.
             if _ops.claim_period("monthly_summary", f"{today}-{now.hour}"):
                 log.info("Running monthly summary emails...")
                 _ops.run_job("monthly_summary", run_monthly_summaries)

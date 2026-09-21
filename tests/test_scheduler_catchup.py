@@ -144,6 +144,58 @@ def test_owner_facing_jobs_are_attempted_hourly_and_claimed_per_restaurant():
         assert "_gated_out(" in inspect.getsource(fn), fn.__name__
 
 
+# ── once a MONTH means once a month ───────────────────────────────────────────
+
+def test_local_due_can_be_pinned_to_one_day_of_the_month(monkeypatch):
+    """The hourly loop plus a per-day claim only ever made the summaries
+    once a DAY. `day=` is the calendar half of the gate, judged on the
+    restaurant's own date."""
+    claims = []
+    monkeypatch.setattr(scheduler._ops, "claim_period", lambda job, period: claims.append((job, period)) or True)
+    r = type("R", (), {"id": 4, "timezone": "America/Chicago"})()
+    assert scheduler.local_due(r, 9, claim_key="monthly_summary", day=1,
+                               now_local=datetime(2026, 9, 2, 9, 5)) is False
+    assert claims == []                                    # not even a claim spent
+    assert scheduler.local_due(r, 9, claim_key="monthly_summary", day=1,
+                               now_local=datetime(2026, 9, 1, 8, 59)) is False
+    assert scheduler.local_due(r, 9, claim_key="monthly_summary", day=1,
+                               now_local=datetime(2026, 9, 1, 9, 0)) is True
+    assert claims == [("monthly_summary:4", "2026-09-01")]
+    assert scheduler.local_due(r, 9, claim_key="daily_thing",
+                               now_local=datetime(2026, 9, 2, 9, 5)) is True   # no day: unchanged
+
+
+def test_the_monthly_and_quarterly_summaries_are_gated_to_the_first():
+    """Regression for the daily 'month in review' (lost with the loop's
+    `now.day == 1` in 964c77a): both summary jobs must pass day=1, so the
+    gate lives beside the claim and cannot be dropped with the loop again."""
+    import inspect
+    assert 'local_due(r, 9, claim_key="monthly_summary", day=1)' in inspect.getsource(scheduler.run_monthly_summaries)
+    assert 'local_due(r, 9, claim_key="quarterly_summary", day=1)' in inspect.getsource(scheduler.run_quarterly_summaries)
+
+
+def test_the_monthly_job_sends_nothing_on_any_day_but_the_first(monkeypatch):
+    import emails
+    import models
+    r = type("R", (), {})()
+    r.id = 1; r.name = "R"; r.owner_email = "o@x.com"; r.owner_name = "O"
+    r.billing_status = "active"; r.monthly_review_enabled = 1
+    r.module_reviews = r.module_labor = r.module_inventory = r.module_marketing = 1
+    monkeypatch.setattr(models, "get_all_restaurants", lambda *a, **k: [r])
+    monkeypatch.setattr(scheduler._ops, "claim_period", lambda *a, **k: True)
+    # The real gate, with the clock pinned to 9:05 local on the 2nd — any
+    # day that is not the 1st.
+    real_local_due = scheduler.local_due
+    monkeypatch.setattr(scheduler, "local_due",
+                        lambda rr, hour, until=14, claim_key=None, now_local=None, day=None:
+                            real_local_due(rr, hour, until, claim_key, datetime(2026, 9, 2, 9, 5), day))
+    sent = []
+    monkeypatch.setattr(emails, "send_monthly_summary_email", lambda **kw: sent.append(kw["restaurant_id"]))
+    monkeypatch.setattr(scheduler, "_push_month_ready", lambda rr: None)
+    out = scheduler.run_monthly_summaries()
+    assert sent == [] and out["sent"] == 0 and out["skipped"] == 1
+
+
 # ── the loop itself has to survive a tick ─────────────────────────────────────
 
 class _StopLoop(BaseException):

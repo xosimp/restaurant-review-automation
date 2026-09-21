@@ -511,7 +511,7 @@ def test_the_monthly_summary_goes_once_per_owner_across_locations(db_path, monke
     a = _rid(db_path, module_labor=1)
     b = create_restaurant(Restaurant(name="Moat Co North", owner_email="M@x.com", module_reviews=1), db_path=db_path)
     c = create_restaurant(Restaurant(name="Other", owner_email="o@y.com", module_reviews=1), db_path=db_path)
-    monkeypatch.setattr(scheduler, "local_due", lambda r, hour, claim_key=None: True)
+    monkeypatch.setattr(scheduler, "local_due", lambda r, hour, claim_key=None, **k: True)
     monkeypatch.setattr(scheduler, "_push_month_ready", lambda r: None)
     singles, groups = [], []
     monkeypatch.setattr(emails, "send_monthly_summary_email", lambda **kw: singles.append(kw["restaurant_id"]))
