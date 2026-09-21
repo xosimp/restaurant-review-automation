@@ -297,9 +297,14 @@ def test_the_cavnar_read_card_is_on_the_reviews_tab():
     # And the root-cause card, which is the point of the endpoint now: a
     # snapshot the owner can already read off their own screen is not worth
     # an AI call, and restating one was all this card used to do.
-    assert "renderDiagnosis(d)" in fn
+    assert "renderReviewDiagnosis(d)" in fn
     assert "renderSeverityStrip(d)" in fn
     assert 'id="review-diagnosis"' in panel
+    # One global per name: a second `function renderDiagnosis(` in the same
+    # script used to shadow the Reviews one, and this card never rendered.
+    src = _src()
+    assert src.count("function renderReviewDiagnosis(") == 1
+    assert src.count("function renderDiagnosis(") == 1
 
 
 def test_reviews_kicker_and_inbox_label_match_food_costs_bumped_size():

@@ -7479,7 +7479,7 @@ function loadReviewInsight(){
       el.innerHTML=processInsightHtml(cd.insight||'');
       applyInsightCaveats(el,cd);
       renderSeverityStrip(cd);
-      renderDiagnosis(cd);
+      renderReviewDiagnosis(cd);
       return;
     }
   }catch(e){}
@@ -7495,7 +7495,7 @@ function loadReviewInsight(){
     typewriterEffect(el,processInsightHtml(html));
     applyInsightCaveats(el,d);
     renderSeverityStrip(d);
-    renderDiagnosis(d);
+    renderReviewDiagnosis(d);
   }).catch(function(){
     el.classList.remove('insight-loading');
     el.innerHTML=emptyStateHtml('Analysis unavailable', 'Check back shortly — the AI retries automatically', true);
@@ -7548,7 +7548,11 @@ function renderSeverityStrip(d){
 /* The diagnosis card. Renders nothing at all when there is no diagnosis —
    an owner whose reviews do not yet support a cause should see the snapshot
    and stop there, not a cause invented to fill the space. */
-function renderDiagnosis(d){
+// The Reviews diagnosis card. Named apart from the Marketing/Labor
+// renderDiagnosis(id,dg) below: both used to be called renderDiagnosis in this
+// one script, the later declaration won by hoisting, and this card never
+// rendered.
+function renderReviewDiagnosis(d){
   var box=document.getElementById('review-diagnosis');
   if(!box)return;
   var dg=d&&d.diagnosis;
