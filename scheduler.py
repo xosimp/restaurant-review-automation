@@ -2263,6 +2263,12 @@ def scheduler_loop():
                 from strategy_jobs import run_auto_draft_schedules
                 _ops.run_job("auto_draft_schedule", run_auto_draft_schedules)
 
+            # Monday 8am local, per restaurant — queue trusted supplier orders
+            # with an hour to undo (strategy_jobs.run_trusted_orders).
+            if now.weekday() == 0 and _ops.claim_period("trusted_orders", f"{today}-{now.hour}"):
+                from strategy_jobs import run_trusted_orders
+                _ops.run_job("trusted_orders", run_trusted_orders)
+
             # Friday 9am local, per restaurant — queue the unedited draft
             # to publish at 11am with an undo window (run_auto_publish_schedules).
             if now.weekday() == 4 and _ops.claim_period("auto_publish_schedule", f"{today}-{now.hour}"):

@@ -2660,7 +2660,7 @@ def _build_schedule_result(restaurant_id):
         daypart_split=getattr(restaurant, 'daypart_split', None),
         delivery_pct=getattr(restaurant, 'delivery_pct', None),
         role_minimums_json=getattr(restaurant, 'role_minimums_json', None),
-        sched_notes=getattr(restaurant, 'sched_notes', None),
+        sched_notes=_sched_notes_with_findings(restaurant_id, getattr(restaurant, 'sched_notes', None)),
         staff_availability=staff_availability or None,
         tz_name=getattr(restaurant, 'timezone', None),
         restaurant_id=restaurant_id,
@@ -3680,6 +3680,27 @@ def _score_schedule_quality(restaurant_id, rows, result, **extra):
         except Exception as _wx:
             what_if = {"ran": False, "reason": f"comparison unavailable: {_wx}"}
     return quality, what_if
+
+
+def _sched_notes_with_findings(restaurant_id, sched_notes):
+    """The owner's schedule notes plus what the cross-module engine found
+    about staffing. "Friday dinner is one server short and it shows in the
+    reviews" (business_intelligence reviews_x_labor) used to change nothing
+    unless the owner read it and edited the draft; now the draft reads it.
+    Only links that cleared their own floors exist, so this adds nothing
+    when there is nothing to add."""
+    try:
+        import business_intelligence as bi
+        links = [l for l in (bi.executive_brief(restaurant_id).get("links") or [])
+                 if l.get("kind") == "reviews_x_labor" and l.get("headline")]
+    except Exception:
+        links = []
+    if not links:
+        return sched_notes
+    lines = ["Cavnar AI finding (reviews x labor) — reflect this in the draft and say so in the summary: "
+             + l["headline"] + (" Confirm by: " + l["confirm_by"] if l.get("confirm_by") else "")
+             for l in links[:2]]
+    return ((sched_notes or "").strip() + "\n" + "\n".join(lines)).strip()
 
 
 def _run_schedule_job(job_id, restaurant_id):

@@ -61,7 +61,68 @@ def save(restaurant_id, fields, user_id=None, submitted_by=None, business_date=N
         conn.commit()
     finally:
         conn.close()
+    try:
+        _act_on(restaurant_id, day, values, restaurant, db_path=db_path)
+    except Exception as e:
+        import ops
+        ops.capture(e, job="closeout_actions", context=f"restaurant_id={restaurant_id}")
     return get(restaurant_id, day, db_path=db_path)
+
+
+def _act_on(restaurant_id, day, values, restaurant, db_path=DB_PATH):
+    """What the close-out changes, beyond tomorrow's brief.
+
+    An 86 is a count of zero: the ingredient it names is recounted to 0
+    tonight (inventory_ledger.record_recount, source 'closeout'), which is
+    exactly what puts it at the top of tomorrow's order draft. A callout is
+    tomorrow's staffing gap: it opens a routed issue carrying who could
+    cover (labor_replacements), the same answer the coverage check gives.
+    Names are matched, never invented — a dish with no ingredient of that
+    name changes nothing."""
+    eighty = (values.get("eighty_sixed") or "").strip()
+    if eighty and getattr(restaurant, "module_inventory", 0):
+        import inventory_ledger
+        conn = get_conn(db_path)
+        try:
+            ings = [dict(r) for r in conn.execute(
+                "SELECT id, name FROM ingredients WHERE restaurant_id=? AND is_active=1", (restaurant_id,)).fetchall()]
+        finally:
+            conn.close()
+        for phrase in _phrases(eighty):
+            hit = _match_ingredient(phrase, ings)
+            if hit:
+                inventory_ledger.record_recount(restaurant_id, hit["id"], 0.0, event_date=day,
+                                                source="closeout", note=f"86'd at close: {phrase}")
+    callouts = (values.get("callouts") or "").strip()
+    if callouts and getattr(restaurant, "module_labor", 0):
+        import issues, labor_replacements
+        from datetime import date as _d, timedelta as _td
+        tomorrow = _d.fromisoformat(day) + _td(days=1)
+        fits = ""
+        try:
+            first = _phrases(callouts)[0] if _phrases(callouts) else ""
+            fits = labor_replacements.sentence(labor_replacements.for_gap(
+                restaurant_id, None, tomorrow.strftime("%A"), exclude={first}, db_path=db_path))
+        except Exception:
+            pass
+        issues.create_issue(restaurant_id, "callout", f"Callout at close: {callouts[:70]}",
+                            detail=f"From tonight's close-out: {callouts}." + fits,
+                            severity="normal", source_key=f"callout:{day}", db_path=db_path)
+
+
+def _phrases(text):
+    import re
+    parts = re.split(r"[,;\n]+|\band\b", text or "")
+    return [p.strip(" .") for p in parts if p and p.strip(" .")]
+
+
+def _match_ingredient(phrase, ingredients):
+    """The one ingredient whose name the phrase contains (or that contains
+    the phrase). Two candidates is no match — an 86 that says "chicken"
+    must not zero both chicken thighs and chicken stock."""
+    low = phrase.lower()
+    hits = [i for i in ingredients if i["name"] and (i["name"].lower() in low or low in i["name"].lower())]
+    return hits[0] if len(hits) == 1 else None
 
 
 def get(restaurant_id, business_date, db_path=DB_PATH):

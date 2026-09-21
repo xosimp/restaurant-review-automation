@@ -394,6 +394,59 @@ def api_shifts(current_user):
     return jsonify(ok=True, **shifts_for_employee(rid, name))
 
 
+_DAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+
+
+@staff_bp.route("/api/availability")
+@staff_login_required
+def api_availability(current_user):
+    """This employee's own availability — the days they cannot work and a
+    note. The automation audit's one workflow where the person with the
+    information had no way to enter it: availability was typed by a
+    manager on the console on staff's behalf. The name comes from the
+    session, so there is nobody else's to read."""
+    rid, name = _staff_context(current_user)
+    from models import get_staff_availability, init_staff_availability
+    init_staff_availability()
+    mine = next((r for r in (get_staff_availability(rid) or [])
+                 if (r.get("employee_name") or "").strip().lower() == name.strip().lower()), None)
+    import json as _j
+    blocked = []
+    if mine:
+        try:
+            blocked = list(_j.loads(mine.get("unavailable_days") or "[]") or [])
+        except Exception:
+            blocked = []
+    return jsonify(ok=True, days=list(_DAYS), unavailable_days=blocked,
+                   notes=(mine or {}).get("notes") or "", updated_at=(mine or {}).get("updated_at"))
+
+
+@staff_bp.route("/api/availability", methods=["POST"])
+@staff_login_required
+def api_availability_save(current_user):
+    rid, name = _staff_context(current_user)
+    if not name:
+        return jsonify(ok=False, error="No employee name on this session."), 400
+    body = request.get_json(silent=True) or {}
+    raw = body.get("unavailable_days")
+    if not isinstance(raw, list):
+        return jsonify(ok=False, error="unavailable_days must be a list of weekday names."), 400
+    blocked = [d for d in _DAYS if d in {str(x).strip().capitalize() for x in raw}]
+    if len(blocked) == 7:
+        return jsonify(ok=False, error="Every day blocked — leave at least one you can work."), 400
+    notes = (str(body.get("notes") or "").strip())[:300] or None
+    from models import save_staff_availability, init_staff_availability, log_event
+    init_staff_availability()
+    save_staff_availability(rid, name, [d for d in _DAYS if d not in blocked], blocked, notes=notes)
+    # The schedule generator reads staff_availability (get_unavailability_map)
+    # on its next draft; the owner's activity log says who changed what.
+    try:
+        log_event(rid, "availability_updated", {"employee": name, "unavailable_days": blocked})
+    except Exception:
+        pass
+    return jsonify(ok=True, unavailable_days=blocked, notes=notes or "")
+
+
 TASK_DATE_WINDOW_DAYS = 1
 
 

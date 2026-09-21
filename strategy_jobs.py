@@ -581,17 +581,83 @@ def run_demand_opportunity(db_path=DB_PATH):
                 continue
             notify.record_notification(r.id, "demand_opportunity", db_path=db_path,
                                        value=float(out["typical_sales"]))
+            # The fill, drafted: a post and a guest text for that night,
+            # saved as drafts behind the same approval as any other. The
+            # push used to ask "what could fill it?" — now it says "here's
+            # what I wrote; approve it". Drafting can fail (budget, model)
+            # without costing the owner the heads-up.
+            drafted = _draft_quiet_night_fill(r, out, db_path)
+            body = (f"About ${out['typical_sales']:,.0f}, {out['below_average_pct']:.0f}% under a "
+                    f"typical day across {out['samples']} of them. ")
+            body += ("A post and a guest text are drafted — approve them from Marketing."
+                     if drafted else "Two days to do something about it.")
             push.fire_push(
                 r.id, "demand_opportunity",
-                f"{out['weekday']} is usually your quietest night",
-                f"About ${out['typical_sales']:,.0f}, {out['below_average_pct']:.0f}% under a "
-                f"typical day across {out['samples']} of them. Two days to do something about it.",
-                data={"ask_prompt": f"What could fill {out['weekday']} night?"},
+                f"{out['weekday']} is usually your quietest night", body,
+                data={"ask_prompt": f"What could fill {out['weekday']} night?", **drafted},
                 db_path=db_path, user_ids=audience)
             sent += 1
         except Exception as e:
             ops.capture(e, job="demand_opportunity", context=f"restaurant_id={r.id}")
     return {"sent": sent}
+
+
+def _draft_quiet_night_fill(r, out, db_path):
+    """Draft the post and the text that would fill the quiet night. Returns
+    {"post_draft_id", "sms_draft_id"} for whatever was saved, {} if neither."""
+    import ops
+    saved = {}
+    weekday = out.get("weekday") or "the quiet night"
+    topic = f"{weekday} night — a reason to come in this week"
+    try:
+        import marketing, marketing_drafts
+        body = marketing.generate_content("instagram_post", topic, restaurant_id=r.id)
+        if body and body.strip():
+            res = marketing_drafts.save_draft(r.id, body.strip(), content_type="instagram_post", topic=topic)
+            if res.get("ok"):
+                saved["post_draft_id"] = res["id"]
+    except Exception as e:
+        ops.capture(e, job="quiet_night_post", context=f"restaurant_id={r.id}")
+    try:
+        import guest_marketing, marketing_drafts
+        msg = guest_marketing.draft_campaign_message(r, campaign_type="slow_day", topic=topic)
+        if msg and msg.strip():
+            res = marketing_drafts.save_draft(r.id, msg.strip(), content_type="guest_sms",
+                                              topic=f"{weekday} night guest text")
+            if res.get("ok"):
+                saved["sms_draft_id"] = res["id"]
+    except Exception as e:
+        ops.capture(e, job="quiet_night_sms", context=f"restaurant_id={r.id}")
+    return saved
+
+
+def run_trusted_orders(db_path=DB_PATH):
+    """Monday 8am local: queue the supplier orders that can go on their own
+    (ordering.py — a supplier with a record, a total in the usual band, no
+    order this week), with an hour to undo, and tell the owner. Off unless
+    auto_order_trusted is on for the restaurant."""
+    import ops, ordering
+    from time_utils import restaurant_now
+    import scheduler
+    queued = 0
+    for r in _restaurants(db_path):
+        if not getattr(r, "module_inventory", 0) or not getattr(r, "auto_order_trusted", 0):
+            continue
+        local = restaurant_now(r, naive=True)
+        if local.weekday() != 0 or not scheduler.local_due(r, 8, claim_key="trusted_orders"):
+            continue
+        try:
+            rows = ordering.queue_trusted_orders(r.id, restaurant=r, db_path=db_path)
+            for row in rows:
+                _reach(r.id, "order_send_pending",
+                       "A supplier order goes out in an hour",
+                       f"{row.get('label')}. Undo from Home if you'd rather look first.",
+                       {"delayed_action_id": row["id"]}, db_path,
+                       subject=f"Supplier order going out at {row['execute_at'][11:16]} UTC — {r.name}")
+                queued += 1
+        except Exception as e:
+            ops.capture(e, job="trusted_orders", context=f"restaurant_id={r.id}")
+    return {"queued": queued}
 
 
 def run_preshift_nudge(db_path=DB_PATH):

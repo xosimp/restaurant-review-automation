@@ -76,6 +76,9 @@
                  letter-spacing:.18em}
   .pinmsg{font-size:13.5px;margin-top:10px}
   footer{margin-top:34px;text-align:center}
+.av-days{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 10px}
+.av-row{display:flex;align-items:center;gap:10px;margin-top:8px}
+#avail-notes{width:100%;padding:9px 12px;border:1px solid var(--paper3);border-radius:8px;font:inherit;color:var(--ink);background:var(--paper)}
 </style>
 </head>
 <body>
@@ -93,6 +96,7 @@
   <section id="tab-schedule" class="on">
     <div id="brief-body"></div>
     <div id="sched-body" class="load">Loading your shifts…</div>
+  <div id="avail-body" class="card"></div>
   </section>
 
   <section id="tab-tasks">
@@ -198,6 +202,39 @@
     $('sched-body').className = 'err';
     $('sched-body').textContent = 'Could not load your shifts.';
   });
+
+  // ── My availability ─────────────────────────────────────────────────────
+  // The days you can't work, entered by you. Your manager's next draft
+  // reads it. ES5 only.
+  var AV_DAYS = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+  function avRender(d) {
+    var el = $('avail-body'); if (!el) return;
+    var blocked = d.unavailable_days || [];
+    var html = '<h2>My availability</h2><div class="meta" style="margin-bottom:8px">Tap the days you can\u2019t work. Your manager\u2019s next schedule reads this.</div><div class="av-days">';
+    for (var i = 0; i < AV_DAYS.length; i++) {
+      var on = blocked.indexOf(AV_DAYS[i]) >= 0;
+      html += '<button type="button" class="cbtn ' + (on ? 'cbtn-primary' : 'cbtn-secondary') + ' cbtn-sm av-day' + (on ? ' on' : '') + '" data-day="' + AV_DAYS[i] + '" aria-pressed="' + (on ? 'true' : 'false') + '">' + AV_DAYS[i].slice(0, 3) + '</button>';
+    }
+    html += '</div><input type="text" id="avail-notes" maxlength="300" placeholder="Anything else \u2014 \u201cnot before 10am\u201d, \u201caway Oct 3\u20136\u201d" value="' + esc(d.notes || '') + '">'
+          + '<div class="av-row"><button type="button" class="cbtn cbtn-primary cbtn-sm" id="avail-save">Save</button><span class="meta" id="avail-status">' + (d.updated_at ? 'Last saved ' + esc(String(d.updated_at).slice(0, 10)) : '') + '</span></div>';
+    el.innerHTML = html;
+    var btns = el.querySelectorAll('.av-day');
+    for (var j = 0; j < btns.length; j++) btns[j].onclick = function () {
+      var on = this.className.indexOf(' on') < 0;
+      this.className = 'cbtn ' + (on ? 'cbtn-primary' : 'cbtn-secondary') + ' cbtn-sm av-day' + (on ? ' on' : '');
+      this.setAttribute('aria-pressed', on ? 'true' : 'false');
+    };
+    $('avail-save').onclick = function () {
+      var picked = [], all = el.querySelectorAll('.av-day.on');
+      for (var k = 0; k < all.length; k++) picked.push(all[k].getAttribute('data-day'));
+      var st = $('avail-status'); st.textContent = 'Saving\u2026';
+      fetch('/staff/api/availability', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({unavailable_days: picked, notes: $('avail-notes').value})})
+        .then(function (r) { return r.json(); })
+        .then(function (r) { st.textContent = r.ok ? 'Saved \u2014 your manager\u2019s next schedule will use it.' : (r.error || 'Could not save.'); })
+        .catch(function () { st.textContent = 'Could not save \u2014 check your connection.'; });
+    };
+  }
+  fetch('/staff/api/availability').then(function (r) { return r.json(); }).then(function (d) { if (d && d.ok) avRender(d); }).catch(function () {});
 
   // ── Tasks ───────────────────────────────────────────────────────────────
   function loadTasks(){

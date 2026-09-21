@@ -238,7 +238,7 @@ ALERT_TAB = {
     "edit_downgrade": "reviews", "resp_approved": "reviews", "unresponded": "reviews",
     "no_response": "reviews", "negative_trend": "reviews", "rating_threshold": "reviews",
     "labor_over": "labor", "schedule_drafted": "labor", "coverage": "labor", "schedule_publish_pending": "labor",
-    "food_waste": "inventory", "critical_low": "inventory", "price_spike": "inventory",
+    "food_waste": "inventory", "critical_low": "inventory", "price_spike": "inventory", "order_send_pending": "inventory",
     "ai_visibility_drop": "competitor",
     "login": "account", "staff_signin": "account", "connection_lost": "account",
     "while_away": "reviews",
@@ -253,7 +253,7 @@ ALERT_TAB = {
 # three levels, enforced at every briefing send.
 BRIEFING_ALWAYS = frozenset({"morning_brief", "outcome_achieved", "milestone", "while_away",
                              "connection_lost", "monthly_review"})
-BRIEFING_CALM = BRIEFING_ALWAYS | {"closing_summary", "schedule_drafted", "schedule_publish_pending"}
+BRIEFING_CALM = BRIEFING_ALWAYS | {"closing_summary", "schedule_drafted", "schedule_publish_pending", "order_send_pending"}
 BRIEFING_NORMAL_PER_DAY = 4
 
 

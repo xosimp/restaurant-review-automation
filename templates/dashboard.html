@@ -1536,6 +1536,12 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-tl .it .t{flex:1;min-width:0;font-size:16px;font-weight:500;color:var(--ink2);line-height:1.5}
 .hb-tl .it .t strong{color:var(--ink);font-weight:600}
 /* the ledger: sentences with the count in Space Grotesk */
+.fc2-count-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:8px 16px}
+.fc2-count-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid var(--paper2)}
+.fc2-count-row .n{font-size:14px;color:var(--ink2)}
+.fc2-count-row .n small{color:var(--ink3);font-size:12px}
+.fc2-count-row input{width:96px;text-align:right}
+.fc2-count-ft{display:flex;align-items:center;justify-content:flex-end;gap:12px;margin-top:12px}
 .hb-ledger{display:flex;flex-wrap:wrap;gap:8px}
 .hb-ledger span{font-size:13.5px;color:var(--ink2);background:var(--hb-inner);border:1px solid var(--hb-line2);border-radius:999px;padding:6px 12px}
 .hb-ledger span .hb-num{color:var(--ink);font-weight:700}
@@ -4245,6 +4251,7 @@ svg:hover .hb-xh{opacity:1}
          expectation. A gap is a counting problem, not money wasted, and the
          two were indistinguishable in every figure on this page. #}
       <div id="fc2-wsrc" class="fc2-cov" hidden></div>
+      <div id="fc2-count" class="fc2-cov" hidden></div>
     </div>
     {# The CFO read. Everything above is a position: what the waste is, what
        the percentage is, how far to trust it. This is the step after —
@@ -5804,6 +5811,8 @@ svg:hover .hb-xh{opacity:1}
               <div class="c"><select id="as-briefing-level" onchange="saveMorningBrief()" aria-label="Briefing level"><option value="calm">Calm</option><option value="normal">Normal</option><option value="all">Everything</option></select></div></div>
             <div class="ac-row" id="as-autodraft-row" hidden><div class="l"><b>Draft next week&rsquo;s schedule for me</b><span>Every Thursday, if you haven&rsquo;t built one. A draft only &mdash; nothing goes to staff until you publish.</span></div>
               <div class="c"><label class="ac-switch"><input type="checkbox" id="as-autodraft" onchange="saveAutoDraft()" aria-label="Draft next week's schedule"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
+            <div class="ac-row" id="as-autoorder-row" hidden><div class="l"><b>Send orders to suppliers you&rsquo;ve used before</b><span>Monday mornings, an order to a supplier with 3+ past orders, for about what you usually spend, goes out an hour later &mdash; you&rsquo;re told, and can undo from Home. New suppliers always wait for you. <span id="as-autoorder-trust"></span></span></div>
+              <div class="c"><label class="ac-switch"><input type="checkbox" id="as-autoorder" onchange="saveAutoOrder()" aria-label="Send trusted supplier orders automatically"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
             <div class="ac-row" id="as-autopublish-row" hidden><div class="l"><b>Publish it for me on Friday</b><span>Once your last 3 published schedules went out unedited, the Thursday draft goes to staff at 11am Friday &mdash; you&rsquo;re told at 9, and can undo from Home until then. <span id="as-autopublish-trust"></span></span></div>
               <div class="c"><label class="ac-switch"><input type="checkbox" id="as-autopublish" onchange="saveAutoPublish()" aria-label="Publish the schedule automatically"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
           </div>
@@ -10827,7 +10836,7 @@ function loadInvInsight(){
   loadWasteTrend();
   fc2LoadFoodCostPct();
   fc2LoadRecipeCoverage();
-  fc2LoadWasteSources();
+  fc2LoadWasteSources();fc2LoadCountSheet();
   fc2LoadCfo();
   var fiveMin=5*60*1000;
   try{
@@ -10991,6 +11000,32 @@ function fc2LoadFoodCostPct(){
       host.hidden=false;
     })
     .catch(function(){ host.hidden=true; });
+}
+// ── the count sheet, pre-filled ─────────────────────────────────────────────
+// Opens with the ledger's expected on-hand in every box (last recount +
+// receiving − depletion); the owner corrects, not types. Saving writes a
+// recount per changed line — the same event a hand count writes.
+function fc2LoadCountSheet(){
+  var el=document.getElementById('fc2-count');if(!el)return;
+  fetch('/api/food-cost/count-sheet',{credentials:'same-origin'}).then(function(r){return r.json();}).then(function(d){
+    if(!d||!d.ok||!(d.items||[]).length){el.hidden=true;return;}
+    var h='<div class="hb-h3"><span>Count sheet</span><span class="cnt">'+d.items.length+'</span></div><div class="hb-empty" style="font-size:12.5px;margin-bottom:8px">Filled with what the ledger expects on hand. Change only what differs, then save \u2014 each change is a recount.</div><div class="fc2-count-grid">';
+    for(var i=0;i<d.items.length;i++){var it=d.items[i];var exp=(it.expected==null)?'':(Math.round(it.expected*100)/100);
+      h+='<label class="fc2-count-row"><span class="n">'+esc(it.name)+(it.unit?' <small>'+esc(it.unit)+'</small>':'')+'</span><input type="number" step="any" min="0" class="ac-input ac-num" data-ing="'+esc(it.ingredient_id)+'" data-expected="'+esc(exp)+'" value="'+esc(exp)+'" aria-label="Count for '+esc(it.name)+'"></label>';}
+    h+='</div><div class="fc2-count-ft"><span class="ac-status" id="fc2-count-status"></span><button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="fc2SaveCount(this)">Save count</button></div>';
+    el.innerHTML=h;el.hidden=false;
+  }).catch(function(){});
+}
+function fc2SaveCount(btn){
+  var rows=document.querySelectorAll('#fc2-count input[data-ing]'),items=[];
+  for(var i=0;i<rows.length;i++){var v=rows[i].value;if(v===''||v===rows[i].getAttribute('data-expected'))continue;items.push({ingredient_id:parseInt(rows[i].getAttribute('data-ing'),10),counted:parseFloat(v)});}
+  var st=document.getElementById('fc2-count-status');
+  if(!items.length){if(st)st.textContent='Nothing changed \u2014 the ledger already matches your count.';return;}
+  var done=cbtnBusy(btn,'Saving\u2026');
+  fetch('/api/food-cost/count-sheet',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({items:items})}).then(function(r){return r.json();}).then(function(d){
+    done();if(st)st.textContent=d&&d.ok?('Saved \u2014 '+d.written+' recount'+(d.written===1?'':'s')+'.'):((d&&d.error)||'Could not save.');
+    if(d&&d.ok)fc2LoadCountSheet();
+  }).catch(function(){done();if(st)st.textContent='Could not save \u2014 check your connection.';});
 }
 function fc2LoadWasteSources(){
   var host=document.getElementById('fc2-wsrc');if(!host)return;
@@ -11817,6 +11852,7 @@ function loadOpsSettings() {
     if (row && !d.external_tool) row.hidden = false;
     document.getElementById('as-autodraft').checked = !!d.enabled;
     if (!d.external_tool) loadAutoPublish();
+    loadAutoOrder();
   }).catch(function() {});
 }
 
@@ -11865,6 +11901,20 @@ function saveAutoDraft() {
 function saveAutoPublish() {
   asPost('/api/labor/auto-publish', {enabled: document.getElementById('as-autopublish').checked},
          'as-ops-status', 'Saved').then(function() { loadAutoPublish(); });
+}
+function saveAutoOrder() {
+  asPost('/api/food-cost/auto-order', {enabled: document.getElementById('as-autoorder').checked},
+         'as-ops-status', 'Saved').then(function() { loadAutoOrder(); });
+}
+function loadAutoOrder() {
+  fetch('/api/food-cost/auto-order', {credentials: 'same-origin'}).then(function(r) { return r.json(); }).then(function(d) {
+    if (!d || !d.ok) return;
+    var row = document.getElementById('as-autoorder-row'); if (row) row.hidden = false;
+    document.getElementById('as-autoorder').checked = !!d.enabled;
+    var t = document.getElementById('as-autoorder-trust'), parts = [];
+    for (var i = 0; i < (d.suppliers || []).length; i++) { var sp = d.suppliers[i]; parts.push(sp.name + ': ' + (sp.trusted ? 'earned' : (sp.needed + ' more order' + (sp.needed === 1 ? '' : 's')))); }
+    if (t) t.textContent = parts.length ? ('Your suppliers \u2014 ' + parts.join(' \u00b7 ') + '.') : 'No suppliers with an email on file yet.';
+  }).catch(function() {});
 }
 function loadAutoPublish() {
   fetch('/api/labor/auto-publish', {credentials: 'same-origin'}).then(function(r) { return r.json(); }).then(function(d) {

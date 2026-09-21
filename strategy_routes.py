@@ -318,6 +318,15 @@ def _do_invoice_scan(u):
         media_type = "image/jpeg"
     try:
         out = invoices.scan(_rid(u), data, media_type, user_id=u.get("id"))
+        # Supplier memory (ordering.py): a supplier whose scans the owner
+        # has applied unchanged three times gets its clean lines applied on
+        # scan; flagged lines still wait.
+        try:
+            import ordering
+            out = ordering.auto_apply_if_trusted(_rid(u), out, user_id=u.get("id"))
+        except Exception as _ae:
+            import ops
+            ops.capture(_ae, job="invoice_auto_apply", context=f"restaurant_id={_rid(u)}")
     except invoices.InvoiceError as e:
         return {"ok": False, "error": str(e)}, 400
     except Exception as e:
@@ -452,6 +461,95 @@ def _do_auto_publish_set(u):
     update_restaurant(_rid(u), {"auto_publish_schedule": 1 if b["enabled"] else 0})
     log_account_event(_rid(u), "auto_publish_changed", current_user=u, detail="on" if b["enabled"] else "off")
     return _do_auto_publish_get(u)
+
+
+def _do_auto_order_get(u):
+    from models import get_restaurant
+    import ordering
+    r = get_restaurant(_rid(u))
+    # The record per supplier, so the switch says what it would do.
+    suppliers = []
+    try:
+        from models import get_conn
+        conn = get_conn()
+        try:
+            rows = conn.execute("SELECT DISTINCT supplier_name, supplier_email FROM ingredients WHERE restaurant_id=? "
+                                "AND is_active=1 AND supplier_email IS NOT NULL AND supplier_email != ''", (_rid(u),)).fetchall()
+        finally:
+            conn.close()
+        for row in rows:
+            t = ordering.supplier_trust(_rid(u), row["supplier_email"])
+            suppliers.append({"name": row["supplier_name"] or row["supplier_email"], "email": row["supplier_email"],
+                              "orders": t["orders"], "median_total": t["median_total"], "trusted": t["trusted"],
+                              "needed": max(0, ordering.ORDER_TRUST_MIN - t["orders"])})
+    except Exception:
+        pass
+    return {"ok": True, "enabled": bool(getattr(r, "auto_order_trusted", 0)), "suppliers": suppliers,
+            "undo_minutes": ordering.ORDER_UNDO_MINUTES}, 200
+
+
+def _do_auto_order_set(u):
+    if not _sees_food(u):
+        return _forbidden("Only someone who can see food cost can change ordering.")
+    from models import update_restaurant
+    from client_api import log_account_event
+    b = _body()
+    if "enabled" not in b:
+        return {"ok": False, "error": "Nothing to change."}, 400
+    update_restaurant(_rid(u), {"auto_order_trusted": 1 if b["enabled"] else 0})
+    log_account_event(_rid(u), "auto_order_changed", current_user=u, detail="on" if b["enabled"] else "off")
+    return _do_auto_order_get(u)
+
+
+# ── #7 the count sheet, pre-filled ───────────────────────────────────────────
+# Counts were typed from scratch (a CSV column) while the ledger already
+# held the theoretical on-hand — last recount + receiving − depletion. The
+# sheet opens filled with that number; the owner corrects, not types.
+
+def _do_count_sheet_get(u):
+    if not _sees_food(u):
+        return _forbidden("Only someone who can see food cost can count.")
+    import inventory_ledger
+    rows = inventory_ledger.list_ingredients(_rid(u))
+    out = [{"ingredient_id": r["id"], "name": r["name"], "unit": r.get("unit") or "",
+            "category": r.get("category") or "", "expected": r.get("current_stock"),
+            "par_level": r.get("par_level"), "last_recount_at": r.get("last_recount_at"),
+            "avg_daily_usage": r.get("avg_daily_usage")} for r in rows]
+    return {"ok": True, "items": out, "count": len(out)}, 200
+
+
+def _do_count_sheet_save(u):
+    if not _sees_food(u):
+        return _forbidden("Only someone who can see food cost can count.")
+    import inventory_ledger
+    from client_api import log_account_event
+    b = _body()
+    items = b.get("items")
+    if not isinstance(items, list) or not items:
+        return {"ok": False, "error": "Nothing counted."}, 400
+    if len(items) > 500:
+        return {"ok": False, "error": "That is more items than one count holds."}, 400
+    day = (b.get("date") or "").strip()[:10] or None
+    written, skipped = 0, []
+    for it in items:
+        try:
+            ing_id = int(it.get("ingredient_id"))
+            qty = float(it.get("counted"))
+        except (TypeError, ValueError, AttributeError):
+            skipped.append(it)
+            continue
+        if qty < 0 or qty > 1e7:
+            skipped.append(it)
+            continue
+        try:
+            inventory_ledger.record_recount(_rid(u), ing_id, qty, event_date=day, source="count_sheet")
+            written += 1
+        except Exception:
+            skipped.append(it)
+    if written:
+        log_account_event(_rid(u), "inventory_counted", current_user=u, detail=f"{written} items")
+    return {"ok": written > 0, "written": written, "skipped": len(skipped),
+            "error": None if written else "No usable lines — each needs an ingredient and a number."}, (200 if written else 400)
 
 
 def _do_delayed_pending(u):
@@ -847,6 +945,10 @@ _ROUTES = [
     ("/activity", ["GET"], _do_activity, "activity"),
     ("/labor/auto-publish", ["GET"], _do_auto_publish_get, "auto_publish_get"),
     ("/labor/auto-publish", ["POST"], _do_auto_publish_set, "auto_publish_set"),
+    ("/food-cost/count-sheet", ["GET"], _do_count_sheet_get, "count_sheet_get"),
+    ("/food-cost/count-sheet", ["POST"], _do_count_sheet_save, "count_sheet_save"),
+    ("/food-cost/auto-order", ["GET"], _do_auto_order_get, "auto_order_get"),
+    ("/food-cost/auto-order", ["POST"], _do_auto_order_set, "auto_order_set"),
     ("/actions/pending", ["GET"], _do_delayed_pending, "delayed_pending"),
     ("/actions/<int:action_id>/cancel", ["POST"], _do_delayed_cancel, "delayed_cancel"),
     ("/account/pause", ["GET"], _do_pause_status, "pause_status"),

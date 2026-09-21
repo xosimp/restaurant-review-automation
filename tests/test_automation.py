@@ -17,9 +17,9 @@ from models import Restaurant, create_restaurant, get_conn, update_restaurant
 @pytest.fixture(autouse=True)
 def _redirect(monkeypatch, db_path):
     real = models.get_conn
-    import delayed, issues, home_brief, notify, activity, labor_replacements, scheduler
-    # scheduler binds get_conn at import (CLAUDE.md's hazard): patch its copy too.
-    for mod in (models, delayed, issues, home_brief, notify, activity, labor_replacements, scheduler):
+    import delayed, issues, home_brief, notify, activity, labor_replacements, scheduler, ordering, closeout
+    # scheduler and ordering bind get_conn at import (CLAUDE.md's hazard): patch their copies too.
+    for mod in (models, delayed, issues, home_brief, notify, activity, labor_replacements, scheduler, ordering, closeout):
         monkeypatch.setattr(mod, "get_conn", lambda *a, **k: real(db_path), raising=False)
         monkeypatch.setattr(mod, "DB_PATH", db_path, raising=False)
     monkeypatch.setattr(models, "DB_PATH", db_path)
@@ -312,3 +312,202 @@ def test_routes_and_switches_exist_on_both_sides():
         assert want in paths, want
     import notify
     assert "schedule_publish_pending" in notify.BRIEFING_CALM and "schedule_publish_pending" in models.NON_ALERT_TYPES
+
+
+# ── Phase B: the high-ROI set ────────────────────────────────────────────────
+
+def _po(db_path, rid, email, total, days_ago=10):
+    conn = get_conn(db_path)
+    conn.execute("INSERT INTO purchase_orders (restaurant_id, po_number, supplier_name, supplier_email, items_json, "
+                 "total_cost, status, sent_at) VALUES (?,?,?,?,?,?,?,?)",
+                 (rid, f"PO{total}{days_ago}", "Fresh Co", email, "[]", total, "sent", _utc(days=days_ago)))
+    conn.commit(); conn.close()
+
+
+def test_a_supplier_earns_trust_from_the_owners_own_orders(db_path):
+    import ordering
+    rid = _rid(db_path, module_inventory=1)
+    assert ordering.supplier_trust(rid, "s@x.com", db_path=db_path)["trusted"] is False
+    for t, d in ((400, 30), (450, 20), (420, 12)):
+        _po(db_path, rid, "s@x.com", t, days_ago=d)
+    t = ordering.supplier_trust(rid, "S@x.com", db_path=db_path)
+    assert t["trusted"] and t["orders"] == 3 and t["median_total"] == 420
+
+
+def test_an_order_goes_only_inside_the_band_and_outside_the_cadence(db_path):
+    import ordering
+    rid = _rid(db_path, module_inventory=1)
+    for t, d in ((400, 30), (450, 20), (420, 12)):
+        _po(db_path, rid, "s@x.com", t, days_ago=d)
+    ok, why = ordering.order_can_go(rid, {"supplier_email": "s@x.com", "total_cost": 430}, db_path=db_path)
+    assert ok, why
+    ok, why = ordering.order_can_go(rid, {"supplier_email": "s@x.com", "total_cost": 900}, db_path=db_path)
+    assert not ok and "outside the usual" in why
+    ok, why = ordering.order_can_go(rid, {"supplier_email": "new@x.com", "total_cost": 430}, db_path=db_path)
+    assert not ok and "0 prior" in why
+    _po(db_path, rid, "s@x.com", 410, days_ago=1)
+    ok, why = ordering.order_can_go(rid, {"supplier_email": "s@x.com", "total_cost": 430}, db_path=db_path)
+    assert not ok and "this week" in why
+
+
+def test_trusted_orders_are_queued_with_the_undo_window_not_sent(db_path, monkeypatch):
+    import ordering, delayed, inventory
+    rid = _rid(db_path, module_inventory=1)
+    for t, d in ((400, 30), (450, 20), (420, 12)):
+        _po(db_path, rid, "s@x.com", t, days_ago=d)
+    monkeypatch.setattr(inventory, "build_supplier_orders", lambda r: {"draft_hash": "h1", "groups": [
+        {"supplier_email": "s@x.com", "supplier_name": "Fresh Co", "total_cost": 430, "items": [1, 2, 3]},
+        {"supplier_email": "new@x.com", "supplier_name": "Newco", "total_cost": 100, "items": [1]}]})
+    rows = ordering.queue_trusted_orders(rid, db_path=db_path)
+    assert len(rows) == 1 and rows[0]["payload"] == {"supplier_email": "s@x.com", "draft_hash": "h1"}
+    assert rows[0]["label"] == "Sending the Fresh Co order ($430, 3 items)"
+    assert ordering.queue_trusted_orders(rid, db_path=db_path) == []          # one pending per supplier
+    conn = get_conn(db_path); n = conn.execute("SELECT COUNT(*) FROM purchase_orders").fetchone()[0]; conn.close()
+    assert n == 3                                                                 # nothing sent yet
+
+
+def test_the_delayed_send_refuses_a_draft_that_changed(db_path, monkeypatch):
+    import delayed, inventory, client_api
+    rid = _rid(db_path, module_inventory=1)
+    monkeypatch.setattr(inventory, "build_supplier_orders", lambda r: {"draft_hash": "h2", "groups": [
+        {"supplier_email": "s@x.com", "supplier_name": "Fresh Co", "total_cost": 430, "items": [1]}]})
+    sent = []
+    monkeypatch.setattr(client_api, "_send_supplier_orders", lambda *a, **k: sent.append(1) or ([{"po_number": "X"}], []))
+    out = delayed._run_order_send(rid, {"supplier_email": "s@x.com", "draft_hash": "h1"}, db_path)
+    assert out["ok"] is False and "changed" in out["error"] and sent == []
+    out = delayed._run_order_send(rid, {"supplier_email": "s@x.com", "draft_hash": "h2"}, db_path)
+    assert out["ok"] is True and sent == [1]
+
+
+def test_invoice_trust_needs_three_full_accepts_and_then_applies_clean_lines(db_path, monkeypatch):
+    import ordering, invoices
+    rid = _rid(db_path, module_inventory=1)
+    conn = get_conn(db_path)
+    conn.execute("INSERT INTO ingredients (restaurant_id, name, unit, unit_cost, is_active) VALUES (?,?,?,?,1)",
+                 (rid, "Romaine", "case", 20.0))
+    ing = conn.execute("SELECT id FROM ingredients").fetchone()[0]
+    lines = [{"index": 0, "ingredient_id": ing, "proposed_cost": 21.0, "selected": True, "note": None}]
+    for i in range(3):
+        conn.execute("INSERT INTO invoice_imports (restaurant_id, supplier, invoice_date, image_sha, lines_json, "
+                     "applied_json, applied_at) VALUES (?,?,?,?,?,?,datetime('now'))",
+                     (rid, "Fresh Co", "2026-09-01", f"sha{i}", json.dumps({"lines": lines}),
+                      json.dumps([{"index": 0}])))
+    conn.commit(); conn.close()
+    assert ordering.invoice_trust(rid, "fresh co", db_path=db_path)["trusted"] is True
+    proposal = {"id": None, "supplier": "Fresh Co", "duplicate": False, "applied_at": None,
+                "lines": [{"index": 0, "ingredient_id": ing, "proposed_cost": 22.5, "selected": True, "note": None},
+                          {"index": 1, "ingredient_id": ing, "proposed_cost": 90.0, "selected": False,
+                           "note": "a large change — usually a unit mix-up; check before applying"}]}
+    conn = get_conn(db_path)
+    cur = conn.execute("INSERT INTO invoice_imports (restaurant_id, supplier, invoice_date, image_sha, lines_json) "
+                       "VALUES (?,?,?,?,?)", (rid, "Fresh Co", "2026-09-20", "shaX", json.dumps({"lines": proposal["lines"]})))
+    proposal["id"] = cur.lastrowid; conn.commit(); conn.close()
+    monkeypatch.setattr(invoices, "get_conn", lambda *a, **k: models.get_conn(db_path), raising=False)
+    out = ordering.auto_apply_if_trusted(rid, proposal, db_path=db_path)
+    assert [a["index"] for a in out["auto_applied"]] == [0]                     # the flagged line waited
+    conn = get_conn(db_path)
+    assert conn.execute("SELECT unit_cost FROM ingredients WHERE id=?", (ing,)).fetchone()[0] == 22.5
+    conn.close()
+
+
+def test_a_supplier_without_the_record_is_not_auto_applied(db_path):
+    import ordering
+    rid = _rid(db_path, module_inventory=1)
+    out = ordering.auto_apply_if_trusted(rid, {"id": 1, "supplier": "Nobody", "lines": [{"index": 0, "selected": True,
+                                                "ingredient_id": 1, "proposed_cost": 5}]}, db_path=db_path)
+    assert out["auto_applied"] == [] and out["trust"]["trusted"] is False
+
+
+def test_the_count_sheet_opens_with_what_the_ledger_expects(db_path, monkeypatch):
+    import strategy_routes as sr, inventory_ledger
+    rid = _rid(db_path, module_inventory=1)
+    conn = get_conn(db_path)
+    conn.execute("INSERT INTO ingredients (restaurant_id, name, unit, current_stock, par_level, is_active) "
+                 "VALUES (?,?,?,?,?,1)", (rid, "Romaine", "case", 4.5, 8))
+    conn.commit(); conn.close()
+    monkeypatch.setattr(sr, "_sees_food", lambda u: True)
+    monkeypatch.setattr(inventory_ledger, "list_ingredients", lambda r: [dict(x) for x in models.get_conn(db_path).execute(
+        "SELECT * FROM ingredients WHERE restaurant_id=?", (r,)).fetchall()])
+    sheet, _ = sr._do_count_sheet_get({"id": 1, "restaurant_id": rid})
+    assert sheet["items"][0]["expected"] == 4.5 and sheet["items"][0]["name"] == "Romaine"
+    written = []
+    monkeypatch.setattr(inventory_ledger, "record_recount", lambda r, i, q, **k: written.append((i, q, k.get("source"))))
+    monkeypatch.setattr(sr, "_body", lambda: {"items": [{"ingredient_id": sheet["items"][0]["ingredient_id"], "counted": 3},
+                                                       {"ingredient_id": "x", "counted": "no"}]})
+    out, status = sr._do_count_sheet_save({"id": 1, "restaurant_id": rid, "username": "o"})
+    assert status == 200 and out["written"] == 1 and out["skipped"] == 1
+    assert written[0][1] == 3.0 and written[0][2] == "count_sheet"
+
+
+def test_the_schedule_draft_reads_the_reviews_x_labor_finding(monkeypatch):
+    import client_api, business_intelligence as bi
+    monkeypatch.setattr(bi, "executive_brief", lambda rid, **k: {"links": [
+        {"kind": "reviews_x_labor", "headline": "Friday dinner is one server short and it shows in the reviews",
+         "confirm_by": "Add one server Friday 6-9 for two weeks"},
+        {"kind": "reviews_x_menu", "headline": "ignored"}]})
+    notes = client_api._sched_notes_with_findings(1, "Close the patio Mondays")
+    assert notes.startswith("Close the patio Mondays\n")
+    assert "reviews x labor" in notes and "one server short" in notes and "ignored" not in notes
+    monkeypatch.setattr(bi, "executive_brief", lambda rid, **k: {"links": []})
+    assert client_api._sched_notes_with_findings(1, "as is") == "as is"
+
+
+def test_a_close_out_86_becomes_a_zero_count_and_a_callout_becomes_an_issue(db_path, monkeypatch):
+    import closeout, inventory_ledger, issues
+    rid = _rid(db_path, module_inventory=1, module_labor=1)
+    conn = get_conn(db_path)
+    conn.execute("INSERT INTO ingredients (restaurant_id, name, unit, is_active) VALUES (?,?,?,1)", (rid, "Salmon Fillet", "lb"))
+    conn.execute("INSERT INTO ingredients (restaurant_id, name, unit, is_active) VALUES (?,?,?,1)", (rid, "Chicken Thighs", "lb"))
+    conn.execute("INSERT INTO ingredients (restaurant_id, name, unit, is_active) VALUES (?,?,?,1)", (rid, "Chicken Stock", "qt"))
+    conn.commit(); conn.close()
+    recounts, opened = [], []
+    monkeypatch.setattr(inventory_ledger, "record_recount", lambda r, i, q, **k: recounts.append((i, q, k.get("source"))))
+    monkeypatch.setattr(issues, "create_issue", lambda r, kind, title, **k: opened.append((kind, title, k.get("detail"), k.get("source_key"))) or ({}, None))
+    monkeypatch.setattr(closeout, "get", lambda *a, **k: {"ok": True})
+    closeout.save(rid, {"eighty_sixed": "salmon, chicken", "callouts": "Dee called out for tomorrow"},
+                  business_date="2026-09-20", db_path=db_path, restaurant=models.get_restaurant(rid, db_path=db_path))
+    assert len(recounts) == 1 and recounts[0][1] == 0.0 and recounts[0][2] == "closeout"   # "chicken" matched two → skipped
+    assert opened and opened[0][0] == "callout" and opened[0][3] == "callout:2026-09-20"
+    assert "Dee called out" in opened[0][2]
+
+
+def test_the_quiet_night_push_carries_the_drafts_it_wrote(db_path, monkeypatch):
+    import strategy_jobs, marketing, marketing_drafts, guest_marketing
+    rid = _rid(db_path, module_marketing=1)
+    r = models.get_restaurant(rid, db_path=db_path)
+    monkeypatch.setattr(marketing, "generate_content", lambda ct, topic, restaurant_id=None: "Come in Tuesday!")
+    monkeypatch.setattr(guest_marketing, "draft_campaign_message", lambda *a, **k: "Tuesday special — reply YES")
+    saved = []
+    monkeypatch.setattr(marketing_drafts, "save_draft", lambda rid_, body, **k: saved.append((body, k.get("content_type"))) or {"ok": True, "id": len(saved)})
+    out = strategy_jobs._draft_quiet_night_fill(r, {"weekday": "Tuesday"}, db_path)
+    assert out == {"post_draft_id": 1, "sms_draft_id": 2}
+    assert saved == [("Come in Tuesday!", "instagram_post"), ("Tuesday special — reply YES", "guest_sms")]
+    # A model failure costs the drafts, never the heads-up.
+    monkeypatch.setattr(marketing, "generate_content", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("budget")))
+    monkeypatch.setattr(guest_marketing, "draft_campaign_message", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("budget")))
+    import ops
+    monkeypatch.setattr(ops, "capture", lambda *a, **k: None)
+    assert strategy_jobs._draft_quiet_night_fill(r, {"weekday": "Tuesday"}, db_path) == {}
+
+
+def test_staff_can_enter_their_own_availability(db_path, monkeypatch):
+    from flask import Flask
+    import staff_routes, auth
+    monkeypatch.setattr(auth, "get_conn", lambda *a, **k: models.get_conn(db_path), raising=False)
+    rid = _rid(db_path, module_labor=1)
+    app = Flask(__name__)
+    app.register_blueprint(staff_routes.staff_bp, url_prefix="/staff")
+    monkeypatch.setattr(staff_routes, "staff_login_required", lambda f: f, raising=False)
+    user = {"id": 9, "restaurant_id": rid, "employee_name": "Dee", "role": "employee"}
+    with app.test_request_context("/staff/api/availability", method="POST",
+                                  json={"unavailable_days": ["friday", "Sunday", "nope"], "notes": "not before 10"}):
+        out = staff_routes.api_availability_save.__wrapped__(user) if hasattr(staff_routes.api_availability_save, "__wrapped__") \
+            else staff_routes.api_availability_save(user)
+    body = out.get_json() if hasattr(out, "get_json") else out[0].get_json()
+    assert body["ok"] and body["unavailable_days"] == ["Friday", "Sunday"]
+    assert models.get_unavailability_map(rid, db_path=db_path)["Dee"] == {"Friday", "Sunday"}
+    with app.test_request_context("/staff/api/availability", method="POST", json={"unavailable_days": list(staff_routes._DAYS)}):
+        out = staff_routes.api_availability_save.__wrapped__(user) if hasattr(staff_routes.api_availability_save, "__wrapped__") \
+            else staff_routes.api_availability_save(user)
+    body = out.get_json() if hasattr(out, "get_json") else out[0].get_json()
+    assert body["ok"] is False                                                   # every day blocked is refused
