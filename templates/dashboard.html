@@ -445,7 +445,7 @@ html:not([data-theme="dark"]) .empty-state-sm.on-dark .es-sub{color:var(--ink3)}
 [data-theme="dark"] .empty-state-sm.on-dark .es-sub{color:rgba(240,235,224,.45)}
 .insight{background:linear-gradient(160deg,var(--paper2) 0%,var(--paper3) 100%);border:1px solid rgba(200,75,47,.18);border-radius:var(--r);padding:16px 18px;margin-bottom:16px}
 .insight-lbl{font-size:9px;color:var(--ink3);text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px}
-.insight-text{font-size:12px;line-height:1.7;color:var(--ink2);white-space:pre-wrap}
+.insight-text{font-size:16px;line-height:1.65;color:var(--ink2);white-space:pre-wrap}
 [data-theme="dark"] .insight-text{color:rgba(250,248,245,.85)!important}
 .insight-loading{color:var(--ink3);font-style:italic;font-size:12px}
 @keyframes flashGreen{0%{background:#d5ede0;}60%{background:#d5ede0;}100%{background:var(--paper)}}
@@ -751,7 +751,8 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none}
    beneath it, an answer's sources to the answer — with one light
    travelling along it. It is drawn only where a real link exists in the
    payload; it never decorates. */
-.ember-thread{position:relative;width:2px;height:24px;margin:2px 0 0 22px;background:linear-gradient(180deg,var(--ember2),var(--ember));border-radius:2px}
+.ember-thread{position:relative;z-index:2;width:2px;height:68px;margin:2px 0 -24px 22px;background:linear-gradient(180deg,var(--ember2) 0,var(--ember) 58%,var(--ember) 64%,rgba(212,88,58,.38) 66%,rgba(212,88,58,.38) 100%);border-radius:2px}
+.lb2-ai[data-thread="1"]{margin-top:0!important}
 .ember-thread:before{content:'';position:absolute;left:-3px;top:-2px;width:8px;height:8px;border-radius:50%;background:var(--ember);box-shadow:0 0 12px 3px rgba(200,75,47,.55);animation:emberTravel 2.4s ease-in-out infinite}
 .ember-thread.h{width:64px;height:2px;margin:0 2px;background:linear-gradient(90deg,var(--ember2),var(--ember),var(--ember2))}
 .ember-thread.h:before{top:-3px;left:-2px;animation-name:emberTravelH}
@@ -782,6 +783,7 @@ details>summary{transition:color .18s ease}
 details[open]>summary~*{animation:askIn .3s ease both}
 /* section rules carry a short ember mark */
 .hb-sh h2:before,.lb2-subsection-title:before{content:'';display:inline-block;width:14px;height:3px;border-radius:2px;background:var(--ember);margin:0 10px 6px 0;vertical-align:middle}
+.hb-sh h2:before{align-self:center;margin:2px 10px 0 0}
 /* premium empty states: the AI is watching, and says what for */
 .pe{position:relative;display:flex;flex-direction:column;align-items:center;gap:8px;padding:30px 20px!important;border-radius:14px;background:var(--sf-ai),var(--surface);border:1px dashed var(--sf-ai-line)}
 .pe-dot{position:relative;width:10px;height:10px;border-radius:50%;background:var(--ember);box-shadow:0 0 12px var(--ember)}
@@ -950,8 +952,6 @@ details[open]>summary~*{animation:askIn .3s ease both}
   div[style*="display:flex"][style*="gap:24px"],
   div[style*="display:flex"][style*="gap:20px"] { flex-wrap: wrap; }
 
-  /* Insight/forecast cards: keep line length readable */
-  .insight-text { font-size: 12.5px !important; }
 }
 
 /* Tablet — between phone and the 1080px desktop container */
@@ -1493,6 +1493,8 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 /* motion */
 /* Only the thin line is drawn with a dash offset; the blurred glow and the
    fill fade in on opacity (compositor work, no per-frame filter re-raster). */
+.hb-cl{position:relative}.hb-cl>svg:first-child{position:relative;z-index:1}
+.hb-cl>.hb-cl-glow{position:absolute!important;inset:0;width:100%!important;height:100%!important;margin:0!important;z-index:0;pointer-events:none}
 .hb-draw{stroke-dasharray:2000;stroke-dashoffset:2000;animation:hbDraw 2.4s cubic-bezier(.35,0,.15,1) forwards}
 @keyframes hbDraw{to{stroke-dashoffset:0}}
 .hb-glow{opacity:0;animation:hbFillIn 1.4s ease 1.3s forwards}
@@ -1575,10 +1577,10 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
    and a descendant selector here turned each number into a chip inside the chip. */
 .hb-focus .ev>span{font-size:13.5px;color:var(--ink2);background:var(--hb-inner);border:1px solid var(--hb-line2);border-radius:999px;padding:5px 12px;line-height:1.4}
 .hb-focus .ev>span .hb-num{color:var(--ink);font-weight:600}
-.hb-focus .ft{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:20px}
+.hb-focus .ft{display:flex;gap:12px;align-items:center;justify-content:flex-start;flex-wrap:wrap;margin-top:20px}
 .hb-focus .money{font-family:'Space Grotesk',sans-serif;font-size:34px;font-weight:600;letter-spacing:-.025em;color:var(--ink);line-height:1}
 .hb-focus .money small{font-family:'Apfel Grotezk',sans-serif;font-size:13.5px;color:var(--ink3);font-weight:400;letter-spacing:0;margin-left:7px}
-.hb-focus .ft .sp{flex:1}
+.hb-focus .ft .sp{display:none}
 .hb-focus .ft .also{display:inline-flex;align-items:center;gap:12px;flex-wrap:wrap}
 .hb-focus .ft .also .m{font-size:14.5px;font-weight:600;color:var(--ink2);padding:6px 11px;border-radius:999px;background:var(--hb-inner);border:1px solid var(--hb-line2)}
 /* a link between two modules — the "across your restaurant" mark */
@@ -1606,7 +1608,8 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-rec .ev{font-size:14px;color:var(--ink3);line-height:1.45}
 .hb-rec .ft{display:flex;gap:6px;align-items:center;margin-top:auto;padding-top:10px;flex-wrap:wrap}
 .hb-rec .hb-x{opacity:.5}.hb-rec:hover .hb-x{opacity:1}
-.hb-rec-ans{margin-left:auto;display:inline-flex;gap:2px;opacity:.55;transition:opacity .18s ease}.hb-rec:hover .hb-rec-ans{opacity:1}
+.hb-rec-ans{margin-left:auto;display:inline-flex;align-items:center;gap:0;opacity:.55;transition:opacity .18s ease}.hb-rec:hover .hb-rec-ans{opacity:1}
+.hb-rec-ans .cbtn+.cbtn{margin-left:10px;padding-left:12px;border-left:1px solid var(--hb-line)}
 /* receipt strip */
 .hb-rcpt{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin-top:14px}
 .hb-rcpt .it{display:flex;align-items:flex-start;gap:12px;padding:14px 16px;border-radius:12px;background:var(--hb-inner);border:1px solid var(--hb-line2)}
@@ -1780,7 +1783,8 @@ svg:hover .hb-xh{opacity:1}
     return d;
   }
   var _uid=0;
-  function glowDefs(id,col){return '<defs><linearGradient id="'+id+'g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="'+col+'" stop-opacity=".45"/><stop offset="1" stop-color="'+col+'" stop-opacity="0"/></linearGradient><filter id="'+id+'f" x="-20%" y="-50%" width="140%" height="200%"><feGaussianBlur stdDeviation="3"/></filter><radialGradient id="'+id+'h"><stop offset="0" stop-color="'+col+'" stop-opacity=".55"/><stop offset="1" stop-color="'+col+'" stop-opacity="0"/></radialGradient></defs>';}
+  function glowDefs(id,col){return '<defs><linearGradient id="'+id+'g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="'+col+'" stop-opacity=".45"/><stop offset="1" stop-color="'+col+'" stop-opacity="0"/></linearGradient><filter id="'+id+'f" x="-20%" y="-50%" width="140%" height="200%"><feGaussianBlur stdDeviation="3"/></filter></defs>';}
+  function hotDefs(id,col){return '<defs><radialGradient id="'+id+'h"><stop offset="0" stop-color="'+col+'" stop-opacity=".55"/><stop offset="1" stop-color="'+col+'" stop-opacity="0"/></radialGradient></defs>';}
   // Area line with glow stroke, gradient fill, hot endpoint dot. col is a literal (SVG paint servers can't take var()).
   function glowLine(vals,w,h,col,opts){
     opts=opts||{};if(!vals||vals.length<2)return '';
@@ -1790,7 +1794,14 @@ svg:hover .hb-xh{opacity:1}
     for(var i=0;i<vals.length;i++)pts.push([pad+i*(w-2*pad)/(vals.length-1),h-pad-((vals[i]-min)/rng)*(h-2*pad-8)-4]);
     var line=smooth(pts),last=pts[pts.length-1],first=pts[0];
     var anim=reduced()?'':' class="hb-draw"';
-    var s='<svg viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none" aria-hidden="true">'+glowDefs(id,col);
+    // Two svgs, one drawing. WebKit re-rasterises an SVG filter every time
+    // anything in that svg repaints, and the line-draw, the fade-ins and the
+    // hot dot's endless pulse all repaint — so the Gaussian glow used to be
+    // recomputed every frame, for every chart on screen, forever. The
+    // fill and the blurred glow now sit in a static svg underneath; the
+    // svg that animates carries no filter at all.
+    var s='<svg viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none" aria-hidden="true">'+hotDefs(id,col);
+    var gl='<svg class="hb-cl-glow" viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none" aria-hidden="true">'+glowDefs(id,col);
     var hasTarget=opts.target!=null,ty=0;
     if(hasTarget){
       ty=h-pad-((opts.target-min)/rng)*(h-2*pad-8)-4;
@@ -1805,15 +1816,15 @@ svg:hover .hb-xh{opacity:1}
       // row, paint the area red exactly where (and only where) the curve
       // is actually over target — clipped at the target line itself, not
       // per data point, so it stays correct regardless of curve shape.
-      s+='<defs><linearGradient id="'+id+'r" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="'+RED+'" stop-opacity=".5"/><stop offset="1" stop-color="'+RED+'" stop-opacity="0"/></linearGradient>'
+      gl+='<defs><linearGradient id="'+id+'r" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="'+RED+'" stop-opacity=".5"/><stop offset="1" stop-color="'+RED+'" stop-opacity="0"/></linearGradient>'
         +'<clipPath id="'+id+'cb"><rect x="0" y="'+ty.toFixed(1)+'" width="'+w+'" height="'+(h-ty).toFixed(1)+'"/></clipPath>'
         +'<clipPath id="'+id+'ca"><rect x="0" y="0" width="'+w+'" height="'+ty.toFixed(1)+'"/></clipPath></defs>';
-      s+='<path class="hb-fill" d="'+fillD+'" fill="url(#'+id+'g)" clip-path="url(#'+id+'cb)"/>';
-      s+='<path class="hb-fill" d="'+fillD+'" fill="url(#'+id+'r)" clip-path="url(#'+id+'ca)"/>';
+      gl+='<path class="hb-fill" d="'+fillD+'" fill="url(#'+id+'g)" clip-path="url(#'+id+'cb)"/>';
+      gl+='<path class="hb-fill" d="'+fillD+'" fill="url(#'+id+'r)" clip-path="url(#'+id+'ca)"/>';
     } else {
-      s+='<path class="hb-fill" d="'+fillD+'" fill="url(#'+id+'g)"/>';
+      gl+='<path class="hb-fill" d="'+fillD+'" fill="url(#'+id+'g)"/>';
     }
-    s+='<path class="hb-glow" d="'+line+'" fill="none" stroke="'+col+'" stroke-opacity=".55" stroke-width="6" filter="url(#'+id+'f)" stroke-linecap="round"/>';
+    gl+='<path class="hb-glow" d="'+line+'" fill="none" stroke="'+col+'" stroke-opacity=".55" stroke-width="6" filter="url(#'+id+'f)" stroke-linecap="round"/></svg>';
     s+='<path'+anim+' d="'+line+'" fill="none" stroke="'+col+'" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>';
     s+='<circle class="hb-hot" cx="'+last[0].toFixed(1)+'" cy="'+last[1].toFixed(1)+'" r="14" fill="url(#'+id+'h)" style="transform-box:fill-box;transform-origin:center"/>';
     s+='<circle class="hb-dot" cx="'+last[0].toFixed(1)+'" cy="'+last[1].toFixed(1)+'" r="4" fill="'+col+'" stroke="#fff" stroke-opacity=".9" stroke-width="1.5"/>';
@@ -1823,7 +1834,9 @@ svg:hover .hb-xh{opacity:1}
     s+='<g class="hb-xh"><line class="hb-xl" x1="0" y1="0" x2="0" y2="'+h+'" stroke="'+col+'" stroke-opacity=".5" stroke-dasharray="3 4"/><circle class="hb-xd" r="5" fill="'+col+'" stroke="#fff" stroke-opacity=".9" stroke-width="1.5"/></g>';
     var px=[];for(var pi=0;pi<pts.length;pi++)px.push(pts[pi][0].toFixed(1)+','+pts[pi][1].toFixed(1));
     s=s.replace('<svg ','<svg data-pts="'+px.join(';')+'" data-vals="'+vals.map(function(v){return +v;}).join(',')+'" data-lbl="'+esc((opts.labels||[]).join('|'))+'" data-pre="'+esc(opts.prefix||'')+'" data-unit="'+esc(opts.unit||'')+'" ');
-    return s+'</svg>';
+    // The animating svg first (querySelector('svg') and closest('svg[data-pts]')
+    // keep finding it); the glow layer after it, drawn underneath by CSS.
+    return '<div class="hb-cl">'+s+'</svg>'+gl+'</div>';
   }
   // ── charts: crosshair + tooltip ───────────────────────────────────────────
   // One fixed tooltip for every glowLine on the page. The svg is
@@ -3284,12 +3297,15 @@ svg:hover .hb-xh{opacity:1}
    whole chart block (and whatever the callout draws above it) more room
    below the header. */
 #lb2-hero-chart{position:relative;margin-top:24px}
+.lb2-callout.below{transform:translate(-50%,14px)}
 .lb2-callout{position:absolute;transform:translate(-50%,-100%);max-width:200px;background:var(--surface);border:1px solid var(--hb-line);border-radius:8px;padding:6px 10px;font-size:12px;font-weight:600;color:var(--ink2);line-height:1.35;box-shadow:0 8px 20px rgba(0,0,0,.16);display:flex;align-items:flex-start;gap:6px;opacity:0;animation:hbFillIn .6s ease 2.6s forwards;pointer-events:none;z-index:2;white-space:normal}
 .lb2-callout .dot{width:6px;height:6px;border-radius:50%;background:var(--hb-bad);flex-shrink:0;margin-top:4px;box-shadow:0 0 6px var(--hb-bad)}
 .lb2-hoverdot{position:absolute;width:9px;height:9px;margin:-4.5px 0 0 -4.5px;border-radius:50%;border:2px solid var(--surface);box-shadow:0 0 0 1px rgba(0,0,0,.1),0 2px 6px rgba(0,0,0,.25);pointer-events:none;z-index:3;transition:left .07s linear,top .07s linear}
 .lb2-hoverdot[hidden]{display:none}
-.lb2-tip{position:absolute;top:0;transform:translate(-50%,-115%);background:var(--surface);border:1px solid var(--hb-line);border-radius:10px;padding:9px 12px;min-width:148px;box-shadow:0 12px 28px rgba(0,0,0,.2);pointer-events:none;z-index:4;transition:left .07s linear}
-.lb2-tip.right{transform:translate(-85%,-115%)}
+.lb2-tip{position:absolute;top:0;transform:translate(-50%,calc(-100% - 14px));background:var(--surface);border:1px solid var(--hb-line);border-radius:10px;padding:9px 12px;min-width:148px;box-shadow:0 12px 28px rgba(0,0,0,.2);pointer-events:none;z-index:4;transition:left .07s linear,top .07s linear}
+.lb2-tip.right{transform:translate(-85%,calc(-100% - 14px))}
+.lb2-tip.below{transform:translate(-50%,14px)}
+.lb2-tip.right.below{transform:translate(-85%,14px)}
 .lb2-tip[hidden]{display:none}
 .lb2-tip-d{font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3);margin-bottom:4px}
 .lb2-tip-pct{font-family:'Space Grotesk',sans-serif;font-size:19px;font-weight:700;color:var(--hb-good);line-height:1}
@@ -4055,7 +4071,7 @@ svg:hover .hb-xh{opacity:1}
 #panel-inventory{--hb-line:rgba(14,12,10,.12);--hb-line2:rgba(14,12,10,.07);--hb-tint:rgba(200,75,47,.06);--hb-tint2:rgba(200,75,47,.12);--hb-good:var(--green);--hb-warn:var(--amber);--hb-bad:var(--red);--hb-field:rgba(255,255,255,.55)}
 [data-theme="dark"] #panel-inventory{--hb-line:rgba(240,235,224,.14);--hb-line2:rgba(240,235,224,.07);--hb-tint:rgba(224,100,68,.09);--hb-tint2:rgba(224,100,68,.16);--hb-field:rgba(255,255,255,.05)}
 #panel-inventory .hb-chip .v{display:inline-flex;align-items:baseline;gap:2px}
-#panel-inventory #inv-insight{font-size:15px;line-height:1.65;color:var(--ink2);white-space:pre-wrap;padding-left:0}
+#panel-inventory #inv-insight{font-size:16px;line-height:1.65;color:var(--ink2);white-space:pre-wrap;padding-left:0}
 #panel-inventory .lb2-sg .k{font-size:14px}
 #panel-inventory .lb2-sg .v{font-size:34px}
 #panel-inventory .lb2-sg .cap{font-size:15px}
@@ -4750,7 +4766,7 @@ svg:hover .hb-xh{opacity:1}
   <div class="dark-insight-card" style="border-radius:10px;padding:16px 20px;margin-bottom:14px;position:relative;overflow:hidden">
     <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:var(--ember)"></div>
     <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember);margin-bottom:10px;padding-left:4px">Cavnar AI Marketing Brief</div>
-    <div class="insight-text insight-loading" id="mkt-insight" style="font-size:13px;line-height:1.7;padding-left:4px"><div class="cm-compose" data-w=".9,.75,.55"><div class="cm-l" style="height:11px;margin-bottom:9px"></div><div class="cm-l" style="height:11px;margin-bottom:9px"></div><div class="cm-l" style="height:11px"></div><div class="cm-caret" style="height:16px"></div></div></div>
+    <div class="insight-text insight-loading" id="mkt-insight" style="padding-left:4px"><div class="cm-compose" data-w=".9,.75,.55"><div class="cm-l" style="height:11px;margin-bottom:9px"></div><div class="cm-l" style="height:11px;margin-bottom:9px"></div><div class="cm-l" style="height:11px"></div><div class="cm-caret" style="height:16px"></div></div></div>
     <div style="margin-top:12px;padding-top:10px;border-top:1px solid #3d2e1e;font-size:11px;color:var(--ember2);padding-left:4px;display:flex;align-items:flex-start;gap:7px">
       <svg width="13" height="13" viewBox="0 0 16 16" fill="none" style="flex-shrink:0;margin-top:2px" aria-hidden="true"><rect x="1" y="9" width="3" height="6" rx="1" fill="var(--ember)"/><rect x="6.5" y="5" width="3" height="10" rx="1" fill="var(--ember)"/><rect x="12" y="1" width="3" height="14" rx="1" fill="var(--ember)"/></svg>
       <span>Restaurants posting weekly Google Business updates get <strong style="color:var(--ember)">3–7× more direction requests</strong> — use the content calendar below to stay consistent.</span>
@@ -6450,7 +6466,7 @@ function _setAskCavnarLoadingState(bubble, label, state) {
   });
   function brandify() {
     var i, el;
-    var lit = document.querySelectorAll('.rv2-hero:not(.lit),.lb2-hero:not(.lit),.ac-card:not(.lit),.fc2-fcp:not(.lit),.lb2-ai:not(.lit),.data-card:not(.lit)');
+    var lit = document.querySelectorAll('.rv2-hero:not(.lit),.lb2-hero:not(.lit),.hb-hero:not(.lit),.ac-card:not(.lit),.fc2-fcp:not(.lit),.lb2-ai:not(.lit),.data-card:not(.lit)');
     for (i = 0; i < lit.length; i++) lit[i].classList.add('lit');
     // the thread: from the chart above to the read below, wherever a read exists
     var ai = document.querySelectorAll('.lb2-ai:not([data-thread])');
@@ -12640,10 +12656,11 @@ function _laborCallout(pts,vals,target,trend,min,rng){
   // at the widths this panel actually renders at (~700-1000px, capped by
   // .panel's max-width:1080px), with a little margin to spare.
   var leftPct=Math.max(12,Math.min(88,xy[0]/LB2_W*100)).toFixed(2);
-  var topPct=Math.max(2,xy[1]/LB2_H*100-4).toFixed(2);
+  var below=xy[1]<LB2_H*0.45;
+  var topPct=(below?xy[1]/LB2_H*100+4:Math.max(2,xy[1]/LB2_H*100-4)).toFixed(2);
   var day=_laborWeekday(pts[worstI].label)||'That day';
   var text=day+' peaked at '+worstV.toFixed(1)+'% — '+(worstV-target).toFixed(1)+' pts over target';
-  return '<div class="lb2-callout" style="left:'+leftPct+'%;top:'+topPct+'%"><span class="dot"></span>'+CavnarCharts.esc(text)+'</div>';
+  return '<div class="lb2-callout'+(below?' below':'')+'" style="left:'+leftPct+'%;top:'+topPct+'%"><span class="dot"></span>'+CavnarCharts.esc(text)+'</div>';
 }
 var _lb2HoverBound=null;
 function _wireLaborHover(container,pts,vals,target,trend,min,rng){
@@ -12669,7 +12686,11 @@ function _wireLaborHover(container,pts,vals,target,trend,min,rng){
     if(p.actual)html+='<div class="lb2-tip-row"><span>Hours</span><b>'+Math.round(p.actual)+'h</b></div>';
     tip.innerHTML=html;
     tip.style.left=xPct+'%';
+    tip.style.top=yPct+'%';
     tip.classList.toggle('right',xy[0]>LB2_W*0.62);
+    // The hero clips at its edge, so a point in the top 45% of the chart
+    // carries its tip below the dot instead of above it.
+    tip.classList.toggle('below',xy[1]<LB2_H*0.45);
     tip.hidden=false;
   }
   function hide(){tip.hidden=true;dot.hidden=true;}
@@ -13501,22 +13522,24 @@ function animateBars(panelId) {
     })(bars[bi], bi);
   }
 }
+// Root cause of the "flash" on scroll: this used to strip .revealed from
+// EVERY card and hand them back to the IntersectionObserver each time it
+// ran (tab switch, every filter change), so cards went to opacity 0 and
+// re-animated as they scrolled in. Now a card is revealed once, right
+// away, with a short stagger, and a later pass leaves revealed cards alone.
 function staggerCards() {
   var cards = document.querySelectorAll('[id^="rc-"]');
   var idx = 0;
   for (var sci = 0; sci < cards.length; sci++) {
     var card = cards[sci];
     if (card.style.display === 'none') continue;
-    card.classList.remove('revealed');
-    card.style.animation = 'none';
-    card.style.animationDelay = '';
+    if (card.classList.contains('revealed')) continue;
+    if (window._scrollObs) window._scrollObs.unobserve(card);
+    card.style.animation = '';
+    card.style.animationDelay = Math.min(idx * 0.07, 0.42) + 's';
     card.style.opacity = '';
-    card.dataset.revealDelay = Math.min(idx * 0.07, 0.42) + 's';
-    if (window._scrollObs) {
-      window._scrollObs.observe(card);
-    } else {
-      card.classList.add('revealed');
-    }
+    card.dataset.revealDelay = card.style.animationDelay;
+    card.classList.add('revealed');
     idx++;
   }
 }
