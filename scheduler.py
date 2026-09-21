@@ -1918,13 +1918,47 @@ def run_review_diagnoses():
     return {"diagnosed": done, "skipped": skipped, "failed": failed}
 
 
+def _push_month_ready(r):
+    """"August 2026 is in" — to the people with the app, after their email.
+
+    The monthly review was an email on the 1st and a card on Home, and
+    nothing on the phone said the month was ready: the morning brief that
+    day carries month-to-date prime cost, not the review. push OR email is
+    the rule (morning_brief.deliver), so this goes only to device holders —
+    everyone else was reached by the email a moment ago. The tap opens Ask
+    on the month, the way a brief push does. monthly_review has been a
+    defined push type (push.py priority map, the notification labels) since
+    the alert layer was written and nothing ever fired it.
+    """
+    import push, notify, monthly_review
+    from models import DB_PATH
+    if not notify.briefing_allowed(r.id, "monthly_review", DB_PATH):
+        return 0
+    tokens = push.get_device_tokens(r.id, DB_PATH, for_delivery=True) or []
+    users = {int(t.get("user_id") or 0) for t in tokens} - {0}
+    if not users:
+        return 0
+    try:
+        review = monthly_review.build(r.id, restaurant=r)
+        month, head = review["month"], monthly_review.headline(review)
+    except Exception as e:
+        _ops.capture(e, job="month_ready_push", context=f"restaurant_id={r.id}")
+        month, head = "Last month", "Your monthly review is in."
+    push.fire_push(r.id, "monthly_review", f"{month} is in", head,
+                   data={"ask_prompt": f"Walk me through {month.lower() if month == 'Last month' else month}"},
+                   db_path=DB_PATH, user_ids=users)
+    notify.record_notification(r.id, "monthly_review", db_path=DB_PATH)
+    return len(users)
+
+
 def run_monthly_summaries():
     """1st of the month, 9am — the monthly summary email to active clients."""
     from emails import send_monthly_summary_email
     from models import get_all_restaurants
     sent = skipped = failed = 0
     for r in get_all_restaurants():
-        if not r.owner_email or r.billing_status in ('internal', 'churned'):
+        # 'paused' is the owner's own request for quiet — the monthly stops too.
+        if not r.owner_email or r.billing_status in ('internal', 'churned', 'paused'):
             skipped += 1
             continue
         # 9am local on the 1st, not 9am Chicago — and the restaurant's own
@@ -1953,6 +1987,10 @@ def run_monthly_summaries():
             )
             sent += 1
             log.info(f"Monthly summary sent to {r.name}")
+            try:
+                _push_month_ready(r)
+            except Exception as pe:
+                _ops.capture(pe, job="month_ready_push", context=f"restaurant_id={r.id}")
         except Exception as me:
             failed += 1
             log.error(f"Monthly summary failed for {r.name}: {me}")
@@ -1984,6 +2022,90 @@ def run_quarterly_summaries():
             failed += 1
             _ops.capture(qe, job="quarterly_summary", context=f"restaurant_id={r.id}")
     return {"sent": sent, "skipped": skipped, "failed": failed}
+
+
+def run_restore_drill():
+    """Restore the newest snapshot into a scratch file and prove it.
+
+    A backup nobody has restored is a hypothesis (RECOVERY.md). The drill
+    lived in a runbook that depended on a laptop, a logged-in CLI and
+    someone remembering the quarter; the local run could not even prove the
+    thing the unredacted snapshot exists for — that OAuth tokens survive —
+    because a local database holds none. This runs where the snapshot is.
+
+    Quarterly, and from /admin → Jobs. Read-only against production: the
+    snapshot is copied to a scratch path beside it, checked, migrated the
+    way a real restore is (init_db), and deleted. Emails Will the result
+    either way; a failure also lands in ops like any job.
+    """
+    import sqlite3, glob, shutil
+    from models import DB_PATH, init_db
+    backup_dir = os.getenv("BACKUP_DIR") or os.path.join(os.path.dirname(os.path.abspath(DB_PATH)) or ".", "backups")
+    snaps = sorted(glob.glob(os.path.join(backup_dir, "cavnar_ai_backup_*.db")))
+    if not snaps:
+        raise RuntimeError(f"restore drill: no snapshot in {backup_dir}")
+    newest = snaps[-1]
+    scratch = os.path.join(backup_dir, "restore_drill_scratch.db")
+
+    def _clean():
+        for suffix in ("", "-wal", "-shm", "-journal"):
+            try:
+                os.remove(scratch + suffix)
+            except FileNotFoundError:
+                pass
+
+    def _q(path, sql):
+        conn = sqlite3.connect(path, timeout=30)
+        try:
+            row = conn.execute(sql).fetchone()
+            return row[0] if row else None
+        finally:
+            conn.close()
+
+    _clean()
+    shutil.copyfile(newest, scratch)
+    report = {"snapshot": os.path.basename(newest),
+              "size_mb": round(os.path.getsize(newest) / 1e6, 1), "ok": False}
+    try:
+        report["integrity"] = _q(scratch, "PRAGMA integrity_check")
+        report["restaurants"] = _q(scratch, "SELECT COUNT(*) FROM restaurants")
+        report["latest_review"] = _q(scratch, "SELECT MAX(review_date) FROM reviews")
+        report["latest_alert"] = _q(scratch, "SELECT MAX(fired_at) FROM alert_log")
+        tok = "SELECT COUNT(*) FROM restaurants WHERE gmb_refresh_token IS NOT NULL AND gmb_refresh_token != ''"
+        report["google_tokens_in_snapshot"] = _q(scratch, tok)
+        report["google_tokens_live"] = _q(DB_PATH, tok)
+        # The migration path a real restore takes: init_db over an older file.
+        init_db(scratch)
+        report["integrity_after_migrate"] = _q(scratch, "PRAGMA integrity_check")
+        report["ok"] = (report["integrity"] == "ok" and report["integrity_after_migrate"] == "ok"
+                        and (report["restaurants"] or 0) > 0)
+        # Tokens: the snapshot is up to a day old, so equality is not
+        # required — but a snapshot with NONE while production has some is
+        # the redaction bug back, and that fails the drill.
+        report["tokens_survive"] = not (report["google_tokens_live"] and not report["google_tokens_in_snapshot"])
+        report["ok"] = report["ok"] and report["tokens_survive"]
+    finally:
+        _clean()
+
+    try:
+        import html as _h
+        lines = [f"Snapshot: {report['snapshot']} ({report['size_mb']} MB)",
+                 f"integrity_check: {report.get('integrity')} → after init_db: {report.get('integrity_after_migrate')}",
+                 f"Restaurants: {report.get('restaurants')}",
+                 f"Newest review: {report.get('latest_review')} · newest alert: {report.get('latest_alert')}",
+                 f"Google tokens: {report.get('google_tokens_in_snapshot')} in the snapshot, "
+                 f"{report.get('google_tokens_live')} live — {'survive' if report.get('tokens_survive') else 'MISSING'}"]
+        _emails.deliver(email_type="restore_drill", restaurant_id=None, payload={
+            "from": _emails.sender("ops"), "to": [os.getenv("WILL_EMAIL", "will@cavnar.ai")],
+            "subject": f"Restore drill {'passed' if report['ok'] else 'FAILED'} — {report['snapshot']}",
+            "preheader": "The quarterly proof that the backup restores.",
+            "html": _emails._branded_email("".join(f"<p>{_h.escape(x)}</p>" for x in lines)
+                                           + "<p>Record the date in RECOVERY.md.</p>")})
+    except Exception as e:
+        _ops.capture(e, job="restore_drill_email")
+    if not report["ok"]:
+        raise RuntimeError(f"restore drill failed: {report}")
+    return report
 
 
 def scheduler_loop():
@@ -2020,6 +2142,11 @@ def scheduler_loop():
             if _due(now, 2) and _ops.claim_period("backup_db", str(today)):
                 log.info("Running daily DB backup...")
                 _ops.run_job("backup_db", backup_db)
+                # The day after a backup, once a quarter: prove the newest snapshot
+                # restores. See run_restore_drill.
+                if today.day == 2 and today.month in (1, 4, 7, 10) and \
+                        _ops.claim_period("restore_drill", f"{today}"):
+                    _ops.run_job("restore_drill", run_restore_drill)
                 # Straight after the backup, so the pruned rows are in it.
                 _ops.run_job("prune_ledgers", _ops.prune_ledgers)
 

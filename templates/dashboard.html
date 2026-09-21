@@ -2196,12 +2196,13 @@ svg:hover .hb-xh{opacity:1}
         var tone=m.verdict==='improved'?' good':(m.verdict==='worsened'?' ember':'');
         var dl=(m.delta!=null&&m.previous!=null)?((m.delta>0?'+':'')+(m.unit==='$'?'$'+num2(m.delta):(+m.delta).toFixed(m.unit==='★'?2:1))+(m.unit==='%'?' pts':'')):'';
         var yc=(mr.yoy&&mr.yoy[m.key])||'';
-        h+='<div class="hb-stat'+tone+'"><div class="k">'+esc(m.label)+'</div><div class="v hb-num">'+esc(v)+'</div><div class="s">'+(dl?num(dl)+' vs '+esc(r.compared_with):esc(m.why||''))+(yc?'<br>'+num(yc.replace(/^ — /,'')):'')+'</div></div>';}
+        h+='<div class="hb-stat'+tone+'"><div class="k">'+esc(m.label)+'</div><div class="v hb-num">'+esc(v)+'</div><div class="s">'+(dl?num(dl)+' vs '+esc(r.compared_with):esc(m.why||''))+(yc?'<br>'+num(yc.replace(/^ — /,'')):'')+(m.ask?'<br><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-ask="'+esc(m.ask)+'">Ask →</button>':'')+'</div></div>';}
       h+='</div>';}
     var res=r.results||[];
     if(res.length){h+='<div class="hb-h3" style="margin-top:16px"><span>What your changes did</span></div>';for(var j=0;j<Math.min(res.length,3);j++)h+='<div class="hb-row '+(res[j].verdict==='improved'?'good':(res[j].verdict==='worsened'?'critical':'watch'))+'"><span class="d"></span><span class="t wrap">'+num(res[j].summary||res[j].title||'')+'</span></div>';}
     var pr=r.priorities||[];
     if(pr.length){h+='<div class="hb-h3" style="margin-top:16px"><span>Worth your time next month</span></div><div class="hb-ledger">';for(var k=0;k<Math.min(pr.length,3);k++){var p=pr[k];var amt=p.is_range?('$'+num2(p.monthly_low)+'–$'+num2(p.monthly_high)+'/mo'):(p.monthly?'$'+num2(p.monthly)+'/mo':'');h+='<span>'+num(p.label+(amt?' · '+amt:''))+'</span>';}h+='</div>';}
+    h+='<div class="ft" style="margin-top:14px"><span class="sp"></span><button type="button" class="cbtn cbtn-text cbtn-inline" data-ask="'+esc(mr.ask||('Walk me through '+r.month))+'">Ask about this month →</button></div>';
     return h+'</section>';
   }
   // ── comps, voids and refunds ──────────────────────────────────────────────
@@ -2281,7 +2282,7 @@ svg:hover .hb-xh{opacity:1}
     if(!items.length)return '';
     var h='<section class="hb-card rail good hb-rise" style="margin-top:16px" aria-label="What got better"><div class="hb-h3"><span>What got better</span><span class="cnt">'+items.length+'</span></div>';
     for(var i=0;i<Math.min(items.length,4);i++){var g=items[i];
-      h+='<div class="hb-row good"><span class="d"></span><span class="t wrap"><strong>'+num(g.headline)+'</strong><br><span style="font-weight:500;opacity:.85">'+num(g.summary)+'</span></span></div>';
+      h+='<div class="hb-row good"><span class="d"></span><span class="t wrap"><strong>'+num(g.headline)+'</strong><br><span style="font-weight:500;opacity:.85">'+num(g.summary)+'</span></span><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-ask="'+esc(g.ask||('What\'s behind this: '+g.headline))+'">Ask →</button></div>';
     }
     return h+'<div class="hb-empty" style="font-size:12px">'+esc(n.caveat||'')+'</div></section>';
   }

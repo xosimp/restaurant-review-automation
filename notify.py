@@ -252,7 +252,7 @@ ALERT_TAB = {
 # retention audit counted six a day for a POS-connected owner. One setting,
 # three levels, enforced at every briefing send.
 BRIEFING_ALWAYS = frozenset({"morning_brief", "outcome_achieved", "milestone", "while_away",
-                             "connection_lost"})
+                             "connection_lost", "monthly_review"})
 BRIEFING_CALM = BRIEFING_ALWAYS | {"closing_summary", "schedule_drafted"}
 BRIEFING_NORMAL_PER_DAY = 4
 

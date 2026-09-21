@@ -406,6 +406,10 @@ def stripe_webhook():
             granted = _apply_module_entitlement(rid, meta.get("module_keys", ""))
             # Stripe's own subscription status is authoritative for access.
             paused_until = _paused_until(sub)
+            try:
+                _prev = (get_restaurant(rid).billing_status or "").lower()
+            except Exception:
+                _prev = ""
             if paused_until:
                 # A pause (self-serve, or set in the Stripe dashboard) leaves
                 # status "active" with pause_collection set. This event fires
@@ -416,10 +420,21 @@ def stripe_webhook():
                 for _rid in _sibling_restaurant_ids(rid):
                     update_restaurant(_rid, {"billing_status": "paused", "paused_until": paused_until})
                 print(f"billing_status=paused until {paused_until} for {rid} (subscription.updated)")
+                # One account history whoever pressed the button: a pause
+                # set in the Stripe dashboard reads exactly like a self-serve
+                # one in Account → Security → Activity.
+                if _prev != "paused":
+                    from client_api import log_account_event
+                    log_account_event(rid, "subscription_paused",
+                                      detail=f"set in Stripe, resumes {paused_until}")
             elif status in ("active", "trialing"):
                 _set_billing_status(rid, "active", "subscription.updated")
                 for _rid in _sibling_restaurant_ids(rid):
                     update_restaurant(_rid, {"paused_until": None})
+                if _prev == "paused":
+                    from client_api import log_account_event
+                    log_account_event(rid, "subscription_resumed",
+                                      detail="Stripe reached the resume date, or the pause was cleared in Stripe")
             elif status == "past_due":
                 _set_billing_status(rid, "past_due", "subscription.updated")
             elif status in ("canceled", "unpaid", "incomplete_expired"):

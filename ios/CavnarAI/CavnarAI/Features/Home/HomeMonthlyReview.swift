@@ -19,6 +19,7 @@ struct HomeMonthlyReview: Decodable {
         let delta: Double?
         let verdict: String?
         let why: String?
+        let ask: String?
         var id: String { key }
     }
     struct Result: Decodable, Identifiable {
@@ -55,6 +56,8 @@ struct HomeMonthlyReview: Decodable {
     let ok: Bool
     let review: Review?
     let headline: String?
+    /// "Walk me through August 2026" — the card's own question.
+    let ask: String?
     /// Per metric key, the " — 1.2 points under the same month last year"
     /// clause, or "" — the server only writes one when last year could be
     /// measured and the move clears the noise band.
@@ -97,6 +100,8 @@ struct HomeMonthlyReviewCard: View {
                             }
                         }
                     }
+                    HomeAskLink(question: month.ask ?? "Walk me through \(r.month)",
+                                label: "Ask about this month")
                     let priorities = (r.priorities ?? []).prefix(3)
                     if !priorities.isEmpty {
                         VStack(alignment: .leading, spacing: 6) {
@@ -141,6 +146,9 @@ struct HomeMonthlyReviewCard: View {
             if let yc = month.yoy?[m.key], !yc.isEmpty {
                 HomeMixedText.make(yc.replacingOccurrences(of: "^ — ", with: "", options: .regularExpression),
                                    size: 12, weight: 500, color: .cavnarInk3)
+            }
+            if let ask = m.ask {
+                HomeAskLink(question: ask, label: "Ask").padding(.top, 2)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

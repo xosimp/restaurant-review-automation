@@ -590,7 +590,7 @@ def test_the_monthly_review_route_carries_a_yoy_clause_per_metric(db_path, monke
     monkeypatch.setattr(strategy_routes, "_metric_visible", lambda u, m: True)
     monkeypatch.setattr(strategy_routes, "_local_today", lambda u: date(2026, 9, 1))
     fake = {"month": "August 2026", "compared_with": "July", "metrics": [
-        {"key": "labor_pct", "value": 31.0, "previous": 30.0, "unit": "pct", "verdict": "steady",
+        {"key": "labor_pct", "label": "Labor %", "value": 31.0, "previous": 30.0, "unit": "pct", "verdict": "steady",
          "year_ago": 35.0, "yoy": {"verdict": "improved", "delta": -4.0}}], "results": []}
     monkeypatch.setattr(monthly_review, "build", lambda *a, **k: dict(fake))
     payload, status = strategy_routes._do_monthly_review(_owner(rid))
@@ -729,3 +729,151 @@ def test_a_paused_account_is_told_it_is_paused_not_lapsed_on_every_surface(db_pa
     update_restaurant(rid, {"billing_status": "churned", "paused_until": None}, db_path=db_path)
     j = _blocked_page_client(monkeypatch, rid, "owner").get("/api/thing").get_json()
     assert "no longer active" in j["error"] and "paused" not in j
+
+
+# ── re-audit #2's four: the month-ready push, Stripe pauses in the log,
+#    askable cards, and the restore drill as a job ────────────────────────────
+
+def test_the_monthly_review_push_is_in_the_always_set():
+    assert "monthly_review" in notify.BRIEFING_ALWAYS
+    assert "monthly_review" in models.NON_ALERT_TYPES
+
+
+def _fake_r(rid, **kw):
+    r = type("R", (), {})()
+    r.id = rid; r.name = "R"; r.owner_email = "o@x.com"; r.owner_name = "O"
+    r.billing_status = "active"; r.monthly_review_enabled = 1
+    r.module_reviews = r.module_labor = r.module_inventory = r.module_marketing = 1
+    for k, v in kw.items():
+        setattr(r, k, v)
+    return r
+
+
+def test_month_ready_goes_only_to_people_with_the_app(db_path, monkeypatch):
+    import scheduler, push, monthly_review
+    rid = _restaurant(db_path)
+    fired = []
+    monkeypatch.setattr(push, "fire_push", lambda *a, **k: fired.append((a, k)))
+    monkeypatch.setattr(monthly_review, "build", lambda *a, **k: {"month": "August 2026", "metrics": []})
+    monkeypatch.setattr(monthly_review, "headline", lambda r: "A steady month.")
+    monkeypatch.setattr(push, "get_device_tokens", lambda *a, **k: [])
+    assert scheduler._push_month_ready(_fake_r(rid)) == 0 and fired == []
+    monkeypatch.setattr(push, "get_device_tokens",
+                        lambda *a, **k: [{"user_id": 7, "token": "t1"}, {"user_id": 7, "token": "t2"}, {"user_id": 9}])
+    assert scheduler._push_month_ready(_fake_r(rid)) == 2
+    (a, k), = fired
+    assert a[1] == "monthly_review" and a[2] == "August 2026 is in" and a[3] == "A steady month."
+    assert k["user_ids"] == {7, 9} and k["data"]["ask_prompt"] == "Walk me through August 2026"
+    assert models.count_briefings_today(rid, db_path) == 1       # it is counted, and never budgeted out
+
+
+def test_the_monthly_job_pushes_after_each_email(monkeypatch):
+    import scheduler, emails
+    monkeypatch.setattr(models, "get_all_restaurants", lambda *a, **k: [_fake_r(1), _fake_r(2, billing_status="paused")])
+    monkeypatch.setattr(scheduler, "local_due", lambda *a, **k: True)
+    monkeypatch.setattr(emails, "send_monthly_summary_email", lambda **kw: None)
+    pushed = []
+    monkeypatch.setattr(scheduler, "_push_month_ready", lambda r: pushed.append(r.id))
+    out = scheduler.run_monthly_summaries()
+    assert out["sent"] == 1 and pushed == [1]
+
+
+def test_a_pause_set_in_stripe_is_written_to_the_account_log(db_path, monkeypatch):
+    import client_api
+    monkeypatch.setattr(models, "DB_PATH", db_path)
+    rid = _restaurant(db_path, stripe_customer_id="cus_s")
+    logged = []
+    monkeypatch.setattr(client_api, "log_account_event",
+                        lambda r, t, current_user=None, detail=None: logged.append((t, detail)))
+    from datetime import datetime, timezone
+    ts = int(datetime(2026, 11, 1, 12, tzinfo=timezone.utc).timestamp())
+    base = {"id": "sub_s", "customer": "cus_s", "status": "active", "metadata": {"restaurant_id": str(rid)}}
+    ev = {"id": "evt_s1", "type": "customer.subscription.updated",
+          "data": {"object": dict(base, pause_collection={"behavior": "void", "resumes_at": ts})}}
+    c = _stripe_app(monkeypatch, ev)
+    assert c.post("/stripe-webhook", data=b"{}", headers={"Stripe-Signature": "t"}).status_code == 200
+    assert logged == [("subscription_paused", "set in Stripe, resumes 2026-11-01")]
+    # A second delivery of the same state is not a second event.
+    c = _stripe_app(monkeypatch, dict(ev, id="evt_s2"))
+    c.post("/stripe-webhook", data=b"{}", headers={"Stripe-Signature": "t"})
+    assert len(logged) == 1
+    c = _stripe_app(monkeypatch, {"id": "evt_s3", "type": "customer.subscription.updated",
+                                  "data": {"object": dict(base, pause_collection=None)}})
+    c.post("/stripe-webhook", data=b"{}", headers={"Stripe-Signature": "t"})
+    assert logged[-1][0] == "subscription_resumed" and "Stripe" in logged[-1][1]
+
+
+def test_every_card_with_a_question_carries_it(db_path, monkeypatch):
+    """One string from the server, so web and iOS ask the same sentence."""
+    import strategy_routes as sr, business_intelligence as bi, good_news, monthly_review
+    rid = _restaurant(db_path)
+    u = _owner(rid)
+    monkeypatch.setattr(sr, "_metric_visible", lambda u, m: True)
+    monkeypatch.setattr(sr, "_local_today", lambda u: date(2026, 9, 1))
+    monkeypatch.setattr(bi, "executive_brief", lambda *a, **k: {"links": [{"headline": "Friday x lean"}]})
+    links = sr._do_cross_module(u)[0]["links"]
+    assert links[0]["ask"] == "Tell me more about this: Friday x lean"
+    monkeypatch.setattr(good_news, "all_good_news", lambda *a, **k: [{"kind": "record", "key": "k", "headline": "Best rating"}])
+    items = sr._do_good_news(u)[0]["items"]
+    assert items[0]["ask"] == "What's behind this: Best rating"
+    monkeypatch.setattr(monthly_review, "build", lambda *a, **k: {
+        "month": "August 2026", "compared_with": "July", "results": [],
+        "metrics": [{"key": "labor_pct", "label": "Labor %", "unit": "%", "value": 31.0, "previous": 30.0,
+                     "verdict": "steady", "year_ago": None, "yoy": None}]})
+    payload = sr._do_monthly_review(u)[0]
+    assert payload["ask"] == "Walk me through August 2026"
+    assert payload["review"]["metrics"][0]["ask"] == "What moved my labor % in August 2026?"
+
+
+def test_the_restore_drill_proves_the_newest_snapshot_and_cleans_up(db_path, monkeypatch, tmp_path):
+    import scheduler, emails, shutil, os
+    monkeypatch.setattr(models, "DB_PATH", db_path)
+    _restaurant(db_path)
+    from models import update_restaurant
+    update_restaurant(1, {"gmb_refresh_token": "tok"}, db_path=db_path)
+    bdir = tmp_path / "backups"; bdir.mkdir()
+    shutil.copyfile(db_path, bdir / "cavnar_ai_backup_2026-09-18.db")
+    shutil.copyfile(db_path, bdir / "cavnar_ai_backup_2026-09-19.db")
+    monkeypatch.setenv("BACKUP_DIR", str(bdir))
+    sent = {}
+    monkeypatch.setattr(emails, "deliver", lambda **kw: sent.update(kw) or True)
+    report = scheduler.run_restore_drill()
+    assert report["ok"] and report["snapshot"] == "cavnar_ai_backup_2026-09-19.db"
+    assert report["integrity"] == "ok" and report["integrity_after_migrate"] == "ok"
+    assert report["restaurants"] == 1 and report["google_tokens_in_snapshot"] == 1 and report["tokens_survive"]
+    assert not (bdir / "restore_drill_scratch.db").exists()
+    assert sent["payload"]["subject"].startswith("Restore drill passed")
+
+
+def test_the_restore_drill_fails_when_the_snapshot_lost_its_tokens(db_path, monkeypatch, tmp_path):
+    """The redaction bug, caught by the drill rather than by a restore."""
+    import scheduler, emails, shutil, sqlite3
+    monkeypatch.setattr(models, "DB_PATH", db_path)
+    _restaurant(db_path)
+    from models import update_restaurant
+    update_restaurant(1, {"gmb_refresh_token": "tok"}, db_path=db_path)
+    bdir = tmp_path / "backups"; bdir.mkdir()
+    snap = bdir / "cavnar_ai_backup_2026-09-19.db"
+    shutil.copyfile(db_path, snap)
+    conn = sqlite3.connect(snap); conn.execute("UPDATE restaurants SET gmb_refresh_token=NULL"); conn.commit(); conn.close()
+    monkeypatch.setenv("BACKUP_DIR", str(bdir))
+    sent = {}
+    monkeypatch.setattr(emails, "deliver", lambda **kw: sent.update(kw) or True)
+    with pytest.raises(RuntimeError):
+        scheduler.run_restore_drill()
+    assert sent["payload"]["subject"].startswith("Restore drill FAILED")
+    assert not (bdir / "restore_drill_scratch.db").exists()
+
+
+def test_the_drill_is_runnable_from_admin_and_scheduled_quarterly():
+    import inspect, scheduler, admin_ops
+    assert admin_ops.RUNNABLE_JOBS["restore_drill"]["target"] == ("scheduler", "run_restore_drill")
+    src = inspect.getsource(scheduler.scheduler_loop)
+    assert 'claim_period("restore_drill"' in src and "today.day == 2" in src
+
+
+def test_the_runbook_no_longer_says_railway_run():
+    import re
+    text = open("RECOVERY.md").read()
+    # No command LINE uses it (the prose explaining why it is wrong may).
+    assert not re.search(r"^railway run ", text, re.M) and "railway ssh --" in text

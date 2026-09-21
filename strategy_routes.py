@@ -471,8 +471,13 @@ def _do_cross_module(u):
     # manager without FOOD_COST_VIEW must not read a margin link.
     r = viewer_restaurant(get_restaurant(_rid(u)), u)
     brief = bi.executive_brief(_rid(u), restaurant=r)
+    # Every card that carries a question carries the question to ask. The
+    # web phrased this in JS and iOS had no affordance at all; one string
+    # from here means both surfaces ask Cavnar the same thing.
+    links = [dict(l, ask=f"Tell me more about this: {l.get('headline', '')}")
+             for l in (brief.get("links") or [])]
     return {"ok": True,
-            "links": brief.get("links") or [],
+            "links": links,
             "fix_first": brief.get("fix_first"),
             "modules_consulted": brief.get("modules_consulted") or [],
             "modules_off": brief.get("modules_off") or [],
@@ -501,6 +506,7 @@ def _do_good_news(u):
     denied = set(getattr(view, "_ask_denied", frozenset()))
     items = good_news.all_good_news(_rid(u), today=_local_today(u),
                                     restaurant=view, denied_modules=denied)
+    items = [dict(i, ask=f"What's behind this: {i.get('headline', '')}") for i in items]
     return {"ok": True, "items": items, "caveat": good_news.CAVEAT}, 200
 
 
@@ -657,7 +663,10 @@ def _do_monthly_review(u):
     review = monthly_review.build(rid, today=_local_today(u), restaurant=get_restaurant(rid))
     review["metrics"] = [m for m in review["metrics"] if _metric_visible(u, m.get("key"))]
     review["results"] = [r for r in (review.get("results") or []) if _metric_visible(u, r.get("metric"))]
+    for m in review["metrics"]:
+        m["ask"] = f"What moved my {m['label'].lower()} in {review['month']}?"
     return {"ok": True, "review": review, "headline": monthly_review.headline(review),
+            "ask": f"Walk me through {review['month']}",
             "yoy": {m["key"]: monthly_review.yoy_clause(m) for m in review["metrics"]}}, 200
 
 

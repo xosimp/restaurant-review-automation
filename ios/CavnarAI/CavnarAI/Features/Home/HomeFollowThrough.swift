@@ -242,9 +242,10 @@ final class HomeFollowThroughViewModel {
             let confirmBy: String?
             let alternative: String?
             let notACause: String?
+            let ask: String?
             var id: String { headline }
             enum CodingKeys: String, CodingKey {
-                case kind, headline, modules, evidence, alternative
+                case kind, headline, modules, evidence, alternative, ask
                 case confirmBy = "confirm_by"
                 case notACause = "not_a_cause"
             }
@@ -262,6 +263,7 @@ final class HomeFollowThroughViewModel {
             let headline: String
             let summary: String?
             let module: String?
+            let ask: String?
             var id: String { key }
         }
         let ok: Bool
@@ -588,6 +590,9 @@ struct HomeFollowThrough: View {
                                     HomeMixedText.make(summary, size: 12.5, weight: 500,
                                                        color: .cavnarInk3)
                                 }
+                                HomeAskLink(question: item.ask ?? "What's behind this: \(item.headline)",
+                                            label: "Ask")
+                                    .padding(.top, 2)
                             }
                             Spacer(minLength: 0)
                         }
@@ -694,6 +699,8 @@ struct HomeFollowThrough: View {
                         if let alt = link.notACause ?? link.alternative {
                             CavnarCaveat(title: "A question, not a finding", detail: alt)
                         }
+                        HomeAskLink(question: link.ask ?? "Tell me more about this: \(link.headline)")
+                            .padding(.leading, 20)
                         if index < viewModel.links.count - 1 {
                             Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
                         }

@@ -24,6 +24,14 @@ Check `https://dashboard.cavnar.ai/health` before anything else.
 `/status` (public) and `/admin` → Overview carry the same signals with more
 detail, including per-restaurant fetch coverage.
 
+**Reaching the container.** Every command below that touches `/app/data`
+runs *inside* the Railway container: `railway ssh -- <command>` (the CLI
+must be linked to the project — `railway status` shows it). `railway run`
+is the wrong tool — it runs the command on *your laptop* with production's
+environment variables, so `railway run sqlite3 /app/data/reviews.db` opens
+nothing, or worse, a local file. An earlier version of this file said
+`railway run` throughout.
+
 ---
 
 ## Platform down
@@ -52,7 +60,7 @@ because it is served by the same process. Post to the clients directly.
 ### 1. Confirm it is really the database
 
 ```bash
-railway run sqlite3 /app/data/reviews.db "PRAGMA integrity_check;"
+railway ssh -- sqlite3 /app/data/reviews.db "PRAGMA integrity_check;"
 ```
 
 `ok` means the file is fine and the problem is elsewhere.
@@ -62,7 +70,7 @@ railway run sqlite3 /app/data/reviews.db "PRAGMA integrity_check;"
 Backups run at 2am and are kept `BACKUP_RETAIN_DAYS` (14) days:
 
 ```bash
-railway run ls -lh /app/data/backups/
+railway ssh -- ls -lh /app/data/backups/
 ```
 
 **The local snapshots are complete and directly restorable.** They are not
@@ -102,9 +110,9 @@ everything since 2am.
 
 ```bash
 # Keep the broken file. It is evidence, and it may still be partially readable.
-railway run mv /app/data/reviews.db /app/data/reviews.db.broken-$(date +%s)
-railway run rm -f /app/data/reviews.db-wal /app/data/reviews.db-shm
-railway run cp /app/data/backups/cavnar_ai_backup_YYYY-MM-DD.db /app/data/reviews.db
+railway ssh -- mv /app/data/reviews.db /app/data/reviews.db.broken-$(date +%s)
+railway ssh -- rm -f /app/data/reviews.db-wal /app/data/reviews.db-shm
+railway ssh -- cp /app/data/backups/cavnar_ai_backup_YYYY-MM-DD.db /app/data/reviews.db
 ```
 
 Removing `-wal` and `-shm` matters: a stale WAL beside a restored database
@@ -152,10 +160,10 @@ Writes fail, reads succeed, and **every fail-open guard in the system keeps
 failing open**. This looks like a hundred unrelated small errors, not one
 cause. `/health` names it directly.
 
-1. `railway run df -h /app/data`
+1. `railway ssh -- df -h /app/data`
 2. Largest offenders are usually `backups/` and the WAL:
    ```bash
-   railway run du -sh /app/data/* | sort -h | tail
+   railway ssh -- du -sh /app/data/* | sort -h | tail
    ```
 3. Free space: lower `BACKUP_RETAIN_DAYS`, delete the oldest snapshots
    (**never the newest**), or grow the volume in Railway.
@@ -202,23 +210,35 @@ while the real jobs stopped. See `RAILWAY_SCHEDULER_SPLIT.md`.
 
 ## Drill
 
-Restore the newest snapshot into a scratch copy and run the verification
-queries. Quarterly, and after any change to `backup_db`,
-`_write_consistent_snapshot` or `_redact_snapshot`.
-
-```bash
-cp /app/data/backups/$(ls -t /app/data/backups | head -1) /tmp/drill.db
-sqlite3 /tmp/drill.db "PRAGMA integrity_check; SELECT COUNT(*) FROM restaurants;"
-```
+The drill is a job: `scheduler.run_restore_drill`, run automatically on
+the 2nd of Jan/Apr/Jul/Oct after the 2am backup, and on demand from
+`/admin` → Jobs → **restore_drill**. It copies the newest snapshot to a
+scratch file beside it, runs `integrity_check`, counts restaurants, reads
+the newest review and alert, counts Google tokens in the snapshot against
+production (the un-redaction proof), runs `init_db()` over the copy the
+way a real restore does, deletes the copy, and emails Will the result.
+A failure is a failed job in `/admin` → Jobs like any other. Run it by
+hand after any change to `backup_db`, `_write_consistent_snapshot` or
+`_redact_snapshot`.
 
 Record the date of the last successful drill here:
 
-- **Last drill:** 2026-09-20, **local** (not production). Newest local
+- **Last drill:** 2026-09-20, **production**, by hand over `railway ssh`
+  (the job above did not exist yet). Newest snapshot
+  `cavnar_ai_backup_2026-09-20.db` (2.03 MB) copied to `/tmp` in the
+  container; `PRAGMA integrity_check` → `ok`; 4 restaurants; newest review
+  2026-09-20T01:34:54; newest alert 2026-09-16; **110 sessions and 1 device
+  token present in the snapshot** — the un-redaction proof, since those are
+  what `_redact_snapshot` deletes; Google tokens 0 in the snapshot and 0
+  live (no Google connection in production yet, so that column proves
+  nothing either way); `init_db()` migrated the copy and integrity was
+  `ok` afterwards; scratch file removed. Next: the `restore_drill` job on
+  2027-01-02, automatically.
+- **Earlier:** 2026-09-20, **local** (not production). Newest local
   snapshot `cavnar_ai_backup_2026-09-19.db` (8.3 MB) copied to scratch with
   `-wal`/`-shm` removed; `PRAGMA integrity_check` → `ok`; 16 restaurants;
   `MAX(review_date)` 2026-09-19; `MAX(fired_at)` 2026-09-15; `init_db()` ran
   its additive migration over the snapshot and integrity was `ok` afterwards.
   What this did NOT prove: unredaction of OAuth tokens — the local database
   holds no `gmb_refresh_token` at all, so "0 kept" is not evidence either
-  way. **The production drill is still owed** (`railway run`, same steps);
-  do it before the next ten clients.
+  way. Superseded by the production drill above.

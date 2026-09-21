@@ -29,7 +29,10 @@ final class DeepLinkRouter {
         // Both of these are cross-module reads that arrive WITH a question
         // (data.ask_prompt), so they open the assistant on it rather than
         // guessing a module to drop the owner into.
-        if alertType == "morning_brief" || alertType == "intraday_pulse" {
+        // Any push that carries a question — the monthly review's "August
+        // is in" among them — is the same shape as a brief.
+        if alertType == "morning_brief" || alertType == "intraday_pulse"
+            || alertType == "monthly_review" || (askPrompt?.isEmpty == false) {
             pendingTab = .ask
             pendingModuleKey = nil
             pendingReviewID = nil
