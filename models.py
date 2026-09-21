@@ -1107,6 +1107,15 @@ def init_db(db_path: str = DB_PATH):
             UNIQUE(restaurant_id, key) ON CONFLICT REPLACE
         )""",
         "ALTER TABLE home_dismissals ADD COLUMN times INTEGER NOT NULL DEFAULT 1",
+        # Resumable-job cursors (scheduler.run_daily_fetch, intelligence.jobs):
+        # where the last bounded pass stopped, so the next one starts there.
+        # Two callers used to create this table themselves with two different
+        # definitions; whichever ran first on a fresh volume won. One owner.
+        """CREATE TABLE IF NOT EXISTS job_cursors (
+            key        TEXT PRIMARY KEY,
+            value      TEXT,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )""",
         # Durable login throttling (security.py): keyed by IP and by account,
         # so a deploy no longer resets the counter and one worker is no
         # longer a security requirement.

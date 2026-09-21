@@ -27,9 +27,8 @@ _LIVE = ("trial", "active")
 def _cursor_get(db_path):
     conn = get_conn(db_path)
     try:
-        conn.execute("CREATE TABLE IF NOT EXISTS job_cursors (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT)")
+        # job_cursors is created by models.init_db (one owner, one definition).
         row = conn.execute("SELECT value FROM job_cursors WHERE key=?", (CURSOR_KEY,)).fetchone()
-        conn.commit()
     finally:
         conn.close()
     try:

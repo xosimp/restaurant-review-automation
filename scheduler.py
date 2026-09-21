@@ -210,10 +210,7 @@ def _fetch_order(ids):
     try:
         from models import get_conn
         conn = get_conn()
-        conn.execute("CREATE TABLE IF NOT EXISTS job_cursors ("
-                     "key TEXT PRIMARY KEY, value TEXT, updated_at TEXT "
-                     "NOT NULL DEFAULT (datetime('now')))")
-        conn.commit()
+        # job_cursors is created by models.init_db (one owner, one definition).
         row = conn.execute("SELECT value FROM job_cursors WHERE key=?",
                            (_FETCH_CURSOR_KEY,)).fetchone()
         conn.close()

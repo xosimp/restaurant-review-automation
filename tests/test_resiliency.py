@@ -457,3 +457,20 @@ def test_metrics_key_on_the_route_rule_not_the_raw_path():
         rules = {row[3] for row in http_layer._samples}
     assert rules == {"/thing/<int:n>"}
     http_layer.reset_metrics()
+
+
+def test_job_cursors_has_one_owner(db_path):
+    """Two callers used to CREATE job_cursors themselves with two different
+    definitions (one with an updated_at default, one without); whichever
+    ran first on a fresh volume decided the schema. init_db owns it now."""
+    import inspect, pathlib
+    import intelligence.jobs as ij
+    conn = models.get_conn(db_path)
+    try:
+        cols = {r["name"]: r for r in conn.execute("PRAGMA table_info(job_cursors)").fetchall()}
+    finally:
+        conn.close()
+    assert set(cols) == {"key", "value", "updated_at"}
+    assert cols["updated_at"]["dflt_value"]
+    for src in (inspect.getsource(scheduler), inspect.getsource(ij)):
+        assert "CREATE TABLE IF NOT EXISTS job_cursors" not in src
