@@ -187,7 +187,7 @@ def _admin_app(monkeypatch, user):
     from flask import Flask, jsonify
     import auth
     monkeypatch.setattr(auth, "get_current_user", lambda: user)
-    app = Flask(__name__)
+    app = Flask(__name__, template_folder="../templates")     # the branded two-factor page renders here
     app.add_url_rule("/login", endpoint="auth.login", view_func=lambda: "login")
 
     @app.route("/admin/thing")
@@ -223,10 +223,10 @@ def test_an_admin_without_two_factor_is_held_at_the_door(monkeypatch, db_path):
     rid = _rid(db_path)
     c = _admin_app(monkeypatch, {"id": 1, "is_admin": 1, "role": "client", "restaurant_id": rid, "username": "will"})
     r = c.get("/admin/thing")
-    assert r.status_code == 403 and "two-factor" in r.get_data(as_text=True)
+    assert r.status_code == 403 and "Two-factor first" in r.get_data(as_text=True)
     update_restaurant(rid, {"two_fa_enabled": 1}, db_path=db_path)
     assert c.get("/admin/thing").status_code == 200
-    monkeypatch.setenv("ADMIN_REQUIRE_2FA", "0")
+    monkeypatch.delenv("ADMIN_REQUIRE_2FA", raising=False)               # opt-in: unset means off
     update_restaurant(rid, {"two_fa_enabled": 0}, db_path=db_path)
     assert c.get("/admin/thing").status_code == 200
 

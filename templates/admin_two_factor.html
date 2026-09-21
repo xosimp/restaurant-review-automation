@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Two-factor required — Cavnar AI</title>
+<link rel="icon" type="image/x-icon" href="/favicon.ico">
+<meta name="theme-color" content="#0e0c0a">
+<link rel="stylesheet" href="/static/fonts/cavnar-fonts.css">
+<link rel="stylesheet" href="/static/css/cavnar-buttons.css">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+*:focus-visible{outline:2px solid var(--ember);outline-offset:2px;border-radius:3px}
+:root{--ink:#0e0c0a;--ink2:#3a3530;--ink3:#7a736a;--paper:#f7f4ef;--paper2:#edeae3;--paper3:#e0dbd0;--ember:#c84b2f;--r:8px}
+body{font-family:'Apfel Grotezk',sans-serif;background:#0c0c0c;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;position:relative;overflow:hidden}
+@keyframes cardIn{from{opacity:0;transform:translateY(20px) scale(.975)}to{opacity:1;transform:translateY(0) scale(1)}}
+.card{background:var(--paper);border-radius:14px;padding:40px 40px 36px;width:100%;max-width:420px;border:1.5px solid var(--ember);box-shadow:0 0 0 5px rgba(200,75,47,.08),0 28px 70px rgba(0,0,0,.55);position:relative;overflow:hidden;animation:cardIn .48s cubic-bezier(.22,.68,0,1.1) .08s both;z-index:1}
+.card::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--ember)}
+.logo{font-family:'Clash Display',sans-serif;font-size:26px;color:var(--ink);margin-bottom:4px}
+.sub{font-size:12px;color:var(--ink3);margin-bottom:28px;letter-spacing:.06em;text-transform:uppercase}
+.heading{font-family:'Clash Display',sans-serif;font-size:22px;font-weight:600;color:var(--ink);margin-bottom:8px;line-height:1.2}
+.desc{font-size:15px;color:var(--ink2);line-height:1.6;margin-bottom:22px}
+.steps{font-size:14px;color:var(--ink2);line-height:1.7;margin:0 0 22px 18px}
+.back{display:block;text-align:center;margin-top:18px;font-size:12px;color:var(--ink3);text-decoration:none}
+.cf-layer{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:0}
+.cf-vignette{position:fixed;inset:0;pointer-events:none;z-index:0;background:linear-gradient(180deg,rgba(12,12,12,0) 0%,rgba(12,12,12,.28) 45%,rgba(12,12,12,.90) 100%)}
+</style>
+</head>
+<body>
+<canvas id="cf-aurora" class="cf-layer" aria-hidden="true"></canvas>
+<canvas id="cf-sky" class="cf-layer" aria-hidden="true"></canvas>
+<div class="cf-vignette" aria-hidden="true"></div>
+<div class="card">
+  <div class="logo">Cavnar <em style="color:var(--ember);font-style:italic">AI</em></div>
+  <div class="sub">Admin console</div>
+  <div class="heading">Two-factor first.</div>
+  <div class="desc">{{ message }}</div>
+  <ol class="steps">
+    <li>Open the dashboard and go to <b>Account &rarr; Security</b>.</li>
+    <li>Turn on two-factor authentication and confirm the code.</li>
+    <li>Come back to <b>/admin</b>.</li>
+  </ol>
+  <a class="cbtn cbtn-primary cbtn-lg cbtn-block" href="/">Open Account</a>
+  <a href="/logout" class="back">Sign out</a>
+</div>
+<script src="/static/cavnar-field.js"></script>
+<script>window.cavnarField=CavnarField.mount({aurora:document.getElementById('cf-aurora'),sky:document.getElementById('cf-sky')});</script>
+</body>
+</html>

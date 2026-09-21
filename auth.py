@@ -2741,9 +2741,12 @@ _ADMIN_2FA_EXEMPT = frozenset({"admin.stop_viewing"})
 
 def _admin_two_factor_missing(user):
     """True when this admin has not turned on 2FA and the deployment
-    requires it (ADMIN_REQUIRE_2FA, default on)."""
+    requires it. OPT-IN (ADMIN_REQUIRE_2FA=1): shipping it default-on
+    locked the only admin out of /admin on the deploy that introduced it,
+    before he had enrolled. Enrol first (Account → Security), then set the
+    variable in Railway; the gate is then permanent for every admin."""
     import os as _os
-    if _os.getenv("ADMIN_REQUIRE_2FA", "1") == "0":
+    if _os.getenv("ADMIN_REQUIRE_2FA", "0") != "1":
         return False
     try:
         from models import get_restaurant as _gr
@@ -2772,8 +2775,8 @@ def admin_required(f):
             msg = "Turn on two-factor authentication in Account → Security to use the admin console."
             if _wants_json_response():
                 return _jsonify_2f(ok=False, error=msg, two_factor_required=True), 403
-            return (f"<p style='font-family:sans-serif;padding:32px'>{msg} "
-                    f"<a href='/'>Open Account</a></p>"), 403
+            from flask import render_template as _rt_2f
+            return _rt_2f("admin_two_factor.html", message=msg), 403
         return f(*args, **kwargs, current_user=user)
     return decorated
 
