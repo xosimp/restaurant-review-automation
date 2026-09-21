@@ -1351,6 +1351,11 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE marketing_content_log ADD COLUMN post_platform TEXT",
         "ALTER TABLE marketing_content_log ADD COLUMN reach INTEGER DEFAULT 0",
         "ALTER TABLE marketing_content_log ADD COLUMN impressions INTEGER DEFAULT 0",
+        # What the post was about (marketing_tags.py): the dish it promoted,
+        # the occasion, and its kind — so its result reads against them.
+        "ALTER TABLE marketing_content_log ADD COLUMN menu_item_id INTEGER",
+        "ALTER TABLE marketing_content_log ADD COLUMN occasion TEXT",
+        "ALTER TABLE marketing_content_log ADD COLUMN post_kind TEXT",
         "ALTER TABLE marketing_content_log ADD COLUMN engaged INTEGER DEFAULT 0",
         "ALTER TABLE marketing_content_log ADD COLUMN likes INTEGER DEFAULT 0",
         "ALTER TABLE marketing_content_log ADD COLUMN comments INTEGER DEFAULT 0",
@@ -1481,6 +1486,14 @@ def init_db(db_path: str = DB_PATH):
             computed_at       TEXT    NOT NULL DEFAULT (datetime('now')),
             UNIQUE(content_log_id, window_hours)
         )""",
+        # Beyond total sales: the promoted dish's own units, reviews that
+        # mentioned it, and the guest list's move in the post's window.
+        "ALTER TABLE marketing_attribution ADD COLUMN item_lift_pct REAL",
+        "ALTER TABLE marketing_attribution ADD COLUMN item_window_qty REAL",
+        "ALTER TABLE marketing_attribution ADD COLUMN item_baseline_qty REAL",
+        "ALTER TABLE marketing_attribution ADD COLUMN reviews_mentioning INTEGER",
+        "ALTER TABLE marketing_attribution ADD COLUMN guest_list_delta INTEGER",
+        "ALTER TABLE marketing_attribution ADD COLUMN engagement_rate REAL",
 
         # Campaign history was written and never read back. Segment says WHO
         # it went to, which is the question an owner asks first when a list

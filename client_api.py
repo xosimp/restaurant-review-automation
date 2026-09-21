@@ -2111,7 +2111,20 @@ def gen_content(current_user):
             mark_calendar_idea_used(rid, content_type, topic)
         except Exception:
             pass
-    return jsonify(content=result)
+    return jsonify(content=result, tags=_post_tags_safe(rid, topic, result))
+
+
+def _post_tags_safe(rid, topic, body):
+    """What the post is about (marketing_tags.infer), so the compose screen
+    can say "Margherita · game day" and the owner can correct it. Never
+    fails a generation."""
+    try:
+        import marketing_tags
+        t = marketing_tags.infer(rid, topic, body)
+        t["label"] = marketing_tags.label(t)
+        return t
+    except Exception:
+        return None
 
 # ── Marketing: media, scheduling, drafts, links, analytics ────────────────
 # The web halves of everything mobile_api.py now exposes, so a feature isn't

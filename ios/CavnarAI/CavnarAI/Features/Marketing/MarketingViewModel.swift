@@ -321,7 +321,24 @@ final class MarketingViewModel {
         let ok: Bool
         let content: String?
         let error: String?
+        let tags: PostTags?
     }
+
+    /// What the generated post is about (marketing_tags.infer) — shown as a
+    /// chip under the draft so the owner knows which dish and occasion its
+    /// result will be read against.
+    struct PostTags: Decodable, Equatable {
+        let label: String?
+        let menuItemName: String?
+        let occasion: String?
+        let postKind: String?
+        enum CodingKeys: String, CodingKey {
+            case label, occasion
+            case menuItemName = "menu_item_name"
+            case postKind = "post_kind"
+        }
+    }
+    var draftTags: PostTags?
 
     func generate(fromCalendar: Bool = false) async {
         isGenerating = true
@@ -344,6 +361,7 @@ final class MarketingViewModel {
             if response.ok, let content = response.content {
                 draft = content
                 hasDraft = true
+                draftTags = response.tags
                 lastGeneratedTopic = requestedTopic
             } else {
                 generateError = response.error ?? "Couldn't generate content."

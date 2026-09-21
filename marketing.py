@@ -299,10 +299,36 @@ def get_recent_content(restaurant_id: int, limit: int = 5) -> list:
 
 
 def log_content(restaurant_id: int, content_type: str, topic: str,
-                post_id: str = None, post_platform: str = None):
-    """Log generated content for memory."""
+                post_id: str = None, post_platform: str = None, body: str = None, tags: dict = None):
+    """Log generated content for memory — and tag it (marketing_tags.py)
+    with the dish, occasion and kind it is about, so its result can be read
+    against them. A post that went live also starts the month's observed
+    sales tracker (outcomes.observe)."""
     if not restaurant_id:
         return
+    row_id = _log_content_row(restaurant_id, content_type, topic, post_id, post_platform)
+    if row_id:
+        try:
+            import marketing_tags
+            marketing_tags.tag_row(row_id, restaurant_id, topic, body, overrides=tags)
+        except Exception as e:
+            try:
+                import ops
+                ops.capture(e, job="marketing_tags", context=f"restaurant_id={restaurant_id}")
+            except Exception:
+                pass
+    if post_id:
+        try:
+            import outcomes
+            outcomes.observe(restaurant_id, "post_published", detail=(topic or "")[:60])
+        except Exception:
+            pass
+    return row_id
+
+
+def _log_content_row(restaurant_id, content_type, topic, post_id, post_platform):
+    """The row write, returning the row's id (the updated or inserted one)."""
+    row_id = None
     try:
         from models import get_conn
         conn = get_conn()
@@ -325,25 +351,25 @@ def log_content(restaurant_id: int, content_type: str, topic: str,
             pass
         if post_id:
             # Update the most recent unposted row for this topic instead of inserting a duplicate
-            updated = conn.execute(
-                """UPDATE marketing_content_log SET post_id=?, post_platform=?
-                   WHERE id=(
-                     SELECT id FROM marketing_content_log
-                     WHERE restaurant_id=? AND topic=? AND post_id IS NULL
-                     ORDER BY created_at DESC LIMIT 1
-                   )""",
-                (post_id, post_platform, restaurant_id, topic)
-            ).rowcount
-            if not updated:
-                conn.execute(
+            target = conn.execute(
+                "SELECT id FROM marketing_content_log WHERE restaurant_id=? AND topic=? AND post_id IS NULL "
+                "ORDER BY created_at DESC LIMIT 1", (restaurant_id, topic)).fetchone()
+            if target:
+                conn.execute("UPDATE marketing_content_log SET post_id=?, post_platform=? WHERE id=?",
+                             (post_id, post_platform, target["id"]))
+                row_id = target["id"]
+            else:
+                cur = conn.execute(
                     "INSERT INTO marketing_content_log (restaurant_id, content_type, topic, post_id, post_platform) VALUES (?,?,?,?,?)",
                     (restaurant_id, content_type, topic, post_id, post_platform)
                 )
+                row_id = cur.lastrowid
         else:
-            conn.execute(
+            cur = conn.execute(
                 "INSERT INTO marketing_content_log (restaurant_id, content_type, topic, post_id, post_platform) VALUES (?,?,?,?,?)",
                 (restaurant_id, content_type, topic, post_id, post_platform)
             )
+            row_id = cur.lastrowid
         conn.commit()
         conn.close()
     except Exception as e:
@@ -354,6 +380,7 @@ def log_content(restaurant_id: int, content_type: str, topic: str,
             ops.capture(e, job="log_content", context=f"restaurant_id={restaurant_id} {content_type}")
         except Exception:
             pass
+    return row_id
 
 
 def generate_content(content_type: str, topic: str,

@@ -206,3 +206,13 @@ four indexed reads and no model call.
 - At present the platform has fewer than `MIN_COHORT` live restaurants, so
   every cross-restaurant surface says so honestly. The engine is built for
   the week that changes.
+
+## Posts in the engine (added after the marketing gap review)
+
+Published posts contribute `dish_posts_28d`, `offer_posts_28d`,
+`occasion_posts_28d`, `post_lift_median_28d`, `item_lift_median_28d` and
+`post_engagement_rate_28d` (from `marketing_tags` and the cached
+`marketing_attribution` rows). Four hypotheses read them: dish posts vs
+sales lift, occasion posts vs engagement, offer posts vs lift, weekly
+cadence vs lift. The former `specials_28d` feature is gone — it matched
+content types the generator never wrote.

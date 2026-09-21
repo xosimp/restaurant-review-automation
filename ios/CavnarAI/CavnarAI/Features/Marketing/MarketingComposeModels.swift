@@ -195,28 +195,82 @@ struct MarketingAttribution: Decodable {
         let baselineSales: Double
         let liftPct: Double
         let baselineDays: Int
+        // What the post was about and what else its window showed
+        // (marketing_signals._beyond_sales). Optional: older servers omit them.
+        let menuItemName: String?
+        let occasion: String?
+        let postKind: String?
+        let itemLiftPct: Double?
+        let reviewsMentioning: Int?
+        let guestListDelta: Int?
+        let engagementRate: Double?
 
         enum CodingKeys: String, CodingKey {
-            case topic, platform
+            case topic, platform, occasion
             case postedAt = "posted_at"
             case windowSales = "window_sales"
             case baselineSales = "baseline_sales"
             case liftPct = "lift_pct"
             case baselineDays = "baseline_days"
+            case menuItemName = "menu_item_name"
+            case postKind = "post_kind"
+            case itemLiftPct = "item_lift_pct"
+            case reviewsMentioning = "reviews_mentioning"
+            case guestListDelta = "guest_list_delta"
+            case engagementRate = "engagement_rate"
         }
 
         var id: String { (topic ?? "") + (postedAt ?? "") }
+
+        /// "Margherita · game day", or nil when nothing was inferred.
+        var aboutLabel: String? {
+            let bits = [menuItemName, occasion?.replacingOccurrences(of: "_", with: " ")].compactMap { $0 }
+            return bits.isEmpty ? nil : bits.joined(separator: " · ")
+        }
+
+        /// The secondary line: the dish's own units, reviews that mentioned
+        /// it, engagement. Only what was measured.
+        var detailLine: String? {
+            var bits: [String] = []
+            if let name = menuItemName, let il = itemLiftPct {
+                bits.append("\(name) \(il > 0 ? "+" : "")\(Int(il.rounded()))% units")
+            }
+            if let n = reviewsMentioning, n > 0 { bits.append("\(n) review\(n == 1 ? "" : "s") mentioned it") }
+            if let e = engagementRate { bits.append("\(String(format: "%.1f", e * 100))% engagement") }
+            if let g = guestListDelta, g != 0 { bits.append("guest list \(g > 0 ? "+" : "")\(g)") }
+            return bits.isEmpty ? nil : bits.joined(separator: " · ")
+        }
+    }
+
+    struct Group: Decodable, Identifiable {
+        let group: String
+        let posts: Int
+        let medianLiftPct: Double
+        let medianItemLiftPct: Double?
+        enum CodingKeys: String, CodingKey {
+            case group, posts
+            case medianLiftPct = "median_lift_pct"
+            case medianItemLiftPct = "median_item_lift_pct"
+        }
+        var id: String { group }
     }
 
     let ok: Bool
     let reason: String?
     let posts: [Post]
+    let weakest: [Post]?
     let measured: Int?
     let medianLiftPct: Double?
+    let byKind: [Group]?
+    let byOccasion: [Group]?
+    let byDish: [Group]?
 
     enum CodingKeys: String, CodingKey {
-        case ok, reason, posts, measured
+        case ok, reason, posts, measured, weakest
         case medianLiftPct = "median_lift_pct"
+        case byKind = "by_kind"
+        case byOccasion = "by_occasion"
+        case byDish = "by_dish"
     }
 
     /// Why there's no number yet, in words an owner can act on.

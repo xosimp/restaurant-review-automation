@@ -416,6 +416,16 @@ def _build(current_user):
         mkt["scheduled"] = _rows(conn, "SELECT id, platform, topic, content_type, scheduled_for, status FROM marketing_scheduled_posts WHERE restaurant_id=? AND status IN ('scheduled','pending') AND scheduled_for >= datetime('now') ORDER BY scheduled_for LIMIT 3", (rid,))
         mkt["failed"] = _rows(conn, "SELECT id, platform, topic, error, scheduled_for FROM marketing_scheduled_posts WHERE restaurant_id=? AND status='failed' ORDER BY id DESC LIMIT 3", (rid,))
         mkt["posted_since"] = (_one(conn, "SELECT COUNT(*) AS n FROM marketing_scheduled_posts WHERE restaurant_id=? AND status='posted' AND posted_at >= ?", (rid, since_sql)) or {}).get("n") or 0
+        try:
+            mkt["post_result"] = _one(conn,
+                "SELECT c.topic, COALESCE(c.posted_at, c.created_at) AS posted_at, a.lift_pct, a.item_lift_pct, "
+                "       a.reviews_mentioning, m.name AS menu_item_name "
+                "FROM marketing_attribution a JOIN marketing_content_log c ON c.id = a.content_log_id "
+                "LEFT JOIN menu_items m ON m.id = c.menu_item_id "
+                "WHERE a.restaurant_id=? AND a.lift_pct IS NOT NULL AND julianday(COALESCE(c.posted_at, c.created_at)) >= julianday('now','-10 days') "
+                "ORDER BY COALESCE(c.posted_at, c.created_at) DESC LIMIT 1", (rid,))
+        except Exception:
+            mkt["post_result"] = None
         mkt["ig_connected"] = bool(r.get("ig_token"))
         mkt["fb_connected"] = bool(r.get("fb_page_token"))
 
@@ -831,6 +841,18 @@ def _build(current_user):
             add_rec("first_post", "Generate your first post", "Cavnar AI writes it in your voice from your reviews and menu — one click.", "no marketing content yet", "Marketing · reach", "marketing", "Today", "early", "Generate a post")
         if mkt.get("posted_since"):
             add_change(f"{_plural(mkt['posted_since'], 'scheduled post')} went live", "good", "marketing")
+        # What the latest measured post did — sales against the same weekday,
+        # the dish's own units, reviews that named it. Read from the cached
+        # attribution row, so Home stays a read; the sync computes it.
+        pr = mkt.get("post_result")
+        if pr:
+            bits = [f"{pr['lift_pct']:+.0f}% sales vs the same weekday"]
+            if pr.get("item_lift_pct") is not None and pr.get("menu_item_name"):
+                bits.append(f"{pr['menu_item_name']} {pr['item_lift_pct']:+.0f}%")
+            if pr.get("reviews_mentioning"):
+                bits.append(f"{_plural(int(pr['reviews_mentioning']), 'review')} mentioned it")
+            add_change(f"Your post on {pr.get('topic') or 'the last post'}: " + " · ".join(bits),
+                       "good" if pr["lift_pct"] >= 0 else "bad", "marketing", at=pr.get("posted_at"))
         for p in mkt.get("scheduled") or []:
             upcoming.append({"label": f"{(p.get('platform') or '').title()} post · {p.get('topic') or p.get('content_type') or 'scheduled'}", "when": p.get("scheduled_for"), "module": "marketing", "kind": "post"})
         snapshot.append({"key": "marketing", "label": "Marketing", "status": "available", "value": str(mkt.get("month", 0)), "unit": "pieces this month",

@@ -472,18 +472,37 @@ def _read_marketing_posts(restaurant_id, limit=10):
     conn = get_conn()
     try:
         rows = conn.execute(
-            "SELECT content_type, topic, post_platform, reach, impressions, engaged, created_at "
-            "FROM marketing_content_log WHERE restaurant_id=? ORDER BY id DESC LIMIT ?",
+            "SELECT c.id, c.content_type, c.topic, c.post_platform, c.reach, c.impressions, c.engaged, c.created_at, "
+            "       c.posted_at, c.occasion, c.post_kind, m.name AS menu_item_name, "
+            "       a.lift_pct, a.item_lift_pct, a.reviews_mentioning, a.guest_list_delta, a.engagement_rate "
+            "FROM marketing_content_log c "
+            "LEFT JOIN menu_items m ON m.id = c.menu_item_id "
+            "LEFT JOIN marketing_attribution a ON a.content_log_id = c.id "
+            "WHERE c.restaurant_id=? ORDER BY c.id DESC LIMIT ?",
             (restaurant_id, min(int(limit or 10), _MAX_ROWS))
         ).fetchall()
     finally:
         conn.close()
     posts = [dict(r) for r in rows]
     published = [p for p in posts if p.get("post_platform")]
+    summary = None
+    try:
+        from marketing_signals import attribution_summary
+        a = attribution_summary(restaurant_id)
+        if a.get("ok"):
+            summary = {"measured": a["measured"], "median_lift_pct": a["median_lift_pct"], "by_kind": a["by_kind"],
+                       "by_occasion": a["by_occasion"], "by_dish": a["by_dish"],
+                       "weakest": [{"topic": w["topic"], "lift_pct": w["lift_pct"]} for w in a["weakest"]]}
+    except Exception:
+        pass
     return {
         "total_logged": len(posts),
         "published_count": len(published),
         "posts": posts,
+        "what_worked": summary,
+        "note": ("lift_pct is sales in the two days after a post against the same weekday before it; item_lift_pct "
+                 "is the promoted dish's own units the same way; reviews_mentioning counts reviews in the next 14 days "
+                 "naming the dish or topic. Correlations, not proof — say so when you cite one, and name the count."),
     }
 
 

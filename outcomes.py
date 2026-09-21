@@ -68,6 +68,9 @@ ALERT_METRICS = {
 OBSERVED_ACTIONS = {
     "schedule_published": ("labor_pct", "Published a schedule"),
     "supplier_order_sent": ("food_cost_pct", "Sent a supplier order from the draft"),
+    # A post going live is an action; its receipt is sales over the window
+    # (one tracker per month — "the posts you published in September").
+    "post_published": ("sales", "Published a post"),
 }
 
 

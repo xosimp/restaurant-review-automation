@@ -95,3 +95,10 @@ grep -n "def mobile_labor_" mobile_api.py        # by handler name pattern
 - Ask tools `read_restaurant_memory`, `read_platform_intelligence`.
 - `POST /mobile/api/account/update-profile` and `POST /admin/api/brand/<id>`
   accept `category` (taxonomy in `intelligence/categories.py`).
+- `POST /api/generate-content` and the mobile twin return `tags`
+  (`menu_item_id`, `menu_item_name`, `occasion`, `post_kind`, `label`).
+- `POST /api/marketing/posts/<id>/tags` (web) / `/mobile/api/marketing/posts/<id>/tags`
+  — correct a post's tags.
+- `GET /api/marketing/attribution` rows now carry `menu_item_name`, `occasion`,
+  `post_kind`, `item_lift_pct`, `reviews_mentioning`, `guest_list_delta`,
+  `engagement_rate`; the payload adds `weakest`, `by_kind`, `by_occasion`, `by_dish`.

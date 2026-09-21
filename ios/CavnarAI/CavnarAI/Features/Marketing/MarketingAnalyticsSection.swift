@@ -242,21 +242,20 @@ struct MarketingAnalyticsSection: View {
 
                 if attribution.ok, !attribution.posts.isEmpty {
                     ForEach(Array(attribution.posts.enumerated()), id: \.element.id) { index, post in
-                        HStack(alignment: .firstTextBaseline) {
-                            Text(post.topic ?? "Untitled")
-                                .font(.cavnarBody(15))
-                                .foregroundStyle(Color.cavnarInk)
-                                .fixedSize(horizontal: false, vertical: true)
-                            Spacer(minLength: 8)
-                            Text("\(post.liftPct > 0 ? "+" : "")\(post.liftPct, specifier: "%.0f")%")
-                                .font(.cavnarNumber(15, weight: 700))
-                                .foregroundStyle(post.liftPct > 0 ? Color.cavnarGreen : Color.cavnarInk3)
-                        }
-                        .padding(.vertical, 9)
-                        .overlay(alignment: .top) {
-                            if index > 0 { Rectangle().fill(Color.cavnarPaper3).frame(height: 1) }
+                        attributionRow(post, divider: index > 0)
+                    }
+                    if let weakest = attribution.weakest, !weakest.isEmpty {
+                        Text("WHAT DIDN'T LAND")
+                            .font(.cavnarBody(12, weight: 700)).tracking(1.1)
+                            .foregroundStyle(Color.cavnarInk3)
+                            .padding(.top, 12)
+                        ForEach(Array(weakest.enumerated()), id: \.element.id) { index, post in
+                            attributionRow(post, divider: index > 0)
                         }
                     }
+                    groupBlock("BY KIND OF POST", attribution.byKind)
+                    groupBlock("BY OCCASION", attribution.byOccasion)
+                    groupBlock("BY DISH", attribution.byDish)
                 } else {
                     Text(attribution.emptyExplanation)
                         .font(.cavnarBody(15))
@@ -266,6 +265,63 @@ struct MarketingAnalyticsSection: View {
                 }
             }
             .cavnarCard()
+        }
+    }
+
+    /// One measured post: topic with what it was about, the sales lift, and
+    /// beneath it only the further measures that exist for it.
+    private func attributionRow(_ post: MarketingAttribution.Post, divider: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(post.topic ?? "Untitled")
+                        .font(.cavnarBody(15))
+                        .foregroundStyle(Color.cavnarInk)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let about = post.aboutLabel {
+                        AccountChip(text: about, muted: true)
+                    }
+                }
+                Spacer(minLength: 8)
+                Text("\(post.liftPct > 0 ? "+" : "")\(post.liftPct, specifier: "%.0f")%")
+                    .font(.cavnarNumber(15, weight: 700))
+                    .foregroundStyle(post.liftPct >= 0 ? Color.cavnarGreen : Color.cavnarRed)
+            }
+            if let detail = post.detailLine {
+                HomeMixedText.make(detail, size: 12.5, weight: 500, color: .cavnarInk3)
+            }
+        }
+        .padding(.vertical, 9)
+        .overlay(alignment: .top) {
+            if divider { Rectangle().fill(Color.cavnarPaper3).frame(height: 1) }
+        }
+    }
+
+    private static func groupValue(_ g: MarketingAttribution.Group) -> String {
+        var text = "\(g.medianLiftPct > 0 ? "+" : "")\(Int(g.medianLiftPct.rounded()))% median"
+        if let il = g.medianItemLiftPct {
+            text += " · dish \(il > 0 ? "+" : "")\(Int(il.rounded()))%"
+        }
+        return text
+    }
+
+    @ViewBuilder
+    private func groupBlock(_ title: String, _ groups: [MarketingAttribution.Group]?) -> some View {
+        if let groups, !groups.isEmpty {
+            Text(title)
+                .font(.cavnarBody(12, weight: 700)).tracking(1.1)
+                .foregroundStyle(Color.cavnarInk3)
+                .padding(.top, 12)
+            ForEach(groups) { g in
+                HStack(alignment: .firstTextBaseline) {
+                    HomeMixedText.make("\(g.group.replacingOccurrences(of: "_", with: " ")) · \(g.posts) posts", size: 13.5, weight: 500, color: .cavnarInk2)
+                    Spacer(minLength: 8)
+                    Text(Self.groupValue(g))
+                        .font(.cavnarNumber(13.5, weight: 700))
+                        .foregroundStyle(g.medianLiftPct >= 0 ? Color.cavnarGreen : Color.cavnarRed)
+                }
+                .padding(.vertical, 5)
+            }
         }
     }
 

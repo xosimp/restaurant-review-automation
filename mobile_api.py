@@ -2831,7 +2831,7 @@ def _do_mobile_generate_content(restaurant_id, content_type, topic, from_calenda
             mark_calendar_idea_used(restaurant_id, content_type, topic)
         except Exception:
             pass
-    return {"ok": True, "content": result}, 200
+    return {"ok": True, "content": result, "tags": _capi._post_tags_safe(restaurant_id, topic, result)}, 200
 
 
 @mobile_bp.route("/marketing/generate-content", methods=["POST"])

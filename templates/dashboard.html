@@ -4811,6 +4811,7 @@ svg:hover .hb-xh{opacity:1}
     <button class="cbtn cbtn-google" id="gg-post-btn" onclick="postToGoogle()" style="display:none"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="white" style="vertical-align:-2px;margin-right:5px"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3a3 3 0 110 6 3 3 0 010-6zm0 14.2a7.2 7.2 0 01-6-3.22c.03-1.99 4-3.08 6-3.08s5.97 1.09 6 3.08a7.2 7.2 0 01-6 3.22z"/></svg>Post to Google</button>
     <button class="cbtn cbtn-primary cbtn-facebook" id="fb-post-btn" onclick="postToFacebook()" style="display:none"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="white" style="vertical-align:-2px;margin-right:5px"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>Post to Facebook</button>
     <span id="output-hint" style="display:none;font-size:10px;color:var(--ink3);margin-left:4px">✏ Edit above before posting</span>
+    <span id="output-tags" class="hb-chip" style="display:none;margin-left:6px" title="What this post is about — its result will be read against the dish and occasion"></span>
   </div>
 
   <div class="data-panel" style="margin-top:20px;padding:16px 20px;white-space:normal">
@@ -8959,14 +8960,23 @@ function loadMktAttribution(){
         : 'Not enough sales history yet to compare a post against the same weekday before it.';
       return;
     }
-    var html = '<div style="margin-bottom:10px">Sales in the two days after each post, against the same weekday before it. This is a correlation, not proof — a busy Friday is still a busy Friday.</div>';
-    for(var i=0;i<d.posts.length;i++){
-      var p = d.posts[i];
-      html += '<div style="display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid var(--paper3)">'
-        + '<span style="color:var(--ink)">' + _escHtml(p.topic || 'Untitled') + '</span>'
-        + '<span style="font-family:\'Space Grotesk\',sans-serif;font-weight:700;color:' + (p.lift_pct >= 0 ? '#2d6a4f' : 'var(--ink3)') + '">' + (p.lift_pct > 0 ? '+' : '') + Math.round(p.lift_pct) + '%</span>'
-        + '</div>';
+    var html = '<div style="margin-bottom:10px">Sales in the two days after each post, against the same weekday before it. Where the post named a dish, that dish\u2019s own units the same way, and reviews in the next two weeks that mentioned it. Correlations, not proof \u2014 a busy Friday is still a busy Friday.</div>';
+    function _postRow(p){
+      var about=[];if(p.menu_item_name)about.push(p.menu_item_name);if(p.occasion)about.push(String(p.occasion).replace('_',' '));
+      var extra=[];
+      if(p.item_lift_pct!=null&&p.menu_item_name)extra.push(_escHtml(p.menu_item_name)+' <b class="hb-num">'+(p.item_lift_pct>0?'+':'')+Math.round(p.item_lift_pct)+'%</b> units');
+      if(p.reviews_mentioning)extra.push('<b class="hb-num">'+p.reviews_mentioning+'</b> review'+(p.reviews_mentioning===1?'':'s')+' mentioned it');
+      if(p.engagement_rate!=null)extra.push('<b class="hb-num">'+(Math.round(p.engagement_rate*1000)/10)+'%</b> engagement');
+      if(p.guest_list_delta)extra.push('guest list <b class="hb-num">'+(p.guest_list_delta>0?'+':'')+p.guest_list_delta+'</b>');
+      return '<div style="padding:7px 0;border-bottom:1px solid var(--paper3)"><div style="display:flex;justify-content:space-between;gap:10px">'
+        + '<span style="color:var(--ink)">' + _escHtml(p.topic || 'Untitled') + (about.length?' <span class="hb-chip" style="margin-left:6px">'+_escHtml(about.join(' \u00b7 '))+'</span>':'') + '</span>'
+        + '<span class="hb-num" style="font-weight:700;color:' + (p.lift_pct >= 0 ? 'var(--hb-good)' : 'var(--red)') + '">' + (p.lift_pct > 0 ? '+' : '') + Math.round(p.lift_pct) + '%</span>'
+        + '</div>'+(extra.length?'<div style="font-size:12px;color:var(--ink3);margin-top:2px">'+extra.join(' \u00b7 ')+'</div>':'')+'</div>';
     }
+    for(var i=0;i<d.posts.length;i++)html+=_postRow(d.posts[i]);
+    if((d.weakest||[]).length){html+='<div class="hb-kicker" style="margin-top:12px">What didn\u2019t land</div>';for(var w=0;w<d.weakest.length;w++)html+=_postRow(d.weakest[w]);}
+    function _groups(title,rows,noun){if(!(rows||[]).length)return '';var g='<div class="hb-kicker" style="margin-top:12px">'+title+'</div>';for(var k=0;k<rows.length;k++){var r=rows[k];g+='<div style="display:flex;justify-content:space-between;gap:10px;padding:5px 0;font-size:13px"><span>'+_escHtml(String(r.group).replace('_',' '))+' <span style="color:var(--ink3)">\u00b7 '+r.posts+' '+noun+'</span></span><span class="hb-num" style="font-weight:700;color:'+(r.median_lift_pct>=0?'var(--hb-good)':'var(--red)')+'">'+(r.median_lift_pct>0?'+':'')+Math.round(r.median_lift_pct)+'% median'+(r.median_item_lift_pct!=null?' \u00b7 dish '+(r.median_item_lift_pct>0?'+':'')+Math.round(r.median_item_lift_pct)+'%':'')+'</span></div>';}return g;}
+    html+=_groups('By kind of post',d.by_kind,'posts')+_groups('By occasion',d.by_occasion,'posts')+_groups('By dish',d.by_dish,'posts');
     body.innerHTML = html;
   }).catch(function(){});
 }
@@ -11789,6 +11799,8 @@ function genContent(fromCalendar){
       var _genContent = d.content||'Generation failed — try again.';
       typewriterEffect(box, _genContent);
       var hint=document.getElementById('output-hint');if(hint)hint.style.display='block';
+      var tagEl=document.getElementById('output-tags');
+      if(tagEl){var tl=d.tags&&d.tags.label;tagEl.textContent=tl?('About: '+tl):'';tagEl.style.display=tl?'inline-flex':'none';}
       var igBtn=document.getElementById('ig-post-btn');
       var fbBtn=document.getElementById('fb-post-btn');
       var ggBtn=document.getElementById('gg-post-btn');

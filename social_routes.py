@@ -210,7 +210,7 @@ def _do_post_to_instagram(restaurant_id, caption, image_url, topic):
     try:
         from marketing import log_content as _lc
         if topic and post_id:
-            _lc(restaurant_id, "instagram_post", topic, post_id=post_id, post_platform="instagram")
+            _lc(restaurant_id, "instagram_post", topic, post_id=post_id, post_platform="instagram", body=caption)
     except Exception as _e:
         print(f"[insights] failed to log post_id: {_e}")
     return {"ok": True, "post_id": post_id}, 200
@@ -427,7 +427,7 @@ def _do_post_to_facebook(restaurant_id, caption, topic):
     try:
         from marketing import log_content as _lc_fb
         if topic and post_id:
-            _lc_fb(restaurant_id, "facebook_post", topic, post_id=post_id, post_platform="facebook")
+            _lc_fb(restaurant_id, "facebook_post", topic, post_id=post_id, post_platform="facebook", body=caption)
     except Exception as _e_fb:
         print(f"[insights] failed to log fb post_id: {_e_fb}")
     return {"ok": True, "post_id": post_id}, 200

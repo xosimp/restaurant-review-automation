@@ -234,3 +234,15 @@ materialized table of ratios and answer only over cohorts of at least
 recommendation; `dashboard.py` builds the admin Intelligence page. Stance:
 nothing generated fills a gap, and `privacy.assert_anonymous` runs on every
 cross-restaurant payload.
+
+## Marketing tags and post attribution (`marketing_tags.py`, `marketing_signals.py`)
+
+Every content-log row carries what the post was about — `menu_item_id`
+(only a dish the restaurant has), `occasion` (game day, holiday, event,
+offer, weather, weekend) and `post_kind` — inferred from the topic and
+caption, correctable by the owner. Attribution reads a post's window
+beyond total sales: the promoted dish's own units against the same
+weekdays before (`menu_item_sales`), reviews in the next fortnight that
+named it, the guest list's move, and engagement. The summary shows what did
+not land next to what did, and medians by kind, occasion and dish. A
+publish starts the month's observed sales tracker (`post_published`).

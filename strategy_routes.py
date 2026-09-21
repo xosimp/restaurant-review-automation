@@ -782,6 +782,42 @@ def _do_recipe_scan(u):
     return {"ok": True, "draft": draft}, 200
 
 
+def _do_post_tags(u, post_id):
+    """Correct what a post was about. Only a menu item of this restaurant,
+    only a known occasion or kind; anything else is refused, not guessed."""
+    import marketing_tags
+    from models import get_conn
+    b = _body()
+    overrides = {}
+    if "menu_item_id" in b:
+        try:
+            overrides["menu_item_id"] = int(b["menu_item_id"]) if b["menu_item_id"] not in (None, "", 0, "0") else None
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "menu_item_id must be a number."}, 400
+    if "occasion" in b:
+        occ = (b.get("occasion") or "").strip().lower() or None
+        if occ and occ not in marketing_tags.OCCASIONS:
+            return {"ok": False, "error": f"occasion must be one of {', '.join(marketing_tags.OCCASIONS)}."}, 400
+        overrides["occasion"] = occ
+    if "post_kind" in b:
+        kind = (b.get("post_kind") or "").strip().lower() or None
+        if kind and kind not in marketing_tags.KINDS:
+            return {"ok": False, "error": f"post_kind must be one of {', '.join(marketing_tags.KINDS)}."}, 400
+        overrides["post_kind"] = kind
+    conn = get_conn()
+    try:
+        row = conn.execute("SELECT id, topic FROM marketing_content_log WHERE id=? AND restaurant_id=?", (int(post_id), _rid(u))).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return {"ok": False, "error": "Post not found."}, 404
+    # An explicit "no item" must clear inference too, so it is passed as a
+    # sentinel the tagger treats as set.
+    tags = marketing_tags.tag_row(row["id"], _rid(u), row["topic"], overrides=overrides, clear_item=("menu_item_id" in overrides and overrides["menu_item_id"] is None))
+    tags["label"] = marketing_tags.label(tags)
+    return {"ok": True, "tags": tags}, 200
+
+
 def _do_ai_visibility_queries(u):
     from models import ai_visibility_query_history
     return {"ok": True, **ai_visibility_query_history(_rid(u))}, 200
@@ -1218,6 +1254,7 @@ _ROUTES = [
     ("/food-cost/auto-order", ["POST"], _do_auto_order_set, "auto_order_set"),
     ("/account/memory", ["GET"], _do_memory_list, "memory_list"),
     ("/account/memory/add", ["POST"], _do_memory_add, "memory_add"),
+    ("/marketing/posts/<int:post_id>/tags", ["POST"], _do_post_tags, "post_tags"),
     ("/intel/ai-visibility/queries", ["GET"], _do_ai_visibility_queries, "ai_visibility_queries"),
     ("/marketing/diagnosis", ["GET"], _do_marketing_diagnosis, "marketing_diagnosis"),
     ("/labor/time-off", ["GET"], _do_time_off_list, "time_off_list"),

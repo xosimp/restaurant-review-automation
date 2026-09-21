@@ -24,7 +24,8 @@ FEATURE_KEYS = (
     "food_cost_pct_28d", "waste_sales_pct_28d",
     # marketing
     "campaigns_28d", "campaign_tap_rate_28d", "campaign_return_rate_28d",
-    "posts_28d", "post_cadence_days", "specials_28d", "guest_list_size",
+    "posts_28d", "post_cadence_days", "dish_posts_28d", "offer_posts_28d", "occasion_posts_28d",
+    "post_lift_median_28d", "item_lift_median_28d", "post_engagement_rate_28d", "guest_list_size",
     # the recommendation loop
     "recs_answered_28d", "recs_done_28d", "recs_declined_28d",
     "outcomes_evaluated_90d", "outcomes_improved_rate_90d",
@@ -36,12 +37,13 @@ UNITS = {
     "food_cost_pct_28d": "%", "waste_sales_pct_28d": "%", "reply_rate_30d": "share",
     "response_24h_rate_30d": "share", "weekend_sales_share_28d": "share", "campaign_tap_rate_28d": "share",
     "campaign_return_rate_28d": "share", "outcomes_improved_rate_90d": "share", "schedule_adjust_rate": "share",
+    "post_lift_median_28d": "%", "item_lift_median_28d": "%", "post_engagement_rate_28d": "share",
 }
 
 # Features benchmarks are published for (cohort p25/p50/p75). Ratios only.
 BENCHMARK_KEYS = ("avg_rating_30d", "response_24h_rate_30d", "reply_rate_30d", "labor_pct_28d",
                   "labor_pct_sd_28d", "food_cost_pct_28d", "waste_sales_pct_28d", "campaign_tap_rate_28d",
-                  "outcomes_improved_rate_90d")
+                  "post_lift_median_28d", "post_engagement_rate_28d", "outcomes_improved_rate_90d")
 
 
 def iso_week(day: date) -> str:
@@ -148,15 +150,43 @@ def compute(restaurant_id: int, today: date = None, db_path: str = DB_PATH) -> d
             if measured:
                 f["campaign_return_rate_28d"] = round(sum(int(c["visits_matched"]) for c in measured)
                                                       / max(1, sum(int(c["sent_count"] or 0) for c in measured)), 3)
+        # Published posts only (post_id set), with what each was about
+        # (marketing_tags) and what it did (marketing_attribution).
+        tagged = _has_col(conn, "marketing_content_log", "post_kind")
         posts = conn.execute(
-            "SELECT content_type, created_at FROM marketing_content_log WHERE restaurant_id=? AND created_at >= ? ORDER BY created_at",
+            "SELECT c.id, c.created_at, COALESCE(c.posted_at, c.created_at) AS at, "
+            + ("c.post_kind, c.occasion, " if tagged else "NULL AS post_kind, NULL AS occasion, ")
+            + "COALESCE(c.reach,0)+COALESCE(c.impressions,0) AS seen, "
+              "COALESCE(c.likes,0)+COALESCE(c.comments,0)+COALESCE(c.shares,0) AS engaged "
+              "FROM marketing_content_log c WHERE c.restaurant_id=? AND c.post_id IS NOT NULL "
+              "AND COALESCE(c.posted_at, c.created_at) >= ? ORDER BY at",
             (restaurant_id, d28.isoformat())).fetchall()
         f["posts_28d"] = len(posts)
         if len(posts) >= 2:
-            first, last = _d(posts[0]["created_at"]), _d(posts[-1]["created_at"])
+            first, last = _d(posts[0]["at"]), _d(posts[-1]["at"])
             span = (date.fromisoformat(last) - date.fromisoformat(first)).days
             f["post_cadence_days"] = round(span / (len(posts) - 1), 1)
-        f["specials_28d"] = sum(1 for p in posts if (p["content_type"] or "").lower() in ("special", "specials", "promo", "promotion", "offer"))
+        if posts:
+            f["dish_posts_28d"] = sum(1 for p in posts if p["post_kind"] == "dish")
+            f["offer_posts_28d"] = sum(1 for p in posts if p["post_kind"] == "offer")
+            f["occasion_posts_28d"] = sum(1 for p in posts if p["occasion"] in ("game_day", "holiday", "event"))
+            seen = [p for p in posts if p["seen"]]
+            if seen:
+                f["post_engagement_rate_28d"] = round(sum(p["engaged"] for p in seen) / sum(p["seen"] for p in seen), 4)
+            try:
+                ids = [p["id"] for p in posts]
+                marks = ",".join("?" for _ in ids)
+                att = conn.execute(f"SELECT lift_pct, item_lift_pct FROM marketing_attribution WHERE content_log_id IN ({marks})",
+                                   ids).fetchall()
+                from .stats import percentile as _pct
+                lifts = [float(a["lift_pct"]) for a in att if a["lift_pct"] is not None]
+                ilifts = [float(a["item_lift_pct"]) for a in att if a["item_lift_pct"] is not None]
+                if lifts:
+                    f["post_lift_median_28d"] = round(_pct(lifts, 50), 1)
+                if ilifts:
+                    f["item_lift_median_28d"] = round(_pct(ilifts, 50), 1)
+            except Exception:
+                pass
         try:      # guest_contacts is a lazily created table (guest_marketing.init_guest_marketing)
             f["guest_list_size"] = conn.execute(
                 "SELECT COUNT(*) FROM guest_contacts WHERE restaurant_id=? AND consent=1 AND unsubscribed=0",
@@ -184,7 +214,8 @@ def compute(restaurant_id: int, today: date = None, db_path: str = DB_PATH) -> d
 
 
 def completeness(f: dict) -> float:
-    measurable = [k for k in FEATURE_KEYS if not k.startswith(("recs_", "outcomes_", "guest_list", "posts_", "specials_", "campaigns_", "schedules_"))]
+    measurable = [k for k in FEATURE_KEYS if not k.startswith(("recs_", "outcomes_", "guest_list", "posts_", "dish_posts", "offer_posts",
+                                                                 "occasion_posts", "campaigns_", "schedules_"))]
     have = sum(1 for k in measurable if f.get(k) is not None)
     return round(have / len(measurable), 3) if measurable else 0.0
 

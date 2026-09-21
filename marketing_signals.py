@@ -21,6 +21,7 @@ Tuesday would just measure the weekend.
 """
 import json
 import logging
+import re
 from datetime import datetime, timedelta
 
 from models import get_conn, DB_PATH
@@ -71,7 +72,7 @@ def attribution_for_post(restaurant_id, content_log_id, db_path: str = DB_PATH) 
     conn = get_conn(db_path)
     try:
         row = conn.execute(
-            "SELECT id, topic, post_platform, COALESCE(posted_at, created_at) AS at "
+            "SELECT id, topic, post_platform, COALESCE(posted_at, created_at) AS at, menu_item_id, occasion, post_kind "
             "FROM marketing_content_log WHERE id=? AND restaurant_id=?",
             (content_log_id, restaurant_id),
         ).fetchone()
@@ -112,13 +113,85 @@ def attribution_for_post(restaurant_id, content_log_id, db_path: str = DB_PATH) 
 
     lift = round((window_avg - baseline_avg) / baseline_avg * 100, 1)
     result = {
-        "ok": True, "topic": row["topic"], "platform": row["post_platform"],
+        "ok": True, "id": row["id"], "topic": row["topic"], "platform": row["post_platform"],
         "posted_at": row["at"], "window_hours": ATTRIBUTION_WINDOW_HOURS,
         "window_sales": round(window_avg, 2), "baseline_sales": round(baseline_avg, 2),
         "lift_pct": lift, "baseline_days": len(baseline_values),
     }
+    result.update(_beyond_sales(restaurant_id, row, posted, window_dates, days, db_path))
     _cache_attribution(restaurant_id, content_log_id, result, db_path=db_path)
     return result
+
+
+def _beyond_sales(restaurant_id, row, posted, window_dates, days, db_path) -> dict:
+    """What else the post's window shows: the promoted dish's own units
+    against the same weekdays before (menu_item_sales), reviews in the
+    fortnight after that mention the dish or the topic, the guest list's
+    move, and the post's own engagement. Each is None when it cannot be
+    measured — never 0 standing in for "not tracked"."""
+    out = {"menu_item_id": row["menu_item_id"] if "menu_item_id" in row.keys() else None,
+           "menu_item_name": None, "occasion": row["occasion"] if "occasion" in row.keys() else None,
+           "post_kind": row["post_kind"] if "post_kind" in row.keys() else None,
+           "item_lift_pct": None, "item_window_qty": None, "item_baseline_qty": None,
+           "reviews_mentioning": None, "guest_list_delta": None, "engagement_rate": None}
+    conn = get_conn(db_path)
+    try:
+        if out["menu_item_id"]:
+            mi = conn.execute("SELECT name FROM menu_items WHERE id=? AND restaurant_id=?", (out["menu_item_id"], restaurant_id)).fetchone()
+            out["menu_item_name"] = mi["name"] if mi else None
+            qty = {r["business_date"]: float(r["qty_sold"]) for r in conn.execute(
+                "SELECT business_date, qty_sold FROM menu_item_sales WHERE restaurant_id=? AND menu_item_id=?",
+                (restaurant_id, out["menu_item_id"])).fetchall()}
+            win = [qty[d] for d in window_dates if d in qty]
+            base = []
+            for offset in range(1, BASELINE_WEEKS + 1):
+                for i in range(days):
+                    d = (posted + timedelta(days=i) - timedelta(weeks=offset)).strftime("%Y-%m-%d")
+                    if d in qty:
+                        base.append(qty[d])
+            if win and len(base) >= MIN_BASELINE_DAYS and sum(base) > 0:
+                wa, ba = sum(win) / len(win), sum(base) / len(base)
+                out["item_window_qty"], out["item_baseline_qty"] = round(wa, 1), round(ba, 1)
+                out["item_lift_pct"] = round((wa - ba) / ba * 100, 1)
+        # reviews in the 14 days after the post that name the dish or the topic
+        needles = set()
+        if out["menu_item_name"]:
+            needles.add(out["menu_item_name"].lower())
+        for w in re.findall(r"[a-z]{5,}", (row["topic"] or "").lower()):
+            if w not in _TOPIC_STOPWORDS:
+                needles.add(w)
+        if needles:
+            after = (posted + timedelta(days=14)).strftime("%Y-%m-%d")
+            rows = conn.execute("SELECT text FROM reviews WHERE restaurant_id=? AND review_date >= ? AND review_date < ?",
+                                (restaurant_id, posted.strftime("%Y-%m-%d"), after)).fetchall()
+            out["reviews_mentioning"] = sum(1 for r in rows if any(n in (r["text"] or "").lower() for n in needles))
+        # guest list: consents in the 7 days after vs the 7 before
+        try:
+            a0, a1 = posted.strftime("%Y-%m-%d"), (posted + timedelta(days=7)).strftime("%Y-%m-%d")
+            b0 = (posted - timedelta(days=7)).strftime("%Y-%m-%d")
+            after_n = conn.execute("SELECT COUNT(*) FROM guest_contacts WHERE restaurant_id=? AND consent=1 AND consent_at >= ? AND consent_at < ?",
+                                   (restaurant_id, a0, a1)).fetchone()[0]
+            before_n = conn.execute("SELECT COUNT(*) FROM guest_contacts WHERE restaurant_id=? AND consent=1 AND consent_at >= ? AND consent_at < ?",
+                                    (restaurant_id, b0, a0)).fetchone()[0]
+            out["guest_list_delta"] = int(after_n) - int(before_n)
+        except Exception:
+            out["guest_list_delta"] = None
+        try:
+            m = conn.execute("SELECT COALESCE(reach,0)+COALESCE(impressions,0) AS seen, "
+                             "COALESCE(likes,0)+COALESCE(comments,0)+COALESCE(shares,0) AS engaged "
+                             "FROM marketing_content_log WHERE id=?", (row["id"],)).fetchone()
+            if m and m["seen"]:
+                out["engagement_rate"] = round(float(m["engaged"]) / float(m["seen"]), 4)
+        except Exception:
+            pass
+    finally:
+        conn.close()
+    return out
+
+
+_TOPIC_STOPWORDS = {"about", "their", "there", "these", "those", "which", "would", "could", "should", "tonight",
+                    "today", "weekend", "special", "specials", "happy", "hour", "friday", "saturday", "sunday", "monday",
+                    "tuesday", "wednesday", "thursday", "every", "night", "great", "amazing", "delicious"}
 
 
 def _cache_attribution(restaurant_id, content_log_id, result, db_path: str = DB_PATH):
@@ -126,10 +199,13 @@ def _cache_attribution(restaurant_id, content_log_id, result, db_path: str = DB_
     try:
         conn.execute(
             "INSERT OR REPLACE INTO marketing_attribution "
-            "(restaurant_id, content_log_id, window_hours, baseline_sales, window_sales, lift_pct, computed_at) "
-            "VALUES (?,?,?,?,?,?,datetime('now'))",
+            "(restaurant_id, content_log_id, window_hours, baseline_sales, window_sales, lift_pct, item_lift_pct, "
+            " item_window_qty, item_baseline_qty, reviews_mentioning, guest_list_delta, engagement_rate, computed_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))",
             (restaurant_id, content_log_id, result["window_hours"], result["baseline_sales"],
-             result["window_sales"], result["lift_pct"]),
+             result["window_sales"], result["lift_pct"], result.get("item_lift_pct"), result.get("item_window_qty"),
+             result.get("item_baseline_qty"), result.get("reviews_mentioning"), result.get("guest_list_delta"),
+             result.get("engagement_rate")),
         )
         conn.commit()
     except Exception as e:
@@ -151,6 +227,11 @@ def attribution_summary(restaurant_id, limit=5, db_path: str = DB_PATH) -> dict:
     finally:
         conn.close()
 
+    try:
+        import marketing_tags
+        marketing_tags.backfill(restaurant_id, db_path=db_path)
+    except Exception:
+        pass
     scored = []
     for r in rows:
         result = attribution_for_post(restaurant_id, r["id"], db_path=db_path)
@@ -163,9 +244,38 @@ def attribution_summary(restaurant_id, limit=5, db_path: str = DB_PATH) -> dict:
     return {
         "ok": True,
         "posts": scored[:limit],
+        # What did not land is as much of the picture as what did.
+        "weakest": [p for p in reversed(scored) if p["lift_pct"] < 0][:3],
         "measured": len(scored),
         "median_lift_pct": round(sorted(lifts)[len(lifts) // 2], 1),
+        "by_kind": _group_lift(scored, "post_kind"),
+        "by_occasion": _group_lift(scored, "occasion"),
+        "by_dish": _group_lift(scored, "menu_item_name"),
     }
+
+
+def _group_lift(scored, key):
+    """Median sales lift (and item lift where measured) per group, with the
+    count — only groups with two or more measured posts, so one post never
+    becomes a rule."""
+    groups = {}
+    for p in scored:
+        g = p.get(key)
+        if not g:
+            continue
+        groups.setdefault(g, []).append(p)
+    out = []
+    for g, ps in groups.items():
+        if len(ps) < 2:
+            continue
+        ls = sorted(x["lift_pct"] for x in ps)
+        il = sorted(x["item_lift_pct"] for x in ps if x.get("item_lift_pct") is not None)
+        er = [x["engagement_rate"] for x in ps if x.get("engagement_rate") is not None]
+        out.append({"group": g, "posts": len(ps), "median_lift_pct": ls[len(ls) // 2],
+                    "median_item_lift_pct": il[len(il) // 2] if il else None,
+                    "avg_engagement_rate": round(sum(er) / len(er), 4) if er else None})
+    out.sort(key=lambda x: x["median_lift_pct"], reverse=True)
+    return out
 
 
 # ── What worked, fed back in ───────────────────────────────────────────────

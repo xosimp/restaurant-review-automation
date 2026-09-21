@@ -107,7 +107,7 @@ def publish_now(restaurant_id, platform, body, *, topic="", media_token=None,
     # all of it.
     _log_published(restaurant_id, content_type or _default_type(platform), topic or body[:80],
                    post_id, platform, scheduled_post_id=scheduled_post_id,
-                   link_token=link_token, db_path=db_path)
+                   link_token=link_token, body=body, db_path=db_path)
     return {"ok": True, "post_id": post_id}
 
 
@@ -123,7 +123,7 @@ def _media_url(base_url, token):
 
 
 def _log_published(restaurant_id, content_type, topic, post_id, platform,
-                   scheduled_post_id=None, link_token=None, db_path: str = DB_PATH):
+                   scheduled_post_id=None, link_token=None, body=None, db_path: str = DB_PATH):
     """One content-log row per published piece.
 
     social_routes already inserts a row for Instagram and Facebook, so this
@@ -136,14 +136,16 @@ def _log_published(restaurant_id, content_type, topic, post_id, platform,
             "SELECT id FROM marketing_content_log WHERE restaurant_id=? AND post_id=? LIMIT 1",
             (restaurant_id, post_id),
         ).fetchone() if post_id else None
+        row_id = None
         if existing:
             conn.execute(
                 "UPDATE marketing_content_log SET scheduled_post_id=?, link_token=?, "
                 "posted_at=COALESCE(posted_at, datetime('now')) WHERE id=?",
                 (scheduled_post_id, link_token, existing["id"]),
             )
+            row_id = existing["id"]
         else:
-            conn.execute(
+            cur = conn.execute(
                 "INSERT INTO marketing_content_log "
                 "(restaurant_id, content_type, topic, post_id, post_platform, "
                 " scheduled_post_id, link_token, posted_at) "
@@ -151,11 +153,27 @@ def _log_published(restaurant_id, content_type, topic, post_id, platform,
                 (restaurant_id, content_type, (topic or "")[:120], post_id, platform,
                  scheduled_post_id, link_token),
             )
+            row_id = cur.lastrowid
         conn.commit()
     except Exception as e:
         log.warning("content log write failed for %s: %s", restaurant_id, e)
+        row_id = None
     finally:
         conn.close()
+    # Tag it (dish · occasion · kind) and count the publish as an observed
+    # action on sales — the same two things marketing.log_content does for
+    # the Instagram/Facebook paths, here for Google and scheduled posts.
+    if row_id:
+        try:
+            import marketing_tags
+            marketing_tags.tag_row(row_id, restaurant_id, topic, body, db_path=db_path)
+        except Exception as e:
+            log.warning("marketing tag failed for %s: %s", restaurant_id, e)
+    try:
+        import outcomes
+        outcomes.observe(restaurant_id, "post_published", detail=(topic or "")[:60], db_path=db_path)
+    except Exception:
+        pass
 
 
 # ── Preview ────────────────────────────────────────────────────────────────

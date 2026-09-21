@@ -342,6 +342,16 @@ struct MarketingView: View {
                 .focused($focusedField, equals: .draft)
                 .id(Self.draftEditorAnchor)
 
+            // What the post is about (the dish and occasion its result will
+            // be read against) — the server's inference, shown so the owner
+            // knows and can rewrite the topic if it guessed wrong.
+            if let label = viewModel.draftTags?.label, !label.isEmpty {
+                HStack(spacing: 8) {
+                    Text("About").font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3)
+                    AccountChip(text: label, muted: true)
+                }
+            }
+
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Text("Trim it before it goes out")
                     .font(.cavnarBody(14))
