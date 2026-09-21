@@ -797,6 +797,8 @@ def docusign_webhook():
             )
             conn.commit()
             conn.close()
+            import models as _models_inv
+            _models_inv._invalidate_request_cache()
             print(f"Contract signed: {envelope_id}")
             try:
                 import admin_events as _ae

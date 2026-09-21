@@ -2906,6 +2906,8 @@ def revoke_all_trusted_devices(restaurant_id: int, db_path: str = DB_PATH):
     conn.execute("UPDATE restaurants SET two_fa_device_token=NULL WHERE id=?", (restaurant_id,))
     conn.commit()
     conn.close()
+    import models as _models_inv
+    _models_inv._invalidate_request_cache(restaurant_id)
 
 
 def create_login_report(user_id: int, session_token: str | None, db_path: str = DB_PATH) -> str:
@@ -2941,6 +2943,8 @@ def consume_login_report(token: str, db_path: str = DB_PATH) -> dict | None:
     if user and user["restaurant_id"]:
         conn.execute("DELETE FROM trusted_devices WHERE restaurant_id=?", (user["restaurant_id"],))
         conn.execute("UPDATE restaurants SET two_fa_device_token=NULL WHERE id=?", (user["restaurant_id"],))
+        import models as _models_inv
+        _models_inv._invalidate_request_cache(user["restaurant_id"])
     conn.commit()
     conn.close()
     return dict(user) if user else None

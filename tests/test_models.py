@@ -146,3 +146,44 @@ def test_weather_fields_round_trip_through_get_restaurant(db_path):
     assert r.longitude == -88.3
     assert r.weather_cache_json == '[{"temperature": 80}]'
     assert r.weather_cached_at == "2026-07-07T12:00:00"
+
+
+# ── the four touch points, enforced ──────────────────────────────────────────
+
+def test_every_alert_preference_column_is_writable_through_update_restaurant():
+    """A restaurants column needs four touch points (dataclass, migration,
+    whitelist, hydration). al_3star_email/sms/push had three: they were in
+    the DDL, the dataclass and get_restaurant, but not in update_restaurant's
+    `allowed`, so a write silently no-op'd. Asserted against the source so
+    it holds for every al_*/alert_* field, not one fixture."""
+    import dataclasses, inspect
+    src = inspect.getsource(update_restaurant)
+    missing = [f.name for f in dataclasses.fields(Restaurant)
+               if (f.name.startswith("al_") or f.name.startswith("alert_")) and f'"{f.name}"' not in src]
+    assert missing == [], missing
+
+
+def test_three_star_alert_preferences_round_trip(db_path):
+    rid = create_restaurant(Restaurant(name="Three Star Co", owner_email="ts@x.com"), db_path=db_path)
+    update_restaurant(rid, {"al_3star_email": 0, "al_3star_sms": 1, "al_3star_push": 0}, db_path=db_path)
+    r = get_restaurant(rid, db_path=db_path)
+    assert (r.al_3star_email, r.al_3star_sms, r.al_3star_push) == (0, 1, 0)
+
+
+def test_a_direct_restaurants_write_drops_the_request_memo(db_path):
+    """get_restaurant is memoised per Flask request. update_restaurant
+    invalidates; the direct UPDATE sites (last_fetched_at, deletion request,
+    organisation, activity) must too, or a read after the write in the same
+    request returns the row from before it."""
+    import models
+    from flask import Flask
+    rid = create_restaurant(Restaurant(name="Memo Co", owner_email="memo@x.com"), db_path=db_path)
+    with Flask(__name__).app_context():
+        before = get_restaurant(rid, db_path=db_path)
+        assert before.last_fetched_at is None
+        assert get_restaurant(rid, db_path=db_path) is before          # memoised
+        models.update_last_fetched(rid, db_path=db_path)
+        after = get_restaurant(rid, db_path=db_path)
+        assert after is not before and after.last_fetched_at
+        models.log_activity(rid, "labor", db_path=db_path)
+        assert get_restaurant(rid, db_path=db_path).last_active_tab == "labor"

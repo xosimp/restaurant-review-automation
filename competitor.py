@@ -937,6 +937,8 @@ def run_competitor_analysis(restaurant_id: int) -> dict:
         )
         conn.commit()
         conn.close()
+        import models as _models_inv
+        _models_inv._invalidate_request_cache(restaurant_id)
         # One JSON blob overwritten every Monday was the entire record, so
         # nothing could show that a competitor's rating fell, that a new one
         # opened, or that a complaint theme appeared. A snapshot per run is

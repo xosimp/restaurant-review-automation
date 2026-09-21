@@ -3380,6 +3380,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "al_health_email","al_health_sms","al_health_push",
         "al_1star_email","al_1star_sms","al_1star_push",
         "al_2star_email","al_2star_sms","al_2star_push",
+        "al_3star_email","al_3star_sms","al_3star_push",
         "al_5star_email","al_5star_sms","al_5star_push",
         "al_spike_email","al_spike_sms","al_spike_push",
         "al_unres_email","al_unres_sms","al_unres_push",
@@ -3486,6 +3487,7 @@ def request_account_deletion(restaurant_id: int, db_path: str = DB_PATH) -> str:
     conn.execute("UPDATE restaurants SET deletion_requested_at=? WHERE id=?", (now, restaurant_id))
     conn.commit()
     conn.close()
+    _invalidate_request_cache(restaurant_id)
     return now
 
 
@@ -6298,6 +6300,7 @@ def log_activity(restaurant_id: int, tab: str,
             pass
     conn.commit()
     conn.close()
+    _invalidate_request_cache(restaurant_id)
 
 
 def log_event(restaurant_id: int, event_type: str, event_data: dict = None,
@@ -6427,6 +6430,7 @@ def update_last_fetched(restaurant_id: int, db_path: str = DB_PATH):
                  (datetime.now(_ZI_m('America/Chicago')).strftime('%Y-%m-%dT%H:%M:%S'), restaurant_id))
     conn.commit()
     conn.close()
+    _invalidate_request_cache(restaurant_id)
 
 
 # Billing states that still entitle a restaurant to use the product.
@@ -6513,6 +6517,8 @@ def backfill_organizations(db_path: str = DB_PATH) -> int:
                 """, (org["id"], group, email))
                 linked += cur.rowcount or 0
             conn.commit()
+            if linked:
+                _invalidate_request_cache()
             return linked
         finally:
             conn.close()
@@ -6577,6 +6583,7 @@ def set_restaurant_organization(restaurant_id: int, organization_id, db_path: st
         cur = conn.execute("UPDATE restaurants SET organization_id=? WHERE id=?",
                            (organization_id, restaurant_id))
         conn.commit()
+        _invalidate_request_cache(restaurant_id)
         return (cur.rowcount or 0) > 0
     finally:
         conn.close()

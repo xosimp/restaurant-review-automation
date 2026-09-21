@@ -4337,6 +4337,8 @@ def mobile_update_email(current_user):
     conn.execute("UPDATE restaurants SET owner_email=? WHERE id=?", (new_email, current_user["restaurant_id"]))
     conn.commit()
     conn.close()
+    import models as _models_inv
+    _models_inv._invalidate_request_cache(current_user["restaurant_id"])
     _log_account_event(current_user["restaurant_id"], "email_changed", current_user, detail=new_email)
     if old_email and old_email != new_email:
         try:

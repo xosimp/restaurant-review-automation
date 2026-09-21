@@ -600,6 +600,8 @@ def update_email_route(current_user):
     conn.execute("UPDATE restaurants SET owner_email=? WHERE id=?", (new_email, current_user["restaurant_id"]))
     conn.commit()
     conn.close()
+    import models as _models_inv
+    _models_inv._invalidate_request_cache(current_user["restaurant_id"])
     if old_email and old_email != new_email:
         try:
             restaurant = get_restaurant(current_user["restaurant_id"])
