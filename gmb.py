@@ -68,6 +68,18 @@ def exchange_code(code: str, redirect_uri: str = None) -> dict:
     return resp.json()
 
 
+def _state_secret() -> bytes:
+    """The key that signs the mobile connect state. It used to default to a
+    literal 'cavnar-dev-secret' when SECRET_KEY was unset — a token anyone
+    could forge. hosted_dashboard refuses to run sessions without a
+    SECRET_KEY (it generates a random one and warns), so the only honest
+    answer here is the same: no key, no signing."""
+    secret = os.getenv("SECRET_KEY")
+    if not secret:
+        raise RuntimeError("SECRET_KEY is not set; cannot sign the Google connect state")
+    return secret.encode()
+
+
 def sign_mobile_state(restaurant_id: int) -> str:
     """Self-contained, storage-free CSRF token for the mobile GMB connect
     flow. Encodes restaurant_id plus a 10-minute expiry, HMAC-signed with
@@ -78,7 +90,7 @@ def sign_mobile_state(restaurant_id: int) -> str:
     what proves this callback traces back to a request this server issued,
     for this restaurant, recently."""
     import hmac, hashlib, time
-    secret  = os.getenv("SECRET_KEY", "cavnar-dev-secret").encode()
+    secret  = _state_secret()
     expires = int(time.time()) + 600
     payload = f"{restaurant_id}:{expires}"
     sig = hmac.new(secret, payload.encode(), hashlib.sha256).hexdigest()[:32]
@@ -91,7 +103,7 @@ def verify_mobile_state(state: str) -> int | None:
     import hmac, hashlib, time
     try:
         rid_s, expires_s, sig = state.split(":")
-        secret   = os.getenv("SECRET_KEY", "cavnar-dev-secret").encode()
+        secret   = _state_secret()
         payload  = f"{rid_s}:{expires_s}"
         expected = hmac.new(secret, payload.encode(), hashlib.sha256).hexdigest()[:32]
         if not hmac.compare_digest(sig, expected):
@@ -99,7 +111,7 @@ def verify_mobile_state(state: str) -> int | None:
         if int(expires_s) < int(time.time()):
             return None
         return int(rid_s)
-    except (ValueError, AttributeError):
+    except (ValueError, AttributeError, RuntimeError):
         return None
 
 

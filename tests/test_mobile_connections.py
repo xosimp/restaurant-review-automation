@@ -220,6 +220,21 @@ def test_disconnect_google_clears_tokens(client, db_path):
 
 # ── gmb.py signed-state helpers (pure unit, no Flask) ───────────────────
 
+@pytest.fixture(autouse=True)
+def _signing_key(monkeypatch):
+    """sign_mobile_state refuses to run without SECRET_KEY (it used to fall
+    back to a literal anyone could forge with)."""
+    monkeypatch.setenv("SECRET_KEY", "test-signing-key")
+
+
+def test_the_state_cannot_be_signed_or_verified_without_a_secret_key(monkeypatch):
+    from gmb import sign_mobile_state, verify_mobile_state
+    signed = sign_mobile_state(123)
+    monkeypatch.delenv("SECRET_KEY")
+    with pytest.raises(RuntimeError):
+        sign_mobile_state(123)
+    assert verify_mobile_state(signed) is None
+
 def test_sign_and_verify_mobile_state_round_trips():
     from gmb import sign_mobile_state, verify_mobile_state
     state = sign_mobile_state(123)
@@ -255,7 +270,7 @@ def test_verify_mobile_state_rejects_different_restaurant_id_swap():
 def test_verify_mobile_state_rejects_expired_token():
     from gmb import verify_mobile_state
     import hmac, hashlib, os, time
-    secret = os.getenv("SECRET_KEY", "cavnar-dev-secret").encode()
+    secret = os.environ["SECRET_KEY"].encode()
     expired = int(time.time()) - 10
     payload = f"55:{expired}"
     sig = hmac.new(secret, payload.encode(), hashlib.sha256).hexdigest()[:32]
