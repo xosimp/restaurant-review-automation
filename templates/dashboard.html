@@ -703,6 +703,93 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none}
 @keyframes hbChartBreath{0%,100%{opacity:1}50%{opacity:.78}}
 @media (prefers-reduced-motion:reduce){.ai-strip .dot:after,.ai-feed .it.now .d:after,.ai-feed .it.in,.ai-feed.on,.ask-steps .st,.ask-in,.hb-card svg[data-pts] path[stroke]{animation:none!important;opacity:1}.ai-strip .txt{transition:none}}
 @media(max-width:640px){.ai-strip{left:12px;bottom:14px;max-width:calc(100vw - 110px);font-size:12px}.ai-feed{left:12px;bottom:60px}}
+/* ── Brand layer ─────────────────────────────────────────────────────────
+   One surface hierarchy for every module, lit the way Home is lit.
+   Tokens first; then each existing class is placed on a tier — nothing
+   is re-laid-out, only how it sits in the light.
+     hero      — the section's focal point: ambient ember light, deep shadow
+     card      — informational surface: hairline, soft lift on hover
+     recessed  — supporting stats inside a card: inset, no border
+     floating  — panels above the page: glass, long shadow
+     ai        — anything Cavnar AI wrote: warm surface, ember hairline,
+                 and the ember thread (the signature motif) tying it to
+                 the evidence above it. */
+:root{--sf-ai:linear-gradient(135deg,rgba(200,75,47,.09),rgba(200,75,47,.02) 62%);--sf-ai-line:rgba(200,75,47,.16);--sf-recess:rgba(14,12,10,.035);--glow-ember:0 0 0 1px rgba(200,75,47,.10),0 22px 56px -30px rgba(200,75,47,.45);--elev-card:0 1px 2px rgba(14,12,10,.04),0 14px 30px -20px rgba(14,12,10,.16);--elev-hero:0 2px 6px rgba(14,12,10,.06),0 28px 60px -26px rgba(14,12,10,.28),0 40px 90px -40px rgba(200,75,47,.28);--elev-float:0 2px 6px rgba(14,12,10,.08),0 30px 80px -30px rgba(14,12,10,.38);--ambient:rgba(200,75,47,.13)}
+[data-theme="dark"]{--sf-ai:linear-gradient(135deg,rgba(224,100,68,.15),rgba(224,100,68,.03) 62%);--sf-ai-line:rgba(224,100,68,.22);--sf-recess:rgba(255,255,255,.045);--glow-ember:0 0 0 1px rgba(224,100,68,.18),0 22px 56px -30px rgba(224,100,68,.55);--elev-card:var(--elev-1);--elev-hero:var(--elev-2),0 40px 90px -40px rgba(224,100,68,.35);--elev-float:0 2px 6px rgba(0,0,0,.3),0 30px 80px -30px rgba(0,0,0,.75);--ambient:rgba(224,100,68,.17)}
+/* hero: the module's focal point */
+.rv2-hero,.lb2-hero{position:relative;padding:26px 28px 24px;border-radius:20px;background:var(--surface);border:1px solid var(--hb-line);box-shadow:var(--elev-hero);overflow:hidden;transition:box-shadow .25s ease,transform .25s ease}
+[data-theme="dark"] .rv2-hero,[data-theme="dark"] .lb2-hero{background:var(--surface-glass),var(--surface);border-color:var(--line-hi)}
+.rv2-hero:before,.lb2-hero:before{content:'';position:absolute;left:-12%;top:-45%;width:58%;height:130%;background:radial-gradient(closest-side,var(--ambient),transparent 72%);filter:blur(14px);pointer-events:none;animation:brandAmbient 9s ease-in-out infinite alternate}
+.rv2-hero>*,.lb2-hero>*{position:relative}
+@keyframes brandAmbient{from{transform:translate(0,0) scale(1);opacity:.85}to{transform:translate(6%,4%) scale(1.08);opacity:1}}
+.lb2-hero .lb2-ai{margin-top:18px}
+/* cursor light on every lit surface (Home's own, extended) */
+.lit{position:relative}
+.lit:after{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;opacity:0;transition:opacity .25s ease;background:radial-gradient(360px circle at var(--mx,50%) var(--my,50%),rgba(200,75,47,.10),transparent 60%)}
+.lit:hover:after{opacity:1}
+[data-theme="dark"] .lit:after{background:radial-gradient(360px circle at var(--mx,50%) var(--my,50%),rgba(224,100,68,.14),transparent 60%)}
+/* card tier: the informational surfaces outside Home */
+.ac-card,.fc2-fcp,.data-card,.card{box-shadow:var(--elev-card);transition:box-shadow .2s ease,transform .2s ease,border-color .2s ease}
+.ac-card:hover,.fc2-fcp:hover,.data-card:hover{transform:translateY(-1px);box-shadow:0 2px 5px rgba(14,12,10,.06),0 22px 44px -22px rgba(14,12,10,.22)}
+/* recessed tier: supporting stats sit INTO the card, separated by tone not line */
+.hb-sg,.rv2-sg,.lb2-sg{border-radius:12px;transition:background-color .2s ease}
+.hb-sg:hover,.rv2-sg:hover,.lb2-sg:hover{background:var(--sf-recess)}
+.hb-stat{transition:background-color .2s ease,transform .2s ease}
+/* floating tier: glass above the page */
+.ask-panel,.ai-feed,#explain-modal .box,.hb-modal .box{-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);box-shadow:var(--elev-float)}
+/* ai tier: what Cavnar AI wrote, lit warm and tied to its evidence */
+.lb2-ai{background:var(--sf-ai),var(--surface);border:1px solid var(--sf-ai-line);border-radius:14px;box-shadow:var(--glow-ember);position:relative}
+.lb2-ai .tag:before{content:'';display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--ember);box-shadow:0 0 8px var(--ember);margin:0 8px 1px 0;vertical-align:middle;animation:hbBreath 2.4s ease-in-out infinite}
+.ask-b.ai .bb{background:var(--sf-ai),var(--paper2);border-color:var(--sf-ai-line);box-shadow:inset 2px 0 0 var(--ember2)}
+.hb-msg.ai{box-shadow:inset 2px 0 0 var(--ember2)}
+.hb-card.hb-rec{box-shadow:0 2px 6px rgba(14,12,10,.06),0 28px 60px -26px rgba(14,12,10,.30),0 0 0 1px rgba(200,75,47,.07)}
+.hb-card.hb-rec:hover{box-shadow:0 2px 6px rgba(14,12,10,.06),0 34px 70px -28px rgba(14,12,10,.36),var(--glow-ember)}
+.fc2-recipe{background:var(--sf-ai),var(--surface);border-radius:12px;padding:12px 14px;margin-bottom:8px;border:1px solid var(--sf-ai-line)}
+/* ── the ember thread: the signature ──────────────────────────────────────
+   A lit line from evidence to conclusion. It appears wherever an insight
+   rests on data — Home's module pills to the finding, a chart to the read
+   beneath it, an answer's sources to the answer — with one light
+   travelling along it. It is drawn only where a real link exists in the
+   payload; it never decorates. */
+.ember-thread{position:relative;width:2px;height:24px;margin:2px 0 0 22px;background:linear-gradient(180deg,var(--ember2),var(--ember));border-radius:2px}
+.ember-thread:before{content:'';position:absolute;left:-3px;top:-2px;width:8px;height:8px;border-radius:50%;background:var(--ember);box-shadow:0 0 12px 3px rgba(200,75,47,.55);animation:emberTravel 2.4s ease-in-out infinite}
+.ember-thread.h{width:64px;height:2px;margin:0 2px;background:linear-gradient(90deg,var(--ember2),var(--ember),var(--ember2))}
+.ember-thread.h:before{top:-3px;left:-2px;animation-name:emberTravelH}
+.ember-thread.fresh:after{content:'';position:absolute;left:-6px;bottom:-7px;width:14px;height:14px;border-radius:50%;border:2px solid var(--ember);opacity:.7;animation:emberRing 2.2s ease-out infinite}
+@keyframes emberTravel{0%{top:-2px;opacity:0}12%{opacity:1}88%{opacity:1}100%{top:calc(100% - 6px);opacity:0}}
+@keyframes emberTravelH{0%{left:-2px;opacity:0}12%{opacity:1}88%{opacity:1}100%{left:calc(100% - 6px);opacity:0}}
+@keyframes emberRing{0%{transform:scale(.6);opacity:.8}100%{transform:scale(1.8);opacity:0}}
+/* Home's module-to-finding line becomes the thread */
+.hb-join .ln:before{left:-2px;top:-3px;margin:0;width:8px;height:8px;box-shadow:0 0 12px 3px rgba(200,75,47,.55);animation:emberTravelH 2.4s ease-in-out infinite}
+/* Ask: the sources strip is joined to the answer */
+.ask-eva{position:relative;padding-left:14px}
+.ask-eva:before{content:'';position:absolute;left:4px;top:0;bottom:0;width:2px;border-radius:2px;background:linear-gradient(180deg,var(--ember2),var(--ember))}
+/* buttons: physics and light */
+.cbtn{transition:transform .12s ease,box-shadow .18s ease,background-color .18s ease,border-color .18s ease}
+.cbtn-primary:hover{box-shadow:0 10px 26px -10px rgba(200,75,47,.65)}
+.cbtn:active{transform:scale(.985)}
+/* charts: lift, selection, motion */
+svg[data-pts] path[stroke]{filter:drop-shadow(0 2px 6px rgba(14,12,10,.18))}
+[data-theme="dark"] svg[data-pts] path[stroke]{filter:drop-shadow(0 0 8px rgba(224,100,68,.35))}
+svg[data-pts] rect,svg[data-pts] circle{transition:opacity .2s ease,transform .2s ease}
+svg[data-pts]:hover rect:not(:hover){opacity:.7}
+svg[data-pts] rect:hover{filter:drop-shadow(0 0 6px rgba(200,75,47,.5))}
+#hb-tip{box-shadow:var(--elev-float);border:1px solid var(--sf-ai-line)}
+/* rows and expandable sections */
+.hb-row{transition:background-color .18s ease,transform .18s ease;border-radius:8px}
+.hb-row:hover{background:var(--sf-recess)}
+details>summary{transition:color .18s ease}
+details[open]>summary~*{animation:askIn .3s ease both}
+/* section rules carry a short ember mark */
+.hb-sh h2:before,.lb2-subsection-title:before{content:'';display:inline-block;width:14px;height:3px;border-radius:2px;background:var(--ember);margin:0 10px 6px 0;vertical-align:middle}
+/* premium empty states: the AI is watching, and says what for */
+.pe{position:relative;display:flex;flex-direction:column;align-items:center;gap:8px;padding:30px 20px!important;border-radius:14px;background:var(--sf-ai),var(--surface);border:1px dashed var(--sf-ai-line)}
+.pe-dot{position:relative;width:10px;height:10px;border-radius:50%;background:var(--ember);box-shadow:0 0 12px var(--ember)}
+.pe-dot:after{content:'';position:absolute;inset:-5px;border-radius:50%;background:var(--ember);opacity:.35;animation:hbBreath 2.4s ease-in-out infinite}
+.pe-next{font-size:12.5px;color:var(--ink3);margin-top:2px}
+.pe-next b{color:var(--ink2);font-weight:600}
+.hb-live.mod{margin-left:auto}
+@media (prefers-reduced-motion:reduce){.rv2-hero:before,.lb2-hero:before,.ember-thread:before,.ember-thread:after,.hb-join .ln:before,.lb2-ai .tag:before,.pe-dot:after{animation:none!important}.lit:after{transition:none}}
 .ask-fab{position:fixed;bottom:24px;right:24px;width:60px;height:60px;border-radius:50%;border:1px solid rgba(232,149,106,.35);background:radial-gradient(circle at 35% 30%,#2c2c2e,#0c0c0c 72%);box-shadow:0 10px 30px rgba(200,75,47,.35),0 0 0 6px rgba(200,75,47,.08);display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:998;padding:0;transition:transform .18s,box-shadow .18s}
 .ask-fab:hover{transform:translateY(-2px);box-shadow:0 14px 36px rgba(200,75,47,.5),0 0 0 8px rgba(200,75,47,.12)}
 .ask-fab:active{transform:scale(.94)}
@@ -6310,6 +6397,56 @@ function _setAskCavnarLoadingState(bubble, label, state) {
   if (_askCavnarLoadingOrb && state && window.CavnarOrb) CavnarOrb.setState(_askCavnarLoadingOrb, state);
 }
 
+// ── the brand layer: light, tiers, the thread, counters, empty states ────────
+// Applied to whatever is on the page and re-applied as modules render
+// (MutationObserver, throttled). Idempotent: every hook marks what it did.
+(function () {
+  var act = null;
+  function reduced() { return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches; }
+  function esc(x) { return String(x == null ? '' : x).replace(/[&<>"']/g, function (c) { return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]; }); }
+  var MOD = {reviews: 'reviews', labor: 'labor', inventory: 'inventory', marketing: 'marketing', competitor: 'intel', home: 'home'};
+  function moduleOf(el) { var p = el.closest ? el.closest('.panel') : null; return p ? (MOD[(p.id || '').replace('panel-', '')] || '') : ''; }
+  function workingFor(mod) { if (!act || !mod) return null; var w = act.working || []; for (var i = 0; i < w.length; i++) if (w[i].module === mod) return w[i]; return null; }
+  // cursor light on every lit surface
+  document.addEventListener('mousemove', function (e) {
+    var c = e.target && e.target.closest ? e.target.closest('.lit') : null; if (!c) return;
+    var r = c.getBoundingClientRect();
+    c.style.setProperty('--mx', ((e.clientX - r.left) / r.width * 100).toFixed(1) + '%');
+    c.style.setProperty('--my', ((e.clientY - r.top) / r.height * 100).toFixed(1) + '%');
+  });
+  function brandify() {
+    var i, el;
+    var lit = document.querySelectorAll('.rv2-hero:not(.lit),.lb2-hero:not(.lit),.ac-card:not(.lit),.fc2-fcp:not(.lit),.lb2-ai:not(.lit),.data-card:not(.lit)');
+    for (i = 0; i < lit.length; i++) lit[i].classList.add('lit');
+    // the thread: from the chart above to the read below, wherever a read exists
+    var ai = document.querySelectorAll('.lb2-ai:not([data-thread])');
+    for (i = 0; i < ai.length; i++) { el = ai[i]; el.setAttribute('data-thread', '1'); var t = document.createElement('div'); t.className = 'ember-thread'; t.setAttribute('aria-hidden', 'true'); el.parentNode.insertBefore(t, el); }
+    // hero numbers count up once
+    if (!reduced() && typeof countUp === 'function') {
+      var nums = document.querySelectorAll('.rv2-hero .big .hb-num:not([data-counted]),.lb2-hero .big .hb-num:not([data-counted])');
+      for (i = 0; i < nums.length; i++) { el = nums[i]; el.setAttribute('data-counted', '1'); var raw = (el.textContent || '').replace(/,/g, ''); if (!/^-?\d+(\.\d+)?$/.test(raw)) continue; var v = parseFloat(raw), dec = (raw.split('.')[1] || '').length; countUp(el, v, 900, '', '', dec); }
+    }
+    // empty states: the AI is watching, and says what for
+    var empties = document.querySelectorAll('.rv2-empty:not(.pe),.fc2-empty:not(.pe),.in2-empty:not(.pe),.fc2-wt-empty:not(.pe),.empty-state:not(.pe)');
+    for (i = 0; i < empties.length; i++) {
+      el = empties[i]; el.classList.add('pe');
+      var dot = document.createElement('span'); dot.className = 'pe-dot'; dot.setAttribute('aria-hidden', 'true'); el.insertBefore(dot, el.firstChild);
+      var w = workingFor(moduleOf(el));
+      if (w) { var n = document.createElement('div'); n.className = 'pe-next'; n.innerHTML = 'Cavnar AI is on it \u2014 <b>' + esc(w.text) + '</b>'; el.appendChild(n); }
+    }
+    // hero pills: what the AI is doing for this module, from the feed
+    var heroes = {reviews: '#panel-reviews .rv2-hero .hd', labor: '#panel-labor .lb2-hero .hd', inventory: '#panel-inventory .lb2-hero .hd', intel: '#panel-competitor .lb2-hero .hd'};
+    for (var k in heroes) { if (!heroes.hasOwnProperty(k)) continue; var hd = document.querySelector(heroes[k]); if (!hd || hd.querySelector('.hb-live')) continue; var wk = workingFor(k); if (!wk) continue; var sp = document.createElement('span'); sp.className = 'hb-live mod'; sp.innerHTML = '<i></i>' + esc(wk.text); hd.appendChild(sp); }
+  }
+  document.addEventListener('cavnar:activity', function (e) { act = e.detail || act; brandify(); });
+  var pending = null;
+  if (window.MutationObserver) {
+    new MutationObserver(function () { if (pending) return; pending = setTimeout(function () { pending = null; brandify(); }, 350); })
+      .observe(document.body, {childList: true, subtree: true});
+  }
+  brandify();
+})();
+
 // ── the AI activity strip ────────────────────────────────────────────────────
 // Reads /api/activity (activity.py): what is armed right now, what ran and
 // when, what the AI is still holding. The strip rotates the "now" lines;
@@ -6382,6 +6519,7 @@ function _setAskCavnarLoadingState(bubble, label, state) {
     fetch('/api/activity', {credentials: 'same-origin'}).then(function (r) { return r.json(); }).then(function (d) {
       if (!d || !d.ok) return;
       var first = !data; data = d; render();
+      try { var ev = document.createEvent('CustomEvent'); ev.initCustomEvent('cavnar:activity', false, false, d); document.dispatchEvent(ev); } catch (e2) {}
       if (first) { strip.className = 'ai-strip cbtn on'; rot = 0; rotate(); if (rotTimer) clearInterval(rotTimer); rotTimer = setInterval(rotate, 7000); }
     }).catch(function () {});
   }

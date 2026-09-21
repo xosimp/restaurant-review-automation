@@ -442,22 +442,78 @@ func cavnarTitleToolbar(_ title: String) -> some ToolbarContent {
 /// grouping without the flat, blocky "everything is a solid box" look. Mirrors
 /// how Raycast/Apple's HIG signal elevation in dark mode: a subtle border
 /// instead of a heavy filled card.
+/// The surface hierarchy, shared with the web's brand layer. Not every
+/// panel gets the same treatment: an informational card sits quietly, a
+/// hero carries ambient ember light, a floating panel throws a long
+/// shadow, and anything Cavnar AI wrote is lit warm with an ember hairline
+/// — so a recommendation reads as more elevated than a table.
+enum CavnarSurface {
+    case card        // informational: faint tint, hairline
+    case hero        // the section's focal point: ambient light, deep shadow
+    case ai          // written by Cavnar AI: warm surface, ember hairline, glow
+    case floating    // above the page: long shadow
+}
+
 struct CavnarCardStyle: ViewModifier {
+    var tier: CavnarSurface = .card
+
     func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: CavnarRadius.card)
         content
             .padding(16)
-            .background(Color.cavnarPaper2.opacity(0.6))
-            .overlay(
-                RoundedRectangle(cornerRadius: CavnarRadius.card)
-                    .strokeBorder(Color.cavnarPaper3.opacity(0.5), lineWidth: 1)
-            )
-            .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.card))
+            .background(background)
+            .overlay(shape.strokeBorder(border, lineWidth: 1))
+            .clipShape(shape)
+            .shadow(color: shadowColor, radius: shadowRadius, x: 0, y: shadowY)
+    }
+
+    @ViewBuilder private var background: some View {
+        switch tier {
+        case .card:
+            Color.cavnarPaper2.opacity(0.6)
+        case .hero:
+            ZStack(alignment: .topLeading) {
+                Color.cavnarPaper2.opacity(0.7)
+                RadialGradient(colors: [Color.cavnarEmber.opacity(0.16), .clear], center: .topLeading,
+                               startRadius: 0, endRadius: 260)
+            }
+        case .ai:
+            LinearGradient(colors: [Color.cavnarEmber.opacity(0.10), Color.cavnarEmber.opacity(0.02)],
+                           startPoint: .topLeading, endPoint: .bottomTrailing)
+                .background(Color.cavnarPaper2.opacity(0.6))
+        case .floating:
+            Color.cavnarPaper2.opacity(0.85)
+        }
+    }
+
+    private var border: Color {
+        switch tier {
+        case .ai: return Color.cavnarEmber.opacity(0.18)
+        default: return Color.cavnarPaper3.opacity(0.5)
+        }
+    }
+
+    private var shadowColor: Color {
+        switch tier {
+        case .card: return .clear
+        case .hero: return Color.cavnarEmber.opacity(0.18)
+        case .ai: return Color.cavnarEmber.opacity(0.14)
+        case .floating: return .black.opacity(0.28)
+        }
+    }
+
+    private var shadowRadius: CGFloat {
+        switch tier { case .card: return 0; case .hero: return 28; case .ai: return 18; case .floating: return 30 }
+    }
+
+    private var shadowY: CGFloat {
+        switch tier { case .card: return 0; case .hero: return 14; case .ai: return 10; case .floating: return 18 }
     }
 }
 
 extension View {
-    func cavnarCard() -> some View {
-        modifier(CavnarCardStyle())
+    func cavnarCard(_ tier: CavnarSurface = .card) -> some View {
+        modifier(CavnarCardStyle(tier: tier))
     }
 }
 

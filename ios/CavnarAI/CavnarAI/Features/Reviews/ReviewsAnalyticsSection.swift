@@ -46,6 +46,8 @@ struct ReviewsAnalyticsSection: View {
                 // the answer away, and could still show the caveat above
                 // referring to a passage that was not on screen.
                 if let insight = viewModel.insight, !insight.isEmpty {
+                    // The ember thread: the chart above to the read below.
+                    EmberThread().padding(.leading, 6)
                     insightCard(insight)
                     // Open complaints ranked by how serious they are rather
                     // than how many there are. Sits directly under the read
@@ -158,9 +160,7 @@ struct ReviewsAnalyticsSection: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16)
-        .background(Color.cavnarEmber.opacity(0.09))
-        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+        .cavnarCard(.ai)
     }
 
     // MARK: - Severity

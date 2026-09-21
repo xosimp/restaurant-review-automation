@@ -674,10 +674,13 @@ struct HomeFollowThrough: View {
                                 HomeMixedText.make(link.headline, size: 14.5, weight: 700,
                                                    color: .cavnarInk)
                                 if let modules = link.modules, !modules.isEmpty {
-                                    Text(modules.map { $0.capitalized }.joined(separator: " + "))
-                                        .font(.cavnarBody(11, weight: 700))
-                                        .tracking(1.0)
-                                        .foregroundStyle(Color.cavnarInk3)
+                                    HStack(spacing: 8) {
+                                        EmberThread(axis: .horizontal, length: 34)
+                                        Text(modules.map { $0.capitalized }.joined(separator: " + "))
+                                            .font(.cavnarBody(11, weight: 700))
+                                            .tracking(1.0)
+                                            .foregroundStyle(Color.cavnarInk3)
+                                    }
                                 }
                             }
                             Spacer(minLength: 0)
@@ -708,7 +711,7 @@ struct HomeFollowThrough: View {
                     .padding(.vertical, 11)
                 }
             }
-            .cavnarCard()
+            .cavnarCard(.ai)
         }
     }
 

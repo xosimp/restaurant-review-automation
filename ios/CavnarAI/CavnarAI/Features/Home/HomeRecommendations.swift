@@ -35,7 +35,7 @@ struct HomeRecommendations: View {
                         showsDivider: index < shown.count - 1)
                 }
             }
-            .cavnarCard()
+            .cavnarCard(.ai)
             if let toast {
                 Text(toast)
                     .font(.cavnarBody(12.5, weight: 600))

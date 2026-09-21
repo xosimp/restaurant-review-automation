@@ -309,6 +309,34 @@ row a job wrote; a restaurant with nothing running shows no strip at all;
 lines from a module the viewer may not read are left out. It is not a
 notification surface and never demands attention.
 
+**The surface hierarchy (brand layer).** Not every panel gets the same
+treatment. Five tiers, shared by web (`dashboard.html` → *Brand layer*) and
+iOS (`CavnarSurface` on `cavnarCard(_:)`):
+
+| Tier | Use | Web | iOS |
+|---|---|---|---|
+| hero | the module's focal point near the top | `.rv2-hero`, `.lb2-hero`, `.hb-card.hero` — ambient ember light (`:before`), deep shadow, cursor light | `.cavnarCard(.hero)` |
+| card | informational | `.hb-card`, `.ac-card`, `.data-card` — hairline, lift on hover | `.cavnarCard()` |
+| recessed | supporting stats inside a card | `.hb-sg`, `.rv2-sg`, `.lb2-sg` — inset tone on hover, no border | — |
+| floating | above the page | `.ask-panel`, `.ai-feed`, modals — glass, long shadow | `.cavnarCard(.floating)` |
+| ai | written by Cavnar AI | `.lb2-ai`, `.hb-rec`, `.ask-b.ai`, `.fc2-recipe` — warm surface, ember hairline, glow | `.cavnarCard(.ai)` |
+
+A recommendation must always read as more elevated than a table. Every
+lit surface carries the cursor light (`.lit`, `--mx/--my`).
+
+**The ember thread (signature motif).** A 2px ember line with one light
+travelling along it, drawn from evidence to conclusion: Home's module pills
+to the finding (`.hb-join .ln`), a chart to the read beneath it
+(`.ember-thread`, inserted before every `.lb2-ai`), an answer's sources to
+the answer (`.ask-eva`). iOS: `EmberThread(axis:length:fresh:)`. Rule: it is
+drawn only where a real link exists in the payload — a thread that decorates
+would spend the meaning the motif exists to carry. `fresh` adds a ring when
+the conclusion was updated in the last few minutes (real `generated_at`).
+
+**Premium empty states** (`.pe`): a breathing ember dot, the reason the
+space is empty, and — from `/api/activity` — the real line for what Cavnar
+AI is doing about it ("Watching for new reviews · next sweep at 4pm").
+
 ---
 
 ## 11. Animation
