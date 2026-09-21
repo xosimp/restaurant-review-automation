@@ -794,7 +794,6 @@ def run_campaign_attribution(db_path=DB_PATH, today=None):
     date is fetched once per restaurant per run, whatever the number of
     campaigns, and only dates not yet read for that campaign."""
     from datetime import date as _date, timedelta as _td
-    import toast as _toast
     from models import get_restaurant
     today = today or _date.today()
     yesterday = today - _td(days=1)
@@ -809,13 +808,16 @@ def run_campaign_attribution(db_path=DB_PATH, today=None):
         conn.close()
     checked = matched = 0
     phones_by_day = {}          # (rid, iso date) -> set of normalized phones
+    import pos as _pos
     for c in camps:
         rid = c["restaurant_id"]
         r = get_restaurant(rid)
-        if not r or not getattr(r, "toast_restaurant_guid", None):
+        # Any POS that shares guest records — Toast today; RPOWER once its
+        # customer scope is granted — not a Toast field check.
+        if not r or not _pos.supports(rid, "fetch_order_customers"):
             continue
         if (getattr(r, "billing_status", None) or "trial").lower() in ("churned", "cancelled", "canceled", "paused"):
-            continue          # no Toast calls on behalf of an account that asked for quiet
+            continue          # no POS calls on behalf of an account that asked for quiet
         sent_on = _date.fromisoformat(c["sent_on"])
         start = _date.fromisoformat(c["attribution_through"]) + _td(days=1) if c["attribution_through"] else sent_on
         end = min(yesterday, sent_on + _td(days=ATTRIBUTION_WINDOW_DAYS))
@@ -837,7 +839,7 @@ def run_campaign_attribution(db_path=DB_PATH, today=None):
             key = (rid, day.isoformat())
             if key not in phones_by_day:
                 try:
-                    custs = _toast.fetch_order_customers(rid, day)
+                    custs, _prov = _pos.fetch_order_customers(rid, day)
                     phones_by_day[key] = {_normalize_phone(x.get("phone")) for x in custs if x.get("phone")}
                 except Exception as e:
                     import ops
@@ -923,17 +925,16 @@ def run_toast_optin_invites(business_date=None, db_path=DB_PATH):
     this order is skipped, so re-running is safe.
     """
     from datetime import date as _date
-    import toast as _toast
 
     if business_date is None:
         business_date = _date.today()
 
     conn = get_conn(db_path)
-    restaurants = conn.execute(
-        "SELECT id, name FROM restaurants "
-        "WHERE module_marketing=1 AND toast_client_id IS NOT NULL AND toast_restaurant_guid IS NOT NULL"
-    ).fetchall()
+    restaurants = conn.execute("SELECT id, name FROM restaurants WHERE module_marketing=1").fetchall()
     conn.close()
+    # Whichever POS shares guest records (pos.supports), not a Toast column.
+    import pos as _pos
+    restaurants = [r for r in restaurants if _pos.supports(r["id"], "fetch_order_customers")]
 
     invited, skipped, failed, deferred = 0, 0, 0, 0
     for r in restaurants:
@@ -946,7 +947,7 @@ def run_toast_optin_invites(business_date=None, db_path=DB_PATH):
             deferred += 1
             continue
         try:
-            customers = _toast.fetch_order_customers(rid, business_date)
+            customers, _prov = _pos.fetch_order_customers(rid, business_date)
         except Exception:
             failed += 1
             continue

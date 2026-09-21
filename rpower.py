@@ -744,6 +744,14 @@ def sync_to_db(restaurant_id: int) -> dict:
             from models import save_labor_daily_history, save_labor_snapshot
             analysis = analyse_shifts_for_restaurant(restaurant_id)
             save_labor_daily_history(restaurant_id, analysis.get("by_day", {}))
+            # Same as the Toast sync: keep menu_items current so the dish a
+            # post names, the count sheet and recipe drafts have RPOWER's
+            # items to match against — not only when Food Cost is open.
+            try:
+                import inventory_ledger
+                inventory_ledger.discover_menu_items(restaurant_id, days=2)
+            except Exception as _menu_e:
+                log.warning("[rpower sync] menu item discovery error for %s: %s", restaurant_id, _menu_e)
             dr = analysis.get("date_range", {})
             if dr.get("start") and dr.get("end"):
                 save_labor_snapshot(restaurant_id, dr["start"], dr["end"],

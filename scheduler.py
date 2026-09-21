@@ -896,7 +896,15 @@ def run_daily_depletion_sync():
 
         ok_count, total = 0, 0
         for r in get_all_restaurants():
-            if r.id not in restaurants_with_recipes:
+            # Item-level sales (menu_item_sales) are what a post's dish lift
+            # and menu engineering read, and they were only ever written for
+            # restaurants with recipes. A marketing restaurant on a POS that
+            # reports line items gets them too — with no recipes there is
+            # nothing to deplete, and the same pass records the units sold.
+            wants_item_sales = bool(getattr(r, "module_marketing", 0) or getattr(r, "module_inventory", 0))
+            if r.id not in restaurants_with_recipes and not wants_item_sales:
+                continue
+            if (getattr(r, "billing_status", None) or "trial").lower() in ("churned", "cancelled", "canceled", "paused"):
                 continue
             try:
                 # A POS that cannot report item-level sales is skipped

@@ -235,3 +235,47 @@ def test_home_says_what_the_latest_post_did(db_path, monkeypatch):
     assert r["menu_item_name"] == "Buffalo Wings" and r["item_lift_pct"] == 42.0
     src = open(home_brief.__file__).read()
     assert 'mkt["post_result"]' in src and "Your post on" in src and '"bad" if pr["lift_pct"] >= 0' not in src
+
+
+# ── every POS, not only Toast ────────────────────────────────────────────────
+
+def test_guest_matching_asks_the_connected_pos_and_refuses_one_that_cannot(db_path, monkeypatch):
+    """Erik's RPOWER reports line items but not guest records yet. Campaign
+    visit matching and opt-in invites must skip such a store (no calls, no
+    zero), and light up the day its provider grows fetch_order_customers."""
+    import pos, types
+    rid = _rid(db_path)
+    fake = types.SimpleNamespace(is_connected=lambda r: r == rid,
+                                 fetch_order_selections=lambda r, d: [],
+                                 sync_to_db=lambda r: {}, build_shifts_csv=lambda r, days=60: None)
+    monkeypatch.setattr(pos, "PROVIDERS", {"rpower": fake})
+    assert pos.supports(rid, "fetch_order_selections") and not pos.supports(rid, "fetch_order_customers")
+    with pytest.raises(pos.POSCapabilityError):
+        pos.fetch_order_customers(rid, date.today())
+    import guest_marketing as gm
+    monkeypatch.setattr(gm, "get_conn", lambda *a, **k: models.get_conn(db_path))
+    gm.init_guest_marketing(db_path=db_path)
+    conn = get_conn(db_path)
+    cur = conn.execute("INSERT INTO guest_campaigns (restaurant_id, message, sent_count, created_at) VALUES (?,?,?,?)",
+                       (rid, "Patio", 5, (date.today() - timedelta(days=3)).isoformat() + " 12:00:00"))
+    conn.execute("INSERT INTO guest_campaign_recipients (campaign_id, restaurant_id, contact_id, phone) VALUES (?,?,?,?)",
+                 (cur.lastrowid, rid, 1, "+13125550100"))
+    conn.commit(); conn.close()
+    assert gm.run_campaign_attribution(db_path=db_path) == {"campaigns_checked": 0, "visits_matched": 0}
+    # once the provider can answer, the same store is matched without any Toast field
+    fake.fetch_order_customers = lambda r, d: []
+    assert pos.supports(rid, "fetch_order_customers")
+    assert gm.run_campaign_attribution(db_path=db_path)["campaigns_checked"] == 1
+    src = open(gm.__file__).read()
+    assert "toast_restaurant_guid" not in src.split("def run_campaign_attribution")[1].split("def ")[1]
+    assert 'toast_client_id IS NOT NULL' not in src
+
+
+def test_item_sales_are_recorded_for_marketing_restaurants_without_recipes():
+    """Dish lift reads menu_item_sales; the nightly pass used to write them
+    only for restaurants with recipes, which a Back Office user never has."""
+    import scheduler, rpower
+    src = open(scheduler.__file__).read()
+    body = src.split("def run_daily_depletion_sync")[1].split("\ndef ")[0]
+    assert "wants_item_sales" in body and 'getattr(r, "module_marketing", 0)' in body
+    assert "discover_menu_items(restaurant_id, days=2)" in open(rpower.__file__).read().split("def sync_to_db")[1]

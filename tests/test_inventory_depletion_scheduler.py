@@ -37,7 +37,12 @@ def _restaurant_with_recipe(db_path, name, toast_client_id=None):
 
 
 def _restaurant_without_recipe(db_path, name):
-    return create_restaurant(Restaurant(name=name, owner_email=f"{name}@x.com", module_inventory=1), db_path=db_path)
+    # Neither Food Cost nor Marketing: nothing downstream reads item sales,
+    # so the nightly pass leaves it alone. A restaurant with either module
+    # and a line-item POS gets its units sold recorded even with no recipe
+    # (a post's dish lift and menu engineering read menu_item_sales).
+    return create_restaurant(Restaurant(name=name, owner_email=f"{name}@x.com", module_inventory=0, module_marketing=0),
+                             db_path=db_path)
 
 
 def test_skips_restaurants_with_no_recipe_configured(db_path, monkeypatch):

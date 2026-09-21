@@ -29,7 +29,7 @@ PROVIDER_API = ("is_connected", "sync_to_db", "build_shifts_csv")
 # rather than return an empty list, because "nothing sold" and "I can't see
 # what sold" lead to opposite conclusions everywhere downstream.
 DATA_API = ("fetch_business_days", "fetch_order_selections", "fetch_loss_lines",
-            "fetch_sales_today", "fetch_clock_ins_today")
+            "fetch_sales_today", "fetch_clock_ins_today", "fetch_order_customers")
 
 
 def _load_providers():
@@ -152,6 +152,25 @@ def fetch_order_selections(restaurant_id, business_date):
         raise POSCapabilityError(
             f"{name} does not report item-level sales through Cavnar yet, so recipe "
             f"depletion and menu discovery cannot run for this restaurant")
+    return fn(restaurant_id, business_date), name
+
+
+def fetch_order_customers(restaurant_id, business_date):
+    """One business date's identified guests as [{name, phone, email, order_guid}].
+
+    Returns (rows, provider_name). Only a provider that exposes customer
+    records can answer; RPOWER's customer scope is a separate agreement
+    (see the memory note), so until it lands this raises for RPOWER and
+    the callers say "not available on this POS" rather than counting zero.
+    """
+    name, mod = connected_provider(restaurant_id)
+    if not mod:
+        raise POSCapabilityError("no POS connected")
+    fn = getattr(mod, "fetch_order_customers", None)
+    if fn is None:
+        raise POSCapabilityError(
+            f"{name} does not share guest records through Cavnar yet, so campaign "
+            f"visit matching and opt-in invites cannot run for this restaurant")
     return fn(restaurant_id, business_date), name
 
 
