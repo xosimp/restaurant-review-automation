@@ -6053,6 +6053,18 @@ svg:hover .hb-xh{opacity:1}
       <div class="ac-card" id="acct-memory-card">
         <div class="ac-card-h"><div><h3>What Cavnar AI remembers</h3><p>Facts the assistant was told to keep &mdash; they shape every answer. Anyone on this account can add one; you can remove any of them.</p></div></div>
         <div id="acct-memory-list" class="ac-status">Loading&hellip;</div>
+        <div class="ac-inline" style="margin-top:10px">
+          <input class="ac-input" id="acct-memory-new" maxlength="300" placeholder="Something the assistant should always know &mdash; &ldquo;we close Mondays&rdquo;, &ldquo;never discount the tasting menu&rdquo;" aria-label="A fact to remember">
+          <button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="acctRemember(this)">Remember</button>
+        </div>
+      </div>
+      <div class="ac-card" id="acct-decisions-card">
+        <div class="ac-card-h"><div><h3>What you&rsquo;ve decided</h3><p>Every recommendation, issue and proposal, what you did with it, and what was measured afterwards. Ask Cavnar AI reads this before it recommends anything.</p></div></div>
+        <div id="acct-decisions-list" class="ac-status">Loading&hellip;</div>
+      </div>
+      <div class="ac-card" id="acct-trust-card">
+        <div class="ac-card-h"><div><h3>Why Cavnar AI stopped asking</h3><p>Nothing runs on its own until your own record earns it. This is that record.</p></div></div>
+        <div id="acct-trust-list" class="ac-status">Loading&hellip;</div>
       </div>
       <div class="ac-grid">
         <div class="ac-card">
@@ -12180,8 +12192,55 @@ document.addEventListener('click', function (e) {
     .then(function (r) { return r.json(); }).then(function (d) { done(); if (typeof toast === 'function') toast(d && d.ok ? 'Forgotten' : ((d && d.error) || 'Could not forget'), d && d.ok ? 'success' : 'error'); loadMemory(); })
     .catch(function () { done(); });
 });
+function acctRemember(btn) {
+  var inp = document.getElementById('acct-memory-new'); var fact = (inp && inp.value || '').trim();
+  if (!fact) { if (typeof toast === 'function') toast('Write the fact first', 'error'); return; }
+  var done = cbtnBusy(btn, 'Saving\u2026');
+  fetch('/api/account/memory/add', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({fact: fact, kind: 'context'})})
+    .then(function (r) { return r.json(); }).then(function (d) { done(); if (d && d.ok) { inp.value = ''; } if (typeof toast === 'function') toast(d && d.ok ? 'Remembered' : ((d && d.error) || 'Could not save'), d && d.ok ? 'success' : 'error'); loadMemory(); })
+    .catch(function () { done(); });
+}
+function loadDecisions() {
+  var el = document.getElementById('acct-decisions-list'); if (!el) return;
+  fetch('/api/decisions', {credentials: 'same-origin'}).then(function(r) { return r.json(); }).then(function(d) {
+    if (!d || !d.ok) return;
+    var rows = d.decisions || [];
+    if (!rows.length) { el.innerHTML = '<div class="pe"><b>Nothing decided yet.</b><span>When you answer a recommendation on Home, resolve an issue or confirm a proposal in Ask, it is kept here with what it measured.</span></div>'; return; }
+    var h = '';
+    for (var i = 0; i < rows.length && i < 30; i++) { var r = rows[i], sub = [];
+      var ans = r.answer || 'open';
+      if (r.times_hidden > 1) ans += ' (hidden ' + r.times_hidden + 'x)';
+      if (r.reason) sub.push('because: ' + r.reason);
+      if (r.outcome) { sub.push(r.outcome.status === 'evaluated' ? ('measured: ' + (r.outcome.verdict || 'unknown') + (r.outcome.dollars_monthly ? ' \u00b7 about $' + Math.round(Math.abs(r.outcome.dollars_monthly)).toLocaleString() + '/mo' : '')) : ('measuring until ' + mdy(String(r.outcome.evaluate_on || '').slice(0, 10)))); }
+      if (r.issue && r.issue.note) sub.push('resolved: ' + r.issue.note);
+      var when = r.answered_on || r.asked_on; if (when) sub.push(mdy(when));
+      h += '<div class="ac-row"><div class="l"><b>' + esc(r.title || '') + '</b><span>' + esc(sub.join(' \u00b7 ')) + '</span></div><div class="c"><span class="ac-chip sm' + (ans === 'done' || ans === 'confirmed' || ans === 'resolved' ? ' good' : '') + '">' + esc(ans) + '</span></div></div>';
+    }
+    el.innerHTML = h;
+  }).catch(function() { el.textContent = 'Could not load.'; });
+}
+function loadTrust() {
+  var el = document.getElementById('acct-trust-list'); if (!el) return;
+  fetch('/api/account/trust', {credentials: 'same-origin'}).then(function(r) { return r.json(); }).then(function(d) {
+    if (!d || !d.ok) return;
+    var h = '', i, b, keys = ['5', '4', '3', '2', '1'];
+    var earned = [];
+    for (i = 0; i < keys.length; i++) { b = d.auto_approve && d.auto_approve.bands ? d.auto_approve.bands[keys[i]] : null; if (b && b.trusted) earned.push(keys[i] + '\u2605'); }
+    h += '<div class="ac-row"><div class="l"><b>Review replies</b><span>' + esc(earned.length ? ('Trusted on ' + earned.join(', ') + ' reviews from your own approved, unedited replies (' + d.auto_approve.min_approved + ' per band).') : ('No band trusted yet \u2014 it takes ' + d.auto_approve.min_approved + ' approved replies on a star band with almost no edits.')) + '</span></div><div class="c"><span class="ac-chip sm' + (d.auto_approve.enabled ? ' good' : '') + '">' + (d.auto_approve.enabled ? 'On' : 'Off') + '</span></div></div>';
+    h += '<div class="ac-row"><div class="l"><b>Schedule publishing</b><span>' + esc(d.schedule.unedited_in_a_row >= d.schedule.needed ? ('Earned \u2014 ' + d.schedule.unedited_in_a_row + ' schedules went out unedited in a row.') : (d.schedule.unedited_in_a_row + ' of ' + d.schedule.needed + ' unedited schedules in a row.')) + '</span></div><div class="c"><span class="ac-chip sm' + (d.schedule.enabled ? ' good' : '') + '">' + (d.schedule.enabled ? 'On' : 'Off') + '</span></div></div>';
+    var sup = d.suppliers || [];
+    for (i = 0; i < sup.length; i++) { var s = sup[i];
+      h += '<div class="ac-row"><div class="l"><b>Orders to ' + esc(s.name || '') + '</b><span>' + esc(s.trusted ? (s.orders + ' orders sent; a draft inside your usual total can go on its own.') : (s.orders + ' orders sent \u2014 ' + s.needed + ' more before one can go alone.')) + '</span></div><div class="c"><span class="ac-chip sm' + (s.trusted ? ' good' : '') + '">' + (s.trusted ? 'Earned' : 'Not yet') + '</span></div></div>';
+    }
+    var inv = d.invoices || [];
+    for (i = 0; i < inv.length; i++) { var v = inv[i];
+      h += '<div class="ac-row"><div class="l"><b>Invoices from ' + esc(v.supplier || '') + '</b><span>' + esc(v.trusted ? (v.full_accepts + ' scans applied exactly as read; lines are preselected.') : (v.full_accepts + ' of ' + (d.invoices_needed || (v.full_accepts + v.needed)) + ' scans applied without a change.')) + '</span></div><div class="c"><span class="ac-chip sm' + (v.trusted ? ' good' : '') + '">' + (v.trusted ? 'Earned' : 'Not yet') + '</span></div></div>';
+    }
+    el.innerHTML = h;
+  }).catch(function() { el.textContent = 'Could not load.'; });
+}
 function loadPause() {
-  loadMemory();
+  loadMemory(); loadDecisions(); loadTrust();
   fetch('/api/account/pause', {credentials: 'same-origin'}).then(function(r) { return r.json(); }).then(function(d) {
     if (!d || !d.ok || !d.can_pause) return;
     var card = document.getElementById('acct-pause-card'); if (card) card.hidden = false;

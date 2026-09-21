@@ -663,6 +663,7 @@ def profitability_projection(restaurant_id: int, db_path: str = DB_PATH) -> dict
         "prime_cost_pct": prime_pct,
         "projected_sales": projected_sales,
         "projected_prime_cost": projected_prime,
+        "forecast_kind": "profitability_month",
         "prev_month_prime_pct": prev_pct,
         "prev_month_why": prev_why,
         "prime_pct_delta": round(prime_pct - prev_pct, 1) if prev_pct is not None else None,
@@ -795,6 +796,39 @@ def record_forecast(restaurant_id: int, kind: str, horizon_end: str, predicted: 
         conn.close()
 
 
+PROFITABILITY_FORECAST_DAY = 15   # the day of the month the projection is frozen for scoring
+
+
+def record_profitability_forecast(restaurant_id: int, db_path: str = DB_PATH, today=None) -> dict:
+    """Freeze this month's prime-cost projection once, mid-month, so it can
+    be scored against the month that closes (moat audit #16).
+
+    Deliberately NOT on the page render: a projection re-recorded on every
+    open converges on the actual as the month ends and scores itself
+    perfect. One fixed prediction, taken by the nightly job on or after the
+    15th, is a forecast; the last render before month end is a reading."""
+    from datetime import date as _date
+    import calendar as _cal
+    today = today or _date.today()
+    if today.day < PROFITABILITY_FORECAST_DAY:
+        return {"recorded": False, "reason": "before the 15th"}
+    horizon = today.replace(day=_cal.monthrange(today.year, today.month)[1]).isoformat()
+    conn = get_conn(db_path)
+    try:
+        have = conn.execute("SELECT 1 FROM forecast_log WHERE restaurant_id=? AND kind='profitability_month' "
+                            "AND horizon_end=?", (restaurant_id, horizon)).fetchone()
+    finally:
+        conn.close()
+    if have:
+        return {"recorded": False, "reason": "already frozen this month"}
+    proj = profitability_projection(restaurant_id, db_path=db_path)
+    if not proj.get("available") or proj.get("prime_cost_pct") is None:
+        return {"recorded": False, "reason": proj.get("reason") or "no projection"}
+    record_forecast(restaurant_id, "profitability_month", horizon, proj["prime_cost_pct"],
+                    basis=f"{proj.get('days_elapsed')} days of the month, prime cost run rate", db_path=db_path)
+    return {"recorded": True, "horizon_end": horizon, "predicted": proj["prime_cost_pct"]}
+
+
 def score_forecasts(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     """Fill in the actual for every forecast whose period has closed."""
     from waste_trend import load_waste_history
@@ -827,6 +861,18 @@ def score_forecasts(restaurant_id: int, db_path: str = DB_PATH) -> dict:
                 try:
                     iso = date.fromisoformat(f["horizon_end"]).isocalendar()
                     actual = by_week.get((iso[0], iso[1]))
+                except Exception:
+                    actual = None
+            elif f["kind"] == "profitability_month":
+                # Prime cost = food cost % + labor % over the closed month,
+                # from the same measurements the monthly review reads.
+                try:
+                    import metrics as _m
+                    from monthly_review import month_bounds as _mb
+                    ms, me = _mb(date.fromisoformat(f["horizon_end"]))
+                    fc, _ = _m.measure(restaurant_id, "food_cost_pct", ms.isoformat(), me.isoformat(), db_path)
+                    lb, _ = _m.measure(restaurant_id, "labor_pct", ms.isoformat(), me.isoformat(), db_path)
+                    actual = (float(fc) + float(lb)) if fc is not None and lb is not None else None
                 except Exception:
                     actual = None
             if actual is None:

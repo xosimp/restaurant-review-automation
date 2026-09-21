@@ -7477,7 +7477,7 @@ def get_review_request_stats(restaurant_id: int, db_path: str = DB_PATH) -> dict
 # those are admin telemetry, not "what changed on my account".
 ACCOUNT_EVENT_TYPES = (
     # Security events the owner should see without asking (security audit).
-    "login_locked", "account_frozen", "memory_forgotten", "staff_pin_reset",
+    "login_locked", "account_frozen", "memory_forgotten", "memory_added", "staff_pin_reset",
     "auto_publish_changed", "auto_order_changed", "weekly_plan_changed", "send_delay_changed",
     "login", "password_changed", "email_changed", "recovery_email_set", "recovery_email_removed",
     "two_fa_enabled", "two_fa_disabled", "backup_codes_regenerated",

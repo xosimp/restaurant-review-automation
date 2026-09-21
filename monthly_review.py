@@ -131,6 +131,7 @@ def build(restaurant_id, today=None, restaurant=None, db_path=None, months=1):
             "window": [last_start.isoformat(), last_end.isoformat()],
             "compared_with": compared,
             "metrics": rows, "prime_cost": prime, "results": results,
+            "plan": _plan_score(restaurant_id, last_start, last_end, db_path),
             "goals": goal_rows, "priorities": priorities,
             "fix_first": brief.get("fix_first")}
 
@@ -145,6 +146,26 @@ def _fmt(value, unit):
     if unit == "★":
         return f"{value:.2f}★"
     return f"{value:g}"
+
+
+def _plan_score(restaurant_id, start, end, db_path):
+    """The Monday plans' own receipt: how many of the actions the agent
+    filed in the month were resolved. Absent when none were filed."""
+    try:
+        from models import get_conn
+        conn = get_conn(db_path)
+        try:
+            rows = conn.execute(
+                "SELECT status FROM ops_issues WHERE restaurant_id=? AND kind='plan' "
+                "AND substr(created_at,1,10) BETWEEN ? AND ?", (restaurant_id, start.isoformat(), end.isoformat())).fetchall()
+        finally:
+            conn.close()
+    except Exception:
+        return None
+    if not rows:
+        return None
+    done = sum(1 for r in rows if (r["status"] or "") == "resolved")
+    return {"filed": len(rows), "done": done}
 
 
 def headline(review) -> str:
@@ -201,6 +222,10 @@ def lines(review):
         drift = (f", {abs(p['delta']):.1f} points {'up' if p['delta'] > 0 else 'down'} on last month"
                  if p.get("delta") else "")
         out.append(f"Prime cost is running at {p['pct']:.1f}% of sales{drift}.")
+    plan = review.get("plan")
+    if plan:
+        span = "last quarter" if review.get("months", 1) > 1 else "last month"
+        out.append(f"You did {plan['done']} of the {plan['filed']} actions the Monday plans filed {span}.")
     return out
 
 

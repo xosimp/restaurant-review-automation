@@ -54,6 +54,17 @@ def known_metric(metric):
 # "observed", at most once per metric per calendar month, and never while
 # another tracker on the same metric is already in flight (two trackers on
 # labor % would double-count the same move).
+# An alert the owner OPENED is an action too: they read it and went to
+# look. What the metric did over the next window is the alert's own
+# receipt — the moat audit's "outcome matching for alerts".
+ALERT_METRICS = {
+    "labor_over": ("labor_pct", "Read the labor-over-target alert"),
+    "food_waste": ("weekly_waste", "Read the food-waste alert"),
+    "rating_threshold": ("avg_rating", "Read the rating-below-threshold alert"),
+    "negative_trend": ("avg_rating", "Read the rating-declining alert"),
+    "price_spike": ("food_cost_pct", "Read the price-spike alert"),
+}
+
 OBSERVED_ACTIONS = {
     "schedule_published": ("labor_pct", "Published a schedule"),
     "supplier_order_sent": ("food_cost_pct", "Sent a supplier order from the draft"),
@@ -65,6 +76,8 @@ def observe(restaurant_id, action, detail=None, user_id=None, db_path=DB_PATH, t
     or None when nothing was recorded (unknown action, a tracker already in
     flight on that metric, or this month's already observed)."""
     spec = OBSERVED_ACTIONS.get(action)
+    if spec is None and action.startswith("alert_"):
+        spec = ALERT_METRICS.get(action[len("alert_"):])
     if not spec:
         return None
     metric, title = spec

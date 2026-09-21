@@ -1332,6 +1332,15 @@ def mobile_mark_notification_opened(current_user):
     """Twin of the web route — one row when a notification is opened."""
     from models import record_notification_open
     data = request.get_json(silent=True) or {}
+    # Opening an alert with a metric behind it starts an observed tracker —
+    # once per metric per month, never while one is in flight (outcomes.observe).
+    try:
+        import outcomes as _oc_open
+        _atype = (data.get("type") or "").strip()
+        if _atype in _oc_open.ALERT_METRICS:
+            _oc_open.observe(current_user["restaurant_id"], f"alert_{_atype}", user_id=current_user.get("id"))
+    except Exception:
+        pass
     record_notification_open(current_user["restaurant_id"], data.get("type") or "",
                              user_id=current_user["id"])
     return jsonify(ok=True)

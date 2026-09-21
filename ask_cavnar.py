@@ -494,6 +494,16 @@ def _memory_context(restaurant_id):
     return "\n".join(lines) + "\n"
 
 
+def _decisions_context(restaurant_id):
+    """What this restaurant decided and what came of it (decisions.py) —
+    the assistant's memory of the owner's answers, not only its own advice."""
+    try:
+        import decisions
+        return decisions.context(restaurant_id)
+    except Exception:
+        return ""
+
+
 def _commitments_context(restaurant_id):
     """What the assistant has already proposed, and what the owner did with it.
 
@@ -601,7 +611,7 @@ def build_context(restaurant):
     # None of these belongs to a module — what the owner has told the
     # assistant, what has fired, and what the assistant itself has already
     # put in front of them.
-    for always in (_memory_context, _alerts_context, _commitments_context):
+    for always in (_memory_context, _decisions_context, _alerts_context, _commitments_context):
         try:
             section = always(restaurant.id)
             if section:

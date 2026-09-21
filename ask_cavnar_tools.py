@@ -968,6 +968,13 @@ def _read_dish_scorecard(restaurant_id):
     return menu_intelligence.dish_scorecard(restaurant_id)
 
 
+def _read_decisions(restaurant_id, limit=20):
+    import decisions
+    rows = decisions.history(restaurant_id, limit=int(limit or 20))
+    return {"decisions": rows, "count": len(rows),
+            "note": "Each row is what the owner did and what was measured — never a guess."}
+
+
 def _read_reprice_suggestions(restaurant_id):
     import menu_intelligence
     return menu_intelligence.reprice_suggestions(restaurant_id)
@@ -1592,6 +1599,24 @@ TOOLS = [
         },
     },
 
+    {
+        "kind": "read",
+        "fn": _read_decisions,
+        "module": None,
+        "spec": {
+            "name": "read_decisions",
+            "description": (
+                "THE HISTORY OF DECISIONS at this restaurant: every recommendation, issue and "
+                "proposal, what the owner did with it (done, not for us and why, hidden, "
+                "tracking, resolved) and what was measured afterwards. Call this before "
+                "recommending anything, so you never re-propose what they declined and you "
+                "build on what measurably worked."
+            ),
+            "input_schema": {"type": "object", "properties": {
+                "limit": {"type": "integer", "minimum": 1, "maximum": 60}},
+                "additionalProperties": False},
+        },
+    },
     # ── Write tools: proposal only ──────────────────────────────────────────
     # Each carries the route the client calls on confirm. Nothing here runs
     # server-side from a model decision.

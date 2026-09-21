@@ -636,6 +636,71 @@ def _do_send_delay_set(u):
     return _do_send_delay_get(u)
 
 
+def _do_trust(u):
+    """Why Cavnar AI stopped asking — every earned automation and the
+    record behind it, in one place (moat audit #17)."""
+    from models import get_restaurant, auto_approve_trust, schedule_publish_trust, SCHEDULE_PUBLISH_TRUST_MIN, AUTO_APPROVE_TRUST_MIN
+    import ordering
+    r = get_restaurant(_rid(u))
+    out = {"ok": True, "auto_approve": {"enabled": bool(getattr(r, "auto_approve_earned", 0)),
+                                        "min_approved": AUTO_APPROVE_TRUST_MIN,
+                                        "bands": {str(k): v for k, v in auto_approve_trust(_rid(u)).items()}},
+           "schedule": {"enabled": bool(getattr(r, "auto_publish_schedule", 0)),
+                        "unedited_in_a_row": schedule_publish_trust(_rid(u)), "needed": SCHEDULE_PUBLISH_TRUST_MIN},
+           "suppliers": [], "invoices": []}
+    if _sees_food(u):
+        try:
+            from models import get_conn
+            conn = get_conn()
+            try:
+                rows = conn.execute("SELECT DISTINCT supplier_name, supplier_email FROM ingredients WHERE restaurant_id=? "
+                                    "AND is_active=1 AND supplier_email IS NOT NULL AND supplier_email != ''", (_rid(u),)).fetchall()
+                inv = conn.execute("SELECT DISTINCT supplier FROM invoice_imports WHERE restaurant_id=? AND supplier IS NOT NULL",
+                                   (_rid(u),)).fetchall()
+            finally:
+                conn.close()
+            out["orders_enabled"] = bool(getattr(r, "auto_order_trusted", 0))
+            for row in rows:
+                t = ordering.supplier_trust(_rid(u), row["supplier_email"])
+                out["suppliers"].append({"name": row["supplier_name"] or row["supplier_email"], **t,
+                                         "needed": max(0, ordering.ORDER_TRUST_MIN - t["orders"])})
+            for row in inv:
+                t = ordering.invoice_trust(_rid(u), row["supplier"])
+                out["invoices"].append({"supplier": row["supplier"], **t,
+                                        "needed": max(0, ordering.INVOICE_TRUST_MIN - t["full_accepts"])})
+        except Exception:
+            pass
+    return out, 200
+
+
+def _do_memory_add(u):
+    """The owner adds a fact directly — the profile is theirs to write, not
+    only the assistant's to keep."""
+    from models import remember_ask_fact
+    from client_api import log_account_event
+    b = _body()
+    fact = (b.get("fact") or "").strip()[:300]
+    kind = (b.get("kind") or "context").strip()
+    if not fact:
+        return {"ok": False, "error": "Write the fact first."}, 400
+    if kind not in ("goal", "context", "preference", "followup"):
+        kind = "context"
+    try:
+        saved = remember_ask_fact(_rid(u), fact, kind=kind, source="Account", user_id=u.get("id"))
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}, 400
+    log_account_event(_rid(u), "memory_added", current_user=u, detail=fact[:120])
+    return {"ok": True, "fact": saved.get("fact") if isinstance(saved, dict) else fact}, 200
+
+
+def _do_decisions(u):
+    import decisions
+    rows = decisions.history(_rid(u), limit=40)
+    if not _sees_food(u):
+        rows = [r for r in rows if not ((r.get("outcome") or {}).get("metric") or "").startswith(("food_cost", "weekly_waste"))]
+    return {"ok": True, "decisions": rows}, 200
+
+
 def _do_memory_list(u):
     """What Ask Cavnar remembers about this restaurant, with who added it —
     so the owner can read and correct the memory that shapes every answer."""
@@ -1061,6 +1126,9 @@ _ROUTES = [
     ("/food-cost/auto-order", ["GET"], _do_auto_order_get, "auto_order_get"),
     ("/food-cost/auto-order", ["POST"], _do_auto_order_set, "auto_order_set"),
     ("/account/memory", ["GET"], _do_memory_list, "memory_list"),
+    ("/account/memory/add", ["POST"], _do_memory_add, "memory_add"),
+    ("/account/trust", ["GET"], _do_trust, "trust"),
+    ("/decisions", ["GET"], _do_decisions, "decisions"),
     ("/account/memory/forget", ["POST"], _do_memory_forget, "memory_forget"),
     ("/actions/pending", ["GET"], _do_delayed_pending, "delayed_pending"),
     ("/actions/<int:action_id>/cancel", ["POST"], _do_delayed_cancel, "delayed_cancel"),

@@ -1804,6 +1804,7 @@ def run_food_cost_snapshots():
             log.error(f"Food cost snapshot failed for restaurant {rid}: {e}")
             _ops.capture(e, job="food_cost_snapshots", context=f"restaurant_id={rid}")
         try:
+            fci.record_profitability_forecast(rid)
             scored += fci.score_forecasts(rid).get("scored", 0)
         except Exception as e:
             _ops.capture(e, job="food_cost_forecast_scoring", context=f"restaurant_id={rid}")
