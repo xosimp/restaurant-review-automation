@@ -431,7 +431,10 @@ def test_the_web_renders_the_receipts_it_computes():
     it looks shipped."""
     src = _dashboard()
     assert "function renderReceipts(" in src
-    assert "h+=renderReceipts(d);" in src
+    # Rendered inside THE DAY's slot (Home order, DESIGN_SYSTEM 11b): the
+    # receipts lead the day on Monday and follow the brief otherwise.
+    assert "var receipts=renderReceipts(d);" in src
+    assert "if(monday)day+=receipts;" in src and "(monday?'':receipts)" in src
 
 
 def test_the_web_renders_cross_module_links():
