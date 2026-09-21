@@ -5963,6 +5963,10 @@ svg:hover .hb-xh{opacity:1}
     <!-- ══════════════ SECURITY ══════════════ -->
     <section class="ac-section" id="acct-security" aria-labelledby="acct-security-h">
       <div class="ac-h"><div><h2 id="acct-security-h">Security</h2><p>How this account is protected, and what&rsquo;s been happening on it.</p></div></div>
+      <div class="ac-card" id="acct-memory-card">
+        <div class="ac-card-h"><div><h3>What Cavnar AI remembers</h3><p>Facts the assistant was told to keep &mdash; they shape every answer. Anyone on this account can add one; you can remove any of them.</p></div></div>
+        <div id="acct-memory-list" class="ac-status">Loading&hellip;</div>
+      </div>
       <div class="ac-grid">
         <div class="ac-card">
           <div class="ac-card-h"><div><h3>Security checkup</h3><p>Six things that keep this account yours.</p></div>
@@ -12018,7 +12022,28 @@ function asPost(url, body, statusId, okMsg) {
 // ── self-serve pause ─────────────────────────────────────────────────────────
 // The only path off the product was an email to Will asking to cancel. A
 // pause is the smaller decision an owner can make for themselves.
+function loadMemory() {
+  var el = document.getElementById('acct-memory-list'); if (!el) return;
+  fetch('/api/account/memory', {credentials: 'same-origin'}).then(function(r) { return r.json(); }).then(function(d) {
+    if (!d || !d.ok) return;
+    var facts = d.facts || [];
+    if (!facts.length) { el.textContent = 'Nothing remembered yet. Tell Ask Cavnar AI \u201cremember that\u2026\u201d and it appears here.'; return; }
+    var h = '';
+    for (var i = 0; i < facts.length; i++) { var f = facts[i];
+      h += '<div class="ac-row"><div class="l"><b>' + esc(f.fact || '') + '</b><span>' + esc((f.kind || 'context') + (f.source ? ' \u00b7 from ' + f.source : '') + (f.created_at ? ' \u00b7 ' + String(f.created_at).slice(0, 10) : '')) + '</span></div><div class="c"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-forget-fact="' + esc(f.fact || '') + '">Forget</button></div></div>';
+    }
+    el.innerHTML = h;
+  }).catch(function() { el.textContent = 'Could not load.'; });
+}
+document.addEventListener('click', function (e) {
+  var b = e.target && e.target.closest ? e.target.closest('[data-forget-fact]') : null; if (!b) return;
+  var done = cbtnBusy(b, 'Forgetting\u2026');
+  fetch('/api/account/memory/forget', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({fact: b.getAttribute('data-forget-fact')})})
+    .then(function (r) { return r.json(); }).then(function (d) { done(); if (typeof toast === 'function') toast(d && d.ok ? 'Forgotten' : ((d && d.error) || 'Could not forget'), d && d.ok ? 'success' : 'error'); loadMemory(); })
+    .catch(function () { done(); });
+});
 function loadPause() {
+  loadMemory();
   fetch('/api/account/pause', {credentials: 'same-origin'}).then(function(r) { return r.json(); }).then(function(d) {
     if (!d || !d.ok || !d.can_pause) return;
     var card = document.getElementById('acct-pause-card'); if (card) card.hidden = false;

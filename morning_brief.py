@@ -316,7 +316,11 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
     # modules_off) and never said what one would add. Phrased as what the
     # product could measure, not as a pitch — and never on a day the brief
     # is already long.
-    if today.weekday() == 0 and len(lines) <= 4:
+    # Only on a Monday brief that already has something in it: an upsell
+    # line must never be the thing that stops "nothing needs you" from
+    # being said — that line is earned by what was watched, not displaced
+    # by what could be sold.
+    if today.weekday() == 0 and 0 < len(lines) <= 4:
         unlock = _safe(_unlock_line, restaurant, eb)
         if unlock:
             lines.append(unlock)

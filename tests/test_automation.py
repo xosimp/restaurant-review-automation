@@ -297,7 +297,8 @@ def test_a_checkout_with_no_match_provisions_the_restaurant_and_welcomes_the_own
     assert r.name == "The New Place" and r.owner_email == "new.owner@x.com"
     assert r.module_reviews == 1 and r.module_labor == 1 and r.module_inventory == 0
     assert r.billing_status == "active" and r.stripe_customer_id == "cus_new"
-    assert welcomed["username"] == "new.owner" and welcomed["password"] == r.temp_password
+    assert welcomed["username"] == "new.owner" and welcomed["password"]
+    assert not r.temp_password                                   # emailed once, never stored (security audit A3)
     # The same email again is a reconciliation, not a provisioning.
     assert provisioning.provision_from_checkout(sess, db_path=db_path) is None
     # No email: refuse rather than guess.

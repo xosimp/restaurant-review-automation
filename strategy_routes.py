@@ -636,6 +636,25 @@ def _do_send_delay_set(u):
     return _do_send_delay_get(u)
 
 
+def _do_memory_list(u):
+    """What Ask Cavnar remembers about this restaurant, with who added it —
+    so the owner can read and correct the memory that shapes every answer."""
+    from models import get_ask_memory
+    return {"ok": True, "facts": get_ask_memory(_rid(u))}, 200
+
+
+def _do_memory_forget(u):
+    from models import forget_ask_fact
+    from client_api import log_account_event
+    fact = (_body().get("fact") or "").strip()
+    if not fact:
+        return {"ok": False, "error": "Which fact?"}, 400
+    ok = forget_ask_fact(_rid(u), fact)
+    if ok:
+        log_account_event(_rid(u), "memory_forgotten", current_user=u, detail=fact[:120])
+    return ({"ok": True} if ok else {"ok": False, "error": "No fact like that."}), (200 if ok else 404)
+
+
 def _do_delayed_pending(u):
     import delayed
     return {"ok": True, "actions": delayed.pending(_rid(u))}, 200
@@ -1041,6 +1060,8 @@ _ROUTES = [
     ("/food-cost/count-sheet", ["POST"], _do_count_sheet_save, "count_sheet_save"),
     ("/food-cost/auto-order", ["GET"], _do_auto_order_get, "auto_order_get"),
     ("/food-cost/auto-order", ["POST"], _do_auto_order_set, "auto_order_set"),
+    ("/account/memory", ["GET"], _do_memory_list, "memory_list"),
+    ("/account/memory/forget", ["POST"], _do_memory_forget, "memory_forget"),
     ("/actions/pending", ["GET"], _do_delayed_pending, "delayed_pending"),
     ("/actions/<int:action_id>/cancel", ["POST"], _do_delayed_cancel, "delayed_cancel"),
     ("/account/pause", ["GET"], _do_pause_status, "pause_status"),

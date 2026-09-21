@@ -603,9 +603,14 @@ def send_failure_digest():
     last 24h. No failures → no email (silence stays meaningful)."""
     failures = failures_last_24h()
     stuck = stuck_jobs()
+    try:
+        import security as _security
+        sec_lines = _security.digest_lines()
+    except Exception:
+        sec_lines = []
     # A job that died without raising leaves no failure row, so "no failures"
     # was never the same thing as "nothing went wrong".
-    if not failures and not stuck:
+    if not failures and not stuck and not sec_lines:
         return False
     resend_key = os.getenv("RESEND_API_KEY", "")
     if not resend_key:
@@ -617,6 +622,10 @@ def send_failure_digest():
         _resend.api_key = resend_key
         will = os.getenv("WILL_EMAIL", "will@cavnar.ai")
         total = sum(f["cnt"] for f in failures)
+        sec_html = ""
+        if sec_lines:
+            sec_html = ("<p style=\"font-size:13px;font-weight:600;color:#0e0c0a;margin:22px 0 6px\">Security, last 24 hours</p><ul style=\"font-size:13px;color:#3a3530;margin:0 0 10px 18px\">"
+                        + "".join(f"<li>{_html.escape(x)}</li>" for x in sec_lines) + "</ul>")
         stuck_html = ""
         if stuck:
             stuck_rows = "".join(
@@ -666,7 +675,7 @@ def send_failure_digest():
       <th style="text-align:left;padding:8px 12px;border-bottom:2px solid #c84b2f">Latest error</th>
     </tr>
     {rows_html}
-  </table>{stuck_html}
+  </table>{sec_html}{stuck_html}
   <p style="font-size:12px;color:#7a736a;margin-top:16px">Full stack traces are in Sentry (if configured) and Railway logs.</p>
 </div>
 </div>"""),

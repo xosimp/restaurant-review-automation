@@ -35,3 +35,16 @@ jobs:
           # AI/email path onto its offline fallback.
           ANTHROPIC_API_KEY: ""
           RESEND_API_KEY: ""
+
+  audit:
+    # Known-vulnerability scan of the pinned dependencies. Non-blocking for
+    # now (an advisory with no fix must not stop a deploy); read it.
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: pip-audit
+        run: pip install pip-audit && pip-audit -r requirements.txt

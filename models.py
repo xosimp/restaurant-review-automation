@@ -1101,6 +1101,21 @@ def init_db(db_path: str = DB_PATH):
             UNIQUE(restaurant_id, key) ON CONFLICT REPLACE
         )""",
         "ALTER TABLE home_dismissals ADD COLUMN times INTEGER NOT NULL DEFAULT 1",
+        # Durable login throttling (security.py): keyed by IP and by account,
+        # so a deploy no longer resets the counter and one worker is no
+        # longer a security requirement.
+        """CREATE TABLE IF NOT EXISTS login_attempts (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            key          TEXT NOT NULL,
+            kind         TEXT NOT NULL,
+            ip           TEXT,
+            attempted_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_login_attempts_key ON login_attempts(key, attempted_at)",
+        # Temporary passwords are no longer persisted (security audit A3):
+        # they are emailed once and a fresh one is minted at contract
+        # signing. Anything still stored is a plaintext login credential.
+        "UPDATE restaurants SET temp_password=NULL WHERE temp_password IS NOT NULL AND temp_password != ''",
         "ALTER TABLE restaurants ADD COLUMN weekly_plan_enabled INTEGER DEFAULT 0",
         "ALTER TABLE restaurants ADD COLUMN send_delay_minutes INTEGER DEFAULT 0",
         """CREATE TABLE IF NOT EXISTS recipe_drafts (
@@ -3246,6 +3261,10 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return
+    # OAuth/POS credentials are encrypted at rest (credentials.py); every
+    # reader sees plaintext through get_restaurant.
+    import credentials as _cred
+    updates = _cred.encrypt_fields(updates)
     set_clause = ", ".join(f"{k}=?" for k in updates)
     # The version bump rides in the SAME statement as the update, so it
     # cannot be skipped by an early return and cannot race a reader.
@@ -5594,6 +5613,11 @@ def reset_user_password(user_id: int, new_password: str,
     conn.close()
 
 
+def _hash_reset_token(token: str) -> str:
+    import hashlib
+    return hashlib.sha256((token or "").encode("utf-8")).hexdigest()
+
+
 def create_reset_token(email: str, db_path: str = DB_PATH) -> str | None:
     """Create a password reset token for the user with this email. Returns token or None if not found."""
     import secrets
@@ -5605,8 +5629,10 @@ def create_reset_token(email: str, db_path: str = DB_PATH) -> str | None:
         return None
     token = secrets.token_urlsafe(32)
     expires = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    # Only the hash is stored (security audit A2) — the same rule as
+    # sessions. A database read yields nothing that opens an account.
     conn.execute("UPDATE users SET reset_token=?, reset_token_expires=? WHERE id=?",
-                 (token, expires, user["id"]))
+                 (_hash_reset_token(token), expires, user["id"]))
     conn.commit()
     conn.close()
     return token
@@ -5617,7 +5643,7 @@ def validate_reset_token(token: str, db_path: str = DB_PATH) -> dict | None:
     from datetime import datetime, timezone
     conn = get_conn(db_path)
     user = conn.execute(
-        "SELECT * FROM users WHERE reset_token=? AND is_active=1", (token,)
+        "SELECT * FROM users WHERE reset_token=? AND is_active=1", (_hash_reset_token(token),)
     ).fetchone()
     conn.close()
     if not user:
@@ -7450,6 +7476,9 @@ def get_review_request_stats(restaurant_id: int, db_path: str = DB_PATH) -> dict
 # also records every tab view (log_activity) and analytics-style events;
 # those are admin telemetry, not "what changed on my account".
 ACCOUNT_EVENT_TYPES = (
+    # Security events the owner should see without asking (security audit).
+    "login_locked", "account_frozen", "memory_forgotten", "staff_pin_reset",
+    "auto_publish_changed", "auto_order_changed", "weekly_plan_changed", "send_delay_changed",
     "login", "password_changed", "email_changed", "recovery_email_set", "recovery_email_removed",
     "two_fa_enabled", "two_fa_disabled", "backup_codes_regenerated",
     "team_member_invited", "team_member_revoked",
@@ -8967,3 +8996,30 @@ def get_ask_actions(restaurant_id, limit: int = 50, db_path: str = DB_PATH) -> l
     finally:
         conn.close()
     return [dict(r) for r in rows]
+
+
+# ── credentials read back as plaintext ───────────────────────────────────────
+# Wrapped at module end so every importer binds the decrypting version.
+# Decrypting is idempotent (a plaintext value has no prefix), so the memoised
+# instance being decrypted twice is harmless.
+def _decrypting(fn, many=False):
+    import functools
+
+    @functools.wraps(fn)
+    def inner(*a, **k):
+        out = fn(*a, **k)
+        try:
+            import credentials as _cred
+            if many:
+                for r in (out or []):
+                    _cred.decrypt_restaurant(r)
+            elif out is not None:
+                _cred.decrypt_restaurant(out)
+        except Exception:
+            pass
+        return out
+    return inner
+
+
+get_restaurant = _decrypting(get_restaurant)
+get_all_restaurants = _decrypting(get_all_restaurants, many=True)

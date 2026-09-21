@@ -8,6 +8,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
 
+# Security controls that would otherwise refuse or block in a test process:
+# a pepper so staff PINs can be set, no live breach lookups, and the admin
+# 2FA gate off except in the test that turns it on.
+os.environ.setdefault("CAVNAR_PIN_PEPPER", "test-pepper")
+os.environ.setdefault("HIBP_DISABLED", "1")
+os.environ.setdefault("ADMIN_REQUIRE_2FA", "0")
+
 from models import init_db, ensure_columns, create_restaurant, save_reviews, Restaurant, Review
 
 

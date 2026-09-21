@@ -36,19 +36,37 @@ def _get_client_ip():
     return (request.headers.get("X-Forwarded-For","").split(",")[0].strip()
             or request.remote_addr or "unknown")
 
-def _is_rate_limited(ip):
-    """Return True if IP has exceeded failed login attempts."""
-    now = time.time()
-    attempts = _login_attempts.get(ip, [])
-    recent = [t for t in attempts if now - t < _LOCKOUT_SECS]
-    _login_attempts[ip] = recent
-    return len(recent) >= _MAX_ATTEMPTS
+def _is_rate_limited(ip, username=None):
+    """Durable, keyed by IP and account (security.py). The in-memory dict
+    this replaced reset on deploy and never saw an attacker rotate
+    addresses; it was also the reason gunicorn could not run two workers."""
+    try:
+        import security
+        blocked, _ = security.login_throttled(ip, username)
+        return blocked
+    except Exception:
+        # A limiter that cannot read its table must not fail open.
+        now = time.time()
+        attempts = _login_attempts.get(ip, [])
+        recent = [t for t in attempts if now - t < _LOCKOUT_SECS]
+        _login_attempts[ip] = recent
+        return len(recent) >= _MAX_ATTEMPTS
 
-def _record_failed_attempt(ip):
+def _record_failed_attempt(ip, username=None):
     _login_attempts.setdefault(ip, []).append(time.time())
+    try:
+        import security
+        security.record_login_failure(ip, username)
+    except Exception:
+        pass
 
-def _clear_attempts(ip):
+def _clear_attempts(ip, username=None):
     _login_attempts.pop(ip, None)
+    try:
+        import security
+        security.clear_login_failures(ip=ip, username=username)
+    except Exception:
+        pass
 
 # ── CSRF validation ───────────────────────────────────────────────────────────
 # These auth forms set a csrf_token cookie and render it into a hidden field;
@@ -149,6 +167,10 @@ def reset_password(token):
     if len(password) < 8 or password != confirm:
         from flask import redirect as _redir
         return _redir(f"/reset-password/{token}?error=mismatch")
+    import security as _sec
+    if _sec.password_pwned(password):
+        from flask import redirect as _redir
+        return _redir(f"/reset-password/{token}?error=breached")
 
     success = consume_reset_token(token, password)
     if success:
@@ -166,7 +188,7 @@ def login():
 
         _google_sso_post = bool(os.getenv("GOOGLE_SSO_CLIENT_ID"))
         _csrf_cookie = request.cookies.get('csrf_token', '')
-        if _is_rate_limited(ip):
+        if _is_rate_limited(ip, request.form.get("username", "").strip()):
             return render_template('login.html', google_sso_enabled=_google_sso_post, csrf_token=_csrf_cookie,
                 error="Too many failed attempts. Please wait 5 minutes and try again.")
         if not _csrf_ok():
@@ -176,9 +198,9 @@ def login():
         password = request.form.get("password","")
         user = verify_password(username, password)
         if not user:
-            _record_failed_attempt(ip)
+            _record_failed_attempt(ip, username)
             return render_template('login.html', error="Invalid username or password", google_sso_enabled=_google_sso_post, csrf_token=_csrf_cookie)
-        _clear_attempts(ip)
+        _clear_attempts(ip, username)
         if user.get("must_reset_password"):
             return render_template('login.html', google_sso_enabled=_google_sso_post, csrf_token=_csrf_cookie,
                 error="This account needs a password reset before signing in — use Forgot password below.")
@@ -536,6 +558,9 @@ def change_password(current_user):
     new_pw = data.get("new_password","")
     if len(new_pw) < 8:
         return jsonify(ok=False, error="Password must be at least 8 characters")
+    import security as _sec
+    if _sec.password_pwned(new_pw):
+        return jsonify(ok=False, error=_sec.PWNED_MESSAGE)
     update_password(current_user["id"], new_pw)
     try:
         restaurant = get_restaurant(current_user["restaurant_id"])

@@ -154,7 +154,6 @@ def create_client(current_user):
             "module_labor":    _flag("module_labor"),
             "module_inventory":_flag("module_inventory"),
             "module_marketing":_flag("module_marketing"),
-            "temp_password":   data.get("password",""),
             # A Place ID IS the reviews connection until Google OAuth is
             # done — fetcher.fetch_google reads it directly. reviews_live
             # defaulted to 0 and was settable only from the settings page,
@@ -757,6 +756,74 @@ def save_client_settings(restaurant_id, current_user):
     except Exception as e:
         return jsonify(ok=False, error=_safe_err(e))
 
+@admin_bp.before_request
+def _audit_admin_write():
+    """Every admin write is a row in admin_events with the actor, before it
+    runs — so a denied or failed write is on the record too (security
+    audit Z2). Reads are not logged; view-as logs itself."""
+    if request.method in ("GET", "HEAD", "OPTIONS") or not (request.path or "").startswith("/admin"):
+        return None
+    try:
+        from auth import get_current_user
+        import admin_events
+        u = get_current_user() or {}
+        rid = (request.view_args or {}).get("restaurant_id")
+        # The restaurant rides in the payload, not the column: the per-client
+        # events view filters on restaurant_id and must keep showing the
+        # route's own event first (e.g. alert_cap.set), not the audit row.
+        admin_events.record("audit", f"admin_write:{request.endpoint or request.path}",
+                            summary=f"{u.get('username') or 'anonymous'} {request.method} {request.path}",
+                            payload={"restaurant_id": rid, "actor": u.get("username"), "role": u.get("role")})
+    except Exception:
+        pass
+    return None
+
+
+@admin_bp.route("/admin/freeze/<int:restaurant_id>", methods=["POST"])
+@admin_required
+def freeze_account(restaurant_id, current_user):
+    """The takeover response: every session and trusted device for this
+    restaurant's logins is revoked and the next sign-in is refused until
+    the password is reset (security audit R1)."""
+    if not current_user.get("is_admin"):
+        return jsonify(ok=False, error="Support accounts are read-only."), 403
+    import security
+    data = request.get_json(silent=True) or {}
+    n = security.freeze_restaurant(restaurant_id, actor=current_user, reason=data.get("reason"))
+    try:
+        import admin_events
+        admin_events.record("admin", "account_frozen", restaurant_id=restaurant_id,
+                            summary=f"{current_user.get('username')} froze {n} login(s): {(data.get('reason') or '')[:120]}")
+    except Exception:
+        pass
+    return jsonify(ok=True, frozen=n)
+
+
+@admin_bp.route("/admin/send-reset-link/<int:user_id>", methods=["POST"])
+@admin_required
+def send_reset_link(user_id, current_user):
+    """Preferred over setting a password by hand: the owner chooses it, and
+    nothing about it passes through Will or the database."""
+    if not current_user.get("is_admin"):
+        return jsonify(ok=False, error="Support accounts are read-only."), 403
+    from models import create_reset_token
+    conn = get_conn()
+    row = conn.execute("SELECT u.email, r.name, r.owner_name FROM users u LEFT JOIN restaurants r ON r.id=u.restaurant_id "
+                       "WHERE u.id=?", (user_id,)).fetchone()
+    conn.close()
+    if not row or not row["email"]:
+        return jsonify(ok=False, error="No email on that login."), 404
+    token = create_reset_token(row["email"])
+    if not token:
+        return jsonify(ok=False, error="That login is inactive."), 409
+    try:
+        from emails import send_password_reset_email
+        send_password_reset_email(row["email"], f"https://dashboard.cavnar.ai/reset-password/{token}")
+    except Exception as e:
+        return jsonify(ok=False, error=f"Couldn't send: {e}"), 502
+    return jsonify(ok=True)
+
+
 @admin_bp.route("/admin/reset-password/<int:user_id>", methods=["POST"])
 @admin_required
 def reset_password(user_id, current_user):
@@ -767,8 +834,13 @@ def reset_password(user_id, current_user):
     if not new_pw:
         # Auto-generate if not provided
         new_pw = ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(10))
-    if len(new_pw) < 6:
-        return jsonify(ok=False, error="Password must be at least 6 characters")
+    if len(new_pw) < 8:
+        return jsonify(ok=False, error="Password must be at least 8 characters")
+    import security as _sec
+    if _sec.password_pwned(new_pw):
+        return jsonify(ok=False, error=_sec.PWNED_MESSAGE)
+    if not current_user.get("is_admin"):
+        return jsonify(ok=False, error="Support accounts are read-only."), 403
     reset_user_password(user_id, new_pw)
     # Optionally email the new password
     if data.get("send_email"):

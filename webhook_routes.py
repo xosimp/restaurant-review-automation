@@ -783,7 +783,7 @@ def docusign_webhook():
             # Mark contract as signed
             conn = get_conn()
             row = conn.execute(
-                """SELECT r.id, r.name, r.owner_email, r.temp_password,
+                """SELECT r.id, r.name, r.owner_email, u.id AS user_id,
                           r.module_reviews, r.module_labor, r.module_inventory, r.module_marketing,
                           u.username
                    FROM restaurants r
@@ -843,10 +843,14 @@ def docusign_webhook():
 
                 # Send welcome email with credentials
                 try:
-                    tmp_pw = r.get("temp_password") or ""
-                    # Fallback if temp_password wasn't stored
-                    if not tmp_pw:
-                        tmp_pw = "Check your email from Will for your temporary password, or contact will@cavnar.ai"
+                    # A fresh temporary password, minted here and emailed once.
+                    # It used to be read back from restaurants.temp_password,
+                    # which meant a plaintext login credential sat in the
+                    # database from client creation until this email went.
+                    import secrets as _sec_pw
+                    from models import reset_user_password as _rup
+                    tmp_pw = _sec_pw.token_urlsafe(9)
+                    _rup(r["user_id"], tmp_pw)
                     send_welcome_email(
                         to_email=r["owner_email"],
                         restaurant_name=r["name"],
@@ -858,12 +862,6 @@ def docusign_webhook():
                         module_marketing=int(r.get("module_marketing") or 0),
                         google_place_id=r.get("google_place_id"),
                     )
-                    # Clear temp password from DB after sending
-                    try:
-                        from models import update_restaurant
-                        update_restaurant(r["id"], {"temp_password": ""})
-                    except Exception:
-                        pass
                     print(f"Welcome email sent to {r['owner_email']} after signing")
                     try:
                         log_email(r["id"], "welcome", r["owner_email"], f"Welcome — {r['name']}")

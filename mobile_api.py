@@ -224,17 +224,17 @@ def mobile_login():
     same 2FA pending-token scheme, same create_session() — just JSON in,
     JSON out, and device_type='ios' on the resulting session."""
     ip = _get_client_ip()
-    if _is_rate_limited(ip):
-        return jsonify(ok=False, error="Too many failed attempts. Please wait 5 minutes and try again."), 429
     data = request.get_json() or {}
     device_id = (data.get("device_id") or "").strip() or None
     username = (data.get("username") or "").strip()
     password = data.get("password") or ""
+    if _is_rate_limited(ip, username):
+        return jsonify(ok=False, error="Too many failed attempts. Please wait a few minutes and try again."), 429
     user = verify_password(username, password)
     if not user:
-        _record_failed_attempt(ip)
+        _record_failed_attempt(ip, username)
         return jsonify(ok=False, error="Invalid username or password"), 401
-    _clear_attempts(ip)
+    _clear_attempts(ip, username)
     # A sign-in reported as "not me" burns the password until it's reset —
     # see auth.consume_login_report.
     if user.get("must_reset_password"):
@@ -340,6 +340,9 @@ def mobile_reset_password():
     new_password = data.get("new_password") or ""
     if len(new_password) < 8:
         return jsonify(ok=False, error="Password must be at least 8 characters."), 400
+    import security as _sec
+    if _sec.password_pwned(new_password):
+        return jsonify(ok=False, error=_sec.PWNED_MESSAGE), 400
     if len(code) != 6 or not code.isdigit():
         _record_failed_attempt(ip)
         return jsonify(ok=False, error="That code isn't right. Check the email and try again."), 400
@@ -3313,7 +3316,8 @@ def mobile_guest_join_link(current_user):
     rid = current_user["restaurant_id"]
     if not _capi._restaurant_has_marketing_module(rid):
         return jsonify(ok=False, error=_capi._NO_MARKETING_MODULE_ERROR), 403
-    join_url = request.url_root.rstrip("/") + f"/join/{rid}"
+    from guest_links import sign_join
+    join_url = request.url_root.rstrip("/") + f"/join/{sign_join(rid)}"
     # The web tab prints POS-specific instructions for where this link belongs
     # (dashboard.html's "Add this to your receipts"), which is the step that
     # actually gets guests into the club. Served here so the app shows the
@@ -4253,6 +4257,9 @@ def mobile_change_password(current_user):
     new_pw = data.get("new_password", "")
     if len(new_pw) < 8:
         return jsonify(ok=False, error="Password must be at least 8 characters"), 400
+    import security as _sec
+    if _sec.password_pwned(new_pw):
+        return jsonify(ok=False, error=_sec.PWNED_MESSAGE), 400
     update_password(current_user["id"], new_pw)
     _log_account_event(current_user["restaurant_id"], "password_changed", current_user)
     try:

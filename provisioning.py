@@ -61,7 +61,7 @@ def provision_from_checkout(session, db_path=DB_PATH):
     username = _username_for(email, db_path)
     create_user(restaurant_id=rid, username=username, email=email, password=password, db_path=db_path)
     updates = dict(flags)
-    updates.update({"temp_password": password, "billing_status": "active"})
+    updates.update({"billing_status": "active"})       # the password is emailed once, never stored
     if session.get("customer"):
         updates["stripe_customer_id"] = session["customer"]
     update_restaurant(rid, updates, db_path=db_path)

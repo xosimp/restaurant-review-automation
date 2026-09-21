@@ -789,6 +789,10 @@ def set_membership_pin(membership_id: int, restaurant_id: int, pin: str,
     genuinely revokes the old one rather than leaving it usable until expiry.
     """
     pin = validate_pin(pin)
+    # A PIN hashed without the pepper is a PIN an offline attacker recovers
+    # in seconds (10,000 guesses). Refuse to store one rather than warn.
+    if not _pin_pepper():
+        raise PinError("Staff PINs are unavailable until CAVNAR_PIN_PEPPER is configured on the server.")
     conn = get_conn(db_path)
     try:
         cur = conn.execute(
@@ -2729,15 +2733,47 @@ def login_required(f):
         return f(*args, **kwargs, current_user=user)
     return decorated
 
+# Support accounts (role='support', is_admin=0) may READ the admin console
+# and open a view-as session; every other admin write needs the admin bit.
+_SUPPORT_WRITE_OK = frozenset({"admin.view_as_client", "admin.stop_viewing"})
+_ADMIN_2FA_EXEMPT = frozenset({"admin.stop_viewing"})
+
+
+def _admin_two_factor_missing(user):
+    """True when this admin has not turned on 2FA and the deployment
+    requires it (ADMIN_REQUIRE_2FA, default on)."""
+    import os as _os
+    if _os.getenv("ADMIN_REQUIRE_2FA", "1") == "0":
+        return False
+    try:
+        from models import get_restaurant as _gr
+        r = _gr(user.get("restaurant_id")) if user.get("restaurant_id") else None
+        return not (r and getattr(r, "two_fa_enabled", 0))
+    except Exception:
+        return False
+
+
 def admin_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         user = get_current_user()
-        if not user or not user["is_admin"]:
+        is_support = bool(user) and not user.get("is_admin") and (user.get("role") == "support")
+        if not user or not (user["is_admin"] or is_support):
             if _wants_json_response():
                 from flask import jsonify as _jsonify_ar
                 return _jsonify_ar(ok=False, error="Your session expired — please log in again.", session_expired=True), 401
             return redirect(url_for("auth.login"))
+        if is_support and request.method not in ("GET", "HEAD", "OPTIONS") \
+                and request.endpoint not in _SUPPORT_WRITE_OK:
+            from flask import jsonify as _jsonify_sr
+            return _jsonify_sr(ok=False, error="Support accounts are read-only."), 403
+        if request.endpoint not in _ADMIN_2FA_EXEMPT and _admin_two_factor_missing(user):
+            from flask import jsonify as _jsonify_2f
+            msg = "Turn on two-factor authentication in Account → Security to use the admin console."
+            if _wants_json_response():
+                return _jsonify_2f(ok=False, error=msg, two_factor_required=True), 403
+            return (f"<p style='font-family:sans-serif;padding:32px'>{msg} "
+                    f"<a href='/'>Open Account</a></p>"), 403
         return f(*args, **kwargs, current_user=user)
     return decorated
 

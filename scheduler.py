@@ -1075,7 +1075,7 @@ OPTIN_INVITE_LATEST_HOUR = 20
 
 
 # Backups keep this many days of local snapshots on the Railway volume.
-BACKUP_RETAIN_DAYS = int(os.getenv("BACKUP_RETAIN_DAYS", "14"))
+BACKUP_RETAIN_DAYS = int(os.getenv("BACKUP_RETAIN_DAYS", "7"))
 
 # Tables whose contents must never leave the server in a backup artifact.
 # `sessions` holds live bearer tokens (auth.py stores only their hash now, but
@@ -2418,6 +2418,14 @@ def scheduler_loop():
                     log.info(f"Delayed actions: {_dl}")
             except Exception as e:
                 _ops.capture(e, job="delayed_actions")
+
+            # Daily — drop login-attempt rows older than two days.
+            if _ops.claim_period("prune_login_attempts", str(today)):
+                try:
+                    import security as _security
+                    _security.prune_login_attempts()
+                except Exception as e:
+                    _ops.capture(e, job="prune_login_attempts")
 
             # Every tick — publish anything whose scheduled slot has arrived.
             # This is why the loop no longer sleeps for an hour: a post the

@@ -140,6 +140,7 @@ ROLE_CLIENT = "client"      # a restaurant's primary login (the DB default)
 ROLE_MANAGER = "manager"    # new: runs a restaurant, does not administer logins
 ROLE_MEMBER = "member"      # legacy: a teammate invited by the primary login
 ROLE_EMPLOYEE = "employee"  # new: PIN identity, staff portal only
+ROLE_SUPPORT = "support"    # Cavnar staff: reads the admin console, opens view-as, writes nothing
 
 # What every non-employee role could already do before this module existed.
 # Kept as one name so the legacy roles below are provably unchanged rather
@@ -151,6 +152,9 @@ _CONSOLE_BASE = frozenset({
 }) | _ALL_MODULES       # every module, which is what holding the console meant
 
 ROLE_PERMISSIONS = {
+    # No client-console permissions at all: a support login is not a
+    # restaurant's login. What it MAY do is decided in auth.admin_required.
+    ROLE_SUPPORT: frozenset(),
     # Everything, plus the location switcher. The only role client_api's
     # _do_switch_location / _do_group_locations and home_brief's group brief
     # have ever accepted.

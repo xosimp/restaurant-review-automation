@@ -168,11 +168,15 @@ def test_a_v0_hash_written_before_versioning_still_verifies(db_path, monkeypatch
 
 
 def test_pin_pepper_health_reports_an_unset_pepper_with_live_pins(db_path, monkeypatch):
-    monkeypatch.delenv("CAVNAR_PIN_PEPPER", raising=False)
+    # A PIN can no longer be SET without the pepper (security audit E1), so
+    # the "live PINs, pepper gone" state this test describes is a pepper
+    # that was configured and later dropped from the environment.
+    monkeypatch.setenv("CAVNAR_PIN_PEPPER", "was-configured")
     rid = _restaurant(db_path)
     uid = create_user(rid, "jordan", "jordan@x.test", "pw", db_path=db_path)
     m = upsert_membership(uid, rid, "employee", db_path=db_path)
     auth.set_membership_pin(m["id"], rid, "8317", db_path=db_path)
+    monkeypatch.delenv("CAVNAR_PIN_PEPPER", raising=False)
 
     health = auth.pin_pepper_health(db_path=db_path)
     assert health["ok"] is False

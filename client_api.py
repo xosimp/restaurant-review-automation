@@ -6191,7 +6191,8 @@ def guest_qr_code(current_user):
     if not _restaurant_has_marketing_module(rid):
         return jsonify(ok=False, error=_NO_MARKETING_MODULE_ERROR), 403
     import qrcode, io
-    join_url = request.url_root.rstrip("/") + f"/join/{rid}"
+    from guest_links import sign_join
+    join_url = request.url_root.rstrip("/") + f"/join/{sign_join(rid)}"
     img = qrcode.make(join_url, box_size=10, border=2)
     buf = io.BytesIO()
     img.save(buf, format="PNG")
@@ -6249,8 +6250,12 @@ def guest_newsletter_unsubscribe(token):
 # old join link/QR code (already printed, already in the wild) must stop
 # accepting new signups rather than keep working for free.
 
-@client_bp.route("/join/<int:restaurant_id>")
-def guest_optin_page(restaurant_id):
+@client_bp.route("/join/<token>")
+def guest_optin_page(token):
+    from guest_links import verify_join
+    restaurant_id = verify_join(token)
+    if not restaurant_id:
+        return "Not found", 404
     restaurant = get_restaurant(restaurant_id)
     if not restaurant:
         return "Restaurant not found", 404
@@ -6258,8 +6263,12 @@ def guest_optin_page(restaurant_id):
         return "This text club isn't active right now.", 404
     return render_template("guest_optin.html", restaurant_name=restaurant.name)
 
-@client_bp.route("/api/public/guest-optin/<int:restaurant_id>", methods=["POST"])
-def guest_optin_submit(restaurant_id):
+@client_bp.route("/api/public/guest-optin/<token>", methods=["POST"])
+def guest_optin_submit(token):
+    from guest_links import verify_join
+    restaurant_id = verify_join(token)
+    if not restaurant_id:
+        return jsonify(ok=False, error="Not found"), 404
     from ai_utils import ai_rate_limited
     ip = request.headers.get("X-Forwarded-For", "").split(",")[0].strip() or request.remote_addr or "unknown"
     if ai_rate_limited(f"guestoptin:{ip}", max_calls=5, window_secs=300):
