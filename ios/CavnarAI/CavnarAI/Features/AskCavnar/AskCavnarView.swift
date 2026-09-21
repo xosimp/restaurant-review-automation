@@ -79,7 +79,7 @@ struct AskCavnarView: View {
                                 .id(message.id)
                             }
                             if viewModel.isLoading {
-                                LoadingBubble(label: viewModel.statusLabel, orbState: viewModel.orbState,
+                                LoadingBubble(label: viewModel.statusLabel, trail: viewModel.progressTrail, orbState: viewModel.orbState,
                                               paused: motionPaused)
                             }
                             // Scroll target for the in-progress reveal above
@@ -703,6 +703,10 @@ private struct LoadingBubble: View {
     /// tool loop ("Reading your reviews"). nil while the stream is still
     /// connecting, or once it falls back to the plain non-streaming request.
     var label: String? = nil
+    /// What already ran this turn, oldest first — ticked lines above the
+    /// one running now, so a multi-tool answer shows its reasoning rather
+    /// than a single label that keeps changing.
+    var trail: [String] = []
     /// Drives the orb's motion — connecting, searching, composing and so on.
     var orbState: CavnarOrbState = .connecting
     var paused: Bool = false
@@ -717,9 +721,21 @@ private struct LoadingBubble: View {
                     .tracking(1.2)
                     .foregroundStyle(Color.cavnarEmber2)
                 if let label {
-                    Text(label)
+                    ForEach(Array(trail.enumerated()), id: \.offset) { _, done in
+                        HStack(spacing: 6) {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(Color.cavnarGreen)
+                            Text(done)
+                                .font(.cavnarBody(12.5))
+                                .foregroundStyle(Color.cavnarInk3)
+                        }
+                        .transition(.opacity.combined(with: .move(edge: .leading)))
+                    }
+                    Text(label + "\u{2026}")
                         .font(.cavnarBody(13.5))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .foregroundStyle(Color.cavnarInk2)
+                        .id(label)
                         .transition(.opacity)
                 } else {
                     // "Composing" — an ember caret writing lines into place

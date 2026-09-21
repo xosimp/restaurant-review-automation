@@ -11,6 +11,7 @@ import SwiftUI
 /// of the old ember aurora.
 struct HomeView: View {
     @State private var followThrough = HomeFollowThroughViewModel()
+    @State private var aiActivity = AIActivityViewModel()
     @Environment(SessionStore.self) private var sessionStore
     @Environment(DeepLinkRouter.self) private var deepLinkRouter
     // Owned by RootView (see its homeViewModel) so the loaded summary
@@ -108,6 +109,15 @@ struct HomeView: View {
                             }
                             .padding(.top, 18)
                             .belowFold(heroAppeared, delay: 0.1)
+
+                            // The activity strip — what Cavnar AI is doing
+                            // right now, rotating; tap for the feed. Shows
+                            // nothing for an account with nothing armed.
+                            AIActivityStrip(viewModel: aiActivity, paused: backgroundMotionPaused)
+                                .padding(.horizontal, 20)
+                                .padding(.top, 12)
+                                .belowFold(heroAppeared, delay: 0.16)
+                                .task { await aiActivity.load() }
 
                             if summary.quietHoursActive {
                                 quietHoursBanner(summary)

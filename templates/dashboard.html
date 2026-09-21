@@ -652,6 +652,57 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none}
 .ask-cavnar-accent-bg{background:#c84b2f}
 [data-theme="dark"] .ask-cavnar-accent-bg{background:#923020!important}
 /* ── Ask Cavnar (ask-*) — the iOS Ask screen, floating. Dark-first, theme-aware. */
+/* ── the AI activity strip ─────────────────────────────────────────────
+   A low-profile pill in the opposite corner from Ask: one breathing dot, one
+   rotating line of what Cavnar AI is doing right now, and a count of what
+   it did since the owner last looked. Every line is read from a row a job
+   wrote (activity.py); nothing here is generated to fill space. Click for
+   the feed. */
+.cbtn.ai-strip{position:fixed;left:20px;bottom:22px;z-index:997;display:flex;align-items:center;justify-content:flex-start;gap:9px;height:auto;max-width:min(420px,calc(100vw - 120px));padding:9px 14px 9px 12px;border-radius:999px;background:var(--paper);border:1px solid var(--paper3);box-shadow:0 8px 24px rgba(0,0,0,.14),0 0 0 1px rgba(0,0,0,.03);color:var(--ink2);font-family:'Apfel Grotezk',sans-serif;font-size:13px;font-weight:600;cursor:pointer;transition:transform .18s,box-shadow .18s,opacity .3s;opacity:0}
+.cbtn.ai-strip.on{opacity:1}
+.cbtn.ai-strip:hover{transform:translateY(-1px);box-shadow:0 12px 30px rgba(0,0,0,.18),0 0 0 1px rgba(200,75,47,.12)}
+.ai-strip .dot{position:relative;width:8px;height:8px;border-radius:50%;background:var(--ember);box-shadow:0 0 8px var(--ember);flex-shrink:0}
+.ai-strip .dot:after{content:'';position:absolute;inset:-4px;border-radius:50%;background:var(--ember);opacity:.35;animation:aiBreath 2.4s ease-in-out infinite}
+.ai-strip .txt{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:opacity .35s,transform .35s}
+.ai-strip .txt.swap{opacity:0;transform:translateY(4px)}
+.ai-strip .txt .hb-num,.ai-strip .txt .n{font-family:'Space Grotesk',sans-serif;font-weight:700;color:var(--ink)}
+.ai-strip .new{display:none;font-family:'Space Grotesk',sans-serif;font-size:11.5px;font-weight:700;color:var(--paper);background:var(--ember);border-radius:999px;padding:2px 8px;line-height:1.3;animation:aiPop .4s cubic-bezier(.2,.8,.2,1)}
+.ai-strip .new.on{display:inline-block}
+.ai-feed{position:fixed;left:20px;bottom:70px;z-index:997;width:min(360px,calc(100vw - 40px));max-height:min(62vh,560px);overflow:auto;border-radius:18px;background:var(--paper);border:1px solid var(--paper3);box-shadow:0 24px 60px rgba(0,0,0,.22),0 0 0 1px rgba(0,0,0,.04);color:var(--ink);font-family:'Apfel Grotezk',sans-serif;display:none;transform-origin:bottom left}
+.ai-feed.on{display:block;animation:aiRise .28s cubic-bezier(.2,.8,.2,1)}
+.ai-feed .hd{position:sticky;top:0;display:flex;align-items:center;justify-content:space-between;padding:14px 16px 10px;background:var(--paper);border-bottom:1px solid var(--paper2);z-index:1}
+.ai-feed .hd b{font-family:'Clash Display',sans-serif;font-weight:600;font-size:16px;letter-spacing:.005em}
+.ai-feed .hd .k{display:block;font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--ink3);margin-bottom:2px}
+.ai-feed .sec{padding:10px 16px 6px;font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--ink3)}
+.ai-feed .it{display:flex;align-items:flex-start;gap:10px;padding:8px 16px;font-size:13.5px;line-height:1.45;color:var(--ink2);border-radius:10px;transition:background .6s}
+.ai-feed .it .d{position:relative;flex-shrink:0;width:7px;height:7px;border-radius:50%;background:var(--green);margin-top:7px;box-shadow:0 0 6px rgba(78,173,122,.5)}
+.ai-feed .it.now .d{background:var(--ember);box-shadow:0 0 8px var(--ember)}
+.ai-feed .it.now .d:after{content:'';position:absolute;inset:-3px;border-radius:50%;background:var(--ember);opacity:.35;animation:aiBreath 2.4s ease-in-out infinite}
+.ai-feed .it.mem .d{background:var(--ink3);box-shadow:none}
+.ai-feed .it .t{flex:1}
+.ai-feed .it .t .n,.ai-feed .it .t .hb-num{font-family:'Space Grotesk',sans-serif;font-weight:700;color:var(--ink)}
+.ai-feed .it .ago{display:block;font-size:11.5px;color:var(--ink3);margin-top:1px}
+.ai-feed .it.in{animation:aiSlide .45s cubic-bezier(.2,.8,.2,1) both;background:rgba(200,75,47,.07)}
+.ai-feed .empty{padding:14px 16px 18px;font-size:13px;color:var(--ink3);line-height:1.5}
+.ai-feed .ft{padding:10px 16px 14px;font-size:11.5px;color:var(--ink3);border-top:1px solid var(--paper2)}
+@keyframes aiBreath{0%,100%{transform:scale(1);opacity:.35}50%{transform:scale(1.9);opacity:0}}
+@keyframes aiPop{from{transform:scale(.6);opacity:0}to{transform:scale(1);opacity:1}}
+@keyframes aiRise{from{transform:translateY(8px) scale(.98);opacity:0}to{transform:none;opacity:1}}
+@keyframes aiSlide{from{transform:translateX(-8px);opacity:0}to{transform:none;opacity:1}}
+/* Ask: the reasoning trail — every tool the loop ran, in the order it ran,
+   ticked as the next one starts. Labels are the server's own. */
+.ask-steps{display:flex;flex-direction:column;gap:3px;margin-top:2px}
+.ask-steps .st{font-size:12.5px;color:var(--ink3);animation:aiSlide .3s ease both}
+.ask-steps .st:before{content:'\2713';color:var(--green);font-weight:700;margin-right:6px}
+/* Ask: the answer arrives block by block, not as a wall. */
+.ask-in{animation:askIn .38s cubic-bezier(.2,.8,.2,1) both}
+@keyframes askIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
+/* Home charts breathe — a slow, barely-there swell on the line, so a
+   watched screen is never perfectly still. */
+.hb-card svg[data-pts] path[stroke]{animation:hbChartBreath 7s ease-in-out infinite}
+@keyframes hbChartBreath{0%,100%{opacity:1}50%{opacity:.78}}
+@media (prefers-reduced-motion:reduce){.ai-strip .dot:after,.ai-feed .it.now .d:after,.ai-feed .it.in,.ai-feed.on,.ask-steps .st,.ask-in,.hb-card svg[data-pts] path[stroke]{animation:none!important;opacity:1}.ai-strip .txt{transition:none}}
+@media(max-width:640px){.ai-strip{left:12px;bottom:14px;max-width:calc(100vw - 110px);font-size:12px}.ai-feed{left:12px;bottom:60px}}
 .ask-fab{position:fixed;bottom:24px;right:24px;width:60px;height:60px;border-radius:50%;border:1px solid rgba(232,149,106,.35);background:radial-gradient(circle at 35% 30%,#2c2c2e,#0c0c0c 72%);box-shadow:0 10px 30px rgba(200,75,47,.35),0 0 0 6px rgba(200,75,47,.08);display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:998;padding:0;transition:transform .18s,box-shadow .18s}
 .ask-fab:hover{transform:translateY(-2px);box-shadow:0 14px 36px rgba(200,75,47,.5),0 0 0 8px rgba(200,75,47,.12)}
 .ask-fab:active{transform:scale(.94)}
@@ -1836,7 +1887,7 @@ svg:hover .hb-xh{opacity:1}
   function askOut(){var o=document.getElementById('hb-ask-out');if(o)o.hidden=false;return o;}
   // Markdown-lite for answers: **bold** kept, everything else flattened to plain text.
   function mdLite(t){var h=esc(t).replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/^#{1,6}\s+/gm,'').replace(/^\s*[-*]\s+/gm,'• ').replace(/(^|[^*])\*(?!\*)([^*\n]+)\*(?!\*)/g,'$1$2').replace(/\*\*/g,'').replace(/\n{3,}/g,'\n\n');return h;}
-  function askBubble(text,me){var d=document.createElement('div');d.className='hb-msg '+(me?'me':'ai');if(me)d.textContent=text;else d.innerHTML=mdLite(text);return d;}
+  function askBubble(text,me){var d=document.createElement('div');d.className='hb-msg '+(me?'me':'ai');if(me)d.textContent=text;else{d.innerHTML=mdLite(text);if(typeof _askStagger==='function')_askStagger(d);}return d;}
   function askInline(q){
     var out=askOut();if(!out||_hbAskBusy)return;_hbAskBusy=true;
     var inp=document.getElementById('hb-ask-in'),btn=document.querySelector('[data-ask-submit]');
@@ -1863,7 +1914,7 @@ svg:hover .hb-xh{opacity:1}
           if(res.done){if(!done){done=true;viaJson();}return;}
           buf+=dec.decode(res.value,{stream:true});var chunks=buf.split('\n\n');buf=chunks.pop();
           for(var i=0;i<chunks.length;i++){var line=chunks[i].replace(/^data: /,'').trim();if(!line)continue;var evt;try{evt=JSON.parse(line);}catch(e){continue;}
-            if(evt.type==='progress'){var lb=think.querySelector('.lbl');if(lb)lb.textContent=evt.label||'Working…';var oc=think.querySelector('canvas.hb-orb');if(oc&&oc._orb&&window.CavnarOrb&&evt.state)CavnarOrb.setState(oc._orb,evt.state);}
+            if(evt.type==='progress'){var lb=think.querySelector('.lbl');if(lb){var prevL=lb.textContent.replace(/…$/,'');if(prevL&&prevL!=='Thinking'&&prevL!==(evt.label||'')){var stp=think.querySelector('.ask-steps');if(!stp){stp=document.createElement('div');stp.className='ask-steps';lb.parentNode.insertBefore(stp,lb);}var st=document.createElement('div');st.className='st';st.textContent=prevL;stp.appendChild(st);}lb.textContent=(evt.label||'Working')+'…';}var oc=think.querySelector('canvas.hb-orb');if(oc&&oc._orb&&window.CavnarOrb&&evt.state)CavnarOrb.setState(oc._orb,evt.state);}
             else if(evt.type==='answer'){done=true;finish({ok:true,answer:evt.answer});}
             else if(evt.type==='error'){done=true;finish({ok:false,error:evt.error});}}
           if(!done)return pump();});}
@@ -2981,6 +3032,8 @@ svg:hover .hb-xh{opacity:1}
   <canvas id="ask-fab-orb" width="34" height="34" aria-hidden="true"></canvas>
   <span class="ask-fab-l">Ask Cavnar AI</span>
 </button>
+<div id="ai-feed" class="ai-feed" role="dialog" aria-label="What Cavnar AI has been doing"></div>
+<button type="button" id="ai-strip" class="ai-strip cbtn" onclick="aiFeedToggle()" aria-expanded="false" aria-controls="ai-feed" title="What Cavnar AI is doing"><i class="dot" aria-hidden="true"></i><span class="txt">Cavnar AI</span><span class="new" id="ai-new"></span></button>
 
 <div id="ask-cavnar-panel" class="ask-panel" style="display:none">
   <div class="ask-head">
@@ -6158,11 +6211,21 @@ function _appendAskCavnarMessage(text, isUser) {
   if (!isUser) wrap.innerHTML = '<div class="ask-badge s">' + ASK_SPARK + '</div>';
   var bubble = document.createElement('div');
   bubble.className = 'bb';
-  if (isUser) bubble.textContent = text; else bubble.innerHTML = _askMd(text);
+  if (isUser) bubble.textContent = text; else { bubble.innerHTML = _askMd(text); _askStagger(bubble); }
   wrap.appendChild(bubble);
   messages.appendChild(wrap);
   messages.scrollTop = messages.scrollHeight;
   return bubble;
+}
+
+// The answer exists in full when it arrives; it is REVEALED block by block
+// (a beat per paragraph or list) rather than typed out, so nothing is
+// pretended and nothing lands as a wall. Reduced motion shows it at once.
+function _askStagger(el) {
+  if (!el || (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches)) return;
+  var kids = el.children;
+  if (!kids || !kids.length) { el.className += ' ask-in'; return; }
+  for (var i = 0; i < kids.length && i < 14; i++) { kids[i].className += ' ask-in'; kids[i].style.animationDelay = (i * 90) + 'ms'; }
 }
 
 function _appendAskCavnarLoadingBubble() {
@@ -6194,9 +6257,93 @@ function _appendAskCavnarLoadingBubble() {
 }
 
 function _setAskCavnarLoadingState(bubble, label, state) {
-  if (bubble && bubble._status && label) bubble._status.textContent = label + '\u2026';
+  // The reasoning trail: the label that was running becomes a ticked line
+  // above the one running now. Every line is the server's own progress
+  // event, in the order the tool loop ran it — never a script.
+  if (bubble && bubble._status && label) {
+    var prev = bubble._status.textContent.replace(/\u2026$/, '');
+    if (prev && prev !== 'Connecting' && prev !== label) {
+      if (!bubble._steps) { bubble._steps = document.createElement('div'); bubble._steps.className = 'ask-steps'; bubble._status.parentNode.insertBefore(bubble._steps, bubble._status); }
+      var st = document.createElement('div'); st.className = 'st'; st.textContent = prev; bubble._steps.appendChild(st);
+    }
+    bubble._status.textContent = label + '\u2026';
+  }
   if (_askCavnarLoadingOrb && state && window.CavnarOrb) CavnarOrb.setState(_askCavnarLoadingOrb, state);
 }
+
+// ── the AI activity strip ────────────────────────────────────────────────────
+// Reads /api/activity (activity.py): what is armed right now, what ran and
+// when, what the AI is still holding. The strip rotates the "now" lines;
+// the panel lists everything; the badge counts entries newer than the last
+// time this browser opened the panel. ES5 only.
+(function () {
+  var strip = document.getElementById('ai-strip'), feed = document.getElementById('ai-feed'), badge = document.getElementById('ai-new');
+  if (!strip || !feed) return;
+  var data = null, seenKeys = {}, rot = 0, rotTimer = null, pollTimer = null, open = false;
+  function esc(x) { return String(x == null ? '' : x).replace(/[&<>"']/g, function (c) { return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]; }); }
+  function nums(x) { return esc(x).replace(/(\$?\d[\d,.]*%?)/g, '<span class="n">$1</span>'); }
+  function ago(iso) {
+    if (!iso) return '';
+    var t = Date.parse(iso); if (isNaN(t)) return '';
+    var m = Math.round((Date.now() - t) / 60000);
+    if (m < 1) return 'just now'; if (m < 60) return m + ' min ago';
+    var h = Math.round(m / 60); if (h < 24) return h + (h === 1 ? ' hour ago' : ' hours ago');
+    var d = Math.round(h / 24); return d + (d === 1 ? ' day ago' : ' days ago');
+  }
+  function seenAt() { try { return localStorage.getItem('ai-feed-seen') || ''; } catch (e) { return ''; } }
+  function markSeen() { try { if (data && data.generated_at) localStorage.setItem('ai-feed-seen', data.generated_at); } catch (e) {} }
+  function keyOf(e) { return (e.at || '') + '|' + e.text; }
+  function reduced() { return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches; }
+  function rotate() {
+    var w = (data && data.working) || [];
+    var txt = strip.querySelector('.txt');
+    if (!w.length) { txt.innerHTML = 'Cavnar AI'; return; }
+    var next = w[rot % w.length]; rot++;
+    if (reduced()) { txt.innerHTML = nums(next.text); return; }
+    txt.className = 'txt swap';
+    setTimeout(function () { txt.innerHTML = nums(next.text); txt.className = 'txt'; }, 360);
+  }
+  function badgeCount() {
+    var since = seenAt(), n = 0, es = (data && data.entries) || [];
+    for (var i = 0; i < es.length; i++) if (es[i].at && (!since || es[i].at > since)) n++;
+    return n;
+  }
+  function render() {
+    if (!data) return;
+    var h = '<div class="hd"><div><span class="k">Cavnar AI</span><b>Working for you</b></div>' +
+      (data.last_run ? '<span style="font-size:11.5px;color:var(--ink3)">last sweep ' + esc(ago(data.last_run.at)) + '</span>' : '') + '</div>';
+    var w = data.working || [], es = data.entries || [], mem = data.memory || [], since = seenAt();
+    if (w.length) { h += '<div class="sec">Right now</div>'; for (var i = 0; i < w.length; i++) h += '<div class="it now"><span class="d"></span><span class="t">' + nums(w[i].text) + '</span></div>'; }
+    if (es.length) {
+      h += '<div class="sec">Recently</div>';
+      for (var j = 0; j < es.length; j++) { var e = es[j], fresh = !seenKeys[keyOf(e)] && seenKeys._primed; h += '<div class="it' + (fresh ? ' in' : '') + '"><span class="d"></span><span class="t">' + nums(e.text) + '<span class="ago">' + esc(ago(e.at)) + '</span></span></div>'; }
+    }
+    if (mem.length) { h += '<div class="sec">Still holding</div>'; for (var k = 0; k < mem.length; k++) h += '<div class="it mem"><span class="d"></span><span class="t">' + nums(mem[k].text) + '</span></div>'; }
+    if (!w.length && !es.length && !mem.length) h += '<div class="empty">Nothing to show yet. Once data is flowing, everything Cavnar AI does for this restaurant is listed here as it happens.</div>';
+    h += '<div class="ft">Every line is something that actually ran, with its time. Nothing here is generated to fill space.</div>';
+    feed.innerHTML = h;
+    for (var m = 0; m < es.length; m++) seenKeys[keyOf(es[m])] = 1;
+    seenKeys._primed = 1;
+    var n = open ? 0 : badgeCount();
+    badge.textContent = n ? (n + ' new') : '';
+    badge.className = 'new' + (n ? ' on' : '');
+  }
+  function load() {
+    fetch('/api/activity', {credentials: 'same-origin'}).then(function (r) { return r.json(); }).then(function (d) {
+      if (!d || !d.ok) return;
+      var first = !data; data = d; render();
+      if (first) { strip.className = 'ai-strip cbtn on'; rot = 0; rotate(); if (rotTimer) clearInterval(rotTimer); rotTimer = setInterval(rotate, 7000); }
+    }).catch(function () {});
+  }
+  window.aiFeedToggle = function () {
+    open = !open; feed.className = 'ai-feed' + (open ? ' on' : ''); strip.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (open) { markSeen(); render(); }
+  };
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && open) aiFeedToggle(); });
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) load(); });
+  load();
+  pollTimer = setInterval(load, 60000);
+})();
 
 function _appendAskCavnarEvidence(d) {
   // The provenance strip under an answer. Nothing here is decoration: an

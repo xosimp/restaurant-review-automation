@@ -177,7 +177,19 @@ final class AskCavnarViewModel {
     /// while a multi-tool answer is in flight. nil outside a request, and
     /// while the stream connects, so it never flashes stale text left over
     /// from the previous question.
-    var statusLabel: String?
+    var statusLabel: String? {
+        didSet {
+            // The reasoning trail: the label that was running is ticked as
+            // the next one starts. Every entry is the server's own progress
+            // event, in the order the tool loop ran it — never a script.
+            if let old = oldValue, !old.isEmpty, old != statusLabel, statusLabel != nil {
+                progressTrail.append(old)
+            }
+        }
+    }
+    /// Labels already completed this turn, oldest first. Cleared with
+    /// statusLabel at the end of a request.
+    var progressTrail: [String] = []
     /// The orb's motion for the current moment, from the stream's `state`
     /// field. `.connecting` from the instant a question is sent until the
     /// first progress event arrives, so the orb never sits still.
@@ -521,7 +533,7 @@ final class AskCavnarViewModel {
         isLoading = true
         statusLabel = nil
         orbState = .connecting
-        defer { isLoading = false; statusLabel = nil; orbState = .connecting }
+        defer { isLoading = false; statusLabel = nil; progressTrail = []; orbState = .connecting }
 
         do {
             try await streamAnswer(for: asked)

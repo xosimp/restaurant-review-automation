@@ -290,6 +290,25 @@ never substitute zero for a number that isn't known.
 line the module already uses — the reader must always be able to tell a
 measured figure from an estimate.
 
+**AI at work is a reasoning trail, not a label that keeps changing.** When
+the Ask loop streams `progress` events, the label that was running becomes a
+ticked line above the one running now (`.ask-steps .st` on web, `trail:` on
+iOS `LoadingBubble`). Every line is the server's own event in the order it
+ran — never a scripted sequence. The answer then arrives block by block
+(`_askStagger` → `.ask-in`, ~90ms per paragraph): it exists in full when it
+lands and is *revealed*, not typed, so nothing is pretended.
+
+**The AI activity strip and feed** (`activity.py`, `/api/activity`): a
+low-profile pill in the bottom-left (`.cbtn.ai-strip` web; `AIActivityStrip`
+under the pulse strip on iOS) with one breathing ember dot and a rotating
+sentence of what is armed right now, and a badge counting entries newer than
+the last look. Tap for the feed (`.ai-feed` / `AIActivityFeedSheet`): *Right
+now* (ember, breathing), *Recently* (green, timestamped), *Still holding*
+(memory — trackers in flight, follow-ups). Rules: every line is read from a
+row a job wrote; a restaurant with nothing running shows no strip at all;
+lines from a module the viewer may not read are left out. It is not a
+notification surface and never demands attention.
+
 ---
 
 ## 11. Animation

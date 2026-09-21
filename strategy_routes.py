@@ -653,6 +653,18 @@ def _do_pause_status(u):
             "can_pause": _principal(u)}, 200
 
 
+def _do_activity(u):
+    """What Cavnar AI has been doing for this restaurant — the activity feed
+    (activity.py). Filtered by what this login may see, the same way the
+    brief and good news are."""
+    import activity
+    from ask_cavnar_tools import viewer_restaurant
+    from models import get_restaurant
+    view = viewer_restaurant(get_restaurant(_rid(u)), u)
+    denied = set(getattr(view, "_ask_denied", frozenset()))
+    return activity.feed(_rid(u), restaurant=view, denied=denied), 200
+
+
 def _do_monthly_review(u):
     """Last month, read the way an owner reads a P&L — the same build the
     monthly email sends on the 1st, so the screen and the email agree.
@@ -798,6 +810,7 @@ _ROUTES = [
     ("/good-news", ["GET"], _do_good_news, "good_news"),
     ("/milestones", ["GET"], _do_milestones, "milestones_list"),
     ("/monthly-review", ["GET"], _do_monthly_review, "monthly_review"),
+    ("/activity", ["GET"], _do_activity, "activity"),
     ("/account/pause", ["GET"], _do_pause_status, "pause_status"),
     ("/account/pause", ["POST"], _do_pause, "pause"),
     ("/account/resume", ["POST"], _do_resume, "resume"),
