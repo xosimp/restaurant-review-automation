@@ -536,3 +536,16 @@ def test_the_group_email_is_one_message_logged_for_every_location(db_path, monke
     delivered.clear()
     emails.send_monthly_group_summary_email("m@x.com", "Mo", rs[:1])
     assert delivered == []
+
+
+def test_the_labor_insight_routes_carry_the_diagnosis_and_stay_registered(db_path):
+    """The helper was once inserted between the route decorators and the
+    view, which re-pointed /api/labor-insight at the helper. Pinned here."""
+    import client_api, mobile_api
+    from flask import Flask
+    app = Flask(__name__)
+    app.register_blueprint(client_api.client_bp)
+    app.register_blueprint(mobile_api.mobile_bp)
+    by_rule = {r.rule: r.endpoint for r in app.url_map.iter_rules()}
+    assert by_rule["/api/labor-insight"] == "client.labor_insight_api"
+    assert callable(client_api._labor_diagnosis_safe) and not hasattr(client_api._labor_diagnosis_safe, "__wrapped__")

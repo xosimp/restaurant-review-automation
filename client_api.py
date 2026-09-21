@@ -1991,8 +1991,6 @@ brand voice. No corporate language. The whole brief must be under 60 words."""
             return {"insight": stale[1]}, 200
         return {"insight": "Marketing brief unavailable — check back shortly."}, 500
 
-@client_bp.route("/api/labor-insight")
-@login_required
 def _labor_diagnosis_safe(rid, analysis=None):
     """labor.diagnose over the current analysis — deterministic, so it is
     never cached with the model's prose and never fails the route."""
@@ -2003,6 +2001,8 @@ def _labor_diagnosis_safe(rid, analysis=None):
         return {"available": False, "reason": "could not read the shifts"}
 
 
+@client_bp.route("/api/labor-insight")
+@login_required
 def labor_insight_api(current_user):
     rid = current_user["restaurant_id"]
     cached = _cache_get("labor-insight:" + str(rid))

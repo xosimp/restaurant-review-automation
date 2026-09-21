@@ -685,8 +685,13 @@ def send_campaign(restaurant_id, message, db_path=DB_PATH, segment="all", link_t
                 if reached_phone.get(cid):
                     conn.execute("INSERT INTO guest_campaign_recipients (campaign_id, restaurant_id, contact_id, phone) "
                                  "VALUES (?,?,?,?)", (campaign_id, restaurant_id, cid, _normalize_phone(reached_phone[cid])))
-        except Exception:
-            pass          # a table from before this migration ran: the send still stands
+        except Exception as e:
+            # The texts already went; the send record must stand even if the
+            # recipients table is missing (a database from before this
+            # migration). Recorded, never swallowed — attribution will read
+            # nothing for this campaign and the ledger says why.
+            import ops
+            ops.capture(e, job="campaign_recipients", context=f"restaurant_id={restaurant_id}")
         # Stamps the frequency cap. Only guests actually reached are stamped,
         # so a failed send doesn't lock someone out of the next campaign.
         for cid in reached_ids:
