@@ -447,6 +447,38 @@ def api_availability_save(current_user):
     return jsonify(ok=True, unavailable_days=blocked, notes=notes or "")
 
 
+@staff_bp.route("/api/time-off")
+@staff_login_required
+def api_time_off(current_user):
+    """This employee's own time-off requests and their answers. The name
+    comes from the session; there is nobody else's to read."""
+    rid, name = _staff_context(current_user)
+    import time_off
+    if not name:
+        return jsonify(ok=True, requests=[])
+    return jsonify(ok=True, requests=time_off.mine(rid, name))
+
+
+@staff_bp.route("/api/time-off", methods=["POST"])
+@staff_login_required
+def api_time_off_request(current_user):
+    rid, name = _staff_context(current_user)
+    if not name:
+        return jsonify(ok=False, error="No employee name on this session."), 400
+    body = request.get_json(silent=True) or {}
+    import time_off
+    row, err = time_off.request_time_off(rid, name, body.get("start_date"), body.get("end_date"),
+                                         reason=body.get("reason"))
+    if err:
+        return jsonify(ok=False, error=err), 400
+    from models import log_event
+    try:
+        log_event(rid, "time_off_requested", {"employee": name, "start": row["start_date"], "end": row["end_date"]})
+    except Exception:
+        pass
+    return jsonify(ok=True, request=row)
+
+
 TASK_DATE_WINDOW_DAYS = 1
 
 

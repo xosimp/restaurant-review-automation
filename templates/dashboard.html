@@ -3501,6 +3501,13 @@ svg:hover .hb-xh{opacity:1}
       </div>
       <div class="cap"><span>weekly overspend × 4.33 · overtime at 0.5× on hours over 40</span></div></div>
   </div>
+  <div class="lb2-sig" id="lb2-ops" style="margin-top:14px">
+    <div class="lb2-sg" id="lb2-timeoff"><div class="k"><span>Time off</span><i id="lb2-timeoff-flag"></i></div><div id="lb2-timeoff-body" class="hb-empty" style="font-size:12.5px">Loading&hellip;</div><div class="cap"><span>asked for in the staff portal &middot; an approved range is kept off the next draft</span></div></div>
+    <div class="lb2-sg" id="lb2-covers"><div class="k"><span>Covers</span><i id="lb2-covers-flag"></i></div><div id="lb2-covers-body" class="hb-empty" style="font-size:12.5px">Loading&hellip;</div>
+      <div class="ac-inline" style="margin-top:8px;flex-wrap:wrap"><input type="date" class="ac-input" id="lb2-cov-date" aria-label="Date" style="max-width:150px"><input type="number" class="ac-input ac-num" id="lb2-cov-n" min="0" step="1" placeholder="covers" aria-label="Covers" style="max-width:110px"><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="lb2SaveCover(this)">Save</button></div>
+      <details class="fc2-import" style="margin-top:6px"><summary>Paste a CSV (date,covers)</summary><textarea id="lb2-cov-csv" rows="4" class="ac-input" style="width:100%;font-family:monospace;font-size:12px" placeholder="date,covers&#10;2026-09-19,212"></textarea><div class="fc2-count-ft"><span class="ac-status" id="lb2-cov-status"></span><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="lb2ImportCovers(this)">Import</button></div></details>
+      <div class="cap"><span>the one figure that tells a lean day from a short one &middot; read by the labor analysis</span></div></div>
+  </div>
   <script>
   var _roleColors=['#c84b2f','#e8956a','#2d6a4f','#b7791f','#6aabff','#9e6bd6','#4dd0e1'];
   var _roleData=[
@@ -9255,8 +9262,61 @@ function loadMktInsight(){
     mktLoaded=false;
   });
 }
+function lb2LoadTimeOff(){
+  var el=document.getElementById('lb2-timeoff-body');if(!el)return;
+  fetch('/api/labor/time-off',{credentials:'same-origin'}).then(function(r){return r.json();}).then(function(d){
+    if(!d||!d.ok){el.textContent='';return;}
+    var rows=d.requests||[],flag=document.getElementById('lb2-timeoff-flag');
+    if(flag)flag.textContent=d.pending?d.pending+' waiting':'';
+    if(!rows.length){el.textContent='No requests. Staff ask for dates in the portal and the answer lands here.';return;}
+    var h='';
+    for(var i=0;i<rows.length;i++){var q=rows[i];var when=q.start_date===q.end_date?mdy(q.start_date):(mdy(q.start_date)+' \u2013 '+mdy(q.end_date));
+      h+='<div class="ac-row"><div class="l"><b>'+esc(q.employee_name)+'</b><span>'+esc(when)+(q.reason?' \u00b7 '+esc(q.reason):'')+'</span></div><div class="c">';
+      if(q.status==='pending')h+='<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-timeoff="'+esc(q.id)+'" data-decision="deny">Deny</button><button type="button" class="cbtn cbtn-primary cbtn-sm" data-timeoff="'+esc(q.id)+'" data-decision="approve">Approve</button>';
+      else h+='<span class="ac-chip sm'+(q.status==='approved'?' good':'')+'">'+esc(q.status)+'</span>';
+      h+='</div></div>';}
+    el.innerHTML=h;el.className='';
+  }).catch(function(){});
+}
+document.addEventListener('click',function(e){
+  var t=e.target&&e.target.closest?e.target.closest('[data-timeoff]'):null;if(!t)return;
+  var done=cbtnBusy(t,'\u2026');
+  fetch('/api/labor/time-off/'+encodeURIComponent(t.getAttribute('data-timeoff'))+'/decide',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({decision:t.getAttribute('data-decision')})}).then(function(r){return r.json();}).then(function(d){
+    done();if(typeof toast==='function')toast(d&&d.ok?(d.request.status==='approved'?'Approved \u2014 kept off the next draft':'Not approved'):((d&&d.error)||'Could not decide'),d&&d.ok?'success':'error');lb2LoadTimeOff();
+  }).catch(function(){done();});
+});
+function lb2LoadCovers(){
+  var el=document.getElementById('lb2-covers-body');if(!el)return;
+  fetch('/api/labor/covers',{credentials:'same-origin'}).then(function(r){return r.json();}).then(function(d){
+    if(!d||!d.ok){el.textContent='';return;}
+    var days=d.days||[],flag=document.getElementById('lb2-covers-flag');
+    if(flag)flag.textContent=days.length?days.length+' days on file':'';
+    if(!days.length){el.textContent='No cover counts yet. Without them a lean day and a short-staffed one look the same.';return;}
+    var h='<div style="display:flex;flex-wrap:wrap;gap:6px">';
+    for(var i=0;i<days.length&&i<14;i++)h+='<span class="ac-chip sm">'+esc(mdy(days[i].date))+' <b class="hb-num">'+esc(days[i].covers)+'</b></span>';
+    el.innerHTML=h+'</div>';el.className='';
+  }).catch(function(){});
+}
+function lb2SaveCover(btn){
+  var dt=(document.getElementById('lb2-cov-date')||{}).value,n=(document.getElementById('lb2-cov-n')||{}).value;
+  if(!dt||n===''){if(typeof toast==='function')toast('Pick a date and a count','error');return;}
+  var done=cbtnBusy(btn,'Saving\u2026');
+  fetch('/api/labor/covers',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({rows:[{date:dt,covers:n}]})}).then(function(r){return r.json();}).then(function(d){
+    done();if(typeof toast==='function')toast(d&&d.ok&&d.written?'Saved':((d&&(d.error||(d.errors||[])[0]))||'Could not save'),d&&d.ok&&d.written?'success':'error');lb2LoadCovers();
+  }).catch(function(){done();});
+}
+function lb2ImportCovers(btn){
+  var csv=(document.getElementById('lb2-cov-csv')||{}).value||'',st=document.getElementById('lb2-cov-status');
+  if(!csv.trim()){if(st)st.textContent='Paste a CSV first.';return;}
+  var done=cbtnBusy(btn,'Importing\u2026');
+  fetch('/api/labor/covers',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({csv:csv})}).then(function(r){return r.json();}).then(function(d){
+    done();if(st)st.textContent=d&&d.ok?('Saved '+d.written+' day'+(d.written===1?'':'s')+(d.skipped?' \u00b7 '+d.skipped+' skipped':'')+'.'):((d&&d.error)||'Could not import.');
+    if(d&&d.ok)lb2LoadCovers();
+  }).catch(function(){done();if(st)st.textContent='Could not import \u2014 check your connection.';});
+}
 function loadLaborInsight(){
   laborLoaded=true;
+  lb2LoadTimeOff();lb2LoadCovers();
   var el=document.getElementById('labor-insight');
   if(!el)return;
   var fiveMin=5*60*1000;
@@ -10333,6 +10393,7 @@ function openPublishSchedule(){
       html += '<div style="display:flex;align-items:center;gap:10px;padding:6px 0">';
       html += '<div style="width:130px;font-size:14px;color:rgba(255,255,255,.8);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+_psEsc(c.employee_name)+'</div>';
       html += '<input type="email" placeholder="email address" value="'+_psEsc(c.email)+'" data-name="'+_psEsc(c.employee_name)+'" onchange="savePsContact(this)" style="flex:1;background:#101010;border:1px solid var(--paper3);border-radius:6px;color:var(--ink);padding:8px 10px;font-size:14px">';
+      html += '<input type="text" placeholder="POS id" title="The id your POS shows for this person — lets a comp or void pattern be named to them" value="'+_psEsc(c.pos_id||'')+'" data-name="'+_psEsc(c.employee_name)+'" data-field="pos_id" onchange="savePsContact(this)" style="width:92px;background:#101010;border:1px solid var(--paper3);border-radius:6px;color:var(--ink);padding:8px 10px;font-size:14px">';
       html += '</div>';
     });
     body.innerHTML = html;
@@ -10345,9 +10406,12 @@ function openPublishSchedule(){
 
 function savePsContact(input){
   var name = input.getAttribute('data-name');
-  var email = input.value.trim();
+  var row = input.parentNode, body = {employee_name: name};
+  var em = row.querySelector('input[type=email]'), pid = row.querySelector('input[data-field=pos_id]');
+  body.email = em ? em.value.trim() : input.value.trim();
+  if (pid) body.pos_id = pid.value.trim();
   fetch('/api/labor/staff-contacts', {method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({employee_name: name, email: email})
+    body: JSON.stringify(body)
   }).then(function(r){return r.json();}).then(function(d){
     if(!d.ok) toast(d.error||'Couldn\'t save that contact','error');
   });
@@ -11201,9 +11265,20 @@ function fc2LoadRecipeDrafts(){
       h+='<div class="fc2-recipe"><div class="fc2-recipe-h"><b>'+esc(dr.menu_item_name||('Dish #'+dr.menu_item_id))+'</b>'+(dr.note?'<span class="fc2-recipe-note">'+esc(dr.note)+'</span>':'')+'</div><div class="fc2-recipe-lines">';
       for(var j=0;j<(dr.lines||[]).length;j++){var ln=dr.lines[j];h+='<span class="fc2-recipe-ln'+(ln.confidence==='low'?' low':'')+'">'+esc(ln.name)+' <b class="hb-num">'+esc(ln.qty)+'</b> '+esc(ln.unit||'')+(ln.confidence==='low'?' <i>?</i>':'')+'</span>';}
       h+='</div><div class="fc2-recipe-ft"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-recipe-reject="'+esc(dr.id)+'">Not right</button><button type="button" class="cbtn cbtn-primary cbtn-sm" data-recipe-accept="'+esc(dr.id)+'">Accept recipe</button></div></div>';}
+    h+='<div class="fc2-count-ft" style="margin-top:8px"><span class="ac-status" id="fc2-photo-status">Photograph a recipe card and it becomes a draft to confirm.</span><label class="cbtn cbtn-secondary cbtn-sm" for="fc2-photo-file">Photograph a recipe<input type="file" id="fc2-photo-file" accept="image/*" capture="environment" style="display:none" onchange="fc2ScanRecipe(this)"></label></div>';
     h+='<details class="fc2-import"><summary>Import recipes from a CSV</summary><div class="hb-empty" style="font-size:12.5px;margin:6px 0">Columns: menu_item, ingredient, qty \u2014 ingredient names must match your list; a new dish is created, an unknown ingredient is skipped and named.</div><textarea id="fc2-import-csv" rows="5" class="ac-input" style="width:100%;font-family:monospace;font-size:12px" placeholder="menu_item,ingredient,qty&#10;Margherita,Mozzarella,0.25"></textarea><div class="fc2-count-ft"><span class="ac-status" id="fc2-import-status"></span><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="fc2ImportRecipes(this)">Import</button></div></details>';
     el.innerHTML=h;el.hidden=false;
   }).catch(function(){});
+}
+function fc2ScanRecipe(input){
+  var f=input.files&&input.files[0];var st=document.getElementById('fc2-photo-status');if(!f)return;
+  if(st)st.textContent='Reading the card\u2026';
+  var fd=new FormData();fd.append('file',f);
+  fetch('/api/food-cost/recipes/scan',{method:'POST',credentials:'same-origin',body:fd}).then(function(r){return r.json();}).then(function(d){
+    if(d&&d.ok){if(typeof toast==='function')toast('Draft ready for '+(d.draft.menu_item_name||'the dish'),'success');fc2LoadRecipeDrafts();}
+    else if(st)st.textContent=(d&&d.error)||'Could not read the card.';
+  }).catch(function(){if(st)st.textContent='Could not read the card \u2014 check your connection.';});
+  input.value='';
 }
 function fc2ImportRecipes(btn){
   var csv=(document.getElementById('fc2-import-csv')||{}).value||'';var st=document.getElementById('fc2-import-status');
@@ -13918,7 +13993,8 @@ function loadGuestHistory(){
           + '<div style="display:flex;justify-content:space-between;gap:8px">'
           + '<span style="font-size:11px;font-weight:600;color:var(--ember)">' + _escHtml((c.created_at||'').slice(0,10)) + '</span>'
           + '<span style="font-size:11px;color:var(--ink3);font-family:\'Space Grotesk\',sans-serif">' + c.sent_count + ' sent'
-          + (c.clicks ? ' · ' + c.clicks + ' taps' : '') + '</span></div>'
+          + (c.clicks ? ' · ' + c.clicks + ' taps' : '')
+          + (c.visits_matched ? ' · ' + c.visits_matched + ' came back' : '') + '</span></div>'
           + (c.segment_label ? '<div style="font-size:11px;color:var(--ink3)">' + _escHtml(c.segment_label) + '</div>' : '')
           + '<div style="font-size:12px;color:var(--ink);line-height:1.5;margin-top:2px">' + _escHtml(c.message) + '</div>'
           + '</div>';

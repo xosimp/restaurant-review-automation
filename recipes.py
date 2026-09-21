@@ -139,6 +139,115 @@ def draft_missing(restaurant_id, limit=RECIPE_DRAFT_LIMIT, client=None, db_path=
     return {"drafted": drafted, "skipped": skipped}
 
 
+_PHOTO_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "menu_item_name": {"type": ["string", "null"]},
+        "ingredients": _SCHEMA["properties"]["ingredients"],
+        "note": {"type": ["string", "null"]},
+    },
+    "required": ["menu_item_name", "ingredients", "note"],
+    "additionalProperties": False,
+}
+
+_PHOTO_PROMPT = (
+    "This is a photo of a recipe card, prep sheet or handwritten recipe from a restaurant kitchen. "
+    "Transcribe it: the dish name as written, and every ingredient line with its quantity and unit as "
+    "written (per the batch or plate the card describes — do not scale). Where the card names an "
+    "ingredient that is on the restaurant's list below, use the list's spelling exactly; otherwise keep "
+    "the card's words. Mark confidence low for anything you had to guess at. Return the JSON only.\n\n"
+    "Ingredients on the restaurant's list:\n{names}"
+)
+
+
+class RecipePhotoError(ValueError):
+    pass
+
+
+def extract_from_image(restaurant_id, data, media_type, user_id=None, client=None, db_path=DB_PATH):
+    """A recipe card photographed → a pending draft the owner confirms
+    (moat audit #3). The same gate as an invoice scan: nothing is written
+    to a menu item until Accept. Lines naming an ingredient the restaurant
+    does not have are kept on the draft and flagged, never invented into
+    the ledger.
+
+    Returns the draft dict, with `unmatched` (card lines with no ingredient)
+    and `menu_item_matched` (False when the dish had to be created)."""
+    import invoices, inventory_ledger
+    invoices.check_upload(data, media_type)
+    if media_type == invoices.PDF_TYPE:
+        raise RecipePhotoError("Photograph the recipe card — a PDF is not a card.")
+    ingredients = [i for i in (inventory_ledger.list_ingredients(restaurant_id) or []) if i.get("name")]
+    by_name = {i["name"].strip().lower(): i for i in ingredients}
+    names = "\n".join(f"- {i['name']} (unit: {i.get('unit') or 'each'})" for i in ingredients) or "- (none on file yet)"
+    import anthropic
+    from ai_utils import create_with_retry
+    client = client or anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+    msg = create_with_retry(
+        client, restaurant_id=restaurant_id, action="recipe_photo",
+        model=MODEL, max_tokens=2000,
+        output_config={"format": {"type": "json_schema", "schema": _PHOTO_SCHEMA}},
+        messages=[{"role": "user", "content": [invoices._content_block(data, media_type),
+                                               {"type": "text", "text": _PHOTO_PROMPT.format(names=names)}]}])
+    if getattr(msg, "stop_reason", None) == "refusal":
+        raise RecipePhotoError("The card couldn't be read. Try a clearer photo.")
+    text = next((b.text for b in msg.content if getattr(b, "type", "") == "text"), "")
+    try:
+        out = json.loads(text)
+    except ValueError:
+        raise RecipePhotoError("The card couldn't be read. Try a clearer photo.")
+    dish = (out.get("menu_item_name") or "").strip()[:120]
+    if not dish:
+        raise RecipePhotoError("No dish name could be read from the card — write it at the top and try again.")
+    lines, unmatched = [], []
+    for ln in out.get("ingredients") or []:
+        nm = str(ln.get("name") or "").strip()
+        try:
+            qty = float(ln.get("qty"))
+        except (TypeError, ValueError):
+            qty = None
+        ing = by_name.get(nm.lower())
+        if ing and qty and qty > 0:
+            lines.append({"ingredient_id": ing["id"], "name": ing["name"], "qty": round(qty, 4),
+                          "unit": ing.get("unit") or ln.get("unit") or "", "confidence": ln.get("confidence") or "low"})
+        elif nm:
+            unmatched.append({"name": nm, "qty": qty, "unit": ln.get("unit") or ""})
+    if not lines:
+        raise RecipePhotoError("None of the card's ingredients are on your list yet — add them under Ingredients first.")
+    # The dish: an existing menu item by name, else a new inactive-price item.
+    items = inventory_ledger.list_menu_items_with_recipes(restaurant_id) or []
+    match = next((m for m in items if (m.get("name") or "").strip().lower() == dish.lower()), None)
+    if match is None:
+        match = next((m for m in items if dish.lower() in (m.get("name") or "").lower()
+                      or (m.get("name") or "").strip().lower() in dish.lower()), None)
+    matched = match is not None
+    if match is None:
+        conn = get_conn(db_path)
+        try:
+            cur = conn.execute("INSERT INTO menu_items (restaurant_id, name, is_active) VALUES (?,?,1)", (restaurant_id, dish))
+            conn.commit()
+            item_id, item_name = cur.lastrowid, dish
+        finally:
+            conn.close()
+    else:
+        item_id, item_name = match["id"], match["name"]
+    note_bits = ["From a photographed recipe card"]
+    if out.get("note"):
+        note_bits.append(str(out["note"])[:160])
+    if unmatched:
+        note_bits.append("not on your list: " + ", ".join(u["name"] for u in unmatched[:6]))
+    conn = get_conn(db_path)
+    try:
+        cur = conn.execute("INSERT INTO recipe_drafts (restaurant_id, menu_item_id, menu_item_name, lines_json, note) "
+                           "VALUES (?,?,?,?,?)", (restaurant_id, item_id, item_name, json.dumps(lines), " · ".join(note_bits)[:300]))
+        conn.commit()
+        draft_id = cur.lastrowid
+    finally:
+        conn.close()
+    return {"id": draft_id, "menu_item_id": item_id, "menu_item_name": item_name, "lines": lines,
+            "note": " · ".join(note_bits)[:300], "unmatched": unmatched, "menu_item_matched": matched}
+
+
 def list_drafts(restaurant_id, status="pending", db_path=DB_PATH):
     conn = get_conn(db_path)
     try:

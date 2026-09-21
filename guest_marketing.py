@@ -85,6 +85,20 @@ def init_guest_marketing(db_path=DB_PATH):
         "ALTER TABLE guest_contacts ADD COLUMN email_unsubscribed INTEGER DEFAULT 0",
         "ALTER TABLE guest_contacts ADD COLUMN email_token TEXT",
         "CREATE INDEX IF NOT EXISTS idx_guest_email_token ON guest_contacts(email_token)",
+        # Who each campaign reached, so a later Toast check-in on the same
+        # phone can be counted as a visit (moat audit #21). Taps measured
+        # interest; this measures the only thing that pays.
+        """CREATE TABLE IF NOT EXISTS guest_campaign_recipients (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            campaign_id   INTEGER NOT NULL,
+            restaurant_id INTEGER NOT NULL,
+            contact_id    INTEGER,
+            phone         TEXT NOT NULL,
+            visited_on    TEXT
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_gcr_campaign ON guest_campaign_recipients(campaign_id)",
+        "ALTER TABLE guest_campaigns ADD COLUMN visits_matched INTEGER",
+        "ALTER TABLE guest_campaigns ADD COLUMN attribution_through TEXT",
     ):
         try:
             conn.execute(col_sql)
@@ -655,15 +669,24 @@ def send_campaign(restaurant_id, message, db_path=DB_PATH, segment="all", link_t
         except Exception:
             failed += 1
 
+    reached_phone = {c["id"]: c.get("phone") for c in eligible}
     conn = get_conn(db_path)
     try:
-        conn.execute(
+        cur = conn.execute(
             "INSERT INTO guest_campaigns "
             "(restaurant_id, message, sent_count, failed_count, segment, segment_label, link_token) "
             "VALUES (?,?,?,?,?,?,?)",
             (restaurant_id, message.strip(), sent, failed, segment,
              SEGMENTS.get(segment, SEGMENTS["all"])["label"], link_token),
         )
+        campaign_id = cur.lastrowid
+        try:
+            for cid in reached_ids:
+                if reached_phone.get(cid):
+                    conn.execute("INSERT INTO guest_campaign_recipients (campaign_id, restaurant_id, contact_id, phone) "
+                                 "VALUES (?,?,?,?)", (campaign_id, restaurant_id, cid, _normalize_phone(reached_phone[cid])))
+        except Exception:
+            pass          # a table from before this migration ran: the send still stands
         # Stamps the frequency cap. Only guests actually reached are stamped,
         # so a failed send doesn't lock someone out of the next campaign.
         for cid in reached_ids:
@@ -694,7 +717,7 @@ def campaign_history(restaurant_id, limit=20, db_path=DB_PATH) -> list:
     try:
         rows = conn.execute(
             "SELECT c.id, c.message, c.sent_count, c.failed_count, c.segment, "
-            "       c.segment_label, c.link_token, c.created_at, "
+            "       c.segment_label, c.link_token, c.created_at, c.visits_matched, c.attribution_through, "
             "       COALESCE(l.clicks, 0) AS clicks "
             "FROM guest_campaigns c "
             "LEFT JOIN marketing_links l ON l.token = c.link_token "
@@ -704,6 +727,91 @@ def campaign_history(restaurant_id, limit=20, db_path=DB_PATH) -> list:
     finally:
         conn.close()
     return [dict(r) for r in rows]
+
+
+ATTRIBUTION_WINDOW_DAYS = 14
+
+
+def run_campaign_attribution(db_path=DB_PATH, today=None):
+    """Daily: for every campaign sent in the last ATTRIBUTION_WINDOW_DAYS
+    at a Toast-connected restaurant, count recipients Toast identified on
+    a check on a later business day. Written to guest_campaigns as
+    visits_matched, with attribution_through saying how far the window
+    has been read. A visit is counted once per recipient per campaign.
+
+    Partial by nature — Toast only has a customer on a check when one was
+    captured — and said so wherever the number is shown. Each business
+    date is fetched once per restaurant per run, whatever the number of
+    campaigns, and only dates not yet read for that campaign."""
+    from datetime import date as _date, timedelta as _td
+    import toast as _toast
+    from models import get_restaurant
+    today = today or _date.today()
+    yesterday = today - _td(days=1)
+    floor = (today - _td(days=ATTRIBUTION_WINDOW_DAYS + 1)).isoformat()
+    conn = get_conn(db_path)
+    try:
+        camps = conn.execute(
+            "SELECT id, restaurant_id, substr(created_at,1,10) AS sent_on, attribution_through "
+            "FROM guest_campaigns WHERE substr(created_at,1,10) >= ? AND sent_count > 0 "
+            "ORDER BY restaurant_id, id", (floor,)).fetchall()
+    finally:
+        conn.close()
+    checked = matched = 0
+    phones_by_day = {}          # (rid, iso date) -> set of normalized phones
+    for c in camps:
+        rid = c["restaurant_id"]
+        r = get_restaurant(rid)
+        if not r or not getattr(r, "toast_restaurant_guid", None):
+            continue
+        sent_on = _date.fromisoformat(c["sent_on"])
+        start = _date.fromisoformat(c["attribution_through"]) + _td(days=1) if c["attribution_through"] else sent_on
+        end = min(yesterday, sent_on + _td(days=ATTRIBUTION_WINDOW_DAYS))
+        if start > end:
+            continue
+        conn = get_conn(db_path)
+        try:
+            recips = conn.execute("SELECT id, phone FROM guest_campaign_recipients WHERE campaign_id=? AND visited_on IS NULL",
+                                  (c["id"],)).fetchall()
+        finally:
+            conn.close()
+        if not recips:
+            continue
+        by_phone = {rr["phone"]: rr["id"] for rr in recips}
+        newly = []
+        day = start
+        ok = True
+        while day <= end:
+            key = (rid, day.isoformat())
+            if key not in phones_by_day:
+                try:
+                    custs = _toast.fetch_order_customers(rid, day)
+                    phones_by_day[key] = {_normalize_phone(x.get("phone")) for x in custs if x.get("phone")}
+                except Exception as e:
+                    import ops
+                    ops.capture(e, job="campaign_attribution", context=f"restaurant_id={rid} date={day}")
+                    ok = False
+                    break
+            for ph in phones_by_day[key] & set(by_phone):
+                if by_phone[ph] not in [n[0] for n in newly]:
+                    newly.append((by_phone[ph], day.isoformat()))
+            day += _td(days=1)
+        through = (day - _td(days=1)) if ok else (day - _td(days=1))
+        conn = get_conn(db_path)
+        try:
+            for rec_id, on in newly:
+                conn.execute("UPDATE guest_campaign_recipients SET visited_on=? WHERE id=? AND visited_on IS NULL", (on, rec_id))
+            total = conn.execute("SELECT COUNT(*) FROM guest_campaign_recipients WHERE campaign_id=? AND visited_on IS NOT NULL",
+                                 (c["id"],)).fetchone()[0]
+            if through >= start:
+                conn.execute("UPDATE guest_campaigns SET visits_matched=?, attribution_through=? WHERE id=?",
+                             (int(total), through.isoformat(), c["id"]))
+            conn.commit()
+        finally:
+            conn.close()
+        checked += 1
+        matched += len(newly)
+    return {"campaigns_checked": checked, "visits_matched": matched}
 
 
 def consent_ledger(restaurant_id, db_path=DB_PATH) -> dict:

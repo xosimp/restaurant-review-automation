@@ -151,6 +151,30 @@ def get_week_start_day(restaurant_id: int) -> int:
         return 0
 
 
+def _covers_guidance(analysis: dict) -> str:
+    """What the model may say about a lean day, which depends on whether
+    covers are on file. Without them the refusal stands word for word;
+    with them, sales per cover against the period's average is the one
+    comparison allowed — still never an assertion of lost revenue."""
+    cov = (analysis or {}).get("covers") or {}
+    lean = (analysis or {}).get("understaffed_days") or []
+    with_covers = [d for d in lean[:2] if d.get("sales_per_cover") is not None]
+    if not cov.get("avg_sales_per_cover") or not with_covers:
+        return (" — these are days where labor ran under the target while sales were strong. That is usually a good "
+                "outcome. It is SOMETIMES a sign of running short, but this system has no service-time, wait-time or "
+                "cover-count data, so you cannot tell which it was. If you mention one of these days, describe only "
+                "what the numbers show and ask whether service held up. Never assert that revenue was lost, that "
+                "service was slow, or that covers were missed, and never recommend adding staff to a day on this "
+                "evidence alone.")
+    return (f" — these are days where labor ran under the target while sales were strong. Cover counts ARE on file "
+            f"for {cov['days_with_covers']} days of this period; the period's sales per cover is "
+            f"${cov['avg_sales_per_cover']:,.2f}. For a lean day with a covers figure, compare its sales_per_cover to "
+            f"that average (vs_avg_pct): near or above it, the day was simply efficient — say so. Well below it "
+            f"(more than 15% under) is consistent with a floor that could not serve what walked in, and you may say "
+            f"that is worth checking with whoever ran the shift. That is the whole inference: never assert that revenue "
+            f"was lost or that service was slow, and never recommend adding staff on this evidence alone.")
+
+
 def analyse_shifts_for_restaurant(restaurant_id: int) -> dict:
     """Load shifts and analyse with client-specific hourly rate and target."""
     from models import get_client_data
@@ -162,13 +186,27 @@ def analyse_shifts_for_restaurant(restaurant_id: int) -> dict:
     from models import get_role_rates, compute_blended_rate
     role_rates = get_role_rates(restaurant_id)
     blended = compute_blended_rate(shifts, role_rates, fallback=rate)
+    try:
+        covers_by_date = _covers_for_shifts(restaurant_id, shifts)
+    except Exception:
+        covers_by_date = {}
     result = analyse_shifts(shifts, hourly_rate=blended, labor_target=target,
                             role_rates=role_rates,
-                            week_start_day=get_week_start_day(restaurant_id))
+                            week_start_day=get_week_start_day(restaurant_id),
+                            covers_by_date=covers_by_date)
     result['is_live'] = is_live
     result['blended_rate'] = blended
     result['role_rates'] = {k: v for k, v in role_rates.items() if k != "_default"}
     return result
+
+
+def _covers_for_shifts(restaurant_id, shifts):
+    """Cover counts over exactly the dates the shifts cover."""
+    import covers as _covers
+    dates = sorted({str(x.get("date") or "")[:10] for x in shifts if x.get("date")})
+    if not dates:
+        return {}
+    return _covers.by_date(restaurant_id, dates[0], dates[-1])
 
 
 def _shift_rate(shift: dict, role_rates: dict, fallback: float) -> float:
@@ -244,10 +282,16 @@ def analyse_shifts(shifts: list[dict],
                    hourly_rate: float = DEFAULT_HOURLY_RATE,
                    labor_target: float = 30.0,
                    role_rates: dict = None,
-                   week_start_day: int = 0) -> dict:
-    """Compute labor metrics from raw shift data."""
+                   week_start_day: int = 0,
+                   covers_by_date: dict = None) -> dict:
+    """Compute labor metrics from raw shift data.
+
+    covers_by_date ({iso date: covers}, covers.py) is the one figure that
+    separates a lean day from a short-staffed one; when it is absent the
+    analysis says so and the prompt keeps its refusal."""
     if role_rates is None:
         role_rates = {"_default": hourly_rate}
+    covers_by_date = covers_by_date or {}
     LABOR_TARGET = labor_target
     OVERSTAFF_THRESHOLD = labor_target
     by_day = defaultdict(lambda: {"scheduled": 0, "actual": 0, "sales": 0, "shifts": [], "labor_cost": 0})
@@ -402,8 +446,25 @@ def analyse_shifts(shifts: list[dict],
             except Exception:
                 fmt_date = date
             real_day_u = datetime.strptime(date, "%Y-%m-%d").strftime("%A") if date else d["shifts"][0]["day"]
-            understaffed.append({"date": fmt_date, "day": real_day_u,
-                                  "labor_pct": round(labor_pct, 1), "sales": d["sales"]})
+            _u = {"date": fmt_date, "day": real_day_u,
+                  "labor_pct": round(labor_pct, 1), "sales": d["sales"]}
+            if covers_by_date.get(date):
+                _u["covers"] = int(covers_by_date[date])
+                _u["sales_per_cover"] = round(d["sales"] / covers_by_date[date], 2)
+            understaffed.append(_u)
+
+    # Sales per cover over the days that have a count — the yardstick a
+    # lean day is read against. None, never 0, when no day has one.
+    _cov_days = [(d["sales"], covers_by_date[k]) for k, d in by_day.items()
+                 if k and covers_by_date.get(k) and d["sales"]]
+    covers_summary = {
+        "days_with_covers": len(_cov_days),
+        "avg_sales_per_cover": (round(sum(sl for sl, _ in _cov_days) / sum(c for _, c in _cov_days), 2)
+                                if _cov_days else None),
+    }
+    for _u in understaffed:
+        if _u.get("sales_per_cover") is not None and covers_summary["avg_sales_per_cover"]:
+            _u["vs_avg_pct"] = round((_u["sales_per_cover"] / covers_summary["avg_sales_per_cover"] - 1) * 100, 1)
 
     # Overtime risk — bucketed by the restaurant's OWN payroll week (see
     # get_week_start_day), not a hardcoded Monday.
@@ -566,6 +627,7 @@ def analyse_shifts(shifts: list[dict],
         "overall_labor_pct": overall_pct,
         "overstaffed_days": sorted(overstaffed, key=lambda x: x["labor_pct"], reverse=True),
         "understaffed_days": understaffed,
+        "covers": covers_summary,
         "overtime_risk": overtime_flags,
         "dow_summary": dow_summary,
         "potential_savings": potential_savings,
@@ -971,7 +1033,7 @@ Data:
 - Overall labor cost: ${analysis['total_labor_cost']:,.0f} on ${analysis['total_sales']:,.0f} in sales ({analysis['overall_labor_pct']}% labor ratio)
 - This restaurant's labor target: {analysis.get('labor_target', 30)}% (industry full-service range: 33–36%, National Restaurant Association 2024)
 - Overstaffed days: {json.dumps(analysis['overstaffed_days'][:3])}
-- Days that ran BELOW target on a strong sales day: {json.dumps(analysis['understaffed_days'][:2])} — these are days where labor ran under the target while sales were strong. That is usually a good outcome. It is SOMETIMES a sign of running short, but this system has no service-time, wait-time or cover-count data, so you cannot tell which it was. If you mention one of these days, describe only what the numbers show and ask whether service held up. Never assert that revenue was lost, that service was slow, or that covers were missed, and never recommend adding staff to a day on this evidence alone.
+- Days that ran BELOW target on a strong sales day: {json.dumps(analysis['understaffed_days'][:2])}{_covers_guidance(analysis)}
 - Overtime risk: {json.dumps(analysis['overtime_risk'])}{role_context}{trend_context}
 - Labor % by day of week: {json.dumps(analysis['dow_summary'])}{data_caveats}
 - Estimated monthly savings with optimized scheduling: {savings_line}{constraints_context}
@@ -1621,10 +1683,23 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         except Exception:
             pass
 
+    # Approved time off for the week being drafted (time_off.py) joins the
+    # availability block as dated, named lines — the same hard constraint.
+    _time_off_lines = []
+    if restaurant_id:
+        try:
+            import time_off as _to
+            for _emp, _days in sorted(_to.approved_in_window(restaurant_id, week_dates[0], week_dates[-1]).items()):
+                _named = ", ".join(f"{_d} ({datetime.strptime(_d, '%Y-%m-%d').strftime('%A')})" for _d in _days)
+                _time_off_lines.append(f"  {_emp}: APPROVED TIME OFF on {_named} — do not schedule")
+        except Exception:
+            _time_off_lines = []
+
     # Employee availability block
     import json as _jav
     _avail_block = ""
-    if staff_availability:
+    if staff_availability or _time_off_lines:
+        staff_availability = staff_availability or []
         _av_lines = []
         for av in staff_availability:
             _name = av.get("employee_name","")
@@ -1640,6 +1715,7 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                 parts.append(_anote)
             if parts:
                 _av_lines.append(f"  {_name}: {' | '.join(parts)}")
+        _av_lines.extend(_time_off_lines)
         if _av_lines:
             _avail_block = ("\n\nEMPLOYEE AVAILABILITY — do not schedule anyone on days they are unavailable. "
                             "This is a hard constraint, same priority as STAFF CONSTRAINTS:\n"

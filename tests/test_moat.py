@@ -5,6 +5,7 @@ was measured after, and which automations that record has earned. Every
 test pins that a figure comes from a row someone wrote — never generated,
 never re-proposed once declined, never scored against itself.
 """
+import json
 from datetime import date, datetime, timedelta, timezone
 
 import pytest
@@ -13,11 +14,19 @@ import models
 from models import Restaurant, create_restaurant, get_conn, update_restaurant
 
 
+# Imported here, before any fixture patches models.get_conn: a module first
+# imported INSIDE a patched test binds the patched lambda (and its tmp DB)
+# for the rest of the session — CLAUDE.md's bound-import hazard, seen live
+# when recipes leaked one test's draft into the next file's.
+import covers, decisions, food_cost_intelligence as fci, guest_marketing, home_brief, issues, labor, monthly_review  # noqa: E402
+import ordering, outcomes, recipes, strategy_jobs, strategy_routes, time_off  # noqa: E402
+
+
 @pytest.fixture(autouse=True)
 def _redirect(monkeypatch, db_path):
     real = models.get_conn
-    import decisions, outcomes, issues, home_brief, monthly_review, food_cost_intelligence as fci, ordering
-    for mod in (models, decisions, outcomes, issues, home_brief, monthly_review, fci, ordering):
+    for mod in (models, decisions, outcomes, issues, home_brief, monthly_review, fci, ordering, recipes, time_off,
+                covers, strategy_jobs, labor):
         monkeypatch.setattr(mod, "get_conn", lambda *a, **k: real(db_path), raising=False)
         monkeypatch.setattr(mod, "DB_PATH", db_path, raising=False)
     import auth
@@ -248,3 +257,161 @@ def test_the_new_routes_exist_on_web_and_phone(db_path):
     for p in ("/account/memory/add", "/account/trust", "/decisions"):
         assert p in paths, p
     assert "memory_added" in models.ACCOUNT_EVENT_TYPES
+
+
+# ── #5 time off: asked by the person, decided by a manager, honoured by the draft ──
+
+def test_a_request_is_validated_and_decided_once(db_path):
+    import time_off
+    rid = _rid(db_path, module_labor=1)
+    today = date(2026, 9, 21)
+    row, err = time_off.request_time_off(rid, "Ana", "2026-10-03", "2026-10-05", reason="wedding", db_path=db_path, today=today)
+    assert err is None and row["status"] == "pending" and row["reason"] == "wedding"
+    assert time_off.request_time_off(rid, "Ana", "2026-10-04", "2026-10-04", db_path=db_path, today=today)[1] == \
+        "You already have a request over those dates."
+    assert time_off.request_time_off(rid, "Ana", "2026-09-01", "2026-09-02", db_path=db_path, today=today)[1] == "That date has passed."
+    assert time_off.request_time_off(rid, "Ana", "2026-11-10", "2026-11-01", db_path=db_path, today=today)[1] == "The end date is before the start."
+    assert time_off.request_time_off(rid, "", "2026-11-10", "2026-11-11", db_path=db_path, today=today)[1] == "No employee name on this session."
+    assert time_off.pending(rid, db_path=db_path)[0]["id"] == row["id"]
+    # nothing is a constraint until approved
+    assert time_off.approved_in_window(rid, "2026-10-01", "2026-10-07", db_path=db_path) == {}
+    dec = time_off.decide(rid, row["id"], True, decided_by=1, note="enjoy", db_path=db_path)
+    assert dec["status"] == "approved" and dec["decision_note"] == "enjoy"
+    assert time_off.decide(rid, row["id"], False, db_path=db_path) is None          # final
+    assert time_off.decide(rid + 1, row["id"], False, db_path=db_path) is None      # not theirs
+    # the draft's week reads only the overlapping days, by name
+    assert time_off.approved_in_window(rid, "2026-10-05", "2026-10-11", db_path=db_path) == {"Ana": ["2026-10-05"]}
+    assert time_off.mine(rid, "ana", db_path=db_path, today=today)[0]["status"] == "approved"
+
+
+def test_time_off_routes_exist_for_managers_and_staff(db_path):
+    import strategy_routes as sr, staff_routes
+    paths = {p for p, _m, _f, _e in sr._ROUTES}
+    assert "/labor/time-off" in paths and "/labor/time-off/<int:request_id>/decide" in paths
+    src = open(staff_routes.__file__).read()
+    assert '@staff_bp.route("/api/time-off", methods=["POST"])' in src and '@staff_bp.route("/api/time-off")' in src
+
+
+# ── #4 covers: the figure that tells a lean day from a short one ──────────────
+
+def test_covers_are_saved_and_read_by_the_analysis(db_path):
+    import covers, labor
+    rid = _rid(db_path, module_labor=1)
+    out = covers.save(rid, covers.parse_csv("date,covers\n2026-09-14,180\n2026-09-15,60\nnope,x"), db_path=db_path)
+    assert out["written"] == 2 and out["skipped"] == 1
+    assert covers.by_date(rid, "2026-09-14", "2026-09-15", db_path=db_path) == {"2026-09-14": 180, "2026-09-15": 60}
+    shifts = []
+    for day, sales in (("2026-09-14", 9000), ("2026-09-15", 3000), ("2026-09-16", 9000)):
+        shifts.append({"employee": "A", "role": "Server", "date": day, "day": "Mon", "scheduled_hours": 8,
+                       "actual_hours": 8, "sales": sales, "shift_start": "10:00", "shift_end": "18:00"})
+    plain = labor.analyse_shifts(shifts, hourly_rate=20, labor_target=30)
+    assert plain["covers"] == {"days_with_covers": 0, "avg_sales_per_cover": None}
+    with_c = labor.analyse_shifts(shifts, hourly_rate=20, labor_target=30, covers_by_date={"2026-09-14": 180, "2026-09-15": 60})
+    assert with_c["covers"]["days_with_covers"] == 2 and with_c["covers"]["avg_sales_per_cover"] == 50.0
+    lean = {d["date"]: d for d in with_c["understaffed_days"]}
+    assert lean["9/14/26"]["covers"] == 180 and lean["9/14/26"]["sales_per_cover"] == 50.0 and lean["9/14/26"]["vs_avg_pct"] == 0.0
+    assert "covers" not in lean["9/16/26"]
+    # the prompt's refusal stands word for word without covers, and changes only with them
+    assert "this system has no service-time, wait-time or cover-count data" in labor._covers_guidance(plain)
+    g = labor._covers_guidance(with_c)
+    assert "Cover counts ARE on file for 2 days" in g and "never assert that revenue was lost" in g
+
+
+# ── #9 a comp/void pattern names a person only from the owner's own mapping ──
+
+def test_the_approver_is_named_only_from_a_pos_id_the_owner_entered(db_path):
+    import strategy_jobs
+    rid = _rid(db_path, module_inventory=1)
+    assert strategy_jobs._approver_name(rid, "8842", db_path) is None
+    models.set_staff_contact(rid, "Jordan Lee", "j@x.com", "", db_path=db_path, pos_id="8842")
+    assert strategy_jobs._approver_name(rid, "8842", db_path) == "Jordan Lee"
+    assert strategy_jobs._approver_name(rid, "unrecorded", db_path) is None
+    # a later save without a pos_id keeps it
+    models.set_staff_contact(rid, "Jordan Lee", "jl@x.com", "", db_path=db_path)
+    assert [c["pos_id"] for c in models.get_staff_contacts(rid, db_path=db_path)] == ["8842"]
+
+
+# ── #3 a photographed recipe card becomes a draft, never a written recipe ────
+
+def test_a_recipe_photo_becomes_a_pending_draft_with_unmatched_lines_named(db_path, monkeypatch):
+    import recipes, inventory_ledger
+    rid = _rid(db_path, module_inventory=1)
+    conn = get_conn(db_path)
+    conn.execute("INSERT INTO ingredients (restaurant_id, name, unit, is_active) VALUES (?,?,?,1)", (rid, "Mozzarella", "lb"))
+    conn.execute("INSERT INTO ingredients (restaurant_id, name, unit, is_active) VALUES (?,?,?,1)", (rid, "Flour", "lb"))
+    conn.execute("INSERT INTO menu_items (restaurant_id, name, is_active) VALUES (?,?,1)", (rid, "Margherita Pizza"))
+    conn.commit(); conn.close()
+    monkeypatch.setattr(inventory_ledger, "list_ingredients", lambda r: [
+        {"id": 1, "name": "Mozzarella", "unit": "lb"}, {"id": 2, "name": "Flour", "unit": "lb"}])
+    monkeypatch.setattr(inventory_ledger, "list_menu_items_with_recipes", lambda r: [{"id": 7, "name": "Margherita Pizza"}])
+
+    class _Blk:
+        type = "text"
+        text = json.dumps({"menu_item_name": "margherita", "note": None, "ingredients": [
+            {"name": "Mozzarella", "qty": 0.25, "unit": "lb", "confidence": "high"},
+            {"name": "San Marzano tomatoes", "qty": 0.5, "unit": "cup", "confidence": "medium"}]})
+
+    class _Msg:
+        stop_reason = "end_turn"
+        content = [_Blk()]
+
+    class _Client:
+        pass
+    import ai_utils
+    monkeypatch.setattr(ai_utils, "create_with_retry", lambda client, **kw: _Msg())
+    draft = recipes.extract_from_image(rid, b"\xff\xd8fakejpeg", "image/jpeg", client=_Client(), db_path=db_path)
+    assert draft["menu_item_id"] == 7 and draft["menu_item_matched"] is True
+    assert draft["lines"] == [{"ingredient_id": 1, "name": "Mozzarella", "qty": 0.25, "unit": "lb", "confidence": "high"}]
+    assert draft["unmatched"][0]["name"] == "San Marzano tomatoes"
+    assert "not on your list: San Marzano tomatoes" in draft["note"]
+    pending = recipes.list_drafts(rid, db_path=db_path)
+    assert len(pending) == 1 and pending[0]["id"] == draft["id"]
+    # nothing was written to the menu item
+    conn = get_conn(db_path)
+    assert conn.execute("SELECT COUNT(*) FROM recipe_drafts WHERE status='pending' AND restaurant_id=?", (rid,)).fetchone()[0] == 1
+    conn.close()
+    with pytest.raises(recipes.RecipePhotoError):
+        recipes.extract_from_image(rid, b"%PDF-1.4 x", "application/pdf", client=_Client(), db_path=db_path)
+
+
+# ── #21 a campaign's receipt is the guests Toast saw afterwards ──────────────
+
+def test_recipients_are_kept_and_visits_matched_once_within_the_window(db_path, monkeypatch):
+    import guest_marketing as gm, toast
+    for mod in (gm,):
+        monkeypatch.setattr(mod, "get_conn", lambda *a, **k: models.get_conn(db_path))
+        monkeypatch.setattr(mod, "DB_PATH", db_path)
+    rid = _rid(db_path, module_marketing=1)
+    update_restaurant(rid, {"toast_restaurant_guid": "guid-1"}, db_path=db_path)
+    gm.init_guest_marketing(db_path=db_path)
+    a = gm.add_guest_contact_manual(rid, "+13125550100", name="Ana", db_path=db_path)
+    b = gm.add_guest_contact_manual(rid, "+13125550101", name="Ben", db_path=db_path)
+    conn = get_conn(db_path)
+    conn.execute("UPDATE guest_contacts SET consent=1, consent_at='2026-09-01T10:00:00' WHERE restaurant_id=?", (rid,))
+    conn.commit(); conn.close()
+    monkeypatch.setattr(gm, "guest_sms_allowed_now", lambda r: True)
+    monkeypatch.setattr(gm, "send_sms", lambda phone, msg: True)
+    out = gm.send_campaign(rid, "Patio is open", db_path=db_path)
+    assert out["ok"] and out["sent"] == 2
+    conn = get_conn(db_path)
+    camp_id = conn.execute("SELECT id FROM guest_campaigns WHERE restaurant_id=?", (rid,)).fetchone()["id"]
+    conn.execute("UPDATE guest_campaigns SET created_at='2026-09-15 12:00:00' WHERE id=?", (camp_id,))
+    conn.commit()
+    assert conn.execute("SELECT COUNT(*) FROM guest_campaign_recipients WHERE campaign_id=?", (camp_id,)).fetchone()[0] == 2
+    conn.close()
+    fetched = []
+
+    def fake_customers(r, day):
+        fetched.append(day.isoformat())
+        return [{"phone": "(312) 555-0100", "name": "Ana"}] if day.isoformat() in ("2026-09-16", "2026-09-18") else []
+    monkeypatch.setattr(toast, "fetch_order_customers", fake_customers)
+    res = gm.run_campaign_attribution(db_path=db_path, today=date(2026, 9, 19))
+    assert res == {"campaigns_checked": 1, "visits_matched": 1}
+    assert fetched == ["2026-09-15", "2026-09-16", "2026-09-17", "2026-09-18"]
+    hist = gm.campaign_history(rid, db_path=db_path)[0]
+    assert hist["visits_matched"] == 1 and hist["attribution_through"] == "2026-09-18"
+    # the next day reads only the day not yet read, and Ana is not counted twice
+    fetched.clear()
+    res = gm.run_campaign_attribution(db_path=db_path, today=date(2026, 9, 20))
+    assert fetched == ["2026-09-19"] and res["visits_matched"] == 0
+    assert gm.campaign_history(rid, db_path=db_path)[0]["visits_matched"] == 1

@@ -701,6 +701,87 @@ def _do_decisions(u):
     return {"ok": True, "decisions": rows}, 200
 
 
+def _sees_labor(u):
+    from permissions import has_permission, LABOR_VIEW
+    return bool(u.get("is_admin")) or has_permission(u, LABOR_VIEW)
+
+
+def _do_time_off_list(u):
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can review time off.")
+    import time_off
+    rows = time_off.recent(_rid(u))
+    return {"ok": True, "requests": rows, "pending": sum(1 for r in rows if r["status"] == "pending")}, 200
+
+
+def _do_time_off_decide(u, request_id):
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can decide time off.")
+    import time_off
+    from client_api import log_account_event
+    b = _body()
+    decision = (b.get("decision") or "").strip().lower()
+    if decision not in ("approve", "deny"):
+        return {"ok": False, "error": "decision must be approve or deny."}, 400
+    row = time_off.decide(_rid(u), request_id, decision == "approve", decided_by=u.get("id"), note=b.get("note"))
+    if not row:
+        return {"ok": False, "error": "That request was already answered, or is not yours."}, 404
+    log_account_event(_rid(u), "time_off_decided", current_user=u,
+                      detail=f"{row['employee_name']} {row['start_date']}–{row['end_date']}: {row['status']}")
+    return {"ok": True, "request": row}, 200
+
+
+def _do_covers_get(u):
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can see covers.")
+    import covers
+    return {"ok": True, "days": covers.recent(_rid(u))}, 200
+
+
+def _do_covers_save(u):
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can enter covers.")
+    import covers
+    from client_api import log_account_event
+    b = _body()
+    rows = b.get("rows")
+    if not isinstance(rows, list):
+        rows = covers.parse_csv(b.get("csv") or "")
+    if not rows:
+        return {"ok": False, "error": "Send rows of date and covers, or a CSV with those two columns."}, 400
+    out = covers.save(_rid(u), rows, source="manual")
+    if out["written"]:
+        log_account_event(_rid(u), "covers_imported", current_user=u, detail=f"{out['written']} days")
+    return {"ok": True, **out}, 200
+
+
+def _do_recipe_scan(u):
+    if not _sees_food(u):
+        return _forbidden("Only someone who can see food cost can add recipes.")
+    import recipes
+    f = request.files.get("file")
+    if not f:
+        return {"ok": False, "error": "Attach a photo of the recipe card."}, 400
+    if _limited(u, "recipe_scan", 10, 600):
+        return _SLOW_DOWN
+    data = f.read()
+    media_type = (f.mimetype or "").lower()
+    if media_type == "image/jpg":
+        media_type = "image/jpeg"
+    try:
+        draft = recipes.extract_from_image(_rid(u), data, media_type, user_id=u.get("id"))
+    except (recipes.RecipePhotoError, ValueError) as e:
+        return {"ok": False, "error": str(e)}, 400
+    except Exception as e:
+        from ai_utils import AIBudgetExceeded
+        if isinstance(e, AIBudgetExceeded):
+            return {"ok": False, "error": str(e)}, 429
+        import ops
+        ops.capture(e, job="recipe_scan", context=f"restaurant_id={_rid(u)}")
+        return {"ok": False, "error": "The card couldn't be read right now. Try again shortly."}, 502
+    return {"ok": True, "draft": draft}, 200
+
+
 def _do_memory_list(u):
     """What Ask Cavnar remembers about this restaurant, with who added it —
     so the owner can read and correct the memory that shapes every answer."""
@@ -1127,6 +1208,11 @@ _ROUTES = [
     ("/food-cost/auto-order", ["POST"], _do_auto_order_set, "auto_order_set"),
     ("/account/memory", ["GET"], _do_memory_list, "memory_list"),
     ("/account/memory/add", ["POST"], _do_memory_add, "memory_add"),
+    ("/labor/time-off", ["GET"], _do_time_off_list, "time_off_list"),
+    ("/labor/time-off/<int:request_id>/decide", ["POST"], _do_time_off_decide, "time_off_decide"),
+    ("/labor/covers", ["GET"], _do_covers_get, "covers_get"),
+    ("/labor/covers", ["POST"], _do_covers_save, "covers_save"),
+    ("/food-cost/recipes/scan", ["POST"], _do_recipe_scan, "recipe_scan"),
     ("/account/trust", ["GET"], _do_trust, "trust"),
     ("/decisions", ["GET"], _do_decisions, "decisions"),
     ("/account/memory/forget", ["POST"], _do_memory_forget, "memory_forget"),

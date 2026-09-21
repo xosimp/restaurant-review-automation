@@ -7395,6 +7395,7 @@ def get_staff_contacts_api(current_user):
         "employee_name": n,
         "email": (saved.get(n.lower()) or {}).get("email", ""),
         "phone": (saved.get(n.lower()) or {}).get("phone", ""),
+        "pos_id": (saved.get(n.lower()) or {}).get("pos_id") or "",
     } for n in names]
     return jsonify(ok=True, contacts=contacts,
                    schedule_id=(row["id"] if row else None),
@@ -7414,7 +7415,8 @@ def set_staff_contact_api(current_user):
         return jsonify(ok=False, error="Which member of staff?"), 400
     if email and "@" not in email:
         return jsonify(ok=False, error="That doesn't look like an email address"), 400
-    if not set_staff_contact(current_user["restaurant_id"], name, email, (data.get("phone") or "").strip()):
+    if not set_staff_contact(current_user["restaurant_id"], name, email, (data.get("phone") or "").strip(),
+                             pos_id=(str(data.get("pos_id") or "").strip() or None)):
         return jsonify(ok=False, error="Couldn't save that contact."), 400
     return jsonify(ok=True)
 

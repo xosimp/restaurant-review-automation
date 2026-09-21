@@ -359,7 +359,8 @@ def _read_shifts(restaurant_id, employee=None, limit=20):
     if not shifts:
         return {"has_data": False, "employees": [], "shifts": []}
     try:
-        analysis = analyse_shifts(shifts)
+        from labor import _covers_for_shifts
+        analysis = analyse_shifts(shifts, covers_by_date=_covers_for_shifts(restaurant_id, shifts))
     except Exception:
         analysis = {}
     roster = analysis.get("employee_hours") or {}

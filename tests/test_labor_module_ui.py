@@ -206,11 +206,13 @@ def test_labor_body_text_below_the_consultant_box_was_actually_enlarged():
     css = _src()
 
     def size_of(selector):
-        m = re.search(re.escape(selector) + r"\{([^}]*)\}", css)
-        assert m, "missing rule: " + selector
-        sz = re.search(r"font-size:([\d.]+)px", m.group(1))
-        assert sz, "no font-size on: " + selector
-        return float(sz.group(1))
+        # A selector may carry several rules (the brand layer adds a surface
+        # rule to .lb2-ai with no type in it); the size is whichever states one.
+        bodies = re.findall(re.escape(selector) + r"\{([^}]*)\}", css)
+        assert bodies, "missing rule: " + selector
+        sizes = [float(m.group(1)) for b in bodies for m in [re.search(r"font-size:([\d.]+)px", b)] if m]
+        assert sizes, "no font-size on: " + selector
+        return sizes[-1]
 
     assert size_of(".lb2-ai") >= 16
     assert size_of("#panel-labor #labor-insight") >= 16

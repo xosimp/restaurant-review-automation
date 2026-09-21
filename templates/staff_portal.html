@@ -77,6 +77,8 @@
   .pinmsg{font-size:13.5px;margin-top:10px}
   footer{margin-top:34px;text-align:center}
 .av-days{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 10px}
+.to-row{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid var(--line);font-size:14px}
+.to-st{font-size:12px;color:var(--ink3);white-space:nowrap}.to-approved{color:var(--green)}.to-denied{color:var(--ink3)}
 .av-row{display:flex;align-items:center;gap:10px;margin-top:8px}
 #avail-notes{width:100%;padding:9px 12px;border:1px solid var(--paper3);border-radius:8px;font:inherit;color:var(--ink);background:var(--paper)}
 </style>
@@ -97,6 +99,7 @@
     <div id="brief-body"></div>
     <div id="sched-body" class="load">Loading your shifts…</div>
   <div id="avail-body" class="card"></div>
+  <div id="timeoff-body" class="card"></div>
   </section>
 
   <section id="tab-tasks">
@@ -235,6 +238,36 @@
     };
   }
   fetch('/staff/api/availability').then(function (r) { return r.json(); }).then(function (d) { if (d && d.ok) avRender(d); }).catch(function () {});
+
+  // ── Time off ────────────────────────────────────────────────────────────
+  // Specific dates, asked for here and answered by a manager. An approved
+  // range is a hard constraint on the next schedule draft. ES5 only.
+  function toRender(d) {
+    var el = $('timeoff-body'); if (!el) return;
+    var reqs = d.requests || [];
+    var html = '<h2>Time off</h2><div class="meta" style="margin-bottom:8px">Ask for specific dates. Your manager answers here, and an approved range is kept off the next schedule.</div>';
+    for (var i = 0; i < reqs.length; i++) { var q = reqs[i];
+      var when = q.start_date === q.end_date ? q.start_date : (q.start_date + ' \u2013 ' + q.end_date);
+      var st = q.status === 'approved' ? 'Approved' : (q.status === 'denied' ? 'Not approved' : 'Waiting for an answer');
+      html += '<div class="to-row"><span>' + esc(when) + (q.reason ? ' <span class="meta">\u00b7 ' + esc(q.reason) + '</span>' : '') + '</span><span class="to-st to-' + esc(q.status) + '">' + st + (q.decision_note ? ' \u00b7 ' + esc(q.decision_note) : '') + '</span></div>';
+    }
+    html += '<div class="av-row" style="flex-wrap:wrap"><input type="date" id="to-start" aria-label="First day off"><input type="date" id="to-end" aria-label="Last day off"><input type="text" id="to-reason" maxlength="200" placeholder="Reason (optional)" style="flex:1;min-width:140px"></div>'
+          + '<div class="av-row"><button type="button" class="cbtn cbtn-primary cbtn-sm" id="to-send">Request</button><span class="meta" id="to-status"></span></div>';
+    el.innerHTML = html;
+    $('to-send').onclick = function () {
+      var st = $('to-status'); var s0 = $('to-start').value, e0 = $('to-end').value || s0;
+      if (!s0) { st.textContent = 'Pick the first day.'; return; }
+      st.textContent = 'Sending\u2026';
+      fetch('/staff/api/time-off', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({start_date: s0, end_date: e0, reason: $('to-reason').value})})
+        .then(function (r) { return r.json(); })
+        .then(function (r) { if (r.ok) { loadTimeOff(); } else { st.textContent = r.error || 'Could not send.'; } })
+        .catch(function () { st.textContent = 'Could not send \u2014 check your connection.'; });
+    };
+  }
+  function loadTimeOff() {
+    fetch('/staff/api/time-off').then(function (r) { return r.json(); }).then(function (d) { if (d && d.ok) toRender(d); }).catch(function () {});
+  }
+  loadTimeOff();
 
   // ── Tasks ───────────────────────────────────────────────────────────────
   function loadTasks(){

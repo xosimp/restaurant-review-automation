@@ -770,6 +770,9 @@ def ensure_columns(db_path: str = DB_PATH):
         ("menu_items", "sell_price", "REAL"),
         ("ingredients", "supplier_name", "TEXT"),
         ("ingredients", "supplier_email", "TEXT"),
+        # The POS's id for a member of staff, so a comp/void concentration
+        # can be named to a person the owner knows (moat audit #9).
+        ("staff_contacts", "pos_id", "TEXT"),
         # Changelog seen state
         ("restaurants", "changelog_seen_at", "TEXT"),
         # Notifications (alert_log) seen state — same stamp-on-read pattern.
@@ -1580,6 +1583,35 @@ def init_db(db_path: str = DB_PATH):
             UNIQUE(restaurant_id, employee_name)
         )""",
         "CREATE INDEX IF NOT EXISTS idx_staff_contacts_restaurant ON staff_contacts(restaurant_id)",
+        # Time off, asked for by the person who needs it (staff portal) and
+        # decided by a manager; approved ranges are hard constraints on the
+        # next schedule draft (moat audit #5).
+        """CREATE TABLE IF NOT EXISTS staff_time_off (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
+            employee_name   TEXT NOT NULL,
+            start_date      TEXT NOT NULL,
+            end_date        TEXT NOT NULL,
+            reason          TEXT,
+            status          TEXT NOT NULL DEFAULT 'pending',
+            decided_by      INTEGER,
+            decided_at      TEXT,
+            decision_note   TEXT,
+            created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_staff_time_off_restaurant ON staff_time_off(restaurant_id, status, start_date)",
+        # Cover counts by day. The labor analysis had no way to tell a lean
+        # day from a short-staffed one; covers are the one figure that
+        # separates them (moat audit #4). Entered or imported, never inferred.
+        """CREATE TABLE IF NOT EXISTS covers_daily (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
+            date            TEXT NOT NULL,
+            covers          INTEGER NOT NULL,
+            source          TEXT NOT NULL DEFAULT 'manual',
+            saved_at        TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(restaurant_id, date)
+        )""",
         # One row per employee per published schedule: the tokenised link
         # they were sent, and whether they have actually opened it. That
         # last part is the difference between "I sent the schedule" and "the
@@ -7478,6 +7510,7 @@ def get_review_request_stats(restaurant_id: int, db_path: str = DB_PATH) -> dict
 ACCOUNT_EVENT_TYPES = (
     # Security events the owner should see without asking (security audit).
     "login_locked", "account_frozen", "memory_forgotten", "memory_added", "staff_pin_reset",
+    "time_off_decided", "covers_imported",
     "auto_publish_changed", "auto_order_changed", "weekly_plan_changed", "send_delay_changed",
     "login", "password_changed", "email_changed", "recovery_email_set", "recovery_email_removed",
     "two_fa_enabled", "two_fa_disabled", "backup_codes_regenerated",
@@ -8373,30 +8406,33 @@ def get_staff_contacts(restaurant_id: int, db_path: str = DB_PATH) -> list:
     conn = get_conn(db_path)
     try:
         rows = conn.execute(
-            "SELECT id, employee_name, email, phone FROM staff_contacts "
+            "SELECT id, employee_name, email, phone, pos_id FROM staff_contacts "
             "WHERE restaurant_id=? ORDER BY employee_name", (restaurant_id,)
         ).fetchall()
     finally:
         conn.close()
     return [{"id": r["id"], "employee_name": r["employee_name"],
-             "email": r["email"] or "", "phone": r["phone"] or ""} for r in rows]
+             "email": r["email"] or "", "phone": r["phone"] or "", "pos_id": r["pos_id"] or ""} for r in rows]
 
 
 def set_staff_contact(restaurant_id: int, employee_name: str, email: str = None,
-                      phone: str = None, db_path: str = DB_PATH) -> bool:
+                      phone: str = None, db_path: str = DB_PATH, pos_id: str = None) -> bool:
     """Upsert by (restaurant, employee name) — the same key
-    staff_availability and staff_notes use."""
+    staff_availability and staff_notes use. pos_id is kept when the caller
+    does not send one, so a route that never knew the field cannot blank it."""
     name = (employee_name or "").strip()
     if not name:
         return False
     conn = get_conn(db_path)
     try:
         conn.execute("""
-            INSERT INTO staff_contacts (restaurant_id, employee_name, email, phone)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO staff_contacts (restaurant_id, employee_name, email, phone, pos_id)
+            VALUES (?, ?, ?, ?, ?)
             ON CONFLICT(restaurant_id, employee_name)
-            DO UPDATE SET email=excluded.email, phone=excluded.phone, updated_at=datetime('now')
-        """, (restaurant_id, name, (email or "").strip() or None, (phone or "").strip() or None))
+            DO UPDATE SET email=excluded.email, phone=excluded.phone,
+                          pos_id=COALESCE(excluded.pos_id, staff_contacts.pos_id), updated_at=datetime('now')
+        """, (restaurant_id, name, (email or "").strip() or None, (phone or "").strip() or None,
+              (pos_id or "").strip() or None))
         conn.commit()
         return True
     finally:

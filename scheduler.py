@@ -2352,6 +2352,13 @@ def scheduler_loop():
                 _ops.run_job("toast_optin_invites",
                              lambda: run_toast_optin_invites(business_date=_d.today() - _td(days=1)))
 
+            # Noon daily — which campaign recipients Toast saw on a later
+            # check (guest_marketing.run_campaign_attribution). Reads
+            # yesterday and earlier; each date fetched once per restaurant.
+            if _due(now, 12) and _ops.claim_period("campaign_attribution", str(today)):
+                from guest_marketing import run_campaign_attribution
+                _ops.run_job("campaign_attribution", run_campaign_attribution)
+
             # Hourly — automated post-visit review request texts. Eligibility
             # is "N hours since last_visit" in each restaurant's local time, so
             # this needs hourly granularity, but no more than that: the loop

@@ -166,14 +166,39 @@ def _loss_flags_to_issues(r, db_path):
             for f in entry.get("flags") or []:
                 if f.get("type") != "concentration":
                     continue
+                who = _approver_name(r.id, f.get("approver"), db_path)
+                headline = f["headline"]
+                if who:
+                    headline = headline.replace(f"One manager (POS id {f.get('approver')})", f"{who} (POS id {f.get('approver')})")
                 issues.create_issue(
-                    r.id, "loss", f["headline"][:120],
-                    detail=f"{f.get('alternative', '')} {sig.get('note', '')}".strip(),
+                    r.id, "loss", headline[:120],
+                    detail=((f"POS approver id {f.get('approver')} is {who} on your staff list. " if who else
+                             f"POS approver id {f.get('approver')} is not on your staff list — add the POS id under "
+                             f"Labor → Staff contacts to name them next time. ")
+                            + f"{f.get('alternative', '')} {sig.get('note', '')}").strip(),
                     severity="normal", source_key=f"loss:{week}:{entry['kind']}:{f.get('approver')}",
                     notify=False, db_path=db_path)
     except Exception as e:
         import ops
         ops.capture(e, job="loss_issues", context=f"restaurant_id={r.id}")
+
+
+def _approver_name(restaurant_id, pos_id, db_path):
+    """The staff contact whose pos_id matches, or None. A name only from
+    a mapping the owner entered — never guessed from a similar string."""
+    if not pos_id or str(pos_id) == "unrecorded":
+        return None
+    try:
+        from models import get_conn
+        conn = get_conn(db_path)
+        try:
+            row = conn.execute("SELECT employee_name FROM staff_contacts WHERE restaurant_id=? AND pos_id=?",
+                               (restaurant_id, str(pos_id))).fetchone()
+        finally:
+            conn.close()
+        return row["employee_name"] if row else None
+    except Exception:
+        return None
 
 
 WEEKLY_PLAN_PROMPT = (
