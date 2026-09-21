@@ -1207,6 +1207,16 @@ def mobile_delete_review(review_id, current_user):
     return jsonify(**payload), status
 
 
+@mobile_bp.route("/reviews/<int:review_id>/retry-post", methods=["POST"])
+@mobile_login_required
+def mobile_retry_post_review(review_id, current_user):
+    """The app's "Retry posting" button. Same body as the web's
+    /api/reviews/<id>/retry-post; this twin was missing, so the button
+    got the "update the app" 404."""
+    payload, status = _capi._do_retry_post(review_id, current_user["restaurant_id"])
+    return jsonify(**payload), status
+
+
 # ── Reviews Analytics ────────────────────────────────────────────────────
 # Mirrors the web Reviews tab's Analytics sub-tab (dashboard.html's
 # rv-panel-analytics): response performance, rate-vs-benchmark (computed

@@ -4508,3 +4508,25 @@ def test_home_carries_readiness_with_the_next_step_for_an_unconnected_module(cli
     assert labor["connected"] is False and labor["next"] and labor["module"] == "labor"
     assert set(ready) == {"modules", "connected", "total", "measurable", "complete"}
     assert not any(k in ("score", "pct", "grade") for k in ready)
+
+
+# ── /mobile/api/reviews/<id>/retry-post ─────────────────────────────────────
+
+def test_retry_post_has_a_mobile_twin(client, db_path):
+    """The app's "Retry posting" button called this path; only the web twin
+    was registered, so the app got the "update the app" 404. Same body as
+    the web route: scoped to the caller's restaurant, and only an approved
+    Google reply that has not posted can be retried."""
+    rid_a = _restaurant(db_path, name="Restaurant A")
+    rid_b = _restaurant(db_path, name="Restaurant B")
+    review_id = _add_review(db_path, rid_a)
+    assert client.post(f"/mobile/api/reviews/{review_id}/retry-post").status_code == 401
+
+    token_b = _login(client, db_path, rid_b, username="bob")
+    resp = client.post(f"/mobile/api/reviews/{review_id}/retry-post", headers=_auth_headers(token_b))
+    assert resp.status_code == 404 and resp.get_json()["error"] == "Review not found"
+
+    token_a = _login(client, db_path, rid_a, username="alice")
+    resp = client.post(f"/mobile/api/reviews/{review_id}/retry-post", headers=_auth_headers(token_a))
+    assert resp.status_code == 400
+    assert resp.get_json()["error"].startswith("Only an approved Google reply")
