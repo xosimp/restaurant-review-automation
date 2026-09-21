@@ -126,10 +126,15 @@ struct HomeView: View {
                                     .belowFold(heroAppeared, delay: 0.1)
                             }
 
-                            attentionSection(summary)
-                                .padding(.horizontal, 20)
-                                .padding(.top, 30)
-                                .belowFold(heroAppeared, delay: 0.3)
+                            // The order is fixed by role, the same as the web
+                            // Home: header strip, value graph, THE DAY, what
+                            // needs a hand, what to do next, then the proof.
+                            // An account with nothing connected leads with
+                            // readiness and the first look instead, because
+                            // nothing else has data yet.
+                            if summary.isFresh {
+                                freshStart(summary)
+                            }
 
                             HomeValueBand(
                                 total: summary.totalValueDelivered,
@@ -146,44 +151,38 @@ struct HomeView: View {
                             .padding(.top, 24)
                             .belowFold(heroAppeared, delay: 0.52)
 
-                            if let receipts = summary.weeklyReceipts, !receipts.isEmpty {
+                            // THE DAY. Monday: the weekly receipts lead it.
+                            // After 8pm: the close-out takes the slot.
+                            if summary.localIsMonday, let receipts = summary.weeklyReceipts, !receipts.isEmpty {
                                 HomeWeeklyReceipts(receipts: receipts)
-                                    .padding(.horizontal, 20)
-                                    .padding(.top, 30)
-                                    .belowFold(heroAppeared, delay: 0.74)
-                            }
-
-                            // The first session. Every other block below
-                            // needs data this account does not have yet,
-                            // so the one true thing the product can say
-                            // has to come from outside it.
-                            if let look = summary.firstLook, !look.isEmpty {
-                                HomeFirstLook(lines: look)
                                     .padding(.horizontal, 20)
                                     .padding(.top, 30)
                                     .belowFold(heroAppeared, delay: 0.6)
                             }
-
-                            // What is connected and what that makes
-                            // measurable, with the one action that would
-                            // light up the rest. Hidden once complete.
-                            if let ready = summary.readiness {
-                                HomeReadinessCard(readiness: ready) { module in
-                                    navigate(to: ModuleRoute(key: module,
-                                                             label: moduleLabel(module, in: summary)))
-                                }
+                            if summary.localIsEvening {
+                                HomeCloseOutCard(viewModel: followThrough)
+                                    .padding(.horizontal, 20)
+                                    .padding(.top, 30)
+                                    .belowFold(heroAppeared, delay: 0.6)
+                            }
+                            HomeDayCard(dateLabel: dayLabel(summary))
                                 .padding(.horizontal, 20)
                                 .padding(.top, 30)
-                                .belowFold(heroAppeared, delay: 0.66)
+                                .belowFold(heroAppeared, delay: 0.62)
+                            if !summary.localIsMonday, let receipts = summary.weeklyReceipts, !receipts.isEmpty {
+                                HomeWeeklyReceipts(receipts: receipts)
+                                    .padding(.horizontal, 20)
+                                    .padding(.top, 30)
+                                    .belowFold(heroAppeared, delay: 0.66)
                             }
 
+                            attentionSection(summary)
+                                .padding(.horizontal, 20)
+                                .padding(.top, 30)
+                                .belowFold(heroAppeared, delay: 0.7)
+
                             // What Cavnar recommends, each with the button
-                            // that starts measuring it. The server has sent
-                            // these on every /mobile/api/home response since
-                            // Home shipped and the app ignored them, so the
-                            // loop that ends in "that one worked, about
-                            // $420/month" could only be STARTED at a desk
-                            // (delight audit).
+                            // that starts measuring it.
                             if let recs = summary.recommendations, !recs.isEmpty {
                                 HomeRecommendations(recommendations: recs,
                                                     viewModel: followThrough) { module in
@@ -192,14 +191,16 @@ struct HomeView: View {
                                 }
                                 .padding(.horizontal, 20)
                                 .padding(.top, 30)
-                                .belowFold(heroAppeared, delay: 0.78)
+                                .belowFold(heroAppeared, delay: 0.76)
                             }
 
-                            // What is still open, the goals, what the
-                            // owner's changes did, and tonight's handoff —
-                            // the accountability loop, which used to exist
-                            // only on the web (workflow audit #5).
-                            HomeFollowThrough(viewModel: followThrough) { module in
+                            if !summary.isFresh {
+                                freshStart(summary)
+                            }
+
+                            // Goals, what the owner's changes did, what
+                            // connects, worth, and (before 8pm) the handoff.
+                            HomeFollowThrough(viewModel: followThrough, showsCloseOut: !summary.localIsEvening) { module in
                                 navigate(to: ModuleRoute(key: module, label: moduleLabel(module, in: summary)))
                             }
                             .padding(.horizontal, 20)
@@ -462,6 +463,35 @@ struct HomeView: View {
     }
 
     // MARK: - Sections
+
+    /// The first look and readiness — above the day for an account with
+    /// nothing connected, after the recommendations otherwise. Readiness
+    /// hides itself once complete.
+    @ViewBuilder
+    private func freshStart(_ summary: HomeSummary) -> some View {
+        if let look = summary.firstLook, !look.isEmpty {
+            HomeFirstLook(lines: look)
+                .padding(.horizontal, 20)
+                .padding(.top, 30)
+                .belowFold(heroAppeared, delay: 0.6)
+        }
+        if let ready = summary.readiness {
+            HomeReadinessCard(readiness: ready) { module in
+                navigate(to: ModuleRoute(key: module, label: moduleLabel(module, in: summary)))
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 30)
+            .belowFold(heroAppeared, delay: 0.66)
+        }
+    }
+
+    /// M/D/YY from the restaurant's own clock — the page's one date format.
+    private func dayLabel(_ summary: HomeSummary) -> String? {
+        guard let s = summary.localNow, s.count >= 10 else { return nil }
+        let p = s.prefix(10).split(separator: "-")
+        guard p.count == 3, let m = Int(p[1]), let d = Int(p[2]) else { return nil }
+        return "\(m)/\(d)/\(p[0].suffix(2))"
+    }
 
     @ViewBuilder
     private func attentionSection(_ summary: HomeSummary) -> some View {

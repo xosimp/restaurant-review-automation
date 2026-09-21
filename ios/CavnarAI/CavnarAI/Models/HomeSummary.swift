@@ -52,6 +52,28 @@ struct HomeSummary: Codable {
     // module: connected, what is readable right now, and — when it is not
     // — the one action that would light it up. Never a score.
     let readiness: HomeReadiness?
+    /// The restaurant's own clock (ISO), for the day's slot: the close-out
+    /// leads it after 8pm, the weekly receipts on Monday. Optional — an
+    /// older server omits it and the brief simply leads.
+    let localNow: String?
+
+    var localHour: Int? {
+        guard let s = localNow, let t = s.firstIndex(of: "T") else { return nil }
+        return Int(s[s.index(after: t)..<s.index(t, offsetBy: 3)])
+    }
+    var localIsEvening: Bool { (localHour ?? 12) >= 20 }
+    var localIsMonday: Bool {
+        guard let s = localNow, s.count >= 10 else { return false }
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; f.timeZone = TimeZone(secondsFromGMT: 0)
+        guard let d = f.date(from: String(s.prefix(10))) else { return false }
+        var cal = Calendar(identifier: .gregorian); cal.timeZone = TimeZone(secondsFromGMT: 0)!
+        return cal.component(.weekday, from: d) == 2
+    }
+    /// Nothing connected yet: readiness is the page, so it leads.
+    var isFresh: Bool {
+        guard let r = readiness, !r.modules.isEmpty else { return false }
+        return !r.modules.contains { $0.connected }
+    }
 
     enum CodingKeys: String, CodingKey {
         case username
@@ -71,6 +93,7 @@ struct HomeSummary: Codable {
         case recommendations
         case firstLook = "first_look"
         case readiness
+        case localNow = "local_now"
     }
 }
 

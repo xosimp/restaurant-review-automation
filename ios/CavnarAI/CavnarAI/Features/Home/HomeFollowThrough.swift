@@ -505,8 +505,9 @@ final class HomeFollowThroughViewModel {
 
 struct HomeFollowThrough: View {
     let viewModel: HomeFollowThroughViewModel
+    /// False when HomeView renders the close-out in the day's slot (after 8pm).
+    var showsCloseOut: Bool = true
     var onOpenModule: (String) -> Void
-    @State private var showingCloseOut = false
 
     private var hasAnything: Bool {
         !viewModel.actions.isEmpty || !viewModel.goals.isEmpty || !viewModel.results.isEmpty
@@ -562,12 +563,13 @@ struct HomeFollowThrough: View {
 
             lossCard
 
-            closeOutCard
+            // Before 8pm the handoff sits here, at the end; after 8pm
+            // HomeView puts it in the day's slot instead (HomeCloseOutCard).
+            if showsCloseOut {
+                HomeCloseOutCard(viewModel: viewModel)
+            }
         }
         .task { await viewModel.load() }
-        .sheet(isPresented: $showingCloseOut) {
-            CloseOutSheet(viewModel: viewModel)
-        }
     }
 
     /// What got better. Everything else on this screen looks for trouble —
@@ -921,37 +923,6 @@ struct HomeFollowThrough: View {
         }
     }
 
-    private var closeOutCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HomeSectionHeader(kicker: "End of the night", title: "Close-out",
-                              trailing: viewModel.closeOut == nil ? nil : "filed")
-            VStack(alignment: .leading, spacing: 10) {
-                Text(viewModel.closeOut == nil
-                     ? "Four lines from whoever closes. They lead tomorrow morning's brief."
-                     : filedSummary)
-                    .font(.cavnarBody(14))
-                    .foregroundStyle(Color.cavnarInk3)
-                    .fixedSize(horizontal: false, vertical: true)
-                Button {
-                    Haptic.light()
-                    showingCloseOut = true
-                } label: {
-                    Text(viewModel.closeOut == nil ? "Hand off the night" : "Update the handoff")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(CavnarSecondaryButtonStyle())
-            }
-            .cavnarCard()
-        }
-    }
-
-    private var filedSummary: String {
-        guard let c = viewModel.closeOut else { return "" }
-        let who = c.submittedBy ?? "A manager"
-        let bits = [c.wentWrong, c.eightySixed.map { "86'd: \($0)" }, c.callouts.map { "callouts: \($0)" }]
-            .compactMap { $0 }
-        return bits.isEmpty ? "\(who) filed tonight's handoff." : "\(who): " + bits.joined(separator: " · ")
-    }
 }
 
 // MARK: - The handoff itself

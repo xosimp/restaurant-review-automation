@@ -360,6 +360,18 @@ Rules:
 
 ---
 
+## 11b. Home order (web and iOS, identical)
+
+Fixed by role so the owner learns where things live: header strip (module
+pulse, AI activity) → value delivered → **the day** (morning brief with open
+issues; the close-out takes the slot after 8pm local, the weekly receipts
+lead it on Monday) → needs attention → the one cross-module thing → what
+Cavnar AI recommends → readiness (leads the page instead when nothing is
+connected yet, hides once complete) → measured (goals, what your changes
+did, what got better) → what connects, comps and voids → worth. The
+close-out sits last before 8pm. Every block keeps its empty state; a quiet
+day is a short page.
+
 ## 12. Reusable components
 
 **Web** (all in `templates/dashboard.html` unless noted)

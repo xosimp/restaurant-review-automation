@@ -1038,7 +1038,19 @@ def _do_mobile_home(current_user):
         # otherwise have nothing on it.
         "first_look": _home_first_look(restaurant, rstats, labor, inv),
         "readiness": _brief_ready,
+        # The restaurant's own clock, so the phone can put the close-out in
+        # the day's slot after 8pm and the weekly receipts first on Monday —
+        # the same rule the web Home uses.
+        "local_now": _home_local_now(restaurant),
     }, 200
+
+
+def _home_local_now(restaurant):
+    try:
+        from time_utils import restaurant_now
+        return restaurant_now(restaurant).isoformat()
+    except Exception:
+        return None
 
 
 def _home_first_look(restaurant, rstats, labor, inv):
