@@ -83,7 +83,6 @@ def _idempotency_key(call):
     return {k.lower(): v for k, v in call["headers"].items()}.get("idempotency-key")
 
 
-@pytest.mark.xfail(strict=True, reason="AI-21: deliver retries timeouts/5xx with no Idempotency-Key, so a slow success is sent twice")
 def test_every_retry_of_one_email_send_carries_the_same_idempotency_key(db_path, monkeypatch):
     rid = _restaurant(db_path)
     monkeypatch.setattr(emails, "_resend_key", lambda: "re_test")
@@ -102,7 +101,6 @@ def test_every_retry_of_one_email_send_carries_the_same_idempotency_key(db_path,
     assert len(set(keys)) == 1, f"the retries of one send carried different keys: {keys}"
 
 
-@pytest.mark.xfail(strict=True, reason="AI-21: no Idempotency-Key is sent at all")
 def test_two_different_email_sends_carry_different_idempotency_keys(db_path, monkeypatch):
     rid = _restaurant(db_path)
     monkeypatch.setattr(emails, "_resend_key", lambda: "re_test")
@@ -141,7 +139,6 @@ def twilio(monkeypatch):
     monkeypatch.setattr(notify, "TWILIO_MESSAGING_SERVICE_SID", "MG_test")
 
 
-@pytest.mark.xfail(strict=True, reason="AI-27: send_sms makes one attempt; a 429/5xx/connection error loses the SMS")
 @pytest.mark.parametrize("first", [
     pytest.param(_Resp(503, text="Service Unavailable"), id="http-503"),
     pytest.param(_Resp(500, text="Internal Server Error"), id="http-500"),
@@ -192,7 +189,6 @@ def _nws(monkeypatch, points_status):
     return calls
 
 
-@pytest.mark.xfail(strict=True, reason="AI-28: an NWS failure writes nothing, so every call repeats the blocking requests")
 @pytest.mark.parametrize("points_status", [
     pytest.param(500, id="nws-500-outage"),
     pytest.param(404, id="nws-404-non-us-location"),
@@ -266,7 +262,6 @@ def _push_rows(db_path, rid):
         conn.close()
 
 
-@pytest.mark.xfail(strict=True, reason="AI-29: a push dropped at the queue ceiling leaves no push_deliveries row for its alert")
 def test_every_push_dropped_at_the_queue_ceiling_is_recorded_against_its_alert(db_path, monkeypatch, owner_with_devices):
     rid = owner_with_devices
     delivered = _fire_with_a_full_queue(monkeypatch, rid, db_path)

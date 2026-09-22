@@ -299,7 +299,6 @@ def test_a_campaign_that_runs_past_nine_pm_stops_texting_at_nine(db_path, monkey
     assert all(t.hour < 21 for t in at), [t.strftime("%H:%M") for t in at]
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-A6-campaigns-13: a campaign has no maximum length at send, so a message Twilio cannot carry goes to every guest")
 def test_a_campaign_longer_than_an_sms_can_carry_is_refused_before_anyone_is_texted(db_path, texts):
     """A6 Campaigns #13 — Twilio's hard ceiling is 1,600 characters; each
     160 is a billed segment. A 2,000-character body is refused up front."""

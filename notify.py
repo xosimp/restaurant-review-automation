@@ -126,20 +126,33 @@ def send_sms(to_phone: str, message: str, use_case: str = "alert") -> bool:
         data["MessagingServiceSid"] = service_sid
     else:
         data["From"] = TWILIO_FROM
-    try:
-        r = requests.post(
-            f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_SID}/Messages.json",
-            auth=(TWILIO_SID, TWILIO_TOKEN),
-            data=data,
-            timeout=10,
-        )
-        if r.status_code == 201:
-            return True
-        print(f"[notify] Twilio error {r.status_code}: {r.text[:200]}")
-        return False
-    except Exception as e:
-        print(f"[notify] SMS send failed: {e}")
-        return False
+    # One retry for a failure Twilio says is transient (429, 5xx) or a
+    # connection that failed before a response (AI-27): a single blip lost an
+    # owner's health alert text. NOT for a read timeout — Twilio's Messages
+    # API has no idempotency key, and a request it accepted but did not answer
+    # in time would be sent twice. A 4xx is permanent and is not retried.
+    for attempt in (1, 2):
+        try:
+            r = requests.post(
+                f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_SID}/Messages.json",
+                auth=(TWILIO_SID, TWILIO_TOKEN),
+                data=data,
+                timeout=10,
+            )
+            if r.status_code == 201:
+                return True
+            print(f"[notify] Twilio error {r.status_code}: {r.text[:200]}")
+            if not (r.status_code == 429 or r.status_code >= 500):
+                return False
+        except requests.exceptions.ConnectionError as e:
+            print(f"[notify] SMS send failed: {e}")
+        except Exception as e:
+            print(f"[notify] SMS send failed: {e}")
+            return False
+        if attempt == 1:
+            import time as _time
+            _time.sleep(1.0)
+    return False
 
 
 def send_2fa_sms(to_phone: str, restaurant_name: str, code: str) -> bool:

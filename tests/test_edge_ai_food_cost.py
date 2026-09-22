@@ -146,8 +146,6 @@ def test_a_trusted_suppliers_clean_line_is_still_applied_on_scan(db_path):
     assert _cost(db_path, romaine) == 22.5
 
 
-@pytest.mark.xfail(strict=True, reason="AI-19: a zero-cost ingredient's line is preselected and auto-applied "
-                                       "with no plausibility check")
 def test_a_trusted_suppliers_line_for_an_ingredient_with_no_current_cost_waits_for_the_owner(db_path):
     """Nothing to compare the reading against: $189 read for $1.89 goes
     straight into plate costs unless a person looks first."""
@@ -162,8 +160,6 @@ def test_a_trusted_suppliers_line_for_an_ingredient_with_no_current_cost_waits_f
     assert _cost(db_path, saffron) == 0.0
 
 
-@pytest.mark.xfail(strict=True, reason="AI-19: an ingredient with a NULL unit_cost takes any model-read "
-                                       "price on auto-apply")
 def test_a_trusted_suppliers_line_for_an_ingredient_with_a_null_cost_waits_for_the_owner(db_path):
     rid = _rid(db_path)
     romaine = _ingredient(db_path, rid, "Romaine Hearts", "case", 20.0)
@@ -176,8 +172,6 @@ def test_a_trusted_suppliers_line_for_an_ingredient_with_a_null_cost_waits_for_t
     assert _cost(db_path, basil) is None
 
 
-@pytest.mark.xfail(strict=True, reason="AI-19: a line whose _adds_up is None (null quantity) is preselected "
-                                       "and auto-applied unchecked")
 def test_a_trusted_suppliers_line_with_no_quantity_read_waits_for_the_owner(db_path):
     """quantity x price = total is the only arithmetic check on the reading;
     a line where it could not run has had no check at all."""
@@ -193,8 +187,6 @@ def test_a_trusted_suppliers_line_with_no_quantity_read_waits_for_the_owner(db_p
     assert _cost(db_path, butter) == 4.0
 
 
-@pytest.mark.xfail(strict=True, reason="AI-19: a line whose _adds_up is None (null line total) is preselected "
-                                       "and auto-applied unchecked")
 def test_a_trusted_suppliers_line_with_no_line_total_read_waits_for_the_owner(db_path):
     rid = _rid(db_path)
     romaine = _ingredient(db_path, rid, "Romaine Hearts", "case", 20.0)

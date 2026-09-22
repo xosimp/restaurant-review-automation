@@ -1084,8 +1084,20 @@ def _track_outcome(restaurant_id, title=None, metric=None, source_key=None, _vie
         return {"error": "Food cost tracking is for logins that can see food cost."}
     if not title or not metric:
         return {"error": "title and metric are required"}
+    # One tracker per metric, whoever started it. The model's title (and any
+    # source_key it chose) is not the identity of the work: two wordings of
+    # one change minted two trackers reading the same before/after move, and
+    # both were counted as value delivered (AI-18). observe() already refused
+    # a second tracker on a metric in flight; Ask now shares that rule.
+    live = outcomes.in_flight_on(restaurant_id, metric)
+    if live:
+        return {"ok": True, "outcome": live, "already_tracking": True,
+                "note": ("A change on this metric is already being measured — "
+                         f"\"{live.get('title')}\". Only one runs at a time per metric, so "
+                         "their before/after readings don't overlap. Tell the owner it is "
+                         "already being tracked.")}
     try:
-        o = outcomes.record(restaurant_id, "ask", source_key or f"ask:{title.lower()[:80]}",
+        o = outcomes.record(restaurant_id, "ask", f"ask:{title.lower()[:80]}",
                             title, metric)
     except ValueError as e:
         return {"error": str(e)}

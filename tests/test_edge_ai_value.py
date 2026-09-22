@@ -73,8 +73,6 @@ def _in_flight(db_path, rid, metric):
 
 # ── overlapping trackers on the same metric ────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="AI-18: total_value sums two overlapping same-metric trackers that "
-                                       "measure one before/after move")
 def test_two_overlapping_labor_wins_count_once_in_total_value(db_path):
     """Both windows cover June 10-28; the same drop in labor % is the whole
     of both results. The larger reading stands, the other adds nothing."""
@@ -87,8 +85,6 @@ def test_two_overlapping_labor_wins_count_once_in_total_value(db_path):
     assert v["by_module"].get("labor") == 400.0
 
 
-@pytest.mark.xfail(strict=True, reason="AI-18: the value-delivered headline doubles on overlapping "
-                                       "same-metric trackers")
 def test_two_overlapping_labor_wins_count_once_in_the_value_delivered_headline(db_path):
     rid = _rid(db_path)
     _win(db_path, rid, "Cut one server on Monday lunch", "labor_pct", 400.0, "2026-06-01", "2026-06-29")
@@ -134,8 +130,6 @@ def _ask_track(rid, db_path, **tool_input):
     return json.loads(tools.run_read_tool("track_outcome", rid, tool_input, restaurant=restaurant))
 
 
-@pytest.mark.xfail(strict=True, reason="AI-18: _track_outcome keys on the model's title, so two wordings mint "
-                                       "two in-flight labor_pct trackers")
 def test_ask_naming_the_same_change_two_ways_keeps_one_labor_tracker_in_flight(db_path):
     rid = _rid(db_path)
     first = _ask_track(rid, db_path, title="Cut one server on Monday lunch", metric="labor_pct")
@@ -144,8 +138,6 @@ def test_ask_naming_the_same_change_two_ways_keeps_one_labor_tracker_in_flight(d
     assert _in_flight(db_path, rid, "labor_pct") == 1
 
 
-@pytest.mark.xfail(strict=True, reason="AI-18: a model-chosen source_key bypasses the only dedupe and mints a "
-                                       "second in-flight tracker on the metric")
 def test_ask_passing_its_own_source_key_does_not_mint_a_second_tracker_on_the_metric(db_path):
     rid = _rid(db_path)
     _ask_track(rid, db_path, title="Cut one server on Monday lunch", metric="labor_pct", source_key="conv-1")
@@ -153,8 +145,6 @@ def test_ask_passing_its_own_source_key_does_not_mint_a_second_tracker_on_the_me
     assert _in_flight(db_path, rid, "labor_pct") == 1
 
 
-@pytest.mark.xfail(strict=True, reason="AI-18: Ask's tracker ignores an observed tracker already in flight on "
-                                       "the same metric (only observe() checks)")
 def test_ask_does_not_start_a_labor_tracker_beside_one_a_published_schedule_already_started(db_path):
     rid = _rid(db_path)
     observed = outcomes.observe(rid, "schedule_published", db_path=db_path, today=date.today())

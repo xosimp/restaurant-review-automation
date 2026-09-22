@@ -484,7 +484,6 @@ def _wx_restaurant(db_path, **kw):
     return get_restaurant(rid, db_path=db_path)
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-INT-7: a transient geocode error sets geocode_failed_at and disables weather for 7 days")
 def test_a_network_blip_during_geocode_does_not_black_out_weather_for_a_week(db, monkeypatch):
     """A2 I3 #8 / MOD-INT-7."""
     monkeypatch.setattr(weather, "_GOOGLE_KEY", "k")
@@ -507,7 +506,6 @@ def test_a_place_with_no_geometry_is_still_remembered_as_failed(db, monkeypatch)
     assert get_restaurant(r.id, db_path=db).geocode_failed_at
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-INT-7: an NWS failure is not negative-cached, so every call re-pays two 10s timeouts")
 def test_an_nws_outage_is_not_re_hit_on_every_call(db, monkeypatch):
     """A2 I3 #9 / MOD-INT-7 — within a short window after a failure, no new
     HTTP call."""
@@ -525,7 +523,6 @@ def test_an_nws_outage_is_not_re_hit_on_every_call(db, monkeypatch):
     assert len(calls) == n
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-INT-7: a stale forecast cache is discarded instead of used when the refresh fails")
 def test_a_stale_forecast_is_used_when_the_refresh_fails(db, monkeypatch):
     """A2 I3 #9 / MOD-INT-7 — yesterday's forecast for tomorrow beats none."""
     import json
@@ -546,7 +543,6 @@ def test_a_non_us_restaurant_gets_no_forecast_and_no_error(db, monkeypatch):
     assert weather.get_forecast_for_week(r, ["2026-09-22"], db_path=db) == []
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-INT-7: a non-US restaurant re-calls NWS (and re-waits its timeout) on every forecast read")
 def test_a_non_us_restaurant_does_not_re_ask_nws_every_time(db, monkeypatch):
     """A2 I3 #10 / MOD-INT-7 — a permanent 404 is remembered."""
     r = _wx_restaurant(db, latitude=51.5, longitude=-0.12)

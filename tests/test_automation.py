@@ -401,7 +401,11 @@ def test_invoice_trust_needs_three_full_accepts_and_then_applies_clean_lines(db_
     conn.commit(); conn.close()
     assert ordering.invoice_trust(rid, "fresh co", db_path=db_path)["trusted"] is True
     proposal = {"id": None, "supplier": "Fresh Co", "duplicate": False, "applied_at": None,
-                "lines": [{"index": 0, "ingredient_id": ing, "proposed_cost": 22.5, "selected": True, "note": None},
+                # verified: the line's arithmetic ran and agreed and there was a
+                # current cost to compare against, as invoices.propose marks a
+                # clean line (AI-19 — only such lines are applied unattended).
+                "lines": [{"index": 0, "ingredient_id": ing, "proposed_cost": 22.5, "selected": True, "note": None,
+                           "verified": True},
                           {"index": 1, "ingredient_id": ing, "proposed_cost": 90.0, "selected": False,
                            "note": "a large change — usually a unit mix-up; check before applying"}]}
     conn = get_conn(db_path)

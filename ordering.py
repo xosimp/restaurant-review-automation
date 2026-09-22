@@ -146,9 +146,13 @@ def auto_apply_if_trusted(restaurant_id, proposal, user_id=None, db_path=DB_PATH
     proposal["auto_applied"] = []
     if not trust["trusted"] or proposal.get("duplicate") or proposal.get("applied_at"):
         return proposal
+    # Only lines whose reading was actually checked (invoices.propose's
+    # `verified`): arithmetic that ran and agreed, and a current cost to judge
+    # the move against. Everything else waits for the owner (AI-19).
     picks = [{"index": ln["index"], "ingredient_id": ln["ingredient_id"], "unit_cost": ln["proposed_cost"]}
              for ln in (proposal.get("lines") or [])
-             if ln.get("selected") and ln.get("ingredient_id") and ln.get("proposed_cost") and not ln.get("note")]
+             if ln.get("selected") and ln.get("verified") and ln.get("ingredient_id")
+             and ln.get("proposed_cost") and not ln.get("note")]
     if not picks:
         return proposal
     out = invoices.apply(restaurant_id, proposal["id"], picks, user_id=user_id, db_path=db_path)

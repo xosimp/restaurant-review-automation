@@ -223,7 +223,8 @@ def propose(restaurant_id, extracted, db_path=DB_PATH):
                 "quantity": raw.get("quantity"), "unit": raw.get("unit"),
                 "unit_price": raw.get("unit_price"), "line_total": raw.get("line_total"),
                 "ingredient_id": None, "ingredient_name": None, "current_cost": None,
-                "proposed_cost": None, "change_pct": None, "selected": False, "note": None}
+                "proposed_cost": None, "change_pct": None, "selected": False, "note": None,
+                "verified": False}
         ok = _adds_up(raw)
         ing = match_ingredient(line["description"], ingredients)
         if ing:
@@ -260,6 +261,14 @@ def propose(restaurant_id, extracted, db_path=DB_PATH):
                 # checked), matched exactly one ingredient, units agree, and
                 # the move is plausible.
                 line["selected"] = not big and cost != cur
+                # Whether the reading passed BOTH checks this code has: the
+                # line's own arithmetic ran and agreed, and there was a
+                # current cost to compare the move against. A preselected
+                # line an owner is looking at can rest on less; one applied
+                # with nobody looking cannot — a $189 read for $1.89 on an
+                # ingredient with no cost yet, or a line whose quantity or
+                # total was not read, went straight into plate costs (AI-19).
+                line["verified"] = bool(ok is True and cur > 0 and not big)
         lines.append(line)
 
     totals = [l["line_total"] for l in lines if l["line_total"] is not None]
