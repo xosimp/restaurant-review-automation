@@ -153,7 +153,6 @@ def test_the_unedited_pending_token_signs_the_manager_in_as_the_manager(client, 
     assert get_session_user(v["token"], db_path=db_path)["id"] == mgr
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-5: the 2FA pending token is unsigned; its user id can be swapped for the owner's")
 def test_a_mobile_pending_token_edited_to_name_the_owner_is_refused(client, db_path):
     rid, owner, mgr = _setup(db_path, two_fa=True)
     r = client.post("/mobile/api/login", json={"username": "mgr", "password": "mgrpass12"}).get_json()
@@ -164,7 +163,6 @@ def test_a_mobile_pending_token_edited_to_name_the_owner_is_refused(client, db_p
     assert not (v.get_json() or {}).get("token")
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-5: the web 2FA pending token is unsigned; its user id can be swapped for the owner's")
 def test_a_web_pending_token_edited_to_name_the_owner_is_refused(client, db_path):
     rid, owner, mgr = _setup(db_path, two_fa=True)
     pending = _pending_from_html(_login_form(client, "mgr", "mgrpass12"))
@@ -176,7 +174,6 @@ def test_a_web_pending_token_edited_to_name_the_owner_is_refused(client, db_path
     assert tok is None or get_session_user(tok.value, db_path=db_path)["id"] != owner
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-5: verify-2fa does not re-check must_reset_password for the login it signs in")
 def test_a_swapped_pending_token_cannot_reach_a_login_locked_by_this_wasnt_me(client, db_path):
     rid, owner, mgr = _setup(db_path, two_fa=True)
     report = auth.create_login_report(owner, None, db_path=db_path)
@@ -188,7 +185,6 @@ def test_a_swapped_pending_token_cannot_reach_a_login_locked_by_this_wasnt_me(cl
     assert not v.get("ok")
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-NEW (found writing SEC tests): /resend-2fa splits the rid:uid:secret token in two, so Resend code never works")
 def test_resend_code_works_with_the_token_the_login_page_issued(client, db_path, sent):
     rid, owner, mgr = _setup(db_path, two_fa=True)
     pending = _pending_from_html(_login_form(client, "owner", "ownerpass1"))
@@ -198,7 +194,6 @@ def test_resend_code_works_with_the_token_the_login_page_issued(client, db_path,
 
 # ── throttles and the address they key on ───────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="SEC-3: _get_client_ip trusts the client-sent first X-Forwarded-For value, not ProxyFix's remote_addr")
 def test_the_client_address_is_the_one_the_proxy_vouches_for(proxied):
     r = proxied.get("/_whoami_ip", headers={"X-Forwarded-For": "6.6.6.6, 203.0.113.9"})
     assert r.get_data(as_text=True) == "203.0.113.9"
@@ -215,7 +210,6 @@ def test_the_mobile_reset_throttle_stops_one_address_guessing_codes(proxied, db_
     assert 429 in statuses
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-3: a rotating X-Forwarded-For resets the mobile reset-code throttle")
 def test_a_rotating_forwarded_for_does_not_reset_the_mobile_reset_throttle(proxied, db_path, sent):
     _setup(db_path)
     statuses = [proxied.post("/mobile/api/reset-password",
@@ -225,7 +219,6 @@ def test_a_rotating_forwarded_for_does_not_reset_the_mobile_reset_throttle(proxi
     assert 429 in statuses
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-3: a rotating X-Forwarded-For resets the 2FA verify throttle")
 def test_a_rotating_forwarded_for_does_not_reset_the_2fa_verify_throttle(proxied, db_path):
     rid, owner, mgr = _setup(db_path, two_fa=True)
     r = proxied.post("/mobile/api/login", json={"username": "owner", "password": "ownerpass1"},
@@ -244,7 +237,6 @@ def test_forgot_password_from_one_address_is_throttled(proxied, db_path, sent):
     assert len(sent["reset_code"]) <= security.IP_MAX_ANON
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-3: a rotating X-Forwarded-For turns forgot-password into an email-bombing primitive")
 def test_a_rotating_forwarded_for_does_not_reset_the_forgot_password_throttle(proxied, db_path, sent):
     _setup(db_path)
     for i in range(12):
@@ -253,7 +245,6 @@ def test_a_rotating_forwarded_for_does_not_reset_the_forgot_password_throttle(pr
     assert len(sent["reset_code"]) <= security.IP_MAX_ANON
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-3: a successful login clears the address key, resetting the anonymous budget at will")
 def test_a_successful_login_does_not_wipe_the_address_budget(client, db_path, sent):
     _setup(db_path)
     env = {"REMOTE_ADDR": "203.0.113.50"}
@@ -271,7 +262,6 @@ def test_a_successful_login_does_not_wipe_the_address_budget(client, db_path, se
 
 # ── the in-app 6-digit reset code ────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="SEC-4: the mobile reset code has no per-account attempt cap and survives wrong guesses")
 def test_five_wrong_codes_for_one_email_burn_the_code_even_from_five_addresses(client, db_path, sent):
     rid, owner, mgr = _setup(db_path)
     client.post("/mobile/api/forgot-password", json={"email": "owner@x.test"},
@@ -287,7 +277,6 @@ def test_five_wrong_codes_for_one_email_burn_the_code_even_from_five_addresses(c
     assert auth.verify_password("owner", "ownerpass1", db_path=db_path)
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-4: the mobile reset code is stored in plaintext")
 def test_the_mobile_reset_code_is_not_stored_verbatim(client, db_path, sent):
     rid, owner, mgr = _setup(db_path)
     client.post("/mobile/api/forgot-password", json={"email": "owner@x.test"})
@@ -298,7 +287,6 @@ def test_the_mobile_reset_code_is_not_stored_verbatim(client, db_path, sent):
     assert stored and stored != code
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-4: the breach lookup (a network call) runs before the code is checked, on every guess")
 def test_a_wrong_reset_code_is_refused_before_the_breach_lookup(client, db_path, monkeypatch, sent):
     _setup(db_path)
     calls = []
@@ -326,7 +314,6 @@ _CODE_SITES = [
 ]
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-33: 2FA, reset and recovery codes come from random, not secrets")
 def test_security_codes_are_drawn_from_secrets_not_random():
     offenders = [f"{m.__name__}.{fn}" for m, fn in _CODE_SITES
                  if "random.randint" in inspect.getsource(getattr(m, fn))
@@ -341,7 +328,6 @@ def test_security_codes_are_drawn_from_secrets_not_random():
 
 # ── must_reset_password: freeze and "This wasn't me" must be recoverable ─────
 
-@pytest.mark.xfail(strict=True, reason="SEC-7: a completed web reset never clears must_reset_password set by a freeze")
 def test_after_a_freeze_a_completed_web_reset_lets_the_owner_sign_in(client, db_path):
     rid, owner, mgr = _setup(db_path)
     security.freeze_restaurant(rid, db_path=db_path)
@@ -351,7 +337,6 @@ def test_after_a_freeze_a_completed_web_reset_lets_the_owner_sign_in(client, db_
     assert r.status_code == 200 and r.get_json()["ok"] is True
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-7: a completed in-app reset never clears must_reset_password set by This wasn't me")
 def test_after_this_wasnt_me_a_completed_mobile_reset_lets_the_owner_sign_in(client, db_path, sent):
     rid, owner, mgr = _setup(db_path)
     auth.consume_login_report(auth.create_login_report(owner, None, db_path=db_path), db_path=db_path)
@@ -371,7 +356,6 @@ def test_a_frozen_login_is_refused_until_it_resets(client, db_path):
     assert r.status_code == 403 and r.get_json()["password_reset_required"] is True
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-7/SEC-34: /auth/not-me/<token> acts on a plain GET, so a mail scanner's prefetch locks the account")
 def test_the_not_me_link_does_not_lock_the_account_on_a_plain_get(client, db_path):
     rid, owner, mgr = _setup(db_path)
     live = create_session(owner, db_path=db_path)
@@ -383,7 +367,6 @@ def test_the_not_me_link_does_not_lock_the_account_on_a_plain_get(client, db_pat
 
 # ── a reset or a password change ends the intruder's session ─────────────────
 
-@pytest.mark.xfail(strict=True, reason="SEC-8: a web password reset leaves every existing session alive")
 def test_a_web_reset_ends_every_existing_session(client, db_path):
     rid, owner, mgr = _setup(db_path)
     attacker = create_session(owner, device_type="ios", db_path=db_path)
@@ -392,7 +375,6 @@ def test_a_web_reset_ends_every_existing_session(client, db_path):
     assert get_session_user(attacker, db_path=db_path) is None
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-8: an in-app password reset leaves every existing session alive")
 def test_a_mobile_reset_ends_every_existing_session(client, db_path, sent):
     rid, owner, mgr = _setup(db_path)
     attacker = create_session(owner, device_type="ios", db_path=db_path)
@@ -403,7 +385,6 @@ def test_a_mobile_reset_ends_every_existing_session(client, db_path, sent):
     assert get_session_user(attacker, db_path=db_path) is None
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-8: a web password change leaves the owner's other sessions alive")
 def test_a_web_password_change_ends_every_other_session_but_this_one(client, db_path):
     rid, owner, mgr = _setup(db_path)
     attacker = create_session(owner, device_type="ios", db_path=db_path)
@@ -415,7 +396,6 @@ def test_a_web_password_change_ends_every_other_session_but_this_one(client, db_
     assert get_session_user(attacker, db_path=db_path) is None
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-8: an in-app password change leaves the owner's other sessions alive")
 def test_a_mobile_password_change_ends_every_other_session_but_this_one(client, db_path):
     rid, owner, mgr = _setup(db_path)
     attacker = create_session(owner, db_path=db_path)
@@ -598,7 +578,6 @@ def test_verify_password_hashes_for_a_known_username(db_path, monkeypatch):
     assert calls == [1]
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-37: login-report (This wasn't me) tokens are stored verbatim")
 def test_login_report_tokens_are_not_stored_verbatim(db_path):
     rid, owner, mgr = _setup(db_path)
     token = auth.create_login_report(owner, None, db_path=db_path)
@@ -608,7 +587,6 @@ def test_login_report_tokens_are_not_stored_verbatim(db_path):
     assert token not in stored
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-37: the not-me page interpolates the account email without escaping")
 def test_the_not_me_page_escapes_the_account_email(client, db_path, sent):
     rid = create_restaurant(Restaurant(name="R", owner_email="o@x.test"), db_path=db_path)
     uid = create_user(rid, "odd", "<img src=x onerror=alert(1)>@x.test", "pw123456", db_path=db_path)

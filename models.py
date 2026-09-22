@@ -4969,13 +4969,11 @@ def get_client_data(restaurant_id: int,
 
 def reset_user_password(user_id: int, new_password: str,
                         db_path: str = DB_PATH):
-    """Admin reset of a user password."""
-    from werkzeug.security import generate_password_hash
-    conn = get_conn(db_path)
-    conn.execute("UPDATE users SET password_hash=? WHERE id=?",
-                 (generate_password_hash(new_password), user_id))
-    conn.commit()
-    conn.close()
+    """Admin reset of a user password — through auth.update_password, so it
+    ends the login's sessions and clears must_reset_password like every
+    other password write (SEC-7, SEC-8)."""
+    from auth import update_password
+    update_password(user_id, new_password, db_path=db_path)
 
 
 def _hash_reset_token(token: str) -> str:
@@ -5034,13 +5032,9 @@ def consume_reset_token(token: str, new_password: str, db_path: str = DB_PATH) -
     user = validate_reset_token(token, db_path)
     if not user:
         return False
-    conn = get_conn(db_path)
-    conn.execute(
-        "UPDATE users SET password_hash=?, reset_token=NULL, reset_token_expires=NULL WHERE id=?",
-        (generate_password_hash(new_password), user["id"])
-    )
-    conn.commit()
-    conn.close()
+    # Ends every session and clears must_reset_password (SEC-7, SEC-8).
+    from auth import update_password
+    update_password(user["id"], new_password, db_path=db_path)
     return True
 
 

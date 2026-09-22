@@ -175,17 +175,21 @@ def test_a_failed_schedule_job_payload_has_no_traceback(failed_job_payload):
 # ── CLIENT-40: the session IP ───────────────────────────────────────────────
 
 def _client_ip(xff):
+    """Through the middleware production runs (ProxyFix, one hop): the
+    address is the entry Railway's edge appended, never the client's own."""
+    import auth
     app = Flask(__name__)
-    with app.test_request_context("/", headers={"X-Forwarded-For": xff},
-                                  environ_base={"REMOTE_ADDR": "10.0.0.9"}):
-        return auth_routes._get_client_ip()
+    app.add_url_rule("/_ip", "ip", lambda: auth_routes._get_client_ip())
+    auth.install_proxy_fix(app)
+    return app.test_client().get("/_ip", headers={"X-Forwarded-For": xff},
+                                 environ_base={"REMOTE_ADDR": "10.0.0.9"}).get_data(as_text=True)
 
 
 def test_the_proxied_client_ip_is_used():
-    assert _client_ip("203.0.113.7, 10.0.0.1") == "203.0.113.7"
+    # "6.6.6.6" is what the client claimed; "203.0.113.7" is what the proxy saw.
+    assert _client_ip("6.6.6.6, 203.0.113.7") == "203.0.113.7"
 
 
-@pytest.mark.xfail(strict=True, reason="CLIENT-40: the first X-Forwarded-For value is trusted verbatim, so HTML planted there is stored on the session and rendered in the owner's Sessions list")
 def test_a_forged_forwarded_for_value_is_never_stored_as_the_ip():
     ip = _client_ip('<img src=x onerror="alert(1)">, 10.0.0.1')
     ipaddress.ip_address(ip)          # raises on anything that is not an IP

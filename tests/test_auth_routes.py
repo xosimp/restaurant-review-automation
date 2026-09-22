@@ -101,13 +101,21 @@ def test_rate_limiter_isolated_per_ip():
     assert _is_rate_limited("2.2.2.2") is False
 
 
-def test_clear_attempts_resets_lockout():
-    ip = "1.2.3.4"
+def test_clear_attempts_resets_a_purpose_key_but_never_an_address_budget():
+    # A purpose-specific key ("2fa:<ip>") is cleared on success; a bare
+    # address budget only ages out, or a successful login on an attacker's
+    # own account would wipe the budget they are spending (SEC-3).
+    key = "2fa:1.2.3.4"
+    for _ in range(_MAX_ATTEMPTS):
+        _record_failed_attempt(key)
+    assert _is_rate_limited(key) is True
+    _clear_attempts(key, clear_key=True)
+    assert _is_rate_limited(key) is False
+    ip = "1.2.3.5"
     for _ in range(_MAX_ATTEMPTS):
         _record_failed_attempt(ip)
-    assert _is_rate_limited(ip) is True
     _clear_attempts(ip)
-    assert _is_rate_limited(ip) is False
+    assert _is_rate_limited(ip) is True
 
 
 # ── /login ───────────────────────────────────────────────────────────────────

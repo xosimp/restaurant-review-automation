@@ -389,8 +389,6 @@ def test_admin_reset_sets_a_password_the_user_can_sign_in_with(app, db_path):
     assert check_password_hash(h, "Fresh-owner-pass-2026")
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-8: admin reset_password never touches sessions, "
-                                       "so an attacker's existing session survives the reset")
 def test_admin_reset_ends_every_existing_session_of_that_user(app, db_path):
     _, admin_uid = _admin(db_path)
     rid = _restaurant(db_path)
@@ -404,8 +402,6 @@ def test_admin_reset_ends_every_existing_session_of_that_user(app, db_path):
     assert get_session_user(ios, db_path=db_path) is None
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-7: admin reset_password never clears must_reset_password, "
-                                       "so a frozen login stays locked after the admin resets it")
 def test_admin_reset_clears_the_forced_reset_flag(app, db_path):
     _, admin_uid = _admin(db_path)
     rid = _restaurant(db_path)

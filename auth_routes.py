@@ -22,9 +22,12 @@ _MAX_ATTEMPTS   = 5      # max failures before lockout
 _LOCKOUT_SECS   = 300    # 5 minute lockout
 
 def _get_client_ip():
-    """Get real client IP, respecting Railway's proxy headers."""
-    return (request.headers.get("X-Forwarded-For","").split(",")[0].strip()
-            or request.remote_addr or "unknown")
+    """The client address the proxy vouches for: ProxyFix (one hop,
+    auth.install_proxy_fix) has already set remote_addr from the entry
+    Railway's edge appended. The FIRST X-Forwarded-For value is whatever the
+    client sent, and keying every throttle on it let an attacker reset them
+    by rotating the header (SEC-3)."""
+    return request.remote_addr or "unknown"
 
 def _is_rate_limited(ip, username=None):
     """Durable, keyed by IP and account (security.py). The in-memory dict
@@ -50,11 +53,16 @@ def _record_failed_attempt(ip, username=None):
     except Exception:
         pass
 
-def _clear_attempts(ip, username=None):
-    _login_attempts.pop(ip, None)
+def _clear_attempts(ip, username=None, clear_key=False):
+    """After a success. Clears the ACCOUNT's failures; an address's budget
+    only ages out, or a successful login on the attacker's own account wiped
+    the budget they were spending guessing someone else's codes (SEC-3).
+    `clear_key` clears a purpose-specific key such as "2fa:<ip>"."""
     try:
         import security
-        security.clear_login_failures(ip=ip, username=username)
+        security.clear_login_failures(ip=ip if clear_key else None, username=username)
+        if clear_key:
+            _login_attempts.pop(ip, None)
     except Exception:
         pass
 
@@ -213,7 +221,7 @@ def login():
             # Generate and send 2FA code
             import random, datetime as _dt2
             from models import update_restaurant, get_restaurant
-            code = str(random.randint(100000, 999999))
+            code = str(__import__("secrets").randbelow(900000) + 100000)
             expires = (_dt2.datetime.now() + _dt2.timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M:%S")
             # pending is a per-login-attempt secret bound into the token AND stored
             # server-side, so verify-2fa can confirm the submitted token was actually
@@ -248,9 +256,8 @@ def login():
             # a session for whichever row SQLite returned first (typically the
             # primary/owner login). One login per restaurant hid it; employee
             # accounts make several logins the norm, so it is fixed here.
-            pending_signed = str(_rid) + ":" + str(user["id"]) + ":" + pending
-            import base64 as _b64
-            pending_encoded = _b64.urlsafe_b64encode(pending_signed.encode()).decode()
+            from auth import make_pending_token as _mpt
+            pending_encoded = _mpt(_rid, user["id"], pending)
             import secrets as _sec4
             csrf3 = _sec4.token_hex(16)
             resp3 = make_response(render_template('two_fa.html',
@@ -308,18 +315,15 @@ def verify_2fa():
         if not _csrf_ok():
             return redirect("/login")
         # Decode uid + pending secret from token
-        try:
-            import base64 as _b64_v
-            decoded = _b64_v.urlsafe_b64decode(pending_token.encode()).decode()
-            # "rid:uid:secret". A two-part token is the pre-fix format that
-            # never carried a user_id — it is refused rather than guessed at,
-            # so the worst case is re-entering a password, not being handed
-            # somebody else's session.
-            uid_str, pending_user_str, pending_secret = decoded.split(":", 2)
-            uid = int(uid_str)
-            pending_user_id = int(pending_user_str)
-        except Exception:
+        # Signed "rid:uid:secret:sig" (auth.make_pending_token). Anything
+        # unsigned or edited — the user id swapped for the owner's — is
+        # refused; the worst case is re-entering a password.
+        from auth import read_pending_token as _rpt
+        _parsed = _rpt(pending_token)
+        if not _parsed:
+            _record_failed_attempt("2fa:" + ip)
             return redirect("/login")
+        uid, pending_user_id, pending_secret = _parsed
         if not uid or not pending_user_id:
             return redirect("/login")
         rest = get_restaurant(uid)
@@ -363,7 +367,7 @@ def verify_2fa():
             resp_exp.set_cookie("csrf_token", csrf4, httponly=True, samesite="Lax")
             return resp_exp
         # Code correct — clear it (and the pending secret, single-use) and create session
-        _clear_attempts("2fa:" + ip)
+        _clear_attempts("2fa:" + ip, clear_key=True)
         update_restaurant(uid, {"two_fa_code": "", "two_fa_expires": "", "two_fa_pending": ""})
         _fl3.session.pop("pending_uid", None)
         _fl3.session.pop("pending_token", None)
@@ -376,7 +380,8 @@ def verify_2fa():
         from auth import get_user_by_id as _gubi_2fa
         _user_for_session = _gubi_2fa(pending_user_id)
         if (not _user_for_session or not _user_for_session.get("is_active")
-                or _user_for_session.get("restaurant_id") != uid):
+                or _user_for_session.get("restaurant_id") != uid
+                or _user_for_session.get("must_reset_password")):
             return redirect("/login")
         token = create_session(_user_for_session["id"], ip_address=_ip_2fa, user_agent=_ua_2fa, restaurant_id=_user_for_session["restaurant_id"])
         # Login notification (email + push + bell)
@@ -413,13 +418,14 @@ def resend_2fa():
     _record_failed_attempt("2fa-resend:" + ip)
     data_r = request.get_json() or {}
     pending_token_r = data_r.get("pending_token", "")
-    try:
-        import base64 as _b64_r
-        decoded_r = _b64_r.urlsafe_b64decode(pending_token_r.encode()).decode()
-        uid_r, pending_secret_r = decoded_r.split(":", 1)
-        uid = int(uid_r)
-    except Exception:
+    # The same signed token the login page issued. This used to split it in
+    # two ("rid:secret"), so the secret carried the user id and never
+    # matched: Resend code never worked.
+    from auth import read_pending_token as _rpt_r
+    _parsed_r = _rpt_r(pending_token_r)
+    if not _parsed_r:
         return jsonify(ok=False, error="Session expired — please log in again")
+    uid, _pending_uid_r, pending_secret_r = _parsed_r
     if not uid:
         return jsonify(ok=False, error="Session expired")
     rest = get_restaurant(uid)
@@ -430,7 +436,7 @@ def resend_2fa():
     stored_pending_r = getattr(rest, "two_fa_pending", "") or ""
     if not stored_pending_r or not _hmac_r2fa.compare_digest(stored_pending_r, pending_secret_r):
         return jsonify(ok=False, error="Session expired — please log in again")
-    code = str(random.randint(100000, 999999))
+    code = str(__import__("secrets").randbelow(900000) + 100000)
     expires = (_dt4.datetime.now() + _dt4.timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M:%S")
     update_restaurant(uid, {"two_fa_code": code, "two_fa_expires": expires})
     try:
@@ -474,7 +480,7 @@ def send_2fa_test(current_user):
         email = rest.owner_email or ""
         if not email or "@" not in email:
             return jsonify(ok=False, error="No email address found. Contact will@cavnar.ai to update your account email.")
-    code = str(random.randint(100000, 999999))
+    code = str(__import__("secrets").randbelow(900000) + 100000)
     expires = (_dt5.datetime.now() + _dt5.timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M:%S")
     update_restaurant(current_user["restaurant_id"], {"two_fa_code": code, "two_fa_expires": expires})
     if method == "sms":
@@ -550,7 +556,8 @@ def change_password(current_user):
     import security as _sec
     if _sec.password_pwned(new_pw):
         return jsonify(ok=False, error=_sec.PWNED_MESSAGE)
-    update_password(current_user["id"], new_pw)
+    from auth import current_session_token as _cst
+    update_password(current_user["id"], new_pw, keep_token=_cst())
     try:
         restaurant = get_restaurant(current_user["restaurant_id"])
         if restaurant and restaurant.owner_email:
@@ -1065,7 +1072,7 @@ def google_sso_callback():
         # the password form, which already implements the full challenge.
         return _finish(error="use_password_for_2fa")
 
-    ip = request.headers.get("X-Forwarded-For", request.remote_addr or "").split(",")[0].strip()
+    ip = request.remote_addr or ""
     ua = request.headers.get("User-Agent", "")
     device_id = request.cookies.get("g_sso_device_id") or None
     token = create_session(user["id"], ip_address=ip, user_agent=ua, device_type="ios" if is_mobile else "web", device_id=device_id, restaurant_id=user["restaurant_id"])
@@ -1091,17 +1098,28 @@ def gmb_disconnect(current_user):
 
 
 
-@auth_bp.route("/auth/not-me/<token>")
+@auth_bp.route("/auth/not-me/<token>", methods=["GET", "POST"])
 def login_not_me(token):
     """The login email's 'This wasn't me' button. Signs the account out
     everywhere, forgets every remembered 2FA device, blocks sign-in until
-    the password is reset, and emails a reset link. One use, 7 days."""
+    the password is reset, and emails a reset link. One use, 7 days.
+
+    A GET only asks. It used to act, so a mail scanner prefetching the link
+    (Outlook Safe Links, Gmail's link check) locked the account out the
+    moment the login email arrived (SEC-7, SEC-34). The button POSTs."""
     from auth import consume_login_report
-    user = consume_login_report(token)
+    from markupsafe import escape as _esc_nm
     page = """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Cavnar AI</title><style>body{margin:0;background:#0c0c0c;color:#f0ebe0;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif}
 .card{max-width:460px;margin:12vh auto;padding:32px 28px;background:#121212;border:1px solid #262626;border-radius:16px}
-h1{font-size:22px;margin:0 0 12px}p{font-size:15px;line-height:1.6;color:#cdbfa9;margin:0 0 12px}a{color:#e8956a}</style></head><body><div class="card">%s</div></body></html>"""
+h1{font-size:22px;margin:0 0 12px}p{font-size:15px;line-height:1.6;color:#cdbfa9;margin:0 0 12px}a{color:#e8956a}
+.cbtn{display:inline-block;margin-top:8px;padding:12px 20px;border:0;border-radius:10px;background:#D4583A;color:#fff;font-size:15px;font-weight:700;cursor:pointer}</style></head><body><div class="card">%s</div></body></html>"""
+    if request.method != "POST":
+        return page % ("<h1>Wasn't you?</h1><p>This signs your account out on every device, forgets every "
+                       "remembered device, and emails you a link to set a new password. Nobody can sign in "
+                       "until it's reset.</p><form method='post'><button type='submit' class='cbtn cbtn-primary'>"
+                       "Sign out everywhere</button></form>")
+    user = consume_login_report(token)
     if not user:
         return page % "<h1>That link has expired</h1><p>It was already used, or it's more than 7 days old. If you still don't recognize a sign-in, use <a href='/forgot-password'>Forgot password</a> to reset your password now.</p>", 410
     email = user.get("email") or ""
@@ -1117,4 +1135,4 @@ h1{font-size:22px;margin:0 0 12px}p{font-size:15px;line-height:1.6;color:#cdbfa9
         print(f"[NotMe] reset email error: {_e}")
     return page % ("<h1>You're signed out everywhere</h1><p>Every device has been signed out and every remembered device forgotten. "
                    "Nobody can sign in again until the password is reset — we've emailed a reset link to <strong>%s</strong>.</p>"
-                   "<p>If you don't get it in a couple of minutes, <a href='/forgot-password'>request a new one</a>.</p>" % (email,))
+                   "<p>If you don't get it in a couple of minutes, <a href='/forgot-password'>request a new one</a>.</p>" % (_esc_nm(email),))

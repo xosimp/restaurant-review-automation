@@ -14710,9 +14710,9 @@ function loadSessions(){
       var borderStyle=i>0?'border-top:1px solid var(--paper3)':'';
       html+='<div style="padding:5px 0;'+borderStyle+'">';
       var deviceLabel=s.browser?s.device+' — '+s.browser:s.device;
-      html+='<span style="font-weight:500;color:var(--ink)">'+deviceLabel+'</span>'+badge+'<br>';
-      html+='<span style="color:var(--ink3)">'+s.ip_address+'</span>';
-      if(s.last_active){html+='<span style="color:var(--paper3);margin:0 4px">&middot;</span><span style="color:var(--ink3)">'+s.last_active+'</span>';}
+      html+='<span style="font-weight:500;color:var(--ink)">'+esc(deviceLabel)+'</span>'+badge+'<br>';
+      html+='<span style="color:var(--ink3)">'+esc(s.ip_address)+'</span>';
+      if(s.last_active){html+='<span style="color:var(--paper3);margin:0 4px">&middot;</span><span style="color:var(--ink3)">'+esc(s.last_active)+'</span>';}
       html+='</div>';
     }
     el.innerHTML=html;

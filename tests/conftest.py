@@ -12,6 +12,7 @@ import pytest
 # a pepper so staff PINs can be set, no live breach lookups, and the admin
 # 2FA gate off except in the test that turns it on.
 os.environ.setdefault("CAVNAR_PIN_PEPPER", "test-pepper")
+os.environ.setdefault("SECRET_KEY", "test-secret-key")
 os.environ.setdefault("HIBP_DISABLED", "1")
 os.environ.setdefault("ADMIN_REQUIRE_2FA", "0")
 

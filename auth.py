@@ -5,6 +5,7 @@ auth.py — User authentication for the Cavnar AI hosted dashboard
 Handles: user table, password hashing, session management, login/logout
 """
 import hashlib
+import os
 import sqlite3
 import secrets
 from datetime import datetime, timezone
@@ -1074,6 +1075,39 @@ def verify_membership_pin(membership_id: int, restaurant_id: int, pin: str,
     return {"ok": True}
 
 
+def _pending_key() -> bytes:
+    key = os.getenv("SECRET_KEY") or ""
+    if not key:
+        raise RuntimeError("SECRET_KEY is not set; cannot sign the 2FA pending token")
+    return key.encode()
+
+
+def make_pending_token(restaurant_id: int, user_id: int, secret: str) -> str:
+    """The 2FA pending token: "rid:uid:secret:sig", base64. The user id used
+    to ride unsigned, so a manager who passed their own password could edit
+    it to the owner's id and be signed in as the owner (SEC-5)."""
+    import hmac as _h, hashlib as _hl, base64 as _b
+    body = f"{int(restaurant_id)}:{int(user_id)}:{secret}"
+    sig = _h.new(_pending_key(), body.encode(), _hl.sha256).hexdigest()[:40]
+    return _b.urlsafe_b64encode(f"{body}:{sig}".encode()).decode()
+
+
+def read_pending_token(token: str):
+    """(restaurant_id, user_id, secret) for a token make_pending_token
+    issued, or None for anything tampered with, truncated or unsigned."""
+    import hmac as _h, hashlib as _hl, base64 as _b
+    try:
+        decoded = _b.urlsafe_b64decode((token or "").encode()).decode()
+        body, sig = decoded.rsplit(":", 1)
+        rid_s, uid_s, secret = body.split(":", 2)
+        expected = _h.new(_pending_key(), body.encode(), _hl.sha256).hexdigest()[:40]
+        if not _h.compare_digest(sig, expected):
+            return None
+        return int(rid_s), int(uid_s), secret
+    except Exception:
+        return None
+
+
 def create_staff_session(user_id: int, restaurant_id: int, ip_address: str = None,
                          user_agent: str = None, device_id: str = None,
                          db_path: str = DB_PATH) -> str:
@@ -1804,11 +1838,18 @@ def password_strength(password: str) -> str:
     return "weak"
 
 
-def update_password(user_id: int, new_password: str, db_path: str = DB_PATH):
+def update_password(user_id: int, new_password: str, keep_token: str = None, db_path: str = DB_PATH):
+    """Every password write goes through here: a reset, a change, an admin
+    reset. It also ends every other session of this login (SEC-8 — a reset
+    used to leave an intruder's session alive for 30 days) and clears
+    must_reset_password, which a freeze or "This wasn't me" sets and which
+    nothing ever cleared, so the owner could never sign in again (SEC-7).
+    `keep_token` is the session making the change, which stays signed in."""
     conn = get_conn(db_path)
     from zoneinfo import ZoneInfo as _ZI_pw
     conn.execute(
-        "UPDATE users SET password_hash=?, password_changed_at=?, password_strength=? WHERE id=?",
+        "UPDATE users SET password_hash=?, password_changed_at=?, password_strength=?, "
+        "must_reset_password=0, reset_token=NULL, reset_token_expires=NULL WHERE id=?",
         (
             generate_password_hash(new_password),
             datetime.now(_ZI_pw('America/Chicago')).strftime('%Y-%m-%dT%H:%M:%S'),
@@ -1816,8 +1857,24 @@ def update_password(user_id: int, new_password: str, db_path: str = DB_PATH):
             user_id,
         ),
     )
+    if keep_token:
+        conn.execute("DELETE FROM sessions WHERE user_id=? AND token<>?", (user_id, hash_session_token(keep_token)))
+    else:
+        conn.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
     conn.commit()
     conn.close()
+
+
+def current_session_token():
+    """The session token on this request (web cookie or iOS bearer), for a
+    password change that must keep its own session."""
+    try:
+        auth_h = request.headers.get("Authorization", "")
+        if auth_h.startswith("Bearer "):
+            return auth_h[7:].strip() or None
+        return request.cookies.get("session_token") or None
+    except Exception:
+        return None
 
 # Roles an owner can give a login on their own team, with what the owner
 # sees them called. 'client' is the stored value for an owner login (see the
@@ -2095,6 +2152,9 @@ def create_session(user_id: int, days: int = 30,
     keep the old accumulate-until-expiry behavior, since there's no stable
     per-device identity to key off there."""
     token = secrets.token_urlsafe(32)
+    # Stored as a hash, like session tokens: a copy of this table must not
+    # hand anyone a working "sign the owner out everywhere" link, nor the
+    # live session token it names (SEC-37).
     from datetime import timedelta
     # `hours` is the staff-PIN path: a shift-length session rather than a
     # month, because those run on shared devices sitting on a pass or a host
@@ -3052,7 +3112,7 @@ def create_login_report(user_id: int, session_token: str | None, db_path: str = 
     token = secrets.token_urlsafe(32)
     conn = get_conn(db_path)
     conn.execute("INSERT INTO login_reports (token, user_id, session_token) VALUES (?,?,?)",
-                 (token, user_id, session_token))
+                 (hash_session_token(token), user_id, hash_session_token(session_token) if session_token else None))
     conn.commit()
     conn.close()
     return token
@@ -3067,13 +3127,14 @@ def consume_login_report(token: str, db_path: str = DB_PATH) -> dict | None:
     conn = get_conn(db_path)
     row = conn.execute("""
         SELECT user_id FROM login_reports
-        WHERE token=? AND used_at IS NULL AND created_at > datetime('now', '-7 days')
-    """, (token,)).fetchone()
+        WHERE token IN (?, ?) AND used_at IS NULL AND created_at > datetime('now', '-7 days')
+    """, (hash_session_token(token), token)).fetchone()
     if not row:
         conn.close()
         return None
     user_id = row["user_id"]
-    conn.execute("UPDATE login_reports SET used_at=datetime('now') WHERE token=?", (token,))
+    conn.execute("UPDATE login_reports SET used_at=datetime('now') WHERE token IN (?, ?)",
+                 (hash_session_token(token), token))
     conn.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
     conn.execute("UPDATE users SET must_reset_password=1 WHERE id=?", (user_id,))
     user = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
@@ -3099,7 +3160,7 @@ def start_recovery_email(user_id: int, email: str, db_path: str = DB_PATH) -> st
     to come back through verify_recovery_email before it counts."""
     import random
     from datetime import datetime, timedelta
-    code = str(random.randint(100000, 999999))
+    code = str(__import__("secrets").randbelow(900000) + 100000)
     expires = (datetime.utcnow() + timedelta(minutes=15)).strftime("%Y-%m-%d %H:%M:%S")
     conn = get_conn(db_path)
     conn.execute("""

@@ -240,7 +240,7 @@ def mobile_login():
     device_ok = bool(device_token) and trusted_device_ok(rid, device_token)
 
     if two_fa_on and not device_ok:
-        code = str(random.randint(100000, 999999))
+        code = str(__import__("secrets").randbelow(900000) + 100000)
         expires = (datetime.now() + timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M:%S")
         import secrets as _secrets
         pending = _secrets.token_hex(24)
@@ -263,7 +263,8 @@ def mobile_login():
         # is carried through, so verify-2fa issues a session for THAT login
         # rather than an unordered "LIMIT 1" over the restaurant's users. See
         # the same fix in auth_routes.py.
-        pending_encoded = base64.urlsafe_b64encode(f"{rid}:{user['id']}:{pending}".encode()).decode()
+        from auth import make_pending_token
+        pending_encoded = make_pending_token(rid, user["id"], pending)
         return jsonify(ok=True, requires_2fa=True, pending_token=pending_encoded, masked_email=masked)
 
     ua = request.headers.get("User-Agent", "Cavnar-iOS")
@@ -293,14 +294,18 @@ def mobile_forgot_password():
         # emailed link. Stored in the same reset_token/expires columns the
         # web flow uses, so the two can't both be live for one user at once
         # — whichever was requested last is the one that works.
-        import random as _rnd
+        import secrets as _secrets_rc
         from datetime import datetime as _dt, timezone as _tz, timedelta as _td
-        code = f"{_rnd.randint(0, 999999):06d}"
+        code = f"{_secrets_rc.randbelow(1_000_000):06d}"
         conn = get_conn()
         row = conn.execute("SELECT id FROM users WHERE LOWER(email)=? AND is_active=1", (email,)).fetchone()
         if row:
             expires = (_dt.now(_tz.utc) + _td(hours=1)).isoformat()
-            conn.execute("UPDATE users SET reset_token=?, reset_token_expires=? WHERE id=?", (code, expires, row["id"]))
+            # Stored hashed and bound to the login, never verbatim (SEC-4).
+            conn.execute("UPDATE users SET reset_token=?, reset_token_expires=? WHERE id=?",
+                         (_reset_code_hash(row["id"], code), expires, row["id"]))
+            # A fresh code starts with a fresh miss count.
+            conn.execute("DELETE FROM login_attempts WHERE key=?", ("resetcode:" + email,))
             conn.commit()
         conn.close()
         if row:
@@ -309,6 +314,34 @@ def mobile_forgot_password():
     except Exception as e:
         print(f"[forgot-password-mobile] {e}")
     return jsonify(ok=True)
+
+
+RESET_CODE_MAX_MISSES = 5
+
+
+def _reset_code_hash(user_id, code):
+    import hashlib as _hl
+    key = os.getenv("SECRET_KEY") or ""
+    return "rc1:" + _hl.sha256(f"{key}:{int(user_id)}:{code}".encode()).hexdigest()
+
+
+def _reset_code_misses(email):
+    """Record one wrong code against this email and return how many there
+    have been in the last hour (the durable login_attempts table, under a
+    key of its own that no sign-in reads)."""
+    import security as _sec
+    from time_utils import utc_stamp
+    key = "resetcode:" + (email or "").strip().lower()
+    conn = get_conn()
+    try:
+        conn.execute("INSERT INTO login_attempts (key, kind, ip, attempted_at) VALUES (?,?,?,?)",
+                     (key, "reset_code", "", utc_stamp()))
+        conn.commit()
+        return _sec._count(conn, key, 60)
+    except Exception:
+        return 0
+    finally:
+        conn.close()
 
 
 @mobile_bp.route("/reset-password", methods=["POST"])
@@ -329,9 +362,6 @@ def mobile_reset_password():
     new_password = data.get("new_password") or ""
     if len(new_password) < 8:
         return jsonify(ok=False, error="Password must be at least 8 characters."), 400
-    import security as _sec
-    if _sec.password_pwned(new_password):
-        return jsonify(ok=False, error=_sec.PWNED_MESSAGE), 400
     if len(code) != 6 or not code.isdigit():
         _record_failed_attempt(ip)
         return jsonify(ok=False, error="That code isn't right. Check the email and try again."), 400
@@ -344,9 +374,25 @@ def mobile_reset_password():
     ).fetchone()
     conn.close()
     stored = (row["reset_token"] if row else "") or ""
-    if not row or not stored or not _hmac.compare_digest(stored, code):
+    if not row or not stored or not _hmac.compare_digest(stored, _reset_code_hash(row["id"], code)):
         _record_failed_attempt(ip)
+        # A per-ACCOUNT cap: five wrong codes burn the code, whichever
+        # addresses they came from (SEC-4). The address throttle alone let a
+        # botnet walk the million codes.
+        if row and stored and _reset_code_misses(email) >= RESET_CODE_MAX_MISSES:
+            _c = get_conn()
+            try:
+                _c.execute("UPDATE users SET reset_token=NULL, reset_token_expires=NULL WHERE id=?", (row["id"],))
+                _c.commit()
+            finally:
+                _c.close()
+            return jsonify(ok=False, error="Too many wrong codes — request a new one."), 400
         return jsonify(ok=False, error="That code isn't right. Check the email and try again."), 400
+    # Only once the code is right: the breach lookup is a network call, and
+    # it used to run on every guess (SEC-4).
+    import security as _sec
+    if _sec.password_pwned(new_password):
+        return jsonify(ok=False, error=_sec.PWNED_MESSAGE), 400
     try:
         exp = _dt.fromisoformat((row["reset_token_expires"] or "").replace("Z", "+00:00"))
         if exp.tzinfo is None:
@@ -487,15 +533,14 @@ def mobile_verify_2fa():
     code_entered = (data.get("code") or "").strip()
     remember = bool(data.get("remember_device"))
 
-    try:
-        decoded = base64.urlsafe_b64decode(pending_token.encode()).decode()
-        # "rid:uid:secret" — a two-part token is the pre-fix format with no
-        # user_id and is refused rather than guessed at.
-        rid_str, pending_user_str, pending_secret = decoded.split(":", 2)
-        rid = int(rid_str)
-        pending_user_id = int(pending_user_str)
-    except Exception:
+    # Signed "rid:uid:secret:sig" (auth.make_pending_token): an edited user
+    # id is refused, never honoured (SEC-5).
+    from auth import read_pending_token
+    parsed = read_pending_token(pending_token)
+    if not parsed:
+        _record_failed_attempt("2fa:" + ip)
         return jsonify(ok=False, error="Session expired — please log in again."), 401
+    rid, pending_user_id, pending_secret = parsed
     rest = get_restaurant(rid) if rid else None
     if not rest:
         return jsonify(ok=False, error="Session expired — please log in again."), 401
@@ -523,7 +568,7 @@ def mobile_verify_2fa():
         if datetime.now() > expires:
             return jsonify(ok=False, error="Code expired. Request a new one."), 401
 
-    _clear_attempts("2fa:" + ip)
+    _clear_attempts("2fa:" + ip, clear_key=True)
     update_restaurant(rid, {"two_fa_code": "", "two_fa_expires": "", "two_fa_pending": ""})
     # The login that passed the password step, not an arbitrary active user of
     # this restaurant. Re-checked against rid so a tampered token can't name
@@ -532,6 +577,9 @@ def mobile_verify_2fa():
     user = _gubi_m2fa(pending_user_id)
     if not user or not user.get("is_active") or user.get("restaurant_id") != rid:
         return jsonify(ok=False, error="Session expired — please log in again."), 401
+    if user.get("must_reset_password"):
+        return jsonify(ok=False, password_reset_required=True,
+                       error="This login needs a new password before it can sign in."), 403
 
     ua = request.headers.get("User-Agent", "Cavnar-iOS")
     token = create_session(user["id"], ip_address=ip, user_agent=ua, device_type="ios", device_id=device_id, restaurant_id=user["restaurant_id"])
@@ -4220,7 +4268,8 @@ def mobile_change_password(current_user):
     import security as _sec
     if _sec.password_pwned(new_pw):
         return jsonify(ok=False, error=_sec.PWNED_MESSAGE), 400
-    update_password(current_user["id"], new_pw)
+    from auth import current_session_token
+    update_password(current_user["id"], new_pw, keep_token=current_session_token())
     _log_account_event(current_user["restaurant_id"], "password_changed", current_user)
     try:
         restaurant = get_restaurant(current_user["restaurant_id"])
@@ -4493,7 +4542,7 @@ def mobile_send_2fa_test(current_user):
         return jsonify(ok=False, error="No phone number found. Add one in Profile & Details, or send by email instead."), 400
     if method != "sms" and (not email or "@" not in email):
         return jsonify(ok=False, error="No email address found. Contact will@cavnar.ai to update your account email."), 400
-    code = str(_random.randint(100000, 999999))
+    code = str(__import__("secrets").randbelow(900000) + 100000)
     expires = (datetime.now() + timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M:%S")
     update_restaurant(rid, {"two_fa_code": code, "two_fa_expires": expires})
     if method == "sms":

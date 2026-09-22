@@ -1864,7 +1864,7 @@ def competitor_intel_status(current_user, job_id):
 def send_referral(current_user):
     import resend as _resend
     # Simple per-session rate limit: max 10 referrals per hour
-    ip = (request.headers.get("X-Forwarded-For","").split(",")[0].strip() or request.remote_addr or "")
+    ip = request.remote_addr or ""   # ProxyFix-vouched (SEC-3)
     data = request.get_json()
     ref_name  = data.get("name","").strip()
     ref_email = data.get("email","").strip()

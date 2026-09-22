@@ -359,7 +359,6 @@ def test_the_sessions_list_still_renders_the_ip(src):
     assert "s.ip_address" in _function(src, "loadSessions")
 
 
-@pytest.mark.xfail(strict=True, reason="CLIENT-40: loadSessions writes s.ip_address (client-supplied X-Forwarded-For) into innerHTML unescaped")
 def test_the_sessions_list_escapes_every_field(src):
     body = _function(src, "loadSessions")
     for field in ("s.ip_address", "s.last_active", "deviceLabel"):

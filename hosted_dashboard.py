@@ -265,6 +265,9 @@ def _sweep_leaked_db_connections(exc):
 _secret_key = os.getenv("SECRET_KEY", "")
 if not _secret_key:
     _secret_key = os.urandom(32).hex()
+    # Every module that signs something (2FA pending tokens, connect state,
+    # reset codes) reads SECRET_KEY; one per-process key for all of them.
+    os.environ["SECRET_KEY"] = _secret_key
     print("WARNING: SECRET_KEY not set — sessions will invalidate on every restart. Set SECRET_KEY in Railway env vars.")
 app.secret_key = _secret_key
 

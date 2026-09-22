@@ -4604,7 +4604,7 @@ def guest_optin_submit(token):
     if not restaurant_id:
         return jsonify(ok=False, error="Not found"), 404
     from ai_utils import ai_rate_limited
-    ip = request.headers.get("X-Forwarded-For", "").split(",")[0].strip() or request.remote_addr or "unknown"
+    ip = request.remote_addr or "unknown"   # ProxyFix-vouched, never the client's own header (SEC-3)
     if ai_rate_limited(f"guestoptin:{ip}", max_calls=5, window_secs=300):
         return jsonify(ok=False, error="Too many attempts — please wait a few minutes and try again."), 429
     restaurant = get_restaurant(restaurant_id)
@@ -5069,7 +5069,7 @@ def staff_availability_submit(token):
         return render_template("staff_schedule_expired.html",
                                restaurant_name=share.get("restaurant_name") or ""), 410
 
-    ip = request.headers.get("X-Forwarded-For", "").split(",")[0].strip() or request.remote_addr or "unknown"
+    ip = request.remote_addr or "unknown"   # ProxyFix-vouched, never the client's own header (SEC-3)
     if ai_rate_limited(f"staffavail:{ip}", max_calls=20, window_secs=300):
         return "Too many updates just now — try again in a few minutes.", 429
 

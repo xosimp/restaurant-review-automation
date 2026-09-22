@@ -185,7 +185,6 @@ def test_turning_2fa_off_from_the_web_toggle_is_recorded_in_account_activity(db_
     assert any("two_fa" in e for e in _events(db_path, rid))
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-5/SEC-6: a manager mints backup codes, swaps the pending uid and becomes the owner")
 def test_a_manager_cannot_become_the_owner_with_a_self_minted_backup_code(db_path):
     rid, owner, mgr = _setup(db_path, two_fa=True)
     c = _app().test_client()
