@@ -103,7 +103,11 @@ def load_shifts(path: str = "sample_shifts.csv",
             return []
 
 
-def load_shifts_for_restaurant(restaurant_id: int, allow_sample: bool = False) -> list[dict]:
+_UNREAD = object()   # "client_data not passed in" — None is a real answer (no row)
+
+
+def load_shifts_for_restaurant(restaurant_id: int, allow_sample: bool = False,
+                               client_data=_UNREAD) -> list[dict]:
     """The restaurant's own shifts, or [] when it has uploaded none.
 
     The bundled SAMPLE week is returned only when a caller asks for it with
@@ -114,8 +118,10 @@ def load_shifts_for_restaurant(restaurant_id: int, allow_sample: bool = False) -
     its reliability and tenure into their team views, and its labor % and
     "$12,630/mo" gap into their Home and weekly email as their own figures.
     """
-    from models import get_client_data
-    data = get_client_data(restaurant_id)
+    if client_data is _UNREAD:
+        from models import get_client_data
+        client_data = get_client_data(restaurant_id)
+    data = client_data
     if data and data.get("shifts_csv"):
         return load_shifts(csv_string=data["shifts_csv"])
     return load_shifts() if allow_sample else []
@@ -257,13 +263,19 @@ def _covers_guidance(analysis: dict) -> str:
             f"was lost or that service was slow, and never recommend adding staff on this evidence alone.")
 
 
-def analyse_shifts_for_restaurant(restaurant_id: int) -> dict:
-    """Load shifts and analyse with client-specific hourly rate and target."""
-    from models import get_client_data
-    client_data = get_client_data(restaurant_id)
+def analyse_shifts_for_restaurant(restaurant_id: int, client_data=_UNREAD) -> dict:
+    """Load shifts and analyse with client-specific hourly rate and target.
+
+    `client_data` is the restaurant's client_data row when the caller has
+    already read it. It was read twice here (once for is_live, again inside
+    load_shifts_for_restaurant) and again by the inventory read beside it on
+    Home — three reads of the whole shifts blob for one page (MOD-HOME-2)."""
+    if client_data is _UNREAD:
+        from models import get_client_data
+        client_data = get_client_data(restaurant_id)
     is_live = bool(client_data and client_data.get("shifts_csv"))
     # The labelled preview: is_live=False travels with the result.
-    shifts = load_shifts_for_restaurant(restaurant_id, allow_sample=True)
+    shifts = load_shifts_for_restaurant(restaurant_id, allow_sample=True, client_data=client_data)
     rate   = get_hourly_rate(restaurant_id)
     target = get_labor_target(restaurant_id)
     from models import get_role_rates, compute_blended_rate

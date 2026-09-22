@@ -2115,17 +2115,33 @@ def run_read_tool(name, restaurant_id, tool_input, restaurant=None):
         return json.dumps({"error": f"could not read {name}"})
 
 
-def build_proposal(name, tool_input):
+def build_proposal(name, tool_input, restaurant_id=None):
     """Turn a write-tool call into the confirm card the client renders.
 
     `route` is what the client posts to on confirm — the same authenticated
     endpoint the button in the UI already uses, so a proposal can never
     reach anything the user couldn't already do themselves.
+
+    A supplier order carries the hash of the draft as it stands now — the
+    order the conversation described — because send-order requires it and
+    refuses one that has changed since (MOD-FC-8). Never the model's own
+    draft_hash or resend: the owner's explicit "send again" is not the
+    model's to set.
     """
     tool = _BY_NAME.get(name)
     if not tool or tool["kind"] != "write":
         return None
     args = {k: v for k, v in (tool_input or {}).items() if v is not None}
+    if name == "send_supplier_order":
+        args = {k: v for k, v in args.items() if k not in ("draft_hash", "resend")}
+        if restaurant_id is not None:
+            try:
+                from inventory import build_supplier_orders
+                h = build_supplier_orders(restaurant_id).get("draft_hash")
+            except Exception:
+                h = None
+            if h:
+                args["draft_hash"] = h
     summary = tool["summary"]
     if "{supplier}" in summary:
         summary = summary.replace("{supplier}", args.get("supplier_email") or "every supplier")

@@ -255,7 +255,10 @@ def test_reprice_restores_the_food_cost_percentage(db_path, monkeypatch):
     assert s["increase_per_plate"] == 0.30
     assert s["food_cost_pct_before"] == 25.0          # 3.00 / 12
     assert s["suggested_price"] == 13.25              # 3.30 / 0.25 = 13.20 -> next quarter
-    assert s["monthly_margin_lost"] == 90.0           # 0.30 x 300
+    # 0.30 x 300 units — sold over the 28-day popularity window, scaled to a
+    # 30-day month. This pinned 90.0, a four-week figure labelled 30 days (MOD-FC-28).
+    assert s["monthly_margin_lost"] == round(0.30 * 300 * 30 / 28, 2)
+    assert "28 days" in s["monthly_basis"]
     assert "assumes" in out["assumption"].lower()
 
 

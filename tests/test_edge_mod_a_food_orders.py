@@ -106,6 +106,12 @@ def _mobile(apps, db_path, rid):
     return lambda path, body=None: cl.post(path, json=body or {}, headers={"Authorization": f"Bearer {token}"})
 
 
+def _hash(rid):
+    """The draft hash a client holds after loading the order screen — the
+    send requires it (MOD-FC-8)."""
+    return inventory.build_supplier_orders(rid)["draft_hash"]
+
+
 def _pos(db_path, rid):
     c = get_conn(db_path)
     rows = c.execute("SELECT po_number, supplier_email, status FROM purchase_orders WHERE restaurant_id=? "
@@ -135,7 +141,6 @@ def test_three_below_par_items_are_all_on_the_order(db_path):
 
 # ── A5 order #17 / MOD-FC-2: same name at two suppliers ─────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-2: build_supplier_orders dedupes by display name; the second supplier's line is dropped")
 def test_two_same_name_ingredients_at_two_suppliers_make_two_groups(db_path):
     rid = _restaurant(db_path)
     _ingredient(db_path, rid, "Chicken Breast", supplier_name="Sysco", supplier_email="a@sysco.test")
@@ -146,7 +151,6 @@ def test_two_same_name_ingredients_at_two_suppliers_make_two_groups(db_path):
 
 # ── A5 order #18 / MOD-FC-3: one supplier, name typed two ways ──────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-3: groups are keyed on (supplier_name, email); 'Sysco'/'SYSCO' at one address make two POs")
 def test_one_supplier_address_typed_with_different_name_casing_is_one_group(db_path):
     rid = _restaurant(db_path)
     _ingredient(db_path, rid, "A", supplier_name="Sysco", supplier_email="x@sysco.test")
@@ -161,13 +165,13 @@ def test_a_double_click_on_send_puts_one_po_in_the_suppliers_inbox(apps, db_path
     rid = _restaurant(db_path)
     _ingredient(db_path, rid, "Romaine")
     post = _web(apps, db_path, rid)
-    first = post("/api/food-cost/send-order")
-    second = post("/api/food-cost/send-order")
+    h = {"draft_hash": _hash(rid)}
+    first = post("/api/food-cost/send-order", h)
+    second = post("/api/food-cost/send-order", h)
     assert first.status_code == 200 and second.status_code == 429
     assert len(_pos(db_path, rid)) == 1 and len(mailed) == 1
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-11: the cooldown's check-and-set is not atomic; two request threads can both be allowed")
 def test_two_simultaneous_sends_are_not_both_allowed_through_the_cooldown(monkeypatch):
     """Both request threads read the cooldown before either writes it — the
     interleaving the audit's probe hit 1 time in 2,000, forced here with a
@@ -191,19 +195,18 @@ def test_two_simultaneous_sends_are_not_both_allowed_through_the_cooldown(monkey
     assert sorted(results) == [False, True]
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-11: the cooldown is per restaurant, so the second supplier's Send button is refused for 60s")
 def test_sending_supplier_a_then_supplier_b_inside_a_minute_sends_both(apps, db_path, mailed):
     rid = _restaurant(db_path)
     _ingredient(db_path, rid, "Romaine", supplier_name="Fresh Co", supplier_email="a@fresh.test")
     _ingredient(db_path, rid, "Salmon", supplier_name="Sea Co", supplier_email="b@sea.test")
     post = _web(apps, db_path, rid)
-    assert post("/api/food-cost/send-order", {"supplier_email": "a@fresh.test"}).status_code == 200
-    r = post("/api/food-cost/send-order", {"supplier_email": "b@sea.test"})
+    h = _hash(rid)
+    assert post("/api/food-cost/send-order", {"supplier_email": "a@fresh.test", "draft_hash": h}).status_code == 200
+    r = post("/api/food-cost/send-order", {"supplier_email": "b@sea.test", "draft_hash": h})
     assert r.status_code == 200, r.get_json()
     assert sorted(m["to_email"] for m in mailed) == ["a@fresh.test", "b@sea.test"]
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-11: the cooldown is spent before validation, so a 400 'nothing to order' blocks the fixed retry")
 def test_a_refused_send_does_not_start_the_cooldown(apps, db_path, mailed):
     rid = _restaurant(db_path)
     iid = _ingredient(db_path, rid, "Romaine", supplier_name=None, supplier_email=None)
@@ -212,7 +215,7 @@ def test_a_refused_send_does_not_start_the_cooldown(apps, db_path, mailed):
     c = get_conn(db_path)
     c.execute("UPDATE ingredients SET supplier_name='Fresh Co', supplier_email='a@fresh.test' WHERE id=?", (iid,))
     c.commit(); c.close()
-    r = post("/api/food-cost/send-order")
+    r = post("/api/food-cost/send-order", {"draft_hash": _hash(rid)})
     assert r.status_code == 200, r.get_json()
 
 
@@ -227,8 +230,8 @@ def test_a_stale_draft_hash_is_refused_with_409(apps, db_path, mailed):
 
 
 @pytest.mark.parametrize("surface", [
-    pytest.param("web", marks=pytest.mark.xfail(strict=True, reason="MOD-FC-8: the web send route only checks draft_hash when one is supplied")),
-    pytest.param("mobile", marks=pytest.mark.xfail(strict=True, reason="MOD-FC-8: the mobile send route only checks draft_hash when one is supplied")),
+    "web",
+    "mobile",
 ])
 def test_a_send_without_a_draft_hash_is_refused(apps, db_path, mailed, surface):
     rid = _restaurant(db_path)
@@ -247,12 +250,10 @@ def _js_function(name):
     return html[start:end]
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-8: the web client's send body is {supplier_email} only — no draft_hash")
 def test_the_web_send_body_carries_the_draft_hash():
     assert "draft_hash" in _js_function("sendSupplierOrder")
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-8: the iOS SendBody encodes only supplier_email — no draft_hash")
 def test_the_ios_send_body_carries_the_draft_hash():
     src = open("ios/CavnarAI/CavnarAI/Features/FoodCost/SupplierOrderViewModel.swift", encoding="utf-8").read()
     body = src[src.index("struct SendBody"):]
@@ -267,18 +268,17 @@ def test_the_web_send_honours_the_send_delay(apps, db_path, mailed):
     rid = _restaurant(db_path)
     models.update_restaurant(rid, {"send_delay_minutes": 5}, db_path=db_path)
     _ingredient(db_path, rid, "Romaine")
-    r = _web(apps, db_path, rid)("/api/food-cost/send-order")
+    r = _web(apps, db_path, rid)("/api/food-cost/send-order", {"draft_hash": _hash(rid)})
     assert r.status_code == 200 and r.get_json()["undo_minutes"] == 5
     assert mailed == [] and delayed.pending(rid, db_path=db_path)[0]["kind"] == "order_send"
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-9: the mobile send route is a separate copy that never reads send_delay_minutes")
 def test_the_mobile_send_honours_the_send_delay(apps, db_path, mailed):
     import delayed
     rid = _restaurant(db_path)
     models.update_restaurant(rid, {"send_delay_minutes": 5}, db_path=db_path)
     _ingredient(db_path, rid, "Romaine")
-    r = _mobile(apps, db_path, rid)("/mobile/api/food-cost/send-order")
+    r = _mobile(apps, db_path, rid)("/mobile/api/food-cost/send-order", {"draft_hash": _hash(rid)})
     assert r.status_code == 200
     assert mailed == []
     assert delayed.pending(rid, db_path=db_path)[0]["kind"] == "order_send"
@@ -296,7 +296,6 @@ def test_a_queued_send_whose_draft_changed_sends_nothing(db_path, mailed):
     assert out["failed"] == 1 and mailed == []
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-10: a voided queued/auto order is stored as 'failed' and nothing tells the owner")
 def test_a_queued_send_whose_draft_changed_notifies_the_owner(db_path, mailed, monkeypatch):
     import delayed
     import push
@@ -315,7 +314,6 @@ def test_a_queued_send_whose_draft_changed_notifies_the_owner(db_path, mailed, m
 
 # ── A5 order #25 / MOD-FC-7: PO numbering after a void ──────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-7: PO numbers are COUNT(*)+1, so voiding a non-newest PO wedges numbering permanently")
 def test_a_purchase_order_allocates_after_an_older_one_is_voided(db_path):
     rid = _restaurant(db_path)
     a = models.record_purchase_order(rid, "Sysco", "a@x.test", [{"item": "x", "qty": 1}], 10)
@@ -343,7 +341,6 @@ def test_the_draft_returns_unassigned_items_beside_the_groups(db_path):
     assert len(d["groups"]) == 1 and [u["item"] for u in d["unassigned"]] == ["Napkins"]
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-20: loadOrderDraft reads d.unassigned only when there are no groups")
 def test_the_web_order_screen_renders_unassigned_items_when_groups_exist():
     fn = _js_function("loadOrderDraft")
     after_empty_branch = fn[fn.index("var html = ''"):]
@@ -353,8 +350,8 @@ def test_the_web_order_screen_renders_unassigned_items_when_groups_exist():
 # ── MOD-FC-25: raw exception text ───────────────────────────────────────────
 
 @pytest.mark.parametrize("surface", [
-    pytest.param("web", marks=pytest.mark.xfail(strict=True, reason="MOD-FC-25: 'Couldn't build the order: {e}' returns the raw exception text")),
-    pytest.param("mobile", marks=pytest.mark.xfail(strict=True, reason="MOD-FC-25: the mobile draft route returns the raw exception text")),
+    "web",
+    "mobile",
 ])
 def test_a_failed_order_build_shows_a_fixed_message_not_the_exception(apps, db_path, monkeypatch, surface):
     rid = _restaurant(db_path)

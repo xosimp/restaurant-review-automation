@@ -1698,19 +1698,11 @@ def mobile_set_staff_contact(current_user):
 @mobile_bp.route("/labor/publish-schedule", methods=["POST"])
 @mobile_login_required
 def mobile_publish_schedule(current_user):
-    """Send each member of staff their own shifts — the one body in
-    client_api._publish_schedule, with its publish gate: blockers come back
-    as needs_ack until the person sending has read them."""
-    from permissions import has_permission, SCHEDULE_PUBLISH
-    if not (current_user.get("is_admin") or has_permission(current_user, SCHEDULE_PUBLISH)):
-        return jsonify(ok=False, error="Your login can draft a schedule but not send it to staff."), 403
-    data = request.get_json(silent=True) or {}
-    try:
-        out, status = _capi._publish_schedule(current_user["restaurant_id"], data.get("schedule_id"),
-                                              current_user, acknowledge=bool(data.get("acknowledge")))
-    except (TypeError, ValueError):
-        return jsonify(ok=False, error="Which schedule?"), 400
-    return jsonify(**out), status
+    """Send each member of staff their own shifts — the web route's body
+    (client_api._publish_schedule_request): the permission check, the
+    owner's send delay (DATA-41) and the publish gate, whose blockers come
+    back as needs_ack until the person sending has read them."""
+    return _capi._publish_schedule_request(current_user)
 
 
 @mobile_bp.route("/labor/schedule-share-status")
@@ -1848,7 +1840,10 @@ def mobile_food_cost_order_draft(current_user):
     try:
         draft = build_supplier_orders(current_user["restaurant_id"])
     except Exception as e:
-        return jsonify(ok=False, error=f"Couldn't build the order: {e}"), 500
+        # The exception text is not for an owner (MOD-FC-25).
+        import ops as _ops_d
+        _ops_d.capture(e, job="build_supplier_orders", context=f"restaurant_id={current_user['restaurant_id']}")
+        return jsonify(ok=False, error="Couldn't build the order — try again in a moment."), 500
     return jsonify(ok=True, **draft)
 
 
@@ -1856,90 +1851,10 @@ def mobile_food_cost_order_draft(current_user):
 @mobile_login_required
 def mobile_send_supplier_order(current_user):
     """Email the suggested order to each supplier and record a PO per
-    supplier. Optional `supplier_email` in the body sends to just that one
-    supplier; omitted, every group goes.
-
-    Each supplier is its own PO and its own send, so one bad address can't
-    stop the rest — failures come back per-supplier rather than as a single
-    all-or-nothing error."""
-    from inventory import build_supplier_orders
-    from models import record_purchase_order
-    from client_api import _order_send_allowed
-
-    rid = current_user["restaurant_id"]
-    restaurant = get_restaurant(rid)
-    if not restaurant:
-        return jsonify(ok=False, error="Restaurant not found"), 404
-
-    # The body is optional here — no body means "send every supplier".
-    data = request.get_json(silent=True) or {}
-    only = (data.get("supplier_email") or "").strip().lower()
-
-    # Shares the web route's cooldown: a double-tap on a phone is the most
-    # likely way a supplier receives the same order twice.
-    if not _order_send_allowed(rid):
-        return jsonify(ok=False, error="An order was just sent — give it a moment before sending again."), 429
-
-    try:
-        draft = build_supplier_orders(rid)
-    except Exception as e:
-        return jsonify(ok=False, error=f"Couldn't build the order: {e}"), 500
-
-    # Send what was previewed, not a rebuild of it.
-    expected = (data.get("draft_hash") or "").strip()
-    if expected and expected != (draft.get("draft_hash") or ""):
-        return jsonify(ok=False, stale=True, draft_hash=draft.get("draft_hash"),
-                       error="The order changed since you reviewed it — take another look before sending."), 409
-
-    groups = draft.get("groups") or []
-    if only:
-        groups = [g for g in groups if (g.get("supplier_email") or "").lower() == only]
-    if not groups:
-        return jsonify(ok=False, error="Nothing to order — no items with a supplier assigned."), 400
-
-    sent, failed = [], []
-    for group in groups:
-        # Number allocated inside the insert, and the row written before the
-        # send: an order a supplier has but nothing recorded is far worse than
-        # a row whose email failed, which is voided just below.
-        try:
-            po_number = record_purchase_order(
-                rid, group.get("supplier_name") or "", group["supplier_email"],
-                group["items"], group.get("total_cost") or 0)
-        except Exception as e:
-            failed.append({"supplier_email": group["supplier_email"], "error": str(e)})
-            continue
-        try:
-            from emails import send_supplier_order_email
-            send_supplier_order_email(
-                to_email=group["supplier_email"],
-                supplier_name=group.get("supplier_name") or "",
-                restaurant_name=restaurant.name,
-                po_number=po_number,
-                items=group["items"],
-                total_cost=group.get("total_cost") or 0,
-                reply_to=restaurant.owner_email or None,
-            )
-        except Exception as e:
-            from models import void_purchase_order as _void_po
-            _void_po(rid, po_number)
-            failed.append({"supplier_email": group["supplier_email"], "error": str(e)})
-            continue
-
-        from models import log_email as _log_email
-        _log_email(rid, "supplier_order", group["supplier_email"],
-                   f"Order {po_number} — {restaurant.name}")
-        _log_account_event(rid, "supplier_order_sent", current_user,
-                           detail=f"{po_number} to {group['supplier_email']} — "
-                                  f"{len(group['items'])} items, ${group.get('total_cost') or 0:,.2f}")
-        sent.append({"po_number": po_number, "supplier_email": group["supplier_email"],
-                     "supplier_name": group.get("supplier_name") or "",
-                     "item_count": len(group["items"]), "total_cost": group.get("total_cost") or 0})
-
-    if not sent:
-        return jsonify(ok=False, sent=[], failed=failed,
-                       error="Couldn't send the order — check the supplier addresses."), 502
-    return jsonify(ok=True, sent=sent, failed=failed, error=None)
+    supplier — the one body in client_api._send_order_request. This used to
+    be a separate copy that never read send_delay_minutes, so an order sent
+    from the phone skipped the owner's undo window (MOD-FC-9 / DATA-41)."""
+    return _capi._send_order_request(current_user)
 
 
 @mobile_bp.route("/food-cost/purchase-orders")
@@ -2030,11 +1945,10 @@ def mobile_food_cost_analytics(current_user):
             # overstock[:5]). iOS summed the visible five and presented it as
             # the restaurant's total tied-up capital, which is an undercount
             # by construction whenever a sixth item is overstocked. Totals are
-            # computed here, over everything.
-            overstock_total=round(sum(float(x.get("overstock_cost") or 0)
-                                      for x in (analysis.get("overstock") or [])), 2),
-            waste_items_total=round(sum(float(x.get("waste_cost") or 0)
-                                        for x in (analysis.get("waste_items") or [])), 2),
+            # computed by analyse_inventory over the full lists; summing its
+            # truncated lists here repeated the same undercount (MOD-FC-21).
+            overstock_total=analysis.get("overstock_total", 0),
+            waste_items_total=analysis.get("waste_items_total", 0),
             critical_low=analysis.get("critical_low", []),
             reorder_soon=analysis.get("reorder_soon", []),
             order_reduction=analysis.get("order_reduction", []),

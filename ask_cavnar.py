@@ -1080,7 +1080,8 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
                                                                     "to this login"})})
                     continue
                 _progress(_TOOL_LABELS.get(block.name, "Preparing that action"), "shaping")
-                proposal = tools.build_proposal(block.name, block.input)
+                proposal = tools.build_proposal(block.name, block.input,
+                                                restaurant_id=getattr(restaurant, "id", None))
                 if proposal is None:
                     # Bad or missing arguments (e.g. no review_id) — tell the
                     # model rather than raising a half-built card at the owner.

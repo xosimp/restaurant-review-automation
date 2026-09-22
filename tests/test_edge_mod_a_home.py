@@ -71,7 +71,6 @@ def _alert(db_path, rid, alert_type, value=1.0):
 
 # ── A9 #13 / MOD-HOME-1: a manager's Home must not carry Food Cost alerts ────
 
-@pytest.mark.xfail(strict=True, reason="MOD-HOME-1: Home `alerts` is read from alert_log with no module/role filter")
 def test_a_manager_home_lists_no_food_cost_alert(db_path):
     rid = _seed(db_path)
     _alert(db_path, rid, "food_waste", 420.0)
@@ -91,7 +90,6 @@ def test_the_managers_notification_list_already_scopes_food_cost_out(db_path):
     assert [n["type"] for n in payload["notifications"]] == ["labor_over"]
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-HOME-1: the 'N alerts fired' change counts alerts the role may not see")
 def test_a_managers_alerts_fired_change_counts_only_alerts_the_role_can_see(db_path):
     rid = _seed(db_path)
     _alert(db_path, rid, "food_waste", 420.0)
@@ -167,7 +165,6 @@ def test_a_cold_home_build_on_a_year_of_shifts_stays_inside_a_generous_budget(db
     assert time.time() - t < 10.0
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-HOME-2: a cold Home build reads client_data (and re-parses the shifts CSV) more than once")
 def test_a_cold_home_build_reads_the_shifts_blob_once(db_path, monkeypatch):
     rid = _seed(db_path)
     _year_of_shifts(rid, db_path, staff=5)
@@ -187,7 +184,6 @@ def test_a_cold_home_build_reads_the_shifts_blob_once(db_path, monkeypatch):
 
 # ── A9 #18, #19 / MOD-HOME-3: the payload cache ──────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-HOME-3: _CACHE is unbounded; expired entries are never evicted")
 def test_expired_home_cache_entries_are_evicted(db_path):
     rid = _seed(db_path)
     for uid in range(10, 30):
@@ -212,7 +208,6 @@ def test_an_expired_entry_is_not_served(db_path):
     assert "sentinel" not in again
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-HOME-3: a location switch calls invalidate() with no rid, clearing every tenant's cache")
 def test_a_location_switch_leaves_other_tenants_cached_homes_alone(db_path, monkeypatch):
     a = _seed(db_path, "Corner Bar", location_group="Corner Group", location_name="Downtown")
     b = _seed(db_path, "Corner Bar", location_group="Corner Group", location_name="Uptown")

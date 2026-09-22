@@ -227,6 +227,7 @@ ALERT_TAB = {
     "no_response": "reviews", "negative_trend": "reviews", "rating_threshold": "reviews",
     "labor_over": "labor", "schedule_drafted": "labor", "coverage": "labor", "schedule_publish_pending": "labor",
     "food_waste": "inventory", "critical_low": "inventory", "price_spike": "inventory", "order_send_pending": "inventory",
+    "order_send_voided": "inventory",
     "ai_visibility_drop": "competitor",
     "login": "account", "staff_signin": "account", "connection_lost": "account",
     "while_away": "reviews",
@@ -240,7 +241,10 @@ ALERT_TAB = {
 # retention audit counted six a day for a POS-connected owner. One setting,
 # three levels, enforced at every briefing send.
 BRIEFING_ALWAYS = frozenset({"morning_brief", "outcome_achieved", "milestone", "while_away",
-                             "connection_lost", "monthly_review"})
+                             "connection_lost", "monthly_review",
+                             # A promised supplier order that did not go out:
+                             # a delivery that will not come (MOD-FC-10).
+                             "order_send_voided"})
 BRIEFING_CALM = BRIEFING_ALWAYS | {"closing_summary", "schedule_drafted", "schedule_publish_pending", "order_send_pending"}
 BRIEFING_NORMAL_PER_DAY = 4
 

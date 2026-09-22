@@ -360,9 +360,16 @@ def update_ingredient_route(restaurant_id, ingredient_id, current_user):
     for key in ("name", "category", "unit"):
         if key in data:
             fields[key] = data[key]
+    import math
     for key in ("par_level", "unit_cost", "case_size", "avg_daily_usage", "waste_last_week"):
         if key in data and data[key] not in (None, ""):
-            fields[key] = float(data[key])
+            try:
+                fields[key] = float(data[key])
+            except (TypeError, ValueError):
+                fields[key] = float("nan")
+            # NaN is stored as NULL and broke the restaurant's analysis (MOD-FC-6).
+            if not math.isfinite(fields[key]) or fields[key] < 0:
+                return jsonify(ok=False, error=f"{key.replace('_', ' ')} must be a number of 0 or more."), 400
     if not inventory_ledger.update_ingredient(restaurant_id, ingredient_id, **fields):
         return jsonify(ok=False, error="That ingredient isn't this restaurant's, or nothing changed."), 404
     return jsonify(ok=True)
@@ -462,10 +469,13 @@ def record_recount_route(restaurant_id, ingredient_id, current_user):
     data = request.get_json() or {}
     if "counted_qty" not in data:
         return jsonify(ok=False, error="counted_qty required")
-    result = inventory_ledger.record_recount(
-        restaurant_id, ingredient_id, float(data["counted_qty"]),
-        source="admin", note=data.get("note")
-    )
+    try:
+        result = inventory_ledger.record_recount(
+            restaurant_id, ingredient_id, float(data["counted_qty"]),
+            source="admin", note=data.get("note")
+        )
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error="counted_qty must be a number of 0 or more"), 400
     if result.get("ok") is False:
         return jsonify(**result), 404
     return jsonify(ok=True, **result)
@@ -478,6 +488,13 @@ def record_receiving_route(restaurant_id, ingredient_id, current_user):
     data = request.get_json() or {}
     if "qty" not in data:
         return jsonify(ok=False, error="qty required")
+    try:
+        _qty = float(data["qty"])
+    except (TypeError, ValueError):
+        _qty = float("nan")
+    if not (_qty > 0 and _qty != float("inf")):
+        # A delivery is a positive quantity; a correction is a recount (MOD-FC-12).
+        return jsonify(ok=False, error="qty must be more than 0 — use a recount to correct stock"), 400
     event_id = inventory_ledger.record_receiving(
         restaurant_id, ingredient_id, float(data["qty"]),
         source="admin", note=data.get("note")

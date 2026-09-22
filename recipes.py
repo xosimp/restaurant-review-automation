@@ -349,10 +349,19 @@ def accept(restaurant_id, draft_id, lines=None, user_id=None, db_path=DB_PATH):
     [{ingredient_id, qty}] — otherwise the draft's own. Returns
     {"ok", "written", "skipped"}."""
     import inventory_ledger
+    # Claim first: the pending -> accepted flip is the one atomic step, and
+    # only the request that makes it writes anything. Read-then-write let a
+    # second accept (double tap, second device) read 'pending', find every
+    # line already bound, write nothing — and mark the recipe the first had
+    # just written 'rejected' (MOD-FC-27).
     conn = get_conn(db_path)
     try:
-        row = conn.execute("SELECT * FROM recipe_drafts WHERE id=? AND restaurant_id=? AND status='pending'",
-                           (draft_id, restaurant_id)).fetchone()
+        cur = conn.execute("UPDATE recipe_drafts SET status='accepted', answered_at=datetime('now'), "
+                           "answered_by=? WHERE id=? AND restaurant_id=? AND status='pending'",
+                           (user_id, draft_id, restaurant_id))
+        conn.commit()
+        row = conn.execute("SELECT * FROM recipe_drafts WHERE id=? AND restaurant_id=?",
+                           (draft_id, restaurant_id)).fetchone() if cur.rowcount == 1 else None
     finally:
         conn.close()
     if not row:
@@ -369,13 +378,15 @@ def accept(restaurant_id, draft_id, lines=None, user_id=None, db_path=DB_PATH):
             written += 1
         else:
             skipped += 1
-    conn = get_conn(db_path)
-    try:
-        conn.execute("UPDATE recipe_drafts SET status=?, answered_at=datetime('now'), answered_by=? WHERE id=?",
-                     ("accepted" if written else "rejected", user_id, draft_id))
-        conn.commit()
-    finally:
-        conn.close()
+    if not written:
+        # Nothing could be bound: the claim becomes the answer it really is.
+        conn = get_conn(db_path)
+        try:
+            conn.execute("UPDATE recipe_drafts SET status='rejected' WHERE id=? AND restaurant_id=? "
+                         "AND status='accepted'", (draft_id, restaurant_id))
+            conn.commit()
+        finally:
+            conn.close()
     return {"ok": written > 0, "written": written, "skipped": skipped,
             "error": None if written else "None of those lines could be written."}
 
@@ -391,9 +402,22 @@ def reject(restaurant_id, draft_id, user_id=None, db_path=DB_PATH):
         conn.close()
 
 
+IMPORT_MAX_ROWS = 2000
+
+
 def import_csv(restaurant_id, text, db_path=DB_PATH):
     """Bulk recipes from CSV: menu_item, ingredient, qty. A missing dish is
-    created; a missing ingredient is skipped and named — never invented."""
+    created; a missing ingredient is skipped and named — never invented.
+
+    Everything that did not simply work is said (MOD-FC-24):
+      unlinked_dishes — dishes written to that no POS item is linked to. A
+                        recipe on one never depletes stock, and a CSV name
+                        that differs from the POS ("Margherita" vs
+                        "Margherita Pizza") used to create one silently.
+      updated         — (dish, ingredient) pairs already on file whose qty
+                        this file corrected; they used to hit the unique
+                        index and be skipped, so a qty could not be fixed.
+      truncated_rows  — rows past IMPORT_MAX_ROWS, not read."""
     import csv, io
     import inventory_ledger
     rows = list(csv.DictReader(io.StringIO(text or "")))
@@ -404,8 +428,8 @@ def import_csv(restaurant_id, text, db_path=DB_PATH):
         return {"ok": False, "error": "Columns must be: menu_item, ingredient, qty"}
     ingredients = {i["name"].strip().lower(): i for i in (inventory_ledger.list_ingredients(restaurant_id) or []) if i.get("name")}
     dishes = {m["name"].strip().lower(): m for m in (inventory_ledger.list_menu_items_with_recipes(restaurant_id) or []) if m.get("name")}
-    written, skipped, unknown = 0, 0, []
-    for raw in rows[:2000]:
+    written, updated, skipped, unknown, unlinked = 0, 0, 0, [], {}
+    for raw in rows[:IMPORT_MAX_ROWS]:
         row = {k.strip().lower(): (v or "").strip() for k, v in raw.items() if k}
         dish, ing, qty = row.get("menu_item", ""), row.get("ingredient", ""), row.get("qty", "")
         if not dish or not ing:
@@ -419,16 +443,28 @@ def import_csv(restaurant_id, text, db_path=DB_PATH):
         m = dishes.get(dish.lower())
         if not m:
             mid = inventory_ledger.create_menu_item(restaurant_id, dish)
-            m = {"id": mid, "name": dish}
+            m = {"id": mid, "name": dish, "toast_guid": None}
             dishes[dish.lower()] = m
         try:
             ok = inventory_ledger.add_recipe_ingredient(restaurant_id, int(m["id"]), int(ingredient["id"]), float(qty))
+            fixed = False
+            if not ok:
+                fixed = inventory_ledger.set_recipe_ingredient_qty(
+                    restaurant_id, int(m["id"]), int(ingredient["id"]), float(qty))
         except (TypeError, ValueError):
-            ok = 0
+            ok, fixed = 0, False
         if ok:
             written += 1
+        elif fixed:
+            updated += 1
         else:
             skipped += 1
-    return {"ok": written > 0, "written": written, "skipped": skipped,
+        if (ok or fixed) and not m.get("toast_guid"):
+            unlinked[m["name"]] = True
+    total_rows = len(rows)
+    written_any = written + updated
+    return {"ok": written_any > 0, "written": written, "updated": updated, "skipped": skipped,
             "unknown_ingredients": sorted(set(unknown))[:20],
-            "error": None if written else "Nothing written — check the ingredient names match your list."}
+            "unlinked_dishes": sorted(unlinked)[:50],
+            "truncated_rows": max(0, total_rows - IMPORT_MAX_ROWS),
+            "error": None if written_any else "Nothing written — check the ingredient names match your list."}

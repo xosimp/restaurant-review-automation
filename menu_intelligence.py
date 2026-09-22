@@ -231,7 +231,12 @@ def reprice_suggestions(restaurant_id, db_path=DB_PATH):
         before_fc = before_cost / price
         suggested = _round_up(d["plate_cost"] / before_fc) if before_fc > 0 else None
         units = d["units_sold_30d"]
-        monthly = round(inc * units, 2) if units else None
+        # units_sold comes from menu_profitability's popularity window, which
+        # is 28 days, not 30: multiplied as-is it was a four-week figure
+        # labelled "the last 30 days" (MOD-FC-28). Scaled to 30 and said so.
+        # (The key keeps its old name; clients read it.)
+        window = inventory_ledger._POPULARITY_WINDOW_DAYS
+        monthly = round(inc * units * 30.0 / window, 2) if units else None
         if monthly is not None and monthly < MIN_MONTHLY_MARGIN_LOST:
             continue
         d.update({
@@ -241,7 +246,7 @@ def reprice_suggestions(restaurant_id, db_path=DB_PATH):
             "suggested_price": suggested,
             "price_change": round(suggested - price, 2) if suggested else None,
             "monthly_margin_lost": monthly,
-            "monthly_basis": ("units sold over the last 30 days" if units else
+            "monthly_basis": (f"units sold over the last {window} days, scaled to 30" if units else
                               "no sales mix yet — per-plate figure only"),
         })
         out.append(d)

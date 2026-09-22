@@ -46,14 +46,18 @@ def _f(v, default=0.0):
 def purchases_in_window(restaurant_id, start, end, db_path=None):
     """Dollar value of everything received between two dates, inclusive.
 
-    Priced at each ingredient's current unit_cost. Returns (dollars, n_events)
-    so a caller can tell "nothing was bought" from "nothing was recorded".
+    Priced at what each delivery cost when it arrived (the unit_cost the
+    receiving event recorded). Priced at today's unit_cost, an invoice that
+    raised a price re-priced every delivery already in the window (MOD-FC-23).
+    Rows from before the event carried a price fall back to the current one.
+    Returns (dollars, n_events) so a caller can tell "nothing was bought"
+    from "nothing was recorded".
     """
     from models import get_conn, DB_PATH
     conn = get_conn(db_path or DB_PATH)
     try:
         row = conn.execute(
-            "SELECT COALESCE(SUM(e.qty * COALESCE(i.unit_cost, 0)), 0) AS total, COUNT(*) AS n "
+            "SELECT COALESCE(SUM(e.qty * COALESCE(e.unit_cost, i.unit_cost, 0)), 0) AS total, COUNT(*) AS n "
             "FROM ingredient_stock_events e "
             "JOIN ingredients i ON i.id = e.ingredient_id AND i.restaurant_id = e.restaurant_id "
             "WHERE e.restaurant_id=? AND e.event_type='receiving' "
@@ -86,33 +90,53 @@ def inventory_value_near(weeks, target_day, tolerance_days=SNAPSHOT_TOLERANCE_DA
     return best, (best_day.isoformat() if best_day else None)
 
 
-def _archived_net_sales(restaurant_id, start, end):
+def _archived_net_sales(restaurant_id, start, end, today=None):
     """Net sales for the window from the LOCAL archive, or None.
 
     labor_daily_history carries one row per business date with that day's
     sales, written by each provider's nightly sync_to_db. Reading it is free
     and works when the POS is unreachable.
 
-    Coverage is decided by the archive's own edges, not by counting dates: a
-    restaurant closed on Mondays has no Monday row, so "every calendar date
-    present" would never be true. If the archive spans the window — its
-    earliest row is at or before `start` and its latest is at or after `end`
-    — the nightly sync has been through this period and what is there is what
-    there is. Anything narrower falls through to the live POS rather than
-    quietly returning a smaller number, which is the one failure mode that
-    matters here: an under-reported sales figure inflates food cost %.
+    Coverage takes two things. The archive must span the window — its
+    earliest row at or before `start`, its latest at or after `end` — and it
+    must have a row for (nearly) every day the restaurant trades inside it.
+    Spanning alone was the whole test, so an archive with a three-week hole
+    in the middle was summed as three weeks of zero sales and read food cost
+    about eleven times too high (MOD-FC-16). "Every day it trades" is every
+    date whose weekday has sales somewhere in the window or the eight weeks
+    before it: a restaurant closed on Mondays has no Monday row and is not
+    counted short for it. One missing day in ten (a holiday, a snow day) is
+    allowed; more falls through to the live POS rather than quietly
+    returning a smaller number — an under-reported sales figure inflates
+    food cost %.
+
+    A window ending today is judged through yesterday. The nightly sync
+    archives each business date after it closes, so an archive complete
+    through yesterday never reached `end`, and every load of a window
+    ending today called the live POS (MOD-FC-17) — the traffic the RPOWER
+    integrator asked us not to send. Today's sales are not in the figure
+    until tonight's sync writes them.
     """
     from models import get_conn
-    s, e = str(start)[:10], str(end)[:10]
+    try:
+        d0 = date.fromisoformat(str(start)[:10])
+        d1 = date.fromisoformat(str(end)[:10])
+    except ValueError:
+        return None
+    yesterday = (today or date.today()) - timedelta(days=1)
+    if d1 > yesterday:
+        d1 = yesterday
+    if d1 < d0:
+        return None
+    s, e = d0.isoformat(), d1.isoformat()
+    lookback = (d0 - timedelta(days=56)).isoformat()
     try:
         conn = get_conn()
         try:
-            row = conn.execute(
-                "SELECT MIN(date) AS first, MAX(date) AS last, "
-                "       COALESCE(SUM(sales), 0) AS total, COUNT(*) AS n "
-                "FROM labor_daily_history "
+            rows = conn.execute(
+                "SELECT date, sales FROM labor_daily_history "
                 "WHERE restaurant_id=? AND sales IS NOT NULL AND sales > 0 "
-                "  AND date >= ? AND date <= ?", (restaurant_id, s, e)).fetchone()
+                "  AND date >= ? AND date <= ?", (restaurant_id, lookback, e)).fetchall()
             edges = conn.execute(
                 "SELECT MIN(date) AS first, MAX(date) AS last FROM labor_daily_history "
                 "WHERE restaurant_id=? AND sales IS NOT NULL AND sales > 0",
@@ -121,11 +145,26 @@ def _archived_net_sales(restaurant_id, start, end):
             conn.close()
     except Exception:
         return None
-    if not row or not row["n"] or not edges or not edges["first"]:
+    if not edges or not edges["first"]:
         return None
     if str(edges["first"])[:10] > s or str(edges["last"])[:10] < e:
         return None          # the archive does not span this window
-    total = _f(row["total"])
+    by_day = {}
+    for r in rows:
+        try:
+            by_day[date.fromisoformat(str(r["date"])[:10])] = by_day.get(
+                date.fromisoformat(str(r["date"])[:10]), 0.0) + _f(r["sales"])
+        except ValueError:
+            continue
+    in_window = {d: v for d, v in by_day.items() if d0 <= d <= d1}
+    if not in_window:
+        return None
+    trading_weekdays = {d.weekday() for d in by_day}
+    expected = sum(1 for k in range((d1 - d0).days + 1)
+                   if (d0 + timedelta(days=k)).weekday() in trading_weekdays)
+    if len(in_window) < expected - max(1, expected // 10):
+        return None          # a hole inside the span: not what the restaurant sold
+    total = sum(in_window.values())
     return round(total, 2) if total > 0 else None
 
 
@@ -220,7 +259,12 @@ def build_food_cost_pct(restaurant_id, days=DEFAULT_WINDOW_DAYS, db_path=None, t
         target = _f(restaurant.food_cost_target) or None
 
     missing = []
-    weeks, _total = load_waste_history(restaurant_id, None, db_path=db_path)
+    # Only the snapshots that can be the opening or closing count are read:
+    # within SNAPSHOT_TOLERANCE_DAYS of the window's edges (MOD-FC-18).
+    weeks, _total = load_waste_history(
+        restaurant_id, None, db_path=db_path,
+        since=start - timedelta(days=SNAPSHOT_TOLERANCE_DAYS),
+        until=end + timedelta(days=SNAPSHOT_TOLERANCE_DAYS))
 
     opening, opening_day = inventory_value_near(weeks, start)
     if opening is None:

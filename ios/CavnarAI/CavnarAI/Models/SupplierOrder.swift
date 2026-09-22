@@ -94,6 +94,14 @@ struct SendOrderResult: Decodable {
     let sent: [SentOrder]
     let failed: [FailedOrder]
     let error: String?
+    /// Set when the owner's send delay queued the order instead of sending
+    /// it — the phone used to skip that undo window entirely (MOD-FC-9).
+    let undoMinutes: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case ok, sent, failed, error
+        case undoMinutes = "undo_minutes"
+    }
 
     struct SentOrder: Decodable, Identifiable {
         let poNumber: String

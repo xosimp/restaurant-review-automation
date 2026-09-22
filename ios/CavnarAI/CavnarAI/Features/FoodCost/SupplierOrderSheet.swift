@@ -18,6 +18,14 @@ struct SupplierOrderSheet: View {
                             .font(.cavnarBody(15))
                             .foregroundStyle(Color.cavnarInk3)
                     } else if let draft = viewModel.draft {
+                        // A refused send (the draft changed, or it already
+                        // went) — shown above the reloaded draft.
+                        if let error = viewModel.errorMessage {
+                            Text(error)
+                                .font(.cavnarBody(14))
+                                .foregroundStyle(Color.cavnarInk2)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                         if let result = viewModel.lastResult {
                             resultBanner(result)
                         }
@@ -206,6 +214,18 @@ struct SupplierOrderSheet: View {
 
     private func resultBanner(_ result: SendOrderResult) -> some View {
         VStack(alignment: .leading, spacing: 8) {
+            // The owner's send delay queued it rather than sending it.
+            if let minutes = result.undoMinutes, result.sent.isEmpty {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Image(systemName: "clock")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(Color.cavnarEmber2)
+                    (Text("Goes out in ").font(.cavnarBody(14))
+                        + Text("\(minutes)").font(.cavnarNumber(14, weight: 700))
+                        + Text(" min — undo from Home").font(.cavnarBody(14)))
+                        .foregroundStyle(Color.cavnarInk)
+                }
+            }
             ForEach(result.sent) { sent in
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Image(systemName: "checkmark")

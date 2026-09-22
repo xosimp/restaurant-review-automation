@@ -115,7 +115,6 @@ def test_a_complete_inventory_csv_uploads_and_analyses(world):
                  "Tomato,Produce,10,5,1.8,2,10,1\n", id="title-case-headers"),
     pytest.param(FULL_HEADER + "Tomato,Produce,10,-5,nan,2,10,1e308\n", id="nan-negative-huge"),
 ])
-@pytest.mark.xfail(strict=True, reason="MOD-FC-5: the upload validator accepts the file, then every Food Cost read raises")
 def test_an_inventory_csv_is_refused_or_readable(world, text):
     _refused_or_readable(world, text)
 
@@ -161,7 +160,6 @@ def _cost(db_path, iid):
     pytest.param(float("nan"), id="nan-literal"),
     pytest.param("nan", id="nan-string"),
 ])
-@pytest.mark.xfail(strict=True, reason="MOD-FC-6: NaN passes the 0 < cost <= 100000 guard and is written (stored as NULL)")
 def test_an_invoice_line_with_a_nan_cost_writes_nothing(db_path, value):
     rid = _rid(db_path)
     iid = _ingredient(db_path, rid)
@@ -190,7 +188,6 @@ def test_the_same_ingredient_on_two_invoice_lines_ends_at_the_last_cost_and_keep
     assert out["updated"][0]["old_cost"] == 12.5
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-6: a NULL numeric column (NaN written through update_ingredient) makes analysis raise")
 def test_a_nan_written_through_the_ingredient_editor_does_not_break_analysis(db_path):
     rid = _rid(db_path)
     iid = _ingredient(db_path, rid, name="Beef")
@@ -198,7 +195,6 @@ def test_a_nan_written_through_the_ingredient_editor_does_not_break_analysis(db_
     inventory.analysis_for(rid)
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-6: analyse_inventory multiplies a NULL unit_cost and raises TypeError")
 def test_analysis_tolerates_a_null_numeric_column(db_path):
     rid = _rid(db_path)
     iid = _ingredient(db_path, rid)
@@ -238,7 +234,6 @@ def _overstocked(db_path, rid, n):
         _ingredient(db_path, rid, name=f"O{i}", cost=10, par=10, stock=30, usage=1, last=10, waste=0)
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-21: overstock_total sums analyse_inventory's display-truncated overstock[:5]")
 def test_the_mobile_overstock_total_covers_every_overstocked_item(db_path, monkeypatch):
     rid = _rid(db_path)
     _overstocked(db_path, rid, 10)
@@ -264,7 +259,6 @@ def test_analyse_inventory_values_every_overstocked_item_in_stock_value():
 
 # ── A5 CFO #9: the driver list when analysis raises ─────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="A5 CFO #9 / MOD-FC-6: cost_drivers calls analysis_for outside any try; a NULL column raises through")
 def test_cost_drivers_degrade_instead_of_raising_when_the_analysis_fails(db_path):
     import food_cost_intelligence as fci
     rid = _rid(db_path)

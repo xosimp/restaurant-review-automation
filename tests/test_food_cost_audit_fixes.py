@@ -376,7 +376,7 @@ def test_food_cost_pct_is_cogs_over_sales_against_the_restaurants_target(monkeyp
     monkeypatch.setattr(cogs_mod, "net_sales_in_window", lambda r, s, e: (10000.0, None))
     monkeypatch.setattr(cogs_mod, "purchases_in_window", lambda r, s, e, db_path=None: (3000.0, 4))
     start = date.today() - timedelta(days=27)
-    monkeypatch.setattr(waste_trend, "load_waste_history", lambda r, l, db_path=None: ([
+    monkeypatch.setattr(waste_trend, "load_waste_history", lambda r, l, db_path=None, **_bounds: ([
         {"week_end": start.isoformat(), "inv_value": 5000.0},
         {"week_end": date.today().isoformat(), "inv_value": 4800.0},
     ], 2))
@@ -393,7 +393,7 @@ def test_an_impossible_count_is_refused_rather_than_reported_as_negative(monkeyp
     monkeypatch.setattr(cogs_mod, "net_sales_in_window", lambda r, s, e: (10000.0, None))
     monkeypatch.setattr(cogs_mod, "purchases_in_window", lambda r, s, e, db_path=None: (100.0, 1))
     start = date.today() - timedelta(days=27)
-    monkeypatch.setattr(waste_trend, "load_waste_history", lambda r, l, db_path=None: ([
+    monkeypatch.setattr(waste_trend, "load_waste_history", lambda r, l, db_path=None, **_bounds: ([
         {"week_end": start.isoformat(), "inv_value": 1000.0},
         {"week_end": date.today().isoformat(), "inv_value": 9000.0},
     ], 2))

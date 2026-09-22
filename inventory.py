@@ -207,18 +207,93 @@ Shrimp 16/20,Protein,10,8,14.2,1.6,10,1.2"""
                     rows = list(csv.DictReader(f))
             except Exception:
                 return []
-    for r in rows:
-        r["par_level"]      = float(r["par_level"])
-        r["current_stock"]  = float(r["current_stock"])
-        r["unit_cost"]      = float(r["unit_cost"])
-        r["avg_daily_usage"]= float(r["avg_daily_usage"])
-        r["last_order_qty"] = float(r["last_order_qty"])
-        r["waste_last_week"]= float(r["waste_last_week"])
-        r.setdefault("unit", "")  # unit label optional (e.g. "lbs", "cases")
-        # Supplier case/pack size, optional — used to round suggested_order_qty
-        # up to an actionable number instead of a raw formula output.
-        r["case_size"] = float(r["case_size"]) if r.get("case_size") not in (None, "") else 1.0
-    return rows
+    # Lenient on read: a row this cannot parse is left out rather than
+    # raising, so one bad cell in a stored file never takes every Food Cost
+    # read down with it. The upload refuses such a file up front, with the
+    # row named (parse_inventory_rows' errors) — MOD-FC-5.
+    items, _errors = parse_inventory_rows(rows)
+    return items
+
+
+INVENTORY_REQUIRED = ("item", "current_stock", "par_level", "unit_cost", "waste_last_week")
+# Optional columns and what a blank one means.
+_INVENTORY_OPTIONAL = {"avg_daily_usage": 0.0, "last_order_qty": 0.0, "case_size": 1.0}
+# Stock, usage and cost figures past this are a typo or an overflow, not a
+# kitchen ("1e308" parsed happily and poisoned every total).
+_INVENTORY_MAX = 1_000_000.0
+
+
+def _inventory_header(h) -> str:
+    """'Unit_Cost', ' unit cost', '\\ufeffitem' -> 'unit_cost' / 'item'."""
+    return (h or "").replace("﻿", "").strip().lower().replace(" ", "_")
+
+
+def _inventory_number(raw):
+    """A cell as a float: None when blank; ValueError when it is not a
+    finite number. Accepts what spreadsheets write: "$1.80", "1,250"."""
+    if raw is None:
+        return None
+    s = str(raw).strip().replace("$", "").replace(",", "")
+    if not s:
+        return None
+    v = float(s)
+    if not math.isfinite(v):
+        raise ValueError("not a finite number")
+    return v
+
+
+def parse_inventory_rows(rows):
+    """(items, errors) for inventory CSV rows (csv.DictReader output).
+
+    The one parser for an inventory file. load_inventory used to read exact
+    keys with bare float(), so a file with only the required columns, a
+    blank cell, "$1.80", title-case headers or a nan — all of which the
+    upload validator accepted — made every Food Cost read raise (MOD-FC-5).
+    Headers are normalised; optional columns default; a required figure that
+    is blank, not a finite number, negative or absurd is an error naming the
+    row, and that row is not in `items`."""
+    items, errors = [], []
+    for n, raw in enumerate(rows or [], start=2):          # row 1 is the header
+        r = {_inventory_header(k): (v.strip() if isinstance(v, str) else v)
+             for k, v in (raw or {}).items() if k is not None}
+        if not any(v not in (None, "") for v in r.values()):
+            continue                                         # a blank line
+        name = (r.get("item") or "").strip()
+        label = f"Row {n}" + (f" ({name})" if name else "")
+        if not name:
+            errors.append(f"{label}: the item name is blank.")
+            continue
+        item, bad = dict(r), None
+        for col in ("par_level", "current_stock", "unit_cost", "waste_last_week",
+                    "avg_daily_usage", "last_order_qty", "case_size"):
+            try:
+                v = _inventory_number(r.get(col))
+            except (TypeError, ValueError):
+                bad = f"{label}: {col} “{r.get(col)}” isn't a number."
+                break
+            if v is None:
+                if col in _INVENTORY_OPTIONAL:
+                    v = _INVENTORY_OPTIONAL[col]
+                else:
+                    bad = f"{label}: {col} is blank."
+                    break
+            if v < 0:
+                bad = f"{label}: {col} can't be negative."
+                break
+            if v > _INVENTORY_MAX:
+                bad = f"{label}: {col} {v:g} is too large to be right."
+                break
+            item[col] = v
+        if bad:
+            errors.append(bad)
+            continue
+        if item["case_size"] <= 0:
+            item["case_size"] = 1.0
+        item["item"] = name
+        item["category"] = item.get("category") or ""
+        item["unit"] = item.get("unit") or ""   # unit label optional (e.g. "lbs", "cases")
+        items.append(item)
+    return items, errors
 
 
 def analyse_inventory(items: list[dict], delivery_days: str = None,
@@ -268,10 +343,16 @@ def analyse_inventory(items: list[dict], delivery_days: str = None,
     total_recoverable_week = 0.0
 
     for item in items:
+        # Ordering and valuation read stock as never below zero. Negative
+        # stock (a recipe in the wrong unit, an unlogged delivery) used to
+        # grow the order by the size of the error — par*1.5 minus -485 — and
+        # turn the stock value, and the COGS built on it, negative (MOD-FC-12).
+        # The item keeps its own figure; the maths uses the clamped one.
+        stock = max(0.0, float(item["current_stock"] or 0))
         # Weekend-weighted depletion simulation instead of a flat division —
         # a restaurant heading into a busy Fri/Sat/Sun runs out sooner than
         # a single flat avg_daily_usage would suggest.
-        days_remaining  = _simulate_days_remaining(item["current_stock"], item["avg_daily_usage"], today)
+        days_remaining  = _simulate_days_remaining(stock, item["avg_daily_usage"], today)
         waste_cost      = item["waste_last_week"] * item["unit_cost"]
         # Category-specific overstock thresholds (industry standard)
         # Proteins/dairy: flag at 110% of par (perishable, high cost)
@@ -284,9 +365,9 @@ def analyse_inventory(items: list[dict], delivery_days: str = None,
             overstock_multiplier = 1.20
         else:
             overstock_multiplier = 1.30
-        overstock_units = max(0, item["current_stock"] - item["par_level"] * overstock_multiplier)
+        overstock_units = max(0, stock - item["par_level"] * overstock_multiplier)
         overstock_cost  = overstock_units * item["unit_cost"]
-        stock_value     = item["current_stock"] * item["unit_cost"]
+        stock_value     = stock * item["unit_cost"]
         waste_pct       = (item["waste_last_week"] / item["last_order_qty"] * 100
                            if item["last_order_qty"] > 0 else 0)
 
@@ -301,7 +382,7 @@ def analyse_inventory(items: list[dict], delivery_days: str = None,
         # Suggested order quantity: target 1.5x par, cover 3 days usage, adjusted for waste rate
         # If wasting a lot, pull the order quantity down proportionally
         waste_adj     = min(0.95, max(0.60, 1.0 - (waste_pct / 100) * 0.5))
-        raw_qty       = (item["par_level"] * 1.5) - item["current_stock"] + (item["avg_daily_usage"] * 3)
+        raw_qty       = (item["par_level"] * 1.5) - stock + (item["avg_daily_usage"] * 3)
 
         # Event scaling — bump quantity for items tied to a holiday/event in
         # the next 30 days, so the actual order number reflects the surge,
@@ -357,12 +438,17 @@ def analyse_inventory(items: list[dict], delivery_days: str = None,
         if overstock_units > 0:
             overstock.append(item)
 
+        # Out, and below par, is urgent whatever usage reads. With usage at
+        # zero (no recipe mapped, or a dish that stopped selling) days
+        # remaining reads 99, so an empty shelf never reached the order
+        # (MOD-FC-13).
+        empty = stock <= 0
         if delivery_offset is not None:
             # Judge urgency against when the truck actually comes, not a
             # flat day count.
             margin = days_remaining - delivery_offset
             item["delivery_margin_days"] = round(margin, 1)
-            if margin < 0 and item["current_stock"] < item["par_level"]:
+            if (margin < 0 or empty) and stock < item["par_level"]:
                 critical_low.append(item)
             elif margin <= 1.5:
                 reorder_soon.append(item)
@@ -371,7 +457,7 @@ def analyse_inventory(items: list[dict], delivery_days: str = None,
                 order_reduction.append(item)
         else:
             item["delivery_margin_days"] = None
-            if days_remaining <= 2 and item["current_stock"] < item["par_level"]:
+            if (days_remaining <= 2 or empty) and stock < item["par_level"]:
                 critical_low.append(item)
             elif days_remaining <= 4:
                 reorder_soon.append(item)
@@ -509,6 +595,13 @@ def analyse_inventory(items: list[dict], delivery_days: str = None,
         "total_stock_value":     round(total_stock_value, 2),
         "waste_items":    waste_items[:6],
         "overstock":      overstock[:5],
+        # Totals over EVERY flagged item. The two lists above are display
+        # slices, and a total summed from them is an undercount whenever a
+        # sixth item is overstocked (MOD-FC-21).
+        "overstock_total":   round(sum(float(x.get("overstock_cost") or 0) for x in overstock), 2),
+        "overstock_count":   len(overstock),
+        "waste_items_total": round(sum(float(x.get("waste_cost") or 0) for x in waste_items), 2),
+        "waste_items_count": len(waste_items),
         # Full lists. They drive the supplier order, which was built from a
         # display slice ([:4] / [:6]) and so sent short purchase orders for
         # any restaurant with more than about ten items to reorder, and every
@@ -539,7 +632,6 @@ def compute_item_trends(restaurant_id: int, current_items: list, db_path: str = 
         reverse=True,
     )
     big_8_names = {i["item"] for i in scored[:8]}
-    current_prices = {i["item"]: (i.get("unit_cost") or 0) for i in current_items}
 
     try:
         conn = _gc_t(_db)
@@ -578,24 +670,51 @@ def compute_item_trends(restaurant_id: int, current_items: list, db_path: str = 
             weekly[key] = row
     rows = [weekly[k] for k in sorted(weekly)][-8:]   # oldest → newest, 8 weeks
 
-    # Build per-item price history: {name: [price_oldest, ..., price_newest]}
-    history = {}
+    # Per-ingredient price history, oldest → newest, keyed by the ingredient
+    # row, not its display name (MOD-FC-22). By name, two "Chicken Breast"
+    # rows at two suppliers overwrote each other, so one supplier's +21% was
+    # masked by the other's steady price; and renaming an ingredient started
+    # its history from nothing. Each week's snapshot is matched by id, and by
+    # name only where that week carries no id and the name is unambiguous
+    # (older snapshots were written without ids).
+    def _iid(it):
+        return it.get("ingredient_id") or it.get("id")
+
+    weeks_items = []
     for row in rows:
         try:
-            for hi in _jt.loads(row["items_json"] or "[]"):
-                name = hi.get("item")
-                price = hi.get("unit_cost") or 0
-                if name:
-                    history.setdefault(name, []).append(price)
+            weeks_items.append([hi for hi in _jt.loads(row["items_json"] or "[]") if isinstance(hi, dict)])
         except Exception:
             pass
 
+    name_counts = {}
+    for ci in current_items:
+        name_counts[ci.get("item")] = name_counts.get(ci.get("item"), 0) + 1
+
+    series = []          # (display name, current price, [history prices], id)
+    for ci in current_items:
+        name, cid = ci.get("item"), _iid(ci)
+        if not name:
+            continue
+        hist = []
+        for week in weeks_items:
+            match = [hi for hi in week if cid and _iid(hi) == cid]
+            if not match:
+                same = [hi for hi in week if hi.get("item") == name]
+                if len(same) == 1 and name_counts.get(name) == 1 and not (cid and _iid(same[0])):
+                    match = same
+            if match:
+                hist.append(match[0].get("unit_cost") or 0)
+        if not hist:
+            continue
+        label = name
+        if name_counts.get(name, 0) > 1 and ci.get("supplier_name"):
+            label = f"{name} ({ci['supplier_name']})"
+        series.append((label, ci.get("unit_cost") or 0, hist, cid))
+
     price_alerts, trend_alerts, trend_lines = [], [], []
 
-    for name, hist in history.items():
-        if name not in current_prices:
-            continue
-        curr = current_prices[name]
+    for name, curr, hist, iid in series:
 
         # Week-over-week spike: >5% increase vs last stored week
         if hist:
@@ -677,7 +796,8 @@ def build_price_watch(trends: dict) -> list:
     watch = {}
     for a in trends.get("price_alerts", []):
         rose = (a["change_pct"] or 0) > 0
-        watch[a["item"]] = {
+        # Per ingredient row: two same-named rows are two entries (MOD-FC-22).
+        watch[a.get("ingredient_id") or a["item"]] = {
             "item": a["item"], "kind": "spike" if rose else "drop",
             "change_pct": a["change_pct"],
             "weeks": None, "old_price": a["old_price"], "new_price": a["new_price"],
@@ -689,7 +809,7 @@ def build_price_watch(trends: dict) -> list:
     for a in trends.get("trend_alerts", []):
         hint = ("Sustained rise — consider a menu price adjustment on dishes using this, or shop suppliers."
                 if a["is_big_8"] else "Sustained rise — worth keeping an eye on.")
-        watch[a["item"]] = {
+        watch[a.get("ingredient_id") or a["item"]] = {
             "item": a["item"], "kind": "trend", "change_pct": a["total_change_pct"],
             "weeks": a["weeks"], "old_price": a["start_price"], "new_price": a["current_price"],
             "is_big_8": a["is_big_8"], "action_hint": hint,
@@ -1157,7 +1277,10 @@ Then, on new lines after the paragraph, write 1-3 recommendations:
     return result
 
 
-def load_inventory_for_restaurant(restaurant_id: int):
+_UNREAD = object()   # "client_data not passed in" — None is a real answer (no row)
+
+
+def load_inventory_for_restaurant(restaurant_id: int, client_data=_UNREAD):
     """Load this restaurant's inventory. Resolution order: the persistent
     ingredients table (once migrated — see inventory_ledger.import_csv_to_ingredients
     and the nightly Toast depletion sync) -> the legacy inventory_csv blob
@@ -1172,17 +1295,31 @@ def load_inventory_for_restaurant(restaurant_id: int):
     ).fetchall()
     conn.close()
     if rows:
+        def _num(v, default=0.0):
+            # A NULL (a NaN written through any path stores as NULL) or a
+            # non-finite value reads as the default. One such cell used to
+            # raise TypeError in analyse_inventory on every read of the
+            # restaurant's Food Cost and in every job that touched it (MOD-FC-6).
+            try:
+                f = float(v)
+            except (TypeError, ValueError):
+                return default
+            return f if math.isfinite(f) else default
         items = [{
+            # The row's own identity. The order used to dedupe on the display
+            # name, so a second "Chicken Breast" at another supplier was
+            # dropped from the order (MOD-FC-2).
+            "ingredient_id":   r["id"],
             "item":            r["name"],
             "category":        r["category"] or "",
-            "par_level":       r["par_level"],
-            "current_stock":   r["current_stock"],
-            "unit_cost":       r["unit_cost"],
-            "avg_daily_usage": r["avg_daily_usage"],
-            "last_order_qty":  r["last_order_qty"],
-            "waste_last_week": r["waste_last_week"],
+            "par_level":       _num(r["par_level"]),
+            "current_stock":   _num(r["current_stock"]),
+            "unit_cost":       _num(r["unit_cost"]),
+            "avg_daily_usage": _num(r["avg_daily_usage"]),
+            "last_order_qty":  _num(r["last_order_qty"]),
+            "waste_last_week": _num(r["waste_last_week"]),
             "unit":            r["unit"] or "",
-            "case_size":       r["case_size"] or 1.0,
+            "case_size":       _num(r["case_size"], 1.0) or 1.0,
             # Carried through so build_supplier_orders can group an order
             # by who it actually gets sent to. Only the ingredients-table
             # path has these; CSV/sample items simply have none, and fall
@@ -1191,13 +1328,15 @@ def load_inventory_for_restaurant(restaurant_id: int):
             "supplier_email":  (r["supplier_email"] if "supplier_email" in r.keys() else None) or "",
         } for r in rows]
         return items, True
-    data = get_client_data(restaurant_id)
+    # A caller that already holds the client_data row passes it (Home reads
+    # it once for Labor and Food Cost together — MOD-HOME-2).
+    data = get_client_data(restaurant_id) if client_data is _UNREAD else client_data
     if data and data.get("inventory_csv"):
         return load_inventory(csv_string=data["inventory_csv"]), True
     return load_inventory(), False  # fallback to sample
 
 
-def analysis_for(restaurant_id: int, items=None, is_live=None):
+def analysis_for(restaurant_id: int, items=None, is_live=None, client_data=_UNREAD):
     """The one food-cost analysis. Every surface comes through here.
 
     Callers used to assemble analyse_inventory()'s arguments themselves —
@@ -1216,7 +1355,8 @@ def analysis_for(restaurant_id: int, items=None, is_live=None):
     from marketing import get_upcoming_holidays
 
     if items is None or is_live is None:
-        items, is_live = load_inventory_for_restaurant(restaurant_id)
+        items, is_live = (load_inventory_for_restaurant(restaurant_id) if client_data is _UNREAD
+                          else load_inventory_for_restaurant(restaurant_id, client_data=client_data))
     restaurant = get_restaurant(restaurant_id)
 
     # The two measured inputs analyse_inventory could not derive for itself:
@@ -1316,16 +1456,21 @@ def build_supplier_orders(restaurant_id: int, db_path: str = None) -> dict:
     for bucket in ("critical_low", "reorder_soon"):
         for item in analysis.get(bucket, []):
             name = item.get("item")
-            if not name or name in seen:
+            # One line per ingredient ROW, not per display name: two rows
+            # both called "Chicken Breast" at two suppliers are two lines
+            # (MOD-FC-2). The CSV path has no ids and keeps the name.
+            key = item.get("ingredient_id") or ("name", name)
+            if not name or key in seen:
                 continue
             if int(item.get("suggested_order_qty") or 0) <= 0:
                 continue
-            seen.add(name)
+            seen.add(key)
             # What was thrown away last week comes off what is ordered this
             # week — capped, so a bad week never halves an order, and named
             # on the line so the owner sees why the number is lower.
             qty, trimmed = _trim_for_waste(item)
             ordered.append({
+                "ingredient_id": item.get("ingredient_id"),
                 "item": name,
                 "unit": item.get("unit") or "",
                 "qty": qty,
@@ -1337,20 +1482,35 @@ def build_supplier_orders(restaurant_id: int, db_path: str = None) -> dict:
                 "supplier_email": (item.get("supplier_email") or "").strip(),
             })
 
-    groups, unassigned = {}, []
+    # One group per ADDRESS (MOD-FC-3). Keyed on (name, email) it made two
+    # purchase orders for one supplier whose name was typed "Sysco" on one
+    # ingredient and "SYSCO" on another. The group is named by the first
+    # non-empty name its rows carry.
+    groups, names, unassigned = {}, {}, []
     for row in ordered:
         if not row["supplier_email"]:
             unassigned.append(row)
             continue
-        key = (row["supplier_name"], row["supplier_email"].lower())
-        groups.setdefault(key, []).append(row)
+        email = row["supplier_email"].lower()
+        row["supplier_email"] = email
+        groups.setdefault(email, []).append(row)
+        if row["supplier_name"] and not names.get(email):
+            names[email] = row["supplier_name"]
 
-    group_list = [{
-        "supplier_name": name or email,
-        "supplier_email": email,
-        "items": rows,
-        "total_cost": round(sum(r["line_cost"] for r in rows), 2),
-    } for (name, email), rows in sorted(groups.items())]
+    group_list = []
+    for email in sorted(groups, key=lambda e: ((names.get(e) or e).lower(), e)):
+        rows = groups[email]
+        group = {
+            "supplier_name": names.get(email) or email,
+            "supplier_email": email,
+            "items": rows,
+            "total_cost": round(sum(r["line_cost"] for r in rows), 2),
+        }
+        # Per supplier, so a queued send for one supplier is not voided by a
+        # count that changed another supplier's lines (MOD-FC-10), and so a
+        # PO records exactly which order it was (DATA-15).
+        group["draft_hash"] = draft_hash([group])
+        group_list.append(group)
 
     return {
         "groups": group_list,

@@ -26,6 +26,7 @@ checks.
 import hashlib
 import json
 import logging
+import math
 from ai_utils import model_for
 import re
 
@@ -373,7 +374,9 @@ def apply(restaurant_id, import_id, selections, user_id=None, db_path=DB_PATH):
                 cost = round(float(s["unit_cost"]), 4)
             except (KeyError, TypeError, ValueError):
                 continue
-            if cost <= 0 or cost > 100000:
+            # NaN fails every comparison, so it slipped past `cost <= 0 or
+            # cost > 100000`, was stored as NULL, and broke analysis (MOD-FC-6).
+            if not math.isfinite(cost) or cost <= 0 or cost > 100000:
                 continue
             ing = conn.execute("SELECT name, unit_cost FROM ingredients WHERE id=? AND "
                                "restaurant_id=? AND is_active=1", (ing_id, restaurant_id)).fetchone()

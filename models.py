@@ -817,6 +817,13 @@ def ensure_columns(db_path: str = DB_PATH):
         ("menu_items", "sell_price", "REAL"),
         ("ingredients", "supplier_name", "TEXT"),
         ("ingredients", "supplier_email", "TEXT"),
+        # The supplier group's draft hash a PO was sent for — the durable
+        # "this exact order already went" claim (record_purchase_order).
+        ("purchase_orders", "draft_hash", "TEXT"),
+        # What a delivery cost WHEN it arrived (cogs.purchases_in_window).
+        # Priced at today's unit_cost, an invoice re-priced every past
+        # delivery in the window (MOD-FC-23). NULL on rows from before.
+        ("ingredient_stock_events", "unit_cost", "REAL"),
         # The POS's id for a member of staff, so a comp/void concentration
         # can be named to a person the owner knows (moat audit #9).
         ("staff_contacts", "pos_id", "TEXT"),
@@ -6561,6 +6568,7 @@ NON_ALERT_TYPES = (
     "monthly_review", "daily_briefing", "schedule_drafted", "outcome_achieved",
     "issue", "issue_escalated", "coverage", "demand_opportunity",
     "while_away", "connection_lost", "schedule_publish_pending", "order_send_pending",
+    "order_send_voided",
 )
 
 
@@ -7677,11 +7685,36 @@ def get_ai_visibility_history(restaurant_id: int, limit: int = 10, db_path: str 
 # ── Purchase orders ────────────────────────────────────────────────────────────
 
 
+class DuplicatePurchaseOrder(Exception):
+    """An open PO already carries exactly this supplier's draft. Carries the
+    existing row's number and when it went out, so the refusal can name it."""
+
+    def __init__(self, po_number, sent_at):
+        super().__init__(f"already sent as {po_number}")
+        self.po_number = po_number
+        self.sent_at = sent_at
+
+
 def record_purchase_order(restaurant_id: int, supplier_name: str,
                           supplier_email: str, items: list, total_cost: float,
-                          db_path: str = DB_PATH) -> str:
+                          db_path: str = DB_PATH, draft_hash: str = None,
+                          allow_duplicate: bool = False) -> str:
     """Allocate a PO number and store what was sent, atomically. Returns the
     number.
+
+    `draft_hash` is the durable claim on this exact order (DATA-15): while a
+    PO with the same supplier and the same hash is still open (status
+    'sent'), a second one raises DuplicatePurchaseOrder instead of being
+    written. The re-send guard used to be only a 60-second, process-local
+    cooldown, so a retry after a minute or after any deploy put the same
+    purchase order in the supplier's inbox again. The check and the insert
+    share the BEGIN IMMEDIATE below, so two concurrent sends cannot both
+    pass it. `allow_duplicate` is the owner's explicit "send it again".
+
+    The number is MAX+1 over this restaurant's PO numbers (MOD-FC-7). It
+    was COUNT(*)+1, and a failed email deletes its row, so voiding any PO
+    that was not the newest made every later allocation collide with an
+    existing number: five retries, then a raise, for good.
 
     The number used to be read by a separate COUNT(*) before the supplier
     email went out, and only then inserted against UNIQUE(restaurant_id,
@@ -7698,16 +7731,27 @@ def record_purchase_order(restaurant_id: int, supplier_name: str,
         for _attempt in range(5):
             try:
                 conn.execute("BEGIN IMMEDIATE")
+                if draft_hash and not allow_duplicate:
+                    dup = conn.execute(
+                        "SELECT po_number, sent_at FROM purchase_orders WHERE restaurant_id=? "
+                        "AND LOWER(COALESCE(supplier_email,''))=? AND draft_hash=? AND status='sent' "
+                        "ORDER BY id DESC LIMIT 1",
+                        (restaurant_id, (supplier_email or "").strip().lower(), draft_hash)).fetchone()
+                    if dup:
+                        conn.rollback()
+                        raise DuplicatePurchaseOrder(dup["po_number"], dup["sent_at"])
                 n = conn.execute(
-                    "SELECT COUNT(*) FROM purchase_orders WHERE restaurant_id=?", (restaurant_id,)
+                    "SELECT MAX(CAST(SUBSTR(po_number, 4) AS INTEGER)) FROM purchase_orders "
+                    "WHERE restaurant_id=? AND po_number LIKE 'PO-%'", (restaurant_id,)
                 ).fetchone()[0] or 0
                 po_number = f"PO-{n + 1:04d}"
                 conn.execute("""
                     INSERT INTO purchase_orders
-                        (restaurant_id, po_number, supplier_name, supplier_email, items_json, total_cost)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                        (restaurant_id, po_number, supplier_name, supplier_email, items_json, total_cost,
+                         draft_hash)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                 """, (restaurant_id, po_number, supplier_name, supplier_email,
-                      _json.dumps(items or []), round(float(total_cost or 0), 2)))
+                      _json.dumps(items or []), round(float(total_cost or 0), 2), draft_hash))
                 conn.commit()
                 return po_number
             except _sqlite3.IntegrityError:
@@ -7716,6 +7760,24 @@ def record_purchase_order(restaurant_id: int, supplier_name: str,
         raise RuntimeError("could not allocate a purchase order number")
     finally:
         conn.close()
+
+
+def open_purchase_order(restaurant_id: int, supplier_email: str, draft_hash: str,
+                        db_path: str = DB_PATH):
+    """The open (sent, not yet received) PO carrying exactly this supplier's
+    draft, as {po_number, sent_at}, or None."""
+    if not draft_hash:
+        return None
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT po_number, sent_at FROM purchase_orders WHERE restaurant_id=? "
+            "AND LOWER(COALESCE(supplier_email,''))=? AND draft_hash=? AND status='sent' "
+            "ORDER BY id DESC LIMIT 1",
+            (restaurant_id, (supplier_email or "").strip().lower(), draft_hash)).fetchone()
+    finally:
+        conn.close()
+    return {"po_number": row["po_number"], "sent_at": row["sent_at"]} if row else None
 
 
 def void_purchase_order(restaurant_id: int, po_number: str, db_path: str = DB_PATH) -> bool:

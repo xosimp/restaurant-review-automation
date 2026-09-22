@@ -3078,6 +3078,12 @@ def test_order_draft_groups_items_by_supplier_and_flags_unassigned(client, db_pa
     assert fresh["total_cost"] == round(sum(i["line_cost"] for i in fresh["items"]), 2)
 
 
+def _draft_hash(client, token):
+    """What the phone holds after loading the order sheet; the send requires
+    it (MOD-FC-8)."""
+    return client.get("/mobile/api/food-cost/order-draft", headers=_auth_headers(token)).get_json()["draft_hash"]
+
+
 def test_send_order_emails_each_supplier_and_records_one_po_each(client, db_path, monkeypatch):
     rid = _restaurant(db_path)
     _ingredient(db_path, rid, "Romaine", supplier_name="Fresh Co", supplier_email="orders@fresh.test")
@@ -3089,7 +3095,8 @@ def test_send_order_emails_each_supplier_and_records_one_po_each(client, db_path
     monkeypatch.setattr(_emails, "send_supplier_order_email",
                         lambda **kw: sends.append(kw) or {"id": "email_1"})
 
-    data = client.post("/mobile/api/food-cost/send-order", headers=_auth_headers(token)).get_json()
+    data = client.post("/mobile/api/food-cost/send-order", json={"draft_hash": _draft_hash(client, token)},
+                       headers=_auth_headers(token)).get_json()
     assert data["ok"] is True and data["failed"] == []
     assert len(data["sent"]) == 2
     assert {s["po_number"] for s in data["sent"]} == {"PO-0001", "PO-0002"}
@@ -3110,7 +3117,7 @@ def test_send_order_to_one_supplier_only(client, db_path, monkeypatch):
     import emails as _emails
     monkeypatch.setattr(_emails, "send_supplier_order_email", lambda **kw: {"id": "e"})
     data = client.post("/mobile/api/food-cost/send-order",
-                       json={"supplier_email": "orders@sea.test"},
+                       json={"supplier_email": "orders@sea.test", "draft_hash": _draft_hash(client, token)},
                        headers=_auth_headers(token)).get_json()
     assert [s["supplier_email"] for s in data["sent"]] == ["orders@sea.test"]
 
@@ -3128,7 +3135,8 @@ def test_a_failing_supplier_send_does_not_block_the_others_or_record_a_po(client
         return {"id": "e"}
     monkeypatch.setattr(_emails, "send_supplier_order_email", _send)
 
-    data = client.post("/mobile/api/food-cost/send-order", headers=_auth_headers(token)).get_json()
+    data = client.post("/mobile/api/food-cost/send-order", json={"draft_hash": _draft_hash(client, token)},
+                       headers=_auth_headers(token)).get_json()
     assert [s["supplier_email"] for s in data["sent"]] == ["orders@fresh.test"]
     assert [f["supplier_email"] for f in data["failed"]] == ["bad@sea.test"]
     orders = client.get("/mobile/api/food-cost/purchase-orders", headers=_auth_headers(token)).get_json()["orders"]
@@ -3193,7 +3201,8 @@ def test_receiving_a_po_closes_it_and_is_scoped_to_the_restaurant(client, db_pat
     token = _login(client, db_path, rid)
     import emails as _emails
     monkeypatch.setattr(_emails, "send_supplier_order_email", lambda **kw: {"id": "e"})
-    client.post("/mobile/api/food-cost/send-order", headers=_auth_headers(token))
+    client.post("/mobile/api/food-cost/send-order", json={"draft_hash": _draft_hash(client, token)},
+                headers=_auth_headers(token))
     po = client.get("/mobile/api/food-cost/purchase-orders", headers=_auth_headers(token)).get_json()["orders"][0]
 
     other_token = _login(client, db_path, other, username="otheruser")

@@ -589,6 +589,42 @@ _RETENTION_COLUMN = {
 }
 
 
+# inventory_history holds a snapshot per restaurant per DAY, each carrying the
+# full item list — about 2.5 MB a day for a 5,000-item kitchen, and nothing
+# pruned it (MOD-FC-18). Every reader buckets it to one row per ISO week, so
+# past INVENTORY_DAILY_DAYS only each week's last snapshot is kept; past
+# INVENTORY_HISTORY_DAYS nothing is. 395 days keeps the same four weeks last
+# year that food_cost_intelligence.seasonal_baseline compares against (its
+# oldest day is 392 days back).
+INVENTORY_DAILY_DAYS = int(os.getenv("RETAIN_INVENTORY_DAILY_DAYS", "56"))
+INVENTORY_HISTORY_DAYS = int(os.getenv("RETAIN_INVENTORY_HISTORY_DAYS", "395"))
+
+
+def _prune_inventory_history(conn):
+    """Thin inventory_history to weekly past INVENTORY_DAILY_DAYS and drop it
+    past INVENTORY_HISTORY_DAYS. Dated by week_end — the day the snapshot
+    describes — not saved_at, which a backfill sets to today. Returns rows
+    deleted."""
+    n = 0
+    if INVENTORY_HISTORY_DAYS > 0:
+        cur = conn.execute("DELETE FROM inventory_history WHERE week_end < date('now', ?)",
+                           (f"-{INVENTORY_HISTORY_DAYS} days",))
+        n += max(0, cur.rowcount or 0)
+    if INVENTORY_DAILY_DAYS > 0:
+        # The week's figure is its latest snapshot (waste_trend.load_waste_history).
+        cur = conn.execute(
+            "DELETE FROM inventory_history WHERE week_end < date('now', ?) AND id NOT IN ("
+            "  SELECT (SELECT h2.id FROM inventory_history h2 WHERE h2.restaurant_id = h.restaurant_id"
+            "          AND date(h2.week_end, 'weekday 0', '-6 days') = date(h.week_end, 'weekday 0', '-6 days')"
+            "          ORDER BY h2.week_end DESC, h2.id DESC LIMIT 1)"
+            "  FROM inventory_history h WHERE h.week_end < date('now', ?)"
+            "  GROUP BY h.restaurant_id, date(h.week_end, 'weekday 0', '-6 days'))",
+            (f"-{INVENTORY_DAILY_DAYS} days", f"-{INVENTORY_DAILY_DAYS} days"))
+        n += max(0, cur.rowcount or 0)
+    conn.commit()
+    return n
+
+
 def prune_ledgers(db_path=None):
     """Delete rows past their retention window. Returns {table: rows_deleted}.
 
@@ -618,6 +654,12 @@ def prune_ledgers(db_path=None):
             except Exception as e:
                 # Missing table or renamed column — not worth failing the sweep.
                 log.debug(f"prune_ledgers skipped {table}: {e}")
+        try:
+            n = _prune_inventory_history(conn)
+            if n:
+                deleted["inventory_history"] = n
+        except Exception as e:
+            log.debug(f"prune_ledgers skipped inventory_history: {e}")
     finally:
         conn.close()
     if deleted:

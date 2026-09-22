@@ -131,7 +131,8 @@ def test_web_send_order_emails_supplier_and_records_po(client, db_path, monkeypa
     _login_as(monkeypatch, rid)
     sent = {}
     monkeypatch.setattr("emails.send_supplier_order_email", lambda **kw: sent.update(kw))
-    resp = client.post("/api/food-cost/send-order", json={})
+    draft_hash = client.get("/api/food-cost/order-draft").get_json()["draft_hash"]   # required (MOD-FC-8)
+    resp = client.post("/api/food-cost/send-order", json={"draft_hash": draft_hash})
     d = resp.get_json()
     assert d["ok"] is True
     assert d["sent"][0]["supplier_email"] == "orders@fresh.test"
@@ -145,7 +146,8 @@ def test_web_purchase_order_can_be_marked_received(client, db_path, monkeypatch)
     _ingredient(db_path, rid, "Romaine", supplier_name="Fresh Co", supplier_email="orders@fresh.test")
     _login_as(monkeypatch, rid)
     monkeypatch.setattr("emails.send_supplier_order_email", lambda **kw: None)
-    client.post("/api/food-cost/send-order", json={})
+    client.post("/api/food-cost/send-order",
+                json={"draft_hash": client.get("/api/food-cost/order-draft").get_json()["draft_hash"]})
     po_id = client.get("/api/food-cost/purchase-orders").get_json()["orders"][0]["id"]
     assert client.post(f"/api/food-cost/purchase-orders/{po_id}/received").get_json()["ok"] is True
     assert client.post(f"/api/food-cost/purchase-orders/{po_id}/received").status_code == 404

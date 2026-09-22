@@ -97,7 +97,6 @@ def test_a_window_with_zero_sales_is_unknown_not_a_division(db_path, monkeypatch
 
 # ── A5 cogs #8 / MOD-FC-16: a hole inside the archive's span ────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-16: archive coverage is judged by its edges only; a 21-day hole is summed as zero sales")
 def test_an_archive_with_a_three_week_hole_is_not_read_as_covering_the_window(db_path, monkeypatch):
     rid = _rid(db_path)
     _sales(db_path, rid, [(TODAY - timedelta(days=40), 1000), (TODAY - timedelta(days=27), 1000),
@@ -116,7 +115,6 @@ def test_an_archive_covering_every_day_is_read_without_the_pos(db_path, pos_call
 
 # ── A5 cogs #9 / MOD-FC-17: a window ending today ───────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-17: an archive complete through yesterday never spans a window ending today, so every load calls the POS")
 def test_an_archive_complete_through_yesterday_serves_a_window_ending_today(db_path, pos_calls):
     rid = _rid(db_path)
     today = date.today()
@@ -127,7 +125,6 @@ def test_an_archive_complete_through_yesterday_serves_a_window_ending_today(db_p
 
 # ── A5 cogs #10 / MOD-FC-23: a price change after a delivery ────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-23: purchases are priced at today's unit_cost, so an invoice re-prices past deliveries")
 def test_a_price_change_after_a_delivery_does_not_reprice_that_delivery(db_path):
     rid = _rid(db_path)
     iid = _ingredient(db_path, rid, cost=5.0)
@@ -152,7 +149,6 @@ def test_one_snapshot_cannot_be_both_opening_and_closing(db_path, pos_calls):
 
 # ── A5 cogs #12, waste #9 / MOD-FC-18: a year of snapshots ──────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-18: build_food_cost_pct calls load_waste_history(limit=None) and JSON-parses every snapshot on file")
 def test_a_28_day_food_cost_read_parses_only_snapshots_near_its_window(db_path, pos_calls, monkeypatch):
     rid = _rid(db_path)
     items = [{"item": f"I{i}", "unit_cost": 2.5, "current_stock": 15, "waste_last_week": 1} for i in range(20)]
@@ -165,7 +161,6 @@ def test_a_28_day_food_cost_read_parses_only_snapshots_near_its_window(db_path, 
     assert len(parsed) <= 28 + 2 * cogs.SNAPSHOT_TOLERANCE_DAYS
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-18: nothing prunes inventory_history; prune_ledgers does not know the table")
 def test_old_inventory_snapshots_are_pruned(db_path):
     rid = _rid(db_path)
     _snapshot(db_path, rid, TODAY - timedelta(days=400))
@@ -201,7 +196,6 @@ def _history(db_path, rid, weekly_items):
         _snapshot(db_path, rid, date.today() - timedelta(days=7 * (n - i)), items=items)
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-22: price history is keyed by display name, so one supplier's +21% on a dual-sourced item is masked")
 def test_a_price_rise_on_one_of_two_same_named_ingredients_is_alerted(db_path):
     rid = _rid(db_path)
     steady = [{"id": 1, "item": "Chicken Breast", "unit_cost": 5.80}, {"id": 2, "item": "Chicken Breast", "unit_cost": 6.40}]
@@ -212,7 +206,6 @@ def test_a_price_rise_on_one_of_two_same_named_ingredients_is_alerted(db_path):
     assert any(a["old_price"] == 5.80 and a["new_price"] == 7.00 for a in alerts)
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-22: renaming an ingredient starts its price history from zero")
 def test_renaming_an_ingredient_keeps_its_price_trend(db_path):
     rid = _rid(db_path)
     _history(db_path, rid, [[{"id": 7, "item": "Ribeye", "unit_cost": p}] for p in (10.0, 11.0, 12.0)])
@@ -244,7 +237,6 @@ def _menu_item(db_path, rid, name, guid=None):
     return mid
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-24: a CSV dish that matches no POS item is created unlinked and counted as written, silently")
 def test_a_recipe_csv_dish_that_matches_no_pos_item_is_reported_as_unlinked(db_path):
     rid = _rid(db_path)
     _ingredient(db_path, rid, name="Mozzarella")
@@ -253,7 +245,6 @@ def test_a_recipe_csv_dish_that_matches_no_pos_item_is_reported_as_unlinked(db_p
     assert [k for k in out if "unlinked" in k.lower() and out[k]], out
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-24: rows past 2,000 are dropped with no count in the response")
 def test_a_recipe_csv_over_two_thousand_rows_reports_the_truncation(db_path):
     rid = _rid(db_path)
     _ingredient(db_path, rid, name="Mozzarella")
@@ -262,7 +253,6 @@ def test_a_recipe_csv_over_two_thousand_rows_reports_the_truncation(db_path):
     assert [k for k in out if "truncat" in k.lower() and out[k]], {k: v for k, v in out.items() if k != "unknown_ingredients"}
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-24: a row for an existing (dish, ingredient) pair hits the unique index and is skipped; qty cannot be corrected")
 def test_a_recipe_csv_corrects_an_existing_quantity(db_path):
     rid = _rid(db_path)
     _ingredient(db_path, rid, name="Mozzarella")
@@ -284,7 +274,6 @@ def test_a_recipe_csv_row_is_written_against_a_matching_dish(db_path):
 
 # ── A5 menu #12 / MOD-FC-27: accepting a draft twice ────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-27: accept is not claim-first; a concurrent second accept marks a written recipe 'rejected'")
 def test_two_simultaneous_accepts_leave_the_draft_accepted(db_path, monkeypatch):
     rid = _rid(db_path)
     iid = _ingredient(db_path, rid, name="Mozzarella")
@@ -331,7 +320,6 @@ def test_accepting_a_draft_writes_its_lines_once(db_path):
 
 # ── A5 menu #13 / MOD-FC-28: the monthly basis ──────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-28: reprice multiplies 28 days of units and labels it 'the last 30 days'")
 def test_reprice_monthly_margin_matches_its_stated_basis(db_path, monkeypatch):
     rid = _rid(db_path)
     iid = _ingredient(db_path, rid, name="Beef", cost=6.0)
@@ -381,7 +369,6 @@ def _cursor_keys(db_path):
     return keys
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-19: the nightly depletion sync walks every restaurant with no bound or cursor")
 def test_the_depletion_sync_records_where_it_stopped(db_path, monkeypatch):
     _three_pos_restaurants(db_path, monkeypatch)
     monkeypatch.setattr(il, "compute_daily_depletion", lambda rid, d: {"unmapped_selections": []})
@@ -389,7 +376,6 @@ def test_the_depletion_sync_records_where_it_stopped(db_path, monkeypatch):
     assert any("deplet" in k or "inventory" in k for k in _cursor_keys(db_path))
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-19: a restart mid-pass starts the depletion sync from the first restaurant again")
 def test_a_depletion_sync_interrupted_mid_pass_resumes_after_the_last_restaurant_done(db_path, monkeypatch):
     rids = _three_pos_restaurants(db_path, monkeypatch)
     seen, deployed = [], []
@@ -411,7 +397,6 @@ def test_a_depletion_sync_interrupted_mid_pass_resumes_after_the_last_restaurant
     assert seen[0] == rids[1]
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-19: the snapshot job walks every restaurant with no bound or cursor")
 def test_the_snapshot_job_records_where_it_stopped(db_path, monkeypatch):
     _three_pos_restaurants(db_path, monkeypatch)
     monkeypatch.setattr(fci, "weekly_snapshot", lambda rid, **k: {"ok": True})
@@ -438,7 +423,6 @@ def test_one_restaurant_failing_its_snapshot_does_not_stop_the_rest(db_path, mon
     assert done == rids[1:] and out["failed"] == 1
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-26: one malformed updated_at aborts check_stale_inventory for every restaurant")
 def test_one_malformed_timestamp_does_not_hide_the_other_stale_restaurants(db_path, monkeypatch):
     import resend
     bad, stale = _rid(db_path, name="Bad Stamp"), _rid(db_path, name="Really Stale")

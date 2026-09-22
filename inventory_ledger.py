@@ -35,9 +35,18 @@ _POPULARITY_WINDOW_DAYS = 28
 
 
 def _as_date_str(d) -> str:
+    """An event date as YYYY-MM-DD. A string that is not an ISO date raises
+    ValueError: the ledger orders and windows events by this text, and
+    "9/21/26" sorts after every ISO date, so it sat inside every future
+    7-day window (MOD-FC-15)."""
     if d is None:
         return date.today().isoformat()
-    return d.isoformat() if hasattr(d, "isoformat") else str(d)
+    if hasattr(d, "isoformat"):
+        return d.isoformat()[:10]
+    s = str(d).strip()
+    if len(s) != 10:
+        raise ValueError(f"not an ISO date: {s!r}")
+    return date.fromisoformat(s).isoformat()
 
 
 def _compute_current_stock(conn, ingredient_id: int, restaurant_id: int = None) -> float:
@@ -123,6 +132,16 @@ def recompute_rollups(restaurant_id: int, ingredient_id: int, conn=None) -> None
                 (agg["recount_id"], restaurant_id)).fetchone()
             recount_date = r["event_date"] if r else None
 
+        # The cached figure every order, valuation and COGS read is never
+        # below zero. Negative stock is not a kitchen: it is a recipe typed in
+        # the wrong unit or a delivery nobody logged, and read as-is it grew
+        # the suggested order and turned the stock value negative (MOD-FC-12).
+        # The ledger keeps the true sum; the warning names the ingredient.
+        if (current_stock or 0) < 0:
+            log.warning(f"[inventory_ledger] restaurant {restaurant_id} ingredient {ingredient_id}: "
+                        f"ledger reads {current_stock} — a recipe unit or a missing delivery; "
+                        f"clamped to 0 until the next count")
+            current_stock = 0.0
         sets, params = ["current_stock=?", "updated_at=datetime('now')"], [current_stock]
         if recount_date:
             sets.append("last_recount_at=?")
@@ -177,14 +196,23 @@ def record_recount(restaurant_id: int, ingredient_id: int, counted_qty: float,
     than was actually counted, auto-insert an inferred 'waste' event for
     the gap — a recount finding MORE than expected (a prior undercount,
     typically) never fabricates negative waste, it's just logged."""
+    import math
     from models import db_conn
     event_date_str = _as_date_str(event_date)
+    counted_qty = float(counted_qty)
+    if not math.isfinite(counted_qty) or counted_qty < 0:
+        raise ValueError("a count must be a number of 0 or more")
     with db_conn() as conn:
+        # The expectation is read and the waste written under one write lock.
+        # Read outside it, two counts of the same item at once (two phones,
+        # a double-submit) each inferred the full gap as waste (MOD-FC-14).
+        conn.execute("BEGIN IMMEDIATE")
         # The pair used to be taken on trust: an admin URL carrying
         # /recount/<restaurant_id>/<ingredient_id> could write an event
         # tagged with one location against another location's ingredient,
         # leaving both ledgers wrong in opposite directions, permanently.
         if not ingredient_belongs_to(conn, restaurant_id, ingredient_id):
+            conn.rollback()
             return {"ok": False, "error": "That ingredient isn't this restaurant's."}
         expected = _compute_current_stock(conn, ingredient_id)
         gap = round(expected - counted_qty, 3)
@@ -225,16 +253,31 @@ def record_recount(restaurant_id: int, ingredient_id: int, counted_qty: float,
 
 def record_receiving(restaurant_id: int, ingredient_id: int, qty: float,
                       event_date=None, source: str = "manual", note: str = None) -> int:
+    """Stock that arrived. Returns the event id, or 0 when nothing was
+    written. A delivery is a positive, finite quantity: -500 was accepted
+    and drove stock to -400 (MOD-FC-12). A correction is a recount."""
+    import math
     from models import db_conn
+    try:
+        qty = float(qty)
+    except (TypeError, ValueError):
+        return 0
+    if not math.isfinite(qty) or qty <= 0:
+        return 0
     event_date_str = _as_date_str(event_date)
     with db_conn() as conn:
         if not ingredient_belongs_to(conn, restaurant_id, ingredient_id):
             return 0          # see record_recount's note on the untrusted pair
+        # The delivery carries the price it arrived at, so a later invoice
+        # does not re-price it in COGS (MOD-FC-23).
+        price = conn.execute("SELECT unit_cost FROM ingredients WHERE id=? AND restaurant_id=?",
+                             (ingredient_id, restaurant_id)).fetchone()
         cur = conn.execute(
             "INSERT INTO ingredient_stock_events "
-            "(restaurant_id, ingredient_id, event_type, qty, event_date, source, note) "
-            "VALUES (?,?,?,?,?,?,?)",
-            (restaurant_id, ingredient_id, "receiving", qty, event_date_str, source, note)
+            "(restaurant_id, ingredient_id, event_type, qty, event_date, source, note, unit_cost) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (restaurant_id, ingredient_id, "receiving", qty, event_date_str, source, note,
+             price["unit_cost"] if price else None)
         )
         event_id = cur.lastrowid
         recompute_rollups(restaurant_id, ingredient_id, conn=conn)
@@ -308,11 +351,7 @@ def compute_daily_depletion(restaurant_id: int, business_date) -> dict:
         # on get_conn would silently turn a crash here into a day of
         # inventory quietly reading as zero depletion. Say it out loud.
         conn.execute("BEGIN IMMEDIATE")
-        conn.execute(
-            "DELETE FROM ingredient_stock_events "
-            "WHERE restaurant_id=? AND event_date=? AND event_type='depletion' AND source='toast'",
-            (restaurant_id, business_date_str)
-        )
+        qty_by_ingredient = {}
 
         for guid, qty_sold in sold_by_guid.items():
             menu_item = conn.execute(
@@ -344,16 +383,54 @@ def compute_daily_depletion(restaurant_id: int, business_date) -> dict:
                 continue
 
             for r in recipe_rows:
+                qty_by_ingredient[r["ingredient_id"]] = (qty_by_ingredient.get(r["ingredient_id"], 0.0)
+                                                         + r["qty_per_unit"] * qty_sold)
+
+        # One row per ingredient per business date, UPDATED in place so it
+        # keeps its id. Stock counts events with id > the latest recount, and
+        # the nightly window re-syncs the last three days: deleting and
+        # re-inserting gave the days before a count new, higher ids, so a
+        # count of 80 read as 60 the next morning — two days' sales
+        # subtracted twice, and the next count's shrink masked (MOD-FC-4).
+        existing = conn.execute(
+            "SELECT id, ingredient_id FROM ingredient_stock_events "
+            "WHERE restaurant_id=? AND event_date=? AND event_type='depletion' AND source='toast' ORDER BY id",
+            (restaurant_id, business_date_str)).fetchall()
+        keep, stale = {}, []
+        for row in existing:
+            if row["ingredient_id"] in qty_by_ingredient and row["ingredient_id"] not in keep:
+                keep[row["ingredient_id"]] = row["id"]
+            else:
+                stale.append(row)
+        for row in stale:
+            conn.execute("DELETE FROM ingredient_stock_events WHERE id=? AND restaurant_id=?",
+                         (row["id"], restaurant_id))
+            ingredients_updated.add(row["ingredient_id"])
+        for ingredient_id, qty in qty_by_ingredient.items():
+            if ingredient_id in keep:
+                conn.execute("UPDATE ingredient_stock_events SET qty=? WHERE id=? AND restaurant_id=?",
+                             (qty, keep[ingredient_id], restaurant_id))
+            else:
                 conn.execute(
                     "INSERT INTO ingredient_stock_events "
                     "(restaurant_id, ingredient_id, event_type, qty, event_date, source) "
                     "VALUES (?,?,?,?,?,?)",
-                    (restaurant_id, r["ingredient_id"], "depletion",
-                     r["qty_per_unit"] * qty_sold, business_date_str, "toast")
-                )
-                ingredients_updated.add(r["ingredient_id"])
+                    (restaurant_id, ingredient_id, "depletion", qty, business_date_str, "toast"))
+            ingredients_updated.add(ingredient_id)
 
-        for ingredient_id in ingredients_updated:
+        # Every ingredient still carrying a usage figure from sales, not just
+        # the ones sold today: usage is a trailing window, and an ingredient
+        # whose only dish came off the menu was never recomputed again, so
+        # its last usage froze and it kept being reordered (MOD-FC-13).
+        recompute = set(ingredients_updated)
+        for r in conn.execute(
+                "SELECT i.id FROM ingredients i WHERE i.restaurant_id=? AND i.is_active=1 "
+                "AND COALESCE(i.avg_daily_usage,0) > 0 AND EXISTS (SELECT 1 FROM ingredient_stock_events e "
+                "WHERE e.ingredient_id=i.id AND e.restaurant_id=i.restaurant_id AND e.event_type='depletion')",
+                (restaurant_id,)).fetchall():
+            recompute.add(r["id"])
+
+        for ingredient_id in recompute:
             recompute_rollups(restaurant_id, ingredient_id, conn=conn)
         conn.commit()
 
@@ -759,6 +836,19 @@ def update_ingredient(restaurant_id: int, ingredient_id: int, **fields) -> bool:
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return False
+    # A NaN passes every `<`/`>` guard, is stored as NULL, and then broke
+    # the restaurant's whole Food Cost on every read (MOD-FC-6). A figure
+    # that is not a finite, non-negative number writes nothing.
+    import math
+    for k in ("par_level", "unit_cost", "case_size", "avg_daily_usage", "waste_last_week"):
+        if k in updates and updates[k] is not None:
+            try:
+                v = float(updates[k])
+            except (TypeError, ValueError):
+                return False
+            if not math.isfinite(v) or v < 0:
+                return False
+            updates[k] = v
     sets = ", ".join(f"{k}=?" for k in updates) + ", updated_at=datetime('now')"
     with db_conn() as conn:
         cur = conn.execute(f"UPDATE ingredients SET {sets} WHERE id=? AND restaurant_id=?",
@@ -902,6 +992,31 @@ def add_recipe_ingredient(restaurant_id: int, menu_item_id: int, ingredient_id: 
             return 0
         conn.commit()
         return cur.lastrowid
+
+
+def set_recipe_ingredient_qty(restaurant_id: int, menu_item_id: int, ingredient_id: int,
+                              qty_per_unit: float) -> bool:
+    """Correct the quantity on a (dish, ingredient) pair already bound.
+    True when a row changed. Same tenant checks as add_recipe_ingredient —
+    the dish scopes the row."""
+    import math
+    from models import db_conn
+    try:
+        qty_per_unit = float(qty_per_unit)
+    except (TypeError, ValueError):
+        return False
+    if not math.isfinite(qty_per_unit) or qty_per_unit <= 0:
+        return False
+    with db_conn() as conn:
+        if not menu_item_belongs_to(conn, restaurant_id, menu_item_id):
+            return False
+        if not ingredient_belongs_to(conn, restaurant_id, ingredient_id):
+            return False
+        cur = conn.execute(
+            "UPDATE recipe_ingredients SET qty_per_unit=? WHERE menu_item_id=? AND ingredient_id=?",
+            (qty_per_unit, menu_item_id, ingredient_id))
+        conn.commit()
+        return cur.rowcount > 0
 
 
 def delete_recipe_ingredient(restaurant_id: int, recipe_ingredient_id: int) -> bool:

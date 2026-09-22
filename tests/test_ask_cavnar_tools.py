@@ -162,6 +162,17 @@ def test_a_write_tool_builds_a_proposal_not_a_send():
     assert "orders@fresh.test" in p["summary"]
 
 
+def test_a_supplier_order_proposal_carries_the_current_draft_hash(monkeypatch):
+    """send-order requires the reviewed draft's hash (MOD-FC-8); the card
+    carries the draft as it stands when proposed, never the model's own."""
+    import inventory
+    monkeypatch.setattr(inventory, "build_supplier_orders", lambda rid: {"draft_hash": "h-now"})
+    p = tools.build_proposal("send_supplier_order",
+                             {"supplier_email": "orders@fresh.test", "draft_hash": "made-up", "resend": True},
+                             restaurant_id=7)
+    assert p["body"] == {"supplier_email": "orders@fresh.test", "draft_hash": "h-now"}
+
+
 def test_a_proposal_without_a_named_supplier_says_every_supplier():
     assert "every supplier" in tools.build_proposal("send_supplier_order", {})["summary"]
 
