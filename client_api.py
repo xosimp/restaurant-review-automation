@@ -4545,8 +4545,8 @@ def client_upload_data(current_user):
 
         import os as _os, resend as _resend
         _resend_key = _os.getenv("RESEND_API_KEY", "")
-        _will_email = _config.will_email()
-        _from_email = _config.from_email()
+        _will_email = config.will_email()
+        _from_email = config.from_email()
         if _is_first_upload and _resend_key and r:
             _resend.api_key = _resend_key
             _module = "shift schedule" if data_type == "shifts" else "inventory"

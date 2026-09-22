@@ -1,3 +1,4 @@
 # Test/CI-only dependencies — not installed on Railway.
 -r requirements.txt
 pytest>=8.0.0
+pyflakes>=3.0

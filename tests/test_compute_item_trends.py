@@ -16,9 +16,7 @@ def _restaurant(db_path):
 
 
 def _insert_history(db_path, rid, week_end, price):
-    # inventory_history isn't part of init_db()'s base schema — it's
-    # created lazily by get_claude_insights() on first real use, same
-    # pattern as webhooks/job_failures/staff_notes.
+    # init_db() creates inventory_history now; this helper only inserts.
     conn = get_conn(db_path)
     conn.execute("""CREATE TABLE IF NOT EXISTS inventory_history (
         id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -8,11 +8,14 @@ one item (a review never got analyzed, a draft never got written), with no
 backoff and no second attempt. This wraps the call once so every caller gets
 the same retry behavior instead of each reimplementing it inconsistently.
 """
+import logging
 import os
 import sqlite3
 import threading
 import time
 import anthropic
+
+log = logging.getLogger("ai_utils")
 
 # Errors worth retrying — transient/server-side. NOT retried: BadRequestError,
 # AuthenticationError, PermissionDeniedError, NotFoundError — those are

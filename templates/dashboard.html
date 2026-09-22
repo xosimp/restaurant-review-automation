@@ -2062,9 +2062,8 @@ svg:hover .hb-xh{opacity:1}
   window.hbTrack=function(btn,key,title,metric){
     if(btn){btn.disabled=true;btn.textContent='Starting...';}
     // No CSRF header here on purpose: _csrf_fetch.html wraps window.fetch and
-    // injects the real X-CSRF one on every same-origin POST. The literal
-    // 'X-CSRFToken' spelled out elsewhere in this file is vestigial - csrf.py
-    // reads X-CSRF - and it only works because of that wrapper.
+    // injects the real X-CSRF one on every same-origin POST (csrf.py reads
+    // X-CSRF; nothing reads an 'X-CSRFToken' header, so none is sent).
     fetch('/api/outcomes',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({source:'recommendation',source_key:key,title:title,metric:metric})})
     .then(function(r){return r.json();}).then(function(d){
@@ -6871,8 +6870,6 @@ function saveDraft(id) {
     }).catch(function(){ toast('Network error — try again','error'); });
   }).catch(function(){ toast('Network error — try again','error'); });
 }
-// CSRF token for POST requests
-var _csrf = (document.querySelector('meta[name="csrf-token"]') || {}).content || '';
 var _igConnected = {% if restaurant.ig_token %}true{% else %}false{% endif %};
 var _fbConnected = {% if restaurant.fb_page_token and restaurant.fb_page_id %}true{% else %}false{% endif %};
 var _ggConnected = {% if restaurant.gmb_refresh_token and restaurant.gmb_account_id and restaurant.gmb_location_id %}true{% else %}false{% endif %};

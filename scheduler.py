@@ -2045,7 +2045,7 @@ def run_auto_publish_schedules():
     shared. Nothing is sent here; delayed.run_due sends it, and the owner
     is told now so "undo" is a real choice."""
     import delayed
-    from models import get_all_restaurants, get_conn, schedule_publish_trust, SCHEDULE_PUBLISH_TRUST_MIN
+    from models import get_all_restaurants, get_conn, schedule_publish_trust, SCHEDULE_PUBLISH_TRUST_MIN, DB_PATH
     from time_utils import restaurant_now
     queued = skipped = 0
     for r in get_all_restaurants():

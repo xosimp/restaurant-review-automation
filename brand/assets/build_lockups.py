@@ -28,10 +28,10 @@ TARGETS = [
     os.path.join(ROOT, "brand", "assets"),
     os.path.join(ROOT, "static", "brand"),
     os.path.join(ROOT, "brand", "social"),
-    os.path.join(ROOT, "ios", "CavnarAI", "CavnarAI", "Assets.xcassets", "BrandLockup.imageset"),
 ]
-# The iOS imageset only carries the light (cream-on-dark) variant.
-LIGHT_ONLY = {TARGETS[3]}
+# (The iOS BrandLockup imageset used to be a fourth target; the app draws
+# the lockup itself now and the imageset was removed in Sep 2026.)
+LIGHT_ONLY = set()
 
 
 def tag_paths(tag):
