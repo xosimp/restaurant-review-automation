@@ -10,6 +10,7 @@ exploring code:
 
 | File | What it covers |
 |---|---|
+| `ARCHITECTURE_MANIFEST.md` | The map: folders, services and owners, layers and allowed imports, shared utilities, what stays separate, naming — read before adding a file |
 | `CAVNAR_AI_ENGINEERING_GUIDE.md` | How the system is built and why |
 | `MODULE_OVERVIEW.md` | Every module, its files, its design stance |
 | `SYSTEM_ARCHITECTURE.md` | Processes, jobs, data flow |
