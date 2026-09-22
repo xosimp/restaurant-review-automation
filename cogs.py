@@ -259,7 +259,12 @@ def build_food_cost_pct(restaurant_id, days=DEFAULT_WINDOW_DAYS, db_path=None, t
         target = _f(restaurant.food_cost_target) or None
 
     missing = []
-    weeks, _total = load_waste_history(restaurant_id, None, db_path=db_path)
+    # Only the snapshots that can be the opening or closing count are read:
+    # within SNAPSHOT_TOLERANCE_DAYS of the window's edges (MOD-FC-18).
+    weeks, _total = load_waste_history(
+        restaurant_id, None, db_path=db_path,
+        since=start - timedelta(days=SNAPSHOT_TOLERANCE_DAYS),
+        until=end + timedelta(days=SNAPSHOT_TOLERANCE_DAYS))
 
     opening, opening_day = inventory_value_near(weeks, start)
     if opening is None:

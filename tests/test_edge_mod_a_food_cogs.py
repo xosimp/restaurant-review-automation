@@ -149,7 +149,6 @@ def test_one_snapshot_cannot_be_both_opening_and_closing(db_path, pos_calls):
 
 # ── A5 cogs #12, waste #9 / MOD-FC-18: a year of snapshots ──────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-18: build_food_cost_pct calls load_waste_history(limit=None) and JSON-parses every snapshot on file")
 def test_a_28_day_food_cost_read_parses_only_snapshots_near_its_window(db_path, pos_calls, monkeypatch):
     rid = _rid(db_path)
     items = [{"item": f"I{i}", "unit_cost": 2.5, "current_stock": 15, "waste_last_week": 1} for i in range(20)]
@@ -162,7 +161,6 @@ def test_a_28_day_food_cost_read_parses_only_snapshots_near_its_window(db_path, 
     assert len(parsed) <= 28 + 2 * cogs.SNAPSHOT_TOLERANCE_DAYS
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-18: nothing prunes inventory_history; prune_ledgers does not know the table")
 def test_old_inventory_snapshots_are_pruned(db_path):
     rid = _rid(db_path)
     _snapshot(db_path, rid, TODAY - timedelta(days=400))

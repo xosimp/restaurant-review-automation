@@ -139,12 +139,17 @@ def _week_from_row(week_end, waste_json, items_json, inv_value_col=None):
     return week
 
 
-def load_waste_history(restaurant_id, limit=None, db_path=None):
+def load_waste_history(restaurant_id, limit=None, db_path=None, since=None, until=None):
     """The restaurant's weekly waste series, oldest first, one entry per
     ISO week. When a week holds several snapshots (the insight ran more
     than once), the most recent one is that week's figure. `limit` keeps
     the newest N weeks after bucketing, so a range of 8 is eight distinct
-    weeks, not eight rows."""
+    weeks, not eight rows.
+
+    `since` / `until` (dates, inclusive) bound which snapshot rows are read
+    and parsed at all. A caller that needs only the counts near two dates —
+    cogs.build_food_cost_pct — used to JSON-parse every snapshot the
+    restaurant had ever written on each request (MOD-FC-18)."""
     from models import get_conn, DB_PATH
     conn = get_conn(db_path or DB_PATH)
     try:
@@ -181,18 +186,17 @@ def load_waste_history(restaurant_id, limit=None, db_path=None):
         cutoff = None
         if limit and total_weeks > limit:
             cutoff = first_day_of[ordered_keys[-limit]]
-        if cutoff:
-            rows = conn.execute(
-                "SELECT week_end, waste_json, items_json, inv_value FROM inventory_history "
-                "WHERE restaurant_id=? AND week_end >= ? ORDER BY week_end ASC",
-                (restaurant_id, cutoff),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT week_end, waste_json, items_json, inv_value FROM inventory_history "
-                "WHERE restaurant_id=? AND week_end IS NOT NULL ORDER BY week_end ASC",
-                (restaurant_id,),
-            ).fetchall()
+        lo = max([str(v)[:10] for v in (cutoff, since) if v] or [""]) or None
+        sql = ("SELECT week_end, waste_json, items_json, inv_value FROM inventory_history "
+               "WHERE restaurant_id=? AND week_end IS NOT NULL")
+        params = [restaurant_id]
+        if lo:
+            sql += " AND week_end >= ?"
+            params.append(lo)
+        if until:
+            sql += " AND week_end <= ?"
+            params.append(str(until)[:10])
+        rows = conn.execute(sql + " ORDER BY week_end ASC", params).fetchall()
     finally:
         conn.close()
 
