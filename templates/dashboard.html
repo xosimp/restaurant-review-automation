@@ -3350,8 +3350,7 @@ svg:hover .hb-xh{opacity:1}
 .lb2-op.ember:after{content:'';position:absolute;right:-20%;top:-55%;width:62%;height:150%;background:radial-gradient(closest-side,var(--ambient),transparent 72%);filter:blur(16px);pointer-events:none}
 .lb2-op>*{position:relative}
 .lb2-op .hd{display:flex;align-items:center;gap:14px}
-.lb2-op .ic{width:46px;height:46px;border-radius:13px;flex-shrink:0;display:flex;align-items:center;justify-content:center;color:var(--ember);background:var(--sf-ai),var(--surface);border:1px solid var(--sf-ai-line);box-shadow:var(--glow-ember)}
-.lb2-op .ic svg{width:22px;height:22px}
+.lb2-op .ic{width:46px;height:46px}
 .lb2-op .hd-t{min-width:0}
 .lb2-op .k{font-size:12.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3)}
 .lb2-op .v{font-family:'Space Grotesk',sans-serif;font-size:32px;font-weight:600;letter-spacing:-.025em;line-height:1;color:var(--ink);margin-top:6px;display:flex;align-items:baseline;gap:9px;flex-wrap:wrap}
@@ -3572,12 +3571,12 @@ svg:hover .hb-xh{opacity:1}
        time off is answered here, covers are entered here. -->
   <div class="lb2-ops" id="lb2-ops">
     <section class="lb2-op" id="lb2-timeoff" aria-label="Time off">
-      <div class="hd"><span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M8 3v4M16 3v4M3 10h18"/><path d="M9 15.5l2 2 4-4"/></svg></span><div class="hd-t"><div class="k">Time off</div><div class="v" id="lb2-timeoff-v"><span class="hb-num" id="lb2-timeoff-n">&ndash;</span><small id="lb2-timeoff-flag">loading</small></div></div></div>
+      <div class="hd"><span class="ic ob-tile" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M8 3v4M16 3v4M3 10h18"/><path d="M9 15.5l2 2 4-4"/></svg></span><div class="hd-t"><div class="k">Time off</div><div class="v" id="lb2-timeoff-v"><span class="hb-num" id="lb2-timeoff-n">&ndash;</span><small id="lb2-timeoff-flag">loading</small></div></div></div>
       <div id="lb2-timeoff-body" class="lb2-op-body">Loading&hellip;</div>
       <div class="cap"><span>asked for in the staff portal &middot; an approved range is kept off the next draft</span></div>
     </section>
     <section class="lb2-op ember" id="lb2-covers" aria-label="Covers">
-      <div class="hd"><span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0"/><circle cx="17" cy="9" r="2.4"/><path d="M15.5 14.2a4.5 4.5 0 0 1 5 4.3"/></svg></span><div class="hd-t"><div class="k">Covers</div><div class="v" id="lb2-covers-v"><span class="hb-num" id="lb2-covers-n">&ndash;</span><small id="lb2-covers-flag">loading</small></div></div></div>
+      <div class="hd"><span class="ic ob-tile" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0"/><circle cx="17" cy="9" r="2.4"/><path d="M15.5 14.2a4.5 4.5 0 0 1 5 4.3"/></svg></span><div class="hd-t"><div class="k">Covers</div><div class="v" id="lb2-covers-v"><span class="hb-num" id="lb2-covers-n">&ndash;</span><small id="lb2-covers-flag">loading</small></div></div></div>
       <div id="lb2-covers-body" class="lb2-op-body">Loading&hellip;</div>
       <div class="ac-inline lb2-op-form"><input type="date" class="ac-input" id="lb2-cov-date" aria-label="Date" style="max-width:150px"><input type="number" class="ac-input ac-num" id="lb2-cov-n" min="0" step="1" placeholder="covers" aria-label="Covers" style="max-width:110px"><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="lb2SaveCover(this)">Save</button></div>
       <details class="fc2-import"><summary>Paste a CSV (date,covers)</summary><textarea id="lb2-cov-csv" rows="4" class="ac-input" style="width:100%;font-family:monospace;font-size:13px" placeholder="date,covers&#10;2026-09-19,212"></textarea><div class="fc2-count-ft"><span class="ac-status" id="lb2-cov-status"></span><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="lb2ImportCovers(this)">Import</button></div></details>
@@ -4435,20 +4434,15 @@ svg:hover .hb-xh{opacity:1}
          food_cost_target. Filled by /api/food-cost/cogs; hidden until it
          answers, and when a component is missing it says which rather than
          showing a percentage built on an assumed number. #}
-      <div id="fc2-fcp" class="fc2-fcp" hidden></div>
       {# Recipe coverage: the share of sales a recipe actually accounts for.
          A dish with no recipe depletes nothing, so its ingredients look like
          they are never used — which understates usage, overstates days
          remaining and keeps items out of the reorder list, worst for whatever
          sells most. This number says how far the rest of the page can be
          trusted, and it was only ever written to a log. #}
-      <div id="fc2-cov" class="fc2-cov" hidden></div>
       {# Waste counted vs waste inferred from a recount coming in under
          expectation. A gap is a counting problem, not money wasted, and the
          two were indistinguishable in every figure on this page. #}
-      <div id="fc2-wsrc" class="fc2-cov" hidden></div>
-      <div id="fc2-recipes" class="fc2-cov" hidden></div>
-      <div id="fc2-count" class="fc2-cov" hidden></div>
     </div>
     {# The CFO read. Everything above is a position: what the waste is, what
        the percentage is, how far to trust it. This is the step after —
@@ -11272,7 +11266,7 @@ function fc2LoadRecipeDrafts(note){
   fetch('/api/food-cost/recipe-drafts',{credentials:'same-origin'}).then(function(r){return r.json();}).then(function(d){
     if(!d||!d.ok)return;
     var ds=d.drafts||[];
-    var h='<div class="hb-h3"><span>Recipes to confirm</span>'+(ds.length?'<span class="cnt">'+ds.length+'</span>':'')+'</div>';
+    var h=fc2BlockHead(FC2_ICON.recipe,'Recipes','Recipes to confirm',ds.length,'What each dish is made of is what every plate cost and margin rests on. Drafts wait here until you accept them.');
     if(!ds.length)h+='<div class="hb-empty" style="font-size:14px;padding-top:2px">Nothing waiting. Paste your menu below and Cavnar drafts a recipe for each dish; anything your POS adds later is drafted on Tuesday mornings.</div>';
     for(var i=0;i<ds.length;i++){var dr=ds[i];
       h+='<div class="fc2-recipe"><div class="fc2-recipe-h"><b>'+esc(dr.menu_item_name||('Dish #'+dr.menu_item_id))+'</b>'+(dr.note?'<span class="fc2-recipe-note">'+esc(dr.note)+'</span>':'')+'</div><div class="fc2-recipe-lines">';

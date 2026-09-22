@@ -195,7 +195,10 @@ each chosen so no two adjacent sections share a silhouette:
 | Timeline | `.hb-tl .it` with a tone dot on a rail | The morning brief, read once top to bottom |
 | Stat tile | `.hb-stats .hb-stat` (+ `.good` / `.ember`) | Four *kinds* of number that must never be added together |
 | Ledger pill | `.hb-ledger span` — the leading count on an ember disc (`>.hb-num:first-child`), a figure mid-sentence stays plain | Since you started: distinct work counted, never dollars |
-| Ops tile | `.lb2-ops .lb2-op` (+ `.ember` ambient) — ember mark `.ic`, count in the number face `.v` (+ `.warn` / `.good` / `.ember`), body at 15px, `.cap` footer | Labor's Time off and Covers: what the owner feeds the read. Card tier, so they weigh the same as the tiles above them |
+| Ops tile | `.lb2-ops .lb2-op` (+ `.ember` ambient) — obsidian mark `.ic.ob-tile`, count in the number face `.v` (+ `.warn` / `.good` / `.ember`), body at 15px, `.cap` footer | Labor's Time off and Covers: what the owner feeds the read. Card tier, so they weigh the same as the tiles above them |
+| Position tile | `.fc2-position .fc2-pos` — ember rail, one number in the number face, its basis under it | Food Cost's actual %, recipe coverage, unexplained waste: three kinds of number in one row, never stacked in a column |
+| Working block | `.fc2-block` with `fc2BlockHead(icon, kicker, title, count, sub)` — obsidian tile, kicker, Clash title with an ember count chip | Food Cost's recipes, count sheet and suppliers: full-width cards, each the owner's own work surface |
+| Obsidian tile | `.ob-tile` (+ `.sm`) — the web twin of iOS `GlowBadge`: obsidian gradient, lit edge ember→dark from the top-left, hairline lip, cream glyph, one ember seated on the right edge. A solid object, not a light source | Every mark that names a block or a module; the glyph inside is a 22px stroke SVG |
 | Goal bar | `.hb-goal .bar i` (width from `data-w`) | Progress from baseline to target; no bar when the baseline is unreadable |
 | Checklist | `.hb-chk` | Still open |
 | Section header | `.hb-sh` — `.k` kicker (ember, or `.dim`) + Clash `h2 small` | Between the big moments; the hairline is the rhythm |
