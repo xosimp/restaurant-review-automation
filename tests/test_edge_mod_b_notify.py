@@ -259,7 +259,6 @@ def _labor_over(db_path, rid):
     save_labor_snapshot(rid, start.isoformat(), end.isoformat(), 38.0, 3800, 10000, db_path=db_path)
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-NOT-3: a combined morning batch is gated by the al_unres_* toggles and delivers nothing")
 def test_a_combined_morning_batch_is_delivered_with_the_unresponded_toggles_off(db_path, sent, monkeypatch):
     """A8 #24 / MOD-NOT-3 — labor over AND rating under the floor, with the
     'no reply after 48h' reminders switched off: one push still goes out.

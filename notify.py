@@ -1193,6 +1193,12 @@ def deliver_alert(restaurant_id: int, alert_type: str, sms_text: str, subject: s
         "critical_low":       (None, None, None),
         "price_spike":        (None, None, None),
         "ai_visibility_drop": (None, None, None),
+        # The combined morning batch folds the daily operational alerts into
+        # one message. It fell through to the unresponded triplet below, so
+        # an owner with "no reply after 48h" reminders off heard about none
+        # of the morning's labor or rating news (MOD-NOT-3). The items inside
+        # were each opted into already.
+        "daily_briefing":     (None, None, None),
     }
     # An unmapped type used to land on the HEALTH triplet — the most
     # permissive channel set in the system, and the one the quiet-hours
