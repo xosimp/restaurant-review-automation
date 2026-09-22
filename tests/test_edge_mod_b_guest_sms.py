@@ -88,7 +88,6 @@ def _unsubscribed(db_path, phone):
 
 @pytest.mark.parametrize("body", ["Stop.", "STOP!", "Please stop", "opt out", "Opt-out", "remove me",
                                   "Unsubscribe."])
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-8: punctuated or phrase-form STOP revocations leave the guest subscribed")
 def test_a_punctuated_or_phrased_stop_unsubscribes(db_path, body):
     """A6 SMS #12 / MOD-MKT-8 — the FCC's 'reasonable means' revocation."""
     rid = _rid(db_path)
@@ -99,7 +98,6 @@ def test_a_punctuated_or_phrased_stop_unsubscribes(db_path, body):
 
 
 @pytest.mark.parametrize("body", ["\u200bSTOP", "\uff33\uff34\uff2f\uff30", "STOP\u200d"])
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-8: zero-width and full-width STOP are not normalised, so the guest stays subscribed")
 def test_a_unicode_disguised_stop_unsubscribes(db_path, body):
     """A6 SMS #13 / MOD-MKT-8 — NFKC and zero-width characters."""
     rid = _rid(db_path)
@@ -119,7 +117,6 @@ def test_a_stop_that_leads_the_message_still_works(db_path, body):
     assert _unsubscribed(db_path, "+15551234567") == [1]
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-A6-optin-18: the HELP reply names no program or restaurant")
 def test_the_help_reply_names_the_restaurant_it_is_for(db_path):
     """A6 SMS #18 — a HELP reply has to identify the program (the carrier
     requirement for a HELP response is program name plus how to stop)."""
@@ -145,7 +142,6 @@ def _optin(web, token, phone, xff=None, name="Guest"):
                     headers=headers)
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-9: anyone submitting the public join form re-subscribes a guest who texted STOP")
 def test_the_public_form_never_re_subscribes_a_guest_who_texted_stop(db_path, web):
     """A6 SMS #14 / MOD-MKT-9 — only an inbound START from that phone may
     undo a STOP."""
@@ -172,7 +168,6 @@ def test_a_signed_join_token_is_accepted(db_path, web):
     assert _optin(web, guest_links.sign_join(rid), "5551234567").status_code == 200
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-9: the opt-in rate limit keys on the client-supplied left-most X-Forwarded-For")
 def test_a_spoofed_forwarded_for_header_does_not_bypass_the_opt_in_limit(db_path, web):
     """A6 SMS #16 / MOD-MKT-9 — one client, a fresh fake XFF each time."""
     rid = _rid(db_path)

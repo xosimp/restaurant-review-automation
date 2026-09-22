@@ -73,7 +73,6 @@ def test_a_first_public_opt_in_records_consent(db_path):
     assert _contact(db_path, rid, "5125550100")["consent"] == 1
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-17: the public opt-in sets unsubscribed=0, re-enrolling a guest who texted STOP")
 def test_the_public_opt_in_never_clears_an_unsubscribe(db_path):
     import guest_marketing
     rid = _marketing_restaurant(db_path)
@@ -106,7 +105,6 @@ def test_the_public_opt_in_throttles_one_address(db_path):
     assert statuses[0] == 200 and 429 in statuses
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-17: the opt-in throttle keys on the client-sent first X-Forwarded-For value")
 def test_a_rotating_forwarded_for_does_not_reset_the_opt_in_throttle(db_path):
     import guest_links
     rid = _marketing_restaurant(db_path)
@@ -116,7 +114,6 @@ def test_a_rotating_forwarded_for_does_not_reset_the_opt_in_throttle(db_path):
     assert 429 in statuses
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-17: a stranger with the join link re-subscribes an unsubscribed number through the route")
 def test_the_public_opt_in_page_cannot_resubscribe_a_number_that_opted_out(db_path):
     import guest_links, guest_marketing
     rid = _marketing_restaurant(db_path)

@@ -15,6 +15,7 @@ ever set consent=True. TCPA marketing consent has to come from the
 recipient, not be asserted on their behalf.
 """
 import os
+import re
 from datetime import datetime, timedelta
 from models import get_conn, DB_PATH
 from notify import send_sms, _normalize_phone
@@ -222,9 +223,14 @@ def _upsert_contact(restaurant_id, phone, name, consent, db_path):
             # just the first), so a repeat guest's automated review-request
             # follow-up re-fires for *this* visit. consent_at only gets set
             # once though (COALESCE) — consent doesn't need re-timestamping.
+            # Never un-STOPs: the public form is open to anyone with the
+            # link, and a STOP is undone only by a START texted from that
+            # phone (resubscribe_guest, handle_inbound_sms). The form used to
+            # re-subscribe whoever's number was typed in (MOD-MKT-9). Nor
+            # does a stranger's submission rename an existing guest.
             conn.execute(
                 "UPDATE guest_contacts SET consent=1, consent_at=COALESCE(consent_at,?), "
-                "unsubscribed=0, name=COALESCE(?,name), last_visit=?, "
+                "name=COALESCE(name,?), last_visit=?, "
                 "visit_count=COALESCE(visit_count,0)+1 WHERE id=?",
                 (now_iso, name, now_iso, existing["id"])
             )
@@ -405,6 +411,37 @@ def _mark_invite_response(phone, response, db_path=DB_PATH, restaurant_id=None):
         conn.close()
 
 
+_ZERO_WIDTH = dict.fromkeys(map(ord, "\u200b\u200c\u200d\u200e\u200f\u2060\ufeff"), None)
+_STOP_PHRASES = ("stop", "unsubscribe", "opt out", "optout", "remove me", "stop texting", "cancel", "end", "quit")
+
+
+def _normalise_sms(body: str) -> str:
+    """NFKC (full-width letters), zero-width characters out, lowercase,
+    punctuation to spaces, whitespace collapsed."""
+    import unicodedata
+    text = unicodedata.normalize("NFKC", body or "").translate(_ZERO_WIDTH).lower()
+    text = re.sub(r"[^\w\s]", " ", text)
+    return " ".join(text.split())
+
+
+def _is_stop(body: str) -> bool:
+    """A revocation in any reasonable form. The FCC's rule is "any reasonable
+    means"; only a bare first word counted, so "Stop.", "Please stop", "opt
+    out" and a zero-width or full-width STOP left the guest subscribed
+    (MOD-MKT-8). A short message carrying a stop phrase is a stop; a long
+    one ("don't stop the specials…") is left to its first word."""
+    text = _normalise_sms(body)
+    if not text:
+        return False
+    words = text.split()
+    if words[0] in STOP_KEYWORDS:
+        return True
+    if len(words) <= 5:
+        padded = f" {text} "
+        return any(f" {p} " in padded for p in _STOP_PHRASES) or text.replace(" ", "") in ("optout", "unsubscribe")
+    return False
+
+
 def handle_inbound_sms(from_phone, body, db_path=DB_PATH):
     """Process one inbound guest text. Returns a reply string to send back
     (or None to stay silent).
@@ -414,9 +451,10 @@ def handle_inbound_sms(from_phone, body, db_path=DB_PATH):
     says stop, the safe reading is stop, not "stop from this one tenant".
     """
     phone = _normalize_phone(from_phone)
-    word = (body or "").strip().lower().split()[0] if (body or "").strip() else ""
+    _norm = _normalise_sms(body)
+    word = _norm.split()[0] if _norm else ""
 
-    if word in STOP_KEYWORDS:
+    if _is_stop(body):
         conn = get_conn(db_path)
         conn.execute("UPDATE guest_contacts SET unsubscribed=1 WHERE phone=?", (phone,))
         conn.commit()
@@ -429,7 +467,10 @@ def handle_inbound_sms(from_phone, body, db_path=DB_PATH):
         return None          # nothing of ours — stay silent rather than guess
 
     if word in HELP_KEYWORDS:
-        return "This is a guest text line for restaurant updates. Reply STOP to unsubscribe."
+        # The carrier requirement for HELP: name the program, say how to stop.
+        names = " and ".join(n for _, n in candidates[:3] if n) or "a restaurant you joined"
+        return (f"Guest texts from {names}, sent by Cavnar AI. Msg & data rates may apply. "
+                "Reply STOP to unsubscribe.")
 
     if word in START_KEYWORDS or _match_named_restaurant(body, candidates):
         # One candidate is unambiguous. Several means two restaurants texted
