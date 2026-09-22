@@ -205,34 +205,26 @@ final class EdgeAppCoreTests: XCTestCase {
 
     func testA500OnMeAtLaunchLeavesTheSessionAlone() async {
         let store = await launch(answering: 500, body: #"{"ok": false, "error": "Internal error"}"#)
-        XCTExpectFailure("CLIENT-4: a 5xx on /me at launch is non-retryable, so it signs the user out", strict: true) {
-            XCTAssertTrue(store.isAuthenticated, "a server error is not a rejected session")
-        }
+        XCTAssertTrue(store.isAuthenticated, "a server error is not a rejected session")
     }
 
     func testA502DuringADeployLeavesTheSessionAlone() async {
         // Railway's edge answers 502 with an HTML page while the container
         // restarts — every iPhone opened during a deploy.
         let store = await launch(answering: 502, body: "<html><body>Bad Gateway</body></html>")
-        XCTExpectFailure("CLIENT-4: a deploy-window 502 at launch signs every iPhone user out", strict: true) {
-            XCTAssertTrue(store.isAuthenticated)
-        }
+        XCTAssertTrue(store.isAuthenticated)
     }
 
     func testA429AtLaunchLeavesTheSessionAlone() async {
         let store = await launch(answering: 429, body: #"{"ok": false, "error": "Too many requests"}"#)
-        XCTExpectFailure("CLIENT-4: a rate-limit 429 at launch signs the user out", strict: true) {
-            XCTAssertTrue(store.isAuthenticated)
-        }
+        XCTAssertTrue(store.isAuthenticated)
     }
 
     func testAnUndecodableMeBodyAtLaunchLeavesTheSessionAlone() async {
         // A 200 whose body is not the /me shape (a captive portal, a proxy
         // page) is not the server rejecting this token.
         let store = await launch(answering: 200, body: #"{"unexpected": true}"#)
-        XCTExpectFailure("CLIENT-4: a decode failure on /me at launch signs the user out", strict: true) {
-            XCTAssertTrue(store.isAuthenticated)
-        }
+        XCTAssertTrue(store.isAuthenticated)
     }
 
     func testAServerErrorAtLaunchKeepsTheOfflineQueue() async {
@@ -242,9 +234,7 @@ final class EdgeAppCoreTests: XCTestCase {
         _ = await launch(answering: 503, body: #"{"ok": false, "error": "Service unavailable"}"#)
         await settle(150_000_000)   // clearLocalSession empties the queue in its own Task
         let remaining = await PendingWriteQueue.shared.pendingCount
-        XCTExpectFailure("CLIENT-4: a launch 5xx wipes the offline write queue along with the session", strict: true) {
-            XCTAssertEqual(remaining, 1, "work queued offline must survive a server hiccup at launch")
-        }
+        XCTAssertEqual(remaining, 1, "work queued offline must survive a server hiccup at launch")
     }
 
     func testAConfirmedRejectionAtLaunchStillSignsOut() async {

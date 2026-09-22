@@ -145,7 +145,11 @@ final class SessionStore {
             // as soon as this validation resolves. clearLocalSession() is
             // idempotent, so the handler firing a second time is harmless.
             handleSessionExpired()
-        } catch let error as APIClient.APIError where !error.isRetryable {
+        } catch let error as APIClient.APIError where error.status == 401 || error.status == 403 {
+            // Only the server saying no to THIS session ends it. A 5xx in a
+            // deploy window, a 429 or a body that failed to decode used to
+            // count as a rejection too — every iPhone user was signed out
+            // and their offline queue wiped by a 502 (CLIENT-4).
             handleSessionExpired()
         } catch {
             // Offline, timed out, or an odd decode — say nothing here;

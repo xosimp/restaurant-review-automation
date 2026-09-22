@@ -241,7 +241,8 @@ actor APIClient {
                 throw SessionExpiredError()
             }
             if hapticOnError { await Haptic.error() }
-            throw APIError(message: envelope?.error ?? "Your session expired — please log in again.")
+            throw APIError(message: envelope?.error ?? "Your session expired — please log in again.",
+                           status: 401, body: data)
         }
 
         if http.statusCode >= 400 {
