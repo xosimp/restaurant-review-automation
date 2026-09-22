@@ -99,3 +99,30 @@ def utc_stamp(dt=None) -> str:
     Was defined identically in security, activity and delayed."""
     from datetime import timezone
     return (dt or datetime.now(timezone.utc)).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def mdy(value) -> str:
+    """M/D/YY with no leading zeros — `9/21/26` — the one date format an
+    owner reads (DESIGN_SYSTEM.md → Dates and times). Takes a date, a
+    datetime or an ISO string; anything unparseable comes back unchanged
+    rather than raising inside a sentence."""
+    from datetime import date as _date, datetime as _datetime
+    if value is None or value == "":
+        return ""
+    if isinstance(value, _datetime):
+        d = value.date()
+    elif isinstance(value, _date):
+        d = value
+    else:
+        s = str(value).strip()
+        try:
+            d = _date.fromisoformat(s[:10])
+        except ValueError:
+            return s
+    return f"{d.month}/{d.day}/{d.year % 100:02d}"
+
+
+def mdy_range(start, end) -> str:
+    """`9/14/26 – 9/20/26`, or a single date when both ends are the same day."""
+    a, b = mdy(start), mdy(end)
+    return a if a == b or not b else f"{a} – {b}"

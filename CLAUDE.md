@@ -111,6 +111,10 @@ A deletion is only "verified" when the trace is written down alongside it.
   and motion, on web and iOS. Do not introduce a new UI pattern unless no
   existing one fits — and if none does, document the new one there in the
   same commit.
+- **Dates read `9/21/26`.** M/D/YY, no leading zeros, everywhere an owner
+  sees a date — `time_utils.mdy()` in Python, `|format_date` in Jinja,
+  `mdy()` in web JS. `DESIGN_SYSTEM.md` → *Dates and times* is the rule;
+  an ISO date in owner-facing text is a bug.
 - **Email colours come from `emails.BRAND`**, enforced as a ratchet by
   `scripts/check_email_tokens.py`. Email is light-mode only, inline-styled,
   and governed by `DESIGN_SYSTEM.md` → Email.

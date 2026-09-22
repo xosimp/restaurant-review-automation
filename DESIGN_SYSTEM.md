@@ -96,6 +96,24 @@ this automatically); iOS uses `HomeMixedText.make(...)` or
 `.font(.cavnarNumber(...))`. Use `font-variant-numeric: tabular-nums` /
 tabular figures wherever digits line up in a column.
 
+### Dates and times (one format, everywhere)
+
+Every date an owner reads is **M/D/YY with no leading zeros: `9/21/26`**. On
+web, iOS, email, push, the activity feed, and in any sentence a job or a
+model writes. A range is `9/14/26 – 9/20/26`; a time is `6:45pm` (no
+seconds); a day with a time is `9/21/26 · 6:45pm`. Never an ISO
+`2026-09-21`, never `Sep 21`, never a weekday alone where the date matters.
+An ISO date in owner-facing text is a bug, not a style choice.
+
+| Surface | Helper |
+|---|---|
+| Python — API text, emails, briefs, activity, alerts | `time_utils.mdy(value)` (date, datetime or ISO string); `time_utils.mdy_range(a, b)` |
+| Jinja | `{{ value\|format_date }}` |
+| Web JS | `mdy(x)` — global, exported from the Home closure |
+| iOS | a `M/d/yy` `DateFormatter`, as `TimeOffSection.mdy` does |
+
+`tests/test_date_format.py` pins the helper and the feed text.
+
 ### Scale (the sizes actually in use)
 
 | Step | Size | Where |
