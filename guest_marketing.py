@@ -1077,6 +1077,8 @@ def run_review_request_followups(delay_hours=None, db_path=DB_PATH):
     restaurant's UTC offset.
     """
     from time_utils import restaurant_now_by_id
+    # A cancelled restaurant's guests are not texted on its behalf (MOD-REV-2).
+    from models import in_service_sql
 
     if delay_hours is None:
         delay_hours = int(os.getenv("REVIEW_REQUEST_DELAY_HOURS", DEFAULT_REVIEW_REQUEST_DELAY_HOURS))
@@ -1090,6 +1092,7 @@ def run_review_request_followups(delay_hours=None, db_path=DB_PATH):
         JOIN restaurants r ON r.id = gc.restaurant_id
         WHERE gc.consent=1 AND gc.unsubscribed=0
           AND r.module_marketing=1
+          AND """ + in_service_sql("r.billing_status") + """
           AND gc.last_visit IS NOT NULL
           AND (gc.last_review_requested_at IS NULL OR gc.last_review_requested_at < gc.last_visit)
         """

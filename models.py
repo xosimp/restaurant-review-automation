@@ -5664,6 +5664,29 @@ ACTIVE_BILLING_STATES = {"trial", "active", "internal", "past_due", "pending", "
 BLOCKED_BILLING_STATES = {"churned", "paused", "canceled", "cancelled"}
 
 
+def in_service(restaurant) -> bool:
+    """subscription_allows_access for a restaurant object already in hand —
+    what every BACKGROUND job asks before spending on or contacting one
+    (MOD-REV-2). The request side refused a cancelled customer; the
+    scheduler kept fetching, publishing replies under their name, alerting
+    them and paying Places, Claude and Perplexity for their Intel."""
+    if hasattr(restaurant, "billing_status"):
+        status = restaurant.billing_status
+    else:
+        try:
+            status = restaurant["billing_status"]    # a sqlite3.Row or a dict
+        except (KeyError, IndexError, TypeError):
+            status = None
+    return (status or "").strip().lower() not in BLOCKED_BILLING_STATES
+
+
+def in_service_sql(column: str = "billing_status") -> str:
+    """The same rule as a WHERE fragment, for jobs that select restaurants
+    in SQL. NULL/unknown stays in service, as subscription_allows_access."""
+    states = ",".join("'%s'" % s for s in sorted(BLOCKED_BILLING_STATES))
+    return f"LOWER(TRIM(COALESCE({column},''))) NOT IN ({states})"
+
+
 def subscription_allows_access(restaurant_id: int, db_path: str = DB_PATH) -> bool:
     """Whether this restaurant's billing state still entitles it to service.
 

@@ -240,7 +240,6 @@ class _FakeClock:
         return self.now
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-INT-1: the weekly competitor job is an unbounded, cursor-less loop")
 def test_the_weekly_competitor_job_is_bounded_and_resumes_where_it_stopped(db, monkeypatch):
     """A2 I1 #17 / MOD-INT-1 — each restaurant takes ten hours of fake wall
     clock; a bounded job stops long before ten of them, records a cursor, and
@@ -267,7 +266,6 @@ def test_the_weekly_competitor_job_is_bounded_and_resumes_where_it_stopped(db, m
     assert second[0] not in first
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-REV-2: churned full-tier restaurants still get the weekly competitor run")
 def test_a_churned_restaurant_is_skipped_by_the_weekly_competitor_job(db, monkeypatch):
     """A2 I1 #18 / MOD-REV-2 — no Places or Claude spend on a cancelled
     customer."""
@@ -402,7 +400,6 @@ def test_runs_measured_against_different_cities_are_not_compared(db, monkeypatch
     assert notify._ai_visibility_drop(models.last_two_ai_visibility_runs(1, db_path=db)) is None
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-INT-1: the weekly AI visibility job is an unbounded, cursor-less loop")
 def test_the_weekly_visibility_job_is_bounded_and_resumes_where_it_stopped(db, monkeypatch):
     """A2 I2 #13 / MOD-INT-1."""
     ids = [_full_tier(db, name=f"V{i} Co") for i in range(10)]
@@ -423,7 +420,6 @@ def test_the_weekly_visibility_job_is_bounded_and_resumes_where_it_stopped(db, m
     assert any("visib" in k for k in keys)
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-REV-2: churned full-tier restaurants still get the weekly AI visibility run")
 def test_a_churned_restaurant_is_skipped_by_the_weekly_visibility_job(db, monkeypatch):
     """A2 I2 #13 / MOD-REV-2 — no Perplexity spend on a cancelled customer."""
     live = _full_tier(db, name="Live Co", billing_status="active")

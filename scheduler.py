@@ -187,8 +187,9 @@ FETCH_MAX_SECONDS = int(os.getenv("FETCH_MAX_SECONDS", str(3 * 3600)))
 _FETCH_CURSOR_KEY = "review_fetch_cursor"
 
 
-def _fetch_order(ids):
-    """The live restaurant ids, rotated so the ones skipped last time lead."""
+def _fetch_order(ids, key=_FETCH_CURSOR_KEY):
+    """The live restaurant ids, rotated so the ones skipped last time lead.
+    `key` names the job's cursor row; the weekly Intel sweeps have their own."""
     if not ids:
         return []
     try:
@@ -196,7 +197,7 @@ def _fetch_order(ids):
         conn = get_conn()
         # job_cursors is created by models.init_db (one owner, one definition).
         row = conn.execute("SELECT value FROM job_cursors WHERE key=?",
-                           (_FETCH_CURSOR_KEY,)).fetchone()
+                           (key,)).fetchone()
         conn.close()
         last = int(row["value"]) if row and str(row["value"]).isdigit() else None
     except Exception as e:
@@ -209,7 +210,7 @@ def _fetch_order(ids):
     return ordered[cut:] + ordered[:cut]
 
 
-def _remember_fetch_cursor(order, processed):
+def _remember_fetch_cursor(order, processed, key=_FETCH_CURSOR_KEY):
     """Record the last restaurant this pass actually covered."""
     if not order or processed <= 0:
         return
@@ -219,7 +220,7 @@ def _remember_fetch_cursor(order, processed):
         conn = get_conn()
         conn.execute("INSERT INTO job_cursors (key, value, updated_at) VALUES (?,?,datetime('now')) "
                      "ON CONFLICT(key) DO UPDATE SET value=excluded.value, "
-                     "updated_at=excluded.updated_at", (_FETCH_CURSOR_KEY, str(last)))
+                     "updated_at=excluded.updated_at", (key, str(last)))
         conn.commit()
         conn.close()
     except Exception as e:
@@ -286,8 +287,14 @@ def run_daily_fetch():
         from drafter import draft_response
 
         conn = get_conn()
+        # In service only (MOD-REV-2): a cancelled restaurant is not fetched,
+        # analysed, drafted or alerted — its reviews are no longer ours to
+        # read and its Google listing no longer ours to reply on.
+        from models import in_service_sql
         live = conn.execute(
-            "SELECT id FROM restaurants WHERE reviews_live=1 OR gmb_refresh_token IS NOT NULL"
+            "SELECT id FROM restaurants WHERE (reviews_live=1 OR gmb_refresh_token IS NOT NULL) "
+            "AND deletion_requested_at IS NULL "    # the owner asked for it gone
+            "AND " + in_service_sql()
         ).fetchall()
         conn.close()
 
@@ -317,12 +324,16 @@ def run_daily_fetch():
 
             if restaurant.gmb_refresh_token:
                 try:
-                    from gmb import get_valid_token, fetch_reviews_via_gmb, find_gmb_location
-                    # raise_unavailable: a timeout or a Google 5xx on the
-                    # refresh raises into the except below (Places fallback,
-                    # failure digest) instead of reading as a revoked
-                    # connection and telling the owner to reconnect (AI-22).
-                    token = get_valid_token(rid, raise_unavailable=True)
+                    from gmb import (get_valid_token, fetch_reviews_via_gmb, find_gmb_location,
+                                     refresh_failed_transiently, GoogleTokenUnavailable)
+                    token = get_valid_token(rid)
+                    _blip = None if token else refresh_failed_transiently(rid)
+                    if _blip:
+                        # A timeout or a Google 5xx on the refresh: into the
+                        # except below (Places fallback, failure digest) — not
+                        # a revoked connection, so the owner is not told to
+                        # reconnect (AI-22).
+                        raise GoogleTokenUnavailable(f"Google token refresh failed: {_blip}")
                     if not token:
                         # Returns None rather than raising — a revoked or
                         # expired refresh token used to land here and be
@@ -980,11 +991,11 @@ def run_marketing_metrics_sync():
     looking — an owner who checks once a week saw whatever reach/engagement
     happened to be cached from their last visit, not real current totals."""
     try:
-        from models import get_all_restaurants
+        from models import get_all_restaurants, in_service
         from social_routes import refresh_post_metrics
 
         candidates = [r for r in get_all_restaurants()
-                     if r.module_marketing and (r.ig_token or r.fb_page_token)]
+                     if r.module_marketing and (r.ig_token or r.fb_page_token) and in_service(r)]
         if not candidates:
             return
         log.info(f"Marketing metrics sync for {len(candidates)} restaurant(s)")
@@ -1670,29 +1681,79 @@ def send_while_away_nudges():
 # found the only evidence a monthly summary run had died halfway was a line
 # in the Railway log, which nobody reads on the first of the month.
 
+# The weekly Intel sweeps follow run_daily_fetch's pattern (CLAUDE.md: work
+# that iterates every restaurant is bounded and resumable). Each was a serial
+# loop over every full-tier restaurant with no time bound — competitor
+# analysis is Places plus Claude per restaurant, visibility eight paced
+# Perplexity queries — so at scale one Monday pass ran for hours or days and
+# a crash lost its place (AI-9, MOD-INT-1). Now a wall-clock bound, and a
+# job_cursors cursor so the next pass starts with whoever this one missed.
+# One worker: visibility is paced against a single Perplexity rate limit,
+# and neither job is urgent enough to contend for it.
+WEEKLY_SWEEP_MAX_SECONDS = int(os.getenv("WEEKLY_SWEEP_MAX_SECONDS", str(3 * 3600)))
+_COMPETITOR_CURSOR_KEY = "competitor_sweep_cursor"
+_VISIBILITY_CURSOR_KEY = "ai_visibility_sweep_cursor"
+
+
+def _weekly_sweep(job, cursor_key, restaurants, fn):
+    """Run `fn(restaurant)` over `restaurants` under WEEKLY_SWEEP_MAX_SECONDS,
+    starting after the cursor; returns (processed, hit_bound). `fn` returns
+    True for a success and False for a handled failure, or raises."""
+    by_id = {r.id: r for r in restaurants}
+    order = _fetch_order(list(by_id), key=cursor_key)
+    tally = {"attempted": 0}
+
+    def _one(rid):
+        tally["attempted"] += 1
+        fn(by_id[rid])
+
+    def _failed(rid, e):
+        log.error(f"{job} failed for restaurant {rid}: {e}")
+        _ops.capture(e, job=job, context=f"restaurant_id={rid}")
+
+    done, ran_out = bounded_map(order, _one, 1, WEEKLY_SWEEP_MAX_SECONDS, on_error=_failed)
+    # Advance past everything this pass reached, success or failure: a
+    # restaurant whose analysis failed is retried next week, not first in
+    # line forever ahead of the ones never reached.
+    _remember_fetch_cursor(order, tally["attempted"], key=cursor_key)
+    if ran_out:
+        _ops.capture(
+            RuntimeError(f"{job} covered {tally['attempted']} of {len(order)} restaurants before the "
+                         f"{WEEKLY_SWEEP_MAX_SECONDS}s bound; the rest lead the next pass."),
+            job=job, context="time_bound")
+    return tally["attempted"], ran_out
+
+
 def run_weekly_competitor_analysis():
-    """Monday 6am — competitor analysis for every full-tier client."""
-    from competitor import run_competitor_analysis
-    from models import get_all_restaurants, is_full_tier
-    done = failed = 0
-    for r in get_all_restaurants():
-        if r.google_place_id and r.id and is_full_tier(r):
-            try:
-                res = run_competitor_analysis(r.id) or {}
-                # An analysis that returned ok:False did not analyse anything:
-                # counting it as done hid a Places refusal behind "analysed".
-                if res.get("ok") is False:
-                    failed += 1
-                    if res.get("places_status") or "No nearby competitors" not in (res.get("error") or ""):
-                        _ops.capture(RuntimeError(res.get("error") or "competitor analysis failed"),
-                                     job="competitor_analysis", context=f"restaurant_id={r.id}")
-                else:
-                    done += 1
-            except Exception as ce:
-                failed += 1
-                log.error(f"Competitor analysis failed for {r.name}: {ce}")
-                _ops.capture(ce, job="competitor_analysis", context=f"restaurant_id={r.id}")
-    return {"analysed": done, "failed": failed}
+    """Monday 6am — competitor analysis for every full-tier client in service."""
+    import competitor
+    from models import get_all_restaurants, in_service, is_full_tier
+    counts = {"analysed": 0, "failed": 0}
+
+    def _analyse(r):
+        try:
+            # Looked up at call time so a test's (or a hot patch's) swap of
+            # competitor.run_competitor_analysis is honoured.
+            res = competitor.run_competitor_analysis(r.id) or {}
+        except Exception:
+            counts["failed"] += 1
+            raise
+        # An analysis that returned ok:False did not analyse anything:
+        # counting it as done hid a Places refusal behind "analysed".
+        if res.get("ok") is False:
+            counts["failed"] += 1
+            if res.get("places_status") or "No nearby competitors" not in (res.get("error") or ""):
+                _ops.capture(RuntimeError(res.get("error") or "competitor analysis failed"),
+                             job="competitor_analysis", context=f"restaurant_id={r.id}")
+        else:
+            counts["analysed"] += 1
+
+    # In service only (MOD-REV-2): no Places or Claude spend on a customer
+    # who has cancelled.
+    eligible = [r for r in get_all_restaurants()
+                if r.google_place_id and r.id and is_full_tier(r) and in_service(r)]
+    _weekly_sweep("competitor_analysis", _COMPETITOR_CURSOR_KEY, eligible, _analyse)
+    return counts
 
 
 def run_weekly_ai_visibility():
@@ -1708,22 +1769,25 @@ def run_weekly_ai_visibility():
     force=True bypasses the six-hour display cache; the budget ceiling and
     the per-restaurant rate limit inside the call still apply.
     """
-    from client_api import _do_ai_visibility_inner
-    from models import get_all_restaurants, is_full_tier
-    done = failed = 0
-    for r in get_all_restaurants():
-        if r.id and is_full_tier(r):
-            try:
-                payload, _ = _do_ai_visibility_inner(r.id, force=True)
-                if payload.get("ok"):
-                    done += 1
-                else:
-                    failed += 1
-            except Exception as ve:
-                failed += 1
-                log.error(f"AI visibility run failed for {r.name}: {ve}")
-                _ops.capture(ve, job="ai_visibility", context=f"restaurant_id={r.id}")
-    return {"checked": done, "failed": failed}
+    import client_api
+    from models import get_all_restaurants, in_service, is_full_tier
+    counts = {"checked": 0, "failed": 0}
+
+    def _check(r):
+        try:
+            payload, _ = client_api._do_ai_visibility_inner(r.id, force=True)
+        except Exception:
+            counts["failed"] += 1
+            raise
+        if payload.get("ok"):
+            counts["checked"] += 1
+        else:
+            counts["failed"] += 1
+
+    # In service only (MOD-REV-2): no Perplexity spend on a cancelled customer.
+    eligible = [r for r in get_all_restaurants() if r.id and is_full_tier(r) and in_service(r)]
+    _weekly_sweep("ai_visibility", _VISIBILITY_CURSOR_KEY, eligible, _check)
+    return counts
 
 
 def run_daily_alert_checks():
@@ -2612,7 +2676,11 @@ def auto_approve_five_stars(rid: int, restaurant) -> int:
     show 'N auto-approved today'."""
     if not getattr(restaurant, "auto_approve_5star", 0) or getattr(restaurant, "auto_approve_paused", 0):
         return 0
-    from models import auto_approve_candidates, count_auto_approved_today, log_event
+    from models import auto_approve_candidates, count_auto_approved_today, in_service, log_event
+    # Never publish on a former customer's listing under their name, whatever
+    # the auto-approve flags still say (MOD-REV-2).
+    if not in_service(restaurant):
+        return 0
     cap = int(getattr(restaurant, "auto_approve_daily_cap", 5) or 0)
     done_today = count_auto_approved_today(rid)
     if cap and done_today >= cap:

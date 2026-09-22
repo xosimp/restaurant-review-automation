@@ -69,8 +69,6 @@ def _quiet_fetch(monkeypatch):
 
 # ── R1 #29: not fetched ─────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-REV-2: run_daily_fetch selects reviews_live=1 OR a GBP token with "
-                                        "no billing_status filter, so a churned restaurant is still fetched")
 def test_a_churned_restaurant_is_not_fetched(db_path, monkeypatch):
     import scheduler
     _pair(db_path, module_reviews=1)
@@ -82,8 +80,6 @@ def test_a_churned_restaurant_is_not_fetched(db_path, monkeypatch):
 
 # ── R3 #8: not auto-published ──────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-REV-2: auto_approve_five_stars checks only the auto-approve flags, "
-                                        "so a churned restaurant's drafts are still published to Google")
 def test_a_churned_restaurant_is_never_auto_published(db_path, monkeypatch):
     import scheduler
     _pair(db_path, module_reviews=1, auto_approve_5star=1, auto_approve_daily_cap=5,
@@ -133,8 +129,6 @@ def test_an_active_restaurant_is_alerted_about_a_new_one_star(db_path, monkeypat
     assert (ACTIVE, "1star") in sent
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-REV-2 (merged MOD-BIL-8): fire_review_alerts never reads "
-                                        "billing_status, so a cancelled owner is still texted and emailed")
 def test_a_churned_restaurant_is_not_alerted_about_a_new_one_star(db_path, monkeypatch):
     _restaurant(db_path, CHURNED, "churned", alert_1star=1, urgent_via_email=1)
     sent = _record_delivery(monkeypatch)
@@ -144,8 +138,6 @@ def test_a_churned_restaurant_is_not_alerted_about_a_new_one_star(db_path, monke
 
 # ── the weekly Intel loops ─────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-REV-2: run_weekly_competitor_analysis gates only on is_full_tier, "
-                                        "so Places + Claude are spent on churned restaurants")
 def test_the_weekly_competitor_analysis_skips_a_churned_restaurant(db_path, monkeypatch):
     import competitor
     import scheduler
@@ -156,8 +148,6 @@ def test_the_weekly_competitor_analysis_skips_a_churned_restaurant(db_path, monk
     assert seen == [ACTIVE]
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-REV-2: run_weekly_ai_visibility gates only on is_full_tier, "
-                                        "so Perplexity + Claude are spent on churned restaurants")
 def test_the_weekly_ai_visibility_run_skips_a_churned_restaurant(db_path, monkeypatch):
     import client_api
     import scheduler
@@ -171,8 +161,6 @@ def test_the_weekly_ai_visibility_run_skips_a_churned_restaurant(db_path, monkey
 
 # ── R6 #5: review-request follow-ups ───────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-REV-2 / MOD-MKT-12: run_review_request_followups gates on "
-                                        "module_marketing only, so a churned restaurant's guests are still texted")
 def test_review_request_follow_ups_skip_a_churned_restaurant(db_path, monkeypatch):
     import guest_marketing
     from time_utils import restaurant_now_by_id

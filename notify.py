@@ -1431,12 +1431,17 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
                al_3star_email,  al_3star_sms,  al_3star_push,
                al_5star_email,  al_5star_sms,  al_5star_push,
                al_spike_email,  al_spike_sms,  al_spike_push,
-               al_unres_email,  al_unres_sms,  al_unres_push
+               al_unres_email,  al_unres_sms,  al_unres_push,
+               billing_status
         FROM restaurants WHERE id=?
     """, (restaurant_id,)).fetchone()
     conn.close()
 
     if not row:
+        return
+    # A cancelled customer is not texted, emailed or pushed about reviews
+    # (MOD-REV-2, merged MOD-BIL-8) — this never read billing_status.
+    if not models.in_service(row):
         return
 
     # Global SMS/email on switches (must be on for any SMS/email to fire).
@@ -1798,6 +1803,7 @@ def check_no_response_alerts(db_path: str = DB_PATH, local_hour: int = None):
         WHERE r.sentiment='negative'
           AND r.response_status = 'pending'
           AND r.fetched_at <= datetime('now', '-48 hours')
+          AND """ + models.in_service_sql("rest.billing_status") + """
           AND rest.alert_no_response = 1
           AND (rest.urgent_via_sms = 1 OR rest.urgent_via_email = 1 OR rest.al_unres_push = 1)
         GROUP BY r.restaurant_id
@@ -1871,6 +1877,7 @@ def check_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
                alert_labor_over, labor_target_pct
         FROM restaurants
         WHERE (urgent_via_sms = 1 OR urgent_via_email = 1)
+          AND """ + models.in_service_sql() + """
     """).fetchall()
     conn.close()
 
@@ -2087,6 +2094,7 @@ def check_extra_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
                alert_food_waste, alert_ai_visibility_drop
         FROM restaurants
         WHERE (COALESCE(alert_food_waste,0)=1 OR COALESCE(alert_ai_visibility_drop,0)=1)
+          AND """ + models.in_service_sql() + """
     """).fetchall()
     conn.close()
 

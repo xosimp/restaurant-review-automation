@@ -14,9 +14,13 @@ PLACES_API_KEY = config.google_places_key()  # either variable name; used to rea
 ANTHROPIC_KEY  = os.getenv("ANTHROPIC_API_KEY", "")
 
 
-def fetch_menu_notes_from_places(google_place_id: str) -> str:
+def fetch_menu_notes_from_places(google_place_id: str, restaurant_id: int = None) -> str:
     """Fetch menu URL, editorial summary, and cuisine info from Google Places API.
-    Returns a string suitable for menu_notes field, or empty string if nothing useful found."""
+    Returns a string suitable for menu_notes field, or empty string if nothing useful found.
+
+    `restaurant_id` is the restaurant the notes are for; the menu extraction
+    below is billed to it. Without it the spend landed in the global pool
+    only, outside that restaurant's own budget (AI-30)."""
     if not PLACES_API_KEY or not google_place_id:
         return ""
     try:
@@ -70,7 +74,7 @@ def fetch_menu_notes_from_places(google_place_id: str) -> str:
         if menu_url:
             parts.append(f"Menu URL: {menu_url}")
             try:
-                menu_items = fetch_menu_from_url(menu_url)
+                menu_items = fetch_menu_from_url(menu_url, restaurant_id=restaurant_id)
                 if menu_items:
                     parts.append(f"Menu items (auto-extracted):\n{menu_items}")
             except Exception:
@@ -130,12 +134,54 @@ def fetch_menu_from_pdf_bytes(pdf_bytes: bytes, restaurant_name: str = "", resta
         return ""
 
 
+# A menu URL comes from a Google listing's `website` field or an admin's
+# paste — a page whose author is not our customer. It was fetched with
+# requests' default redirect-following and no host check, so a site that
+# answered 302 to http://169.254.169.254/... had the server read its own
+# cloud metadata (instance credentials) and hand it to the model (AI-30).
+# Every hop is now checked against the same public-address rule webhooks use.
+_MENU_MAX_REDIRECTS = 3
+
+
+def _public_url(url: str) -> bool:
+    try:
+        from webhooks import _validate_webhook_url, InvalidWebhookURL
+    except Exception:
+        return False
+    try:
+        _validate_webhook_url(url)
+        return True
+    except InvalidWebhookURL:
+        return False
+    except Exception:
+        return False
+
+
+def _get_public(url, headers, timeout):
+    """GET `url`, following at most _MENU_MAX_REDIRECTS redirects by hand and
+    refusing any hop — the first included — that is not a public address.
+    Returns the final response, or None when a hop was refused."""
+    from urllib.parse import urljoin
+    for _hop in range(_MENU_MAX_REDIRECTS + 1):
+        if not _public_url(url):
+            print(f"[fetch_menu_from_url] refused a non-public address: {url[:120]}")
+            return None
+        r = requests.get(url, headers=headers, timeout=timeout, allow_redirects=False)
+        if r.status_code in (301, 302, 303, 307, 308):
+            location = (r.headers or {}).get("Location") or (r.headers or {}).get("location")
+            if not location:
+                return r
+            url = urljoin(url, location)
+            continue
+        return r
+    return None
+
+
 def fetch_menu_from_url(menu_url: str, restaurant_id: int = None) -> str:
     """Fetch a restaurant's menu page and use AI to extract key menu items."""
     if not menu_url:
         return ""
     try:
-        import requests as _req
         import os
         # Identify as a normal browser so servers don't reject a bare
         # "python-requests" client — this is a single honest identity, not
@@ -145,8 +191,8 @@ def fetch_menu_from_url(menu_url: str, restaurant_id: int = None) -> str:
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9",
         }
-        r = _req.get(menu_url, headers=headers, timeout=12, allow_redirects=True)
-        if r.status_code != 200 or len(r.text) <= 500:
+        r = _get_public(menu_url, headers, 12)
+        if r is None or r.status_code != 200 or len(r.text) <= 500:
             return ""  # Not available, or the site declined the request — fail cleanly
         page_text = r.text[:10000]
 

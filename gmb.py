@@ -151,17 +151,30 @@ class GoogleTokenUnavailable(RuntimeError):
     MOD-REV-12)."""
 
 
-def get_valid_token(restaurant_id: int, raise_unavailable: bool = False) -> str | None:
+# restaurant_id -> the last refresh failure's exception type name, for a
+# refresh that failed TRANSIENTLY and returned None. Cleared on the next
+# success or revocation. Process-local and bounded by restaurant count.
+_transient_refresh_failures = {}
+
+
+def refresh_failed_transiently(restaurant_id: int) -> str | None:
+    """Why the last get_valid_token for this restaurant returned None when
+    the connection itself is fine (a timeout, a dropped connection, a Google
+    5xx, a non-invalid_grant error), or None. The daily fetch asks this
+    before telling the owner to reconnect (AI-22, MOD-REV-12)."""
+    return _transient_refresh_failures.get(restaurant_id)
+
+
+def get_valid_token(restaurant_id: int) -> str | None:
     """
     Return a valid access token for the restaurant, refreshing if needed.
     Returns None if not connected — including when Google has revoked the
     refresh token (invalid_grant), which is also cleared here so it is not
     re-tried four times a day forever (MOD-REV-12).
 
-    Any other refresh failure is transient as far as the connection is
-    concerned. With `raise_unavailable` it raises GoogleTokenUnavailable, so
-    a caller that tells the owner to reconnect (the daily fetch) can tell a
-    network blip from a dead connection (AI-22); without it, None as before.
+    Any other refresh failure also returns None, but is recorded for
+    refresh_failed_transiently(): as far as the connection is concerned it
+    is a blip, not "reconnect Google".
     """
     from models import get_restaurant, update_restaurant
     r = get_restaurant(restaurant_id)
@@ -187,10 +200,12 @@ def get_valid_token(restaurant_id: int, raise_unavailable: bool = False) -> str 
             "gmb_access_token":  access_token,
             "gmb_token_expires": expires_at,
         })
+        _transient_refresh_failures.pop(restaurant_id, None)
         return access_token
     except Exception as e:
         print(f"[GMB] Token refresh failed for restaurant {restaurant_id}: {e}")
         if isinstance(e, GoogleTokenRevoked):
+            _transient_refresh_failures.pop(restaurant_id, None)
             try:
                 update_restaurant(restaurant_id, {"gmb_refresh_token": None,
                                                   "gmb_access_token": None,
@@ -198,8 +213,7 @@ def get_valid_token(restaurant_id: int, raise_unavailable: bool = False) -> str 
             except Exception as _clear:
                 print(f"[GMB] could not clear revoked token for {restaurant_id}: {_clear}")
             return None
-        if raise_unavailable:
-            raise GoogleTokenUnavailable(f"Google token refresh failed: {type(e).__name__}") from e
+        _transient_refresh_failures[restaurant_id] = type(e).__name__
         return None
 
 

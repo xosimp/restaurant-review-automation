@@ -152,7 +152,7 @@ def create_client(current_user):
         if google_place_id and _flag("module_marketing"):
             try:
                 from competitor import fetch_menu_notes_from_places
-                auto_menu = fetch_menu_notes_from_places(google_place_id)
+                auto_menu = fetch_menu_notes_from_places(google_place_id, restaurant_id=rid)
                 if auto_menu:
                     update_restaurant(rid, {"menu_notes": auto_menu})
                     print(f"[create_client] Auto-fetched menu notes for {data['restaurant_name']}")
@@ -1618,7 +1618,8 @@ def refresh_menu_notes(restaurant_id, current_user):
     try:
         from competitor import fetch_menu_notes_from_places
         from models import update_restaurant
-        menu_notes = fetch_menu_notes_from_places(restaurant.google_place_id)
+        menu_notes = fetch_menu_notes_from_places(restaurant.google_place_id,
+                                                  restaurant_id=restaurant_id)
         if not menu_notes or len(menu_notes) < 30:
             # Build helpful message with where to find menu data manually
             yelp_url = f"https://www.yelp.com/biz/{restaurant.yelp_business_id}" if restaurant.yelp_business_id else ""
