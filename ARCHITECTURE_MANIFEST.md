@@ -47,7 +47,7 @@ Each service is a set of modules with one owner-module that other code is meant 
 | **Data layer** | `models.py` (schema at boot, the `Restaurant` dataclass, most reads/writes) | `auth.py` (users, sessions, staff portal tables), `credentials.py` (Fernet at rest), `ops.py` (job ledgers, lease, claims) | `models.get_conn`, `get_restaurant`, `update_restaurant` |
 | **AI** | `ai_utils.py` (the only `messages.create`; `MODELS`, `model_for`, `get_client`, budget, breaker, usage) | `ai_guard.py` (figure verification, claim kinds, untrusted-text wrapping) | `create_with_retry(get_client(), model=model_for(...))` |
 | **Reviews** | `analyser.py` (scoring) / `drafter.py` (replies) | `fetcher.py`, `gmb.py`, `review_intelligence.py`, `reporter.py` (the digest), `response_templates` in `models` | routes in `client_api` / `mobile_api`; jobs in `scheduler` |
-| **Labor** | `labor.py` (shift ingestion, labor %, schedule generation glue) | `shift_quality.py` (pure scoring engine — no I/O, ever), `covers.py`, `time_off.py`, `labor_replacements.py`, `staff_roster.py`, `staff_schedule.py`, `demand.py`, `preshift.py`, `schedule_engine.py` (the deterministic pipeline: inputs, row repair, rule backstops, quality signals, the async job) | routes; `strategy_routes` twins; `strategy_jobs` |
+| **Labor** | `labor.py` (shift ingestion, labor %, schedule generation glue) | `shift_quality.py` (pure scoring engine — no I/O, ever), `covers.py`, `time_off.py`, `labor_replacements.py`, `staff_roster.py`, `staff_schedule.py`, `demand.py`, `preshift.py`, `schedule_engine.py` (the deterministic pipeline: inputs, row repair, rule backstops, quality signals, the async job), `schedule_rules.py`, `staff_settings.py`, `demand_signals.py`, `schedule_versions.py`, `shift_requests.py` | routes; `strategy_routes` twins; `strategy_jobs` |
 | **Food Cost** | `inventory.py` (waste/overstock/orders) | `inventory_ledger.py` (stock ledger, recipes, margins), `cogs.py`, `waste_trend.py`, `food_cost_intelligence.py` (the CFO layer), `recipes.py`, `invoices.py`, `ordering.py`, `menu_intelligence.py` | routes; `strategy_routes` twins; 5am/6am jobs |
 | **Marketing** | `marketing.py` (drafting, content log) | `marketing_drafts.py`, `marketing_publish.py`, `marketing_media.py`, `marketing_links.py`, `marketing_signals.py` (attribution), `marketing_tags.py`, `guest_marketing.py` (text club), `guest_email.py`, `guest_links.py`, `meta_api.py`, `social_routes.py` (Instagram/Facebook OAuth + publish) | routes; `run_due_posts` every tick |
 | **Intel** | `competitor.py` | `competitor_intel_format.py`, `weather.py`, the AI-visibility engine currently inside `client_api.py` (`_do_ai_visibility_inner`, Perplexity over REST) | routes; Monday jobs |
@@ -149,6 +149,11 @@ Every root module, its layer and its one-line job. The test fails when a module 
 | `issues` | 2 | issues, assignment, escalation, tokenised links |
 | `labor` | 2 | shift ingestion, labor %, schedule generation glue |
 | `schedule_engine` | 2 | the deterministic schedule pipeline: inputs, row repair, backstops, quality signals, the async generation job |
+| `schedule_rules` | 2 | the rules a schedule is checked against: compliance settings, role floors, the Constraints set, the violation sweep |
+| `staff_settings` | 2 | the one roster (history ∪ hand-added − deactivated) and per-person facts: hours limits, daypart windows, minors, pairings, reliability |
+| `demand_signals` | 2 | owner-entered events and reservation counts for specific dates |
+| `schedule_versions` | 2 | every saved state of a schedule, diffs between them, the edits a manager keeps making |
+| `shift_requests` | 2 | staff drop requests, the manager's answer, open shifts and claims |
 | `labor_replacements` | 2 | who could cover a shift |
 | `loss_detection` | 2 | comps/voids/refunds signals (owner-only) |
 | `main` | 4 | pre-hosted CLI (`--demo`); runs its own `schedule` loop with no lease — do not run beside the real scheduler |

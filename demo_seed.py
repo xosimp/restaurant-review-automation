@@ -732,6 +732,13 @@ def _seed_gia_mia(db_path: str = DB_PATH):
             "role_rates_json": json.dumps(gia_mia_role_rates),
             "close_times_json": json.dumps(gia_mia_close_times),
             "role_close_buffer_json": json.dumps(gia_mia_role_close_buffer),
+            # The pizza oven is never unattended: one Pizza Cook every
+            # daypart, two on the busy nights. This used to be a rule
+            # hard-coded in the generator; it is now this restaurant's own
+            # setting (schedule_rules.role_floors).
+            "role_floors_json": json.dumps({"Pizza Cook": {
+                "morning": 1, "night": 1,
+                "days": {d: {"night": 2} for d in ("Monday", "Friday", "Saturday", "Sunday")}}}),
             "location_name": "St. Charles, IL",
             "email_theme": "dark",
         })

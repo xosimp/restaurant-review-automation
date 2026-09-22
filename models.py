@@ -482,6 +482,8 @@ class Restaurant:
     auto_approve_daily_cap: int      = 5
     auto_approve_paused: int         = 0     # kill switch — keeps the rule configured but off
     open_times_json: Optional[str]   = None  # {"Monday":"11:00am",...}; close_times_json already exists
+    compliance_json: Optional[str]   = None  # schedule_rules.DEFAULTS overrides: min_rest_hours, max_shift_hours, minors, days off
+    role_floors_json: Optional[str]  = None  # {"Line Cook": {"morning": 1, "night": 2, "days": {"Saturday": {"night": 3}}}}
     response_language: Optional[str] = None  # None = match the review's language (drafter default)
     tone_preset: Optional[str]       = None  # warm / professional / playful / concise
     data_retention_months: int       = 0     # 0 = keep everything
@@ -674,6 +676,18 @@ def ensure_columns(db_path: str = DB_PATH):
         # Staff schedule links used to live forever: a former employee's
         # link kept showing next week's roster indefinitely.
         ("schedule_shares", "expires_at", "TEXT"),
+        # Scheduling rules the owner sets once (schedule_rules.py): rest
+        # between shifts, shift length, minors, days off; and per-role,
+        # per-daypart staffing floors that replace the one hardcoded rule.
+        ("restaurants", "compliance_json", "TEXT"),
+        ("restaurants", "role_floors_json", "TEXT"),
+        # schedule_history grew these after it shipped (also ensured lazily
+        # by _ensure_history_columns for a database created before boot ran).
+        ("schedule_history", "published_at", "TEXT"),
+        ("schedule_history", "published_by", "TEXT"),
+        ("schedule_history", "review_json", "TEXT"),
+        ("schedule_history", "generation_seconds", "REAL"),
+        ("schedule_history", "weather_json", "TEXT"),
         # email_log.status existed from the start but nothing could write it:
         # log_email() had no status parameter, so a failed send was recorded
         # as 'sent' like every other row.
@@ -2302,7 +2316,9 @@ def init_db(db_path: str = DB_PATH):
                   init_staff_availability, init_team_messages, init_task_management,
                   init_staff_capabilities, init_manual_team_members, init_shift_profiles,
                   init_ask_memory, init_capability_changes, init_onboarding_emails,
-                  init_competitor_snapshots, init_ai_visibility_queries):
+                  init_competitor_snapshots, init_ai_visibility_queries,
+                  init_staff_settings, init_demand_signals, init_schedule_versions,
+                  init_shift_requests):
         _init(db_path)
     # Runs after ensure_columns() so organization_id exists to write into.
     backfill_organizations(db_path=db_path)
@@ -2434,6 +2450,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "alert_health_bypass_quiet","alert_food_waste","alert_ai_visibility_drop","alert_extra_emails","push_sound",
         "auto_approve_earned","auto_publish_schedule","auto_order_trusted","weekly_plan_enabled","send_delay_minutes",
         "auto_approve_5star","auto_approve_4star","auto_approve_daily_cap","auto_approve_paused","open_times_json",
+        "compliance_json","role_floors_json",
         "response_language","tone_preset","data_retention_months",
         "toast_client_id","toast_client_secret","toast_restaurant_guid",
         "rpower_token","rpower_cg","rpower_store_mid","rpower_store_name",
@@ -2712,6 +2729,8 @@ def _restaurant_from_row(row) -> Restaurant:
         auto_approve_daily_cap=row["auto_approve_daily_cap"] if "auto_approve_daily_cap" in row.keys() and row["auto_approve_daily_cap"] is not None else 5,
         auto_approve_paused=row["auto_approve_paused"] if "auto_approve_paused" in row.keys() else 0,
         open_times_json=row["open_times_json"] if "open_times_json" in row.keys() else None,
+        compliance_json=row["compliance_json"] if "compliance_json" in row.keys() else None,
+        role_floors_json=row["role_floors_json"] if "role_floors_json" in row.keys() else None,
         response_language=row["response_language"] if "response_language" in row.keys() else None,
         tone_preset=row["tone_preset"] if "tone_preset" in row.keys() else None,
         data_retention_months=row["data_retention_months"] if "data_retention_months" in row.keys() and row["data_retention_months"] is not None else 0,
@@ -4058,6 +4077,113 @@ def capability_coverage(restaurant_id: int, roster: list, db_path: str = DB_PATH
     }
 
 
+def init_staff_settings(db_path: str = DB_PATH):
+    """Per-person scheduling facts the roster never had: whether they still
+    work here, full or part time, an hours envelope, which dayparts they can
+    work on each day, and whether they are a minor. staff_settings.py owns
+    the reads and writes; this only creates the tables."""
+    conn = get_conn(db_path)
+    conn.execute("""CREATE TABLE IF NOT EXISTS staff_settings (
+        id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+        restaurant_id        INTEGER NOT NULL REFERENCES restaurants(id),
+        employee_name        TEXT    NOT NULL,
+        active               INTEGER NOT NULL DEFAULT 1,
+        employment_type      TEXT,               -- 'full' | 'part' | NULL (unknown)
+        min_hours            REAL,
+        max_hours            REAL,
+        daypart_availability TEXT,               -- JSON {"Monday": "any|morning|night|off", ...}
+        is_minor             INTEGER NOT NULL DEFAULT 0,
+        updated_by           TEXT,
+        updated_at           TEXT    NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(restaurant_id, employee_name)
+    )""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS staff_pairs (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        restaurant_id  INTEGER NOT NULL REFERENCES restaurants(id),
+        employee_a     TEXT    NOT NULL,
+        employee_b     TEXT    NOT NULL,
+        kind           TEXT    NOT NULL,          -- 'prefer' | 'avoid'
+        note           TEXT,
+        created_by     TEXT,
+        created_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(restaurant_id, employee_a, employee_b, kind)
+    )""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_staff_settings_rest ON staff_settings(restaurant_id)")
+    conn.commit()
+    conn.close()
+
+
+def init_demand_signals(db_path: str = DB_PATH):
+    """Owner-entered events and reservation counts for specific dates
+    (demand_signals.py). The scheduler read holidays and weekday medians
+    and nothing an owner actually knew about next Saturday."""
+    conn = get_conn(db_path)
+    conn.execute("""CREATE TABLE IF NOT EXISTS demand_signals (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        restaurant_id  INTEGER NOT NULL REFERENCES restaurants(id),
+        date           TEXT    NOT NULL,
+        kind           TEXT    NOT NULL,          -- 'event' | 'reservations'
+        label          TEXT    NOT NULL,
+        covers         INTEGER,
+        lift_pct       INTEGER,
+        source         TEXT    NOT NULL DEFAULT 'manual',
+        created_by     TEXT,
+        created_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(restaurant_id, date, kind, label)
+    )""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_demand_signals_date ON demand_signals(restaurant_id, date)")
+    conn.commit()
+    conn.close()
+
+
+def init_schedule_versions(db_path: str = DB_PATH):
+    """Every saved state of a schedule (schedule_versions.py): the draft as
+    generated, each manager save, the copy that was published. Edits used
+    to overwrite the one row and the draft was gone."""
+    conn = get_conn(db_path)
+    conn.execute("""CREATE TABLE IF NOT EXISTS schedule_versions (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        restaurant_id  INTEGER NOT NULL REFERENCES restaurants(id),
+        history_id     INTEGER NOT NULL REFERENCES schedule_history(id),
+        version        INTEGER NOT NULL,
+        reason         TEXT    NOT NULL,          -- 'generated' | 'edited' | 'published' | 'fixes'
+        schedule_csv   TEXT    NOT NULL,
+        quality_json   TEXT,
+        diff_json      TEXT,                      -- vs the previous version
+        saved_by       TEXT,
+        created_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(history_id, version)
+    )""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_schedule_versions_hist ON schedule_versions(history_id)")
+    conn.commit()
+    conn.close()
+
+
+def init_shift_requests(db_path: str = DB_PATH):
+    """A member of staff asking to drop a published shift, the manager's
+    answer, and who picked it up (shift_requests.py)."""
+    conn = get_conn(db_path)
+    conn.execute("""CREATE TABLE IF NOT EXISTS shift_change_requests (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        restaurant_id    INTEGER NOT NULL REFERENCES restaurants(id),
+        history_id       INTEGER NOT NULL REFERENCES schedule_history(id),
+        employee_name    TEXT    NOT NULL,
+        date             TEXT    NOT NULL,
+        shift_start      TEXT    NOT NULL,
+        shift_end        TEXT,
+        role             TEXT,
+        reason           TEXT,
+        status           TEXT    NOT NULL DEFAULT 'pending',   -- pending | open | denied | covered | withdrawn
+        replacement_name TEXT,
+        decided_by       TEXT,
+        decided_at       TEXT,
+        created_at       TEXT    NOT NULL DEFAULT (datetime('now'))
+    )""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_shift_requests_rest ON shift_change_requests(restaurant_id, status)")
+    conn.commit()
+    conn.close()
+
+
 def init_manual_team_members(db_path: str = DB_PATH):
     conn = get_conn(db_path)
     conn.execute("""CREATE TABLE IF NOT EXISTS manual_team_members (
@@ -4944,7 +5070,9 @@ def _ensure_history_columns(conn):
     """Columns added to schedule_history after it first shipped."""
     have = {r[1] for r in conn.execute("PRAGMA table_info(schedule_history)")}
     for name, decl in (("quality_json", "TEXT"), ("edited_at", "TEXT"),
-                       ("edited_by", "TEXT")):
+                       ("edited_by", "TEXT"), ("published_at", "TEXT"), ("published_by", "TEXT"),
+                       ("review_json", "TEXT"), ("generation_seconds", "REAL"),
+                       ("weather_json", "TEXT")):
         if name not in have:
             conn.execute(f"ALTER TABLE schedule_history ADD COLUMN {name} {decl}")
 
@@ -7189,23 +7317,37 @@ SCHEDULE_PUBLISH_TRUST_MIN = 3
 
 
 def schedule_publish_trust(restaurant_id: int, db_path: str = DB_PATH) -> int:
-    """How many of the most recent published schedules went out unedited,
-    counting back from the latest until one was edited (capped at 10). A
-    schedule counts as published when it has a share row. This is the
-    owner's own record that the Thursday draft is the schedule they run."""
+    """How many of the most recent published schedules RAN CLEAN, counting
+    back from the latest until one did not (capped at 10). A schedule
+    counts as published when it has a share row.
+
+    Clean used to mean "went out unedited". An unedited week proves the
+    owner did not look; a week that ran is the evidence auto-publish needs:
+    nobody flagged a coverage gap or a no-show as an issue during it, and
+    the owner did not have to rewrite it after generation."""
     conn = get_conn(db_path)
     try:
         rows = conn.execute(
-            "SELECT h.id, h.edited_at FROM schedule_history h WHERE h.restaurant_id=? "
+            "SELECT h.id, h.edited_at, h.week_start, h.week_end FROM schedule_history h WHERE h.restaurant_id=? "
             "AND EXISTS (SELECT 1 FROM schedule_shares s WHERE s.schedule_id=h.id) "
             "ORDER BY h.id DESC LIMIT 10", (restaurant_id,)).fetchall()
+        n = 0
+        for r in rows:
+            if r["edited_at"]:
+                break
+            if r["week_start"] and r["week_end"]:
+                try:
+                    trouble = conn.execute(
+                        "SELECT 1 FROM ops_issues WHERE restaurant_id=? AND kind IN ('coverage', 'no_show') "
+                        "AND substr(created_at, 1, 10) BETWEEN ? AND ? LIMIT 1",
+                        (restaurant_id, r["week_start"], r["week_end"])).fetchone()
+                except Exception:
+                    trouble = None
+                if trouble:
+                    break
+            n += 1
     finally:
         conn.close()
-    n = 0
-    for r in rows:
-        if r["edited_at"]:
-            break
-        n += 1
     return n
 
 
