@@ -93,6 +93,21 @@
   .sr-row .act{display:flex;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap}
   .sr-row.open-shift{border-left:3px solid var(--ember2)}
   .sr-msg{font-size:13.5px;margin-top:6px;color:var(--red)}
+  .sr-row .kind{font-size:10.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ember2);margin-right:6px}
+  /* Swap with a colleague: a small picker under the shift */
+  .shift .brk{font-size:13px;color:var(--ink3);margin-top:3px}
+  .shift .drop{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+  .swap-pick{margin-top:10px;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--paper)}
+  .swap-pick label{display:block;font-size:12.5px;color:var(--ink3);margin:8px 0 4px}
+  .swap-pick label:first-child{margin-top:0}
+  .swap-pick select,.swap-pick input{width:100%;background:#0f0f0f;border:1px solid var(--line);border-radius:8px;padding:10px 12px;color:var(--ink);font-family:inherit;font-size:15px}
+  .swap-pick .act{display:flex;gap:10px;align-items:center;margin-top:10px;flex-wrap:wrap}
+  .swap-pick .msg{font-size:13px;color:var(--red)}
+  /* What I'd like: a wish, not a rule */
+  .pref-row{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 10px}
+  .pref-hrs{display:flex;gap:10px;align-items:center;margin:8px 0 10px}
+  .pref-hrs input{width:90px;background:#0f0f0f;border:1px solid var(--line);border-radius:8px;padding:9px 12px;color:var(--ink);font-family:inherit;font-size:16px;text-align:center}
+  .pref-note{font-size:12.5px;color:var(--ink3);margin-top:8px;line-height:1.5}
 </style>
 </head>
 <body>
@@ -112,6 +127,7 @@
     <div id="sched-body" class="load">Loading your shifts…</div>
     <div id="req-body"></div>
   <div id="avail-body" class="card"></div>
+  <div id="pref-body" class="card"></div>
   <div id="timeoff-body" class="card"></div>
   </section>
 
@@ -197,8 +213,11 @@
       $('today-line').textContent = '';
       return;
     }
+    // The shifts API names them start / end / hours (labor.employee_shifts_from_csv).
+    function sStart(s) { return s.start || s.shift_start || ''; }
+    function sEnd(s) { return s.end || s.shift_end || ''; }
     $('today-line').textContent = d.today
-      ? 'Today: ' + d.today.shift_start + ' – ' + d.today.shift_end
+      ? 'Today: ' + sStart(d.today) + ' – ' + sEnd(d.today)
       : "You're off today.";
 
     var html = '<h2>Next 7 days</h2>';
@@ -209,13 +228,17 @@
             + '<div><span class="day">' + esc(day.weekday) + '</span>'
             + '<span class="date">' + mdyShort(day.date) + (day.is_today ? ' · today' : '') + '</span></div>';
       if (s) {
-        html += '<div class="time">' + esc(s.shift_start) + ' – ' + esc(s.shift_end) + '</div>'
+        var hrs = s.hours || s.scheduled_hours;
+        html += '<div class="time">' + esc(sStart(s)) + ' – ' + esc(sEnd(s)) + '</div>'
               + '<div class="meta">' + esc(s.role || '')
-              + (s.scheduled_hours ? ' · ' + esc(s.scheduled_hours) + 'h' : '') + '</div>';
+              + (hrs ? ' · ' + esc(hrs) + 'h' : '') + '</div>';
+        if (s['break']) html += '<div class="brk">Break ' + esc(s['break']) + '</div>';
         if (s.notes) html += '<div class="meta">' + esc(s.notes) + '</div>';
-        // A published shift you can't make: ask to drop it. A manager
-        // answers, and an approved one opens up for somebody else to claim.
-        html += '<div class="drop"><button type="button" class="cbtn cbtn-text cbtn-sm" data-drop-date="' + esc(day.date) + '" data-drop-start="' + esc(s.shift_start) + '">Can\u2019t work this</button></div>';
+        // A published shift you can't make: ask to drop it, or swap it
+        // with a colleague's. A manager answers either one.
+        html += '<div class="drop"><button type="button" class="cbtn cbtn-text cbtn-sm" data-drop-date="' + esc(day.date) + '" data-drop-start="' + esc(sStart(s)) + '">Can\u2019t work this</button>'
+              + '<button type="button" class="cbtn cbtn-text cbtn-sm" data-swap-date="' + esc(day.date) + '" data-swap-start="' + esc(sStart(s)) + '">Swap with a colleague</button></div>'
+              + '<div class="swap-slot" id="swap-' + esc(day.date) + '"></div>';
       } else {
         html += '<div class="none">Off</div>';
       }
@@ -246,10 +269,14 @@
     if (mine.length) {
       html += '<h2>My requests</h2>';
       for (i = 0; i < mine.length; i++) {
-        var q = mine[i], st = q.status || 'pending';
+        var q = mine[i], st = q.status || 'pending', swap = (q.kind || 'drop') === 'swap';
         var label = REQ_STATUS[st] || st;
-        if (st === 'covered' && q.replacement_name) label = 'Covered by ' + q.replacement_name;
-        html += '<div class="sr-row"><div class="when">' + fmtShort(q.date) + ' \u00B7 ' + esc(q.shift_start) + (q.shift_end ? ' \u2013 ' + esc(q.shift_end) : '') + '</div>'
+        if (st === 'covered' && q.replacement_name) label = swap ? 'Swapped' : 'Covered by ' + q.replacement_name;
+        // A swap names both shifts: mine, and the colleague's I asked for.
+        var when = swap
+          ? '<span class="kind">Swap</span>my ' + fmtShort(q.date) + ' ' + esc(q.shift_start) + ' for ' + esc(q.target_name || '') + '\u2019s ' + fmtShort(q.target_date) + ' ' + esc(q.target_start || '')
+          : '<span class="kind">Drop</span>' + fmtShort(q.date) + ' \u00B7 ' + esc(q.shift_start) + (q.shift_end ? ' \u2013 ' + esc(q.shift_end) : '');
+        html += '<div class="sr-row"><div class="when">' + when + '</div>'
               + (q.role || q.reason ? '<div class="meta">' + esc(q.role || '') + (q.role && q.reason ? ' \u00B7 ' : '') + esc(q.reason || '') + '</div>' : '')
               + '<div class="st ' + esc(st) + '">' + esc(label) + '</div>';
         if (st === 'pending' || st === 'open') {
@@ -279,11 +306,64 @@
     return fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body || {})})
       .then(function (r) { return r.json().catch(function () { return {ok: false, error: 'Something went wrong \u2014 try again.'}; }); });
   }
+  // ── Swap with a colleague ───────────────────────────────────────────────
+  // Who else is on the published week and their shifts, fetched once; a
+  // small picker under the shift builds the request. The server judges
+  // whether both sides are legal when a manager approves it.
+  var _colleagues = null;
+  function loadColleagues(cb) {
+    if (_colleagues) { cb(_colleagues); return; }
+    fetch('/staff/api/colleagues').then(function (r) { return r.json(); }).then(function (d) {
+      _colleagues = (d && d.ok && d.colleagues) || [];
+      cb(_colleagues);
+    }).catch(function () { cb([]); });
+  }
+  function shiftLabel(s) { return fmtShort(s.date) + ' ' + s.shift_start + (s.shift_end ? ' – ' + s.shift_end : '') + (s.role ? ' · ' + s.role : ''); }
+  function openSwapPicker(date, start) {
+    var slot = $('swap-' + date); if (!slot) return;
+    if (slot.innerHTML) { slot.innerHTML = ''; return; }
+    slot.innerHTML = '<div class="swap-pick"><div class="load">Loading who’s on this week…</div></div>';
+    loadColleagues(function (list) {
+      if (!list.length) { slot.innerHTML = '<div class="swap-pick"><div class="meta">Nobody else is on the published week yet.</div></div>'; return; }
+      var html = '<div class="swap-pick"><label for="swap-who-' + esc(date) + '">Swap with</label><select id="swap-who-' + esc(date) + '" data-swap-who="' + esc(date) + '">';
+      for (var i = 0; i < list.length; i++) html += '<option value="' + i + '">' + esc(list[i].name) + '</option>';
+      html += '</select><label for="swap-their-' + esc(date) + '">For their shift</label><select id="swap-their-' + esc(date) + '"></select>'
+            + '<label for="swap-why-' + esc(date) + '">Why (optional)</label><input type="text" id="swap-why-' + esc(date) + '" maxlength="200" placeholder="e.g. a class that night">'
+            + '<div class="act"><button type="button" class="cbtn cbtn-primary cbtn-sm" data-swap-send="' + esc(date) + '" data-swap-start="' + esc(start) + '">Ask for the swap</button>'
+            + '<button type="button" class="cbtn cbtn-text cbtn-sm" data-swap-cancel="' + esc(date) + '">Cancel</button><span class="msg" id="swap-msg-' + esc(date) + '"></span></div></div>';
+      slot.innerHTML = html;
+      fillTheirShifts(date);
+    });
+  }
+  function fillTheirShifts(date) {
+    var who = $('swap-who-' + date), their = $('swap-their-' + date);
+    if (!who || !their || !_colleagues) return;
+    var c = _colleagues[+who.value] || {shifts: []}, html = '';
+    for (var i = 0; i < c.shifts.length; i++) html += '<option value="' + i + '">' + esc(shiftLabel(c.shifts[i])) + '</option>';
+    their.innerHTML = html || '<option value="">No shifts this week</option>';
+  }
+  document.addEventListener('change', function (ev) {
+    var el = ev.target; if (!el || !el.getAttribute) return;
+    var d = el.getAttribute('data-swap-who'); if (d) fillTheirShifts(d);
+  });
   document.addEventListener('click', function (ev) {
     var el = ev.target;
-    while (el && el !== document.body && !(el.getAttribute && (el.getAttribute('data-drop-date') || el.getAttribute('data-withdraw') || el.getAttribute('data-claim')))) el = el.parentNode;
+    while (el && el !== document.body && !(el.getAttribute && (el.getAttribute('data-drop-date') || el.getAttribute('data-withdraw') || el.getAttribute('data-claim') || el.getAttribute('data-swap-date') || el.getAttribute('data-swap-send') || el.getAttribute('data-swap-cancel')))) el = el.parentNode;
     if (!el || !el.getAttribute) return;
     var drop = el.getAttribute('data-drop-date'), wd = el.getAttribute('data-withdraw'), cl = el.getAttribute('data-claim');
+    var sw = el.getAttribute('data-swap-date'), swSend = el.getAttribute('data-swap-send'), swCancel = el.getAttribute('data-swap-cancel');
+    if (sw) { openSwapPicker(sw, el.getAttribute('data-swap-start')); return; }
+    if (swCancel) { var sl = $('swap-' + swCancel); if (sl) sl.innerHTML = ''; return; }
+    if (swSend) {
+      var who = $('swap-who-' + swSend), their = $('swap-their-' + swSend), msg2 = $('swap-msg-' + swSend);
+      var c = (_colleagues || [])[+(who ? who.value : -1)], s = c && their && their.value !== '' ? c.shifts[+their.value] : null;
+      if (!c || !s) { if (msg2) msg2.textContent = 'Pick a colleague and one of their shifts.'; return; }
+      el.disabled = true; if (msg2) msg2.textContent = '';
+      post('/staff/api/shift-requests', {kind: 'swap', date: swSend, shift_start: el.getAttribute('data-swap-start'), target_name: c.name, target_date: s.date, target_start: s.shift_start, reason: ($('swap-why-' + swSend) || {}).value || ''})
+        .then(function (d) { el.disabled = false; if (!d.ok) { if (msg2) msg2.textContent = d.error || 'Could not send that.'; return; } var sl2 = $('swap-' + swSend); if (sl2) sl2.innerHTML = '<div class="swap-pick"><div class="meta">Asked ✓ — your manager decides, and both shifts move if it’s approved.</div></div>'; loadRequests(); })
+        .catch(function () { el.disabled = false; if (msg2) msg2.textContent = 'Could not send that — check your connection.'; });
+      return;
+    }
     if (drop) {
       var reason = window.prompt('Why can\u2019t you work this shift? (optional)', '');
       if (reason === null) return;
@@ -339,6 +419,40 @@
     };
   }
   fetch('/staff/api/availability').then(function (r) { return r.json(); }).then(function (d) { if (d && d.ok) avRender(d); }).catch(function () {});
+
+  // ── What I'd like ───────────────────────────────────────────────────────
+  // Preferred dayparts and hours a week, in your own words. The draft reads
+  // it as a wish: honoured where coverage allows, never over a rule. ES5 only.
+  function prefRender(d) {
+    var el = $('pref-body'); if (!el) return;
+    var picked = d.preferred_dayparts || [];
+    var html = '<h2>What I’d like</h2><div class="meta" style="margin-bottom:4px">The shifts you’d rather have, and how many hours a week you want.</div><div class="pref-row">';
+    var parts = [['morning', 'Days'], ['night', 'Nights']];
+    for (var i = 0; i < parts.length; i++) {
+      var on = picked.indexOf(parts[i][0]) >= 0;
+      html += '<button type="button" class="cbtn ' + (on ? 'cbtn-primary' : 'cbtn-secondary') + ' cbtn-sm pref-dp' + (on ? ' on' : '') + '" data-dp="' + parts[i][0] + '" aria-pressed="' + (on ? 'true' : 'false') + '">' + parts[i][1] + '</button>';
+    }
+    html += '</div><div class="pref-hrs"><label for="pref-hours" class="meta" style="margin:0">Hours a week</label><input type="number" id="pref-hours" min="0" max="80" step="1" inputmode="numeric" value="' + (d.desired_hours == null ? '' : esc(d.desired_hours)) + '" placeholder="—"></div>'
+          + '<div class="av-row"><button type="button" class="cbtn cbtn-primary cbtn-sm" id="pref-save">Save</button><span class="meta" id="pref-status"></span></div>'
+          + '<div class="pref-note">A wish, not a rule — the schedule honours it where coverage allows.</div>';
+    el.innerHTML = html;
+    var btns = el.querySelectorAll('.pref-dp');
+    for (var j = 0; j < btns.length; j++) btns[j].onclick = function () {
+      var on = this.className.indexOf(' on') < 0;
+      this.className = 'cbtn ' + (on ? 'cbtn-primary' : 'cbtn-secondary') + ' cbtn-sm pref-dp' + (on ? ' on' : '');
+      this.setAttribute('aria-pressed', on ? 'true' : 'false');
+    };
+    $('pref-save').onclick = function () {
+      var dps = [], all = el.querySelectorAll('.pref-dp.on');
+      for (var k = 0; k < all.length; k++) dps.push(all[k].getAttribute('data-dp'));
+      var hv = $('pref-hours').value, st = $('pref-status'); st.textContent = 'Saving…';
+      fetch('/staff/api/preferences', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({preferred_dayparts: dps, desired_hours: hv === '' ? null : +hv})})
+        .then(function (r) { return r.json(); })
+        .then(function (r) { st.textContent = r.ok ? 'Saved — the next draft reads it.' : (r.error || 'Could not save.'); })
+        .catch(function () { st.textContent = 'Could not save — check your connection.'; });
+    };
+  }
+  fetch('/staff/api/preferences').then(function (r) { return r.json(); }).then(function (d) { if (d && d.ok) prefRender(d); }).catch(function () {});
 
   // ── Time off ────────────────────────────────────────────────────────────
   // Specific dates, asked for here and answered by a manager. An approved

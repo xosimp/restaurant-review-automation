@@ -3470,6 +3470,10 @@ svg:hover .hb-xh{opacity:1}
 .lb2-hist .rline .dot.info{background:#6aabff}
 .lb2-hist .badge{font-size:10.5px;font-weight:700;letter-spacing:.02em;padding:2px 7px;border-radius:999px;white-space:nowrap;flex-shrink:0}
 .lb2-hist .badge.edited{background:rgba(239,159,39,.16);color:#ef9f27}
+.lb2-hist .badge.sup{background:var(--sf-recess);color:var(--ink3)}
+.lb2-hist .row.sup{opacity:.62}
+.lb2-hist .row.sup:hover,.lb2-hist .row.sup.selected{opacity:1}
+.shr-kind{font-size:10.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ember);background:var(--hb-tint2);padding:1px 7px;border-radius:999px;margin-right:4px;vertical-align:middle}
 .lb2-hist .rside{display:flex;align-items:center;gap:10px}
 .lb2-hist .qpill{font-family:'Space Grotesk',sans-serif;font-size:12.5px;font-weight:700;padding:3px 9px;border-radius:999px;white-space:nowrap}
 .lb2-hist .qpill.good{background:rgba(74,173,122,.14);color:var(--hb-good)}
@@ -3624,7 +3628,134 @@ svg:hover .hb-xh{opacity:1}
 .sv-v .ln{font-size:13px;color:var(--ink3);line-height:1.5;margin-top:2px}
 .sv-dvp{margin-top:14px;padding:12px 14px;border-radius:10px;background:var(--sf-recess)}
 .sv-dvp .ln{font-size:13.5px;color:var(--ink2);line-height:1.55;padding:2px 0}
-@media (max-width:640px){.rst-days{grid-template-columns:repeat(4,minmax(0,1fr))}.rul-floor .role{flex-basis:100%}}
+.lb2-srow.s8{background:linear-gradient(135deg,rgba(200,75,47,.30),rgba(200,75,47,.16))}
+/* Week picker beside Generate */
+.lb2-weekpick{display:inline-flex;gap:8px;align-items:center}
+.lb2-weekpick .ac-select,.lb2-weekpick .ac-input{width:auto;padding:8px 10px;font-size:14px}
+/* Redo some days: one checkbox per date under the preview header */
+.sched-redo{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:10px 20px;border-bottom:1px solid var(--hb-line2)}
+.sched-redo .sr-k{margin-right:4px}
+.sched-redo label{display:inline-flex;align-items:center;gap:5px;font-size:13px;color:var(--ink2);cursor:pointer;padding:4px 9px;border-radius:999px;border:1px solid var(--hb-line2);background:var(--sf-recess)}
+.sched-redo label.hol{border-color:var(--ember);color:var(--ember)}
+.sched-redo label input{margin:0;accent-color:var(--ember)}
+.sched-redo .sp{flex:1}
+/* Projected cost and the forecast's notices */
+.sched-econ{padding:14px 20px;border-bottom:1px solid var(--hb-line2)}
+.sched-econ .hb-stats{grid-template-columns:repeat(auto-fit,minmax(130px,1fr))}
+.sched-econ .hb-stat .v{font-size:24px}
+.sched-econ .cap{font-size:12.5px;color:var(--ink3);margin-top:8px}
+.sched-econ .notice{display:flex;gap:9px;align-items:flex-start;margin-top:10px;padding:9px 12px;border-radius:9px;background:var(--amber-bg);color:var(--hb-warn);font-size:13.5px;line-height:1.5}
+.sched-econ .notice.dim{background:var(--sf-recess);color:var(--ink3)}
+.sched-econ details{margin-top:10px}
+.sched-econ summary{cursor:pointer;font-size:13.5px;font-weight:600;color:var(--ink2);list-style:none;display:flex;align-items:center;gap:8px}
+.sched-econ summary::-webkit-details-marker{display:none}
+.sched-econ summary:before{content:'';width:0;height:0;border-left:5px solid var(--ember);border-top:4px solid transparent;border-bottom:4px solid transparent;transition:transform .2s}
+.sched-econ details[open] summary:before{transform:rotate(90deg)}
+.sched-econ .sr-line{font-size:13.5px}
+.sched-econ .sr-line .why{color:var(--ink3)}
+/* Holiday on a day header in the schedule table */
+.sched-hol{display:inline-block;margin-left:6px;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ember);background:var(--hb-tint2);padding:1px 6px;border-radius:999px;vertical-align:middle;white-space:nowrap}
+.sched-hol .hb-num{color:var(--hb-good)}
+/* Cost of the edits in the edit bar */
+.sched-cost{font-size:13.5px;color:var(--ink2);white-space:nowrap}
+.sched-cost .hb-num{font-weight:700}
+.sched-cost.up{color:var(--ember)}
+.sched-cost.down{color:var(--hb-good)}
+/* A save refused because somebody saved first */
+.sched-conflict{margin:0 20px 14px;padding:12px 14px;border-radius:10px;background:var(--red-bg);color:var(--hb-bad);font-size:13.5px;line-height:1.5}
+.sched-conflict b{font-weight:700}
+.sched-conflict .ln{color:var(--ink2);padding:2px 0}
+.sched-conflict .sr-actions{margin-top:8px}
+/* Recommendation ✓ / ✕ */
+.sq-rec{display:flex;gap:8px;align-items:flex-start;margin-bottom:5px}
+.sq-rec .tx{flex:1;font-size:14px;line-height:1.6;color:var(--ink2)}
+.sq-rec .acts{display:inline-flex;gap:2px;flex:none;opacity:.7}
+.sq-rec:hover .acts{opacity:1}
+.sq-rec.done .tx{color:var(--ink3);text-decoration:line-through}
+.sq-rec .st{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);flex:none;margin-top:3px}
+.sq-hidden{font-size:12.5px;color:var(--ink3);margin-top:8px}
+/* Chip toggles (rules: certifications per role, FOH and patio roles;
+   roster: certifications) */
+.chip-tog{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.chip-tog .ct{display:inline-flex;align-items:center;gap:5px;height:28px;padding:0 11px;border-radius:999px;border:1px solid var(--hb-line2);background:var(--sf-recess);color:var(--ink2);font-size:12.5px;font-weight:600;cursor:pointer;user-select:none;-webkit-user-select:none;transition:background .15s,border-color .15s,color .15s;font-family:inherit}
+.chip-tog .ct:hover{border-color:var(--hb-line)}
+.chip-tog .ct.on{background:var(--hb-tint2);border-color:var(--ember);color:var(--ember)}
+.chip-tog .ct.on:before{content:'\2713';font-size:11px}
+.chip-tog .ct:disabled{cursor:default;opacity:.6}
+.chip-tog .ct.ro{cursor:default}
+/* Rules: the jurisdiction pack's caveats, and the reservation feed */
+.rul-pack{margin-top:10px;padding:10px 12px;border-radius:9px;background:var(--sf-recess);font-size:13px;color:var(--ink2);line-height:1.55}
+.rul-pack .k{font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ember);margin-bottom:4px}
+.rul-pack li{margin:2px 0 2px 16px}
+.rul-pack .cc{margin-top:6px;color:var(--ink3);font-style:italic}
+.rul-from{color:var(--ember)!important}
+.rul-row{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:9px 0;border-top:1px solid var(--hb-line2)}
+.rul-row:first-child{border-top:none}
+.rul-row .role{flex:0 0 150px;font-weight:600;color:var(--ink)}
+.rul-row .lbl{font-size:12.5px;color:var(--ink3)}
+.rul-row .ac-input,.rul-row .ac-select{width:auto;padding:5px 8px;font-size:13.5px}
+.rul-row .ac-input.n{width:64px;text-align:center}
+.rul-sw{display:flex;gap:12px;align-items:center;padding:10px 0;border-top:1px solid var(--hb-line2)}
+.rul-sw .t{flex:1;font-size:14.5px;color:var(--ink)}
+.rul-sw .t small{display:block;font-size:12.5px;color:var(--ink3);margin-top:1px}
+.rul-res{margin-top:6px}
+.rul-res .msg{font-size:13px;color:var(--ink3);margin-top:8px;line-height:1.5}
+.rul-res .msg.live{color:var(--hb-good)}
+.rul-res .msg.bad{color:var(--hb-bad)}
+/* Roster: time windows, certifications, stated preferences, trained-up */
+.rst-win{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px;padding:10px 10px 0}
+.rst-win>div{text-align:center}
+.rst-win .dy{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);margin-bottom:4px}
+.rst-win .ac-input{width:100%;padding:5px 4px;font-size:12px;text-align:center;margin-bottom:4px}
+.rst-more{display:flex;gap:14px;flex-wrap:wrap;padding:10px 10px 0;align-items:flex-start}
+.rst-more>div{min-width:180px;flex:1}
+.rst-more .k{font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);margin-bottom:6px}
+.rst-more .said{font-size:13.5px;color:var(--ink2);line-height:1.5}
+.rst-more .said small{display:block;font-size:12px;color:var(--ink3)}
+.rst-up{display:inline-flex;align-items:center;gap:5px;height:26px;padding:0 10px;border-radius:999px;background:var(--green-bg);color:var(--hb-good);font-size:12.5px;font-weight:600;margin:0 4px 4px 0}
+.rst-up:before{content:'';width:6px;height:6px;border-radius:50%;background:var(--hb-good);box-shadow:0 0 6px var(--hb-good)}
+/* Suggested pairs and learned patterns */
+.lb2-pairs .pr.sug .kd{background:var(--hb-tint2);color:var(--ember)}
+.lb2-pairs .pr .ev{font-size:12.5px;color:var(--ink3);flex-basis:100%}
+.lb2-pairs .pr .acts{margin-left:auto;display:inline-flex;gap:6px}
+.lrn-row{display:flex;gap:12px;align-items:center;padding:9px 0;border-top:1px solid var(--hb-line2);font-size:14px;color:var(--ink2);line-height:1.5}
+.lrn-row:first-child{border-top:none}
+.lrn-row .tx{flex:1}
+.lrn-row.off .tx{color:var(--ink3);text-decoration:line-through}
+.lrn-row .n{flex:none;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3)}
+.lrn-row .n.on{color:var(--hb-good)}
+/* What the record says */
+.int-rev{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;font-size:14.5px;color:var(--ink2);margin-bottom:6px}
+.int-rev .hb-num{font-size:26px;font-weight:600;color:var(--ink);letter-spacing:-.02em}
+.int-rev .src{font-size:13px;color:var(--ink3)}
+.int-tbl{width:100%;border-collapse:collapse;font-size:13.5px}
+.int-tbl th{text-align:left;font-size:10.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);padding:0 8px 8px 0;border-bottom:1px solid var(--hb-line)}
+.int-tbl td{padding:8px 8px 8px 0;border-bottom:1px solid var(--hb-line2);vertical-align:top;color:var(--ink2)}
+.int-tbl td.wd{font-weight:600;color:var(--ink);white-space:nowrap}
+.int-tbl .cell{line-height:1.5}
+.int-tbl .cell small{display:block;font-size:12px;color:var(--ink3)}
+.int-tbl .cell.trbl{position:relative;padding-left:10px}
+.int-tbl .cell.trbl:before{content:'';position:absolute;left:0;top:4px;bottom:4px;width:3px;border-radius:2px;background:var(--hb-bad);box-shadow:0 0 8px var(--hb-bad)}
+.int-tbl .cell .flag{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--hb-bad)}
+.int-tbl .dim{color:var(--ink3)}
+.int-bars{display:flex;flex-direction:column;gap:6px}
+.int-bar{display:grid;grid-template-columns:110px 1fr 70px;gap:10px;align-items:center;font-size:13px;color:var(--ink2)}
+.int-bar .l{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.int-bar .l small{color:var(--ink3)}
+.int-bar .tr{height:8px;border-radius:999px;background:var(--sf-recess);overflow:hidden}
+.int-bar .tr i{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,var(--ember2),var(--ember));box-shadow:0 0 10px rgba(200,75,47,.45);transform-origin:left center;animation:cmBar .8s cubic-bezier(.4,0,.2,1) both}
+.int-bar .v{text-align:right;font-family:'Space Grotesk',sans-serif;font-weight:700;color:var(--ink)}
+.int-cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px}
+.int-ledger{font-size:13.5px;color:var(--ink2);line-height:1.6}
+.int-ledger b{color:var(--ink);font-weight:600}
+.int-ledger .hb-num{color:var(--ember);font-weight:700}
+.int-ledger .most{color:var(--ink2)}
+.int-say{padding:7px 0;border-top:1px solid var(--hb-line2);font-size:14px;color:var(--ink2);line-height:1.5}
+.int-say:first-child{border-top:none}
+.int-say b{color:var(--ink);font-weight:600}
+.int-supp{margin-top:14px;padding:10px 12px;border-radius:9px;background:var(--sf-recess);font-size:13px;color:var(--ink3);line-height:1.5}
+.int-supp b{color:var(--ink2);font-weight:600}
+@media (max-width:640px){.rst-days,.rst-win{grid-template-columns:repeat(4,minmax(0,1fr))}.rul-floor .role,.rul-row .role{flex-basis:100%}.int-bar{grid-template-columns:90px 1fr 60px}}
 #sched-history-more{padding:12px 0 2px;text-align:center}
 /* Same branded gradient+border recipe as .cal-card/.lb2-avail — a flat
    var(--hb-tint) wash here read as an undefined smear, not a branded
@@ -3811,7 +3942,10 @@ svg:hover .hb-xh{opacity:1}
 
   <div class="lb2-sched">
     <div class="hb-sh" style="margin-top:0"><div><div class="k">Schedule</div><h2>Next week, built by Cavnar AI<small>optimized to your {{ _lt|int }}% target and every staff constraint</small></h2><div class="lb2-actions">
-      {% if labor.is_live %}<button onclick="generateSchedule(this)" id="gen-sched-btn" class="cbtn cbtn-primary">Generate optimized schedule</button>{% endif %}
+      {% if labor.is_live %}<button onclick="generateSchedule(this)" id="gen-sched-btn" class="cbtn cbtn-primary">Generate optimized schedule</button>
+      <!-- Which week: next week by default, the week after, or any date
+           inside the wanted week. Sent as week_start. -->
+      <span class="lb2-weekpick"><select class="ac-select" id="sched-week-pick" aria-label="Which week" onchange="document.getElementById('sched-week-date').style.display=this.value==='date'?'':'none'"><option value="next">Next week</option><option value="after">The week after</option><option value="date">A date…</option></select><input type="date" class="ac-input" id="sched-week-date" aria-label="A date in the week you want" style="display:none"></span>{% endif %}
       {% if not restaurant.toast_restaurant_guid %}
       <label class="cbtn cbtn-secondary">{% if labor.is_live %}Update shifts CSV{% else %}Upload shifts CSV{% endif %}<input type="file" accept=".csv" style="display:none" id="shifts-inline-input" onchange="clientUpload('shifts', this)"></label>
       {% endif %}
@@ -3843,6 +3977,7 @@ svg:hover .hb-xh{opacity:1}
           <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember);margin-bottom:4px">AI-Optimized Schedule</div>
           <div id="sched-week-label" style="font-size:14px;font-weight:700;color:rgba(255,255,255,.88)">Week of —</div>
           <div id="sched-gen-meta"></div>
+          <div id="sched-gen-notes" class="sr-note"></div>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button onclick="downloadScheduleFromPreview()" class="cbtn cbtn-success" onmousedown="this.style.transform='scale(.97)'" onmouseup="this.style.transform='translateY(-1px)'">Download CSV</button>
@@ -3850,6 +3985,10 @@ svg:hover .hb-xh{opacity:1}
           <button class="cbtn cbtn-glass" onclick="document.getElementById('schedule-preview-panel').style.display='none'" onmousedown="this.style.transform='scale(.97)'" onmouseup="this.style.transform='translateY(-1px)'">Close</button>
         </div>
       </div>
+
+      <!-- Redo some days: one checkbox per date, regenerated against the
+           same draft (POST /api/generate-schedule {dates, history_id}). -->
+      <div id="sched-redo" class="sched-redo" style="display:none"></div>
 
       <!-- Publish schedule to staff -->
       <div id="publish-sched-panel" style="display:none;padding:14px 20px;border-bottom:1px solid rgba(255,255,255,.08);background:rgba(200,75,47,.05)">
@@ -3895,6 +4034,12 @@ svg:hover .hb-xh{opacity:1}
           <div id="sched-par-badge" style="font-size:13px;font-weight:800;padding:8px 16px;border-radius:8px;white-space:nowrap"></div>
         </div>
       </div>
+
+      <!-- What the week costs and what the forecast saw. Three kinds of
+           number (total, overtime hours, premium) as stat tiles, the
+           revenue basis as a caption, then the trimmed and staggered
+           shifts and the honest notices. Rendered by _schedRenderEconomics. -->
+      <div id="sched-econ" class="sched-econ" style="display:none"></div>
 
       <!-- The Shift Strength banner is gone. It ran a second leadership
            check with different semantics from the quality engine — silently
@@ -3958,10 +4103,16 @@ svg:hover .hb-xh{opacity:1}
       <div id="sched-edit-bar">
         <span class="st">Unsaved edits</span>
         <span class="sr-note">Save to re-score the week and keep it. Send to staff is off until you do.</span>
+        <!-- What the edits move: hours, overtime-priced dollars, overtime
+             hours — from POST /api/labor/schedule/violations with baseline_rows. -->
+        <span id="sched-edit-cost" class="sched-cost"></span>
         <span class="sp"></span>
         <button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="discardScheduleEdits()">Discard</button>
         <button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="saveScheduleEdits(this)">Save changes</button>
       </div>
+      <!-- Somebody saved this week after it was opened here: their lines,
+           and a Reload. Nothing is overwritten. -->
+      <div id="sched-conflict" class="sched-conflict" style="display:none"></div>
     </div>
   </div>
 
@@ -4169,6 +4320,13 @@ svg:hover .hb-xh{opacity:1}
         <div class="lb2-sub">Who works together<small>a pair to prefer, or to keep apart</small></div>
         <div id="roster-pairs" class="lb2-pairs"></div>
         <div id="roster-pair-form"></div>
+        <!-- Pairs the record suggests: shared dayparts that ran clean.
+             Never applied on their own. -->
+        <div id="roster-suggested-wrap" style="display:none"><div class="lb2-sub">Suggested pairs<small>from the weeks that ran without an issue</small></div><div id="roster-suggested" class="lb2-pairs"></div></div>
+        <!-- What the draft learned from the manager's own edits, with a
+             say over each one. -->
+        <div class="lb2-sub">What the draft has learned<small>from your edits to past drafts</small></div>
+        <div id="roster-learned"><div class="hb-skel" style="width:50%;height:12px"></div></div>
       </div>
     </div>
   </div>
@@ -4214,6 +4372,24 @@ svg:hover .hb-xh{opacity:1}
       <div class="lb2-avail">
         <div style="font-size:15px;color:var(--ink3);margin-bottom:12px">Asked for in the staff portal. Approving opens the shift for anyone on the roster to claim &mdash; or name who takes it and it is covered now.</div>
         <div id="requests-body"><div class="hb-skel" style="width:60%;height:14px;margin-bottom:10px"></div><div class="hb-skel" style="width:80%;height:14px"></div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- What the record says — the memory behind the draft: what published
+       weeks actually did by daypart, sales per labor hour, who has carried
+       the weekends and closes, what staff keep dropping and claiming, who
+       could hold a station, and the pairs the record suggests. Every line
+       is read from a row a published week wrote; nothing is invented. -->
+  <div class="lb2-srow s8">
+    <div class="lb2-subsection" onclick="lb2RowClick(event,toggleIntelPanel)">
+      <div class="lb2-subsection-title">What the record says <span id="intel-chip" class="lb2-subsection-chip"></span></div>
+      <button type="button" onclick="toggleIntelPanel()" class="cbtn cbtn-text cbtn-inline lb2-subsection-toggle" id="intel-toggle-btn">Read it ↓</button>
+    </div>
+    <div id="intel-panel" style="display:none">
+      <div class="lb2-avail">
+        <div style="font-size:15px;color:var(--ink3);margin-bottom:12px">What your published weeks actually did, and what the next draft learns from them. Read from the record, never guessed.</div>
+        <div id="intel-body"><div class="hb-skel" style="width:60%;height:14px;margin-bottom:10px"></div><div class="hb-skel" style="width:80%;height:14px"></div></div>
       </div>
     </div>
   </div>
@@ -9794,9 +9970,13 @@ function _schedHandleResult(data) {
   _schedHistoryId = data.history_id || null;
   _schedWeekDates = data.week_dates || [];
   _schedRosterNames = data.roster || [];
+  _schedHoliday = data.holiday_lift || {};
+  if (data.reservation_feed) window._reservationFeed = data.reservation_feed;
   _schedWhyOpen = null; _schedEditIdx = null; _schedEditOpts = []; _schedAddedIdx = null;
   _schedSetDirty(false);
   _schedSnapshot();
+  _schedHideConflict();
+  _schedLoadVersion();
   var psb = document.getElementById('ps-blockers'); if (psb) { psb.style.display = 'none'; psb.innerHTML = ''; }
   _schedRenderTable(true);
   var gm = document.getElementById('sched-gen-meta');
@@ -9806,6 +9986,15 @@ function _schedHandleResult(data) {
     if (data.roster_roles && data.roster_roles.length) bits.push(data.roster_roles.length + ' roles');
     gm.innerHTML = bits.length ? num(bits.join(' \u00B7 ')) : '';
   }
+  // A very large roster built per department; a redo of only some days.
+  var gn = document.getElementById('sched-gen-notes');
+  if (gn) {
+    var notes = [], rg = data.regenerated_dates || [], dp = data.departments || [], q;
+    if (dp.length) notes.push('Built per department: ' + dp.join(', '));
+    if (rg.length) { var rgd = []; for (q = 0; q < rg.length; q++) rgd.push(_schedDayOf(rg[q]).slice(0, 3) + ' ' + mdy(rg[q])); notes.push('Redone: ' + rgd.join(', ') + ' \u2014 the other days are as they were'); }
+    gn.innerHTML = notes.length ? num(notes.join(' \u00B7 ')) : '';
+  }
+  _schedRenderRedo();
 
   // PAR hours banner
   var parBanner = document.getElementById('sched-par-banner');
@@ -9840,7 +10029,12 @@ function _schedHandleResult(data) {
       parBadge.style.color = '#eb5757';
     }
     parBanner.style.display = 'block';
+  } else if (parBanner) {
+    parBanner.style.display = 'none';
   }
+  // Projected cost, what was trimmed or staggered, and the notices about
+  // what the forecast could and could not see. All from the payload.
+  _schedRenderEconomics(data);
 
   renderShiftQuality(data.quality, data.what_if);
   loadTeamForSwap();
@@ -10258,8 +10452,9 @@ function renderQualityWarnings(quality) {
     lines.push(_qTitle(b) + ' came in at ' + b.score + ', under the ' + b.min_quality
                + ' this ' + (b.label || 'shift').toLowerCase() + ' expects.');
   }
-  lines = lines.concat(quality.recommendations || []);
-  if (!lines.length) { el.innerHTML = ''; return; }
+  var recs = quality.recommendations || [];
+  var hidden = quality.suppressed_recommendation_kinds || [];
+  if (!lines.length && !recs.length && !hidden.length) { el.innerHTML = ''; return; }
   var html = '<div style="padding:12px 14px;border-radius:10px;background:rgba(242,153,74,.07)">';
   for (i = 0; i < Math.min(lines.length, 5); i++) {
     html += '<div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:5px">'
@@ -10267,7 +10462,60 @@ function renderQualityWarnings(quality) {
       + '<span style="font-size:14px;color:rgba(255,255,255,.78);line-height:1.6">'
       + _escHtml(lines[i]) + '</span></div>';
   }
+  // Each recommendation gets ✓ (did it) / ✕ (not for us). The ledger
+  // behind that decides which kinds keep being shown.
+  for (i = 0; i < Math.min(recs.length, 5); i++) {
+    var rec = String(recs[i] || ''), st = _recState[rec];
+    html += '<div class="sq-rec' + (st === 'accepted' ? ' done' : (st === 'dismissed' ? ' done' : '')) + '">'
+      + '<span style="flex:0 0 5px;width:5px;height:5px;border-radius:50%;background:#f2994a;margin-top:8px"></span>'
+      + '<span class="tx">' + _escHtml(rec) + '</span>'
+      + (st ? '<span class="st">' + (st === 'accepted' ? 'done' : 'not for us') + '</span>'
+            : '<span class="acts"><button type="button" class="cbtn cbtn-icon cbtn-text cbtn-success cbtn-sm" title="Did it" aria-label="Did it" data-rec-action="accepted" data-rec="' + _escAttr(rec) + '">&#10003;</button>'
+              + '<button type="button" class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" title="Not for us" aria-label="Not for us" data-rec-action="dismissed" data-rec="' + _escAttr(rec) + '">&#10005;</button></span>')
+      + '</div>';
+  }
+  if (hidden.length) {
+    html += '<div class="sq-hidden">' + hidden.length + ' recommendation kind' + (hidden.length === 1 ? '' : 's') + ' hidden (' + _escHtml(hidden.join(', ')) + ') — you never act on them. '
+          + '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="openIntelPanel()">See them in What the record says</button></div>';
+  }
   el.innerHTML = html + '</div>';
+}
+
+// The kind a recommendation belongs to, by the sentence it opens with —
+// the same rule the ledger keys on.
+var _recState = {};
+function _recKind(text) {
+  var t = String(text || '');
+  if (t.indexOf('Fill the gap') === 0) return 'coverage';
+  if (t.indexOf('Move somebody') === 0) return 'leadership';
+  if (t.indexOf('Pair ') === 0) return 'strength';
+  if (t.indexOf('Trim about') === 0) return 'hours';
+  if (t.indexOf('Give ') === 0) return 'fatigue';
+  if (t.indexOf('Rate the') === 0) return 'ratings';
+  return 'other';
+}
+document.addEventListener('click', function (ev) {
+  var el = ev.target;
+  while (el && el !== document.body && !(el.getAttribute && el.getAttribute('data-rec-action'))) el = el.parentNode;
+  if (!el || !el.getAttribute) return;
+  var action = el.getAttribute('data-rec-action'), text = el.getAttribute('data-rec') || '';
+  if (!action) return;
+  var done = cbtnBusy(el, '');
+  fetch('/api/labor/schedule/recommendation', {method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({kind: _recKind(text), key: text.slice(0, 200), action: action})})
+    .then(function (r) { return r.json(); }).then(function (d) {
+      done();
+      if (!d || !d.ok) { toast((d && d.error) || 'Could not record that', 'error'); return; }
+      _recState[text] = action;
+      if (_quality) { _quality.suppressed_recommendation_kinds = d.suppressed_kinds || _quality.suppressed_recommendation_kinds || []; renderQualityWarnings(_quality); }
+      toast(action === 'accepted' ? 'Noted as done' : 'Noted — not for you', 'success');
+    }).catch(function () { done(); toast('Could not record that', 'error'); });
+});
+function openIntelPanel() {
+  var p = document.getElementById('intel-panel');
+  if (p && p.style.display === 'none' && window.toggleIntelPanel) toggleIntelPanel();
+  var row = document.querySelector('.lb2-srow.s8');
+  if (row) row.scrollIntoView({behavior: 'smooth', block: 'start'});
 }
 
 function renderQualityShifts(shifts) {
@@ -10458,13 +10706,16 @@ function rescoreSchedule(btn) {
   var done = btn ? cbtnBusy(btn, 'Saving\u2026') : function () {};
   var body = {rows: _schedRows, daily_target_hours: _schedTargets, save: true};
   // Saving appends an "edited" version to the row the preview came from,
-  // rather than minting a second history entry for the same week.
+  // rather than minting a second history entry for the same week. The
+  // version the page loaded goes with it: a newer one on file is a 409.
   if (_schedHistoryId) body.history_id = _schedHistoryId;
+  if (_schedVersion !== null && _schedVersion !== undefined) body.version = _schedVersion;
+  var status = 0;
   fetch('/api/labor/schedule/score', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(body)
-  }).then(function (r) { return r.json(); }).then(function (d) {
+  }).then(function (r) { status = r.status; return r.json(); }).then(function (d) {
     done();
     if (d && d.ok) {
       renderShiftQuality(d.quality, d.what_if);
@@ -10474,13 +10725,22 @@ function rescoreSchedule(btn) {
       if (d.saved) {
         _schedSetDirty(false);
         _schedSnapshot();
-        toast('Schedule saved \u2014 this is what your staff will receive', 'success');
+        _schedHideConflict();
+        _schedLoadVersion();
+        // A week staff already have: who was re-sent their shifts.
+        var cs = d.changed_since_sent;
+        if (cs && cs.length) toast('Updated schedule sent to ' + cs.join(', '), 'success');
+        else if (cs && !cs.length) toast('Saved; nobody\u2019s shifts changed', 'success');
+        else toast('Schedule saved \u2014 this is what your staff will receive', 'success');
         if (typeof loadScheduleHistory === 'function') loadScheduleHistory();
       }
       if (window.renderScheduleReview) renderScheduleReview({review: d.review, violations: d.violations, fixes: [], unfixed: []});
       _schedRenderTable();
+    } else if (d && d.conflict) {
+      _schedShowConflict(d);
+      _setQualityState('stale', d.error || 'Somebody saved this week first.');
     } else {
-      _setQualityState('stale', (d && d.error) || 'Could not save that change.');
+      _setQualityState('stale', (d && d.error) || (status === 403 ? 'Your login can view labor but not change the schedule.' : 'Could not save that change.'));
     }
   }).catch(function () {
     done();
@@ -10549,7 +10809,7 @@ function _schedRenderTable(collapse) {
       : '';
     var cls = 'sched-row' + (row.needs_review ? ' needs-review' : '') + (_schedWhyOpen === i ? ' open' : '');
     tHtml += '<tr class="' + cls + '" data-sched-row="' + i + '" style="' + bgStyle + (constraintNote ? ';background:rgba(242,153,74,.04)' : '') + '">';
-    tHtml += '<td style="' + TD + 'color:' + (isNewDay ? 'var(--ember2)' : 'transparent') + ';font-weight:700;font-size:11px;white-space:nowrap">' + _escHtml(day) + '</td>';
+    tHtml += '<td style="' + TD + 'color:' + (isNewDay ? 'var(--ember2)' : 'transparent') + ';font-weight:700;font-size:11px;white-space:nowrap">' + _escHtml(day) + (isNewDay ? _schedHolidayMark(row.date) : '') + '</td>';
     // Clicking a name opens the list of people who could take that shift
     // instead; the row itself opens the engine's reason for the assignment.
     tHtml += '<td style="' + TD + 'color:rgba(255,255,255,.88);font-weight:600">'
@@ -10643,9 +10903,37 @@ document.addEventListener('click', function (ev) {
   renderQualityShifts((_quality && _quality.shifts) || []);
 });
 
-function generateSchedule(btn) {
+// Which week the picker asks for, as any date inside it (the server
+// snaps to the week). "next" sends nothing and keeps the default.
+function _schedWeekStart() {
+  var pick = document.getElementById('sched-week-pick'), dt = document.getElementById('sched-week-date');
+  if (!pick) return null;
+  if (pick.value === 'date') return (dt && dt.value) ? dt.value : null;
+  if (pick.value === 'after') {
+    var d = new Date(); d.setDate(d.getDate() + 14);
+    return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
+  }
+  return null;
+}
+
+// Redo only the ticked days of the draft on screen; the rest are kept.
+function regenerateScheduleDays(btn) {
+  var boxes = document.querySelectorAll('#sched-redo input[type=checkbox]:checked'), dates = [], i;
+  for (i = 0; i < boxes.length; i++) dates.push(boxes[i].value);
+  if (!dates.length) { toast('Tick the days to redo', 'error'); return; }
+  if (!_schedHistoryId) { toast('This draft has no history row to rebuild from', 'error'); return; }
+  if (_schedDirty) { toast('Save or discard your edits first', 'error'); return; }
+  var gen = document.getElementById('gen-sched-btn') || btn;
+  generateSchedule(gen, {dates: dates, history_id: _schedHistoryId});
+}
+
+function generateSchedule(btn, opts) {
   _schedBtn = btn;
   btn.disabled = true;
+  opts = opts || {};
+  var body = {};
+  if (opts.dates && opts.dates.length) { body.dates = opts.dates; body.history_id = opts.history_id; }
+  else { var ws = _schedWeekStart(); if (ws) body.week_start = ws; }
   var panel = document.getElementById('schedule-preview-panel');
   if (panel) panel.style.display = 'none';
 
@@ -10661,7 +10949,9 @@ function generateSchedule(btn) {
   // button it got squeezed into the row instead of rendering full-width.
   var _oldWk = document.getElementById('sched-week'); if (_oldWk) _oldWk.remove();
   var _wk = document.createElement('div'); _wk.id = 'sched-week'; _wk.style.cssText = 'margin-top:14px';
-  _wk.innerHTML = cavnarWeekHtml("Building next week's schedule")
+  var _wkLabel = body.dates ? ('Redoing ' + body.dates.length + ' day' + (body.dates.length === 1 ? '' : 's') + ' of the draft')
+               : (body.week_start ? 'Building the week of ' + mdy(body.week_start) : "Building next week's schedule");
+  _wk.innerHTML = cavnarWeekHtml(_wkLabel)
     + '<div id="sched-steps" style="max-width:340px;margin:10px auto 0;text-align:left"></div>';
   (btn.closest('.lb2-actions') || btn).insertAdjacentElement('afterend', _wk);
   startScheduleSteps(_schedStart);
@@ -10672,7 +10962,7 @@ function generateSchedule(btn) {
     btn.innerHTML = 'Generating… ' + secs + 's ' + _spinner;
   }, 5000);
 
-  fetch('/api/generate-schedule')
+  fetch('/api/generate-schedule', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)})
     .then(function(r) { return r.json(); })
     .then(function(startData) {
       if (!startData.ok || !startData.job_id) {
@@ -10853,6 +11143,124 @@ var _schedRosterNames = [];
 var _schedSaved = '[]';      // rows as last generated or saved, for Discard
 var _SCHED_ICON_PEN = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11.3 2.2l2.5 2.5L5.5 13H3v-2.5z"/><path d="M9.8 3.7l2.5 2.5"/></svg>';
 var _SCHED_ICON_X = '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>';
+var _schedHoliday = {};      // holiday_lift: {date: {name, lift_pct, based_on}}
+var _schedVersion = null;    // the latest version number loaded with the week, sent on save
+
+// A holiday on the day header: its name, and the lift this restaurant saw
+// on it last year when that was measured. No number is shown that was not.
+function _schedHolidayMark(iso) {
+  var h = _schedHoliday[iso];
+  if (!h || !h.name) return '';
+  var lift = (h.lift_pct === null || h.lift_pct === undefined) ? '' : ' <span class="hb-num">' + (h.lift_pct > 0 ? '+' : '') + h.lift_pct + '%</span>';
+  return '<span class="sched-hol" title="' + _escAttr(h.based_on || (h.name + ' — no sales on file for it last year')) + '">' + _escHtml(h.name) + lift + '</span>';
+}
+
+// One checkbox per date of the week, so a manager can redo Saturday
+// without touching the six days that were fine.
+function _schedRenderRedo() {
+  var el = document.getElementById('sched-redo');
+  if (!el) return;
+  if (!_schedWeekDates.length || !_schedHistoryId) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  var h = '<span class="sr-k">Redo some days</span>', i;
+  for (i = 0; i < _schedWeekDates.length; i++) {
+    var d = _schedWeekDates[i], hol = _schedHoliday[d];
+    h += '<label' + (hol ? ' class="hol" title="' + _escAttr(hol.name) + '"' : '') + '><input type="checkbox" value="' + _escAttr(d) + '"> ' + _escHtml(_schedDayOf(d).slice(0, 3)) + ' <span class="hb-num">' + mdy(d) + '</span></label>';
+  }
+  h += '<span class="sp"></span><button type="button" class="cbtn cbtn-soft cbtn-sm" onclick="regenerateScheduleDays(this)">Redo selected days</button>';
+  el.innerHTML = h; el.style.display = 'flex';
+}
+
+function _schedMoney(n) { return '$' + Math.round(+n || 0).toLocaleString(); }
+function _schedHrs(n) { var v = Math.round((+n || 0) * 10) / 10; return String(v); }
+
+// Projected cost (three kinds of number, never summed on screen), the
+// revenue basis, what was trimmed or staggered, and what the forecast
+// could not see. Every figure is the payload's own.
+function _schedRenderEconomics(data) {
+  var el = document.getElementById('sched-econ');
+  if (!el) return;
+  var pc = data.projected_cost || null, h = '', i;
+  if (pc) {
+    h += '<div class="hb-stats">'
+       + '<div class="hb-stat' + ((data.over_budget_dollars || 0) > 0 ? ' ember' : '') + '"><div class="k">Projected cost</div><div class="v">' + _schedMoney(pc.total) + '</div><div class="s">'
+       + ((data.over_budget_dollars === null || data.over_budget_dollars === undefined) ? 'no dollar budget set' : (data.over_budget_dollars > 0 ? _schedMoney(data.over_budget_dollars) + ' over the budget' : _schedMoney(-data.over_budget_dollars) + ' under the budget')) + '</div></div>'
+       + '<div class="hb-stat"><div class="k">Overtime hours</div><div class="v">' + _schedHrs(pc.overtime_hours) + '<small>h</small></div><div class="s">over the weekly ceiling</div></div>'
+       + '<div class="hb-stat"><div class="k">Overtime premium</div><div class="v">' + _schedMoney(pc.overtime_premium) + '</div><div class="s">at ' + (pc.multiplier || 1.5) + '× on those hours</div></div>'
+       + '<div class="hb-stat"><div class="k">Straight time</div><div class="v">' + _schedMoney(pc.straight) + '</div><div class="s">at the rates on file</div></div>'
+       + '</div>';
+  }
+  if (data.projected_revenue_source) h += '<div class="cap">Projected revenue: ' + _escHtml(data.projected_revenue_source) + '.</div>';
+  if (data.hourly_profile_ready === false) h += '<div class="notice dim"><span>&#9432;</span><span>No intraday sales captured yet — starts are not staggered by the sales curve.</span></div>';
+  var ddt = data.demand_data_through;
+  if (ddt && ddt.blind) h += '<div class="notice"><span>&#9888;</span><span>Demand blind since <span class="hb-num">' + mdy(ddt.date) + '</span>: the forecast has no sales newer than that.</span></div>';
+  var tr = data.trimmed || [];
+  if (tr.length) {
+    h += '<details><summary>Trimmed <span class="hb-num">' + _schedHrs(data.hours_trimmed) + 'h</span> to fit the budget — ' + tr.length + ' shift' + (tr.length === 1 ? '' : 's') + ' removed</summary><div>';
+    for (i = 0; i < tr.length; i++) {
+      var t = tr[i];
+      h += '<div class="sr-line"><span class="d"></span><span><b>' + _escHtml(t.employee) + '</b>, ' + _escHtml((t.day || _schedDayOf(t.date)).slice(0, 3)) + ' <span class="hb-num">' + mdy(t.date) + '</span> ' + _escHtml(t.shift_start) + '–' + _escHtml(t.shift_end) + (t.role ? ' · ' + _escHtml(t.role) : '') + ' (<span class="hb-num">' + _schedHrs(t.hours) + 'h</span>)' + (t.reason ? ' <span class="why">— ' + _escHtml(t.reason) + '</span>' : '') + '</span></div>';
+    }
+    h += '</div></details>';
+  }
+  var sg = data.staggered || [];
+  if (sg.length) {
+    h += '<details><summary>' + sg.length + ' start' + (sg.length === 1 ? '' : 's') + ' staggered along the sales curve</summary><div>';
+    for (i = 0; i < sg.length; i++) {
+      var s = sg[i];
+      h += '<div class="sr-line fix"><span class="d"></span><span><b>' + _escHtml(s.employee) + '</b>, ' + _escHtml(_schedDayOf(s.date).slice(0, 3)) + ' <span class="hb-num">' + mdy(s.date) + '</span>' + (s.role ? ' · ' + _escHtml(s.role) : '') + ': ' + _escHtml(s.from) + ' <span class="arrow">&rarr;</span> ' + _escHtml(s.to) + (s.reason ? ' <span class="why">— ' + _escHtml(s.reason) + '</span>' : '') + '</span></div>';
+    }
+    h += '</div></details>';
+  }
+  el.innerHTML = h;
+  el.style.display = h ? 'block' : 'none';
+}
+
+// The version number the page is working from. Sent with every save so a
+// second manager's save refuses instead of overwriting the first.
+function _schedLoadVersion() {
+  _schedVersion = null;
+  if (!_schedHistoryId) return;
+  var hid = _schedHistoryId;
+  fetch('/api/labor/schedule-history/' + hid + '/versions').then(function (r) { return r.json(); }).then(function (d) {
+    if (_schedHistoryId !== hid || !d || !d.ok) return;
+    var vs = d.versions || [];
+    _schedVersion = vs.length ? vs[vs.length - 1].version : null;
+  }).catch(function () { });
+}
+
+function _schedHideConflict() { var c = document.getElementById('sched-conflict'); if (c) { c.style.display = 'none'; c.innerHTML = ''; } }
+
+function _schedShowConflict(d) {
+  var c = document.getElementById('sched-conflict');
+  if (!c) return;
+  var h = '<b>' + _escHtml(d.saved_by || 'Somebody') + ' saved this week after you opened it.</b> Your edits are still here; nothing was overwritten. Reload to see their version (v' + _escHtml(String(d.latest_version || '')) + '), then make your changes again.', i;
+  var lines = d.lines || [];
+  if (lines.length) { h += '<div style="margin-top:6px">'; for (i = 0; i < lines.length; i++) h += '<div class="ln">' + num(lines[i]) + '</div>'; h += '</div>'; }
+  h += '<div class="sr-actions"><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="reloadScheduleFromHistory(this)">Reload their version</button></div>';
+  c.innerHTML = h; c.style.display = 'block';
+}
+
+// Take the stored week back onto the screen — after a conflict, or when
+// a manager simply wants what is on file.
+function reloadScheduleFromHistory(btn) {
+  if (!_schedHistoryId) return;
+  var done = btn ? cbtnBusy(btn, 'Reloading…') : function () {};
+  fetch('/api/labor/schedule-history/' + _schedHistoryId).then(function (r) { return r.json(); }).then(function (d) {
+    done();
+    if (!d || !d.ok) { toast((d && d.error) || 'Could not reload', 'error'); return; }
+    _schedRows = d.preview_rows || [];
+    _schedOverrides = {}; _schedWhyOpen = null; _schedEditIdx = null; _schedAddedIdx = null;
+    _schedSnapshot();
+    _schedSetDirty(false);
+    _setQualityState('');
+    _schedHideConflict();
+    _schedLoadVersion();
+    if (d.quality) renderShiftQuality(d.quality, d.what_if || null);
+    _schedRenderTable();
+    _schedRecheck();
+    toast('Reloaded the saved week', 'success');
+  }).catch(function () { done(); toast('Could not reload', 'error'); });
+}
 
 function _schedMinutes(s) {
   var m = String(s == null ? '' : s).trim().toLowerCase().replace(/\s+/g, '').match(/^(\d{1,2})(?::(\d{2}))?(am|pm)?$/);
@@ -10904,6 +11312,7 @@ function _schedSetDirty(on) {
   _schedDirty = !!on;
   var bar = document.getElementById('sched-edit-bar');
   if (bar) bar.className = on ? 'on' : '';
+  if (!on) _schedRenderCost(null);
   var ids = ['ps-toggle-btn', 'ps-send-btn', 'ps-ack-send'], i;
   for (i = 0; i < ids.length; i++) {
     var b = document.getElementById(ids[i]);
@@ -10915,14 +11324,32 @@ function _schedSetDirty(on) {
 }
 
 function _schedRecheck() {
+  var base = [];
+  try { base = JSON.parse(_schedSaved) || []; } catch (e) { base = []; }
   fetch('/api/labor/schedule/violations', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({rows: _schedRows})
+    body: JSON.stringify({rows: _schedRows, baseline_rows: base})
   }).then(function (r) { return r.json(); }).then(function (d) {
     if (d && d.ok && window.renderScheduleReview) {
       renderScheduleReview({review: d.review, pending_time_off: d.pending_time_off, violations: d.violations, fixes: [], unfixed: []});
     }
-  }).catch(function () { });
+    _schedRenderCost(d && d.ok ? d.cost : null);
+  }).catch(function () { _schedRenderCost(null); });
+}
+
+// "+6h · +$90 · 2h overtime" — what the edits on screen move against the
+// rows as loaded. Ember when it costs money, green when it saves some.
+function _schedRenderCost(c) {
+  var el = document.getElementById('sched-edit-cost');
+  if (!el) return;
+  if (!c || !_schedDirty) { el.innerHTML = ''; el.className = 'sched-cost'; return; }
+  var hd = +c.hours_delta || 0, dd = +c.dollars_delta || 0, ot = +c.overtime_hours_after || 0;
+  var sign = function (n) { return (n > 0 ? '+' : (n < 0 ? '−' : '')); };
+  var bits = ['<span class="hb-num">' + sign(hd) + _schedHrs(Math.abs(hd)) + 'h</span>',
+              '<span class="hb-num">' + sign(dd) + '$' + Math.round(Math.abs(dd)).toLocaleString() + '</span>'];
+  if (ot > 0) bits.push('<span class="hb-num">' + _schedHrs(ot) + 'h</span> overtime');
+  el.innerHTML = bits.join(' · ');
+  el.className = 'sched-cost' + (dd > 0 ? ' up' : (dd < 0 ? ' down' : ''));
 }
 
 function schedAfterEdit() {
@@ -16146,9 +16573,13 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     var qtone=(band==='excellent'||band==='good')?'good':(band==='fair'?'fair':(band?'warn':''));
     var q=r.quality_score?'<span class="qpill '+qtone+'" title="Shift Quality'+(r.confidence?' · '+esc(r.confidence)+' confidence':'')+'">'+r.quality_score+'</span>':'';
     var badge=r.edited_at?'<span class="badge edited" title="'+(r.edited_by?'Edited by '+esc(r.edited_by):'Manually edited')+'">Edited</span>':'';
+    // A draft replaced by a newer draft of the same week reads quieter;
+    // a published week updated after it went out says so.
+    if(r.superseded_by)badge+='<span class="badge sup" title="Replaced by a newer draft of the same week">replaced</span>';
+    else if(r.republished_at)badge+='<span class="badge edited" title="Updated '+esc(M(r.republished_at))+' after sending">Updated after sending</span>';
     var tone=r.summary_tone||'info';
     var week=esc(M(r.week_start||''))+(r.week_end?' – '+esc(M(r.week_end)):'');
-    return '<div class="row" tabindex="0" role="button" data-id="'+r.id+'" aria-label="View schedule for week of '+week+'"'
+    return '<div class="row'+(r.superseded_by?' sup':'')+'" tabindex="0" role="button" data-id="'+r.id+'" aria-label="View schedule for week of '+week+'"'
       +' onclick="viewScheduleHistory('+r.id+',this.querySelector(\'.ric-view\'))"'
       +' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();viewScheduleHistory('+r.id+',this.querySelector(\'.ric-view\'));}">'
       +'<div class="rmain"><div class="rtop"><b>'+week+'</b>'+badge+'</div>'
@@ -16197,7 +16628,11 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       done();if(!d.ok){toast(d.error||'Could not load','error');return;}
       var rows=d.preview_rows||[];
       var csv=d.schedule_csv||'';
-      var pub=d.published_at?'<div style="font-size:13.5px;color:var(--hb-good);margin-top:3px">Published <span class="hb-num">'+esc(mdy(d.published_at))+'</span>'+(d.published_by?' by '+esc(d.published_by):'')+'</div>':'<div style="font-size:13.5px;color:var(--ink3);margin-top:3px">Not published yet</div>';
+      var pub=d.published_at?'<div style="font-size:13.5px;color:var(--hb-good);margin-top:3px">Published <span class="hb-num">'+esc(mdy(d.published_at))+'</span>'+(d.published_by?' by '+esc(d.published_by):'')+(d.republished_at?' <span style="color:var(--ink3)">· updated <span class="hb-num">'+esc(mdy(d.republished_at))+'</span> after sending</span>':'')+'</div>':'<div style="font-size:13.5px;color:var(--ink3);margin-top:3px">Not published yet'+(d.superseded_by?' · replaced by a newer draft of the same week':'')+'</div>';
+      // The what-if the engine ran on this week, when it kept one.
+      var wi=null;try{wi=d.what_if_json?JSON.parse(d.what_if_json):(d.what_if||null);}catch(e){wi=null;}
+      var wih='';
+      if(wi&&wi.ran&&wi.verdict){wih='<div class="sv-dvp" style="margin-top:12px"><div class="sr-k" style="margin-bottom:4px">What if</div><div class="ln">'+num(wi.verdict)+'</div>';var sws=wi.swaps||[],si;for(si=0;si<Math.min(sws.length,3);si++)if(sws[si]&&sws[si].reason)wih+='<div class="ln">&#8644; '+num(sws[si].reason)+'</div>';wih+='</div>';}
       var rvh='';
       if(d.review&&(d.review.hard||d.review.soft)){var hh=+d.review.hard||0,ss=+d.review.soft||0;rvh=' · '+(hh?hh+' hard':'')+(hh&&ss?', ':'')+(ss?ss+' soft':'')+' rule'+(hh+ss===1?'':'s')+' broken';}
       var html='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:10px"><div><div style="font-size:15px;font-weight:600;color:var(--ink)">Week of '+esc(mdy(d.week_start||''))+' · '+rows.length+' shifts'+(d.generation_seconds?' · generated in '+Math.round(+d.generation_seconds)+'s':'')+esc(rvh)+'</div>'+pub+'</div><div style="display:flex;gap:10px"><button onclick="downloadHistoryCsv('+id+')" class="cbtn cbtn-secondary">Download CSV</button><button onclick="closeScheduleHistoryDetail()" class="cbtn cbtn-secondary">Close ✕</button></div></div>';
@@ -16216,8 +16651,9 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
           :'padding:6px 8px;color:var(--ink3)';
         return '<tr style="border-top:1px solid var(--paper3)"><td style="'+dayStyle+'">'+esc(day)+'</td><td style="padding:6px 8px;color:var(--ink)">'+esc(r.employee||'')+'</td><td style="padding:6px 8px;color:var(--ink3)">'+esc(r.role||'')+'</td><td style="padding:6px 8px;color:var(--ink3);white-space:nowrap">'+esc(r.shift_start||'')+'–'+esc(r.shift_end||'')+'</td><td style="padding:6px 8px;text-align:right;font-family:\'Space Grotesk\',sans-serif">'+esc(r.scheduled_hours||'')+'</td></tr>';
       }).join('')+'</table></div>';
+      html+=wih;
       html+='<div id="sched-hist-versions" class="sv-list"><div class="hb-skel" style="width:40%;height:12px"></div></div>';
-      box.innerHTML=html;box.style.display='block';window._schedHistCsv=window._schedHistCsv||{};window._schedHistCsv[id]={csv:csv,week:d.week_start||''};
+      box.innerHTML=html;box.style.display='block';box.style.opacity=d.superseded_by?'.72':'1';window._schedHistCsv=window._schedHistCsv||{};window._schedHistCsv[id]={csv:csv,week:d.week_start||''};
       _schedHistVersions(id);
       box.scrollIntoView({behavior:'smooth',block:'nearest'});
     });
@@ -16357,6 +16793,14 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
   }
   function _lbOpts(list,current,labels){var o='',i;for(i=0;i<list.length;i++)o+='<option value="'+esc(list[i])+'"'+(list[i]===current?' selected':'')+'>'+esc((labels||{})[list[i]]||list[i])+'</option>';return o;}
   function _lbSw(field,on,ro){return '<label class="ac-switch"><input type="checkbox" data-rst-f="'+field+'"'+(on?' checked':'')+(ro?' disabled':'')+'><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label>';}
+  // Chip toggles: one button per choice, lit when picked. The attr names
+  // the group so a delegated click knows what to save.
+  function _chipTog(choices,picked,attr,ro){
+    var o='',i,on={};for(i=0;i<(picked||[]).length;i++)on[String(picked[i]).toLowerCase()]=1;
+    for(i=0;i<choices.length;i++){var c=String(choices[i]);o+='<button type="button" class="cbtn cbtn-secondary cbtn-sm ct'+(on[c.toLowerCase()]?' on':'')+(ro?' ro':'')+'" '+attr+'="'+esc(c)+'" aria-pressed="'+(on[c.toLowerCase()]?'true':'false')+'"'+(ro?' disabled':'')+'>'+esc(c)+'</button>';}
+    return o||'<span class="ac-note" style="margin:0">Nothing to pick from.</span>';
+  }
+  function _chipVals(box,attr){var out=[],els=box?box.querySelectorAll('.ct.on['+attr+']'):[],i;for(i=0;i<els.length;i++)out.push(els[i].getAttribute(attr));return out;}
 
   // ── Roster & settings ──
   var _roster=null,_rosterOpen={};
@@ -16369,7 +16813,85 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       if(!d.ok){el.innerHTML='<div class="hb-empty">'+esc(d.error||'Could not load the roster.')+'</div>';return;}
       _roster=d;_lbLoaded.roster=true;renderRoster();
     });
+    // "Trained up" comes from the record; the learned patterns from the
+    // manager's own edits. Both load once and re-render what shows them.
+    if(!window._laborIntel)loadIntel(function(){if(_roster)renderRoster();});
+    loadLearnedPatterns();
   };
+  // Time windows and certifications save like every other roster fact:
+  // one POST, one toast.
+  document.addEventListener('change',function(ev){
+    var t=ev.target;if(!t||!t.getAttribute||t.getAttribute('data-rst-win')===null)return;
+    var tr=t;while(tr&&tr.tagName!=='TR')tr=tr.parentNode;if(!tr)return;
+    var name=tr.getAttribute('data-rst');if(!name)return;
+    var ins=tr.querySelectorAll('[data-rst-win]'),win={},i;
+    for(i=0;i<ins.length;i++){var dy=ins[i].getAttribute('data-rst-win'),f=ins[i].getAttribute('data-rst-wf'),v=ins[i].value.trim();if(!v)continue;win[dy]=win[dy]||{};win[dy][f]=v;}
+    _rstSave(name,{time_windows:win},null);
+  });
+  document.addEventListener('click',function(ev){
+    var t=ev.target;while(t&&t!==document.body&&!(t.getAttribute&&t.getAttribute('data-rst-cert')!==null))t=t.parentNode;
+    if(!t||!t.getAttribute||t.disabled)return;
+    var box=t.parentNode,name=box.getAttribute('data-rst-certs');if(!name)return;
+    var on=t.className.indexOf(' on')<0;
+    t.className=on?t.className+' on':t.className.replace(' on','');t.setAttribute('aria-pressed',on?'true':'false');
+    _rstSave(name,{certifications:_chipVals(box,'data-rst-cert')},null);
+  });
+  var _ignoredPairs={};
+  function _pairKey(p){return [String(p.a).toLowerCase(),String(p.b).toLowerCase()].sort().join('|');}
+  // Pairs the record suggests: never applied on their own. Add writes the
+  // pair through the same POST the form uses; Ignore is this page's memory.
+  function _pairSuggestHtml(list,ro){
+    var h='',i,n=0;
+    for(i=0;i<(list||[]).length;i++){var p=list[i];if(_ignoredPairs[_pairKey(p)])continue;n++;
+      h+='<div class="pr sug" data-sug="'+esc(_pairKey(p))+'"><b>'+esc(p.a)+'</b><span class="kd '+esc(p.kind||'prefer')+'">'+(p.kind==='avoid'?'keep apart':'prefer')+'</span><b>'+esc(p.b)+'</b>'
+        +(ro?'':'<span class="acts"><button type="button" class="cbtn cbtn-soft cbtn-sm" data-sug-add="1">Add</button><button type="button" class="cbtn cbtn-text cbtn-muted cbtn-sm" data-sug-ignore="1">Ignore</button></span>')
+        +'<span class="ev">'+num(p.evidence||(p.shared+' shared dayparts'))+'</span></div>';
+    }
+    return n?h:'';
+  }
+  document.addEventListener('click',function(ev){
+    var t=ev.target;while(t&&t!==document.body&&!(t.getAttribute&&(t.getAttribute('data-sug-add')||t.getAttribute('data-sug-ignore'))))t=t.parentNode;
+    if(!t||!t.getAttribute)return;
+    var row=t;while(row&&!(row.getAttribute&&row.getAttribute('data-sug')))row=row.parentNode;if(!row)return;
+    var key=row.getAttribute('data-sug'),list=((_roster&&_roster.suggested_pairs)||[]).concat(((window._laborIntel||{}).suggested_pairs)||[]),p=null,i;
+    for(i=0;i<list.length;i++)if(_pairKey(list[i])===key){p=list[i];break;}
+    if(t.getAttribute('data-sug-ignore')){_ignoredPairs[key]=1;_rstPairs();renderIntel();return;}
+    if(!p)return;
+    var done=busy(t,'Adding…');
+    jsend('/api/labor/staff-pairs',{a:p.a,b:p.b,kind:p.kind||'prefer',note:(p.evidence||'').slice(0,120)},function(d){
+      done();if(!d.ok){toast(d.error||'Could not save that pairing','error');return;}
+      _ignoredPairs[key]=1;if(_roster){_roster.pairs=d.pairs||[];}_rstPairs();renderIntel();toast('Pairing saved','success');
+    });
+  });
+  // What the draft has learned from the manager's edits, with the owner's
+  // say over each one.
+  var _learned=null;
+  window.loadLearnedPatterns=function(){
+    jget('/api/labor/learned-patterns',function(d){_learned=d.ok?d:{ok:false,patterns:[]};_lrnRender();});
+  };
+  function _lrnRender(){
+    var el=document.getElementById('roster-learned');if(!el)return;
+    var d=_learned;if(!d){el.innerHTML='<div class="hb-skel" style="width:50%;height:12px"></div>';return;}
+    var ps=d.patterns||[],ro=!d.can_edit,i,h='';
+    if(!ps.length){el.innerHTML='<div class="hb-empty">Nothing learned yet — a change you make to two drafts in a row becomes a standing preference here.</div>';return;}
+    for(i=0;i<ps.length;i++){var p=ps[i];
+      h+='<div class="lrn-row'+(p.dismissed?' off':'')+'" data-lrn="'+esc(p.key)+'"><span class="tx">'+num(p.text||'')+'</span>'
+        +'<span class="n'+(p.active?' on':'')+'">'+(p.dismissed?'not used':(p.active?'in use':'seen once'))+'</span>'
+        +(ro?'':'<button type="button" class="cbtn cbtn-text cbtn-sm'+(p.dismissed?'':' cbtn-muted')+'" data-lrn-set="'+(p.dismissed?'0':'1')+'">'+(p.dismissed?'Use again':'Stop using this')+'</button>')+'</div>';
+    }
+    el.innerHTML=h;
+  }
+  document.addEventListener('click',function(ev){
+    var t=ev.target;while(t&&t!==document.body&&!(t.getAttribute&&t.getAttribute('data-lrn-set')!==null))t=t.parentNode;
+    if(!t||!t.getAttribute)return;
+    var row=t;while(row&&!(row.getAttribute&&row.getAttribute('data-lrn')))row=row.parentNode;if(!row)return;
+    var key=row.getAttribute('data-lrn'),dis=t.getAttribute('data-lrn-set')==='1',done=busy(t,'…');
+    jsend('/api/labor/learned-patterns',{key:key,dismissed:dis},function(d){
+      done();if(!d.ok){toast(d.error||'Could not change that','error');return;}
+      var ps=(_learned&&_learned.patterns)||[],i;for(i=0;i<ps.length;i++)if(ps[i].key===key){ps[i].dismissed=dis;ps[i].active=!dis&&ps[i].times>=2;}
+      _lrnRender();toast(dis?'The draft will stop using that':'The draft will use that again','success');
+    });
+  });
   function _rstActive(e){var st=e.settings||{};return st.active!==false&&e.active!==false;}
   function _rstActiveNames(){var out=[],i,list=(_roster&&_roster.roster)||[];for(i=0;i<list.length;i++)if(_rstActive(list[i]))out.push(list[i].name);return out;}
   function _rstRel(r){
@@ -16398,10 +16920,22 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
         +'<td><input type="number" class="ac-input ac-num hrs" data-rst-f="max_hours" min="0" max="80" step="1" value="'+(st.max_hours==null?'':esc(st.max_hours))+'" placeholder="—" aria-label="Maximum hours"'+(ro?' disabled':'')+'></td>'
         +'<td>'+_lbSw('is_minor',!!st.is_minor,ro)+'</td></tr>';
       if(open){
-        var av=st.daypart_availability||{},j;
+        var av=st.daypart_availability||{},tw=st.time_windows||{},certs=st.certifications||[],j;
         h+='<tr class="rst-grid" data-rst="'+nm+'"><td colspan="8"><div class="rst-days">';
         for(j=0;j<days.length;j++){var v=av[days[j]]||'any';h+='<div><div class="dy">'+esc(days[j].slice(0,3))+'</div><select class="ac-select '+esc(v)+'" data-rst-day="'+esc(days[j])+'" aria-label="'+esc(days[j])+'"'+(ro?' disabled':'')+'>'+_lbOpts(dps,v,_DP_LABELS)+'</select></div>';}
-        h+='</div><div class="rst-cap">any = either shift &middot; morning / night = only that one &middot; off = never that day'+(e.last_worked?' &middot; last worked '+esc(mdy(e.last_worked)):'')+(e.can_close?' &middot; can close':'')+'</div></td></tr>';
+        h+='</div><div class="rst-cap">any = either shift &middot; morning / night = only that one &middot; off = never that day'+(e.last_worked?' &middot; last worked '+esc(mdy(e.last_worked)):'')+(e.can_close?' &middot; can close':'')+'</div>';
+        // Earliest start and latest finish per weekday — the hours they
+        // can work, tighter than a daypart.
+        h+='<div class="rst-win">';
+        for(j=0;j<days.length;j++){var w=tw[days[j]]||{};h+='<div><div class="dy">'+esc(days[j].slice(0,3))+'</div><input class="ac-input" data-rst-win="'+esc(days[j])+'" data-rst-wf="earliest" value="'+esc(w.earliest||'')+'" placeholder="from" aria-label="'+esc(days[j])+' earliest start" maxlength="8"'+(ro?' disabled':'')+'><input class="ac-input" data-rst-win="'+esc(days[j])+'" data-rst-wf="latest" value="'+esc(w.latest||'')+'" placeholder="until" aria-label="'+esc(days[j])+' latest finish" maxlength="8"'+(ro?' disabled':'')+'></div>';}
+        h+='</div><div class="rst-cap">Earliest start and latest finish, like 10:00am and 9:00pm. Blank means any time.</div>';
+        h+='<div class="rst-more">';
+        h+='<div><div class="k">Certifications</div><div class="chip-tog" data-rst-certs="'+nm+'">'+_chipTog(ch.certifications||[],certs,'data-rst-cert',ro)+'</div></div>';
+        var said=[];if((st.preferred_dayparts||[]).length)said.push('prefers '+st.preferred_dayparts.map(function(p){return p==='morning'?'days':(p==='night'?'nights':p);}).join(' and '));if(st.desired_hours!=null&&st.desired_hours!=='')said.push('wants <span class="hb-num">'+esc(st.desired_hours)+'h</span> a week');
+        h+='<div><div class="k">What they said</div><div class="said">'+(said.length?said.join(' · '):'Nothing stated yet')+'<small>From the staff portal. A wish the draft honours where coverage allows; it is theirs to change.</small></div></div>';
+        var up=((window._laborIntel||{}).could_hold||{})[e.name]||[];
+        h+='<div><div class="k">Trained up</div><div>'+(up.length?up.map(function(r){return '<span class="rst-up">'+esc(r)+'</span>';}).join(''):'<span class="said" style="color:var(--ink3)">'+(window._laborIntel?'No station they have shadowed enough to hold yet.':'Loading…')+'</span>')+'</div></div>';
+        h+='</div></td></tr>';
       }
     }
     el.innerHTML=h+'</tbody></table></div>';
@@ -16452,6 +16986,8 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
         +(ro?'':'<button type="button" class="cbtn cbtn-icon cbtn-text cbtn-danger cbtn-sm x" title="Remove pairing" aria-label="Remove pairing" onclick="deleteStaffPair('+(+p.id)+',this)">✕</button>')+'</div>';
     }
     el.innerHTML=h;
+    var sw=document.getElementById('roster-suggested-wrap'),sg=document.getElementById('roster-suggested');
+    if(sw&&sg){var sh=_pairSuggestHtml((d&&d.suggested_pairs)||[],ro);sg.innerHTML=sh;sw.style.display=sh?'':'none';}
     if(ro){fm.innerHTML='';return;}
     var names=_rstActiveNames();
     if(names.length<2){fm.innerHTML='<div class="ac-note">Two people on the roster and you can pair them.</div>';return;}
@@ -16488,13 +17024,20 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     jget('/api/labor/rules',function(d){
       var el=document.getElementById('rules-body');if(!el)return;
       if(!d.ok){el.innerHTML='<div class="hb-empty">'+esc(d.error||'Could not load the rules.')+'</div>';return;}
-      _rules=d;renderRules();
+      _rules=d;
+      // The per-role rows need the roster's roles; render once both are in.
+      if(!_roster)jget('/api/labor/roster',function(r){if(r.ok)_roster=r;renderRules();});
+      else renderRules();
     });
   };
   function _rulRoles(){
     var seen={},out=[],i,k,floors=(_rules&&_rules.role_floors)||{};
     function add(r){r=String(r||'').trim();if(!r||seen[r.toLowerCase()])return;seen[r.toLowerCase()]=1;out.push(r);}
     for(k in floors)if(floors.hasOwnProperty(k))add(k);
+    var extra=[(_rules&&_rules.role_arrivals)||{},(_rules&&_rules.role_requirements)||{}],x;
+    for(x=0;x<extra.length;x++)for(k in extra[x])if(extra[x].hasOwnProperty(k))add(k);
+    var lists=[(_rules&&_rules.foh_roles)||[],(_rules&&_rules.patio_roles)||[]];
+    for(x=0;x<lists.length;x++)for(i=0;i<lists[x].length;i++)add(lists[x][i]);
     var tr=window._teamRoles||[];for(i=0;i<tr.length;i++)add(tr[i]);
     var rs=(_roster&&_roster.roster)||[];for(i=0;i<rs.length;i++)add(rs[i].role);
     var rows=window._schedRows||[];for(i=0;i<rows.length;i++)add(rows[i].role);
@@ -16517,21 +17060,72 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     var ro=!d.can_edit,rules=d.rules||{},defs=d.defaults||{},floors=d.role_floors||{},roles=_rulRoles(),i,h='';
     var chip=document.getElementById('rules-chip');if(chip){var set=0,k;for(k in rules)if(rules.hasOwnProperty(k)&&rules[k]!=null&&rules[k]!==''&&String(rules[k])!==String(defs[k]))set++;chip.textContent=set?set+' of your own':'defaults';}
     if(ro)h+='<div class="lb2-ro">Only the account owner can change the scheduling rules.</div>';
-    h+='<div class="rul-grid">';
+    // Jurisdiction: a pack of starting values applied under the owner's
+    // own. Its notes are caveats, not legal advice.
+    var pack=d.pack||null,packs=d.packs||[],applied=(pack&&pack.applied)||{};
+    h+='<div class="lb2-form" style="margin-top:0;margin-bottom:12px"><div class="ac-field"><label>Jurisdiction<small style="display:block;font-weight:400;color:var(--ink3);font-size:12.5px">a starting rule pack, under your own values</small></label><select class="ac-select" id="rul-jur" aria-label="Jurisdiction"'+(ro?' disabled':'')+'><option value="">None — defaults only</option>';
+    for(i=0;i<packs.length;i++)h+='<option value="'+esc(packs[i].code)+'"'+(packs[i].code===d.jurisdiction?' selected':'')+'>'+esc(packs[i].label)+'</option>';
+    h+='</select></div></div>';
+    if(pack){
+      var ak=[],k2;for(k2 in applied)if(applied.hasOwnProperty(k2))ak.push(k2);
+      h+='<div class="rul-pack"><div class="k">The '+esc(pack.label)+' pack</div>';
+      if((pack.notes||[]).length){h+='<ul style="margin:0;padding:0">';for(i=0;i<pack.notes.length;i++)h+='<li>'+esc(pack.notes[i])+'</li>';h+='</ul>';}
+      h+='<div class="cc">Starting values, not legal advice — check with counsel.'+(ak.length?' Fields marked “from the '+esc(pack.label)+' pack” take the pack’s value until you type your own.':'')+'</div></div>';
+    }
+    h+='<div class="rul-grid" style="margin-top:12px">';
     for(i=0;i<_RULE_FIELDS.length;i++){
-      var f=_RULE_FIELDS[i],isTime=f[0]==='minor_latest_end',v=rules[f[0]],dv=defs[f[0]];
-      h+='<div class="ac-field"><label>'+esc(f[1])+'<small>'+esc(f[2])+'</small></label><input class="ac-input'+(isTime?'':' ac-num')+'" data-rule="'+f[0]+'" value="'+(v==null?'':esc(v))+'" placeholder="'+(dv==null?'not tracked':esc(dv))+'"'+(isTime?' maxlength="8"':' type="number" step="0.5" min="0"')+(ro?' disabled':'')+'></div>';
+      var f=_RULE_FIELDS[i],isTime=f[0]==='minor_latest_end',v=rules[f[0]],dv=defs[f[0]],fromPack=pack&&applied[f[0]]!==undefined&&applied[f[0]]!==null;
+      h+='<div class="ac-field"><label>'+esc(f[1])+'<small'+(fromPack?' class="rul-from"':'')+'>'+(fromPack?'from the '+esc(pack.label)+' pack':esc(f[2]))+'</small></label><input class="ac-input'+(isTime?'':' ac-num')+'" data-rule="'+f[0]+'" value="'+((v==null||fromPack)?'':esc(v))+'" placeholder="'+(fromPack?esc(applied[f[0]]):(dv==null?'not tracked':esc(dv)))+'"'+(isTime?' maxlength="8"':' type="number" step="0.5" min="0"')+(ro?' disabled':'')+'></div>';
     }
     h+='</div>';
+    h+='<div class="rul-sw"><label class="ac-switch"><input type="checkbox" id="rul-mod"'+(rules.manager_on_duty?' checked':'')+(ro?' disabled':'')+'><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label><div class="t">Manager on duty<small>Every shift needs a manager or keyholder on it; the rules check names the ones without.</small></div></div>';
+    h+='<div class="rul-sw"><label class="ac-switch"><input type="checkbox" id="rul-trim"'+(d.trim_to_budget?' checked':'')+(ro?' disabled':'')+'><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label><div class="t">Trim to budget<small>When the draft runs over the hours budget, remove the lowest-value shifts until it fits. Off leaves the overage for you to see.</small></div></div>';
     h+='<div class="lb2-sub">Role floors<small>how many of each role a morning and a night needs</small></div><div id="rul-floors">';
     if(!roles.length)h+='<div class="hb-empty">Roles appear once your shifts carry one, or add one below.</div>';
     for(i=0;i<roles.length;i++)h+=_rulFloorHtml(roles[i],floors[roles[i]]||{},ro);
     h+='</div>';
-    if(!ro){
-      h+='<div class="lb2-form"><div class="ac-field"><label>Another role</label><input class="ac-input" id="rul-new-role" maxlength="40" placeholder="e.g. Host"></div><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="addRuleRole()">Add role</button></div>';
-      h+='<div class="sr-actions" style="margin-top:16px"><button type="button" class="cbtn cbtn-primary" onclick="saveRules(this)">Save rules</button><span class="ac-status" id="rules-status"></span></div>';
+    if(!ro)h+='<div class="lb2-form"><div class="ac-field"><label>Another role</label><input class="ac-input" id="rul-new-role" maxlength="40" placeholder="e.g. Host"></div><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="addRuleRole()">Add role</button></div>';
+    // Arrivals: minutes before or after open, per role.
+    var arr=d.role_arrivals||{},reqs=d.role_requirements||{},certs=d.certifications||[];
+    h+='<div class="lb2-sub">Arrivals<small>when each role clocks in against the open</small></div><div id="rul-arrivals">';
+    if(!roles.length)h+='<div class="hb-empty">Add a role above first.</div>';
+    for(i=0;i<roles.length;i++){var m=arr[roles[i]],has=m!==undefined&&m!==null,before=has?m<=0:true;
+      h+='<div class="rul-row" data-arr-role="'+esc(roles[i])+'"><span class="role">'+esc(roles[i])+'</span><input type="number" class="ac-input ac-num n" data-arr-n min="0" max="240" step="5" value="'+(has?Math.abs(+m):'')+'" placeholder="—" aria-label="'+esc(roles[i])+' minutes"'+(ro?' disabled':'')+'><span class="lbl">minutes</span><select class="ac-select" data-arr-dir aria-label="Before or after open"'+(ro?' disabled':'')+'><option value="before"'+(before?' selected':'')+'>before open</option><option value="after"'+(before?'':' selected')+'>after open</option></select></div>';
     }
+    h+='</div>';
+    // Certifications a role needs, from the known list.
+    h+='<div class="lb2-sub">Certifications<small>what a role must hold; a shift without it is named</small></div><div id="rul-certs">';
+    if(!roles.length)h+='<div class="hb-empty">Add a role above first.</div>';
+    for(i=0;i<roles.length;i++)h+='<div class="rul-row" data-cert-role="'+esc(roles[i])+'"><span class="role">'+esc(roles[i])+'</span><div class="chip-tog">'+_chipTog(certs,reqs[roles[i]]||[],'data-cert',ro)+'</div></div>';
+    h+='</div>';
+    // Front-of-house and patio roles: chip pickers over the same roles.
+    h+='<div class="lb2-sub">Front of house<small>the roles the section cap and covers apply to</small></div><div class="chip-tog" id="rul-foh">'+_chipTog(roles,d.foh_roles||[],'data-foh',ro)+'</div>';
+    h+='<div class="lb2-sub">Patio roles<small>staffed only when the weather allows</small></div><div class="chip-tog" id="rul-patio">'+_chipTog(roles,d.patio_roles||[],'data-patio',ro)+'</div>';
+    // Reservation feed: which system, its key, and what it can do today.
+    var rf=d.reservation_feed||{},provs=d.reservation_providers||[];
+    h+='<div class="lb2-sub">Reservation system<small>covers on the book, read into the forecast</small></div><div class="rul-res"><div class="lb2-form" style="margin-top:0"><div class="ac-field"><label>System</label><select class="ac-select" id="rul-res-prov" aria-label="Reservation system"'+(ro?' disabled':'')+'><option value="">None</option>';
+    for(i=0;i<provs.length;i++)h+='<option value="'+esc(provs[i].code)+'"'+(provs[i].code===rf.provider?' selected':'')+'>'+esc(provs[i].label)+(provs[i].live?'':' — not live yet')+'</option>';
+    h+='</select></div><div class="ac-field w"><label>API key</label><input class="ac-input" id="rul-res-key" type="password" autocomplete="off" placeholder="'+(rf.configured?'on file — leave blank to keep it':'paste the key from your account')+'"'+(ro?' disabled':'')+'></div>'
+      +(ro?'':'<button type="button" class="cbtn cbtn-secondary" onclick="syncReservations(this)">Sync now</button>')+'</div>'
+      +'<div class="msg'+(rf.live?' live':'')+'" id="rul-res-msg">'+esc(rf.message||'')+'</div></div>';
+    if(!ro)h+='<div class="sr-actions" style="margin-top:16px"><button type="button" class="cbtn cbtn-primary" onclick="saveRules(this)">Save rules</button><span class="ac-status" id="rules-status"></span></div>';
     el.innerHTML=h;
+  };
+  // Chip toggles inside the rules card flip locally; Save writes them.
+  document.addEventListener('click',function(ev){
+    var t=ev.target;while(t&&t!==document.body&&!(t.getAttribute&&(t.getAttribute('data-cert')!==null||t.getAttribute('data-foh')!==null||t.getAttribute('data-patio')!==null)))t=t.parentNode;
+    if(!t||!t.getAttribute||t.disabled)return;
+    var body=document.getElementById('rules-body');if(!body||!body.contains(t))return;
+    var on=t.className.indexOf(' on')<0;
+    t.className=on?t.className+' on':t.className.replace(' on','');t.setAttribute('aria-pressed',on?'true':'false');
+  });
+  window.syncReservations=function(btn){
+    var msg=document.getElementById('rul-res-msg'),done=busy(btn,'Syncing…');
+    jsend('/api/labor/reservations/sync',{},function(d){
+      done();if(!msg)return;
+      if(d.ok){msg.className='msg live';msg.textContent=(d.written||0)+' date'+(d.written===1?'':'s')+' written'+(d.skipped?' · '+d.skipped+' skipped':'')+'.';toast('Reservations synced','success');loadSignals();}
+      else{msg.className='msg bad';msg.textContent=d.error||'The sync could not run.';}
+    });
   };
   window.addRuleRole=function(){
     var inp=document.getElementById('rul-new-role'),box=document.getElementById('rul-floors');if(!inp||!box)return;
@@ -16567,13 +17161,27 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       if(anyDay)spec.days=days;
       if(spec.morning!==undefined||spec.night!==undefined||anyDay)floors[role]=spec;
     }
+    var mod=document.getElementById('rul-mod');if(mod)rules.manager_on_duty=!!mod.checked;
+    var body={rules:rules,role_floors:floors};
+    var jur=document.getElementById('rul-jur');if(jur)body.jurisdiction=jur.value||null;
+    var trim=document.getElementById('rul-trim');if(trim)body.trim_to_budget=!!trim.checked;
+    var arrs=document.querySelectorAll('#rules-body [data-arr-role]'),arrivals={};
+    for(i=0;i<arrs.length;i++){var an=arrs[i].querySelector('[data-arr-n]').value,ad=arrs[i].querySelector('[data-arr-dir]').value;if(an==='')continue;arrivals[arrs[i].getAttribute('data-arr-role')]=ad==='before'?-Math.abs(+an):Math.abs(+an);}
+    body.role_arrivals=arrivals;
+    var crs=document.querySelectorAll('#rules-body [data-cert-role]'),reqs={};
+    for(i=0;i<crs.length;i++){var picked=_chipVals(crs[i],'data-cert');if(picked.length)reqs[crs[i].getAttribute('data-cert-role')]=picked;}
+    body.role_requirements=reqs;
+    body.foh_roles=_chipVals(document.getElementById('rul-foh'),'data-foh');
+    body.patio_roles=_chipVals(document.getElementById('rul-patio'),'data-patio');
+    var prov=document.getElementById('rul-res-prov'),key=document.getElementById('rul-res-key');
+    if(prov){body.reservation_provider=prov.value||null;if(key&&key.value.trim())body.reservation_api_key=key.value.trim();}
     var done=busy(btn,'Saving…'),st=document.getElementById('rules-status');
-    jsend('/api/labor/rules',{rules:rules,role_floors:floors},function(d){
+    jsend('/api/labor/rules',body,function(d){
       done();
       if(!d.ok){if(st)st.textContent=d.error||'Could not save.';toast(d.error||'Could not save the rules','error');return;}
-      _rules.rules=d.rules||_rules.rules;_rules.role_floors=d.role_floors||{};
-      renderRules();toast('Rules saved','success');
-      var st2=document.getElementById('rules-status');if(st2)st2.textContent='Saved — the next draft is checked against these.';
+      // The pack and its applied values come back on a fresh GET.
+      loadRules();toast('Rules saved','success');
+      setTimeout(function(){var st2=document.getElementById('rules-status');if(st2)st2.textContent='Saved — the next draft is checked against these.';},400);
     });
   };
 
@@ -16587,11 +17195,15 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       if(!d.ok){el.innerHTML='<div class="hb-empty">'+esc(d.error||'Could not load these dates.')+'</div>';return;}
       _signals=d.signals||[];renderSignals();
     });
+    // The reservation feed's own status line, as a caption on this card.
+    if(!window._reservationFeed&&!(_rules&&_rules.reservation_feed))jget('/api/labor/rules',function(d){if(d.ok&&d.reservation_feed){window._reservationFeed=d.reservation_feed;renderSignals();}});
   };
   window.renderSignals=function(){
     var el=document.getElementById('signals-body');if(!el)return;
     var list=_signals||[],i,h='';
     var chip=document.getElementById('signals-chip');if(chip)chip.textContent=list.length?list.length+' in the next 60 days':'';
+    var rf=window._reservationFeed||(_rules&&_rules.reservation_feed)||null;
+    if(rf&&rf.message)h+='<div class="ac-note" style="margin:0 0 10px">'+(rf.label?'<b>'+esc(rf.label)+'</b> · ':'')+esc(rf.message)+'</div>';
     if(!list.length)h+='<div class="hb-empty">Nothing on the calendar for the next 60 days. A party, a block of reservations or a street fair goes here and the draft plans for it.</div>';
     else{
       h+='<div style="overflow-x:auto"><table class="hb-tbl dsg-tbl" style="margin-top:0"><thead><tr><th>Date</th><th>What</th><th class="r">Covers</th><th class="r">Lift</th><th></th></tr></thead><tbody>';
@@ -16663,9 +17275,14 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     var names=_rstActiveNames(),h='';
     h+='<div class="sr-k" style="margin-bottom:4px">Waiting for an answer</div>';
     if(!pend.length)h+='<div class="hb-clear"><span class="ok">✓</span>Nothing waiting — every request has been answered.</div>';
-    for(i=0;i<pend.length;i++){var r=pend[i];
-      h+='<div class="shr-row" data-shr="'+(+r.id)+'"><div class="who"><b>'+esc(r.employee_name)+'</b> can’t work '+_shrWhen(r)+(r.reason?'<span class="sub">“'+esc(r.reason)+'”</span>':'')+'<span class="sub">asked '+esc(ago(r.created_at))+'</span></div>'
-        +'<select class="ac-select" data-shr-rep aria-label="Who takes it"><option value="">Open it up for anyone to claim</option>'+_lbOpts(names.filter(function(n){return n!==r.employee_name;}),'')+'</select>'
+    for(i=0;i<pend.length;i++){var r=pend[i],swap=(r.kind||'drop')==='swap';
+      // A swap names both shifts and moves both on approval; a drop opens
+      // the shift, or covers it when a replacement is named here.
+      var who=swap
+        ?'<span class="shr-kind">swap</span> <b>'+esc(r.employee_name)+'</b> &harr; <b>'+esc(r.target_name||'')+'</b>: '+esc(_dayShort(r.date))+' '+esc(r.shift_start||'')+' for '+esc(_dayShort(r.target_date))+' '+esc(r.target_start||'')+(r.target_end?'–'+esc(r.target_end):'')
+        :'<span class="shr-kind">drop</span> <b>'+esc(r.employee_name)+'</b> can’t work '+_shrWhen(r);
+      h+='<div class="shr-row" data-shr="'+(+r.id)+'"><div class="who">'+who+(r.reason?'<span class="sub">“'+esc(r.reason)+'”</span>':'')+'<span class="sub">asked '+esc(ago(r.created_at))+(swap?' · approving moves both shifts':'')+'</span></div>'
+        +(swap?'':'<select class="ac-select" data-shr-rep aria-label="Who takes it"><option value="">Open it up for anyone to claim</option>'+_lbOpts(names.filter(function(n){return n!==r.employee_name;}),'')+'</select>')
         +'<button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="decideShiftRequest('+(+r.id)+',\'deny\',this)">Deny</button>'
         +'<button type="button" class="cbtn cbtn-success cbtn-sm" onclick="decideShiftRequest('+(+r.id)+',\'approve\',this)">Approve</button></div>';
     }
@@ -16684,12 +17301,100 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     jsend('/api/labor/shift-requests/'+id+'/decide',body,function(d){
       done();
       if(!d.ok){toast(d.error||'Could not decide that','error');return;}
-      var st=(d.request||{}).status;
-      toast(st==='covered'?'Covered by '+((d.request||{}).replacement_name||'them'):(st==='open'?'Approved — the shift is open to claim':'Denied'),'success');
+      var rq=d.request||{},st=rq.status;
+      toast(st==='covered'?((rq.kind||'drop')==='swap'?'Swapped — both shifts moved':'Covered by '+(rq.replacement_name||'them')):(st==='open'?'Approved — the shift is open to claim':'Denied'),'success');
       loadShiftRequests();
     });
   };
 
+
+  // ── What the record says ──
+  // GET /api/labor/intel: outcomes by weekday × daypart, sales per labor
+  // hour, the rotation ledger, what staff keep dropping and claiming, who
+  // could hold a station, and the pairs the record suggests. Every figure
+  // is the server's; an absent measurement is absent, never 0.
+  var _DP_NAMES={morning:'day',night:'night'};
+  window.toggleIntelPanel=function(){_lbToggle('intel',function(){loadIntel(null,true);},'Read it ↓');};
+  window.loadIntel=function(after,force){
+    if(window._laborIntel&&!force){if(after)after();renderIntel();return;}
+    jget('/api/labor/intel',function(d){
+      if(d.ok)window._laborIntel=d;else window._laborIntel=window._laborIntel||{ok:false,error:d.error};
+      renderIntel();if(after)after();
+    });
+  };
+  function _intMoney(n){return '$'+Math.round(+n||0).toLocaleString();}
+  window.renderIntel=function(){
+    var el=document.getElementById('intel-body'),d=window._laborIntel;if(!el||!d)return;
+    if(d.ok===false){el.innerHTML='<div class="hb-empty">'+esc(d.error||'Could not read the record.')+'</div>';return;}
+    var h='',i,j,wd,part,k;
+    var outs=d.outcomes||{},ledger=d.ledger||{},beh=d.behaviour||{},could=d.could_hold||{},sug=d.suggested_pairs||[],splh=d.splh||{},rev=d.revenue||{},supp=d.suppressed_recommendation_kinds||[];
+    var nOut=0;for(k in outs)if(outs.hasOwnProperty(k))nOut++;
+    var chip=document.getElementById('intel-chip');if(chip)chip.textContent=nOut?nOut+' weekdays on record':'';
+    // Revenue projection: the figure and where it came from, or why not.
+    h+='<div class="int-rev">'+(rev.value?'<span class="hb-num">'+_intMoney(rev.value)+'</span><span>projected weekly revenue</span>':'<span>No weekly revenue projection yet</span>')+'<span class="src">'+esc(rev.source||'')+(rev.weeks?' · '+rev.weeks+' week'+(rev.weeks===1?'':'s'):'')+'</span></div>';
+    // Outcomes by weekday × daypart.
+    h+='<div class="lb2-sub" style="margin-top:14px">What published weeks did<small>by weekday and daypart · a troubled daypart is flagged</small></div>';
+    if(!nOut)h+='<div class="hb-empty">Nothing recorded yet — the first published week writes the first row.</div>';
+    else{
+      h+='<div style="overflow-x:auto"><table class="int-tbl"><thead><tr><th>Day</th><th>Day shift</th><th>Night shift</th></tr></thead><tbody>';
+      for(i=0;i<_RV_DAYS.length;i++){wd=_RV_DAYS[i];if(!outs[wd])continue;
+        h+='<tr><td class="wd">'+esc(wd)+'</td>';
+        var parts=['morning','night'];
+        for(j=0;j<parts.length;j++){var o=outs[wd][parts[j]];
+          if(!o){h+='<td><span class="dim">—</span></td>';continue;}
+          h+='<td><div class="cell'+(o.troubled?' trbl':'')+'">'+(o.troubled?'<span class="flag">troubled</span> ':'')+'<span class="hb-num">'+esc(o.avg_hours)+'h</span>'+(o.splh?' · <span class="hb-num">'+_intMoney(o.splh)+'</span>/h':'')+(o.rating?' · <span class="hb-num">'+esc(o.rating)+'</span>★':'')
+            +'<small>'+o.weeks+' week'+(o.weeks===1?'':'s')+(o.issues?' · '+o.issues+' issue'+(o.issues===1?'':'s'):' · no issues')+(o.avg_sales?' · '+_intMoney(o.avg_sales)+' sales':'')+'</small></div></td>';
+        }
+        h+='</tr>';
+      }
+      h+='</tbody></table></div>';
+    }
+    // Sales per labor hour by daypart, as bars against the best one.
+    var bars=[],mx=0;
+    for(i=0;i<_RV_DAYS.length;i++){wd=_RV_DAYS[i];if(!splh[wd])continue;for(part in splh[wd])if(splh[wd].hasOwnProperty(part)&&splh[wd][part]&&splh[wd][part].splh){bars.push({l:wd.slice(0,3)+' '+(_DP_NAMES[part]||part),v:+splh[wd][part].splh,h:splh[wd][part].hours,s:splh[wd][part].sales});if(+splh[wd][part].splh>mx)mx=+splh[wd][part].splh;}}
+    h+='<div class="lb2-sub">Sales per labor hour<small>by daypart · the last 8 weeks</small></div>';
+    if(!bars.length)h+='<div class="hb-empty">Needs daily sales and hours on file — upload shifts and connect the POS, and the bars draw themselves.</div>';
+    else{
+      h+='<div class="int-bars">';
+      for(i=0;i<bars.length;i++)h+='<div class="int-bar"><span class="l">'+esc(bars[i].l)+'</span><span class="tr"><i style="width:'+Math.max(3,Math.round(bars[i].v/mx*100))+'%;animation-delay:'+(i*60)+'ms"></i></span><span class="v">'+_intMoney(bars[i].v)+'/h</span></div>';
+      h+='</div>';
+    }
+    h+='<div class="int-cols" style="margin-top:18px">';
+    // Rotation ledger: most and fewest weekends and closes.
+    var names=[],ln;for(k in ledger)if(ledger.hasOwnProperty(k))names.push(k);
+    h+='<div><div class="lb2-sub" style="margin-top:0;padding-top:0;border-top:none">Rotation<small>who has carried the weekends and closes</small></div>';
+    if(!names.length)h+='<div class="hb-empty">Nothing recorded yet — the first published week writes the first row.</div>';
+    else{
+      var wk=names.slice().sort(function(a,b){return (ledger[b].weekend||0)-(ledger[a].weekend||0);});
+      var cl=names.slice().sort(function(a,b){return (ledger[b].closing||0)-(ledger[a].closing||0);});
+      var weeks=ledger[names[0]].weeks||0;
+      var ledgerLine=function(list,key,word){var top=list.slice(0,3),bot=list.length>3?list.slice(-3).reverse():[],t=[],b=[],q;for(q=0;q<top.length;q++)t.push('<b>'+esc(top[q])+'</b> <span class="hb-num">'+(ledger[top[q]][key]||0)+'</span>');for(q=0;q<bot.length;q++)b.push('<b>'+esc(bot[q])+'</b> <span class="hb-num">'+(ledger[bot[q]][key]||0)+'</span>');return '<div class="int-ledger"><span class="most">Most '+word+':</span> '+t.join(', ')+(b.length?'<br><span class="most">Fewest:</span> '+b.join(', '):'')+'</div>';};
+      h+=ledgerLine(wk,'weekend','weekend shifts')+'<div style="height:8px"></div>'+ledgerLine(cl,'closing','closes');
+      var hol=names.filter(function(n){return ledger[n].holiday;});if(hol.length){var hh=[];for(i=0;i<Math.min(hol.length,4);i++)hh.push('<b>'+esc(hol[i])+'</b> <span class="hb-num">'+ledger[hol[i]].holiday+'</span>');h+='<div class="int-ledger" style="margin-top:8px"><span class="most">Holidays:</span> '+hh.join(', ')+'</div>';}
+      h+='<div class="ac-note" style="margin-top:8px">Over the last '+weeks+' published week'+(weeks===1?'':'s')+'. The draft spreads the next ones.</div>';
+    }
+    h+='</div>';
+    // What staff keep dropping and claiming.
+    var bn=[];for(k in beh)if(beh.hasOwnProperty(k))bn.push(k);
+    h+='<div><div class="lb2-sub" style="margin-top:0;padding-top:0;border-top:none">What staff keep asking<small>learned from drops and claims</small></div>';
+    if(!bn.length)h+='<div class="hb-empty">Nothing yet — two drops or claims of the same slot become a pattern here.</div>';
+    else for(i=0;i<bn.length;i++){var b=beh[bn[i]];
+      if((b.avoids||[]).length)h+='<div class="int-say"><b>'+esc(bn[i])+'</b> keeps asking to drop '+esc(b.avoids.map(function(s){return s.replace(/ night$/,' nights').replace(/ day$/,' days');}).join(' and '))+'<small style="display:block;font-size:12px;color:var(--ink3)">'+b.drops+' drop'+(b.drops===1?'':'s')+' asked</small></div>';
+      if((b.prefers||[]).length)h+='<div class="int-say"><b>'+esc(bn[i])+'</b> keeps picking up '+esc(b.prefers.map(function(s){return s.replace(/ night$/,' nights').replace(/ day$/,' days');}).join(' and '))+'<small style="display:block;font-size:12px;color:var(--ink3)">'+b.claims+' claim'+(b.claims===1?'':'s')+'</small></div>';
+    }
+    h+='</div></div>';
+    // Trained up: who could hold a station they have shadowed.
+    var cn=[];for(k in could)if(could.hasOwnProperty(k)&&(could[k]||[]).length)cn.push(k);
+    h+='<div class="lb2-sub">Trained up<small>a station shadowed often enough to hold</small></div>';
+    if(!cn.length)h+='<div class="hb-empty">Nobody yet — a person who has worked beside a role’s regular on enough shifts shows here.</div>';
+    else{h+='<div>';for(i=0;i<cn.length;i++)h+='<div class="int-say"><b>'+esc(cn[i])+'</b> could hold '+could[cn[i]].map(function(r){return '<span class="rst-up">'+esc(r)+'</span>';}).join(' ')+'</div>';h+='</div>';}
+    // Suggested pairs, the same block the roster shows.
+    var ro=!(_roster&&_roster.can_edit)&&!!_roster;
+    var ph=_pairSuggestHtml(sug,ro);
+    h+='<div class="lb2-sub">Suggested pairs<small>shared dayparts that ran clean</small></div>'+(ph?'<div class="lb2-pairs">'+ph+'</div>':'<div class="hb-empty">No pair the record can vouch for yet — it takes a few clean weeks together.</div>');
+    if(supp.length)h+='<div class="int-supp"><b>'+supp.length+' recommendation kind'+(supp.length===1?'':'s')+' hidden on the schedule:</b> '+esc(supp.join(', '))+'. They stopped showing because they were never acted on; accepting one of that kind brings it back.</div>';
+    el.innerHTML=h;
+  };
 
   // ── Reviews ──
   window.retractR=function(id,btn){
