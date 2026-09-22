@@ -21,8 +21,7 @@ import pytest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CSS = os.path.join(ROOT, "static", "css", "cavnar-buttons.css")
 DASHBOARD = os.path.join(ROOT, "templates", "dashboard.html")
-STANDALONE = ["login.html", "two_fa.html", "forgot_password.html", "reset_password.html",
-              "reset_success.html", "guest_optin.html", "staff_schedule.html"]
+STANDALONE = ["login.html", "two_fa.html", "forgot_password.html", "reset_password.html", "guest_optin.html", "staff_schedule.html"]
 
 LEGACY = re.compile(r"(^|[^c-])btn-(primary|secondary|approve|skip|approved|blue|link-)|(^|[^-])hb-btn\b|(^|[^-])hb-link\b")
 

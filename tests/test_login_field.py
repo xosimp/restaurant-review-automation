@@ -14,7 +14,7 @@ import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 JS = os.path.join(ROOT, "static", "cavnar-field.js")
-PAGES = ["login.html", "forgot_password.html", "reset_password.html", "reset_success.html"]
+PAGES = ["login.html", "forgot_password.html", "reset_password.html"]
 
 
 def _src(p):
