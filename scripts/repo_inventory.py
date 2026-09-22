@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-inventory.py — the numbers the reference docs used to hand-type.
+repo_inventory.py — the numbers the reference docs used to hand-type.
 
 Prints tables, routes by blueprint, scheduled jobs, model call sites and
 the test count from the code itself, so a doc can quote the command
 instead of a figure that is stale within days.
 
-    python3 scripts/inventory.py            # everything but the test count
-    python3 scripts/inventory.py --tests    # also collect the test count (~2s)
+    python3 scripts/repo_inventory.py            # everything but the test count
+    python3 scripts/repo_inventory.py --tests    # also collect the test count (~2s)
 
 Read-only. Importing the app boots it against a scratch volume; the real
 reviews.db is never opened.

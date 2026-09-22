@@ -101,7 +101,7 @@ grep -n "'/mobile/api/labor" mobile_api.py      # mobile handler
 grep -n '"/api/labor' client_api.py             # web equivalent, if any (often `_m(...)`)
 grep -n "def mobile_labor_" mobile_api.py        # by handler name pattern
 grep -n '"/labor/' strategy_routes.py            # the _ROUTES table (registered at both prefixes)
-python3 scripts/inventory.py                     # every rule, by blueprint, from the live url_map
+python3 scripts/repo_inventory.py                     # every rule, by blueprint, from the live url_map
 ```
 
 ## Intelligence engine
