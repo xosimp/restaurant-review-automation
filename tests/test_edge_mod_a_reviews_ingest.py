@@ -350,8 +350,6 @@ def _places_fallback_ok(monkeypatch):
     monkeypatch.setattr(requests, "get", lambda *a, **k: _Resp({"status": "OK", "result": {"reviews": []}}))
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-REV-12: get_valid_token turns a timeout into None, which "
-                                        "run_daily_fetch reports to the owner as a lost connection")
 def test_a_token_refresh_that_times_out_does_not_tell_the_owner_to_reconnect(db_path, monkeypatch):
     _gbp_restaurant(db_path)
     raised = _record_alerts(monkeypatch)
@@ -377,8 +375,6 @@ def test_a_revoked_refresh_token_still_tells_the_owner_to_reconnect(db_path, mon
     assert "connection_lost" in raised
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-REV-12: a revoked (invalid_grant) refresh token is never cleared, "
-                                        "so it is re-tried four times a day forever")
 def test_a_revoked_refresh_token_is_cleared(db_path, monkeypatch):
     rid = _gbp_restaurant(db_path)
     _record_alerts(monkeypatch)

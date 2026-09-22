@@ -385,7 +385,6 @@ _TRANSIENT = [
 ]
 
 
-@pytest.mark.xfail(strict=True, reason="AI-22: get_valid_token returns None on any refresh error, read as a revoked connection")
 @pytest.mark.parametrize("endpoint", _TRANSIENT)
 def test_a_transient_google_token_refresh_failure_does_not_tell_the_owner_to_reconnect(db_path, monkeypatch, endpoint):
     _gmb_restaurant(db_path)

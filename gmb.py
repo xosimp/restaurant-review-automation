@@ -115,22 +115,53 @@ def verify_mobile_state(state: str) -> int | None:
         return None
 
 
+class GoogleTokenRevoked(RuntimeError):
+    """Google answered invalid_grant: the refresh token is dead (revoked by
+    the owner, expired, or superseded) and will never work again."""
+
+
 def refresh_access_token(refresh_token: str) -> dict:
-    """Get a new access token using the refresh token."""
+    """Get a new access token using the refresh token.
+
+    Raises GoogleTokenRevoked for invalid_grant — the one answer that means
+    the connection is gone. Only that one: any other 4xx (invalid_client,
+    unauthorized_client) is a problem with OUR OAuth client, the same for
+    every restaurant, and must not read as each owner's dead connection."""
     resp = requests.post("https://oauth2.googleapis.com/token", data={
         "refresh_token": refresh_token,
         "client_id":     GOOGLE_CLIENT_ID,
         "client_secret": GOOGLE_CLIENT_SECRET,
         "grant_type":    "refresh_token",
     }, timeout=10)
+    if resp.status_code in (400, 401):
+        try:
+            error = (resp.json() or {}).get("error")
+        except Exception:
+            error = None
+        if error == "invalid_grant":
+            raise GoogleTokenRevoked("Google refresh token revoked or expired (invalid_grant)")
     resp.raise_for_status()
     return resp.json()
 
 
-def get_valid_token(restaurant_id: int) -> str | None:
+class GoogleTokenUnavailable(RuntimeError):
+    """The refresh failed for a reason that says nothing about the
+    connection: a timeout, a dropped connection, a Google 5xx, or an error
+    from Google that is not invalid_grant. Not "reconnect Google" (AI-22,
+    MOD-REV-12)."""
+
+
+def get_valid_token(restaurant_id: int, raise_unavailable: bool = False) -> str | None:
     """
     Return a valid access token for the restaurant, refreshing if needed.
-    Returns None if not connected.
+    Returns None if not connected — including when Google has revoked the
+    refresh token (invalid_grant), which is also cleared here so it is not
+    re-tried four times a day forever (MOD-REV-12).
+
+    Any other refresh failure is transient as far as the connection is
+    concerned. With `raise_unavailable` it raises GoogleTokenUnavailable, so
+    a caller that tells the owner to reconnect (the daily fetch) can tell a
+    network blip from a dead connection (AI-22); without it, None as before.
     """
     from models import get_restaurant, update_restaurant
     r = get_restaurant(restaurant_id)
@@ -159,6 +190,16 @@ def get_valid_token(restaurant_id: int) -> str | None:
         return access_token
     except Exception as e:
         print(f"[GMB] Token refresh failed for restaurant {restaurant_id}: {e}")
+        if isinstance(e, GoogleTokenRevoked):
+            try:
+                update_restaurant(restaurant_id, {"gmb_refresh_token": None,
+                                                  "gmb_access_token": None,
+                                                  "gmb_token_expires": None})
+            except Exception as _clear:
+                print(f"[GMB] could not clear revoked token for {restaurant_id}: {_clear}")
+            return None
+        if raise_unavailable:
+            raise GoogleTokenUnavailable(f"Google token refresh failed: {type(e).__name__}") from e
         return None
 
 

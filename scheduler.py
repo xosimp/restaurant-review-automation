@@ -318,7 +318,11 @@ def run_daily_fetch():
             if restaurant.gmb_refresh_token:
                 try:
                     from gmb import get_valid_token, fetch_reviews_via_gmb, find_gmb_location
-                    token = get_valid_token(rid)
+                    # raise_unavailable: a timeout or a Google 5xx on the
+                    # refresh raises into the except below (Places fallback,
+                    # failure digest) instead of reading as a revoked
+                    # connection and telling the owner to reconnect (AI-22).
+                    token = get_valid_token(rid, raise_unavailable=True)
                     if not token:
                         # Returns None rather than raising — a revoked or
                         # expired refresh token used to land here and be
