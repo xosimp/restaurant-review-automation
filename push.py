@@ -85,6 +85,8 @@ CREATE TABLE IF NOT EXISTS push_deliveries (
     error           TEXT,
     created_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
+-- ops.prune_ledgers deletes by created_at (DATA-40).
+CREATE INDEX IF NOT EXISTS idx_push_deliveries_created ON push_deliveries(created_at);
 """
 
 

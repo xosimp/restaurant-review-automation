@@ -80,6 +80,8 @@ CREATE TABLE IF NOT EXISTS webhook_deliveries (
     error           TEXT,
     created_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
+-- ops.prune_ledgers deletes by created_at (DATA-40).
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_created ON webhook_deliveries(created_at);
 """
 
 def init_webhooks(db_path=DB_PATH):

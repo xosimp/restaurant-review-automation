@@ -8,7 +8,10 @@ nobody reads logs until a client complains. Every silent failure now flows
 through capture(): recorded in a job_failures table, forwarded to Sentry when
 configured, and rolled up into a daily 8am digest email if anything failed.
 """
+import collections.abc
 import logging
+import sqlite3
+import threading
 import uuid
 import os
 import config
@@ -114,16 +117,141 @@ def _record_run_end(run_id, started, ok, error=None, db_path=None):
         log.error(f"_record_run_end({run_id}) failed: {e}")
 
 
+class _OrderedKeySet(collections.abc.MutableSet):
+    """A set that remembers insertion order, so the ceiling below can evict
+    the OLDEST key. The plain set this replaced popped an arbitrary one —
+    often a period claimed a minute ago, re-opening that job's guard in the
+    middle of the outage it exists for (DATA-45)."""
+
+    def __init__(self, items=()):
+        self._d = dict.fromkeys(items)
+
+    def __contains__(self, key):
+        return key in self._d
+
+    def __iter__(self):
+        return iter(self._d)
+
+    def __len__(self):
+        return len(self._d)
+
+    def add(self, key):
+        self._d[key] = None
+
+    def discard(self, key):
+        self._d.pop(key, None)
+
+    def pop(self):
+        """Remove and return the oldest key."""
+        try:
+            key = next(iter(self._d))
+        except StopIteration:
+            raise KeyError("pop from an empty set") from None
+        del self._d[key]
+        return key
+
+    def clear(self):
+        self._d.clear()
+
+
 # Process-local backstop for claim_period when the database cannot be
-# written. Deliberately a plain set with a ceiling: it only has to survive
-# the outage, not a restart.
-_claim_fallback = set()
+# written. Deliberately in memory with a ceiling: it only has to survive the
+# outage, not a restart.
+_claim_fallback = _OrderedKeySet()
 _CLAIM_FALLBACK_MAX = 500
 
 _PERIOD_CLAIM_SQL = """CREATE TABLE IF NOT EXISTS job_period_claims (
     job_key    TEXT PRIMARY KEY,
     claimed_at TEXT NOT NULL DEFAULT (datetime('now'))
 )"""
+
+# A claim whose run started and never finished is taken to be dead after
+# this long, and the period may be claimed again (DATA-20). A run still
+# alive in THIS process is never reclaimed whatever its age (_running_jobs),
+# and one in another process can only be reclaimed after that process has
+# lost the scheduler lease, which a live runner renews all through a long
+# pass (scheduler._TickPulse).
+CLAIM_RECLAIM_MINUTES = int(os.getenv("CLAIM_RECLAIM_MINUTES", "120"))
+
+# How many runs of each job name run_job is executing in this process.
+_running_jobs = {}
+_running_lock = threading.Lock()
+
+
+def init_ops(db_path=None):
+    """Create this module's tables, and their indexes, at boot.
+
+    Called from models.init_db, so every database the app or a test builds
+    has them. claim_period used to run CREATE TABLE IF NOT EXISTS and an
+    unindexed full-table prune on every call (DATA-6 / MOD-PERF-3): two
+    statements under SQLite's write lock for every restaurant a sweep
+    claims."""
+    from models import get_conn
+    conn = get_conn(db_path) if db_path else get_conn()
+    try:
+        for sql in (_TABLE_SQL, _RUNS_SQL, _PERIOD_CLAIM_SQL, _ASYNC_JOB_SQL, _LEASE_SQL):
+            conn.execute(sql)
+        for sql in (
+            # The retention deletes in prune_ledgers (DATA-40), and the
+            # dead-run lookup in _reclaim_dead_run.
+            "CREATE INDEX IF NOT EXISTS idx_job_failures_created ON job_failures(created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_job_runs_started ON job_runs(started_at)",
+            "CREATE INDEX IF NOT EXISTS idx_job_runs_job ON job_runs(job, started_at)",
+            "CREATE INDEX IF NOT EXISTS idx_job_period_claims_at ON job_period_claims(claimed_at)",
+        ):
+            conn.execute(sql)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _memo_claim(key, reason):
+    """The in-memory answer while the claims table cannot be written: the
+    first ask in this process runs the job, every later one refuses."""
+    first_time = key not in _claim_fallback
+    _claim_fallback.add(key)
+    while len(_claim_fallback) > _CLAIM_FALLBACK_MAX:
+        # Bounded: a long outage across many jobs must not grow this without
+        # limit. The oldest key goes — the period least likely to be asked
+        # about again.
+        _claim_fallback.pop()
+    log.error(f"claim_period({key}) failed, {'allowing' if first_time else 'refusing'} "
+              f"run from process memory: {reason}")
+    return first_time
+
+
+def _reclaim_dead_run(conn, job, key):
+    """True if `key` was claimed by a run of `job` that started and never
+    finished, long enough ago to be dead — the claim is then taken over
+    (restamped) for this caller. A deploy SIGKILLs mid-run: the claim row
+    stands, job_runs holds a start and no finish, and without this the job
+    did not run again until its next period — for a daily job, a whole day
+    of alerts that never went out (DATA-20).
+
+    Only a claim with that evidence is reclaimed. One with no run row at
+    all, or whose run finished (even with an error), is left alone:
+    re-sending a digest is worse than missing one."""
+    with _running_lock:
+        if _running_jobs.get(job):
+            return False                       # still running here, however long
+    row = conn.execute(
+        "SELECT claimed_at FROM job_period_claims WHERE job_key=? AND claimed_at < datetime('now', ?)",
+        (key, f"-{int(CLAIM_RECLAIM_MINUTES)} minutes")).fetchone()
+    if not row:
+        return False
+    claimed_at = row[0]
+    runs = conn.execute(
+        "SELECT SUM(finished_at IS NULL), SUM(finished_at IS NOT NULL) FROM job_runs "
+        "WHERE job=? AND started_at >= datetime(?, '-5 minutes')", (job, claimed_at)).fetchone()
+    if not runs or not runs[0] or runs[1]:
+        return False
+    cur = conn.execute("UPDATE job_period_claims SET claimed_at=datetime('now') "
+                       "WHERE job_key=? AND claimed_at=?", (key, claimed_at))
+    conn.commit()
+    if cur.rowcount == 1:
+        log.error(f"claim_period({key}): the run claimed at {claimed_at} never finished — reclaimed")
+        return True
+    return False
 
 
 def claim_period(job: str, period: str) -> bool:
@@ -143,54 +271,55 @@ def claim_period(job: str, period: str) -> bool:
        Google Places and Claude for every full-tier restaurant.
 
     The PRIMARY KEY insert is the claim, so it is atomic and survives
-    restarts. Fails OPEN (returns True) if the bookkeeping table is
-    unreachable — a scheduler that silently stops working is worse than one
-    that occasionally repeats.
+    restarts. Only a duplicate key means "already claimed". Any other
+    failure to write it (a full, read-only or locked volume) used to be read
+    the same way, so every scheduled job silently stopped for as long as it
+    lasted, with nothing logged (DATA-22).
 
-    But "occasionally repeats" was doing more work than it looked like. The
-    scheduler ticks every 300 seconds, and acquire_scheduler_lease fails
-    open too, on the SAME dependency: a database that is up enough to serve
-    reads and down enough to refuse this write drops both guards at once,
-    and every due job re-runs on every tick for as long as it lasts. For a
-    daily digest that is twelve identical emails an hour to every client.
-    --workers 1 is the only thing that has kept it theoretical.
+    The fall-back for a claim that cannot be written is a process-local memo
+    rather than an open door. acquire_scheduler_lease fails open on the same
+    dependency, so "allow every time" would re-run every due job on every
+    tick — twelve identical digests an hour. The memo bounds a bookkeeping
+    outage to one run per job per period per process while still letting
+    the work happen, and a period run from it is written to the table (and
+    refused) once the database answers again.
 
-    So the fall-back is a process-local memo rather than an open door. It is
-    not durable — that is the whole reason the table exists — but it bounds
-    a bookkeeping outage to one run per job per period per process instead
-    of one per tick, while still letting the work happen.
+    A claim whose run was killed before it finished is reclaimed after
+    CLAIM_RECLAIM_MINUTES (_reclaim_dead_run). The table is created at boot
+    (init_ops) and pruned by prune_ledgers, never here.
     """
     key = f"{job}:{period}"
     try:
         from models import get_conn
         conn = get_conn()
-        conn.execute(_PERIOD_CLAIM_SQL)
-        conn.commit()
+    except Exception as e:
+        return _memo_claim(key, e)
+    try:
+        if key in _claim_fallback:
+            # Already run from memory during an outage: record it durably
+            # now the database answers, and refuse (DATA-22).
+            conn.execute("INSERT OR IGNORE INTO job_period_claims (job_key) VALUES (?)", (key,))
+            conn.commit()
+            return False
         try:
             conn.execute("INSERT INTO job_period_claims (job_key) VALUES (?)", (key,))
             conn.commit()
-            claimed = True
-        except Exception:
-            claimed = False
-        # Keep the table from growing without bound.
+            return True
+        except sqlite3.IntegrityError:
+            conn.rollback()
         try:
-            conn.execute("DELETE FROM job_period_claims WHERE claimed_at < datetime('now','-45 days')")
-            conn.commit()
+            return _reclaim_dead_run(conn, job, key)
+        except Exception as e:
+            log.error(f"claim_period({key}) could not check for a dead run: {e}")
+            return False
+    except Exception as e:
+        try:
+            conn.rollback()
         except Exception:
             pass
+        return _memo_claim(key, e)
+    finally:
         conn.close()
-        return claimed
-    except Exception as e:
-        first_time = key not in _claim_fallback
-        _claim_fallback.add(key)
-        if len(_claim_fallback) > _CLAIM_FALLBACK_MAX:
-            # Bounded: a long outage across many jobs must not grow this
-            # without limit. Dropping the oldest re-opens the door for that
-            # job, which is the same failure this already tolerates.
-            _claim_fallback.pop()
-        log.error(f"claim_period({key}) failed, {'allowing' if first_time else 'refusing'} "
-                  f"run from process memory: {e}")
-        return first_time
 
 
 def release_period(job: str, period: str) -> None:
@@ -450,6 +579,8 @@ def run_job(name, fn, *args, context="", db_path=None, **kwargs):
     import time as _time
     started = _time.time()
     run_id = _record_run_start(name, context, db_path=db_path)
+    with _running_lock:
+        _running_jobs[name] = _running_jobs.get(name, 0) + 1
     try:
         result = fn(*args, **kwargs)
         _record_run_end(run_id, started, True, db_path=db_path)
@@ -459,6 +590,11 @@ def run_job(name, fn, *args, context="", db_path=None, **kwargs):
         capture(e, job=name, db_path=db_path)
         _record_run_end(run_id, started, False, e, db_path=db_path)
         return None
+    finally:
+        with _running_lock:
+            _running_jobs[name] -= 1
+            if not _running_jobs[name]:
+                del _running_jobs[name]
 
 
 def failures_last_24h():
@@ -601,6 +737,9 @@ _RETENTION_DAYS = {
     # dismissed; a year is plenty to know which kinds an owner ignores
     # (SCHED-27).
     "schedule_recommendation_events": int(os.getenv("RETAIN_SCHED_RECS_DAYS", "365")),
+    # claim_period pruned this itself, on every call, with a full scan
+    # (DATA-6). A claim older than any period that is still asked about.
+    "job_period_claims": int(os.getenv("RETAIN_JOB_CLAIMS_DAYS", "45")),
 }
 
 # Each table's own timestamp column — they do not agree on a name.
@@ -609,8 +748,11 @@ _RETENTION_COLUMN = {
     "push_deliveries": "created_at", "webhook_deliveries": "created_at",
     "alert_log": "fired_at", "email_log": "sent_at",
     "ai_visibility_query_runs": "created_at", "competitor_snapshots": "captured_at",
-    "ai_visibility_runs": "created_at",
+    "ai_visibility_runs": "created_at", "job_period_claims": "claimed_at",
 }
+# Every table above has an index on its column, created where the table is
+# (DATA-40): these deletes run under the write lock, and a full scan of a
+# year of email_log there stalls every request that writes.
 
 
 # inventory_history holds a snapshot per restaurant per DAY, each carrying the
@@ -703,7 +845,9 @@ def stuck_jobs(older_than_minutes: int = 90):
     below stayed empty. Silence looked identical to "nothing went wrong".
 
     A row with started_at and no finished_at is the evidence. The admin
-    console already lists these; this is what puts them in the mail.
+    console already lists these; this is what puts them in the mail. Since
+    DATA-20, claim_period also acts on it: the period is reclaimed, and the
+    job re-run, once the claim is CLAIM_RECLAIM_MINUTES old.
     """
     try:
         from models import get_conn
@@ -763,7 +907,7 @@ def send_failure_digest():
             )
             stuck_html = f"""
   <p style="font-size:13px;font-weight:600;color:#0e0c0a;margin:22px 0 6px">Started and never finished</p>
-  <p style="font-size:12px;color:#7a736a;margin:0 0 10px">These did not raise, so they are not counted above. The job holds its claim until its next slot, so whatever it does was skipped for that period.</p>
+  <p style="font-size:12px;color:#7a736a;margin:0 0 10px">These did not raise, so they are not counted above. Each is re-run once its claim is {CLAIM_RECLAIM_MINUTES} minutes old; until then its work for that period has not happened.</p>
   <table style="width:100%;border-collapse:collapse;font-size:13px">
     <tr>
       <th style="text-align:left;padding:8px 12px;border-bottom:2px solid #b7791f">Job</th>

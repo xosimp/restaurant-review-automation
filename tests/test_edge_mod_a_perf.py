@@ -169,21 +169,18 @@ def test_a_period_is_claimed_once(monkeypatch, db_path):
     assert ops.claim_period("edge_job", "2026-09-22") is False
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-PERF-3: claim_period runs a full-table prune DELETE on every call")
 def test_claiming_a_period_issues_no_delete(monkeypatch, db_path):
     statements = _traced(monkeypatch, db_path)
     ops.claim_period("edge_job", "2026-09-22")
     assert not [s for s in statements if s.strip().upper().startswith("DELETE")], statements
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-PERF-3: claim_period runs CREATE TABLE IF NOT EXISTS on every call")
 def test_claiming_a_period_runs_no_schema_ddl(monkeypatch, db_path):
     statements = _traced(monkeypatch, db_path)
     ops.claim_period("edge_job", "2026-09-22")
     assert not [s for s in statements if "CREATE TABLE" in s.upper()], statements
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-PERF-3: job_period_claims has no index on claimed_at, so the prune scans the table")
 def test_the_claim_prune_uses_an_index(monkeypatch, db_path):
     _traced(monkeypatch, db_path)
     ops.claim_period("edge_job", "2026-09-22")  # the table exists after a claim, whoever creates it
@@ -253,10 +250,7 @@ _HOT_QUERIES = {
 }
 
 
-@pytest.mark.parametrize("table", [
-    pytest.param(t, marks=pytest.mark.xfail(strict=True, reason=f"MOD-PERF-6: {t} has no index leading on restaurant_id"))
-    for t in sorted(_HOT_QUERIES)
-])
+@pytest.mark.parametrize("table", sorted(_HOT_QUERIES))
 def test_a_per_restaurant_hot_query_does_not_scan_the_whole_table(db_path, table):
     c = sqlite3.connect(db_path)
     plan = [r[3] for r in c.execute("EXPLAIN QUERY PLAN " + _HOT_QUERIES[table], (1,))]

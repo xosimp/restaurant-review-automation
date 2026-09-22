@@ -538,6 +538,8 @@ def init_schedule_intel(db_path: str = DB_PATH):
         created_at     TEXT    NOT NULL DEFAULT (datetime('now'))
     )""")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_sched_rec_events ON schedule_recommendation_events(restaurant_id, kind)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_sched_rec_events_created "
+                 "ON schedule_recommendation_events(created_at)")          # ops.prune_ledgers (DATA-40)
     conn.execute("""CREATE TABLE IF NOT EXISTS schedule_pattern_dismissals (
         restaurant_id  INTEGER NOT NULL REFERENCES restaurants(id),
         key            TEXT    NOT NULL,

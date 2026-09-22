@@ -196,6 +196,7 @@ CREATE TABLE IF NOT EXISTS weekly_reports (
     top_issues_json TEXT,       -- [["food_quality",3],...]
     sent_at         TEXT
 );
+CREATE INDEX IF NOT EXISTS idx_weekly_reports_restaurant ON weekly_reports(restaurant_id);
 
 CREATE TABLE IF NOT EXISTS service_status (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1265,6 +1266,10 @@ def init_db(db_path: str = DB_PATH):
             gbp_score INTEGER,
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
         )""",
+        # Read per restaurant, newest first (MOD-PERF-6), and pruned by
+        # created_at alone (ops.prune_ledgers, DATA-40).
+        "CREATE INDEX IF NOT EXISTS idx_aivis_runs_rest ON ai_visibility_runs(restaurant_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_aivis_runs_created ON ai_visibility_runs(created_at)",
         "ALTER TABLE restaurants ADD COLUMN gmb_refresh_token TEXT",
         "ALTER TABLE restaurants ADD COLUMN gmb_account_id TEXT",
         "ALTER TABLE restaurants ADD COLUMN gmb_location_id TEXT",
@@ -1305,6 +1310,7 @@ def init_db(db_path: str = DB_PATH):
             method        TEXT NOT NULL DEFAULT 'email',
             status        TEXT NOT NULL DEFAULT 'sent'
         )""",
+        "CREATE INDEX IF NOT EXISTS idx_review_requests_rest ON review_requests(restaurant_id, sent_at)",  # MOD-PERF-6
         """CREATE TABLE IF NOT EXISTS service_status (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
             service_key TEXT NOT NULL UNIQUE,
@@ -1355,6 +1361,9 @@ def init_db(db_path: str = DB_PATH):
             fired_at      TEXT NOT NULL DEFAULT (datetime('now'))
         )""",
         "CREATE INDEX IF NOT EXISTS idx_alert_log_restaurant ON alert_log(restaurant_id, fired_at)",
+        # ops.prune_ledgers deletes by fired_at alone, which the index above
+        # cannot serve (DATA-40).
+        "CREATE INDEX IF NOT EXISTS idx_alert_log_fired ON alert_log(fired_at)",
         # Per-LOGIN notification read state. restaurants.notifications_seen_at
         # was one stamp for the whole restaurant, so a co-owner opening the
         # bell cleared their partner's unread badge — and the two clients
@@ -1588,6 +1597,7 @@ def init_db(db_path: str = DB_PATH):
             computed_at       TEXT    NOT NULL DEFAULT (datetime('now')),
             UNIQUE(content_log_id, window_hours)
         )""",
+        "CREATE INDEX IF NOT EXISTS idx_marketing_attr_rest ON marketing_attribution(restaurant_id)",  # MOD-PERF-6
         # Beyond total sales: the promoted dish's own units, reviews that
         # mentioned it, and the guest list's move in the post's window.
         "ALTER TABLE marketing_attribution ADD COLUMN item_lift_pct REAL",
@@ -1843,6 +1853,7 @@ def init_db(db_path: str = DB_PATH):
             message_id    TEXT
         )""",
         "CREATE INDEX IF NOT EXISTS idx_email_log_restaurant ON email_log(restaurant_id, sent_at)",
+        "CREATE INDEX IF NOT EXISTS idx_email_log_sent ON email_log(sent_at)",   # prune_ledgers (DATA-40)
         # Addresses Resend told us are undeliverable or that reported us as
         # spam. Suppressed at send time: retrying a hard bounce forever, or
         # continuing to mail someone who hit "report spam", is exactly what
@@ -2369,6 +2380,10 @@ def init_db(db_path: str = DB_PATH):
         _init(db_path)
     from schedule_intel import init_schedule_intel
     init_schedule_intel(db_path)
+    # Job claims, runs, failures, async jobs and the scheduler lease — at
+    # boot, not on each claim (DATA-6).
+    import ops as _ops
+    _ops.init_ops(db_path)
     # Runs after ensure_columns() so organization_id exists to write into.
     backfill_organizations(db_path=db_path)
     print(f"Database initialised at {db_path}")
@@ -3584,6 +3599,7 @@ def init_email_log(db_path: str = DB_PATH):
         error TEXT,
         message_id TEXT
     )""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_email_log_sent ON email_log(sent_at)")   # prune_ledgers (DATA-40)
     conn.commit()
     conn.close()
 
@@ -7090,6 +7106,7 @@ def init_competitor_snapshots(db_path: str = DB_PATH):
     )""")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_compsnap_rest_time "
                  "ON competitor_snapshots(restaurant_id, captured_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_compsnap_captured ON competitor_snapshots(captured_at)")  # DATA-40
     conn.commit()
     conn.close()
 
@@ -7285,6 +7302,7 @@ def init_ai_visibility_queries(db_path: str = DB_PATH):
     )""")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_aivq_run ON ai_visibility_query_runs(run_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_aivq_rest ON ai_visibility_query_runs(restaurant_id, created_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_aivq_created ON ai_visibility_query_runs(created_at)")  # DATA-40
     conn.commit()
     conn.close()
 

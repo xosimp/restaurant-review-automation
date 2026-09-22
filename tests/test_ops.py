@@ -138,7 +138,10 @@ def test_old_claims_are_pruned(monkeypatch, db_path):
     conn.commit()
     conn.close()
 
-    ops.claim_period("some_other_job", "2026-09-08")  # any call runs the prune
+    ops.claim_period("some_other_job", "2026-09-08")
+    # The prune is the nightly prune_ledgers pass, not a full-table DELETE
+    # on every claim (DATA-6 / MOD-PERF-3).
+    ops.prune_ledgers(db_path)
 
     conn = models.get_conn()
     remaining = [r[0] for r in conn.execute("SELECT job_key FROM job_period_claims").fetchall()]
