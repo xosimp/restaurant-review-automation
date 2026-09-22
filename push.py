@@ -132,12 +132,40 @@ def get_device_tokens(restaurant_id, db_path=DB_PATH, for_delivery=False):
     own the next time the app launches and re-registers (register_device_token
     clears both the counter and the reason)."""
     conn = get_conn(db_path)
-    sql = "SELECT * FROM device_tokens WHERE restaurant_id=?"
-    if for_delivery:
-        sql += " AND disabled_reason IS NULL"
-    rows = conn.execute(sql, (restaurant_id,)).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    try:
+        if not for_delivery:
+            rows = conn.execute("SELECT * FROM device_tokens WHERE restaurant_id=?", (restaurant_id,)).fetchall()
+            return [dict(r) for r in rows]
+        # Delivery is narrower and wider than "registered here":
+        # - only a login that is still active. A removed teammate's or a
+        #   deactivated login's phone kept receiving the restaurant's alerts
+        #   (MOD-NOT-6, DATA-53).
+        # - an account holder's phone registered at another location of the
+        #   same group (same group name and owner) hears about this one too.
+        #   A device belonged to whichever location was open when it
+        #   registered, so a multi-location owner heard about one (MOD-NOT-7).
+        # One row per phone, even when it registered at several locations.
+        rows = conn.execute(
+            "SELECT d.* FROM device_tokens d JOIN users u ON u.id = d.user_id "
+            "WHERE d.disabled_reason IS NULL AND u.is_active = 1 AND ("
+            "  d.restaurant_id = ? OR ("
+            "    COALESCE(u.role, 'client') IN ('client', 'owner') AND d.restaurant_id IN ("
+            "      SELECT o.id FROM restaurants o JOIN restaurants me ON me.id = ? "
+            "      WHERE TRIM(COALESCE(me.location_group, '')) <> '' "
+            "        AND TRIM(o.location_group) = TRIM(me.location_group) "
+            "        AND LOWER(TRIM(o.owner_email)) = LOWER(TRIM(me.owner_email)))))"
+            "ORDER BY (d.restaurant_id = ?) DESC, d.id",
+            (restaurant_id, restaurant_id, restaurant_id)).fetchall()
+    finally:
+        conn.close()
+    out, seen = [], set()
+    for r in rows:
+        tok = r["apns_token"]
+        if tok in seen:
+            continue
+        seen.add(tok)
+        out.append(dict(r))
+    return out
 
 
 # ── Executive priority ──────────────────────────────────────────────────────

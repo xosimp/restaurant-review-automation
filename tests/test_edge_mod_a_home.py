@@ -133,7 +133,6 @@ def _hhmm(dt):
     return f"{dt.hour:02d}:{dt.minute:02d}"
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-NOT-4: is_in_quiet_hours reads America/Chicago for every restaurant")
 def test_home_quiet_hours_indicator_uses_the_restaurants_own_timezone(db_path):
     """A one-hour window around the current Los Angeles time: quiet in LA,
     two hours clear of it in Chicago, whatever the wall clock says."""

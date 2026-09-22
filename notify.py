@@ -995,25 +995,38 @@ def release_due_alerts(db_path: str = DB_PATH, now_utc=None):
     replay the same alert every five minutes."""
     from datetime import datetime as _dt, timedelta as _td, timezone as _timezone
     now_utc = now_utc or _dt.now(_timezone.utc)
+    now_s = now_utc.strftime("%Y-%m-%d %H:%M:%S")
     stale_before = (now_utc - _td(hours=HOLD_MAX_LATE_HOURS)).strftime("%Y-%m-%d %H:%M:%S")
     conn = models.get_conn(db_path)
     try:
+        # Holds too late to be worth sending are retired in one statement.
+        dropped = conn.execute("UPDATE alert_holds SET sent_at=datetime('now') WHERE sent_at IS NULL "
+                               "AND release_at < ?", (stale_before,)).rowcount
+        conn.commit()
+        # A fair slice per restaurant: the first 200 by id used to be one
+        # restaurant's backlog, so every other restaurant's held alerts waited
+        # behind it indefinitely (MOD-NOT-2).
         rows = [dict(r) for r in conn.execute(
-            "SELECT * FROM alert_holds WHERE sent_at IS NULL AND release_at <= ? "
-            "ORDER BY id LIMIT 200", (now_utc.strftime("%Y-%m-%d %H:%M:%S"),)).fetchall()]
+            "SELECT * FROM (SELECT h.*, ROW_NUMBER() OVER (PARTITION BY restaurant_id ORDER BY id) AS rn "
+            "FROM alert_holds h WHERE sent_at IS NULL AND release_at <= ?) WHERE rn <= ? ORDER BY id LIMIT 500",
+            (now_s, MAX_RELEASE_PER_RESTAURANT)).fetchall()]
     finally:
         conn.close()
-    sent, dropped, per_restaurant = 0, 0, {}
+    if dropped:
+        print(f"[notify] {dropped} hold(s) dropped — {HOLD_MAX_LATE_HOURS}h past their release")
+    sent = 0
     for h in rows:
         rid = h["restaurant_id"]
-        if h["release_at"] < stale_before:
-            _mark_sent(h["id"], db_path)
-            dropped += 1
-            print(f"[notify] hold {h['id']} dropped — {HOLD_MAX_LATE_HOURS}h past its release")
+        # Claim before delivering: marking it sent AFTER delivery meant a
+        # failing write re-delivered the same alert every five minutes, and
+        # two runners both delivered it (DATA-5, DATA-4). At most once.
+        if not _claim_hold(h["id"], db_path):
             continue
-        if per_restaurant.get(rid, 0) >= MAX_RELEASE_PER_RESTAURANT:
-            continue                      # the rest ride the next tick
-        per_restaurant[rid] = per_restaurant.get(rid, 0) + 1
+        # A held alert is still an alert: the owner's daily cap and the hard
+        # ceiling apply when it is released, or 60 one-stars held through a
+        # rush all arrived at once (MOD-NOT-1).
+        if _release_suppressed(rid, db_path):
+            continue
         try:
             deliver_alert(h["restaurant_id"], h["alert_type"], h["sms_text"], h["subject"],
                           h["html"], review_id=h["review_id"], db_path=db_path,
@@ -1026,8 +1039,34 @@ def release_due_alerts(db_path: str = DB_PATH, now_utc=None):
                 ops.capture(e, job="release_held_alerts", context=f"hold_id={h['id']}")
             except Exception:
                 pass
-        _mark_sent(h["id"], db_path)
     return {"released": sent, "dropped_stale": dropped}
+
+
+def _claim_hold(hold_id, db_path: str = DB_PATH) -> bool:
+    try:
+        conn = models.get_conn(db_path)
+        try:
+            got = conn.execute("UPDATE alert_holds SET sent_at=datetime('now') WHERE id=? AND sent_at IS NULL",
+                               (hold_id,)).rowcount
+            conn.commit()
+            return got == 1
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[notify] could not claim hold {hold_id}: {e}")
+        return False
+
+
+def _release_suppressed(restaurant_id, db_path: str = DB_PATH) -> bool:
+    try:
+        from models import count_alerts_today, get_restaurant
+        r = get_restaurant(restaurant_id, db_path)
+        cap = int(getattr(r, "alert_max_per_day", 0) or 0)
+        if cap > 0 and count_alerts_today(restaurant_id, db_path) >= cap:
+            return True
+    except Exception as e:
+        print(f"[notify] cap check failed for rid={restaurant_id}: {e}")
+    return _over_alert_ceiling(restaurant_id, db_path)
 
 
 def _mark_sent(hold_id, db_path: str = DB_PATH):

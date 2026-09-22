@@ -88,7 +88,6 @@ def _one_star_reviews(rid, n, prefix="e", review_date=None):
 
 # ── The ceiling and holds ───────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-NOT-1: alerts held through a rush bypass the 50/day hard ceiling")
 def test_alerts_held_through_a_rush_still_respect_the_daily_ceiling(db_path, sent, monkeypatch):
     """A8 #8 / MOD-NOT-1 — 60 one-star reviews land mid-lunch; draining the
     holds must deliver at most ALERT_HARD_CEILING_PER_DAY."""
@@ -107,7 +106,6 @@ def test_alerts_held_through_a_rush_still_respect_the_daily_ceiling(db_path, sen
     assert len(_alert_log(db_path, rid, "1star")) <= notify.ALERT_HARD_CEILING_PER_DAY
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-NOT-2: one restaurant's hold backlog starves every other restaurant's held alerts")
 def test_one_restaurants_hold_backlog_does_not_starve_another(db_path, sent, monkeypatch):
     """A8 #18 / MOD-NOT-2 — 300 due holds for A and one for B: the first
     release pass delivers B's."""
@@ -156,7 +154,6 @@ def test_a_quiet_window_that_crosses_midnight(db_path, monkeypatch, hh, mm, quie
     assert models.is_in_quiet_hours(rid, db_path) is quiet
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-NOT-4: quiet hours are evaluated in America/Chicago for every restaurant")
 def test_quiet_hours_are_read_on_the_restaurants_own_clock(db_path, monkeypatch):
     """A8 #20 / MOD-NOT-4 — 06:00 in Los Angeles (08:00 Chicago) is inside an
     LA owner's 22:00-07:00 window; 07:30 LA is not."""
@@ -436,7 +433,6 @@ def delivered(monkeypatch):
     return got
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-NOT-6: a revoked teammate's registered phone keeps receiving the restaurant's alerts")
 def test_a_revoked_teammates_phone_stops_receiving_alerts(db_path, delivered):
     """A8 #35 / MOD-NOT-6."""
     rid = _rid(db_path)
@@ -450,7 +446,6 @@ def test_a_revoked_teammates_phone_stops_receiving_alerts(db_path, delivered):
     assert delivered == ["tok-owner"]
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-NOT-7: a device token belongs to one restaurant, so a multi-location owner hears about one location")
 def test_a_multi_location_owner_hears_about_every_location(db_path, delivered):
     """A8 #36 / MOD-NOT-7 — registered once while viewing A; a health alert
     at B must still reach the phone."""

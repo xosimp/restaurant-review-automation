@@ -186,8 +186,6 @@ def test_every_active_teammates_phone_gets_the_restaurants_push(pushes):
     assert sorted(pushes) == ["tok-dana", "tok-owner"]
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-53: revoke_team_member never touches device_tokens and "
-                                       "get_device_tokens does not check users.is_active")
 def test_a_revoked_teammates_device_gets_nothing(pushes):
     rid, owner, mate = _team_with_phones()
     assert revoke_team_member(rid, mate, acting_user_id=owner)["ok"] is True
@@ -198,8 +196,6 @@ def test_a_revoked_teammates_device_gets_nothing(pushes):
     assert "tok-dana" not in pushes, "the removed manager still receives the restaurant's alerts"
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-53: admin deactivate-client only sets users.is_active=0; the "
-                                       "login's device keeps receiving pushes")
 def test_a_deactivated_logins_device_gets_nothing(app, pushes):
     rid, owner, mate = _team_with_phones()
     admin_rid = _loc("Cavnar HQ", owner_email="will@x.test")

@@ -6483,19 +6483,21 @@ def delete_changelog_entry(entry_id: int, db_path: str = DB_PATH):
     conn.commit(); conn.close()
 
 def is_in_quiet_hours(restaurant_id: int, db_path: str = DB_PATH) -> bool:
-    """Return True if the current Chicago time falls within the restaurant's quiet window."""
+    """True when the restaurant's OWN clock is inside its quiet window. It
+    read America/Chicago for every restaurant, so a Los Angeles owner's
+    "10pm to 7am" ended at 5am their time (MOD-NOT-4)."""
     conn = get_conn(db_path)
     row = conn.execute(
-        "SELECT alert_quiet_start, alert_quiet_end FROM restaurants WHERE id=?",
+        "SELECT alert_quiet_start, alert_quiet_end, timezone FROM restaurants WHERE id=?",
         (restaurant_id,)
     ).fetchone()
     conn.close()
     if not row or not row["alert_quiet_start"] or not row["alert_quiet_end"]:
         return False
     try:
-        from zoneinfo import ZoneInfo
         from datetime import datetime as _dt
-        now = _dt.now(ZoneInfo("America/Chicago"))
+        from time_utils import restaurant_tz
+        now = _dt.now(restaurant_tz(row["timezone"] if "timezone" in row.keys() else None))
         now_t = now.hour * 60 + now.minute
         def _hm(s):
             h, m = s.split(":"); return int(h)*60+int(m)

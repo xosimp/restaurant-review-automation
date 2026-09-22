@@ -58,8 +58,6 @@ def test_a_released_hold_is_delivered_once_across_ticks(db_path, monkeypatch):
     assert sent == ["1star"]
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-5: _mark_sent runs after deliver_alert and is unprotected; when the "
-                                       "write fails the same hold is re-delivered on every tick")
 def test_a_failed_mark_sent_does_not_redeliver(db_path, monkeypatch):
     _held(db_path)
     sent = []
@@ -73,8 +71,6 @@ def test_a_failed_mark_sent_does_not_redeliver(db_path, monkeypatch):
     assert len(sent) <= 1, f"one held alert was delivered {len(sent)} times"
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-4: release_due_alerts selects unsent holds and marks them only after "
-                                       "delivery, so two concurrent runners both deliver the same hold")
 def test_two_runners_deliver_a_hold_once(db_path, monkeypatch):
     _held(db_path)
     sent = []
