@@ -2097,7 +2097,9 @@ ARRIVAL TIMES, ROLE MINIMUMS, SHIFT LENGTHS, AND ROLE-SPECIFIC RULES:
     if structured:
         _call["output_config"] = {"format": {"type": "json_schema", "schema": SCHEDULE_SCHEMA}}
     try:
-        msg = create_with_retry(get_client(), **_call)
+        # Background job, long output: up to 16,000 tokens is minutes of
+        # generation, well past the request-path default.
+        msg = create_with_retry(get_client(timeout=360.0), **_call)
     except Exception as _e:
         # A deployment whose SDK or model refuses the format contract gets
         # the CSV text contract instead, once, rather than no schedule.

@@ -107,13 +107,11 @@ def _load_check_timeouts():
 
 # ── AI-1: the shared client is bounded ──────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="AI-1: get_client() inherits the SDK's 600s read timeout")
 def test_the_shared_anthropic_client_gives_up_reading_within_ninety_seconds(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
     assert _read_timeout(ai_utils.get_client()) <= 90
 
 
-@pytest.mark.xfail(strict=True, reason="AI-1/AI-13: the SDK's own 2 retries sit inside create_with_retry's 2")
 def test_the_shared_anthropic_client_leaves_retrying_to_create_with_retry(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
     assert ai_utils.get_client().max_retries == 0
@@ -125,7 +123,6 @@ def test_an_explicit_timeout_is_honoured_by_the_shared_client(monkeypatch):
     assert _read_timeout(ai_utils.get_client(timeout=45.0)) == 45.0
 
 
-@pytest.mark.xfail(strict=True, reason="AI-1: check_timeouts.py only sees requests/httpx, not anthropic.Anthropic()")
 def test_the_timeout_lint_flags_an_anthropic_client_built_with_no_timeout(tmp_path, monkeypatch):
     lint = _load_check_timeouts()
     (tmp_path / "some_module.py").write_text(
@@ -143,7 +140,6 @@ def test_the_timeout_lint_still_flags_a_bare_requests_call(tmp_path, monkeypatch
     assert [o[2] for o in lint.offenders()] == ["requests.get"]
 
 
-@pytest.mark.xfail(strict=True, reason="AI-1: ASK_MAX_CONCURRENT (8) is above gunicorn's 4 threads, so Ask can hold them all")
 def test_concurrent_ask_streams_cannot_take_every_request_thread():
     """Each open Ask stream holds a request thread for its whole tool loop.
     If the Ask ceiling is at or above the thread count, four people asking

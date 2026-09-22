@@ -180,7 +180,7 @@ def _fallback_harness(monkeypatch):
         return _Msg(HEADER + "\n" + "\n".join(f"{d},X,Ana,Server,11:00am,3:00pm,4,x" for d in dates)
                     + "\n---SUMMARY---\n- a")
     monkeypatch.setattr(labor, "create_with_retry", fake_create)
-    monkeypatch.setattr(labor, "get_client", lambda: None)
+    monkeypatch.setattr(labor, "get_client", lambda *a, **k: None)
     monkeypatch.setattr(labor, "extract_text", lambda m: m.text)
     monkeypatch.setattr(labor, "model_for", lambda k: "m")
     return seen
@@ -422,7 +422,7 @@ def _capture_prompt(monkeypatch):
         prompts.append(kw["messages"][0]["content"])
         return _Msg(HEADER + "\n2026-10-05,Monday,Ana,Server,11:00am,3:00pm,4,x\n---SUMMARY---\n- a")
     monkeypatch.setattr(labor, "create_with_retry", fake_create)
-    monkeypatch.setattr(labor, "get_client", lambda: None)
+    monkeypatch.setattr(labor, "get_client", lambda *a, **k: None)
     monkeypatch.setattr(labor, "extract_text", lambda m: m.text)
     monkeypatch.setattr(labor, "model_for", lambda k: "m")
     return prompts

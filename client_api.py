@@ -42,7 +42,10 @@ MAX_CSV_ROWS = 25_000
 # rounds. Sized above gunicorn's --threads 4 so it never rejects a request
 # the server could actually serve today, while still being a real ceiling if
 # the worker count changes.
-ASK_MAX_CONCURRENT = int(os.getenv("ASK_MAX_CONCURRENT", "8"))
+# Each open Ask stream holds a request thread for its whole tool loop. The
+# ceiling must stay under gunicorn's 4 threads, or four people asking at
+# once leave nothing to serve login or /health (AI-1).
+ASK_MAX_CONCURRENT = min(int(os.getenv("ASK_MAX_CONCURRENT", "2")), 3)
 _ASK_SLOTS = threading.BoundedSemaphore(ASK_MAX_CONCURRENT)
 
 def _cache_get(key):

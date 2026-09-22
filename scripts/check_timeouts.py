@@ -41,6 +41,11 @@ SKIP_DIRS = {".git", "__pycache__", ".claude", "node_modules", "ios",
 HTTP_MODULES = {"requests", "_requests", "httpx", "_httpx"}
 VERBS = {"get", "post", "put", "delete", "patch", "head", "options", "request"}
 
+# SDK clients that make HTTP calls: constructing one must name timeout= and
+# max_retries= (retrying belongs to ai_utils.create_with_retry alone).
+SDK_MODULES = {"anthropic", "_anthropic"}
+SDK_CLIENTS = {"Anthropic", "AsyncAnthropic"}
+
 # If a pre-configured session/client with a baked-in timeout is ever added,
 # name it here — a bare verb on it is then fine.
 _SESSION_FACTORIES = set()
@@ -62,6 +67,16 @@ def offenders():
                 if not isinstance(node, ast.Call):
                     continue
                 fn = node.func
+                # An SDK client is an outbound HTTP call too: anthropic's
+                # default read timeout is 600 s with 2 hidden retries, which
+                # is four request threads held for ten minutes (AI-1).
+                if (isinstance(fn, ast.Attribute) and fn.attr in SDK_CLIENTS
+                        and isinstance(fn.value, ast.Name) and fn.value.id in SDK_MODULES):
+                    kws = {k.arg for k in node.keywords if k.arg}
+                    if "timeout" not in kws or "max_retries" not in kws:
+                        rel = os.path.relpath(path, ROOT)
+                        out.append((rel, node.lineno, f"{fn.value.id}.{fn.attr}"))
+                    continue
                 if not isinstance(fn, ast.Attribute) or fn.attr not in VERBS:
                     continue
                 owner = fn.value

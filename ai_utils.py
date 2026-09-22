@@ -421,20 +421,34 @@ _clients = {}
 _clients_lock = threading.Lock()
 
 
+# The SDK's defaults are a 600 s read timeout and 2 retries of its own,
+# inside create_with_retry's 2. With gunicorn's 4 request threads, four slow
+# calls held the whole platform — login, the portal, webhooks and /health —
+# for up to half an hour (AI-1). A request-path call waits at most this long
+# for the answer; background work that writes long outputs (the schedule)
+# asks for more explicitly.
+DEFAULT_AI_TIMEOUT = 90.0
+AI_CONNECT_TIMEOUT = 5.0
+
+
 def get_client(timeout=None):
     """The shared anthropic.Anthropic for the current API key, built on first
     use rather than at import, so load_dotenv has run and a rotated key is
     picked up by the next call. One client per (key, timeout); the SDK's
-    client is thread-safe and pools connections."""
+    client is thread-safe and pools connections.
+
+    Always bounded (DEFAULT_AI_TIMEOUT unless a caller names its own) and
+    never retrying on its own: create_with_retry is the one retry loop, so
+    a failing call is attempted retries+1 times, not (retries+1) x 3."""
     key = os.getenv("ANTHROPIC_API_KEY") or ""
-    cache_key = (key, timeout)
+    read = float(timeout if timeout is not None else DEFAULT_AI_TIMEOUT)
+    cache_key = (key, read)
     with _clients_lock:
         c = _clients.get(cache_key)
         if c is None:
-            kw = {"api_key": key}
-            if timeout is not None:
-                kw["timeout"] = timeout
-            c = anthropic.Anthropic(**kw)
+            c = anthropic.Anthropic(api_key=key,
+                                    timeout=anthropic.Timeout(read, connect=AI_CONNECT_TIMEOUT),
+                                    max_retries=0)
             _clients[cache_key] = c
         return c
 
