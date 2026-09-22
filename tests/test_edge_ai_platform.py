@@ -159,7 +159,6 @@ def test_a_rate_limit_is_attempted_exactly_retries_plus_one_times():
     assert len(client.calls) == 3
 
 
-@pytest.mark.xfail(strict=True, reason="AI-13: every concurrent caller passes the expired breaker, not just one probe")
 def test_only_one_caller_probes_a_breaker_whose_window_just_expired(monkeypatch):
     monkeypatch.setattr(ai_utils, "CB_OPEN_SECONDS", 0)
     for _ in range(ai_utils.CB_FAILURE_THRESHOLD):
@@ -194,7 +193,6 @@ def test_every_default_model_is_sent_a_thinking_config_it_accepts(purpose, monke
     assert client.calls[0]["thinking"] == {"type": "disabled"}
 
 
-@pytest.mark.xfail(strict=True, reason="AI-14: thinking disabled is forced on models that reject it with a 400")
 @pytest.mark.parametrize("model", ["claude-opus-5-5", "claude-fable-5"])
 def test_a_model_that_rejects_disabled_thinking_is_not_sent_it(model, monkeypatch):
     monkeypatch.setenv("ASK_CAVNAR_MODEL", model)
@@ -205,7 +203,6 @@ def test_a_model_that_rejects_disabled_thinking_is_not_sent_it(model, monkeypatc
 
 # ── AI-12: pricing ──────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="AI-12: the ledger prices Sonnet 5 at $3/$15, list is $2/$10")
 def test_sonnet_5_is_priced_at_its_list_price():
     assert ai_utils._estimate_cost("claude-sonnet-5", 1_000_000, 1_000_000) == pytest.approx(12.0)
 
@@ -215,13 +212,11 @@ def test_every_default_model_has_its_own_pricing_row():
         assert default in ai_utils._MODEL_PRICING, f"{purpose} default {default} has no price"
 
 
-@pytest.mark.xfail(strict=True, reason="AI-12: an alias id (claude-haiku-4-5) falls back to Sonnet-tier pricing")
 def test_a_model_alias_is_priced_like_its_family():
     dated = ai_utils._estimate_cost("claude-haiku-4-5-20251001", 1_000_000, 1_000_000)
     assert ai_utils._estimate_cost("claude-haiku-4-5", 1_000_000, 1_000_000) == pytest.approx(dated)
 
 
-@pytest.mark.xfail(strict=True, reason="AI-12: the global backstop grows $200 per client with no absolute ceiling")
 def test_the_global_backstop_does_not_scale_without_limit(monkeypatch):
     monkeypatch.setattr(ai_utils, "_paying_client_count", lambda db_path=None: 100_000)
     assert ai_utils.global_monthly_budget() < 100_000 * ai_utils.AI_GLOBAL_PER_CLIENT_USD
@@ -229,7 +224,6 @@ def test_the_global_backstop_does_not_scale_without_limit(monkeypatch):
 
 # ── AI-10: the budget cache is pruned ───────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="AI-10: _budget_cache keeps a key per restaurant per past day, forever")
 def test_the_budget_cache_keeps_only_current_period_keys(db_path):
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc)
@@ -274,7 +268,6 @@ def test_a_refusal_is_still_recorded_in_the_ledger(db_path):
 
 # ── AI-33: Stripe calls are bounded ─────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="AI-33: Stripe SDK calls run on its default (~80s) timeout; nothing configures it")
 def test_the_stripe_http_client_is_configured_with_a_short_timeout():
     found = []
     for name in os.listdir(ROOT):

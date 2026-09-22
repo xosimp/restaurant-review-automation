@@ -2546,7 +2546,7 @@ def billing_info(current_user):
         return jsonify(ok=False, reason="no_key")
 
     try:
-        _stripe.api_key = stripe_key
+        _stripe = config.stripe_api(stripe_key)
         # Get active subscriptions for this customer
         subs = _stripe.Subscription.list(
             customer=restaurant.stripe_customer_id,

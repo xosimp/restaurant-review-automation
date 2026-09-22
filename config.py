@@ -45,3 +45,25 @@ def google_places_key() -> str:
     """The Google Places key. Two variable names have been used over time;
     either works, GOOGLE_PLACES_API_KEY first."""
     return os.getenv("GOOGLE_PLACES_API_KEY") or os.getenv("GOOGLE_API_KEY") or ""
+
+
+def stripe_api(key=None):
+    """The stripe module with the secret key set and a bounded HTTP client.
+
+    Stripe's SDK waits ~80 s per request by default and retries on its own,
+    and the billing-page calls run several of those back to back inside one
+    of the four request threads (AI-33). Every caller that talks to Stripe
+    goes through here, so one place bounds them all: 10 s per request and a
+    single SDK retry. The HTTP client is installed once per process; a fake
+    module in a test that has no RequestsClient is left as it is."""
+    import stripe
+    stripe.api_key = key if key is not None else os.getenv("STRIPE_SECRET_KEY", "")
+    if not getattr(stripe, "_cavnar_bounded", False):
+        try:
+            client_cls = getattr(stripe, "RequestsClient", None) or stripe.http_client.RequestsClient
+            stripe.default_http_client = client_cls(timeout=10)
+            stripe.max_network_retries = 1
+            stripe._cavnar_bounded = True
+        except Exception:
+            pass
+    return stripe

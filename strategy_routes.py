@@ -1436,7 +1436,8 @@ def _stripe_client():
     if not key:
         return None
     import stripe as _stripe
-    _stripe.api_key = key
+    import config as _config
+    _stripe = _config.stripe_api(key)
     return _stripe
 
 

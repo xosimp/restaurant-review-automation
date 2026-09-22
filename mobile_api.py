@@ -5399,7 +5399,7 @@ def _do_mobile_billing(restaurant_id):
 
     try:
         import stripe as _stripe
-        _stripe.api_key = stripe_key
+        _stripe = config.stripe_api(stripe_key)
         subs = _stripe.Subscription.list(customer=restaurant.stripe_customer_id, status="active", limit=5)
         if not subs.data:
             subs = _stripe.Subscription.list(customer=restaurant.stripe_customer_id, status="trialing", limit=5)

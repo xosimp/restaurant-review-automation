@@ -1408,7 +1408,7 @@ def create_stripe_checkout(module_count: int, owner_email: str,
     if module_count == 0:
         return None
 
-    _stripe.api_key = stripe_key
+    _stripe = config.stripe_api(stripe_key)
     from pricing import plan_for
     from pricing import money, RETAINER_START_DAYS
     plan = plan_for(module_count)

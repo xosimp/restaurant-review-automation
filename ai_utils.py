@@ -54,6 +54,11 @@ AI_MONTHLY_BUDGET_USD = float(os.getenv("AI_MONTHLY_BUDGET_USD", "150"))
 # business instead of throttling it.
 AI_GLOBAL_MONTHLY_BUDGET_USD = float(os.getenv("AI_GLOBAL_MONTHLY_BUDGET_USD", "1500"))
 AI_GLOBAL_PER_CLIENT_USD = float(os.getenv("AI_GLOBAL_PER_CLIENT_USD", "200"))
+# ...but never above this. A backstop that grows without limit stops being a
+# backstop (AI-12): at a few hundred clients a runaway loop could spend tens
+# of thousands of dollars before the "shared ceiling" noticed. Raising it is
+# a deliberate Railway variable, not a side effect of signing clients.
+AI_GLOBAL_MAX_MONTHLY_BUDGET_USD = float(os.getenv("AI_GLOBAL_MAX_MONTHLY_BUDGET_USD", "10000"))
 
 
 def _paying_client_count(db_path=None):
@@ -76,12 +81,16 @@ def global_monthly_budget(db_path=None):
     Never below AI_GLOBAL_MONTHLY_BUDGET_USD, so a small client base still has
     a real backstop; above that it is AI_GLOBAL_PER_CLIENT_USD per paying
     client, so winning a client raises the pool rather than shrinking
-    everyone's share of it. A budget of 0 still disables the ceiling.
+    everyone's share of it — up to AI_GLOBAL_MAX_MONTHLY_BUDGET_USD, the
+    absolute ceiling. A budget of 0 still disables the ceiling.
     """
     if not AI_GLOBAL_MONTHLY_BUDGET_USD:
         return 0.0
-    return max(AI_GLOBAL_MONTHLY_BUDGET_USD,
-               _paying_client_count(db_path) * AI_GLOBAL_PER_CLIENT_USD)
+    scaled = max(AI_GLOBAL_MONTHLY_BUDGET_USD,
+                 _paying_client_count(db_path) * AI_GLOBAL_PER_CLIENT_USD)
+    if AI_GLOBAL_MAX_MONTHLY_BUDGET_USD:
+        scaled = min(scaled, max(AI_GLOBAL_MAX_MONTHLY_BUDGET_USD, AI_GLOBAL_MONTHLY_BUDGET_USD))
+    return scaled
 
 # Unpaid accounts — demos, prospects, anything not billing_status active or
 # internal — get their own, much smaller ceilings, AND their spend is excluded
@@ -168,6 +177,24 @@ def _spend_since(sql_window, restaurant_id=None, db_path=None, paid_only=False):
         conn.close()
 
 
+def _current_windows():
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    return now.strftime("%Y-%m-%d 00:00:00"), now.strftime("%Y-%m-01 00:00:00")
+
+
+def _prune_budget_cache(current_windows):
+    """Drop every cached total whose window is not a current one (AI-10).
+
+    Keys are (scope, window-start); yesterday's day key is never read again,
+    but nothing removed it, so the dict grew by one key per restaurant per day
+    for the life of the process — and note_ai_spend walks the whole dict on
+    every AI call."""
+    for key in list(_budget_cache):
+        if key[1] not in current_windows:
+            _budget_cache.pop(key, None)
+
+
 def _cached_spend(cache_key, sql_window, restaurant_id, db_path, paid_only=False):
     now = time.time()
     hit = _budget_cache.get(cache_key)
@@ -184,6 +211,7 @@ def ai_budget_status(restaurant_id=None, db_path=None):
     now = datetime.now(timezone.utc)
     day = now.strftime("%Y-%m-%d 00:00:00")
     month = now.strftime("%Y-%m-01 00:00:00")
+    _prune_budget_cache((day, month))
     paid = _is_paid_account(restaurant_id, db_path)
     out = {
         "global_month": {"spend": _cached_spend(("g", month), month, None, db_path, paid_only=True),
@@ -255,6 +283,7 @@ def note_ai_spend(cost_usd, restaurant_id=None):
     cache window still trips the ceiling."""
     if not cost_usd:
         return
+    _prune_budget_cache(_current_windows())
     for key in list(_budget_cache):
         if key[0] in ("g", restaurant_id):
             ts, spend = _budget_cache[key]
@@ -290,10 +319,22 @@ class AIProviderDown(RuntimeError):
     """Raised instead of calling a provider that just failed repeatedly."""
 
 
+# How long one probe may hold the half-open breaker before another caller is
+# allowed to try. A probe whose thread died without reporting must not keep
+# the breaker shut forever; a healthy probe reports within its own bounded
+# call (DEFAULT_AI_TIMEOUT per attempt).
+CB_PROBE_SECONDS = int(os.getenv("AI_BREAKER_PROBE_SECONDS", "120"))
+
+_PROVIDER_DOWN_MESSAGE = ("Cavnar's AI provider is not responding right now. Nothing is lost — "
+                          "try again in a minute.")
+
+
 def breaker_state(provider="anthropic"):
     """(state, seconds_remaining) — "closed", "open" or "probing"."""
     with _breaker_lock:
         b = _breakers.get(provider)
+        if b and b.get("probe_until", 0) > time.time():
+            return "probing", 0
         if not b or not b.get("open_until"):
             return "closed", 0
         remaining = b["open_until"] - time.time()
@@ -303,23 +344,43 @@ def breaker_state(provider="anthropic"):
 
 
 def _breaker_check(provider):
-    """Raise if the breaker is open. Lets exactly one probe through after."""
+    """Raise if the breaker is open. Lets exactly one probe through after.
+
+    Single-flight (AI-13): the first caller after the window expires becomes
+    the probe and marks the breaker half-open; every other caller is refused
+    until that probe reports (or CB_PROBE_SECONDS pass without a report).
+    Clearing open_until alone let every concurrent caller through as "the
+    probe", so a provider that was still down took the whole burst again."""
+    now = time.time()
     with _breaker_lock:
         b = _breakers.get(provider)
-        if not b or not b.get("open_until"):
+        if not b:
             return
-        if time.time() < b["open_until"]:
-            raise AIProviderDown(
-                "Cavnar's AI provider is not responding right now. Nothing is lost — "
-                "try again in a minute.")
+        if b.get("probe_until", 0) > now:
+            raise AIProviderDown(_PROVIDER_DOWN_MESSAGE)
+        if not b.get("open_until"):
+            return
+        if now < b["open_until"]:
+            raise AIProviderDown(_PROVIDER_DOWN_MESSAGE)
         # Window expired: allow this one call through as the probe.
         b["open_until"] = 0.0
         b["failures"] = CB_FAILURE_THRESHOLD - 1
+        b["probe_until"] = now + CB_PROBE_SECONDS
+
+
+def _breaker_release_probe(provider):
+    """The call ended without a verdict on the provider's health (a 400, a
+    malformed request) — the provider answered, so stop refusing others."""
+    with _breaker_lock:
+        b = _breakers.get(provider)
+        if b:
+            b["probe_until"] = 0.0
 
 
 def _breaker_record(provider, ok):
     with _breaker_lock:
         b = _breakers.setdefault(provider, {"failures": 0, "open_until": 0.0})
+        b["probe_until"] = 0.0
         if ok:
             b["failures"] = 0
             b["open_until"] = 0.0
@@ -411,6 +472,30 @@ MODELS = {
 }
 
 
+# Models on which thinking cannot be turned off: an explicit
+# {"type": "disabled"} is a 400 on every call (AI-14). Thinking is always on
+# for these, so the parameter is omitted; extract_text already skips the
+# thinking blocks they return. Prefix-matched so point releases are covered.
+_THINKING_ALWAYS_ON_PREFIXES = ("claude-fable", "claude-mythos", "claude-opus-5-5")
+
+
+def accepts_disabled_thinking(model, kwargs=None):
+    """Whether `model` accepts thinking={"type": "disabled"} on this call.
+
+    Forcing it on a model that rejects it turned one env override into every
+    AI feature failing with a 400 — and a 400 is not retryable, so the breaker
+    never opened to say so. Claude Opus 5 accepts it only at effort high or
+    below."""
+    m = (model or "").lower()
+    if m.startswith(_THINKING_ALWAYS_ON_PREFIXES):
+        return False
+    if m.startswith("claude-opus-5"):
+        effort = ((kwargs or {}).get("output_config") or {}).get("effort")
+        if effort in ("xhigh", "max"):
+            return False
+    return True
+
+
 def model_for(purpose: str) -> str:
     """The model a call site uses: its env override if set, else its default."""
     env, default = MODELS[purpose]
@@ -469,7 +554,8 @@ def create_with_retry(client, retries=2, backoff=1.5, restaurant_id=None, action
     spend — pass restaurant_id/action (both optional) and usage is recorded
     to the ai_usage table on success. Neither is forwarded to the Anthropic
     API; they're popped off before reaching client.messages.create()."""
-    kwargs.setdefault("thinking", {"type": "disabled"})
+    if "thinking" not in kwargs and accepts_disabled_thinking(kwargs.get("model"), kwargs):
+        kwargs["thinking"] = {"type": "disabled"}
     # anthropic>=0.105 (what Railway installs) rejects `temperature` outright
     # — TypeError before the request is even made — and current Sonnet
     # models refuse it server-side anyway. Strip it here so no caller can
@@ -519,6 +605,7 @@ def create_with_retry(client, retries=2, backoff=1.5, restaurant_id=None, action
             # a failed AI call the admin console should see next to the
             # successes, in the same table.
             _log_failure_safe(e, kwargs.get("model", "unknown"), restaurant_id, action)
+            _breaker_release_probe("anthropic")
             raise
 
 
@@ -613,12 +700,12 @@ def _ensure_usage_columns(conn):
     except Exception:
         pass
 
-# $ per million tokens (input, output). Anthropic pricing as of this writing —
-# update here if it changes; unknown models fall back to Sonnet-tier pricing
-# so a forgotten update under-tracks rather than crashes.
+# $ per million tokens (input, output), Anthropic list prices — update here if
+# they change. Sonnet 5 was recorded at $3/$15 (the Sonnet 4.x price) against
+# a list price of $2/$10, so every budget tripped 50% early (AI-12).
 _MODEL_PRICING = {
     "claude-haiku-4-5-20251001": (1.00, 5.00),
-    "claude-sonnet-5": (3.00, 15.00),
+    "claude-sonnet-5": (2.00, 10.00),
     # invoices.py reads prices off photos with the most capable model.
     "claude-opus-5": (5.00, 25.00),
     # Perplexity sonar, per million tokens. Audit #7 found this vendor was
@@ -689,9 +776,38 @@ _CACHE_WRITE_MULTIPLIER = 1.25
 _CACHE_READ_MULTIPLIER = 0.10
 
 
+# A model id the table does not name exactly — an alias (claude-haiku-4-5), a
+# dated snapshot, an env override — is priced by its family, longest prefix
+# first. It used to fall straight to Sonnet-4 pricing, so a Haiku alias was
+# over-counted 3x and a Fable override under-counted 3x (AI-12).
+_FAMILY_PRICING = (
+    ("claude-opus-5-5", (4.00, 20.00)),
+    ("claude-opus-5", (5.00, 25.00)),
+    ("claude-opus-4", (5.00, 25.00)),
+    ("claude-sonnet-5", (2.00, 10.00)),
+    ("claude-sonnet-4", (3.00, 15.00)),
+    ("claude-haiku-4", (1.00, 5.00)),
+    ("claude-fable", (10.00, 50.00)),
+    ("claude-mythos", (10.00, 50.00)),
+)
+# No family matched: price it like the most expensive family, so the budget
+# over-counts an unknown model rather than letting it run under-counted.
+_UNKNOWN_MODEL_PRICING = (10.00, 50.00)
+
+
+def _price_for(model):
+    if model in _MODEL_PRICING:
+        return _MODEL_PRICING[model]
+    m = (model or "").lower()
+    for prefix, rates in _FAMILY_PRICING:
+        if m.startswith(prefix):
+            return rates
+    return _UNKNOWN_MODEL_PRICING
+
+
 def _estimate_cost(model, input_tokens, output_tokens,
                    cache_write_tokens=0, cache_read_tokens=0):
-    in_rate, out_rate = _MODEL_PRICING.get(model, (3.00, 15.00))
+    in_rate, out_rate = _price_for(model)
     return ((input_tokens / 1_000_000) * in_rate
             + (output_tokens / 1_000_000) * out_rate
             + (cache_write_tokens / 1_000_000) * in_rate * _CACHE_WRITE_MULTIPLIER

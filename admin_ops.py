@@ -943,7 +943,8 @@ def billing():
     if key:
         try:
             import stripe as _stripe
-            _stripe.api_key = key
+            import config as _config
+            _stripe = _config.stripe_api(key)
             for r in recs:
                 cid = r["billing"]["stripe_customer_id"]
                 if not cid:
