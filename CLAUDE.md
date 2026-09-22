@@ -5,8 +5,8 @@ file is loaded automatically at the start of every session.
 
 ## Where the architecture lives
 
-These eight files in the repo root are the authoritative reference. Read the
-relevant one before exploring code:
+These files are the authoritative reference. Read the relevant one before
+exploring code:
 
 | File | What it covers |
 |---|---|
@@ -19,6 +19,10 @@ relevant one before exploring code:
 | `DESIGN_SYSTEM.md` | UI/UX: tokens, type, spacing, components, motion |
 | `TESTING.md` | How the suite is organised |
 | `PROJECT_CONTEXT.md` / `ROADMAP.md` | Product state and direction |
+| `INTELLIGENCE_ENGINE.md` | The cross-restaurant learning layer and its privacy rules |
+| `docs/ops/SECURITY.md`, `docs/ops/RECOVERY.md`, `docs/ops/RAILWAY_SCHEDULER_SPLIT.md`, `docs/ops/PIN_PEPPER_RUNBOOK.md` | Controls, the emergency runbook, the deploy shape, the PIN pepper |
+| `docs/plans/` | Designs not yet built (task sheets, Back Office) |
+| `docs/history/` | Superseded material kept for the record; nothing in it is live |
 
 ---
 
@@ -117,9 +121,11 @@ A deletion is only "verified" when the trace is written down alongside it.
   Colours come from CSS variables only, enforced by `scripts/check_colors.py`.
   Every web button carries `.cbtn`, enforced by `tests/test_button_system.py`.
 - **New `restaurants` column = 4 touch points**: the `Restaurant` dataclass,
-  `init_db()`'s migration list, `update_restaurant()`'s `allowed` whitelist,
-  and `get_restaurant()`'s hydration. Miss the whitelist and writes silently
-  no-op.
+  a migration entry (either `init_db()`'s ALTER list or `ensure_columns()`'s
+  tuple list — both run at boot; pick one), `update_restaurant()`'s `allowed`
+  whitelist, and `get_restaurant()`'s hydration. Miss the whitelist and writes
+  silently no-op — `tests/test_models.py` now asserts every `al_*`/`alert_*`
+  dataclass field is whitelisted.
 - **Targeted tests by default.** Run the full suite once before pushing, or
   when asked — not after every edit.
 - **`get_restaurant()` is memoised per Flask request**, and only per request —
@@ -127,8 +133,10 @@ A deletion is only "verified" when the trace is written down alongside it.
   long-running job sees rows change under it. Any new write path to
   `restaurants` outside `update_restaurant` must call
   `models._invalidate_request_cache(rid)`.
-- **Never put schema DDL on a request or per-call path.** `init_db()` owns
-  every table. `ai_utils._ensure_usage_schema` is the pattern where a lazy
+- **Never put schema DDL on a request or per-call path.** Every table is
+  created at boot — by `init_db()` or by one of the `init_*` functions
+  `hosted_dashboard.py` calls right after it (`auth`, `push`, `webhooks`,
+  `guest_marketing`, `sales_audits`, `ops`). `ai_utils._ensure_usage_schema` is the pattern where a lazy
   table is unavoidable: once per database per process, with a self-healing
   retry if a write later fails on a missing column.
 - **The scheduler only runs on Railway** (`scheduler.scheduling_allowed()`):
@@ -139,14 +147,15 @@ A deletion is only "verified" when the trace is written down alongside it.
   **Never run it as a separate Railway service**: volumes cannot be shared
   between services, so it would schedule against an empty database while the
   real jobs stopped. `worker.py` is only valid as a second process in the same
-  service — see `RAILWAY_SCHEDULER_SPLIT.md`. The single-runner guarantee is
+  service — see `docs/ops/RAILWAY_SCHEDULER_SPLIT.md`. The single-runner guarantee is
   `ops.acquire_scheduler_lease()`, and the lease lives in the SQLite file.
 - **Do not raise gunicorn `--workers` past 1** until these process-local
-  dicts are moved into the database: `auth_routes._login_attempts` (login
-  brute-force limiter), `client_api._order_send_last` (supplier-email
-  cooldown) and `ai_utils._ai_call_log` (AI rate limit). Each worker gets its
-  own copy, so two workers silently double every one of those limits — the
-  first is a security control. Railway usage (Sep 2026) showed ~19 vCPU-minutes
+  dicts are moved into the database: `client_api._order_send_last`
+  (supplier-email cooldown) and `ai_utils._ai_call_log` (AI rate limit).
+  Each worker gets its own copy, so two workers silently double both limits.
+  (The login brute-force limiter is durable now — `security.login_throttled`
+  on the `login_attempts` table; `auth_routes._login_attempts` is only its
+  fail-closed fallback.) Railway usage (Sep 2026) showed ~19 vCPU-minutes
   of CPU for the whole billing period, so there is no load reason to do it yet.
 - **Every outbound HTTP call names a timeout**, enforced by
   `scripts/check_timeouts.py`. With `--workers 1 --threads 4`, one call
@@ -156,7 +165,7 @@ A deletion is only "verified" when the trace is written down alongside it.
   cursor in `job_cursors` so the next pass starts where the last one
   stopped. A time bound without a cursor is worse than no bound — it starves
   the same tail every pass.
-- **Recovery lives in `RECOVERY.md`.** The local backup snapshot is
+- **Recovery lives in `docs/ops/RECOVERY.md`.** The local backup snapshot is
   deliberately NOT redacted (it never leaves the volume and is the restore
   artifact); only the emailed copy is. Do not reintroduce redaction on the
   local path.

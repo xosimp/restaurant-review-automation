@@ -67,7 +67,7 @@ railway ssh -- sqlite3 /app/data/reviews.db "PRAGMA integrity_check;"
 
 ### 2. Find a snapshot
 
-Backups run at 2am and are kept `BACKUP_RETAIN_DAYS` (14) days:
+Backups run at 2am and are kept `BACKUP_RETAIN_DAYS` days (14 in production; the code default is 7):
 
 ```bash
 railway ssh -- ls -lh /app/data/backups/

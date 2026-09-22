@@ -2,16 +2,16 @@
 
 What protects the platform, where each control lives, and the environment
 variables it depends on. Written after the enterprise security audit
-(Sep 2026). Read `RECOVERY.md` for what to do when something is broken.
+(Sep 2026). Read `RECOVERY.md` (beside this file) for what to do when something is broken.
 
 ## Environment variables the controls depend on
 
 | Variable | Required | What happens without it |
 |---|---|---|
-| `SECRET_KEY` | yes | Flask sessions and signed guest join links fall back to a dev value |
+| `SECRET_KEY` | yes | Flask sessions get a random per-boot key (every deploy logs everyone out); signed guest join links fall back to a dev value; the Google connect state cannot be signed at all (`gmb._state_secret` raises) |
 | `CAVNAR_PIN_PEPPER` | **yes** | Staff PINs **cannot be set** (`auth.set_membership_pin` raises). Existing PINs still verify. |
 | `CREDENTIAL_KEY` | yes (production) | Client OAuth/POS tokens are stored **unencrypted** and a warning is printed once at boot. Generate: `python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
-| `STRIPE_WEBHOOK_SECRET`, `DOCUSIGN_HMAC_KEY` | yes | Webhooks are rejected |
+| `STRIPE_WEBHOOK_SECRET`, `DOCUSIGN_WEBHOOK_SECRET` | yes | Webhooks are rejected |
 | `BACKUP_ENCRYPTION_KEY` | yes | The emailed backup copy is skipped (local snapshots still run) |
 | `ADMIN_REQUIRE_2FA` | opt-in (`1`) | Set it **after** every admin account has enrolled in Account → Security; unset, an admin without two-factor can still open `/admin` |
 | `ALLOW_LEGACY_JOIN_LINKS` | default `1` | `0` retires bare-integer `/join/<id>` links (set once printed QR codes are reissued) |

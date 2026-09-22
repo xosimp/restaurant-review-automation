@@ -64,10 +64,11 @@ catch-up gating fix, which addresses the problem that actually loses work.
 
 ## Worker count — leave it at 1
 
-Three limits live in process memory, so every gunicorn worker keeps its own
-copy and N workers multiply each limit by N:
+Two limits live in process memory, so every gunicorn worker keeps its own
+copy and N workers multiply each limit by N (the login brute-force limiter
+used to be a third; it is durable now, in `security.py`'s `login_attempts`
+table):
 
-  * `auth_routes._login_attempts` — the login brute-force limiter
   * `client_api._order_send_last` — the supplier-email cooldown, so a double
     tap can email a supplier twice
   * `ai_utils._ai_call_log` — the per-user AI rate limit
