@@ -2295,6 +2295,24 @@ def set_morning_brief_pref(restaurant_id, user_id, enabled, db_path: str = DB_PA
         conn.close()
 
 
+_last_touch_failure = [0.0]
+
+
+def _note_session_touch_failure(e):
+    """A session could not record its activity: the database is refusing
+    writes. The request carries on; ops hears about it at most once a
+    minute rather than once per request."""
+    import time as _t
+    if _t.monotonic() - _last_touch_failure[0] < 60:
+        return
+    _last_touch_failure[0] = _t.monotonic()
+    try:
+        import ops
+        ops.capture(e, job="session_last_active", context="the database refused a write; requests continue")
+    except Exception:
+        pass
+
+
 def get_session_user(token: str, db_path: str = DB_PATH) -> Optional[dict]:
     if not token:
         return None
@@ -2321,9 +2339,13 @@ def get_session_user(token: str, db_path: str = DB_PATH) -> Optional[dict]:
             la = datetime.fromisoformat(last_active[:19])  # always naive UTC, drops any tz suffix
             now_utc = datetime.utcnow()
             if now_utc - la > timedelta(hours=INACTIVITY_HOURS):
-                # Session expired due to inactivity — delete it
-                conn.execute("DELETE FROM sessions WHERE token=?", (hash_session_token(token),))
-                conn.commit()
+                # Session expired due to inactivity — delete it. The session
+                # is refused whether or not the delete can be written.
+                try:
+                    conn.execute("DELETE FROM sessions WHERE token=?", (hash_session_token(token),))
+                    conn.commit()
+                except Exception as _de:
+                    _note_session_touch_failure(_de)
                 conn.close()
                 return None
         except Exception as e:
@@ -2346,14 +2368,37 @@ def get_session_user(token: str, db_path: str = DB_PATH) -> Optional[dict]:
     # request. Sliding the deadline on each use keeps the same bound (an
     # abandoned view-as session still dies within 30 minutes of the last real
     # request) without punishing a longer session that stays active.
-    if (row["device_type"] or "") == "admin-view-as":
-        conn.execute(
-            "UPDATE sessions SET last_active=datetime('now'), expires_at=datetime('now','+30 minutes') WHERE token=?",
-            (hash_session_token(token),)
-        )
-    else:
-        conn.execute("UPDATE sessions SET last_active=datetime('now') WHERE token=?", (hash_session_token(token),))
-    conn.commit()
+    #
+    # Best-effort and at most once a minute per session (DATA-1). This was an
+    # unguarded write + commit on every authenticated request, so a full,
+    # read-only or locked database failed every logged-in request — reads
+    # included — after a 30 s busy wait each, while /health stayed green.
+    # A minute of slack is nothing against an 8-hour inactivity window.
+    _touch_due = True
+    try:
+        from datetime import datetime as _dt_la
+        if ((row["device_type"] or "") != "admin-view-as" and last_active
+                and (_dt_la.utcnow() - _dt_la.fromisoformat(last_active[:19])).total_seconds() < 60):
+            _touch_due = False
+    except Exception:
+        _touch_due = True
+    if _touch_due:
+        try:
+            conn.execute("PRAGMA busy_timeout=1500")
+            if (row["device_type"] or "") == "admin-view-as":
+                conn.execute(
+                    "UPDATE sessions SET last_active=datetime('now'), expires_at=datetime('now','+30 minutes') WHERE token=?",
+                    (hash_session_token(token),)
+                )
+            else:
+                conn.execute("UPDATE sessions SET last_active=datetime('now') WHERE token=?", (hash_session_token(token),))
+            conn.commit()
+        except Exception as e:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            _note_session_touch_failure(e)
     user = dict(row)
     acting_rid = (user.get("active_restaurant_id")
                   if user.get("role") == "owner" and user.get("active_restaurant_id")

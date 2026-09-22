@@ -160,6 +160,12 @@ Writes fail, reads succeed, and **every fail-open guard in the system keeps
 failing open**. This looks like a hundred unrelated small errors, not one
 cause. `/health` names it directly.
 
+People already signed in keep reading: a session's `last_active` stamp is
+best-effort and written at most once a minute, so a refused write no longer
+fails the request (a `session_last_active` entry in the error log says the
+database is refusing writes). **Nobody can sign in** — a new session is a
+write — and every save, draft and send fails until space is freed.
+
 1. `railway ssh -- df -h /app/data`
 2. Largest offenders are usually `backups/` and the WAL:
    ```bash

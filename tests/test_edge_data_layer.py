@@ -85,8 +85,6 @@ def test_an_authenticated_read_works_on_a_healthy_database(web):
     assert r.status_code == 200, r.get_data(as_text=True)[:300]
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-1: get_session_user writes sessions.last_active unguarded, so a "
-                                       "database refusing writes 500s every logged-in request, reads included")
 def test_a_database_refusing_writes_still_serves_authenticated_reads(web, db_path, monkeypatch):
     base = sqlite3.connect
 
