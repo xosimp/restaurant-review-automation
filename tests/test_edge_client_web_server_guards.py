@@ -133,7 +133,6 @@ def test_one_approve_posts_once_and_fires_once(google_review):
     assert calls["webhooks"].count("response.approved") == 1
 
 
-@pytest.mark.xfail(strict=True, reason="CLIENT-16/CLIENT-6: _do_approve is not idempotent — a second approve re-posts to Google and re-fires the webhook and alert")
 def test_a_second_approve_does_not_repost_or_refire(google_review):
     rid, review_id, calls = google_review
     client_api._do_approve(review_id, rid)

@@ -889,6 +889,13 @@ _MAX_QUESTION_LENGTH = 2000
 # rounds, not more; this is headroom for the uncommon one.
 _MAX_TOOL_ROUNDS = 6
 
+# Wall-clock budget for the tool loop (AI-1's per-route half). Each call is
+# bounded by the client's read timeout, but six rounds of them held one of
+# the four request threads for as long as the rounds took. Past this, no new
+# round starts; the model answers with what it has already read.
+import os as _os
+ASK_LOOP_MAX_SECONDS = float(_os.getenv("ASK_LOOP_MAX_SECONDS", "60"))
+
 # The orb states a client can render — the nine hand-tuned motions in the
 # shared orb engine (static/cavnar-orb.js, DesignSystem/CavnarOrb.swift).
 # Every real moment in an Ask Cavnar turn maps onto one of these:
@@ -1071,7 +1078,11 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
         return _strip_leaked_markers(extract_text(msg))
 
     _progress("Thinking", "solving")
-    for _ in range(_MAX_TOOL_ROUNDS):
+    import time as _time
+    _loop_started = _time.time()
+    for _round in range(_MAX_TOOL_ROUNDS):
+        if _round and _time.time() - _loop_started > ASK_LOOP_MAX_SECONDS:
+            break
         message = create_with_retry(
             get_client(),
             model=model,
@@ -1202,7 +1213,8 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
             return (answer, getattr(final, "stop_reason", None) == "max_tokens", proposals,
                     _meta(answer, seen_corpus, tools_used, consulted, depth, restaurant.id))
 
-    # Ran out of rounds — answer with what it has rather than looping.
+    # Ran out of rounds (or of time) — answer with what it has rather than
+    # looping.
     final = create_with_retry(
         get_client(), model=model, max_tokens=max_tokens,
         system=system_blocks, messages=messages,

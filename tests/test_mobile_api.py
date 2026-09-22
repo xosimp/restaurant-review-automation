@@ -1452,6 +1452,8 @@ def test_intel_endpoint_parses_real_json_blob_shape(client, db_path):
         "match_basis": None, "distance_m": None, "price_level": None,
         # 270 reviews is well past the provisional threshold.
         "rating_is_provisional": False,
+        # It has a rating, so it is not an unrated place (MOD-INT-3).
+        "unrated": False,
     }]
     assert data["updated_at"] == "2026-08-01 12:00:00"
     # Google's own all-time rating is what competitor ratings are comparable

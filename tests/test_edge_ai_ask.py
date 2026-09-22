@@ -149,6 +149,24 @@ def test_the_final_call_after_running_out_of_rounds_carries_the_same_tools(db_pa
     assert calls[-1].get("tools") == loop_tools
 
 
+def test_the_tool_loop_stops_starting_rounds_past_its_wall_clock_budget(db_path, monkeypatch):
+    """AI-1's per-route half: once the loop's time is spent, no new tool
+    round starts and the model answers with what it has already read."""
+    rid = _restaurant(db_path)
+    restaurant = models.get_restaurant(rid, db_path=db_path)
+    monkeypatch.setattr(ask_cavnar, "ASK_LOOP_MAX_SECONDS", -1)
+    calls = []
+
+    def fake_create(client, **kw):
+        calls.append(kw)
+        if kw.get("tool_choice") == {"type": "none"}:
+            return _Msg("end_turn", [_Text("Here is what I found.")])
+        return _Msg("tool_use", [_Tool("read_alerts", {}, block_id=f"tu_{len(calls)}")])
+    monkeypatch.setattr(ask_cavnar, "create_with_retry", fake_create)
+    answer, _t, _p, _m = ask_cavnar.ask_with_tools(restaurant, "what alerts do I have")
+    assert len(calls) == 2 and answer == "Here is what I found."
+
+
 def test_every_call_inside_the_tool_loop_offers_tools(db_path, monkeypatch):
     """Control for the two tests above: the loop's own calls are correct."""
     rid = _restaurant(db_path)

@@ -68,8 +68,11 @@ def _paying(db_path, *rids):
 
 
 def _spend(rid, dollars):
-    """Write a row worth roughly `dollars` at Sonnet output pricing."""
-    log_ai_usage(rid, "test", "claude-sonnet-5", 0, int(dollars / 15.00 * 1_000_000))
+    """Write a row worth roughly `dollars` at Sonnet output pricing — read
+    from the ledger's own table, which is Sonnet 5's list $10/M since AI-12
+    (this helper had the old $15 written in)."""
+    out_rate = ai_utils._MODEL_PRICING["claude-sonnet-5"][1]
+    log_ai_usage(rid, "test", "claude-sonnet-5", 0, int(dollars / out_rate * 1_000_000))
     ai_utils._budget_cache.clear()
 
 
