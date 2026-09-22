@@ -50,17 +50,6 @@ ANNIVERSARY_MONTHS = (3, 6, 12, 24, 36)
 KINDS = ("savings", "anniversary", "response_rate", "goal", "record", "streak")
 
 
-def _table(conn):
-    conn.execute("""CREATE TABLE IF NOT EXISTS milestones (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        restaurant_id INTEGER NOT NULL,
-        kind TEXT NOT NULL, key TEXT NOT NULL, title TEXT NOT NULL,
-        body TEXT, value REAL, data TEXT,
-        notified_at TEXT, seen_at TEXT,
-        created_at TEXT NOT NULL DEFAULT (datetime('now')))""")
-    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_milestones ON milestones(restaurant_id, key)")
-
-
 def fire(restaurant_id, kind, key, title, body=None, value=None, data=None,
          db_path=DB_PATH):
     """Record a milestone if it has never been recorded for this restaurant.
@@ -71,7 +60,6 @@ def fire(restaurant_id, kind, key, title, body=None, value=None, data=None,
     """
     conn = get_conn(db_path)
     try:
-        _table(conn)
         conn.execute(
             "INSERT INTO milestones (restaurant_id, kind, key, title, body, value, data) "
             "VALUES (?,?,?,?,?,?,?)",
@@ -93,7 +81,6 @@ def fire(restaurant_id, kind, key, title, body=None, value=None, data=None,
 def get(restaurant_id, key, db_path=DB_PATH):
     conn = get_conn(db_path)
     try:
-        _table(conn)
         row = conn.execute("SELECT * FROM milestones WHERE restaurant_id=? AND key=?",
                            (restaurant_id, key)).fetchone()
         return dict(row) if row else None
@@ -106,7 +93,6 @@ def get(restaurant_id, key, db_path=DB_PATH):
 def recent(restaurant_id, limit=5, db_path=DB_PATH, unseen_only=False):
     conn = get_conn(db_path)
     try:
-        _table(conn)
         sql = "SELECT * FROM milestones WHERE restaurant_id=?"
         if unseen_only:
             sql += " AND seen_at IS NULL"
@@ -124,7 +110,6 @@ def mark_seen(restaurant_id, key, db_path=DB_PATH):
     still happen the next time they open it."""
     conn = get_conn(db_path)
     try:
-        _table(conn)
         n = conn.execute("UPDATE milestones SET seen_at=datetime('now') "
                          "WHERE restaurant_id=? AND key=? AND seen_at IS NULL",
                          (restaurant_id, key)).rowcount
@@ -139,7 +124,6 @@ def mark_seen(restaurant_id, key, db_path=DB_PATH):
 def mark_notified(restaurant_id, key, db_path=DB_PATH):
     conn = get_conn(db_path)
     try:
-        _table(conn)
         conn.execute("UPDATE milestones SET notified_at=datetime('now') "
                      "WHERE restaurant_id=? AND key=?", (restaurant_id, key))
         conn.commit()

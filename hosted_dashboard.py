@@ -991,18 +991,6 @@ def _do_seed_gia_mia():
                 # Use today as week_end anchor — matches how analyse_inventory saves snapshots
                 _today_gm = _dt_gm_inv.now(_ZI_gm_inv('America/Chicago')).date()
                 _conn_gm_inv = get_conn()
-                _conn_gm_inv.execute("""CREATE TABLE IF NOT EXISTS inventory_history (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        restaurant_id INTEGER NOT NULL,
-                        waste_json TEXT,
-                        week_end TEXT,
-                        saved_at TEXT DEFAULT (datetime('now'))
-                )""")
-                try:
-                        _conn_gm_inv.execute("ALTER TABLE inventory_history ADD COLUMN week_end TEXT")
-                except Exception:
-                        pass
-                _conn_gm_inv.commit()
                 for _wi, (_waste, _items) in enumerate(_gm_inv_weeks):
                         # Go back 5,4,3,2,1,0 weeks from today — same cadence as real weekly uploads
                         _week_end = (_today_gm - _td_gm(weeks=(5 - _wi))).isoformat()

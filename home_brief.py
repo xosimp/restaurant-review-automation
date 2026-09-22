@@ -28,33 +28,6 @@ _CACHE_TTL = 60  # seconds — a refresh within a minute costs nothing
 _REVIEW_FETCH_HOURS_CT = (8, 12, 16, 20)  # scheduler.py's review_fetch cadence
 _DISMISS_DAYS = 14  # a dismissed recommendation stays gone this long, then can resurface if still true
 
-_DISMISS_SQL = """
-CREATE TABLE IF NOT EXISTS home_dismissals (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    restaurant_id INTEGER NOT NULL,
-    key TEXT NOT NULL,
-    kind TEXT NOT NULL DEFAULT 'recommendation',
-    dismissed_by INTEGER,
-    dismissed_at TEXT NOT NULL DEFAULT (datetime('now')),
-    expires_at TEXT NOT NULL,
-    times INTEGER NOT NULL DEFAULT 1,
-    UNIQUE(restaurant_id, key) ON CONFLICT REPLACE
-)
-"""
-# The row is REPLACED on a repeat hide (one row per key), so the count of
-# hides has to ride on the row itself. Existing tables gain the column at
-# boot (init_db); this is the same guard for a table created lazily before.
-_DISMISS_TIMES_ALTER = "ALTER TABLE home_dismissals ADD COLUMN times INTEGER NOT NULL DEFAULT 1"
-
-
-def _ensure_dismissals(conn):
-    conn.execute(_DISMISS_SQL)
-    try:
-        conn.execute(_DISMISS_TIMES_ALTER)
-    except Exception:
-        pass
-
-
 def _safe_readiness(rid, restaurant, r, rstats, labor_live, inv_live, mkt):
     try:
         return readiness(rid, restaurant, r, rstats, labor_live, inv_live, mkt)
@@ -113,7 +86,6 @@ def readiness(rid, restaurant, r, rstats, labor_live, inv_live, mkt):
 
 def _dismissed_keys(conn, rid):
     try:
-        conn.execute(_DISMISS_SQL)
         return {r["key"]: r for r in conn.execute("SELECT key, kind, dismissed_at, expires_at FROM home_dismissals WHERE restaurant_id=? AND expires_at > datetime('now')", (rid,)).fetchall()}
     except Exception:
         return {}
@@ -130,7 +102,6 @@ def times_hidden(conn, rid):
     """{key: how many times it has been hidden, ever}. A recommendation
     hidden twice is a question the product should ask, not re-ask."""
     try:
-        _ensure_dismissals(conn)
         return {r["key"]: int(r["n"] or 1) for r in conn.execute(
             "SELECT key, COALESCE(times, 1) AS n FROM home_dismissals WHERE restaurant_id=?", (rid,)).fetchall()}
     except Exception:
@@ -150,7 +121,6 @@ def dismiss(rid, key, kind="recommendation", user_id=None, days=None, reason=Non
     kind = kind if kind in _DISMISS_DAYS_BY_KIND else "recommendation"
     days = days or _DISMISS_DAYS_BY_KIND[kind]
     conn = get_conn()
-    _ensure_dismissals(conn)
     prior = conn.execute("SELECT COALESCE(times, 1) AS n FROM home_dismissals WHERE restaurant_id=? AND key=?",
                          (rid, key)).fetchone()
     times = (int(prior["n"]) + 1) if prior else 1
@@ -173,7 +143,6 @@ def dismiss(rid, key, kind="recommendation", user_id=None, days=None, reason=Non
 
 def undismiss(rid, key):
     conn = get_conn()
-    conn.execute(_DISMISS_SQL)
     n = conn.execute("DELETE FROM home_dismissals WHERE restaurant_id=? AND key=?", (rid, (key or "").strip()[:120])).rowcount
     conn.commit(); conn.close()
     invalidate(rid)

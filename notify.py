@@ -692,7 +692,6 @@ def _log_alert(restaurant_id: int, alert_type: str, review_id: int = None, db_pa
             # init_db owns these columns now; this is the self-healing retry
             # for a database opened before it ran (ai_utils._ensure_usage_schema
             # is the same pattern). No DDL on the happy path.
-            _ensure_alert_value_column(conn)
             conn.execute(sql, args)
         conn.commit()
     finally:
@@ -767,15 +766,6 @@ def record_notification(restaurant_id: int, alert_type: str, review_id: int = No
         print(f"[notify] could not record {alert_type} for rid={restaurant_id}: {e}")
 
 
-def _ensure_alert_value_column(conn):
-    for ddl in ("ALTER TABLE alert_log ADD COLUMN value REAL",
-                "ALTER TABLE alert_log ADD COLUMN priority INTEGER"):
-        try:
-            conn.execute(ddl)
-        except Exception:
-            pass  # already there
-
-
 def _waste_alert_worsened(restaurant_id: int, total: float, db_path: str = DB_PATH,
                           min_increase_pct: float = 10.0) -> bool:
     """True when this week's flagged waste is meaningfully worse than the
@@ -788,7 +778,6 @@ def _waste_alert_worsened(restaurant_id: int, total: float, db_path: str = DB_PA
     """
     conn = models.get_conn(db_path)
     try:
-        _ensure_alert_value_column(conn)
         row = conn.execute(
             "SELECT value FROM alert_log WHERE restaurant_id=? AND alert_type='food_waste' "
             "AND value IS NOT NULL ORDER BY id DESC LIMIT 1",

@@ -5893,18 +5893,6 @@ def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
     """
     import json as _json_sh
     conn = get_conn(db_path)
-    conn.execute("""CREATE TABLE IF NOT EXISTS schedule_history (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        restaurant_id INTEGER NOT NULL,
-        generated_at TEXT NOT NULL DEFAULT (datetime('now')),
-        week_start TEXT,
-        week_end TEXT,
-        hours_scheduled REAL,
-        hours_budget REAL,
-        labor_target REAL,
-        schedule_csv TEXT,
-        summary_json TEXT
-    )""")
     # The Shift Quality verdict used to live only in the async job result,
     # which is deleted the first time it is polled — so the headline number
     # an owner is asked to trust could never be looked at again, and
@@ -6176,18 +6164,6 @@ def save_labor_daily_history(restaurant_id: int, by_day: dict,
     """Persist per-day labor breakdown from a shifts analysis. Called on every CSV upload."""
     from datetime import datetime as _dt
     conn = get_conn(db_path)
-    conn.execute("""CREATE TABLE IF NOT EXISTS labor_daily_history (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        restaurant_id INTEGER NOT NULL,
-        date TEXT NOT NULL,
-        day_of_week TEXT,
-        labor_pct REAL,
-        labor_cost REAL,
-        sales REAL,
-        total_hours REAL,
-        saved_at TEXT NOT NULL DEFAULT (datetime('now')),
-        UNIQUE(restaurant_id, date) ON CONFLICT REPLACE
-    )""")
     for date_str, day_data in by_day.items():
         sales = day_data.get("sales", 0)
         actual_hours = day_data.get("actual", 0)

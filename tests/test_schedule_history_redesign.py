@@ -118,6 +118,9 @@ def test_a_realistic_long_finding_is_not_clipped():
 
 def test_get_schedule_history_carries_the_summary_and_edited_by(tmp_path):
     db = str(tmp_path / "t.db")
+    # schedule_history is created at boot (init_db), no longer by the save.
+    from models import init_db
+    init_db(db_path=db)
     save_schedule_history(1, "2026-09-07", "2026-09-13", 300, 300, 26.0,
                           "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes\n",
                           [], quality={"checked": True, "band": "excellent", "score": 94,
