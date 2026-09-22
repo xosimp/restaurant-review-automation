@@ -17,6 +17,7 @@ from emails import send_payment_email, send_welcome_email
 from ai_guard import safe_error as _safe_err
 
 
+import sqlite3
 from emails import html_document as _html_doc  # one definition; emails reads its env lazily
 
 def _claim_stripe_event(event_id: str) -> bool:
@@ -39,9 +40,10 @@ def _claim_stripe_event(event_id: str) -> bool:
             conn.execute("INSERT INTO stripe_events_seen (event_id) VALUES (?)", (event_id,))
             conn.commit()
             claimed = True
-        except Exception:
+        except sqlite3.IntegrityError:
             claimed = False   # duplicate PK — already handled
-        conn.close()
+        finally:
+            conn.close()
         return claimed
     except Exception as e:
         # Fail open: a bookkeeping failure must not drop a real payment event.
@@ -72,13 +74,40 @@ def _claim_docusign_event(envelope_id: str, status: str) -> bool:
                          (key, envelope_id, status))
             conn.commit()
             claimed = True
-        except Exception:
+        except sqlite3.IntegrityError:
             claimed = False   # duplicate PK — already handled
-        conn.close()
+        finally:
+            conn.close()
         return claimed
     except Exception as e:
         print(f"_claim_docusign_event failed ({key}): {e}")
         return True
+
+
+class _AlreadyOnboarded(Exception):
+    """The owner has signed in before; no welcome email or new password."""
+
+
+def _release_claim(table, column, key):
+    """Undo a claim whose processing failed, so the provider's retry is
+    processed rather than skipped as a duplicate. Only "database is locked"
+    style errors were ever meant to be survivable; a claim that stuck after
+    its handler died dropped the retry of a real payment (AI-2, SEC-27)."""
+    if not key:
+        return
+    try:
+        # A fresh connection through models, not this module's bound name:
+        # the release runs right after a connection failed, and is the one
+        # write that has to land for the provider's retry to be processed.
+        import models as _models_rel
+        conn = _models_rel.get_conn()
+        try:
+            conn.execute(f"DELETE FROM {table} WHERE {column}=?", (key,))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"release of {table} claim {key} failed: {e}")
 
 
 def _restaurant_for_stripe(customer_id: str = "", email: str = ""):
@@ -172,13 +201,11 @@ def _apply_module_entitlement(restaurant_id: int, module_keys: str) -> dict:
     if not keys:
         return {}
     updates = {f"module_{k}": (1 if k in keys else 0) for k in _GRANTABLE_MODULES}
-    try:
-        update_restaurant(restaurant_id, updates)
-        print(f"Entitlement set from Stripe for restaurant {restaurant_id}: {sorted(keys)}")
-        return updates
-    except Exception as e:
-        print(f"Failed to apply entitlement for {restaurant_id}: {e}")
-        return {}
+    # A failed write raises: the webhook then answers 5xx and Stripe retries,
+    # instead of the client paying for modules they never receive.
+    update_restaurant(restaurant_id, updates)
+    print(f"Entitlement set from Stripe for restaurant {restaurant_id}: {sorted(keys)}")
+    return updates
 
 
 def _set_billing_status(restaurant_id: int, status: str, reason: str = ""):
@@ -297,6 +324,24 @@ def stripe_webhook():
     if not _claim_stripe_event(event.get("id", "")):
         print(f"Stripe event {event.get('id')} already handled — skipping duplicate")
         return jsonify(received=True, duplicate=True)
+    try:
+        return _stripe_dispatch(event)
+    except Exception as e:
+        # The claim is released and Stripe is told to retry. Answering 200
+        # here marked a payment handled that never activated anything.
+        _release_claim("stripe_events_seen", "event_id", event.get("id", ""))
+        try:
+            import ops
+            ops.capture(e, job="stripe_webhook", context=f"{event.get('type')} {event.get('id')}")
+        except Exception:
+            pass
+        return jsonify(error="processing failed; will retry"), 500
+
+
+def _stripe_dispatch(event):
+    """Everything a verified, first-time Stripe event does. Raises on any
+    state write that fails, so stripe_webhook can release the claim and
+    answer 5xx; email failures are the only ones swallowed."""
 
     def send_alert(subject, body):
         """Send alert email to Will."""
@@ -350,6 +395,7 @@ def stripe_webhook():
                         update_restaurant(_sib, {"billing_status": "active"})
             except Exception as e:
                 print(f"checkout.session.completed: failed to activate {rid}: {e}")
+                raise
             granted = _apply_module_entitlement(rid, meta.get("module_keys", ""))
             send_alert(
                 f"✅ Checkout completed — {meta.get('restaurant') or email}",
@@ -692,6 +738,7 @@ def stripe_webhook():
                             print(f"First payment notification failed: {ne}")
             except Exception as e:
                 print(f"Failed to save Stripe customer ID: {e}")
+                raise
 
     return jsonify(ok=True)
 
@@ -734,6 +781,7 @@ def docusign_webhook():
         ).decode()
         if not auth_header or not _hmac_ds.compare_digest(auth_header, expected):
             return jsonify(error="Unauthorized"), 401
+    claimed_key = None
     try:
         raw = request.get_data(as_text=True)
         print(f"DocuSign webhook received: {raw[:500]}")
@@ -758,12 +806,13 @@ def docusign_webhook():
             if not _claim_docusign_event(envelope_id, "completed"):
                 print(f"DocuSign envelope {envelope_id} already processed — ignoring repeat delivery")
                 return jsonify(ok=True, duplicate=True), 200
+            claimed_key = f"{envelope_id}:completed"
             # Mark contract as signed
             conn = get_conn()
             row = conn.execute(
                 """SELECT r.id, r.name, r.owner_email, u.id AS user_id,
                           r.module_reviews, r.module_labor, r.module_inventory, r.module_marketing,
-                          u.username
+                          u.username, u.last_login
                    FROM restaurants r
                    JOIN users u ON u.restaurant_id = r.id AND u.is_admin = 0
                    WHERE r.docusign_envelope_id = ? LIMIT 1""",
@@ -790,6 +839,9 @@ def docusign_webhook():
             elif not _resend_key():
                 print(f"WARNING: No RESEND_API_KEY - emails not sent")
 
+            # From here on only emails are sent; a failure in them must not
+            # release the claim (that would re-send on DocuSign's retry).
+            claimed_key = None
             if row and _resend_key():
                 r = dict(row)
                 mods = sum([
@@ -821,8 +873,14 @@ def docusign_webhook():
                 except Exception as e:
                     print(f"Payment email failed after signing: {e}")
 
-                # Send welcome email with credentials
+                # Send welcome email with credentials — only to an owner who
+                # has never signed in. Every completion used to mint and email
+                # a new temporary password, so a repeat or forged completion
+                # replaced the password of an owner already using the product
+                # (SEC-11).
                 try:
+                    if r.get("last_login"):
+                        raise _AlreadyOnboarded()
                     # A fresh temporary password, minted here and emailed once.
                     # It used to be read back from restaurants.temp_password,
                     # which meant a plaintext login credential sat in the
@@ -846,13 +904,25 @@ def docusign_webhook():
                     try:
                         log_email(r["id"], "welcome", r["owner_email"], f"Welcome — {r['name']}")
                     except Exception: pass
+                except _AlreadyOnboarded:
+                    print(f"Owner of {r['name']} has already signed in — no new temporary password")
                 except Exception as e:
                     print(f"Welcome email failed after signing: {e}")
 
         return jsonify(ok=True)
     except Exception as e:
         print(f"DocuSign webhook error: {e}")
-        return jsonify(ok=True)  # Always return 200 to DocuSign
+        if claimed_key:
+            # The contract write failed after the claim: release it and ask
+            # DocuSign to retry, instead of a 200 that dropped the signing.
+            _release_claim("docusign_events_seen", "event_key", claimed_key)
+            try:
+                import ops
+                ops.capture(e, job="docusign_webhook", context=claimed_key)
+            except Exception:
+                pass
+            return jsonify(error="processing failed; will retry"), 500
+        return jsonify(ok=True)
 
 
 

@@ -149,14 +149,12 @@ def _lock_the_claim(monkeypatch, db_path):
                         lambda *a, **k: _LockedClaimConn(real(db_path)))
 
 
-@pytest.mark.xfail(strict=True, reason="AI-2: a locked stripe_events_seen insert is read as 'duplicate — already handled'")
 def test_a_stripe_claim_that_hits_a_locked_database_is_not_treated_as_a_duplicate(db_path, monkeypatch):
     _lock_the_claim(monkeypatch, db_path)
     assert webhook_routes._claim_stripe_event("evt_locked_1") is True, \
         "a bookkeeping failure must fail open, not drop a payment event as already seen"
 
 
-@pytest.mark.xfail(strict=True, reason="AI-2: a locked claim returns 200 duplicate and the paid checkout is never activated")
 def test_a_checkout_whose_claim_hits_a_locked_database_still_activates_the_account(db_path, monkeypatch):
     rid = _restaurant(db_path, billing_status="pending")
     holder = {"event": _checkout_event(rid)}
@@ -169,7 +167,6 @@ def test_a_checkout_whose_claim_hits_a_locked_database_still_activates_the_accou
         "the client paid and the account was never switched on"
 
 
-@pytest.mark.xfail(strict=True, reason="AI-2: an event that crashed after its claim is skipped as a duplicate on Stripe's retry")
 def test_an_event_that_crashed_after_its_claim_is_processed_on_stripes_retry(db_path, monkeypatch):
     # A paused account, and Stripe reporting that the pause is over.
     rid = _restaurant(db_path, billing_status="paused", paused_until="2026-10-20",
@@ -203,7 +200,6 @@ def test_an_event_that_crashed_after_its_claim_is_processed_on_stripes_retry(db_
         "the resume never landed: the account still carries its old pause date"
 
 
-@pytest.mark.xfail(strict=True, reason="AI-2: a failed activation write is printed and the route still returns 200")
 def test_a_checkout_whose_activation_write_fails_asks_stripe_to_retry_and_the_retry_activates(db_path, monkeypatch):
     rid = _restaurant(db_path, billing_status="pending")
     holder = {"event": _checkout_event(rid, "evt_checkout_locked_write")}

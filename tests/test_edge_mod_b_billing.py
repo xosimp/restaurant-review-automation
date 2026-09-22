@@ -233,7 +233,6 @@ class _FailingInsert:
         return getattr(self._c, name)
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-BIL-3: a locked database while claiming a Stripe event is treated as a duplicate and the event is dropped")
 def test_a_bookkeeping_failure_on_the_stripe_claim_is_not_a_duplicate(db_path, monkeypatch):
     """A10 #11 / MOD-BIL-3 — the claim must fail open (or the route 500 so
     Stripe retries), never answer 'already handled' for a new event."""
@@ -242,7 +241,6 @@ def test_a_bookkeeping_failure_on_the_stripe_claim_is_not_a_duplicate(db_path, m
     assert webhook_routes._claim_stripe_event("evt_never_seen") is True
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-BIL-3: a locked database while claiming a DocuSign event is treated as a duplicate and the event is dropped")
 def test_a_bookkeeping_failure_on_the_docusign_claim_is_not_a_duplicate(db_path, monkeypatch):
     """A10 #11 / MOD-BIL-3."""
     real = models.get_conn
@@ -256,7 +254,6 @@ def test_a_genuine_duplicate_stripe_event_is_still_refused(db_path):
     assert webhook_routes._claim_stripe_event("evt_dup") is False
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-BIL-4: a checkout whose activation write failed is claimed anyway, so Stripe's retry is dropped")
 def test_a_checkout_whose_activation_failed_is_activated_on_stripes_retry(db_path, hook, monkeypatch):
     """A10 #12 / MOD-BIL-4 — update_restaurant raises once (a locked DB);
     the redelivered event must still activate the customer."""

@@ -229,7 +229,6 @@ def test_a_replayed_signed_checkout_completion_is_acknowledged_as_a_duplicate(wh
     assert again.get_json().get("duplicate") is True
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-27: Stripe claims the event, swallows the activation failure and returns 200, so the retry is dropped as a duplicate")
 def test_a_failing_stripe_activation_returns_5xx_and_leaves_the_event_unclaimed(
         wh_client, db_path, stripe_ok, monkeypatch):
     a, b = _two_locations_one_customer(db_path)
@@ -366,7 +365,6 @@ def test_a_correctly_signed_docusign_completion_marks_the_contract_signed(
     assert [kind for kind, _ in sent] == ["payment", "welcome"]
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-11: every DocuSign completion mints and emails a new temp password, even for an owner who has already logged in")
 def test_a_docusign_completion_never_replaces_the_password_of_an_owner_who_has_logged_in(
         wh_client, db_path, sent, monkeypatch):
     monkeypatch.setenv("DOCUSIGN_WEBHOOK_SECRET", DS_SECRET)
@@ -381,7 +379,6 @@ def test_a_docusign_completion_never_replaces_the_password_of_an_owner_who_has_l
     assert not any(kind == "welcome" and k.get("password") for kind, k in sent)
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-27: DocuSign claims the envelope, then its outer except returns 200 on any failure, so the retry is dropped as a duplicate")
 def test_a_failing_docusign_completion_returns_5xx_and_leaves_the_event_unclaimed(
         wh_client, db_path, sent, monkeypatch):
     monkeypatch.setenv("DOCUSIGN_WEBHOOK_SECRET", DS_SECRET)
