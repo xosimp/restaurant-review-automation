@@ -4741,7 +4741,8 @@ def _do_switch_location(current_user, target_id, token):
     from auth import switch_active_restaurant
     switch_active_restaurant(token, target_id)
     try:
-        import home_brief; home_brief.invalidate()
+        # This login's cached Homes only — not every tenant's (MOD-HOME-3).
+        import home_brief; home_brief.invalidate_user(current_user.get("id"))
     except Exception:
         pass
     target = get_restaurant(target_id)
@@ -4800,6 +4801,8 @@ _NOTIFICATION_LABELS = {
     "weekly_review":    "Your week",
     "monthly_review":   "Your month",
     "schedule_drafted": "Next week's schedule drafted",
+    "order_send_pending": "Supplier order going out",
+    "order_send_voided": "Supplier order not sent",
 }
 
 # Which module a notification's "view" action should open. The keys are the
@@ -4816,6 +4819,7 @@ _NOTIFICATION_MODULE = {
     "unresponded": "reviews", "negative_trend": "reviews", "rating_threshold": "reviews",
     "labor_over": "labor", "schedule_drafted": "labor", "coverage": "labor",
     "food_waste": "inventory", "critical_low": "inventory", "price_spike": "inventory",
+    "order_send_pending": "inventory", "order_send_voided": "inventory",
     "ai_visibility_drop": "competitor",
     "demand_opportunity": "marketing",
     # Cross-module reads that arrive with their own question, so they open

@@ -1277,7 +1277,10 @@ Then, on new lines after the paragraph, write 1-3 recommendations:
     return result
 
 
-def load_inventory_for_restaurant(restaurant_id: int):
+_UNREAD = object()   # "client_data not passed in" — None is a real answer (no row)
+
+
+def load_inventory_for_restaurant(restaurant_id: int, client_data=_UNREAD):
     """Load this restaurant's inventory. Resolution order: the persistent
     ingredients table (once migrated — see inventory_ledger.import_csv_to_ingredients
     and the nightly Toast depletion sync) -> the legacy inventory_csv blob
@@ -1325,13 +1328,15 @@ def load_inventory_for_restaurant(restaurant_id: int):
             "supplier_email":  (r["supplier_email"] if "supplier_email" in r.keys() else None) or "",
         } for r in rows]
         return items, True
-    data = get_client_data(restaurant_id)
+    # A caller that already holds the client_data row passes it (Home reads
+    # it once for Labor and Food Cost together — MOD-HOME-2).
+    data = get_client_data(restaurant_id) if client_data is _UNREAD else client_data
     if data and data.get("inventory_csv"):
         return load_inventory(csv_string=data["inventory_csv"]), True
     return load_inventory(), False  # fallback to sample
 
 
-def analysis_for(restaurant_id: int, items=None, is_live=None):
+def analysis_for(restaurant_id: int, items=None, is_live=None, client_data=_UNREAD):
     """The one food-cost analysis. Every surface comes through here.
 
     Callers used to assemble analyse_inventory()'s arguments themselves —
@@ -1350,7 +1355,7 @@ def analysis_for(restaurant_id: int, items=None, is_live=None):
     from marketing import get_upcoming_holidays
 
     if items is None or is_live is None:
-        items, is_live = load_inventory_for_restaurant(restaurant_id)
+        items, is_live = load_inventory_for_restaurant(restaurant_id, client_data=client_data)
     restaurant = get_restaurant(restaurant_id)
 
     # The two measured inputs analyse_inventory could not derive for itself:

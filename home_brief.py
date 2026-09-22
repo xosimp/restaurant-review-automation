@@ -24,6 +24,23 @@ from models import get_conn, get_restaurant
 
 _CACHE = {}
 _CACHE_TTL = 60  # seconds — a refresh within a minute costs nothing
+# A ceiling on live entries. Nothing ever removed an expired one, so the
+# dict held one full Home payload per (restaurant, login) that had ever
+# loaded it, for the life of the process (MOD-HOME-3).
+_CACHE_MAX = 2000
+
+
+def _cache_put(key, payload):
+    """Store one payload, first dropping every expired entry and, past
+    _CACHE_MAX, the oldest ones."""
+    now = datetime.now(timezone.utc)
+    for k, (at, _p) in list(_CACHE.items()):
+        if (now - at).total_seconds() >= _CACHE_TTL:
+            _CACHE.pop(k, None)
+    if len(_CACHE) >= _CACHE_MAX:
+        for k, _v in sorted(_CACHE.items(), key=lambda kv: kv[1][0])[:len(_CACHE) - _CACHE_MAX + 1]:
+            _CACHE.pop(k, None)
+    _CACHE[key] = (now, payload)
 
 _REVIEW_FETCH_HOURS_CT = (8, 12, 16, 20)  # scheduler.py's review_fetch cadence
 _DISMISS_DAYS = 14  # a dismissed recommendation stays gone this long, then can resurface if still true
@@ -265,7 +282,7 @@ def build_home_brief(current_user, fresh=False):
             return hit[1], 200
     payload, status = _build(current_user)
     if status == 200:
-        _CACHE[key] = (datetime.now(timezone.utc), payload)
+        _cache_put(key, payload)
     return payload, status
 
 
@@ -288,6 +305,15 @@ def invalidate(rid=None):
     # key only records the owner's BASE location, never the others.
     stale = [k for k in _CACHE if k[0] == rid or k[0] == "group"]
     for k in stale:
+        _CACHE.pop(k, None)
+
+
+def invalidate_user(user_id):
+    """Drop one login's cached Homes — every location's and its group brief.
+    What a location switch needs: it used to call invalidate() with no rid,
+    which cleared every tenant's cache on the platform (MOD-HOME-3). Both
+    key shapes end with the login's id."""
+    for k in [k for k in _CACHE if k and k[-1] == user_id]:
         _CACHE.pop(k, None)
 
 
@@ -350,12 +376,23 @@ def _build(current_user):
     stale_unanswered = _one_dict(conn, "SELECT COUNT(*) AS n FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL AND rating<=3 AND response_status IN ('pending','drafted') AND julianday(fetched_at) < julianday('now','-2 days')", (rid,)) or {}
     rating_prev = _one_dict(conn, "SELECT ROUND(AVG(rating),1) AS r, COUNT(*) AS n FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL AND COALESCE(NULLIF(review_date,''), fetched_at) >= date('now','-60 days') AND COALESCE(NULLIF(review_date,''), fetched_at) < date('now','-30 days')", (rid,)) or {}
 
+    # The client_data row carries the whole shifts CSV. Read once here and
+    # handed to Labor and Food Cost, which each read it for themselves —
+    # three reads of a year of shifts on every cold Home build (MOD-HOME-2).
+    stored = None
+    if "labor" in active_keys or "inventory" in active_keys:
+        from models import get_client_data as _get_client_data
+        try:
+            stored = _get_client_data(rid)
+        except Exception:
+            stored = None
+
     # ── labor ───────────────────────────────────────────────────────────────
     labor, labor_live = None, False
     if "labor" in active_keys:
         try:
             from labor import analyse_shifts_for_restaurant
-            labor = analyse_shifts_for_restaurant(rid)
+            labor = analyse_shifts_for_restaurant(rid, client_data=stored)
             labor_live = bool(labor.get("is_live"))
         except Exception:
             labor = None
@@ -369,7 +406,7 @@ def _build(current_user):
     if "inventory" in active_keys:
         try:
             from inventory import analysis_for
-            items, inv_live, inv = analysis_for(rid)
+            items, inv_live, inv = analysis_for(rid, client_data=stored)
             inv = inv if items else {}
         except Exception:
             inv = {}
@@ -412,13 +449,26 @@ def _build(current_user):
 
     # ── alerts ──────────────────────────────────────────────────────────────
     alerts_7d = _rows_dict(conn, "SELECT alert_type, COUNT(*) AS n, MAX(fired_at) AS last_at FROM alert_log WHERE restaurant_id=? AND julianday(fired_at) >= julianday('now','-7 days') GROUP BY alert_type ORDER BY n DESC", (rid,))
-    alerts_since = (_one_dict(conn, "SELECT COUNT(*) AS n FROM alert_log WHERE restaurant_id=? AND fired_at >= ?", (rid, since_sql)) or {}).get("n") or 0
+    alerts_since_by_type = _rows_dict(conn, "SELECT alert_type, COUNT(*) AS n FROM alert_log WHERE restaurant_id=? AND fired_at >= ? GROUP BY alert_type", (rid, since_sql))
     recent_alerts = _rows_dict(conn, """SELECT a.alert_type, a.review_id, a.fired_at, rv.rating, rv.response_status, rv.author
                                    FROM alert_log a LEFT JOIN reviews rv ON rv.id=a.review_id
                                    WHERE a.restaurant_id=? AND julianday(a.fired_at) >= julianday('now','-7 days')
                                    ORDER BY a.id DESC LIMIT 12""", (rid,))
     dismissed = _dismissed_keys(conn, rid)
     conn.close()
+
+    # Alerts are scoped to what this login may see, exactly as the
+    # notification list is (client_api._sees). Home read alert_log with no
+    # module or role filter, so a shift manager's Home listed — and counted
+    # in "N alerts fired" — the Food Cost alerts that role cannot open
+    # (MOD-HOME-1).
+    from client_api import _NOTIFICATION_MODULE, _sees
+
+    def _visible(alert_type):
+        return _sees(current_user, _NOTIFICATION_MODULE.get(alert_type, "reviews"))
+    alerts_7d = [a for a in alerts_7d if _visible(a["alert_type"])]
+    recent_alerts = [a for a in recent_alerts if _visible(a["alert_type"])]
+    alerts_since = sum(int(a.get("n") or 0) for a in alerts_since_by_type if _visible(a["alert_type"]))
 
     # The Reviews tab's AI read, only if it's already been generated and is
     # still in the 5-minute cache — Home never triggers a model call itself.
@@ -1176,5 +1226,5 @@ def build_group_brief(current_user, fresh=False):
                       "heaviest_labor": ({"location": heaviest["name"], "id": heaviest["id"], "pct": heaviest["labor"]["pct"], "over": heaviest["labor"]["over"]} if heaviest and heaviest["labor"]["over"] > 0 else None),
                       "biggest_issue": ({"location": attention[0]["location"], "id": attention[0]["restaurant_id"], "issue": attention[0]["text"]} if attention else None)},
     }
-    _CACHE[key] = (datetime.now(timezone.utc), payload)
+    _cache_put(key, payload)
     return payload, 200
