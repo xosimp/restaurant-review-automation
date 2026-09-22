@@ -6,6 +6,7 @@ Run locally:  python3 hosted_dashboard.py
 Deploy:       Railway (connect GitHub repo, set env vars)
 """
 import os
+import config
 import pathlib
 from datetime import datetime, timedelta
 from functools import wraps
@@ -270,9 +271,9 @@ app.secret_key = _secret_key
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "will")
 
 RESEND_API_KEY          = os.getenv("RESEND_API_KEY", "")
-FROM_EMAIL              = os.getenv("FROM_EMAIL", "will@cavnar.ai")
+FROM_EMAIL              = config.from_email()
 STRIPE_WEBHOOK_SECRET   = os.getenv("STRIPE_WEBHOOK_SECRET", "")
-WILL_EMAIL              = os.getenv("WILL_EMAIL", "will@cavnar.ai")
+WILL_EMAIL              = config.will_email()
 
 # ── Auth helpers ──────────────────────────────────────────────────────────────
 
@@ -931,7 +932,7 @@ def _do_seed_gia_mia():
 
         # Draft responses — hardcoded on Railway (fast), real API locally (quality)
         try:
-            _on_railway = bool(os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RAILWAY_PROJECT_ID"))
+            _on_railway = config.on_railway()
             if _on_railway:
                 _drafts_map = {
                     "positive": [

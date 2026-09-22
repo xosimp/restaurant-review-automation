@@ -4,6 +4,7 @@ Registered as a Flask Blueprint in hosted_dashboard.py
 """
 from flask import Blueprint, request, jsonify, make_response, redirect, render_template
 import os
+import config
 import time
 
 from models import get_conn, get_restaurant, update_restaurant
@@ -897,7 +898,7 @@ def google_sso_start():
     over a custom URL scheme instead of setting a web session cookie."""
     import secrets, urllib.parse
     state = secrets.token_hex(16)
-    base_url = os.getenv("BASE_URL", "https://dashboard.cavnar.ai")
+    base_url = config.base_url()
     params = urllib.parse.urlencode({
         "client_id":     os.getenv("GOOGLE_SSO_CLIENT_ID", ""),
         "redirect_uri":  base_url + "/auth/google-sso/callback",
@@ -961,7 +962,7 @@ def google_sso_callback():
         return _finish(error="state_mismatch")
 
     code     = request.args.get("code", "")
-    base_url = os.getenv("BASE_URL", "https://dashboard.cavnar.ai")
+    base_url = config.base_url()
 
     # Exchange code for tokens
     token_resp = _req.post("https://oauth2.googleapis.com/token", data={

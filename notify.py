@@ -4,6 +4,7 @@ Both channels use the same 6 alert toggles; delivery is controlled
 by urgent_via_sms and urgent_via_email per restaurant.
 """
 import os
+import config
 import html as _html
 import requests
 import models
@@ -47,7 +48,6 @@ def emails_sender(kind="client"):
     emails.SENDERS. Imported lazily for the same reason _html_doc is."""
     from emails import sender
     return sender(kind)
-from emails import _from_email
 
 HEALTH_KEYWORDS = [
     "food poison", "food poisoning", "foodborne", "sick after", "got sick",
@@ -309,7 +309,7 @@ def briefing_allowed(restaurant_id: int, alert_type: str, db_path: str = DB_PATH
 
 def alert_url(alert_type=None, review_id=None) -> str:
     """The dashboard URL that answers this alert."""
-    base = (os.getenv("BASE_URL") or "https://dashboard.cavnar.ai").rstrip("/")
+    base = config.base_url()
     tab = ALERT_TAB.get(alert_type or "")
     if not tab:
         return base

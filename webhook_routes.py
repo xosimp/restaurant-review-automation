@@ -4,6 +4,7 @@ Registered as a Flask Blueprint in hosted_dashboard.py
 """
 from flask import Blueprint, request, jsonify, redirect
 import os
+import config
 import emails as _emails
 from datetime import datetime
 
@@ -264,8 +265,8 @@ webhook_bp = Blueprint('webhook', __name__)
 
 from emails import _resend_key
 
-FROM_EMAIL            = os.getenv("FROM_EMAIL", "will@cavnar.ai")
-WILL_EMAIL            = os.getenv("WILL_EMAIL", "will@cavnar.ai")
+FROM_EMAIL            = config.from_email()
+WILL_EMAIL            = config.will_email()
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
 
 @webhook_bp.route("/stripe-webhook", methods=["POST"])

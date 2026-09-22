@@ -15,7 +15,7 @@ rather than blocking schedule generation, the same fallback shape
 load_shifts_for_restaurant/load_inventory_for_restaurant already use for
 their own optional-data gaps.
 """
-import os
+import config
 import json
 from datetime import datetime, timedelta
 
@@ -26,7 +26,7 @@ from models import DB_PATH, update_restaurant
 
 from ai_utils import meter_places as _meter_places
 
-_GOOGLE_KEY = os.getenv("GOOGLE_PLACES_API_KEY") or os.getenv("GOOGLE_API_KEY", "")
+_GOOGLE_KEY = config.google_places_key()
 _USER_AGENT = "CavnarAI/1.0 (will@cavnar.ai)"  # NWS asks for an identifying UA, not a key
 _CACHE_HOURS = 6
 

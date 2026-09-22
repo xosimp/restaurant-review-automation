@@ -11,6 +11,7 @@ Jobs:
                 — send IMMEDIATE urgent alert to owner if critical review found
   8:00am weekly — send weekly digest to clients on their chosen day
 """
+import config
 import os, threading, time, logging, html as _html
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from status_manager import record_scheduler_heartbeat, run_health_checks
@@ -783,7 +784,7 @@ def check_stale_inventory():
         _resend.api_key = _resend_key()
         _resend.Emails.send({
             "from": _emails.sender("client"),
-            "to": [os.getenv("WILL_EMAIL", "will@cavnar.ai")],
+            "to": [config.will_email()],
             "subject": f"⚠ Stale inventory data — {len(stale)} client(s) need updating",
             "html": _html_doc(f"""
 <div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
@@ -1175,7 +1176,7 @@ def backup_db():
     import base64
     from models import DB_PATH
 
-    WILL_EMAIL = os.getenv("WILL_EMAIL", "will@cavnar.ai")
+    WILL_EMAIL = config.will_email()
     timestamp = _chi_now().strftime("%Y-%m-%d")
     filename = f"cavnar_ai_backup_{timestamp}.db"
     backup_dir = os.getenv("BACKUP_DIR") or os.path.join(os.path.dirname(os.path.abspath(DB_PATH)) or ".", "backups")
@@ -1488,8 +1489,8 @@ def check_inactive_clients():
     from models import get_all_restaurants, get_conn
 
     RESEND_API_KEY_LOCAL = os.getenv("RESEND_API_KEY", "")
-    WILL_EMAIL_LOCAL     = os.getenv("WILL_EMAIL", "will@cavnar.ai")
-    FROM_EMAIL_LOCAL     = os.getenv("FROM_EMAIL", "will@cavnar.ai")
+    WILL_EMAIL_LOCAL     = config.will_email()
+    FROM_EMAIL_LOCAL     = config.from_email()
 
     if not RESEND_API_KEY_LOCAL:
         log.warning("check_inactive_clients: no RESEND_API_KEY — skipping")
@@ -2158,7 +2159,7 @@ def run_restore_drill():
                  f"Google tokens: {report.get('google_tokens_in_snapshot')} in the snapshot, "
                  f"{report.get('google_tokens_live')} live — {'survive' if report.get('tokens_survive') else 'MISSING'}"]
         _emails.deliver(email_type="restore_drill", restaurant_id=None, payload={
-            "from": _emails.sender("ops"), "to": [os.getenv("WILL_EMAIL", "will@cavnar.ai")],
+            "from": _emails.sender("ops"), "to": [config.will_email()],
             "subject": f"Restore drill {'passed' if report['ok'] else 'FAILED'} — {report['snapshot']}",
             "preheader": "The quarterly proof that the backup restores.",
             "html": _emails._branded_email("".join(f"<p>{_h.escape(x)}</p>" for x in lines)
@@ -2463,7 +2464,7 @@ def scheduler_loop():
             # owner set for 11am should go out at 11am, not at 11:59.
             try:
                 from marketing_publish import run_due_posts
-                _base = (os.getenv("BASE_URL") or "https://dashboard.cavnar.ai").rstrip("/")
+                _base = config.base_url()
                 # Not named `_due`: any assignment to a name inside this
                 # function makes it local for the WHOLE function, so the
                 # `_due(now, H)` gates above would raise UnboundLocalError on

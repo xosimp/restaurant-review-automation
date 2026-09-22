@@ -2045,9 +2045,8 @@ def cookies_require_secure() -> bool:
     CAVNAR_FORCE_SECURE_COOKIES exists for any other TLS-terminating host.
     """
     import os
-    return bool(os.getenv("RAILWAY_ENVIRONMENT")
-                or os.getenv("RAILWAY_PROJECT_ID")
-                or os.getenv("CAVNAR_FORCE_SECURE_COOKIES"))
+    import config
+    return bool(config.on_railway() or os.getenv("CAVNAR_FORCE_SECURE_COOKIES"))
 
 
 def create_session(user_id: int, days: int = 30,

@@ -2,6 +2,7 @@
 admin_routes.py — Cavnar AI admin, infrastructure and API routes
 Registered as a Flask Blueprint in hosted_dashboard.py
 """
+import config
 from flask import Blueprint, request, jsonify, redirect, render_template, make_response, send_file, Response
 import os, json, io
 from datetime import datetime
@@ -61,7 +62,7 @@ def admin_api_system(current_user):
         except Exception:
             build = None
     from models import DB_PATH
-    return jsonify(ok=True, services=services, env=("railway" if _os.getenv("RAILWAY_ENVIRONMENT") else "local"),
+    return jsonify(ok=True, services=services, env=("railway" if config.on_railway() else "local"),
                    tick=int(_os.getenv("SCHEDULER_TICK_SECONDS", "300")), db=_os.path.basename(str(DB_PATH)), build=build)
 
 @admin_bp.route("/admin/create-client", methods=["POST"])
@@ -503,13 +504,13 @@ def resync_depletion_route(restaurant_id, current_user):
 @admin_bp.route("/admin/staff-availability/<int:restaurant_id>", methods=["GET"])
 @login_required
 def get_staff_availability_route(restaurant_id, current_user):
-    from models import get_staff_availability, init_staff_availability
+    from models import get_staff_availability
     return jsonify(ok=True, availability=get_staff_availability(restaurant_id))
 
 @admin_bp.route("/admin/staff-availability/<int:restaurant_id>", methods=["POST"])
 @login_required
 def save_staff_availability_route(restaurant_id, current_user):
-    from models import save_staff_availability, init_staff_availability
+    from models import save_staff_availability
     data = request.get_json() or {}
     name = (data.get("employee_name") or "").strip()
     if not name:
@@ -1286,7 +1287,7 @@ def view_as_client(restaurant_id, current_user):
         pass
     resp = make_response(redirect("/"))
     resp.set_cookie("session_token", token, max_age=1800,
-                    httponly=True, secure=bool(os.getenv("RAILWAY_ENVIRONMENT")), samesite="Strict")
+                    httponly=True, secure=config.on_railway(), samesite="Strict")
     return resp
 
 @admin_bp.route("/admin/stop-viewing")
@@ -1415,7 +1416,7 @@ def sms_optin_preview_page():
     resp = Response(html, mimetype="text/html")
     if not request.cookies.get(_CSRF_COOKIE):
         resp.set_cookie(_CSRF_COOKIE, csrf_token, max_age=30 * 24 * 3600,
-                        httponly=False, secure=bool(_os.getenv("RAILWAY_ENVIRONMENT")),
+                        httponly=False, secure=config.on_railway(),
                         samesite="Lax")
     return resp
 

@@ -2,6 +2,7 @@
 client_api.py — Client-facing API routes and data endpoints
 Registered as a Flask Blueprint in hosted_dashboard.py
 """
+import config
 from flask import Blueprint, request, jsonify, redirect, send_file, Response, render_template, make_response
 import os, json, re, time, threading
 from datetime import datetime
@@ -4546,7 +4547,7 @@ def client_upload_data(current_user):
             from models import get_restaurant as _gr_ot
             _r_ot = _gr_ot(restaurant_id)
             _key_ot = _os_ot.getenv("RESEND_API_KEY", "")
-            _from_ot = _os_ot.getenv("FROM_EMAIL", "will@cavnar.ai")
+            _from_ot = config.from_email()
             if _key_ot and _r_ot and _r_ot.owner_email:
                 _resend_ot.api_key = _key_ot
                 _ot_rows = "".join(
@@ -4607,8 +4608,8 @@ def client_upload_data(current_user):
 
         import os as _os, resend as _resend
         _resend_key = _os.getenv("RESEND_API_KEY", "")
-        _will_email = _os.getenv("WILL_EMAIL", "will@cavnar.ai")
-        _from_email = _os.getenv("FROM_EMAIL", "will@cavnar.ai")
+        _will_email = _config.will_email()
+        _from_email = _config.from_email()
         if _is_first_upload and _resend_key and r:
             _resend.api_key = _resend_key
             _module = "shift schedule" if data_type == "shifts" else "inventory"
@@ -5190,7 +5191,7 @@ def _city_from_place_id(place_id: str) -> str:
     city = ""
     try:
         import requests as _req
-        key = os.getenv("GOOGLE_PLACES_API_KEY") or os.getenv("GOOGLE_API_KEY") or ""
+        key = config.google_places_key()
         if key:
             resp = _req.get("https://maps.googleapis.com/maps/api/place/details/json",
                             params={"place_id": place_id, "fields": "address_component",
@@ -6711,7 +6712,7 @@ def staff_schedule_page(token):
     ))
     if not request.cookies.get(_CSRF_COOKIE):
         response.set_cookie(_CSRF_COOKIE, csrf_token, max_age=30 * 24 * 3600,
-                            httponly=False, secure=bool(os.getenv("RAILWAY_ENVIRONMENT")),
+                            httponly=False, secure=config.on_railway(),
                             samesite="Lax")
     return response
 
@@ -7455,7 +7456,7 @@ def _publish_schedule(restaurant_id, schedule_id=None, actor=None):
         week_label = f"{row['week_start']} – {row['week_end']}"
 
     contacts = {c["employee_name"].lower(): c for c in get_staff_contacts(rid)}
-    base_url = (os.getenv("BASE_URL") or "https://dashboard.cavnar.ai").rstrip("/")
+    base_url = config.base_url()
 
     # The owner is acting. Measure what it does to labor % over the next
     # window, whether or not they ever pressed Track (outcomes.observe).

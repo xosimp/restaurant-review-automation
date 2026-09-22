@@ -3,6 +3,7 @@ emails.py — Cavnar AI email sending functions
 """
 import logging
 import os
+import config
 # Read fresh at call time, never bound at import. Binding these at module
 # scope meant that importing this module before load_dotenv() ran froze the
 # key to "" and silently dropped every send in this file — the same bug
@@ -10,7 +11,7 @@ import os
 # It happened to work only because hosted_dashboard.py calls load_dotenv()
 # before importing us; one import reorder was all it would have taken.
 def _resend_key(): return os.getenv("RESEND_API_KEY", "")
-def _from_email(): return os.getenv("FROM_EMAIL", "will@cavnar.ai")
+def _from_email(): return config.from_email()
 log = logging.getLogger(__name__)
 
 
@@ -132,7 +133,6 @@ def generate_email_personalization(context: str, fallback: str, restaurant_id: i
     if not os.getenv("ANTHROPIC_API_KEY"):
         return fallback
     try:
-        import anthropic
         from ai_utils import create_with_retry, extract_text, get_client, model_for
         client = get_client()
         # `brief` is for the report emails, which open on ONE line above a stat
@@ -436,7 +436,7 @@ def _add_unsubscribe(payload: dict, restaurant_id: int) -> dict:
     """
     try:
         from models import unsubscribe_token
-        base = (os.getenv("BASE_URL") or "https://dashboard.cavnar.ai").rstrip("/")
+        base = config.base_url()
         url = f"{base}/u/{unsubscribe_token(restaurant_id)}"
     except Exception as e:
         log.warning("unsubscribe link build failed for restaurant %s: %s", restaurant_id, e)
@@ -962,7 +962,7 @@ def send_signup_admin_alert(restaurant_name: str, owner_name: str, email: str, p
     """Heads-up to Will the moment someone self-registers — every other new
     client so far has been created by hand, so a signup nobody set up
     shouldn't be discovered days later in the admin list."""
-    to = os.getenv("WILL_EMAIL", "will@cavnar.ai")
+    to = config.will_email()
     return _send_branded(to, f"New signup — {restaurant_name}",
                           from_label="Cavnar AI Ops",
                           email_type="send_signup_admin_alert",

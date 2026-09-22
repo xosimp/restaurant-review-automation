@@ -1,11 +1,12 @@
-import os, requests, csv
+import config
+import requests, csv
 from datetime import datetime, timezone
 from models import Review, save_reviews
 
 
 from ai_utils import meter_places as _meter_places
 
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+GOOGLE_API_KEY = config.google_places_key()  # either variable name; used to read only GOOGLE_API_KEY
 
 
 def fetch_google(place_id: str, restaurant_id: int) -> list[Review]:

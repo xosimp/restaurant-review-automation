@@ -21,7 +21,7 @@ happen here by construction. Each line carries an "ask" prompt so a tap opens
 Ask Cavnar on exactly that question.
 """
 import logging
-import os
+import config
 from datetime import date, datetime, timedelta
 
 from models import get_conn, DB_PATH
@@ -469,7 +469,7 @@ def _ask_url(prompt):
     """A link that opens the dashboard and asks that question — the email's
     version of the push's one-tap into Ask (dashboard.html reads ?ask=)."""
     from urllib.parse import quote
-    base = (os.getenv("BASE_URL") or "https://dashboard.cavnar.ai").rstrip("/")
+    base = config.base_url()
     return f"{base}/?ask={quote(prompt or '', safe='')}"
 
 

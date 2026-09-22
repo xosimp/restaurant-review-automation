@@ -27,6 +27,7 @@ TWO RULES.
   case belongs to sales_audit_engine, which builds it from real figures at
   the table with ranges attached.
 """
+import config
 import logging
 import threading
 import time
@@ -96,9 +97,8 @@ def build(google_place_id, restaurant_id=None, deep=False):
     if hit is not None:
         return hit
     try:
-        import os
         import requests
-        key = os.getenv("GOOGLE_PLACES_API_KEY", "")
+        key = config.google_places_key()
         if not key:
             return out
         r = requests.get(

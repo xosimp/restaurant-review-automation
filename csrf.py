@@ -12,7 +12,7 @@ Deliberately NOT applied to: webhook_bp (external callers verified by HMAC
 signature), auth_bp (has its own form-token flow), status_bp (public GETs).
 """
 import hmac
-import os
+import config
 import secrets
 
 from flask import request, jsonify
@@ -20,7 +20,7 @@ from flask import request, jsonify
 CSRF_COOKIE = "csrf_js"          # readable by JS on purpose — that's the double-submit design
 CSRF_HEADER = "X-CSRF"
 _SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
-_on_railway = bool(os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RAILWAY_PROJECT_ID"))
+_on_railway = config.on_railway()
 
 
 def ensure_csrf_cookie(resp):

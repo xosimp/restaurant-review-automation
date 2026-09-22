@@ -2,6 +2,7 @@
 competitor.py — Competitor intelligence for Cavnar AI
 Pulls nearby restaurant reviews via Google Places API and generates AI insights.
 """
+import config
 import os, json, requests
 from ai_utils import create_with_retry, extract_text, get_client, model_for
 from ai_guard import UNTRUSTED_NOTE, wrap_untrusted
@@ -9,7 +10,7 @@ from ai_guard import UNTRUSTED_NOTE, wrap_untrusted
 
 from ai_utils import meter_places as _meter_places
 
-PLACES_API_KEY = os.getenv("GOOGLE_PLACES_API_KEY", "")
+PLACES_API_KEY = config.google_places_key()  # either variable name; used to read only GOOGLE_PLACES_API_KEY
 ANTHROPIC_KEY  = os.getenv("ANTHROPIC_API_KEY", "")
 
 

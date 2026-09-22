@@ -14,7 +14,7 @@ CAN-SPAM requires the link to work without the recipient identifying
 themselves first.
 """
 import logging
-import os
+import config
 import re
 import secrets
 
@@ -160,7 +160,7 @@ def send_newsletter(restaurant_id, body, subject=None, db_path: str = DB_PATH) -
     if not people:
         return {"ok": False, "error": "Nobody has opted in to email yet — the join page collects it."}
 
-    base = (os.getenv("BASE_URL") or "https://dashboard.cavnar.ai").rstrip("/")
+    base = config.base_url()
     paragraphs = "".join(
         f'<p style="font-size:15px;line-height:1.7;color:#1a1714;margin:0 0 14px">{_html.escape(p)}</p>'
         for p in body_text.split("\n\n") if p.strip()

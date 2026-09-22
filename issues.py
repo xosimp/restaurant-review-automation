@@ -18,7 +18,7 @@ auto-routed to a manager — the approving manager may be the subject of one.
 Anything else is created by the owner, from the app or from Ask.
 """
 import hashlib
-import os
+import config
 import secrets
 from datetime import datetime, timedelta
 
@@ -42,7 +42,7 @@ def _hash(token):
 
 
 def _base_url():
-    return (os.getenv("BASE_URL") or "https://dashboard.cavnar.ai").rstrip("/")
+    return config.base_url()
 
 
 def _now():

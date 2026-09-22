@@ -11,6 +11,7 @@ configured, and rolled up into a daily 8am digest email if anything failed.
 import logging
 import uuid
 import os
+import config
 
 
 from emails import html_document as _html_doc  # one definition; emails reads its env lazily
@@ -611,7 +612,7 @@ def send_failure_digest():
         import html as _html
         import resend as _resend
         _resend.api_key = resend_key
-        will = os.getenv("WILL_EMAIL", "will@cavnar.ai")
+        will = config.will_email()
         total = sum(f["cnt"] for f in failures)
         sec_html = ""
         if sec_lines:

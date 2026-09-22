@@ -21,6 +21,7 @@ call, so there's one implementation behind both the dashboard and the app.
 import base64
 import hmac
 import os
+import config
 import random
 from datetime import datetime, timedelta
 
@@ -77,7 +78,7 @@ def _login_report_url(user_id: int) -> str:
     """One-time link for the login email's 'This wasn't me' button — see
     auth.consume_login_report for what it does."""
     from auth import create_login_report
-    base = os.getenv("BASE_URL", "https://dashboard.cavnar.ai").rstrip("/")
+    base = config.base_url()
     return f"{base}/auth/not-me/{create_login_report(user_id, None)}"
 
 
@@ -1672,7 +1673,7 @@ def mobile_publish_schedule(current_user):
         week_label = f"{row['week_start']} – {row['week_end']}"
 
     contacts = {c["employee_name"].lower(): c for c in get_staff_contacts(rid)}
-    base_url = (os.getenv("BASE_URL") or "https://dashboard.cavnar.ai").rstrip("/")
+    base_url = config.base_url()
 
     sent, unreachable, failed = [], [], []
     for name in employees_in_schedule(row["schedule_csv"]):
@@ -2604,7 +2605,7 @@ def mobile_labor_availability(current_user):
     scheduler input client_api.py's _build_schedule_result() already reads
     (staff_availability=...), so entries saved here are respected by the
     next "Generate schedule" run with no extra wiring."""
-    from models import get_staff_availability, init_staff_availability
+    from models import get_staff_availability
     import json as _json
     rows = get_staff_availability(current_user["restaurant_id"]) or []
     entries = [
@@ -2622,7 +2623,7 @@ def mobile_labor_availability(current_user):
 @mobile_bp.route("/labor/availability", methods=["POST"])
 @mobile_login_required
 def mobile_labor_availability_save(current_user):
-    from models import save_staff_availability, init_staff_availability
+    from models import save_staff_availability
     data = request.get_json(silent=True) or {}
     name = (data.get("employee_name") or "").strip()
     if not name:

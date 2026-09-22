@@ -25,7 +25,7 @@ and the cadence all live in the loop.
   run_coverage_check        service — scheduled staff who have not clocked in
 """
 import logging
-import os
+import config
 import uuid
 
 from models import get_conn, DB_PATH
@@ -834,7 +834,7 @@ def run_preshift_nudge(db_path=DB_PATH):
             from auth import get_or_create_staff_portal_token
             from notify import send_sms
             token = get_or_create_staff_portal_token(r.id, db_path=db_path)
-            base = (os.getenv("BASE_URL") or "https://dashboard.cavnar.ai").rstrip("/")
+            base = config.base_url()
             lead = items[0]["text"]
             msg = (f"Cavnar AI · tonight's lineup notes are ready ({len(items)} point"
                    f"{'' if len(items) == 1 else 's'}): {lead} Read them with the team: "
