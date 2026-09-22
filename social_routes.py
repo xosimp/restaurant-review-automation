@@ -33,7 +33,11 @@ def instagram_connect(current_user):
     app_id       = os.getenv("META_APP_ID","")
     redirect_uri = os.getenv("META_REDIRECT_URI", "https://dashboard.cavnar.ai/instagram/callback")
     scope        = "instagram_basic,instagram_content_publish,instagram_manage_insights,pages_read_engagement,pages_manage_posts,pages_show_list,business_management,read_insights"
-    state        = str(current_user["restaurant_id"])
+    # Signed, like the iOS flow: a bare restaurant id let anyone finish the
+    # public dialog with their own Meta account and bind their page to any
+    # restaurant (MOD-MKT-5). "web~" tells the callback to answer the popup.
+    from gmb import sign_mobile_state
+    state        = "web~" + sign_mobile_state(current_user["restaurant_id"])
     params = urllib.parse.urlencode({
         "client_id":     app_id,
         "redirect_uri":  redirect_uri,
@@ -114,14 +118,19 @@ def instagram_callback():
             "</script><p>No Instagram business account found.</p></body></html>"
         )
 
-    # Web popups send a bare restaurant id; the iOS app sends a signed
-    # mobile state (gmb.sign_mobile_state) and finishes on a deep link.
-    mobile = bool(state and ":" in state)
-    if mobile:
-        from gmb import verify_mobile_state
+    # Both flows send a signed state (gmb.sign_mobile_state): the web popup
+    # prefixes it with "web~" and is answered with postMessage; the iOS app
+    # finishes on a deep link. An unsigned or bare-numeric state binds
+    # nothing — it used to be trusted as the restaurant id.
+    from gmb import verify_mobile_state
+    web_signed = bool(state and state.startswith("web~"))
+    mobile = bool(state and ":" in state and not web_signed)
+    if web_signed:
+        rid = verify_mobile_state(state[len("web~"):])
+    elif mobile:
         rid = verify_mobile_state(state)
     else:
-        rid = int(state) if state and state.isdigit() else None
+        rid = None
     if rid:
         from datetime import datetime, timedelta
         expires = (datetime.now() + timedelta(days=60)).strftime("%Y-%m-%d")

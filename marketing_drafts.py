@@ -33,6 +33,10 @@ def save_draft(restaurant_id, body, *, content_type=None, topic=None, media_id=N
         return {"ok": False, "error": "There's nothing to save."}
     if len(body) > MAX_BODY:
         return {"ok": False, "error": "That's longer than any platform will take."}
+    if media_id:
+        from marketing_media import get_media_token
+        if not get_media_token(media_id, restaurant_id, db_path=db_path):
+            return {"ok": False, "error": "That photo isn't in your library."}
 
     conn = get_conn(db_path)
     try:
@@ -71,7 +75,7 @@ def list_drafts(restaurant_id, limit=40, db_path: str = DB_PATH) -> list:
             "       m.token AS media_token, u.username AS created_by_name, "
             "       a.username AS approved_by_name "
             "FROM marketing_drafts d "
-            "LEFT JOIN marketing_media m ON m.id = d.media_id "
+            "LEFT JOIN marketing_media m ON m.id = d.media_id AND m.restaurant_id = d.restaurant_id "
             "LEFT JOIN users u ON u.id = d.created_by "
             "LEFT JOIN users a ON a.id = d.approved_by "
             "WHERE d.restaurant_id=? ORDER BY d.updated_at DESC LIMIT ?",

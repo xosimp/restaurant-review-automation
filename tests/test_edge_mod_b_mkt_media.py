@@ -404,7 +404,6 @@ def test_an_empty_upload_is_a_json_400_on_web_and_mobile(app, db_path):
 
 # ── Drafts #5 foreign photo (MOD-MKT-1) ───────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-1: save_draft stores any media_id with no ownership check")
 def test_a_draft_cannot_be_saved_with_another_restaurants_photo(db_path):
     """A6 Drafts #5 / MOD-MKT-1."""
     a = _restaurant(db_path, name="Alpha Co")
@@ -413,7 +412,6 @@ def test_a_draft_cannot_be_saved_with_another_restaurants_photo(db_path):
     assert not marketing_drafts.save_draft(a, "Our copy", media_id=theirs["id"], db_path=db_path)["ok"]
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-1: list_drafts joins marketing_media on id alone and returns a foreign media_token")
 def test_the_drafts_listing_never_hands_back_another_restaurants_photo_token(db_path):
     """A6 Drafts #5 / MOD-MKT-1: probe p02_draft_idor reproduced the leak."""
     a = _restaurant(db_path, name="Alpha Co")

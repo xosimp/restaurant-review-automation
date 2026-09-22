@@ -213,7 +213,6 @@ def test_a_slot_more_than_six_months_out_is_refused_and_one_just_inside_is_taken
 
 # ── #15 foreign media (MOD-MKT-1) ─────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-1: schedule_post stores any media_id from the request with no ownership check")
 def test_a_post_cannot_be_scheduled_with_another_restaurants_photo(db_path):
     """A6 queue #15 / MOD-MKT-1: media ids are sequential integers."""
     a = _restaurant(db_path, name="Alpha")
@@ -223,7 +222,6 @@ def test_a_post_cannot_be_scheduled_with_another_restaurants_photo(db_path):
     assert not result["ok"], "restaurant A queued a post carrying restaurant B's photo"
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-1: list_scheduled joins marketing_media on id alone and returns a foreign media_token")
 def test_the_queue_listing_never_hands_back_another_restaurants_photo_token(db_path):
     """A6 queue #15 / MOD-MKT-1: the token is the only secret guarding the
     public /m/<token>.jpg route, so returning it is the leak."""
@@ -236,7 +234,6 @@ def test_the_queue_listing_never_hands_back_another_restaurants_photo_token(db_p
     assert all(p.get("media_token") != theirs["token"] for p in listed)
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-1: run_due_posts joins marketing_media on id alone and publishes a foreign photo")
 def test_a_due_post_is_never_published_with_another_restaurants_photo(db_path, monkeypatch, mail):
     """A6 queue #15 / MOD-MKT-1: a row that already carries a foreign
     media_id (written before the fix) must not reach A's Instagram with B's

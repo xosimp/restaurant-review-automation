@@ -271,6 +271,13 @@ def schedule_post(restaurant_id, platform, body, scheduled_for, *, topic="",
     if not channels_for(restaurant_id, db_path=db_path).get(platform):
         return {"ok": False, "error": f"{platform.title()} isn't connected yet."}
 
+    # Media ids are sequential integers; one restaurant must never schedule
+    # (and so publish, and read the token of) another's photo (MOD-MKT-1).
+    if media_id:
+        from marketing_media import get_media_token
+        if not get_media_token(media_id, restaurant_id, db_path=db_path):
+            return {"ok": False, "error": "That photo isn't in your library."}
+
     conn = get_conn(db_path)
     try:
         cur = conn.execute(
@@ -303,7 +310,7 @@ def list_scheduled(restaurant_id, include_done=True, limit=50, db_path: str = DB
     conn = get_conn(db_path)
     try:
         sql = ("SELECT s.*, m.token AS media_token FROM marketing_scheduled_posts s "
-               "LEFT JOIN marketing_media m ON m.id = s.media_id "
+               "LEFT JOIN marketing_media m ON m.id = s.media_id AND m.restaurant_id = s.restaurant_id "
                "WHERE s.restaurant_id=?")
         if not include_done:
             sql += " AND s.status='scheduled'"
@@ -410,7 +417,7 @@ def run_due_posts(base_url="https://dashboard.cavnar.ai", db_path: str = DB_PATH
     try:
         rows = conn.execute(
             "SELECT s.*, m.token AS media_token FROM marketing_scheduled_posts s "
-            "LEFT JOIN marketing_media m ON m.id = s.media_id "
+            "LEFT JOIN marketing_media m ON m.id = s.media_id AND m.restaurant_id = s.restaurant_id "
             "WHERE s.status='scheduled' ORDER BY s.scheduled_for ASC LIMIT 200"
         ).fetchall()
     finally:

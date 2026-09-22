@@ -152,7 +152,6 @@ def _meta_fields(db_path, rid):
 
 # ── #1 unsigned numeric state (MOD-MKT-5) ─────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-5: the web callback trusts state=<restaurant_id> unsigned and writes the caller's page tokens onto that restaurant")
 def test_a_callback_with_a_bare_numeric_state_does_not_bind_a_page_to_that_restaurant(app, db_path, monkeypatch):
     """A6 Meta #1 / MOD-MKT-5: the dialog URL is public; an attacker who
     completes it with their own Meta account and state=<victim id> must not
