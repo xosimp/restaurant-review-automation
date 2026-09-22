@@ -113,8 +113,8 @@ struct CavnarSealDrawIn: View {
 /// that font's real glyph outlines (extracted with fontTools, quadratic
 /// curves and all, the font's own contour winding preserved for nonzero
 /// fill), placed in a box whose height is the cap height (100 units) —
-/// the same geometry brand/assets/wordmark-*.svg and the BrandLockup
-/// asset are built from, so this and those are pixel-identical at rest.
+/// the same geometry brand/assets/wordmark-*.svg and lockup-*.svg are
+/// built from, so this and those are pixel-identical at rest.
 struct CavnarWordmarkLetterShape: Shape {
     let index: Int
 
@@ -496,8 +496,8 @@ struct CavnarWordmarkStampIn: View {
     // When true the AI tag hangs off the wordmark's trailing edge as an
     // overlay that takes no layout width — so centering this view centers
     // the six letters themselves, with the tag sitting off to the right
-    // (the lock screen). Off by default: inside CavnarLockupIntro the tag
-    // is part of the composed lockup's width, matching the BrandLockup asset.
+    // (the lock screen). Off by default: in a composed lockup the tag is
+    // part of the lockup's width, matching brand/assets/lockup-*.svg.
     var aiTagOverhangs: Bool = false
 
     /// From the first stamp to the tag landing — what a parent waits for
@@ -679,39 +679,6 @@ struct CavnarWordmarkTraceIn: View {
             }
             onFinished?()
         }
-    }
-}
-
-/// The full lockup (seal + wordmark + AI tag) as one choreographed
-/// entrance — the seal draws itself while the letters stamp in (or, on a
-/// cold launch, get traced and filled) beside it. Same 865x148
-/// proportions as the BrandLockup asset so it drops in at the same `width`
-/// wherever that static image was used.
-struct CavnarLockupIntro: View {
-    var width: CGFloat
-    var coldLaunch: Bool = false
-
-    /// The lockup's proportions (brand/assets/lockup-light.svg): seal, gap,
-    /// wordmark, gap, AI tag.
-    static let aspectWidth: CGFloat = 865
-    static let aspectHeight: CGFloat = 148
-
-    private var s: CGFloat { width / Self.aspectWidth }
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 30 * s) {
-            CavnarSealDrawIn(size: 120 * s)
-                .padding(.top, 14 * s)
-            Group {
-                if coldLaunch {
-                    CavnarWordmarkTraceIn(width: CavnarWordmarkLetterShape.boxWidth * s, delay: 0.45)
-                } else {
-                    CavnarWordmarkStampIn(width: CavnarWordmarkLetterShape.boxWidth * s, delay: 0.45)
-                }
-            }
-            .padding(.top, 4 * s)
-        }
-        .frame(width: width, height: Self.aspectHeight * s, alignment: .topLeading)
     }
 }
 

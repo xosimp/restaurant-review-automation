@@ -9,7 +9,7 @@ import SwiftUI
 /// session traced live on device: the duplicated content's true width, with
 /// nothing capping it, leaked straight up through the layout tree and every
 /// other section on the page inherited it. A small nudge arrow after the
-/// last chip (the same motion NeedsAttentionCarousel already uses) is the
+/// last chip (the PulsingSwipeArrow motion) is the
 /// hint that there's more to see, instead.
 struct HomePulseStrip: View {
     let modules: [ModuleSummary]

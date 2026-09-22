@@ -488,7 +488,7 @@ private struct AddGuestContactSheet: View {
                         focus: $focusedField, field: .phone
                     )
 
-                    // Plain full-width buttons, not CavnarFormButtonPair —
+                    // Plain full-width buttons, not a width-matched pair —
                     // see SendReviewRequestSheet's identical comment; same
                     // PreferenceKey width-matching bug, same fix.
                     VStack(spacing: 10) {

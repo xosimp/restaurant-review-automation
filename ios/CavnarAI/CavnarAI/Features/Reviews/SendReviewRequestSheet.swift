@@ -128,7 +128,7 @@ struct SendReviewRequestSheet: View {
                         Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
                     }
 
-                    // Plain full-width buttons, not CavnarFormButtonPair —
+                    // Plain full-width buttons, not a width-matched pair —
                     // that PreferenceKey width-matching mechanism doesn't
                     // reliably resolve when the sheet sits in this app's
                     // deeper sheet-presentation chains (already root-caused

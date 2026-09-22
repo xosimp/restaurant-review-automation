@@ -35,7 +35,7 @@ struct UpdateEmailSheet: View {
                         Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
                     }
 
-                    // Plain full-width buttons, not CavnarFormButtonPair —
+                    // Plain full-width buttons, not a width-matched pair —
                     // this sheet is reached through the same two-level
                     // sheet chain (AccountView -> AccountProfileDetailView
                     // -> here) that first exposed the PreferenceKey width-

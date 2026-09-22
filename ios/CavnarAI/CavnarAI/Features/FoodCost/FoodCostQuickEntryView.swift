@@ -372,7 +372,7 @@ private struct IngredientCarousel: View {
         ScrollViewReader { proxy in
             VStack(spacing: 10) {
                 // A visible hint that this window scrolls — same SWIPE +
-                // arrow language as Home's NeedsAttentionCarousel, rotated
+                // arrow language as Home's pulse strip, rotated
                 // to point down since this carousel is vertical. Its own
                 // row above the window (not an overlay on top of it) so it
                 // sits in genuinely empty space instead of drawing over

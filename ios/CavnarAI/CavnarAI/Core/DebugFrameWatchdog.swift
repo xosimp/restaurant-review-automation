@@ -148,46 +148,8 @@ enum DebugFrameWatchdog {
         return n
     }
 
-    private static func sampleMainThread(at t: Double) {
-        var state = arm_thread_state64_t()
-        var count = mach_msg_type_number_t(MemoryLayout<arm_thread_state64_t>.size / MemoryLayout<natural_t>.size)
-        guard thread_suspend(mainThread) == KERN_SUCCESS else { return }
-        let kr = withUnsafeMutablePointer(to: &state) { ptr in
-            ptr.withMemoryRebound(to: natural_t.self, capacity: Int(count)) {
-                thread_get_state(mainThread, thread_state_flavor_t(ARM_THREAD_STATE64), $0, &count)
-            }
-        }
-        var n = 0
-        if kr == KERN_SUCCESS {
-            frameBuffer[n] = UInt(state.__pc); n += 1
-            frameBuffer[n] = UInt(state.__lr); n += 1
-            var fp = UInt(state.__fp)
-            while n < 250, fp >= stackLo, fp < stackHi, fp & 0xF == 0 {
-                let next = UnsafePointer<UInt>(bitPattern: fp)!.pointee
-                let ret = UnsafePointer<UInt>(bitPattern: fp + 8)!.pointee
-                if ret == 0 { break }
-                frameBuffer[n] = ret; n += 1
-                if next <= fp { break }
-                fp = next
-            }
-        }
-        thread_resume(mainThread)
-        var lines: [String] = []
-        for i in 0..<n {
-            var info = Dl_info()
-            let pc = frameBuffer[i]
-            if dladdr(UnsafeRawPointer(bitPattern: pc), &info) != 0, let sym = info.dli_sname {
-                let lib = info.dli_fname.map { String(cString: $0).split(separator: "/").last.map(String.init) ?? "" } ?? ""
-                lines.append("\(lib)!\(String(cString: sym))")
-            } else {
-                lines.append(String(format: "0x%lx", pc))
-            }
-        }
-        NSLog("FRAMELOG sample %.3f\n    %@", t, lines.joined(separator: "\n    "))
-    }
     #else
     private static func captureMainThread(into out: UnsafeMutablePointer<UInt>) -> Int { 0 }
-    private static func sampleMainThread(at t: Double) {}
     #endif
 }
 #else

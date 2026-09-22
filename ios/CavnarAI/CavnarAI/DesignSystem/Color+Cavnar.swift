@@ -50,31 +50,4 @@ extension Color {
     /// #000). Don't use this for content surfaces — use cavnarPaper/Paper2/
     /// Paper3 for those.
     static let cavnarChrome = Color("Chrome")
-
-    /// Per-tenant white-label accent (restaurant.brand_color, read from the
-    /// /mobile/api/home payload) — falls back to the default ember when a
-    /// restaurant hasn't set one. Use this instead of .cavnarEmber for any
-    /// "brand accent" usage (FAB, selected state, primary button) so a
-    /// white-labeled restaurant's own color shows through; keep using
-    /// .cavnarEmber directly only for chrome that's deliberately
-    /// Cavnar-branded rather than tenant-branded.
-    static func cavnarAccent(brandColorHex: String?) -> Color {
-        guard let hex = brandColorHex, let color = Color(hex: hex) else { return .cavnarEmber }
-        return color
-    }
-}
-
-extension Color {
-    /// Parses a "#rrggbb" or "rrggbb" string. Returns nil for anything else
-    /// rather than silently falling back to black, since a bad brand_color
-    /// value should be treated the same as "not set" by the caller.
-    init?(hex: String) {
-        var hexString = hex.trimmingCharacters(in: .whitespacesAndNewlines)
-        if hexString.hasPrefix("#") { hexString.removeFirst() }
-        guard hexString.count == 6, let value = UInt32(hexString, radix: 16) else { return nil }
-        let r = Double((value >> 16) & 0xFF) / 255.0
-        let g = Double((value >> 8) & 0xFF) / 255.0
-        let b = Double(value & 0xFF) / 255.0
-        self.init(red: r, green: g, blue: b)
-    }
 }

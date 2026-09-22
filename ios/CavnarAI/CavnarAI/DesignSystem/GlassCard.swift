@@ -157,18 +157,3 @@ struct StatProgressBar: View {
         .frame(height: 6)
     }
 }
-
-/// Small circular "view more" affordance — the reference's top-right
-/// chevron button. A display-only visual (the whole card is usually the tap
-/// target already); wrap in a Button at the call site when it should be
-/// independently tappable.
-struct GlassChevronButton: View {
-    var body: some View {
-        Image(systemName: "chevron.right")
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(Color.cavnarInk2)
-            .frame(width: 26, height: 26)
-            .background(.ultraThinMaterial, in: Circle())
-            .overlay(Circle().strokeBorder(Color.white.opacity(0.12), lineWidth: 1))
-    }
-}

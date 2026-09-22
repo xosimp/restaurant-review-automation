@@ -217,7 +217,6 @@ enum LoginMetrics {
     static let spaceL: CGFloat = 16
     static let spaceXL: CGFloat = 24
     static let spaceXXL: CGFloat = 32
-    static let spaceHero: CGFloat = 48
     static let touch: CGFloat = 44
     static let fieldHeight: CGFloat = 52
     static let buttonHeight: CGFloat = 52

@@ -131,7 +131,7 @@ extension View {
 
 struct CavnarPrimaryButtonStyle: ButtonStyle {
     var isDisabled: Bool = false
-    // Set by CavnarFormButtonPair so this button's VISUAL surface can be
+    // Set by a width-matching container so this button's VISUAL surface can be
     // forced to match a sibling's width. Has to be applied HERE, inside
     // makeBody before .cavnarPremiumButtonSurface draws the background/
     // border/clipShape — not as a plain .frame() bolted on from outside
@@ -635,63 +635,6 @@ private extension View {
     }
 }
 
-/// A primary action + "Cancel" pair, sized to genuinely match each
-/// other (both equal to the wider of the two — in practice always the
-/// primary button, since "Cancel" is short) and centered within their
-/// container.
-///
-/// Real width-matching via PreferenceKey, measured AND applied correctly —
-/// this took three attempts to get right, worth recording all three so the
-/// mistake doesn't get repeated a fourth time:
-///   1. Cancel's label got .frame(maxWidth: .infinity) applied AFTER
-///      .buttonStyle(). Only the invisible tap target grew; the visible
-///      pill stayed narrow, because CavnarSecondaryButtonStyle's own
-///      background/border/clipShape are composed inside makeBody, sized to
-///      the label BEFORE that outside .frame() ever applies.
-///   2. Moved .frame(maxWidth: .infinity) onto the label itself, before
-///      .buttonStyle() sees it. That stretched the visual pill correctly,
-///      but .frame(maxWidth: .infinity) is a greedy/unbounded request —
-///      having it anywhere inside a VStack's child makes the WHOLE VStack
-///      report unbounded ideal width to ITS OWN parent, so Cancel ended up
-///      spanning the full form width instead of matching the button above.
-///   3. Switched to PreferenceKey-measured widths (this version) — but
-///      still applied the resulting `.frame(width:)` from OUTSIDE
-///      .buttonStyle(), i.e. attempt 1's exact mistake with a smarter
-///      number. Same result: Cancel's hit target matched, its visible
-///      pill didn't.
-/// The actual fix needed BOTH halves at once: measure the real widths via
-/// PreferenceKey (this struct), AND feed the result INTO each ButtonStyle
-/// so `matchedWidth` is applied inside makeBody, before the surface is
-/// drawn — see CavnarPrimaryButtonStyle/CavnarSecondaryButtonStyle's own
-/// matchedWidth property. That's why `primary` takes the measured width as
-/// a parameter instead of building itself with no knowledge of it.
-struct CavnarFormButtonPair<Primary: View>: View {
-    // cancelLabel comes first (a plain String, not a closure) so both
-    // `primary` and `cancelAction` can be used as trailing closures —
-    // Swift's multi-trailing-closure syntax needs the closure params
-    // grouped at the end, with any non-closure params passed normally
-    // in the parens before them:
-    //   CavnarFormButtonPair(cancelLabel: "Cancel") { width in ... } cancelAction: { ... }
-    var cancelLabel: String = "Cancel"
-    @ViewBuilder var primary: (CGFloat?) -> Primary
-    let cancelAction: () -> Void
-
-    @State private var matchedWidth: CGFloat?
-
-    var body: some View {
-        VStack(spacing: 10) {
-            primary(matchedWidth)
-                .cavnarReportWidth()
-
-            Button(cancelLabel, action: cancelAction)
-                .buttonStyle(CavnarSecondaryButtonStyle(matchedWidth: matchedWidth))
-                .cavnarReportWidth()
-        }
-        .onPreferenceChange(CavnarWidthKey.self) { matchedWidth = $0 }
-        .frame(maxWidth: .infinity)
-    }
-}
-
 /// The app's standing "quick async action, no spinner" convention — a
 /// gentle breathing opacity on the loading label instead of a spinner.
 /// Same exact curve as AIConsultantView's own private PulsingAnalyzingText
@@ -906,18 +849,6 @@ extension View {
 /// Templates, Change Password, 2FA Setup, Add Guest, Send Review Request),
 /// carrying the same premium feel established for Ask Cavnar's redesign
 /// across every other modal instead of leaving them flat. .ignoresSafeArea()
-/// so the gradient actually starts behind the status bar/nav bar, not below it.
-
-/// A circle with a fully transparent fill and only an ember stroke — no
-/// material, no tint fill, nothing opaque — so the module gradient bleeds
-/// straight through the ring where the system's own chrome allows it.
-struct CavnarOutlineCircle: View {
-    var body: some View {
-        Circle()
-            .fill(Color.clear)
-            .overlay(Circle().strokeBorder(Color.cavnarEmber.opacity(0.45), lineWidth: 1))
-    }
-}
 
 /// Ember-colored back chevron via a real ToolbarItem — NOT via hiding the
 /// system nav bar. A `.toolbar(.hidden, for: .navigationBar)` + custom

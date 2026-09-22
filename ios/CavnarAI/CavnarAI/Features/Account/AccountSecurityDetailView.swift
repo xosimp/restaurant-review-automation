@@ -412,7 +412,7 @@ private struct ChangePasswordSheet: View {
                         Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
                     }
 
-                    // Plain full-width buttons, not CavnarFormButtonPair —
+                    // Plain full-width buttons, not a width-matched pair —
                     // this sheet is reached through the same two-level
                     // sheet chain (AccountView -> AccountSecurityDetailView
                     // -> here) that first exposed the PreferenceKey width-
@@ -523,7 +523,7 @@ private struct TwoFactorSetupSheet: View {
                             Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
                         }
 
-                        // Plain full-width buttons, not CavnarFormButtonPair —
+                        // Plain full-width buttons, not a width-matched pair —
                         // its PreferenceKey width-matching could get stuck at
                         // a stale/tiny value under this screen's multi-stage
                         // sheet-restoration timing (relock -> re-present),
@@ -587,7 +587,7 @@ private struct TwoFactorSetupSheet: View {
 
                         // Plain full-width button — see the identical note
                         // on the "Verify and enable" button above for why
-                        // CavnarFormButtonPair's width-matching was dropped
+                        // width-matched button pairs were dropped
                         // from this screen specifically.
                         VStack(spacing: 10) {
                             Button {
