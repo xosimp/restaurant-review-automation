@@ -5627,7 +5627,7 @@ def publish_blockers(restaurant_id, schedule_id=None):
     except Exception:
         review = {}
     for line in (review.get("lines") or [])[:6]:
-        if line.startswith("⚠"):
+        if line.startswith("⚠") and "over the ceiling" not in line:   # the hours check below says it once
             out.append(line.lstrip("⚠ ").strip())
     # The labor budget is a ceiling. A week the model wrote past it is not
     # trimmed (a silently thinner week is worse) — it is named here, so the

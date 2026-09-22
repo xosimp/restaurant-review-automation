@@ -1,7 +1,7 @@
 """
 labor.py — Labor cost analysis + Claude-powered scheduling recommendations
 """
-import csv, json, math, time
+import csv, json, math, re, time
 from collections import defaultdict
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -1332,7 +1332,8 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                                  roster: list = None,
                                  extra_blocks: str = None,
                                  week_slice: list = None,
-                                 structured: bool = True) -> dict:
+                                 structured: bool = True,
+                                 prior_rows: list = None) -> dict:
     """
     Use Claude to generate an optimized weekly schedule.
     Returns dict: {schedule_csv: str, summary: list[str], week_dates: list, week_days: list}
@@ -1345,6 +1346,8 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                     reservations, pairings, reliability, learned edits).
     week_slice    — a subset of the week's dates to write rows for, when the
                     week is generated in parts (a big roster).
+    prior_rows    — the rows the earlier parts already wrote, so this part
+                    can keep hours, rest and days off right across the seam.
     structured    — ask for JSON against SCHEDULE_SCHEMA; falls back to the
                     CSV text contract if the API refuses the format.
     """
@@ -1914,6 +1917,13 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     # efficient 24% against a 30% target had staff added until it reached
     # 30%. That raised payroll inside the one module whose headline metric
     # is savings. Under budget is a good outcome and is now stated as one.
+    # The 40h and days-off lines used to be hardcoded here and contradicted the
+    # restaurant's own rules block (a 48h ceiling read as 40h). When the engine
+    # hands over that block (extra_blocks), it is the only statement of them.
+    _ceiling_line = "" if extra_blocks else "- No employee over 40h for the week\n"
+    _days_off_block = "" if extra_blocks else ("CONSECUTIVE DAYS OFF:\n- Every employee must receive at least 2 consecutive days off "
+                                                  "per week. Never give isolated single days off. Part-time staff should have 3+ consecutive days off.\n\n")
+
     _hours_rule = (
         f"- Weekly hours must not EXCEED {hours_budget}h. Landing under it is fine and expected — "
         f"never add people or hours to reach it (see PAR HOURS CEILING above). If you are over it, trim back."
@@ -1958,6 +1968,26 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         _dates_block = ("Next week runs " + week_dates[0] + " to " + week_dates[-1] + ". This request covers ONLY these dates; "
                         "the other days are written separately. Write shifts for these dates only, keeping the same "
                         "people's other days in mind for hours and rest:\n" + "\n".join(f"- {d}: {n}" for d, n in zip(_gen_dates, _gen_days)))
+        if prior_rows:
+            _seen = {}
+            for _pr in prior_rows:
+                _nm = (_pr.get("employee") or "").strip()
+                if not _nm:
+                    continue
+                _e = _seen.setdefault(_nm, {"hours": 0.0, "days": set(), "last": ""})
+                try:
+                    _e["hours"] += float(_pr.get("scheduled_hours") or 0)
+                except (TypeError, ValueError):
+                    pass
+                _e["days"].add((_pr.get("day") or _pr.get("date") or "")[:3])
+                _key = (_pr.get("date") or "", _pr.get("shift_end") or "")
+                if _key > (_e.get("_k") or ("", "")):
+                    _e["_k"] = _key
+                    _e["last"] = f"{_pr.get('day') or _pr.get('date')} until {_pr.get('shift_end')}"
+            _prior_lines = [f"  {n}: {e['hours']:g}h so far on {'/'.join(sorted(e['days']))}" + (f", last shift {e['last']}" if e["last"] else "")
+                            for n, e in sorted(_seen.items())]
+            _dates_block += ("\n\nALREADY WRITTEN FOR THE OTHER DAYS OF THIS WEEK (count these toward the hours ceiling, "
+                             "rest and days off — the rules are checked across the whole week):\n" + "\n".join(_prior_lines))
     if structured:
         _output_spec = ("OUTPUT — JSON only, matching the schema you were given: `shifts` is every shift for the dates above "
                         "(date YYYY-MM-DD, day, employee exactly as listed, role, shift_start and shift_end in 12-hour am/pm "
@@ -1996,8 +2026,7 @@ SCHEDULING RULES:
 - Use exact dates listed above and real employee names from the staff list
 - Base each day's staffing on the YoY same-day data when available — that is your primary projection
 - For holiday weeks, match staffing to last year's holiday labor hours, not recent averages
-- No employee over 40h for the week
-{_hours_rule}
+{_ceiling_line}{_hours_rule}
 
 ROLE STAGGER RULE (universal — applies to every restaurant):
 - Never schedule two employees in the same role at the exact same start time. The first person opens; additional staff stagger in based on volume. Add headcount only when YoY data or a flagged event justifies it — never to consume an hours budget.
@@ -2005,10 +2034,7 @@ ROLE STAGGER RULE (universal — applies to every restaurant):
 SERVER CLOSING STAGGER RULE (universal — applies to every restaurant, including busy nights like Mondays and weekends, unless RESTAURANT HOURS & SHIFT RULES below explicitly says otherwise):
 - Never schedule every server on a shift to close at the same time. Dinner rush tapers off well before actual closing — real restaurants don't pay a full server lineup to stand around a dead dining room for the last hour. Keep only 1-2 servers on through close to handle stragglers and closing side-work; end the rest of that shift's servers' shifts once volume visibly drops (commonly ~8:30-9pm, adjust to this restaurant's own patterns). A busier night justifies scheduling MORE servers earlier in the shift, not keeping more of them until close.
 
-CONSECUTIVE DAYS OFF:
-- Every employee must receive at least 2 consecutive days off per week. Never give isolated single days off. Part-time staff should have 3+ consecutive days off.
-
-CROSS-TRAINING:
+{_days_off_block}CROSS-TRAINING:
 - When a gap exists in a role, check CROSS-TRAINED STAFF first before adding a new person. Flexing a cross-trained employee costs nothing extra and keeps headcount lean.
 
 NO-SHOW BUFFER:
@@ -2343,6 +2369,20 @@ def format_demand_block(forecast: dict) -> str:
 
 # ── Publishing a schedule to staff ─────────────────────────────────────────────
 
+_ENGINE_NOTE = re.compile(r"\s*[—\-–]?\s*NEEDS REVIEW:.*$|\s*\(was [^)]*\)|(^|\s*[—\-–;]\s*)(added|trimmed|auto-capped)\b[^;]*", re.I)
+
+
+def staff_facing_note(note) -> str:
+    """The notes column carries the engine's own marks for the owner —
+    NEEDS REVIEW, (was Ana — over her hours), added — coverage top-up.
+    None of that belongs on an employee's schedule."""
+    n = (note or "").strip()
+    if not n:
+        return ""
+    n = _ENGINE_NOTE.sub("", n).strip(" —-–;")
+    return n
+
+
 def employee_shifts_from_csv(schedule_csv: str, employee_name: str) -> list:
     """One employee's own shifts, pulled out of the generated schedule CSV.
 
@@ -2376,7 +2416,7 @@ def employee_shifts_from_csv(schedule_csv: str, employee_name: str) -> list:
                 "start": (row.get("shift_start") or "").strip(),
                 "end": (row.get("shift_end") or "").strip(),
                 "hours": round(hours, 2),
-                "notes": (row.get("notes") or "").strip(),
+                "notes": staff_facing_note(row.get("notes")),
             })
     except Exception:
         return []

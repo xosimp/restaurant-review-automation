@@ -24,6 +24,7 @@ struct ScheduleRulesSheet: View {
         ("weekly_hours_ceiling", "Hours a week, at most", "hours"),
         ("min_consecutive_days_off", "Consecutive days off, at least", "days"),
         ("part_time_days_off", "Part-time days off a week", "days"),
+        ("max_consecutive_days", "Days in a row, at most", "days"),
         ("notice_days", "Notice before the week starts", "days"),
         ("minor_latest_end", "Minors finish by", "time"),
         ("minor_max_daily_hours", "Minors' longest day", "hours"),

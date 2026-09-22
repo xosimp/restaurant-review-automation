@@ -1534,7 +1534,9 @@ final class LaborViewModel {
         // ~8-10s before the job actually finished: it completed
         // server-side, but nothing was left polling to receive it. Wide
         // margin over the observed worst case rather than the bare minimum.
-        for _ in 0..<75 {
+        // A 70-person week is two or three model calls and about five
+        // minutes. The job runs on regardless; poll for up to 15 minutes.
+        for _ in 0..<450 {
             do {
                 let result: GeneratedSchedule = try await client.send(
                     "/mobile/api/labor/schedule-status/\(jobId)"

@@ -94,5 +94,5 @@ def shifts_for_employee(restaurant_id: int, employee_name: str, today=None) -> d
         "week": week,
         "week_start": today.isoformat(),
         "published": True,
-        "week_of": detail.get("week_start") or history[0].get("week_start"),
+        "week_of": detail.get("week_start"),
     }

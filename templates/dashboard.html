@@ -10688,14 +10688,16 @@ function generateSchedule(btn) {
         var jn = document.getElementById('sched-week');
         if (jn) jn.insertAdjacentHTML('beforeend', '<div id="sched-joined" style="margin-top:8px;text-align:center;font-size:13.5px;color:var(--ink3)">Joining the generation already running\u2026</div>');
       }
-      // Hard timeout at 3 min — show a helpful message instead of infinite spin
+      // A 70-person week takes two or three model calls and about five
+      // minutes; the job keeps running server-side whatever the page does,
+      // so the page waits as long as the job can (15 min) before giving up.
       var _hardTimeout = setTimeout(function() {
         clearInterval(_elapsedTimer);
         clearInterval(_schedPollInterval);
         _schedPollInterval = null;
         _schedReset(btn);
-        alert('Schedule generation is taking longer than usual. Railway may be cold-starting. Please try again in 30 seconds.');
-      }, 180000);
+        alert('Schedule generation is still running after 15 minutes. It will appear in Schedule History when it finishes.');
+      }, 900000);
 
       _schedPollInterval = setInterval(function() {
         fetch('/api/schedule-status/' + jobId)
@@ -16479,7 +16481,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     ['min_rest_hours','Rest between shifts','hours'],['max_shift_hours','Longest shift','hours'],
     ['daily_ot_hours','Daily overtime after','hours'],['meal_break_after_hours','Meal break after','hours'],
     ['minor_latest_end','Minors finish by','time, e.g. 10:00pm'],['minor_max_daily_hours','Minors per day','hours'],
-    ['min_consecutive_days_off','Days off in a row','days'],['part_time_days_off','Part-time days off','days'],
+    ['min_consecutive_days_off','Days off in a row','days'],['part_time_days_off','Part-time days off','days'],['max_consecutive_days','Days in a row, at most','days'],
     ['weekly_hours_ceiling','Weekly ceiling','hours'],['notice_days','Schedule notice','days']];
   window.toggleRulesPanel=function(){_lbToggle('rules',loadRules,'Set rules ↓');};
   window.loadRules=function(){

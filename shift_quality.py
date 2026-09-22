@@ -562,9 +562,14 @@ def dim_leadership(ctx: ShiftContext) -> DimensionResult | None:
     met = len(satisfied) + (1 if (check_profile and profile_ok) else 0)
     score = _pct(met, total)
 
+    # The floor (which caps the whole shift) is earned only by a rule the
+    # owner wrote. A built-in profile's "somebody able to run it" is a
+    # preference: it costs the dimension its points, never the shift its
+    # score — a fully staffed Saturday is not worth 0 because nobody on it
+    # has been rated 4 yet.
     res = DimensionResult(
         key="leadership", label="Leadership", score=score,
-        weight=DEFAULT_WEIGHTS["leadership"], floor=60,
+        weight=DEFAULT_WEIGHTS["leadership"], floor=60 if rules else None,
         facts={"rules_checked": total, "rules_met": met, "misses": missed},
     )
     for miss in missed:
@@ -2111,6 +2116,10 @@ class _SwapIndex:
                         gap = (s - pe).total_seconds() / 3600
                     else:
                         return False
+                    # Same calendar date is a double shift, not a rest
+                    # breach — the rule is the overnight turnaround.
+                    if ps.date() == s.date():
+                        continue
                     if gap < self.min_rest:
                         return False
         return True
@@ -2367,6 +2376,29 @@ def apply_fixes(rows: list, violations: list, profiles: list = None, weights: di
     cross = signals.get("cross_trained") or {}
     fixes, unfixed, evaluated = [], [], 0
     hard = [v for v in (violations or []) if v.get("hard")]
+    # over_max_hours lands on EVERY row of the person's payroll week. Fixing
+    # each one would strip them of the whole week (48h → 0h); only the
+    # excess should move. Keep the latest rows until the week fits, and
+    # drop the rest of that person's over-hours entries from the work list.
+    over = {}
+    for v in hard:
+        if v.get("kind") == "over_max_hours":
+            over.setdefault((v.get("employee") or "").strip().lower(), []).append(v)
+    if over:
+        probe = _SwapIndex(rows, availability, constraints, rules)
+        keep = set()
+        for low, vs in over.items():
+            cap = probe.cap(low)
+            excess = probe.total_hours(low) - cap
+            vs_sorted = sorted(vs, key=lambda x: (rows[x["index"]].get("date") or "", _slot_minutes(rows[x["index"]].get("shift_start") or "") or 0),
+                               reverse=True)
+            removed = 0.0
+            for v in vs_sorted:
+                if removed >= excess - 0.05:
+                    break
+                keep.add(id(v))
+                removed += _row_hours(rows[v["index"]])
+        hard = [v for v in hard if v.get("kind") != "over_max_hours" or id(v) in keep]
     seen_idx = set()
     for v in sorted(hard, key=lambda x: (0 if x.get("no_show") else 1, x.get("index", 0))):
         i = v.get("index")

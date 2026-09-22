@@ -23,7 +23,27 @@ import staff_settings as _staff
 import demand_signals as _signals
 
 # When one call cannot carry the week, it is written in this many parts.
-CHUNK_ROSTER_THRESHOLD = 80
+CHUNK_ROSTER_THRESHOLD = 80     # kept for callers; the decision is now by expected rows
+CHUNK_ROWS_PER_CALL = 160       # ~60 output tokens a row against a 16k ceiling, with room for the summary
+
+
+def _expected_rows(shifts, roster_pairs) -> int:
+    """How many shift rows a week here usually has: the busiest of the last
+    four full weeks in the history, else three and a half a head."""
+    try:
+        by_week = {}
+        for sh in shifts or []:
+            d = (sh.get("date") or "")[:10]
+            if len(d) == 10:
+                from datetime import datetime as _d
+                dt = _d.strptime(d, "%Y-%m-%d")
+                by_week[(dt.isocalendar()[0], dt.isocalendar()[1])] = by_week.get((dt.isocalendar()[0], dt.isocalendar()[1]), 0) + 1
+        weeks = sorted(by_week.items())[-5:-1] or sorted(by_week.items())[-1:]
+        if weeks:
+            return max(n for _, n in weeks)
+    except Exception:
+        pass
+    return int(len(roster_pairs or []) * 3.5)
 
 
 def _no_shift_data_message(restaurant_id, restaurant=None):
@@ -292,13 +312,16 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
     written again in parts and merged. A big roster starts in parts."""
     from labor import generate_optimized_schedule
     parts = 1
-    if len(roster_pairs or []) > CHUNK_ROSTER_THRESHOLD:
-        parts = 2 if len(roster_pairs) <= CHUNK_ROSTER_THRESHOLD * 2 else 3
+    expected = _expected_rows(shifts, roster_pairs)
+    if expected > CHUNK_ROWS_PER_CALL:
+        parts = 2 if expected <= CHUNK_ROWS_PER_CALL * 2 else 3
+    wasted = 0.0
     if parts == 1:
         result = generate_optimized_schedule(analysis, shifts, **kwargs)
         if not result.get("truncated"):
             result["chunked"] = 1
             return result
+        wasted = float(result.get("generation_seconds") or 0)
         parts = 2
     from datetime import datetime as _d, timedelta as _t
     # Same week the single call would have used (the prompt builder computes
@@ -312,14 +335,23 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
     size = -(-len(week_dates) // parts)
     slices = [week_dates[i:i + size] for i in range(0, len(week_dates), size)]
     merged = None
-    rows, narrative, seconds = [], [], 0.0
+    rows, narrative, seconds = [], [], wasted
+    prior_rows = []
     for sl in slices:
-        part = generate_optimized_schedule(analysis, shifts, week_slice=sl, **kwargs)
+        # Each slice sees what the earlier ones wrote — hours so far, days
+        # worked, last shift end — so the ceiling, rest and days-off rules
+        # can be honoured across the boundary rather than only checked after.
+        part = generate_optimized_schedule(analysis, shifts, week_slice=sl, prior_rows=list(prior_rows), **kwargs)
         if part.get("truncated"):
             raise ValueError("The week is too long to generate even in parts — trim the roster or split the "
                              "restaurant into departments, then try again.")
         merged = merged or part
         rows.extend(part["schedule_csv"].split("\n")[1:])
+        for line in part["schedule_csv"].split("\n")[1:]:
+            cols = [c.strip() for c in line.split(",", 7)]
+            if len(cols) >= 7 and cols[2]:
+                prior_rows.append({"date": cols[0], "day": cols[1], "employee": cols[2], "role": cols[3],
+                                   "shift_start": cols[4], "shift_end": cols[5], "scheduled_hours": cols[6]})
         narrative.extend(part.get("narrative") or [])
         seconds += float(part.get("generation_seconds") or 0)
     merged["schedule_csv"] = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes\n" + "\n".join(r for r in rows if r.strip())
@@ -338,7 +370,8 @@ def _last_published_csv(restaurant_id, before_date):
     try:
         row = conn.execute(
             "SELECT schedule_csv FROM schedule_history WHERE restaurant_id=? AND published_at IS NOT NULL "
-            "AND week_end < ? ORDER BY week_end DESC, id DESC LIMIT 1", (restaurant_id, before_date)).fetchone()
+            "AND week_end < ? AND week_end >= date(?, '-2 days') ORDER BY week_end DESC, id DESC LIMIT 1",
+            (restaurant_id, before_date, before_date)).fetchone()
     finally:
         conn.close()
     return (row["schedule_csv"] if row else "") or ""
@@ -1096,6 +1129,22 @@ def _window_overlap(row: dict, window: tuple) -> bool:
 
 _MORNING_WINDOW = (_parse_time_to_minutes("11:00am"), _parse_time_to_minutes("2:30pm"))
 _NIGHT_WINDOW = (_parse_time_to_minutes("5:30pm"), _parse_time_to_minutes("8:30pm"))
+_DAYPART_SPLIT = 15 * 60   # the same 3pm the rules and the quality engine use
+
+
+def _daypart_windows(constraints, day_name: str) -> list:
+    """[("morning", (start, end)), ("night", (start, end))] for one day, on
+    the same 3pm split schedule_rules.daypart_of and shift_quality use, from
+    the day's opening and closing times when they are known. A floor
+    measured on a fixed 11am–2:30pm slot counted a 6am–10:30am cook as
+    nobody and added a second one."""
+    open_m = _parse_time_to_minutes((getattr(constraints, "open_times", None) or {}).get(day_name, "")) if constraints else None
+    close_m = _parse_time_to_minutes((getattr(constraints, "close_times", None) or {}).get(day_name, "")) if constraints else None
+    if open_m is None:
+        open_m = 6 * 60
+    if close_m is None or close_m <= _DAYPART_SPLIT:
+        close_m = 24 * 60 - 1
+    return [("morning", (open_m, _DAYPART_SPLIT)), ("night", (_DAYPART_SPLIT, close_m))]
 
 
 def _ensure_role_floors(preview_rows: list, week_dates: list, week_days: list, restaurant_id: int,
@@ -1158,7 +1207,7 @@ def _ensure_role_floors(preview_rows: list, week_dates: list, week_days: list, r
     for date, day_name in zip(week_dates, week_days):
         for role_name, spec in floors.items():
             key = role_name.strip().lower()
-            for part, window in (("morning", _MORNING_WINDOW), ("night", _NIGHT_WINDOW)):
+            for part, window in _daypart_windows(constraints, day_name):
                 need = _rules.floor_for(floors, role_name, day_name, part)
                 if not need:
                     continue
@@ -1309,12 +1358,17 @@ def _prior_week_assignments(restaurant_id, days_back: int = 7, before: str = Non
     from datetime import datetime as _dt
     try:
         csv_text = _last_published_csv(restaurant_id, before) if before else ""
-        if not csv_text:
+        if not csv_text and before:
             # Nothing published before this week: the newest generation is
-            # the only tail there is, as long as it is not this same week.
-            entries = get_schedule_history(restaurant_id, limit=3)
+            # the only tail there is — but ONLY if it is the adjacent week.
+            # A three-week-old draft seeded "7 days in a row" warnings for
+            # people working three days; no seed is better than a stale one.
+            from datetime import timedelta as _tdl
+            floor = (_dt.strptime(before, "%Y-%m-%d") - _tdl(days=2)).strftime("%Y-%m-%d")
+            entries = get_schedule_history(restaurant_id, limit=5)
             for e in entries:
-                if before and (e.get("week_start") or "") >= before:
+                ws, we = (e.get("week_start") or ""), (e.get("week_end") or "")
+                if ws >= before or not we or we < floor:
                     continue
                 detail = get_schedule_history_detail(e["id"], restaurant_id)
                 csv_text = (detail or {}).get("schedule_csv") or ""
@@ -1436,6 +1490,7 @@ def _quality_signals(restaurant_id, result, **extra):
             signals[key] = fn(restaurant_id) or {}
         except Exception:
             signals[key] = {}
+    _reconcile_to_roster(signals)
     try:
         weights = get_quality_weights(restaurant_id)
     except Exception:
@@ -1450,6 +1505,21 @@ def _quality_signals(restaurant_id, result, **extra):
             signals["constraints"] = {}
     signals.update(extra)
     return signals, weights
+
+
+def _reconcile_to_roster(signals: dict) -> None:
+    """Ratings and closer flags for people who are not on the roster (seed
+    leftovers, staff who left) must not judge this week: fourteen such
+    ratings once put a fully staffed Saturday at 0 while the confidence
+    panel said nobody was rated. With a roster on file, only its names'
+    facts are scored; without one, everything stands."""
+    roster = {str(n).strip().lower() for n in (signals.get("roster") or []) if n}
+    if not roster:
+        return
+    for key in ("scores", "leader_flags"):
+        d = signals.get(key) or {}
+        if isinstance(d, dict):
+            signals[key] = {n: v for n, v in d.items() if str(n).strip().lower() in roster}
 
 
 def _score_schedule_quality(restaurant_id, rows, result, **extra):

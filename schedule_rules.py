@@ -30,19 +30,20 @@ DEFAULTS = {
     "min_consecutive_days_off": 2,
     "part_time_days_off": 3,
     "weekly_hours_ceiling": 40.0,
+    "max_consecutive_days": 6,       # a longer run is a hard breach (the tail of the published week counts)
     "notice_days": None,             # predictive-scheduling notice; informational
 }
 _BOUNDS = {"min_rest_hours": (0, 24), "max_shift_hours": (4, 24), "daily_ot_hours": (4, 24),
            "meal_break_after_hours": (2, 12), "minor_max_daily_hours": (1, 12),
            "min_consecutive_days_off": (0, 4), "part_time_days_off": (0, 5),
-           "weekly_hours_ceiling": (10, 80), "notice_days": (0, 30)}
+           "weekly_hours_ceiling": (10, 80), "max_consecutive_days": (2, 14), "notice_days": (0, 30)}
 
 # Reasons that mean the person is not really on that shift, so the row must
 # not count as coverage. Everything else in HARD is a cost or a rule breach
 # with a real person still on the floor.
 NO_SHOW = frozenset({"off_roster", "inactive", "outside_week", "double_booked", "overlap",
                      "approved_time_off", "unavailable_day", "unavailable_daypart", "elsewhere"})
-HARD = NO_SHOW | frozenset({"over_max_hours", "shift_too_long", "rest_gap", "minor_late", "minor_hours"})
+HARD = NO_SHOW | frozenset({"over_max_hours", "shift_too_long", "rest_gap", "minor_late", "minor_hours", "long_run"})
 SOFT = frozenset({"days_off", "pending_time_off", "daily_ot", "meal_break", "under_min_hours", "over_section_cap"})
 
 LABELS = {
@@ -56,6 +57,7 @@ LABELS = {
     "days_off": "fewer consecutive days off than the rule", "pending_time_off": "has a time-off request waiting on you",
     "daily_ot": "daily overtime", "meal_break": "long enough to need a meal break",
     "under_min_hours": "under their minimum hours", "over_section_cap": "more servers than sections",
+    "long_run": "too many days in a row",
 }
 
 
@@ -294,6 +296,11 @@ class Constraints:
                 gap = (s - re_).total_seconds() / 3600
             else:
                 return False, LABELS["overlap"]
+            # The rest rule is the overnight turnaround. Two legs on the same
+            # date (lunch then dinner) are a double, which the prompt asks
+            # for; only an overlap is wrong there.
+            if r.get("date") == candidate.get("date"):
+                continue
             if gap < need:
                 return False, f"{LABELS['rest_gap']} ({gap:.1f}h, needs {need:g}h)"
         return True, ""
@@ -539,8 +546,35 @@ def violations(rows: list, c: Constraints) -> list:
                     out.append(_v("overlap", i_cur, r_cur, f"overlaps their {r_prev.get('shift_start')}–{r_prev.get('shift_end')} on {r_prev.get('date')}"))
                 continue
             gap = (s_cur - e_prev).total_seconds() / 3600
-            if need and gap < need - 0.01:
+            # Same date = a double shift, not a rest breach (see rest_ok).
+            if need and gap < need - 0.01 and r_cur.get("date") != r_prev.get("date"):
                 out.append(_v("rest_gap", i_cur, r_cur, f"{gap:.1f}h since their previous shift, the rule is {need:g}h"))
+        # too many days in a row — the published tail counts, so a Saturday
+        # and Sunday already sent plus Monday to Friday here reads as seven
+        max_run = c.compliance.get("max_consecutive_days")
+        if max_run:
+            worked_dates = {r.get("date") for _, r in items if r.get("date")}
+            worked_dates |= {r.get("date") for r in (c.base_rows.get(key) or []) if r.get("date")}
+            try:
+                ordered = sorted(datetime.strptime(d, "%Y-%m-%d") for d in worked_dates)
+            except (TypeError, ValueError):
+                ordered = []
+            run, run_dates = [], []
+            best_run = []
+            for d in ordered:
+                if run and (d - run[-1]).days == 1:
+                    run.append(d)
+                else:
+                    run = [d]
+                if len(run) > len(best_run):
+                    best_run = list(run)
+            if len(best_run) > int(max_run):
+                run_iso = {d.strftime("%Y-%m-%d") for d in best_run}
+                week_rows = [(i, r) for i, r in items if r.get("date") in run_iso]
+                if week_rows:
+                    i_last, r_last = week_rows[-1]
+                    out.append(_v("long_run", i_last, r_last,
+                                  f"{len(best_run)} days in a row — the rule is at most {int(max_run)}"))
         # consecutive days off inside the generated week
         req = c.compliance.get("part_time_days_off") if c.employment.get(key) == "part" else c.compliance.get("min_consecutive_days_off")
         if req and c.week_dates:
@@ -596,6 +630,8 @@ def prompt_block(c: Constraints) -> str:
         lines.append(f"- Daily overtime starts at {float(comp['daily_ot_hours']):g} hours — avoid it.")
     if comp.get("meal_break_after_hours"):
         lines.append(f"- A shift over {float(comp['meal_break_after_hours']):g} hours includes a meal break; leave room for it.")
+    if comp.get("max_consecutive_days"):
+        lines.append(f"- Nobody works more than {int(comp['max_consecutive_days'])} days in a row, counting days already published last week.")
     if comp.get("min_consecutive_days_off"):
         lines.append(f"- Everyone gets at least {int(comp['min_consecutive_days_off'])} consecutive days off"
                      + (f"; part-time staff {int(comp['part_time_days_off'])}." if comp.get("part_time_days_off") else "."))

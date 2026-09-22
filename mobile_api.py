@@ -2536,7 +2536,18 @@ def mobile_schedule_history_delete(history_id, current_user):
     """The only deletion path for schedule_history rows -- nothing in this
     codebase ever removes one automatically. Scoped to current_user's
     restaurant_id the same way the detail route is."""
-    from models import delete_schedule_history
+    from models import delete_schedule_history, get_schedule_history_detail
+    from permissions import has_permission, SCHEDULE_PUBLISH
+    # Deleting a week is the publish permission's, not every console
+    # login's; and a week staff have already been sent cannot be deleted
+    # from under them — edit it, and the portal follows.
+    if not (current_user.get("is_admin") or has_permission(current_user, SCHEDULE_PUBLISH)):
+        return jsonify(ok=False, error="Your login can view schedules but not delete them."), 403
+    detail = get_schedule_history_detail(history_id, current_user["restaurant_id"])
+    if not detail:
+        return jsonify(ok=False, error="Not found"), 404
+    if detail.get("published_at"):
+        return jsonify(ok=False, error="This week has been sent to staff and can't be deleted. Edit it instead."), 400
     deleted = delete_schedule_history(history_id, current_user["restaurant_id"])
     if not deleted:
         return jsonify(ok=False, error="Not found"), 404
