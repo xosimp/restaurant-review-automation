@@ -14,9 +14,13 @@ PLACES_API_KEY = config.google_places_key()  # either variable name; used to rea
 ANTHROPIC_KEY  = os.getenv("ANTHROPIC_API_KEY", "")
 
 
-def fetch_menu_notes_from_places(google_place_id: str) -> str:
+def fetch_menu_notes_from_places(google_place_id: str, restaurant_id: int = None) -> str:
     """Fetch menu URL, editorial summary, and cuisine info from Google Places API.
-    Returns a string suitable for menu_notes field, or empty string if nothing useful found."""
+    Returns a string suitable for menu_notes field, or empty string if nothing useful found.
+
+    `restaurant_id` is the restaurant the notes are for; the menu extraction
+    below is billed to it. Without it the spend landed in the global pool
+    only, outside that restaurant's own budget (AI-30)."""
     if not PLACES_API_KEY or not google_place_id:
         return ""
     try:
@@ -70,7 +74,7 @@ def fetch_menu_notes_from_places(google_place_id: str) -> str:
         if menu_url:
             parts.append(f"Menu URL: {menu_url}")
             try:
-                menu_items = fetch_menu_from_url(menu_url)
+                menu_items = fetch_menu_from_url(menu_url, restaurant_id=restaurant_id)
                 if menu_items:
                     parts.append(f"Menu items (auto-extracted):\n{menu_items}")
             except Exception:
@@ -130,12 +134,54 @@ def fetch_menu_from_pdf_bytes(pdf_bytes: bytes, restaurant_name: str = "", resta
         return ""
 
 
+# A menu URL comes from a Google listing's `website` field or an admin's
+# paste — a page whose author is not our customer. It was fetched with
+# requests' default redirect-following and no host check, so a site that
+# answered 302 to http://169.254.169.254/... had the server read its own
+# cloud metadata (instance credentials) and hand it to the model (AI-30).
+# Every hop is now checked against the same public-address rule webhooks use.
+_MENU_MAX_REDIRECTS = 3
+
+
+def _public_url(url: str) -> bool:
+    try:
+        from webhooks import _validate_webhook_url, InvalidWebhookURL
+    except Exception:
+        return False
+    try:
+        _validate_webhook_url(url)
+        return True
+    except InvalidWebhookURL:
+        return False
+    except Exception:
+        return False
+
+
+def _get_public(url, headers, timeout):
+    """GET `url`, following at most _MENU_MAX_REDIRECTS redirects by hand and
+    refusing any hop — the first included — that is not a public address.
+    Returns the final response, or None when a hop was refused."""
+    from urllib.parse import urljoin
+    for _hop in range(_MENU_MAX_REDIRECTS + 1):
+        if not _public_url(url):
+            print(f"[fetch_menu_from_url] refused a non-public address: {url[:120]}")
+            return None
+        r = requests.get(url, headers=headers, timeout=timeout, allow_redirects=False)
+        if r.status_code in (301, 302, 303, 307, 308):
+            location = (r.headers or {}).get("Location") or (r.headers or {}).get("location")
+            if not location:
+                return r
+            url = urljoin(url, location)
+            continue
+        return r
+    return None
+
+
 def fetch_menu_from_url(menu_url: str, restaurant_id: int = None) -> str:
     """Fetch a restaurant's menu page and use AI to extract key menu items."""
     if not menu_url:
         return ""
     try:
-        import requests as _req
         import os
         # Identify as a normal browser so servers don't reject a bare
         # "python-requests" client — this is a single honest identity, not
@@ -145,8 +191,8 @@ def fetch_menu_from_url(menu_url: str, restaurant_id: int = None) -> str:
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9",
         }
-        r = _req.get(menu_url, headers=headers, timeout=12, allow_redirects=True)
-        if r.status_code != 200 or len(r.text) <= 500:
+        r = _get_public(menu_url, headers, 12)
+        if r is None or r.status_code != 200 or len(r.text) <= 500:
             return ""  # Not available, or the site declined the request — fail cleanly
         page_text = r.text[:10000]
 
@@ -370,6 +416,8 @@ def search_places_near(query: str, lat: float = None, lng: float = None, max_res
                 "place_id": item.get("place_id", ""),
                 "name": item.get("name", ""),
                 "address": item.get("formatted_address", ""),
+                # A search hit, not a measurement we store; the app decodes a
+                # number here.
                 "rating": item.get("rating", 0),
                 "review_count": item.get("user_ratings_total", 0),
             }
@@ -381,10 +429,21 @@ def search_places_near(query: str, lat: float = None, lng: float = None, max_res
         return []
 
 
-def get_nearby_competitors(google_place_id: str, radius_meters: int = 2000, max_results: int = 5) -> list:
-    """Find nearby restaurants using the Google Places API."""
+def get_nearby_competitors(google_place_id: str, radius_meters: int = 2000, max_results: int = 5,
+                           usage: dict = None) -> list:
+    """Find nearby restaurants using the Google Places API.
+
+    `usage`, when given, is filled with the billed Places requests this made
+    by kind ({"details": n, "nearby": n}). A run can make up to three nearby
+    searches (keyword, broad, widened radius) and the caller metered one
+    (MOD-INT-6), so two thirds of the spend never reached the budget."""
     if not PLACES_API_KEY or not google_place_id:
         return []
+    if usage is None:
+        usage = {}
+
+    def _billed(kind):
+        usage[kind] = usage.get(kind, 0) + 1
     try:
         # First get the restaurant's coordinates and types from its place ID
         details_url = "https://maps.googleapis.com/maps/api/place/details/json"
@@ -393,6 +452,7 @@ def get_nearby_competitors(google_place_id: str, radius_meters: int = 2000, max_
             "fields": "geometry,name,vicinity,types,price_level",
             "key": PLACES_API_KEY,
         }, timeout=8)
+        _billed("details")
         data = r.json()
         from ai_utils import places_error as _pe, PlacesError as _PlacesError
         if _pe(data):
@@ -437,6 +497,7 @@ def get_nearby_competitors(google_place_id: str, radius_meters: int = 2000, max_
             params["keyword"] = meal_keyword
 
         r2 = requests.get(nearby_url, params=params, timeout=8)
+        _billed("nearby")
         r2_data = r2.json()
         if _pe(r2_data):
             # A refused search is not an empty neighbourhood.
@@ -447,6 +508,7 @@ def get_nearby_competitors(google_place_id: str, radius_meters: int = 2000, max_
         if len(places) < 3:
             params.pop("keyword", None)
             r2 = requests.get(nearby_url, params=params, timeout=8)
+            _billed("nearby")
             r2_data = r2.json()
             if _pe(r2_data):
                 raise _pe(r2_data)
@@ -487,7 +549,9 @@ def get_nearby_competitors(google_place_id: str, radius_meters: int = 2000, max_
                 out.append({
                     "place_id": pid,
                     "name": name,
-                    "rating": p.get("rating", 0),
+                    # None when Places has no rating (no reviews yet): a
+                    # missing measurement, never a 0-star place (MOD-INT-3).
+                    "rating": p.get("rating"),
                     "review_count": p.get("user_ratings_total", 0),
                     "vicinity": p.get("vicinity", ""),
                     "price_level": p.get("price_level"),
@@ -534,7 +598,9 @@ def get_nearby_competitors(google_place_id: str, radius_meters: int = 2000, max_
                     "type": "restaurant",
                     "key": PLACES_API_KEY,
                     "rankby": "prominence",
-                }, timeout=8).json()
+                }, timeout=8)
+                _billed("nearby")
+                wider = wider.json()
                 more_places = wider.get("results", []) if wider.get("status") in ("OK", "ZERO_RESULTS") else []
                 existing_ids = {c["place_id"] for c in competitors}
                 for extra in _filter(more_places, enforce_price=False,
@@ -673,7 +739,7 @@ def generate_competitor_insight(restaurant_name: str, competitors: list, owner_n
             prov_line = ("\n  NOTE: this rating rests on very few reviews — treat it as provisional "
                          "and do not compare against it as a settled figure.") if _prov else ""
             comp_summary += f"""
-- {c["name"]} ({c["rating"]}★, {c["review_count"]} reviews){price_line}{dist_line}{match_line}{prov_line}
+- {c["name"]} ({(str(c["rating"]) + "★") if c.get("rating") else "no rating yet"}, {c["review_count"]} reviews){price_line}{dist_line}{match_line}{prov_line}
   Recent customer reviews (with how long ago each was written):
   {reviews_text}
 """
@@ -828,6 +894,18 @@ Tone: sharp, direct, trusted business advisor. Every line is a single punchy sen
         return ""
 
 
+def _previous_competitor(restaurant, place_id):
+    """This competitor as the last stored analysis had it, or None."""
+    try:
+        blob = json.loads(getattr(restaurant, "competitor_intel", None) or "{}")
+    except (TypeError, ValueError):
+        return None
+    for c in (blob.get("competitors") or []) if isinstance(blob, dict) else []:
+        if isinstance(c, dict) and c.get("place_id") == place_id:
+            return {k: v for k, v in c.items() if k != "reviews"}
+    return None
+
+
 def run_competitor_analysis(restaurant_id: int) -> dict:
     """Full pipeline: fetch competitors, get reviews, generate insight."""
     try:
@@ -837,8 +915,9 @@ def run_competitor_analysis(restaurant_id: int) -> dict:
             return {"ok": False, "error": "No Google Place ID set"}
 
         from ai_utils import PlacesError as _PlacesError
+        _usage = {}
         try:
-            competitors = get_nearby_competitors(restaurant.google_place_id)
+            competitors = get_nearby_competitors(restaurant.google_place_id, usage=_usage)
         except _PlacesError as pe:
             _meter_places(restaurant_id, "competitor_intel", "nearby", status="error", error=str(pe)[:200])
             try:
@@ -851,7 +930,13 @@ def run_competitor_analysis(restaurant_id: int) -> dict:
         # Google Places is billed per request and was invisible to the budget
         # entirely, which for a weekly job across every full-tier client is
         # real money no ceiling could see.
-        _meter_places(restaurant_id, "competitor_intel", "nearby")
+        # Every billed search the lookup made — own details, then one to
+        # three nearby searches (MOD-INT-6) — then a details lookup per
+        # candidate it kept.
+        for _ in range(_usage.get("details", 0)):
+            _meter_places(restaurant_id, "competitor_intel", "details")
+        for _ in range(max(1, _usage.get("nearby", 0))):
+            _meter_places(restaurant_id, "competitor_intel", "nearby")
         for _ in competitors or []:
             _meter_places(restaurant_id, "competitor_intel", "details")
 
@@ -882,7 +967,7 @@ def run_competitor_analysis(restaurant_id: int) -> dict:
                             competitors.append({
                                 "place_id": pid,
                                 "name": d["name"],
-                                "rating": d.get("rating", 0),
+                                "rating": d.get("rating"),
                                 "review_count": d.get("user_ratings_total", 0),
                                 "vicinity": d.get("vicinity", ""),
                                 "types": d.get("types", []),
@@ -896,6 +981,15 @@ def run_competitor_analysis(restaurant_id: int) -> dict:
                                                    "status": _status})
                     except Exception as ce:
                         print(f"[Competitor] Could not fetch custom competitor {pid}: {ce}")
+                        # Our lookup failing is not the rival closing. It was
+                        # dropped from the set and the next roster comparison
+                        # told the owner it was "gone" (MOD-INT-8). Carry the
+                        # last known entry, marked as not refreshed.
+                        _last = _previous_competitor(restaurant, pid)
+                        if _last:
+                            competitors.append(dict(_last, custom=True, stale=True,
+                                                    match_basis="added by you — not refreshed this run"))
+                            existing_ids.add(pid)
 
         if not competitors:
             return {"ok": False, "error": "No nearby competitors found"}

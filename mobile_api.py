@@ -1985,11 +1985,15 @@ def mobile_food_cost_analytics(current_user):
             **_food_cost_trust_block(rid),
         )
     except Exception as e:
-        return jsonify(ok=False, error=_safe_err(e), insight="Analysis unavailable — check back shortly.",
-                       insight_intro="Analysis unavailable — check back shortly.",
+        # A budget stop or outage says so rather than "check back shortly",
+        # which retrying never clears (AI-11).
+        from ai_utils import insight_error as _insight_err_fc
+        _msg_fc, _status_fc = _insight_err_fc(e)
+        return jsonify(ok=False, error=_msg_fc, insight=_msg_fc,
+                       insight_intro=_msg_fc,
                        insight_recommendations=[], insight_forecast=None,
                        waste_items=[], overstock=[], critical_low=[], reorder_soon=[],
-                       order_reduction=[], price_watch=[]), 500
+                       order_reduction=[], price_watch=[]), _status_fc
 
 
 @mobile_bp.route("/food-cost/trend")
@@ -2409,9 +2413,11 @@ def mobile_labor_insight(current_user):
         return jsonify(ok=True, insight=insight, diagnosis=_capi._labor_diagnosis_safe(rid, analysis),
                        **_insight_json(insight))
     except Exception as e:
-        return jsonify(ok=False, insight="Analysis unavailable — check back shortly.",
-                       insight_intro="Analysis unavailable — check back shortly.",
-                       insight_recommendations=[], insight_forecast=None, error=_safe_err(e)), 500
+        from ai_utils import insight_error as _insight_err_lab
+        _msg_lab, _status_lab = _insight_err_lab(e)
+        return jsonify(ok=False, insight=_msg_lab,
+                       insight_intro=_msg_lab,
+                       insight_recommendations=[], insight_forecast=None, error=_msg_lab), _status_lab
 
 
 @mobile_bp.route("/labor/generate-schedule", methods=["POST"])
@@ -3219,8 +3225,9 @@ def mobile_marketing_preview(current_user):
 @mobile_login_required
 def mobile_marketing_insight(current_user):
     payload, status = _capi._do_mkt_insight(current_user["restaurant_id"], raw=True)
-    extra = _insight_json(payload.get("insight", "")) if payload.get("insight") else {}
-    return jsonify(ok=True, **payload, **extra), status
+    extra = _insight_json(payload.get("insight", "")) if payload.get("insight") and status == 200 else {}
+    # ok tracks the status: a paused or failed brief is not a successful one.
+    return jsonify(ok=(status == 200), **payload, **extra), status
 
 
 @mobile_bp.route("/marketing/post-to-instagram", methods=["POST"])
@@ -3381,7 +3388,10 @@ def _do_mobile_intel(restaurant_id):
             "competitors": [
                 {
                     "name": c.get("name", ""),
-                    "rating": c.get("rating", 0),
+                    # The app decodes a number; an unrated place (MOD-INT-3)
+                    # is sent as 0 with `unrated` saying what the 0 means.
+                    "rating": c.get("rating") or 0,
+                    "unrated": not c.get("rating"),
                     "review_count": c.get("review_count", 0),
                     "vicinity": c.get("vicinity", ""),
                     "reviews": c.get("reviews", []),
@@ -5338,7 +5348,7 @@ def _do_mobile_billing(restaurant_id):
 
     try:
         import stripe as _stripe
-        _stripe.api_key = stripe_key
+        _stripe = config.stripe_api(stripe_key)
         subs = _stripe.Subscription.list(customer=restaurant.stripe_customer_id, status="active", limit=5)
         if not subs.data:
             subs = _stripe.Subscription.list(customer=restaurant.stripe_customer_id, status="trialing", limit=5)

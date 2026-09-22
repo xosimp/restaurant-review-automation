@@ -328,6 +328,46 @@ def bounded_map(items, fn, workers, max_seconds, on_error=None):
     return done, hit_bound
 
 
+def _record_places_gap(rid, name, total, stored_new):
+    """Places returns at most five reviews a fetch. When Google's own count
+    of the listing grew by more than this fetch stored, the difference was
+    never returned and is lost unless recorded (MOD-REV-11): an activity-log
+    entry the account can show, and a failure-digest line for the operator.
+    The last total seen lives in job_cursors."""
+    from models import get_conn
+    key = f"places_total:{rid}"
+    prev = None
+    try:
+        conn = get_conn()
+        try:
+            row = conn.execute("SELECT value FROM job_cursors WHERE key=?", (key,)).fetchone()
+            prev = int(row["value"]) if row and str(row["value"]).isdigit() else None
+            conn.execute("INSERT INTO job_cursors (key, value, updated_at) VALUES (?,?,datetime('now')) "
+                         "ON CONFLICT(key) DO UPDATE SET value=excluded.value, "
+                         "updated_at=excluded.updated_at", (key, str(int(total))))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        log.warning(f"places total cursor for {rid}: {e}")
+        return
+    if prev is None:
+        return
+    missed = (int(total) - prev) - int(stored_new or 0)
+    if missed <= 0:
+        return
+    detail = (f"Google's count for {name} rose by {int(total) - prev} but this fetch returned "
+              f"{int(stored_new or 0)} new — {missed} reviews missed (a gap: Places returns at most "
+              f"five). Connecting Google Business Profile reads them all.")
+    try:
+        from models import log_event
+        log_event(rid, "review_fetch_gap", {"missed": missed, "google_total": int(total),
+                                            "previous_total": prev, "detail": detail})
+    except Exception:
+        pass
+    _ops.capture(RuntimeError(detail), job="review_fetch_gap", context=f"restaurant_id={rid}")
+
+
 def run_daily_fetch():
     """Fetch reviews for all live clients, analyse, draft, alert on urgent."""
     try:
@@ -338,8 +378,14 @@ def run_daily_fetch():
         from drafter import draft_response
 
         conn = get_conn()
+        # In service only (MOD-REV-2): a cancelled restaurant is not fetched,
+        # analysed, drafted or alerted — its reviews are no longer ours to
+        # read and its Google listing no longer ours to reply on.
+        from models import in_service_sql
         live = conn.execute(
-            "SELECT id FROM restaurants WHERE reviews_live=1 OR gmb_refresh_token IS NOT NULL"
+            "SELECT id FROM restaurants WHERE (reviews_live=1 OR gmb_refresh_token IS NOT NULL) "
+            "AND deletion_requested_at IS NULL "    # the owner asked for it gone
+            "AND " + in_service_sql()
         ).fetchall()
         conn.close()
 
@@ -365,12 +411,22 @@ def run_daily_fetch():
             # everything reported operational.
             reviews = []
             fetched_ok = False
+            gbp_listing = None      # (location_id, the GbpReviews it returned)
+            places_total = None     # Google's user_ratings_total, Places path
             gmb_failed_reason = None
 
             if restaurant.gmb_refresh_token:
                 try:
-                    from gmb import get_valid_token, fetch_reviews_via_gmb, find_gmb_location
+                    from gmb import (get_valid_token, fetch_reviews_via_gmb, find_gmb_location,
+                                     refresh_failed_transiently, GoogleTokenUnavailable)
                     token = get_valid_token(rid)
+                    _blip = None if token else refresh_failed_transiently(rid)
+                    if _blip:
+                        # A timeout or a Google 5xx on the refresh: into the
+                        # except below (Places fallback, failure digest) — not
+                        # a revoked connection, so the owner is not told to
+                        # reconnect (AI-22).
+                        raise GoogleTokenUnavailable(f"Google token refresh failed: {_blip}")
                     if not token:
                         # Returns None rather than raising — a revoked or
                         # expired refresh token used to land here and be
@@ -419,7 +475,9 @@ def run_daily_fetch():
                         if not loc_id:
                             gmb_failed_reason = gmb_failed_reason or "Google Business location could not be resolved"
                         else:
-                            reviews += fetch_reviews_via_gmb(token, loc_id, rid)
+                            _gbp = fetch_reviews_via_gmb(token, loc_id, rid)
+                            reviews += _gbp
+                            gbp_listing = (loc_id, _gbp)
                             fetched_ok = True
                             try:
                                 from gmb import fetch_gmb_logo_url
@@ -441,7 +499,9 @@ def run_daily_fetch():
                                  context=f"restaurant_id={rid} {restaurant.name} — falling back to Places")
                     if restaurant.google_place_id:
                         try:
-                            reviews += fetch_google(restaurant.google_place_id, rid)
+                            _pl = fetch_google(restaurant.google_place_id, rid)
+                            reviews += _pl
+                            places_total = getattr(_pl, "total", None)
                             fetched_ok = True
                             log.warning(f"GMB unusable for {restaurant.name}; served from Places instead")
                         except Exception as e:
@@ -450,7 +510,9 @@ def run_daily_fetch():
 
             elif restaurant.google_place_id:
                 try:
-                    reviews += fetch_google(restaurant.google_place_id, rid)
+                    _pl = fetch_google(restaurant.google_place_id, rid)
+                    reviews += _pl
+                    places_total = getattr(_pl, "total", None)
                     fetched_ok = True
                 except Exception as e:
                     log.error(f"Google fetch [{restaurant.name}]: {e}")
@@ -472,6 +534,20 @@ def run_daily_fetch():
                     log.info(f"{new_count} new reviews for {restaurant.name}")
                 if downgraded:
                     log.info(f"{len(downgraded)} review(s) edited down for {restaurant.name}")
+
+            # A complete Business Profile listing is the whole truth about
+            # this location: a stored review it no longer contains is one
+            # Google removed (a fake review taken down, a guest who deleted
+            # theirs), and it stops counting (MOD-REV-14).
+            if gbp_listing and getattr(gbp_listing[1], "complete", False):
+                try:
+                    from gmb import retire_unlisted_reviews
+                    retire_unlisted_reviews(rid, gbp_listing[0],
+                                            [r.review_name for r in gbp_listing[1] if r.review_name])
+                except Exception as _re:
+                    _ops.capture(_re, job="review_fetch", context=f"retire unlisted rid={rid}")
+            if places_total is not None and not gbp_listing:
+                _record_places_gap(rid, restaurant.name, places_total, new_count)
 
             # Analyse BEFORE alerting. Alerts used to fire on the raw batch,
             # so sentiment and urgency were both still NULL when the health
@@ -495,6 +571,12 @@ def run_daily_fetch():
                 try:
                     analyse_review(r.id, r.rating, r.text, restaurant_id=rid)
                 except Exception as e:
+                    from ai_utils import is_platform_stop
+                    if is_platform_stop(e):
+                        # Budget or provider breaker: not this review's fault
+                        # and the same for the rest — no attempt spent (AI-4).
+                        log.warning(f"Analysis paused for {restaurant.name}: {e}")
+                        break
                     log.error(f"Analyse error: {e}")
                     _ops.capture(e, job="review_analyse", context=restaurant.name)
                     try:
@@ -524,7 +606,10 @@ def run_daily_fetch():
                 # Fire outbound webhooks for each new review
                 try:
                     from webhooks import fire_webhook as _fw
-                    for _nr in new_reviews:
+                    from notify import is_recent_review as _recent
+                    # A history import is not news: no review.received per
+                    # years-old row on a first Google connect (MOD-REV-6).
+                    for _nr in [r for r in new_reviews if _recent(r)]:
                         _payload = {
                             "platform": _nr.platform,
                             "rating":   _nr.rating,
@@ -563,6 +648,10 @@ def run_daily_fetch():
                                   # report got the standard 1-star template.
                                   urgency=r.urgency or "normal",)
                 except Exception as e:
+                    from ai_utils import is_platform_stop
+                    if is_platform_stop(e):
+                        log.warning(f"Drafting paused for {restaurant.name}: {e}")
+                        break
                     log.error(f"Draft error: {e}")
                     _ops.capture(e, job="review_draft", context=restaurant.name)
                     try:
@@ -1066,11 +1155,11 @@ def run_marketing_metrics_sync():
     looking — an owner who checks once a week saw whatever reach/engagement
     happened to be cached from their last visit, not real current totals."""
     try:
-        from models import get_all_restaurants
+        from models import get_all_restaurants, in_service
         from social_routes import refresh_post_metrics
 
         candidates = [r for r in get_all_restaurants()
-                     if r.module_marketing and (r.ig_token or r.fb_page_token)]
+                     if r.module_marketing and (r.ig_token or r.fb_page_token) and in_service(r)]
         if not candidates:
             return
         log.info(f"Marketing metrics sync for {len(candidates)} restaurant(s)")
@@ -1756,29 +1845,79 @@ def send_while_away_nudges():
 # found the only evidence a monthly summary run had died halfway was a line
 # in the Railway log, which nobody reads on the first of the month.
 
+# The weekly Intel sweeps follow run_daily_fetch's pattern (CLAUDE.md: work
+# that iterates every restaurant is bounded and resumable). Each was a serial
+# loop over every full-tier restaurant with no time bound — competitor
+# analysis is Places plus Claude per restaurant, visibility eight paced
+# Perplexity queries — so at scale one Monday pass ran for hours or days and
+# a crash lost its place (AI-9, MOD-INT-1). Now a wall-clock bound, and a
+# job_cursors cursor so the next pass starts with whoever this one missed.
+# One worker: visibility is paced against a single Perplexity rate limit,
+# and neither job is urgent enough to contend for it.
+WEEKLY_SWEEP_MAX_SECONDS = int(os.getenv("WEEKLY_SWEEP_MAX_SECONDS", str(3 * 3600)))
+_COMPETITOR_CURSOR_KEY = "competitor_sweep_cursor"
+_VISIBILITY_CURSOR_KEY = "ai_visibility_sweep_cursor"
+
+
+def _weekly_sweep(job, cursor_key, restaurants, fn):
+    """Run `fn(restaurant)` over `restaurants` under WEEKLY_SWEEP_MAX_SECONDS,
+    starting after the cursor; returns (processed, hit_bound). `fn` returns
+    True for a success and False for a handled failure, or raises."""
+    by_id = {r.id: r for r in restaurants}
+    order = _fetch_order(list(by_id), key=cursor_key)
+    tally = {"attempted": 0}
+
+    def _one(rid):
+        tally["attempted"] += 1
+        fn(by_id[rid])
+
+    def _failed(rid, e):
+        log.error(f"{job} failed for restaurant {rid}: {e}")
+        _ops.capture(e, job=job, context=f"restaurant_id={rid}")
+
+    done, ran_out = bounded_map(order, _one, 1, WEEKLY_SWEEP_MAX_SECONDS, on_error=_failed)
+    # Advance past everything this pass reached, success or failure: a
+    # restaurant whose analysis failed is retried next week, not first in
+    # line forever ahead of the ones never reached.
+    _remember_fetch_cursor(order, tally["attempted"], key=cursor_key)
+    if ran_out:
+        _ops.capture(
+            RuntimeError(f"{job} covered {tally['attempted']} of {len(order)} restaurants before the "
+                         f"{WEEKLY_SWEEP_MAX_SECONDS}s bound; the rest lead the next pass."),
+            job=job, context="time_bound")
+    return tally["attempted"], ran_out
+
+
 def run_weekly_competitor_analysis():
-    """Monday 6am — competitor analysis for every full-tier client."""
-    from competitor import run_competitor_analysis
-    from models import get_all_restaurants, is_full_tier
-    done = failed = 0
-    for r in get_all_restaurants():
-        if r.google_place_id and r.id and is_full_tier(r):
-            try:
-                res = run_competitor_analysis(r.id) or {}
-                # An analysis that returned ok:False did not analyse anything:
-                # counting it as done hid a Places refusal behind "analysed".
-                if res.get("ok") is False:
-                    failed += 1
-                    if res.get("places_status") or "No nearby competitors" not in (res.get("error") or ""):
-                        _ops.capture(RuntimeError(res.get("error") or "competitor analysis failed"),
-                                     job="competitor_analysis", context=f"restaurant_id={r.id}")
-                else:
-                    done += 1
-            except Exception as ce:
-                failed += 1
-                log.error(f"Competitor analysis failed for {r.name}: {ce}")
-                _ops.capture(ce, job="competitor_analysis", context=f"restaurant_id={r.id}")
-    return {"analysed": done, "failed": failed}
+    """Monday 6am — competitor analysis for every full-tier client in service."""
+    import competitor
+    from models import get_all_restaurants, in_service, is_full_tier
+    counts = {"analysed": 0, "failed": 0}
+
+    def _analyse(r):
+        try:
+            # Looked up at call time so a test's (or a hot patch's) swap of
+            # competitor.run_competitor_analysis is honoured.
+            res = competitor.run_competitor_analysis(r.id) or {}
+        except Exception:
+            counts["failed"] += 1
+            raise
+        # An analysis that returned ok:False did not analyse anything:
+        # counting it as done hid a Places refusal behind "analysed".
+        if res.get("ok") is False:
+            counts["failed"] += 1
+            if res.get("places_status") or "No nearby competitors" not in (res.get("error") or ""):
+                _ops.capture(RuntimeError(res.get("error") or "competitor analysis failed"),
+                             job="competitor_analysis", context=f"restaurant_id={r.id}")
+        else:
+            counts["analysed"] += 1
+
+    # In service only (MOD-REV-2): no Places or Claude spend on a customer
+    # who has cancelled.
+    eligible = [r for r in get_all_restaurants()
+                if r.google_place_id and r.id and is_full_tier(r) and in_service(r)]
+    _weekly_sweep("competitor_analysis", _COMPETITOR_CURSOR_KEY, eligible, _analyse)
+    return counts
 
 
 def run_weekly_ai_visibility():
@@ -1794,22 +1933,25 @@ def run_weekly_ai_visibility():
     force=True bypasses the six-hour display cache; the budget ceiling and
     the per-restaurant rate limit inside the call still apply.
     """
-    from client_api import _do_ai_visibility_inner
-    from models import get_all_restaurants, is_full_tier
-    done = failed = 0
-    for r in get_all_restaurants():
-        if r.id and is_full_tier(r):
-            try:
-                payload, _ = _do_ai_visibility_inner(r.id, force=True)
-                if payload.get("ok"):
-                    done += 1
-                else:
-                    failed += 1
-            except Exception as ve:
-                failed += 1
-                log.error(f"AI visibility run failed for {r.name}: {ve}")
-                _ops.capture(ve, job="ai_visibility", context=f"restaurant_id={r.id}")
-    return {"checked": done, "failed": failed}
+    import client_api
+    from models import get_all_restaurants, in_service, is_full_tier
+    counts = {"checked": 0, "failed": 0}
+
+    def _check(r):
+        try:
+            payload, _ = client_api._do_ai_visibility_inner(r.id, force=True)
+        except Exception:
+            counts["failed"] += 1
+            raise
+        if payload.get("ok"):
+            counts["checked"] += 1
+        else:
+            counts["failed"] += 1
+
+    # In service only (MOD-REV-2): no Perplexity spend on a cancelled customer.
+    eligible = [r for r in get_all_restaurants() if r.id and is_full_tier(r) and in_service(r)]
+    _weekly_sweep("ai_visibility", _VISIBILITY_CURSOR_KEY, eligible, _check)
+    return counts
 
 
 def run_daily_alert_checks():
@@ -1942,7 +2084,7 @@ def run_food_cost_diagnoses():
             r = get_restaurant(rid)
             # A restaurant whose AI budget is spent gets no diagnosis rather
             # than a refused call and a captured exception.
-            if r and getattr(r, "ai_budget_exceeded", False):
+            if r and _ai_budget_spent(rid):
                 skipped += 1
                 continue
             out = fci.diagnose(rid)
@@ -1964,6 +2106,17 @@ def run_food_cost_diagnoses():
             _ops.capture(e, job="food_cost_diagnoses", context=f"restaurant_id={rid}")
     log.info(f"Food cost diagnoses: {done} produced, {skipped} skipped, {failed} failed")
     return {"diagnosed": done, "skipped": skipped, "failed": failed}
+
+
+def _ai_budget_spent(rid):
+    """Whether this restaurant's AI budget is spent, from the ledger.
+
+    Both diagnosis sweeps used getattr(restaurant, "ai_budget_exceeded"),
+    an attribute the Restaurant dataclass has never had — so the guard was
+    always False and an over-budget restaurant paid a refused call and a
+    captured exception per cluster every day (AI-25)."""
+    import ai_utils
+    return bool(ai_utils.ai_budget_exceeded(rid))
 
 
 def run_review_diagnoses():
@@ -2002,7 +2155,7 @@ def run_review_diagnoses():
             # A restaurant whose AI budget is spent gets no diagnosis rather
             # than a failed call per cluster — create_with_retry would refuse
             # each one individually and we would pay three exceptions for it.
-            if r and getattr(r, "ai_budget_exceeded", False):
+            if r and _ai_budget_spent(rid):
                 skipped += 1
                 continue
             produced = ri.diagnose(rid)
@@ -2701,7 +2854,11 @@ def auto_approve_five_stars(rid: int, restaurant) -> int:
     show 'N auto-approved today'."""
     if not getattr(restaurant, "auto_approve_5star", 0) or getattr(restaurant, "auto_approve_paused", 0):
         return 0
-    from models import auto_approve_candidates, count_auto_approved_today, log_event
+    from models import auto_approve_candidates, count_auto_approved_today, in_service, log_event
+    # Never publish on a former customer's listing under their name, whatever
+    # the auto-approve flags still say (MOD-REV-2).
+    if not in_service(restaurant):
+        return 0
     cap = int(getattr(restaurant, "auto_approve_daily_cap", 5) or 0)
     done_today = count_auto_approved_today(rid)
     if cap and done_today >= cap:
@@ -2734,6 +2891,19 @@ def auto_approve_five_stars(rid: int, restaurant) -> int:
         refusal = check_public_reply(candidate.get("draft_response"), never_say=never_say)
         if refusal:
             log.warning(f"Auto-approve skipped review {review_id}: {refusal}")
+            # Marked for the owner's review, which also takes it out of the
+            # candidates: it stayed one and was re-logged and re-captured
+            # four times a day forever (MOD-REV-16).
+            try:
+                from models import get_conn as _gc_held
+                _hc = _gc_held()
+                _hc.execute("UPDATE reviews SET draft_needs_review=1, draft_review_reason=? "
+                            "WHERE id=? AND restaurant_id=?",
+                            (f"held from auto-approve: {refusal}", review_id, rid))
+                _hc.commit()
+                _hc.close()
+            except Exception as _he:
+                log.warning(f"could not mark held draft {review_id}: {_he}")
             log_event(rid, "review_auto_approve_held", {"review_id": review_id, "reason": refusal})
             try:
                 import ops
@@ -2745,11 +2915,26 @@ def auto_approve_five_stars(rid: int, restaurant) -> int:
             continue
         try:
             from client_api import _do_approve
-            _do_approve(review_id, rid)
-            log_event(rid, "review_auto_approved", {"review_id": review_id})
-            approved += 1
+            payload, status = _do_approve(review_id, rid)
         except Exception as e:
             log.error(f"Auto-approve failed for review {review_id}: {e}")
+            continue
+        if status != 200 or not payload.get("ok"):
+            continue        # someone else approved it first (compare-and-set)
+        if payload.get("post_error"):
+            # Approved but NOT published: it did not use up the owner's cap of
+            # unread public replies, and it is reported (MOD-REV-10). It stays
+            # 'approved' for Retry posting.
+            try:
+                import ops
+                ops.capture(RuntimeError(f"auto-approve could not publish: {payload['post_error']}"),
+                            job="auto_approve_five_stars",
+                            context=f"restaurant_id={rid} review_id={review_id}")
+            except Exception:
+                pass
+            continue
+        log_event(rid, "review_auto_approved", {"review_id": review_id})
+        approved += 1
     if approved:
         log.info(f"Auto-approved {approved} five-star responses for rid={rid}")
     return approved

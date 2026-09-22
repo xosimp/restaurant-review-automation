@@ -532,7 +532,6 @@ def _drafted_review(db_path, rid, status="drafted"):
     return review_id
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-26: _do_approve has no status check, so a second approve re-fires the webhook, the Google post and the alert")
 def test_approving_twice_fires_the_webhook_once(db_path, monkeypatch):
     rid = _restaurant(db_path)
     review_id = _drafted_review(db_path, rid)

@@ -126,20 +126,33 @@ def send_sms(to_phone: str, message: str, use_case: str = "alert") -> bool:
         data["MessagingServiceSid"] = service_sid
     else:
         data["From"] = TWILIO_FROM
-    try:
-        r = requests.post(
-            f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_SID}/Messages.json",
-            auth=(TWILIO_SID, TWILIO_TOKEN),
-            data=data,
-            timeout=10,
-        )
-        if r.status_code == 201:
-            return True
-        print(f"[notify] Twilio error {r.status_code}: {r.text[:200]}")
-        return False
-    except Exception as e:
-        print(f"[notify] SMS send failed: {e}")
-        return False
+    # One retry for a failure Twilio says is transient (429, 5xx) or a
+    # connection that failed before a response (AI-27): a single blip lost an
+    # owner's health alert text. NOT for a read timeout — Twilio's Messages
+    # API has no idempotency key, and a request it accepted but did not answer
+    # in time would be sent twice. A 4xx is permanent and is not retried.
+    for attempt in (1, 2):
+        try:
+            r = requests.post(
+                f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_SID}/Messages.json",
+                auth=(TWILIO_SID, TWILIO_TOKEN),
+                data=data,
+                timeout=10,
+            )
+            if r.status_code == 201:
+                return True
+            print(f"[notify] Twilio error {r.status_code}: {r.text[:200]}")
+            if not (r.status_code == 429 or r.status_code >= 500):
+                return False
+        except requests.exceptions.ConnectionError as e:
+            print(f"[notify] SMS send failed: {e}")
+        except Exception as e:
+            print(f"[notify] SMS send failed: {e}")
+            return False
+        if attempt == 1:
+            import time as _time
+            _time.sleep(1.0)
+    return False
 
 
 def send_2fa_sms(to_phone: str, restaurant_name: str, code: str) -> bool:
@@ -1399,6 +1412,31 @@ def raise_alert(restaurant_id: int, alert_type: str, sms_text: str, subject: str
     return True
 
 
+# A review older than this is history, not news (MOD-REV-6). The first Google
+# connect of an established restaurant inserts years of reviews in one pass;
+# every one of them reached the alert loop, so 300 reviews from 2019 were 300
+# "respond now" alerts — capped at the 50/day ceiling, which then suppressed
+# the genuine alerts that day. A week covers Google's own delay in surfacing a
+# review and a restaurant whose fetch was down for a few days.
+REVIEW_NEWS_MAX_AGE_DAYS = int(os.getenv("REVIEW_NEWS_MAX_AGE_DAYS", "7"))
+
+
+def is_recent_review(review, max_age_days: int = None) -> bool:
+    """Whether a newly stored review was WRITTEN recently enough to announce
+    (alerts, review.received webhooks). No usable date reads as recent: the
+    row is new to us, and staying silent about a real review is worse."""
+    from datetime import datetime as _dt, timedelta as _td
+    days = REVIEW_NEWS_MAX_AGE_DAYS if max_age_days is None else max_age_days
+    stamp = (getattr(review, "review_date", None) or "")[:19]
+    if not stamp:
+        return True
+    try:
+        written = _dt.fromisoformat(stamp.replace("Z", ""))
+    except ValueError:
+        return True
+    return written >= _dt.now() - _td(days=days, hours=14)   # hours: any zone's "today"
+
+
 def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: list,
                        db_path: str = DB_PATH, edited_reviews: list = None):
     """
@@ -1411,7 +1449,12 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
     type at the end, through the same blast() gating as everything else —
     an edit is not a new row, so before this it produced no alert at all
     and a five-star quietly becoming a one-star was invisible.
+
+    A newly inserted review written more than REVIEW_NEWS_MAX_AGE_DAYS ago is
+    a history import, stored silently (MOD-REV-6). An edit is always news:
+    the guest changed it now, whenever they first wrote it.
     """
+    new_reviews = [r for r in (new_reviews or []) if is_recent_review(r)]
     if not new_reviews and not edited_reviews:
         return
 
@@ -1428,12 +1471,17 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
                al_3star_email,  al_3star_sms,  al_3star_push,
                al_5star_email,  al_5star_sms,  al_5star_push,
                al_spike_email,  al_spike_sms,  al_spike_push,
-               al_unres_email,  al_unres_sms,  al_unres_push
+               al_unres_email,  al_unres_sms,  al_unres_push,
+               billing_status
         FROM restaurants WHERE id=?
     """, (restaurant_id,)).fetchone()
     conn.close()
 
     if not row:
+        return
+    # A cancelled customer is not texted, emailed or pushed about reviews
+    # (MOD-REV-2, merged MOD-BIL-8) — this never read billing_status.
+    if not models.in_service(row):
         return
 
     # Global SMS/email on switches (must be on for any SMS/email to fire).
@@ -1795,6 +1843,7 @@ def check_no_response_alerts(db_path: str = DB_PATH, local_hour: int = None):
         WHERE r.sentiment='negative'
           AND r.response_status = 'pending'
           AND r.fetched_at <= datetime('now', '-48 hours')
+          AND """ + models.in_service_sql("rest.billing_status") + """
           AND rest.alert_no_response = 1
           AND (rest.urgent_via_sms = 1 OR rest.urgent_via_email = 1 OR rest.al_unres_push = 1)
         GROUP BY r.restaurant_id
@@ -1868,6 +1917,7 @@ def check_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
                alert_labor_over, labor_target_pct
         FROM restaurants
         WHERE (urgent_via_sms = 1 OR urgent_via_email = 1)
+          AND """ + models.in_service_sql() + """
     """).fetchall()
     conn.close()
 
@@ -2084,6 +2134,7 @@ def check_extra_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
                alert_food_waste, alert_ai_visibility_drop
         FROM restaurants
         WHERE (COALESCE(alert_food_waste,0)=1 OR COALESCE(alert_ai_visibility_drop,0)=1)
+          AND """ + models.in_service_sql() + """
     """).fetchall()
     conn.close()
 

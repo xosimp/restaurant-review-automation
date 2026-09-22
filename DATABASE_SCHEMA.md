@@ -168,7 +168,7 @@ Attention items a user has dismissed from the Home brief, so a handled issue doe
 
 ## Intel
 
-`competitor_snapshots` (week-over-week diffed), `ai_visibility_runs` (one row per run, with `answered`/`appeared` totals) / `ai_visibility_query_runs` (per query: `appeared` and the `answer` text).
+`competitor_snapshots` (week-over-week diffed), `ai_visibility_runs` (one row per run, with `answered`/`appeared` totals, the `city_basis` it was measured against — runs on different bases are never compared — and the `payload_json` the Intel tab serves after a redeploy) / `ai_visibility_query_runs` (per query: `appeared` and the `answer` text).
 
 ## Billing / Contracts / Webhooks
 

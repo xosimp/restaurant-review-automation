@@ -113,8 +113,6 @@ def test_a_published_auto_approval_counts_toward_the_cap(db_path, posts):
 
 # ── MOD-REV-10: a failed publish is recorded, not counted (R3 #6) ───────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-REV-10: auto_approve_five_stars discards _do_approve's post_error; "
-                                        "a failed publish is counted as auto-approved and never captured")
 def test_an_auto_approval_that_google_refused_is_not_counted_and_is_reported(db_path, monkeypatch):
     rid = _restaurant(db_path)
     review_id = _drafted(db_path, rid, "refused")
@@ -181,8 +179,6 @@ _EVENING_SLOT_UTC = "2026-09-23 00:40:00"
 _AFTERNOON_SLOT_UTC = "2026-09-22 21:00:00"
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-REV-13: count_auto_approved_today compares Chicago-stamped events "
-                                        "to date('now','localtime'); under UTC the cap resets at 7pm CT")
 def test_five_approvals_at_730pm_ct_still_count_at_the_8pm_ct_slot(db_path, monkeypatch, utc_process):
     rid = _restaurant(db_path)
     _approved_at(db_path, rid, ["2026-09-22T19:30:00"] * 5)
@@ -206,8 +202,6 @@ def test_yesterdays_approvals_do_not_count_toward_today(db_path, monkeypatch, ut
     assert models.count_auto_approved_today(rid) == 0
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-REV-13: at the 8pm CT slot a restaurant already at its cap of 5 "
-                                        "publishes a second full cap")
 def test_a_restaurant_at_its_cap_publishes_nothing_more_at_the_8pm_ct_slot(db_path, monkeypatch, utc_process,
                                                                              posts):
     rid = _restaurant(db_path)
@@ -220,8 +214,6 @@ def test_a_restaurant_at_its_cap_publishes_nothing_more_at_the_8pm_ct_slot(db_pa
 
 # ── MOD-REV-16: a held draft is reported once (R3 #7) ──────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-REV-16: a draft ai_guard refuses stays a candidate and is "
-                                        "re-logged and re-captured on every cycle")
 def test_a_held_draft_is_captured_once_across_two_runs(db_path, posts):
     rid = _restaurant(db_path)
     _drafted(db_path, rid, "linky", draft="Thanks! See our menu at https://example.com/menu")

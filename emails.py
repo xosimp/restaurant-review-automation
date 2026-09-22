@@ -368,12 +368,20 @@ def deliver(payload: dict = None, restaurant_id=None, email_type=None, log_send:
         except Exception as e:
             log.warning("suppression check failed for %s: %s", to_email, e)
 
+    # One Idempotency-Key for every attempt of THIS send, a new one for the
+    # next. The loop retries timeouts and 5xx, and a timeout is often a send
+    # Resend accepted whose response never arrived — without the key the
+    # retry was a second copy of a supplier order (AI-21). Resend drops a
+    # repeat of a key it has already accepted.
+    import uuid as _uuid
+    idempotency_key = f"{email_type or 'email'}-{_uuid.uuid4().hex}"
     last = None
     for attempt in range(1, _MAX_ATTEMPTS + 1):
         try:
             resp = _requests.post(
                 "https://api.resend.com/emails",
-                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json",
+                         "Idempotency-Key": idempotency_key},
                 json=payload, timeout=15,
             )
             if resp.status_code == 200:
@@ -1408,7 +1416,7 @@ def create_stripe_checkout(module_count: int, owner_email: str,
     if module_count == 0:
         return None
 
-    _stripe.api_key = stripe_key
+    _stripe = config.stripe_api(stripe_key)
     from pricing import plan_for
     from pricing import money, RETAINER_START_DAYS
     plan = plan_for(module_count)

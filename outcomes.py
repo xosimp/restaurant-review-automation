@@ -312,6 +312,53 @@ def realised(restaurant_id, db_path=DB_PATH, since=None, denied_modules=None):
     return rows
 
 
+def _after_window(r):
+    """(start, end) ISO dates of the window a tracker's "after" was read over."""
+    start = r.get("after_start") or r.get("started_on") or ""
+    end = r.get("after_end") or r.get("evaluate_on") or start
+    return str(start)[:10], str(end)[:10]
+
+
+def distinct_wins(wins):
+    """One win per piece of work: improved trackers on the SAME metric whose
+    after-windows overlap measured the same before/after move, so they are
+    one result, not two (AI-18). Each overlapping group keeps its largest
+    reading; the others add nothing. Separate windows on one metric, and
+    overlapping windows on different metrics, stay separate."""
+    out = []
+    by_metric = {}
+    for r in wins:
+        by_metric.setdefault(r.get("metric"), []).append(r)
+    for rows in by_metric.values():
+        rows = sorted(rows, key=lambda r: _after_window(r)[0])
+        group, group_end = [], ""
+        for r in rows:
+            start, end = _after_window(r)
+            if group and start <= group_end:
+                group.append(r)
+                group_end = max(group_end, end)
+                continue
+            if group:
+                out.append(max(group, key=lambda g: abs(float(g["dollars_monthly"]))))
+            group, group_end = [r], end
+        if group:
+            out.append(max(group, key=lambda g: abs(float(g["dollars_monthly"]))))
+    return out
+
+
+def in_flight_on(restaurant_id, metric, db_path=DB_PATH):
+    """The tracker currently measuring `metric`, or None. One at a time per
+    metric: two trackers in flight on one number read the same move twice."""
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT * FROM recommendation_outcomes WHERE restaurant_id=? AND metric=? "
+            "AND status='tracking' ORDER BY id LIMIT 1", (restaurant_id, metric)).fetchone()
+    finally:
+        conn.close()
+    return _row(row) if row else None
+
+
 def total_value(restaurant_id, db_path=DB_PATH, since=None, denied_modules=None):
     """What measured improvements are worth, per month, with the honest
     denominator alongside.
@@ -332,7 +379,8 @@ def total_value(restaurant_id, db_path=DB_PATH, since=None, denied_modules=None)
     def _visible(r):
         return not denied or module_of(r["metric"]) not in denied
 
-    wins = realised(restaurant_id, db_path=db_path, since=since, denied_modules=denied)
+    # Distinct work only (CLAUDE.md: "counts distinct work, never rows").
+    wins = distinct_wins(realised(restaurant_id, db_path=db_path, since=since, denied_modules=denied))
     evaluated = [r for r in list_outcomes(restaurant_id, status="evaluated", limit=500,
                                           db_path=db_path)
                  if (not since or (r.get("evaluate_on") or "") >= str(since)[:10]) and _visible(r)]

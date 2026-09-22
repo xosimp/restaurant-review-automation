@@ -97,7 +97,24 @@ def invalidate_insight_cache(restaurant_id, prefixes=None):
 # without duplicating it.
 
 def _do_approve(rid, restaurant_id):
-    # Determine response action before approving
+    # The approve itself first, as a compare-and-set: only this restaurant's
+    # live, drafted reply, and only once however many approves arrive
+    # together (MOD-REV-4, MOD-REV-5). Nothing below — the action label, the
+    # webhook, the Google post, the confirmation — happens for a loser.
+    from models import claim_approval
+    if not claim_approval(rid, restaurant_id):
+        _gc = get_conn()
+        _cur = _gc.execute("SELECT response_status, deleted_at FROM reviews WHERE id=? AND restaurant_id=?",
+                           (rid, restaurant_id)).fetchone()
+        _gc.close()
+        if not _cur:
+            return {"ok": False, "error": "Review not found"}, 404
+        if _cur["deleted_at"]:
+            return {"ok": False, "error": "That review was removed."}, 409
+        if _cur["response_status"] in ("approved", "posted"):
+            return {"ok": False, "error": "That reply has already been approved."}, 409
+        return {"ok": False, "error": "There's no drafted reply to approve on that review."}, 409
+    # Determine response action
     try:
         _ac = get_conn()
         _row = _ac.execute(
@@ -117,7 +134,6 @@ def _do_approve(rid, restaurant_id):
             _ac2.commit(); _ac2.close()
     except Exception as _ae:
         print(f"[approve] response_action error: {_ae}")
-    approve_response(rid, restaurant_id=restaurant_id)
     try:
         from models import log_event
         log_event(restaurant_id, "review_approved", {"review_id": rid})
@@ -187,10 +203,29 @@ def _attempt_google_post(rid, restaurant_id):
                 pass
             return True, None
         print(f"[GMB] Auto-post failed for review {rid}: {result['error']}")
+        if result.get("removed"):
+            # Google answered 404: the review is gone, so it leaves the queue
+            # and the stats rather than sitting 'approved' forever (MOD-REV-14).
+            try:
+                _dc = get_conn()
+                _dc.execute("UPDATE reviews SET deleted_at=datetime('now') WHERE id=? AND restaurant_id=?",
+                            (rid, restaurant_id))
+                _dc.commit()
+                _dc.close()
+            except Exception as _de:
+                print(f"[GMB] could not retire removed review {rid}: {_de}")
         return False, result["error"]
     except Exception as e:
+        # The owner reads post_error; the exception text (a connection pool
+        # repr, a URL) goes to the failure digest instead (MOD-REV-15).
         print(f"[GMB] approve auto-post error: {e}")
-        return False, str(e)
+        try:
+            import ops
+            ops.capture(e, job="review_post", context=f"restaurant_id={restaurant_id} review_id={rid}")
+        except Exception:
+            pass
+        return False, ("Couldn't reach Google to post this reply. Nothing was lost — "
+                       "use Retry posting in a few minutes.")
 
 
 def _do_retry_post(rid, restaurant_id):
@@ -859,9 +894,12 @@ def _do_review_insight(rid):
     if cached:
         return (dict(cached) if isinstance(cached, dict) else {"insight": cached}), 200
     try:
-        import os, json, anthropic as _anth
+        import os, json
+        import ai_utils as _aiu_ri
         from models import get_restaurant, get_review_stats, get_top_issues
-        _client_ri = _anth.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY",""))
+        # The shared, bounded client (AI-1): a bare anthropic.Anthropic here
+        # ran on the SDK's 600 s timeout and its own retries.
+        _client_ri = _aiu_ri.get_client()
         restaurant = get_restaurant(rid)
         rstats = get_review_stats(rid)
         # sentiment=None: this line is labelled "Top topics" in the prompt,
@@ -988,11 +1026,17 @@ def _do_review_insight(rid):
             first = parts[0] if parts else ""
             return first if len(first) > 1 and first.lower() not in (
                 "a", "an", "the", "anonymous", "user", "google", "yelp", "local") else ""
+        # The name and the excerpt are both guest-written, so both travel
+        # inside the untrusted fence the note above the prompt describes
+        # (AI-15) — they were quoted raw under a note about a fence that was
+        # not there.
+        from ai_guard import wrap_untrusted as _wrap_ri
         _urgent_lines = []
         for r in urgent_rows:
             who = _first_name(r["author"]) or "an unnamed guest"
-            _urgent_lines.append(f'#{r["id"]} {who} ({r["rating"]}★): "{(r["text"] or "")[:110]}"')
-        urgent_texts = "; ".join(_urgent_lines) if _urgent_lines else "none"
+            _urgent_lines.append(f'#{r["id"]} ({r["rating"]}★), guest name then review excerpt:\n'
+                                 + _wrap_ri(f'{who}\n{(r["text"] or "")[:110]}'))
+        urgent_texts = ("\n" + "\n".join(_urgent_lines)) if _urgent_lines else "none"
         issues_str = ", ".join(f"{i['label']} ({i['count']})" for i in top_issues) if top_issues else "no data"
         rest_name  = restaurant.name if restaurant else "this restaurant"
 
@@ -1244,7 +1288,12 @@ def _do_review_insight(rid):
             out.update(_fresh_ri(stale[0].isoformat(timespec="seconds"), stale_after_days=0))
             out["stale"] = True
             return out, 200
-        return {"insight": "Analysis unavailable — check back shortly.", "error": str(_re)}, 500
+        # The owner reads `insight`: a budget stop or an outage says so rather
+        # than "check back shortly" (AI-11), and no raw exception text — a
+        # provider error body with its request id — reaches the client (AI-31).
+        from ai_utils import insight_error as _insight_err_ri
+        _msg_ri, _status_ri = _insight_err_ri(_re)
+        return {"insight": _msg_ri, "error": _msg_ri}, _status_ri
 
 def _do_recent_topics(rid):
     """The last few things this restaurant generated, folded by topic, with
@@ -1526,11 +1575,12 @@ def _do_ask_cavnar(restaurant_id, question, history=None, user_id=None, conversa
                 "proposals": proposals or [], "conversation_id": conversation_id,
                 **_ask_meta(meta)}, 200
     except Exception as e:
-        from ai_utils import AIBudgetExceeded, user_facing_error
+        from ai_utils import AIBudgetExceeded, AIRefused, user_facing_error
         msg, status = user_facing_error(e)
         # A budget stop is a decision this product made on purpose, not a
         # fault — it does not belong in the failure digest beside real ones.
-        if not isinstance(e, AIBudgetExceeded):
+        # Nor does a refusal: nothing broke, and it is not saved as an answer.
+        if not isinstance(e, (AIBudgetExceeded, AIRefused)):
             import ops
             ops.capture(e, job="ask_cavnar", context=f"restaurant_id={restaurant_id}")
         return {"ok": False, "error": msg}, status
@@ -1611,9 +1661,9 @@ def _ask_cavnar_stream_response(rid, uid, question, conversation_id=None, new_co
                         "truncated": truncated, "proposals": proposals or [],
                         "conversation_id": cid, **_ask_meta(meta)})
         except Exception as e:
-            from ai_utils import AIBudgetExceeded, user_facing_error
+            from ai_utils import AIBudgetExceeded, AIRefused, user_facing_error
             msg, _status = user_facing_error(e, "Couldn't get an answer right now — try again.")
-            if not isinstance(e, AIBudgetExceeded):
+            if not isinstance(e, (AIBudgetExceeded, AIRefused)):
                 import ops
                 ops.capture(e, job="ask_cavnar_stream", context=f"restaurant_id={rid}")
             events.put({"type": "error", "error": msg})
@@ -1958,7 +2008,11 @@ brand voice. No corporate language. The whole brief must be under 60 words."""
         stale = _insight_cache.get(cache_key)
         if stale:
             return {"insight": stale[1]}, 200
-        return {"insight": "Marketing brief unavailable — check back shortly."}, 500
+        # A budget stop or outage says so (AI-11); anything else keeps the
+        # retry wording.
+        from ai_utils import insight_error as _insight_err_mkt
+        _msg_mkt, _status_mkt = _insight_err_mkt(e, "Marketing brief unavailable — check back shortly.")
+        return {"insight": _msg_mkt}, _status_mkt
 
 def _labor_diagnosis_safe(rid, analysis=None):
     """labor.diagnose over the current analysis — deterministic, so it is
@@ -1997,7 +2051,11 @@ def labor_insight_api(current_user):
         stale = _insight_cache.get("labor-insight:" + str(rid))
         if stale:
             return jsonify(insight=stale[1])
-        return jsonify(insight="Unable to load analysis — check back shortly.")
+        from ai_utils import insight_error as _insight_err_lab
+        _msg_lab, _status_lab = _insight_err_lab(e, "Unable to load analysis — check back shortly.")
+        # 200 as before for an ordinary failure; a pause or outage carries its
+        # own status (AI-11).
+        return jsonify(insight=_msg_lab), (200 if _status_lab == 500 else _status_lab)
 
 @client_bp.route("/api/inv-insight")
 @login_required
@@ -2031,7 +2089,9 @@ def inv_insight_api(current_user):
         print(f"[inv-insight ERROR] {_inv_e}\n{traceback.format_exc()}")
         # safe_error, not str(e): a requests failure carries the URL it was
         # calling and a Places URL carries key=.
-        return jsonify(insight="Analysis unavailable — check back shortly.", error=_safe_err(_inv_e)), 500
+        from ai_utils import insight_error as _insight_err_inv
+        _msg_inv, _status_inv = _insight_err_inv(_inv_e)
+        return jsonify(insight=_msg_inv, error=_msg_inv), _status_inv
 
 
 @client_bp.route("/api/food-cost/waste-trend")
@@ -2074,7 +2134,17 @@ def gen_content(current_user):
         return jsonify(content="", error="Too many requests — please wait a moment and try again.")
     content_type = data.get("type","instagram_post")
     topic = data.get("topic","")
-    result = generate_content(content_type, topic, restaurant_id=rid)
+    try:
+        result = generate_content(content_type, topic, restaurant_id=rid)
+    except Exception as e:
+        # There was no except here at all, so a budget stop became a bare 500
+        # with no message (AI-11). The phone twin already said "paused".
+        from ai_utils import AIBudgetExceeded, user_facing_error
+        msg, status = user_facing_error(e, "Couldn't write that right now — try again in a moment.")
+        if not isinstance(e, AIBudgetExceeded):
+            import ops
+            ops.capture(e, job="generate_content", context=f"restaurant_id={rid}")
+        return jsonify(content="", error=msg), status
     if data.get("from_calendar") and rid:
         try:
             mark_calendar_idea_used(rid, content_type, topic)
@@ -2280,7 +2350,21 @@ def content_calendar(current_user):
             return jsonify(ideas=just_made)
         if ai_rate_limited(f"calendar:{rid}", max_calls=4, window_secs=300):
             return jsonify(ideas=[], error="Too many calendar regenerations — try again in a few minutes."), 429
-    return jsonify(ideas=get_content_calendar_ideas(restaurant_id=rid, force=force))
+    # An empty week always comes with a reason (AI-26): a cut-off or
+    # unreadable draw, a budget pause, an outage. The phone twin already said
+    # so; the web tab got ideas=[] and nothing else.
+    try:
+        ideas = get_content_calendar_ideas(restaurant_id=rid, force=force)
+    except Exception as e:
+        import ops
+        from ai_utils import AIBudgetExceeded, insight_error
+        if not isinstance(e, AIBudgetExceeded):
+            ops.capture(e, job="content_calendar", context=f"restaurant_id={rid}")
+        msg, status = insight_error(e, "Couldn't build this week's calendar — try Generate again.")
+        return jsonify(ideas=[], error=msg), status
+    if not ideas:
+        return jsonify(ideas=[], error="Couldn't build this week's calendar — try Generate again.")
+    return jsonify(ideas=ideas)
 
 def _do_regenerate_draft(review_id, restaurant_id):
     """Regenerate AI draft for a review — delegates to drafter.draft_response()
@@ -2553,7 +2637,7 @@ def billing_info(current_user):
         return jsonify(ok=False, reason="no_key")
 
     try:
-        _stripe.api_key = stripe_key
+        _stripe = config.stripe_api(stripe_key)
         # Get active subscriptions for this customer
         subs = _stripe.Subscription.list(
             customer=restaurant.stripe_customer_id,
@@ -3609,6 +3693,7 @@ def _city_from_place_id(place_id: str) -> str:
     if _hit and (datetime.utcnow() - _hit[0]).total_seconds() < _CITY_CACHE_SECS:
         return _hit[1]
     city = ""
+    settled = False     # an answer worth remembering, found or not
     try:
         import requests as _req
         key = config.google_places_key()
@@ -3617,7 +3702,9 @@ def _city_from_place_id(place_id: str) -> str:
                             params={"place_id": place_id, "fields": "address_component",
                                     "key": key}, timeout=8)
             data = resp.json()
-            if data.get("status") == "OK":
+            status = data.get("status")
+            if status == "OK":
+                settled = True
                 for comp in (data.get("result", {}).get("address_components") or []):
                     types = comp.get("types") or []
                     if "locality" in types:
@@ -3625,9 +3712,15 @@ def _city_from_place_id(place_id: str) -> str:
                         break
                     if not city and "postal_town" in types:
                         city = comp.get("long_name") or ""
+            elif status in ("NOT_FOUND", "INVALID_REQUEST", "ZERO_RESULTS"):
+                settled = True   # a fact about this Place ID, not a blip
     except Exception as e:
         print(f"[aivis] city lookup failed for {place_id}: {e}")
-    _city_cache[place_id] = (datetime.utcnow(), city)
+    # Only a settled answer is cached. A timeout or a quota refusal was
+    # cached as "no city" for a day, which scored every run in it as zero
+    # (MOD-INT-4); it is retried on the next call instead.
+    if settled:
+        _city_cache[place_id] = (datetime.utcnow(), city)
     return city
 
 
@@ -3651,6 +3744,21 @@ def _do_ai_visibility_inner(rid, force=False):
         if _hit and (datetime.utcnow() - _hit[0]).total_seconds() < _AIVIS_CACHE_SECS:
             _cached = dict(_hit[1])
             _cached["cached"] = True
+            return _cached, 200
+        # The process cache is gone after every deploy; the recorded run is
+        # still the answer. Serving it beats eight live Perplexity queries on
+        # a request thread (MOD-INT-5). The weekly job keeps it current; the
+        # Refresh button forces a new run.
+        try:
+            from models import latest_ai_visibility_payload
+            _stored = latest_ai_visibility_payload(rid)
+        except Exception:
+            _stored = None
+        if _stored:
+            _cached = dict(_stored[0])
+            _cached["cached"] = True
+            _cached["measured_at"] = _stored[1]
+            _aivis_cache[rid] = (datetime.utcnow(), dict(_cached))
             return _cached, 200
 
     # Perplexity is a paid dependency like any other, so it answers to the
@@ -4254,6 +4362,11 @@ def _do_ai_visibility_inner(rid, force=False):
     # ai_visibility_runs, where it became a "declining visibility" data point
     # the owner reads as real.
     ai_score = round((appeared_count / len(discovery)) * 100) if discovery else None
+    # With no city nothing can be matched (_mentions_this_restaurant needs
+    # one), so a 0 here would be ours, not the restaurant's (MOD-INT-4). No
+    # score, and — below — no history row.
+    if not city:
+        ai_score = None
 
     # A point estimate from a handful of non-deterministic queries is not a
     # measurement, and drawing it as one is how ordinary model variance
@@ -4262,7 +4375,7 @@ def _do_ai_visibility_inner(rid, force=False):
     # on a proportion from a small sample and degrades sensibly at 0 and
     # 100 where a naive interval does not.
     ai_score_low = ai_score_high = None
-    if discovery:
+    if discovery and ai_score is not None:
         import math as _math
         _n = len(discovery)
         _p = appeared_count / _n
@@ -4273,13 +4386,15 @@ def _do_ai_visibility_inner(rid, force=False):
         ai_score_low = max(0, round((_c - _m) * 100))
         ai_score_high = min(100, round((_c + _m) * 100))
 
+    _run_id = None
     try:
         from models import record_ai_visibility_run, record_ai_visibility_queries
         # A partial run is not a measurement. Show it, don't record it.
         if ai_score is not None and len(answered) == len(queries):
             _run_id = record_ai_visibility_run(
                 rid, ai_score, gbp_score,
-                answered=len(discovery), appeared=appeared_count)
+                answered=len(discovery), appeared=appeared_count,
+                city_basis=f"{city_source}:{_norm(city)}")
             # What was asked, what came back, and what grounded it. The runs
             # table held a score and nothing else, so a change could never be
             # explained — while the drop alert told the owner to open Intel
@@ -4362,6 +4477,13 @@ def _do_ai_visibility_inner(rid, force=False):
     # restaurant's real standing.
     if not _payload["partial"]:
         _aivis_cache[rid] = (datetime.utcnow(), dict(_payload))
+    if _run_id:
+        try:
+            import json as _json_av
+            from models import attach_ai_visibility_payload
+            attach_ai_visibility_payload(_run_id, _json_av.dumps(_payload, default=str))
+        except Exception as _pe:
+            print(f"[aivis] payload store failed for rid={rid}: {_pe}")
     return _payload, 200
 
 

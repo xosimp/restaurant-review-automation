@@ -9,6 +9,8 @@ log = logging.getLogger(__name__)
 
 from emails import html_document as _html_doc  # one definition; emails reads its env lazily
 
+from time_utils import mdy as _mdy
+
 SENTIMENT_COLOR = {"positive": "#16a34a", "neutral": "#6b7280", "negative": "#dc2626"}
 STAR_FILLED = "★"
 STAR_EMPTY  = "☆"
@@ -21,8 +23,9 @@ def build_report(restaurant_id: int, restaurant_name: str,
 
     report = WeeklyReport(
         restaurant_id=restaurant_id,
-        period_start=(datetime.now() - timedelta(days=days)).strftime("%b %d"),
-        period_end=datetime.now().strftime("%b %d, %Y"),
+        # M/D/YY, the one date format an owner reads (MOD-REV-17).
+        period_start=_mdy(datetime.now() - timedelta(days=days)),
+        period_end=_mdy(datetime.now()),
     )
 
     if not reviews:
@@ -33,7 +36,10 @@ def build_report(restaurant_id: int, restaurant_name: str,
 
     cat_counts: dict = {}
     for r in reviews:
-        report.sentiment[r.sentiment or "neutral"] += 1
+        # An unanalysed review has no sentiment yet; it counts in the total
+        # and the average, not as "neutral".
+        if r.sentiment in report.sentiment:
+            report.sentiment[r.sentiment] += 1
         for cat in (r.categories or []):
             cat_counts[cat] = cat_counts.get(cat, 0) + 1
 
@@ -1007,8 +1013,9 @@ def build_report_from_db(restaurant_id: int, restaurant_name: str,
 
     report = WeeklyReport(
         restaurant_id=restaurant_id,
-        period_start=(datetime.now() - timedelta(days=days)).strftime("%b %d"),
-        period_end=datetime.now().strftime("%b %d, %Y"),
+        # M/D/YY, the one date format an owner reads (MOD-REV-17).
+        period_start=_mdy(datetime.now() - timedelta(days=days)),
+        period_end=_mdy(datetime.now()),
     )
     if not reviews:
         return report
@@ -1017,7 +1024,10 @@ def build_report_from_db(restaurant_id: int, restaurant_name: str,
     report.avg_rating = round(sum(r.rating for r in reviews) / len(reviews), 1)
     cat_counts: dict = {}
     for r in reviews:
-        report.sentiment[r.sentiment or "neutral"] += 1
+        # An unanalysed review has no sentiment yet; it counts in the total
+        # and the average, not as "neutral".
+        if r.sentiment in report.sentiment:
+            report.sentiment[r.sentiment] += 1
         for cat in (r.categories or []):
             cat_counts[cat] = cat_counts.get(cat, 0) + 1
     report.top_issues = sorted(cat_counts.items(), key=lambda x: x[1], reverse=True)[:3]

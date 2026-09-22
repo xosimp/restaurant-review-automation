@@ -171,7 +171,10 @@ def rating_trend(restaurant_id: int, weeks: int = 8, db_path: str = DB_PATH) -> 
         "weeks_with_data": len(series),
         "weeks_above_floor": len(solid),
         "min_reviews_per_week": MIN_TREND_REVIEWS_PER_WEEK,
-        "direction": None, "confidence": None, "slope": None,
+        # `change` is here too: the review insight copies it into its payload
+        # unconditionally, so a restaurant below the trend floor raised
+        # KeyError after the model call and got the error panel every time.
+        "direction": None, "confidence": None, "slope": None, "change": None,
         "first": None, "latest": None, "anomalies": [],
         # Why there is no direction, when there isn't one — so the UI and the
         # prompt can both say the honest thing instead of showing a blank.
@@ -1134,9 +1137,10 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False,
             )
             if getattr(msg, "stop_reason", None) == "max_tokens":
                 raise ValueError("diagnosis was truncated")
-            raw = extract_text(msg).strip()
-            raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-            result = _validate_diagnosis(json.loads(raw), allowed, prompt, restaurant_id)
+            # A leading sentence before the JSON failed json.loads (AI-26).
+            from ai_utils import parse_json_reply
+            result = _validate_diagnosis(parse_json_reply(extract_text(msg), expect=dict),
+                                         allowed, prompt, restaurant_id)
             money = revenue_at_risk(restaurant_id, db_path=db_path)
             _save_diagnosis(restaurant_id, cluster, result, money, db_path)
             result.update({"category": cluster["category"], "mention_count": cluster["mentions"],

@@ -235,8 +235,6 @@ def test_an_active_restaurant_is_fetched(db_path, monkeypatch):
     assert fetched == [rid]
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-51/DATA-61: run_daily_fetch selects reviews_live/gmb restaurants with "
-                                       "no billing or deletion check, so cancelled accounts keep costing Google and AI calls")
 @pytest.mark.parametrize("state", ["churned", "paused", "deletion_requested"])
 def test_a_cancelled_restaurant_is_not_fetched(db_path, monkeypatch, state):
     import fetcher, scheduler
@@ -299,8 +297,6 @@ def test_an_active_restaurant_s_guests_get_their_follow_up(db_path, monkeypatch)
     assert texted == ["+15125550100"]
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-51: run_review_request_followups has no billing gate, so a former "
-                                       "client's guests keep getting texted after cancellation")
 def test_a_cancelled_restaurant_s_guests_are_not_texted(db_path, monkeypatch):
     import guest_marketing
     rid = _followup_world(db_path, monkeypatch)

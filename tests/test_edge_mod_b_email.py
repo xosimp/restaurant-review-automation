@@ -132,7 +132,6 @@ def _stub_post(monkeypatch, behaviours):
     return calls, sleeps
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-EML-8: deliver() retries a timed-out send with no Idempotency-Key, so an accepted send is mailed twice")
 def test_a_retried_send_carries_the_same_idempotency_key(db_path, monkeypatch):
     """A7 deliver #10 / MOD-EML-8."""
     calls, _ = _stub_post(monkeypatch, [requests.Timeout("read timed out"), _R(200)])

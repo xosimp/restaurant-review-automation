@@ -17,6 +17,8 @@ their own optional-data gaps.
 """
 import config
 import json
+import threading
+import time
 from datetime import datetime, timedelta
 
 import requests
@@ -86,12 +88,24 @@ def _geocode(restaurant, db_path=DB_PATH):
         return None, None
     if _geocode_recently_failed(restaurant):
         return None, None
+    if _backing_off(("geocode", db_path, getattr(restaurant, "id", None), restaurant.google_place_id)):
+        return None, None
     try:
         resp = requests.get(
             "https://maps.googleapis.com/maps/api/place/details/json",
             params={"place_id": restaurant.google_place_id, "fields": "geometry", "key": _GOOGLE_KEY},
             timeout=10,
         )
+    except Exception:
+        # A timeout or a dropped connection says nothing about the place_id.
+        # Stamping geocode_failed_at for it blacked weather out for a week
+        # over one blip (MOD-INT-7); back off briefly in this process instead.
+        _back_off(("geocode", db_path, getattr(restaurant, "id", None), restaurant.google_place_id), _TRANSIENT_BACKOFF_SECS)
+        return None, None
+    try:
+        if getattr(resp, "status_code", 200) >= 500:
+            _back_off(("geocode", db_path, getattr(restaurant, "id", None), restaurant.google_place_id), _TRANSIENT_BACKOFF_SECS)
+            return None, None
         resp.raise_for_status()
         # Geocoding a restaurant once is cheap, but it is still a billed
         # Places request and belongs in the same ledger as the rest.
@@ -108,26 +122,82 @@ def _geocode(restaurant, db_path=DB_PATH):
                           db_path=db_path)
         return lat, lon
     except Exception:
-        # A network error or a 4xx is also not worth retrying on every call
-        # in a loop over every restaurant.
+        # A 4xx or an unreadable answer from Google is about this place_id,
+        # not the network — not worth retrying on every call in a loop over
+        # every restaurant.
         _note_geocode_failure(restaurant, db_path=db_path)
         return None, None
 
 
-def _fetch_periods(lat, lon):
-    """Raw NWS forecast periods for a lat/lon, or [] on any failure."""
+# ── negative cache for failed lookups ───────────────────────────────────────
+#
+# An NWS failure wrote nothing, so every Home, Labor and schedule request for
+# the restaurant re-paid the blocking /points + /forecast calls — two 10 s
+# timeouts per request during an outage, and a fresh 404 on every read for a
+# restaurant outside the US, which NWS will never cover (AI-28, MOD-INT-7).
+# Process-local on purpose: it bounds how often THIS process waits on a
+# vendor, needs no schema, and a redeploy costing one retry is fine. Keyed by
+# restaurant, so it is bounded by the number of restaurants.
+_TRANSIENT_BACKOFF_SECS = 15 * 60
+_NOT_COVERED_BACKOFF_SECS = 24 * 3600
+# A refresh that fails falls back to a cached forecast up to this old: the
+# forecast for tomorrow written yesterday beats none, and dates outside what
+# it covers simply produce no row.
+_STALE_OK_HOURS = 72
+
+_backoff = {}
+_backoff_lock = threading.Lock()
+
+
+def _back_off(key, seconds):
+    with _backoff_lock:
+        _backoff[key] = time.time() + seconds
+
+
+def _backing_off(key):
+    with _backoff_lock:
+        until = _backoff.get(key)
+        if until and until > time.time():
+            return True
+        _backoff.pop(key, None)
+        return False
+
+
+def _fetch_periods_ex(lat, lon):
+    """(periods, failure) — failure is None, "transient" or "not_covered"."""
+    headers = {"User-Agent": _USER_AGENT, "Accept": "application/geo+json"}
     try:
-        headers = {"User-Agent": _USER_AGENT, "Accept": "application/geo+json"}
         points_resp = requests.get(f"https://api.weather.gov/points/{lat},{lon}", headers=headers, timeout=10)
+        if getattr(points_resp, "status_code", 200) == 404:
+            return [], "not_covered"
         points_resp.raise_for_status()
         forecast_url = points_resp.json().get("properties", {}).get("forecast")
         if not forecast_url:
-            return []
+            return [], "not_covered"
         fc_resp = requests.get(forecast_url, headers=headers, timeout=10)
         fc_resp.raise_for_status()
-        return fc_resp.json().get("properties", {}).get("periods", [])
+        periods = fc_resp.json().get("properties", {}).get("periods", [])
+        return (periods, None) if periods else ([], "transient")
     except Exception:
-        return []
+        return [], "transient"
+
+
+def _fetch_periods(lat, lon):
+    """Raw NWS forecast periods for a lat/lon, or [] on any failure."""
+    return _fetch_periods_ex(lat, lon)[0]
+
+
+def _stale_periods(restaurant):
+    """The cached periods even past _CACHE_HOURS (up to _STALE_OK_HOURS), for
+    when a refresh has failed. None when there is nothing usable."""
+    try:
+        cached_at = datetime.fromisoformat(restaurant.weather_cached_at)
+        if datetime.now() - cached_at > timedelta(hours=_STALE_OK_HOURS):
+            return None
+        periods = json.loads(restaurant.weather_cache_json or "[]")
+    except Exception:
+        return None
+    return periods if isinstance(periods, list) and periods else None
 
 
 def _cached_periods(restaurant):
@@ -166,12 +236,20 @@ def get_forecast_for_week(restaurant, week_dates, db_path=DB_PATH):
         lat, lon = _geocode(restaurant, db_path=db_path)
         if lat is None or lon is None:
             return []
-        periods = _fetch_periods(lat, lon)
-        if periods:
+        key = ("nws", db_path, restaurant.id, lat, lon)
+        failure = "backing_off" if _backing_off(key) else None
+        if failure is None:
+            periods, failure = _fetch_periods_ex(lat, lon)
+        if failure is None:
             update_restaurant(restaurant.id, {
                 "weather_cache_json": json.dumps(periods),
                 "weather_cached_at": datetime.now().isoformat(),
             }, db_path=db_path)
+        else:
+            if failure != "backing_off":
+                _back_off(key, _NOT_COVERED_BACKOFF_SECS if failure == "not_covered"
+                          else _TRANSIENT_BACKOFF_SECS)
+            periods = _stale_periods(restaurant) or []
 
     if not periods:
         return []

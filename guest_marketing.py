@@ -615,6 +615,14 @@ def _too_soon(contact, now):
         return False
 
 
+# The SMS budget for a campaign's own words (the STOP line and any link are
+# added after). The draft prompt asks for it, the web composer's textarea
+# enforces it — and nothing on the server did, so a 700-character message
+# (from the API, the phone, Ask, or a draft the model over-wrote) went to the
+# whole list as a five-segment text, billed per segment per guest (AI-32).
+CAMPAIGN_MAX_CHARS = 300
+
+
 def draft_campaign_message(restaurant, campaign_type="general", topic=""):
     """AI-drafts a short SMS (under ~300 chars — a real SMS/MMS segment
     budget, not email) in the restaurant's own voice. Reuses marketing.py's
@@ -657,6 +665,11 @@ def draft_campaign_message(restaurant, campaign_type="general", topic=""):
     refusal = check_public_reply(text)
     if refusal:
         raise ValueError(f"campaign copy rejected: {refusal}")
+    # check_public_reply allows a 1,200-character review reply; a text
+    # message has its own, much smaller budget.
+    if len(text) > CAMPAIGN_MAX_CHARS:
+        raise ValueError(f"campaign copy rejected: {len(text)} characters, over the "
+                         f"{CAMPAIGN_MAX_CHARS} a text message can carry")
     return text
 
 
@@ -716,6 +729,11 @@ def send_campaign(restaurant_id, message, db_path=DB_PATH, segment="all", link_t
       2. consent       — only guests who opted in themselves
       3. frequency     — nobody gets two campaigns inside three days
     """
+    if len((message or "").strip()) > CAMPAIGN_MAX_CHARS:
+        n = len((message or "").strip())
+        return {"ok": False, "blocked": "too_long", "sent": 0, "failed": 0, "total": 0,
+                "error": (f"That message is {n} characters. A guest text can carry "
+                          f"{CAMPAIGN_MAX_CHARS} — shorten it and send again.")}
     if not guest_sms_allowed_now(restaurant_id):
         return {"ok": False, "blocked": "quiet_hours", "sent": 0, "failed": 0, "total": 0,
                 "error": ("Guest texts only go out between "
@@ -1155,6 +1173,8 @@ def run_review_request_followups(delay_hours=None, db_path=DB_PATH):
     restaurant's UTC offset.
     """
     from time_utils import restaurant_now_by_id
+    # A cancelled restaurant's guests are not texted on its behalf (MOD-REV-2).
+    from models import in_service_sql
 
     if delay_hours is None:
         delay_hours = int(os.getenv("REVIEW_REQUEST_DELAY_HOURS", DEFAULT_REVIEW_REQUEST_DELAY_HOURS))
@@ -1168,6 +1188,7 @@ def run_review_request_followups(delay_hours=None, db_path=DB_PATH):
         JOIN restaurants r ON r.id = gc.restaurant_id
         WHERE gc.consent=1 AND gc.unsubscribed=0
           AND r.module_marketing=1
+          AND """ + in_service_sql("r.billing_status") + """
           AND gc.last_visit IS NOT NULL
           AND (gc.last_review_requested_at IS NULL OR gc.last_review_requested_at < gc.last_visit)
         """

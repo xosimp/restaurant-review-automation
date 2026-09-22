@@ -68,8 +68,6 @@ def _gbp(rid, i, written, rating=1):
 
 # ── MOD-REV-6: a history import is silent (R4 #2) ──────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-REV-6: fire_review_alerts has no review_date age filter, so a "
-                                        "first GBP import alerts on every years-old 1-star")
 def test_a_backlog_of_old_one_star_reviews_sends_no_alerts(db_path, delivered):
     rid = _restaurant(db_path)
     _n, new = save_reviews([_gbp(rid, i, f"2019-05-0{1 + i}T12:00:00Z") for i in range(5)], db_path=db_path)
@@ -105,8 +103,6 @@ def _first_connect(db_path, monkeypatch, reviews):
     return hooks
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-REV-6: run_daily_fetch fires a review.received webhook for every "
-                                        "row a first import inserts, however old")
 def test_a_first_import_fires_no_review_received_webhooks_for_old_reviews(db_path, monkeypatch, delivered):
     rid = _restaurant(db_path, gmb_refresh_token="rt", gmb_location_id="locations/2", reviews_live=1)
     hooks = _first_connect(db_path, monkeypatch, [_gbp(rid, i, "2019-05-01T12:00:00Z") for i in range(4)])
@@ -123,15 +119,20 @@ def test_a_first_import_still_announces_a_review_written_today(db_path, monkeypa
 
 # ── MOD-REV-3 at the alert layer: one review, one alert (R4 #6) ─────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-REV-3: the Places copy and the GBP copy of one review are two "
-                                        "rows, so the owner is alerted twice about the same 1-star")
 def test_one_review_arriving_through_places_and_gbp_alerts_once(db_path, delivered):
     rid = _restaurant(db_path, timezone="UTC")
+    # Written today: a review from a year ago is history since MOD-REV-6 and
+    # alerts nobody, whichever API brings it. The instant is what ties the
+    # two copies together, so both carry the same one.
+    from datetime import timezone as _tz
+    now = datetime.now(_tz.utc).replace(microsecond=0)
+    epoch = int(now.timestamp())
+    written = now.strftime("%Y-%m-%dT%H:%M:%S")
     places = Review(restaurant_id=rid, platform="google",
-                    external_id="google_1757000000_https://www.google.com/maps/contrib/111/reviews",
-                    author="Ann", rating=1, text="Cold food, never again", review_date="2025-09-04T15:33:20")
+                    external_id=f"google_{epoch}_https://www.google.com/maps/contrib/111/reviews",
+                    author="Ann", rating=1, text="Cold food, never again", review_date=written)
     via_gbp = Review(restaurant_id=rid, platform="google", external_id="accounts/1/locations/2/reviews/abc",
-                     author="Ann", rating=1, text="Cold food, never again", review_date="2025-09-04T15:33:20Z",
+                     author="Ann", rating=1, text="Cold food, never again", review_date=written + "Z",
                      review_name="accounts/1/locations/2/reviews/abc")
     for copy in (places, via_gbp):
         _n, new = save_reviews([copy], db_path=db_path)
@@ -152,8 +153,6 @@ def _this_week(db_path, rid, ext, rating, processed):
     conn.close()
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-REV-17: get_reviews_since requires processed=1, so the digest's "
-                                        "count and average omit every review the AI has not analysed")
 def test_the_digest_counts_a_review_the_ai_has_not_analysed(db_path):
     from reporter import build_report_from_db
     rid = _restaurant(db_path)
@@ -164,8 +163,6 @@ def test_the_digest_counts_a_review_the_ai_has_not_analysed(db_path):
     assert report.avg_rating == 3.0
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-REV-17: the digest period is strftime('%b %d') / ('%b %d, %Y'), "
-                                        "not M/D/YY")
 def test_the_digest_period_reads_m_d_yy(db_path):
     from reporter import build_report_from_db
     rid = _restaurant(db_path)

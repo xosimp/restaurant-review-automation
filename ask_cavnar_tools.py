@@ -31,6 +31,9 @@ log = logging.getLogger(__name__)
 # matters more now that some tools act without a confirmation step.
 _UNTRUSTED_CONTENT_TOOLS = {
     "read_reviews", "read_competitors", "read_staff_availability", "read_guest_club",
+    # Complaint clusters quote each guest's own specific_complaint phrase;
+    # they reached the model unfenced (AI-16).
+    "read_review_diagnosis", "read_review_brief",
 }
 
 _UNTRUSTED_NOTE = (
@@ -55,7 +58,7 @@ _UNTRUSTED_NOTE = (
 # little: the payload's _UNTRUSTED_NOTE already names review authors
 # explicitly, and a name is not prose an instruction can hide inside the way
 # a paragraph is. The delimiters go where the sentences are.
-_UNTRUSTED_FIELDS = ("text", "message", "complaints", "notes", "preview")
+_UNTRUSTED_FIELDS = ("text", "message", "complaints", "complaint", "notes", "preview")
 
 # Ceiling on rows any single read tool returns. The model pays for every
 # token of this, and 20 reviews is plenty to answer "what are people
@@ -1089,8 +1092,20 @@ def _track_outcome(restaurant_id, title=None, metric=None, source_key=None, _vie
         return {"error": "Food cost tracking is for logins that can see food cost."}
     if not title or not metric:
         return {"error": "title and metric are required"}
+    # One tracker per metric, whoever started it. The model's title (and any
+    # source_key it chose) is not the identity of the work: two wordings of
+    # one change minted two trackers reading the same before/after move, and
+    # both were counted as value delivered (AI-18). observe() already refused
+    # a second tracker on a metric in flight; Ask now shares that rule.
+    live = outcomes.in_flight_on(restaurant_id, metric)
+    if live:
+        return {"ok": True, "outcome": live, "already_tracking": True,
+                "note": ("A change on this metric is already being measured — "
+                         f"\"{live.get('title')}\". Only one runs at a time per metric, so "
+                         "their before/after readings don't overlap. Tell the owner it is "
+                         "already being tracked.")}
     try:
-        o = outcomes.record(restaurant_id, "ask", source_key or f"ask:{title.lower()[:80]}",
+        o = outcomes.record(restaurant_id, "ask", f"ask:{title.lower()[:80]}",
                             title, metric)
     except ValueError as e:
         return {"error": str(e)}
@@ -1226,7 +1241,11 @@ TOOLS = [
         },
     },
     {
-        "kind": "read",
+        # A direct write, not a read (AI-16): what it records is replayed into
+        # every future prompt as something the owner said. As an "action" it
+        # is refused once the turn has read public text, and never offered to
+        # an unattended run.
+        "kind": "action",
         "fn": _remember,
         "module": None,
         "spec": {
@@ -1245,7 +1264,7 @@ TOOLS = [
         },
     },
     {
-        "kind": "read",
+        "kind": "action",
         "fn": _forget,
         "module": None,
         "spec": {
@@ -2052,6 +2071,16 @@ def is_write_tool(name):
 def is_action_tool(name):
     tool = _BY_NAME.get(name)
     return bool(tool and tool["kind"] == "action")
+
+
+def is_read_tool(name):
+    tool = _BY_NAME.get(name)
+    return bool(tool and tool["kind"] == "read")
+
+
+def reads_public_text(name):
+    """Whether this tool's result carries text a member of the public wrote."""
+    return name in _UNTRUSTED_CONTENT_TOOLS
 
 
 def _mark_untrusted(node):

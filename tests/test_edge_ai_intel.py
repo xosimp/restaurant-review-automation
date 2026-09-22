@@ -137,7 +137,6 @@ def test_the_weekly_sweeps_skip_restaurants_that_are_not_full_tier(db_path, monk
     assert seen_c == full and seen_v == full
 
 
-@pytest.mark.xfail(strict=True, reason="AI-9: run_weekly_competitor_analysis is a serial loop over every full-tier restaurant with no time bound and no job_cursors cursor")
 def test_the_competitor_sweep_stops_at_a_time_bound_and_resumes_from_a_cursor(db_path, monkeypatch, clock):
     ids = _full_tier(db_path, 12)
     seen = []
@@ -161,7 +160,6 @@ def test_the_competitor_sweep_stops_at_a_time_bound_and_resumes_from_a_cursor(db
     assert set(seen) - set(first), "the next pass started from the top again"
 
 
-@pytest.mark.xfail(strict=True, reason="AI-9: run_weekly_ai_visibility is a serial loop over every full-tier restaurant with no time bound and no job_cursors cursor")
 def test_the_visibility_sweep_stops_at_a_time_bound_and_resumes_from_a_cursor(db_path, monkeypatch, clock):
     ids = _full_tier(db_path, 12)
     seen = []
@@ -274,7 +272,6 @@ def test_a_public_menu_page_is_summarised_and_billed_to_the_restaurant_asked_for
     assert "UNTRUSTED_GUEST_TEXT" in calls[0]["messages"][0]["content"]
 
 
-@pytest.mark.xfail(strict=True, reason="AI-30: fetch_menu_from_url follows redirects to any host, so a competitor website can bounce the fetch to the cloud metadata endpoint")
 def test_a_menu_url_that_redirects_to_the_metadata_endpoint_is_refused(db_path, monkeypatch):
     contacted, calls = [], []
     _web(monkeypatch, contacted)
@@ -288,7 +285,6 @@ def test_a_menu_url_that_redirects_to_the_metadata_endpoint_is_refused(db_path, 
     assert out == ""
 
 
-@pytest.mark.xfail(strict=True, reason="AI-30: fetch_menu_from_url has no host filter, so a private address given as the menu URL is fetched")
 def test_a_menu_url_on_a_private_address_is_never_fetched(db_path, monkeypatch):
     contacted, calls = [], []
     _web(monkeypatch, contacted)
@@ -311,7 +307,6 @@ def admin_app(monkeypatch):
     return flask_app
 
 
-@pytest.mark.xfail(strict=True, reason="AI-30: fetch_menu_notes_from_places calls fetch_menu_from_url with no restaurant_id, so the menu-extraction spend lands in the global pool only")
 def test_refreshing_menu_notes_bills_the_extraction_to_that_restaurant(db_path, monkeypatch, admin_app):
     (rid,) = _full_tier(db_path, 1)
     contacted, calls = [], []

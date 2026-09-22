@@ -115,22 +115,66 @@ def verify_mobile_state(state: str) -> int | None:
         return None
 
 
+class GoogleTokenRevoked(RuntimeError):
+    """Google answered invalid_grant: the refresh token is dead (revoked by
+    the owner, expired, or superseded) and will never work again."""
+
+
 def refresh_access_token(refresh_token: str) -> dict:
-    """Get a new access token using the refresh token."""
+    """Get a new access token using the refresh token.
+
+    Raises GoogleTokenRevoked for invalid_grant — the one answer that means
+    the connection is gone. Only that one: any other 4xx (invalid_client,
+    unauthorized_client) is a problem with OUR OAuth client, the same for
+    every restaurant, and must not read as each owner's dead connection."""
     resp = requests.post("https://oauth2.googleapis.com/token", data={
         "refresh_token": refresh_token,
         "client_id":     GOOGLE_CLIENT_ID,
         "client_secret": GOOGLE_CLIENT_SECRET,
         "grant_type":    "refresh_token",
     }, timeout=10)
+    if resp.status_code in (400, 401):
+        try:
+            error = (resp.json() or {}).get("error")
+        except Exception:
+            error = None
+        if error == "invalid_grant":
+            raise GoogleTokenRevoked("Google refresh token revoked or expired (invalid_grant)")
     resp.raise_for_status()
     return resp.json()
+
+
+class GoogleTokenUnavailable(RuntimeError):
+    """The refresh failed for a reason that says nothing about the
+    connection: a timeout, a dropped connection, a Google 5xx, or an error
+    from Google that is not invalid_grant. Not "reconnect Google" (AI-22,
+    MOD-REV-12)."""
+
+
+# restaurant_id -> the last refresh failure's exception type name, for a
+# refresh that failed TRANSIENTLY and returned None. Cleared on the next
+# success or revocation. Process-local and bounded by restaurant count.
+_transient_refresh_failures = {}
+
+
+def refresh_failed_transiently(restaurant_id: int) -> str | None:
+    """Why the last get_valid_token for this restaurant returned None when
+    the connection itself is fine (a timeout, a dropped connection, a Google
+    5xx, a non-invalid_grant error), or None. The daily fetch asks this
+    before telling the owner to reconnect (AI-22, MOD-REV-12)."""
+    return _transient_refresh_failures.get(restaurant_id)
 
 
 def get_valid_token(restaurant_id: int) -> str | None:
     """
     Return a valid access token for the restaurant, refreshing if needed.
-    Returns None if not connected.
+    Returns None if not connected — including when Google has revoked the
+    refresh token (invalid_grant), which is also cleared here so it is not
+    re-tried four times a day forever (MOD-REV-12).
+
+    Any other refresh failure also returns None, but is recorded for
+    refresh_failed_transiently(): as far as the connection is concerned it
+    is a blip, not "reconnect Google".
     """
     from models import get_restaurant, update_restaurant
     r = get_restaurant(restaurant_id)
@@ -156,9 +200,20 @@ def get_valid_token(restaurant_id: int) -> str | None:
             "gmb_access_token":  access_token,
             "gmb_token_expires": expires_at,
         })
+        _transient_refresh_failures.pop(restaurant_id, None)
         return access_token
     except Exception as e:
         print(f"[GMB] Token refresh failed for restaurant {restaurant_id}: {e}")
+        if isinstance(e, GoogleTokenRevoked):
+            _transient_refresh_failures.pop(restaurant_id, None)
+            try:
+                update_restaurant(restaurant_id, {"gmb_refresh_token": None,
+                                                  "gmb_access_token": None,
+                                                  "gmb_token_expires": None})
+            except Exception as _clear:
+                print(f"[GMB] could not clear revoked token for {restaurant_id}: {_clear}")
+            return None
+        _transient_refresh_failures[restaurant_id] = type(e).__name__
         return None
 
 
@@ -279,6 +334,82 @@ GMB_REVIEW_PAGE_SIZE = 50
 GMB_MAX_REVIEW_PAGES = 20
 
 
+class GbpReviews(list):
+    """The reviews one fetch returned, plus `complete`: True only when the
+    fetch walked the listing from its first page to its last, so a stored
+    review this listing does not contain is one Google no longer lists
+    (MOD-REV-14). An incremental fetch that stopped early is not complete."""
+    complete = False
+
+
+def _known_review_names(restaurant_id, names):
+    """Which of these GBP resource names this restaurant already stores."""
+    if not names:
+        return set()
+    from models import get_conn
+    conn = get_conn()
+    try:
+        marks = ",".join("?" * len(names))
+        rows = conn.execute(
+            f"SELECT external_id FROM reviews WHERE restaurant_id=? AND platform='google' "
+            f"AND external_id IN ({marks})", (restaurant_id, *names)).fetchall()
+        return {r["external_id"] for r in rows}
+    finally:
+        conn.close()
+
+
+def _backfill_key(restaurant_id, location_id):
+    return f"gbp_backfill:{restaurant_id}:{location_id}"
+
+
+def _backfill_token(restaurant_id, location_id, value=False):
+    """Read (value=False) or write (value=str/None) the page token a capped
+    history walk stopped at. job_cursors holds it, so the next run continues
+    there instead of starting at page 1 again (MOD-REV-7)."""
+    from models import get_conn
+    key = _backfill_key(restaurant_id, location_id)
+    try:
+        conn = get_conn()
+        try:
+            if value is False:
+                row = conn.execute("SELECT value FROM job_cursors WHERE key=?", (key,)).fetchone()
+                return row["value"] if row and row["value"] else None
+            if value:
+                conn.execute("INSERT INTO job_cursors (key, value, updated_at) VALUES (?,?,datetime('now')) "
+                             "ON CONFLICT(key) DO UPDATE SET value=excluded.value, "
+                             "updated_at=excluded.updated_at", (key, value))
+            else:
+                conn.execute("DELETE FROM job_cursors WHERE key=?", (key,))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[GMB] backfill cursor {key}: {e}")
+    return None
+
+
+def _local_review_time(stamp, restaurant_id):
+    """A GBP createTime (UTC, "…Z") as the restaurant's local wall-clock time,
+    the way fetcher stores a Places review. Stored verbatim, a 9:30pm CDT
+    review was dated the next day on every day/week/month axis (MOD-REV-9)."""
+    if not stamp:
+        return stamp
+    try:
+        from datetime import datetime as _dt
+        from fetcher import _restaurant_tz
+        text = stamp.replace("Z", "+00:00")
+        if "." in text:
+            head, tail = text.split(".", 1)
+            zone = tail[tail.find("+"):] if "+" in tail else ""
+            text = head + zone
+        when = _dt.fromisoformat(text)
+        if when.tzinfo is None:
+            return stamp
+        return when.astimezone(_restaurant_tz(restaurant_id)).strftime("%Y-%m-%dT%H:%M:%S")
+    except Exception:
+        return stamp
+
+
 def fetch_reviews_via_gmb(access_token: str, location_id: str, restaurant_id: int) -> list:
     """
     Fetch reviews using the current Business Profile Reviews API.
@@ -291,14 +422,21 @@ def fetch_reviews_via_gmb(access_token: str, location_id: str, restaurant_id: in
     monitor built to catch a dead Google connection never fired. Reviews
     stopped arriving permanently while every health indicator read green.
     fetcher.fetch_google already raises; this now matches it.
+
+    Two walks share GMB_MAX_REVIEW_PAGES (MOD-REV-7):
+      * new reviews, from page 1, stopping at the first page this
+        restaurant already stores entirely — an incremental fetch used to
+        walk all 20 pages every run;
+      * history, continuing from the page token the last capped walk
+        stopped at (job_cursors) — every run used to start at page 1, so
+        nothing past the newest 1,000 was ever fetched.
     """
     from models import Review
-    raw = []
-    page_token = None
-    for _page in range(GMB_MAX_REVIEW_PAGES):
+
+    def _page(token):
         params = {"pageSize": GMB_REVIEW_PAGE_SIZE}
-        if page_token:
-            params["pageToken"] = page_token
+        if token:
+            params["pageToken"] = token
         resp = requests.get(
             f"https://mybusinessreviews.googleapis.com/v1/{location_id}/reviews",
             headers={"Authorization": f"Bearer {access_token}"},
@@ -307,13 +445,37 @@ def fetch_reviews_via_gmb(access_token: str, location_id: str, restaurant_id: in
         )
         resp.raise_for_status()
         body = resp.json()
-        raw.extend(body.get("reviews") or [])
-        page_token = body.get("nextPageToken")
+        return body.get("reviews") or [], body.get("nextPageToken")
+
+    raw = []
+    budget = GMB_MAX_REVIEW_PAGES
+    complete = False
+    stored_backfill = _backfill_token(restaurant_id, location_id)
+    page_token = None
+    while budget > 0:
+        page, page_token = _page(page_token)
+        budget -= 1
+        raw.extend(page)
         if not page_token:
+            complete = True         # walked from page 1 to the end
             break
-    else:
+        names = [r.get("name") for r in page if r.get("name")]
+        if names and len(_known_review_names(restaurant_id, names)) == len(names):
+            break                   # everything from here down is already stored
+    if page_token and not stored_backfill and budget == 0:
+        # A first import capped by the page budget: remember where it stopped.
+        _backfill_token(restaurant_id, location_id, page_token)
         print(f"[GMB] stopped at {GMB_MAX_REVIEW_PAGES} pages for {location_id} — "
               f"more history remains, next run continues")
+    elif stored_backfill and not complete:
+        token = stored_backfill
+        while budget > 0 and token:
+            page, token = _page(token)
+            budget -= 1
+            raw.extend(page)
+        _backfill_token(restaurant_id, location_id, token or None)
+    elif complete and stored_backfill:
+        _backfill_token(restaurant_id, location_id, None)
     try:
         reviews = []
         for r in raw:
@@ -346,16 +508,52 @@ def fetch_reviews_via_gmb(access_token: str, location_id: str, restaurant_id: in
                 author=author,
                 rating=rating,
                 text=text,
-                review_date=create_time,
+                review_date=_local_review_time(create_time, restaurant_id),
                 review_name=review_name,
                 source_updated_at=update_time,
             ))
-        return reviews
+        out = GbpReviews(reviews)
+        out.complete = complete
+        return out
     except Exception as e:
         # Parsing failures only — the HTTP call above is deliberately left
         # to raise so the caller can tell a dead connection from a quiet day.
         print(f"[GMB] fetch_reviews_via_gmb parse error: {e}")
         raise
+
+
+def retire_unlisted_reviews(restaurant_id: int, location_id: str, listed_names: list) -> int:
+    """Soft-delete this location's stored GBP reviews that a COMPLETE listing
+    no longer contains — Google removed them, so they stop counting in the
+    rating, the stats and the reply queue (MOD-REV-14). save_reviews is
+    insert-or-edit only, so a fake one-star Google took down kept dragging
+    the average forever.
+
+    Refuses when the listing is empty or would retire more than half of what
+    is stored: that is an API glitch or a wrong location, not a purge."""
+    from models import get_conn
+    listed = set(n for n in listed_names if n)
+    if not listed or not location_id:
+        return 0
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT id, review_name FROM reviews WHERE restaurant_id=? AND platform='google' "
+            "AND deleted_at IS NULL AND review_name LIKE ?",
+            (restaurant_id, f"%/{location_id}/reviews/%")).fetchall()
+        gone = [r["id"] for r in rows if r["review_name"] not in listed]
+        if not gone:
+            return 0
+        if len(gone) * 2 > len(rows):
+            print(f"[GMB] not retiring {len(gone)} of {len(rows)} reviews for {location_id}: "
+                  f"too many to be removals")
+            return 0
+        conn.executemany("UPDATE reviews SET deleted_at=datetime('now') WHERE id=?", [(i,) for i in gone])
+        conn.commit()
+        print(f"[GMB] {len(gone)} review(s) no longer on Google retired for restaurant {restaurant_id}")
+        return len(gone)
+    finally:
+        conn.close()
 
 
 # ── Reply posting ─────────────────────────────────────────────────────────────
@@ -386,10 +584,34 @@ def post_reply(restaurant_id: int, review_name: str, reply_text: str) -> dict:
         )
         if resp.status_code in (200, 201):
             return {"ok": True}
-        else:
-            return {"ok": False, "error": f"API error {resp.status_code}: {resp.text[:200]}"}
+        # `error` is shown to the owner as-is, so it is a sentence, never
+        # Google's JSON body (MOD-REV-15); the raw detail goes to the logs.
+        print(f"[GMB] post_reply {resp.status_code} for {review_name}: {(resp.text or '')[:300]}")
+        return {"ok": False, "status": resp.status_code, "removed": resp.status_code == 404,
+                "error": reply_error_message(resp.status_code)}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        print(f"[GMB] post_reply transport error for {review_name}: {e}")
+        return {"ok": False, "status": None,
+                "error": ("Couldn't reach Google to post this reply. Nothing was lost — "
+                          "use Retry posting in a few minutes.")}
+
+
+def reply_error_message(status_code) -> str:
+    """What an owner is told when Google refuses a reply, by status."""
+    if status_code == 404:
+        return ("Google says this review was removed, so there's nothing to reply to. "
+                "It has been taken out of your queue.")
+    if status_code == 401:
+        return ("Google didn't accept Cavnar's connection. Reconnect Google in "
+                "Account → Connections, then use Retry posting.")
+    if status_code == 403:
+        return ("Google says this login can't reply on this listing. Check you're an owner or "
+                "manager of it in Google Business Profile, then use Retry posting.")
+    if status_code == 429 or (status_code or 0) >= 500:
+        return ("Google is having trouble right now. Nothing was lost — use Retry posting "
+                "in a few minutes.")
+    return ("Google didn't accept this reply. Check it reads as you want it to, then use "
+            "Retry posting.")
 
 
 def delete_reply(restaurant_id: int, review_name: str) -> dict:

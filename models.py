@@ -885,6 +885,14 @@ def ensure_columns(db_path: str = DB_PATH):
         # from a difference in how many queries came back.
         ("ai_visibility_runs", "answered", "INTEGER"),
         ("ai_visibility_runs", "appeared", "INTEGER"),
+        # What each run was measured against (MOD-INT-4): "<source>:<city>".
+        # A profile-city run and a Google-city run ask different questions
+        # and match different strings; comparing them is a change of ruler.
+        ("ai_visibility_runs", "city_basis", "TEXT"),
+        # The run as the owner saw it, so the Intel tab can serve the stored
+        # measurement after a redeploy instead of re-asking Perplexity
+        # eight live questions on a request thread (MOD-INT-5).
+        ("ai_visibility_runs", "payload_json", "TEXT"),
     ]
     for table, col, col_type in columns_to_add:
         try:
@@ -3041,6 +3049,47 @@ def _apply_review_edit(conn, r: "Review") -> tuple:
     return (True, bool(new_rating and old_rating and new_rating < old_rating))
 
 
+def _same_guest_review(row, r: "Review") -> bool:
+    """Whether a stored row and an incoming review are one guest review seen
+    through the other Google API. Same rating, same second written (Places
+    `time` and GBP createTime are one instant; both are stored to the second
+    in the restaurant's day), and the same author or the same words."""
+    if int(row["rating"] or 0) != int(r.rating or 0):
+        return False
+    if (row["review_date"] or "")[:19] != (r.review_date or "")[:19] or not (r.review_date or ""):
+        return False
+    same_author = (row["author"] or "").strip().lower() == (r.author or "").strip().lower()
+    same_text = (row["text"] or "").strip() == (r.text or "").strip()
+    return same_author or same_text
+
+
+def _cross_source_copy(conn, r: "Review"):
+    """The stored row that is this Google review arriving through the OTHER
+    API, or None (MOD-REV-3).
+
+    Places keys a review google_<time>_<author url>; the Business Profile API
+    keys it by its resource name. The same guest review fetched both ways was
+    two rows: counted twice, alerted twice, and the Places row — the one the
+    owner was most likely to approve — could never be posted to Google."""
+    if r.platform != "google" or not r.review_date:
+        return None
+    if r.review_name:
+        where = "review_name IS NULL AND external_id LIKE 'google_%'"
+    elif (r.external_id or "").startswith("google_"):
+        where = "review_name IS NOT NULL"
+    else:
+        return None
+    rows = conn.execute(
+        f"SELECT id, rating, author, text, review_date, review_name FROM reviews "
+        f"WHERE restaurant_id=? AND platform='google' AND deleted_at IS NULL AND {where} "
+        f"AND substr(review_date, 1, 19) = ?",
+        (r.restaurant_id, (r.review_date or "")[:19])).fetchall()
+    for row in rows:
+        if _same_guest_review(row, r):
+            return row
+    return None
+
+
 def save_reviews(reviews: list[Review], db_path: str = DB_PATH,
                  downgrades: list = None) -> tuple[int, list]:
     """Upsert reviews; skip ones this restaurant already has.
@@ -3082,14 +3131,33 @@ def save_reviews(reviews: list[Review], db_path: str = DB_PATH,
     for r in reviews:
         if _tz_stamp:
             r.fetched_at = _tz_stamp
+        # One guest review, one row, whichever Google API brought it
+        # (MOD-REV-3). A GBP copy of a stored Places row takes that row over
+        # (its resource name is what a reply is posted to); a Places copy of
+        # a stored GBP row is the same review again. Neither is new.
         try:
+            twin = _cross_source_copy(conn, r)
+        except Exception:
+            twin = None
+        if twin is not None:
+            already_had += 1
+            if r.review_name and not twin["review_name"]:
+                conn.execute("UPDATE reviews SET external_id=?, review_name=?, source_updated_at=? "
+                             "WHERE id=?", (r.external_id, r.review_name, r.source_updated_at, twin["id"]))
+            r.id = twin["id"]
+            continue
+        try:
+            # review_name and source_updated_at are stored now. They were on
+            # the Review the GBP fetch built and never written, so no fetched
+            # review could ever be posted to or retracted from Google.
             cur = conn.execute("""
                 INSERT INTO reviews
                     (restaurant_id, platform, external_id, author, rating,
-                     text, review_date, fetched_at)
-                VALUES (?,?,?,?,?,?,?,?)
+                     text, review_date, fetched_at, review_name, source_updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?)
             """, (r.restaurant_id, r.platform, r.external_id, r.author,
-                  r.rating, r.text, r.review_date, r.fetched_at))
+                  r.rating, r.text, r.review_date, r.fetched_at,
+                  r.review_name or None, getattr(r, "source_updated_at", None)))
             # The row id, carried back onto the object. Without it every
             # caller downstream saw review.id as None: alert_log rows were
             # written with a null review_id, so an alert could not be traced
@@ -3115,6 +3183,10 @@ def save_reviews(reviews: list[Review], db_path: str = DB_PATH,
                 # restaurant's work and are never touched. The text changed,
                 # so the row goes back for re-analysis.
                 try:
+                    if r.review_name:
+                        conn.execute("UPDATE reviews SET review_name=? WHERE restaurant_id=? AND platform=? "
+                                     "AND external_id=? AND review_name IS NULL",
+                                     (r.review_name, r.restaurant_id, r.platform, r.external_id))
                     _changed, _downgraded = _apply_review_edit(conn, r)
                     if _changed:
                         edited += 1
@@ -3222,11 +3294,16 @@ def get_reviews_since(restaurant_id: int, since: str,
     as "this week". And it never excluded soft-deleted rows, so a review the
     owner removed still shaped their digest's rating, sentiment split and top
     themes.
+
+    Analysed or not (MOD-REV-17): it required processed=1, so a review the AI
+    had not got to yet — a budget pause, a failed call — was missing from the
+    week's count and average. A guest's rating is a fact before any model
+    reads it; callers that need the analysis check `processed` themselves.
     """
     conn = get_conn(db_path)
     rows = conn.execute(f"""
         SELECT * FROM reviews
-        WHERE restaurant_id=? AND processed=1 AND deleted_at IS NULL
+        WHERE restaurant_id=? AND deleted_at IS NULL
           AND {REVIEW_TIME_AXIS_BARE} >= ?
         ORDER BY {REVIEW_TIME_AXIS_BARE} DESC
     """, (restaurant_id, since)).fetchall()
@@ -3296,6 +3373,31 @@ def approve_response(review_id: int, restaurant_id: int = None, db_path: str = D
         """, (review_id,))
     conn.commit()
     conn.close()
+
+
+def claim_approval(review_id: int, restaurant_id: int, db_path: str = DB_PATH) -> bool:
+    """Approve a drafted reply as a compare-and-set. True only for the one
+    caller that moved THIS restaurant's live, drafted, non-empty reply to
+    'approved'; everyone else gets False and nothing changes.
+
+    approve_response is an unconditional UPDATE, so an approve of an
+    already-posted, deleted, draftless or other restaurant's review returned
+    200 and published or confirmed about nothing (MOD-REV-4), and two
+    approves at once both went on to post to Google (MOD-REV-5). The WHERE
+    clause is the lock: SQLite serialises the writes, only one matches."""
+    conn = get_conn(db_path)
+    try:
+        cur = conn.execute("""
+            UPDATE reviews
+            SET response_status='approved', approved_at=datetime('now')
+            WHERE id=? AND restaurant_id=? AND response_status IN ('drafted','pending')
+              AND deleted_at IS NULL
+              AND draft_response IS NOT NULL AND TRIM(draft_response) != ''
+        """, (review_id, restaurant_id))
+        conn.commit()
+        return cur.rowcount == 1
+    finally:
+        conn.close()
 
 
 def mark_posted(review_id: int, db_path: str = DB_PATH):
@@ -5710,6 +5812,29 @@ ACTIVE_BILLING_STATES = {"trial", "active", "internal", "past_due", "pending", "
 BLOCKED_BILLING_STATES = {"churned", "paused", "canceled", "cancelled"}
 
 
+def in_service(restaurant) -> bool:
+    """subscription_allows_access for a restaurant object already in hand —
+    what every BACKGROUND job asks before spending on or contacting one
+    (MOD-REV-2). The request side refused a cancelled customer; the
+    scheduler kept fetching, publishing replies under their name, alerting
+    them and paying Places, Claude and Perplexity for their Intel."""
+    if hasattr(restaurant, "billing_status"):
+        status = restaurant.billing_status
+    else:
+        try:
+            status = restaurant["billing_status"]    # a sqlite3.Row or a dict
+        except (KeyError, IndexError, TypeError):
+            status = None
+    return (status or "").strip().lower() not in BLOCKED_BILLING_STATES
+
+
+def in_service_sql(column: str = "billing_status") -> str:
+    """The same rule as a WHERE fragment, for jobs that select restaurants
+    in SQL. NULL/unknown stays in service, as subscription_allows_access."""
+    states = ",".join("'%s'" % s for s in sorted(BLOCKED_BILLING_STATES))
+    return f"LOWER(TRIM(COALESCE({column},''))) NOT IN ({states})"
+
+
 def subscription_allows_access(restaurant_id: int, db_path: str = DB_PATH) -> bool:
     """Whether this restaurant's billing state still entitles it to service.
 
@@ -7083,7 +7208,10 @@ def competitor_movement(restaurant_id: int, days: int = 60, db_path: str = DB_PA
     for pid, snaps in by_place.items():
         if len(snaps) < 2:
             continue
-        rated = [x for x in snaps if x["rating"] is not None]
+        # A Google rating is 1.0-5.0; a 0 is how an unrated place used to be
+        # stored (MOD-INT-3), so "0 then 4.6" is a place getting its first
+        # reviews, not a +4.6 swing. Only real ratings are compared.
+        rated = [x for x in snaps if x["rating"] is not None and float(x["rating"]) > 0]
         if len(rated) < 2:
             continue
         first, last = rated[0], rated[-1]
@@ -7277,36 +7405,78 @@ def ai_visibility_sources(restaurant_id: int, limit: int = 20, db_path: str = DB
 
 def record_ai_visibility_run(restaurant_id: int, ai_score: int, gbp_score: int = None,
                              answered: int = None, appeared: int = None,
-                             db_path: str = DB_PATH):
+                             db_path: str = DB_PATH, city_basis: str = None):
     """Record one complete visibility run.
 
     answered/appeared are stored so a later comparison can tell a real
     change from a difference in sample size, and so the drop alert can
-    refuse to fire on a sample too small to say anything.
+    refuse to fire on a sample too small to say anything. city_basis is
+    what the run was measured against (MOD-INT-4).
     """
     conn = get_conn(db_path)
     try:
         cur = conn.execute(
-            "INSERT INTO ai_visibility_runs (restaurant_id, ai_score, gbp_score, answered, appeared) "
-            "VALUES (?,?,?,?,?)",
-            (restaurant_id, ai_score, gbp_score, answered, appeared))
+            "INSERT INTO ai_visibility_runs (restaurant_id, ai_score, gbp_score, answered, appeared, "
+            "city_basis) VALUES (?,?,?,?,?,?)",
+            (restaurant_id, ai_score, gbp_score, answered, appeared, city_basis))
         conn.commit()
         return cur.lastrowid
     finally:
         conn.close()
 
 
+def attach_ai_visibility_payload(run_id: int, payload_json: str, db_path: str = DB_PATH):
+    """Store the payload a recorded run was shown as (MOD-INT-5)."""
+    conn = get_conn(db_path)
+    try:
+        conn.execute("UPDATE ai_visibility_runs SET payload_json=? WHERE id=?", (payload_json, run_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def latest_ai_visibility_payload(restaurant_id: int, max_age_days: int = 8,
+                                 db_path: str = DB_PATH):
+    """(payload dict, created_at) of the newest recorded run younger than
+    max_age_days that stored its payload, or None. The weekly job records
+    one a week; the Intel tab serves it rather than re-running (MOD-INT-5)."""
+    import json as _json
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("""
+            SELECT payload_json, created_at FROM ai_visibility_runs
+            WHERE restaurant_id=? AND payload_json IS NOT NULL
+              AND created_at >= datetime('now', ?)
+            ORDER BY created_at DESC, id DESC LIMIT 1
+        """, (restaurant_id, f"-{int(max_age_days)} days")).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return None
+    try:
+        payload = _json.loads(row["payload_json"])
+    except (TypeError, ValueError):
+        return None
+    return (payload, row["created_at"]) if isinstance(payload, dict) else None
+
+
 def last_two_ai_visibility_runs(restaurant_id: int, db_path: str = DB_PATH) -> list:
-    """The two most recent complete runs, newest first, with their samples."""
+    """The two most recent complete runs, newest first, with their samples —
+    but only when both were measured against the same city (MOD-INT-4). A
+    newest run on a different basis comes back alone, so nothing compares a
+    change of ruler as a change in visibility."""
     conn = get_conn(db_path)
     rows = conn.execute("""
-        SELECT ai_score, answered, appeared, created_at
+        SELECT ai_score, answered, appeared, created_at, city_basis
         FROM ai_visibility_runs
         WHERE restaurant_id=? AND ai_score IS NOT NULL
         ORDER BY created_at DESC, id DESC LIMIT 2
     """, (restaurant_id,)).fetchall()
     conn.close()
-    return [dict(r) for r in rows]
+    runs = [dict(r) for r in rows]
+    if len(runs) == 2 and runs[0].get("city_basis") != runs[1].get("city_basis"):
+        return runs[:1]
+    return runs
 
 
 
@@ -7403,15 +7573,44 @@ def purge_expired_reviews(db_path: str = DB_PATH) -> int:
     return total
 
 
+def _utc_offset_minutes(tz_name: str) -> int:
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo as _ZI
+    try:
+        off = _dt.now(_ZI(tz_name or "America/Chicago")).utcoffset()
+    except Exception:
+        off = _dt.now(_ZI("America/Chicago")).utcoffset()
+    return int(off.total_seconds() // 60) if off is not None else 0
+
+
 def count_auto_approved_today(restaurant_id: int, db_path: str = DB_PATH) -> int:
+    """Auto-approvals since midnight in the RESTAURANT's day (MOD-REV-13).
+
+    It compared log_event's America/Chicago wall-clock stamps with
+    date('now','localtime') — the server's date, which on Railway is UTC —
+    so from 7pm Central the cap reset and the 8pm slot published a second
+    full day's worth of unread replies. Now the restaurant's midnight is
+    worked out in SQL from the same clock and expressed in Chicago wall time,
+    the zone activity_log is stamped in."""
     conn = get_conn(db_path)
-    row = conn.execute("""
-        SELECT COUNT(*) AS n FROM activity_log
-        WHERE restaurant_id=? AND event_type='review_auto_approved'
-          AND created_at >= date('now', 'localtime')
-    """, (restaurant_id,)).fetchone()
-    conn.close()
-    return int(row["n"]) if row else 0
+    try:
+        tz = None
+        try:
+            r = conn.execute("SELECT timezone FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
+            tz = r["timezone"] if r else None
+        except Exception:
+            tz = None
+        local = _utc_offset_minutes(tz)
+        stamp = _utc_offset_minutes("America/Chicago")
+        row = conn.execute("""
+            SELECT COUNT(*) AS n FROM activity_log
+            WHERE restaurant_id=? AND event_type='review_auto_approved'
+              AND created_at >= strftime('%Y-%m-%dT%H:%M:%S',
+                                         date('now', ?), ?)
+        """, (restaurant_id, f"{local:+d} minutes", f"{stamp - local:+d} minutes")).fetchone()
+        return int(row["n"]) if row else 0
+    finally:
+        conn.close()
 
 
 AUTO_APPROVE_TRUST_MIN = 10        # approved replies on a star band before it can be trusted

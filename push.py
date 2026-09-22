@@ -710,6 +710,27 @@ def send_test_push(restaurant_id, user_id, db_path=DB_PATH):
             "error": None if sent else (failures[0] if failures else "Apple did not accept it.")}
 
 
+def _record_dropped(token_rows, alert_type, db_path=DB_PATH):
+    """A push dropped at the queue ceiling leaves a push_deliveries row per
+    device, like any other failed delivery (AI-29). Only the failure digest
+    knew before, so the alert's own delivery history showed nothing tried.
+    Written without touching the device's failure counter: nothing is wrong
+    with the device."""
+    try:
+        conn = get_conn(db_path)
+        try:
+            conn.executemany(
+                "INSERT INTO push_deliveries (device_token_id, restaurant_id, alert_type, status, ok, "
+                "attempts, error) VALUES (?,?,?,NULL,0,0,?)",
+                [(t["id"], t["restaurant_id"], alert_type,
+                  "not sent: the push queue was full") for t in token_rows])
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[push] could not record dropped pushes ({alert_type}): {e}")
+
+
 def fire_push(restaurant_id, alert_type, title, body, data=None, db_path=DB_PATH, user_ids=None):
     """Fire push to every device registered for this restaurant, on a bounded
     background pool — never blocks the caller. Mirrors webhooks.fire_webhook()'s
@@ -725,7 +746,8 @@ def fire_push(restaurant_id, alert_type, title, body, data=None, db_path=DB_PATH
         if user_ids is not None:
             allowed = {int(u) for u in user_ids}
             tokens = [t for t in tokens if int(t.get("user_id") or 0) in allowed]
-        for token_row in tokens:
+        dropped = []
+        for i, token_row in enumerate(tokens):
             with _executor_lock:
                 if _queued >= _MAX_PUSH_QUEUED:
                     print(f"[push] queue full ({_queued}) — dropping {alert_type} for rid={restaurant_id}")
@@ -736,10 +758,13 @@ def fire_push(restaurant_id, alert_type, title, body, data=None, db_path=DB_PATH
                                     db_path=db_path)
                     except Exception:
                         pass
+                    dropped = tokens[i:]
                     break
                 _queued += 1
             _push_executor().submit(
                 _run_delivery, token_row, alert_type, title, body, data, db_path
             )
+        if dropped:
+            _record_dropped(dropped, alert_type, db_path)
     except Exception as e:
         print(f"[push] fire_push error ({alert_type}, rid={restaurant_id}): {e}")

@@ -430,7 +430,6 @@ def test_a_churned_restaurant_sends_no_opt_in_invites(db_path, texts):
     assert texts == []
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-12: a churned restaurant's post-visit review requests keep going out")
 def test_a_churned_restaurant_sends_no_review_requests(db_path, texts):
     """A6 Jobs #13 / MOD-MKT-12."""
     rid = _rid(db_path, google_place_id="ChIJreview")

@@ -146,8 +146,6 @@ def test_a_trusted_suppliers_clean_line_is_still_applied_on_scan(db_path):
     assert _cost(db_path, romaine) == 22.5
 
 
-@pytest.mark.xfail(strict=True, reason="AI-19: a zero-cost ingredient's line is preselected and auto-applied "
-                                       "with no plausibility check")
 def test_a_trusted_suppliers_line_for_an_ingredient_with_no_current_cost_waits_for_the_owner(db_path):
     """Nothing to compare the reading against: $189 read for $1.89 goes
     straight into plate costs unless a person looks first."""
@@ -162,8 +160,6 @@ def test_a_trusted_suppliers_line_for_an_ingredient_with_no_current_cost_waits_f
     assert _cost(db_path, saffron) == 0.0
 
 
-@pytest.mark.xfail(strict=True, reason="AI-19: an ingredient with a NULL unit_cost takes any model-read "
-                                       "price on auto-apply")
 def test_a_trusted_suppliers_line_for_an_ingredient_with_a_null_cost_waits_for_the_owner(db_path):
     rid = _rid(db_path)
     romaine = _ingredient(db_path, rid, "Romaine Hearts", "case", 20.0)
@@ -176,8 +172,6 @@ def test_a_trusted_suppliers_line_for_an_ingredient_with_a_null_cost_waits_for_t
     assert _cost(db_path, basil) is None
 
 
-@pytest.mark.xfail(strict=True, reason="AI-19: a line whose _adds_up is None (null quantity) is preselected "
-                                       "and auto-applied unchecked")
 def test_a_trusted_suppliers_line_with_no_quantity_read_waits_for_the_owner(db_path):
     """quantity x price = total is the only arithmetic check on the reading;
     a line where it could not run has had no check at all."""
@@ -193,8 +187,6 @@ def test_a_trusted_suppliers_line_with_no_quantity_read_waits_for_the_owner(db_p
     assert _cost(db_path, butter) == 4.0
 
 
-@pytest.mark.xfail(strict=True, reason="AI-19: a line whose _adds_up is None (null line total) is preselected "
-                                       "and auto-applied unchecked")
 def test_a_trusted_suppliers_line_with_no_line_total_read_waits_for_the_owner(db_path):
     rid = _rid(db_path)
     romaine = _ingredient(db_path, rid, "Romaine Hearts", "case", 20.0)
@@ -240,8 +232,6 @@ _TRUNCATED_CARD = ('{"menu_item_name": "Margherita Pizza", "note": null, "ingred
                    '{"name": "Flour", "qty": 0.4, "unit": "lb", "confid')
 
 
-@pytest.mark.xfail(strict=True, reason="AI-26: recipe photo ignores stop_reason max_tokens and tells the owner "
-                                       "to try a clearer photo")
 def test_a_recipe_card_cut_off_at_the_token_limit_says_it_was_too_long_not_try_a_clearer_photo(db_path):
     rid = _recipe_setup(db_path)
     fake = _FakeClient(_TRUNCATED_CARD, stop_reason="max_tokens")
@@ -329,7 +319,6 @@ def test_the_forced_budget_stop_raises_the_paused_sentence(budget_stopped):
     assert "paused" in str(err.value)
 
 
-@pytest.mark.xfail(strict=True, reason="AI-11: web food cost insight says 'check back shortly' under a budget stop")
 def test_the_web_food_cost_insight_says_paused_when_the_ai_budget_has_stopped(http, budget_stopped):
     r = http.get("/api/inv-insight")
     body = r.get_json()
@@ -337,7 +326,6 @@ def test_the_web_food_cost_insight_says_paused_when_the_ai_budget_has_stopped(ht
     assert "check back shortly" not in body["insight"]
 
 
-@pytest.mark.xfail(strict=True, reason="AI-11: mobile food cost insight says 'check back shortly' under a budget stop")
 def test_the_mobile_food_cost_insight_says_paused_when_the_ai_budget_has_stopped(http, budget_stopped):
     r = http.get("/mobile/api/food-cost/analytics", headers=_BEARER)
     body = r.get_json()
@@ -346,7 +334,6 @@ def test_the_mobile_food_cost_insight_says_paused_when_the_ai_budget_has_stopped
     assert "check back shortly" not in body["insight"]
 
 
-@pytest.mark.xfail(strict=True, reason="AI-11: web labor insight says 'check back shortly' under a budget stop")
 def test_the_web_labor_insight_says_paused_when_the_ai_budget_has_stopped(http, budget_stopped):
     r = http.get("/api/labor-insight")
     body = r.get_json()
@@ -354,7 +341,6 @@ def test_the_web_labor_insight_says_paused_when_the_ai_budget_has_stopped(http, 
     assert "check back shortly" not in body["insight"]
 
 
-@pytest.mark.xfail(strict=True, reason="AI-11: mobile labor insight says 'check back shortly' under a budget stop")
 def test_the_mobile_labor_insight_says_paused_when_the_ai_budget_has_stopped(http, budget_stopped):
     r = http.get("/mobile/api/labor/insight", headers=_BEARER)
     body = r.get_json()

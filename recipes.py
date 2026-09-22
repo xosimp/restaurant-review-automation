@@ -265,6 +265,12 @@ def extract_from_image(restaurant_id, data, media_type, user_id=None, client=Non
                                                {"type": "text", "text": _PHOTO_PROMPT.format(names=names)}]}])
     if getattr(msg, "stop_reason", None) == "refusal":
         raise RecipePhotoError("The card couldn't be read. Try a clearer photo.")
+    if getattr(msg, "stop_reason", None) == "max_tokens":
+        # The transcription ran out of room, not out of legibility: telling
+        # the owner to retake a sharp photo of a long card sends them round
+        # in circles (AI-26).
+        raise RecipePhotoError("That card is too long to read in one go — photograph it "
+                               "a section at a time.")
     text = next((b.text for b in msg.content if getattr(b, "type", "") == "text"), "")
     try:
         out = json.loads(text)

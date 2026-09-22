@@ -165,7 +165,6 @@ def test_a_closed_competitor_the_owner_added_is_reported_not_silently_kept(db, m
     assert "Rosie's" not in [c["name"] for c in out["competitors"]]
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-INT-8: a custom competitor whose Places lookup fails is dropped and then reported as 'gone'")
 def test_a_custom_competitor_whose_lookup_fails_is_not_reported_gone(db, monkeypatch):
     """A2 I1 #11 / MOD-INT-8 — our own lookup failing is not a rival closing."""
     nearby = [_place("Open One", "p1"), _place("Open Two", "p2"), _place("Open Three", "p3")]
@@ -183,7 +182,6 @@ def test_a_custom_competitor_whose_lookup_fails_is_not_reported_gone(db, monkeyp
     assert "cust1" not in [g["place_id"] for g in changes["gone"]]
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-INT-3: a competitor with no Places rating is stored as rating 0")
 def test_a_place_with_no_rating_is_kept_as_unrated_not_zero(monkeypatch):
     """A2 I1 #12 / MOD-INT-3 — Places omits `rating` for a place with no
     reviews; that is a missing measurement, not a zero-star restaurant."""
@@ -195,7 +193,6 @@ def test_a_place_with_no_rating_is_kept_as_unrated_not_zero(monkeypatch):
     assert new["rating"] is None
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-INT-3: 0 -> 4.6 on first reviews is reported as a significant rating jump")
 def test_a_first_snapshot_with_no_rating_does_not_produce_a_movement(db):
     """A2 I1 #12 / MOD-INT-3 — 'rating 0 then 4.6' is a place getting its
     first reviews, not a +4.6 swing."""
@@ -210,7 +207,6 @@ def test_a_first_snapshot_with_no_rating_does_not_produce_a_movement(db):
     assert models.competitor_movement(1, days=60, db_path=db) == []
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-INT-6: a run that widens the radius meters one nearby call, not three")
 def test_a_run_that_widens_the_radius_meters_every_nearby_search(db, monkeypatch):
     """MOD-INT-6 — keyword search, broad search and widened search are three
     billed Places requests; the ledger must see three."""
@@ -240,7 +236,6 @@ class _FakeClock:
         return self.now
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-INT-1: the weekly competitor job is an unbounded, cursor-less loop")
 def test_the_weekly_competitor_job_is_bounded_and_resumes_where_it_stopped(db, monkeypatch):
     """A2 I1 #17 / MOD-INT-1 — each restaurant takes ten hours of fake wall
     clock; a bounded job stops long before ten of them, records a cursor, and
@@ -267,7 +262,6 @@ def test_the_weekly_competitor_job_is_bounded_and_resumes_where_it_stopped(db, m
     assert second[0] not in first
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-REV-2: churned full-tier restaurants still get the weekly competitor run")
 def test_a_churned_restaurant_is_skipped_by_the_weekly_competitor_job(db, monkeypatch):
     """A2 I1 #18 / MOD-REV-2 — no Places or Claude spend on a cancelled
     customer."""
@@ -338,7 +332,6 @@ def test_no_city_is_flagged_as_location_unknown(db, monkeypatch):
     assert p["location_known"] is False
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-INT-4: with no resolvable city the run is scored 0 and recorded as a complete run")
 def test_no_city_records_no_score_rather_than_a_zero(db, monkeypatch):
     """A2 I2 #2 / MOD-INT-4 — with no city nothing can match, so the 0 is
     ours, not the restaurant's. No score, no history row."""
@@ -348,7 +341,6 @@ def test_no_city_records_no_score_rather_than_a_zero(db, monkeypatch):
     assert _runs(db) == []
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-INT-4: a city lookup exception is cached as 'no city' for 24h")
 def test_a_city_lookup_that_raised_is_retried_on_the_next_call(monkeypatch):
     """A2 I2 #4 / MOD-INT-4 — one Places blip must not blank the city for a
     day."""
@@ -388,7 +380,6 @@ def test_a_successful_city_lookup_is_cached(monkeypatch):
         client_api._city_cache.clear()
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-INT-4: runs with different city sources are stored in one series and compared")
 def test_runs_measured_against_different_cities_are_not_compared(db, monkeypatch):
     """A2 I2 #11 / MOD-INT-4 — a profile-city run and a Google-city run ask
     different questions and match against different strings; a drop between
@@ -402,7 +393,6 @@ def test_runs_measured_against_different_cities_are_not_compared(db, monkeypatch
     assert notify._ai_visibility_drop(models.last_two_ai_visibility_runs(1, db_path=db)) is None
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-INT-1: the weekly AI visibility job is an unbounded, cursor-less loop")
 def test_the_weekly_visibility_job_is_bounded_and_resumes_where_it_stopped(db, monkeypatch):
     """A2 I2 #13 / MOD-INT-1."""
     ids = [_full_tier(db, name=f"V{i} Co") for i in range(10)]
@@ -423,7 +413,6 @@ def test_the_weekly_visibility_job_is_bounded_and_resumes_where_it_stopped(db, m
     assert any("visib" in k for k in keys)
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-REV-2: churned full-tier restaurants still get the weekly AI visibility run")
 def test_a_churned_restaurant_is_skipped_by_the_weekly_visibility_job(db, monkeypatch):
     """A2 I2 #13 / MOD-REV-2 — no Perplexity spend on a cancelled customer."""
     live = _full_tier(db, name="Live Co", billing_status="active")
@@ -435,7 +424,6 @@ def test_a_churned_restaurant_is_skipped_by_the_weekly_visibility_job(db, monkey
     assert live in seen and gone not in seen
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-INT-5: an Intel tab open after a redeploy re-runs 8 live Perplexity queries instead of reading the stored run")
 def test_the_visibility_screen_is_served_from_the_stored_run(db, monkeypatch):
     """A2 I2 #14 / MOD-INT-5 — the process cache is gone after every deploy;
     the recorded run is the answer, not eight live queries on a request
@@ -484,7 +472,6 @@ def _wx_restaurant(db_path, **kw):
     return get_restaurant(rid, db_path=db_path)
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-INT-7: a transient geocode error sets geocode_failed_at and disables weather for 7 days")
 def test_a_network_blip_during_geocode_does_not_black_out_weather_for_a_week(db, monkeypatch):
     """A2 I3 #8 / MOD-INT-7."""
     monkeypatch.setattr(weather, "_GOOGLE_KEY", "k")
@@ -507,7 +494,6 @@ def test_a_place_with_no_geometry_is_still_remembered_as_failed(db, monkeypatch)
     assert get_restaurant(r.id, db_path=db).geocode_failed_at
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-INT-7: an NWS failure is not negative-cached, so every call re-pays two 10s timeouts")
 def test_an_nws_outage_is_not_re_hit_on_every_call(db, monkeypatch):
     """A2 I3 #9 / MOD-INT-7 — within a short window after a failure, no new
     HTTP call."""
@@ -525,7 +511,6 @@ def test_an_nws_outage_is_not_re_hit_on_every_call(db, monkeypatch):
     assert len(calls) == n
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-INT-7: a stale forecast cache is discarded instead of used when the refresh fails")
 def test_a_stale_forecast_is_used_when_the_refresh_fails(db, monkeypatch):
     """A2 I3 #9 / MOD-INT-7 — yesterday's forecast for tomorrow beats none."""
     import json
@@ -546,7 +531,6 @@ def test_a_non_us_restaurant_gets_no_forecast_and_no_error(db, monkeypatch):
     assert weather.get_forecast_for_week(r, ["2026-09-22"], db_path=db) == []
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-INT-7: a non-US restaurant re-calls NWS (and re-waits its timeout) on every forecast read")
 def test_a_non_us_restaurant_does_not_re_ask_nws_every_time(db, monkeypatch):
     """A2 I3 #10 / MOD-INT-7 — a permanent 404 is remembered."""
     r = _wx_restaurant(db, latitude=51.5, longitude=-0.12)

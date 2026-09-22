@@ -244,7 +244,6 @@ def test_a_campaign_inside_the_sms_budget_goes_out_in_full_with_the_stop_line(db
     assert bodies[0].startswith(message) and "Reply STOP" in bodies[0]
 
 
-@pytest.mark.xfail(strict=True, reason="AI-32: send_campaign has no length check — a 700-character message goes to the whole list as a 5-segment text")
 def test_a_700_character_campaign_is_refused_before_any_text_is_sent(db_path, rid, monkeypatch):
     _guests(db_path, rid, 3)
     sends = []
@@ -258,7 +257,6 @@ def test_a_700_character_campaign_is_refused_before_any_text_is_sent(db_path, ri
     assert not result.get("sent")
 
 
-@pytest.mark.xfail(strict=True, reason="AI-32: the draft prompt asks for under 300 characters but check_public_reply allows 1,200, so a 700-character draft is handed back as ready to send")
 def test_a_drafted_campaign_over_the_sms_budget_is_not_handed_back_as_ready(db_path, rid, monkeypatch):
     long_copy = ("Come back and see us this week for the new autumn menu and a glass on the house. " * 9)[:700]
     monkeypatch.setattr(guest_marketing, "get_client", lambda *a, **k: object())
@@ -293,7 +291,6 @@ def test_the_best_quote_is_read_from_a_recent_five_star_review(db_path, rid):
     assert marketing_signals.review_signal(rid, db_path=db_path)["best_quote"] == INJECTION
 
 
-@pytest.mark.xfail(strict=True, reason="AI-15: generation_context embeds the 5-star best_quote raw, outside the UNTRUSTED_GUEST_TEXT fence")
 def test_the_five_star_quote_in_the_generation_context_is_fenced_as_guest_text(db_path, rid):
     _five_star(db_path, rid, INJECTION)
     ctx = marketing_signals.generation_context(rid, db_path=db_path)
@@ -301,7 +298,6 @@ def test_the_five_star_quote_in_the_generation_context_is_fenced_as_guest_text(d
     assert _fenced(ctx, INJECTION), "guest-written quote reaches the prompt outside the fence"
 
 
-@pytest.mark.xfail(strict=True, reason="AI-15: the marketing generation prompt carries the 5-star best_quote unfenced into copy that is published")
 def test_the_published_copy_prompt_fences_the_guest_quote(db_path, rid, monkeypatch):
     _five_star(db_path, rid, INJECTION)
     seen = []
@@ -327,7 +323,6 @@ def test_a_budget_stop_on_phone_generate_says_ai_is_paused(app, monkeypatch):
     assert "paused" in body["error"]
 
 
-@pytest.mark.xfail(strict=True, reason="AI-11: the web generate route has no except, so a budget stop becomes a bare 500 with no message")
 def test_a_budget_stop_on_web_generate_says_ai_is_paused(app, monkeypatch):
     _force_budget_stop(monkeypatch)
     resp = app.test_client().post("/api/generate-content",
@@ -335,14 +330,12 @@ def test_a_budget_stop_on_web_generate_says_ai_is_paused(app, monkeypatch):
     assert "paused" in resp.get_data(as_text=True)
 
 
-@pytest.mark.xfail(strict=True, reason="AI-11: the web marketing brief answers a budget stop with 'check back shortly'")
 def test_a_budget_stop_on_the_web_marketing_brief_says_ai_is_paused(app, monkeypatch):
     _force_budget_stop(monkeypatch)
     resp = app.test_client().get("/api/mkt-insight")
     assert "paused" in resp.get_data(as_text=True)
 
 
-@pytest.mark.xfail(strict=True, reason="AI-11: the phone marketing brief answers a budget stop with 'check back shortly'")
 def test_a_budget_stop_on_the_phone_marketing_brief_says_ai_is_paused(app, monkeypatch):
     _force_budget_stop(monkeypatch)
     resp = app.test_client().get("/mobile/api/marketing/insight", headers=BEARER)
@@ -370,7 +363,6 @@ def test_a_well_formed_calendar_array_comes_back_as_a_dated_week(app, monkeypatc
     assert all(i.get("iso_date") for i in body["ideas"])
 
 
-@pytest.mark.xfail(strict=True, reason="AI-26: a calendar wrapped in an object is parsed as free text, fails, and the web tab gets ideas=[] with no reason")
 def test_a_calendar_the_model_wrapped_in_an_object_is_not_shown_as_an_empty_week(app, monkeypatch):
     import json
     _calendar_model(monkeypatch, json.dumps({"ideas": WEEK}))
@@ -378,7 +370,6 @@ def test_a_calendar_the_model_wrapped_in_an_object_is_not_shown_as_an_empty_week
     assert body["ideas"] or body.get("error"), "an empty week with no reason given"
 
 
-@pytest.mark.xfail(strict=True, reason="AI-26: a truncated calendar (max_tokens) fails to parse and the web tab gets ideas=[] with no reason")
 def test_a_truncated_calendar_tells_the_owner_why_instead_of_an_empty_week(app, monkeypatch):
     import json
     cut = json.dumps(WEEK)[:300]
@@ -388,10 +379,19 @@ def test_a_truncated_calendar_tells_the_owner_why_instead_of_an_empty_week(app, 
 
 
 def test_the_phone_says_it_could_not_build_a_calendar_rather_than_showing_an_empty_week(app, monkeypatch):
-    """The phone's twin already answers a failed draw with a sentence; this
-    pins it while the web half is fixed."""
+    """The phone's twin answers a failed draw with a sentence. (It used a
+    wrapped object as its failed draw; since AI-26 that shape is read as the
+    week it is, so a draw cut off at max_tokens is the failure pinned here.)"""
     import json
-    _calendar_model(monkeypatch, json.dumps({"ideas": WEEK}))
+    _calendar_model(monkeypatch, json.dumps(WEEK)[:300], stop_reason="max_tokens")
     body = app.test_client().post("/mobile/api/marketing/calendar", headers=BEARER).get_json()
     assert body["ok"] is False
     assert body.get("error")
+
+
+def test_the_phone_reads_a_calendar_the_model_wrapped_in_an_object(app, monkeypatch):
+    import json
+    _calendar_model(monkeypatch, json.dumps({"ideas": WEEK}))
+    body = app.test_client().post("/mobile/api/marketing/calendar", headers=BEARER).get_json()
+    assert body["ok"] is True
+    assert len([i for i in body["calendar"] if i.get("source") != "menu_margins"]) == 7

@@ -372,7 +372,10 @@ def test_approve_does_not_affect_another_restaurants_review(client, db_path):
     token_b = _login(client, db_path, rid_b, username="bob")
 
     resp = client.post(f"/mobile/api/reviews/{review_id}/approve", headers=_auth_headers(token_b))
-    assert resp.status_code == 200  # approve() has no existence check — just scopes the UPDATE
+    # Refused outright now (MOD-REV-4): approve is a compare-and-set on this
+    # restaurant's own drafted reply, so another restaurant's id is a 404,
+    # not a 200 that quietly changed nothing.
+    assert resp.status_code == 404
 
     conn = get_conn(db_path)
     row = conn.execute("SELECT response_status FROM reviews WHERE id=?", (review_id,)).fetchone()
@@ -1449,6 +1452,8 @@ def test_intel_endpoint_parses_real_json_blob_shape(client, db_path):
         "match_basis": None, "distance_m": None, "price_level": None,
         # 270 reviews is well past the provisional threshold.
         "rating_is_provisional": False,
+        # It has a rating, so it is not an unrated place (MOD-INT-3).
+        "unrated": False,
     }]
     assert data["updated_at"] == "2026-08-01 12:00:00"
     # Google's own all-time rating is what competitor ratings are comparable

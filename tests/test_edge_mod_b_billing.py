@@ -489,7 +489,6 @@ def sent(monkeypatch):
     return out
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-REV-2: a churned restaurant still receives review alerts")
 def test_a_churned_restaurant_gets_no_review_alerts(db_path, sent):
     """A10 #34 / MOD-REV-2 — no SMS/email/push spend on a cancelled customer."""
     rid = _restaurant(db_path, billing_status="churned")
@@ -500,7 +499,6 @@ def test_a_churned_restaurant_gets_no_review_alerts(db_path, sent):
     assert sent["email"] == [] and sent["push"] == []
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-REV-2: a churned restaurant still gets the daily operational alerts")
 def test_a_churned_restaurant_gets_no_daily_alerts(db_path, sent):
     """A10 #34 / MOD-REV-2."""
     from models import save_labor_snapshot
@@ -513,7 +511,6 @@ def test_a_churned_restaurant_gets_no_daily_alerts(db_path, sent):
     assert sent["email"] == [] and sent["push"] == []
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-REV-2: the nightly Meta metrics sync still runs for churned restaurants")
 def test_a_churned_restaurant_is_skipped_by_the_nightly_metrics_sync(db_path, monkeypatch):
     """A10 #34 / MOD-REV-2."""
     import social_routes

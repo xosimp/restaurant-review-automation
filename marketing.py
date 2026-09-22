@@ -573,6 +573,25 @@ def _with_margin_idea(restaurant_id, ideas, days_map, iso_map):
         return ideas
 
 
+def _calendar_ideas(text):
+    """The week's ideas from the model's reply: a JSON array of objects, or
+    the same array wrapped in an object ({"ideas": [...]}), with any preamble
+    or code fence around it. The wrapped shape used to be read as free text,
+    fail, and reach the owner as an empty week with no reason (AI-26)."""
+    from ai_utils import parse_json_reply
+
+    def _week(v):
+        if isinstance(v, list) and v and all(isinstance(x, dict) for x in v):
+            return v
+        if isinstance(v, dict):
+            for inner in v.values():
+                if isinstance(inner, list) and inner and all(isinstance(x, dict) for x in inner):
+                    return inner
+        return None
+
+    return _week(parse_json_reply(text, accept=lambda v: _week(v) is not None))
+
+
 def get_content_calendar_ideas(restaurant_id: int = None, force: bool = False) -> list[dict]:
     """A week of content ideas. Generated once per restaurant per week and
     cached from then on; `force=True` is the owner explicitly asking for a
@@ -663,15 +682,17 @@ Rules:
     msg = create_with_retry(
         get_client(),
         model=model_for("marketing"),
-        max_tokens=1000,
+        max_tokens=1500,
         messages=[{"role": "user", "content": prompt}],
         restaurant_id=restaurant_id,
         action="content_calendar",
     )
-    raw = extract_text(msg).strip()
-    raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    # A week cut off at max_tokens is not a parse error to swallow into an
+    # empty list — it is a failure the caller has to be able to name (AI-26).
+    if getattr(msg, "stop_reason", None) == "max_tokens":
+        raise ValueError("the content calendar was cut off before the week was finished")
     try:
-        ideas = json.loads(raw)
+        ideas = _calendar_ideas(extract_text(msg))
         # Inject real dates into each idea based on day name
         # Strip any date contamination from AI (e.g. "Thursday, June 5" -> "Thursday")
         valid_days = {"Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"}

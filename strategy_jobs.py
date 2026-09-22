@@ -212,13 +212,13 @@ WEEKLY_PLAN_PROMPT = (
 
 
 def _parse_plan(answer):
-    import json, re
-    text = (answer or "").strip()
-    m = re.search(r"\[.*\]", text, re.S)
-    if not m:
-        return []
+    # The first JSON array of objects in the answer. A greedy [.*] match ran
+    # from the first "[" in any preamble to the last "]" in any sign-off, so
+    # prose with brackets of its own lost the whole week (AI-17 / AI-26).
+    from ai_utils import parse_json_reply
     try:
-        items = json.loads(m.group(0))
+        items = parse_json_reply(answer, expect=list,
+                                 accept=lambda v: all(isinstance(x, dict) for x in v))
     except ValueError:
         return []
     out = []
@@ -234,12 +234,31 @@ def _parse_plan(answer):
     return out[:3]
 
 
+# A plan that failed is retried on a later tick the same morning, up to this
+# many attempts a week — a transient failure (a budget stop, an outage) used
+# to lose the week, because the week was claimed before the call (AI-17).
+WEEKLY_PLAN_MAX_ATTEMPTS = 3
+
+
+def _plan_item_unverified(item, unverified):
+    """Whether a plan item states a figure the answer's verifier could not
+    trace to anything the model read. Filed issues are unattended output:
+    nobody reads the answer before the item lands on Home."""
+    text = f"{item.get('title') or ''} {item.get('why') or ''}"
+    return any(fig and fig in text for fig in (unverified or []))
+
+
 def run_weekly_plan(db_path=DB_PATH):
     """Monday 7am local: the agent — not a script — reads the week and files
     up to three owned actions as issues (notify=False: they appear on Home,
     nobody is texted). The morning brief is deterministic by design; this is
     the one place the model is asked to hold the why across modules. Off
-    unless weekly_plan_enabled; claimed per ISO week."""
+    unless weekly_plan_enabled; claimed per ISO week.
+
+    Unattended, so it is offered read tools only (no direct actions, no
+    proposals, no memory writes), an item whose figures failed verification
+    is not filed, and a run that fails gives its claim back so the next tick
+    retries it (AI-17)."""
     import ops, issues
     from time_utils import restaurant_now
     filed = 0
@@ -250,19 +269,31 @@ def run_weekly_plan(db_path=DB_PATH):
         if local.weekday() != 0 or not (7 <= local.hour < 11):
             continue
         week = local.strftime("%G-W%V")
+        # Claimed before the call so two ticks cannot both run it; given
+        # back below if the run fails, within a bounded number of attempts.
         if not ops.claim_period(f"weekly_plan:{r.id}", week):
             continue
+        if not any(ops.claim_period(f"weekly_plan_attempt:{r.id}", f"{week}#{n}")
+                   for n in range(WEEKLY_PLAN_MAX_ATTEMPTS)):
+            continue    # attempts for this week are spent; the claim stays
         try:
             from ask_cavnar import ask_with_tools
-            answer, _trunc, _props, _meta = ask_with_tools(r, WEEKLY_PLAN_PROMPT, history=[], user=None)
+            answer, _trunc, _props, _meta = ask_with_tools(r, WEEKLY_PLAN_PROMPT, history=[], user=None,
+                                                           read_only=True)
+            unverified = (_meta or {}).get("unverified_figures") or []
             for i, item in enumerate(_parse_plan(answer)):
+                if _plan_item_unverified(item, unverified):
+                    continue
                 issues.create_issue(
                     r.id, "plan", item["title"],
                     detail=f"{item['why']} Owner: {item['owner']}. Due in {item['due_days']} days.",
                     severity="normal", source_key=f"plan:{week}:{i}", notify=False, db_path=db_path)
                 filed += 1
         except Exception as e:
-            ops.capture(e, job="weekly_plan", context=f"restaurant_id={r.id}")
+            ops.release_period(f"weekly_plan:{r.id}", week)
+            from ai_utils import AIBudgetExceeded
+            if not isinstance(e, AIBudgetExceeded):
+                ops.capture(e, job="weekly_plan", context=f"restaurant_id={r.id}")
     return {"filed": filed}
 
 
