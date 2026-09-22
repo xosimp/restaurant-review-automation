@@ -217,7 +217,6 @@ def _per_phone(texts):
     return counts
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-6: two overlapping campaign sends text every guest twice")
 def test_two_overlapping_campaign_sends_text_each_guest_once(db_path, monkeypatch):
     """A6 Campaigns #9 / MOD-MKT-6 — a double-tap: the second send starts
     while the first is still in its loop."""
@@ -241,7 +240,6 @@ class _Killed(BaseException):
     """A deploy/restart mid-loop — not an Exception, so nothing swallows it."""
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-6: a campaign interrupted mid-send records nothing, so the retry re-texts everyone already reached")
 def test_a_campaign_interrupted_mid_send_does_not_re_text_on_retry(db_path, monkeypatch):
     """A6 Campaigns #10 / MOD-MKT-6."""
     rid = _rid(db_path)

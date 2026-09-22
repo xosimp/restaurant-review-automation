@@ -404,7 +404,6 @@ def test_the_same_order_is_not_sent_again_once_the_cooldown_passes(app, db_path,
 
 # ── DATA-13 · guest SMS campaign ────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="DATA-13: send_campaign reads the audience, texts it, and only then stamps last_campaign_at, so two in-flight sends text every guest twice")
 def test_two_concurrent_campaign_sends_text_each_guest_once(db_path, monkeypatch):
     rid = _restaurant(db_path)
     phones = ["+15550001001", "+15550001002"]

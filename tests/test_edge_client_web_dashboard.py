@@ -327,7 +327,6 @@ def test_the_guest_blast_asks_before_it_sends(src):
     assert body.index("confirm(") < body.index("fetch(")
 
 
-@pytest.mark.xfail(strict=True, reason="CLIENT-1: after a transport error the blast button is re-enabled with 'try again', though the texts may already have gone out")
 def test_a_guest_blast_that_lost_its_response_does_not_invite_a_blind_resend(src):
     catch = _catch_bodies(_function(src, "sendGuestCampaign"))[-1]
     assert "disabled = false" not in catch and "try again" not in catch.lower(), catch

@@ -95,9 +95,7 @@ final class EdgeMarketingTests: XCTestCase {
         async let a: Void = vm.sendCampaign()
         async let b: Void = vm.sendCampaign()
         _ = await (a, b)
-        XCTExpectFailure("CLIENT-1: sendCampaign has no `guard !isSending`, so a double tap sends the blast twice", strict: true) {
-            XCTAssertEqual(sends.value, 1)
-        }
+        XCTAssertEqual(sends.value, 1)
     }
 
     func testATimedOutBlastIsNotPresentedAsSafeToRetry() async {
@@ -110,10 +108,8 @@ final class EdgeMarketingTests: XCTestCase {
         await vm.sendCampaign()
         let message = vm.campaignError ?? ""
         XCTAssertFalse(message.isEmpty)
-        XCTExpectFailure("CLIENT-1: a timed-out send says \"Tap to retry\" although the texts may already be going out", strict: true) {
-            XCTAssertFalse(message.lowercased().contains("retry"), message)
-            XCTAssertTrue(message.lowercased().contains("history"), "the owner should check campaign history first")
-        }
+        XCTAssertFalse(message.lowercased().contains("retry"), message)
+        XCTAssertTrue(message.lowercased().contains("history"), "the owner should check campaign history first")
     }
 
     // MARK: CLIENT-34 — deleting a contact

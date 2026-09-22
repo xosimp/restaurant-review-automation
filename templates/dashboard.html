@@ -15329,11 +15329,15 @@ window.sendGuestCampaign = function() {
     }
     status.style.display = 'inline';
   }).catch(function(){
-    btn.disabled = false;
-    btn.textContent = 'Send to this audience';
-    status.textContent = 'Network error — try again.';
+    // The response was lost, not necessarily the send: the texts may
+    // already be going out. Say so and show the history, rather than
+    // offering the same button again. The button stays off until a reload;
+    // a resend then texts only guests the first one never reached.
+    btn.textContent = 'Sending may have finished';
+    status.textContent = 'Lost the connection mid-send. The history below shows what went out; reload the page to send to anyone it missed.';
     status.style.color = 'var(--red)';
     status.style.display = 'inline';
+    loadGuestHistory();
   });
 };
 

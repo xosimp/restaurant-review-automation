@@ -334,6 +334,9 @@ final class GuestTextClubViewModel {
     }
 
     func sendCampaign() async {
+        // A second tap while the first send is in flight must not start a
+        // second blast (CLIENT-1).
+        guard !isSending else { return }
         isSending = true
         campaignError = nil
         defer { isSending = false }
@@ -352,10 +355,18 @@ final class GuestTextClubViewModel {
             } else {
                 campaignError = response.error ?? "Couldn't send the campaign."
             }
+        } catch let error as APIClient.APIError where error.isRetryable || error.status == nil {
+            // The answer was lost, not necessarily the send: the server may
+            // still be texting. "Tap to retry" invited a second blast. The
+            // server skips anyone already texted, but the owner should look
+            // at the history first.
+            campaignError = "Lost the connection mid-send. Check the campaign history before sending again — anyone already texted is skipped."
+            await loadHistory()
         } catch let error as APIClient.APIError {
             campaignError = error.message
         } catch {
-            campaignError = "Couldn't send the campaign."
+            campaignError = "Lost the connection mid-send. Check the campaign history before sending again — anyone already texted is skipped."
+            await loadHistory()
         }
     }
 }

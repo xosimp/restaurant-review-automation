@@ -65,7 +65,6 @@ def test_a_second_campaign_after_the_first_finished_skips_everyone(db_path, _red
     assert len(sent) == 5
 
 
-@pytest.mark.xfail(strict=True, reason="CLIENT-1: send_campaign stamps last_campaign_at only after the whole loop, so an overlapping second send texts every guest again")
 def test_an_overlapping_second_campaign_texts_each_guest_once(db_path, _redirect, monkeypatch):
     rid = _guest_list(db_path, 6)
     sent, lock = [], threading.Lock()

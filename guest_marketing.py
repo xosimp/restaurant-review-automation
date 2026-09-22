@@ -650,51 +650,100 @@ def send_campaign(restaurant_id, message, db_path=DB_PATH, segment="all", link_t
         body = f"{body}\n{_short_link(link_token)}"
     full_message = body + "\n\nReply STOP to unsubscribe."
 
-    sent, failed = 0, 0
-    reached_ids = []
-    for c in eligible:
-        try:
-            if send_sms(c["phone"], full_message):
-                sent += 1
-                reached_ids.append(c["id"])
-            else:
-                failed += 1
-        except Exception:
-            failed += 1
-
-    reached_phone = {c["id"]: c.get("phone") for c in eligible}
+    # Exactly once per guest, even with two sends in flight (a double tap, a
+    # phone that gave up at 20 s and was pressed again) or a send killed
+    # halfway by a deploy. The old loop texted the whole list and only then
+    # wrote the campaign row, the recipients and the frequency stamps in one
+    # commit, so an overlapping send saw nobody stamped and texted everyone
+    # again, and a crash left no record of who had been texted.
+    #
+    # Now: the campaign row goes in first; each guest is CLAIMED by stamping
+    # last_campaign_at conditionally (only if nobody stamped them inside the
+    # frequency window) and committed before their text goes out; each
+    # delivered text is recorded as it happens. A claim whose send fails is
+    # released, so a failure never locks a guest out of the next campaign.
+    stamp = now.strftime("%Y-%m-%dT%H:%M:%S")
+    cutoff = (now - timedelta(days=GUEST_SMS_MIN_DAYS_BETWEEN)).strftime("%Y-%m-%dT%H:%M:%S")
+    label = SEGMENTS.get(segment, SEGMENTS["all"])["label"]
     conn = get_conn(db_path)
     try:
         cur = conn.execute(
             "INSERT INTO guest_campaigns "
             "(restaurant_id, message, sent_count, failed_count, segment, segment_label, link_token) "
             "VALUES (?,?,?,?,?,?,?)",
-            (restaurant_id, message.strip(), sent, failed, segment,
-             SEGMENTS.get(segment, SEGMENTS["all"])["label"], link_token),
-        )
+            (restaurant_id, message.strip(), 0, 0, segment, label, link_token))
         campaign_id = cur.lastrowid
-        try:
-            for cid in reached_ids:
-                if reached_phone.get(cid):
-                    conn.execute("INSERT INTO guest_campaign_recipients (campaign_id, restaurant_id, contact_id, phone) "
-                                 "VALUES (?,?,?,?)", (campaign_id, restaurant_id, cid, _normalize_phone(reached_phone[cid])))
-        except Exception as e:
-            # The texts already went; the send record must stand even if the
-            # recipients table is missing (a database from before this
-            # migration). Recorded, never swallowed — attribution will read
-            # nothing for this campaign and the ledger says why.
-            import ops
-            ops.capture(e, job="campaign_recipients", context=f"restaurant_id={restaurant_id}")
-        # Stamps the frequency cap. Only guests actually reached are stamped,
-        # so a failed send doesn't lock someone out of the next campaign.
-        for cid in reached_ids:
-            conn.execute("UPDATE guest_contacts SET last_campaign_at=? WHERE id=?",
-                         (now.strftime("%Y-%m-%dT%H:%M:%S"), cid))
         conn.commit()
     finally:
         conn.close()
 
-    return {"ok": True, "sent": sent, "failed": failed, "total": len(eligible),
+    def _claim(contact_id, prior):
+        c2 = get_conn(db_path)
+        try:
+            got = c2.execute(
+                "UPDATE guest_contacts SET last_campaign_at=? WHERE id=? AND restaurant_id=? "
+                "AND (last_campaign_at IS NULL OR last_campaign_at < ? OR last_campaign_at IS ?)",
+                (stamp, contact_id, restaurant_id, cutoff, prior)).rowcount
+            c2.commit()
+            return bool(got)
+        finally:
+            c2.close()
+
+    def _release(contact_id, prior):
+        c2 = get_conn(db_path)
+        try:
+            c2.execute("UPDATE guest_contacts SET last_campaign_at=? WHERE id=? AND last_campaign_at=?",
+                       (prior, contact_id, stamp))
+            c2.commit()
+        finally:
+            c2.close()
+
+    def _record(contact, ok):
+        c2 = get_conn(db_path)
+        try:
+            if ok:
+                c2.execute("UPDATE guest_campaigns SET sent_count=sent_count+1 WHERE id=?", (campaign_id,))
+                try:
+                    c2.execute("INSERT INTO guest_campaign_recipients (campaign_id, restaurant_id, contact_id, phone) "
+                               "VALUES (?,?,?,?)", (campaign_id, restaurant_id, contact["id"],
+                                                    _normalize_phone(contact.get("phone") or "")))
+                except Exception as e:
+                    # The text already went; the count stands even if the
+                    # recipients table is missing. Recorded, never swallowed.
+                    import ops
+                    ops.capture(e, job="campaign_recipients", context=f"restaurant_id={restaurant_id}")
+            else:
+                c2.execute("UPDATE guest_campaigns SET failed_count=failed_count+1 WHERE id=?", (campaign_id,))
+            c2.commit()
+        finally:
+            c2.close()
+
+    sent, failed, raced = 0, 0, 0
+    for c in eligible:
+        prior = c.get("last_campaign_at")
+        if not _claim(c["id"], prior):
+            raced += 1          # another send in flight already has this guest
+            continue
+        try:
+            ok = bool(send_sms(c["phone"], full_message))
+        except Exception:
+            ok = False
+        except BaseException:
+            # Killed before this text is known to have gone: give the guest
+            # back so a retry reaches them, then let the kill propagate.
+            _release(c["id"], prior)
+            raise
+        if not ok:
+            _release(c["id"], prior)
+        _record(c, ok)
+        if ok:
+            sent += 1
+        else:
+            failed += 1
+    skipped_recent += raced
+
+    return {"ok": True, "sent": sent, "failed": failed, "total": len(eligible) - raced,
+            "campaign_id": campaign_id,
             "skipped_recent": skipped_recent, "segment": segment,
             "segment_label": SEGMENTS.get(segment, SEGMENTS["all"])["label"]}
 

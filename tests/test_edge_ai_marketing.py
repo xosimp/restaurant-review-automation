@@ -160,7 +160,6 @@ def test_a_normal_campaign_texts_every_eligible_guest_exactly_once(db_path, rid,
     assert sorted(sent) == sorted(phones)
 
 
-@pytest.mark.xfail(strict=True, reason="AI-7: the frequency cap is stamped only after the whole list, so a send interrupted and pressed again re-texts everyone already reached")
 def test_a_campaign_interrupted_mid_send_and_sent_again_does_not_retext_anyone(db_path, rid, monkeypatch):
     """A deploy or a worker timeout ends the request after two texts went
     out. The owner, told it failed, presses Send again."""
@@ -185,7 +184,6 @@ def test_a_campaign_interrupted_mid_send_and_sent_again_does_not_retext_anyone(d
     assert twice == [], f"texted twice: {twice}"
 
 
-@pytest.mark.xfail(strict=True, reason="AI-7: the campaign row and recipients are written only after the loop, so a send that dies halfway leaves no record of who was texted")
 def test_a_campaign_that_dies_mid_send_still_records_who_was_texted(db_path, rid, monkeypatch):
     _guests(db_path, rid, 5)
     texted = []
@@ -209,7 +207,6 @@ def test_a_campaign_that_dies_mid_send_still_records_who_was_texted(db_path, rid
     assert sorted(recorded) == sorted(texted)
 
 
-@pytest.mark.xfail(strict=True, reason="AI-7: a retry that arrives while the first send is still looping sees no stamps and texts the whole list again")
 def test_a_retry_that_arrives_while_the_first_send_is_still_running_does_not_double_text(db_path, rid, monkeypatch):
     """The phone gives up at 20 s and shows "Couldn't send the campaign";
     the server is still sending. The owner taps Send again — that second
