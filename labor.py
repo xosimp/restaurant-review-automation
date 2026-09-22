@@ -1,7 +1,7 @@
 """
 labor.py — Labor cost analysis + Claude-powered scheduling recommendations
 """
-import csv, json, math
+import csv, json, math, time
 from collections import defaultdict
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -1278,6 +1278,32 @@ def format_profile_block(profiles: list = None) -> str:
             "  Where a shift matches no profile above, use the standard bar.\n")
 
 
+# The shape the model is asked to return. Rows keep the CSV column names so
+# everything downstream (repair, scoring, history, the staff link) reads one
+# format whether the response was JSON or the text fallback.
+SCHEDULE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "shifts": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "date": {"type": "string"}, "day": {"type": "string"}, "employee": {"type": "string"},
+                    "role": {"type": "string"}, "shift_start": {"type": "string"}, "shift_end": {"type": "string"},
+                    "scheduled_hours": {"type": "number"}, "notes": {"type": "string"},
+                },
+                "required": ["date", "day", "employee", "role", "shift_start", "shift_end", "scheduled_hours", "notes"],
+                "additionalProperties": False,
+            },
+        },
+        "summary": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["shifts", "summary"],
+    "additionalProperties": False,
+}
+
+
 def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                                  restaurant_name: str = "Restaurant",
                                  hourly_rate: float = DEFAULT_HOURLY_RATE,
@@ -1302,10 +1328,25 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                                  strength_thresholds: dict = None,
                                  leader_rules: list = None,
                                  prior_schedule_summary: dict = None,
-                                 shift_profiles: list = None) -> dict:
+                                 shift_profiles: list = None,
+                                 roster: list = None,
+                                 extra_blocks: str = None,
+                                 week_slice: list = None,
+                                 structured: bool = True) -> dict:
     """
     Use Claude to generate an optimized weekly schedule.
     Returns dict: {schedule_csv: str, summary: list[str], week_dates: list, week_days: list}
+
+    roster        — [(name, role)] from staff_settings.roster: the one staff
+                    list (history ∪ hand-added − deactivated). Without it the
+                    list is whoever appears in shift history, as before.
+    extra_blocks  — prompt text the engine renders from its own facts (the
+                    rules the week is checked against, dated events and
+                    reservations, pairings, reliability, learned edits).
+    week_slice    — a subset of the week's dates to write rows for, when the
+                    week is generated in parts (a big roster).
+    structured    — ask for JSON against SCHEDULE_SCHEMA; falls back to the
+                    CSV text contract if the API refuses the format.
     """
     # Was capped at 15 in the prompt below — silently invisible to any
     # restaurant with a bigger real roster (found via Gia Mia's actual
@@ -1315,6 +1356,16 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     # see. Raised generously; TYPICAL HEADCOUNT/PAR reconciliation already
     # bound how many actually get scheduled per day.
     employees = list({s.get("employee"): s.get("role") for s in shifts if s.get("employee")}.items())
+    if roster:
+        # The one roster. Everyone on it can be scheduled; nobody off it can.
+        employees = [(str(n), str(r or "")) for n, r in roster if n]
+    # Every name, grouped by role — the old "first 100 names" list silently
+    # hid the rest of a big roster from the model while the roster check
+    # still flagged them as unknown.
+    _by_role_names = {}
+    for _n, _r in employees:
+        _by_role_names.setdefault(_r or "Unassigned", []).append(_n)
+    _roster_block = "\n".join(f"    {_r}: {', '.join(sorted(_names))}" for _r, _names in sorted(_by_role_names.items()))
     overstaffed = analysis.get("overstaffed_days", [])[:5]
     understaffed = analysis.get("understaffed_days", [])[:3]
     dow = analysis.get("dow_summary", {})
@@ -1896,6 +1947,28 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                      f"constraints below — in that order. The hours ceiling only ever removes hours; it never adds "
                      f"them.{_daily_targets}")
 
+    # The dates to write rows for. A big roster is generated in parts; the
+    # rules that span the whole week (days off, the hours ceiling, rest) are
+    # verified after the parts are merged, so each part only has to be
+    # right for its own days.
+    _gen_dates = [d for d in week_dates if not week_slice or d in set(week_slice)]
+    _gen_days = [n for d, n in zip(week_dates, week_days) if d in set(_gen_dates)]
+    _dates_block = "Next week dates:\n" + "\n".join(f"- {d}: {n}" for d, n in zip(_gen_dates, _gen_days))
+    if week_slice and len(_gen_dates) < len(week_dates):
+        _dates_block = ("Next week runs " + week_dates[0] + " to " + week_dates[-1] + ". This request covers ONLY these dates; "
+                        "the other days are written separately. Write shifts for these dates only, keeping the same "
+                        "people's other days in mind for hours and rest:\n" + "\n".join(f"- {d}: {n}" for d, n in zip(_gen_dates, _gen_days)))
+    if structured:
+        _output_spec = ("OUTPUT — JSON only, matching the schema you were given: `shifts` is every shift for the dates above "
+                        "(date YYYY-MM-DD, day, employee exactly as listed, role, shift_start and shift_end in 12-hour am/pm "
+                        "form like \"4:00pm\", scheduled_hours as a number, notes as one brief phrase), and `summary` is exactly "
+                        "three bullets.")
+    else:
+        _output_spec = ("OUTPUT — your entire response must follow this structure with no text before the CSV:\n\n"
+                        "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes\n"
+                        "2026-MM-DD,Day,Employee Name,Role,start,end,hours,note\n(continue for every shift)\n---SUMMARY---\n"
+                        "- bullet 1\n- bullet 2\n- bullet 3")
+
     prompt = f"""You are a restaurant scheduling expert for {restaurant_name}. Generate an optimized schedule for next week AND a brief plain-English summary of your decisions.
 
 CONTEXT:
@@ -1904,20 +1977,12 @@ CONTEXT:
 - Recent overstaffed days: {[d["day"] + " (" + str(d["labor_pct"]) + "%)" for d in overstaffed]}
 - Recent understaffed days: {[d["day"] for d in understaffed]}
 - Recent labor % by day of week: {dow}
-- Active staff: {[e[0] + " (" + e[1] + ")" for e in employees[:100]]}{yoy_block}{events_block}{_demand_block}{_weather_block}{_prior_schedule_block}{role_rates_block}{hours_block}{par_block}{_headcount_block}{_cross_block}{_section_block}{_daypart_block}{_delivery_block}{_noshows_block}{_strength_block}{_profile_block}{_avail_block}{_sched_notes_block}
+- Active staff ({len(employees)} people, by role — use these exact names and nobody else):
+{_roster_block}{yoy_block}{events_block}{_demand_block}{_weather_block}{_prior_schedule_block}{role_rates_block}{hours_block}{par_block}{_headcount_block}{_cross_block}{_section_block}{_daypart_block}{_delivery_block}{_noshows_block}{_strength_block}{_profile_block}{_avail_block}{_sched_notes_block}{extra_blocks or ""}
 
-Next week dates:
-{chr(10).join(f"- {d}: {n}" for d, n in zip(week_dates, week_days))}
+{_dates_block}
 
-OUTPUT — your entire response must follow this structure with no text before the CSV:
-
-date,day,employee,role,shift_start,shift_end,scheduled_hours,notes
-2026-MM-DD,Day,Employee Name,Role,start,end,hours,note
-(continue for every shift)
----SUMMARY---
-- bullet 1
-- bullet 2
-- bullet 3
+{_output_spec}
 
 Each summary bullet: one short clause, 10 words or fewer, plain language — the concrete change and its one-line reason, nothing more. A restaurant owner should be able to read all 3 in under 5 seconds. No full sentences, no restating these rules back, no generic scheduling advice.
 
@@ -1961,8 +2026,8 @@ ARRIVAL TIMES, ROLE MINIMUMS, SHIFT LENGTHS, AND ROLE-SPECIFIC RULES:
 
     EXPECTED_HEADER = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes"
 
-    msg = create_with_retry(
-        get_client(),
+    _t0 = time.time()
+    _call = dict(
         model=model_for("schedule"),
         # Was 8000 — ai_usage logs showed real generations for this
         # restaurant landing on exactly 8000 output tokens, which is
@@ -1987,26 +2052,67 @@ ARRIVAL TIMES, ROLE MINIMUMS, SHIFT LENGTHS, AND ROLE-SPECIFIC RULES:
         restaurant_id=restaurant_id,
         action="labor_schedule",
     )
+    if structured:
+        _call["output_config"] = {"format": {"type": "json_schema", "schema": SCHEDULE_SCHEMA}}
+    try:
+        msg = create_with_retry(get_client(), **_call)
+    except Exception as _e:
+        # A deployment whose SDK or model refuses the format contract gets
+        # the CSV text contract instead, once, rather than no schedule.
+        _msg = str(_e).lower()
+        if structured and ("output_config" in _msg or "json_schema" in _msg or "format" in _msg):
+            return generate_optimized_schedule(
+                analysis, shifts, restaurant_name=restaurant_name, hourly_rate=hourly_rate, owner_name=owner_name,
+                staff_notes=staff_notes, labor_target=labor_target, yoy_context=yoy_context,
+                upcoming_events=upcoming_events, monthly_revenue_target=monthly_revenue_target,
+                hours_notes=hours_notes, role_rates=role_rates, section_count=section_count,
+                daypart_split=daypart_split, delivery_pct=delivery_pct, role_minimums_json=role_minimums_json,
+                sched_notes=sched_notes, staff_availability=staff_availability, tz_name=tz_name,
+                restaurant_id=restaurant_id, weather_forecast=weather_forecast,
+                operational_scores=operational_scores, strength_thresholds=strength_thresholds,
+                leader_rules=leader_rules, prior_schedule_summary=prior_schedule_summary,
+                shift_profiles=shift_profiles, roster=roster, extra_blocks=extra_blocks,
+                week_slice=week_slice, structured=False)
+        raise
+    _seconds = round(time.time() - _t0, 1)
     raw = extract_text(msg).strip()
-    print(f"[schedule] raw length={len(raw)} stop_reason={msg.stop_reason}")
+    _stop = getattr(msg, "stop_reason", None)
+    _truncated = _stop == "max_tokens"
+    print(f"[schedule] raw length={len(raw)} stop_reason={_stop} seconds={_seconds}")
     import re as _re_sched
 
-    if "---SUMMARY---" in raw:
-        _csv_raw, summary_part = raw.split("---SUMMARY---", 1)
+    _data_rows, summary_part = [], ""
+    _parsed_json = None
+    if structured:
+        try:
+            _parsed_json = json.loads(raw)
+        except Exception:
+            _parsed_json = None
+    if isinstance(_parsed_json, dict) and isinstance(_parsed_json.get("shifts"), list):
+        for _sh in _parsed_json["shifts"]:
+            if not isinstance(_sh, dict) or not str(_sh.get("employee") or "").strip():
+                continue
+            _vals = [str(_sh.get(k) if _sh.get(k) is not None else "").strip().replace(",", ";")
+                     for k in ("date", "day", "employee", "role", "shift_start", "shift_end", "scheduled_hours", "notes")]
+            _data_rows.append(",".join(_vals))
+        summary_part = "\n".join("- " + str(b) for b in (_parsed_json.get("summary") or []) if str(b).strip())
     else:
-        _csv_raw = raw
-        summary_part = ""
-
-    # Build cleaned CSV: header + data rows that have commas and aren't a repeat header
-    _data_rows = []
-    for _l in _csv_raw.split("\n"):
-        _l = _l.strip().strip('"')
-        if not _l or "," not in _l:
-            continue
-        _low = _l.lower().replace(" ", "")
-        if "date" in _low and "employee" in _low and "shift" in _low:
-            continue  # skip any accidental header repetition
-        _data_rows.append(_l)
+        if "---SUMMARY---" in raw:
+            _csv_raw, summary_part = raw.split("---SUMMARY---", 1)
+        else:
+            _csv_raw = raw
+        # Build cleaned CSV: header + data rows that have commas and aren't a repeat header
+        for _l in _csv_raw.split("\n"):
+            _l = _l.strip().strip('"')
+            if not _l or "," not in _l:
+                continue
+            _low = _l.lower().replace(" ", "")
+            if "date" in _low and "employee" in _low and "shift" in _low:
+                continue  # skip any accidental header repetition
+            _data_rows.append(_l)
+    if week_slice:
+        _keep = set(_gen_dates)
+        _data_rows = [r for r in _data_rows if r.split(",", 1)[0].strip() in _keep]
     csv_clean = EXPECTED_HEADER + "\n" + "\n".join(_data_rows)
     print(f"[schedule] data_rows={len(_data_rows)} first={_data_rows[0] if _data_rows else None}")
 
@@ -2039,6 +2145,14 @@ ARRIVAL TIMES, ROLE MINIMUMS, SHIFT LENGTHS, AND ROLE-SPECIFIC RULES:
     return {
         "schedule_csv": csv_clean,
         "summary": summary_bullets[:3],
+        # The model's own three bullets, kept apart from the deterministic
+        # "what changed" the engine writes from the diff.
+        "narrative": summary_bullets[:3],
+        "truncated": _truncated,
+        "stop_reason": _stop,
+        "structured": bool(_parsed_json),
+        "generation_seconds": _seconds,
+        "generated_dates": _gen_dates,
         "week_dates": week_dates,
         "week_days": week_days,
         "projected_revenue": projected_revenue,

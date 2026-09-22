@@ -22,6 +22,12 @@ def for_gap(restaurant_id, role, weekday, exclude=(), db_path=DB_PATH, limit=2):
     names = {c["employee_name"] for c in (get_staff_contacts(restaurant_id, db_path=db_path) or []) if c.get("employee_name")}
     names |= set(scores.keys())
     excluded = {str(x).strip().lower() for x in (exclude or []) if x}
+    try:
+        import staff_settings as _ss
+        excluded |= {n.lower() for n, st in _ss.get_all(restaurant_id, db_path=db_path).items()
+                     if not st.get("active", True)}
+    except Exception:
+        pass
     out = []
     for name in sorted(names):
         key = name.strip()
