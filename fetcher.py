@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from models import Review, save_reviews
 
 
-from ai_utils import meter_places as _meter_places
+from ai_utils import meter_places as _meter_places, places_error as _places_error
 
 GOOGLE_API_KEY = config.google_places_key()  # either variable name; used to read only GOOGLE_API_KEY
 
@@ -21,8 +21,15 @@ def fetch_google(place_id: str, restaurant_id: int) -> list[Review]:
         _meter_places(restaurant_id, "review_fetch", "details", status="error",
                       error=_se(e)[:200])
         raise
+    body = resp.json()
+    refused = _places_error(body)
+    if refused:
+        # Metered as an error at no cost, and raised so the caller neither
+        # stamps last_fetched_at nor calls it a sync (MOD-REV-1 / AI-6).
+        _meter_places(restaurant_id, "review_fetch", "details", status="error", error=str(refused)[:200])
+        raise refused
     _meter_places(restaurant_id, "review_fetch", "details")
-    raw = resp.json().get("result", {}).get("reviews", [])
+    raw = (body.get("result") or {}).get("reviews", [])
     tz = _restaurant_tz(restaurant_id)
     out = []
     for r in raw:

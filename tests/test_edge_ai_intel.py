@@ -370,7 +370,6 @@ def test_a_genuinely_empty_neighbourhood_reports_no_competitors(db_path, monkeyp
     assert result == {"ok": False, "error": "No nearby competitors found"}
 
 
-@pytest.mark.xfail(strict=True, reason="AI-6: get_nearby_competitors turns a Places error status into [] and the run reports 'No nearby competitors found'")
 @pytest.mark.parametrize("stage,status", [
     ("nearby", "REQUEST_DENIED"),
     ("nearby", "OVER_QUERY_LIMIT"),
@@ -388,7 +387,6 @@ def test_a_places_error_is_not_reported_as_no_nearby_competitors(db_path, monkey
         "a %s from Places was reported to the owner as an empty neighbourhood" % status
 
 
-@pytest.mark.xfail(strict=True, reason="AI-6: a nearby search answered OVER_QUERY_LIMIT is metered as a successful, billed Places call")
 def test_a_refused_nearby_search_is_not_metered_as_a_successful_call(db_path, monkeypatch):
     (rid,) = _full_tier(db_path, 1)
     _web(monkeypatch, [], places=_places(nearby_status="OVER_QUERY_LIMIT"))

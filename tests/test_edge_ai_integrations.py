@@ -266,7 +266,6 @@ def _ledger(db_path):
 _NON_OK = ["REQUEST_DENIED", "OVER_QUERY_LIMIT", "NOT_FOUND", "INVALID_REQUEST"]
 
 
-@pytest.mark.xfail(strict=True, reason="AI-6: fetch_google checks only the HTTP status; a Places error body returns []")
 @pytest.mark.parametrize("places_status", _NON_OK)
 def test_a_places_error_status_inside_an_http_200_makes_fetch_google_raise(db_path, monkeypatch, places_status):
     import fetcher
@@ -277,7 +276,6 @@ def test_a_places_error_status_inside_an_http_200_makes_fetch_google_raise(db_pa
         fetcher.fetch_google("ChIJbroken", rid)
 
 
-@pytest.mark.xfail(strict=True, reason="AI-6: a REQUEST_DENIED Places call is metered as a successful $0.017 call")
 def test_a_places_error_status_is_metered_as_an_error_at_no_cost(db_path, monkeypatch):
     import fetcher
     rid = _restaurant(db_path)
@@ -336,7 +334,6 @@ def _run_daily_fetch_with_places(db_path, monkeypatch, body):
     scheduler.run_daily_fetch()
 
 
-@pytest.mark.xfail(strict=True, reason="AI-6: REQUEST_DENIED sets fetched_ok and stamps last_fetched_at — the stall reads as synced")
 def test_a_places_request_denied_leaves_last_fetched_at_unstamped(db_path, monkeypatch):
     rid = _restaurant(db_path, google_place_id="ChIJbroken", reviews_live=1)
     _run_daily_fetch_with_places(db_path, monkeypatch,

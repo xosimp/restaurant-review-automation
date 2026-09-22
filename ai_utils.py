@@ -812,6 +812,45 @@ def extract_text(message) -> str:
     return ""
 
 
+class PlacesError(RuntimeError):
+    """Google Places answered HTTP 200 with a non-OK `status`.
+
+    Places reports a denied or unbilled key, an exhausted quota, a bad
+    request and a Place ID that no longer exists as HTTP 200 with a status
+    and no result, so raise_for_status never fires. Treating that body as
+    "no reviews" recorded a fleet-wide ingestion stop as a successful quiet
+    day, metered at full price, with the staleness check green. The message
+    carries the status and Google's own error text, never the URL (which
+    holds the key)."""
+
+    def __init__(self, status, message=""):
+        self.status = status or "UNKNOWN"
+        text = f"Google Places {self.status}"
+        if message:
+            text += f": {str(message)[:200]}"
+        super().__init__(text)
+
+    @property
+    def owner_message(self):
+        if self.status == "NOT_FOUND" or self.status == "INVALID_REQUEST":
+            return "Google no longer recognises this restaurant's listing ID — update it in Settings."
+        return f"Google Places refused the request ({self.status}); it will be retried."
+
+
+PLACES_OK_STATUSES = ("OK", "ZERO_RESULTS")
+
+
+def places_error(body):
+    """The PlacesError a Places response body stands for, or None when it is
+    a real answer. A body without a status is left alone."""
+    if not isinstance(body, dict):
+        return None
+    status = body.get("status")
+    if status is None or status in PLACES_OK_STATUSES:
+        return None
+    return PlacesError(status, body.get("error_message") or "")
+
+
 def meter_places(restaurant_id, action, kind="details", status="ok", error=None):
     """Google Places is billed per request. Audit #7 found it outside the
     ledger and the budget entirely, so a Places-only restaurant's four daily

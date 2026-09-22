@@ -394,8 +394,11 @@ def get_nearby_competitors(google_place_id: str, radius_meters: int = 2000, max_
             "key": PLACES_API_KEY,
         }, timeout=8)
         data = r.json()
+        from ai_utils import places_error as _pe, PlacesError as _PlacesError
+        if _pe(data):
+            raise _pe(data)
         if data.get("status") != "OK":
-            return []
+            raise _PlacesError(data.get("status") or "NOT_FOUND", "no details for this listing")
         result_data = data.get("result", {})
         geometry = result_data.get("geometry", {})
         location = geometry.get("location", {})
@@ -435,8 +438,9 @@ def get_nearby_competitors(google_place_id: str, radius_meters: int = 2000, max_
 
         r2 = requests.get(nearby_url, params=params, timeout=8)
         r2_data = r2.json()
-        if r2_data.get("status") not in ("OK", "ZERO_RESULTS"):
-            print(f"[Competitor] Nearby search error: {r2_data.get('status')} {r2_data.get('error_message','')}")
+        if _pe(r2_data):
+            # A refused search is not an empty neighbourhood.
+            raise _pe(r2_data)
         places = r2_data.get("results", [])
 
         # If keyword search returns too few, fall back to broader search
@@ -444,8 +448,8 @@ def get_nearby_competitors(google_place_id: str, radius_meters: int = 2000, max_
             params.pop("keyword", None)
             r2 = requests.get(nearby_url, params=params, timeout=8)
             r2_data = r2.json()
-            if r2_data.get("status") not in ("OK", "ZERO_RESULTS"):
-                print(f"[Competitor] Fallback search error: {r2_data.get('status')} {r2_data.get('error_message','')}")
+            if _pe(r2_data):
+                raise _pe(r2_data)
             places = r2_data.get("results", [])
 
         # Filter: skip self, skip fast food chains, skip pure beverage
@@ -546,6 +550,9 @@ def get_nearby_competitors(google_place_id: str, radius_meters: int = 2000, max_
 
         return competitors
     except Exception as e:
+        from ai_utils import PlacesError as _PlacesError
+        if isinstance(e, _PlacesError):
+            raise
         print(f"[Competitor] get_nearby_competitors error: {e}")
         return []
 
@@ -829,7 +836,17 @@ def run_competitor_analysis(restaurant_id: int) -> dict:
         if not restaurant or not restaurant.google_place_id:
             return {"ok": False, "error": "No Google Place ID set"}
 
-        competitors = get_nearby_competitors(restaurant.google_place_id)
+        from ai_utils import PlacesError as _PlacesError
+        try:
+            competitors = get_nearby_competitors(restaurant.google_place_id)
+        except _PlacesError as pe:
+            _meter_places(restaurant_id, "competitor_intel", "nearby", status="error", error=str(pe)[:200])
+            try:
+                import ops
+                ops.capture(pe, job="competitor_intel", context=f"restaurant_id={restaurant_id}")
+            except Exception:
+                pass
+            return {"ok": False, "error": pe.owner_message, "places_status": pe.status}
         # One nearby search, then a details lookup per candidate it kept.
         # Google Places is billed per request and was invisible to the budget
         # entirely, which for a weekly job across every full-tier client is

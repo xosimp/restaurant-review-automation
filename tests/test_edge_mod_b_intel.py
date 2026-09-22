@@ -116,7 +116,6 @@ def _analysis_ready(monkeypatch, db_path, fake_get, custom_ids=""):
     return rid
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-INT-2: a Places OVER_QUERY_LIMIT/REQUEST_DENIED reads as 'No nearby competitors found'")
 @pytest.mark.parametrize("status", ["OVER_QUERY_LIMIT", "REQUEST_DENIED"])
 def test_a_places_refusal_is_distinguished_from_an_empty_market(db, monkeypatch, status):
     """A2 I1 #8 / MOD-INT-2 — the error must name Google not answering, not
@@ -133,7 +132,6 @@ def test_a_real_zero_results_answer_is_still_no_competitors(db, monkeypatch):
     assert out == {"ok": False, "error": "No nearby competitors found"}
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-INT-2: the weekly competitor job counts an ok:False analysis as analysed")
 def test_the_weekly_competitor_job_counts_a_failed_analysis_as_failed(db, monkeypatch):
     """A2 I1 #9 / MOD-INT-2."""
     _full_tier(db)

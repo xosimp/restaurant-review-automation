@@ -1674,8 +1674,16 @@ def run_weekly_competitor_analysis():
     for r in get_all_restaurants():
         if r.google_place_id and r.id and is_full_tier(r):
             try:
-                run_competitor_analysis(r.id)
-                done += 1
+                res = run_competitor_analysis(r.id) or {}
+                # An analysis that returned ok:False did not analyse anything:
+                # counting it as done hid a Places refusal behind "analysed".
+                if res.get("ok") is False:
+                    failed += 1
+                    if res.get("places_status") or "No nearby competitors" not in (res.get("error") or ""):
+                        _ops.capture(RuntimeError(res.get("error") or "competitor analysis failed"),
+                                     job="competitor_analysis", context=f"restaurant_id={r.id}")
+                else:
+                    done += 1
             except Exception as ce:
                 failed += 1
                 log.error(f"Competitor analysis failed for {r.name}: {ce}")

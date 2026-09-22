@@ -115,8 +115,6 @@ _DENIALS = [
 ]
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-REV-1: fetch_google never reads the Places `status` field; "
-                                        "a denied key or dead Place ID returns [] like a quiet day")
 @pytest.mark.parametrize("body", _DENIALS, ids=[b["status"] for b in _DENIALS])
 def test_a_places_response_that_is_not_ok_raises_instead_of_returning_nothing(db_path, monkeypatch, body):
     """Places reports a denied key, an exhausted quota and a dead Place ID as
@@ -137,8 +135,6 @@ def test_an_ok_or_empty_places_response_is_still_a_successful_fetch(db_path, mon
     assert fetcher.fetch_google("ChIJ_quiet", 1) == []
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-REV-1: a REQUEST_DENIED Places response stamps last_fetched_at "
-                                        "and captures nothing, so the staleness monitor stays green")
 def test_a_denied_places_key_leaves_the_sync_stale_and_reaches_the_failure_log(db_path, monkeypatch):
     rid = _restaurant(db_path, 1, google_place_id="ChIJ_fake", reviews_live=1)
     monkeypatch.setattr(requests, "get", lambda *a, **k: _Resp(
