@@ -42,9 +42,9 @@ Full detail in `MODULE_OVERVIEW.md`. Condensed here for quick orientation:
 Full schema: `DATABASE_SCHEMA.md`. Conventions that apply everywhere:
 
 - **`restaurants`** is the tenant root; nearly every other table FKs to `restaurants.id`.
-- **A new `restaurants` column needs four touch points, not one**: the `Restaurant` dataclass field (`models.py`), the `ensure_columns()` migration entry, `update_restaurant()`'s allowed-write whitelist, and `get_restaurant()`'s hydration. Miss the whitelist and writes silently no-op; miss hydration and the value is in the DB but invisible to every reader.
+- **A new `restaurants` column needs four touch points, not one**: the `Restaurant` dataclass field (`models.py`), a migration entry (`init_db()`'s ALTER list or `ensure_columns()` — both run at boot), `update_restaurant()`'s allowed-write whitelist, and `get_restaurant()`'s hydration. Miss the whitelist and writes silently no-op; miss hydration and the value is in the DB but invisible to every reader.
 - **Employees are identified by name**, not an ID — POS shift data carries no stable identifier. Every staffing feature matches on the name string, case-insensitively.
-- **Append-only audit tables never get pruned**: `login_history`, `ask_cavnar_actions`, `alert_log`, `capability_changes`. "Current state" is always computed by querying the latest row; history itself is never mutated or deleted.
+- **Append-only audit tables are never mutated in place**: `login_history`, `ask_cavnar_actions`, `alert_log`, `capability_changes`. "Current state" is always computed by querying the latest row. Retention is a separate question: `ops._RETENTION_DAYS` prunes the operational ledgers (`alert_log` after 180 days, among others); `login_history` and `ask_cavnar_actions` are never pruned.
 - **JSON-in-a-column** is for structured settings read/written as one blob by one piece of code (`quality_weights_json`, `shift_leader_rules_json`, etc.) — not for anything that needs to be queried by an internal field.
 - **`is_demo`** on `restaurants` marks an account whose seed data may be reset — never true for a real client, including Simple EJ's now that Erik is paying.
 
@@ -110,9 +110,9 @@ Full detail: `SYSTEM_ARCHITECTURE.md` §Auth.
 - **iOS**: Bearer token, same `sessions` table, `mobile_login_required` decorator.
 - **2FA**: SMS/email OTP + hashed single-use backup codes (`two_fa_backup_codes`).
 - **Team access**: multiple `users` rows per restaurant; only `role == 'owner'` can invite/revoke teammates.
-- **Admin**: a wholly separate `admin_required` decorator — no client role, however elevated, reaches `/admin/*`.
+- **Admin**: a wholly separate `admin_required` decorator — no client role, however elevated, reaches `/admin/*`. The one non-client exception is Cavnar's own `support` role, which reads the console and opens view-as but gets 403 on every write.
 - **Assumption an auditor should verify on every new route**: does this handler derive `restaurant_id` from the authenticated user/session, or does it trust a path/query/body parameter? The latter is an IDOR until proven otherwise.
-- **Inbound webhooks** (Stripe, Twilio) are signature-verified and event-id de-duplicated (`stripe_events_seen`, Twilio signature check in `notify.py`) before any side effect runs.
+- **Inbound webhooks** (Stripe, DocuSign, Resend, Twilio) are signature-verified and, where the provider retries, event-id de-duplicated (`stripe_events_seen`, `docusign_events_seen`; the Twilio signature check is in `webhook_routes.py`) before any side effect runs.
 
 ---
 
@@ -140,7 +140,7 @@ Full detail: `SYSTEM_ARCHITECTURE.md` §Auth.
 
 ## 11. Verification policy (see `TESTING.md` for the full version)
 
-Run only the test file(s) that cover what changed. Full 1,908-test suite is a pre-push or full-audit step, run once — not a per-edit habit. Color lint and ES5 checks only when a template/CSS/JS file actually changed. This is a deliberate, requested change from running the full suite by default — see `feedback_lean_verification` in project memory for the reasoning and date.
+Run only the test file(s) that cover what changed. The full suite (about 3,400 tests, ~7 minutes) is a pre-push or full-audit step, run once — not a per-edit habit. Color lint and ES5 checks only when a template/CSS/JS file actually changed. This is a deliberate, requested change from running the full suite by default — see `feedback_lean_verification` in project memory for the reasoning and date.
 
 ---
 

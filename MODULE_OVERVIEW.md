@@ -101,7 +101,7 @@ Two halves:
 
 ## Ask Cavnar
 
-**Files**: `ask_cavnar.py` (context snapshot builder + `ask_with_tools`), `ask_cavnar_tools.py` (the tool registry, 52 tools), `business_intelligence.py` (the cross-module layer), `home_brief.py` (feeds the opening briefing).
+**Files**: `ask_cavnar.py` (context snapshot builder + `ask_with_tools`), `ask_cavnar_tools.py` (the tool registry — `len(TOOLS)` is the count), `business_intelligence.py` (the cross-module layer), `home_brief.py` (feeds the opening briefing).
 
 **Design stance**: an AI-powered restaurant COO, not a chatbot wrapper. Every question gets a fresh `build_context()` snapshot (identity, sibling locations, alerts, memory, module data the restaurant's tier actually has) plus a filtered tool list (`tool_specs(restaurant)` — a tool tagged with a module the restaurant doesn't have is never offered, so the model can't call it and produce an empty-result apology).
 
@@ -116,7 +116,7 @@ Two halves:
 - `action` — executes immediately, no confirmation (reserved for low-stakes/reversible calls).
 - `write` — returns a **proposal** (`build_proposal`) the client renders as a confirm card; the actual route it posts to on confirm is the same authenticated endpoint a manual button already uses, so a proposal can never reach anything the owner couldn't do themselves.
 
-**The opening** (`/mobile/api/ask-cavnar/opening`, delegated on web): built from `home_brief`'s attention items + one win, **no model call** — instant, and can't hallucinate since nothing here is generated. Cached with a 5-minute TTL per session so a fixed issue doesn't keep re-warning the owner.
+**The opening** (`/mobile/api/ask-cavnar/opening`, delegated on web): built from `home_brief`'s attention items + one win, **no model call** — instant, and can't hallucinate since nothing here is generated. The only cache behind it is `home_brief`'s 60-second per-restaurant memo, so a fixed issue stops being raised within a minute.
 
 **Memory** (`ask_memory`): the model calls `remember`/`forget` deliberately; nothing lands automatically. Facts are marked "told, not measured" wherever they appear in the snapshot, so the model never presents an owner's stated goal as something it computed.
 
@@ -209,7 +209,7 @@ Client health rollup (owner → brand → location), job-run history (`job_runs`
 
 ## Account
 
-Profile, Security (2FA + backup codes + trusted devices + sign-in history), Team (owner-only invite/revoke), Connections (Google/Toast real; IG/Square/Clover partial), Billing, Notifications/alert channels, Data export, Help/FAQ. All five iOS sheets share one "identity card" layout (`AccountSheetKit.swift`) — a new sheet reuses it rather than inventing a new chrome.
+Profile, Security (2FA + backup codes + trusted devices + sign-in history), Team (owner-only invite/revoke/re-role, owner-granted Food-cost and Comps access), Automation & trust (every switch with its record), Connections (Google, Toast, Instagram and RPOWER real; Square/Clover honest "contact us" stubs), Billing, Notifications/alert channels, Data export, Help/FAQ. All five iOS sheets share one "identity card" layout (`AccountSheetKit.swift`) — a new sheet reuses it rather than inventing a new chrome.
 
 ---
 
@@ -221,7 +221,21 @@ See `SYSTEM_ARCHITECTURE.md`'s Auth section for the model. Module-specific note:
 
 ## POS / Platform integrations
 
-`toast.py`/`toast_routes.py` (real, OAuth + shift/sales sync), `square.py`/`square_routes.py`, `clover.py`/`clover_routes.py` — each behind `pos.py`'s `PROVIDER_API` contract: `is_connected`, `sync_to_db`, `build_shifts_csv(restaurant_id, days=60)`. `gmb.py` (Google Business Profile), `meta_api.py` (Instagram), `weather.py` (NWS forecast, cached on the restaurant row for schedule demand-matching).
+`toast.py`/`toast_routes.py` (OAuth + shift/sales sync), `square.py`/`square_routes.py`, `clover.py`/`clover_routes.py`, and `rpower.py`/`rpower_routes.py` (a static bearer token pasted in Admin → Verify & save, which resolves the store; month-at-a-time, read-only, archived locally before it is parsed — vendor-confirmed Sep 2026; item-level sales feed `menu_item_sales`) — each behind `pos.py`'s `PROVIDER_API` contract (`is_connected`, `test_credentials`, `sync_to_db`, `build_shifts_csv`, and the optional `fetch_order_customers` that guest matching asks for via `pos.supports`). `gmb.py` (Google Business Profile), `meta_api.py` (Instagram), `weather.py` (NWS forecast, cached on the restaurant row for schedule demand-matching).
+
+## Staff portal
+
+**Files**: `staff_routes.py` (the `/staff/*` blueprint), `staff_schedule.py` (the published week as an employee sees it), `staff_roster.py` (names and job roles from the POS or entered by hand), `time_off.py` (requests the owner decides in place), `labor_replacements.py` (who could cover a shift), `preshift.py` (the pre-shift read), and the `memberships`/`staff_portal_tokens` tier in `auth.py` (PIN identity, pepper in `docs/ops/PIN_PEPPER_RUNBOOK.md`).
+
+An employee signs in with a name and PIN at the restaurant's portal link, sees today's shifts, the flat task checklist for their job role, the pre-shift read (relative volume, complaint watch, running-low items, holiday, weather — no money, no individuals), can submit availability and request time off. `docs/plans/TASK_SHEETS_PLAN.md` is the design for replacing the flat checklist with per-shift sheets the owner writes.
+
+## Security infrastructure
+
+**Files**: `security.py` (durable login throttling by account and IP, breached-password check, the freeze), `security_headers.py` (HSTS/CSP/etc. on every response), `credentials.py` (Fernet at rest for POS/OAuth columns), `csrf.py`, `guest_links.py` (signed public tokens), `http_layer.py` (gzip, cache headers, the rolling latency window), `permissions.py` (roles and the per-module view gates), `provisioning.py` (account creation from a signed contract). The controls and the env vars they need: `docs/ops/SECURITY.md`.
+
+## Automation and moments
+
+**Files**: `delayed.py` (actions queued with an undo window — auto-publish, trusted supplier orders), `decisions.py` (the owner's decision record: what was proposed, what they answered, what was measured after), `milestones.py` (firsts an owner is told about once), `good_news.py` and `first_look.py` (the wins and the first-week read the brief and emails draw on), `covers.py` (covers per day), `promise.py` (the sales audit's promise, measured), `review_common.py` (the sentences the weekly and monthly reviews share). `status_routes.py`/`status_manager.py` are the public status page; `social_routes.py` the Instagram/Facebook OAuth and publishing; `sales_audits.py` the sales-audit store behind `sales_audit_routes.py`. `audit_app.py` is a separate standalone app (the digital audit scorecard), not part of the web process.
 
 ## Intelligence engine (`intelligence/`)
 
@@ -231,7 +245,10 @@ restaurant's own history and serves only that restaurant. Levels 2 and 3
 (`patterns.py`, `benchmarks.py`, `trends.py`, `scoring.py`) read one
 materialized table of ratios and answer only over cohorts of at least
 `privacy.MIN_COHORT` restaurants. `confidence.py` scores every Home
-recommendation; `dashboard.py` builds the admin Intelligence page. Stance:
+recommendation; `dashboard.py` builds the admin Intelligence page;
+`categories.py` is the cohort taxonomy, `stats.py` the permutation test
+and FDR correction, `jobs.py` the two nightly passes (3am features,
+4am learning). Stance:
 nothing generated fills a gap, and `privacy.assert_anonymous` runs on every
 cross-restaurant payload.
 
