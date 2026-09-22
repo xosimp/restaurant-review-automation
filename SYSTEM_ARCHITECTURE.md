@@ -18,7 +18,9 @@ review_automation/
 ├── staff_routes.py / staff_schedule.py / staff_roster.py / time_off.py / labor_replacements.py / preshift.py
 │                              # the staff portal: PIN sign-in, today's schedule, availability, time off, pre-shift read
 ├── admin_routes.py / admin_ops.py / admin_events.py   # /admin console (Will-only)
-├── labor.py                   # shift CSV ingestion, labor % math, schedule building glue
+├── labor.py                   # shift CSV ingestion, labor % math, the one schedule model call
+├── schedule_engine.py / schedule_rules.py / staff_settings.py / demand_signals.py / schedule_versions.py / shift_requests.py
+│                              # the schedule pipeline: constraints, backstops, rule sweep, versions, roster, dated demand, shift swaps
 ├── scheduler.py               # background job loop: the registry is in §Scheduling below
 ├── strategy_jobs.py           # the scheduled half of the strategic features (loss sync, outcomes, weekly plan, ...)
 ├── delayed.py / decisions.py  # undo-window actions; the owner's decision record
@@ -142,7 +144,8 @@ A single `scheduler_loop()` running in a background thread, ticking every five m
 | `weekly_plan` | Mon, hourly → 7am *local* | `run_weekly_plan` |
 | `recipe_drafts` | Tue, hourly → 5am *local* | `run_recipe_drafts` |
 | `trusted_orders` | Mon, hourly → 8am *local* | `run_trusted_orders` |
-| `auto_publish_schedule` | Fri, hourly → 9am *local* | `run_auto_publish_schedules` |
+| `auto_publish_schedule` | Fri, hourly → 9am *local* | `run_auto_publish_schedules` — held when `client_api.publish_blockers` is non-empty |
+| `quality_calibration` | Sun 5am | `strategy_jobs.run_quality_calibration` — nudges a restaurant's quality weights from its own clean vs troubled published weeks; never lowers, never before 8 weeks |
 | `review_fetch` | 8am, 12pm, 4pm, 8pm (latest missed slot only) | `run_daily_fetch` — bounded pool, cursor in `job_cursors` |
 | `ops_digest` | 8am | `ops.send_failure_digest` (only if something failed) |
 | `weekly_digest` | hourly → 9am *local* on the digest day | `run_weekly_digests` |
@@ -161,7 +164,7 @@ A single `scheduler_loop()` running in a background thread, ticking every five m
 
 `admin_ops.RUNNABLE_JOBS` is the admin console's "run now" map onto the same functions.
 
-The **shift-scheduling** feature (an owner clicking "Generate optimized schedule") is a separate, synchronous, on-demand flow — see `MODULE_OVERVIEW.md`'s Labor section and `shift_quality.py`'s architecture below. It is not a background job.
+The **shift-scheduling** feature (an owner clicking "Generate optimized schedule") is an on-demand async job (`ops.async_jobs`, one per restaurant at a time — `ops.active_job`), run by `schedule_engine._run_schedule_job` — see `MODULE_OVERVIEW.md`'s Labor section. It is not a scheduled job; only the Thursday draft and the Friday publish are.
 
 ### Shift Quality Engine (`shift_quality.py`)
 

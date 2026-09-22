@@ -18,7 +18,15 @@ One section per product module: what it does, the key files, the invariants an a
 
 ## Labor
 
-**Files**: `labor.py` (ingestion, aggregation, glue), `shift_quality.py` (pure scoring engine), `scheduler.py`'s job pieces, `models.py`'s staff/schedule tables.
+**Files**: `labor.py` (ingestion, aggregation, the one model call), `schedule_engine.py` (the deterministic pipeline around that call), `schedule_rules.py` (compliance rules, role floors, the `Constraints` object and the violation sweep), `staff_settings.py` (roster, per-person facts, pairs, reliability), `demand_signals.py` (events and reservations per date), `schedule_versions.py` (versions, diffs, learned edits), `shift_requests.py` (drop / decide / claim), `shift_quality.py` (pure scoring engine), `scheduler.py`/`strategy_jobs.py` job pieces, `models.py`'s staff/schedule tables.
+
+### The schedule pipeline (`schedule_engine._run_schedule_job`)
+1. `schedule_rules.build_constraints` gathers everything once: the roster (`staff_settings.roster`, deactivated names excluded), availability, notes, approved time off (blocks the date) and pending time off (a warning), per-person hours envelopes and daypart windows, minors, the rules, the role floors, and the already-published tail of the payroll week here and at sibling sites (hours count toward the ceiling, rows toward rest, a sibling's date blocks the person).
+2. The prompt carries the rules, dated demand signals, pairings, reliability and what the manager keeps changing; the model answers a JSON schema (CSV fallback). Rosters over `CHUNK_ROSTER_THRESHOLD` or a truncated answer generate the week in date slices and merge.
+3. Deterministic backstops, every one asking `Constraints.can_work` / `max_hours` / `rest_ok` before it adds a row: close times, the server overlap cap, role floors (`_ensure_role_floors`), and a coverage top-up that fills only a day-and-role genuinely thin against its own average — the labor budget is a ceiling, never a quota.
+4. `schedule_rules.violations` sweeps the finished week; `shift_quality.apply_fixes` puts somebody legal on each hard breach; what nobody legal can take is marked `needs_review` and named. Rows the engine could not vouch for are never dropped.
+5. `shift_quality.score_rows` grades it, with a `why` for every assignment; the summary is `schedule_versions.diff` against the last published week (deterministic — the model's own note is kept separately as `narrative`); the result is persisted with its version, review and timing.
+6. Publishing (`client_api._publish_schedule`) refuses with the blockers until a human acknowledges; auto-publish holds. Only a published week reaches the staff portal.
 
 ### Data flow
 POS shift CSV (`date,day,employee,role,shift_start,shift_end,scheduled_hours,actual_hours,sales,notes`) → `labor.py` loads and aggregates → labor % vs `labor_target_pct`, overtime detection (1.5× over 40h on the restaurant's own `week_start_day`-anchored workweek), overstaffed-day detection (high labor % on a day, contrasted against sales) → rendered on the Labor tab (web `#panel-labor`, iOS `LaborView`).

@@ -47,7 +47,22 @@ Saved canned-response templates per restaurant.
 ## Labor / Scheduling
 
 ### `schedule_history`
-One row per generated schedule: `week_start`/`week_end`, `hours_scheduled`/`hours_budget`/`labor_target`, the full `schedule_csv`, `summary_json`, and (added later) `quality_json` — the Shift Quality Engine's full evaluation for that schedule — plus `edited_at`/`edited_by` when a manager hand-edits a published schedule.
+One row per generated schedule: `week_start`/`week_end`, `hours_scheduled`/`hours_budget`/`labor_target`, the full `schedule_csv`, `summary_json`, and (added later) `quality_json` — the Shift Quality Engine's full evaluation for that schedule — plus `edited_at`/`edited_by` when a manager hand-edits a published schedule. `published_at`/`published_by` mark the moment it went to staff: the staff portal, the payroll-week hours check and `schedule_publish_trust` read only rows with `published_at` set — a draft is never "the schedule". `review_json` is the rule sweep (`schedule_rules.summarize`), `generation_seconds` the model time, `weather_json` the forecast the draft saw.
+
+### `schedule_versions`
+Every state a schedule has been in — `(history_id, version)` unique, `reason` in `generated | edited | fixes | published`, the CSV, `quality_json`, `diff_json` against the previous version, `saved_by`. `schedule_versions.learned_patterns` reads the recurring edits back into the next draft.
+
+### `staff_settings` / `staff_pairs`
+The roster's facts: `active` (a deactivated person is never scheduled, whatever the shift history says), `employment_type` (full/part), `min_hours`/`max_hours`, `daypart_availability` (JSON weekday → any/morning/night/off), `is_minor`. Keyed by `(restaurant_id, employee_name)` like every staff table. `staff_pairs` is `prefer`/`avoid` between two names, stored once whichever way round it was typed.
+
+### `demand_signals`
+Owner-entered facts about specific dates: `kind` event or reservations, `label`, `covers`, `lift_pct`, `source` (manual, csv, or a future sync). Unique on `(restaurant_id, date, kind, label)`.
+
+### `shift_change_requests`
+A member of staff asking to drop a published shift: `history_id`, the shift, `reason`, `status` in `pending | open | denied | covered | withdrawn`, `replacement_name`, `decided_by`. `covered` also rewrites the published CSV and appends a version.
+
+### `restaurants.compliance_json` / `restaurants.role_floors_json`
+The scheduling rules (`schedule_rules.DEFAULTS` keys) and the per-role, per-daypart staffing floors — the setting that replaced the compiled-in pizza-cook rule.
 
 ### `staff_capabilities`
 The Operational Score layer. `(restaurant_id, employee_name, attribute)` unique — `attribute` is things like `overall`, `can_close`, per-role scores. `score` (1–5 scale) or `flag` (boolean), `notes`, `updated_by`. Unrated is absent, never a row with a zero score — a name only appears here once someone has actually rated them.

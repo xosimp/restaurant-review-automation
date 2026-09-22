@@ -43,6 +43,15 @@ Profile, security (2FA setup/verify, backup codes, trusted devices, sessions lis
 ### Labor (`/api/labor*`, `/mobile/api/labor/*` — ~27 mobile + ~17 client)
 Shift CSV upload, labor % + ribbon data, schedule generation/history/sharing, staff availability, staff contacts (for schedule delivery), Operational Score (`team`), scheduling profiles (demand levels), overtime/overstaffed-day detail.
 
+**Schedule generation, review and publish** (both prefixes unless noted; bodies in `strategy_routes._ROUTES` except the first four):
+- `GET /api/generate-schedule` / `POST /mobile/api/labor/generate-schedule` → `{job_id}` (needs `SCHEDULE_DRAFT`); returns `joined: true` when a generation for this restaurant is already running (`ops.active_job`) — poll that job. `GET …/schedule-status/<job_id>` → the finished payload: `preview_rows` (rows may carry `needs_review`/`review_reason`), `summary` (deterministic diff lines against the last published week), `narrative` (the model's own note), `quality` (each `shifts[].assignments[]` carries a `why` explanation), `review` `{hard, soft, by_kind, lines, hard_rows, fixes, unfixed}`, `rule_violations`, `pending_time_off`, `history_id`, `generation_seconds`, `chunked`, `roster`, `demand_by_date`, `learned_patterns`.
+- `POST labor/schedule/score` `{rows, save?, history_id?}` → `{quality, violations, review}`; a save needs `SCHEDULE_DRAFT`, appends an `edited` version and writes `review_json`.
+- `POST labor/schedule/violations` `{rows}` → `{violations, review, pending_time_off}` — re-check after an edit. `POST labor/schedule/apply-fixes` `{rows}` → `{rows, fixes, unfixed, quality, review}` — puts somebody legal on every hard breach; the owner still saves.
+- `POST labor/publish-schedule` `{schedule_id?, acknowledge?}` (needs `SCHEDULE_PUBLISH`) → `409 {needs_ack, blockers[]}` until a human acknowledges (`client_api.publish_blockers`: NEEDS REVIEW rows, hard breaches, a weak or low-confidence quality verdict); on send stamps `published_at`/`published_by` and appends a `published` version. Friday auto-publish holds instead and tells the owner (`schedule_publish_held`).
+- `GET labor/schedule-history/<id>/versions` → `{versions:[{version, reason: generated|edited|fixes|published, saved_by, changes, lines, score}], draft_vs_published}`.
+- Roster and rules: `GET labor/roster` (everyone incl. deactivated, with settings, score, reliability, pairs), `POST labor/staff-settings` (active, employment_type, min/max hours, per-day daypart availability, is_minor), `POST labor/staff-pairs` / `DELETE labor/staff-pairs/<id>` (prefer/avoid), `GET/POST labor/rules` (compliance rules + per-role floors), `GET/POST labor/demand-signals` + `DELETE labor/demand-signals/<id>` (events and reservation counts per date; POST takes rows or a `date,covers` CSV).
+- Shift requests (manager): `GET labor/shift-requests` → `{requests, open}`; `POST labor/shift-requests/<id>/decide` `{decision: approve|deny, replacement?}`.
+
 ### Reviews (`/mobile/api/reviews/*`, `/mobile/api/review-stats`; web routes are flat — `/api/reviews/page`, `/api/review-stats`, `/api/topic-heatmap`, `/api/sentiment-trend`, `/api/response-performance`, `/api/regenerate-draft/<id>`, `/api/save-draft/<id>`, and the actions at root: `/approve/<id>`, `/skip/<id>`, `/undo/<id>`, `/retract/<id>`)
 List/detail/approve/skip/regenerate a draft response, retry a failed Google post (`/reviews/<id>/retry-post`, both surfaces), bulk approve-all, sentiment trend, topic heatmap, response-performance, review-request send, review stats.
 
@@ -77,7 +86,7 @@ The deterministic Home-tab payload — see `home_brief.py`. `?fresh=1` forces re
 Login (web + mobile variants), mobile register, forgot/reset password, verify-2fa, Apple/Google sign-in, logout, mobile `/me`, APNs token registration.
 
 ### Staff portal (`/staff/*`, `staff_routes.py`)
-`/staff/r/<token>/login` (PIN), `/staff/api/me`, today's schedule, availability, time off requests, `/staff/api/signup/claim`, `/staff/api/pin`, `/staff/api/preshift`.
+`/staff/r/<token>/login` (PIN), `/staff/api/me`, today's schedule (`/staff/api/shifts` — published weeks only; `published:false` when nothing is), availability, time off requests, `/staff/api/signup/claim`, `/staff/api/pin`, `/staff/api/preshift`, shift requests (`GET/POST /staff/api/shift-requests`, `POST …/<id>/withdraw`) and open shifts (`POST /staff/api/open-shifts/<id>/claim` — legality is `schedule_engine.replacement_is_legal`, the same check the owner's pickers use).
 
 ### Other groups with web + mobile twins
 `/api/tasks*` (today's checklist), `/api/team/inbox` + `/api/team/messages*`, `/api/changelog*`, `/api/switch-location` + `/api/group-locations`, `/api/home` + `/api/home/dismiss`, `/api/rpower/status` and the `/admin/rpower/*` bootstrap.
