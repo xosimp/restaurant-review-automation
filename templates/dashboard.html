@@ -4346,6 +4346,14 @@ svg:hover .hb-xh{opacity:1}
 .fc2-tool .g{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid var(--hb-line2)}
 .fc2-tool .g b{font-size:14px;font-weight:600;color:var(--ink)}
 .fc2-tool .g span{font-size:12.5px;color:var(--ink3);display:block;margin-top:2px}
+/* A tool with nothing to show says what is missing and where it is fixed. */
+.fc2-tool-empty{margin-top:4px;padding:14px 16px;border-radius:12px;background:var(--sf-recess);border:1px dashed var(--hb-line);font-size:14.5px;line-height:1.5}
+.fc2-tool-empty b{display:block;color:var(--ink);font-weight:600;margin-bottom:3px}
+.fc2-tool-empty span{display:block;color:var(--ink3)}
+/* The pasted menu → recipe drafts. AI surface, so it carries the ai tone. */
+.fc2-menu-draft{margin-top:12px;padding:14px 16px;border-radius:12px;background:var(--sf-ai),var(--surface);border:1px solid var(--sf-ai-line)}
+.fc2-menu-draft .t b{display:block;font-size:15px;font-weight:600;color:var(--ink)}
+.fc2-menu-draft .t span{display:block;font-size:14px;color:var(--ink3);line-height:1.5;margin:3px 0 10px}
 /* The tracker's columns are fixed-width and total ~360px; inside the card's
    own padding that overflows the panel at phone widths, and the responsive
    block below only restacks the order/tools grids. */
@@ -4712,7 +4720,13 @@ svg:hover .hb-xh{opacity:1}
     el.innerHTML = cavnarLoading('Working out plate costs…',22,'working');
     fetch('/api/food-cost/menu-profitability').then(function(r){return r.json();}).then(function(d){
       if(!d.ok){ el.innerHTML='<span style="color:var(--hb-bad)">'+_mmEsc(d.error||'Couldn\'t load menu margins')+'</span>'; return; }
-      if(!d.priced.length && !d.unpriced.length && !d.unmapped.length){ el.innerHTML='No menu items mapped to recipes yet.'; return; }
+      // Nothing to table is a state, not a sentence: say what is missing
+      // and where it gets fixed, or the tool reads as if Load did nothing.
+      if(!d.priced.length){
+        var why=(!d.unpriced.length&&!d.unmapped.length)?'No dishes on file yet.':((d.unmapped.length?d.unmapped.length+' dish'+(d.unmapped.length===1?' has':'es have')+' no recipe':'')+(d.unmapped.length&&d.unpriced.length?' \u00b7 ':'')+(d.unpriced.length?d.unpriced.length+' with a recipe but no price':'')+'.');
+        el.innerHTML='<div class="fc2-tool-empty"><b>No margins to show yet</b><span>'+_mmEsc(why)+' A margin needs a recipe and a price: draft recipes from your menu in the section above, then set each price here.</span></div>';
+        return;
+      }
       var html = '';
       if(d.priced.length){
         html += '<table><tbody>';
@@ -4744,7 +4758,14 @@ svg:hover .hb-xh{opacity:1}
     fetch('/api/food-cost/order-draft').then(function(r){return r.json();}).then(function(d){
       if(!d.ok){ el.innerHTML='<span style="color:var(--hb-bad)">'+_mmEsc(d.error||'Couldn\'t build the order')+'</span>'; return; }
       var groups = d.groups || [];
-      if(!groups.length){ el.innerHTML='Nothing to order — assign suppliers to ingredients first.'; loadPurchaseOrders(); return; }
+      if(!groups.length){
+        var un=(d.unassigned||[]).length,title,why;
+        if(d.is_live===false){title='Nothing to order yet';why=d.notice||'Food Cost is showing example data.';}
+        else if(un){title='Suppliers needed';why=un+' item'+(un===1?' is':'s are')+' due but no supplier is set on '+(un===1?'it':'them')+'. Add a supplier to each ingredient in the app (Food Cost \u2192 ingredient) and this fills in.';}
+        else{title='Nothing to order';why='Nothing is below par this week.';}
+        el.innerHTML='<div class="fc2-tool-empty"><b>'+_mmEsc(title)+'</b><span>'+_mmEsc(why)+'</span></div>';
+        loadPurchaseOrders();return;
+      }
       var html = '';
       groups.forEach(function(g){
         html += '<div class="g"><div><b>'+_mmEsc(g.supplier_name||g.supplier_email)+'</b><span>'+g.items.length+' item'+(g.items.length!==1?'s':'')+'</span></div>';
@@ -11244,31 +11265,45 @@ function fc2LoadFoodCostPct(){
 // Dishes the POS created that have no recipe, drafted from your own
 // ingredient list (recipes.py). Accept writes the recipe; nothing is
 // written until you do. Plus a CSV import for a whole menu at once.
-function fc2LoadRecipeDrafts(){
+function fc2LoadRecipeDrafts(note){
+  // The note survives the re-render: the status line lives inside this
+  // block, so a result written before the reload was wiped by it.
   var el=document.getElementById('fc2-recipes');if(!el)return;
   fetch('/api/food-cost/recipe-drafts',{credentials:'same-origin'}).then(function(r){return r.json();}).then(function(d){
     if(!d||!d.ok)return;
     var ds=d.drafts||[];
     var h='<div class="hb-h3"><span>Recipes to confirm</span>'+(ds.length?'<span class="cnt">'+ds.length+'</span>':'')+'</div>';
-    if(!ds.length)h+='<div class="hb-empty" style="font-size:12.5px">Every dish on your POS has a recipe, or drafts arrive Tuesday mornings for any that don\u2019t.</div>';
+    if(!ds.length)h+='<div class="hb-empty" style="font-size:14px;padding-top:2px">Nothing waiting. Paste your menu below and Cavnar drafts a recipe for each dish; anything your POS adds later is drafted on Tuesday mornings.</div>';
     for(var i=0;i<ds.length;i++){var dr=ds[i];
       h+='<div class="fc2-recipe"><div class="fc2-recipe-h"><b>'+esc(dr.menu_item_name||('Dish #'+dr.menu_item_id))+'</b>'+(dr.note?'<span class="fc2-recipe-note">'+esc(dr.note)+'</span>':'')+'</div><div class="fc2-recipe-lines">';
       for(var j=0;j<(dr.lines||[]).length;j++){var ln=dr.lines[j];h+='<span class="fc2-recipe-ln'+(ln.confidence==='low'?' low':'')+'">'+esc(ln.name)+' <b class="hb-num">'+esc(ln.qty)+'</b> '+esc(ln.unit||'')+(ln.confidence==='low'?' <i>?</i>':'')+'</span>';}
       h+='</div><div class="fc2-recipe-ft"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-recipe-reject="'+esc(dr.id)+'">Not right</button><button type="button" class="cbtn cbtn-primary cbtn-sm" data-recipe-accept="'+esc(dr.id)+'">Accept recipe</button></div></div>';}
-    h+='<div class="fc2-count-ft" style="margin-top:8px"><span class="ac-status" id="fc2-photo-status">Photograph a recipe card and it becomes a draft to confirm.</span><label class="cbtn cbtn-secondary cbtn-sm" for="fc2-photo-file">Photograph a recipe<input type="file" id="fc2-photo-file" accept="image/*" capture="environment" style="display:none" onchange="fc2ScanRecipe(this)"></label></div>';
+    // The menu, pasted. Nobody photographs a recipe card, and a
+    // restaurant without a POS has no dishes for the Tuesday job to draft
+    // against — but every owner has the menu. One paste does the rest.
+    var canDraft=(d.ingredients||0)>=3;
+    h+='<div class="fc2-menu-draft"><div class="t"><b>Draft recipes from your menu</b><span>Paste the menu, one dish a line, a price after a comma if you like. Cavnar drafts each recipe from your ingredient list and you confirm it above \u2014 nothing is saved until you accept.</span></div>';
+    if(d.missing>0)h+='<div class="fc2-count-ft" style="margin:0 0 10px;justify-content:flex-start"><span class="ac-status">'+d.missing+' dish'+(d.missing===1?' on file has':'es on file have')+' no recipe yet.</span><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="fc2DraftRecipes(this,true)"'+(canDraft?'':' disabled')+'>Draft '+(d.missing===1?'it':'them')+' now</button></div>';
+    h+='<textarea id="fc2-menu-text" rows="5" class="ac-input" style="width:100%;font-size:14px" placeholder="Classic Burger, 14&#10;Caesar Salad, 11&#10;Grilled Salmon, 24"></textarea><div class="fc2-count-ft"><span class="ac-status" id="fc2-menu-status">'+(canDraft?'':'Add at least three ingredients first \u2014 a recipe can only use what is on your list.')+'</span><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="fc2DraftRecipes(this,false)"'+(canDraft?'':' disabled')+'>Draft recipes</button></div></div>';
     h+='<details class="fc2-import"><summary>Import recipes from a CSV</summary><div class="hb-empty" style="font-size:12.5px;margin:6px 0">Columns: menu_item, ingredient, qty \u2014 ingredient names must match your list; a new dish is created, an unknown ingredient is skipped and named.</div><textarea id="fc2-import-csv" rows="5" class="ac-input" style="width:100%;font-family:monospace;font-size:12px" placeholder="menu_item,ingredient,qty&#10;Margherita,Mozzarella,0.25"></textarea><div class="fc2-count-ft"><span class="ac-status" id="fc2-import-status"></span><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="fc2ImportRecipes(this)">Import</button></div></details>';
     el.innerHTML=h;el.hidden=false;
+    if(note){var stn=document.getElementById('fc2-menu-status');if(stn)stn.textContent=note;}
   }).catch(function(){});
 }
-function fc2ScanRecipe(input){
-  var f=input.files&&input.files[0];var st=document.getElementById('fc2-photo-status');if(!f)return;
-  if(st)st.textContent='Reading the card\u2026';
-  var fd=new FormData();fd.append('file',f);
-  fetch('/api/food-cost/recipes/scan',{method:'POST',credentials:'same-origin',body:fd}).then(function(r){return r.json();}).then(function(d){
-    if(d&&d.ok){if(typeof toast==='function')toast('Draft ready for '+(d.draft.menu_item_name||'the dish'),'success');fc2LoadRecipeDrafts();}
-    else if(st)st.textContent=(d&&d.error)||'Could not read the card.';
-  }).catch(function(){if(st)st.textContent='Could not read the card \u2014 check your connection.';});
-  input.value='';
+function fc2DraftRecipes(btn,missingOnly){
+  var ta=document.getElementById('fc2-menu-text'),st=document.getElementById('fc2-menu-status');
+  var menu=missingOnly?'':((ta&&ta.value)||'');
+  if(!missingOnly&&!menu.trim()){if(st)st.textContent='Paste your menu first \u2014 one dish a line.';return;}
+  var done=cbtnBusy(btn,'Drafting\u2026');
+  fetch('/api/food-cost/recipes/draft',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({menu:menu})}).then(function(r){return r.json();}).then(function(d){
+    done();
+    if(!d||!d.ok){if(st)st.textContent=(d&&d.error)||'Could not draft just now.';return;}
+    var msg=d.drafted?('Drafted '+d.drafted+' recipe'+(d.drafted===1?'':'s')+' \u2014 confirm them above.'):(d.reason?d.reason.charAt(0).toUpperCase()+d.reason.slice(1)+'.':(d.already_covered?'Those dishes already have a recipe or a draft.':'Nothing to draft.'));
+    if(d.created)msg+=' '+d.created+' new dish'+(d.created===1?'':'es')+' added.';
+    if(d.remaining>0)msg+=' '+d.remaining+' more to go \u2014 click again for the next batch.';
+    if(typeof toast==='function'&&d.drafted)toast('Drafted '+d.drafted+' recipe'+(d.drafted===1?'':'s'),'success');
+    if(d.drafted||d.created)fc2LoadRecipeDrafts(msg);else if(st)st.textContent=msg;
+  }).catch(function(){done();if(st)st.textContent='Could not draft \u2014 check your connection.';});
 }
 function fc2ImportRecipes(btn){
   var csv=(document.getElementById('fc2-import-csv')||{}).value||'';var st=document.getElementById('fc2-import-status');

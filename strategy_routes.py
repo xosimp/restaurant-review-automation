@@ -556,7 +556,49 @@ def _do_recipe_drafts(u):
     if not _sees_food(u):
         return _forbidden("Only someone who can see food cost can review recipes.")
     import recipes
-    return {"ok": True, "drafts": recipes.list_drafts(_rid(u))}, 200
+    # `missing` is what the "draft them now" button offers; `ingredients` is
+    # whether a draft can be attempted at all (it may only use what is on
+    # the list). Both best-effort: the drafts themselves are the point.
+    missing = ingredients = 0
+    try:
+        import inventory_ledger
+        missing = len(recipes.missing_recipes(_rid(u)))
+        ingredients = len([i for i in (inventory_ledger.list_ingredients(_rid(u)) or []) if i.get("name")])
+    except Exception:
+        pass
+    return {"ok": True, "drafts": recipes.list_drafts(_rid(u)), "missing": missing,
+            "ingredients": ingredients}, 200
+
+
+def _do_recipe_draft_now(u):
+    """The owner pastes the menu (or asks for the POS dishes that have no
+    recipe) and Cavnar drafts recipes from the ingredient list — the
+    accept gate is unchanged. Bounded to RECIPE_DRAFT_LIMIT model calls a
+    request, so the response arrives inside the worker's timeout; the
+    reply says how many are left and the button offers the next batch."""
+    if not _sees_food(u):
+        return _forbidden("Only someone who can see food cost can draft recipes.")
+    import recipes
+    from client_api import log_account_event
+    if _limited(u, "recipe_draft", 6, 600):
+        return _SLOW_DOWN
+    text = _body().get("menu") or ""
+    if len(text) > 20_000:
+        return {"ok": False, "error": "That is more than a menu — paste the dishes, one a line."}, 400
+    try:
+        if text.strip():
+            out = recipes.draft_from_menu(_rid(u), text, user_id=u.get("id"), limit=recipes.RECIPE_DRAFT_LIMIT)
+        else:
+            out = {"ok": True, **recipes.draft_missing(_rid(u), limit=recipes.RECIPE_DRAFT_LIMIT)}
+        if out.get("ok"):
+            out["remaining"] = len(recipes.missing_recipes(_rid(u)))
+    except Exception as e:
+        import ops
+        ops.capture(e, job="recipe_draft_now", context=f"restaurant_id={_rid(u)}")
+        return {"ok": False, "error": "Couldn't draft just now — try again in a minute."}, 500
+    if out.get("drafted"):
+        log_account_event(_rid(u), "recipes_drafted", current_user=u, detail=f"{out['drafted']} drafts")
+    return out, (200 if out.get("ok") else 400)
 
 
 def _do_recipe_draft_accept(u, draft_id):
@@ -1244,6 +1286,7 @@ _ROUTES = [
     ("/food-cost/recipe-drafts/<int:draft_id>/accept", ["POST"], _do_recipe_draft_accept, "recipe_draft_accept"),
     ("/food-cost/recipe-drafts/<int:draft_id>/reject", ["POST"], _do_recipe_draft_reject, "recipe_draft_reject"),
     ("/food-cost/recipes/import", ["POST"], _do_recipes_import, "recipes_import"),
+    ("/food-cost/recipes/draft", ["POST"], _do_recipe_draft_now, "recipe_draft_now"),
     ("/labor/weekly-plan", ["GET"], _do_weekly_plan_get, "weekly_plan_get"),
     ("/labor/weekly-plan", ["POST"], _do_weekly_plan_set, "weekly_plan_set"),
     ("/account/send-delay", ["GET"], _do_send_delay_get, "send_delay_get"),

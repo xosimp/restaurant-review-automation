@@ -14,6 +14,7 @@ Bounded: RECIPE_DRAFT_LIMIT dishes per run, one run a week, only where
 Food Cost is on and a POS is feeding menu items.
 """
 import json
+import re
 from ai_utils import model_for
 
 from models import get_conn, DB_PATH
@@ -79,18 +80,20 @@ def _prompt(item_name, ingredients, context):
     )
 
 
-def draft_missing(restaurant_id, limit=RECIPE_DRAFT_LIMIT, client=None, db_path=DB_PATH):
-    """Draft up to `limit` recipes. Returns {"drafted": n, "skipped": n}."""
+def draft_missing(restaurant_id, limit=RECIPE_DRAFT_LIMIT, client=None, db_path=DB_PATH, items=None):
+    """Draft up to `limit` recipes — every dish with none, or just `items`
+    ([{id, name}]) when the caller has a list. Returns {"drafted": n,
+    "skipped": n} plus `reason` when nothing could be attempted."""
     import inventory_ledger
     from models import get_restaurant
     r = get_restaurant(restaurant_id)
     if not r or not getattr(r, "module_inventory", 0):
-        return {"drafted": 0, "skipped": 0}
+        return {"drafted": 0, "skipped": 0, "reason": "Food Cost is not on for this restaurant"}
     ingredients = [i for i in (inventory_ledger.list_ingredients(restaurant_id) or []) if i.get("name")]
     if len(ingredients) < 3:
         return {"drafted": 0, "skipped": 0, "reason": "fewer than three ingredients on file"}
     by_name = {i["name"].strip().lower(): i for i in ingredients}
-    todo = missing_recipes(restaurant_id, db_path=db_path)[:limit]
+    todo = (list(items) if items is not None else missing_recipes(restaurant_id, db_path=db_path))[:limit]
     if not todo:
         return {"drafted": 0, "skipped": 0}
     from ai_utils import create_with_retry, get_client
@@ -136,6 +139,79 @@ def draft_missing(restaurant_id, limit=RECIPE_DRAFT_LIMIT, client=None, db_path=
             conn.close()
         drafted += 1
     return {"drafted": drafted, "skipped": skipped}
+
+
+# ── the menu, pasted ─────────────────────────────────────────────────────────
+# Nobody photographs a recipe card, and a restaurant without a POS has no
+# menu items for the Tuesday job to draft against. What every owner does
+# have is the menu. One paste — a dish a line, a price after it if they
+# like — creates the dishes, keeps the prices, and drafts a recipe for each
+# from the restaurant's own ingredient list. Same accept gate as ever.
+
+MENU_LINE_LIMIT = 40
+
+_PRICE_TAIL = re.compile(r"^(.*?)\s*(?:[,;:|]|\s[-–—]\s|[-–—](?=\s*\$?\d))\s*\$?\s*(\d{1,4}(?:\.\d{1,2})?)\s*$")
+_PRICE_SPACE = re.compile(r"^(.*?)\s+\$(\d{1,4}(?:\.\d{1,2})?)\s*$")
+
+
+def parse_menu_text(text):
+    """'Classic Burger, 14' · 'Classic Burger — $14' · 'Classic Burger $14' ·
+    'Classic Burger' → [(name, price or None)], at most MENU_LINE_LIMIT."""
+    out = []
+    for line in (text or "").splitlines():
+        # A tab or a run of spaces between the dish and its price is how a
+        # menu pastes out of a spreadsheet or a PDF column.
+        s = re.sub(r"\t+|\s{2,}", ", ", line.strip().lstrip("-•*·").strip())
+        if not s:
+            continue
+        m = _PRICE_TAIL.match(s) or _PRICE_SPACE.match(s)
+        if m and m.group(1).strip():
+            name, price = m.group(1), float(m.group(2))
+        else:
+            name, price = s, None
+        name = name.strip(" .,;:-–—$")[:80]
+        if name:
+            out.append((name, price))
+    return out[:MENU_LINE_LIMIT]
+
+
+def draft_from_menu(restaurant_id, text, user_id=None, client=None, db_path=DB_PATH, limit=MENU_LINE_LIMIT):
+    """The pasted menu → dishes on file (created where missing, priced where
+    a price was given and none was set) → a draft for every dish that has
+    no recipe and no pending draft. Nothing else is written until Accept."""
+    lines = parse_menu_text(text)
+    if not lines:
+        return {"ok": False, "error": "Paste your menu, one dish a line — a price after a comma is optional."}
+    created = priced = 0
+    targets = []
+    conn = get_conn(db_path)
+    try:
+        existing = {r["name"].strip().lower(): dict(r) for r in conn.execute(
+            "SELECT id, name, sell_price FROM menu_items WHERE restaurant_id=? AND is_active=1",
+            (restaurant_id,)).fetchall()}
+        for name, price in lines:
+            row = existing.get(name.lower())
+            if not row:
+                cur = conn.execute("INSERT INTO menu_items (restaurant_id, toast_guid, name) VALUES (?,NULL,?)",
+                                   (restaurant_id, name))
+                row = {"id": cur.lastrowid, "name": name, "sell_price": None}
+                existing[name.lower()] = row
+                created += 1
+            if price and not row.get("sell_price"):
+                conn.execute("UPDATE menu_items SET sell_price=? WHERE id=? AND restaurant_id=?",
+                             (price, row["id"], restaurant_id))
+                row["sell_price"] = price
+                priced += 1
+            targets.append({"id": row["id"], "name": row["name"]})
+        conn.commit()
+    finally:
+        conn.close()
+    missing = {m["id"] for m in missing_recipes(restaurant_id, db_path=db_path)}
+    todo = [t for t in targets if t["id"] in missing]
+    out = (draft_missing(restaurant_id, limit=limit, client=client, db_path=db_path, items=todo)
+           if todo else {"drafted": 0, "skipped": 0})
+    return {"ok": True, "dishes": len(lines), "created": created, "priced": priced,
+            "already_covered": len(targets) - len(todo), **out}
 
 
 _PHOTO_SCHEMA = {
