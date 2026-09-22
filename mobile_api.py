@@ -842,10 +842,6 @@ def _do_mobile_home(current_user):
         elif key == "marketing":
             try:
                 conn = get_conn()
-                conn.execute("""CREATE TABLE IF NOT EXISTS marketing_content_log (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT, restaurant_id INTEGER NOT NULL,
-                    content_type TEXT, topic TEXT, post_id TEXT, post_platform TEXT,
-                    created_at TEXT DEFAULT (datetime('now')))""")
                 this_month = conn.execute(
                     "SELECT COUNT(*) FROM marketing_content_log WHERE restaurant_id=? AND created_at >= date('now','start of month')",
                     (rid,)
@@ -2659,10 +2655,6 @@ def mobile_labor_availability_delete(current_user):
 def _do_mobile_marketing_stats(restaurant_id):
     try:
         conn = get_conn()
-        conn.execute("""CREATE TABLE IF NOT EXISTS marketing_content_log (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, restaurant_id INTEGER NOT NULL,
-            content_type TEXT, topic TEXT, post_id TEXT, post_platform TEXT,
-            created_at TEXT DEFAULT (datetime('now')))""")
         generated = conn.execute(
             "SELECT COUNT(*) FROM marketing_content_log WHERE restaurant_id=?", (restaurant_id,)
         ).fetchone()[0] or 0
@@ -2956,16 +2948,6 @@ def mobile_marketing_performance(current_user):
     rid = current_user["restaurant_id"]
     try:
         conn = get_conn()
-        conn.execute("""CREATE TABLE IF NOT EXISTS marketing_content_log (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, restaurant_id INTEGER NOT NULL,
-            content_type TEXT, topic TEXT, post_id TEXT, post_platform TEXT,
-            created_at TEXT DEFAULT (datetime('now')))""")
-        for col in ("reach", "impressions", "engaged", "likes", "comments", "shares"):
-            try:
-                conn.execute(f"ALTER TABLE marketing_content_log ADD COLUMN {col} INTEGER DEFAULT 0")
-            except Exception:
-                pass
-        conn.commit()
 
         published = conn.execute(
             "SELECT COUNT(*) FROM marketing_content_log WHERE restaurant_id=? AND post_id IS NOT NULL",

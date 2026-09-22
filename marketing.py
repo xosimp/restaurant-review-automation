@@ -275,14 +275,6 @@ def get_recent_content(restaurant_id: int, limit: int = 5) -> list:
     try:
         from models import get_conn
         conn = get_conn()
-        # Ensure table exists
-        conn.execute("""CREATE TABLE IF NOT EXISTS marketing_content_log (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            restaurant_id INTEGER NOT NULL,
-            content_type TEXT,
-            topic TEXT,
-            created_at TEXT DEFAULT (datetime('now'))
-        )""")
         rows = conn.execute(
             """SELECT content_type, topic FROM marketing_content_log
                WHERE restaurant_id=? ORDER BY created_at DESC LIMIT ?""",
@@ -329,23 +321,6 @@ def _log_content_row(restaurant_id, content_type, topic, post_id, post_platform)
     try:
         from models import get_conn
         conn = get_conn()
-        conn.execute("""CREATE TABLE IF NOT EXISTS marketing_content_log (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            restaurant_id INTEGER NOT NULL,
-            content_type TEXT,
-            topic TEXT,
-            post_id TEXT,
-            post_platform TEXT,
-            created_at TEXT DEFAULT (datetime('now'))
-        )""")
-        try:
-            conn.execute("ALTER TABLE marketing_content_log ADD COLUMN post_id TEXT")
-        except Exception:
-            pass
-        try:
-            conn.execute("ALTER TABLE marketing_content_log ADD COLUMN post_platform TEXT")
-        except Exception:
-            pass
         if post_id:
             # Update the most recent unposted row for this topic instead of inserting a duplicate
             target = conn.execute(

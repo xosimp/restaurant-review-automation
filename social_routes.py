@@ -332,12 +332,6 @@ def refresh_post_metrics(restaurant_id, limit=25):
         return {"ok": False, "error": "Not connected", "posts": []}
     conn = get_conn()
     try:
-        for col in ("reach", "impressions", "engaged", "likes", "comments", "shares"):
-            try:
-                conn.execute(f"ALTER TABLE marketing_content_log ADD COLUMN {col} INTEGER DEFAULT 0")
-            except Exception:
-                pass
-        conn.commit()
         rows = conn.execute(
             """SELECT id, topic, post_id, post_platform, created_at,
                       reach, impressions, engaged, likes, comments, shares

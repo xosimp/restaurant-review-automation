@@ -476,10 +476,6 @@ def index(current_user):
     # Marketing activity stats
     try:
         _conn_mkt = get_conn()
-        _conn_mkt.execute("""CREATE TABLE IF NOT EXISTS marketing_content_log (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, restaurant_id INTEGER NOT NULL,
-            content_type TEXT, topic TEXT, post_id TEXT, post_platform TEXT,
-            created_at TEXT DEFAULT (datetime('now')))""")
         _mkt_gen   = _conn_mkt.execute("SELECT COUNT(*) FROM marketing_content_log WHERE restaurant_id=?", (rid,)).fetchone()[0] or 0
         _mkt_pub   = _conn_mkt.execute("SELECT COUNT(DISTINCT topic) FROM marketing_content_log WHERE restaurant_id=? AND post_id IS NOT NULL", (rid,)).fetchone()[0] or 0
         _mkt_month = _conn_mkt.execute("SELECT COUNT(*) FROM marketing_content_log WHERE restaurant_id=? AND created_at >= date('now','start of month')", (rid,)).fetchone()[0] or 0
