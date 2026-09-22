@@ -300,7 +300,6 @@ def test_the_docusign_callback_confirms_consent_and_otherwise_redirects(wh_clien
     assert bare.headers["Location"].endswith("/admin")
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-11: with DOCUSIGN_WEBHOOK_SECRET unset the HMAC check is skipped; an unsigned completion marks the contract signed and resets the owner's password")
 def test_the_docusign_webhook_refuses_every_request_when_no_secret_is_configured(
         wh_client, db_path, sent, monkeypatch):
     monkeypatch.delenv("DOCUSIGN_WEBHOOK_SECRET", raising=False)

@@ -353,11 +353,17 @@ def ds(monkeypatch):
     monkeypatch.setattr(webhook_routes, "_resend_key", lambda: "k")
     monkeypatch.setattr(webhook_routes, "send_payment_email", lambda **k: mail["payment"].append(k["to_email"]))
     monkeypatch.setattr(webhook_routes, "send_welcome_email", lambda **k: mail["welcome"].append(k["to_email"]))
-    monkeypatch.delenv("DOCUSIGN_WEBHOOK_SECRET", raising=False)
+    # Signed like DocuSign Connect signs them: the webhook refuses anything
+    # unsigned (SEC-11), so an unsigned fixture would only ever test the 401.
+    monkeypatch.setenv("DOCUSIGN_WEBHOOK_SECRET", "fixture-secret")
 
     def post(envelope_id, status="completed", headers=None):
-        return client.post("/docusign/webhook", json={"envelopeId": envelope_id, "status": status},
-                           headers=headers or {})
+        import base64, hashlib, hmac, json as _json
+        body = _json.dumps({"envelopeId": envelope_id, "status": status}).encode()
+        sig = base64.b64encode(hmac.new(b"fixture-secret", body, hashlib.sha256).digest()).decode()
+        h = {"X-DocuSign-Signature-1": sig, "Content-Type": "application/json"}
+        h.update(headers or {})
+        return client.post("/docusign/webhook", data=body, headers=h)
     post.mail = mail
     return post
 
@@ -366,14 +372,14 @@ def _password_hash(db_path, uid):
     return _count(db_path, "SELECT password_hash FROM users WHERE id=?", uid)
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-BIL-7: with DOCUSIGN_WEBHOOK_SECRET unset the DocuSign webhook processes unsigned bodies")
-def test_the_docusign_webhook_refuses_an_unsigned_body_when_no_secret_is_configured(db_path, ds):
+def test_the_docusign_webhook_refuses_an_unsigned_body_when_no_secret_is_configured(db_path, ds, monkeypatch):
     """A10 #30 / MOD-BIL-7 — docs/ops/SECURITY.md says webhooks are rejected
     without their secret; an unsigned 'completed' must not mark a contract
     signed or reset a password."""
     rid = _restaurant(db_path, docusign_envelope_id="env_1", contract_status="sent")
     uid = create_user(rid, "owner", "owner@x.test", "pw-owner-1", db_path=db_path)
     before = _password_hash(db_path, uid)
+    monkeypatch.delenv("DOCUSIGN_WEBHOOK_SECRET", raising=False)
     resp = ds("env_1")
     assert resp.status_code in (401, 403, 503)
     assert get_restaurant(rid, db_path).contract_status == "sent"

@@ -775,6 +775,18 @@ def docusign_webhook():
     # this only checked the header was *present*, which any caller can fake —
     # now it actually verifies the signature matches the body.
     ds_secret = os.getenv("DOCUSIGN_WEBHOOK_SECRET", "")
+    if not ds_secret:
+        # Fail closed. Without the secret the check used to be skipped, so an
+        # unsigned "completed" marked a contract signed and could replace the
+        # owner's password (SEC-11, MOD-BIL-7). A missing variable now stops
+        # every delivery, loudly, instead of trusting every caller.
+        try:
+            import ops
+            ops.capture(RuntimeError("DOCUSIGN_WEBHOOK_SECRET is not set; DocuSign webhook refused"),
+                        job="docusign_webhook", context="missing secret")
+        except Exception:
+            pass
+        return jsonify(error="Unauthorized"), 401
     if ds_secret:
         import hmac as _hmac_ds, hashlib as _hashlib_ds, base64 as _b64_ds
         auth_header = request.headers.get("X-DocuSign-Signature-1", "")
