@@ -419,69 +419,89 @@ def run_auto_draft_schedules(db_path=DB_PATH):
     in 7shifts/HotSchedules/etc. and a Cavnar draft would be a second,
     conflicting source of truth), and where Labor isn't on the plan."""
     import ops
-    import time as _time
-    from schedule_engine import _run_schedule_job
-    drafted, skipped = 0, 0
-    # Bounded and resumable, like run_daily_fetch: a five-minute draft per
-    # 70-person roster means one pass cannot cover every restaurant, so the
-    # cursor makes the next pass start where this one stopped.
-    started = _time.monotonic()
+    import threading
+    from datetime import date as _date
+    import scheduler as _sched
+    import schedule_engine as _se
+    counts = {"drafted": 0, "skipped": 0}
+    lock = threading.Lock()
+    # Bounded and resumable, like run_daily_fetch: a worker pool, a
+    # wall-clock bound and a cursor. It used to be one serial 40-minute pass
+    # claimed once per Thursday, so the restaurants past the bound waited a
+    # whole week (SCHED-11 / DATA-8); the scheduler now runs a pass every
+    # hour on Thursday, each starting at the cursor, and a restaurant is
+    # attempted at most once a day (claimed before the paid generation).
     rows = [r for r in _restaurants(db_path)
             if getattr(r, "auto_draft_schedule", 0) and getattr(r, "module_labor", 0)]
     order = sorted(rows, key=lambda r: r.id)
     cursor = _read_cursor(AUTO_DRAFT_CURSOR_KEY, db_path)
     order = [r for r in order if r.id > cursor] + [r for r in order if r.id <= cursor]
-    last_done = None
-    for r in order:
-        if _time.monotonic() - started > AUTO_DRAFT_MAX_SECONDS:
-            break
-        last_done = r.id
+    day = _date.today().isoformat()
+
+    def _bump(key):
+        with lock:
+            counts[key] += 1
+
+    def _one(r):
         if (getattr(r, "external_scheduling_tool", None) or "").strip():
-            skipped += 1
-            continue
+            _bump("skipped")
+            return
         conn = get_conn(db_path)
         try:
             if _recent_schedule(conn, r.id):
-                skipped += 1
-                continue
+                _bump("skipped")
+                return
         finally:
             conn.close()
-        job_id = f"auto-{uuid.uuid4().hex[:12]}"
-        ops.start_async_job(job_id, "schedule", r.id)
-        try:
-            _run_schedule_job(job_id, r.id)
-        except Exception as e:
-            ops.capture(e, job="auto_draft_schedule", context=f"restaurant_id={r.id}")
-            continue
-        # _run_schedule_job reports its own failures into the job row rather
-        # than raising, so the push below must wait on that verdict — telling
-        # an owner a draft is waiting when none was saved is worse than silence.
-        state = ops.read_async_job(job_id, restaurant_id=r.id) or {}
-        if state.get("status") != "done":
-            continue
-        drafted += 1
-        try:
-            import notify, push
-            # The owner's task, not the line cook's: a teammate with the app
-            # was told to review and publish a schedule they cannot publish.
-            # morning_brief.recipients is the same audience the brief uses.
-            import morning_brief
-            audience = {u["id"] for u in morning_brief.recipients(r.id, db_path)}
-            if not notify.briefing_allowed(r.id, "schedule_drafted", db_path):
-                continue
-            notify.record_notification(r.id, "schedule_drafted", db_path=db_path)
-            push.fire_push(r.id, "schedule_drafted", "Next week's schedule is drafted",
-                           "Review it and publish when it looks right — nothing has gone to "
-                           "your staff yet.", data={}, db_path=db_path,
-                           user_ids=audience or None)
-        except Exception as e:
-            ops.capture(e, job="auto_draft_schedule_push", context=f"restaurant_id={r.id}")
-    _write_cursor(AUTO_DRAFT_CURSOR_KEY, last_done if last_done is not None else 0, db_path)
-    return {"drafted": drafted, "skipped": skipped}
+        if not ops.claim_period(f"auto_draft:{r.id}", day):
+            _bump("skipped")               # attempted earlier today — never a second paid try
+            return
+        _draft_one(r, db_path, _se, _bump)
+
+    def _failed(r, e):
+        ops.capture(e, job="auto_draft_schedule", context=f"restaurant_id={r.id}")
+
+    done, ran_out = _sched.bounded_map(order, _one, AUTO_DRAFT_WORKERS, AUTO_DRAFT_MAX_SECONDS, on_error=_failed)
+    if order:
+        last = order[min(done, len(order)) - 1].id if done else cursor
+        _write_cursor(AUTO_DRAFT_CURSOR_KEY, last, db_path)
+    return {"drafted": counts["drafted"], "skipped": counts["skipped"], "complete": not ran_out}
+
+
+def _draft_one(r, db_path, _se, _bump):
+    """One restaurant's auto-draft and, when it saved, the owner's nudge."""
+    import ops
+    job_id = f"auto-{uuid.uuid4().hex[:12]}"
+    ops.start_async_job(job_id, "schedule", r.id)
+    _se._run_schedule_job(job_id, r.id)
+    # _run_schedule_job reports its own failures into the job row rather
+    # than raising, so the push below must wait on that verdict — telling
+    # an owner a draft is waiting when none was saved is worse than silence.
+    state = ops.read_async_job(job_id, restaurant_id=r.id) or {}
+    if state.get("status") != "done":
+        return
+    _bump("drafted")
+    try:
+        import notify, push
+        # The owner's task, not the line cook's: a teammate with the app
+        # was told to review and publish a schedule they cannot publish.
+        # morning_brief.recipients is the same audience the brief uses.
+        import morning_brief
+        audience = {u["id"] for u in morning_brief.recipients(r.id, db_path)}
+        if not notify.briefing_allowed(r.id, "schedule_drafted", db_path):
+            return
+        notify.record_notification(r.id, "schedule_drafted", db_path=db_path)
+        push.fire_push(r.id, "schedule_drafted", "Next week's schedule is drafted",
+                       "Review it and publish when it looks right — nothing has gone to "
+                       "your staff yet.", data={}, db_path=db_path,
+                       user_ids=audience or None)
+    except Exception as e:
+        ops.capture(e, job="auto_draft_schedule_push", context=f"restaurant_id={r.id}")
 
 
 AUTO_DRAFT_CURSOR_KEY = "auto_draft_schedule_cursor"
 AUTO_DRAFT_MAX_SECONDS = 40 * 60
+AUTO_DRAFT_WORKERS = 3              # each draft is minutes of model wait; three share the pass
 
 
 def _read_cursor(key, db_path) -> int:
@@ -511,17 +531,31 @@ def _write_cursor(key, value, db_path) -> None:
 def run_schedule_outcomes(db_path=DB_PATH):
     """Monday: record what each published week actually did, by daypart
     (schedule_intel.record_outcomes), for every Labor restaurant."""
+    import ops
     import schedule_intel
-    written = 0
-    for r in _restaurants(db_path):
-        if not getattr(r, "module_labor", 0):
-            continue
-        try:
-            written += schedule_intel.record_outcomes(r.id, db_path=db_path).get("written", 0)
-        except Exception as e:
-            import ops
-            ops.capture(e, job="schedule_outcomes", context=f"restaurant_id={r.id}")
-    return {"rows": written}
+    import scheduler as _sched
+    # Bounded and resumable (SCHED-27): a wall-clock bound and a cursor, so a
+    # pass that runs out of time is picked up where it stopped instead of
+    # starving the same tail every Monday.
+    order = sorted((r for r in _restaurants(db_path) if getattr(r, "module_labor", 0)), key=lambda r: r.id)
+    cursor = _read_cursor(OUTCOMES_CURSOR_KEY, db_path)
+    order = [r for r in order if r.id > cursor] + [r for r in order if r.id <= cursor]
+    written = {"n": 0}
+
+    def _one(r):
+        written["n"] += schedule_intel.record_outcomes(r.id, db_path=db_path).get("written", 0)
+
+    def _failed(r, e):
+        ops.capture(e, job="schedule_outcomes", context=f"restaurant_id={r.id}")
+
+    done, _ran_out = _sched.bounded_map(order, _one, 1, OUTCOMES_MAX_SECONDS, on_error=_failed)
+    if order:
+        _write_cursor(OUTCOMES_CURSOR_KEY, order[min(done, len(order)) - 1].id if done else cursor, db_path)
+    return {"rows": written["n"]}
+
+
+OUTCOMES_CURSOR_KEY = "schedule_outcomes_cursor"
+OUTCOMES_MAX_SECONDS = 20 * 60
 
 
 # Used only when a restaurant hasn't set its hours: without a fallback the

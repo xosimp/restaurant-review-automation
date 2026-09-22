@@ -1949,6 +1949,7 @@ def _quality_signals(restaurant_id, result, **extra):
     try:
         scores = signals["scores"]
         unsat = 0
+        unmeetable = []
         for rule in signals["leader_rules"]:
             ms = rule.get("min_score")
             if ms is None or rule.get("attribute"):
@@ -1959,7 +1960,11 @@ def _quality_signals(restaurant_id, result, **extra):
                     and (not roles or (roles.get(n) or "").strip().lower() == role)]
             if len(able) < int(rule.get("count") or 1):
                 unsat += 1
+                unmeetable.append(rule)
         signals["unsatisfiable"] = unsat
+        # The rules themselves, so the engine sets them aside instead of
+        # capping every shift they cover (SCHED-30).
+        signals["unmeetable_leader_rules"] = unmeetable
     except Exception:
         pass
     # Each of these is a separate read and any one of them can be empty for

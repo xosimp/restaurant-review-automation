@@ -2330,8 +2330,12 @@ def scheduler_loop():
                 _ops.run_job("reservation_sync", run_reservation_sync)
 
             # Thursday 6am+ — draft next week's schedule for owners who opted
-            # in. A draft in Schedule History; nothing reaches staff.
-            if _due(now, 6) and now.weekday() == 3 and _ops.claim_period("auto_draft_schedule", str(today)):
+            # in. A draft in Schedule History; nothing reaches staff. A pass
+            # an hour: each is time-bounded and starts at the cursor, and a
+            # restaurant is attempted once a day, so a pass that ran out of
+            # time is finished later the same Thursday, not next week
+            # (SCHED-11).
+            if _due(now, 6) and now.weekday() == 3 and _ops.claim_period("auto_draft_schedule", f"{today}-{now.hour}"):
                 from strategy_jobs import run_auto_draft_schedules
                 _ops.run_job("auto_draft_schedule", run_auto_draft_schedules)
 

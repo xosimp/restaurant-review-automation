@@ -573,6 +573,10 @@ _RETENTION_DAYS = {
     "ai_visibility_query_runs": int(os.getenv("RETAIN_AIVIS_QUERIES_DAYS", "365")),
     "competitor_snapshots":     int(os.getenv("RETAIN_COMPETITOR_SNAPSHOTS_DAYS", "365")),
     "ai_visibility_runs":       int(os.getenv("RETAIN_AIVIS_RUNS_DAYS", "730")),
+    # One row each time a schedule recommendation is shown, accepted or
+    # dismissed; a year is plenty to know which kinds an owner ignores
+    # (SCHED-27).
+    "schedule_recommendation_events": int(os.getenv("RETAIN_SCHED_RECS_DAYS", "365")),
 }
 
 # Each table's own timestamp column — they do not agree on a name.

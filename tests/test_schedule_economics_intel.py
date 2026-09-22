@@ -351,8 +351,11 @@ def test_mentoring_counts_shifts_beside_a_closer_in_another_role(db_path, rid, m
 def test_recommendation_kinds_are_suppressed_after_ten_ignored_showings(db_path, rid):
     import shift_quality as sq
     assert sq.recommendation_kind("Trim about 12h from Friday night to get back under target.") == "hours"
-    for _ in range(10):
-        intel.record_recommendation(rid, "hours", "Trim about 12h", "shown", db_path=db_path)
+    # Ten separate showings (ten weeks' drafts). The same one re-shown in a
+    # single sitting counts once (SCHED-26), so the fixture varies the key.
+    for week in range(10):
+        intel.record_recommendation(rid, "hours", f"Trim about 12h (week {week})", "shown", db_path=db_path)
+    intel.record_recommendation(rid, "hours", "Trim about 12h (week 9)", "shown", db_path=db_path)   # a rescore
     assert intel.suppressed_kinds(rid, db_path=db_path) == {"hours"}
     intel.record_recommendation(rid, "hours", "Trim about 12h", "accepted", db_path=db_path)
     assert intel.suppressed_kinds(rid, db_path=db_path) == set()

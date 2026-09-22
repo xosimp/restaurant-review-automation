@@ -156,7 +156,6 @@ def test_two_approved_sunday_night_drops_are_an_avoid_and_two_claims_a_preferenc
 
 # ── SCHED-27: the Monday outcomes job ─────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="SCHED-27: run_schedule_outcomes loops every labor restaurant with no bound or cursor")
 def test_the_outcomes_job_keeps_a_cursor_and_resumes_after_it(db, monkeypatch):
     rids = [_restaurant(db, name=f"Labor {i}", module_labor=1) for i in range(3)]
     seen = []
@@ -181,7 +180,6 @@ def test_the_outcomes_job_only_visits_labor_restaurants(db, monkeypatch):
     assert strategy_jobs.run_schedule_outcomes() == {"rows": 1} and seen == [on]
 
 
-@pytest.mark.xfail(strict=True, reason="SCHED-27: schedule_recommendation_events has no retention rule and grows on every rescore")
 def test_recommendation_events_have_a_retention_window(db):
     rid = _restaurant(db)
     si.record_recommendation(rid, "coverage", "old", "shown")
@@ -199,7 +197,6 @@ class _StopLoop(BaseException):
     pass
 
 
-@pytest.mark.xfail(strict=True, reason="SCHED-11: auto-draft is claimed once per Thursday, so a time-bounded pass resumes only next week")
 def test_a_time_bounded_auto_draft_pass_is_finished_later_the_same_thursday(db, monkeypatch):
     rids = [_restaurant(db, name=f"Draft {i}", module_labor=1, auto_draft_schedule=1) for i in range(3)]
     drafted = []

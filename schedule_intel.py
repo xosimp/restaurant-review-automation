@@ -441,6 +441,15 @@ def record_recommendation(restaurant_id, kind: str, key: str, action: str, actor
         return
     conn = get_conn(db_path)
     try:
+        # A showing is one per recommendation per day: a manager saving the
+        # same week ten times in one sitting was ten "shown, never taken"
+        # and switched the advice off for good (SCHED-26), and every rescore
+        # grew the table (SCHED-27).
+        if action == "shown" and conn.execute(
+                "SELECT 1 FROM schedule_recommendation_events WHERE restaurant_id=? AND kind=? AND key=? "
+                "AND action='shown' AND created_at >= date('now')",
+                (restaurant_id, str(kind)[:60], str(key or "")[:200])).fetchone():
+            return
         conn.execute("INSERT INTO schedule_recommendation_events (restaurant_id, kind, key, action, actor) VALUES (?,?,?,?,?)",
                      (restaurant_id, str(kind)[:60], str(key or "")[:200], action, (actor or "")[:120] or None))
         conn.commit()
@@ -453,7 +462,8 @@ def suppressed_kinds(restaurant_id, db_path=DB_PATH) -> set:
     that were never once accepted."""
     conn = get_conn(db_path)
     try:
-        rows = conn.execute("SELECT kind, SUM(action='shown') AS shown, SUM(action='accepted') AS acc FROM schedule_recommendation_events "
+        rows = conn.execute("SELECT kind, COUNT(DISTINCT CASE WHEN action='shown' THEN key || '|' || date(created_at) END) AS shown, "
+                            "SUM(action='accepted') AS acc FROM schedule_recommendation_events "
                             "WHERE restaurant_id=? GROUP BY kind", (restaurant_id,)).fetchall()
     except Exception:
         return set()
