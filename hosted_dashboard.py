@@ -54,10 +54,16 @@ except Exception as _pf_e:  # pragma: no cover — werkzeug always ships this
     print(f"[boot] ProxyFix unavailable: {_pf_e}")
 
 def _check_duplicate_routes():
-    """Crash loudly at startup if any URL rule is registered more than once."""
+    """Crash loudly at startup if any (path, method) is registered more than
+    once. Werkzeug serves whichever rule was registered first, silently:
+    the admin blueprint's permissive /robots.txt shadowed the app's for
+    months. Written in June, never called until now. Counted per method so
+    a GET and a POST on one path (registered as two rules) are not a
+    duplicate."""
     from collections import Counter
-    rules = [r.rule for r in app.url_map.iter_rules()]
-    dupes = [r for r, n in Counter(rules).items() if n > 1]
+    seen = Counter((r.rule, m) for r in app.url_map.iter_rules()
+                   for m in (r.methods or ()) if m not in ("HEAD", "OPTIONS"))
+    dupes = sorted({rule for (rule, _m), n in seen.items() if n > 1})
     if dupes:
         raise RuntimeError(f"DUPLICATE ROUTES DETECTED — fix before deploying: {dupes}")
 app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024  # 5MB global upload limit
@@ -231,6 +237,7 @@ app.register_blueprint(issue_link_bp)
 # the same posture mobile_bp already takes.
 from staff_routes import staff_bp
 app.register_blueprint(staff_bp)
+_check_duplicate_routes()
 
 app.after_request(ensure_csrf_cookie)
 
