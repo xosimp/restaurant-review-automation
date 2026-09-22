@@ -1060,7 +1060,7 @@ def reseed_demo_data(restaurant_id, current_user):
     if not restaurant.is_demo:
         return jsonify(ok=False, error="This restaurant is not flagged is_demo — refusing to reseed real client data"), 400
     try:
-        from hosted_dashboard import _refresh_gia_mia_reviews
+        from demo_seed import _refresh_gia_mia_reviews
         _refresh_gia_mia_reviews(restaurant_id)
         return jsonify(ok=True)
     except Exception as e:

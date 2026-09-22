@@ -40,12 +40,10 @@ def test_reseed_demo_data_refuses_when_not_demo(db_path, monkeypatch):
 
 
 def test_reseed_demo_data_runs_when_is_demo(db_path, monkeypatch):
-    """The route's `from hosted_dashboard import _refresh_gia_mia_reviews` is a
-    lazy, function-body import — importing the real hosted_dashboard module
-    would execute its module-level side effects (real DB init, background
-    scheduler/seed threads against the real reviews.db, not this test's
-    fixture). Inject a fake module into sys.modules instead so the import
-    resolves without ever touching the real module."""
+    """The route's `from demo_seed import _refresh_gia_mia_reviews` is a lazy,
+    function-body import. Inject a fake module into sys.modules so the
+    import resolves without running the real seed against this test's
+    fixture database."""
     monkeypatch.setattr(admin_routes, "get_restaurant", lambda rid: get_restaurant(rid, db_path=db_path))
     rid = create_restaurant(Restaurant(name="Demo Co", owner_email="d@x.com", is_demo=1), db_path=db_path)
 
@@ -54,9 +52,9 @@ def test_reseed_demo_data_runs_when_is_demo(db_path, monkeypatch):
     def fake_refresh(restaurant_id):
         called["rid"] = restaurant_id
 
-    fake_module = types.ModuleType("hosted_dashboard")
+    fake_module = types.ModuleType("demo_seed")
     fake_module._refresh_gia_mia_reviews = fake_refresh
-    monkeypatch.setitem(sys.modules, "hosted_dashboard", fake_module)
+    monkeypatch.setitem(sys.modules, "demo_seed", fake_module)
 
     with Flask(__name__).app_context():
         resp = admin_routes.reseed_demo_data.__wrapped__(rid, current_user={"is_admin": 1})

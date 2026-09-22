@@ -190,8 +190,8 @@ def test_demo_flag_route_and_console_default(monkeypatch, rid):
     assert cl.post("/admin/api/client/999999/demo", json={"is_demo": 1}).status_code == 404
     html = open("templates/admin.html").read()
     assert "_showDemo = true" in html
-    src = open("hosted_dashboard.py").read()
-    assert "UPDATE restaurants SET is_demo=1" not in src
+    for f in ("hosted_dashboard.py", "demo_seed.py"):
+        assert "UPDATE restaurants SET is_demo=1" not in open(f).read(), f
 
 
 # ── Client Settings was only ever reachable by clicking into a specific
