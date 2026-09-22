@@ -339,8 +339,16 @@ def portal_logout():
 def portal_home(current_user):
     rid, name = _staff_context(current_user)
     restaurant = get_restaurant(rid)
+    # Where "Sign in again" goes when the shift session ends (CLIENT-47):
+    # this restaurant's own PIN pad, by its join code — the same short code
+    # posted in the back of house, which /staff/r/<code> resolves.
+    try:
+        code = get_join_code(rid)
+    except Exception:
+        code = ""
+    signin_url = url_for("staff.portal_login", token=code) if code else url_for("staff.portal_entry")
     return render_template("staff_portal.html", restaurant=restaurant,
-                           employee_name=name)
+                           employee_name=name, signin_url=signin_url)
 
 
 @staff_bp.route("/api/me")
@@ -388,6 +396,25 @@ def api_shifts(current_user):
 _DAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 
 
+def availability_from_submission(unavailable, notes):
+    """The one rule for an employee's own availability, whichever surface
+    they save it from — the portal here, or the /s/<token> link in the
+    weekly schedule email (client_api.staff_availability_submit). The two
+    used to disagree: the link stored "all 7 days blocked" and kept the old
+    available_days, so a newly blocked day was both (CLIENT-11).
+
+    Returns (available_days, unavailable_days, notes, error). The available
+    days are the complement of the blocked ones, so the row can never
+    contradict itself; the note is trimmed to 300 characters, None if blank.
+    """
+    wanted = {str(x).strip().capitalize() for x in (unavailable or [])}
+    blocked = [d for d in _DAYS if d in wanted]
+    if len(blocked) == len(_DAYS):
+        return None, None, None, "Every day blocked — leave at least one you can work."
+    clean = (str(notes or "").strip())[:300] or None
+    return [d for d in _DAYS if d not in blocked], blocked, clean, None
+
+
 @staff_bp.route("/api/availability")
 @staff_login_required
 def api_availability(current_user):
@@ -421,12 +448,11 @@ def api_availability_save(current_user):
     raw = body.get("unavailable_days")
     if not isinstance(raw, list):
         return jsonify(ok=False, error="unavailable_days must be a list of weekday names."), 400
-    blocked = [d for d in _DAYS if d in {str(x).strip().capitalize() for x in raw}]
-    if len(blocked) == 7:
-        return jsonify(ok=False, error="Every day blocked — leave at least one you can work."), 400
-    notes = (str(body.get("notes") or "").strip())[:300] or None
+    available, blocked, notes, err = availability_from_submission(raw, body.get("notes"))
+    if err:
+        return jsonify(ok=False, error=err), 400
     from models import save_staff_availability, init_staff_availability, log_event
-    save_staff_availability(rid, name, [d for d in _DAYS if d not in blocked], blocked, notes=notes)
+    save_staff_availability(rid, name, available, blocked, notes=notes)
     # The schedule generator reads staff_availability (get_unavailability_map)
     # on its next draft; the owner's activity log says who changed what.
     try:
@@ -687,7 +713,11 @@ def api_tasks(current_user):
     date = _valid_task_date(raw, rid)
     if raw and not date:
         return jsonify(ok=False, error="That date isn't one you can check off."), 400
-    return jsonify(ok=True, role=role, tasks=get_todays_tasks(rid, role, task_date=date or _task_today(rid).isoformat()))
+    # The day the list is for goes back with it, so a check-off is recorded
+    # against the restaurant's day, not the phone's (CLIENT-61).
+    task_date = date or _task_today(rid).isoformat()
+    return jsonify(ok=True, role=role, task_date=task_date,
+                   tasks=get_todays_tasks(rid, role, task_date=task_date))
 
 
 @staff_bp.route("/api/tasks/complete", methods=["POST"])

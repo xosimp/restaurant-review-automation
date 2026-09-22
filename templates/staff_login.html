@@ -49,6 +49,10 @@
               font-weight:600;cursor:pointer;transition:background .1s}
   .pad button:active{background:#232323}
   .pad button.act{font-size:14px;color:var(--ink3);font-weight:500}
+  /* PINs are 4-8 digits (auth.PIN_MIN_LENGTH..PIN_MAX_LENGTH), so the pad
+     cannot guess when one is finished: it submits on this key, on Enter,
+     or on its own only once the eighth (last possible) digit lands. */
+  .pin-go{display:block;width:100%;max-width:300px;margin:14px auto 0}
 
   .err{color:var(--red);font-size:14px;text-align:center;margin:18px 0 0;min-height:20px}
   .empty{background:var(--card);border:1px solid var(--line);border-radius:12px;
@@ -122,6 +126,7 @@
         <button type="button" data-d="0">0</button>
         <button type="button" class="act" onclick="del()">&#9003;</button>
       </div>
+      <button type="button" id="pin-go" class="cbtn cbtn-primary pin-go" onclick="submitPin()" disabled>Sign in</button>
       <div class="err" id="err"></div>
     </div>
   {% endif %}
@@ -175,7 +180,7 @@
 
    <div class="sustep" id="su-pin">
      <h1>Choose a PIN</h1>
-     <p class="hint">4 digits. You'll use this to sign in here and on the restaurant's tablet — don't share it.</p>
+     <p class="hint">4 to 8 digits. You'll use this to sign in here and on the restaurant's tablet — don't share it.</p>
      <div class="dots" id="su-dots"><i></i><i></i><i></i><i></i></div>
      <div class="pad">
        <button type="button" data-sd="1">1</button>
@@ -191,6 +196,7 @@
        <button type="button" data-sd="0">0</button>
        <button type="button" class="act" onclick="suDelPin()">&#9003;</button>
      </div>
+     <button type="button" id="su-pin-go" class="cbtn cbtn-primary pin-go" onclick="suSetPin()" disabled>Set PIN</button>
    </div>
 
    <div class="err" id="su-err"></div>
@@ -206,11 +212,22 @@
 
   function $(id){ return document.getElementById(id); }
 
-  function paint(){
-    var dots = $('dots').children;
-    for (var i = 0; i < dots.length; i++) {
-      dots[i].className = i < pin.length ? 'f' : '';
+  var PIN_MIN = 4, PIN_MAX = 8;
+
+  /* One dot per digit typed, never fewer than four, so a 6-digit PIN
+     shows six filled dots rather than stopping at four. */
+  function paintDots(box, n){
+    var want = n > PIN_MIN ? n : PIN_MIN;
+    while (box.children.length < want) { box.appendChild(document.createElement('i')); }
+    while (box.children.length > want) { box.removeChild(box.lastChild); }
+    for (var i = 0; i < box.children.length; i++) {
+      box.children[i].className = i < n ? 'f' : '';
     }
+  }
+
+  function paint(){
+    paintDots($('dots'), pin.length);
+    $('pin-go').disabled = busy || pin.length < PIN_MIN;
   }
 
   window.clearPin = function(){ pin = ""; paint(); $('err').textContent = ""; };
@@ -235,21 +252,22 @@
   var keys = document.querySelectorAll('.pad button[data-d]');
   for (var k = 0; k < keys.length; k++) {
     keys[k].addEventListener('click', function(){
-      if (busy || pin.length >= 8) return;
+      if (busy || pin.length >= PIN_MAX) return;
       pin += this.getAttribute('data-d');
       paint();
-      if (pin.length === 4) submit();
+      if (pin.length === 8) submit();
     });
   }
 
   document.addEventListener('keydown', function(e){
     if (membershipId === null) return;
-    if (e.key >= '0' && e.key <= '9' && pin.length < 8) {
+    if (busy) return;
+    if (e.key >= '0' && e.key <= '9' && pin.length < PIN_MAX) {
       pin += e.key; paint();
-      if (pin.length === 4) submit();
+      if (pin.length === 8) submit();
     } else if (e.key === 'Backspace') {
       del();
-    } else if (e.key === 'Enter' && pin.length >= 4) {
+    } else if (e.key === 'Enter' && pin.length >= PIN_MIN) {
       submit();
     }
   });
@@ -288,11 +306,13 @@
   }
 
   function submit(){
-    if (busy || membershipId === null) return;
+    if (busy || membershipId === null || pin.length < PIN_MIN) return;
     busy = true;
+    paint();
     $('err').textContent = "";
     post(0);
   }
+  window.submitPin = submit;
 
   /* ── Self-signup ──────────────────────────────────────────────────────
      phone -> texted code -> join code -> claim a name -> set a PIN.
@@ -311,7 +331,7 @@
     $('su-err').textContent = "";
   }
 
-  function suFail(msg){ suBusy = false; $('su-err').textContent = msg; }
+  function suFail(msg){ suBusy = false; $('su-err').textContent = msg; suPaintPin(); }
 
   function suPost(path, body, done){
     fetch(path, {
@@ -467,10 +487,8 @@
   }
 
   function suPaintPin(){
-    var dots = $('su-dots').children;
-    for (var i = 0; i < dots.length; i++) {
-      dots[i].className = i < suPin.length ? 'f' : '';
-    }
+    paintDots($('su-dots'), suPin.length);
+    $('su-pin-go').disabled = suBusy || suPin.length < PIN_MIN;
   }
 
   window.suClearPin = function(){ suPin = ""; suPaintPin(); $('su-err').textContent = ""; };
@@ -479,16 +497,17 @@
   var suKeys = document.querySelectorAll('.pad button[data-sd]');
   for (var sk = 0; sk < suKeys.length; sk++) {
     suKeys[sk].addEventListener('click', function(){
-      if (suBusy || suPin.length >= 8) return;
+      if (suBusy || suPin.length >= PIN_MAX) return;
       suPin += this.getAttribute('data-sd');
       suPaintPin();
-      if (suPin.length === 4) suClaim();
+      if (suPin.length === 8) suClaim();
     });
   }
 
   function suClaim(){
-    if (suBusy) return;
+    if (suBusy || suPin.length < PIN_MIN) return;
     suBusy = true;
+    suPaintPin();
     $('su-err').textContent = "";
     suPost('/staff/api/signup/claim', {
       signup_token: suToken, join_code: suJoin,
@@ -500,6 +519,7 @@
       suFail(d.error || 'Could not finish setting up your account.');
     });
   }
+  window.suSetPin = suClaim;
 })();
 </script>
 </body>

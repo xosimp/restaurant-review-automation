@@ -5140,16 +5140,19 @@ def staff_schedule_page(token):
     shifts = employee_shifts_from_csv(share.get("schedule_csv") or "", share["employee_name"])
     mark_schedule_share_viewed(token)
 
-    # Whatever they last told us, so the form comes back pre-ticked rather
-    # than making them re-enter it every week.
-    unavailable = []
+    # Whatever they last told us — days and note — so the form comes back
+    # pre-filled rather than making them re-enter it every week, and a
+    # re-save cannot silently blank the note (CLIENT-11).
+    unavailable, saved_note = [], ""
     for row in get_staff_availability(share["restaurant_id"]):
         if (row.get("employee_name") or "").strip().lower() == share["employee_name"].strip().lower():
             try:
                 unavailable = _json_av.loads(row.get("unavailable_days") or "[]")
             except Exception:
                 unavailable = []
+            saved_note = row.get("notes") or ""
             break
+    from time_utils import mdy as _mdy
 
     # The availability form below is a plain HTML POST, not a fetch, so it
     # can't use the dashboard's fetch wrapper to supply the CSRF header —
@@ -5169,14 +5172,16 @@ def staff_schedule_page(token):
         "staff_schedule.html",
         restaurant_name=share.get("restaurant_name") or "",
         employee_name=share["employee_name"],
-        week_start=share.get("week_start") or "",
-        week_end=share.get("week_end") or "",
-        shifts=shifts,
+        week_start=_mdy(share.get("week_start")),
+        week_end=_mdy(share.get("week_end")),
+        shifts=[dict(s, date_label=_mdy(s.get("date"))) for s in shifts],
         total_hours=round(sum(s["hours"] for s in shifts), 1),
         token=token,
         days=DAY_NAMES,
         unavailable_days=unavailable,
+        note=saved_note,
         saved=request.args.get("saved") == "1",
+        all_days_blocked=request.args.get("error") == "all_days",
         csrf_token=csrf_token,
     ))
     if not request.cookies.get(_CSRF_COOKIE):
@@ -5204,7 +5209,6 @@ def staff_availability_submit(token):
     """
     from models import get_schedule_share, save_staff_availability, get_staff_availability
     from ai_utils import ai_rate_limited
-    import json as _json_av
 
     share = get_schedule_share(token)
     if not share:
@@ -5219,22 +5223,25 @@ def staff_availability_submit(token):
     if ai_rate_limited(f"staffavail:{ip}", max_calls=20, window_secs=300):
         return "Too many updates just now — try again in a few minutes.", 429
 
-    submitted = [d for d in request.form.getlist("unavailable") if d in DAY_NAMES]
-    note = (request.form.get("note") or "").strip()[:300]
+    # The same rule the portal applies (CLIENT-11): 7 of 7 blocked is
+    # refused, and available_days is the complement, never a stale list.
+    from staff_routes import availability_from_submission
+    available, blocked, note, err = availability_from_submission(
+        request.form.getlist("unavailable"), request.form.get("note"))
+    if err:
+        return redirect(f"/s/{token}?error=all_days")
 
-    # Preserve whatever available_days the manager may have set; this form
-    # only speaks to the days someone CAN'T work.
-    existing_available = []
-    for row in get_staff_availability(share["restaurant_id"]):
-        if (row.get("employee_name") or "").strip().lower() == share["employee_name"].strip().lower():
-            try:
-                existing_available = _json_av.loads(row.get("available_days") or "[]")
-            except Exception:
-                existing_available = []
-            break
+    # The page pre-fills the note and says so with note_prefilled, so there a
+    # blank field means "clear it". A form without it (a tab opened before the
+    # field was pre-filled) never showed the note, so a blank keeps it.
+    if note is None and not request.form.get("note_prefilled"):
+        for row in get_staff_availability(share["restaurant_id"]):
+            if (row.get("employee_name") or "").strip().lower() == share["employee_name"].strip().lower():
+                note = row.get("notes") or None
+                break
 
     save_staff_availability(share["restaurant_id"], share["employee_name"],
-                            existing_available, submitted, note or None)
+                            available, blocked, note)
     return redirect(f"/s/{token}?saved=1")
 
 

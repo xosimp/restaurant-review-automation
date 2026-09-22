@@ -151,13 +151,11 @@ def test_both_pin_pads_are_still_on_the_page():
     assert "function submit()" in page or "submit()" in page
 
 
-@pytest.mark.xfail(strict=True, reason="CLIENT-3: the sign-in pad auto-submits after 4 digits, so a 5-8 digit PIN the server accepts can never be entered")
 def test_the_sign_in_pad_can_enter_every_pin_length_the_server_accepts():
     for n in _auto_submit_lengths(_read("staff_login.html"), "pin"):
         assert n >= auth.PIN_MAX_LENGTH, "auto-submits at %d digits" % n
 
 
-@pytest.mark.xfail(strict=True, reason="CLIENT-3: the self-signup pad also claims the account after 4 digits")
 def test_the_self_signup_pad_can_enter_every_pin_length_the_server_accepts():
     for n in _auto_submit_lengths(_read("staff_login.html"), "suPin"):
         assert n >= auth.PIN_MAX_LENGTH, "auto-submits at %d digits" % n
@@ -183,7 +181,6 @@ def test_the_portal_keeps_available_and_unavailable_days_disjoint(client, db_pat
     assert row["notes"] == "not before 10am"
 
 
-@pytest.mark.xfail(strict=True, reason="CLIENT-11: the /s/ link's note input has no value, so the saved note is never shown")
 def test_the_link_form_shows_the_note_already_saved(client, db_path):
     rid = _restaurant(db_path)
     token = _share(db_path, rid)
@@ -193,7 +190,6 @@ def test_the_link_form_shows_the_note_already_saved(client, db_path):
     assert 'value="away Oct 3-6"' in field, field
 
 
-@pytest.mark.xfail(strict=True, reason="CLIENT-11: re-saving from the email link with the (never pre-filled) note blank erases the saved note")
 def test_resaving_from_the_link_keeps_the_existing_note(client, db_path):
     rid = _restaurant(db_path)
     token = _share(db_path, rid)
@@ -203,7 +199,6 @@ def test_resaving_from_the_link_keeps_the_existing_note(client, db_path):
     assert _row(db_path, rid)["notes"] == "not before 10am"
 
 
-@pytest.mark.xfail(strict=True, reason="CLIENT-11: the email link stores 'all 7 days blocked', which the portal refuses")
 def test_the_link_refuses_all_seven_days_blocked_like_the_portal(client, db_path):
     rid = _restaurant(db_path)
     token = _share(db_path, rid)
@@ -212,7 +207,6 @@ def test_the_link_refuses_all_seven_days_blocked_like_the_portal(client, db_path
     assert sorted(json.loads(_row(db_path, rid)["unavailable_days"])) != sorted(DAYS)
 
 
-@pytest.mark.xfail(strict=True, reason="CLIENT-11: the link keeps the old available_days, so a newly blocked day is stored as both available and unavailable")
 def test_a_link_save_never_leaves_a_day_both_available_and_unavailable(client, db_path):
     rid = _restaurant(db_path)
     token = _share(db_path, rid)
@@ -236,7 +230,6 @@ def test_the_link_page_renders_the_week_and_shift_dates(client, db_path):
     assert re.search(r'class="date">[^<]+<', page)
 
 
-@pytest.mark.xfail(strict=True, reason="CLIENT-45: the /s/ page prints 'Week of 2026-09-28 – 2026-10-04' and ISO shift dates")
 def test_the_link_page_dates_are_mdy(client, db_path):
     rid = _restaurant(db_path)
     token = _share(db_path, rid)
@@ -251,7 +244,6 @@ def test_the_portal_has_an_mdy_formatter():
     assert "function mdyShort(iso)" in _read("staff_portal.html")
 
 
-@pytest.mark.xfail(strict=True, reason="CLIENT-45: the portal's 'Last saved' prints String(updated_at).slice(0, 10), an ISO date")
 def test_the_portal_last_saved_line_is_mdy():
     assert "'Last saved ' + esc(String(d.updated_at).slice(0, 10))" not in _read("staff_portal.html")
 
@@ -334,7 +326,6 @@ def test_an_expired_shift_session_is_told_so_in_json(client, db_path):
     assert r.get_json()["session_expired"] is True
 
 
-@pytest.mark.xfail(strict=True, reason="CLIENT-47: the portal never reads session_expired, so an ended shift session shows 'Could not load your shifts.' with no way back")
 def test_the_portal_sends_an_expired_session_back_to_sign_in():
     assert "session_expired" in _read("staff_portal.html")
 
@@ -346,7 +337,6 @@ def test_the_task_checkbox_handler_still_posts():
     assert "/staff/api/tasks/complete" in page
 
 
-@pytest.mark.xfail(strict=True, reason="CLIENT audit staff edge 15: a refused or failed task toggle just reloads the list; the employee is never told it didn't save")
 def test_a_failed_task_toggle_is_shown_to_the_employee():
     page = _read("staff_portal.html")
     i = page.index("'/staff/api/tasks/complete'")
@@ -354,13 +344,11 @@ def test_a_failed_task_toggle_is_shown_to_the_employee():
     assert "d.ok" in chain or "!r.ok" in chain, chain
 
 
-@pytest.mark.xfail(strict=True, reason="CLIENT-61: the portal's task date is the browser's local date, not the restaurant's")
 def test_the_task_date_does_not_come_from_the_browser_clock():
     page = _read("staff_portal.html")
     today_fn = page[page.index("function today()"):page.index("}", page.index("function today()")) + 1]
     assert "new Date()" not in today_fn, today_fn
 
 
-@pytest.mark.xfail(strict=True, reason="CLIENT-48: the portal reports shift-request errors with window.alert()")
 def test_the_portal_reports_errors_without_alert():
     assert "window.alert(" not in _read("staff_portal.html")
