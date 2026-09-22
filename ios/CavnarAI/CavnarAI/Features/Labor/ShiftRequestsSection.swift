@@ -69,9 +69,17 @@ struct ShiftRequestsSection: View {
         return VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 10) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(req.employeeName ?? "Open shift")
-                        .font(.cavnarBody(15, weight: 700))
-                        .foregroundStyle(Color.cavnarInk)
+                    HStack(spacing: 6) {
+                        Text(req.employeeName ?? "Open shift")
+                            .font(.cavnarBody(15, weight: 700))
+                            .foregroundStyle(Color.cavnarInk)
+                        kindPill(req)
+                    }
+                    if let swap = req.swapLabel {
+                        // "Ana ↔ Bob: Mon 4:00pm for Wed 4:00pm"
+                        HomeMixedText.make(swap, size: 14, weight: 600, color: .cavnarInk2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                     HomeMixedText.make(req.whenLabel + (req.reason.map { " · \($0)" } ?? ""),
                                        size: 13.5, weight: 500, color: .cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
@@ -93,7 +101,9 @@ struct ShiftRequestsSection: View {
                     .disabled(busy)
                     Button {
                         Haptic.light()
-                        if viewModel.activeNames.filter({ $0 != req.employeeName }).isEmpty {
+                        // A swap moves both shifts as asked — there is no
+                        // replacement to name. The picker is for drops.
+                        if req.isSwap || viewModel.activeNames.filter({ $0 != req.employeeName }).isEmpty {
                             Task { await viewModel.decideShiftRequest(req.id, approve: true) }
                         } else {
                             choosingFor = req
@@ -112,6 +122,16 @@ struct ShiftRequestsSection: View {
         .padding(12)
         .background(Color.white.opacity(0.03))
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private func kindPill(_ req: ShiftRequest) -> some View {
+        Text(req.kindLabel.uppercased())
+            .font(.cavnarBody(9.5, weight: 700))
+            .tracking(0.5)
+            .foregroundStyle(req.isSwap ? Color.cavnarBlue : Color.cavnarInk3)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1)
+            .background(Capsule().fill(req.isSwap ? Color.cavnarBlue.opacity(0.14) : Color.white.opacity(0.06)))
     }
 
     private func statusLabel(_ status: String) -> String {

@@ -91,6 +91,14 @@ struct LaborView: View {
                                     scrollToReveal(Self.demandID, proxy: proxy)
                                 }
                                 .id(Self.demandID)
+                                // The measured layer behind the draft:
+                                // outcomes, rotation, what staff keep doing.
+                                ScheduleIntelSection(viewModel: setupViewModel, onExpand: {
+                                    scrollToReveal(Self.intelID, proxy: proxy)
+                                }, onAddPair: { pair in
+                                    Task { await setupViewModel.addPair(a: pair.a, b: pair.b, kind: pair.kind ?? "prefer", note: pair.evidence) }
+                                })
+                                .id(Self.intelID)
                                 // Rating the team, then the targets those
                                 // ratings feed. In that order because a
                                 // target means nothing before anyone is
@@ -314,6 +322,8 @@ struct LaborView: View {
                     action: { Task { await viewModel.generateSchedule() } }
                 )
                 .padding(.top, 2)
+                // Which week: next (the default), the one after, or a date.
+                GenerateWeekPicker(viewModel: viewModel)
             }
 
             // "Building the Week" — shifts fill a 7-day grid while an ember
@@ -323,7 +333,10 @@ struct LaborView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     CavnarWeekBuilder(caption: viewModel.joinedRunningGeneration
                                       ? "Joining the generation already running…"
-                                      : "Building next week's schedule")
+                                      : (!viewModel.regeneratingDates.isEmpty
+                                         ? "Redoing \(viewModel.regeneratingDates.count) \(viewModel.regeneratingDates.count == 1 ? "day" : "days") — the rest are kept"
+                                         : (viewModel.generateWeek == .next ? "Building next week's schedule"
+                                            : "Building the schedule for \(viewModel.generateWeek.label)")))
                     if viewModel.joinedRunningGeneration {
                         Text("Somebody else started this week's draft moments ago — from the web, or another phone. You'll get the same result when it lands.")
                             .font(.cavnarBody(13.5))
@@ -492,6 +505,7 @@ struct LaborView: View {
     private static let requestsID = "labor-shift-requests"
     private static let rosterID = "labor-roster"
     private static let demandID = "labor-demand"
+    private static let intelID = "labor-intel"
     private static let teamID = "labor-team"
     private static let targetsID = "labor-targets"
 
@@ -773,6 +787,10 @@ struct LaborView: View {
                     if let budget = result.hoursBudget, budget > 0, let scheduled = result.hoursScheduled {
                         parHoursBanner(budget: budget, scheduled: scheduled, dollars: result.laborBudgetDollars)
                     }
+                    // Cost, the budget trim, staggered starts, and what the
+                    // forecast could not see — each only when the payload
+                    // carried it.
+                    ScheduleWeekNotes(result: result)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .cavnarCard()
@@ -790,11 +808,22 @@ struct LaborView: View {
                 if let quality = result.quality, quality.checked {
                     ShiftQualityPanel(quality: quality, whatIf: result.whatIf,
                                       isRescoring: viewModel.isRescoringQuality,
-                                      overrideState: viewModel.overrideState)
+                                      overrideState: viewModel.overrideState,
+                                      recommendationDecisions: viewModel.recommendationDecisions,
+                                      onRecommendation: { text, accepted in
+                                          Task { await viewModel.recordRecommendation(text, accepted: accepted) }
+                                      },
+                                      suppressedKinds: viewModel.suppressedRecommendationKinds.isEmpty
+                                          ? (quality.suppressedRecommendationKinds ?? [])
+                                          : viewModel.suppressedRecommendationKinds)
                 }
 
                 if let rows = result.previewRows, !rows.isEmpty {
                     fullScheduleTable(rows, csv: result.scheduleCsv)
+                    // Tick days on their headers; only those are redone.
+                    if result.historyId != nil {
+                        RedoSelectedDaysRow(viewModel: viewModel)
+                    }
                 }
 
                 // The schedule used to end at a CSV download — the people
@@ -1153,6 +1182,10 @@ struct LaborView: View {
     private func scheduleDayGroup(day: String, rows: [ScheduleRow]) -> some View {
         let morning = rows.filter { (Self.minutesFromMidnight($0.shiftStart) ?? Self.nightCutoffMinutes) < Self.nightCutoffMinutes }
         let night = rows.filter { (Self.minutesFromMidnight($0.shiftStart) ?? Self.nightCutoffMinutes) >= Self.nightCutoffMinutes }
+        let date = rows.first?.date
+        let holiday = viewModel.scheduleResult?.holiday(on: date)
+        let ticked = date.map { viewModel.selectedRedoDates.contains($0) } ?? false
+        let canRedo = viewModel.scheduleResult?.historyId != nil && date != nil
 
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
@@ -1167,6 +1200,38 @@ struct LaborView: View {
                 Text("\(rows.count) shift\(rows.count == 1 ? "" : "s")")
                     .font(.cavnarBody(14))
                     .foregroundStyle(Color.cavnarInk3)
+                // A holiday inside the week, with the lift when the record
+                // has one — an owner should never be surprised by the date.
+                if let holiday {
+                    HStack(spacing: 4) {
+                        Image(systemName: "star.fill").font(.system(size: 9, weight: .bold))
+                        HomeMixedText.make(holiday.label, size: 12, weight: 700, color: .cavnarAmber)
+                    }
+                    .foregroundStyle(Color.cavnarAmber)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(Color.cavnarAmber.opacity(0.14)))
+                    .accessibilityLabel(holiday.basedOn.map { "\(holiday.label), based on \($0)" } ?? holiday.label)
+                }
+                Spacer(minLength: 4)
+                if canRedo, let date {
+                    Button {
+                        viewModel.toggleRedoDate(date)
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: ticked ? "checkmark.square.fill" : "square")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(ticked ? Color.cavnarEmber : Color.cavnarInk3)
+                            Text("Redo")
+                                .font(.cavnarBody(12.5, weight: ticked ? 700 : 500))
+                                .foregroundStyle(ticked ? Color.cavnarEmber : Color.cavnarInk3)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(ticked ? "Redo \(day), ticked" : "Redo \(day)")
+                    .accessibilityAddTraits(ticked ? .isSelected : [])
+                }
             }
             VStack(alignment: .leading, spacing: 12) {
                 if !morning.isEmpty {

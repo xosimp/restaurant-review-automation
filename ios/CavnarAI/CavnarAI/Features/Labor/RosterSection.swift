@@ -19,7 +19,15 @@ struct RosterSection: View {
             badge: viewModel.roster.filter { !$0.isActive }.isEmpty ? nil : viewModel.roster.filter { !$0.isActive }.count,
             tone: .neutral,
             isExpanded: $viewModel.rosterExpanded,
-            onExpand: { onExpand?(); Task { await viewModel.loadRoster() } }
+            onExpand: {
+                onExpand?()
+                Task {
+                    await viewModel.loadRoster()
+                    await viewModel.loadLearnedPatterns()
+                    // "Trained up" chips on the detail sheet read from intel.
+                    if viewModel.intel == nil { await viewModel.loadIntel() }
+                }
+            }
         ) {
             VStack(alignment: .leading, spacing: 14) {
                 Text("Who the generator may schedule, and how. Tap a person to set hours, days and status.")
@@ -62,6 +70,10 @@ struct RosterSection: View {
                     Text(error).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarRed)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+
+                if !viewModel.openSuggestions.isEmpty { suggestedPairsBlock }
+
+                if !viewModel.learnedPatterns.isEmpty { learnedPatternsBlock }
             }
         }
         .sheet(item: $selected) { member in
@@ -169,7 +181,7 @@ struct RosterSection: View {
                     Text("Schedule rules")
                         .font(.cavnarBody(14.5, weight: 700))
                         .foregroundStyle(Color.cavnarInk)
-                    Text("Rest, shift length, minors, role floors")
+                    Text("Rest, shift length, minors, floors, jurisdiction, arrivals, certifications, reservations")
                         .font(.cavnarBody(13))
                         .foregroundStyle(Color.cavnarInk3)
                 }
@@ -262,6 +274,100 @@ struct RosterSection: View {
     }
 }
 
+// MARK: - Suggested pairs & learned patterns
+
+extension RosterSection {
+    /// Pairs the record suggests. Never applied on their own: Add creates
+    /// the pair through the same POST the editor uses; Ignore hides it.
+    fileprivate var suggestedPairsBlock: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Suggested pairs")
+                .font(.cavnarBody(14.5, weight: 700))
+                .foregroundStyle(Color.cavnarInk)
+            Text("Two people whose shared dayparts ran clean. Nothing is applied until you add it.")
+                .font(.cavnarBody(13))
+                .foregroundStyle(Color.cavnarInk3)
+                .fixedSize(horizontal: false, vertical: true)
+            ForEach(viewModel.openSuggestions) { pair in
+                SuggestedPairRow(pair: pair, busy: viewModel.isSavingPair) {
+                    Task { await viewModel.addPair(a: pair.a, b: pair.b, kind: pair.kind ?? "prefer", note: pair.evidence) }
+                } onIgnore: {
+                    viewModel.ignoredSuggestions.insert(pair.id)
+                }
+            }
+        }
+    }
+
+    /// What the draft has learned from the manager's edits, each with
+    /// "Stop using this" / "Use again".
+    fileprivate var learnedPatternsBlock: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Learned from your edits")
+                .font(.cavnarBody(14.5, weight: 700))
+                .foregroundStyle(Color.cavnarInk)
+            Text("Moves you keep making become the draft's defaults. Stop one here and the next draft ignores it.")
+                .font(.cavnarBody(13))
+                .foregroundStyle(Color.cavnarInk3)
+                .fixedSize(horizontal: false, vertical: true)
+            VStack(spacing: 0) {
+                ForEach(viewModel.learnedPatterns) { pattern in
+                    learnedPatternRow(pattern)
+                    if pattern.id != viewModel.learnedPatterns.last?.id {
+                        Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
+                    }
+                }
+            }
+            if let error = viewModel.patternError {
+                Text(error).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarRed)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func learnedPatternRow(_ pattern: LearnedPattern) -> some View {
+        let dismissed = pattern.dismissed == true
+        let busy = viewModel.patternBusyKey == pattern.key
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: pattern.kind == "moved_off" ? "person.fill.xmark" : "person.fill.checkmark")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(dismissed ? Color.cavnarInk3 : (pattern.kind == "moved_off" ? Color.cavnarAmber : Color.cavnarGreen))
+                    .frame(width: 18)
+                    .padding(.top, 2)
+                VStack(alignment: .leading, spacing: 3) {
+                    HomeMixedText.make(pattern.text ?? "", size: 14, color: dismissed ? .cavnarInk3 : .cavnarInk2)
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 6) {
+                        if let n = pattern.times {
+                            HomeMixedText.make("\(n) \(n == 1 ? "time" : "times")", size: 12.5, color: .cavnarInk3)
+                        }
+                        Text(dismissed ? "not in use" : (pattern.active == true ? "in use" : "needs one more repeat"))
+                            .font(.cavnarBody(12.5, weight: 600))
+                            .foregroundStyle(dismissed ? Color.cavnarInk3 : (pattern.active == true ? Color.cavnarGreen : Color.cavnarInk3))
+                    }
+                }
+            }
+            if viewModel.canEditPatterns {
+                Button {
+                    Haptic.light()
+                    Task { await viewModel.setPattern(pattern.key, dismissed: !dismissed) }
+                } label: {
+                    Group {
+                        if busy { CavnarShimmerText(text: "Saving…") } else { Text(dismissed ? "Use again" : "Stop using this") }
+                    }
+                    .font(.cavnarBody(13.5, weight: 700))
+                    .foregroundStyle(dismissed ? Color.cavnarEmber : Color.cavnarInk3)
+                }
+                .buttonStyle(.plain)
+                .disabled(busy)
+                .padding(.leading, 26)
+            }
+        }
+        .padding(.vertical, 9)
+        .opacity(dismissed ? 0.7 : 1)
+    }
+}
+
 // MARK: - Detail sheet
 
 /// One person's settings, saved a field at a time as they change.
@@ -276,10 +382,13 @@ private struct RosterDetailSheet: View {
     @State private var minHours = ""
     @State private var maxHours = ""
     @State private var dayparts: [String: String] = [:]
+    @State private var windows: [String: TimeWindow] = [:]
+    @State private var certifications: [String] = []
     @State private var toast: String?
     @FocusState private var focused: Field?
 
     private enum Field: Hashable, CaseIterable { case minHours, maxHours }
+    @FocusState private var windowFocus: String?
 
     private var member: RosterMember? { viewModel.roster.first { $0.name == name } }
     private var busy: Bool { viewModel.savingFor == name }
@@ -299,6 +408,10 @@ private struct RosterDetailSheet: View {
                     statusSection
                     hoursSection
                     daypartSection
+                    windowsSection
+                    certificationsSection
+                    preferencesSection
+                    trainedUpSection
                     if let toast {
                         Text(toast)
                             .font(.cavnarBody(14))
@@ -323,6 +436,170 @@ private struct RosterDetailSheet: View {
             // "1" on the way to "16" never becomes the ceiling.
             if old == .minHours, new != .minHours { commitHours(min: true) }
             if old == .maxHours, new != .maxHours { commitHours(min: false) }
+        }
+        .onChange(of: windowFocus) { old, new in
+            // Same rule for a window: "10:0" on the way to "10:00am" is
+            // never sent. Commits once the field is left.
+            if old != nil, old != new { commitWindows() }
+        }
+    }
+
+    // MARK: Windows
+
+    /// The earliest they can start and the latest they can finish, per
+    /// weekday. Blank means no limit beyond the daypart above.
+    private var windowsSection: some View {
+        AccountSection(kicker: "Earliest and latest, by day") {
+            ForEach(Array(viewModel.days.enumerated()), id: \.element) { index, day in
+                HStack(spacing: 10) {
+                    Text(String(day.prefix(3)))
+                        .font(.cavnarBody(14.5, weight: 600))
+                        .foregroundStyle(Color.cavnarInk)
+                        .frame(width: 36, alignment: .leading)
+                    Spacer(minLength: 4)
+                    windowField("from", value: windowBinding(day, earliest: true), id: "\(day)|e")
+                    windowField("to", value: windowBinding(day, earliest: false), id: "\(day)|l")
+                }
+                .frame(minHeight: AccountKVRow<EmptyView>.rowHeight)
+                .padding(.vertical, 6)
+                .disabled(!editable)
+                if index < viewModel.days.count - 1 { AccountRowDivider() }
+            }
+            Text("Times like 10:00am or 9:00pm. Leave blank for no limit.")
+                .font(.cavnarBody(13))
+                .foregroundStyle(Color.cavnarInk3)
+                .padding(.top, 8)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func windowField(_ label: String, value: Binding<String>, id: String) -> some View {
+        HStack(spacing: 4) {
+            Text(label)
+                .font(.cavnarBody(11, weight: 700))
+                .foregroundStyle(Color.cavnarInk3)
+            TextField("—", text: value)
+                .font(.cavnarNumber(14, weight: 700))
+                .foregroundStyle(Color.cavnarInk)
+                .multilineTextAlignment(.center)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+                .focused($windowFocus, equals: id)
+                .frame(width: 78, height: 32)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color.cavnarPaper2))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(windowFocus == id ? Color.cavnarEmber : Color.cavnarPaper3, lineWidth: 1))
+        }
+    }
+
+    private func windowBinding(_ day: String, earliest: Bool) -> Binding<String> {
+        Binding(
+            get: { (earliest ? windows[day]?.earliest : windows[day]?.latest) ?? "" },
+            set: { text in
+                var w = windows[day] ?? TimeWindow()
+                if earliest { w.earliest = text } else { w.latest = text }
+                windows[day] = w
+            })
+    }
+
+    private func commitWindows() {
+        var cleaned: [String: TimeWindow] = [:]
+        for (day, w) in windows {
+            let e = (w.earliest ?? "").trimmingCharacters(in: .whitespaces).lowercased()
+            let l = (w.latest ?? "").trimmingCharacters(in: .whitespaces).lowercased()
+            if e.isEmpty && l.isEmpty { continue }
+            cleaned[day] = TimeWindow(earliest: e.isEmpty ? nil : e, latest: l.isEmpty ? nil : l)
+        }
+        let current = (member?.settings?.timeWindows ?? [:]).filter { !$0.value.isEmpty }
+        guard cleaned != current else { return }
+        Task { await viewModel.updateSettings(.init(employeeName: name, timeWindows: cleaned)) }
+    }
+
+    // MARK: Certifications
+
+    private var certificationsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            AccountKicker(text: "Certifications")
+            Text("What they hold. A role that needs one is only given to somebody who has it.")
+                .font(.cavnarBody(13))
+                .foregroundStyle(Color.cavnarInk3)
+                .fixedSize(horizontal: false, vertical: true)
+            if viewModel.certificationChoices.isEmpty {
+                Text("No certifications are defined yet.")
+                    .font(.cavnarBody(14))
+                    .foregroundStyle(Color.cavnarInk3)
+                    .italic()
+            } else {
+                AccountFlowLayout(spacing: 6) {
+                    ForEach(viewModel.certificationChoices, id: \.self) { cert in
+                        let on = certifications.contains(cert)
+                        Button {
+                            guard editable else { return }
+                            Haptic.selection()
+                            var next = certifications
+                            if on { next.removeAll { $0 == cert } } else { next.append(cert) }
+                            certifications = next
+                            Task { await viewModel.updateSettings(.init(employeeName: name, certifications: next)) }
+                        } label: {
+                            AccountChip(text: cert, muted: !on)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(!editable)
+                        .accessibilityAddTraits(on ? .isSelected : [])
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: Preferences (read-only, from the portal)
+
+    @ViewBuilder
+    private var preferencesSection: some View {
+        let s = member?.settings
+        let parts = s?.preferredDayparts ?? []
+        let hours = s?.desiredHours
+        if !parts.isEmpty || (hours ?? 0) > 0 {
+            AccountSection(kicker: "What they asked for") {
+                if !parts.isEmpty {
+                    AccountKVRow(label: "Prefers", showsDivider: (hours ?? 0) > 0) {
+                        HStack(spacing: 6) {
+                            ForEach(parts, id: \.self) { part in AccountChip(text: part.capitalized, muted: true) }
+                        }
+                    }
+                }
+                if let hours, hours > 0 {
+                    AccountKVRow(label: "Wants", showsDivider: false) {
+                        AccountValue(text: "\(hours.commaFormatted)h a week", isNumber: true)
+                    }
+                }
+                Text("Stated in the staff portal — theirs to change, not yours.")
+                    .font(.cavnarBody(13))
+                    .foregroundStyle(Color.cavnarInk3)
+                    .padding(.top, 8)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    // MARK: Trained up (from intel)
+
+    @ViewBuilder
+    private var trainedUpSection: some View {
+        if let roles = viewModel.intel?.couldHold?[name], !roles.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                AccountKicker(text: "Trained up")
+                Text("Roles the record says they could hold — enough shifts beside a rated colleague.")
+                    .font(.cavnarBody(13))
+                    .foregroundStyle(Color.cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+                AccountFlowLayout(spacing: 6) {
+                    ForEach(roles, id: \.self) { role in AccountChip(text: role) }
+                }
+            }
         }
     }
 
@@ -449,6 +726,8 @@ private struct RosterDetailSheet: View {
         var parts: [String: String] = [:]
         for day in viewModel.days { parts[day] = s?.daypartAvailability?[day] ?? "any" }
         dayparts = parts
+        windows = s?.timeWindows ?? [:]
+        certifications = s?.certifications ?? []
     }
 
     private static func hours(_ v: Double) -> String {

@@ -43,8 +43,17 @@ struct ScheduleHistoryDetailView: View {
                         }
                         .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: false))
 
+                        // A draft replaced by a newer draft of the same
+                        // week — kept for the record, read as history.
+                        if let newer = detail.supersededBy, newer > 0 {
+                            supersededLine(by: newer)
+                        }
+
                         if let publishedAt = detail.publishedAt, !publishedAt.isEmpty {
                             publishedLine(at: publishedAt, by: detail.publishedBy)
+                        }
+                        if let republishedAt = detail.republishedAt, !republishedAt.isEmpty {
+                            republishedLine(at: republishedAt)
                         }
 
                         if let summary = detail.summary, !summary.isEmpty {
@@ -96,11 +105,16 @@ struct ScheduleHistoryDetailView: View {
                             .cavnarCard()
                         }
                         versionsSection
+                        if let whatIf = detail.storedWhatIf, whatIf.ran {
+                            whatIfBlock(whatIf)
+                        }
                         if let rows = detail.previewRows, !rows.isEmpty {
                             scheduleByDay(rows)
                         }
                     }
                     .padding(20)
+                    // A superseded draft reads as the record it is.
+                    .opacity((detail.supersededBy ?? 0) > 0 ? 0.82 : 1)
                 }
             } else if viewModel.isLoading {
                 // maxWidth/maxHeight matter here, not just centering —
@@ -207,6 +221,80 @@ struct ScheduleHistoryDetailView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.cavnarGreen.opacity(0.06))
         .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+    }
+
+    /// "Updated 9/22/26 · 3:10pm after sending" — a save after the week
+    /// went out re-emailed the people whose shifts moved.
+    private func republishedLine(at republishedAt: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: "arrow.triangle.2.circlepath")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(Color.cavnarBlue)
+            HomeMixedText.make("Updated " + CavnarDate.mdyTime(republishedAt) + " after sending",
+                               size: 14, weight: 600, color: .cavnarBlue)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.cavnarBlue.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+    }
+
+    /// De-emphasised: this draft was replaced by a newer draft of the
+    /// same week. Nothing here went to staff from this row.
+    private func supersededLine(by newer: Int) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: "doc.on.doc")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(Color.cavnarInk3)
+            HomeMixedText.make("Replaced by a newer draft (#\(newer)) — kept for the record.",
+                               size: 13.5, weight: 600, color: .cavnarInk3)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.white.opacity(0.03))
+        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+    }
+
+    /// The what-if pass stored with the week: what the engine tried and
+    /// what it would have bought. Same headcount, only who works which.
+    private func whatIfBlock(_ whatIf: ScheduleWhatIf) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("WHAT IF")
+                .font(.cavnarBody(12.5, weight: 700))
+                .tracking(1.4)
+                .foregroundStyle(Color.cavnarInk3)
+            if let verdict = whatIf.verdict, !verdict.isEmpty {
+                HomeMixedText.make(verdict, size: 14.5, weight: 600, color: .cavnarInk)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HomeMixedText.make(
+                [whatIf.evaluated.map { "\($0) arrangements tried" },
+                 whatIf.baselineScore.flatMap { b in whatIf.bestScore.map { "\(b) → \($0)" } },
+                 whatIf.improvement.map { $0 > 0 ? "+\($0) available" : "nothing better found" }]
+                    .compactMap { $0 }.joined(separator: " · "),
+                size: 13, color: .cavnarInk3)
+            ForEach(whatIf.swaps ?? []) { swap in
+                HStack(alignment: .top, spacing: 7) {
+                    Image(systemName: "arrow.left.arrow.right")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(Color.cavnarBlue)
+                        .padding(.top, 4)
+                    VStack(alignment: .leading, spacing: 1) {
+                        HomeMixedText.make("\(swap.from.employee ?? "—") ↔ \(swap.to.employee ?? "—") · +\(swap.gain)",
+                                           size: 13.5, weight: 600, color: .cavnarInk)
+                        HomeMixedText.make(swap.reason, size: 13, color: .cavnarInk3)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+            if let reason = whatIf.reason, !reason.isEmpty, (whatIf.swaps ?? []).isEmpty {
+                HomeMixedText.make(reason, size: 13, color: .cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cavnarCard()
     }
 
     // MARK: Versions

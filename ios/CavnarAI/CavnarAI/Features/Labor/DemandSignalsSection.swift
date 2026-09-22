@@ -18,13 +18,33 @@ struct DemandSignalsSection: View {
             badge: viewModel.signals.isEmpty ? nil : viewModel.signals.count,
             tone: .neutral,
             isExpanded: $viewModel.demandExpanded,
-            onExpand: { onExpand?(); Task { await viewModel.loadSignals() } }
+            onExpand: {
+                onExpand?()
+                Task {
+                    await viewModel.loadSignals()
+                    // The feed's status line comes with the rules.
+                    if viewModel.reservationFeed == nil { await viewModel.loadRules() }
+                }
+            }
         ) {
             VStack(alignment: .leading, spacing: 14) {
                 Text("The next 60 days. A party of forty on a Tuesday is the difference between a quiet night and a slammed one, and the history alone cannot see it coming.")
                     .font(.cavnarBody(13.5))
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
+
+                // The reservation system's own sentence — connected, keyed
+                // but not live, or nothing at all. Set under Schedule rules.
+                if let feed = viewModel.reservationFeed, let message = feed.message, !message.isEmpty {
+                    HStack(alignment: .top, spacing: 7) {
+                        Image(systemName: feed.live == true ? "antenna.radiowaves.left.and.right" : "antenna.radiowaves.left.and.right.slash")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(feed.live == true ? Color.cavnarGreen : Color.cavnarInk3)
+                            .padding(.top, 2)
+                        HomeMixedText.make(message, size: 12.5, color: .cavnarInk3)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
 
                 HStack(spacing: 10) {
                     Button {

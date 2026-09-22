@@ -19,6 +19,12 @@ struct ShiftQualityPanel: View {
     /// as catching up rather than as the new truth.
     var isRescoring: Bool = false
     var overrideState: LaborViewModel.OverrideState = .idle
+    /// What the owner has said about each recommendation ("accepted" /
+    /// "dismissed", by text) and where a ✓ or ✕ goes. When no handler is
+    /// given the recommendations read as plain warnings, as before.
+    var recommendationDecisions: [String: String] = [:]
+    var onRecommendation: ((String, Bool) -> Void)? = nil
+    var suppressedKinds: [String] = []
 
     @State private var expandedShift: String?
     @State private var showingReasoning = false
@@ -31,6 +37,8 @@ struct ShiftQualityPanel: View {
                 dimensionGrid(dimensions)
             }
             if !warnings.isEmpty { warningBlock }
+            if onRecommendation != nil, let recs = quality.recommendations, !recs.isEmpty { recommendationsBlock(recs) }
+            if !suppressedKinds.isEmpty { hiddenKindsNote }
             shiftStrip
             reasoningBlock
         }
@@ -139,8 +147,82 @@ struct ShiftQualityPanel: View {
             "\(shift.day) \(shift.daypart == "morning" ? "lunch" : "dinner") came in at "
             + "\(shift.score), under the \(shift.minQuality) this \(shift.label.lowercased()) expects."
         }
-        out.append(contentsOf: quality.recommendations ?? [])
+        // With a decision handler the recommendations get their own block
+        // below, each with ✓ / ✕; without one they read here as before.
+        if onRecommendation == nil { out.append(contentsOf: quality.recommendations ?? []) }
         return Array(out.prefix(5))
+    }
+
+    // MARK: Recommendations
+
+    /// Each one with ✓ (did it) / ✕ (not for us). The answer goes to the
+    /// ledger that decides which kinds keep being shown.
+    private func recommendationsBlock(_ recs: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("RECOMMENDATIONS")
+                .font(.cavnarBody(12, weight: 700))
+                .tracking(1.3)
+                .foregroundStyle(Color.cavnarInk3)
+            ForEach(recs, id: \.self) { rec in
+                let decision = recommendationDecisions[rec]
+                HStack(alignment: .top, spacing: 8) {
+                    Circle()
+                        .fill(decision == "accepted" ? Color.cavnarGreen : (decision == "dismissed" ? Color.cavnarInk3 : Color.cavnarAmber))
+                        .frame(width: 5, height: 5)
+                        .padding(.top, 6)
+                    HomeMixedText.make(rec, size: 14.5, color: decision == "dismissed" ? .cavnarInk3 : .cavnarInk2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .strikethrough(decision == "dismissed", color: Color.cavnarInk3)
+                    Spacer(minLength: 4)
+                    HStack(spacing: 6) {
+                        decisionButton("checkmark", on: decision == "accepted", tone: .cavnarGreen,
+                                       label: "Did it") { onRecommendation?(rec, true) }
+                        decisionButton("xmark", on: decision == "dismissed", tone: .cavnarInk3,
+                                       label: "Not for us") { onRecommendation?(rec, false) }
+                    }
+                }
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.cavnarAmber.opacity(0.07))
+        )
+    }
+
+    private func decisionButton(_ symbol: String, on: Bool, tone: Color, label: String,
+                                action: @escaping () -> Void) -> some View {
+        Button {
+            Haptic.light()
+            action()
+        } label: {
+            Image(systemName: symbol)
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(on ? Color.cavnarPaper : tone)
+                .frame(width: 28, height: 28)
+                .background(Circle().fill(on ? tone : tone.opacity(0.12)))
+                .overlay(Circle().strokeBorder(tone.opacity(on ? 0 : 0.35), lineWidth: 1))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+        .accessibilityAddTraits(on ? .isSelected : [])
+    }
+
+    /// Kinds the engine left out because the owner never acts on them.
+    /// The intel card lists them and says how to bring one back.
+    private var hiddenKindsNote: some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: "eye.slash")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(Color.cavnarInk3)
+                .padding(.top, 2)
+            HomeMixedText.make(
+                "\(suppressedKinds.count) recommendation \(suppressedKinds.count == 1 ? "kind" : "kinds") hidden — see What the record says.",
+                size: 12.5, color: .cavnarInk3)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     private var warningBlock: some View {

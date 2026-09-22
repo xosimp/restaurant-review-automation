@@ -23,6 +23,7 @@ struct ScheduleReviewPanel: View {
         VStack(alignment: .leading, spacing: 14) {
             header
             if let review {
+                kindChips
                 if let lines = review.lines, !lines.isEmpty { linesBlock(lines) }
                 if let fixes = review.fixes, !fixes.isEmpty { fixesBlock(fixes) }
                 if let unfixed = review.unfixed, !unfixed.isEmpty { unfixedBlock(unfixed) }
@@ -40,6 +41,17 @@ struct ScheduleReviewPanel: View {
             RoundedRectangle(cornerRadius: CavnarRadius.card, style: .continuous)
                 .strokeBorder(tone.opacity(0.35), lineWidth: 1))
         .animation(.easeOut(duration: 0.22), value: showingAllLines)
+        .sheet(item: Binding(
+            get: { viewModel.saveConflict.map { ConflictBox(conflict: $0) } },
+            set: { if $0 == nil { viewModel.saveConflict = nil } })) { box in
+            SaveConflictSheet(viewModel: viewModel, conflict: box.conflict)
+        }
+    }
+
+    /// Identifiable wrapper so the 409 can drive `.sheet(item:)`.
+    private struct ConflictBox: Identifiable {
+        let conflict: SaveConflict
+        var id: String { "\(conflict.latestVersion ?? 0)-\(conflict.savedBy ?? "")" }
     }
 
     // MARK: Header
@@ -87,6 +99,40 @@ struct ScheduleReviewPanel: View {
         .padding(.vertical, 4)
         .background(Capsule().fill(tone.opacity(0.14)))
         .accessibilityLabel("\(n) \(word) rule \(n == 1 ? "break" : "breaks")")
+    }
+
+    // MARK: Kinds
+
+    /// One chip per rule kind the week breaks, in the server's own words
+    /// (`label` on each violation) — so a new kind needs no client change.
+    @ViewBuilder
+    private var kindChips: some View {
+        let violations = result.ruleViolations ?? []
+        if !violations.isEmpty {
+            let grouped = Dictionary(grouping: violations) { $0.kind ?? "" }
+            let kinds = grouped.keys.sorted { a, b in
+                let ha = grouped[a]?.first?.isHard ?? false, hb = grouped[b]?.first?.isHard ?? false
+                return ha != hb ? ha : a < b
+            }
+            AccountFlowLayout(spacing: 6) {
+                ForEach(kinds, id: \.self) { kind in
+                    let items = grouped[kind] ?? []
+                    let hard = items.first?.isHard ?? false
+                    let label = items.first?.label ?? kind.replacingOccurrences(of: "_", with: " ")
+                    HStack(spacing: 5) {
+                        Text("\(items.count)")
+                            .font(.cavnarNumber(12, weight: 700))
+                        Text(label)
+                            .font(.cavnarBody(12, weight: 600))
+                    }
+                    .foregroundStyle(hard ? Color.cavnarRed : Color.cavnarAmber)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill((hard ? Color.cavnarRed : Color.cavnarAmber).opacity(0.1)))
+                    .accessibilityLabel("\(items.count) \(label), \(hard ? "hard" : "soft")")
+                }
+            }
+        }
     }
 
     // MARK: Lines
@@ -217,6 +263,12 @@ struct ScheduleReviewPanel: View {
     @ViewBuilder
     private var actions: some View {
         let canFix = (review?.hardCount ?? 0) > 0 && !viewModel.hasUnsavedFixes
+        // What the edits on screen cost against the draft — shown by the
+        // Save button whenever anything has moved.
+        if let cost = viewModel.editCost, cost.summary != nil,
+           viewModel.hasUnsavedFixes || !viewModel.overriddenRows.isEmpty {
+            EditCostReadout(cost: cost)
+        }
         if canFix || viewModel.hasUnsavedFixes {
             HStack(spacing: 10) {
                 if canFix {
@@ -260,6 +312,18 @@ struct ScheduleReviewPanel: View {
                 .font(.cavnarBody(13.5))
                 .foregroundStyle(Color.cavnarRed)
                 .fixedSize(horizontal: false, vertical: true)
+        }
+        // "Updated schedule sent to Ana, Bob" — only after a save of a
+        // week staff already have.
+        if let notice = viewModel.saveNotice {
+            HStack(alignment: .top, spacing: 7) {
+                Image(systemName: "paperplane.fill")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(Color.cavnarGreen)
+                    .padding(.top, 2)
+                HomeMixedText.make(notice, size: 13.5, weight: 600, color: .cavnarGreen)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 

@@ -13,6 +13,16 @@ struct ScheduleRulesSheet: View {
     @State private var posted: String?
     @State private var synced = false
     @FocusState private var focused: String?
+    // The second batch's settings, all saved with the one Save button.
+    @State private var jurisdiction: String = ""
+    @State private var managerOnDuty = false
+    @State private var arrivals: [String: String] = [:]
+    @State private var requirements: [String: [String]] = [:]
+    @State private var fohRoles: [String] = []
+    @State private var patioRoles: [String] = []
+    @State private var trimToBudget = true
+    @State private var reservationProvider: String = ""
+    @State private var reservationKey: String = ""
 
     /// Every rule, in the order an owner would read them, with the label
     /// and the unit the number is in. Mirrors the keys the API names.
@@ -34,7 +44,7 @@ struct ScheduleRulesSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
-                    Text("Hard rules the generator will not break, and what it flags for you. Leave a field blank to keep the default shown.")
+                    Text("Hard rules the generator will not break, and what it flags for you. Leave a field blank to keep the default shown. Everything here saves with the one button at the bottom.")
                         .font(.cavnarBody(14.5))
                         .foregroundStyle(Color.cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
@@ -42,8 +52,18 @@ struct ScheduleRulesSheet: View {
                     if viewModel.isLoadingRules && viewModel.rules.isEmpty && viewModel.ruleDefaults.isEmpty {
                         CavnarSkeletonLines(widths: [1.0, 0.8, 0.9, 0.6])
                     } else {
+                        jurisdictionSection
                         rulesSection
+                        managerSection
                         floorsSection
+                        arrivalsSection
+                        certificationsSection
+                        roleListSection("Front of house", detail: "Roles counted against sections and the section cap.",
+                                        selection: $fohRoles)
+                        roleListSection("Patio", detail: "Roles the weather read can thin or thicken.",
+                                        selection: $patioRoles)
+                        budgetSection
+                        reservationSection
                     }
 
                     if let error = viewModel.rulesError {
@@ -57,7 +77,7 @@ struct ScheduleRulesSheet: View {
                         focused = nil
                         Haptic.medium()
                         Task {
-                            if await viewModel.saveRules(parsedRules(), roleFloors: cleanedFloors()) {
+                            if await viewModel.saveRules(patch()) {
                                 posted = "Rules saved"
                             }
                         }
@@ -88,6 +108,265 @@ struct ScheduleRulesSheet: View {
             sync()
         }
         .onChange(of: viewModel.rules) { _, _ in sync() }
+    }
+
+    // MARK: Jurisdiction
+
+    /// Where the restaurant is. A pack sets a few rules to the state's
+    /// floor; its notes are what to check with counsel, not law.
+    private var jurisdictionSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            AccountSection(kicker: "Where you are") {
+                AccountKVRow(label: "Jurisdiction", showsDivider: false) {
+                    selectMenu(
+                        current: viewModel.packs.first { $0.code == jurisdiction }?.label ?? (jurisdiction.isEmpty ? "None" : jurisdiction),
+                        options: [("", "None")] + viewModel.packs.map { ($0.code, $0.label) }
+                    ) { jurisdiction = $0 }
+                }
+            }
+            if let pack = viewModel.pack, pack.code == jurisdiction, !jurisdiction.isEmpty {
+                if let applied = pack.applied, !applied.isEmpty {
+                    AccountFlowLayout(spacing: 6) {
+                        ForEach(applied.keys.sorted(), id: \.self) { key in
+                            AccountChip(text: "\(Self.fields.first { $0.key == key }?.label ?? key.replacingOccurrences(of: "_", with: " ")) \(applied[key]?.display ?? "") — from the \(pack.label ?? "") pack", muted: true)
+                        }
+                    }
+                }
+                ForEach(Array((pack.notes ?? []).enumerated()), id: \.offset) { _, note in
+                    CavnarCaveat(title: "Check with counsel", detail: note)
+                }
+            } else if !jurisdiction.isEmpty, viewModel.pack?.code != jurisdiction {
+                Text("Save to apply this pack and read its notes.")
+                    .font(.cavnarBody(13))
+                    .foregroundStyle(Color.cavnarInk3)
+            }
+        }
+    }
+
+    /// A choice as a menu on a KV row — the kit's answer to a select.
+    private func selectMenu(current: String, options: [(String, String)], onPick: @escaping (String) -> Void) -> some View {
+        Menu {
+            ForEach(options, id: \.0) { code, label in
+                Button {
+                    Haptic.selection()
+                    onPick(code)
+                } label: { Text(label) }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Text(current)
+                    .font(.cavnarBody(15, weight: 600))
+                    .foregroundStyle(Color.cavnarInk)
+                    .lineLimit(1)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(Color.cavnarEmber2)
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 32)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.cavnarPaper2))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(Color.cavnarPaper3, lineWidth: 1))
+        }
+    }
+
+    // MARK: Manager on duty
+
+    private var managerSection: some View {
+        AccountSection(kicker: "Leadership") {
+            AccountSwitchRow(label: "Manager on duty",
+                             detail: "Every shift needs a manager or keyholder on it. Flagged as a hard break when nobody is.",
+                             isOn: $managerOnDuty, showsDivider: false)
+        }
+    }
+
+    // MARK: Arrivals
+
+    /// Minutes before (negative) or after open each role should arrive.
+    private var arrivalsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            AccountKicker(text: "Arrivals")
+            Text("Minutes before open a role arrives — 30 means half an hour early, -15 a quarter hour after. Blank means at open.")
+                .font(.cavnarBody(13.5))
+                .foregroundStyle(Color.cavnarInk3)
+                .fixedSize(horizontal: false, vertical: true)
+            if roles.isEmpty {
+                Text("Roles appear here once there is shift history to read them from.")
+                    .font(.cavnarBody(14))
+                    .foregroundStyle(Color.cavnarInk3)
+                    .italic()
+            } else {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(roles.enumerated()), id: \.element) { index, role in
+                        HStack(spacing: 10) {
+                            Text(role)
+                                .font(.cavnarBody(15, weight: 600))
+                                .foregroundStyle(Color.cavnarInk)
+                            Spacer(minLength: 6)
+                            floorField(label: "MIN", value: Binding(
+                                get: { arrivals[role] ?? "" },
+                                set: { arrivals[role] = $0 }), id: "arr|\(role)", keyboard: .numbersAndPunctuation)
+                        }
+                        .padding(.vertical, 9)
+                        if index < roles.count - 1 { AccountRowDivider() }
+                    }
+                }
+                .accountCard()
+            }
+        }
+    }
+
+    // MARK: Certifications per role
+
+    private var certificationsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            AccountKicker(text: "Certifications a role needs")
+            Text("Only somebody holding every one of these is put on the role.")
+                .font(.cavnarBody(13.5))
+                .foregroundStyle(Color.cavnarInk3)
+                .fixedSize(horizontal: false, vertical: true)
+            if roles.isEmpty || viewModel.ruleCertifications.isEmpty {
+                Text(roles.isEmpty ? "Roles appear here once there is shift history to read them from."
+                                   : "No certifications are defined yet.")
+                    .font(.cavnarBody(14))
+                    .foregroundStyle(Color.cavnarInk3)
+                    .italic()
+            } else {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(roles.enumerated()), id: \.element) { index, role in
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(role)
+                                .font(.cavnarBody(15, weight: 600))
+                                .foregroundStyle(Color.cavnarInk)
+                            AccountFlowLayout(spacing: 6) {
+                                ForEach(viewModel.ruleCertifications, id: \.self) { cert in
+                                    let on = (requirements[role] ?? []).contains(cert)
+                                    Button {
+                                        Haptic.selection()
+                                        var next = requirements[role] ?? []
+                                        if on { next.removeAll { $0 == cert } } else { next.append(cert) }
+                                        requirements[role] = next
+                                    } label: { AccountChip(text: cert, muted: !on) }
+                                    .buttonStyle(.plain)
+                                    .accessibilityAddTraits(on ? .isSelected : [])
+                                }
+                            }
+                        }
+                        .padding(.vertical, 9)
+                        if index < roles.count - 1 { AccountRowDivider() }
+                    }
+                }
+                .accountCard()
+            }
+        }
+    }
+
+    // MARK: Role lists (front of house, patio)
+
+    private func roleListSection(_ title: String, detail: String, selection: Binding<[String]>) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            AccountKicker(text: title)
+            Text(detail)
+                .font(.cavnarBody(13.5))
+                .foregroundStyle(Color.cavnarInk3)
+                .fixedSize(horizontal: false, vertical: true)
+            let all = roles + selection.wrappedValue.filter { !roles.contains($0) }
+            if all.isEmpty {
+                Text("Roles appear here once there is shift history to read them from.")
+                    .font(.cavnarBody(14))
+                    .foregroundStyle(Color.cavnarInk3)
+                    .italic()
+            } else {
+                AccountFlowLayout(spacing: 6) {
+                    ForEach(all, id: \.self) { role in
+                        let on = selection.wrappedValue.contains(role)
+                        Button {
+                            Haptic.selection()
+                            var next = selection.wrappedValue
+                            if on { next.removeAll { $0 == role } } else { next.append(role) }
+                            selection.wrappedValue = next
+                        } label: { AccountChip(text: role, muted: !on) }
+                        .buttonStyle(.plain)
+                        .accessibilityAddTraits(on ? .isSelected : [])
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: Budget
+
+    private var budgetSection: some View {
+        AccountSection(kicker: "Budget") {
+            AccountSwitchRow(label: "Trim to budget",
+                             detail: "Remove the least-needed shifts until the week fits the hours budget. Each trim is listed with its reason.",
+                             isOn: $trimToBudget, showsDivider: false)
+        }
+    }
+
+    // MARK: Reservations
+
+    private var reservationSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            AccountSection(kicker: "Reservation system") {
+                AccountKVRow(label: "System") {
+                    selectMenu(
+                        current: viewModel.reservationProviders.first { $0.code == reservationProvider }?.label
+                            ?? (reservationProvider.isEmpty ? "None" : reservationProvider),
+                        options: [("", "None")] + viewModel.reservationProviders.map { ($0.code, $0.label) }
+                    ) { reservationProvider = $0 }
+                }
+                HStack(alignment: .center, spacing: 12) {
+                    Text("API key").font(.cavnarBody(16)).foregroundStyle(Color.cavnarInk3)
+                    Spacer(minLength: 8)
+                    SecureField(viewModel.reservationFeed?.configured == true ? "on file" : "paste the key", text: $reservationKey)
+                        .font(.cavnarBody(15))
+                        .foregroundStyle(Color.cavnarInk)
+                        .multilineTextAlignment(.trailing)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                        .focused($focused, equals: "reservation_key")
+                        .frame(maxWidth: 200)
+                }
+                .frame(minHeight: AccountKVRow<EmptyView>.rowHeight)
+                .padding(.vertical, 9)
+            }
+            if let feed = viewModel.reservationFeed, let message = feed.message, !message.isEmpty {
+                HStack(alignment: .top, spacing: 7) {
+                    Circle().fill(feed.live == true ? Color.cavnarGreen : Color.cavnarInk3)
+                        .frame(width: 6, height: 6).padding(.top, 6)
+                    HomeMixedText.make(message, size: 13, color: .cavnarInk3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            HStack(spacing: 10) {
+                Button {
+                    Haptic.light()
+                    Task { await viewModel.syncReservations() }
+                } label: {
+                    Group {
+                        if viewModel.isSyncingReservations {
+                            CavnarShimmerText(text: "Syncing…")
+                        } else {
+                            HStack(spacing: 6) {
+                                Image(systemName: "arrow.triangle.2.circlepath").font(.system(size: 11, weight: .bold))
+                                Text("Sync now")
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(CavnarSecondaryButtonStyle())
+                .disabled(viewModel.isSyncingReservations)
+            }
+            if let message = viewModel.reservationSyncMessage {
+                HomeMixedText.make(message, size: 13.5, weight: 600, color: .cavnarAmber)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
     }
 
     // MARK: Rules
@@ -141,6 +420,8 @@ struct ScheduleRulesSheet: View {
     private var roles: [String] {
         var out = viewModel.ruleRoles
         for role in floors.keys where !out.contains(role) { out.append(role) }
+        for role in arrivals.keys where !out.contains(role) { out.append(role) }
+        for role in requirements.keys where !out.contains(role) { out.append(role) }
         return out
     }
 
@@ -222,7 +503,8 @@ struct ScheduleRulesSheet: View {
         }
     }
 
-    private func floorField(label: String, value: Binding<String>, id: String) -> some View {
+    private func floorField(label: String, value: Binding<String>, id: String,
+                            keyboard: UIKeyboardType = .numberPad) -> some View {
         HStack(spacing: 4) {
             Text(label)
                 .font(.cavnarBody(11, weight: 700))
@@ -232,7 +514,7 @@ struct ScheduleRulesSheet: View {
                 .font(.cavnarNumber(15, weight: 700))
                 .foregroundStyle(Color.cavnarInk)
                 .multilineTextAlignment(.center)
-                .keyboardType(.numberPad)
+                .keyboardType(keyboard)
                 .focused($focused, equals: id)
                 .frame(width: 44, height: 32)
                 .background(
@@ -282,6 +564,40 @@ struct ScheduleRulesSheet: View {
         }
         drafts = next
         floors = viewModel.roleFloors
+        jurisdiction = viewModel.jurisdiction ?? ""
+        if case .bool(let b) = viewModel.rules["manager_on_duty"] ?? .null { managerOnDuty = b }
+        else if case .number(let n) = viewModel.rules["manager_on_duty"] ?? .null { managerOnDuty = n != 0 }
+        arrivals = viewModel.roleArrivals.mapValues(String.init)
+        requirements = viewModel.roleRequirements
+        fohRoles = viewModel.fohRoles
+        patioRoles = viewModel.patioRoles
+        trimToBudget = viewModel.trimToBudget
+        reservationProvider = viewModel.reservationFeed?.provider ?? ""
+        reservationKey = ""
+    }
+
+    /// Everything on the sheet, in one body. A setting that matches what
+    /// the server already holds is still sent — the server treats each
+    /// key as the whole value, and the sheet is its source of truth.
+    private func patch() -> ScheduleSetupViewModel.RulesPatch {
+        var rules = parsedRules()
+        rules["manager_on_duty"] = .bool(managerOnDuty)
+        var arrivalMinutes: [String: Int] = [:]
+        for (role, text) in arrivals {
+            if let n = Int(text.trimmingCharacters(in: .whitespaces)) { arrivalMinutes[role] = n }
+        }
+        var p = ScheduleSetupViewModel.RulesPatch(rules: rules, roleFloors: cleanedFloors())
+        p.jurisdiction = .some(jurisdiction.isEmpty ? nil : jurisdiction)
+        p.roleArrivals = arrivalMinutes
+        p.roleRequirements = requirements.filter { !$0.value.isEmpty }
+        p.fohRoles = fohRoles
+        p.patioRoles = patioRoles
+        p.trimToBudget = trimToBudget
+        if reservationProvider != (viewModel.reservationFeed?.provider ?? "") || !reservationKey.isEmpty {
+            p.reservationProvider = .some(reservationProvider.isEmpty ? nil : reservationProvider)
+            if !reservationKey.isEmpty { p.reservationApiKey = .some(reservationKey) }
+        }
+        return p
     }
 
     /// A number where one was typed, the text otherwise (the minors'

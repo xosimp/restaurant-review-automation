@@ -497,6 +497,9 @@ struct ScheduleQuality: Codable, Equatable {
     let best: String?
     let worst: String?
     let reason: String?
+    // Recommendation kinds the engine left out because the owner never
+    // acts on them. Absent on older payloads.
+    let suppressedRecommendationKinds: [String]?
 
     var scoredShifts: [QualityShift] { (shifts ?? []).filter { $0.scored } }
     var customerDimensions: [QualityDimension] {
@@ -507,6 +510,158 @@ struct ScheduleQuality: Codable, Equatable {
         case checked, score, band, shifts, dimensions, strengths, weaknesses
         case recommendations, confidence, best, worst, reason
         case belowProfile = "below_profile"
+        case suppressedRecommendationKinds = "suppressed_recommendation_kinds"
+    }
+
+    /// The ledger's kind for a recommendation sentence, by its opening
+    /// words — the same rule the server files them under.
+    static func recommendationKind(_ text: String) -> String {
+        let t = text.trimmingCharacters(in: .whitespaces)
+        if t.hasPrefix("Fill the gap") { return "coverage" }
+        if t.hasPrefix("Move somebody") { return "leadership" }
+        if t.hasPrefix("Pair ") { return "strength" }
+        if t.hasPrefix("Trim about") { return "hours" }
+        if t.hasPrefix("Give ") { return "fatigue" }
+        if t.hasPrefix("Rate the") { return "ratings" }
+        return "other"
+    }
+}
+
+/// A shift the generator removed to fit the budget, and why that one.
+struct TrimmedShift: Codable, Identifiable, Equatable {
+    let date: String?
+    let day: String?
+    let employee: String?
+    let role: String?
+    let shiftStart: String?
+    let shiftEnd: String?
+    let hours: Double?
+    let reason: String?
+
+    var id: String { "\(date ?? "")-\(employee ?? "")-\(shiftStart ?? "")" }
+
+    enum CodingKeys: String, CodingKey {
+        case date, day, employee, role, hours, reason
+        case shiftStart = "shift_start"
+        case shiftEnd = "shift_end"
+    }
+}
+
+/// A start moved later along the day's sales curve.
+struct StaggeredStart: Codable, Identifiable, Equatable {
+    let date: String?
+    let employee: String?
+    let role: String?
+    let from: String?
+    let to: String?
+    let reason: String?
+
+    var id: String { "\(date ?? "")-\(employee ?? "")-\(from ?? "")" }
+}
+
+/// What the week costs at the stated rates, overtime priced in.
+struct ProjectedCost: Codable, Equatable {
+    let straight: Double?
+    let overtimePremium: Double?
+    let overtimeHours: Double?
+    let total: Double?
+    let multiplier: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case straight, total, multiplier
+        case overtimePremium = "overtime_premium"
+        case overtimeHours = "overtime_hours"
+    }
+}
+
+/// How fresh the sales the forecast read were. `blind` when the newest
+/// day is more than two weeks old — the draft is guessing from then on.
+struct DemandDataThrough: Codable, Equatable {
+    let date: String?
+    let daysAgo: Int?
+    let blind: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case date, blind
+        case daysAgo = "days_ago"
+    }
+}
+
+/// The reservation system's state, in the server's own sentence.
+struct ReservationFeedStatus: Codable, Equatable {
+    let provider: String?
+    let label: String?
+    let configured: Bool?
+    let live: Bool?
+    let message: String?
+}
+
+/// A holiday inside the week and the lift the record shows for it.
+struct HolidayLift: Codable, Equatable {
+    let name: String?
+    let liftPct: Int?
+    let basedOn: String?
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case liftPct = "lift_pct"
+        case basedOn = "based_on"
+    }
+
+    /// "Labor Day · +18%" or just the name when the lift is unknown.
+    var label: String {
+        guard let lift = liftPct else { return name ?? "Holiday" }
+        return "\(name ?? "Holiday") · \(lift >= 0 ? "+" : "")\(lift)%"
+    }
+}
+
+/// What an edit moves in hours and overtime-priced dollars, against the
+/// rows the manager started from.
+struct EditCostDelta: Codable, Equatable {
+    let hoursBefore: Double?
+    let hoursAfter: Double?
+    let hoursDelta: Double?
+    let dollarsBefore: Double?
+    let dollarsAfter: Double?
+    let dollarsDelta: Double?
+    let overtimeHoursAfter: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case hoursBefore = "hours_before"
+        case hoursAfter = "hours_after"
+        case hoursDelta = "hours_delta"
+        case dollarsBefore = "dollars_before"
+        case dollarsAfter = "dollars_after"
+        case dollarsDelta = "dollars_delta"
+        case overtimeHoursAfter = "overtime_hours_after"
+    }
+
+    /// "+6h · +$90 · 2h overtime". Nil when nothing moved.
+    var summary: String? {
+        let h = hoursDelta ?? 0
+        let d = dollarsDelta ?? 0
+        let ot = overtimeHoursAfter ?? 0
+        guard h != 0 || d != 0 || ot > 0 else { return nil }
+        var parts: [String] = []
+        parts.append("\(h >= 0 ? "+" : "")\(h.commaFormatted)h")
+        parts.append("\(d >= 0 ? "+" : "-")$\(abs(d).commaFormatted)")
+        if ot > 0 { parts.append("\(ot.commaFormatted)h overtime") }
+        return parts.joined(separator: " · ")
+    }
+}
+
+/// The 409 a save answers with when somebody saved the week first.
+struct SaveConflict: Decodable, Equatable {
+    let conflict: Bool?
+    let latestVersion: Int?
+    let savedBy: String?
+    let lines: [String]?
+    let error: String?
+
+    enum CodingKeys: String, CodingKey {
+        case conflict, lines, error
+        case latestVersion = "latest_version"
+        case savedBy = "saved_by"
     }
 }
 
@@ -652,15 +807,21 @@ struct ScheduleReview: Codable, Equatable {
     let hardRows: [Int]?
     let fixes: [ReviewFix]?
     let unfixed: [ReviewUnfixed]?
+    // The budget trim and the staggered starts, repeated here so a
+    // review loaded on its own still carries them.
+    var trimmed: [TrimmedShift]? = nil
+    var hoursTrimmed: Double? = nil
+    var staggered: [StaggeredStart]? = nil
 
     var hardCount: Int { hard ?? 0 }
     var softCount: Int { soft ?? 0 }
     var isClean: Bool { hardCount == 0 && softCount == 0 }
 
     enum CodingKeys: String, CodingKey {
-        case hard, soft, lines, fixes, unfixed
+        case hard, soft, lines, fixes, unfixed, trimmed, staggered
         case byKind = "by_kind"
         case hardRows = "hard_rows"
+        case hoursTrimmed = "hours_trimmed"
     }
 }
 
@@ -737,9 +898,42 @@ struct GeneratedSchedule: Codable {
     // Set once the week has been sent to staff — history detail only.
     let publishedAt: String?
     let publishedBy: String?
+    // History detail only: a save after sending re-emailed the people
+    // whose shifts moved; a newer draft of the same week replaced this one.
+    let republishedAt: String?
+    let supersededBy: Int?
+    // The stored what-if, as the column holds it (a JSON string).
+    let whatIfJson: String?
+
+    // MARK: Second batch — all optional so a cached payload still decodes.
+
+    // Shifts removed to fit the budget, and how many hours they were.
+    var trimmed: [TrimmedShift]?
+    var hoursTrimmed: Double?
+    // Starts moved later along the day's sales curve.
+    var staggered: [StaggeredStart]?
+    // The week priced at the stated rates; over-budget dollars when a
+    // dollar budget exists, nil otherwise — never zero for "unknown".
+    let projectedCost: ProjectedCost?
+    let overBudgetDollars: Double?
+    // Where the revenue the forecast scaled against came from.
+    let projectedRevenueSource: String?
+    // False when no intraday sales exist, so starts were not staggered.
+    let hourlyProfileReady: Bool?
+    let demandDataThrough: DemandDataThrough?
+    let reservationFeed: ReservationFeedStatus?
+    // Holidays inside the week, by ISO date.
+    let holidayLift: [String: HolidayLift]?
+    // Roles somebody has been trained up on, by name.
+    let couldHold: [String: [String]]?
+    // Non-empty when a very large roster was generated per department.
+    let departments: [String]?
+    // Set when only some days were regenerated; the rest were kept.
+    let regeneratedDates: [String]?
 
     enum CodingKeys: String, CodingKey {
         case ok, status, summary, error, strength, quality, review, narrative, chunked, roster
+        case trimmed, staggered, departments
         case whatIf = "what_if"
         case weekDates = "week_dates"
         case weekDays = "week_days"
@@ -756,6 +950,49 @@ struct GeneratedSchedule: Codable {
         case generationSeconds = "generation_seconds"
         case publishedAt = "published_at"
         case publishedBy = "published_by"
+        case republishedAt = "republished_at"
+        case supersededBy = "superseded_by"
+        case whatIfJson = "what_if_json"
+        case hoursTrimmed = "hours_trimmed"
+        case projectedCost = "projected_cost"
+        case overBudgetDollars = "over_budget_dollars"
+        case projectedRevenueSource = "projected_revenue_source"
+        case hourlyProfileReady = "hourly_profile_ready"
+        case demandDataThrough = "demand_data_through"
+        case reservationFeed = "reservation_feed"
+        case holidayLift = "holiday_lift"
+        case couldHold = "could_hold"
+        case regeneratedDates = "regenerated_dates"
+    }
+
+    /// The what-if the row stored, when the live key is absent — history
+    /// detail hands the column back as a JSON string.
+    var storedWhatIf: ScheduleWhatIf? {
+        if let whatIf { return whatIf }
+        guard let text = whatIfJson, !text.isEmpty, text != "null",
+              let data = text.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(ScheduleWhatIf.self, from: data)
+    }
+
+    /// The trim list from wherever it landed — the top level or the review.
+    var trimmedShifts: [TrimmedShift] { trimmed ?? review?.trimmed ?? [] }
+    var trimmedHours: Double { hoursTrimmed ?? review?.hoursTrimmed ?? 0 }
+    var staggeredStarts: [StaggeredStart] { staggered ?? review?.staggered ?? [] }
+
+    /// The holiday on a given ISO date, if the week has one there.
+    func holiday(on date: String?) -> HolidayLift? {
+        guard let date, let lifts = holidayLift else { return nil }
+        return lifts[String(date.prefix(10))]
+    }
+
+    /// Every date in the week, in order, from the rows themselves.
+    var rowDates: [String] {
+        var seen: [String] = []
+        for row in previewRows ?? [] {
+            guard let d = row.date, !d.isEmpty, !seen.contains(d) else { continue }
+            seen.append(d)
+        }
+        return seen.sorted()
     }
 
     /// The explanation for one row: the assignment on the same date whose
@@ -884,6 +1121,7 @@ final class LaborViewModel {
               let cached = try? Self.cacheDecoder.decode(GeneratedSchedule.self, from: data),
               !Self.isStale(cached) else { return }
         scheduleResult = cached
+        if baselineRows == nil { baselineRows = cached.previewRows }
     }
 
     private static func scheduleCacheKey(_ restaurantId: Int) -> String { "labor.cachedSchedule.\(restaurantId)" }
@@ -1095,8 +1333,12 @@ final class LaborViewModel {
         let dailyTargetHours: [String: Double]
         let save: Bool
         let historyId: Int?
+        // The version the rows were loaded from. The server refuses with a
+        // 409 when a newer one is on file, so two managers editing the
+        // same week never silently overwrite each other.
+        let version: Int?
         enum CodingKeys: String, CodingKey {
-            case rows, save
+            case rows, save, version
             case dailyTargetHours = "daily_target_hours"
             case historyId = "history_id"
         }
@@ -1114,14 +1356,179 @@ final class LaborViewModel {
         let violations: [RuleViolation]?
         let review: ScheduleReview?
         let pendingTimeOff: [String: [String]]?
+        // After a save of a PUBLISHED week: the people re-emailed because
+        // their own shifts moved. Nil on a draft; empty when nobody's did.
+        let changedSinceSent: [String]?
         enum CodingKeys: String, CodingKey {
             case ok, quality, error, saved, violations, review
             case whatIf = "what_if"
             case pendingTimeOff = "pending_time_off"
+            case changedSinceSent = "changed_since_sent"
         }
     }
 
     private struct RowsBody: Encodable { let rows: [ScheduleRow] }
+
+    // MARK: - Versions, conflicts and the change notice
+
+    // The newest version on file for the week on screen — what a save
+    // sends so the server can tell whether somebody else got there first.
+    var latestVersion: Int?
+    // Set from a 409: somebody saved after this draft was opened. The
+    // sheet shows their lines and offers Reload; nothing is overwritten.
+    var saveConflict: SaveConflict?
+    // "Updated schedule sent to Ana, Bob" / "Saved; nobody's shifts
+    // changed" — only after a save of a week staff already have.
+    var saveNotice: String?
+    var isReloadingAfterConflict = false
+
+    private struct VersionsEnvelope: Decodable {
+        let ok: Bool
+        let versions: [ScheduleVersion]?
+    }
+
+    /// The latest version number for the week on screen. Silent on
+    /// failure: a save then goes without one and the server skips the
+    /// check, which is the pre-versions behaviour, not a new failure.
+    func loadLatestVersion() async {
+        guard let id = scheduleResult?.historyId else { latestVersion = nil; return }
+        do {
+            let r: VersionsEnvelope = try await client.send(
+                "/mobile/api/labor/schedule-history/\(id)/versions", hapticOnError: false)
+            latestVersion = (r.versions ?? []).map(\.version).max()
+        } catch {
+            // Keep whatever was known.
+        }
+    }
+
+    /// Throw away the local edits and take the week as it is on file —
+    /// the only way out of a conflict that never overwrites.
+    func reloadAfterConflict() async {
+        guard let id = scheduleResult?.historyId else { saveConflict = nil; return }
+        isReloadingAfterConflict = true
+        defer { isReloadingAfterConflict = false }
+        do {
+            let fresh: GeneratedSchedule = try await client.send(
+                "/mobile/api/labor/schedule-history/\(id)", hapticOnError: false)
+            scheduleResult = fresh
+            baselineRows = fresh.previewRows
+            editCost = nil
+            overriddenRows = []
+            hasUnsavedFixes = false
+            overrideState = .idle
+            saveConflict = nil
+            cacheSchedule(fresh)
+            await loadLatestVersion()
+            Haptic.success()
+        } catch let error as APIClient.APIError {
+            overrideState = .failed(error.message)
+        } catch {
+            overrideState = .failed("Couldn't reload this week.")
+        }
+    }
+
+    // MARK: - Cost of an edit
+
+    // The rows the manager started from — set when a week lands or is
+    // reloaded, never on save, so the readout stays "against the draft".
+    var baselineRows: [ScheduleRow]?
+    var editCost: EditCostDelta?
+
+    private struct ViolationsBody: Encodable {
+        let rows: [ScheduleRow]
+        let baselineRows: [ScheduleRow]
+        enum CodingKeys: String, CodingKey {
+            case rows
+            case baselineRows = "baseline_rows"
+        }
+    }
+
+    private struct ViolationsResponse: Decodable {
+        let ok: Bool
+        let cost: EditCostDelta?
+    }
+
+    /// "+6h · +$90 · 2h overtime" for the rows on screen against the
+    /// baseline. Read-only; nothing is stored. Silent on failure.
+    func refreshEditCost() async {
+        guard let rows = scheduleResult?.previewRows, let base = baselineRows, !rows.isEmpty else {
+            editCost = nil
+            return
+        }
+        do {
+            let r: ViolationsResponse = try await client.send(
+                "/mobile/api/labor/schedule/violations", method: .post,
+                body: ViolationsBody(rows: rows, baselineRows: base), hapticOnError: false)
+            if r.ok { editCost = r.cost }
+        } catch {
+            // The readout is a courtesy; the save path reports its own errors.
+        }
+    }
+
+    // MARK: - Recommendations ledger
+
+    // What the owner said about each recommendation this session, by its
+    // text — "accepted" or "dismissed" — so the ✓ / ✕ stays put.
+    var recommendationDecisions: [String: String] = [:]
+    var suppressedRecommendationKinds: [String] = []
+
+    private struct RecommendationBody: Encodable {
+        let kind: String
+        let key: String
+        let action: String
+    }
+
+    private struct RecommendationResponse: Decodable {
+        let ok: Bool
+        let suppressedKinds: [String]?
+        let error: String?
+        enum CodingKeys: String, CodingKey {
+            case ok, error
+            case suppressedKinds = "suppressed_kinds"
+        }
+    }
+
+    /// Record "did it" or "not for us" — the ledger that decides which
+    /// kinds keep being shown.
+    func recordRecommendation(_ text: String, accepted: Bool) async {
+        let action = accepted ? "accepted" : "dismissed"
+        let previous = recommendationDecisions[text]
+        recommendationDecisions[text] = action
+        do {
+            let r: RecommendationResponse = try await client.send(
+                "/mobile/api/labor/schedule/recommendation", method: .post,
+                body: RecommendationBody(kind: ScheduleQuality.recommendationKind(text),
+                                         key: String(text.prefix(200)), action: action),
+                hapticOnError: false)
+            if r.ok {
+                suppressedRecommendationKinds = r.suppressedKinds ?? suppressedRecommendationKinds
+                Haptic.light()
+            } else {
+                recommendationDecisions[text] = previous
+            }
+        } catch {
+            recommendationDecisions[text] = previous
+        }
+    }
+
+    // MARK: - Redo selected days
+
+    // ISO dates ticked in the generated week for "Redo selected days".
+    var selectedRedoDates: Set<String> = []
+
+    func toggleRedoDate(_ date: String) {
+        if selectedRedoDates.contains(date) { selectedRedoDates.remove(date) } else { selectedRedoDates.insert(date) }
+        Haptic.selection()
+    }
+
+    /// Regenerate only the ticked days of the draft on screen; the rest
+    /// are kept. Same job and polling as a full generation.
+    func redoSelectedDays() async {
+        guard let id = scheduleResult?.historyId, !selectedRedoDates.isEmpty else { return }
+        let dates = selectedRedoDates.sorted()
+        selectedRedoDates = []
+        await generateSchedule(dates: dates, historyId: id)
+    }
 
     private struct ApplyFixesResponse: Decodable {
         let ok: Bool
@@ -1180,6 +1587,7 @@ final class LaborViewModel {
             hasUnsavedFixes = !(response.fixes ?? []).isEmpty
             overrideState = .idle
             Haptic.success()
+            await refreshEditCost()
         } catch let error as APIClient.APIError {
             applyFixesError = error.message
         } catch {
@@ -1238,6 +1646,7 @@ final class LaborViewModel {
         overriddenRows.insert(rows[index].id)
         Haptic.light()
         await rescoreQuality()
+        await refreshEditCost()
     }
 
     /// Re-score AND store whatever is currently on screen.
@@ -1250,11 +1659,17 @@ final class LaborViewModel {
         guard var result = scheduleResult, let rows = result.previewRows, !rows.isEmpty else { return }
         isRescoringQuality = true
         overrideState = .saving
+        saveNotice = nil
         defer { isRescoringQuality = false }
+        // A save names the version it started from. Fetched fresh when
+        // none is known yet (a week restored from the cache, or an older
+        // backend that never sent versions).
+        if save, latestVersion == nil, result.historyId != nil { await loadLatestVersion() }
         do {
             let response: ScoreResponse = try await client.send(
                 "/mobile/api/labor/schedule/score", method: .post,
-                body: ScoreBody(rows: rows, dailyTargetHours: [:], save: save, historyId: result.historyId),
+                body: ScoreBody(rows: rows, dailyTargetHours: [:], save: save, historyId: result.historyId,
+                                version: save ? latestVersion : nil),
                 hapticOnError: false, retryTransient: true)
             guard response.ok, let quality = response.quality else {
                 overrideState = .failed(response.error ?? "Couldn't save that change.")
@@ -1273,11 +1688,28 @@ final class LaborViewModel {
             if save { hasUnsavedFixes = false }
             overrideState = (response.saved ?? false) ? .saved : .idle
             if overrideState == .saved {
+                // The version just written is now the latest; the next
+                // save must name it or it would read as a conflict.
+                if let v = latestVersion { latestVersion = v + 1 } else { await loadLatestVersion() }
+                if let changed = response.changedSinceSent {
+                    saveNotice = changed.isEmpty
+                        ? "Saved; nobody's shifts changed."
+                        : "Updated schedule sent to \(changed.joined(separator: ", "))."
+                }
                 Haptic.success()
                 try? await Task.sleep(for: .seconds(4))
                 if overrideState == .saved { overrideState = .idle }
             }
         } catch let error as APIClient.APIError {
+            // 409: somebody saved this week after it was opened. Show their
+            // lines and offer Reload; the edit on screen is never written.
+            if error.status == 409, let body = error.body,
+               let conflict = try? JSONDecoder().decode(SaveConflict.self, from: body), conflict.conflict == true {
+                saveConflict = conflict
+                overrideState = .failed(conflict.error ?? "Somebody saved this week after you opened it.")
+                Haptic.error()
+                return
+            }
             overrideState = .failed(error.message)
         } catch {
             overrideState = .failed("Couldn't save that change.")
@@ -1491,6 +1923,62 @@ final class LaborViewModel {
         }
     }
 
+    private struct GenerateBody: Encodable {
+        let weekStart: String?
+        let dates: [String]?
+        let historyId: Int?
+        enum CodingKeys: String, CodingKey {
+            case dates
+            case weekStart = "week_start"
+            case historyId = "history_id"
+        }
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encodeIfPresent(weekStart, forKey: .weekStart)
+            try c.encodeIfPresent(dates, forKey: .dates)
+            try c.encodeIfPresent(historyId, forKey: .historyId)
+        }
+    }
+
+    /// Which week the next generation is for. Any date inside the wanted
+    /// week is enough; the server snaps it to the week's start.
+    enum GenerateWeek: Equatable {
+        case next
+        case weekAfter
+        case date(Date)
+
+        var label: String {
+            switch self {
+            case .next: return "Next week"
+            case .weekAfter: return "The week after"
+            case .date(let d): return CavnarDate.mdy(LaborViewModel.isoDay.string(from: d))
+            }
+        }
+
+        /// The ISO date sent as `week_start`; nil for the server's default.
+        var weekStart: String? {
+            switch self {
+            case .next: return nil
+            case .weekAfter:
+                let d = Calendar.current.date(byAdding: .day, value: 14, to: Calendar.current.startOfDay(for: Date())) ?? Date()
+                return LaborViewModel.isoDay.string(from: d)
+            case .date(let d): return LaborViewModel.isoDay.string(from: d)
+            }
+        }
+    }
+
+    static let isoDay: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.calendar = Calendar(identifier: .gregorian)
+        f.timeZone = Calendar.current.timeZone
+        return f
+    }()
+
+    var generateWeek: GenerateWeek = .next
+    // What the running generation is redoing, for the progress copy.
+    var regeneratingDates: [String] = []
+
     // Set when the start call joined a run already in progress — from the
     // web, or a second phone — so the progress copy says so instead of
     // pretending this tap started it.
@@ -1499,20 +1987,33 @@ final class LaborViewModel {
     /// Starts the same async AI schedule generation the web Labor tab uses,
     /// then polls until it completes — matches the backend's existing
     /// job-id + poll pattern (client_api.py's generate-schedule/schedule-status).
-    func generateSchedule() async {
+    ///
+    /// `dates` + `historyId` regenerate only those days of the draft on
+    /// screen; the rest are kept. Otherwise the week picker decides.
+    func generateSchedule(dates: [String]? = nil, historyId: Int? = nil) async {
+        let redo = (dates ?? []).isEmpty ? nil : dates
         isGeneratingSchedule = true
         scheduleError = nil
-        scheduleResult = nil
+        regeneratingDates = redo ?? []
+        // A partial redo keeps the week on screen until the new one lands.
+        if redo == nil { scheduleResult = nil }
         joinedRunningGeneration = false
         hasUnsavedFixes = false
         overriddenRows = []
+        saveConflict = nil
+        saveNotice = nil
+        editCost = nil
+        selectedRedoDates = []
         do {
             let response: GenerateResponse = try await client.send(
-                "/mobile/api/labor/generate-schedule", method: .post
+                "/mobile/api/labor/generate-schedule", method: .post,
+                body: GenerateBody(weekStart: redo == nil ? generateWeek.weekStart : nil,
+                                   dates: redo, historyId: redo == nil ? nil : historyId)
             )
             guard response.ok, let jobId = response.jobId else {
                 scheduleError = response.error ?? "Couldn't start schedule generation."
                 isGeneratingSchedule = false
+                regeneratingDates = []
                 return
             }
             joinedRunningGeneration = response.joined ?? false
@@ -1520,9 +2021,11 @@ final class LaborViewModel {
         } catch let error as APIClient.APIError {
             scheduleError = error.message
             isGeneratingSchedule = false
+            regeneratingDates = []
         } catch {
             scheduleError = "Couldn't start schedule generation."
             isGeneratingSchedule = false
+            regeneratingDates = []
         }
     }
 
@@ -1548,12 +2051,18 @@ final class LaborViewModel {
                 scheduleResult = result
                 isGeneratingSchedule = false
                 joinedRunningGeneration = false
+                regeneratingDates = []
                 if !result.ok {
                     scheduleError = result.error ?? "Schedule generation failed."
                 } else {
                     Haptic.success()
                     scheduleResultExpanded = true
                     cacheSchedule(result)
+                    baselineRows = result.previewRows
+                    editCost = nil
+                    latestVersion = nil
+                    suppressedRecommendationKinds = result.quality?.suppressedRecommendationKinds ?? []
+                    await loadLatestVersion()
                 }
                 return
             } catch let error as APIClient.APIError {
