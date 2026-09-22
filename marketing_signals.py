@@ -451,8 +451,13 @@ def generation_context(restaurant_id, db_path: str = DB_PATH) -> str:
     if reviews.get("praised"):
         parts.append("Guests are praising: " + ", ".join(reviews["praised"]) + ".")
     if reviews.get("best_quote"):
-        parts.append(f"A recent 5-star guest wrote: \"{reviews['best_quote']}\". "
-                     "You may draw on the sentiment; never quote a guest verbatim in a post.")
+        # Guest-written, so it travels inside the untrusted fence with the
+        # note that says what the fence means (AI-15). Quoted raw, a 5-star
+        # review was an instruction channel into copy that gets published.
+        from ai_guard import UNTRUSTED_NOTE, wrap_untrusted
+        parts.append("A recent 5-star guest wrote the review below. You may draw on the "
+                     "sentiment; never quote a guest verbatim in a post.\n"
+                     f"{UNTRUSTED_NOTE}\n{wrap_untrusted(reviews['best_quote'])}")
     if reviews.get("criticised"):
         parts.append("Guests have complained about: " + ", ".join(reviews["criticised"]) +
                      ". Do not raise these in marketing copy.")

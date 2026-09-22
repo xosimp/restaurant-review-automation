@@ -1973,7 +1973,11 @@ brand voice. No corporate language. The whole brief must be under 60 words."""
         stale = _insight_cache.get(cache_key)
         if stale:
             return {"insight": stale[1]}, 200
-        return {"insight": "Marketing brief unavailable — check back shortly."}, 500
+        # A budget stop or outage says so (AI-11); anything else keeps the
+        # retry wording.
+        from ai_utils import insight_error as _insight_err_mkt
+        _msg_mkt, _status_mkt = _insight_err_mkt(e, "Marketing brief unavailable — check back shortly.")
+        return {"insight": _msg_mkt}, _status_mkt
 
 def _labor_diagnosis_safe(rid, analysis=None):
     """labor.diagnose over the current analysis — deterministic, so it is
@@ -2012,7 +2016,11 @@ def labor_insight_api(current_user):
         stale = _insight_cache.get("labor-insight:" + str(rid))
         if stale:
             return jsonify(insight=stale[1])
-        return jsonify(insight="Unable to load analysis — check back shortly.")
+        from ai_utils import insight_error as _insight_err_lab
+        _msg_lab, _status_lab = _insight_err_lab(e, "Unable to load analysis — check back shortly.")
+        # 200 as before for an ordinary failure; a pause or outage carries its
+        # own status (AI-11).
+        return jsonify(insight=_msg_lab), (200 if _status_lab == 500 else _status_lab)
 
 @client_bp.route("/api/inv-insight")
 @login_required
@@ -2046,7 +2054,9 @@ def inv_insight_api(current_user):
         print(f"[inv-insight ERROR] {_inv_e}\n{traceback.format_exc()}")
         # safe_error, not str(e): a requests failure carries the URL it was
         # calling and a Places URL carries key=.
-        return jsonify(insight="Analysis unavailable — check back shortly.", error=_safe_err(_inv_e)), 500
+        from ai_utils import insight_error as _insight_err_inv
+        _msg_inv, _status_inv = _insight_err_inv(_inv_e)
+        return jsonify(insight=_msg_inv, error=_msg_inv), _status_inv
 
 
 @client_bp.route("/api/food-cost/waste-trend")
@@ -2089,7 +2099,17 @@ def gen_content(current_user):
         return jsonify(content="", error="Too many requests — please wait a moment and try again.")
     content_type = data.get("type","instagram_post")
     topic = data.get("topic","")
-    result = generate_content(content_type, topic, restaurant_id=rid)
+    try:
+        result = generate_content(content_type, topic, restaurant_id=rid)
+    except Exception as e:
+        # There was no except here at all, so a budget stop became a bare 500
+        # with no message (AI-11). The phone twin already said "paused".
+        from ai_utils import AIBudgetExceeded, user_facing_error
+        msg, status = user_facing_error(e, "Couldn't write that right now — try again in a moment.")
+        if not isinstance(e, AIBudgetExceeded):
+            import ops
+            ops.capture(e, job="generate_content", context=f"restaurant_id={rid}")
+        return jsonify(content="", error=msg), status
     if data.get("from_calendar") and rid:
         try:
             mark_calendar_idea_used(rid, content_type, topic)
@@ -2295,7 +2315,21 @@ def content_calendar(current_user):
             return jsonify(ideas=just_made)
         if ai_rate_limited(f"calendar:{rid}", max_calls=4, window_secs=300):
             return jsonify(ideas=[], error="Too many calendar regenerations — try again in a few minutes."), 429
-    return jsonify(ideas=get_content_calendar_ideas(restaurant_id=rid, force=force))
+    # An empty week always comes with a reason (AI-26): a cut-off or
+    # unreadable draw, a budget pause, an outage. The phone twin already said
+    # so; the web tab got ideas=[] and nothing else.
+    try:
+        ideas = get_content_calendar_ideas(restaurant_id=rid, force=force)
+    except Exception as e:
+        import ops
+        from ai_utils import AIBudgetExceeded, insight_error
+        if not isinstance(e, AIBudgetExceeded):
+            ops.capture(e, job="content_calendar", context=f"restaurant_id={rid}")
+        msg, status = insight_error(e, "Couldn't build this week's calendar — try Generate again.")
+        return jsonify(ideas=[], error=msg), status
+    if not ideas:
+        return jsonify(ideas=[], error="Couldn't build this week's calendar — try Generate again.")
+    return jsonify(ideas=ideas)
 
 def _do_regenerate_draft(review_id, restaurant_id):
     """Regenerate AI draft for a review — delegates to drafter.draft_response()

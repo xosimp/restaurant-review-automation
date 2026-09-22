@@ -240,8 +240,6 @@ _TRUNCATED_CARD = ('{"menu_item_name": "Margherita Pizza", "note": null, "ingred
                    '{"name": "Flour", "qty": 0.4, "unit": "lb", "confid')
 
 
-@pytest.mark.xfail(strict=True, reason="AI-26: recipe photo ignores stop_reason max_tokens and tells the owner "
-                                       "to try a clearer photo")
 def test_a_recipe_card_cut_off_at_the_token_limit_says_it_was_too_long_not_try_a_clearer_photo(db_path):
     rid = _recipe_setup(db_path)
     fake = _FakeClient(_TRUNCATED_CARD, stop_reason="max_tokens")
@@ -329,7 +327,6 @@ def test_the_forced_budget_stop_raises_the_paused_sentence(budget_stopped):
     assert "paused" in str(err.value)
 
 
-@pytest.mark.xfail(strict=True, reason="AI-11: web food cost insight says 'check back shortly' under a budget stop")
 def test_the_web_food_cost_insight_says_paused_when_the_ai_budget_has_stopped(http, budget_stopped):
     r = http.get("/api/inv-insight")
     body = r.get_json()
@@ -337,7 +334,6 @@ def test_the_web_food_cost_insight_says_paused_when_the_ai_budget_has_stopped(ht
     assert "check back shortly" not in body["insight"]
 
 
-@pytest.mark.xfail(strict=True, reason="AI-11: mobile food cost insight says 'check back shortly' under a budget stop")
 def test_the_mobile_food_cost_insight_says_paused_when_the_ai_budget_has_stopped(http, budget_stopped):
     r = http.get("/mobile/api/food-cost/analytics", headers=_BEARER)
     body = r.get_json()
@@ -346,7 +342,6 @@ def test_the_mobile_food_cost_insight_says_paused_when_the_ai_budget_has_stopped
     assert "check back shortly" not in body["insight"]
 
 
-@pytest.mark.xfail(strict=True, reason="AI-11: web labor insight says 'check back shortly' under a budget stop")
 def test_the_web_labor_insight_says_paused_when_the_ai_budget_has_stopped(http, budget_stopped):
     r = http.get("/api/labor-insight")
     body = r.get_json()
@@ -354,7 +349,6 @@ def test_the_web_labor_insight_says_paused_when_the_ai_budget_has_stopped(http, 
     assert "check back shortly" not in body["insight"]
 
 
-@pytest.mark.xfail(strict=True, reason="AI-11: mobile labor insight says 'check back shortly' under a budget stop")
 def test_the_mobile_labor_insight_says_paused_when_the_ai_budget_has_stopped(http, budget_stopped):
     r = http.get("/mobile/api/labor/insight", headers=_BEARER)
     body = r.get_json()

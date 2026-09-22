@@ -1268,10 +1268,11 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False) ->
         restaurant_id=restaurant_id, action="food_cost_diagnosis")
     if getattr(msg, "stop_reason", None) == "max_tokens":
         raise ValueError("food cost diagnosis was truncated")
-    raw = extract_text(msg).strip()
-    raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    # A leading sentence before the JSON failed json.loads (AI-26).
+    from ai_utils import parse_json_reply
     labels = [d.get("item") or d["label"] for d in drv["drivers"]]
-    result = _validate_diagnosis(json.loads(raw), labels, prompt, restaurant_id)
+    result = _validate_diagnosis(parse_json_reply(extract_text(msg), expect=dict),
+                                 labels, prompt, restaurant_id)
 
     pp = ev["profitability"]
     at_stake = (abs(pp["dollars_vs_last_month"])
