@@ -29,7 +29,15 @@ from flask import Blueprint, request, jsonify
 
 from auth import verify_password, create_session, delete_session, revoke_other_sessions, mobile_login_required, update_last_login
 from auth_routes import _is_rate_limited, _record_failed_attempt, _clear_attempts, _get_client_ip
-from models import get_restaurant, update_restaurant, get_conn
+from models import get_restaurant, update_restaurant
+import models as _models_mod
+
+def get_conn(db_path=None):
+    """models.get_conn, resolved at call time — CLAUDE.md's bound-import
+    hazard. `from models import get_conn` bound the function object at
+    import, so a test's monkeypatch of models.get_conn never reached the
+    bare get_conn() calls in this module and they opened ./reviews.db."""
+    return _models_mod.get_conn(db_path) if db_path is not None else _models_mod.get_conn()
 
 import client_api as _capi
 
@@ -1788,7 +1796,7 @@ def mobile_food_cost_cogs(current_user):
     try:
         return jsonify(**_cogs.build_food_cost_pct(current_user["restaurant_id"], days=days))
     except Exception as e:
-        return jsonify(ok=False, pct=None, error=f"Couldn't work out food cost %: {e}"), 500
+        return jsonify(ok=False, pct=None, error=_safe_err(e)), 500
 
 
 @mobile_bp.route("/food-cost/cfo")
@@ -2900,6 +2908,8 @@ def mobile_guest_campaign_draft(current_user):
         message = draft_campaign_message(restaurant, campaign_type=data.get("type", "general"), topic=data.get("topic", ""))
         return jsonify(ok=True, message=message)
     except Exception as e:
+        import ops
+        ops.capture(e, job="guest_campaign_draft", context=f"restaurant_id={rid}")
         return jsonify(ok=False, error="Couldn't draft a message right now — try again in a moment."), 500
 
 
@@ -2935,6 +2945,8 @@ def mobile_guest_campaign_send(current_user):
         # quiet-hours window rather than sending a marketing text at midnight.
         return jsonify(**result), 200
     except Exception as e:
+        import ops
+        ops.capture(e, job="guest_campaign_send", context=f"restaurant_id={rid}")
         return jsonify(ok=False, error="Couldn't send the campaign — try again in a moment."), 500
 
 

@@ -5,7 +5,15 @@ Registered as a Flask Blueprint in hosted_dashboard.py
 from flask import Blueprint, request, jsonify, redirect
 import os
 
-from models import get_conn, get_restaurant, update_restaurant
+from models import get_restaurant, update_restaurant
+import models as _models_mod
+
+def get_conn(db_path=None):
+    """models.get_conn, resolved at call time — CLAUDE.md's bound-import
+    hazard. `from models import get_conn` bound the function object at
+    import, so a test's monkeypatch of models.get_conn never reached the
+    bare get_conn() calls in this module and they opened ./reviews.db."""
+    return _models_mod.get_conn(db_path) if db_path is not None else _models_mod.get_conn()
 from auth import login_required
 from meta_api import graph_url, oauth_dialog_url
 

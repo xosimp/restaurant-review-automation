@@ -7,7 +7,15 @@ from flask import Blueprint, request, jsonify, redirect, send_file, Response, re
 import os, json, re, time, threading
 from datetime import datetime
 
-from models import get_conn, get_restaurant, update_restaurant, approve_response, get_review_stats, get_reviews_data, get_top_issues, get_topic_heatmap
+from models import get_restaurant, update_restaurant, approve_response, get_review_stats, get_reviews_data, get_top_issues, get_topic_heatmap
+import models as _models_mod
+
+def get_conn(db_path=None):
+    """models.get_conn, resolved at call time — CLAUDE.md's bound-import
+    hazard. `from models import get_conn` bound the function object at
+    import, so a test's monkeypatch of models.get_conn never reached the
+    bare get_conn() calls in this module and they opened ./reviews.db."""
+    return _models_mod.get_conn(db_path) if db_path is not None else _models_mod.get_conn()
 from auth import login_required
 
 
@@ -610,12 +618,8 @@ def topic_heatmap_api(current_user):
 @client_bp.route("/api/changelog")
 @login_required
 def changelog_api(current_user):
-    from models import get_changelog, get_restaurant, update_restaurant
-    restaurant = get_restaurant(current_user["restaurant_id"])
-    entries = get_changelog()
-    # Mark as seen — stamp now
-    update_restaurant(current_user["restaurant_id"], {"changelog_seen_at": __import__("datetime").datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")})
-    return jsonify(ok=True, entries=entries)
+    """Web twin — the one body is mobile_api.mobile_changelog."""
+    return _m("mobile_changelog")(current_user)
 
 @client_bp.route("/api/changelog/unread-count")
 @login_required
@@ -650,19 +654,8 @@ def list_templates(current_user):
 @client_bp.route("/api/templates", methods=["POST"])
 @login_required
 def create_template(current_user):
-    from models import create_response_template
-    data  = request.get_json() or {}
-    title = (data.get("title") or "").strip()
-    body  = (data.get("body") or "").strip()
-    if not title or not body:
-        return jsonify(ok=False, error="Title and body required"), 400
-    if len(title) > 120:
-        return jsonify(ok=False, error="Title too long (120 chars max)"), 400
-    category = data.get("category", "general")
-    if category not in ("general", "positive", "negative", "neutral"):
-        category = "general"
-    tid = create_response_template(current_user["restaurant_id"], title, body, category)
-    return jsonify(ok=True, id=tid)
+    """Web twin — the one body is mobile_api.mobile_create_template."""
+    return _m("mobile_create_template")(current_user)
 
 @client_bp.route("/api/templates/<int:tid>", methods=["DELETE"])
 @login_required
@@ -2140,19 +2133,8 @@ def marketing_media_delete(media_id, current_user):
 @client_bp.route("/api/marketing/schedule", methods=["GET", "POST"])
 @login_required
 def marketing_schedule_api(current_user):
-    import marketing_publish as _mp
-    rid = current_user["restaurant_id"]
-    if not _restaurant_has_marketing_module(rid):
-        return jsonify(ok=False, error=_NO_MARKETING_MODULE_ERROR), 403
-    if request.method == "GET":
-        return jsonify(ok=True, posts=_mp.list_scheduled(rid))
-    data = request.get_json() or {}
-    result = _mp.schedule_post(
-        rid, data.get("platform"), data.get("body"), data.get("scheduled_for"),
-        topic=data.get("topic") or "", content_type=data.get("content_type"),
-        media_id=data.get("media_id"), cta_type=data.get("cta_type"),
-        cta_url=data.get("cta_url"))
-    return jsonify(**result), (200 if result.get("ok") else 400)
+    """Web twin — the one body is mobile_api.mobile_schedule."""
+    return _m("mobile_schedule")(current_user)
 
 
 @client_bp.route("/api/marketing/schedule/<int:post_id>", methods=["DELETE"])
@@ -2166,17 +2148,8 @@ def marketing_schedule_cancel(post_id, current_user):
 @client_bp.route("/api/marketing/drafts", methods=["GET", "POST"])
 @login_required
 def marketing_drafts_api(current_user):
-    import marketing_drafts as _md
-    rid = current_user["restaurant_id"]
-    if not _restaurant_has_marketing_module(rid):
-        return jsonify(ok=False, error=_NO_MARKETING_MODULE_ERROR), 403
-    if request.method == "GET":
-        return jsonify(ok=True, drafts=_md.list_drafts(rid))
-    data = request.get_json() or {}
-    result = _md.save_draft(rid, data.get("body"), content_type=data.get("content_type"),
-                            topic=data.get("topic"), media_id=data.get("media_id"),
-                            draft_id=data.get("id"), user_id=current_user.get("id"))
-    return jsonify(**result), (200 if result.get("ok") else 400)
+    """Web twin — the one body is mobile_api.mobile_drafts."""
+    return _m("mobile_drafts")(current_user)
 
 
 @client_bp.route("/api/marketing/drafts/<int:draft_id>/approve", methods=["POST"])
@@ -2216,31 +2189,15 @@ def marketing_attribution_api(current_user):
 @client_bp.route("/api/marketing/links", methods=["GET", "POST"])
 @login_required
 def marketing_links_api(current_user):
-    import marketing_links as _ml
-    rid = current_user["restaurant_id"]
-    if not _restaurant_has_marketing_module(rid):
-        return jsonify(ok=False, error=_NO_MARKETING_MODULE_ERROR), 403
-    if request.method == "GET":
-        return jsonify(ok=True, links=_ml.link_stats(rid))
-    data = request.get_json() or {}
-    result = _ml.create_link(rid, data.get("target_url"), source=data.get("source") or "sms",
-                             campaign=data.get("campaign") or "", label=data.get("label") or "")
-    if result.get("ok"):
-        result["short_url"] = request.url_root.rstrip("/") + "/g/" + result["token"]
-    return jsonify(**result), (200 if result.get("ok") else 400)
+    """Web twin — the one body is mobile_api.mobile_links."""
+    return _m("mobile_links")(current_user)
 
 
 @client_bp.route("/api/guest-segments")
 @login_required
 def guest_segments_api(current_user):
-    from guest_marketing import SEGMENTS, segment_counts, CAMPAIGN_DEFAULT_SEGMENT
-    rid = current_user["restaurant_id"]
-    if not _restaurant_has_marketing_module(rid):
-        return jsonify(ok=False, error=_NO_MARKETING_MODULE_ERROR), 403
-    counts = segment_counts(rid)
-    return jsonify(ok=True, defaults=CAMPAIGN_DEFAULT_SEGMENT, segments=[
-        {"key": k, "label": v["label"], "help": v["help"], "count": counts.get(k, 0)}
-        for k, v in SEGMENTS.items()])
+    """Web twin — the one body is mobile_api.mobile_guest_segments."""
+    return _m("mobile_guest_segments")(current_user)
 
 
 @client_bp.route("/api/guest-campaigns")
@@ -2256,35 +2213,15 @@ def guest_campaigns_api(current_user):
 @client_bp.route("/api/guest-newsletter", methods=["GET", "POST"])
 @login_required
 def guest_newsletter_api(current_user):
-    import guest_email as _ge
-    rid = current_user["restaurant_id"]
-    if not _restaurant_has_marketing_module(rid):
-        return jsonify(ok=False, error=_NO_MARKETING_MODULE_ERROR), 403
-    if request.method == "GET":
-        return jsonify(ok=True, subscribers=_ge.subscriber_count(rid))
-    from ai_utils import ai_rate_limited
-    if ai_rate_limited(f"newsletter:{rid}", max_calls=2, window_secs=600):
-        return jsonify(ok=False, error="Too many newsletters sent recently — wait a few minutes."), 429
-    data = request.get_json() or {}
-    result = _ge.send_newsletter(rid, data.get("body") or "", subject=data.get("subject"))
-    return jsonify(**result), (200 if result.get("ok") else 400)
+    """Web twin — the one body is mobile_api.mobile_guest_newsletter."""
+    return _m("mobile_guest_newsletter")(current_user)
 
 
 @client_bp.route("/api/marketing/preview", methods=["POST"])
 @login_required
 def marketing_preview_api(current_user):
-    """What the post will look like where it lands, and whether it will be
-    accepted — computed server-side so the two platforms can't disagree."""
-    import marketing_publish as _mp
-    from marketing_media import get_media_token
-    data = request.get_json() or {}
-    token = None
-    if data.get("media_id"):
-        token = get_media_token(data["media_id"], current_user["restaurant_id"])
-    return jsonify(ok=True, **_mp.preview(
-        data.get("platform"), data.get("body") or "",
-        media_token=token, cta_type=data.get("cta_type"),
-        base_url=request.url_root))
+    """Web twin — the one body is mobile_api.mobile_marketing_preview."""
+    return _m("mobile_marketing_preview")(current_user)
 
 
 @client_bp.route("/api/post-to-google", methods=["POST"])
@@ -6057,20 +5994,8 @@ def guest_contacts_list(current_user):
 @client_bp.route("/api/guest-contacts", methods=["POST"])
 @login_required
 def guest_contacts_add(current_user):
-    """Owner adding a number manually — never consented (see
-    guest_marketing.add_guest_contact_manual's docstring for why)."""
-    if not _restaurant_has_marketing_module(current_user["restaurant_id"]):
-        return jsonify(ok=False, error=_NO_MARKETING_MODULE_ERROR), 403
-    from guest_marketing import add_guest_contact_manual
-    data = request.get_json() or {}
-    name = (data.get("name") or "").strip()
-    phone = (data.get("phone") or "").strip()
-    if not name:
-        return jsonify(ok=False, error="Name required"), 400
-    if not phone:
-        return jsonify(ok=False, error="Phone number required"), 400
-    contact_id = add_guest_contact_manual(current_user["restaurant_id"], phone, name=name)
-    return jsonify(ok=True, id=contact_id)
+    """Web twin — the one body is mobile_api.mobile_add_guest_contact."""
+    return _m("mobile_add_guest_contact")(current_user)
 
 @client_bp.route("/api/guest-contacts/<int:contact_id>", methods=["DELETE"])
 @login_required
@@ -6096,22 +6021,8 @@ def guest_contacts_mark_visit(contact_id, current_user):
 @client_bp.route("/api/guest-campaign/draft", methods=["POST"])
 @login_required
 def guest_campaign_draft(current_user):
-    rid = current_user["restaurant_id"]
-    if not _restaurant_has_marketing_module(rid):
-        return jsonify(ok=False, error=_NO_MARKETING_MODULE_ERROR), 403
-    from ai_utils import ai_rate_limited
-    if ai_rate_limited(f"guestcampaign:{rid}", max_calls=8, window_secs=60):
-        return jsonify(ok=False, error="Too many requests — please wait a moment and try again."), 429
-    data = request.get_json() or {}
-    try:
-        from guest_marketing import draft_campaign_message
-        restaurant = get_restaurant(rid)
-        message = draft_campaign_message(restaurant, campaign_type=data.get("type", "general"), topic=data.get("topic", ""))
-        return jsonify(ok=True, message=message)
-    except Exception as e:
-        import ops
-        ops.capture(e, job="guest_campaign_draft", context=f"restaurant_id={rid}")
-        return jsonify(ok=False, error="Couldn't draft a message right now — try again in a moment."), 500
+    """Web twin — the one body is mobile_api.mobile_guest_campaign_draft."""
+    return _m("mobile_guest_campaign_draft")(current_user)
 
 _WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 
@@ -6137,38 +6048,8 @@ def _track_campaign_outcome(rid, data, result, user_id):
 @client_bp.route("/api/guest-campaign/send", methods=["POST"])
 @login_required
 def guest_campaign_send(current_user):
-    rid = current_user["restaurant_id"]
-    if not _restaurant_has_marketing_module(rid):
-        return jsonify(ok=False, error=_NO_MARKETING_MODULE_ERROR), 403
-    from ai_utils import ai_rate_limited
-    data = request.get_json() or {}
-    message = (data.get("message") or "").strip()
-    if not message:
-        return jsonify(ok=False, error="Message required"), 400
-    if ai_rate_limited(f"guestcampaignsend:{rid}", max_calls=3, window_secs=300):
-        return jsonify(ok=False, error="Too many campaigns sent recently — please wait a few minutes."), 429
-    try:
-        from guest_marketing import send_campaign
-        # A campaign now goes to a segment, not to everyone consented — and
-        # can carry a tracked link, which SMS could never carry at all.
-        link_token = None
-        target = (data.get("link_url") or "").strip()
-        if target:
-            import marketing_links as _ml
-            made = _ml.create_link(rid, target, source="sms",
-                                   campaign=(data.get("type") or "campaign"))
-            if made.get("ok"):
-                link_token = made["token"]
-        result = send_campaign(rid, message, segment=data.get("segment") or "all",
-                               link_token=link_token)
-        _track_campaign_outcome(rid, data, result, current_user.get("id"))
-        # send_campaign reports its own ok — it refuses outside the guest-text
-        # quiet-hours window rather than sending a marketing text at midnight.
-        return jsonify(**result), 200
-    except Exception as e:
-        import ops
-        ops.capture(e, job="guest_campaign_send", context=f"restaurant_id={rid}")
-        return jsonify(ok=False, error="Couldn't send the campaign — try again in a moment."), 500
+    """Web twin — the one body is mobile_api.mobile_guest_campaign_send."""
+    return _m("mobile_guest_campaign_send")(current_user)
 
 
 @client_bp.route("/api/guest-qr")
@@ -6570,36 +6451,15 @@ def get_notifications(current_user):
 @client_bp.route("/api/account/send-test-push", methods=["POST"])
 @login_required
 def send_test_push_route(current_user):
-    """Web twin of the mobile route — same scoping, same inline delivery.
-    Useful from a laptop precisely because the phone being tested is the one
-    that cannot be used to trigger the test."""
-    from push import send_test_push
-    result = send_test_push(current_user["restaurant_id"], current_user["id"])
-    if not result.get("ok"):
-        return jsonify(ok=False, error=result.get("error") or "Apple did not accept it.",
-                       devices=result.get("devices", 0)), 400
-    return jsonify(ok=True, devices=result["devices"], sent=result["sent"])
+    """Web twin — the one body is mobile_api.mobile_send_test_push."""
+    return _m("mobile_send_test_push")(current_user)
 
 
 @client_bp.route("/api/notifications/opened", methods=["POST"])
 @login_required
 def mark_notification_opened(current_user):
-    """One row when a notification is actually opened. The product could say
-    how many it sent and nothing about whether any were worth sending."""
-    from models import record_notification_open
-    data = request.get_json(silent=True) or {}
-    # Same as the phone twin: an opened alert with a metric behind it starts
-    # an observed tracker (outcomes.ALERT_METRICS), once per metric per month.
-    try:
-        import outcomes as _oc_open
-        _atype = (data.get("type") or "").strip()
-        if _atype in _oc_open.ALERT_METRICS:
-            _oc_open.observe(current_user["restaurant_id"], f"alert_{_atype}", user_id=current_user.get("id"))
-    except Exception:
-        pass
-    record_notification_open(current_user["restaurant_id"], data.get("type") or "",
-                             user_id=current_user["id"])
-    return jsonify(ok=True)
+    """Web twin — the one body is mobile_api.mobile_mark_notification_opened."""
+    return _m("mobile_mark_notification_opened")(current_user)
 
 
 @client_bp.route("/api/notifications/engagement")
@@ -7049,32 +6909,8 @@ def save_login_notify(current_user):
 @client_bp.route("/api/food-cost/ingredient-supplier", methods=["POST"])
 @login_required
 def set_ingredient_supplier(current_user):
-    data = request.get_json(silent=True) or {}
-    rid = current_user["restaurant_id"]
-    name = (data.get("name") or "").strip()
-    if not name:
-        return jsonify(ok=False, error="Ingredient name is required"), 400
-    supplier_name  = (data.get("supplier_name") or "").strip()
-    supplier_email = (data.get("supplier_email") or "").strip()
-    # Was `"@" in value`, with no length bound and no format check — on the
-    # field that decides where a real purchase order gets emailed.
-    from guest_email import valid_email as _valid_email
-    if supplier_email and (len(supplier_email) > 254 or not _valid_email(supplier_email)):
-        return jsonify(ok=False, error="That doesn't look like an email address"), 400
-
-    conn = get_conn()
-    try:
-        cur = conn.execute("""
-            UPDATE ingredients SET supplier_name=?, supplier_email=?, updated_at=datetime('now')
-            WHERE restaurant_id=? AND name=? AND is_active=1
-        """, (supplier_name or None, supplier_email or None, rid, name))
-        conn.commit()
-        updated = cur.rowcount
-    finally:
-        conn.close()
-    if not updated:
-        return jsonify(ok=False, error=f"No active ingredient named \"{name}\""), 404
-    return jsonify(ok=True, name=name, supplier_name=supplier_name, supplier_email=supplier_email)
+    """Web twin — the one body is mobile_api.mobile_set_ingredient_supplier."""
+    return _m("mobile_set_ingredient_supplier")(current_user)
 
 
 _ORDER_SEND_COOLDOWN = 60  # seconds between supplier-order sends per restaurant
@@ -7097,12 +6933,8 @@ def _order_send_allowed(restaurant_id) -> bool:
 @client_bp.route("/api/food-cost/order-draft")
 @login_required
 def food_cost_order_draft(current_user):
-    from inventory import build_supplier_orders
-    try:
-        draft = build_supplier_orders(current_user["restaurant_id"])
-    except Exception as e:
-        return jsonify(ok=False, error=f"Couldn't build the order: {e}"), 500
-    return jsonify(ok=True, **draft)
+    """Web twin — the one body is mobile_api.mobile_food_cost_order_draft."""
+    return _m("mobile_food_cost_order_draft")(current_user)
 
 
 def _send_supplier_orders(rid, restaurant, groups, actor):
@@ -7244,95 +7076,36 @@ def receive_purchase_order(current_user, po_id):
 @client_bp.route("/api/food-cost/cogs")
 @login_required
 def food_cost_cogs(current_user):
-    """Actual food cost % — COGS over net sales — against the restaurant's
-    own food_cost_target. Returns ok=False with a `missing` list rather than
-    a figure built on a substituted zero."""
-    import cogs as _cogs
-    try:
-        days = int(request.args.get("days") or _cogs.DEFAULT_WINDOW_DAYS)
-    except (TypeError, ValueError):
-        days = _cogs.DEFAULT_WINDOW_DAYS
-    days = max(7, min(days, 365))
-    try:
-        return jsonify(**_cogs.build_food_cost_pct(current_user["restaurant_id"], days=days))
-    except Exception as e:
-        return jsonify(ok=False, pct=None, error=_safe_err(e)), 500
+    """Web twin — the one body is mobile_api.mobile_food_cost_cogs."""
+    return _m("mobile_food_cost_cogs")(current_user)
 
 
 @client_bp.route("/api/food-cost/cfo")
 @login_required
 def food_cost_cfo(current_user):
-    """The CFO read: the ranked cost drivers, the stored root cause, the
-    month-end profitability projection, and the eight answers a morning brief
-    owes an owner.
-
-    Everything here is measured or explicitly reported as unmeasurable. The
-    diagnosis is READ, never generated — producing one is a Sonnet call over
-    the drivers and belongs on the scheduler, not on a page load.
-    """
-    import food_cost_intelligence as _fci
-    rid = current_user["restaurant_id"]
-    try:
-        brief = _fci.executive_brief(rid)
-        diag = _fci.get_diagnosis(rid, include_stale=True)
-        return jsonify(
-            ok=True,
-            brief=brief,
-            diagnosis=diag,
-            drivers=_fci.cost_drivers(rid),
-            profitability=brief.get("profitability"),
-            # What KIND of claim each part of this payload is making.
-            # ai_guard.CLAIM_KINDS exists for exactly this; the food-cost web
-            # payload shipped none of it, so a measured food cost %, an
-            # inferred cause and a month-end projection all arrived as prose
-            # of equal authority.
-            claim_kinds={
-                "food_cost_pct": "measured",
-                "drivers": "computed",
-                "why": "inferred",
-                "profitability": "forecast",
-                "money_involved": "forecast",
-                "recommended_action": "suggestion",
-                "trust": "measured",
-            },
-        )
-    except Exception as e:
-        return jsonify(ok=False, error=_safe_err(e)), 500
+    """Web twin — the one body is mobile_api.mobile_food_cost_cfo."""
+    return _m("mobile_food_cost_cfo")(current_user)
 
 
 @client_bp.route("/api/food-cost/waste-sources")
 @login_required
 def food_cost_waste_sources(current_user):
-    """Counted waste vs waste inferred from a recount gap. A gap is a
-    counting problem, not money wasted, and nothing used to tell them
-    apart for the owner."""
-    import inventory_ledger as _il
-    try:
-        return jsonify(ok=True, **_il.waste_sources(current_user["restaurant_id"]))
-    except Exception as e:
-        return jsonify(ok=False, error=_safe_err(e)), 500
+    """Web twin — the one body is mobile_api.mobile_waste_sources."""
+    return _m("mobile_waste_sources")(current_user)
 
 
 @client_bp.route("/api/food-cost/recipe-coverage")
 @login_required
 def food_cost_recipe_coverage(current_user):
-    """What share of what this restaurant sold is accounted for by a recipe —
-    the number that says how far the rest of the module can be trusted."""
-    import inventory_ledger as _il
-    try:
-        return jsonify(ok=True, **_il.recipe_coverage(current_user["restaurant_id"]))
-    except Exception as e:
-        return jsonify(ok=False, error=_safe_err(e)), 500
+    """Web twin — the one body is mobile_api.mobile_recipe_coverage."""
+    return _m("mobile_recipe_coverage")(current_user)
 
 
 @client_bp.route("/api/food-cost/menu-profitability")
 @login_required
 def food_cost_menu_profitability(current_user):
-    import inventory_ledger as _il
-    try:
-        return jsonify(ok=True, **_il.menu_profitability(current_user["restaurant_id"]))
-    except Exception as e:
-        return jsonify(ok=False, error=f"Couldn't work out menu margins: {e}"), 500
+    """Web twin — the one body is mobile_api.mobile_menu_profitability."""
+    return _m("mobile_menu_profitability")(current_user)
 
 
 def track_reprice(rid, user_id=None):
@@ -7360,64 +7133,22 @@ def track_reprice(rid, user_id=None):
 @client_bp.route("/api/food-cost/menu-item-price", methods=["POST"])
 @login_required
 def set_menu_item_price(current_user):
-    import inventory_ledger as _il
-    data = request.get_json(silent=True) or {}
-    try:
-        item_id = int(data.get("menu_item_id"))
-    except (TypeError, ValueError):
-        return jsonify(ok=False, error="Which menu item?"), 400
-    if not _il.set_menu_item_price(current_user["restaurant_id"], item_id, data.get("sell_price")):
-        return jsonify(ok=False, error="Couldn't set that price — check the item and the amount."), 400
-    track_reprice(current_user["restaurant_id"], current_user.get("id"))
-    return jsonify(ok=True)
+    """Web twin — the one body is mobile_api.mobile_set_menu_item_price."""
+    return _m("mobile_set_menu_item_price")(current_user)
 
 
 @client_bp.route("/api/labor/staff-contacts")
 @login_required
 def get_staff_contacts_api(current_user):
-    from models import get_staff_contacts
-    from labor import employees_in_schedule
-    rid = current_user["restaurant_id"]
-
-    conn = get_conn()
-    try:
-        row = conn.execute(
-            "SELECT id, week_start, week_end, schedule_csv FROM schedule_history "
-            "WHERE restaurant_id=? ORDER BY id DESC LIMIT 1", (rid,)
-        ).fetchone()
-    finally:
-        conn.close()
-
-    names = employees_in_schedule(row["schedule_csv"]) if row else []
-    saved = {c["employee_name"].lower(): c for c in get_staff_contacts(rid)}
-    contacts = [{
-        "employee_name": n,
-        "email": (saved.get(n.lower()) or {}).get("email", ""),
-        "phone": (saved.get(n.lower()) or {}).get("phone", ""),
-        "pos_id": (saved.get(n.lower()) or {}).get("pos_id") or "",
-    } for n in names]
-    return jsonify(ok=True, contacts=contacts,
-                   schedule_id=(row["id"] if row else None),
-                   week_start=(row["week_start"] if row else None),
-                   week_end=(row["week_end"] if row else None),
-                   reachable=sum(1 for c in contacts if c["email"]))
+    """Web twin — the one body is mobile_api.mobile_get_staff_contacts."""
+    return _m("mobile_get_staff_contacts")(current_user)
 
 
 @client_bp.route("/api/labor/staff-contacts", methods=["POST"])
 @login_required
 def set_staff_contact_api(current_user):
-    from models import set_staff_contact
-    data = request.get_json(silent=True) or {}
-    name = (data.get("employee_name") or "").strip()
-    email = (data.get("email") or "").strip()
-    if not name:
-        return jsonify(ok=False, error="Which member of staff?"), 400
-    if email and "@" not in email:
-        return jsonify(ok=False, error="That doesn't look like an email address"), 400
-    if not set_staff_contact(current_user["restaurant_id"], name, email, (data.get("phone") or "").strip(),
-                             pos_id=(str(data.get("pos_id") or "").strip() or None)):
-        return jsonify(ok=False, error="Couldn't save that contact."), 400
-    return jsonify(ok=True)
+    """Web twin — the one body is mobile_api.mobile_set_staff_contact."""
+    return _m("mobile_set_staff_contact")(current_user)
 
 
 def _publish_schedule(restaurant_id, schedule_id=None, actor=None):
@@ -7543,21 +7274,8 @@ def publish_schedule_api(current_user):
 @client_bp.route("/api/labor/schedule-share-status")
 @login_required
 def schedule_share_status_api(current_user):
-    from models import get_schedule_share_status
-    rid = current_user["restaurant_id"]
-    schedule_id = request.args.get("schedule_id", type=int)
-    if not schedule_id:
-        conn = get_conn()
-        try:
-            row = conn.execute("SELECT id FROM schedule_history WHERE restaurant_id=? ORDER BY id DESC LIMIT 1",
-                               (rid,)).fetchone()
-        finally:
-            conn.close()
-        schedule_id = row["id"] if row else None
-    if not schedule_id:
-        return jsonify(ok=True, status=[])
-    return jsonify(ok=True, schedule_id=schedule_id,
-                   status=get_schedule_share_status(rid, schedule_id))
+    """Web twin — the one body is mobile_api.mobile_schedule_share_status."""
+    return _m("mobile_schedule_share_status")(current_user)
 
 
 

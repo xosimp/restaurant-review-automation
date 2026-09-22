@@ -1,5 +1,13 @@
 import re
-from models import get_conn, update_draft, get_pending_drafts, get_restaurant
+from models import update_draft, get_pending_drafts, get_restaurant
+import models as _models_mod
+
+def get_conn(db_path=None):
+    """models.get_conn, resolved at call time — CLAUDE.md's bound-import
+    hazard. `from models import get_conn` bound the function object at
+    import, so a test's monkeypatch of models.get_conn never reached the
+    bare get_conn() calls in this module and they opened ./reviews.db."""
+    return _models_mod.get_conn(db_path) if db_path is not None else _models_mod.get_conn()
 from ai_utils import create_with_retry, extract_text, get_client, model_for
 from ai_guard import UNTRUSTED_NOTE, wrap_untrusted
 
