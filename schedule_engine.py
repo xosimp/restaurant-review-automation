@@ -1415,8 +1415,19 @@ def _trim_server_overlap_cap(preview_rows: list, close_times: dict, role_buffers
     below ~30min would leave a token sliver shift.
 
     Returns (preview_rows, rows_trimmed, trimmed_dates).
+
+    With no section count on file there is no cap to enforce: the flat 7
+    this used to fall back on deleted real shifts against a ceiling the
+    owner never set, undid role floors above 7 servers, and reported the
+    cut nowhere (SCHED-8). _SERVER_MAX_OVERLAP stays as the documented
+    figure for callers that pass it explicitly.
     """
-    _cap = int(max_overlap) if max_overlap and int(max_overlap) > 0 else _SERVER_MAX_OVERLAP
+    try:
+        _cap = int(max_overlap) if max_overlap and int(max_overlap) > 0 else 0
+    except (TypeError, ValueError):
+        _cap = 0
+    if not _cap:
+        return preview_rows, 0, {}
 
     by_date: dict = {}
     for r in preview_rows:
@@ -2209,7 +2220,9 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                 _rates = _grr(restaurant_id)
                 _priced = _econ.priced_cost(preview_rows, _rates, result.get("blended_rate") or (_rates or {}).get("_default"),
                                             ceiling=min(float(_constraints.compliance.get("weekly_hours_ceiling") or 40), 40.0),
-                                            base_hours={n: sum(v.values()) for n, v in (_constraints.base_hours or {}).items()})
+                                            base_hours={n: dict(v) for n, v in (_constraints.base_hours or {}).items()},
+                                            bucket=_constraints.bucket,
+                                            daily_ot_hours=_constraints.compliance.get("daily_ot_hours"))
                 result["projected_cost"] = _priced
                 _lbd = float(result.get("labor_budget_dollars") or 0)
                 result["over_budget_dollars"] = round(_priced["total"] - _lbd, 0) if _lbd else None

@@ -95,7 +95,6 @@ def _six(d, emp="Ana", start="10:00am", end="4:00pm"):
 
 # ── SCHED-7: overtime priced per payroll bucket ──────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="SCHED-7: overtime is priced as if the Monday-Sunday draft were one payroll week (26h, not 2h)")
 def test_overtime_is_priced_per_payroll_week_when_payroll_starts_on_wednesday(db, monkeypatch):
     rid = _restaurant(db, week_start_day=2)
     _publish(db, rid, PREV, [_six(d) for d in PREV[2:]])            # 30h Wed-Sun of the prior payroll week
@@ -112,7 +111,6 @@ def test_overtime_on_a_monday_payroll_week_is_priced_past_forty(db, monkeypatch)
     assert any("8h of overtime" in line for line in res["review"]["lines"])
 
 
-@pytest.mark.xfail(strict=True, reason="SCHED-7: priced_cost never reads daily_ot_hours, so daily overtime is flagged but never priced")
 def test_daily_overtime_is_priced_where_the_rule_applies(db, monkeypatch):
     rid = _restaurant(db, compliance_json=json.dumps({"daily_ot_hours": 8}))
     rows = [(WEEK[0], "Monday", "Ana", "Server", "8:00am", "6:00pm", 10, "")]
@@ -128,7 +126,6 @@ def _r(date, emp, start, end, hours, role="Server", notes=""):
             "shift_start": start, "shift_end": end, "scheduled_hours": str(hours), "notes": notes}
 
 
-@pytest.mark.xfail(strict=True, reason="SCHED-23: trim_to_budget removes a person's only shift of the week")
 def test_trim_never_removes_somebodys_only_shift_of_the_week():
     rows = []
     for d in WEEK[:5]:
@@ -141,7 +138,6 @@ def test_trim_never_removes_somebodys_only_shift_of_the_week():
     assert any(r["employee"] == "Maya" for r in out), trimmed
 
 
-@pytest.mark.xfail(strict=True, reason="SCHED-23: trim_to_budget ignores min_hours and takes a part-timer under their stated minimum")
 def test_trim_never_takes_somebody_under_their_minimum_hours():
     c = sr.Constraints(restaurant_id=1, week_dates=WEEK, week_days=DAYS)
     c.hours_limits = {"maya": (8.0, None)}
@@ -154,7 +150,6 @@ def test_trim_never_takes_somebody_under_their_minimum_hours():
     assert sum(float(r["scheduled_hours"]) for r in out if r["employee"] == "Maya") >= 8.0, trimmed
 
 
-@pytest.mark.xfail(strict=True, reason="SCHED-23: the trim counts a no-show row as hours and removes a legal row while it survives")
 def test_trim_never_removes_a_legal_row_while_a_no_show_row_remains():
     c = sr.Constraints(restaurant_id=1, week_dates=WEEK, week_days=DAYS)
     c.blocked_dates = {"zed": {WEEK[2]: sr.LABELS["approved_time_off"]}}

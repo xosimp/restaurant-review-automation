@@ -76,13 +76,17 @@ def test_trim_removes_discretionary_hours_first_and_reports_each():
 
 
 def test_trim_never_goes_below_a_floor_or_removes_the_last_person_of_a_role():
+    # Each cook also works another day (as the last of that role), so the
+    # Monday cook is not their only shift of the week — which the trim never
+    # takes (SCHED-23) — and only the floor and last-of-role rules decide.
     rows = [_row(WEEK[0], "Ana", "4:00pm", "10:00pm", role="Cook"), _row(WEEK[0], "Bob", "4:00pm", "10:00pm", role="Cook"),
-            _row(WEEK[0], "Cy", "4:00pm", "10:00pm", role="Host")]
+            _row(WEEK[0], "Cy", "4:00pm", "10:00pm", role="Host"),
+            _row(WEEK[1], "Ana", "4:00pm", "10:00pm", role="Prep"), _row(WEEK[1], "Bob", "4:00pm", "10:00pm", role="Dish")]
     floors = {"Cook": {"morning": 0, "night": 2, "days": {}}}
     out, trimmed, removed = econ.trim_to_budget(rows, hours_budget=6.0, daily_targets={WEEK[0]: 6}, constraints=_c(), floors=floors)
     assert removed == 0 and trimmed == []                      # the two cooks are the floor, the host is the last host
     out, trimmed, removed = econ.trim_to_budget(rows, hours_budget=6.0, daily_targets={WEEK[0]: 6}, constraints=_c(), floors={})
-    assert removed == 6 and len(out) == 2
+    assert removed == 6 and len(out) == len(rows) - 1 and trimmed[0]["role"] == "Cook"
 
 
 def test_a_week_inside_the_tolerance_is_not_trimmed():

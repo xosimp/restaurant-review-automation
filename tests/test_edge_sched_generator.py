@@ -262,7 +262,6 @@ def _servers(n, date="2026-10-10"):
     return [_line(date, f"S{i}", f"{4 + (i % 3)}:00pm", "10:00pm", 6 - (i % 3)) for i in range(n)]
 
 
-@pytest.mark.xfail(strict=True, reason="SCHED-8: with no section count a hard-coded 7-server cap deletes real shifts and reports it nowhere")
 def test_fourteen_servers_with_no_section_count_are_kept_or_every_change_is_reported(db, monkeypatch):
     rid = _restaurant(db)
     out = _run_job(monkeypatch, rid, _csv(_servers(14)))
@@ -275,7 +274,6 @@ def test_fourteen_servers_with_no_section_count_are_kept_or_every_change_is_repo
     assert untouched or reported
 
 
-@pytest.mark.xfail(strict=True, reason="SCHED-8: a role floor above 7 servers is undone by the unconfigured 7-server cap")
 def test_a_server_floor_above_seven_survives_the_unconfigured_cap(db, monkeypatch):
     rid = _restaurant(db, role_floors_json=json.dumps({"Server": {"morning": 0, "night": 9}}))
     rows = [_line("2026-10-10", f"S{i}", "5:00pm", "10:00pm", 5) for i in range(9)]
