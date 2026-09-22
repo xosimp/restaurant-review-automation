@@ -301,7 +301,6 @@ def test_a_campaign_longer_than_an_sms_can_carry_is_refused_before_anyone_is_tex
     assert out["ok"] is False and texts == []
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-11: guest marketing texts go out on the owner-alert A2P messaging service")
 def test_a_guest_campaign_does_not_ride_the_owner_alert_messaging_service(db_path, texts):
     """A6 Campaigns #14 / MOD-MKT-11."""
     rid = _rid(db_path)
@@ -310,7 +309,6 @@ def test_a_guest_campaign_does_not_ride_the_owner_alert_messaging_service(db_pat
     assert texts and all(t.get("use_case") not in (None, "alert") for t in texts), texts
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-11: the manual review-request SMS ignores a guest's STOP")
 def test_a_manual_review_request_is_not_texted_to_a_guest_who_said_stop(db_path, monkeypatch):
     """MOD-MKT-11 — _do_send_review_request texts whatever number is typed."""
     rid = _rid(db_path, google_place_id="ChIJreview")
@@ -323,7 +321,6 @@ def test_a_manual_review_request_is_not_texted_to_a_guest_who_said_stop(db_path,
     assert sent == []
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-11: the manual review-request SMS ignores the 8am-9pm guest window")
 def test_a_manual_review_request_is_not_texted_at_midnight(db_path, monkeypatch):
     """MOD-MKT-11."""
     rid = _rid(db_path, google_place_id="ChIJreview")
@@ -347,7 +344,6 @@ def _due_followups(db_path, rid, n):
         conn.close()
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-10: the review-request job holds the SQLite write lock across every Twilio call")
 def test_other_writers_are_not_locked_out_while_review_requests_go_out(db_path, monkeypatch):
     """A6 Jobs #9 / MOD-MKT-10 — a settings save during the job must not
     fail with 'database is locked'."""
@@ -371,7 +367,6 @@ def test_other_writers_are_not_locked_out_while_review_requests_go_out(db_path, 
     assert outcomes and all(o == "ok" for o in outcomes), outcomes
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-10: a review-request run interrupted mid-loop commits nothing, so the next run re-texts everyone")
 def test_an_interrupted_review_request_run_does_not_re_text_guests(db_path, monkeypatch):
     """A6 Jobs #10 / MOD-MKT-10."""
     rid = _rid(db_path, google_place_id="ChIJreview")
@@ -405,7 +400,6 @@ def _toast_restaurant(db_path, name, **kw):
     return rid
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-12: a STOP sent to one restaurant does not stop another restaurant's opt-in invite")
 def test_a_stop_to_one_restaurant_stops_another_restaurants_invite(db_path, texts):
     """A6 Jobs #11 / MOD-MKT-12 — the reply promised 'no more texts from us',
     and 'us' is one shared number."""
@@ -421,7 +415,6 @@ def test_a_stop_to_one_restaurant_stops_another_restaurants_invite(db_path, text
     assert victim not in {t["phone"] for t in texts}
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-12: a churned restaurant's opt-in invites keep going out")
 def test_a_churned_restaurant_sends_no_opt_in_invites(db_path, texts):
     """A6 Jobs #13 / MOD-MKT-12."""
     rid = _toast_restaurant(db_path, "Gone Co")
@@ -443,7 +436,6 @@ class _StopLoop(BaseException):
     pass
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-12: a restaurant deferred by quiet hours at the 11am invite slot is never retried that day")
 def test_a_restaurant_deferred_at_the_invite_slot_is_retried_later_that_day(monkeypatch):
     """A6 Jobs #12 / MOD-MKT-12 — drive two real scheduler ticks (11:05 and
     15:00 server time). The first pass deferred a restaurant (Hawaii is at

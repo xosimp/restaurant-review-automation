@@ -61,7 +61,7 @@ def _restaurant(db_path, **kw):
 
 def _sent_sms(monkeypatch):
     sent = []
-    monkeypatch.setattr(gm, "send_sms", lambda phone, msg: sent.append((phone, msg)) or True)
+    monkeypatch.setattr(gm, "send_sms", lambda phone, msg, **kw: sent.append((phone, msg)) or True)
     return sent
 
 

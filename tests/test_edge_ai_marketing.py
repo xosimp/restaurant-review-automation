@@ -152,7 +152,7 @@ def test_a_normal_campaign_texts_every_eligible_guest_exactly_once(db_path, rid,
     """The baseline the three defects below are measured against."""
     phones = _guests(db_path, rid, 4)
     sent = []
-    monkeypatch.setattr(guest_marketing, "send_sms", lambda phone, body: sent.append(phone) or True)
+    monkeypatch.setattr(guest_marketing, "send_sms", lambda phone, body, **kw: sent.append(phone) or True)
 
     result = guest_marketing.send_campaign(rid, "Truffle week starts Thursday.", db_path=db_path)
 
@@ -166,7 +166,7 @@ def test_a_campaign_interrupted_mid_send_and_sent_again_does_not_retext_anyone(d
     _guests(db_path, rid, 5)
     texted = []
 
-    def dies_after_two(phone, body):
+    def dies_after_two(phone, body, **kw):
         if len(texted) == 2:
             raise SystemExit("worker killed mid-request")
         texted.append(phone)
@@ -177,7 +177,7 @@ def test_a_campaign_interrupted_mid_send_and_sent_again_does_not_retext_anyone(d
         guest_marketing.send_campaign(rid, "Patio opens Friday.", db_path=db_path)
     assert len(texted) == 2
 
-    monkeypatch.setattr(guest_marketing, "send_sms", lambda phone, body: texted.append(phone) or True)
+    monkeypatch.setattr(guest_marketing, "send_sms", lambda phone, body, **kw: texted.append(phone) or True)
     guest_marketing.send_campaign(rid, "Patio opens Friday.", db_path=db_path)
 
     twice = sorted({p for p in texted if texted.count(p) > 1})
@@ -188,7 +188,7 @@ def test_a_campaign_that_dies_mid_send_still_records_who_was_texted(db_path, rid
     _guests(db_path, rid, 5)
     texted = []
 
-    def dies_after_two(phone, body):
+    def dies_after_two(phone, body, **kw):
         if len(texted) == 2:
             raise SystemExit("worker killed mid-request")
         texted.append(phone)
@@ -215,7 +215,7 @@ def test_a_retry_that_arrives_while_the_first_send_is_still_running_does_not_dou
     texted = []
     state = {"retried": False}
 
-    def sms(phone, body):
+    def sms(phone, body, **kw):
         texted.append(phone)
         if len(texted) == 2 and not state["retried"]:
             state["retried"] = True
@@ -234,7 +234,7 @@ def test_a_retry_that_arrives_while_the_first_send_is_still_running_does_not_dou
 def test_a_campaign_inside_the_sms_budget_goes_out_in_full_with_the_stop_line(db_path, rid, monkeypatch):
     _guests(db_path, rid, 1)
     bodies = []
-    monkeypatch.setattr(guest_marketing, "send_sms", lambda phone, body: bodies.append(body) or True)
+    monkeypatch.setattr(guest_marketing, "send_sms", lambda phone, body, **kw: bodies.append(body) or True)
     message = "Fresh truffle pasta is back tonight — the first 20 plates get a free glass of Barbera. See you soon."
     assert len(message) < 300
 
@@ -247,7 +247,7 @@ def test_a_campaign_inside_the_sms_budget_goes_out_in_full_with_the_stop_line(db
 def test_a_700_character_campaign_is_refused_before_any_text_is_sent(db_path, rid, monkeypatch):
     _guests(db_path, rid, 3)
     sends = []
-    monkeypatch.setattr(guest_marketing, "send_sms", lambda phone, body: sends.append(phone) or True)
+    monkeypatch.setattr(guest_marketing, "send_sms", lambda phone, body, **kw: sends.append(phone) or True)
     message = ("Our autumn menu is here and we could not be more excited to share it with you. " * 9)[:700]
     assert len(message) == 700
 

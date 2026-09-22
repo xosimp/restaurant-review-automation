@@ -292,7 +292,7 @@ def test_an_active_restaurant_s_guests_get_their_follow_up(db_path, monkeypatch)
     import guest_marketing
     _followup_world(db_path, monkeypatch)
     texted = []
-    monkeypatch.setattr(guest_marketing, "send_sms", lambda phone, msg: texted.append(phone) or True)
+    monkeypatch.setattr(guest_marketing, "send_sms", lambda phone, msg, **kw: texted.append(phone) or True)
     guest_marketing.run_review_request_followups(db_path=db_path)
     assert texted == ["+15125550100"]
 
@@ -302,21 +302,19 @@ def test_a_cancelled_restaurant_s_guests_are_not_texted(db_path, monkeypatch):
     rid = _followup_world(db_path, monkeypatch)
     _mark(db_path, rid, "churned")
     texted = []
-    monkeypatch.setattr(guest_marketing, "send_sms", lambda phone, msg: texted.append(phone) or True)
+    monkeypatch.setattr(guest_marketing, "send_sms", lambda phone, msg, **kw: texted.append(phone) or True)
     guest_marketing.run_review_request_followups(db_path=db_path)
     assert texted == []
 
 
 # ── the follow-up job's transaction (DATA-52) ──────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="DATA-52: run_review_request_followups holds one write transaction across "
-                                       "its whole Twilio loop, so every request's session write waits behind it")
 def test_followups_commit_each_claim_before_sending(db_path, monkeypatch):
     import guest_marketing
     _followup_world(db_path, monkeypatch, n_guests=3)
     blocked = []
 
-    def send(phone, msg):
+    def send(phone, msg, **kw):
         other = sqlite3.connect(db_path, timeout=0.05)
         try:
             other.execute("BEGIN IMMEDIATE")      # what a request's last_active write needs
@@ -335,14 +333,12 @@ class _Killed(BaseException):
     """A deploy's SIGTERM: not an Exception, so nothing in the loop catches it."""
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-52: a crash mid-loop rolls back every stamp after the texts went out, "
-                                       "so the next hourly run texts the same guests again")
 def test_a_follow_up_run_killed_mid_loop_does_not_re_text_guests_already_reached(db_path, monkeypatch):
     import guest_marketing
     _followup_world(db_path, monkeypatch, n_guests=2)
     texted = []
 
-    def dies_on_second(phone, msg):
+    def dies_on_second(phone, msg, **kw):
         if texted:
             raise _Killed()
         texted.append(phone)
@@ -354,7 +350,7 @@ def test_a_follow_up_run_killed_mid_loop_does_not_re_text_guests_already_reached
     first = list(texted)
 
     again = []
-    monkeypatch.setattr(guest_marketing, "send_sms", lambda phone, msg: again.append(phone) or True)
+    monkeypatch.setattr(guest_marketing, "send_sms", lambda phone, msg, **kw: again.append(phone) or True)
     guest_marketing.run_review_request_followups(db_path=db_path)
     assert not (set(again) & set(first)), f"{first} were texted again after the restart"
 

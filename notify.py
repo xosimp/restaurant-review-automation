@@ -41,6 +41,15 @@ TWILIO_MESSAGING_SERVICE_SID = os.getenv("TWILIO_MESSAGING_SERVICE_SID", "")
 # Optional; falls back to TWILIO_MESSAGING_SERVICE_SID (and from there to
 # TWILIO_FROM) when unset, so nothing breaks before this is provisioned.
 TWILIO_OTP_MESSAGING_SERVICE_SID = os.getenv("TWILIO_OTP_MESSAGING_SERVICE_SID", "")
+# Guest-facing texts (campaigns, opt-in invites, review requests) are a third
+# use case: marketing to diners, not alerts to owners. Riding the owner-alert
+# campaign mixed the two, so a carrier filtering the promos would also filter
+# owners' health alerts (MOD-MKT-11). Provisioning this service is what moves
+# them; until it is set, guest texts keep the alert service they have always
+# used (a plain From on the same number is the same campaign, only less
+# reliably routed), and the mismatch is logged once per process.
+TWILIO_GUEST_MESSAGING_SERVICE_SID = os.getenv("TWILIO_GUEST_MESSAGING_SERVICE_SID", "")
+_guest_service_warned = False
 from emails import _resend_key
 
 def emails_sender(kind="client"):
@@ -106,7 +115,9 @@ def send_sms(to_phone: str, message: str, use_case: str = "alert") -> bool:
     one Campaign: "alert" (default) is the owner review/health/labor alert
     campaign on TWILIO_MESSAGING_SERVICE_SID; "otp" is the staff-signup
     verification-code campaign on TWILIO_OTP_MESSAGING_SERVICE_SID, a
-    genuinely separate number and service. Sending OTP traffic through the
+    genuinely separate number and service; "guest" is guest marketing
+    (campaigns, opt-in invites, review requests) on
+    TWILIO_GUEST_MESSAGING_SERVICE_SID. Sending OTP traffic through the
     alert service (or vice versa) is exactly the "mixed use case on one
     campaign" pattern carriers filter hardest.
     """
@@ -120,8 +131,18 @@ def send_sms(to_phone: str, message: str, use_case: str = "alert") -> bool:
     # is worse than the plain-From send this falls back to instead (the
     # behavior every send already had before TWILIO_MESSAGING_SERVICE_SID
     # existed).
-    service_sid = (TWILIO_OTP_MESSAGING_SERVICE_SID if use_case == "otp"
-                   else TWILIO_MESSAGING_SERVICE_SID)
+    if use_case == "otp":
+        service_sid = TWILIO_OTP_MESSAGING_SERVICE_SID
+    elif use_case == "guest" and TWILIO_GUEST_MESSAGING_SERVICE_SID:
+        service_sid = TWILIO_GUEST_MESSAGING_SERVICE_SID
+    else:
+        if use_case == "guest":
+            global _guest_service_warned
+            if not _guest_service_warned:
+                _guest_service_warned = True
+                print("[notify] TWILIO_GUEST_MESSAGING_SERVICE_SID unset: guest texts are "
+                      "going out on the owner-alert messaging service (MOD-MKT-11)")
+        service_sid = TWILIO_MESSAGING_SERVICE_SID
     if service_sid:
         data["MessagingServiceSid"] = service_sid
     else:

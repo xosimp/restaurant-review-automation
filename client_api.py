@@ -3425,13 +3425,26 @@ def _do_send_review_request(rid, data):
                 return {"ok": False,
                         "error": "Confirm the guest agreed to be texted before sending a "
                                  "review request by SMS."}, 400
+            # The same two rules every other guest text obeys: a number that
+            # texted STOP to the shared line is not texted again, and nothing
+            # goes out outside 8am-9pm in the restaurant's time (MOD-MKT-11).
+            import guest_marketing as _gm
+            if _gm.phone_opted_out(customer_phone):
+                return {"ok": False,
+                        "error": "This guest replied STOP to our texts, so they can't be sent "
+                                 "a text. Send the review link by email instead."}, 409
+            if not _gm.guest_sms_allowed_now(rid):
+                return {"ok": False,
+                        "error": "Guest texts can only go out between "
+                                 + _gm.guest_sms_window_label()
+                                 + " your time. Try again then, or send it by email."}, 409
             from notify import send_sms as _send_sms
             sms_text = (
                 f"Hi {first_name}, thanks for dining at {rest_name}! "
                 + (f"{guest_note} " if guest_note else "")
                 + f"We'd love your feedback — leave us a Google review: {review_url}"
             )
-            sent_sms = _send_sms(customer_phone, sms_text)
+            sent_sms = _send_sms(customer_phone, sms_text, use_case="guest")
             if not sent_sms and not customer_email:
                 return {"ok": False, "error": "SMS delivery failed — check Twilio config"}, 500
 

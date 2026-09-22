@@ -2672,11 +2672,16 @@ def scheduler_loop():
                 _ops.run_job("inactive_clients", check_inactive_clients)
                 _ops.run_job("while_away", send_while_away_nudges)
 
-            if _due(now, 11, until=OPTIN_INVITE_LATEST_HOUR) and _ops.claim_period("optin_invite", str(today)):
-                # 11am daily — invite guests Toast identified yesterday to
-                # opt in for themselves. Yesterday, not today: Toast's
-                # business day doesn't end at midnight, so today's is still
-                # open and would be re-scanned tomorrow anyway.
+            if (_due(now, 11, until=OPTIN_INVITE_LATEST_HOUR)
+                    and _ops.claim_period("optin_invite", f"{today}-{now.hour}")):
+                # From 11am, hourly — invite guests Toast identified
+                # yesterday to opt in for themselves. Yesterday, not today:
+                # Toast's business day doesn't end at midnight, so today's is
+                # still open and would be re-scanned tomorrow anyway. Hourly,
+                # not once: 11am here is 6am in Hawaii, and a restaurant
+                # outside its 8am-9pm window was deferred and never retried
+                # (MOD-MKT-12). The job skips restaurants it already finished
+                # for the date, so the later passes are cheap.
                 log.info("Running Toast opt-in invites...")
                 from guest_marketing import run_toast_optin_invites
                 from datetime import date as _d, timedelta as _td

@@ -37,6 +37,9 @@ def _init_auth_tables(db_path):
     init_two_fa_backup_codes(db_path=db_path)
     from push import init_push
     init_push(db_path=db_path)
+    # hosted_dashboard.py boots guest_marketing's tables too; the manual
+    # review-request SMS reads guest_contacts for a STOP (MOD-MKT-11).
+    guest_marketing.init_guest_marketing(db_path)
 
 
 @pytest.fixture(autouse=True)
@@ -2173,6 +2176,13 @@ def test_send_review_request_requires_email_or_phone(client, db_path):
     assert resp.status_code == 400
 
 
+def _inside_guest_texting_hours(monkeypatch):
+    """A guest text is held outside 8am-9pm restaurant time (MOD-MKT-11);
+    pin the clock so the suite means the same thing at 11pm on CI."""
+    from datetime import datetime as _dt
+    monkeypatch.setattr(guest_marketing, "_sms_local_now", lambda rid: _dt.now().replace(hour=12, minute=0))
+
+
 def test_send_review_request_sms_only_logs_request(client, db_path, monkeypatch):
     # A Place ID is required — there is no generic review link to fall back
     # on — and an SMS needs the guest's consent recorded, the same model
@@ -2180,6 +2190,7 @@ def test_send_review_request_sms_only_logs_request(client, db_path, monkeypatch)
     rid = _restaurant(db_path, google_place_id="ChIJtest")
     token = _login(client, db_path, rid)
     monkeypatch.setattr("notify.send_sms", lambda *a, **kw: True)
+    _inside_guest_texting_hours(monkeypatch)
 
     resp = client.post(
         "/mobile/api/send-review-request",
@@ -2202,8 +2213,9 @@ def test_send_review_request_includes_guest_note_in_sms(client, db_path, monkeyp
     sent = {}
     monkeypatch.setattr(
         "notify.send_sms",
-        lambda phone, text: sent.update(phone=phone, text=text) or True
+        lambda phone, text, **kw: sent.update(phone=phone, text=text) or True
     )
+    _inside_guest_texting_hours(monkeypatch)
 
     resp = client.post(
         "/mobile/api/send-review-request",
