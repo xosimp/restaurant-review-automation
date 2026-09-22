@@ -110,7 +110,7 @@ An ISO date in owner-facing text is a bug, not a style choice.
 | Python — API text, emails, briefs, activity, alerts | `time_utils.mdy(value)` (date, datetime or ISO string); `time_utils.mdy_range(a, b)` |
 | Jinja | `{{ value\|format_date }}` |
 | Web JS | `mdy(x)` — global, exported from the Home closure |
-| iOS | a `M/d/yy` `DateFormatter`, as `TimeOffSection.mdy` does |
+| iOS | `CavnarDate.mdy` / `mdyRange` / `mdyTime` (`DesignSystem/Formatting.swift`) — one `M/d/yy` formatter, shared |
 
 `tests/test_date_format.py` pins the helper and the feed text.
 

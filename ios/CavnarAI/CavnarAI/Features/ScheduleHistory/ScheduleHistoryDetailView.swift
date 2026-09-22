@@ -43,6 +43,10 @@ struct ScheduleHistoryDetailView: View {
                         }
                         .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: false))
 
+                        if let publishedAt = detail.publishedAt, !publishedAt.isEmpty {
+                            publishedLine(at: publishedAt, by: detail.publishedBy)
+                        }
+
                         if let summary = detail.summary, !summary.isEmpty {
                             VStack(alignment: .leading, spacing: 8) {
                                 Text("WHAT CHANGED & WHY")
@@ -75,6 +79,23 @@ struct ScheduleHistoryDetailView: View {
                         if let budget = detail.hoursBudget, budget > 0, let scheduled = detail.hoursScheduled {
                             parHoursBanner(budget: budget, scheduled: scheduled)
                         }
+                        if let narrative = detail.narrative?.trimmingCharacters(in: .whitespacesAndNewlines),
+                           !narrative.isEmpty {
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text("CAVNAR AI'S NOTE")
+                                    .font(.cavnarBody(12, weight: 700))
+                                    .tracking(1.2)
+                                    .foregroundStyle(Color.cavnarInk3)
+                                Text(narrative)
+                                    .font(.cavnarBody(14))
+                                    .foregroundStyle(Color.cavnarInk3)
+                                    .lineSpacing(4)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .cavnarCard()
+                        }
+                        versionsSection
                         if let rows = detail.previewRows, !rows.isEmpty {
                             scheduleByDay(rows)
                         }
@@ -130,7 +151,7 @@ struct ScheduleHistoryDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { cavnarTitleToolbar(weekLabel) }
         .sheet(isPresented: $showingPublish) {
-            PublishScheduleSheet()
+            PublishScheduleSheet(scheduleId: historyId)
         }
         // This screen never adopted the app-wide ember back chevron — it
         // was still showing the system's default back button, the one
@@ -168,6 +189,130 @@ struct ScheduleHistoryDetailView: View {
             }
         }
         .task { await viewModel.load(id: historyId) }
+        .task { await viewModel.loadVersions(id: historyId) }
+    }
+
+    /// "Sent 9/21/26 · 6:45pm by will" — when the week went to staff.
+    private func publishedLine(at publishedAt: String, by publishedBy: String?) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: "paperplane.fill")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(Color.cavnarGreen)
+            HomeMixedText.make(
+                "Sent " + CavnarDate.mdyTime(publishedAt)
+                    + ((publishedBy ?? "").isEmpty ? "" : " by \(publishedBy ?? "")"),
+                size: 14, weight: 600, color: .cavnarGreen)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.cavnarGreen.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+    }
+
+    // MARK: Versions
+
+    /// Every version this week has been through — generated, edited,
+    /// fixed, published — oldest first, each with what it changed, and
+    /// the draft-versus-published diff when both exist.
+    @ViewBuilder
+    private var versionsSection: some View {
+        if !viewModel.versions.isEmpty || viewModel.draftVsPublished?.available == true {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("VERSIONS")
+                    .font(.cavnarBody(12.5, weight: 700))
+                    .tracking(1.4)
+                    .foregroundStyle(Color.cavnarInk3)
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(viewModel.versions.enumerated()), id: \.element.id) { index, version in
+                        versionRow(version, isLast: index == viewModel.versions.count - 1)
+                    }
+                }
+                if let diff = viewModel.draftVsPublished, diff.available == true {
+                    draftVsPublishedBlock(diff)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .cavnarCard()
+        } else if let error = viewModel.versionsError {
+            Text(error).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarInk3)
+        }
+    }
+
+    private func versionRow(_ version: ScheduleVersion, isLast: Bool) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            // A rail with one dot per version, the published one lit.
+            VStack(spacing: 0) {
+                Circle()
+                    .fill(version.isPublished ? Color.cavnarEmber : Color.cavnarPaper3)
+                    .frame(width: 10, height: 10)
+                    .overlay(Circle().strokeBorder(Color.cavnarEmber.opacity(version.isPublished ? 0.5 : 0), lineWidth: 3))
+                    .shadow(color: Color.cavnarEmber.opacity(version.isPublished ? 0.5 : 0), radius: 5)
+                if !isLast {
+                    Rectangle().fill(Color.cavnarPaper3.opacity(0.7)).frame(width: 1.5)
+                        .frame(maxHeight: .infinity)
+                }
+            }
+            .frame(width: 12)
+            .padding(.top, 5)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    Text("v\(version.version)")
+                        .font(.cavnarNumber(14.5, weight: 700))
+                        .foregroundStyle(version.isPublished ? Color.cavnarEmber : Color.cavnarInk)
+                    Text(version.title)
+                        .font(.cavnarBody(14.5, weight: 600))
+                        .foregroundStyle(Color.cavnarInk)
+                    Spacer(minLength: 4)
+                    if let score = version.score {
+                        Text("\(score)")
+                            .font(.cavnarNumber(14, weight: 700))
+                            .foregroundStyle(Color.cavnarInk2)
+                            .accessibilityLabel("Shift Quality \(score)")
+                    }
+                }
+                if let at = version.createdAt, !at.isEmpty {
+                    HomeMixedText.make(CavnarDate.mdyTime(at), size: 12.5, color: .cavnarInk3)
+                }
+                ForEach(Array((version.lines ?? []).prefix(4).enumerated()), id: \.offset) { _, line in
+                    HomeMixedText.make(line, size: 13.5, color: .cavnarInk2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let n = version.changes, n > (version.lines ?? []).count, n > 4 {
+                    HomeMixedText.make("\(n) changes in all", size: 12.5, color: .cavnarInk3)
+                }
+            }
+            .padding(.bottom, isLast ? 0 : 14)
+        }
+    }
+
+    private func draftVsPublishedBlock(_ diff: DraftVsPublished) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("DRAFT VS PUBLISHED")
+                .font(.cavnarBody(11, weight: 700))
+                .tracking(1.1)
+                .foregroundStyle(Color.cavnarBlue)
+            if let summary = diff.summaryLine {
+                HomeMixedText.make(summary, size: 14, weight: 600, color: .cavnarInk)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            ForEach(Array((diff.lines ?? []).enumerated()), id: \.offset) { _, line in
+                HStack(alignment: .top, spacing: 7) {
+                    Circle().fill(Color.cavnarBlue).frame(width: 4, height: 4).padding(.top, 7)
+                    HomeMixedText.make(line, size: 13.5, color: .cavnarInk2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            if (diff.changes ?? 0) == 0 && (diff.lines ?? []).isEmpty {
+                Text("Published exactly as generated.")
+                    .font(.cavnarBody(13.5))
+                    .foregroundStyle(Color.cavnarInk3)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.cavnarBlue.opacity(0.07)))
     }
 
     /// The share glyph's box is taller than the other toolbar symbols

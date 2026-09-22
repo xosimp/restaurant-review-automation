@@ -27,13 +27,28 @@ actor APIClient {
 
         let kind: Kind
         let message: String
+        /// The HTTP status and raw body of a 4xx/5xx answer, when there was
+        /// one. A few routes say more than `{ok, error}` on a refusal — the
+        /// publish gate answers 409 with the blockers it wants acknowledged
+        /// — and a caller that needs that detail decodes `body` itself.
+        let status: Int?
+        let body: Data?
         var errorDescription: String? { message }
 
         /// `kind` defaults to `.server` so existing call sites that only pass
         /// a message keep compiling and behaving as before.
-        init(kind: Kind = .server, message: String) {
+        init(kind: Kind = .server, message: String, status: Int? = nil, body: Data? = nil) {
             self.kind = kind
             self.message = message
+            self.status = status
+            self.body = body
+        }
+
+        /// The refusal's body decoded as `T`, or nil when there was none or
+        /// it was a different shape.
+        func decodeBody<T: Decodable>(_ type: T.Type) -> T? {
+            guard let body else { return nil }
+            return try? JSONDecoder.cavnar.decode(T.self, from: body)
         }
 
         /// True when retrying later could plausibly succeed — i.e. the write
@@ -226,7 +241,8 @@ actor APIClient {
         if http.statusCode >= 400 {
             let envelope = try? JSONDecoder.cavnar.decode(ErrorEnvelope.self, from: data)
             if hapticOnError { await Haptic.error() }
-            throw APIError(message: envelope?.error ?? "Something went wrong (\(http.statusCode)).")
+            throw APIError(message: envelope?.error ?? "Something went wrong (\(http.statusCode)).",
+                           status: http.statusCode, body: data)
         }
 
         do {

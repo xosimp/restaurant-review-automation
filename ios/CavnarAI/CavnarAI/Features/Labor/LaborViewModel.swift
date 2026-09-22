@@ -278,6 +278,78 @@ struct QualityProfile: Codable, Equatable {
     }
 }
 
+/// A JSON value whose shape the client does not dictate — the `facts`
+/// behind an assignment explanation differ per person (a score here, a
+/// list of usual nights there). Decoded loosely and rendered as text.
+enum LooseValue: Codable, Equatable {
+    case string(String)
+    case number(Double)
+    case bool(Bool)
+    case list([LooseValue])
+    case object([String: LooseValue])
+    case null
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.singleValueContainer()
+        if c.decodeNil() { self = .null }
+        else if let b = try? c.decode(Bool.self) { self = .bool(b) }
+        else if let n = try? c.decode(Double.self) { self = .number(n) }
+        else if let s = try? c.decode(String.self) { self = .string(s) }
+        else if let l = try? c.decode([LooseValue].self) { self = .list(l) }
+        else if let o = try? c.decode([String: LooseValue].self) { self = .object(o) }
+        else { throw DecodingError.dataCorruptedError(in: c, debugDescription: "Unrecognised value") }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.singleValueContainer()
+        switch self {
+        case .string(let s): try c.encode(s)
+        case .number(let n): try c.encode(n)
+        case .bool(let b): try c.encode(b)
+        case .list(let l): try c.encode(l)
+        case .object(let o): try c.encode(o)
+        case .null: try c.encodeNil()
+        }
+    }
+
+    /// The value as a chip would print it. Nil for nothing worth a chip.
+    var display: String? {
+        switch self {
+        case .string(let s): return s.isEmpty ? nil : s
+        case .number(let n): return n == n.rounded() ? String(Int(n)) : String(format: "%.1f", n)
+        case .bool(let b): return b ? "yes" : "no"
+        case .list(let l):
+            let parts = l.compactMap(\.display)
+            return parts.isEmpty ? nil : parts.joined(separator: ", ")
+        case .object, .null: return nil
+        }
+    }
+}
+
+/// Why one person landed on one shift — the engine's own sentence plus
+/// the facts it built it from. Shown when a schedule row is tapped.
+struct AssignmentExplanation: Codable, Identifiable, Equatable {
+    let employee: String
+    let role: String?
+    let date: String?
+    let day: String?
+    let daypart: String?
+    let why: String?
+    let facts: [String: LooseValue]?
+
+    var id: String { "\(date ?? "")-\(daypart ?? "")-\(employee)" }
+
+    /// `facts` as "label · value" chips, in a stable order.
+    var factChips: [String] {
+        (facts ?? [:]).compactMap { key, value in
+            guard let text = value.display else { return nil }
+            let label = key.replacingOccurrences(of: "_", with: " ")
+            return "\(label) · \(text)"
+        }
+        .sorted()
+    }
+}
+
 /// One shift's verdict, with the reasons it reached it.
 struct QualityShift: Codable, Identifiable, Equatable {
     let date: String
@@ -301,6 +373,9 @@ struct QualityShift: Codable, Identifiable, Equatable {
     // Dimensions that raised rather than dimensions nobody configured. Kept
     // apart because only one of them is the owner's to act on.
     let failed: [QualityFailure]?
+    // Who is on this shift and why each of them, from the engine. Absent
+    // on a server that predates the explanation.
+    let assignments: [AssignmentExplanation]?
 
     var id: String { "\(date)-\(daypart)" }
 
@@ -317,7 +392,7 @@ struct QualityShift: Codable, Identifiable, Equatable {
         case cappedBy = "capped_by"
         case blindSpots = "blind_spots"
         case nothingSpecific = "nothing_specific"
-        case failed
+        case failed, assignments
     }
 }
 
@@ -529,7 +604,12 @@ struct ScheduleRow: Codable, Identifiable {
     // way that couldn't be fully auto-repaired (day is always re-derived
     // from date server-side now, so this — not an unrecognized `day` value
     // — is the real signal that a row still needs a human look).
-    let needsReview: Bool?
+    var needsReview: Bool?
+    // The rule the engine could not satisfy for this row, in words —
+    // "approved time off", "under 10h rest after Monday close". Set with
+    // `needsReview` by the compliance pass; a row flagged for scrambled
+    // columns has no reason.
+    var reviewReason: String?
 
     var id: String { "\(date ?? "")-\(employee ?? "")-\(shiftStart ?? "")" }
 
@@ -539,6 +619,72 @@ struct ScheduleRow: Codable, Identifiable {
         case shiftEnd = "shift_end"
         case scheduledHours = "scheduled_hours"
         case needsReview = "needs_review"
+        case reviewReason = "review_reason"
+    }
+}
+
+/// One swap the compliance pass made (or would make) to clear a violation.
+struct ReviewFix: Codable, Identifiable, Equatable {
+    let index: Int
+    let from: String?
+    let to: String?
+    let kind: String?
+    let reason: String?
+    var id: String { "\(index)-\(from ?? "")-\(to ?? "")" }
+}
+
+/// A violation the pass could not clear by swapping anyone in.
+struct ReviewUnfixed: Codable, Identifiable, Equatable {
+    let index: Int
+    let employee: String?
+    let reason: String?
+    var id: String { "\(index)-\(employee ?? "")" }
+}
+
+/// The deterministic compliance read over the finished week: how many
+/// hard and soft rule breaks, the lines that say which, and what a fix
+/// pass did or could not do about them.
+struct ScheduleReview: Codable, Equatable {
+    let hard: Int?
+    let soft: Int?
+    let byKind: [String: Int]?
+    let lines: [String]?
+    let hardRows: [Int]?
+    let fixes: [ReviewFix]?
+    let unfixed: [ReviewUnfixed]?
+
+    var hardCount: Int { hard ?? 0 }
+    var softCount: Int { soft ?? 0 }
+    var isClean: Bool { hardCount == 0 && softCount == 0 }
+
+    enum CodingKeys: String, CodingKey {
+        case hard, soft, lines, fixes, unfixed
+        case byKind = "by_kind"
+        case hardRows = "hard_rows"
+    }
+}
+
+/// One rule the schedule breaks, tied to the row it breaks it on.
+struct RuleViolation: Codable, Identifiable, Equatable {
+    let kind: String?
+    let index: Int?
+    let employee: String?
+    let date: String?
+    let day: String?
+    let shiftStart: String?
+    let role: String?
+    let detail: String?
+    let hard: Bool?
+    let noShow: Bool?
+    let label: String?
+
+    var id: String { "\(kind ?? "")-\(index ?? -1)-\(employee ?? "")" }
+    var isHard: Bool { hard ?? false }
+
+    enum CodingKeys: String, CodingKey {
+        case kind, index, employee, date, day, role, detail, hard, label
+        case shiftStart = "shift_start"
+        case noShow = "no_show"
     }
 }
 
@@ -568,9 +714,32 @@ struct GeneratedSchedule: Codable {
     // The Shift Quality Engine's verdict, and the alternatives it tried.
     var quality: ScheduleQuality?
     var whatIf: ScheduleWhatIf?
+    // The schedule_history row this run was stored under — what an edit
+    // saves against and what publishing sends. Absent on older payloads
+    // still sitting in the on-device cache.
+    let historyId: Int?
+    // The compliance pass over the finished week and every rule it broke,
+    // row by row. Both move after an edit or a fix pass.
+    var review: ScheduleReview?
+    var ruleViolations: [RuleViolation]?
+    // Time off still waiting for an answer, by name — a warning, not a
+    // block, because nobody has decided it yet.
+    var pendingTimeOff: [String: [String]]?
+    // The model's own short note. `summary` is the deterministic diff
+    // against the last published week; this is the one paragraph it wrote.
+    let narrative: String?
+    let generationSeconds: Double?
+    // True when the roster was too large for one pass and the week was
+    // generated in date slices, then stitched.
+    let chunked: Bool?
+    // The names the engine actually scheduled from.
+    let roster: [String]?
+    // Set once the week has been sent to staff — history detail only.
+    let publishedAt: String?
+    let publishedBy: String?
 
     enum CodingKeys: String, CodingKey {
-        case ok, status, summary, error, strength, quality
+        case ok, status, summary, error, strength, quality, review, narrative, chunked, roster
         case whatIf = "what_if"
         case weekDates = "week_dates"
         case weekDays = "week_days"
@@ -581,6 +750,40 @@ struct GeneratedSchedule: Codable {
         case hoursBudget = "hours_budget"
         case laborBudgetDollars = "labor_budget_dollars"
         case staffConstraints = "staff_constraints"
+        case historyId = "history_id"
+        case ruleViolations = "rule_violations"
+        case pendingTimeOff = "pending_time_off"
+        case generationSeconds = "generation_seconds"
+        case publishedAt = "published_at"
+        case publishedBy = "published_by"
+    }
+
+    /// The explanation for one row: the assignment on the same date whose
+    /// employee matches, in the daypart the row's start time falls in
+    /// (before 3pm is morning). Nil when the engine offered none.
+    func explanation(for row: ScheduleRow) -> AssignmentExplanation? {
+        guard let shifts = quality?.shifts, let date = row.date, let name = row.employee else { return nil }
+        let daypart = Self.daypart(of: row.shiftStart)
+        let sameDate = shifts.filter { $0.date == date }
+        let ordered = sameDate.filter { $0.daypart == daypart } + sameDate.filter { $0.daypart != daypart }
+        for shift in ordered {
+            if let hit = (shift.assignments ?? []).first(where: {
+                $0.employee.caseInsensitiveCompare(name) == .orderedSame
+            }) { return hit }
+        }
+        return nil
+    }
+
+    /// "morning" for a start before 3pm, "night" otherwise — the same cut
+    /// LaborView draws the day table with.
+    static func daypart(of shiftStart: String?) -> String {
+        guard let shiftStart else { return "night" }
+        let f = DateFormatter()
+        f.dateFormat = "h:mma"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        guard let date = f.date(from: shiftStart.lowercased()) else { return "night" }
+        let hour = Calendar.current.component(.hour, from: date)
+        return hour < 15 ? "morning" : "night"
     }
 }
 
@@ -891,9 +1094,11 @@ final class LaborViewModel {
         let rows: [ScheduleRow]
         let dailyTargetHours: [String: Double]
         let save: Bool
+        let historyId: Int?
         enum CodingKeys: String, CodingKey {
             case rows, save
             case dailyTargetHours = "daily_target_hours"
+            case historyId = "history_id"
         }
     }
 
@@ -903,9 +1108,82 @@ final class LaborViewModel {
         let whatIf: ScheduleWhatIf?
         let saved: Bool?
         let error: String?
+        // The compliance read over the rows as edited — every save answers
+        // with the rules the new week breaks, so the panel never shows a
+        // verdict for rows that are no longer on screen.
+        let violations: [RuleViolation]?
+        let review: ScheduleReview?
+        let pendingTimeOff: [String: [String]]?
         enum CodingKeys: String, CodingKey {
-            case ok, quality, error, saved
+            case ok, quality, error, saved, violations, review
             case whatIf = "what_if"
+            case pendingTimeOff = "pending_time_off"
+        }
+    }
+
+    private struct RowsBody: Encodable { let rows: [ScheduleRow] }
+
+    private struct ApplyFixesResponse: Decodable {
+        let ok: Bool
+        let rows: [ScheduleRow]?
+        let fixes: [ReviewFix]?
+        let unfixed: [ReviewUnfixed]?
+        let quality: ScheduleQuality?
+        let review: ScheduleReview?
+        let violations: [RuleViolation]?
+        let error: String?
+    }
+
+    var isApplyingFixes = false
+    var applyFixesError: String?
+    // Rows the fix pass replaced but nobody has saved yet. The owner still
+    // chooses — a fix is a proposal until Save sends it.
+    var hasUnsavedFixes = false
+
+    /// Ask the engine to clear what it can — every hard violation it can
+    /// swap somebody legal into — and show the result. Nothing is stored
+    /// until the owner saves: the rows on screen change, the score and the
+    /// review re-render, and Save is what commits them.
+    func applyFixes() async {
+        guard var result = scheduleResult, let rows = result.previewRows, !rows.isEmpty else { return }
+        isApplyingFixes = true
+        applyFixesError = nil
+        defer { isApplyingFixes = false }
+        do {
+            let response: ApplyFixesResponse = try await client.send(
+                "/mobile/api/labor/schedule/apply-fixes", method: .post,
+                body: RowsBody(rows: rows), hapticOnError: false, retryTransient: false)
+            guard response.ok else {
+                applyFixesError = response.error ?? "Couldn't apply those fixes."
+                return
+            }
+            if let fixed = response.rows {
+                // Mark the rows a fix moved so the table shows CHANGED on
+                // exactly the people who are different now.
+                for fix in response.fixes ?? [] where fixed.indices.contains(fix.index) {
+                    overriddenRows.insert(fixed[fix.index].id)
+                }
+                result.previewRows = fixed
+            }
+            if let quality = response.quality { result.quality = quality }
+            if let review = response.review {
+                result.review = review
+            } else if var review = result.review {
+                review = ScheduleReview(hard: review.hard, soft: review.soft, byKind: review.byKind,
+                                        lines: review.lines, hardRows: review.hardRows,
+                                        fixes: response.fixes ?? review.fixes,
+                                        unfixed: response.unfixed ?? review.unfixed)
+                result.review = review
+            }
+            if let violations = response.violations { result.ruleViolations = violations }
+            scheduleResult = result
+            hasUnsavedFixes = !(response.fixes ?? []).isEmpty
+            overrideState = .idle
+            Haptic.success()
+        } catch let error as APIClient.APIError {
+            applyFixesError = error.message
+        } catch {
+            applyFixesError = "Couldn't apply those fixes."
         }
     }
 
@@ -976,7 +1254,7 @@ final class LaborViewModel {
         do {
             let response: ScoreResponse = try await client.send(
                 "/mobile/api/labor/schedule/score", method: .post,
-                body: ScoreBody(rows: rows, dailyTargetHours: [:], save: save),
+                body: ScoreBody(rows: rows, dailyTargetHours: [:], save: save, historyId: result.historyId),
                 hapticOnError: false, retryTransient: true)
             guard response.ok, let quality = response.quality else {
                 overrideState = .failed(response.error ?? "Couldn't save that change.")
@@ -984,8 +1262,15 @@ final class LaborViewModel {
             }
             result.quality = quality
             result.whatIf = response.whatIf
+            // The compliance read moves with every edit. Only replaced when
+            // the server sent one, so an older backend leaves the last
+            // review standing rather than blanking it.
+            if let review = response.review { result.review = review }
+            if let violations = response.violations { result.ruleViolations = violations }
+            if let pending = response.pendingTimeOff { result.pendingTimeOff = pending }
             scheduleResult = result
             cacheSchedule(result)
+            if save { hasUnsavedFixes = false }
             overrideState = (response.saved ?? false) ? .saved : .idle
             if overrideState == .saved {
                 Haptic.success()
@@ -1195,12 +1480,21 @@ final class LaborViewModel {
         let ok: Bool
         let jobId: String?
         let error: String?
+        // True when a generation was already running for this restaurant
+        // (the lock) and the server handed back that job instead of
+        // starting another. Poll it; it is not a failure.
+        let joined: Bool?
 
         enum CodingKeys: String, CodingKey {
-            case ok, error
+            case ok, error, joined
             case jobId = "job_id"
         }
     }
+
+    // Set when the start call joined a run already in progress — from the
+    // web, or a second phone — so the progress copy says so instead of
+    // pretending this tap started it.
+    var joinedRunningGeneration = false
 
     /// Starts the same async AI schedule generation the web Labor tab uses,
     /// then polls until it completes — matches the backend's existing
@@ -1209,6 +1503,9 @@ final class LaborViewModel {
         isGeneratingSchedule = true
         scheduleError = nil
         scheduleResult = nil
+        joinedRunningGeneration = false
+        hasUnsavedFixes = false
+        overriddenRows = []
         do {
             let response: GenerateResponse = try await client.send(
                 "/mobile/api/labor/generate-schedule", method: .post
@@ -1218,6 +1515,7 @@ final class LaborViewModel {
                 isGeneratingSchedule = false
                 return
             }
+            joinedRunningGeneration = response.joined ?? false
             await pollSchedule(jobId: jobId)
         } catch let error as APIClient.APIError {
             scheduleError = error.message
@@ -1247,6 +1545,7 @@ final class LaborViewModel {
                 }
                 scheduleResult = result
                 isGeneratingSchedule = false
+                joinedRunningGeneration = false
                 if !result.ok {
                     scheduleError = result.error ?? "Schedule generation failed."
                 } else {

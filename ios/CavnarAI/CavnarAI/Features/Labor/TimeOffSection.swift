@@ -97,14 +97,5 @@ struct TimeOffRequest: Decodable, Identifiable, Equatable {
         case decisionNote = "decision_note"
     }
 
-    var dateLabel: String {
-        let s = Self.mdy(startDate), e = Self.mdy(endDate)
-        return s == e ? s : "\(s) – \(e)"
-    }
-
-    private static func mdy(_ iso: String) -> String {
-        let p = iso.prefix(10).split(separator: "-")
-        guard p.count == 3, let m = Int(p[1]), let d = Int(p[2]) else { return iso }
-        return "\(m)/\(d)/\(p[0].suffix(2))"
-    }
+    var dateLabel: String { CavnarDate.mdyRange(startDate, endDate) }
 }

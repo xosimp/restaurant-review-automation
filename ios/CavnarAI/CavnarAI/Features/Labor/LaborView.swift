@@ -13,8 +13,14 @@ struct LaborView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var viewModel = LaborViewModel()
     @State private var analyticsViewModel = LaborAnalyticsViewModel()
+    // Roster, rules, demand signals and shift requests — the set-up around
+    // the generator, kept outside the Overview/Analytics branch for the
+    // same reason LaborViewModel is (see scheduleResultExpanded).
+    @State private var setupViewModel = ScheduleSetupViewModel()
     @State private var subTab: LaborSubTab = .overview
     @State private var showDataInfo = false
+    // The schedule row whose "why this person" is open.
+    @State private var explainingRow: ScheduleRow?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -67,6 +73,24 @@ struct LaborView: View {
                                     scrollToReveal(Self.timeOffID, proxy: proxy)
                                 }
                                 .id(Self.timeOffID)
+                                // Shifts handed back sit next to time off:
+                                // both are the staff asking, both are
+                                // decided in place.
+                                ShiftRequestsSection(viewModel: setupViewModel) {
+                                    scrollToReveal(Self.requestsID, proxy: proxy)
+                                }
+                                .id(Self.requestsID)
+                                // What the generator reads beyond the shift
+                                // history: who it may schedule and how, and
+                                // the dated demand it cannot infer.
+                                RosterSection(viewModel: setupViewModel) {
+                                    scrollToReveal(Self.rosterID, proxy: proxy)
+                                }
+                                .id(Self.rosterID)
+                                DemandSignalsSection(viewModel: setupViewModel) {
+                                    scrollToReveal(Self.demandID, proxy: proxy)
+                                }
+                                .id(Self.demandID)
                                 // Rating the team, then the targets those
                                 // ratings feed. In that order because a
                                 // target means nothing before anyone is
@@ -104,6 +128,9 @@ struct LaborView: View {
                     await viewModel.loadAvailability()
                     await viewModel.loadTimeOff()
                     await viewModel.loadTeam()
+                    await setupViewModel.loadShiftRequests()
+                    await setupViewModel.loadRoster()
+                    await setupViewModel.loadSignals()
                 }
             }
         }
@@ -182,8 +209,18 @@ struct LaborView: View {
         // read their real counts ("3 of 8 rated") instead of a placeholder
         // that changes the moment the section is opened.
         .task { await viewModel.loadTeam() }
+        // Same reason as loadTeam: the collapsed headers read real counts
+        // ("2 waiting for an answer", "14 on the roster") from the start.
+        .task {
+            await setupViewModel.loadShiftRequests()
+            await setupViewModel.loadRoster()
+            await setupViewModel.loadSignals()
+        }
         .sheet(isPresented: $showingPublishSchedule) {
-            PublishScheduleSheet()
+            PublishScheduleSheet(scheduleId: viewModel.scheduleResult?.historyId)
+        }
+        .sheet(item: $explainingRow) { row in
+            AssignmentExplanationSheet(row: row, explanation: viewModel.scheduleResult?.explanation(for: row))
         }
         // Belt-and-suspenders alongside the .task-time restore above: tied
         // directly to scenePhase (the same signal RootView's own Face ID
@@ -284,7 +321,15 @@ struct LaborView: View {
             // (see CavnarMotion). Sits right under the button that started it.
             if viewModel.isGeneratingSchedule {
                 VStack(alignment: .leading, spacing: 12) {
-                    CavnarWeekBuilder(caption: "Building next week's schedule")
+                    CavnarWeekBuilder(caption: viewModel.joinedRunningGeneration
+                                      ? "Joining the generation already running…"
+                                      : "Building next week's schedule")
+                    if viewModel.joinedRunningGeneration {
+                        Text("Somebody else started this week's draft moments ago — from the web, or another phone. You'll get the same result when it lands.")
+                            .font(.cavnarBody(13.5))
+                            .foregroundStyle(Color.cavnarInk3)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                     // What it is actually doing, rather than sixty seconds
                     // of a spinner. Every line is a real stage of the run.
                     ScheduleProgressSteps()
@@ -444,6 +489,9 @@ struct LaborView: View {
     private static let availabilityID = "labor-availability"
 
     private static let timeOffID = "labor-time-off"
+    private static let requestsID = "labor-shift-requests"
+    private static let rosterID = "labor-roster"
+    private static let demandID = "labor-demand"
     private static let teamID = "labor-team"
     private static let targetsID = "labor-targets"
 
@@ -690,27 +738,51 @@ struct LaborView: View {
             VStack(alignment: .leading, spacing: 16) {
                 VStack(alignment: .leading, spacing: 12) {
                     if let summary = result.summary, !summary.isEmpty {
-                        // Same heading + color the web schedule-preview panel
-                        // uses for this exact block, so a client without
-                        // context for a bare bullet list knows what it's
-                        // looking at: the AI's own reasoning for this
-                        // specific week's shifts, not generic tips.
-                        Text("WHAT CHANGED & WHY")
+                        // `summary` is the deterministic diff against the
+                        // last published week — hours moved, who swapped —
+                        // computed from the rows, never written by the
+                        // model. The model's own note follows separately.
+                        Text("WHAT CHANGED VS LAST PUBLISHED WEEK")
                             .font(.cavnarBody(14, weight: 700))
                             .tracking(1.2)
                             .foregroundStyle(Color.cavnarGreen)
-                        ForEach(summary, id: \.self) { line in
-                            Text("• \(line)")
-                                .font(.cavnarBody(14))
-                                .foregroundStyle(Color.cavnarInk2)
-                                .lineSpacing(5)
+                        ForEach(Array(summary.enumerated()), id: \.offset) { _, line in
+                            HStack(alignment: .top, spacing: 6) {
+                                Text("•").font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk2)
+                                HomeMixedText.make(line, size: 14, color: .cavnarInk2)
+                                    .lineSpacing(5)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                         }
+                    }
+                    if let narrative = result.narrative?.trimmingCharacters(in: .whitespacesAndNewlines),
+                       !narrative.isEmpty {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text("CAVNAR AI'S NOTE")
+                                .font(.cavnarBody(12, weight: 700))
+                                .tracking(1.2)
+                                .foregroundStyle(Color.cavnarInk3)
+                            Text(narrative)
+                                .font(.cavnarBody(14))
+                                .foregroundStyle(Color.cavnarInk3)
+                                .lineSpacing(4)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(.top, 2)
                     }
                     if let budget = result.hoursBudget, budget > 0, let scheduled = result.hoursScheduled {
                         parHoursBanner(budget: budget, scheduled: scheduled, dollars: result.laborBudgetDollars)
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .cavnarCard()
+
+                // The rules check comes before the score: a hard violation
+                // is decided on before a number is admired. Shown whenever
+                // the server sent one, or there is pending time off to say.
+                if result.review != nil || !(result.pendingTimeOff ?? [:]).isEmpty {
+                    ScheduleReviewPanel(viewModel: viewModel, result: result)
+                }
 
                 // The Shift Quality Engine's verdict. Placed above the shift
                 // table deliberately: the score and its reasons are what a
@@ -887,10 +959,14 @@ struct LaborView: View {
     /// enough that it couldn't confidently auto-repair them; those still
     /// get routed to a separate flagged group instead of rendering as a
     /// normal (but silently wrong) day entry.
+    ///
+    /// A row the compliance pass flagged carries a `reviewReason` and
+    /// stays in its day, highlighted, so the manager sees it in context;
+    /// only a row flagged with no reason (scrambled columns) is pulled out.
     @ViewBuilder
     private func fullScheduleTable(_ rows: [ScheduleRow], csv: String?) -> some View {
-        let recognized = rows.filter { $0.needsReview != true }
-        let unrecognized = rows.filter { $0.needsReview == true }
+        let recognized = rows.filter { $0.needsReview != true || !($0.reviewReason ?? "").isEmpty }
+        let unrecognized = rows.filter { $0.needsReview == true && ($0.reviewReason ?? "").isEmpty }
         let grouped = Dictionary(grouping: recognized, by: { $0.day ?? "—" })
         let orderedDays = Self.scheduleDayOrder.filter { grouped[$0] != nil }
 
@@ -920,15 +996,19 @@ struct LaborView: View {
         }
     }
 
-    /// One shift, with the manager's own override attached.
+    /// One shift: tap for why this person, long-press to put somebody else
+    /// on it.
     ///
-    /// Long-press rather than a visible edit control: the table's job is to
-    /// be read, and a pencil on every one of eighty rows would bury that.
-    /// Picking a replacement re-scores the week immediately, so the manager
-    /// sees what the change bought before they look away.
+    /// A `Menu` with a primary action gives both without a visible edit
+    /// control: the table's job is to be read, and a pencil on every one of
+    /// eighty rows would bury that. Picking a replacement re-scores the week
+    /// immediately, so the manager sees what the change bought before they
+    /// look away. A row the rules check flagged is tinted amber with its
+    /// reason under the name.
     private func shiftRowWithOverride(_ row: ScheduleRow) -> some View {
         let wasChanged = viewModel.overriddenRows.contains(row.id)
         let candidates = rowReplacements[row.id]
+        let flagged = row.needsReview == true && !(row.reviewReason ?? "").isEmpty
         return Menu {
             if let candidates {
                 if candidates.isEmpty {
@@ -941,10 +1021,20 @@ struct LaborView: View {
                     }
                 }
             } else {
-                Text("Checking who is free…")
+                // Eligibility is the server's answer, not a guess made
+                // here — the same check the what-if pass uses, so
+                // availability, staff notes, double booking and the
+                // forty-hour ceiling all apply.
+                Button {
+                    Task { rowReplacements[row.id] = await viewModel.loadReplacements(for: row) }
+                } label: { Label("Find a replacement", systemImage: "person.2") }
             }
+            Button {
+                Haptic.light()
+                explainingRow = row
+            } label: { Label("Why this person?", systemImage: "questionmark.circle") }
         } label: {
-            HStack {
+            HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 5) {
                         Text(row.employee ?? "")
@@ -959,9 +1049,22 @@ struct LaborView: View {
                                 .padding(.vertical, 1)
                                 .background(Capsule().fill(Color.cavnarBlue.opacity(0.15)))
                         }
+                        if flagged {
+                            Text("REVIEW")
+                                .font(.cavnarBody(9, weight: 700))
+                                .tracking(0.5)
+                                .foregroundStyle(Color.cavnarAmber)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 1)
+                                .background(Capsule().fill(Color.cavnarAmber.opacity(0.16)))
+                        }
                     }
                     if let role = row.role, !role.isEmpty {
                         Text(role).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                    }
+                    if flagged, let reason = row.reviewReason {
+                        HomeMixedText.make(reason, size: 13, weight: 600, color: .cavnarAmber)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 Spacer()
@@ -971,15 +1074,20 @@ struct LaborView: View {
             }
             .contentShape(Rectangle())
             .padding(.vertical, 4)
+            .padding(.horizontal, flagged ? 8 : 0)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(flagged ? Color.cavnarAmber.opacity(0.09) : Color.clear))
+        } primaryAction: {
+            Haptic.light()
+            explainingRow = row
+            // Warm the replacement list on a tap, so the long-press that
+            // usually follows a look at the reason has names ready.
+            if rowReplacements[row.id] == nil {
+                Task { rowReplacements[row.id] = await viewModel.loadReplacements(for: row) }
+            }
         }
         .buttonStyle(.plain)
-        // Eligibility is the server's answer, not a guess made here — the
-        // same check the what-if pass uses, so availability, staff notes,
-        // double booking and the forty-hour ceiling all apply.
-        .onTapGesture {
-            guard rowReplacements[row.id] == nil else { return }
-            Task { rowReplacements[row.id] = await viewModel.loadReplacements(for: row) }
-        }
     }
 
     private func needsReviewGroup(_ rows: [ScheduleRow]) -> some View {

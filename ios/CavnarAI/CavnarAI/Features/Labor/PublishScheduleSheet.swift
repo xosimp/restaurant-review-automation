@@ -42,6 +42,10 @@ struct PublishResult: Decodable {
     let unreachable: [Unreachable]
     let failed: [Failed]
     let error: String?
+    let status: String?
+    // True when the owner sent past the publish gate's blockers — said
+    // in the result so "sent" never quietly hides that it was.
+    let acknowledged: Bool?
 
     struct Sent: Decodable, Identifiable {
         let employeeName: String
@@ -87,6 +91,18 @@ final class PublishScheduleViewModel {
 
     var isPublishing = false
     var lastResult: PublishResult?
+    // Which schedule_history row to send. Nil sends the latest, which is
+    // what the Labor tab means; History passes the row it is looking at.
+    var scheduleId: Int?
+    // The publish gate's answer when the week has something the owner
+    // should read first — needs-review rows, a rule break, a weak score.
+    // Sending again with `acknowledge: true` is the owner saying they did.
+    var blockers: [String] = []
+    var acknowledgeBlockers = false
+    // A refusal that is not a gate: the login cannot send (403), or the
+    // server said no. Separate from errorMessage, which hides the whole
+    // sheet behind an error when nothing has loaded.
+    var publishError: String?
 
     var editingContact: StaffContact?
     var isSavingContact = false
@@ -172,20 +188,64 @@ final class PublishScheduleViewModel {
         }
     }
 
+    private struct PublishBody: Encodable {
+        let scheduleId: Int?
+        let acknowledge: Bool
+        enum CodingKeys: String, CodingKey {
+            case acknowledge
+            case scheduleId = "schedule_id"
+        }
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encodeIfPresent(scheduleId, forKey: .scheduleId)
+            try c.encode(acknowledge, forKey: .acknowledge)
+        }
+    }
+
+    /// 409 from the gate: `{needs_ack, blockers, schedule_id}`.
+    private struct GateResponse: Decodable {
+        let needsAck: Bool?
+        let blockers: [String]?
+        let scheduleId: Int?
+        enum CodingKeys: String, CodingKey {
+            case blockers
+            case needsAck = "needs_ack"
+            case scheduleId = "schedule_id"
+        }
+    }
+
     func publish() async {
         guard !isPublishing else { return }
         isPublishing = true
+        publishError = nil
         defer { isPublishing = false }
         do {
             let result: PublishResult = try await client.send(
-                "/mobile/api/labor/publish-schedule", method: .post)
+                "/mobile/api/labor/publish-schedule", method: .post,
+                body: PublishBody(scheduleId: scheduleId, acknowledge: acknowledgeBlockers))
             lastResult = result
-            if result.ok { Haptic.success() }
+            if result.ok {
+                Haptic.success()
+                blockers = []
+                acknowledgeBlockers = false
+            } else {
+                publishError = result.error ?? "Couldn't send the schedule."
+            }
             await load()
         } catch let error as APIClient.APIError {
-            errorMessage = error.message
+            if error.status == 409, let gate = error.decodeBody(GateResponse.self), gate.needsAck == true {
+                // Not a failure: the week has something to read first.
+                blockers = gate.blockers ?? []
+                if let id = gate.scheduleId { scheduleId = id }
+                acknowledgeBlockers = false
+                Haptic.warning()
+            } else {
+                // 403 lands here too — a member who can draft but not send
+                // gets the server's own sentence, not a generic one.
+                publishError = error.message
+            }
         } catch {
-            errorMessage = "Couldn't send the schedule."
+            publishError = "Couldn't send the schedule."
         }
     }
 }
@@ -196,6 +256,13 @@ final class PublishScheduleViewModel {
 struct PublishScheduleSheet: View {
     @State private var viewModel = PublishScheduleViewModel()
     @Environment(\.dismiss) private var dismiss
+
+    /// The schedule_history row to send; nil means the latest.
+    init(scheduleId: Int? = nil) {
+        let vm = PublishScheduleViewModel()
+        vm.scheduleId = scheduleId
+        _viewModel = State(initialValue: vm)
+    }
 
     var body: some View {
         NavigationStack {
@@ -208,11 +275,20 @@ struct PublishScheduleSheet: View {
                     } else if viewModel.contacts.isEmpty {
                         emptyState
                     } else {
-                        if let result = viewModel.lastResult {
+                        if let result = viewModel.lastResult, result.ok {
                             resultCard(result)
                         }
                         staffCard
+                        if !viewModel.blockers.isEmpty {
+                            blockersCard
+                        }
                         publishButton
+                        if let error = viewModel.publishError {
+                            Text(error)
+                                .font(.cavnarBody(14))
+                                .foregroundStyle(Color.cavnarRed)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                         if !viewModel.status.isEmpty {
                             statusCard
                         }
@@ -296,6 +372,13 @@ struct PublishScheduleSheet: View {
         .cavnarCard()
     }
 
+    /// Disabled while blockers stand unacknowledged: the gate said read
+    /// these first, and the toggle in blockersCard is the reading.
+    private var sendBlocked: Bool {
+        viewModel.reachableCount == 0 || viewModel.isPublishing
+            || (!viewModel.blockers.isEmpty && !viewModel.acknowledgeBlockers)
+    }
+
     private var publishButton: some View {
         Button {
             Task { await viewModel.publish() }
@@ -303,6 +386,9 @@ struct PublishScheduleSheet: View {
             Group {
                 if viewModel.isPublishing {
                     CavnarShimmerText(text: "Sending…")
+                } else if !viewModel.blockers.isEmpty {
+                    Text(viewModel.acknowledgeBlockers ? "Send anyway to \(viewModel.reachableCount) staff"
+                                                       : "Read the notes above first")
                 } else {
                     Text(viewModel.reachableCount > 0
                          ? "Send to \(viewModel.reachableCount) staff"
@@ -311,12 +397,60 @@ struct PublishScheduleSheet: View {
             }
             .frame(maxWidth: .infinity)
         }
-        .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.reachableCount == 0 || viewModel.isPublishing))
-        .disabled(viewModel.reachableCount == 0 || viewModel.isPublishing)
+        .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: sendBlocked))
+        .disabled(sendBlocked)
+    }
+
+    /// What the gate wants read before the week goes out. Every line is
+    /// the server's own — a needs-review count, a rule break, a weak
+    /// score — and the switch is the owner saying they have read them.
+    private var blockersCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 6) {
+                Image(systemName: "hand.raised.fill")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(Color.cavnarAmber)
+                Text("BEFORE THIS GOES OUT")
+                    .font(.cavnarBody(13.5, weight: 700))
+                    .tracking(1.2)
+                    .foregroundStyle(Color.cavnarAmber)
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(Array(viewModel.blockers.enumerated()), id: \.offset) { _, line in
+                    HStack(alignment: .top, spacing: 8) {
+                        Circle().fill(Color.cavnarAmber).frame(width: 5, height: 5).padding(.top, 7)
+                        HomeMixedText.make(line, size: 14.5, color: .cavnarInk)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+            AccountSwitchRow(label: "I've read these — send anyway",
+                             detail: "The week goes out as it is. The result will say it was sent with these acknowledged.",
+                             isOn: $viewModel.acknowledgeBlockers, showsDivider: false)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: CavnarRadius.card, style: .continuous)
+                .fill(Color.cavnarAmber.opacity(0.08)))
+        .overlay(
+            RoundedRectangle(cornerRadius: CavnarRadius.card, style: .continuous)
+                .strokeBorder(Color.cavnarAmber.opacity(0.35), lineWidth: 1))
     }
 
     private func resultCard(_ result: PublishResult) -> some View {
         VStack(alignment: .leading, spacing: 8) {
+            if result.acknowledged == true {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Image(systemName: "hand.raised.fill")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(Color.cavnarAmber)
+                    Text("Sent with acknowledged blockers")
+                        .font(.cavnarBody(14, weight: 700))
+                        .foregroundStyle(Color.cavnarAmber)
+                }
+                .padding(.bottom, 2)
+            }
             ForEach(result.sent) { sent in
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Image(systemName: "checkmark")
