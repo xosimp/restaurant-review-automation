@@ -219,8 +219,17 @@ def fairness_ledger(restaurant_id, weeks: int = LEDGER_WEEKS, db_path=DB_PATH, t
     if not rows:
         return {}
     from schedule_rules import parse_minutes
+    # Both ends of every week: one starting Dec 28 holds New Year's Day of
+    # the next year, which the week_start year alone never looked up (SCHED-33).
     holidays = {}
-    for y in {int((r["week_start"] or "2000")[:4]) for r in rows}:
+    years = set()
+    for r in rows:
+        for k in ("week_start", "week_end"):
+            try:
+                years.add(int((r[k] or "")[:4]))
+            except (TypeError, ValueError):
+                pass
+    for y in years:
         holidays.update(_holiday_dates(y))
     ledger = {}
     for w in rows:
@@ -288,7 +297,11 @@ def behaviour_preferences(restaurant_id, weeks: int = 12, db_path=DB_PATH) -> di
         except (ValueError, TypeError):
             continue
         slot = f"{wd} {'night' if daypart_of(r['shift_start'] or '') == 'night' else 'day'}"
-        if (r["kind"] or "drop") in ("drop", "swap") and r["status"] not in ("withdrawn",):
+        # A drop the manager DENIED is not a preference the next draft should
+        # honour — reading it as "avoids" overrode that decision (SCHED-40).
+        # Only a drop that was let go (open, covered) or a swap that went
+        # through says the person does not want that slot.
+        if (r["kind"] or "drop") in ("drop", "swap") and r["status"] in ("open", "covered"):
             t = tally.setdefault(r["employee_name"], {"avoid": {}, "prefer": {}, "drops": 0, "claims": 0})
             t["avoid"][slot] = t["avoid"].get(slot, 0) + 1
             t["drops"] += 1

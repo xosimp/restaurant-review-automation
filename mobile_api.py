@@ -2516,12 +2516,19 @@ def mobile_generate_schedule(current_user):
         return jsonify(ok=False, error="Too many schedule generations — please wait a moment and try again."), 429
     body = request.get_json(silent=True) or {}
     week_start = (body.get("week_start") or "").strip()[:10] or None
+    from schedule_engine import check_week_start as _cws
+    week_start, _ws_err = _cws(rid, week_start)
+    if _ws_err:
+        return jsonify(ok=False, error=_ws_err), 400
     dates = [str(d)[:10] for d in (body.get("dates") or []) if str(d)[:10]] or None
     base_history_id = body.get("history_id") if dates else None
     if dates and not base_history_id:
         return jsonify(ok=False, error="Regenerating some days needs the draft they belong to (history_id)."), 400
-    job_id = str(uuid.uuid4())
-    _ops.start_async_job(job_id, "schedule", rid)
+    # Checked and started in one transaction: two presses at the same instant
+    # get one job (SCHED-25).
+    job_id, joined = _ops.claim_async_job(str(uuid.uuid4()), "schedule", rid)
+    if joined:
+        return jsonify(ok=True, job_id=job_id, joined=True)
     from schedule_engine import _run_schedule_job as _run_sched
     t = threading.Thread(target=_run_sched, args=(job_id, rid),
                          kwargs={"week_start": week_start, "dates": dates, "base_history_id": base_history_id}, daemon=True)

@@ -9913,7 +9913,8 @@ function _schedReset(btnEl) {
 function _schedHandleResult(data) {
   if (!data.ok) {
     _schedReset(_schedBtn);
-    alert((data.error || 'Schedule generation failed') + (data.traceback ? '\n\n' + data.traceback.slice(0, 600) : '') + '\n\nTry again');
+    // The server's sentence only, never the stack (CLIENT-14 / DATA-46).
+    alert((data.error || 'Schedule generation failed') + '\n\nTry again');
     return;
   }
   if (_schedBtn) {
@@ -10930,9 +10931,16 @@ function regenerateScheduleDays(btn) {
 }
 
 function generateSchedule(btn, opts) {
+  opts = opts || {};
+  // A full Generate replaces the week on screen. Unsaved edits are the
+  // manager's work: ask before throwing them away (SCHED-41) — the same
+  // guard the redo-some-days path already had.
+  if (!(opts.dates && opts.dates.length) && _schedDirty &&
+      !window.confirm('You have unsaved changes to this week. Generating a new draft replaces them. Continue?')) {
+    return;
+  }
   _schedBtn = btn;
   btn.disabled = true;
-  opts = opts || {};
   var body = {};
   if (opts.dates && opts.dates.length) { body.dates = opts.dates; body.history_id = opts.history_id; }
   else { var ws = _schedWeekStart(); if (ws) body.week_start = ws; }
@@ -10991,10 +10999,15 @@ function generateSchedule(btn, opts) {
         alert('Schedule generation is still running after 15 minutes. It will appear in Schedule History when it finishes.');
       }, 900000);
 
+      // One failed poll (a deploy's 502, a dropped connection) is not a
+      // failed job: it keeps running server-side, so the page keeps asking
+      // and only gives up after several failures in a row (SCHED-41).
+      var _pollFails = 0;
       _schedPollInterval = setInterval(function() {
         fetch('/api/schedule-status/' + jobId)
           .then(function(r) { return r.json(); })
           .then(function(pollData) {
+            _pollFails = 0;
             if (pollData.status === 'pending') return;
             clearTimeout(_hardTimeout);
             clearInterval(_elapsedTimer);
@@ -11003,12 +11016,14 @@ function generateSchedule(btn, opts) {
             _schedHandleResult(pollData);
           })
           .catch(function() {
+            _pollFails += 1;
+            if (_pollFails < 8) return;
             clearTimeout(_hardTimeout);
             clearInterval(_elapsedTimer);
             clearInterval(_schedPollInterval);
             _schedPollInterval = null;
             _schedReset(btn);
-            alert('Network error polling schedule — try again');
+            alert('We lost touch with the schedule generation. It may still finish \u2014 check Schedule History in a few minutes.');
           });
       }, 2000);
     })

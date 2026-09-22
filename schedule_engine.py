@@ -27,6 +27,12 @@ CHUNK_ROSTER_THRESHOLD = 80     # kept for callers; the decision is now by expec
 CHUNK_ROWS_PER_CALL = 160       # ~60 output tokens a row against a 16k ceiling, with room for the summary
 
 
+class ScheduleGenerationError(ValueError):
+    """A generation that must not be saved, with a sentence the owner can
+    read. Anything else that fails a job is logged and shown as a plain
+    "try again" — never its exception text or a traceback (DATA-46)."""
+
+
 def _expected_rows(shifts, roster_pairs) -> int:
     """How many shift rows a week here usually has: the busiest of the last
     four full weeks in the history, else three and a half a head."""
@@ -58,6 +64,44 @@ def _week_monday(today, week_start=None):
             pass
     days_ahead = (7 - today.weekday()) % 7 or 7
     return today + _t(days=days_ahead)
+
+
+def check_week_start(restaurant_id, raw):
+    """(week_start or None, error or None) for a Generate request. An
+    unreadable date used to fall back silently to next Monday, and a week
+    that had already happened generated and could be published (SCHED-37).
+    Any date in the wanted week is accepted, as _week_monday reads it."""
+    from datetime import date as _date, timedelta as _t
+    raw = (raw or "").strip()[:10]
+    if not raw:
+        return None, None
+    try:
+        d = _date.fromisoformat(raw)
+    except ValueError:
+        return None, "That week isn't a date we can read — pick the week again."
+    try:
+        from time_utils import restaurant_now_by_id
+        today = restaurant_now_by_id(restaurant_id, naive=True).date()
+    except Exception:
+        today = _date.today()
+    monday = d - _t(days=d.weekday())
+    if monday + _t(days=6) < today:
+        return None, "That week has already happened — pick this week or a later one."
+    if monday > today + _t(days=7 * 12):
+        return None, "That week is more than twelve weeks out — pick a nearer one."
+    return raw, None
+
+
+def _holiday_on_or_after(label, today):
+    """'Jan 1' → the next such date on or after about a month ago. Parsed
+    in today's year, a New Year's Day seen from late December was last
+    January and fell out of the week it belongs to (SCHED-33)."""
+    from datetime import datetime as _d, timedelta as _td
+    base = today if isinstance(today, _d) else _d(today.year, today.month, today.day)
+    d = _d.strptime(f"{label} {base.year}", "%b %d %Y")
+    if d < base - _td(days=31):
+        d = _d.strptime(f"{label} {base.year + 1}", "%b %d %Y")
+    return d
 
 
 def _no_shift_data_message(restaurant_id, restaurant=None):
@@ -100,7 +144,7 @@ def _build_schedule_result(restaurant_id, week_start=None):
     restaurant = get_restaurant(restaurant_id)
     shifts = load_shifts_for_restaurant(restaurant_id)
     if not shifts:
-        raise ValueError(_no_shift_data_message(restaurant_id, restaurant))
+        raise ScheduleGenerationError(_no_shift_data_message(restaurant_id, restaurant))
     analysis = analyse_shifts_for_restaurant(restaurant_id)
     # The guard above can never fire: load_shifts_for_restaurant substitutes
     # a bundled fictional week when a restaurant has uploaded nothing, so
@@ -109,7 +153,7 @@ def _build_schedule_result(restaurant_id, week_start=None):
     # PAR banner priced off a fictional restaurant's revenue. is_live is the
     # real signal and was already computed; only the two AI paths ignored it.
     if not analysis.get("is_live"):
-        raise ValueError(_no_shift_data_message(restaurant_id, restaurant))
+        raise ScheduleGenerationError(_no_shift_data_message(restaurant_id, restaurant))
     # Use blended rate from per-role rates if available, otherwise flat rate
     rate = analysis.get("blended_rate") or get_hourly_rate(restaurant_id)
     target   = float(restaurant.labor_target_pct or 30.0) if restaurant else 30.0
@@ -155,7 +199,7 @@ def _build_schedule_result(restaurant_id, week_start=None):
                 m = _re_h.search(r'\((\w+ \d+)\)$', chunk)
                 if m:
                     try:
-                        hdate = _dt.strptime(m.group(1) + " " + str(today.year), "%b %d %Y")
+                        hdate = _holiday_on_or_after(m.group(1), today)
                         for nd in next_week_dates:
                             if hdate.strftime("%Y-%m-%d") == nd:
                                 _hol_this_week[nd] = chunk[:chunk.rfind("(")].strip()
@@ -180,7 +224,7 @@ def _build_schedule_result(restaurant_id, week_start=None):
                 m = _re_ev.search(r'\((\w+ \d+)\)$', chunk)
                 if m:
                     try:
-                        edate = _dt.strptime(m.group(1) + " " + str(today.year), "%b %d %Y")
+                        edate = _holiday_on_or_after(m.group(1), today)
                         days_away = (edate - today).days
                         if 0 <= days_away <= 21:
                             upcoming_events.append({
@@ -287,6 +331,12 @@ def _build_schedule_result(restaurant_id, week_start=None):
                 e["lift_pct"] = h["lift_pct"] if e.get("lift_pct") is None else max(e["lift_pct"], h["lift_pct"])
     except Exception:
         holiday = {}
+    # The events block states only a lift this restaurant measured; the
+    # prompt used to assert "20-40% higher covers" for any holiday (SCHED-33).
+    for _ev in upcoming_events:
+        for _d, _h in holiday.items():
+            if _h.get("name") == _ev.get("name") and _h.get("lift_pct") is not None:
+                _ev["lift_pct"], _ev["based_on"] = _h["lift_pct"], _h.get("based_on")
     splh = {}
     try:
         splh = _econ.splh_by_daypart(restaurant_id)
@@ -499,26 +549,42 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
     # (kitchen and front of house), each department generated in date
     # slices with the other's rows in view. That is what a 250-person
     # restaurant needs: the rule sweep afterwards arbitrates the merge.
-    departments = [None]
-    if expected > CHUNK_ROWS_PER_CALL * 3:
-        # Three date slices cannot hold the week: split the roster by
-        # department first, then each department by dates.
-        departments = list(_departments(roster_pairs).items()) or [None]
-        parts = min(3, max(2, -(-expected // (len(departments) * CHUNK_ROWS_PER_CALL))))
     if not week_dates:
-        raise ValueError("The restaurant is marked closed every day of this week, so there is nothing to schedule.")
-    size = -(-len(week_dates) // parts)
-    slices = [week_dates[i:i + size] for i in range(0, len(week_dates), size)]
+        raise ScheduleGenerationError("The restaurant is marked closed every day of this week, so there is nothing to schedule.")
+    # Every call is planned to fit CHUNK_ROWS_PER_CALL: past three date
+    # slices the roster is split by department (kitchen and front of house),
+    # and a department too big for one call a day is split again into groups
+    # of people, each written in as many date slices as it needs. At most
+    # three slices of two departments used to be the ceiling, so a 500-person
+    # roster planned ~290-row calls against a 160-row budget (SCHED-24).
+    plan = []
+    if expected > CHUNK_ROWS_PER_CALL * 3:
+        per_head = expected / max(1, len(roster_pairs or []))
+        for label, people in _departments(roster_pairs).items():
+            if not people:
+                continue
+            k, p = _plan_calls(per_head * len(people), len(week_dates), min_slices=2, max_groups=len(people))
+            size_p = -(-len(people) // k)
+            chunks = [people[i:i + size_p] for i in range(0, len(people), size_p)]
+            size_d = -(-len(week_dates) // p)
+            slices = [week_dates[i:i + size_d] for i in range(0, len(week_dates), size_d)]
+            for ci, chunk in enumerate(chunks):
+                plan.append((label, chunk, ci, len(chunks), slices))
+    if not plan:
+        size = -(-len(week_dates) // parts)
+        plan = [(None, None, 0, 1, [week_dates[i:i + size] for i in range(0, len(week_dates), size)])]
     merged = None
     rows, narrative, seconds = [], [], wasted
     prior_rows = []
     calls = 0
-    for dept in departments:
+    for label, chunk, ci, n_chunks, slices in plan:
+        dept = (label or "STAFF", chunk) if chunk is not None else None
         dkwargs = dict(kwargs)
         if dept:
-            dkwargs["roster"] = dept[1]
+            dkwargs["roster"] = chunk
+            what = dept[0] + (f" GROUP {ci + 1} OF {n_chunks}" if n_chunks > 1 else "")
             dkwargs["extra_blocks"] = (kwargs.get("extra_blocks") or "") + (
-                f"\n\nTHIS REQUEST COVERS ONLY THE {dept[0]} ROSTER LISTED ABOVE. The other department is "
+                f"\n\nTHIS REQUEST COVERS ONLY THE {what} ROSTER LISTED ABOVE. The rest of the staff is "
                 "written separately; do not schedule anyone not on this list.")
         for sl in slices:
             # Each slice sees what the earlier ones wrote — hours so far, days
@@ -527,7 +593,7 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
             part = generate_optimized_schedule(analysis, shifts, week_slice=sl, prior_rows=list(prior_rows), **dkwargs)
             calls += 1
             if part.get("truncated"):
-                raise ValueError("The week is too long to generate even in parts — trim the roster or split the "
+                raise ScheduleGenerationError("The week is too long to generate even in parts — trim the roster or split the "
                                  "restaurant into departments, then try again.")
             missing = _real_missing(part.get("schedule_csv", ""), sl)
             if missing:
@@ -546,7 +612,7 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
                 calls += 1
                 missing = _real_missing(part.get("schedule_csv", ""), sl)
                 if missing or part.get("truncated"):
-                    raise ValueError("The model wrote no shifts for " + ", ".join(_pretty_dates(missing or sl)) +
+                    raise ScheduleGenerationError("The model wrote no shifts for " + ", ".join(_pretty_dates(missing or sl)) +
                                      " twice; the week was not saved. Try again in a minute.")
             slices_log.append({"dates": sl, "rows_by_date": _rows_by_date(part.get("schedule_csv", "")),
                                "seconds": part.get("generation_seconds"), "stop_reason": part.get("stop_reason"),
@@ -570,10 +636,29 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
     merged["generation_seconds"] = round(seconds, 1)
     merged["truncated"] = False
     merged["chunked"] = calls
-    merged["departments"] = [d[0] for d in departments if d]
+    merged["departments"] = list(dict.fromkeys(label for label, *_rest in plan if label))
     merged["slices"] = slices_log
     merged["closed_dates"] = sorted(closed | set(_missing_dates(merged["schedule_csv"], all_dates)))
     return merged
+
+
+def _plan_calls(rows: float, n_dates: int, min_slices: int = 1, max_groups: int = 200) -> tuple:
+    """(people_groups, date_slices) with the fewest calls for which every
+    call's expected rows — rows × (its share of people) × (its days / the
+    week) — fit CHUNK_ROWS_PER_CALL."""
+    n = max(1, int(n_dates or 1))
+    best = None
+    for k in range(1, max(1, int(max_groups)) + 1):
+        for p in range(max(1, min(min_slices, n)), n + 1):
+            longest = -(-n // p)
+            if rows / k * longest / n <= CHUNK_ROWS_PER_CALL:
+                calls = k * p
+                if best is None or calls < best[0]:
+                    best = (calls, k, p)
+                break
+        if best is not None and best[0] <= k:
+            break
+    return (best[1], best[2]) if best else (max(1, int(max_groups)), n)
 
 
 def _rows_by_date(csv_text: str) -> dict:
@@ -865,10 +950,6 @@ def _safe_hours_sum(rows: list) -> float:
         except (ValueError, TypeError):
             pass
     return round(total, 1)
-
-
-class ScheduleGenerationError(RuntimeError):
-    """A generation that must not be saved, with a sentence the owner can read."""
 
 
 def _normalise_row_times(row: dict) -> None:
@@ -2422,8 +2503,7 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             # week with "0 hard"; now it is the generation's failure.
             import ops as _ops_fail
             _ops_fail.capture(_csv_ex, job="schedule_checks", context=f"restaurant_id={restaurant_id}")
-            raise ValueError(f"The draft was written but its checks failed ({type(_csv_ex).__name__}: {_csv_ex}); "
-                             "nothing was saved. Try again.")
+            raise ScheduleGenerationError("The draft was written but its checks failed, so nothing was saved. Try again.")
 
         _history_id = None
         try:
@@ -2547,7 +2627,14 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
     except Exception as e:
         tb = _tb.format_exc()
         print(f"[schedule job] FAILED:\n{tb}")
-        _ops.finish_async_job(job_id, "error", {"ok": False, "error": str(e), "traceback": tb})
+        try:
+            _ops.capture(e, job="schedule_generate", context=f"restaurant_id={restaurant_id}")
+        except Exception:
+            pass
+        # The owner gets a sentence, never the exception or the traceback.
+        msg = str(e) if isinstance(e, ScheduleGenerationError) else \
+            "The schedule couldn't be generated just now — please try again in a minute."
+        _ops.finish_async_job(job_id, "error", {"ok": False, "error": msg})
 
 
 _COLS_PINNED = ("date", "day", "employee", "role", "shift_start", "shift_end", "scheduled_hours", "notes")

@@ -111,7 +111,6 @@ def test_one_published_week_is_recorded_per_date_and_daypart(db):
 
 # ── SCHED-33: a holiday on the far side of New Year ──────────────────────
 
-@pytest.mark.xfail(strict=True, reason="SCHED-33: the ledger resolves holidays by week_start's year, so Jan 1 in a week starting Dec 28 is missed")
 def test_new_years_day_in_a_week_that_starts_in_december_counts_as_a_holiday(db):
     rid = _restaurant(db)
     week = ["2026-12-28", "2026-12-29", "2026-12-30", "2026-12-31", "2027-01-01", "2027-01-02", "2027-01-03"]
@@ -138,7 +137,6 @@ def _request(db_path, rid, name, date, start, status, kind="drop", replacement=N
     conn.close()
 
 
-@pytest.mark.xfail(strict=True, reason="SCHED-40: behaviour_preferences counts denied drops as 'avoids', overriding the manager's decision")
 def test_two_denied_sunday_night_drops_do_not_become_an_avoid(db):
     rid = _restaurant(db)
     for d in ("2026-09-06", "2026-09-13"):

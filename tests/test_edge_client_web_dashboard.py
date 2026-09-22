@@ -227,14 +227,12 @@ def test_the_schedule_poll_still_exists(src):
     assert "data.error" in _function(src, "_schedHandleResult")
 
 
-@pytest.mark.xfail(strict=True, reason="CLIENT-14: the first failed poll clears the interval and alerts 'Network error' while the job keeps running on the server")
 def test_one_failed_schedule_poll_does_not_abandon_the_job(src):
     catch = _schedule_poll_catch(src)
     stop = catch.find("clearInterval(_schedPollInterval)")
     assert stop < 0 or re.search(r"\bif\s*\(", catch[:stop]), catch
 
 
-@pytest.mark.xfail(strict=True, reason="CLIENT-14: a failed schedule job's traceback is shown to the owner in an alert()")
 def test_a_failed_schedule_job_never_shows_a_traceback(src):
     assert "traceback" not in _function(src, "_schedHandleResult")
 

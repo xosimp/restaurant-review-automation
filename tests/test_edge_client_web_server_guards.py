@@ -165,7 +165,6 @@ def test_a_failed_schedule_job_is_recorded_as_an_error(failed_job_payload):
     assert failed_job_payload["result"]["error"]
 
 
-@pytest.mark.xfail(strict=True, reason="CLIENT-14: the failed-job payload the browser polls carries the full Python traceback")
 def test_a_failed_schedule_job_payload_has_no_traceback(failed_job_payload):
     result = failed_job_payload["result"]
     assert "traceback" not in result
