@@ -252,7 +252,6 @@ html{background:var(--bg-base);min-height:100%}
 
 /* Skip / secondary buttons */
 /* ROI banner */
-[data-theme="dark"] #global-savings-banner{background:linear-gradient(135deg,#0e180e,#111c11)!important}
 /* Review request card */
 [data-theme="dark"] .rr-card{background:var(--surface)!important;border-color:var(--paper3)!important}
 /* Rate cards (analytics grid) */
@@ -377,8 +376,6 @@ body{font-family:'Apfel Grotezk',sans-serif;background:transparent;color:var(--i
 .stat.warn{background:var(--amber-bg);border-color:#f6d860}
 .stat-n{font-size:26px;font-weight:700;font-family:'Bricolage Grotesque',sans-serif;line-height:1;letter-spacing:-0.5px}
 *[style*="font-weight:800"]{font-family:'Bricolage Grotesque',sans-serif!important;font-weight:700!important}
-#global-savings-banner [style*="font-weight:700"]{font-family:'Bricolage Grotesque',sans-serif}
-#global-savings-banner .vs-link{background:transparent;color:#9bdcb5}
 #panel-labor strong{font-family:'Bricolage Grotesque',sans-serif}
 
 .stat.hi .stat-n{color:var(--red)}
@@ -775,10 +772,19 @@ details[open]>summary~*{animation:askIn .3s ease both}
 .pe-next b{color:var(--ink2);font-weight:600}
 .hb-live.mod{margin-left:auto}
 @media (prefers-reduced-motion:reduce){.rv2-hero:before,.lb2-hero:before,.ember-thread:before,.ember-thread:after,.hb-join .ln:before,.lb2-ai .tag:before,.pe-dot:after{animation:none!important}.lit:after{transition:none}}
-.ask-fab{position:fixed;bottom:24px;right:24px;width:60px;height:60px;border-radius:50%;border:1px solid rgba(232,149,106,.35);background:radial-gradient(circle at 35% 30%,#2c2c2e,#0c0c0c 72%);box-shadow:0 10px 30px rgba(200,75,47,.35),0 0 0 6px rgba(200,75,47,.08);display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:998;padding:0;transition:transform .18s,box-shadow .18s}
-.ask-fab:hover{transform:translateY(-2px);box-shadow:0 14px 36px rgba(200,75,47,.5),0 0 0 8px rgba(200,75,47,.12)}
-.ask-fab:active{transform:scale(.94)}
-.ask-fab canvas{display:block;width:34px;height:34px}
+/* The Ask button: an ember disc with real depth — a top-left highlight, a
+   darker underside, a hairline rim, a long ember shadow and a slow halo —
+   carrying the orb in cream ink (it 'works' at rest and 'searches' under
+   the cursor). The brand colour's one large surface on the page. */
+.ask-fab{position:fixed;bottom:24px;right:24px;width:62px;height:62px;border-radius:50%;border:none;padding:0;cursor:pointer;z-index:998;display:flex;align-items:center;justify-content:center;background-color:var(--ember);background-image:radial-gradient(circle at 32% 26%,rgba(255,255,255,.42),rgba(255,255,255,0) 48%),radial-gradient(circle at 50% 115%,rgba(0,0,0,.38),rgba(0,0,0,0) 58%),linear-gradient(160deg,var(--ember2),var(--ember) 62%);box-shadow:inset 0 1px 0 rgba(255,255,255,.38),inset 0 -1px 0 rgba(0,0,0,.25),0 1px 2px rgba(0,0,0,.28),0 16px 34px -10px rgba(200,75,47,.75),0 0 0 6px rgba(200,75,47,.10);transition:transform .18s ease,box-shadow .18s ease}
+.ask-fab:before{content:'';position:absolute;inset:-7px;border-radius:50%;border:1.5px solid var(--ember2);opacity:0;animation:askFabHalo 3.4s ease-out infinite;pointer-events:none}
+.ask-fab:after{content:'';position:absolute;inset:2px;border-radius:50%;border:1px solid rgba(255,255,255,.18);pointer-events:none}
+@keyframes askFabHalo{0%{transform:scale(.86);opacity:.7}70%{opacity:0}100%{transform:scale(1.3);opacity:0}}
+.ask-fab:hover{transform:translateY(-2px) scale(1.04);box-shadow:inset 0 1px 0 rgba(255,255,255,.5),inset 0 -1px 0 rgba(0,0,0,.25),0 2px 4px rgba(0,0,0,.3),0 22px 44px -10px rgba(200,75,47,.85),0 0 0 9px rgba(200,75,47,.14)}
+.ask-fab:active{transform:scale(.94);box-shadow:inset 0 2px 6px rgba(0,0,0,.4),0 6px 14px -6px rgba(200,75,47,.6),0 0 0 6px rgba(200,75,47,.10)}
+.ask-fab.open:before{animation:none}
+.ask-fab canvas{position:relative;display:block;width:38px;height:38px;filter:drop-shadow(0 1px 1.5px rgba(0,0,0,.35))}
+@media (prefers-reduced-motion:reduce){.ask-fab:before{animation:none}}
 .ask-fab-l{position:absolute;right:calc(100% + 12px);top:50%;transform:translateY(-50%) translateX(6px);white-space:nowrap;font-family:'Clash Display',sans-serif;font-size:14px;color:#f0ebe0;background:#161618;border:1px solid rgba(232,149,106,.3);border-radius:999px;padding:7px 13px;opacity:0;pointer-events:none;transition:opacity .18s,transform .18s}
 .ask-fab:hover .ask-fab-l{opacity:1;transform:translateY(-50%)}
 .ask-fab.open .ask-fab-l{display:none}
@@ -1281,51 +1287,10 @@ document.documentElement.classList.add('pjs-loading');
     <span id="tab-indicator"></span>
 </div>
 
-<!-- VALUE STRIP — measured, avoided, available. Never summed into each other.
-     This replaced a "Total value delivered" banner whose labor and food-cost
-     components were the GAP TO TARGET: money still being lost, counted as
-     money delivered. See value_delivered.py for the full account. The strip
-     was also display:none with nothing ever showing it, so the web had no
-     value surface at all. -->
-{% set _sb = savings_breakdown or {} %}
-{% set _show_value = (_sb.wins and _sb.wins > 0) or (_sb.in_flight and _sb.in_flight > 0) or (_sb.opportunity and _sb.opportunity > 0) or (_sb.avoided_hours and _sb.avoided_hours > 0) %}
-<div id="global-savings-banner" style="display:{{ 'flex' if _show_value else 'none' }};background:linear-gradient(135deg,#0d2b1a 0%,#0a1f13 100%);border-bottom:1px solid #1a3d24;padding:12px 28px;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">
-  <div style="display:flex;align-items:center;gap:10px">
-    <div>
-      <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#6fcf97;margin-bottom:1px">Measured results</div>
-      {% if _sb.wins and _sb.wins > 0 %}
-      <div id="global-savings-total" style="font-family:'Space Grotesk',sans-serif;font-size:22px;font-weight:700;color:white;letter-spacing:-0.5px">${{_sb.total|format_num}}<span style="font-size:12px;font-weight:600;color:#9bdcb5">/mo</span></div>
-      <div style="font-size:11px;color:#9bdcb5">from <span class="hb-num">{{ _sb.wins }}</span> measured {{ 'change' if _sb.wins == 1 else 'changes' }}{% if _sb.in_flight %} · <span class="hb-num">{{ _sb.in_flight }}</span> still being measured{% endif %}</div>
-      {% else %}
-      {# Space Grotesk is the NUMBER face (DESIGN_SYSTEM.md §2). This branch
-         has no number in it, and setting a plain English sentence in the
-         numeral face is exactly the mismatch that rule exists to stop. #}
-      <div id="global-savings-total" style="font-size:17px;font-weight:700;color:white;letter-spacing:-0.3px">Nothing measured yet</div>
-      <div style="font-size:11px;color:#9bdcb5">{% if _sb.in_flight %}<span class="hb-num">{{ _sb.in_flight }}</span> {{ 'change' if _sb.in_flight == 1 else 'changes' }} being measured now.{% else %}Track a recommendation and its result lands here.{% endif %}</div>
-      {% endif %}
-    </div>
-  </div>
-  <div style="display:flex;gap:22px;flex-wrap:wrap">
-    {% if _sb.avoided_hours and _sb.avoided_hours > 0 %}
-    {# "7 hrs / work done for you" said nothing about WHOSE work or WHICH
-       work. It is the hours of manual work the product did in your place —
-       replies written, schedules built, invoices read — each counted at a
-       stated rate in value_delivered.avoided(). The title carries the
-       breakdown so the figure can be checked rather than believed. #}
-    <div style="text-align:center" title="Hours of manual work Cavnar AI did instead of you — review replies, schedule drafts and invoice entry, each at a stated rate. An estimate, not a measurement.">
-      <div style="font-size:14px;font-weight:700;color:white"><span class="hb-num">{{ _sb.avoided_hours|round|int }}</span> hrs</div>
-      <div style="font-size:10px;color:#6fcf97;letter-spacing:.5px;text-transform:uppercase">Of your work, done for you</div>
-    </div>
-    {% endif %}
-    {% if _sb.opportunity and _sb.opportunity > 0 %}
-    <div style="text-align:center">
-      <div style="font-size:14px;font-weight:700;color:white">${{ _sb.opportunity|format_num }}<span style="font-size:10px;color:#9bdcb5">/mo</span></div>
-      <div style="font-size:10px;color:#6fcf97;letter-spacing:.5px;text-transform:uppercase">Still on the table</div>
-    </div>
-    {% endif %}
-    <button class="cbtn cbtn-text cbtn-sm vs-link" onclick="hbOpen('home')">See the detail →</button>
-  </div>
-</div>
+<!-- The full-width "Measured results" strip that sat here is gone. Home's
+     "What Cavnar AI has been worth" card (renderValue) carries the same
+     figures with their caveats; a second copy across the top of every tab
+     said it twice. savings_breakdown still feeds the Labor tiles. -->
 <script>
 var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and savings_breakdown.sales_lift_yr else 0}};
 </script>
@@ -2518,7 +2483,7 @@ svg:hover .hb-xh{opacity:1}
     // up - the exact mistake value_delivered.py exists to prevent.
     var h='<div class="hb-sh"><div><div class="k dim">Measured</div><h2>What Cavnar AI has been worth</h2></div></div><section class="hb-card hb-rise" aria-label="Worth"><div class="hb-stats">';
     if(d.wins>0)h+='<div class="hb-stat good"><div class="k">Measured results</div><div class="v hb-num"><span class="cu" data-n="'+Math.round(d.monthly||0)+'" data-p="$">$'+num2(d.monthly)+'</span><small>/mo</small></div><div class="s">across '+d.wins+' change'+(d.wins===1?'':'s')+(d.annual?' · about $'+num2(d.annual)+' a year if it holds':'')+'</div></div>';
-    else h+='<div class="hb-stat"><div class="k">Measured results</div><div class="v" style="font-size:17px;padding-top:4px">Nothing yet</div><div class="s">'+(d.in_flight?d.in_flight+' change'+(d.in_flight===1?'':'s')+' being measured now':'Track a recommendation and its result lands here')+'</div></div>';
+    else h+='<div class="hb-stat"><div class="k">Measured results</div><div class="v txt" style="font-size:17px;padding-top:4px">Nothing yet</div><div class="s">'+(d.in_flight?d.in_flight+' change'+(d.in_flight===1?'':'s')+' being measured now':'Track a recommendation and its result lands here')+'</div></div>';
     if(av.hours>0||av.dollars>0){
       // The breakdown opens as a centred modal rather than pushing the
       // rest of the card down the page.
@@ -3177,11 +3142,11 @@ svg:hover .hb-xh{opacity:1}
 </div><!-- /panel-reviews -->
 
 <!-- Ask Cavnar — body level so it floats over every tab, not just Account.
-     The floating button is the breathing Cavnar orb on an obsidian disc; the
-     panel is the iOS Ask screen: orb header, suggested questions, iOS bubble
+     The floating button is the working Cavnar orb, in cream, on an ember
+     disc (.ask-fab); the panel is the iOS Ask screen: orb header, suggested questions, iOS bubble
      radii, the circular ember send button. -->
 <button id="ask-cavnar-fab" onclick="toggleAskCavnar()" title="Ask Cavnar AI" aria-label="Ask Cavnar AI" class="ask-fab">
-  <canvas id="ask-fab-orb" width="34" height="34" aria-hidden="true"></canvas>
+  <canvas id="ask-fab-orb" width="38" height="38" aria-hidden="true"></canvas>
   <span class="ask-fab-l">Ask Cavnar AI</span>
 </button>
 <div id="ai-feed" class="ai-feed" role="dialog" aria-label="What Cavnar AI has been doing"></div>
@@ -6436,9 +6401,17 @@ window.toggleAskCavnar = function() {
   }
 };
 document.addEventListener('DOMContentLoaded', function() {
-  // The floating button is the orb itself, always on its dark disc.
+  // The floating button is the orb itself, cream on the ember disc: orbits
+  // at rest, the scanning globe while the cursor is on it.
   var c = document.getElementById('ask-fab-orb');
-  if (c && window.CavnarOrb && !_askFabOrb) _askFabOrb = CavnarOrb.mount(c, 'breathing', {size: 34, dark: true});
+  if (c && window.CavnarOrb && !_askFabOrb) {
+    _askFabOrb = CavnarOrb.mount(c, 'working', {size: 38, ink: 'cream'});
+    var fabEl = document.getElementById('ask-cavnar-fab');
+    if (fabEl) {
+      fabEl.addEventListener('mouseenter', function () { CavnarOrb.setState(_askFabOrb, 'searching'); });
+      fabEl.addEventListener('mouseleave', function () { CavnarOrb.setState(_askFabOrb, 'working'); });
+    }
+  }
 });
 
 function _appendAskCavnarMessage(text, isUser) {
@@ -7726,15 +7699,6 @@ document.addEventListener('DOMContentLoaded', function(){
       setTimeout(function(){ ind.style.transition = ''; }, 50);
     }
   })();
-  // Total value delivered count-up
-  if (!_gbpReload) {
-    var tvEl = document.getElementById('global-savings-total');
-    if (tvEl) {
-      var tvRaw = tvEl.textContent.replace(/[$,]/g,'').trim();
-      var tvNum = parseInt(tvRaw, 10);
-      if (!isNaN(tvNum) && tvNum > 0) countUpMoney(tvEl, tvNum, 1200);
-    }
-  }
 
   var hash = window.location.hash.replace('#','');
   var btn = hash ? document.getElementById('tab-'+hash) : null;

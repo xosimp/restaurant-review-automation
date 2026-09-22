@@ -176,6 +176,8 @@ each chosen so no two adjacent sections share a silhouette:
 | Receipt strip | `.hb-rcpt .it` — check + sentence + module | What Cavnar AI did — finished things must not look like a to-do |
 | Timeline | `.hb-tl .it` with a tone dot on a rail | The morning brief, read once top to bottom |
 | Stat tile | `.hb-stats .hb-stat` (+ `.good` / `.ember`) | Four *kinds* of number that must never be added together |
+| Ledger pill | `.hb-ledger span` — the leading count on an ember disc (`>.hb-num:first-child`), a figure mid-sentence stays plain | Since you started: distinct work counted, never dollars |
+| Ops tile | `.lb2-ops .lb2-op` (+ `.ember` ambient) — ember mark `.ic`, count in the number face `.v` (+ `.warn` / `.good` / `.ember`), body at 15px, `.cap` footer | Labor's Time off and Covers: what the owner feeds the read. Card tier, so they weigh the same as the tiles above them |
 | Goal bar | `.hb-goal .bar i` (width from `data-w`) | Progress from baseline to target; no bar when the baseline is unreadable |
 | Checklist | `.hb-chk` | Still open |
 | Section header | `.hb-sh` — `.k` kicker (ember, or `.dim`) + Clash `h2 small` | Between the big moments; the hairline is the rhythm |
@@ -409,6 +411,8 @@ day is a short page.
 | Form control | `.ac-field`, `.ac-input`, `.ac-select`, `.ac-switch` |
 | Chart | `glowLine`, `bars`, `stacked` |
 | Loading | `.hb-skel`, `.hb-load` + orb, `cbtnBusy()` |
+| Ask button | `.ask-fab` — the ember disc (highlight, underside shade, rim, long ember shadow, `askFabHalo` pulse) carrying the orb in cream ink: `CavnarOrb.mount(c,'working',{ink:'cream'})`, `searching` under the cursor. The brand colour's one large surface on the page; the label pill stays dark |
+| Number badge | `.hb-ledger span>.hb-num:first-child`, `.lb2-cov span>.hb-num` — a 28px ember disc for a count that leads a chip |
 | Empty | `.hb-empty`, `.hb-clear` |
 | Escaping | `esc()` / `num()` (numbers → `.hb-num`) |
 | Diagnosis block | `.diag` via `renderDiagnosis(id, dg)` — cause / also fits / what would tell them apart / evidence pills / confidence. One shape for reviews, labor and marketing; renders only when `dg.cause` exists |

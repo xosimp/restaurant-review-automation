@@ -10,6 +10,8 @@ and the restraint that keeps the good news worth reading.
 """
 from datetime import date, timedelta
 
+import re
+
 import pytest
 
 import models
@@ -486,12 +488,21 @@ def test_the_value_banner_detail_link_has_somewhere_to_go():
 
 
 def test_plain_english_is_not_set_in_the_number_face():
-    """Space Grotesk is the NUMBER face (DESIGN_SYSTEM.md §2)."""
+    """Space Grotesk is the NUMBER face (DESIGN_SYSTEM.md §2).
+
+    This used to pin the header value strip's "Nothing measured yet"; that
+    strip is gone (Home's worth card carries the figures). The surviving
+    sentence-valued tile is the worth card's "Nothing yet", whose .v class
+    inherits the number face from .hb-stat .v and must opt out of it."""
     src = _dashboard()
-    idx = src.find("Nothing measured yet</div>")
+    idx = src.find("Nothing yet</div>")
     assert idx > 0
     line_start = src.rfind("<div", 0, idx)
-    assert "Space Grotesk" not in src[line_start:idx]
+    tag = src[line_start:idx]
+    assert "Space Grotesk" not in tag
+    assert 'class="v txt"' in tag
+    m = re.search(r"\.hb-stat \.v\.txt\{([^}]*)\}", src)
+    assert m and "Space Grotesk" not in m.group(1) and "font-family" in m.group(1)
 
 
 def test_the_closeout_uses_the_pages_own_date_format():

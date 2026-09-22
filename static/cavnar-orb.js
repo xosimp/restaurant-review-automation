@@ -20,6 +20,7 @@
  *
  * Usage:
  *   var orb = CavnarOrb.mount(canvasEl, 'searching', { size: 64 });
+ *   // options: size, speed, dark (theme override), paused, ink ('cream' on an ember surface)
  *   CavnarOrb.setState(orb, 'composing');
  *   CavnarOrb.stop(orb);
  *
@@ -602,29 +603,30 @@
 
   var RAMP = {
     dark:  { near: [232, 149, 106], far: [107, 90, 82] },   // ember2 -> warm grey
-    light: { near: [200, 75, 47],   far: [184, 173, 164] }  // ember  -> warm light grey
+    light: { near: [200, 75, 47],   far: [184, 173, 164] }, // ember  -> warm light grey
+    cream: { near: [255, 250, 243], far: [255, 206, 178] }  // on the ember disc: cream -> peach
   };
-  function inkFor(white, dark) {
+  function inkFor(white, dark, ink) {
     var w = Math.min(1, Math.max(0, white));
     var strength = 1 - w;
-    var ramp = dark ? RAMP.dark : RAMP.light;
+    var ramp = RAMP[ink] || (dark ? RAMP.dark : RAMP.light);
     var r = Math.round(ramp.far[0] + (ramp.near[0] - ramp.far[0]) * strength);
     var g = Math.round(ramp.far[1] + (ramp.near[1] - ramp.far[1]) * strength);
     var b = Math.round(ramp.far[2] + (ramp.near[2] - ramp.far[2]) * strength);
     return [r, g, b];
   }
-  function paint(ctx, frame, dark) {
+  function paint(ctx, frame, dark, ink) {
     var i, c;
     for (i = 0; i < frame.lines.length; i++) {
       var l = frame.lines[i];
-      c = inkFor(l.white, dark);
+      c = inkFor(l.white, dark, ink);
       ctx.strokeStyle = 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + ((l.a == null) ? 1 : l.a) + ')';
       ctx.lineWidth = l.w;
       ctx.beginPath(); ctx.moveTo(l.x1, l.y1); ctx.lineTo(l.x2, l.y2); ctx.stroke();
     }
     for (i = 0; i < frame.dots.length; i++) {
       var d = frame.dots[i];
-      c = inkFor(d.white, dark);
+      c = inkFor(d.white, dark, ink);
       ctx.fillStyle = 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + ((d.a == null) ? 1 : d.a) + ')';
       ctx.beginPath(); ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2); ctx.fill();
     }
@@ -664,6 +666,9 @@
       canvas: canvas, ctx: ctx, size: size, dpr: dpr, speedMul: speedMul,
       state: null, resolved: null, raf: 0, running: false, paused: !!opts.paused,
       dark: (opts.dark == null) ? resolveDark(canvas) : !!opts.dark,
+      // 'cream' paints light ink for a canvas that sits on the ember disc
+      // (the Ask button); otherwise the ramp follows the theme.
+      ink: RAMP[opts.ink] ? opts.ink : null,
       reduced: reducedMotion()
     };
     setState(handle, state || 'breathing');
@@ -680,7 +685,7 @@
     ctx.setTransform(handle.dpr, 0, 0, handle.dpr, 0, 0);
     ctx.clearRect(0, 0, size, size);
     var frame = MODE_FRAMES[handle.resolved.mode](size, t, handle.resolved.opts);
-    paint(ctx, frame, handle.dark);
+    paint(ctx, frame, handle.dark, handle.ink);
   }
 
   function start(handle) {
