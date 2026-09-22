@@ -16,10 +16,9 @@ recipient, not be asserted on their behalf.
 """
 import os
 from datetime import datetime, timedelta
-import anthropic
 from models import get_conn, DB_PATH
 from notify import send_sms, _normalize_phone
-from ai_utils import create_with_retry, extract_text
+from ai_utils import create_with_retry, extract_text, get_client, model_for
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS guest_contacts (
@@ -599,10 +598,10 @@ def draft_campaign_message(restaurant, campaign_type="general", topic=""):
         "End naturally — no 'reply STOP to unsubscribe' (that's added automatically). "
         "Return ONLY the message text, nothing else."
     )
-    client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+    client = get_client()
     message = create_with_retry(
         client,
-        model=os.getenv("GUEST_MARKETING_MODEL", "claude-sonnet-5"),
+        model=model_for("guest_marketing"),
         max_tokens=150,
         messages=[{"role": "user", "content": prompt}],
         restaurant_id=restaurant.id,

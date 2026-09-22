@@ -14,11 +14,11 @@ Bounded: RECIPE_DRAFT_LIMIT dishes per run, one run a week, only where
 Food Cost is on and a POS is feeding menu items.
 """
 import json
-import os
+from ai_utils import model_for
 
 from models import get_conn, DB_PATH
 
-MODEL = os.getenv("RECIPE_MODEL", "claude-sonnet-5")
+MODEL = model_for("recipes")
 RECIPE_DRAFT_LIMIT = 8
 
 _SCHEMA = {
@@ -93,9 +93,8 @@ def draft_missing(restaurant_id, limit=RECIPE_DRAFT_LIMIT, client=None, db_path=
     todo = missing_recipes(restaurant_id, db_path=db_path)[:limit]
     if not todo:
         return {"drafted": 0, "skipped": 0}
-    import anthropic
-    from ai_utils import create_with_retry
-    client = client or anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+    from ai_utils import create_with_retry, get_client
+    client = client or get_client()
     context = (getattr(r, "menu_notes", None) or "")[:600]
     drafted = skipped = 0
     for item in todo:
@@ -180,9 +179,8 @@ def extract_from_image(restaurant_id, data, media_type, user_id=None, client=Non
     ingredients = [i for i in (inventory_ledger.list_ingredients(restaurant_id) or []) if i.get("name")]
     by_name = {i["name"].strip().lower(): i for i in ingredients}
     names = "\n".join(f"- {i['name']} (unit: {i.get('unit') or 'each'})" for i in ingredients) or "- (none on file yet)"
-    import anthropic
-    from ai_utils import create_with_retry
-    client = client or anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+    from ai_utils import create_with_retry, get_client
+    client = client or get_client()
     msg = create_with_retry(
         client, restaurant_id=restaurant_id, action="recipe_photo",
         model=MODEL, max_tokens=2000,

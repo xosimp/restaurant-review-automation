@@ -2,8 +2,8 @@
 competitor.py — Competitor intelligence for Cavnar AI
 Pulls nearby restaurant reviews via Google Places API and generates AI insights.
 """
-import os, json, requests, anthropic
-from ai_utils import create_with_retry, extract_text
+import os, json, requests
+from ai_utils import create_with_retry, extract_text, get_client, model_for
 from ai_guard import UNTRUSTED_NOTE, wrap_untrusted
 
 
@@ -93,7 +93,7 @@ def fetch_menu_notes_from_places(google_place_id: str) -> str:
 def fetch_menu_from_pdf_bytes(pdf_bytes: bytes, restaurant_name: str = "", restaurant_id: int = None) -> str:
     """Extract menu items from PDF bytes using pypdf then AI."""
     try:
-        import io, anthropic, os
+        import io, os
         from pypdf import PdfReader
         reader = PdfReader(io.BytesIO(pdf_bytes))
         text = ""
@@ -102,7 +102,7 @@ def fetch_menu_from_pdf_bytes(pdf_bytes: bytes, restaurant_name: str = "", resta
         text = text[:8000]
         if len(text) < 50:
             return ""
-        client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
+        client = get_client()
         extract_prompt = (
             "Extract the key menu items from this restaurant menu text. "
             "Return a concise summary: Signature dishes: [list]. Appetizers: [list]. "
@@ -116,7 +116,7 @@ def fetch_menu_from_pdf_bytes(pdf_bytes: bytes, restaurant_name: str = "", resta
         )
         msg = create_with_retry(
             client,
-            model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
+            model=model_for("competitor_extract"),
             max_tokens=400,
             messages=[{"role": "user", "content": extract_prompt}],
             restaurant_id=restaurant_id,
@@ -135,7 +135,7 @@ def fetch_menu_from_url(menu_url: str, restaurant_id: int = None) -> str:
         return ""
     try:
         import requests as _req
-        import anthropic, os
+        import os
         # Identify as a normal browser so servers don't reject a bare
         # "python-requests" client — this is a single honest identity, not
         # rotated or retried to work around a site's bot-blocking response.
@@ -159,7 +159,7 @@ def fetch_menu_from_url(menu_url: str, restaurant_id: int = None) -> str:
         if len(clean_words) < 80:
             return ""  # JS-rendered site — no readable content after stripping tags
 
-        client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
+        client = get_client()
         extract_prompt = (
             "Extract the key menu items from this restaurant page. "
             "Return a concise summary: Signature dishes: [list]. Appetizers: [list]. "
@@ -171,7 +171,7 @@ def fetch_menu_from_url(menu_url: str, restaurant_id: int = None) -> str:
         )
         msg = create_with_retry(
             client,
-            model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
+            model=model_for("competitor_extract"),
             max_tokens=400,
             messages=[{"role": "user", "content": extract_prompt}],
             restaurant_id=restaurant_id,
@@ -627,7 +627,7 @@ def generate_competitor_insight(restaurant_name: str, competitors: list, owner_n
     if not competitors or not ANTHROPIC_KEY:
         return ""
     try:
-        client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
+        client = get_client()
 
         _PRICE_WORDS = {1: "$ (inexpensive)", 2: "$$ (moderate)",
                         3: "$$$ (expensive)", 4: "$$$$ (very expensive)"}
@@ -777,7 +777,7 @@ Tone: sharp, direct, trusted business advisor. Every line is a single punchy sen
 
         msg = create_with_retry(
             client,
-            model=os.getenv("CLAUDE_REPORTER_MODEL", "claude-sonnet-5"),
+            model=model_for("competitor_insight"),
             max_tokens=900,
             messages=[{"role": "user", "content": prompt}],
             restaurant_id=restaurant_id,

@@ -26,7 +26,7 @@ checks.
 import hashlib
 import json
 import logging
-import os
+from ai_utils import model_for
 import re
 
 from models import get_conn, DB_PATH
@@ -36,7 +36,7 @@ log = logging.getLogger(__name__)
 # Reading prices off a photo is the one place in this product where a misread
 # digit goes straight into every plate cost, so this uses the most capable
 # model rather than the house default; invoices are a weekly, low-volume call.
-MODEL = os.getenv("INVOICE_MODEL", "claude-opus-5")
+MODEL = model_for("invoices")
 
 IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 PDF_TYPE = "application/pdf"
@@ -121,10 +121,9 @@ def check_upload(data, media_type):
 
 def extract(restaurant_id, data, media_type, client=None):
     """The model's transcription of the invoice, as a dict matching _SCHEMA."""
-    import anthropic
-    from ai_utils import create_with_retry
+    from ai_utils import create_with_retry, get_client
     check_upload(data, media_type)
-    client = client or anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+    client = client or get_client()
     msg = create_with_retry(
         client, restaurant_id=restaurant_id, action="invoice_extract",
         model=MODEL, max_tokens=8000,

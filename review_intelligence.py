@@ -1079,7 +1079,7 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False,
     """
     import os
     import anthropic
-    from ai_utils import create_with_retry, extract_text
+    from ai_utils import create_with_retry, extract_text, get_client, model_for
     from ai_guard import UNTRUSTED_NOTE
     from models import get_restaurant
     from time_utils import restaurant_now
@@ -1092,7 +1092,7 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False,
         return []
     ctx = operational_context(restaurant_id, db_path=db_path)
     op_block = _operational_block(ctx)
-    client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
+    client = get_client()
     today = restaurant_now(restaurant).strftime("%B %d, %Y")
 
     existing = {d["category"]: d for d in get_diagnoses(restaurant_id, db_path=db_path,
@@ -1126,7 +1126,7 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False,
             )
             msg = create_with_retry(
                 client,
-                model=os.getenv("CLAUDE_REPORTER_MODEL", "claude-sonnet-5"),
+                model=model_for("review_diagnosis"),
                 max_tokens=800,
                 messages=[{"role": "user", "content": prompt}],
                 restaurant_id=restaurant_id,

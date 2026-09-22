@@ -2,7 +2,7 @@
 
 Every place a model call happens: which provider, which model, what it's asked to do, and what it's forbidden from doing. Every Anthropic call routes through `ai_utils.create_with_retry()` (budget check, retry with backoff, usage logging to `ai_usage`) — nothing calls `messages.create` directly. Perplexity is not an SDK call: the AI-visibility check posts to its REST endpoint with `requests` (`client_api.py`, `_do_ai_visibility_inner`), metered through the same `ai_usage` ledger.
 
-The model for each call is a literal in the calling module with an env override (the table below names both). `ai_utils` holds no default-model constant; when that changes, this file is the list to update.
+The model for each call comes from one registry, `ai_utils.MODELS` (purpose → env override, default), read through `ai_utils.model_for(purpose)`; the client comes from `ai_utils.get_client()`, built on first use rather than at import. The table below is that registry; when a row changes, change both.
 
 ## Providers
 
@@ -17,7 +17,7 @@ No OpenAI usage anywhere in this codebase.
 
 | Call | Module | Default model | Env override |
 |---|---|---|---|
-| Review analysis | `analyser.py:267` | Haiku | none (hardcoded) |
+| Review analysis | `analyser.py` | Haiku | `REVIEW_ANALYSIS_MODEL` |
 | Review root-cause diagnosis | `review_intelligence.py` | Sonnet | `CLAUDE_REPORTER_MODEL` |
 | Review reply drafting | `drafter.py` | Sonnet | `DRAFTER_MODEL` |
 | Review insight (the consultant read) | `client_api.py` `_do_review_insight` | Sonnet | `REVIEW_INSIGHT_MODEL` |
@@ -35,11 +35,11 @@ No OpenAI usage anywhere in this codebase.
 | Invoice extraction | `invoices.py` | Opus | `INVOICE_MODEL` |
 | Digest narrative | `reporter.py` | Sonnet | `CLAUDE_REPORTER_MODEL` |
 | Onboarding email personalisation | `emails.py:157` | Haiku | `CLAUDE_MODEL` |
-| Sales-audit notes | `sales_audit_notes_ai.py:35` | Sonnet | none (hardcoded) |
+| Sales-audit notes | `sales_audit_notes_ai.py` | Sonnet | `SALES_AUDIT_NOTES_MODEL` |
 | Ask Cavnar | `ask_cavnar.py` | Sonnet | `ASK_CAVNAR_MODEL` |
 | AI visibility | `client_api.py` `AIVIS_MODEL` (Perplexity REST) | `sonar` | `AI_VISIBILITY_MODEL` |
 
-Two call sites have no override (`analyser.py`, `sales_audit_notes_ai.py`); `CLAUDE_MODEL` and `CLAUDE_REPORTER_MODEL` are each read by several. Shift Quality has no model call: its "why this schedule" text is the deterministic evaluation rendered as prose. `sales_audit_cheatsheet.py` has none either.
+`CLAUDE_MODEL` and `CLAUDE_REPORTER_MODEL` are each read by several purposes; `REVIEW_ANALYSIS_MODEL` and `SALES_AUDIT_NOTES_MODEL` are new names for the two sites that had no override (inheriting `CLAUDE_MODEL` would have changed them wherever it is set). Shift Quality has no model call: its "why this schedule" text is the deterministic evaluation rendered as prose. `sales_audit_cheatsheet.py` has none either.
 
 ### Review analysis (`analyser.py`)
 Model: Haiku. Input: one review's text + rating. Output: sentiment (positive/neutral/negative), category list, one-line summary, urgency (high/normal), **severity tier** (safety/legal/operational/service/minor), **`specific_complaint`** (≤8 words) and **`entities`** (dishes, staff roles, daypart, service mode). Deterministic-feeling by design — same review text should score the same way; the prompt does not ask for creative variation.
@@ -83,7 +83,7 @@ Model: Sonnet (`MARKETING_MODEL`, `GUEST_MARKETING_MODEL`); the marketing *insig
 Model: Sonnet (`ASK_CAVNAR_MODEL`), tool-calling enabled (`ask_with_tools`), `max_tokens` from the depth contract `_MAX_TOKENS` — brief 400 / standard 1200 / executive 4000, chosen from the question by `_depth_for`. The system prompt is a LIST of content blocks: static rules with a `cache_control` breakpoint, then the live snapshot (never interpolate per-restaurant data into the static block, or the cache stops hitting for everyone). Input: the full context snapshot (`build_context()` — identity, sibling locations, alerts, memory, per-module data the tier grants) + the filtered tool list for this restaurant's modules + conversation history (sanitized via `_sanitize_history`). System framing: an AI restaurant COO with direct data access, not a generic chatbot — encouraged to call tools rather than guess, required to mark anything it can't verify, and required to route any outside-effect action through a `write`-kind tool's proposal rather than claiming to have done it. See `MODULE_OVERVIEW.md`'s Ask Cavnar section for the tool-kind contract.
 
 ### Sales-audit notes (`sales_audit_notes_ai.py`)
-Model: Sonnet (hardcoded; `sales_audit_cheatsheet.py` is deterministic and makes no call). Input: what Will observed during an in-person audit visit. Output: structured notes / a cheat-sheet for the pitch. Internal tool, not client-facing — lower stakes on hallucination but still grounded in what was actually entered.
+Model: Sonnet (`SALES_AUDIT_NOTES_MODEL`; `sales_audit_cheatsheet.py` is deterministic and makes no call). Input: what Will observed during an in-person audit visit. Output: structured notes / a cheat-sheet for the pitch. Internal tool, not client-facing — lower stakes on hallucination but still grounded in what was actually entered.
 
 ### Invoice extraction (`invoices.py`)
 Model: Opus (`INVOICE_MODEL`, default `claude-opus-5`) — the one call site where a misread digit flows straight into every plate cost, so it uses the most capable model; weekly, low volume. Input: one supplier invoice as an `image` block (JPEG/PNG/WebP/GIF) or a `document` block (PDF), ≤4.5 MB. Output: structured JSON via `output_config.format` (`json_schema`: supplier, invoice_date, invoice_total, lines[description, quantity, unit, unit_price, line_total], every numeric field nullable). The prompt forbids estimating a missing number (null instead) and skips non-product lines. **The model only transcribes.** Matching to ingredients, unit conversion, the qty×price=total check, the >40% "unit mix-up" guard and the lines-vs-total check are all Python (`invoices.propose`), and nothing is written until the owner confirms each line (`invoices.apply`, once per import). `stop_reason` `refusal`/`max_tokens` become owner-facing errors. Same file twice (sha256) is never read twice.

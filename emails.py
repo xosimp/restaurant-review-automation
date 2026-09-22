@@ -133,8 +133,8 @@ def generate_email_personalization(context: str, fallback: str, restaurant_id: i
         return fallback
     try:
         import anthropic
-        from ai_utils import create_with_retry, extract_text
-        client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+        from ai_utils import create_with_retry, extract_text, get_client, model_for
+        client = get_client()
         # `brief` is for the report emails, which open on ONE line above a stat
         # row that already shows the figures. Left on the default the model
         # writes a 30-word run-up ("I wanted to share some really encouraging
@@ -154,7 +154,7 @@ def generate_email_personalization(context: str, fallback: str, restaurant_id: i
         )
         msg = create_with_retry(
             client,
-            model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
+            model=model_for("email_personalise"),
             max_tokens=200,
             messages=[{"role": "user", "content": prompt}],
             restaurant_id=restaurant_id,

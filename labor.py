@@ -1,14 +1,12 @@
 """
 labor.py — Labor cost analysis + Claude-powered scheduling recommendations
 """
-import os, csv, json, math
+import csv, json, math
 from collections import defaultdict
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-import anthropic
-from ai_utils import create_with_retry, extract_text
+from ai_utils import create_with_retry, extract_text, get_client, model_for
 
-client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 DEFAULT_HOURLY_RATE = 26.0  # fallback if not set per client
 
 
@@ -1120,8 +1118,8 @@ There must be EXACTLY 3 numbered recommendations and nothing after number 3.
 The Recommendations section must start with exactly the word "Recommendations:" on its own line.{forecast_instruction}"""
 
     msg = create_with_retry(
-        client,
-        model=os.getenv("LABOR_INSIGHT_MODEL", "claude-sonnet-5"),
+        get_client(),
+        model=model_for("labor_insight"),
         max_tokens=650,
         messages=[{"role": "user", "content": prompt}],
         restaurant_id=restaurant_id,
@@ -1964,8 +1962,8 @@ ARRIVAL TIMES, ROLE MINIMUMS, SHIFT LENGTHS, AND ROLE-SPECIFIC RULES:
     EXPECTED_HEADER = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes"
 
     msg = create_with_retry(
-        client,
-        model=os.getenv("SCHEDULE_MODEL", "claude-sonnet-5"),
+        get_client(),
+        model=model_for("schedule"),
         # Was 8000 — ai_usage logs showed real generations for this
         # restaurant landing on exactly 8000 output tokens, which is
         # truncation (stop_reason: max_tokens), not natural completion.

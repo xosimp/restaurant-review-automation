@@ -81,8 +81,8 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
     """Generate a short AI summary paragraph for the weekly digest."""
     try:
         import anthropic, os
-        from ai_utils import create_with_retry, extract_text
-        client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY",""))
+        from ai_utils import create_with_retry, extract_text, get_client, model_for
+        client = get_client()
         reviews = getattr(report, "_reviews", [])
         pos = report.sentiment.get("positive", 0)
         neg = report.sentiment.get("negative", 0)
@@ -485,7 +485,7 @@ Rules:
 
         msg = create_with_retry(
             client,
-            model=os.getenv("CLAUDE_REPORTER_MODEL", "claude-sonnet-5"),
+            model=model_for("reporter"),
             max_tokens=500,
             messages=[{"role": "user", "content": prompt}],
             restaurant_id=restaurant_id,

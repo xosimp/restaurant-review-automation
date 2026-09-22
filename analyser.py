@@ -1,9 +1,8 @@
-import os, json, anthropic
+import json
 from models import update_analysis, get_pending_analysis
-from ai_utils import create_with_retry, extract_text
+from ai_utils import create_with_retry, extract_text, get_client, model_for
 from ai_guard import UNTRUSTED_NOTE, wrap_untrusted
 
-client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 CATEGORIES = [
     "food_quality", "service", "wait_time", "value",
@@ -263,8 +262,8 @@ def analyse_review(review_id: int, rating: int, text: str, restaurant_id: int = 
         modes=", ".join(SERVICE_MODES),
     )
     message = create_with_retry(
-        client,
-        model="claude-haiku-4-5-20251001",
+        get_client(),
+        model=model_for("review_analysis"),
         # The schema grew an entities object and two more fields; 256 tokens
         # was already close enough to the old ceiling that a review naming
         # three dishes would have tripped the truncation guard below.

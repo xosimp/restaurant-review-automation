@@ -368,6 +368,74 @@ def user_facing_error(exc, fallback="Couldn't get an answer right now — try ag
     return fallback, 502
 
 
+# ── Models and the client ─────────────────────────────────────────────────
+#
+# Every call site used to carry its own `os.getenv("X_MODEL", "claude-...")`
+# literal (22 of them, 12 override names, two with no override at all) and
+# nineteen of them built their own anthropic.Anthropic — six at import time,
+# with the key frozen before load_dotenv could run. One registry and one
+# factory; PROMPT_LIBRARY.md's table is generated from the same names.
+
+HAIKU = "claude-haiku-4-5-20251001"
+SONNET = "claude-sonnet-5"
+OPUS = "claude-opus-5"
+
+# purpose -> (env override, default). A default here is what the call site
+# used before; an override name here is the one it read before, except
+# REVIEW_ANALYSIS_MODEL and SALES_AUDIT_NOTES_MODEL, which are new because
+# those two sites had none (inheriting CLAUDE_MODEL would have changed them
+# wherever that variable is set).
+MODELS = {
+    "review_analysis":     ("REVIEW_ANALYSIS_MODEL",  HAIKU),
+    "review_diagnosis":    ("CLAUDE_REPORTER_MODEL",  SONNET),
+    "review_insight":      ("REVIEW_INSIGHT_MODEL",   SONNET),
+    "drafter":             ("DRAFTER_MODEL",          SONNET),
+    "inventory_insight":   ("INVENTORY_INSIGHT_MODEL", SONNET),
+    "food_cost_diagnosis": ("CLAUDE_REPORTER_MODEL",  SONNET),
+    "labor_insight":       ("LABOR_INSIGHT_MODEL",    SONNET),
+    "schedule":            ("SCHEDULE_MODEL",         SONNET),
+    "competitor_extract":  ("CLAUDE_MODEL",           HAIKU),
+    "competitor_insight":  ("CLAUDE_REPORTER_MODEL",  SONNET),
+    "marketing":           ("MARKETING_MODEL",        SONNET),
+    "marketing_insight":   ("CLAUDE_MODEL",           HAIKU),
+    "guest_marketing":     ("GUEST_MARKETING_MODEL",  SONNET),
+    "recipes":             ("RECIPE_MODEL",           SONNET),
+    "invoices":            ("INVOICE_MODEL",          OPUS),
+    "reporter":            ("CLAUDE_REPORTER_MODEL",  SONNET),
+    "email_personalise":   ("CLAUDE_MODEL",           HAIKU),
+    "sales_audit_notes":   ("SALES_AUDIT_NOTES_MODEL", SONNET),
+    "ask_cavnar":          ("ASK_CAVNAR_MODEL",       SONNET),
+}
+
+
+def model_for(purpose: str) -> str:
+    """The model a call site uses: its env override if set, else its default."""
+    env, default = MODELS[purpose]
+    return os.getenv(env, default)
+
+
+_clients = {}
+_clients_lock = threading.Lock()
+
+
+def get_client(timeout=None):
+    """The shared anthropic.Anthropic for the current API key, built on first
+    use rather than at import, so load_dotenv has run and a rotated key is
+    picked up by the next call. One client per (key, timeout); the SDK's
+    client is thread-safe and pools connections."""
+    key = os.getenv("ANTHROPIC_API_KEY") or ""
+    cache_key = (key, timeout)
+    with _clients_lock:
+        c = _clients.get(cache_key)
+        if c is None:
+            kw = {"api_key": key}
+            if timeout is not None:
+                kw["timeout"] = timeout
+            c = anthropic.Anthropic(**kw)
+            _clients[cache_key] = c
+        return c
+
+
 def create_with_retry(client, retries=2, backoff=1.5, restaurant_id=None, action=None, **kwargs):
     """client.messages.create(**kwargs) with exponential backoff on
     transient failures. Raises the last exception if all attempts fail.

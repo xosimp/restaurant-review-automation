@@ -28,11 +28,12 @@ when notes have changed since and the read is stale.
 import hashlib
 import json
 import os
+from ai_utils import model_for
 from datetime import datetime, timezone
 
 from sales_audit_schema import SECTIONS
 
-MODEL = "claude-sonnet-5"
+MODEL = model_for("sales_audit_notes")
 MAX_NOTE_CHARS = 6000
 CATEGORIES = ("labor", "food", "bar", "reviews", "marketing", "waitlist", "operations", "technology")
 EFFECTS = ("raise_confidence", "lower_confidence", "context")
@@ -165,9 +166,8 @@ def _call_claude(prompt):
     """Isolated so tests replace it. Raises on any failure."""
     if not os.getenv("ANTHROPIC_API_KEY"):
         raise RuntimeError("ANTHROPIC_API_KEY is not set")
-    import anthropic
-    from ai_utils import create_with_retry, extract_text
-    client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+    from ai_utils import create_with_retry, extract_text, get_client
+    client = get_client()
     msg = create_with_retry(client, model=MODEL, max_tokens=1800, system=SYSTEM,
                             messages=[{"role": "user", "content": prompt}], action="audit_notes_read")
     return extract_text(msg)

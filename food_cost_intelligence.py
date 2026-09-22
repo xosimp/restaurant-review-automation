@@ -1229,7 +1229,7 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False) ->
     """
     import os
     import anthropic
-    from ai_utils import create_with_retry, extract_text
+    from ai_utils import create_with_retry, extract_text, get_client, model_for
     from ai_guard import UNTRUSTED_NOTE
     from models import get_restaurant
     from time_utils import restaurant_now_by_id
@@ -1261,9 +1261,9 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False) ->
         operational_block=_operational_block(ev["operational"]),
         cause_vocabulary=CAUSE_VOCABULARY,
     )
-    client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
+    client = get_client()
     msg = create_with_retry(
-        client, model=os.getenv("CLAUDE_REPORTER_MODEL", "claude-sonnet-5"),
+        client, model=model_for("food_cost_diagnosis"),
         max_tokens=900, messages=[{"role": "user", "content": prompt}],
         restaurant_id=restaurant_id, action="food_cost_diagnosis")
     if getattr(msg, "stop_reason", None) == "max_tokens":

@@ -16,11 +16,8 @@ rule never loosens — but it's no longer the model's only allowed source
 of information overall.
 """
 import json
-import os
-import anthropic
-from ai_utils import create_with_retry, extract_text
+from ai_utils import create_with_retry, extract_text, get_client, model_for
 
-_client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 
 def _fmt(v, default="n/a"):
@@ -1027,7 +1024,7 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
 
     proposals = []
     truncated = False
-    model = os.getenv("ASK_CAVNAR_MODEL", "claude-sonnet-5")
+    model = model_for("ask_cavnar")
     max_tokens = _MAX_TOKENS.get(depth, _MAX_TOKENS["standard"])
 
     # Everything the model was actually handed, accumulated as the loop runs.
@@ -1045,7 +1042,7 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
     _progress("Thinking", "solving")
     for _ in range(_MAX_TOOL_ROUNDS):
         message = create_with_retry(
-            _client,
+            get_client(),
             model=model,
             max_tokens=max_tokens,
             system=system_blocks,
@@ -1149,7 +1146,7 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
             # One confirmation per turn. Ask for a plain summary and stop.
             _progress("Composing your answer", "composing")
             final = create_with_retry(
-                _client, model=model, max_tokens=max_tokens,
+                get_client(), model=model, max_tokens=max_tokens,
                 system=system_blocks, messages=messages,
                 restaurant_id=restaurant.id, action="ask_cavnar",
             )
@@ -1159,7 +1156,7 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
 
     # Ran out of rounds — answer with what it has rather than looping.
     final = create_with_retry(
-        _client, model=model, max_tokens=max_tokens,
+        get_client(), model=model, max_tokens=max_tokens,
         system=system_blocks, messages=messages,
         restaurant_id=restaurant.id, action="ask_cavnar",
     )

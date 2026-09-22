@@ -1146,14 +1146,14 @@ def _do_review_insight(rid):
             f"{forecast_line}"
         )
 
-        from ai_utils import create_with_retry, extract_text
+        from ai_utils import create_with_retry, extract_text, model_for
         msg = create_with_retry(
             _client_ri,
             # A consultant's read is worth a bigger model than a rephrase was.
             # Haiku was adequate when the job was restating four pre-written
             # sentences; connecting a complaint cluster to a labor figure and
             # saying how sure it is, is not that job.
-            model=os.getenv("REVIEW_INSIGHT_MODEL", "claude-sonnet-5"),
+            model=model_for("review_insight"),
             max_tokens=520,
             messages=[{"role":"user","content":prompt}],
             restaurant_id=rid,
@@ -1938,11 +1938,11 @@ No preamble on them, no closing encouragement, no sign-off.{forecast_instruction
 Tone: warm, direct, a trusted advisor who knows the owner is busy. Match the
 brand voice. No corporate language. The whole brief must be under 60 words."""
         import anthropic as _anth
-        from ai_utils import create_with_retry, extract_text
+        from ai_utils import create_with_retry, extract_text, model_for
         _client = _anth.Anthropic(api_key=__import__("os").getenv("ANTHROPIC_API_KEY"))
         msg = create_with_retry(
             _client,
-            model=__import__("os").getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
+            model=model_for("marketing_insight"),
             max_tokens=350,
             messages=[{"role": "user", "content": prompt}],
             restaurant_id=rid,

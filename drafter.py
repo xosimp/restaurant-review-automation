@@ -1,9 +1,8 @@
-import os, re, anthropic
+import re
 from models import get_conn, update_draft, get_pending_drafts, get_restaurant
-from ai_utils import create_with_retry, extract_text
+from ai_utils import create_with_retry, extract_text, get_client, model_for
 from ai_guard import UNTRUSTED_NOTE, wrap_untrusted
 
-client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 
 def get_approved_examples(restaurant_id: int, limit: int = 4) -> str:
@@ -196,8 +195,8 @@ Review ({rating}/5 stars, {sentiment}):
 Write ONLY the response. No preamble, no labels, no quotation marks around the response. Sound like a real person — not a PR firm, not a template."""
 
     message = create_with_retry(
-        client,
-        model=os.getenv("DRAFTER_MODEL", "claude-sonnet-5"),
+        get_client(),
+        model=model_for("drafter"),
         max_tokens=300,
         # claude-sonnet-5 rejects `temperature` outright ("deprecated for
         # this model") — confirmed live via direct API call. This means

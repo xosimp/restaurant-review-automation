@@ -1,15 +1,14 @@
 """
 inventory.py — Food waste analysis + Claude-powered ordering recommendations
 """
-import os, csv, json, math
-import anthropic
+import csv, json, math
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-from ai_utils import create_with_retry, extract_text
+from ai_utils import create_with_retry, extract_text, get_client, model_for
 
-# An explicit timeout: the SDK default let a hung call hold a request worker
-# for as long as the connection stayed open, on a route a page load blocks on.
-client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"), timeout=45.0)
+# The insight call passes timeout=45.0: the SDK default let a hung call hold
+# a request worker for as long as the connection stayed open, on a route a
+# page load blocks on.
 
 # Category-specific waste tolerance — fresh produce/herbs naturally run
 # higher waste (wilting, trim loss) than proteins/dairy, so a flat 20%
@@ -1123,8 +1122,8 @@ Then, on new lines after the paragraph, write 1-3 recommendations:
 
 
     msg = create_with_retry(
-        client,
-        model=os.getenv("INVENTORY_INSIGHT_MODEL", "claude-sonnet-5"),
+        get_client(timeout=45.0),
+        model=model_for("inventory_insight"),
         # The recommendations now carry a dollar figure, a confidence and an
         # effort level each, and the opening paragraph can carry a Why
         # sentence. 950 was sized for the old bare-action format and the
