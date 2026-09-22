@@ -11,6 +11,7 @@ The model is OWNER (a users row) → BRAND (restaurants.location_group, or the
 single restaurant itself) → LOCATION (a restaurants row). Health only ever
 rolls UP: a brand is as healthy as its worst location.
 """
+import json
 import logging
 import os
 import re
@@ -776,7 +777,18 @@ def client_detail(rid):
     runs = _rows_dict(conn, "SELECT job, started_at, finished_at, duration_ms, ok, error FROM job_runs WHERE context LIKE ? ORDER BY id DESC LIMIT 20", (f"%rid={rid}%",))
     posts = _rows_dict(conn, "SELECT platform, content_type, topic, scheduled_for, status, error, attempts, posted_at FROM marketing_scheduled_posts WHERE restaurant_id=? ORDER BY id DESC LIMIT 20", (rid,))
     hooks = _rows_dict(conn, "SELECT event_type, status, ok, attempts, error, created_at FROM webhook_deliveries WHERE restaurant_id=? ORDER BY id DESC LIMIT 20", (rid,))
-    schedules = _rows_dict(conn, "SELECT id, generated_at, week_start, week_end, hours_scheduled, hours_budget FROM schedule_history WHERE restaurant_id=? ORDER BY id DESC LIMIT 10", (rid,))
+    try:
+        schedules = _rows_dict(conn, "SELECT id, generated_at, week_start, week_end, hours_scheduled, hours_budget, "
+                               "generation_seconds, published_at, published_by, review_json FROM schedule_history "
+                               "WHERE restaurant_id=? ORDER BY id DESC LIMIT 10", (rid,))
+        for sch in schedules:
+            try:
+                rv = json.loads(sch.pop("review_json", None) or "null") or {}
+            except Exception:
+                rv = {}
+            sch["hard_breaches"] = rv.get("hard") or 0
+    except Exception:
+        schedules = _rows_dict(conn, "SELECT id, generated_at, week_start, week_end, hours_scheduled, hours_budget FROM schedule_history WHERE restaurant_id=? ORDER BY id DESC LIMIT 10", (rid,))
     notes = _rows_dict(conn, "SELECT id, employee_name, notes, created_at FROM staff_notes WHERE restaurant_id=? ORDER BY id DESC", (rid,))
     conn.close()
     r = get_restaurant(rid)
