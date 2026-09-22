@@ -114,7 +114,6 @@ def test_the_owner_can_mint_backup_codes_and_turn_2fa_off(db_path):
     assert get_restaurant(rid, db_path=db_path).two_fa_enabled == 0
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-6: any console role can mint the restaurant's 2FA backup codes (mobile)")
 def test_a_manager_is_refused_backup_code_generation_on_mobile(db_path):
     rid, owner, mgr = _setup(db_path, two_fa=True)
     c = _app().test_client()
@@ -123,14 +122,12 @@ def test_a_manager_is_refused_backup_code_generation_on_mobile(db_path):
     assert not (r.get_json() or {}).get("backup_codes")
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-6: any console role can mint the restaurant's 2FA backup codes (web)")
 def test_a_manager_is_refused_backup_code_generation_on_the_web(db_path):
     rid, owner, mgr = _setup(db_path, two_fa=True)
     r = _web(db_path, mgr).post("/api/account/2fa/backup-codes", headers=CSRF)
     assert r.status_code == 403
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-6: any console role can disable the restaurant's 2FA (mobile)")
 def test_a_manager_is_refused_turning_2fa_off_on_mobile(db_path):
     rid, owner, mgr = _setup(db_path, two_fa=True)
     r = _app().test_client().post("/mobile/api/account/2fa/disable", headers=_bearer(db_path, mgr))
@@ -138,7 +135,6 @@ def test_a_manager_is_refused_turning_2fa_off_on_mobile(db_path):
     assert get_restaurant(rid, db_path=db_path).two_fa_enabled == 1
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-6: any console role can disable the restaurant's 2FA (web account route)")
 def test_a_manager_is_refused_turning_2fa_off_on_the_web(db_path):
     rid, owner, mgr = _setup(db_path, two_fa=True)
     r = _web(db_path, mgr).post("/api/account/2fa/disable", headers=CSRF)
@@ -146,7 +142,6 @@ def test_a_manager_is_refused_turning_2fa_off_on_the_web(db_path):
     assert get_restaurant(rid, db_path=db_path).two_fa_enabled == 1
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-6/SEC-21: /api/toggle-2fa has no permission check — a manager turns the owner's 2FA off")
 def test_a_manager_is_refused_the_toggle_2fa_switch(db_path):
     rid, owner, mgr = _setup(db_path, two_fa=True)
     r = _web(db_path, mgr).post("/api/toggle-2fa", json={"enabled": False})
@@ -154,7 +149,6 @@ def test_a_manager_is_refused_the_toggle_2fa_switch(db_path):
     assert get_restaurant(rid, db_path=db_path).two_fa_enabled == 1
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-21: /api/toggle-login-notify has no permission check — a manager silences login alerts")
 def test_a_manager_is_refused_the_login_alert_switch(db_path):
     rid, owner, mgr = _setup(db_path)
     update_restaurant(rid, {"login_notify": 1}, db_path=db_path)
@@ -163,7 +157,6 @@ def test_a_manager_is_refused_the_login_alert_switch(db_path):
     assert get_restaurant(rid, db_path=db_path).login_notify == 1
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-21: /api/toggle-staff-signin-notify has no permission check")
 def test_a_manager_is_refused_the_staff_sign_in_alert_switch(db_path):
     rid, owner, mgr = _setup(db_path)
     update_restaurant(rid, {"staff_signin_notify": 1}, db_path=db_path)
@@ -178,10 +171,9 @@ def test_turning_2fa_off_from_the_app_is_recorded_in_account_activity(db_path):
     assert "two_fa_disabled" in _events(db_path, rid)
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-6/SEC-21: the web /api/toggle-2fa change leaves no account-activity entry")
 def test_turning_2fa_off_from_the_web_toggle_is_recorded_in_account_activity(db_path):
     rid, owner, mgr = _setup(db_path, two_fa=True)
-    assert _web(db_path, owner).post("/api/toggle-2fa", json={"enabled": False}).status_code == 200
+    assert _web(db_path, owner).post("/api/toggle-2fa", json={"enabled": False}, headers=CSRF).status_code == 200
     assert any("two_fa" in e for e in _events(db_path, rid))
 
 
@@ -200,20 +192,20 @@ def test_a_manager_cannot_become_the_owner_with_a_self_minted_backup_code(db_pat
 
 def test_the_owners_own_email_change_moves_the_restaurant_contact(db_path):
     rid, owner, mgr = _setup(db_path)
-    r = _web(db_path, owner).post("/api/update-email", json={"new_email": "owner-new@x.test", "current_password": "ownerpass1"})
+    r = _web(db_path, owner).post("/api/update-email", json={"new_email": "owner-new@x.test", "current_password": "ownerpass1"},
+                                  headers=CSRF)
     assert r.get_json()["ok"] is True
     assert get_restaurant(rid, db_path=db_path).owner_email == "owner-new@x.test"
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-13: a manager's web email change rewrites restaurants.owner_email (the 2FA/alert channel)")
 def test_a_managers_web_email_change_leaves_the_owner_email_alone(db_path):
     rid, owner, mgr = _setup(db_path)
-    r = _web(db_path, mgr).post("/api/update-email", json={"new_email": "mgr-new@x.test", "current_password": "mgrpass12"})
+    r = _web(db_path, mgr).post("/api/update-email", json={"new_email": "mgr-new@x.test", "current_password": "mgrpass12"},
+                                headers=CSRF)
     assert r.get_json()["ok"] is True
     assert get_restaurant(rid, db_path=db_path).owner_email == "owner@x.test"
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-13: a manager's in-app email change rewrites restaurants.owner_email")
 def test_a_managers_mobile_email_change_leaves_the_owner_email_alone(db_path):
     rid, owner, mgr = _setup(db_path)
     r = _app().test_client().post("/mobile/api/account/update-email", headers=_bearer(db_path, mgr),
@@ -222,7 +214,6 @@ def test_a_managers_mobile_email_change_leaves_the_owner_email_alone(db_path):
     assert get_restaurant(rid, db_path=db_path).owner_email == "owner@x.test"
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-13: a manager's email change detaches their location from the owner's group")
 def test_a_managers_email_change_leaves_the_location_in_the_owners_group(db_path):
     l1 = create_restaurant(Restaurant(name="L1", owner_email="boss@x.test", location_group="G"), db_path=db_path)
     l2 = create_restaurant(Restaurant(name="L2", owner_email="boss@x.test", location_group="G"), db_path=db_path)
@@ -232,7 +223,8 @@ def test_a_managers_email_change_leaves_the_location_in_the_owners_group(db_path
     mgr2 = create_user(l2, "mgr2", "mgr2@x.test", "mgrpass12", db_path=db_path)
     auth.set_user_role(mgr2, "manager", db_path=db_path)
     upsert_membership(mgr2, l2, "manager", db_path=db_path)
-    _web(db_path, mgr2).post("/api/update-email", json={"new_email": "mgr2-new@x.test", "current_password": "mgrpass12"})
+    _web(db_path, mgr2).post("/api/update-email", json={"new_email": "mgr2-new@x.test", "current_password": "mgrpass12"},
+                             headers=CSRF)
     r = _web(db_path, boss).post("/api/switch-location", json={"restaurant_id": l2}, headers=CSRF)
     assert r.status_code == 200 and r.get_json()["ok"] is True
 
@@ -445,7 +437,6 @@ def csrf_statuses():
     return json.loads(line[-1][len("RESULT "):])
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-21: auth_bp's cookie-authenticated JSON posts are exempt from CSRF")
 @pytest.mark.parametrize("path", [p for p, _ in _AUTH_JSON_POSTS])
 def test_every_session_json_post_under_auth_requires_the_csrf_header(csrf_statuses, path):
     assert csrf_statuses[path] == 403

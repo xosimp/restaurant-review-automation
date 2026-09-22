@@ -390,7 +390,9 @@ def test_a_web_password_change_ends_every_other_session_but_this_one(client, db_
     attacker = create_session(owner, device_type="ios", db_path=db_path)
     mine = create_session(owner, db_path=db_path)
     client.set_cookie("session_token", mine)
-    r = client.post("/api/change-password", json={"current": "ownerpass1", "new_password": "brandnewpw9"})
+    client.set_cookie("csrf_js", "edge-csrf")
+    r = client.post("/api/change-password", json={"current": "ownerpass1", "new_password": "brandnewpw9"},
+                    headers={"X-CSRF": "edge-csrf"})
     assert r.get_json()["ok"] is True
     assert get_session_user(mine, db_path=db_path) is not None
     assert get_session_user(attacker, db_path=db_path) is None

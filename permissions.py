@@ -269,6 +269,17 @@ def has_permission(user, permission: str) -> bool:
 
 
 
+def is_principal(user) -> bool:
+    """An account holder: the restaurant's owner login(s) or Cavnar admin.
+    The account's own security — 2FA on or off, backup codes, sign-in
+    alerts, the restaurant's contact email — is theirs alone. Any console
+    role could change it, so a manager could mint backup codes and turn the
+    owner's 2FA off (SEC-6, SEC-21)."""
+    if not user:
+        return False
+    return bool(user.get("is_admin")) or has_permission(user, TEAM_INVITE)
+
+
 def is_employee(user) -> bool:
     """True for a PIN identity. Used where the question really is "is this
     the staff tier" rather than a specific capability — notably the console

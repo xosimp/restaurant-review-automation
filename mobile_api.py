@@ -4309,7 +4309,16 @@ def mobile_update_email(current_user):
     old_email_row = conn.execute("SELECT email FROM users WHERE id=?", (current_user["id"],)).fetchone()
     old_email = old_email_row["email"] if old_email_row else None
     conn.execute("UPDATE users SET email=? WHERE id=?", (new_email, current_user["id"]))
-    conn.execute("UPDATE restaurants SET owner_email=? WHERE id=?", (new_email, current_user["restaurant_id"]))
+    # The restaurant's contact address (2FA codes, alerts, the owner
+    # match that keeps a location in its group) moves only when the account
+    # holder whose address it is changes theirs. Any login's change used to
+    # rewrite it (SEC-13).
+    from permissions import is_principal as _is_principal_em
+    _rest_em = conn.execute("SELECT owner_email FROM restaurants WHERE id=?", (current_user["restaurant_id"],)).fetchone()
+    _moves_contact = (_is_principal_em(current_user) and _rest_em is not None and old_email
+                      and (_rest_em["owner_email"] or "").strip().lower() == (old_email or "").strip().lower())
+    if _moves_contact:
+        conn.execute("UPDATE restaurants SET owner_email=? WHERE id=?", (new_email, current_user["restaurant_id"]))
     conn.commit()
     conn.close()
     import models as _models_inv
@@ -4531,6 +4540,9 @@ def mobile_disconnect_google(current_user):
 @mobile_bp.route("/account/2fa/send-test", methods=["POST"])
 @mobile_login_required
 def mobile_send_2fa_test(current_user):
+    denied = _require_account_holder(current_user)
+    if denied:
+        return denied
     import random as _random
     rid = current_user["restaurant_id"]
     restaurant = get_restaurant(rid)
@@ -4574,6 +4586,9 @@ def mobile_send_2fa_test(current_user):
 @mobile_bp.route("/account/2fa/verify", methods=["POST"])
 @mobile_login_required
 def mobile_verify_2fa_setup(current_user):
+    denied = _require_account_holder(current_user)
+    if denied:
+        return denied
     rid = current_user["restaurant_id"]
     data = request.get_json() or {}
     code = (data.get("code") or "").strip()
@@ -4601,9 +4616,19 @@ def mobile_verify_2fa_setup(current_user):
     return jsonify(ok=True, backup_codes=codes)
 
 
+def _require_account_holder(current_user):
+    from permissions import is_principal
+    if is_principal(current_user):
+        return None
+    return jsonify(ok=False, error="Only the account owner can change sign-in security."), 403
+
+
 @mobile_bp.route("/account/2fa/disable", methods=["POST"])
 @mobile_login_required
 def mobile_disable_2fa(current_user):
+    denied = _require_account_holder(current_user)
+    if denied:
+        return denied
     update_restaurant(current_user["restaurant_id"], {"two_fa_enabled": 0})
     _log_account_event(current_user["restaurant_id"], "two_fa_disabled", current_user)
     return jsonify(ok=True)
@@ -4621,6 +4646,9 @@ def mobile_backup_codes_status(current_user):
 def mobile_regenerate_backup_codes(current_user):
     """Invalidates every previously-issued code and mints a fresh set —
     shown once here, same as at initial 2FA setup."""
+    denied = _require_account_holder(current_user)
+    if denied:
+        return denied
     from models import generate_backup_codes
     codes = generate_backup_codes(current_user["restaurant_id"])
     _log_account_event(current_user["restaurant_id"], "backup_codes_regenerated", current_user)
@@ -4631,6 +4659,9 @@ def mobile_regenerate_backup_codes(current_user):
 @mobile_login_required
 def mobile_toggle_login_notify(current_user):
     """See client_api._do_login_notify."""
+    denied = _require_account_holder(current_user)
+    if denied:
+        return denied
     payload, status = _capi._do_login_notify(current_user["restaurant_id"],
                                              request.get_json(silent=True) or {}, current_user)
     return jsonify(**payload), status

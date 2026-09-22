@@ -218,8 +218,6 @@ def test_a_promoted_membership_drops_off_the_pin_roster(client, db_path):
     assert mid not in [r["membership_id"] for r in roster]
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-14: a membership promoted to manager keeps its "
-                   "PIN and signs in to a console-role session with it")
 def test_a_promoted_membership_cannot_sign_in_with_its_pin(client, db_path):
     rid, mid = _promoted_staff(client, db_path)
     code = get_or_create_staff_portal_token(rid, db_path=db_path)

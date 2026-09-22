@@ -64,6 +64,25 @@ def _token_from_request():
     return request.form.get("csrf_token", "")
 
 
+def csrf_required(fn):
+    """The same double-submit check for one route on a blueprint that is not
+    wholly protected. auth_bp keeps its own form tokens for the login pages,
+    but its session-authenticated JSON posts — 2FA on/off, sign-in alerts,
+    email and password change, revoking sessions, disconnecting Google — had
+    no CSRF check at all (SEC-21)."""
+    from functools import wraps
+
+    @wraps(fn)
+    def wrapper(*a, **k):
+        if request.method not in _SAFE_METHODS:
+            cookie_tok = request.cookies.get(CSRF_COOKIE, "")
+            sent_tok = _token_from_request()
+            if not (cookie_tok and sent_tok and hmac.compare_digest(cookie_tok, sent_tok)):
+                return jsonify(ok=False, error="Request blocked (CSRF). Refresh the page and try again."), 403
+        return fn(*a, **k)
+    return wrapper
+
+
 def csrf_protect(blueprint):
     """Attach enforcement to a blueprint. State-changing requests must echo
     the csrf_js cookie back in the X-CSRF header (or csrf_token field)."""

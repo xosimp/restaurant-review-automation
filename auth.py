@@ -579,6 +579,9 @@ def update_membership_details(membership_id: int, restaurant_id: int,
             raise ValueError(f"unknown role: {role!r}")
         sets.append("role=?")
         args.append(role)
+        if role != "employee":
+            # Out of the staff tier: the PIN goes with it (SEC-14).
+            sets.append("pin_hash=NULL")
     if employee_name is not None:
         cleaned = (employee_name or "").strip()
         if not cleaned:
@@ -1008,9 +1011,11 @@ def verify_membership_pin(membership_id: int, restaurant_id: int, pin: str,
     generic = {"ok": False, "error": "That PIN didn't match.", "locked": False}
     conn = get_conn(db_path)
     try:
+        # Employees only: a membership promoted to manager kept its PIN and
+        # a 4-digit PIN then opened a manager's console session (SEC-14).
         row = conn.execute(
             "SELECT id, pin_hash FROM memberships "
-            "WHERE id=? AND restaurant_id=? AND is_active=1",
+            "WHERE id=? AND restaurant_id=? AND is_active=1 AND role='employee'",
             (membership_id, restaurant_id)).fetchone()
     finally:
         conn.close()

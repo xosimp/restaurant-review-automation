@@ -2,6 +2,7 @@
 auth_routes.py — Login, logout, password reset, 2FA, Google auth, session management
 Registered as a Flask Blueprint in hosted_dashboard.py
 """
+from csrf import csrf_required
 from flask import Blueprint, request, jsonify, make_response, redirect, render_template
 import os
 import config
@@ -534,16 +535,26 @@ def verify_2fa_setup(current_user):
     return jsonify(ok=True)
 
 @auth_bp.route("/api/toggle-2fa", methods=["POST"])
+@csrf_required
 @login_required
 def toggle_2fa(current_user):
     from models import update_restaurant
+    from permissions import is_principal
+    if not is_principal(current_user):
+        return jsonify(ok=False, error="Only the account owner can change sign-in security."), 403
     data = request.get_json() or {}
     enabled = 1 if data.get("enabled") else 0
     update_restaurant(current_user["restaurant_id"], {"two_fa_enabled": enabled})
+    try:
+        from client_api import log_account_event
+        log_account_event(current_user["restaurant_id"], "two_fa_enabled" if enabled else "two_fa_disabled", current_user)
+    except Exception:
+        pass
     return jsonify(ok=True)
 
 
 @auth_bp.route("/api/change-password", methods=["POST"])
+@csrf_required
 @login_required
 def change_password(current_user):
     data = request.get_json()
@@ -568,6 +579,7 @@ def change_password(current_user):
     return jsonify(ok=True)
 
 @auth_bp.route("/api/update-email", methods=["POST"])
+@csrf_required
 @login_required
 def update_email_route(current_user):
     data = request.get_json()
@@ -592,8 +604,17 @@ def update_email_route(current_user):
     old_email = old_email_row["email"] if old_email_row else None
     # Update users.email
     conn.execute("UPDATE users SET email=? WHERE id=?", (new_email, current_user["id"]))
+    # The restaurant's contact address (2FA codes, alerts, the owner
+    # match that keeps a location in its group) moves only when the account
+    # holder whose address it is changes theirs. Any login's change used to
+    # rewrite it (SEC-13).
+    from permissions import is_principal as _is_principal_em
+    _rest_em = conn.execute("SELECT owner_email FROM restaurants WHERE id=?", (current_user["restaurant_id"],)).fetchone()
+    _moves_contact = (_is_principal_em(current_user) and _rest_em is not None and old_email
+                      and (_rest_em["owner_email"] or "").strip().lower() == (old_email or "").strip().lower())
     # Update restaurant.owner_email so notifications/digest still work
-    conn.execute("UPDATE restaurants SET owner_email=? WHERE id=?", (new_email, current_user["restaurant_id"]))
+    if _moves_contact:
+        conn.execute("UPDATE restaurants SET owner_email=? WHERE id=?", (new_email, current_user["restaurant_id"]))
     conn.commit()
     conn.close()
     import models as _models_inv
@@ -697,6 +718,7 @@ def list_sessions(current_user):
 
 
 @auth_bp.route("/api/sessions/revoke-others", methods=["POST"])
+@csrf_required
 @login_required
 def revoke_other_sessions_route(current_user):
     token = request.cookies.get("session_token", "")
@@ -705,9 +727,13 @@ def revoke_other_sessions_route(current_user):
 
 
 @auth_bp.route("/api/toggle-login-notify", methods=["POST"])
+@csrf_required
 @login_required
 def toggle_login_notify(current_user):
     from models import update_restaurant
+    from permissions import is_principal
+    if not is_principal(current_user):
+        return jsonify(ok=False, error="Only the account owner can change sign-in alerts."), 403
     data = request.get_json()
     enabled = 1 if data.get("enabled") else 0
     update_restaurant(current_user["restaurant_id"], {"login_notify": enabled})
@@ -715,10 +741,14 @@ def toggle_login_notify(current_user):
 
 
 @auth_bp.route("/api/toggle-staff-signin-notify", methods=["POST"])
+@csrf_required
 @login_required
 def toggle_staff_signin_notify(current_user):
     """Alert the owner when an employee opens the staff portal."""
     from models import update_restaurant
+    from permissions import is_principal
+    if not is_principal(current_user):
+        return jsonify(ok=False, error="Only the account owner can change sign-in alerts."), 403
     data = request.get_json() or {}
     enabled = 1 if data.get("enabled") else 0
     update_restaurant(current_user["restaurant_id"], {"staff_signin_notify": enabled})
@@ -1082,6 +1112,7 @@ def google_sso_callback():
 
 
 @auth_bp.route("/auth/google/disconnect", methods=["POST"])
+@csrf_required
 @login_required
 def gmb_disconnect(current_user):
     """Disconnect Google Business from this restaurant."""
