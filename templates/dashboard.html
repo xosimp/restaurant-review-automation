@@ -762,7 +762,7 @@ svg[data-pts] rect:hover{filter:drop-shadow(0 0 6px rgba(200,75,47,.5))}
 details>summary{transition:color .18s ease}
 details[open]>summary~*{animation:askIn .3s ease both}
 /* section rules carry a short ember mark */
-.hb-sh h2:before,.lb2-subsection-title:before{content:'';display:inline-block;width:14px;height:3px;border-radius:2px;background:var(--ember);margin:0 10px 6px 0;vertical-align:middle}
+.hb-sh h2:before{content:'';display:inline-block;width:14px;height:3px;border-radius:2px;background:var(--ember);margin:0 10px 6px 0;vertical-align:middle}
 .hb-sh h2:before{align-self:center;margin:2px 10px 0 0}
 /* premium empty states: the AI is watching, and says what for */
 .pe{position:relative;display:flex;flex-direction:column;align-items:center;gap:8px;padding:30px 20px!important;border-radius:14px;background:var(--sf-ai),var(--surface);border:1px dashed var(--sf-ai-line)}
@@ -3420,6 +3420,23 @@ svg:hover .hb-xh{opacity:1}
 .lb2-subsection-title{font-family:'Clash Display',sans-serif;font-size:17px;font-weight:500;color:var(--ink)}
 .lb2-subsection-chip{font-family:'Apfel Grotezk',sans-serif;font-size:13px;font-weight:500;color:var(--ink3);margin-left:4px}
 .lb2-subsection-toggle{font-size:14.5px;font-weight:700}
+/* The schedule block is one ember container. Employee Availability,
+   Operational Score and Daily Tasks are three rows inside it, each a
+   deeper shade than the last, and the whole row is the click target — the
+   button is the label of that click, not the only place it works. No
+   dash bars on these titles: the container and the rows carry the brand. */
+.lb2-sched{position:relative;padding:24px 26px 22px;border-radius:20px;background:linear-gradient(160deg,rgba(200,75,47,.13),rgba(200,75,47,.04) 60%),var(--surface);border:1px solid rgba(200,75,47,.24);box-shadow:var(--elev-card),0 30px 70px -40px rgba(200,75,47,.45)}
+[data-theme="dark"] .lb2-sched{background:linear-gradient(160deg,rgba(224,100,68,.17),rgba(224,100,68,.05) 60%),var(--surface-glass),var(--surface)}
+.lb2-sched>.hb-sh{margin-top:0;padding-top:0;border-top:none}
+.lb2-srow{position:relative;margin-top:12px;border-radius:14px;border:1px solid rgba(200,75,47,.30);background:linear-gradient(135deg,rgba(200,75,47,.14),rgba(200,75,47,.07));box-shadow:inset 0 1px 0 rgba(255,255,255,.10),0 1px 2px rgba(14,12,10,.06),0 14px 28px -18px rgba(200,75,47,.55);overflow:hidden;transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease}
+.lb2-srow.s2{background:linear-gradient(135deg,rgba(200,75,47,.21),rgba(200,75,47,.11))}
+.lb2-srow.s3{background:linear-gradient(135deg,rgba(200,75,47,.29),rgba(200,75,47,.15))}
+.lb2-srow:hover{transform:translateY(-1px);border-color:rgba(200,75,47,.52);box-shadow:inset 0 1px 0 rgba(255,255,255,.14),0 2px 4px rgba(14,12,10,.08),0 20px 36px -18px rgba(200,75,47,.7)}
+.lb2-srow>.lb2-subsection{margin:0;padding:15px 18px;cursor:pointer;user-select:none;-webkit-user-select:none}
+.lb2-srow>[id$="-panel"]{padding:0 18px 18px}
+.lb2-srow .lb2-avail{margin-top:0;background:var(--surface);border-color:var(--hb-line2)}
+.lb2-srow .lb2-subsection-title{color:var(--ink)}
+@media (prefers-reduced-motion:reduce){.lb2-srow,.lb2-srow:hover{transform:none;transition:none}}
 /* Schedule History — a scannable activity timeline, not a card grid.
    Row-based on purpose: an owner browsing fifty past weeks needs aligned
    columns and one glance per row, not fifty tiles. Structure comes from a
@@ -3788,8 +3805,8 @@ svg:hover .hb-xh{opacity:1}
     </ul>
     {% endif %}
   <!-- Employee Availability Manager -->
-  <div style="margin-top:16px;margin-bottom:16px">
-    <div class="lb2-subsection">
+  <div class="lb2-srow s1">
+    <div class="lb2-subsection" onclick="lb2RowClick(event,toggleAvailPanel)">
       <div class="lb2-subsection-title">Employee Availability</div>
       <button onclick="toggleAvailPanel()" class="cbtn cbtn-text cbtn-inline lb2-subsection-toggle" id="avail-toggle-btn">Manage ↓</button>
     </div>
@@ -3829,8 +3846,8 @@ svg:hover .hb-xh{opacity:1}
   <!-- Operational Score — how strong each person is, 1 to 5, set by the owner.
        The scheduler already knows who is available; this is what tells it not
        to put the two weakest people together on a Saturday. -->
-  <div style="margin-bottom:16px">
-    <div class="lb2-subsection">
+  <div class="lb2-srow s2">
+    <div class="lb2-subsection" onclick="lb2RowClick(event,toggleTeamPanel)">
       <div class="lb2-subsection-title">Operational Score <span id="team-coverage-chip" class="lb2-subsection-chip"></span></div>
       <button onclick="toggleTeamPanel()" class="cbtn cbtn-text cbtn-inline lb2-subsection-toggle" id="team-toggle-btn">Rate your team ↓</button>
     </div>
@@ -3936,8 +3953,8 @@ svg:hover .hb-xh{opacity:1}
   <!-- Daily Tasks — a role-scoped morning checklist. Erik's own words:
        "each role can view their Task sheet every morning." Reuses the same
        role vocabulary the Operational Score panel already established. -->
-  <div style="margin-bottom:16px">
-    <div class="lb2-subsection">
+  <div class="lb2-srow s3">
+    <div class="lb2-subsection" onclick="lb2RowClick(event,toggleTasksPanel)">
       <div class="lb2-subsection-title">Daily Tasks</div>
       <button onclick="toggleTasksPanel()" class="cbtn cbtn-text cbtn-inline lb2-subsection-toggle" id="tasks-toggle-btn">Open ↓</button>
     </div>
@@ -10405,6 +10422,17 @@ function publishScheduleNow(){
 var _schedTableOpen = false;
 // ── Employee Availability ──────────────────────────────────────────────────
 var _availOpen = false;
+// A whole schedule row (.lb2-srow > .lb2-subsection) toggles its panel; a
+// click that landed on the row's own button or a control inside it is left
+// to that element so the panel never toggles twice.
+function lb2RowClick(e, fn) {
+  var t = e.target;
+  while (t && t !== e.currentTarget) {
+    if (t.tagName === 'BUTTON' || t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'A' || t.tagName === 'LABEL') return;
+    t = t.parentNode;
+  }
+  fn();
+}
 function toggleAvailPanel() {
   _availOpen = !_availOpen;
   var p = document.getElementById('avail-panel');

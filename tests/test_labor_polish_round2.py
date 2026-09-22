@@ -54,21 +54,27 @@ def _fn(name):
 
 # ── Employee Availability / Operational Score spacing ───────────────────────
 
-def test_employee_availability_has_the_same_16px_gap_as_the_schedule_buttons():
+def test_the_three_schedule_rows_share_one_wrapper_and_one_gap():
+    """These used to be three bare divs with hand-typed 16px margins that
+    drifted (14px on one). They are now .lb2-srow tiers inside the ember
+    .lb2-sched container, so the gap comes from one rule and the whole row
+    is the click target."""
     s = _src()
-    i = s.index("<!-- Employee Availability Manager -->")
-    wrapper = s[i:i + 200]
-    assert 'margin-top:16px' in wrapper and 'margin-bottom:16px' in wrapper, \
-        "Employee Availability should sit 16px below the buttons above it, " \
-        "matching .lb2-actions' own margin-top:16px"
-
-
-def test_operational_score_gap_bumped_to_match():
-    s = _src()
-    i = s.index('Operational Score <span id="team-coverage-chip"')
-    before = s[max(0, i - 300):i]
-    assert 'style="margin-bottom:16px"' in before, \
-        "Operational Score's wrapper should use the same 16px as Employee Availability, not 14px"
+    for marker, cls, fn in (("<!-- Employee Availability Manager -->", "s1", "toggleAvailPanel"),
+                            ('Operational Score <span id="team-coverage-chip"', "s2", "toggleTeamPanel"),
+                            ('<div class="lb2-subsection-title">Daily Tasks</div>', "s3", "toggleTasksPanel")):
+        i = s.index(marker)
+        around = s[max(0, i - 300):i + 300]
+        assert f'<div class="lb2-srow {cls}">' in around, marker
+        assert f'onclick="lb2RowClick(event,{fn})"' in around, marker
+        assert 'style="margin-bottom:16px"' not in around and 'margin-top:16px;margin-bottom:16px' not in around, marker
+    m = re.search(r"\.lb2-srow\{([^}]*)\}", s)
+    assert m and "margin-top:12px" in m.group(1)
+    assert ".lb2-srow.s2{" in s and ".lb2-srow.s3{" in s, "each row is its own shade"
+    assert "function lb2RowClick(e, fn)" in s
+    # no dash bar on these titles any more — only section headers keep it
+    assert ".lb2-subsection-title:before" not in s
+    assert ".hb-sh h2:before{" in s
 
 
 # ── donut legend hover affordance ────────────────────────────────────────────
