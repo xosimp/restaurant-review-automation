@@ -157,8 +157,6 @@ def _connection_error():
         f"/maps/api/place/details/json?place_id=P&fields=reviews&key={_KEY}&reviews_sort=newest")
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-REV-8: ops.capture stores str(exc) unredacted, so a requests "
-                                        "error carrying ?key= puts the Places key in job_failures")
 def test_ops_capture_redacts_an_api_key_in_the_exception_text(db_path):
     ops.capture(_connection_error(), job="review_fetch", context="Google R1")
     rows = _captures(db_path)
@@ -167,8 +165,6 @@ def test_ops_capture_redacts_an_api_key_in_the_exception_text(db_path):
     assert any("[redacted]" in (err or "") for _j, err, _c in rows)
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-REV-8: run_daily_fetch captures the raw Places connection error, "
-                                        "key included")
 def test_a_places_connection_error_during_the_fetch_does_not_log_the_key(db_path, monkeypatch):
     _restaurant(db_path, 1, google_place_id="ChIJ_x", reviews_live=1)
 
@@ -214,8 +210,6 @@ def _save_both_copies(db_path, monkeypatch, rid):
     return new1, new2
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-REV-3: Places and GBP key the same review differently "
-                                        "(google_<time>_<url> vs the resource name), so it is stored twice")
 def test_the_same_review_through_places_then_gbp_is_one_row_with_its_review_name(db_path, monkeypatch):
     rid = _restaurant(db_path, 1, google_place_id="ChIJ_fake", timezone="UTC")
     _save_both_copies(db_path, monkeypatch, rid)
@@ -240,8 +234,6 @@ def _paged_gbp(pages_requested, total_pages=30):
     return fake_get
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-REV-7: no page token is persisted; every call starts at page 1, "
-                                        "so reviews past the newest 1,000 are never fetched")
 def test_a_second_gbp_fetch_continues_past_the_first_thousand(db_path, monkeypatch):
     rid = _restaurant(db_path, 1, gmb_refresh_token="rt", gmb_location_id="locations/2")
     pages = []
@@ -253,8 +245,6 @@ def test_a_second_gbp_fetch_continues_past_the_first_thousand(db_path, monkeypat
     assert max(ids) >= 1000, "the older 500 reviews are never fetched, however many passes run"
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-REV-7: an incremental GBP fetch walks all 20 pages even when "
-                                        "page 1 is entirely already stored")
 def test_an_incremental_gbp_fetch_whose_first_page_is_known_stops_after_one_request(db_path, monkeypatch):
     rid = _restaurant(db_path, 1, gmb_refresh_token="rt", gmb_location_id="locations/2")
     pages = []
@@ -271,8 +261,6 @@ def test_an_incremental_gbp_fetch_whose_first_page_is_known_stops_after_one_requ
 
 # ── MOD-REV-9: GBP review dates are the restaurant's local time (R1 #23) ────
 
-@pytest.mark.xfail(strict=True, reason="MOD-REV-9: gmb stores createTime verbatim in UTC, so a 9:30pm CDT "
-                                        "review is dated the next day")
 def test_a_gbp_review_written_at_0230z_is_dated_the_chicago_evening_before(db_path, monkeypatch):
     rid = _restaurant(db_path, 1, timezone="America/Chicago")
     monkeypatch.setattr(requests, "get", lambda *a, **k: _Resp({"reviews": [{
@@ -299,8 +287,6 @@ def test_a_places_review_written_at_0230z_is_already_dated_the_chicago_evening_b
 
 # ── MOD-REV-11: a Places window with more than five new reviews (R1 #14) ────
 
-@pytest.mark.xfail(strict=True, reason="MOD-REV-11: Places returns at most 5 reviews and nothing compares "
-                                        "user_ratings_total, so reviews beyond the newest five vanish unrecorded")
 def test_a_places_fetch_that_misses_reviews_records_the_gap(db_path, monkeypatch):
     """Five new reviews came back while Google's own total rose by eight: the
     three that were never returned must be recorded somewhere an operator or
@@ -386,8 +372,6 @@ def test_a_revoked_refresh_token_is_cleared(db_path, monkeypatch):
 
 # ── MOD-REV-14: a review Google removed stops counting (R1 #19) ─────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-REV-14: save_reviews is insert-or-edit only; a review missing from "
-                                        "a complete GBP listing keeps counting in get_review_stats")
 def test_a_review_missing_from_a_complete_gbp_listing_drops_out_of_the_stats(db_path, monkeypatch):
     rid = _gbp_restaurant(db_path)
     kept = {"name": "accounts/1/locations/2/reviews/kept", "starRating": "FIVE", "comment": "Great",

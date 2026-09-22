@@ -338,7 +338,6 @@ def test_a_soft_deleted_review_never_triggers_the_no_response_alert(db_path, sen
 
 # ── A history import is not news ────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-REV-6: a first Google connect alerts on every years-old 1-star review")
 def test_a_history_import_of_old_reviews_sends_no_alerts(db_path, sent, monkeypatch):
     """A8 #31 / MOD-REV-6 — 30 one-star reviews written in 2019 arrive on the
     first GBP connect."""

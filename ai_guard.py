@@ -103,15 +103,21 @@ def safe_error(exc, fallback: str = "Something went wrong on our side.") -> str:
     """An exception rendered for a client, with credentials removed.
 
     Keeps the shape of the message so it is still useful in a bug report,
-    and redacts anything that looks like a key. The full text still reaches
-    the operator through ops.capture.
+    and redacts anything that looks like a key. ops.capture stores the same
+    redacted text: the failure log is read by people and emailed in the
+    digest, so it is no place for a key either.
     """
     text = str(exc or "").strip()
     if not text:
         return fallback
-    text = _SECRET_QS_RE.sub(r"\1[redacted]", text)
-    text = _BEARER_RE.sub(r"\1[redacted]", text)
-    return text[:300]
+    return redact_secrets(text)[:300]
+
+
+def redact_secrets(text: str) -> str:
+    """`text` with anything that looks like a credential replaced by
+    [redacted]: key=/token=/secret= query parameters and bearer tokens."""
+    text = _SECRET_QS_RE.sub(r"\1[redacted]", str(text or ""))
+    return _BEARER_RE.sub(r"\1[redacted]", text)
 
 
 # ── commitments a reply must not make on the restaurant's behalf ───────────

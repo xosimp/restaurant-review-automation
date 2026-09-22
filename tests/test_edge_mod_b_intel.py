@@ -165,7 +165,6 @@ def test_a_closed_competitor_the_owner_added_is_reported_not_silently_kept(db, m
     assert "Rosie's" not in [c["name"] for c in out["competitors"]]
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-INT-8: a custom competitor whose Places lookup fails is dropped and then reported as 'gone'")
 def test_a_custom_competitor_whose_lookup_fails_is_not_reported_gone(db, monkeypatch):
     """A2 I1 #11 / MOD-INT-8 — our own lookup failing is not a rival closing."""
     nearby = [_place("Open One", "p1"), _place("Open Two", "p2"), _place("Open Three", "p3")]
@@ -183,7 +182,6 @@ def test_a_custom_competitor_whose_lookup_fails_is_not_reported_gone(db, monkeyp
     assert "cust1" not in [g["place_id"] for g in changes["gone"]]
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-INT-3: a competitor with no Places rating is stored as rating 0")
 def test_a_place_with_no_rating_is_kept_as_unrated_not_zero(monkeypatch):
     """A2 I1 #12 / MOD-INT-3 — Places omits `rating` for a place with no
     reviews; that is a missing measurement, not a zero-star restaurant."""
@@ -195,7 +193,6 @@ def test_a_place_with_no_rating_is_kept_as_unrated_not_zero(monkeypatch):
     assert new["rating"] is None
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-INT-3: 0 -> 4.6 on first reviews is reported as a significant rating jump")
 def test_a_first_snapshot_with_no_rating_does_not_produce_a_movement(db):
     """A2 I1 #12 / MOD-INT-3 — 'rating 0 then 4.6' is a place getting its
     first reviews, not a +4.6 swing."""
@@ -210,7 +207,6 @@ def test_a_first_snapshot_with_no_rating_does_not_produce_a_movement(db):
     assert models.competitor_movement(1, days=60, db_path=db) == []
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-INT-6: a run that widens the radius meters one nearby call, not three")
 def test_a_run_that_widens_the_radius_meters_every_nearby_search(db, monkeypatch):
     """MOD-INT-6 — keyword search, broad search and widened search are three
     billed Places requests; the ledger must see three."""
@@ -336,7 +332,6 @@ def test_no_city_is_flagged_as_location_unknown(db, monkeypatch):
     assert p["location_known"] is False
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-INT-4: with no resolvable city the run is scored 0 and recorded as a complete run")
 def test_no_city_records_no_score_rather_than_a_zero(db, monkeypatch):
     """A2 I2 #2 / MOD-INT-4 — with no city nothing can match, so the 0 is
     ours, not the restaurant's. No score, no history row."""
@@ -346,7 +341,6 @@ def test_no_city_records_no_score_rather_than_a_zero(db, monkeypatch):
     assert _runs(db) == []
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-INT-4: a city lookup exception is cached as 'no city' for 24h")
 def test_a_city_lookup_that_raised_is_retried_on_the_next_call(monkeypatch):
     """A2 I2 #4 / MOD-INT-4 — one Places blip must not blank the city for a
     day."""
@@ -386,7 +380,6 @@ def test_a_successful_city_lookup_is_cached(monkeypatch):
         client_api._city_cache.clear()
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-INT-4: runs with different city sources are stored in one series and compared")
 def test_runs_measured_against_different_cities_are_not_compared(db, monkeypatch):
     """A2 I2 #11 / MOD-INT-4 — a profile-city run and a Google-city run ask
     different questions and match against different strings; a drop between
@@ -431,7 +424,6 @@ def test_a_churned_restaurant_is_skipped_by_the_weekly_visibility_job(db, monkey
     assert live in seen and gone not in seen
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-INT-5: an Intel tab open after a redeploy re-runs 8 live Perplexity queries instead of reading the stored run")
 def test_the_visibility_screen_is_served_from_the_stored_run(db, monkeypatch):
     """A2 I2 #14 / MOD-INT-5 — the process cache is gone after every deploy;
     the recorded run is the answer, not eight live queries on a request

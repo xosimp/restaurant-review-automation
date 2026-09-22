@@ -51,9 +51,13 @@ def capture(exc, job="unknown", context="", db_path=None):
         from models import get_conn
         conn = get_conn(db_path) if db_path else get_conn()
         _ensure_table(conn)
+        # Redacted before it is stored (MOD-REV-8): a requests error carries
+        # the URL it failed on, and every Places URL carries key=. This table
+        # is shown in the admin console and mailed in the failure digest.
+        from ai_guard import redact_secrets
         conn.execute(
             "INSERT INTO job_failures (job, error, context) VALUES (?,?,?)",
-            (str(job)[:100], str(exc)[:500], str(context)[:200]),
+            (str(job)[:100], redact_secrets(str(exc))[:500], redact_secrets(str(context))[:200]),
         )
         conn.commit()
         conn.close()
@@ -94,10 +98,12 @@ def _record_run_end(run_id, started, ok, error=None, db_path=None):
         return
     try:
         import time as _time
+        from ai_guard import redact_secrets
         from models import get_conn
         conn = get_conn(db_path) if db_path else get_conn()
         conn.execute("UPDATE job_runs SET finished_at=datetime('now'), duration_ms=?, ok=?, error=? WHERE id=?",
-                     (int((_time.time() - started) * 1000), 1 if ok else 0, (str(error)[:500] if error else None), run_id))
+                     (int((_time.time() - started) * 1000), 1 if ok else 0,
+                      (redact_secrets(str(error))[:500] if error else None), run_id))
         conn.commit()
         conn.close()
     except Exception as e:

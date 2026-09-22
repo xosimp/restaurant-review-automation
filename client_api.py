@@ -97,7 +97,24 @@ def invalidate_insight_cache(restaurant_id, prefixes=None):
 # without duplicating it.
 
 def _do_approve(rid, restaurant_id):
-    # Determine response action before approving
+    # The approve itself first, as a compare-and-set: only this restaurant's
+    # live, drafted reply, and only once however many approves arrive
+    # together (MOD-REV-4, MOD-REV-5). Nothing below — the action label, the
+    # webhook, the Google post, the confirmation — happens for a loser.
+    from models import claim_approval
+    if not claim_approval(rid, restaurant_id):
+        _gc = get_conn()
+        _cur = _gc.execute("SELECT response_status, deleted_at FROM reviews WHERE id=? AND restaurant_id=?",
+                           (rid, restaurant_id)).fetchone()
+        _gc.close()
+        if not _cur:
+            return {"ok": False, "error": "Review not found"}, 404
+        if _cur["deleted_at"]:
+            return {"ok": False, "error": "That review was removed."}, 409
+        if _cur["response_status"] in ("approved", "posted"):
+            return {"ok": False, "error": "That reply has already been approved."}, 409
+        return {"ok": False, "error": "There's no drafted reply to approve on that review."}, 409
+    # Determine response action
     try:
         _ac = get_conn()
         _row = _ac.execute(
@@ -117,7 +134,6 @@ def _do_approve(rid, restaurant_id):
             _ac2.commit(); _ac2.close()
     except Exception as _ae:
         print(f"[approve] response_action error: {_ae}")
-    approve_response(rid, restaurant_id=restaurant_id)
     try:
         from models import log_event
         log_event(restaurant_id, "review_approved", {"review_id": rid})
@@ -187,10 +203,29 @@ def _attempt_google_post(rid, restaurant_id):
                 pass
             return True, None
         print(f"[GMB] Auto-post failed for review {rid}: {result['error']}")
+        if result.get("removed"):
+            # Google answered 404: the review is gone, so it leaves the queue
+            # and the stats rather than sitting 'approved' forever (MOD-REV-14).
+            try:
+                _dc = get_conn()
+                _dc.execute("UPDATE reviews SET deleted_at=datetime('now') WHERE id=? AND restaurant_id=?",
+                            (rid, restaurant_id))
+                _dc.commit()
+                _dc.close()
+            except Exception as _de:
+                print(f"[GMB] could not retire removed review {rid}: {_de}")
         return False, result["error"]
     except Exception as e:
+        # The owner reads post_error; the exception text (a connection pool
+        # repr, a URL) goes to the failure digest instead (MOD-REV-15).
         print(f"[GMB] approve auto-post error: {e}")
-        return False, str(e)
+        try:
+            import ops
+            ops.capture(e, job="review_post", context=f"restaurant_id={restaurant_id} review_id={rid}")
+        except Exception:
+            pass
+        return False, ("Couldn't reach Google to post this reply. Nothing was lost — "
+                       "use Retry posting in a few minutes.")
 
 
 def _do_retry_post(rid, restaurant_id):
@@ -3638,6 +3673,7 @@ def _city_from_place_id(place_id: str) -> str:
     if _hit and (datetime.utcnow() - _hit[0]).total_seconds() < _CITY_CACHE_SECS:
         return _hit[1]
     city = ""
+    settled = False     # an answer worth remembering, found or not
     try:
         import requests as _req
         key = config.google_places_key()
@@ -3646,7 +3682,9 @@ def _city_from_place_id(place_id: str) -> str:
                             params={"place_id": place_id, "fields": "address_component",
                                     "key": key}, timeout=8)
             data = resp.json()
-            if data.get("status") == "OK":
+            status = data.get("status")
+            if status == "OK":
+                settled = True
                 for comp in (data.get("result", {}).get("address_components") or []):
                     types = comp.get("types") or []
                     if "locality" in types:
@@ -3654,9 +3692,15 @@ def _city_from_place_id(place_id: str) -> str:
                         break
                     if not city and "postal_town" in types:
                         city = comp.get("long_name") or ""
+            elif status in ("NOT_FOUND", "INVALID_REQUEST", "ZERO_RESULTS"):
+                settled = True   # a fact about this Place ID, not a blip
     except Exception as e:
         print(f"[aivis] city lookup failed for {place_id}: {e}")
-    _city_cache[place_id] = (datetime.utcnow(), city)
+    # Only a settled answer is cached. A timeout or a quota refusal was
+    # cached as "no city" for a day, which scored every run in it as zero
+    # (MOD-INT-4); it is retried on the next call instead.
+    if settled:
+        _city_cache[place_id] = (datetime.utcnow(), city)
     return city
 
 
@@ -3680,6 +3724,21 @@ def _do_ai_visibility_inner(rid, force=False):
         if _hit and (datetime.utcnow() - _hit[0]).total_seconds() < _AIVIS_CACHE_SECS:
             _cached = dict(_hit[1])
             _cached["cached"] = True
+            return _cached, 200
+        # The process cache is gone after every deploy; the recorded run is
+        # still the answer. Serving it beats eight live Perplexity queries on
+        # a request thread (MOD-INT-5). The weekly job keeps it current; the
+        # Refresh button forces a new run.
+        try:
+            from models import latest_ai_visibility_payload
+            _stored = latest_ai_visibility_payload(rid)
+        except Exception:
+            _stored = None
+        if _stored:
+            _cached = dict(_stored[0])
+            _cached["cached"] = True
+            _cached["measured_at"] = _stored[1]
+            _aivis_cache[rid] = (datetime.utcnow(), dict(_cached))
             return _cached, 200
 
     # Perplexity is a paid dependency like any other, so it answers to the
@@ -4283,6 +4342,11 @@ def _do_ai_visibility_inner(rid, force=False):
     # ai_visibility_runs, where it became a "declining visibility" data point
     # the owner reads as real.
     ai_score = round((appeared_count / len(discovery)) * 100) if discovery else None
+    # With no city nothing can be matched (_mentions_this_restaurant needs
+    # one), so a 0 here would be ours, not the restaurant's (MOD-INT-4). No
+    # score, and — below — no history row.
+    if not city:
+        ai_score = None
 
     # A point estimate from a handful of non-deterministic queries is not a
     # measurement, and drawing it as one is how ordinary model variance
@@ -4291,7 +4355,7 @@ def _do_ai_visibility_inner(rid, force=False):
     # on a proportion from a small sample and degrades sensibly at 0 and
     # 100 where a naive interval does not.
     ai_score_low = ai_score_high = None
-    if discovery:
+    if discovery and ai_score is not None:
         import math as _math
         _n = len(discovery)
         _p = appeared_count / _n
@@ -4302,13 +4366,15 @@ def _do_ai_visibility_inner(rid, force=False):
         ai_score_low = max(0, round((_c - _m) * 100))
         ai_score_high = min(100, round((_c + _m) * 100))
 
+    _run_id = None
     try:
         from models import record_ai_visibility_run, record_ai_visibility_queries
         # A partial run is not a measurement. Show it, don't record it.
         if ai_score is not None and len(answered) == len(queries):
             _run_id = record_ai_visibility_run(
                 rid, ai_score, gbp_score,
-                answered=len(discovery), appeared=appeared_count)
+                answered=len(discovery), appeared=appeared_count,
+                city_basis=f"{city_source}:{_norm(city)}")
             # What was asked, what came back, and what grounded it. The runs
             # table held a score and nothing else, so a change could never be
             # explained — while the drop alert told the owner to open Intel
@@ -4391,6 +4457,13 @@ def _do_ai_visibility_inner(rid, force=False):
     # restaurant's real standing.
     if not _payload["partial"]:
         _aivis_cache[rid] = (datetime.utcnow(), dict(_payload))
+    if _run_id:
+        try:
+            import json as _json_av
+            from models import attach_ai_visibility_payload
+            attach_ai_visibility_payload(_run_id, _json_av.dumps(_payload, default=str))
+        except Exception as _pe:
+            print(f"[aivis] payload store failed for rid={rid}: {_pe}")
     return _payload, 200
 
 

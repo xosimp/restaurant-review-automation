@@ -1402,6 +1402,31 @@ def raise_alert(restaurant_id: int, alert_type: str, sms_text: str, subject: str
     return True
 
 
+# A review older than this is history, not news (MOD-REV-6). The first Google
+# connect of an established restaurant inserts years of reviews in one pass;
+# every one of them reached the alert loop, so 300 reviews from 2019 were 300
+# "respond now" alerts — capped at the 50/day ceiling, which then suppressed
+# the genuine alerts that day. A week covers Google's own delay in surfacing a
+# review and a restaurant whose fetch was down for a few days.
+REVIEW_NEWS_MAX_AGE_DAYS = int(os.getenv("REVIEW_NEWS_MAX_AGE_DAYS", "7"))
+
+
+def is_recent_review(review, max_age_days: int = None) -> bool:
+    """Whether a newly stored review was WRITTEN recently enough to announce
+    (alerts, review.received webhooks). No usable date reads as recent: the
+    row is new to us, and staying silent about a real review is worse."""
+    from datetime import datetime as _dt, timedelta as _td
+    days = REVIEW_NEWS_MAX_AGE_DAYS if max_age_days is None else max_age_days
+    stamp = (getattr(review, "review_date", None) or "")[:19]
+    if not stamp:
+        return True
+    try:
+        written = _dt.fromisoformat(stamp.replace("Z", ""))
+    except ValueError:
+        return True
+    return written >= _dt.now() - _td(days=days, hours=14)   # hours: any zone's "today"
+
+
 def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: list,
                        db_path: str = DB_PATH, edited_reviews: list = None):
     """
@@ -1414,7 +1439,12 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
     type at the end, through the same blast() gating as everything else —
     an edit is not a new row, so before this it produced no alert at all
     and a five-star quietly becoming a one-star was invisible.
+
+    A newly inserted review written more than REVIEW_NEWS_MAX_AGE_DAYS ago is
+    a history import, stored silently (MOD-REV-6). An edit is always news:
+    the guest changed it now, whenever they first wrote it.
     """
+    new_reviews = [r for r in (new_reviews or []) if is_recent_review(r)]
     if not new_reviews and not edited_reviews:
         return
 

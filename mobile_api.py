@@ -3458,7 +3458,10 @@ def _do_mobile_intel(restaurant_id):
             "competitors": [
                 {
                     "name": c.get("name", ""),
-                    "rating": c.get("rating", 0),
+                    # The app decodes a number; an unrated place (MOD-INT-3)
+                    # is sent as 0 with `unrated` saying what the 0 means.
+                    "rating": c.get("rating") or 0,
+                    "unrated": not c.get("rating"),
                     "review_count": c.get("review_count", 0),
                     "vicinity": c.get("vicinity", ""),
                     "reviews": c.get("reviews", []),

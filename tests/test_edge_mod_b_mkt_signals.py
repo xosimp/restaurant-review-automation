@@ -393,7 +393,6 @@ def test_the_nightly_metrics_sync_is_bounded_and_resumes_where_it_stopped(db_pat
     assert set(second) - set(first), "the second pass started over at the top instead of resuming"
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-15: the metrics sync has no billing_status filter and spends Graph calls on churned accounts")
 def test_the_nightly_metrics_sync_skips_a_churned_restaurant(db_path, monkeypatch, captures):
     """A6 Metrics #6 / MOD-MKT-15."""
     live = _restaurant(db_path, name="Live", ig_token="igt", ig_user_id="igu", billing_status="active")

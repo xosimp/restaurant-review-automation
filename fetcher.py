@@ -9,9 +9,19 @@ from ai_utils import meter_places as _meter_places, places_error as _places_erro
 GOOGLE_API_KEY = config.google_places_key()  # either variable name; used to read only GOOGLE_API_KEY
 
 
+class PlacesReviews(list):
+    """The reviews one Places fetch returned, plus `total`: Google's own
+    user_ratings_total for the listing at that moment, or None. Places
+    returns at most five reviews; comparing the total's growth with what was
+    stored is the only way to see the ones it never returned (MOD-REV-11)."""
+    total = None
+
+
 def fetch_google(place_id: str, restaurant_id: int) -> list[Review]:
     url = "https://maps.googleapis.com/maps/api/place/details/json"
-    params = {"place_id": place_id, "fields": "reviews",  # author_url rides along inside each review
+    # author_url rides along inside each review; user_ratings_total is how a
+    # window with more than five new reviews is seen (MOD-REV-11).
+    params = {"place_id": place_id, "fields": "reviews,user_ratings_total",
               "key": GOOGLE_API_KEY, "reviews_sort": "newest"}
     try:
         resp = requests.get(url, params=params, timeout=10)
@@ -31,7 +41,12 @@ def fetch_google(place_id: str, restaurant_id: int) -> list[Review]:
     _meter_places(restaurant_id, "review_fetch", "details")
     raw = (body.get("result") or {}).get("reviews", [])
     tz = _restaurant_tz(restaurant_id)
-    out = []
+    out = PlacesReviews()
+    try:
+        _total = (body.get("result") or {}).get("user_ratings_total")
+        out.total = int(_total) if _total is not None else None
+    except (TypeError, ValueError):
+        out.total = None
     for r in raw:
         # Places always sends a rating; a default of 0 would fail the table's
         # own CHECK(rating BETWEEN 1 AND 5) and be swallowed as an

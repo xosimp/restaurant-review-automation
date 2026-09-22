@@ -120,8 +120,6 @@ def _case(world, which):
     raise AssertionError(which)
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-REV-4: _do_approve has no response_status/deleted_at gate and "
-                                        "returns 200 whether or not a drafted row was approved")
 @pytest.mark.parametrize("which", ["already_posted", "pending_without_draft", "soft_deleted",
                                    "another_restaurants_review", "nonexistent"])
 def test_approving_anything_but_this_restaurants_drafted_reply_is_refused_and_changes_nothing(world, which):
@@ -137,8 +135,6 @@ def test_approving_anything_but_this_restaurants_drafted_reply_is_refused_and_ch
 
 # ── MOD-REV-5: two approves at once publish once (R2 #5) ───────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-REV-5: approve is not a compare-and-set, so two concurrent "
-                                        "approves both post to Google and both confirm")
 def test_two_simultaneous_approves_of_one_review_post_once_and_confirm_once(world):
     rid = _review(world["db"], 1, "race")
     start = threading.Barrier(2, timeout=5)
@@ -162,8 +158,6 @@ def test_two_simultaneous_approves_of_one_review_post_once_and_confirm_once(worl
     assert sorted(s for _p, s in results)[0] == 200
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-REV-5: two approve-all runs over the same drafts post every "
-                                        "reply twice")
 def test_two_simultaneous_approve_alls_publish_each_reply_once(world, monkeypatch):
     ids = [_review(world["db"], 1, f"bulk{i}") for i in range(3)]
     start = threading.Barrier(2, timeout=5)
@@ -218,8 +212,6 @@ def real_post(world, monkeypatch):
     return world
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-REV-15: post_reply returns 'API error <code>: <raw body>' and "
-                                        "_attempt_google_post str(e), both handed to the owner as post_error")
 @pytest.mark.parametrize("status,body", [
     (401, '{"error": {"code": 401, "status": "UNAUTHENTICATED"}}'),
     (403, _GOOGLE_403),
@@ -235,8 +227,6 @@ def test_a_google_error_on_publish_reaches_the_owner_as_words_not_json(real_post
     assert "{" not in err and "API error" not in err, f"owner shown: {err!r}"
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-REV-15: a transport exception while publishing is shown to the "
-                                        "owner as the raw exception text")
 def test_a_network_failure_on_publish_is_not_shown_as_an_exception_string(real_post, monkeypatch):
     rid = _review(real_post["db"], 1, "net")
 
@@ -251,8 +241,6 @@ def test_a_network_failure_on_publish_is_not_shown_as_an_exception_string(real_p
 
 # ── MOD-REV-14: a reply to a review Google removed (R2 #15) ────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-REV-14: a 404 from the reply PUT is not recognised as a removed "
-                                        "review; the owner sees a raw API error and the row sits 'approved'")
 def test_publishing_to_a_review_google_removed_says_it_was_removed(real_post, monkeypatch):
     rid = _review(real_post["db"], 1, "gone")
     monkeypatch.setattr(requests, "put", lambda *a, **k: _Resp(
