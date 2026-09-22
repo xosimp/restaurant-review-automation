@@ -185,6 +185,7 @@ def _seed_simple_ejs(db_path: str = DB_PATH):
     _seed_ejs_settings(rid, db_path)
     _seed_ejs_shifts(rid, db_path)
     _seed_ejs_capabilities(rid, db_path)
+    _seed_ejs_food_cost(rid, db_path)
     _ensure_ejs_login(rid, db_path)
     return rid
 
@@ -204,6 +205,21 @@ def _seed_ejs_history(rid: int, db_path: str):
             sales, hours = BY_WEEKDAY[d.weekday()]
             cost = round(hours * 12.5, 2)
             conn.execute("""INSERT OR REPLACE INTO labor_daily_history
+                (restaurant_id, date, day_of_week, labor_pct, labor_cost, sales,
+                 total_hours, saved_at)
+                VALUES (?,?,?,?,?,?,?,datetime('now'))""",
+                (rid, d.strftime("%Y-%m-%d"), days[d.weekday()],
+                 round(cost / sales * 100, 2), cost, float(sales), float(hours)))
+            d += timedelta(days=1)
+        # And the trailing six weeks, anchored to today: food cost % divides
+        # purchases by the sales of the same window, and a window that ends
+        # today needs sales through today. OR IGNORE — a row a POS sync
+        # wrote for a real date is never overwritten by a placeholder.
+        d = date.today() - timedelta(days=41)
+        while d <= date.today():
+            sales, hours = BY_WEEKDAY[d.weekday()]
+            cost = round(hours * 12.5, 2)
+            conn.execute("""INSERT OR IGNORE INTO labor_daily_history
                 (restaurant_id, date, day_of_week, labor_pct, labor_cost, sales,
                  total_hours, saved_at)
                 VALUES (?,?,?,?,?,?,?,datetime('now'))""",
@@ -300,6 +316,148 @@ def _seed_ejs_capabilities(rid: int, db_path: str):
         except Exception:
             pass
     print(f"[auto-seed] {SIMPLE_EJS_NAME} ratings written for {len(_EJS_ROSTER)} staff")
+
+
+# ── Food Cost: a pantry with suppliers, a priced menu with recipes, six
+#    weekly counts and a delivery a week ─────────────────────────────────────
+#
+# Without these the Food Cost tab ran on the sample pantry: no actual food
+# cost % (no counts, no purchases, no sales in the window), no margins (no
+# dish had a recipe or a price), nothing to order (no supplier on any
+# ingredient). Quantities are sized to a ~$54k/week restaurant at roughly
+# 27% food cost and ~4.5% waste, so every figure lands near its target
+# rather than screaming. Supplier addresses are .example — undeliverable
+# by definition, so "Send" on the demo never reaches a real vendor.
+
+_EJS_SUPPLIERS = {
+    "broadline": ("Sysco Chicago", "orders@sysco-demo.example"),
+    "produce": ("Testa Produce", "orders@testa-demo.example"),
+}
+
+# name, category, unit, unit cost, weekly delivery qty, par, on hand, waste last week, supplier
+_EJS_PANTRY = [
+    ("Chicken Breast", "Protein", "lb", 5.80, 240, 80, 44, 6.0, "broadline"),
+    ("Ground Beef 80/20", "Protein", "lb", 6.20, 300, 100, 36, 8.0, "broadline"),
+    ("Ribeye Steak", "Protein", "lb", 19.50, 180, 60, 18, 2.4, "broadline"),
+    ("Salmon Fillet", "Protein", "lb", 16.50, 120, 40, 12, 3.6, "broadline"),
+    ("Shrimp 16/20", "Protein", "lb", 14.20, 100, 36, 10, 3.0, "broadline"),
+    ("Cheddar Cheese", "Dairy", "lb", 5.40, 90, 30, 24, 1.6, "broadline"),
+    ("Butter", "Dairy", "lb", 4.50, 80, 28, 32, 1.0, "broadline"),
+    ("Heavy Cream", "Dairy", "qt", 3.80, 60, 20, 14, 2.0, "broadline"),
+    ("Burger Buns", "Bakery", "each", 0.55, 1300, 440, 280, 80, "broadline"),
+    ("Fries (frozen)", "Pantry", "lb", 1.60, 520, 180, 140, 12, "broadline"),
+    ("Penne Pasta", "Pantry", "lb", 2.80, 100, 36, 40, 1.2, "broadline"),
+    ("Olive Oil", "Pantry", "bottle", 14.50, 20, 8, 10, 0.0, "broadline"),
+    ("Romaine Lettuce", "Produce", "head", 2.50, 240, 80, 52, 28, "produce"),
+    ("Roma Tomatoes", "Produce", "lb", 1.80, 180, 60, 40, 18, "produce"),
+    ("Yellow Onions", "Produce", "lb", 0.95, 160, 56, 48, 8, "produce"),
+    ("Russet Potatoes", "Produce", "lb", 0.80, 280, 100, 90, 14, "produce"),
+    ("Fresh Herbs", "Produce", "bunch", 5.50, 36, 12, 8, 5.0, "produce"),
+]
+
+# dish, sell price, (ingredient, qty per plate)
+_EJS_MENU = [
+    ("Classic Burger", 14.00, [("Ground Beef 80/20", 0.4), ("Burger Buns", 1), ("Cheddar Cheese", 0.1),
+                               ("Romaine Lettuce", 0.1), ("Roma Tomatoes", 0.15), ("Fries (frozen)", 0.35)]),
+    ("Grilled Chicken Sandwich", 13.00, [("Chicken Breast", 0.45), ("Burger Buns", 1), ("Romaine Lettuce", 0.1),
+                                         ("Roma Tomatoes", 0.12), ("Fries (frozen)", 0.35)]),
+    ("Ribeye & Potatoes", 36.00, [("Ribeye Steak", 0.75), ("Russet Potatoes", 0.6), ("Butter", 0.08), ("Fresh Herbs", 0.1)]),
+    ("Grilled Salmon", 24.00, [("Salmon Fillet", 0.5), ("Russet Potatoes", 0.4), ("Butter", 0.06), ("Olive Oil", 0.02)]),
+    ("Shrimp Tacos", 16.00, [("Shrimp 16/20", 0.35), ("Romaine Lettuce", 0.15), ("Roma Tomatoes", 0.12), ("Yellow Onions", 0.1)]),
+    ("Chicken Alfredo", 17.00, [("Chicken Breast", 0.4), ("Penne Pasta", 0.3), ("Heavy Cream", 0.25), ("Butter", 0.05)]),
+    ("Caesar Salad", 11.00, [("Romaine Lettuce", 0.6), ("Olive Oil", 0.03), ("Cheddar Cheese", 0.05)]),
+    ("Loaded Fries", 9.00, [("Fries (frozen)", 0.6), ("Cheddar Cheese", 0.15), ("Yellow Onions", 0.08)]),
+]
+
+
+def _seed_ejs_food_cost(rid: int, db_path: str):
+    """Only on a restaurant with no ingredient of its own and no uploaded or
+    POS-fed inventory; a second boot finds the ingredients and returns."""
+    import math
+    from datetime import date, timedelta
+    conn = get_conn(db_path)
+    try:
+        if conn.execute("SELECT 1 FROM ingredients WHERE restaurant_id=? LIMIT 1", (rid,)).fetchone():
+            return
+        try:
+            src = conn.execute("SELECT inventory_source FROM client_data WHERE restaurant_id=?", (rid,)).fetchone()
+        except Exception:
+            src = None
+        if src and src["inventory_source"] in ("upload", "toast"):
+            return
+        today = date.today()
+        iso = today.isoformat()
+
+        ids = {}
+        for name, cat, unit, cost, weekly, par, stock, waste, sup in _EJS_PANTRY:
+            sname, semail = _EJS_SUPPLIERS[sup]
+            cur = conn.execute(
+                "INSERT INTO ingredients (restaurant_id, name, category, unit, par_level, unit_cost, case_size, "
+                " current_stock, avg_daily_usage, last_order_qty, waste_last_week, last_recount_at, "
+                " supplier_name, supplier_email) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (rid, name, cat, unit, par, cost, 1.0, stock, round(weekly / 7, 2), weekly, waste, iso, sname, semail))
+            iid = cur.lastrowid
+            ids[name] = iid
+            # A delivery a week for five weeks (the four inside a 28-day window
+            # are what food cost % divides by), then the count that anchors the
+            # ledger — last, so it is the newest recount and the stock on hand
+            # is exactly the counted figure.
+            for k in range(5, 0, -1):
+                conn.execute(
+                    "INSERT INTO ingredient_stock_events (restaurant_id, ingredient_id, event_type, qty, event_date, "
+                    " source, note) VALUES (?,?,?,?,?,?,?)",
+                    (rid, iid, "receiving", weekly, (today - timedelta(days=7 * k - 2)).isoformat(), "seed", "weekly delivery"))
+            conn.execute(
+                "INSERT INTO ingredient_stock_events (restaurant_id, ingredient_id, event_type, qty, event_date, "
+                " source, note) VALUES (?,?,?,?,?,?,?)",
+                (rid, iid, "recount", stock, iso, "seed", "count that anchors the ledger"))
+
+        for dish, price, lines in _EJS_MENU:
+            row = conn.execute("SELECT id FROM menu_items WHERE restaurant_id=? AND name=? AND is_active=1",
+                               (rid, dish)).fetchone()
+            mid = row["id"] if row else conn.execute(
+                "INSERT INTO menu_items (restaurant_id, toast_guid, name, sell_price) VALUES (?,NULL,?,?)",
+                (rid, dish, price)).lastrowid
+            if row:
+                conn.execute("UPDATE menu_items SET sell_price=COALESCE(sell_price, ?) WHERE id=?", (price, mid))
+            for ing, qty in lines:
+                if not conn.execute("SELECT 1 FROM recipe_ingredients WHERE menu_item_id=? AND ingredient_id=?",
+                                    (mid, ids[ing])).fetchone():
+                    conn.execute("INSERT INTO recipe_ingredients (menu_item_id, ingredient_id, qty_per_unit) VALUES (?,?,?)",
+                                 (mid, ids[ing], qty))
+
+        # Six weekly counts with per-item detail. The sample-era snapshots
+        # (no items, written while the page showed example data) go — they
+        # would sit beside real weeks in the chart as $0-value counts.
+        conn.execute("DELETE FROM inventory_history WHERE restaurant_id=? AND items_json IS NULL", (rid,))
+        for k in range(5, -1, -1):
+            week_end = (today - timedelta(days=7 * k)).isoformat()
+            items, inv_value, waste_cost, top = [], 0.0, 0.0, []
+            for i, (name, cat, unit, cost, weekly, par, stock, waste, sup) in enumerate(_EJS_PANTRY):
+                st = round(stock * (1 + 0.18 * math.sin(k * 1.3 + i)), 1)
+                ws = round(waste * (1 + 0.35 * math.cos(k * 1.7 + i * 0.6)), 1)
+                items.append({"item": name, "category": cat, "unit": unit, "unit_cost": cost, "par_level": par,
+                              "current_stock": st, "avg_daily_usage": round(weekly / 7, 2),
+                              "last_order_qty": weekly, "waste_last_week": ws})
+                inv_value += st * cost
+                waste_cost += ws * cost
+                top.append((ws * cost, name))
+            top.sort(reverse=True)
+            snap = {"total_waste_cost": round(waste_cost, 2), "top_items": [n for _, n in top[:4]],
+                    "inventory_value": round(inv_value, 2)}
+            ex = conn.execute("SELECT id FROM inventory_history WHERE restaurant_id=? AND week_end=?",
+                              (rid, week_end)).fetchone()
+            if ex:
+                conn.execute("UPDATE inventory_history SET waste_json=?, items_json=?, inv_value=?, source='seed' WHERE id=?",
+                             (json.dumps(snap), json.dumps(items), round(inv_value, 2), ex["id"]))
+            else:
+                conn.execute("INSERT INTO inventory_history (restaurant_id, waste_json, week_end, items_json, inv_value, source) "
+                             "VALUES (?,?,?,?,?,?)",
+                             (rid, json.dumps(snap), week_end, json.dumps(items), round(inv_value, 2), "seed"))
+        conn.commit()
+    finally:
+        conn.close()
+    print(f"[auto-seed] {SIMPLE_EJS_NAME} food cost seeded: {len(_EJS_PANTRY)} ingredients, {len(_EJS_MENU)} dishes")
 
 
 SIMPLE_EJS_USERNAME = "erik"
