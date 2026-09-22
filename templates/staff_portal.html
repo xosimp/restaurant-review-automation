@@ -81,6 +81,18 @@
 .to-st{font-size:12px;color:var(--ink3);white-space:nowrap}
 .av-row{display:flex;align-items:center;gap:10px;margin-top:8px}
 #avail-notes{width:100%;padding:9px 12px;border:1px solid var(--paper3);border-radius:8px;font:inherit;color:var(--ink);background:var(--paper)}
+  /* Shift requests: a shift you can't work, and the open ones you can take */
+  .shift .drop{margin-top:8px}
+  .sr-row{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:8px}
+  .sr-row .when{font-size:15px;font-weight:600}
+  .sr-row .meta{font-size:13px;color:var(--ink2);margin-top:3px}
+  .sr-row .st{font-size:12.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;margin-top:6px;color:var(--ink3)}
+  .sr-row .st.open,.sr-row .st.covered{color:var(--green)}
+  .sr-row .st.denied{color:var(--red)}
+  .sr-row .st.pending{color:var(--ember2)}
+  .sr-row .act{display:flex;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap}
+  .sr-row.open-shift{border-left:3px solid var(--ember2)}
+  .sr-msg{font-size:13.5px;margin-top:6px;color:var(--red)}
 </style>
 </head>
 <body>
@@ -98,6 +110,7 @@
   <section id="tab-schedule" class="on">
     <div id="brief-body"></div>
     <div id="sched-body" class="load">Loading your shifts…</div>
+    <div id="req-body"></div>
   <div id="avail-body" class="card"></div>
   <div id="timeoff-body" class="card"></div>
   </section>
@@ -169,13 +182,18 @@
   }).catch(function(){});
 
   // ── Schedule ────────────────────────────────────────────────────────────
-  fetch('/staff/api/shifts').then(function(r){ return r.json(); }).then(function(d){
+  function mdyShort(iso) {
+    // 9/21/26 — the one date format an owner or employee sees (DESIGN_SYSTEM → Dates and times).
+    if (!iso || !/^\d{4}-\d{2}-\d{2}/.test(iso)) return esc(iso || '');
+    return (+iso.slice(5, 7)) + '/' + (+iso.slice(8, 10)) + '/' + iso.slice(2, 4);
+  }
+  function renderShifts(d){
     var el = $('sched-body');
     if (!d.ok) { el.className = 'err'; el.textContent = 'Could not load your shifts.'; return; }
     el.className = '';
     if (!d.published) {
-      el.innerHTML = '<div class="empty">No schedule has been posted yet. '
-                   + 'It will show up here as soon as your manager publishes one.</div>';
+      el.innerHTML = '<div class="empty">Your manager hasn\u2019t published next week yet. '
+                   + 'Your shifts show up here the moment it goes out.</div>';
       $('today-line').textContent = '';
       return;
     }
@@ -189,21 +207,104 @@
       var cls = 'shift' + (day.is_today ? ' today' : '') + (day.off ? ' off' : '');
       html += '<div class="' + cls + '">'
             + '<div><span class="day">' + esc(day.weekday) + '</span>'
-            + '<span class="date">' + esc(day.date) + (day.is_today ? ' · today' : '') + '</span></div>';
+            + '<span class="date">' + mdyShort(day.date) + (day.is_today ? ' · today' : '') + '</span></div>';
       if (s) {
         html += '<div class="time">' + esc(s.shift_start) + ' – ' + esc(s.shift_end) + '</div>'
               + '<div class="meta">' + esc(s.role || '')
               + (s.scheduled_hours ? ' · ' + esc(s.scheduled_hours) + 'h' : '') + '</div>';
         if (s.notes) html += '<div class="meta">' + esc(s.notes) + '</div>';
+        // A published shift you can't make: ask to drop it. A manager
+        // answers, and an approved one opens up for somebody else to claim.
+        html += '<div class="drop"><button type="button" class="cbtn cbtn-text cbtn-sm" data-drop-date="' + esc(day.date) + '" data-drop-start="' + esc(s.shift_start) + '">Can\u2019t work this</button></div>';
       } else {
         html += '<div class="none">Off</div>';
       }
       html += '</div>';
     }
     el.innerHTML = html;
-  }).catch(function(){
+  }
+  fetch('/staff/api/shifts').then(function(r){ return r.json(); }).then(renderShifts).catch(function(){
     $('sched-body').className = 'err';
     $('sched-body').textContent = 'Could not load your shifts.';
+  });
+
+  // ── Shift requests ──────────────────────────────────────────────────────
+  // Mine, with where each one stands, and the open shifts anybody on the
+  // roster can take. The server decides whether a claim is legal (rest,
+  // hours, availability) and says why when it is not. ES5 only.
+  var REQ_STATUS = {pending: 'Waiting for an answer', open: 'Approved \u2014 open for someone to claim',
+                    denied: 'Not approved', covered: 'Covered', withdrawn: 'Withdrawn'};
+  function fmtShort(iso) {
+    if (!iso || !/^\d{4}-\d{2}-\d{2}/.test(iso)) return esc(iso || '');
+    var d = new Date(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10));
+    if (isNaN(d)) return esc(iso);
+    return ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d.getDay()] + ' ' + (d.getMonth() + 1) + '/' + d.getDate() + '/' + String(d.getFullYear()).slice(-2);
+  }
+  function reqRender(d) {
+    var el = $('req-body'); if (!el) return;
+    var mine = d.requests || [], open = d.open || [], html = '', i;
+    if (mine.length) {
+      html += '<h2>My requests</h2>';
+      for (i = 0; i < mine.length; i++) {
+        var q = mine[i], st = q.status || 'pending';
+        var label = REQ_STATUS[st] || st;
+        if (st === 'covered' && q.replacement_name) label = 'Covered by ' + q.replacement_name;
+        html += '<div class="sr-row"><div class="when">' + fmtShort(q.date) + ' \u00B7 ' + esc(q.shift_start) + (q.shift_end ? ' \u2013 ' + esc(q.shift_end) : '') + '</div>'
+              + (q.role || q.reason ? '<div class="meta">' + esc(q.role || '') + (q.role && q.reason ? ' \u00B7 ' : '') + esc(q.reason || '') + '</div>' : '')
+              + '<div class="st ' + esc(st) + '">' + esc(label) + '</div>';
+        if (st === 'pending' || st === 'open') {
+          html += '<div class="act"><button type="button" class="cbtn cbtn-text cbtn-sm" data-withdraw="' + q.id + '">Withdraw</button></div>';
+        }
+        html += '</div>';
+      }
+    }
+    html += '<h2>Open shifts</h2>';
+    if (!open.length) {
+      html += '<div class="empty">No open shifts right now. When a teammate can\u2019t work one and your manager approves it, it shows up here for you to take.</div>';
+    }
+    for (i = 0; i < open.length; i++) {
+      var o = open[i];
+      html += '<div class="sr-row open-shift" id="open-' + o.id + '"><div class="when">' + fmtShort(o.date) + ' \u00B7 ' + esc(o.shift_start) + (o.shift_end ? ' \u2013 ' + esc(o.shift_end) : '') + '</div>'
+            + '<div class="meta">' + esc(o.role || '') + (o.role ? ' \u00B7 ' : '') + 'was ' + esc(o.employee_name) + '</div>'
+            + '<div class="act"><button type="button" class="cbtn cbtn-primary cbtn-sm" data-claim="' + o.id + '">Take this shift</button></div>'
+            + '<div class="sr-msg" id="open-msg-' + o.id + '"></div></div>';
+    }
+    el.innerHTML = html;
+  }
+  function loadRequests() {
+    fetch('/staff/api/shift-requests').then(function (r) { return r.json(); }).then(function (d) { if (d && d.ok) reqRender(d); }).catch(function () {});
+  }
+  loadRequests();
+  function post(url, body) {
+    return fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body || {})})
+      .then(function (r) { return r.json().catch(function () { return {ok: false, error: 'Something went wrong \u2014 try again.'}; }); });
+  }
+  document.addEventListener('click', function (ev) {
+    var el = ev.target;
+    while (el && el !== document.body && !(el.getAttribute && (el.getAttribute('data-drop-date') || el.getAttribute('data-withdraw') || el.getAttribute('data-claim')))) el = el.parentNode;
+    if (!el || !el.getAttribute) return;
+    var drop = el.getAttribute('data-drop-date'), wd = el.getAttribute('data-withdraw'), cl = el.getAttribute('data-claim');
+    if (drop) {
+      var reason = window.prompt('Why can\u2019t you work this shift? (optional)', '');
+      if (reason === null) return;
+      el.disabled = true;
+      post('/staff/api/shift-requests', {date: drop, shift_start: el.getAttribute('data-drop-start'), reason: reason})
+        .then(function (d) { el.disabled = false; if (!d.ok) { window.alert(d.error || 'Could not send that.'); return; } el.textContent = 'Asked \u2713'; loadRequests(); })
+        .catch(function () { el.disabled = false; window.alert('Could not send that \u2014 check your connection.'); });
+    } else if (wd) {
+      el.disabled = true;
+      post('/staff/api/shift-requests/' + wd + '/withdraw').then(function (d) { if (!d.ok) { el.disabled = false; window.alert(d.error || 'Could not withdraw that.'); return; } loadRequests(); })
+        .catch(function () { el.disabled = false; });
+    } else if (cl) {
+      var msg = $('open-msg-' + cl); if (msg) msg.textContent = '';
+      el.disabled = true;
+      post('/staff/api/open-shifts/' + cl + '/claim').then(function (d) {
+        if (!d.ok) { el.disabled = false; if (msg) msg.textContent = d.error || 'You can\u2019t take this one.'; return; }
+        loadRequests();
+        // The week now includes it; redraw the shifts.
+        fetch('/staff/api/shifts').then(function (r) { return r.json(); }).then(renderShifts).catch(function () {});
+      }).catch(function () { el.disabled = false; if (msg) msg.textContent = 'Could not claim that \u2014 check your connection.'; });
+    }
   });
 
   // ── My availability ─────────────────────────────────────────────────────

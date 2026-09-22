@@ -3481,6 +3481,150 @@ svg:hover .hb-xh{opacity:1}
 .lb2-hist .rskel{display:grid;grid-template-columns:1fr auto;gap:16px;align-items:center;padding:11px 12px;border-top:1px solid var(--hb-line2)}
 .lb2-hist .rskel:first-child{border-top:none}
 @media (max-width:640px){.lb2-hist .row{grid-template-columns:1fr auto auto}.lb2-hist .rgen{display:none}.lb2-hist .ractions{opacity:1}}
+/* Schedule review kit — the rules check, per-row explanation drawer and
+   inline edit state of the generated-schedule preview, plus the roster,
+   rules, demand-signal and shift-request rows under it. Tokens only. */
+.sr-panel{padding:16px 20px;border-bottom:1px solid var(--hb-line2)}
+.sr-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+.sr-k{font-size:11.5px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink3)}
+.sr-chip{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border-radius:999px;font-size:12.5px;font-weight:700;background:var(--sf-recess);color:var(--ink2);border:1px solid var(--hb-line2)}
+.sr-chip .hb-num{font-size:13.5px}
+.sr-chip.bad{background:var(--red-bg);color:var(--hb-bad);border-color:transparent}
+.sr-chip.warn{background:var(--amber-bg);color:var(--hb-warn);border-color:transparent}
+.sr-chip.good{background:var(--green-bg);color:var(--hb-good);border-color:transparent}
+.sr-meta{margin-left:auto;font-size:12.5px;color:var(--ink3)}
+.sr-line{display:flex;gap:9px;align-items:flex-start;padding:6px 0;font-size:14px;line-height:1.5;color:var(--ink2);border-top:1px solid var(--hb-line2)}
+.sr-line:first-child{border-top:none}
+.sr-line.warn{color:var(--hb-warn)}
+.sr-line.bad{color:var(--hb-bad)}
+.sr-line b{color:var(--ink);font-weight:600}
+.sr-line .d{width:7px;height:7px;border-radius:50%;background:var(--ink3);flex-shrink:0;margin-top:7px;box-shadow:0 0 8px currentColor;color:transparent}
+.sr-line.warn .d{background:var(--hb-warn);color:var(--hb-warn)}
+.sr-line.bad .d{background:var(--hb-bad);color:var(--hb-bad)}
+.sr-line.fix .d{background:var(--hb-good);color:var(--hb-good)}
+.sr-line .arrow{color:var(--ember);font-weight:700}
+.sr-grp{margin-top:12px}
+.sr-grp .sr-k{margin-bottom:4px}
+.sr-soft{margin-top:12px;padding:10px 12px;border-radius:9px;background:var(--amber-bg);color:var(--hb-warn);font-size:13.5px;line-height:1.5}
+.sr-soft b{font-weight:700}
+.sr-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px}
+.sr-note{font-size:13px;color:var(--ink3)}
+.sr-narr{margin-top:10px;padding-top:10px;border-top:1px solid var(--hb-line2);font-size:13px;color:var(--ink3);line-height:1.6;font-style:italic}
+.sr-narr .sr-k{font-style:normal;margin-bottom:3px}
+#sched-gen-meta{font-size:12px;color:var(--ink3);margin-top:3px}
+#sched-table tr.sched-row{cursor:pointer;transition:background .12s ease}
+#sched-table tr.sched-row:hover td{background:var(--hb-tint)}
+#sched-table tr.needs-review td{background:var(--amber-bg)}
+#sched-table tr.needs-review td:first-child{box-shadow:inset 3px 0 0 var(--hb-warn)}
+#sched-table tr.sched-row.open td{background:var(--sf-recess)}
+#sched-table .rr{font-size:11px;color:var(--hb-warn);font-weight:600;display:block;margin-top:2px}
+#sched-table .rc{white-space:nowrap;text-align:right}
+#sched-table .rc .cbtn{opacity:.55}
+#sched-table tr:hover .rc .cbtn,#sched-table tr.open .rc .cbtn{opacity:1}
+.sched-why td{padding:10px 14px 12px 40px!important;background:var(--sf-ai);border-bottom:1px solid var(--sf-ai-line);font-size:13.5px;line-height:1.55;color:var(--ink2)!important;cursor:default}
+.sched-why .k{font-size:10.5px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:var(--ember);margin-bottom:3px}
+.sched-edit td{padding:8px 12px!important;background:var(--hb-tint2)}
+.sched-edit .ac-input,.sched-edit .ac-select{padding:6px 8px;font-size:13.5px;border-radius:7px;width:auto}
+.sched-edit .tm{width:88px}
+.sched-edit .rl{width:120px}
+.sched-edit .cbtn-row{justify-content:flex-end}
+#sched-edit-bar{display:none;padding:12px 20px;border-top:1px solid var(--hb-line2);background:var(--hb-tint);align-items:center;gap:12px;flex-wrap:wrap}
+#sched-edit-bar.on{display:flex}
+#sched-edit-bar .st{font-size:13.5px;font-weight:600;color:var(--hb-warn)}
+#sched-edit-bar .sp{flex:1}
+#sched-table-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 12px 10px;flex-wrap:wrap}
+#sched-table-foot .cap{font-size:12px;color:var(--ink3)}
+#ps-blockers{display:none;margin:10px 0 4px;padding:12px 14px;border-radius:10px;background:var(--red-bg);border:1px solid var(--hb-line2)}
+#ps-blockers .sr-k{color:var(--hb-bad);margin-bottom:4px}
+#ps-blockers .ack{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px;font-size:14px;color:var(--ink)}
+#ps-blockers .ack label{display:flex;align-items:center;gap:8px;cursor:pointer}
+#ps-blockers .ack input{accent-color:var(--ember);width:16px;height:16px}
+/* Roster & settings */
+.rst-tbl{width:100%;border-collapse:collapse;font-size:14px}
+.rst-tbl th{text-align:left;font-size:10.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);padding:0 8px 8px 0;border-bottom:1px solid var(--hb-line);white-space:nowrap}
+.rst-tbl th.r{text-align:right}
+.rst-tbl td{padding:9px 8px 9px 0;border-bottom:1px solid var(--hb-line2);vertical-align:middle;color:var(--ink2)}
+.rst-tbl td.r{text-align:right}
+.rst-tbl .nm{font-weight:600;color:var(--ink);cursor:pointer;white-space:nowrap}
+.rst-tbl .nm small{display:block;font-size:12px;color:var(--ink3);font-weight:400}
+.rst-tbl .nm .car{display:inline-block;margin-left:6px;color:var(--ink3);transition:transform .2s ease;font-size:11px}
+.rst-tbl tr.open .nm .car{transform:rotate(180deg);color:var(--ember)}
+.rst-tbl tr.off td{opacity:.5}
+.rst-tbl tr.off .nm small{color:var(--hb-warn)}
+.rst-tbl .ac-input,.rst-tbl .ac-select{padding:5px 8px;font-size:13.5px;border-radius:7px;width:auto}
+.rst-tbl .hrs{width:62px;text-align:center}
+.rst-tbl .rst-grid td{padding:10px 0 14px;background:var(--sf-recess)}
+.rst-days{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px;padding:0 10px}
+.rst-days>div{text-align:center}
+.rst-days .dy{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);margin-bottom:4px}
+.rst-days .ac-select{width:100%;padding:5px 4px;font-size:12.5px;text-align:center}
+.rst-days .ac-select.off{color:var(--ink3)}
+.rst-days .ac-select.morning,.rst-days .ac-select.night{color:var(--ember);font-weight:600}
+.rst-cap{padding:8px 10px 0;font-size:12.5px;color:var(--ink3)}
+.rst-rel{font-family:'Space Grotesk',sans-serif;font-size:13.5px;white-space:nowrap}
+.rst-rel.bad{color:var(--hb-bad)}.rst-rel.good{color:var(--hb-good)}
+.rst-score{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;background:var(--hb-tint2);color:var(--ember);font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:13px}
+.rst-score.none{background:transparent;color:var(--ink3);font-weight:400}
+.lb2-pairs .pr{display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--hb-line2);font-size:14.5px;color:var(--ink2);flex-wrap:wrap}
+.lb2-pairs .pr:first-child{border-top:none}
+.lb2-pairs .pr b{color:var(--ink);font-weight:600}
+.lb2-pairs .pr .nt{font-size:13px;color:var(--ink3)}
+.lb2-pairs .pr .x{margin-left:auto}
+.lb2-pairs .kd{font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;padding:2px 8px;border-radius:999px}
+.lb2-pairs .kd.prefer{background:var(--green-bg);color:var(--hb-good)}
+.lb2-pairs .kd.avoid{background:var(--red-bg);color:var(--hb-bad)}
+.lb2-form{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-top:12px}
+.lb2-form .ac-field{min-width:120px}
+.lb2-form .ac-field.w{min-width:200px;flex:1}
+.lb2-form .ac-field.n{min-width:88px;max-width:110px}
+.lb2-form .ac-input,.lb2-form .ac-select{padding:8px 10px;font-size:14px}
+.lb2-sub{font-family:'Clash Display',sans-serif;font-size:16px;font-weight:500;color:var(--ink);margin:18px 0 6px;padding-top:14px;border-top:1px solid var(--hb-line2)}
+.lb2-sub small{font-family:'Apfel Grotezk',sans-serif;font-size:13.5px;color:var(--ink3);margin-left:8px;font-weight:400}
+.lb2-ro{font-size:13px;color:var(--ink3);margin-bottom:10px}
+/* Rules */
+.rul-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px 14px}
+.rul-grid .ac-field label small{display:block;font-weight:400;color:var(--ink3);font-size:12.5px;margin-top:1px}
+.rul-grid .ac-input{padding:8px 10px;font-size:14px}
+.rul-floor{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:9px 0;border-top:1px solid var(--hb-line2)}
+.rul-floor:first-child{border-top:none}
+.rul-floor .role{flex:0 0 150px;font-weight:600;color:var(--ink)}
+.rul-floor .ac-input{width:64px;padding:5px 8px;font-size:13.5px;text-align:center}
+.rul-floor .lbl{font-size:12.5px;color:var(--ink3)}
+.rul-floor .ovs{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.rul-ov{display:inline-flex;align-items:center;gap:4px;height:26px;padding:0 2px 0 10px;border-radius:999px;background:var(--hb-tint2);color:var(--ink);font-size:12.5px;font-weight:600;white-space:nowrap}
+.rul-ov .hb-num{color:var(--ember)}
+.rul-add{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.rul-add .ac-select{width:auto;padding:5px 8px;font-size:13px}
+/* Events & reservations */
+.dsg-tbl .kd{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3)}
+.dsg-tbl .kd.event{color:var(--ember)}
+.dsg-tbl .lift{font-family:'Space Grotesk',sans-serif;font-weight:700;color:var(--hb-good)}
+.dsg-tbl .lift.neg{color:var(--hb-bad)}
+/* Shift requests */
+.shr-row{display:flex;align-items:center;gap:12px;padding:11px 0;border-top:1px solid var(--hb-line2);flex-wrap:wrap}
+.shr-row:first-child{border-top:none}
+.shr-row .who{flex:1;min-width:200px}
+.shr-row .who b{color:var(--ink);font-weight:600}
+.shr-row .who .sub{display:block;font-size:13px;color:var(--ink3);margin-top:2px}
+.shr-row .ac-select{width:auto;padding:6px 8px;font-size:13.5px}
+.shr-open{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ember)}
+.shr-open i{width:7px;height:7px;border-radius:50%;background:var(--ember);box-shadow:0 0 8px var(--ember)}
+.lb2-srow.s4{background:linear-gradient(135deg,rgba(200,75,47,.17),rgba(200,75,47,.09))}
+.lb2-srow.s5{background:linear-gradient(135deg,rgba(200,75,47,.20),rgba(200,75,47,.10))}
+.lb2-srow.s6{background:linear-gradient(135deg,rgba(200,75,47,.24),rgba(200,75,47,.12))}
+.lb2-srow.s7{background:linear-gradient(135deg,rgba(200,75,47,.27),rgba(200,75,47,.14))}
+/* Versions in the history detail */
+.sv-list{margin-top:14px}
+.sv-v{display:flex;gap:12px;padding:10px 0;border-top:1px solid var(--hb-line2)}
+.sv-v:first-child{border-top:none}
+.sv-v .n{flex:0 0 34px;height:34px;border-radius:50%;background:var(--hb-tint2);color:var(--ember);font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:13px;display:flex;align-items:center;justify-content:center}
+.sv-v.published .n{background:var(--green-bg);color:var(--hb-good)}
+.sv-v .t{font-size:14.5px;font-weight:600;color:var(--ink)}
+.sv-v .t small{font-weight:400;color:var(--ink3);margin-left:6px;font-size:12.5px}
+.sv-v .ln{font-size:13px;color:var(--ink3);line-height:1.5;margin-top:2px}
+.sv-dvp{margin-top:14px;padding:12px 14px;border-radius:10px;background:var(--sf-recess)}
+.sv-dvp .ln{font-size:13.5px;color:var(--ink2);line-height:1.55;padding:2px 0}
+@media (max-width:640px){.rst-days{grid-template-columns:repeat(4,minmax(0,1fr))}.rul-floor .role{flex-basis:100%}}
 #sched-history-more{padding:12px 0 2px;text-align:center}
 /* Same branded gradient+border recipe as .cal-card/.lb2-avail — a flat
    var(--hb-tint) wash here read as an undefined smear, not a branded
@@ -3698,6 +3842,7 @@ svg:hover .hb-xh{opacity:1}
         <div>
           <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember);margin-bottom:4px">AI-Optimized Schedule</div>
           <div id="sched-week-label" style="font-size:14px;font-weight:700;color:rgba(255,255,255,.88)">Week of —</div>
+          <div id="sched-gen-meta"></div>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button onclick="downloadScheduleFromPreview()" class="cbtn cbtn-success" onmousedown="this.style.transform='scale(.97)'" onmouseup="this.style.transform='translateY(-1px)'">Download CSV</button>
@@ -3713,6 +3858,9 @@ svg:hover .hb-xh{opacity:1}
           <button class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" title="Collapse" aria-label="Collapse" onclick="togglePublishSchedule()">✕</button>
         </div>
         <div id="ps-contacts" style="font-size:14px;color:rgba(255,255,255,.55)">Loading staff…</div>
+        <!-- The publish gate: a 409 needs_ack lists what the sender must read
+             before the week goes out. Rendered by _psRenderBlockers. -->
+        <div id="ps-blockers"></div>
         <div id="ps-actions" style="margin-top:10px;display:none">
           <button onclick="publishScheduleNow()" id="ps-send-btn" class="cbtn cbtn-success">Send now</button>
           <span id="ps-result" style="font-size:13.5px;margin-left:10px"></span>
@@ -3725,9 +3873,17 @@ svg:hover .hb-xh{opacity:1}
 
       <!-- AI summary bullets -->
       <div id="sched-summary" style="padding:14px 20px;border-bottom:1px solid rgba(255,255,255,.08);display:none">
-        <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#6fcf97;margin-bottom:8px">What changed &amp; why</div>
-        <div id="sched-summary-bullets" style="font-size:12px;color:#c0b8b0;line-height:1.8"></div>
+        <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#6fcf97;margin-bottom:8px">What changed vs last published week</div>
+        <div id="sched-summary-bullets" style="font-size:13px;color:#c0b8b0;line-height:1.8"></div>
+        <div id="sched-narrative" class="sr-narr" style="display:none"></div>
       </div>
+
+      <!-- Rules check — every hard and soft rule the finished week breaks,
+           what the engine fixed on its own, what still needs a human, and
+           time off nobody has answered yet. Re-rendered after every edit
+           from POST /api/labor/schedule/violations so the verdict is never
+           stale. -->
+      <div id="sched-review" class="sr-panel" style="display:none"></div>
 
       <!-- PAR hours banner -->
       <div id="sched-par-banner" style="display:none;padding:14px 20px;border-bottom:1px solid rgba(255,255,255,.08);background:rgba(111,207,151,.06)">
@@ -3787,10 +3943,24 @@ svg:hover .hb-xh{opacity:1}
               <th style="padding:8px 12px;text-align:left;color:var(--ink3);font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;white-space:nowrap">Shift</th>
               <th style="padding:8px 12px;text-align:left;color:var(--ink3);font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;white-space:nowrap">Hrs</th>
               <th style="padding:8px 12px;text-align:left;color:var(--ink3);font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase">Notes</th>
+              <th style="padding:8px 12px;text-align:right;color:var(--ink3);font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase">Edit</th>
             </tr>
           </thead>
           <tbody id="sched-tbody"></tbody>
         </table>
+        <div id="sched-table-foot">
+          <span class="cap">Tap a row for why that person is on it &middot; the pencil edits it</span>
+          <button type="button" class="cbtn cbtn-soft cbtn-sm" data-sched-add="1">+ Add a shift</button>
+        </div>
+      </div>
+      <!-- Unsaved edits. Save re-scores and stores the week as a new
+           "edited" version; nothing can be sent to staff until then. -->
+      <div id="sched-edit-bar">
+        <span class="st">Unsaved edits</span>
+        <span class="sr-note">Save to re-score the week and keep it. Send to staff is off until you do.</span>
+        <span class="sp"></span>
+        <button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="discardScheduleEdits()">Discard</button>
+        <button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="saveScheduleEdits(this)">Save changes</button>
       </div>
     </div>
   </div>
@@ -3980,6 +4150,70 @@ svg:hover .hb-xh{opacity:1}
           </div>
           <div id="task-add-error" style="font-size:12.5px;color:var(--red);margin-top:6px"></div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Roster & settings — the facts the schedule respects about each
+       person: on the roster or not, full or part time, hours, mornings or
+       nights per day, under 18. Each change is one POST and one toast. -->
+  <div class="lb2-srow s4">
+    <div class="lb2-subsection" onclick="lb2RowClick(event,toggleRosterPanel)">
+      <div class="lb2-subsection-title">Roster &amp; settings <span id="roster-chip" class="lb2-subsection-chip"></span></div>
+      <button type="button" onclick="toggleRosterPanel()" class="cbtn cbtn-text cbtn-inline lb2-subsection-toggle" id="roster-toggle-btn">Manage ↓</button>
+    </div>
+    <div id="roster-panel" style="display:none">
+      <div class="lb2-avail">
+        <div style="font-size:15px;color:var(--ink3);margin-bottom:12px">Everyone the schedule can draw on. Hours, full or part time, mornings or nights, and who is under 18 &mdash; each one is a rule the next draft keeps. Tap a name for the week grid.</div>
+        <div id="roster-body"><div class="hb-skel" style="width:60%;height:14px;margin-bottom:10px"></div><div class="hb-skel" style="width:80%;height:14px;margin-bottom:10px"></div><div class="hb-skel" style="width:70%;height:14px"></div></div>
+        <div class="lb2-sub">Who works together<small>a pair to prefer, or to keep apart</small></div>
+        <div id="roster-pairs" class="lb2-pairs"></div>
+        <div id="roster-pair-form"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scheduling rules — the compliance floor every draft is checked
+       against, and how many of each role a morning or a night needs. -->
+  <div class="lb2-srow s5">
+    <div class="lb2-subsection" onclick="lb2RowClick(event,toggleRulesPanel)">
+      <div class="lb2-subsection-title">Scheduling rules <span id="rules-chip" class="lb2-subsection-chip"></span></div>
+      <button type="button" onclick="toggleRulesPanel()" class="cbtn cbtn-text cbtn-inline lb2-subsection-toggle" id="rules-toggle-btn">Set rules ↓</button>
+    </div>
+    <div id="rules-panel" style="display:none">
+      <div class="lb2-avail">
+        <div style="font-size:15px;color:var(--ink3);margin-bottom:12px">What a legal week looks like here. Leave a field blank to keep the default shown in it; the rules check names every row that breaks one.</div>
+        <div id="rules-body"><div class="hb-skel" style="width:60%;height:14px;margin-bottom:10px"></div><div class="hb-skel" style="width:80%;height:14px"></div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Events & reservations — dated demand the forecast cannot see on its
+       own: a private party, a block of reservations, a street fair. -->
+  <div class="lb2-srow s6">
+    <div class="lb2-subsection" onclick="lb2RowClick(event,toggleSignalsPanel)">
+      <div class="lb2-subsection-title">Events &amp; reservations <span id="signals-chip" class="lb2-subsection-chip"></span></div>
+      <button type="button" onclick="toggleSignalsPanel()" class="cbtn cbtn-text cbtn-inline lb2-subsection-toggle" id="signals-toggle-btn">Add dates ↓</button>
+    </div>
+    <div id="signals-panel" style="display:none">
+      <div class="lb2-avail">
+        <div style="font-size:15px;color:var(--ink3);margin-bottom:12px">The next 60 days of demand the forecast cannot see on its own. A date here lifts the covers the schedule plans for.</div>
+        <div id="signals-body"><div class="hb-skel" style="width:60%;height:14px;margin-bottom:10px"></div><div class="hb-skel" style="width:80%;height:14px"></div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Shift requests — a published shift somebody cannot work, and the
+       open shifts nobody has picked up yet. -->
+  <div class="lb2-srow s7">
+    <div class="lb2-subsection" onclick="lb2RowClick(event,toggleRequestsPanel)">
+      <div class="lb2-subsection-title">Shift requests <span id="requests-chip" class="lb2-subsection-chip"></span></div>
+      <button type="button" onclick="toggleRequestsPanel()" class="cbtn cbtn-text cbtn-inline lb2-subsection-toggle" id="requests-toggle-btn">Review ↓</button>
+    </div>
+    <div id="requests-panel" style="display:none">
+      <div class="lb2-avail">
+        <div style="font-size:15px;color:var(--ink3);margin-bottom:12px">Asked for in the staff portal. Approving opens the shift for anyone on the roster to claim &mdash; or name who takes it and it is covered now.</div>
+        <div id="requests-body"><div class="hb-skel" style="width:60%;height:14px;margin-bottom:10px"></div><div class="hb-skel" style="width:80%;height:14px"></div></div>
       </div>
     </div>
   </div>
@@ -9533,19 +9767,45 @@ function _schedHandleResult(data) {
   // Summary bullets
   var sumEl = document.getElementById('sched-summary');
   var bullEl = document.getElementById('sched-summary-bullets');
-  if (data.summary && data.summary.length && bullEl) {
+  // summary is the deterministic diff against the last published week;
+  // narrative is the model's own short note and reads as secondary.
+  var narEl = document.getElementById('sched-narrative');
+  if (bullEl) {
     var bHtml = '';
-    for (var s = 0; s < data.summary.length; s++) {
-      bHtml += '<div style="padding:2px 0">&#x2022; ' + data.summary[s] + '</div>';
+    for (var s = 0; s < (data.summary || []).length; s++) {
+      bHtml += '<div style="padding:2px 0">&#x2022; ' + num(data.summary[s]) + '</div>';
     }
-    bullEl.innerHTML = bHtml;
-    if (sumEl) sumEl.style.display = 'block';
+    bullEl.innerHTML = bHtml || '<div style="padding:2px 0;color:var(--ink3)">Nothing to compare yet \u2014 this is the first week.</div>';
   }
+  if (narEl) {
+    if (data.narrative) { narEl.innerHTML = '<div class="sr-k">Cavnar AI\u2019s note</div>' + _escHtml(data.narrative); narEl.style.display = 'block'; }
+    else { narEl.style.display = 'none'; narEl.innerHTML = ''; }
+  }
+  if (sumEl) sumEl.style.display = (bullEl && (data.summary || []).length) || data.narrative ? 'block' : 'none';
 
-  // Schedule table — drawn from _schedRows so a manager's swap can redraw
-  // it without regenerating anything.
+  // Schedule table — drawn from _schedRows so a manager's edit can redraw
+  // it without regenerating anything. The rows must be in hand before the
+  // first draw: they used to be assigned after it, so the first generation
+  // of a session rendered an empty table.
   _schedConstraints = data.staff_constraints || {};
+  _schedRows = data.preview_rows || [];
+  _schedTargets = data.daily_target_hours || {};
+  _schedOverrides = {};
+  _schedHistoryId = data.history_id || null;
+  _schedWeekDates = data.week_dates || [];
+  _schedRosterNames = data.roster || [];
+  _schedWhyOpen = null; _schedEditIdx = null; _schedEditOpts = []; _schedAddedIdx = null;
+  _schedSetDirty(false);
+  _schedSnapshot();
+  var psb = document.getElementById('ps-blockers'); if (psb) { psb.style.display = 'none'; psb.innerHTML = ''; }
   _schedRenderTable(true);
+  var gm = document.getElementById('sched-gen-meta');
+  if (gm) {
+    var bits = [];
+    if (data.roster && data.roster.length) bits.push(data.roster.length + ' people on the roster');
+    if (data.roster_roles && data.roster_roles.length) bits.push(data.roster_roles.length + ' roles');
+    gm.innerHTML = bits.length ? num(bits.join(' \u00B7 ')) : '';
+  }
 
   // PAR hours banner
   var parBanner = document.getElementById('sched-par-banner');
@@ -9584,9 +9844,14 @@ function _schedHandleResult(data) {
 
   renderShiftQuality(data.quality, data.what_if);
   loadTeamForSwap();
-  _schedRows = data.preview_rows || [];
-  _schedTargets = data.daily_target_hours || {};
-  _schedOverrides = {};
+  // The rules check, what the engine fixed on its own, what still needs a
+  // human, and time off nobody has answered yet.
+  if (window.renderScheduleReview) {
+    var rv = data.review || null;
+    renderScheduleReview({review: rv, pending_time_off: data.pending_time_off, violations: data.rule_violations,
+                          fixes: rv ? (rv.fixes || []) : [], unfixed: rv ? (rv.unfixed || []) : [],
+                          generation_seconds: data.generation_seconds, chunked: data.chunked, initial: true});
+  }
 
   if (panel) panel.style.display = 'block';
   if (panel) panel.scrollIntoView({behavior: 'smooth', block: 'nearest'});
@@ -10174,9 +10439,12 @@ function openShiftSwap(index, anchorEl) {
 
 function applyShiftSwap(index, name) {
   _schedRows[index].employee = name;
+  _schedRows[index].needs_review = false;
+  _schedRows[index].review_reason = '';
   _schedOverrides[index] = true;
-  rescoreSchedule();
-  _schedRenderTable();
+  // Staged like every other edit: the rules check re-runs now, the score
+  // and the stored week move when the manager presses Save.
+  schedAfterEdit();
 }
 
 // Re-score AND store whatever is on screen.
@@ -10185,21 +10453,37 @@ function applyShiftSwap(index, name) {
 // this page, the score moved, and publishing read the CSV saved at
 // generation time — so staff received the week the manager had just fixed,
 // unfixed, with nothing on screen to say so.
-function rescoreSchedule() {
+function rescoreSchedule(btn) {
   _setQualityState('saving');
+  var done = btn ? cbtnBusy(btn, 'Saving\u2026') : function () {};
+  var body = {rows: _schedRows, daily_target_hours: _schedTargets, save: true};
+  // Saving appends an "edited" version to the row the preview came from,
+  // rather than minting a second history entry for the same week.
+  if (_schedHistoryId) body.history_id = _schedHistoryId;
   fetch('/api/labor/schedule/score', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({rows: _schedRows, daily_target_hours: _schedTargets, save: true})
+    body: JSON.stringify(body)
   }).then(function (r) { return r.json(); }).then(function (d) {
+    done();
     if (d && d.ok) {
       renderShiftQuality(d.quality, d.what_if);
       _schedCsvCache = '';
+      if (d.history_id) _schedHistoryId = d.history_id;
       _setQualityState(d.saved ? 'saved' : 'unsaved');
+      if (d.saved) {
+        _schedSetDirty(false);
+        _schedSnapshot();
+        toast('Schedule saved \u2014 this is what your staff will receive', 'success');
+        if (typeof loadScheduleHistory === 'function') loadScheduleHistory();
+      }
+      if (window.renderScheduleReview) renderScheduleReview({review: d.review, violations: d.violations, fixes: [], unfixed: []});
+      _schedRenderTable();
     } else {
       _setQualityState('stale', (d && d.error) || 'Could not save that change.');
     }
   }).catch(function () {
+    done();
     _setQualityState('stale', 'Could not save that change.');
   });
 }
@@ -10224,6 +10508,11 @@ function _setQualityState(state, message) {
   } else if (state === 'stale') {
     note.style.color = '#eb5757';
     note.textContent = (message || 'Could not save.') + ' The score above is out of date.';
+  } else if (state === 'edited') {
+    note.style.color = 'var(--hb-warn)';
+    note.textContent = 'Edited \u2014 the score above is from before your change. Save to re-score the week.';
+  } else if (state === '') {
+    note.textContent = '';
   } else {
     note.style.color = 'var(--ink3)';
     note.textContent = 'Scored, but not saved.';
@@ -10243,49 +10532,59 @@ var _schedConstraints = {};
 function _schedRenderTable(collapse) {
   var tbody = document.getElementById('sched-tbody');
   var _constraints = _schedConstraints || {};
-  if (tbody && _schedRows && _schedRows.length) {
-    var tHtml = '';
-    var lastDay = '';
-    for (var i = 0; i < _schedRows.length; i++) {
-      var row = _schedRows[i];
-      var day = row.day || '';
-      var isNewDay = day !== lastDay;
-      var bgStyle = isNewDay ? 'border-top:2px solid rgba(255,255,255,.1)' : 'border-top:1px solid rgba(255,255,255,.04)';
-      var empName = row.employee || '';
-      var constraintNote = _constraints[empName] || '';
-      var constraintBadge = constraintNote
-        ? ' <span title="' + constraintNote.replace(/"/g, '&quot;') + '" style="font-size:9px;background:rgba(242,153,74,.18);color:#f2994a;padding:1px 5px;border-radius:8px;font-weight:700;vertical-align:middle;cursor:help;letter-spacing:.02em">constraint</span>'
-        : '';
-      tHtml += '<tr style="' + bgStyle + (constraintNote ? ';background:rgba(242,153,74,.04)' : '') + '">';
-      tHtml += '<td style="padding:7px 12px;color:' + (isNewDay ? 'var(--ember2)' : 'transparent') + ';font-weight:700;font-size:11px;white-space:nowrap">' + day + '</td>';
-      // Clicking a name opens the list of people who could take that
-      // shift instead. The score updates the moment one is picked, so a
-      // manager sees what their change bought before they look away.
-      tHtml += '<td style="padding:7px 12px;color:rgba(255,255,255,.88);font-weight:600">'
-            + '<span data-shift-row="' + i + '" style="cursor:pointer;border-bottom:1px dashed rgba(255,255,255,.25)">'
-            + empName + '</span>' + constraintBadge
-            + (_schedOverrides[i] ? ' <span style="font-size:9px;font-weight:700;letter-spacing:.5px;color:#56ccf2;background:rgba(86,204,242,.15);padding:1px 5px;border-radius:8px">CHANGED</span>' : '')
-            + '</td>';
-      tHtml += '<td style="padding:7px 12px;color:rgba(255,255,255,.45)">' + (row.role || '') + '</td>';
-      tHtml += '<td style="padding:7px 12px;color:rgba(255,255,255,.75);white-space:nowrap">' + (row.shift_start || '') + '–' + (row.shift_end || '') + '</td>';
-      tHtml += '<td style="padding:7px 12px;color:#6fcf97;font-weight:600">' + (row.scheduled_hours || '') + '</td>';
-      tHtml += '<td style="padding:7px 12px;color:var(--ink3);font-size:10px">' + (row.notes || '') + '</td>';
-      tHtml += '</tr>';
-      lastDay = day;
+  if (!tbody) return;
+  var tHtml = '', lastDay = '', i;
+  var TD = 'padding:7px 12px;';
+  for (i = 0; i < _schedRows.length; i++) {
+    var row = _schedRows[i];
+    var day = row.day || '';
+    var isNewDay = day !== lastDay;
+    lastDay = day;
+    if (_schedEditIdx === i) { tHtml += _schedEditRowHtml(i, row); continue; }
+    var bgStyle = isNewDay ? 'border-top:2px solid rgba(255,255,255,.1)' : 'border-top:1px solid rgba(255,255,255,.04)';
+    var empName = row.employee || '';
+    var constraintNote = _constraints[empName] || '';
+    var constraintBadge = constraintNote
+      ? ' <span title="' + _escAttr(constraintNote) + '" style="font-size:9px;background:rgba(242,153,74,.18);color:#f2994a;padding:1px 5px;border-radius:8px;font-weight:700;vertical-align:middle;cursor:help;letter-spacing:.02em">constraint</span>'
+      : '';
+    var cls = 'sched-row' + (row.needs_review ? ' needs-review' : '') + (_schedWhyOpen === i ? ' open' : '');
+    tHtml += '<tr class="' + cls + '" data-sched-row="' + i + '" style="' + bgStyle + (constraintNote ? ';background:rgba(242,153,74,.04)' : '') + '">';
+    tHtml += '<td style="' + TD + 'color:' + (isNewDay ? 'var(--ember2)' : 'transparent') + ';font-weight:700;font-size:11px;white-space:nowrap">' + _escHtml(day) + '</td>';
+    // Clicking a name opens the list of people who could take that shift
+    // instead; the row itself opens the engine's reason for the assignment.
+    tHtml += '<td style="' + TD + 'color:rgba(255,255,255,.88);font-weight:600">'
+          + '<span data-shift-row="' + i + '" title="Swap for somebody who can take this shift" style="cursor:pointer;border-bottom:1px dashed rgba(255,255,255,.25)">'
+          + _escHtml(empName) + '</span>' + constraintBadge
+          + (_schedOverrides[i] ? ' <span style="font-size:9px;font-weight:700;letter-spacing:.5px;color:#56ccf2;background:rgba(86,204,242,.15);padding:1px 5px;border-radius:8px">CHANGED</span>' : '')
+          + (row.needs_review ? '<span class="rr">&#9888; ' + _escHtml(row.review_reason || 'needs review') + '</span>' : '')
+          + '</td>';
+    tHtml += '<td style="' + TD + 'color:rgba(255,255,255,.45)">' + _escHtml(row.role || '') + '</td>';
+    tHtml += '<td style="' + TD + 'color:rgba(255,255,255,.75);white-space:nowrap">' + _escHtml(row.shift_start || '') + '\u2013' + _escHtml(row.shift_end || '') + '</td>';
+    tHtml += '<td style="' + TD + 'color:#6fcf97;font-weight:600">' + _escHtml(row.scheduled_hours || '') + '</td>';
+    tHtml += '<td style="' + TD + 'color:var(--ink3);font-size:10px">' + _escHtml(row.notes || '') + '</td>';
+    tHtml += '<td class="rc" style="' + TD + '">'
+          + '<button type="button" class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" title="Edit this shift" aria-label="Edit this shift" data-sched-edit="' + i + '">' + _SCHED_ICON_PEN + '</button>'
+          + '<button type="button" class="cbtn cbtn-icon cbtn-text cbtn-danger cbtn-sm" title="Remove this shift" aria-label="Remove this shift" data-sched-remove="' + i + '">' + _SCHED_ICON_X + '</button>'
+          + '</td></tr>';
+    if (_schedWhyOpen === i) {
+      var why = _schedWhy(row);
+      tHtml += '<tr class="sched-why"><td colspan="7"><div class="k">Why ' + _escHtml(empName || 'this person') + '</div>'
+             + (why && why.why ? _escHtml(why.why) : 'No facts on file for this assignment.') + '</td></tr>';
     }
-    tbody.innerHTML = tHtml;
-    var toggleBar = document.getElementById('sched-toggle-bar');
-    var shiftCount = document.getElementById('sched-shift-count');
-    if (toggleBar) toggleBar.style.display = 'flex';
-    if (shiftCount) shiftCount.textContent = _schedRows.length + ' shifts';
-    if (collapse) {
-      _schedTableOpen = false;
-      var wrap = document.getElementById('sched-table-wrap');
-      if (wrap) wrap.style.display = 'none';
-    }
-    var label = document.getElementById('sched-toggle-label');
-    if (collapse && label) label.innerHTML = 'View full schedule<span id="sched-toggle-arrow" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:rgba(111,207,151,.12);border:1px solid rgba(111,207,151,.25);color:#6fcf97;transition:transform .25s;flex-shrink:0"><svg width="11" height="11" viewBox="0 0 16 16" fill="none"><path d="M5 6l3 3 3-3" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>';
   }
+  if (!_schedRows.length) tHtml = '<tr><td colspan="7" style="padding:14px 12px;color:var(--ink3);font-size:13px">No shifts on this week yet \u2014 add one below.</td></tr>';
+  tbody.innerHTML = tHtml;
+  var toggleBar = document.getElementById('sched-toggle-bar');
+  var shiftCount = document.getElementById('sched-shift-count');
+  if (toggleBar) toggleBar.style.display = 'flex';
+  if (shiftCount) shiftCount.textContent = _schedRows.length + ' shifts';
+  if (collapse) {
+    _schedTableOpen = false;
+    var wrap = document.getElementById('sched-table-wrap');
+    if (wrap) wrap.style.display = 'none';
+  }
+  var label = document.getElementById('sched-toggle-label');
+  if (collapse && label) label.innerHTML = 'View full schedule<span id="sched-toggle-arrow" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:rgba(111,207,151,.12);border:1px solid rgba(111,207,151,.25);color:#6fcf97;transition:transform .25s;flex-shrink:0"><svg width="11" height="11" viewBox="0 0 16 16" fill="none"><path d="M5 6l3 3 3-3" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>';
 }
 
 function toggleQualityReasoning() {
@@ -10383,6 +10682,12 @@ function generateSchedule(btn) {
         return;
       }
       var jobId = startData.job_id;
+      // One generation at a time per restaurant: a second press joins the
+      // one already running rather than paying for a second model call.
+      if (startData.joined) {
+        var jn = document.getElementById('sched-week');
+        if (jn) jn.insertAdjacentHTML('beforeend', '<div id="sched-joined" style="margin-top:8px;text-align:center;font-size:13.5px;color:var(--ink3)">Joining the generation already running\u2026</div>');
+      }
       // Hard timeout at 3 min — show a helpful message instead of infinite spin
       var _hardTimeout = setTimeout(function() {
         clearInterval(_elapsedTimer);
@@ -10471,28 +10776,320 @@ function savePsContact(input){
   });
 }
 
-function publishScheduleNow(){
+function publishScheduleNow(ack){
   var btn = document.getElementById('ps-send-btn');
   var result = document.getElementById('ps-result');
+  var bl = document.getElementById('ps-blockers');
+  if (_schedDirty) {
+    result.style.color = 'var(--hb-warn)';
+    result.textContent = 'Save your edits first — staff would get the week without them.';
+    return;
+  }
   btn.disabled = true; btn.textContent = 'Sending…';
-  fetch('/api/labor/publish-schedule', {method:'POST', headers:{'Content-Type':'application/json'}, body: '{}'})
-    .then(function(r){return r.json();}).then(function(d){
+  var body = {acknowledge: !!ack};
+  if (_schedHistoryId) body.schedule_id = _schedHistoryId;
+  var status = 0;
+  fetch('/api/labor/publish-schedule', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)})
+    .then(function(r){ status = r.status; return r.json().catch(function(){ return {ok:false, error:'Server error (HTTP ' + status + ') — please try again'}; }); })
+    .then(function(d){
       btn.disabled = false; btn.textContent = 'Send now';
       if(d.ok){
-        result.style.color = '#6fcf97';
+        if (bl) { bl.style.display = 'none'; bl.innerHTML = ''; }
+        result.style.color = 'var(--hb-good)';
         if (d.queued) {
-          result.textContent = 'Goes to staff in ' + d.undo_minutes + ' min \u2014 undo from the Cavnar AI strip';
+          result.textContent = 'Goes to staff in ' + d.undo_minutes + ' min — undo from the Cavnar AI strip';
           toast('Schedule queued','success');
         } else {
-          result.textContent = 'Sent to ' + d.sent.length + ' of ' + (d.sent.length + d.unreachable.length) + ' staff';
+          var sent = (d.sent || []).length, total = sent + (d.unreachable || []).length;
+          result.textContent = 'Sent to ' + sent + ' of ' + total + ' staff' + (d.acknowledged ? ' · warnings acknowledged' : '');
           toast('Schedule sent','success');
         }
-      } else {
-        result.style.color = '#ef4444';
-        result.textContent = d.error || 'Nothing sent';
+        return;
       }
-    }).catch(function(){ btn.disabled=false; btn.textContent='Send now'; result.style.color='#ef4444'; result.textContent='Network error'; });
+      // The publish gate: nothing goes out until the person sending has
+      // read what the rules check found. A second Send carries acknowledge.
+      if (d.needs_ack) {
+        _psRenderBlockers(d.blockers || []);
+        result.textContent = '';
+        return;
+      }
+      result.style.color = 'var(--hb-bad)';
+      // 403: this login can draft the week but not send it. The server's
+      // sentence says exactly that; show it rather than "Nothing sent".
+      result.textContent = d.error || (status === 403 ? 'Your login can draft a schedule but not send it to staff.' : 'Nothing sent');
+    }).catch(function(){ btn.disabled=false; btn.textContent='Send now'; result.style.color='var(--hb-bad)'; result.textContent='Network error'; });
 }
+
+function _psRenderBlockers(list) {
+  var bl = document.getElementById('ps-blockers');
+  if (!bl) return;
+  var h = '<div class="sr-k">Read before this goes out</div>', i;
+  for (i = 0; i < list.length; i++) {
+    h += '<div class="sr-line bad"><span class="d"></span><span>' + _escHtml(list[i]) + '</span></div>';
+  }
+  h += '<div class="ack"><label><input type="checkbox" id="ps-ack" onchange="document.getElementById(\'ps-ack-send\').disabled=!this.checked"> I’ve read these and want to send anyway</label>'
+     + '<button type="button" id="ps-ack-send" class="cbtn cbtn-danger cbtn-sm" disabled onclick="publishScheduleNow(true)">Send anyway</button></div>';
+  bl.innerHTML = h;
+  bl.style.display = 'block';
+}
+
+// ── Editing the week in place ───────────────────────────────────────────────
+//
+// Every edit is staged: the table redraws, the rules check re-runs against
+// the rows on screen (POST /api/labor/schedule/violations), and nothing is
+// stored or sendable until Save — which re-scores and appends an "edited"
+// version to the same history row. Send to staff stays off while edits are
+// unsaved, so staff can never receive a week the manager has half-fixed.
+var _schedWhyOpen = null;    // row whose explanation drawer is open
+var _schedEditIdx = null;    // row being edited inline
+var _schedEditOpts = [];     // legal replacements for that row, from the server
+var _schedAddedIdx = null;   // a row added but not yet confirmed
+var _schedDirty = false;
+var _schedHistoryId = null;  // the schedule_history row the preview came from
+var _schedWeekDates = [];
+var _schedRosterNames = [];
+var _schedSaved = '[]';      // rows as last generated or saved, for Discard
+var _SCHED_ICON_PEN = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11.3 2.2l2.5 2.5L5.5 13H3v-2.5z"/><path d="M9.8 3.7l2.5 2.5"/></svg>';
+var _SCHED_ICON_X = '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>';
+
+function _schedMinutes(s) {
+  var m = String(s == null ? '' : s).trim().toLowerCase().replace(/\s+/g, '').match(/^(\d{1,2})(?::(\d{2}))?(am|pm)?$/);
+  if (!m) return null;
+  var h = parseInt(m[1], 10), mi = parseInt(m[2] || '0', 10);
+  if (m[3] === 'pm' && h < 12) h += 12;
+  if (m[3] === 'am' && h === 12) h = 0;
+  if (h > 23 || mi > 59) return null;
+  return h * 60 + mi;
+}
+// The same split the engine uses (schedule_rules.daypart_of): 3pm and later
+// is a night shift.
+function _schedDaypart(start) { var m = _schedMinutes(start); return m === null ? 'unknown' : (m >= 15 * 60 ? 'night' : 'morning'); }
+function _schedHoursBetween(a, b) {
+  var x = _schedMinutes(a), y = _schedMinutes(b);
+  if (x === null || y === null) return '';
+  var d = y - x; if (d <= 0) d += 24 * 60;
+  return String(Math.round(d / 60 * 100) / 100);
+}
+function _schedDayOf(iso) {
+  if (!iso || !/^\d{4}-\d{2}-\d{2}/.test(iso)) return '';
+  var d = new Date(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10));
+  return isNaN(d) ? '' : ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][d.getDay()];
+}
+
+// The engine's own explanation for one row: the assignment in
+// quality.shifts[].assignments[] with the same date and person, preferring
+// the shift whose daypart matches the row's start time.
+function _schedWhy(row) {
+  var q = _quality;
+  if (!q || !q.shifts) return null;
+  var dp = _schedDaypart(row.shift_start), name = String(row.employee || '').toLowerCase().trim(), fallback = null, i, j;
+  for (i = 0; i < q.shifts.length; i++) {
+    var s = q.shifts[i];
+    if (s.date !== row.date) continue;
+    var as = s.assignments || [];
+    for (j = 0; j < as.length; j++) {
+      if (String(as[j].employee || '').toLowerCase().trim() !== name) continue;
+      if (s.daypart === dp) return as[j];
+      if (!fallback) fallback = as[j];
+    }
+  }
+  return fallback;
+}
+
+function _schedSnapshot() { try { _schedSaved = JSON.stringify(_schedRows || []); } catch (e) { _schedSaved = '[]'; } }
+
+function _schedSetDirty(on) {
+  _schedDirty = !!on;
+  var bar = document.getElementById('sched-edit-bar');
+  if (bar) bar.className = on ? 'on' : '';
+  var ids = ['ps-toggle-btn', 'ps-send-btn', 'ps-ack-send'], i;
+  for (i = 0; i < ids.length; i++) {
+    var b = document.getElementById(ids[i]);
+    if (!b) continue;
+    if (ids[i] === 'ps-ack-send' && !on) continue;   // stays gated on its checkbox
+    b.disabled = !!on;
+    b.title = on ? 'Save your edits first' : '';
+  }
+}
+
+function _schedRecheck() {
+  fetch('/api/labor/schedule/violations', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({rows: _schedRows})
+  }).then(function (r) { return r.json(); }).then(function (d) {
+    if (d && d.ok && window.renderScheduleReview) {
+      renderScheduleReview({review: d.review, pending_time_off: d.pending_time_off, violations: d.violations, fixes: [], unfixed: []});
+    }
+  }).catch(function () { });
+}
+
+function schedAfterEdit() {
+  _schedRenderTable();
+  _schedSetDirty(true);
+  _setQualityState('edited');
+  _schedRecheck();
+}
+
+// Rows stay in day order after a date change; overrides follow their row.
+function _schedSortRows() {
+  var tagged = [], i;
+  for (i = 0; i < _schedRows.length; i++) tagged.push({r: _schedRows[i], o: !!_schedOverrides[i]});
+  tagged.sort(function (a, b) {
+    if (a.r.date !== b.r.date) return a.r.date < b.r.date ? -1 : 1;
+    return (_schedMinutes(a.r.shift_start) || 0) - (_schedMinutes(b.r.shift_start) || 0);
+  });
+  _schedRows = []; _schedOverrides = {};
+  for (i = 0; i < tagged.length; i++) { _schedRows.push(tagged[i].r); if (tagged[i].o) _schedOverrides[i] = true; }
+}
+
+function _schedFillEmployeeSelect(sel, current) {
+  var seen = {}, list = [], k, opts = '';
+  function add(n) { n = String(n || '').trim(); if (!n || seen[n.toLowerCase()]) return; seen[n.toLowerCase()] = 1; list.push(n); }
+  add(current);
+  for (k = 0; k < _schedEditOpts.length; k++) add(_schedEditOpts[k]);
+  for (k = 0; k < _schedRosterNames.length; k++) add(_schedRosterNames[k]);
+  for (k = 0; k < _schedRows.length; k++) add(_schedRows[k].employee);
+  for (k = 0; k < list.length; k++) {
+    opts += '<option value="' + _escAttr(list[k]) + '"' + (list[k] === current ? ' selected' : '') + '>' + _escHtml(list[k])
+          + (_schedEditOpts.indexOf(list[k]) !== -1 ? ' · can take it' : '') + '</option>';
+  }
+  sel.innerHTML = opts;
+}
+
+function _schedEditRowHtml(i, row) {
+  var dates = '', k;
+  for (k = 0; k < _schedWeekDates.length; k++) {
+    var d = _schedWeekDates[k];
+    dates += '<option value="' + _escAttr(d) + '"' + (d === row.date ? ' selected' : '') + '>' + _escHtml(_schedDayOf(d).slice(0, 3) + ' ' + mdy(d)) + '</option>';
+  }
+  return '<tr class="sched-edit" data-sched-editrow="' + i + '"><td colspan="7">'
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
+    + (dates ? '<select class="ac-select" data-sched-f="date" aria-label="Day">' + dates + '</select>'
+             : '<span style="font-weight:700;color:var(--ember2);font-size:12px">' + _escHtml(row.day || '') + '</span>')
+    + '<select class="ac-select" data-sched-f="employee" aria-label="Employee"><option>' + _escHtml(row.employee || '') + '</option></select>'
+    + '<input class="ac-input rl" data-sched-f="role" value="' + _escAttr(row.role || '') + '" placeholder="Role" aria-label="Role">'
+    + '<input class="ac-input tm" data-sched-f="shift_start" value="' + _escAttr(row.shift_start || '') + '" placeholder="4:00pm" aria-label="Start">'
+    + '<span style="color:var(--ink3)">–</span>'
+    + '<input class="ac-input tm" data-sched-f="shift_end" value="' + _escAttr(row.shift_end || '') + '" placeholder="10:00pm" aria-label="End">'
+    + '<span style="flex:1"></span>'
+    + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-sched-cancel="' + i + '">Cancel</button>'
+    + '<button type="button" class="cbtn cbtn-soft cbtn-sm" data-sched-done="' + i + '">Done</button>'
+    + '</div></td></tr>';
+}
+
+function schedEditRow(i) {
+  if (_schedAddedIdx !== null && _schedAddedIdx !== i) { _schedRows.splice(_schedAddedIdx, 1); if (i > _schedAddedIdx) i--; }
+  _schedAddedIdx = null;
+  _schedEditIdx = i; _schedEditOpts = []; _schedWhyOpen = null;
+  if (!_schedTableOpen) toggleSchedTable();
+  _schedRenderTable();
+  var sel = document.querySelector('[data-sched-editrow="' + i + '"] [data-sched-f="employee"]');
+  if (sel) _schedFillEmployeeSelect(sel, _schedRows[i].employee || '');
+  _fetchReplacements(i, function (options) {
+    if (_schedEditIdx !== i || !options) return;
+    var k; _schedEditOpts = [];
+    for (k = 0; k < options.length; k++) _schedEditOpts.push(options[k].name);
+    var s2 = document.querySelector('[data-sched-editrow="' + i + '"] [data-sched-f="employee"]');
+    if (s2) _schedFillEmployeeSelect(s2, s2.value);
+  });
+}
+
+function schedFinishEdit(i) {
+  var box = document.querySelector('[data-sched-editrow="' + i + '"]');
+  var row = _schedRows[i];
+  if (!box || !row) return;
+  function val(f) { var el = box.querySelector('[data-sched-f="' + f + '"]'); return el ? String(el.value || '').trim() : null; }
+  var start = val('shift_start'), end = val('shift_end');
+  if (_schedMinutes(start) === null || _schedMinutes(end) === null) { toast('Times read like 4:00pm or 16:00', 'error'); return; }
+  var emp = val('employee');
+  if (!emp) { toast('Pick who works it', 'error'); return; }
+  var date = val('date');
+  if (date) { row.date = date; row.day = _schedDayOf(date) || row.day; }
+  row.employee = emp; row.role = val('role') || ''; row.shift_start = start; row.shift_end = end;
+  row.scheduled_hours = _schedHoursBetween(start, end);
+  row.needs_review = false; row.review_reason = '';
+  _schedOverrides[i] = true;
+  _schedEditIdx = null; _schedEditOpts = []; _schedAddedIdx = null;
+  _schedSortRows();
+  schedAfterEdit();
+}
+
+function schedCancelEdit(i) {
+  if (_schedAddedIdx === i) { _schedRows.splice(i, 1); _schedAddedIdx = null; }
+  _schedEditIdx = null; _schedEditOpts = [];
+  _schedRenderTable();
+}
+
+function schedRemoveRow(i) {
+  if (!_schedRows[i]) return;
+  _schedRows.splice(i, 1);
+  var o = {}, k;
+  for (k in _schedOverrides) if (_schedOverrides.hasOwnProperty(k) && _schedOverrides[k]) { var n = +k; if (n < i) o[n] = true; else if (n > i) o[n - 1] = true; }
+  _schedOverrides = o;
+  _schedWhyOpen = null; _schedEditIdx = null; _schedAddedIdx = null;
+  schedAfterEdit();
+}
+
+function schedAddRow() {
+  if (_schedAddedIdx !== null) return;
+  var first = _schedRows[0] || {};
+  var d0 = _schedWeekDates[0] || first.date || '';
+  var row = {date: d0, day: _schedDayOf(d0) || first.day || '', employee: _schedRosterNames[0] || first.employee || '',
+             role: first.role || '', shift_start: '4:00pm', shift_end: '10:00pm', scheduled_hours: '6', notes: ''};
+  _schedRows.push(row);
+  _schedAddedIdx = _schedRows.length - 1;
+  _schedEditIdx = _schedAddedIdx; _schedEditOpts = []; _schedWhyOpen = null;
+  if (!_schedTableOpen) toggleSchedTable();
+  _schedRenderTable();
+  var box = document.querySelector('[data-sched-editrow="' + _schedEditIdx + '"]');
+  if (box) {
+    var sel = box.querySelector('[data-sched-f="employee"]');
+    if (sel) _schedFillEmployeeSelect(sel, row.employee);
+    box.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+  }
+}
+
+function saveScheduleEdits(btn) {
+  if (_schedEditIdx !== null) { toast('Finish the row you are editing first', 'error'); return; }
+  rescoreSchedule(btn);
+}
+
+function discardScheduleEdits() {
+  try { _schedRows = JSON.parse(_schedSaved) || []; } catch (e) { _schedRows = []; }
+  _schedOverrides = {}; _schedWhyOpen = null; _schedEditIdx = null; _schedAddedIdx = null;
+  _schedRenderTable();
+  _schedSetDirty(false);
+  _setQualityState('');
+  _schedRecheck();
+}
+
+// One delegated listener for the table: the pencil, the ✕, Done / Cancel,
+// Add a shift, and a click on the row itself (the explanation drawer).
+document.addEventListener('click', function (ev) {
+  var t = ev.target;
+  if (!t || !t.getAttribute) return;
+  if (t.getAttribute('data-shift-row') !== null) return;   // the swap control has its own handler
+  var el = t, names = ['data-sched-edit', 'data-sched-remove', 'data-sched-done', 'data-sched-cancel', 'data-sched-add'], attr = null, val = null, k;
+  while (el && el !== document.body) {
+    if (el.getAttribute) {
+      for (k = 0; k < names.length; k++) {
+        if (el.getAttribute(names[k]) !== null) { attr = names[k]; val = el.getAttribute(names[k]); break; }
+      }
+      if (attr) break;
+      if (el.tagName === 'TR' && el.getAttribute('data-sched-row') !== null) { attr = 'row'; val = el.getAttribute('data-sched-row'); break; }
+      if (el.tagName === 'BUTTON' || el.tagName === 'SELECT' || el.tagName === 'INPUT' || el.tagName === 'A') return;
+    }
+    el = el.parentNode;
+  }
+  if (!attr) return;
+  var i = parseInt(val, 10);
+  if (attr === 'data-sched-edit') schedEditRow(i);
+  else if (attr === 'data-sched-remove') schedRemoveRow(i);
+  else if (attr === 'data-sched-done') schedFinishEdit(i);
+  else if (attr === 'data-sched-cancel') schedCancelEdit(i);
+  else if (attr === 'data-sched-add') schedAddRow();
+  else if (attr === 'row') { _schedWhyOpen = (_schedWhyOpen === i) ? null : i; _schedRenderTable(); }
+});
 
 var _schedTableOpen = false;
 // ── Employee Availability ──────────────────────────────────────────────────
@@ -15598,7 +16195,10 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       done();if(!d.ok){toast(d.error||'Could not load','error');return;}
       var rows=d.preview_rows||[];
       var csv=d.schedule_csv||'';
-      var html='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:10px"><div style="font-size:15px;font-weight:600;color:var(--ink)">Week of '+esc(d.week_start||'')+' · '+rows.length+' shifts</div><div style="display:flex;gap:10px"><button onclick="downloadHistoryCsv('+id+')" class="cbtn cbtn-secondary">Download CSV</button><button onclick="closeScheduleHistoryDetail()" class="cbtn cbtn-secondary">Close ✕</button></div></div>';
+      var pub=d.published_at?'<div style="font-size:13.5px;color:var(--hb-good);margin-top:3px">Published <span class="hb-num">'+esc(mdy(d.published_at))+'</span>'+(d.published_by?' by '+esc(d.published_by):'')+'</div>':'<div style="font-size:13.5px;color:var(--ink3);margin-top:3px">Not published yet</div>';
+      var rvh='';
+      if(d.review&&(d.review.hard||d.review.soft)){var hh=+d.review.hard||0,ss=+d.review.soft||0;rvh=' · '+(hh?hh+' hard':'')+(hh&&ss?', ':'')+(ss?ss+' soft':'')+' rule'+(hh+ss===1?'':'s')+' broken';}
+      var html='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:10px"><div><div style="font-size:15px;font-weight:600;color:var(--ink)">Week of '+esc(mdy(d.week_start||''))+' · '+rows.length+' shifts'+(d.generation_seconds?' · generated in '+Math.round(+d.generation_seconds)+'s':'')+esc(rvh)+'</div>'+pub+'</div><div style="display:flex;gap:10px"><button onclick="downloadHistoryCsv('+id+')" class="cbtn cbtn-secondary">Download CSV</button><button onclick="closeScheduleHistoryDetail()" class="cbtn cbtn-secondary">Close ✕</button></div></div>';
       html+='<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13.5px"><tr style="color:var(--ink3);text-transform:uppercase;font-size:13px;letter-spacing:.06em"><th style="text-align:left;padding:6px 8px">Day</th><th style="text-align:left;padding:6px 8px">Employee</th><th style="text-align:left;padding:6px 8px">Role</th><th style="text-align:left;padding:6px 8px">Shift</th><th style="text-align:right;padding:6px 8px">Hrs</th></tr>';
       var lastDay='';
       html+=rows.map(function(r){
@@ -15614,16 +16214,480 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
           :'padding:6px 8px;color:var(--ink3)';
         return '<tr style="border-top:1px solid var(--paper3)"><td style="'+dayStyle+'">'+esc(day)+'</td><td style="padding:6px 8px;color:var(--ink)">'+esc(r.employee||'')+'</td><td style="padding:6px 8px;color:var(--ink3)">'+esc(r.role||'')+'</td><td style="padding:6px 8px;color:var(--ink3);white-space:nowrap">'+esc(r.shift_start||'')+'–'+esc(r.shift_end||'')+'</td><td style="padding:6px 8px;text-align:right;font-family:\'Space Grotesk\',sans-serif">'+esc(r.scheduled_hours||'')+'</td></tr>';
       }).join('')+'</table></div>';
+      html+='<div id="sched-hist-versions" class="sv-list"><div class="hb-skel" style="width:40%;height:12px"></div></div>';
       box.innerHTML=html;box.style.display='block';window._schedHistCsv=window._schedHistCsv||{};window._schedHistCsv[id]={csv:csv,week:d.week_start||''};
+      _schedHistVersions(id);
       box.scrollIntoView({behavior:'smooth',block:'nearest'});
     });
   };
+  // Every version of the week — generated, edited, fixed, published — with
+  // the deterministic lines that describe each step, and the draft against
+  // what actually went out.
+  function _schedHistVersions(id){
+    jget('/api/labor/schedule-history/'+id+'/versions',function(d){
+      var el=document.getElementById('sched-hist-versions');if(!el||window._schedHistOpenId!==id)return;
+      if(!d.ok){el.innerHTML='';return;}
+      var vs=d.versions||[],dv=d.draft_vs_published||d.draft_vs_latest||{},i,h='';
+      if(vs.length){
+        h+='<div class="sr-k" style="margin-bottom:6px">Versions</div>';
+        for(i=0;i<vs.length;i++){
+          var v=vs[i],who=esc(v.saved_by||'Cavnar AI');
+          var what=v.reason==='generated'?'generated by Cavnar AI':(v.reason==='published'?'published by '+who:(v.reason==='fixes'?'fixes applied by '+who:'edited by '+who));
+          var lines=(v.lines||[]).map(function(l){return num(l);}).join('<br>');
+          h+='<div class="sv-v'+(v.reason==='published'?' published':'')+'"><span class="n">v'+esc(v.version)+'</span><div><div class="t">'+what+'<small>'+esc(mdy(v.created_at))+(v.score?' · quality '+esc(v.score):'')+(v.changes?' · '+esc(v.changes)+' change'+(+v.changes===1?'':'s'):'')+'</small></div>'+(lines?'<div class="ln">'+lines+'</div>':'')+'</div></div>';
+        }
+      }
+      if(dv.available){
+        var dl=(dv.lines||[]).map(function(l){return '<div class="ln">'+num(l)+'</div>';}).join('');
+        h+='<div class="sv-dvp"><div class="sr-k" style="margin-bottom:4px">Draft vs published</div>'+(dl||'<div class="ln">Published exactly as generated.</div>')+'</div>';
+      }
+      el.innerHTML=h;
+    });
+  }
   window.closeScheduleHistoryDetail=function(){
     var box=document.getElementById('sched-history-detail');if(box){box.style.display='none';box.innerHTML='';}
     window._schedHistOpenId=null;_schedHistMarkSelected();
   };
   window.downloadHistoryCsv=function(id){var e=(window._schedHistCsv||{})[id];if(!e||!e.csv){toast('No CSV stored for this week','error');return;}var blob=new Blob([e.csv],{type:'text/csv'});var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='schedule-'+(e.week||id)+'.csv';document.body.appendChild(a);a.click();document.body.removeChild(a);};
   window.deleteScheduleHistory=function(id,btn){if(!confirm('Delete this schedule from history?'))return;var done=busy(btn,'…');jsend('/api/labor/schedule-history/'+id,{},function(d){done();if(d.ok){toast('Deleted','success');loadScheduleHistory();if(window._schedHistOpenId===id)closeScheduleHistoryDetail();}else toast(d.error||'Could not delete','error');},'DELETE');};
+
+  // ── Schedule generator surface ──
+  // The rules check on a generated week, and the four rows that feed the
+  // generator: roster & settings, scheduling rules, events & reservations,
+  // shift requests. Every figure here is the server's; nothing is invented
+  // on the client. ES5 only.
+  var _rv={review:null,pending:null,fixes:[],unfixed:[],violations:[],gen:null,chunked:false};
+  var _RV_DAYS=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+  function _rvRow(i){return (window._schedRows||[])[i]||{};}
+  function _rvWhen(r){var d=r.day||(r.date?mdy(r.date):'');return d+(r.shift_start?' '+r.shift_start:'');}
+  function _rvSet(d){
+    if(d.review!==undefined)_rv.review=d.review||null;
+    if(d.pending_time_off!==undefined)_rv.pending=d.pending_time_off||null;
+    if(d.violations!==undefined)_rv.violations=d.violations||[];
+    if(d.fixes!==undefined)_rv.fixes=d.fixes||[];
+    if(d.unfixed!==undefined)_rv.unfixed=d.unfixed||[];
+    if(d.generation_seconds!==undefined)_rv.gen=d.generation_seconds;
+    if(d.chunked!==undefined)_rv.chunked=!!d.chunked;
+  }
+  // The table and the panel must agree on which rows break a hard rule.
+  // On the generated payload the rows already carry needs_review from the
+  // engine, so flags are only added; after an edit the fresh check replaces
+  // them.
+  function _rvMarkRows(replace){
+    var rows=window._schedRows||[],rv=_rv.review,hard={},reason={},i;
+    if(!rv)return;
+    for(i=0;i<(rv.hard_rows||[]).length;i++)hard[rv.hard_rows[i]]=1;
+    for(i=0;i<_rv.violations.length;i++){var v=_rv.violations[i];if(v&&v.hard&&v.index!==undefined&&v.index!==null){hard[v.index]=1;if(!reason[v.index])reason[v.index]=v.detail||v.label||v.kind||'';}}
+    for(i=0;i<rows.length;i++){
+      var on=!!hard[i];
+      if(on){rows[i].needs_review=true;if(reason[i]||!rows[i].review_reason)rows[i].review_reason=reason[i]||rows[i].review_reason||'';}
+      else if(replace){rows[i].needs_review=false;rows[i].review_reason='';}
+    }
+  }
+  window.renderScheduleReview=function(d){
+    if(d)_rvSet(d);
+    var box=document.getElementById('sched-review');if(!box)return;
+    _rvMarkRows(!(d&&d.initial));
+    var rv=_rv.review,pend=_rv.pending||{},hard=rv?(+rv.hard||0):0,soft=rv?(+rv.soft||0):0,i;
+    var pendNames=[],k;for(k in pend)if(pend.hasOwnProperty(k)&&pend[k]&&pend[k].length)pendNames.push(k);
+    if(!rv&&!pendNames.length){box.style.display='none';box.innerHTML='';if(typeof _schedRenderTable==='function')_schedRenderTable();return;}
+    var h='<div class="sr-head"><span class="sr-k">Rules check</span>';
+    if(hard)h+='<span class="sr-chip bad"><span class="hb-num">'+hard+'</span> hard</span>';
+    if(soft)h+='<span class="sr-chip warn"><span class="hb-num">'+soft+'</span> soft</span>';
+    if(rv&&!hard&&!soft)h+='<span class="sr-chip good">&#10003; every rule kept</span>';
+    var meta=[];
+    if(_rv.gen!==null&&_rv.gen!==undefined&&_rv.gen!=='')meta.push('generated in <span class="hb-num">'+Math.round(+_rv.gen)+'s</span>');
+    if(_rv.chunked)meta.push('generated in parts \u2014 the roster was too large for one pass');
+    if(meta.length)h+='<span class="sr-meta">'+meta.join(' &middot; ')+'</span>';
+    h+='</div>';
+    var lines=(rv&&rv.lines)||[];
+    if(lines.length){
+      h+='<div>';
+      for(i=0;i<lines.length;i++){var ln=String(lines[i]||'');var warn=ln.charAt(0)==='⚠';h+='<div class="sr-line'+(warn?' warn':'')+'"><span class="d"></span><span>'+esc(ln)+'</span></div>';}
+      h+='</div>';
+    }
+    if(_rv.fixes.length){
+      h+='<div class="sr-grp"><div class="sr-k">Fixed by Cavnar AI</div>';
+      for(i=0;i<_rv.fixes.length;i++){var f=_rv.fixes[i]||{};h+='<div class="sr-line fix"><span class="d"></span><span><b>'+esc(f.from)+'</b> <span class="arrow">&rarr;</span> <b>'+esc(f.to)+'</b>, '+esc(_rvWhen(_rvRow(f.index)))+' &mdash; '+esc(f.reason||f.kind||'')+'</span></div>';}
+      h+='</div>';
+    }
+    if(_rv.unfixed.length){
+      h+='<div class="sr-grp"><div class="sr-k">Needs a human</div>';
+      for(i=0;i<_rv.unfixed.length;i++){var u=_rv.unfixed[i]||{};h+='<div class="sr-line bad"><span class="d"></span><span><b>'+esc(u.employee)+'</b>, '+esc(_rvWhen(_rvRow(u.index)))+' &mdash; '+esc(u.reason||'nobody legal could take it')+'</span></div>';}
+      h+='</div>';
+    }
+    if(pendNames.length){
+      var parts=[];
+      for(i=0;i<pendNames.length;i++){var ds=pend[pendNames[i]]||[],dd=[],j;for(j=0;j<ds.length;j++)dd.push(mdy(ds[j]));parts.push(esc(pendNames[i])+' ('+dd.join(', ')+')');}
+      h+='<div class="sr-soft"><b>Time off still waiting for an answer</b> &mdash; the draft may use these days: '+parts.join('; ')+'. Answer it in Time off above and regenerate.</div>';
+    }
+    if(hard&&(window._schedRows||[]).length){
+      h+='<div class="sr-actions"><button type="button" class="cbtn cbtn-soft cbtn-sm" onclick="applyScheduleFixes(this)">Apply fixes</button><span class="sr-note">Puts somebody legal on every row that breaks a hard rule. You still choose to save.</span></div>';
+    }
+    box.innerHTML=h;box.style.display='block';
+    if(typeof _schedRenderTable==='function')_schedRenderTable();
+  };
+  window.applyScheduleFixes=function(btn){
+    var rows=window._schedRows||[];if(!rows.length)return;
+    var done=busy(btn,'Fixing…');
+    jsend('/api/labor/schedule/apply-fixes',{rows:rows},function(d){
+      done();
+      if(!d.ok){toast(d.error||'Could not apply the fixes','error');return;}
+      window._schedRows=d.rows||rows;
+      var i,ov=window._schedOverrides||{};
+      for(i=0;i<(d.fixes||[]).length;i++)ov[d.fixes[i].index]=true;
+      window._schedOverrides=ov;
+      if(typeof renderShiftQuality==='function')renderShiftQuality(d.quality,d.what_if);
+      renderScheduleReview({review:d.review,violations:d.violations,fixes:d.fixes||[],unfixed:d.unfixed||[]});
+      if(typeof _schedSetDirty==='function'){_schedSetDirty(true);_setQualityState('edited');}
+      var n=(d.fixes||[]).length;
+      toast(n?(n+' shift'+(n===1?'':'s')+' fixed — save to keep it'):'Nothing could be fixed automatically',n?'success':'error');
+    });
+  };
+
+  // One toggle for the four rows under the schedule, each loading on first open.
+  var _lbLoaded={};
+  function _lbToggle(key,loader,label){
+    var p=document.getElementById(key+'-panel'),b=document.getElementById(key+'-toggle-btn');if(!p)return;
+    var open=p.style.display==='none';p.style.display=open?'':'none';
+    if(b)b.textContent=open?'Close ↑':label;
+    if(open&&loader)loader();
+  }
+  function _lbOpts(list,current,labels){var o='',i;for(i=0;i<list.length;i++)o+='<option value="'+esc(list[i])+'"'+(list[i]===current?' selected':'')+'>'+esc((labels||{})[list[i]]||list[i])+'</option>';return o;}
+  function _lbSw(field,on,ro){return '<label class="ac-switch"><input type="checkbox" data-rst-f="'+field+'"'+(on?' checked':'')+(ro?' disabled':'')+'><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label>';}
+
+  // ── Roster & settings ──
+  var _roster=null,_rosterOpen={};
+  var _EMP_LABELS={full:'Full time',part:'Part time'};
+  var _DP_LABELS={any:'any',morning:'morning',night:'night',off:'off'};
+  window.toggleRosterPanel=function(){_lbToggle('roster',loadRoster,'Manage ↓');};
+  window.loadRoster=function(){
+    jget('/api/labor/roster',function(d){
+      var el=document.getElementById('roster-body');if(!el)return;
+      if(!d.ok){el.innerHTML='<div class="hb-empty">'+esc(d.error||'Could not load the roster.')+'</div>';return;}
+      _roster=d;_lbLoaded.roster=true;renderRoster();
+    });
+  };
+  function _rstActive(e){var st=e.settings||{};return st.active!==false&&e.active!==false;}
+  function _rstActiveNames(){var out=[],i,list=(_roster&&_roster.roster)||[];for(i=0;i<list.length;i++)if(_rstActive(list[i]))out.push(list[i].name);return out;}
+  function _rstRel(r){
+    if(!r||!r.shifts)return '<span class="rst-rel" style="color:var(--ink3)" title="No shift records yet">—</span>';
+    var pct=Math.round((+r.no_show_rate||0)*100);
+    return '<span class="rst-rel '+(pct>=10?'bad':(pct===0?'good':''))+'" title="'+r.shifts+' shift'+(r.shifts===1?'':'s')+' on record'+(r.short_rate?' · '+Math.round(r.short_rate*100)+'% cut short':'')+'">'+pct+'% no-show</span>';
+  }
+  window.renderRoster=function(){
+    var d=_roster,el=document.getElementById('roster-body');if(!d||!el)return;
+    var ro=!d.can_edit,list=d.roster||[],ch=d.choices||{},i,active=0;
+    var days=ch.days||_RV_DAYS,types=ch.employment_type||['full','part'],dps=ch.daypart||['any','morning','night','off'];
+    for(i=0;i<list.length;i++)if(_rstActive(list[i]))active++;
+    var chip=document.getElementById('roster-chip');if(chip)chip.textContent=list.length?active+' on the roster':'';
+    if(!list.length){el.innerHTML='<div class="hb-empty">The roster fills from your shifts file and the Operational Score list above — add a person there and they show up here.</div>';_rstPairs();return;}
+    var h=(ro?'<div class="lb2-ro">Your login can view the team but not change their settings.</div>':'')
+      +'<div style="overflow-x:auto"><table class="rst-tbl"><thead><tr><th>Name</th><th>Score</th><th>Reliability</th><th>On roster</th><th>Type</th><th>Min h</th><th>Max h</th><th>Under 18</th></tr></thead><tbody>';
+    for(i=0;i<list.length;i++){
+      var e=list[i],st=e.settings||{},on=_rstActive(e),open=!!_rosterOpen[e.name],nm=esc(e.name);
+      h+='<tr class="'+(on?'':'off')+(open?' open':'')+'" data-rst="'+nm+'">'
+        +'<td class="nm" data-rst-toggle="'+nm+'">'+nm+'<span class="car">&#9662;</span><small>'+esc(e.role||'')+(on?'':((e.role?' · ':'')+'not on the roster'))+'</small></td>'
+        +'<td>'+(e.score?'<span class="rst-score" title="Operational Score">'+esc(e.score)+'</span>':'<span class="rst-score none" title="Not rated yet">—</span>')+'</td>'
+        +'<td>'+_rstRel(e.reliability)+'</td>'
+        +'<td>'+_lbSw('active',on,ro)+'</td>'
+        +'<td><select class="ac-select" data-rst-f="employment_type" aria-label="Employment type"'+(ro?' disabled':'')+'>'+_lbOpts(types,st.employment_type||types[0],_EMP_LABELS)+'</select></td>'
+        +'<td><input type="number" class="ac-input ac-num hrs" data-rst-f="min_hours" min="0" max="80" step="1" value="'+(st.min_hours==null?'':esc(st.min_hours))+'" placeholder="—" aria-label="Minimum hours"'+(ro?' disabled':'')+'></td>'
+        +'<td><input type="number" class="ac-input ac-num hrs" data-rst-f="max_hours" min="0" max="80" step="1" value="'+(st.max_hours==null?'':esc(st.max_hours))+'" placeholder="—" aria-label="Maximum hours"'+(ro?' disabled':'')+'></td>'
+        +'<td>'+_lbSw('is_minor',!!st.is_minor,ro)+'</td></tr>';
+      if(open){
+        var av=st.daypart_availability||{},j;
+        h+='<tr class="rst-grid" data-rst="'+nm+'"><td colspan="8"><div class="rst-days">';
+        for(j=0;j<days.length;j++){var v=av[days[j]]||'any';h+='<div><div class="dy">'+esc(days[j].slice(0,3))+'</div><select class="ac-select '+esc(v)+'" data-rst-day="'+esc(days[j])+'" aria-label="'+esc(days[j])+'"'+(ro?' disabled':'')+'>'+_lbOpts(dps,v,_DP_LABELS)+'</select></div>';}
+        h+='</div><div class="rst-cap">any = either shift &middot; morning / night = only that one &middot; off = never that day'+(e.last_worked?' &middot; last worked '+esc(mdy(e.last_worked)):'')+(e.can_close?' &middot; can close':'')+'</div></td></tr>';
+      }
+    }
+    el.innerHTML=h+'</tbody></table></div>';
+    _rstPairs();
+  };
+  function _rstFind(name){var list=(_roster&&_roster.roster)||[],i;for(i=0;i<list.length;i++)if(list[i].name===name)return list[i];return null;}
+  function _rstSave(name,patch,after){
+    patch.employee_name=name;
+    jsend('/api/labor/staff-settings',patch,function(d){
+      if(!d.ok){toast(d.error||'Could not save that','error');renderRoster();return;}
+      var e=_rstFind(name);
+      if(e){var s=d.settings||{},k;e.settings=e.settings||{};for(k in s)if(s.hasOwnProperty(k))e.settings[k]=s[k];if(s.active!==undefined)e.active=s.active;}
+      toast('Saved','success');
+      if(after)after();
+    });
+  }
+  document.addEventListener('change',function(ev){
+    var t=ev.target;if(!t||!t.getAttribute)return;
+    var body=document.getElementById('roster-body');if(!body||!body.contains(t))return;
+    var tr=t;while(tr&&tr.tagName!=='TR')tr=tr.parentNode;
+    if(!tr)return;
+    var name=tr.getAttribute('data-rst');if(!name)return;
+    var f=t.getAttribute('data-rst-f'),day=t.getAttribute('data-rst-day'),patch={};
+    if(f==='active'||f==='is_minor')patch[f]=!!t.checked;
+    else if(f==='min_hours'||f==='max_hours')patch[f]=t.value===''?null:+t.value;
+    else if(f==='employment_type')patch[f]=t.value;
+    else if(day){
+      var sels=tr.querySelectorAll('[data-rst-day]'),map={},i;
+      for(i=0;i<sels.length;i++)map[sels[i].getAttribute('data-rst-day')]=sels[i].value;
+      patch.daypart_availability=map;
+      t.className='ac-select '+t.value;
+    } else return;
+    _rstSave(name,patch,f==='active'?renderRoster:null);
+  });
+  document.addEventListener('click',function(ev){
+    var t=ev.target;if(!t||!t.getAttribute)return;
+    var el=t;while(el&&el.getAttribute&&el.getAttribute('data-rst-toggle')===null)el=el.parentNode;
+    if(!el||!el.getAttribute)return;
+    var name=el.getAttribute('data-rst-toggle');if(name===null)return;
+    _rosterOpen[name]=!_rosterOpen[name];renderRoster();
+  });
+  function _rstPairs(){
+    var d=_roster,el=document.getElementById('roster-pairs'),fm=document.getElementById('roster-pair-form');if(!el||!fm)return;
+    var pairs=(d&&d.pairs)||[],ro=!(d&&d.can_edit),i,h='';
+    if(!pairs.length)h='<div class="hb-empty">No pairings yet. A pair to prefer shares shifts when it can; a pair to keep apart never does.</div>';
+    for(i=0;i<pairs.length;i++){var p=pairs[i];
+      h+='<div class="pr"><b>'+esc(p.a)+'</b><span class="kd '+esc(p.kind)+'">'+(p.kind==='prefer'?'prefer':'keep apart')+'</span><b>'+esc(p.b)+'</b>'+(p.note?'<span class="nt">'+esc(p.note)+'</span>':'')
+        +(ro?'':'<button type="button" class="cbtn cbtn-icon cbtn-text cbtn-danger cbtn-sm x" title="Remove pairing" aria-label="Remove pairing" onclick="deleteStaffPair('+(+p.id)+',this)">✕</button>')+'</div>';
+    }
+    el.innerHTML=h;
+    if(ro){fm.innerHTML='';return;}
+    var names=_rstActiveNames();
+    if(names.length<2){fm.innerHTML='<div class="ac-note">Two people on the roster and you can pair them.</div>';return;}
+    fm.innerHTML='<div class="lb2-form"><div class="ac-field"><label>Person</label><select class="ac-select" id="pair-a">'+_lbOpts(names,names[0])+'</select></div>'
+      +'<div class="ac-field"><label>With</label><select class="ac-select" id="pair-b">'+_lbOpts(names,names[1])+'</select></div>'
+      +'<div class="ac-field"><label>Together</label><select class="ac-select" id="pair-kind"><option value="prefer">Prefer</option><option value="avoid">Keep apart</option></select></div>'
+      +'<div class="ac-field w"><label>Note</label><input class="ac-input" id="pair-note" maxlength="120" placeholder="e.g. trains well together"></div>'
+      +'<button type="button" class="cbtn cbtn-secondary" onclick="addStaffPair(this)">Add pairing</button></div>';
+  }
+  window.addStaffPair=function(btn){
+    var a=document.getElementById('pair-a').value,b=document.getElementById('pair-b').value;
+    if(a===b){toast('Pick two different people','error');return;}
+    var done=busy(btn,'Saving…');
+    jsend('/api/labor/staff-pairs',{a:a,b:b,kind:document.getElementById('pair-kind').value,note:document.getElementById('pair-note').value},function(d){
+      done();if(!d.ok){toast(d.error||'Could not save that pairing','error');return;}
+      _roster.pairs=d.pairs||[];_rstPairs();toast('Pairing saved','success');
+    });
+  };
+  window.deleteStaffPair=function(id,btn){
+    var done=busy(btn,'');
+    jsend('/api/labor/staff-pairs/'+id,{},function(d){done();if(!d.ok){toast(d.error||'Could not remove that','error');return;}_roster.pairs=d.pairs||[];_rstPairs();toast('Pairing removed','success');},'DELETE');
+  };
+
+  // ── Scheduling rules ──
+  var _rules=null;
+  var _RULE_FIELDS=[
+    ['min_rest_hours','Rest between shifts','hours'],['max_shift_hours','Longest shift','hours'],
+    ['daily_ot_hours','Daily overtime after','hours'],['meal_break_after_hours','Meal break after','hours'],
+    ['minor_latest_end','Minors finish by','time, e.g. 10:00pm'],['minor_max_daily_hours','Minors per day','hours'],
+    ['min_consecutive_days_off','Days off in a row','days'],['part_time_days_off','Part-time days off','days'],
+    ['weekly_hours_ceiling','Weekly ceiling','hours'],['notice_days','Schedule notice','days']];
+  window.toggleRulesPanel=function(){_lbToggle('rules',loadRules,'Set rules ↓');};
+  window.loadRules=function(){
+    jget('/api/labor/rules',function(d){
+      var el=document.getElementById('rules-body');if(!el)return;
+      if(!d.ok){el.innerHTML='<div class="hb-empty">'+esc(d.error||'Could not load the rules.')+'</div>';return;}
+      _rules=d;renderRules();
+    });
+  };
+  function _rulRoles(){
+    var seen={},out=[],i,k,floors=(_rules&&_rules.role_floors)||{};
+    function add(r){r=String(r||'').trim();if(!r||seen[r.toLowerCase()])return;seen[r.toLowerCase()]=1;out.push(r);}
+    for(k in floors)if(floors.hasOwnProperty(k))add(k);
+    var tr=window._teamRoles||[];for(i=0;i<tr.length;i++)add(tr[i]);
+    var rs=(_roster&&_roster.roster)||[];for(i=0;i<rs.length;i++)add(rs[i].role);
+    var rows=window._schedRows||[];for(i=0;i<rows.length;i++)add(rows[i].role);
+    return out;
+  }
+  function _rulOvChip(day,part,n,ro){
+    return '<span class="rul-ov" data-ov-day="'+esc(day)+'" data-ov-part="'+esc(part)+'" data-ov-n="'+(+n||0)+'">'+esc(day)+' '+esc(part)+' <span class="hb-num">'+(+n||0)+'</span>'
+      +(ro?'':'<button type="button" class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" data-ov-x="1" title="Remove" aria-label="Remove this day">✕</button>')+'</span>';
+  }
+  function _rulFloorHtml(role,f,ro){
+    var days=f.days||{},ovs='',dy,part;
+    for(dy in days)if(days.hasOwnProperty(dy)&&days[dy])for(part in days[dy])if(days[dy].hasOwnProperty(part))ovs+=_rulOvChip(dy,part,days[dy][part],ro);
+    return '<div class="rul-floor" data-floor-role="'+esc(role)+'"><span class="role">'+esc(role)+'</span>'
+      +'<span class="lbl">morning</span><input type="number" min="0" max="20" step="1" class="ac-input ac-num" data-floor="morning" value="'+(f.morning==null?'':esc(f.morning))+'" placeholder="0" aria-label="'+esc(role)+' mornings"'+(ro?' disabled':'')+'>'
+      +'<span class="lbl">night</span><input type="number" min="0" max="20" step="1" class="ac-input ac-num" data-floor="night" value="'+(f.night==null?'':esc(f.night))+'" placeholder="0" aria-label="'+esc(role)+' nights"'+(ro?' disabled':'')+'>'
+      +'<span class="ovs">'+ovs+(ro?'':'<span class="rul-add"><select class="ac-select" data-ov-newday aria-label="Day">'+_lbOpts(_RV_DAYS,'Saturday')+'</select><select class="ac-select" data-ov-newpart aria-label="Shift"><option value="morning">morning</option><option value="night" selected>night</option></select><input type="number" class="ac-input ac-num" data-ov-newn min="0" max="20" step="1" placeholder="n" aria-label="How many" style="width:56px"><button type="button" class="cbtn cbtn-soft cbtn-sm" data-ov-add="1">+ day</button></span>')+'</span></div>';
+  }
+  window.renderRules=function(){
+    var d=_rules,el=document.getElementById('rules-body');if(!d||!el)return;
+    var ro=!d.can_edit,rules=d.rules||{},defs=d.defaults||{},floors=d.role_floors||{},roles=_rulRoles(),i,h='';
+    var chip=document.getElementById('rules-chip');if(chip){var set=0,k;for(k in rules)if(rules.hasOwnProperty(k)&&rules[k]!=null&&rules[k]!==''&&String(rules[k])!==String(defs[k]))set++;chip.textContent=set?set+' of your own':'defaults';}
+    if(ro)h+='<div class="lb2-ro">Only the account owner can change the scheduling rules.</div>';
+    h+='<div class="rul-grid">';
+    for(i=0;i<_RULE_FIELDS.length;i++){
+      var f=_RULE_FIELDS[i],isTime=f[0]==='minor_latest_end',v=rules[f[0]],dv=defs[f[0]];
+      h+='<div class="ac-field"><label>'+esc(f[1])+'<small>'+esc(f[2])+'</small></label><input class="ac-input'+(isTime?'':' ac-num')+'" data-rule="'+f[0]+'" value="'+(v==null?'':esc(v))+'" placeholder="'+(dv==null?'not tracked':esc(dv))+'"'+(isTime?' maxlength="8"':' type="number" step="0.5" min="0"')+(ro?' disabled':'')+'></div>';
+    }
+    h+='</div>';
+    h+='<div class="lb2-sub">Role floors<small>how many of each role a morning and a night needs</small></div><div id="rul-floors">';
+    if(!roles.length)h+='<div class="hb-empty">Roles appear once your shifts carry one, or add one below.</div>';
+    for(i=0;i<roles.length;i++)h+=_rulFloorHtml(roles[i],floors[roles[i]]||{},ro);
+    h+='</div>';
+    if(!ro){
+      h+='<div class="lb2-form"><div class="ac-field"><label>Another role</label><input class="ac-input" id="rul-new-role" maxlength="40" placeholder="e.g. Host"></div><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="addRuleRole()">Add role</button></div>';
+      h+='<div class="sr-actions" style="margin-top:16px"><button type="button" class="cbtn cbtn-primary" onclick="saveRules(this)">Save rules</button><span class="ac-status" id="rules-status"></span></div>';
+    }
+    el.innerHTML=h;
+  };
+  window.addRuleRole=function(){
+    var inp=document.getElementById('rul-new-role'),box=document.getElementById('rul-floors');if(!inp||!box)return;
+    var role=inp.value.trim();if(!role)return;
+    if(box.querySelector('[data-floor-role="'+role.replace(/"/g,'\\"')+'"]')){toast('That role is already listed','error');return;}
+    var empty=box.querySelector('.hb-empty');if(empty)empty.parentNode.removeChild(empty);
+    box.insertAdjacentHTML('beforeend',_rulFloorHtml(role,{},false));inp.value='';
+  };
+  document.addEventListener('click',function(ev){
+    var t=ev.target;if(!t||!t.getAttribute)return;
+    var body=document.getElementById('rules-body');if(!body||!body.contains(t))return;
+    var el=t;while(el&&el!==body&&el.getAttribute&&el.getAttribute('data-ov-add')===null&&el.getAttribute('data-ov-x')===null)el=el.parentNode;
+    if(!el||el===body||!el.getAttribute)return;
+    if(el.getAttribute('data-ov-x')!==null){var chip=el.parentNode;chip.parentNode.removeChild(chip);return;}
+    var fl=el;while(fl&&!(fl.getAttribute&&fl.getAttribute('data-floor-role')!==null))fl=fl.parentNode;
+    if(!fl)return;
+    var day=fl.querySelector('[data-ov-newday]').value,part=fl.querySelector('[data-ov-newpart]').value,n=fl.querySelector('[data-ov-newn]').value;
+    if(n===''){toast('How many for that day?','error');return;}
+    var old=fl.querySelector('.rul-ov[data-ov-day="'+day+'"][data-ov-part="'+part+'"]');if(old)old.parentNode.removeChild(old);
+    fl.querySelector('.rul-add').insertAdjacentHTML('beforebegin',_rulOvChip(day,part,+n,false));
+    fl.querySelector('[data-ov-newn]').value='';
+  });
+  window.saveRules=function(btn){
+    var rules={},floors={},ins=document.querySelectorAll('#rules-body [data-rule]'),i;
+    for(i=0;i<ins.length;i++){var v=ins[i].value.trim();rules[ins[i].getAttribute('data-rule')]=v===''?null:(ins[i].getAttribute('data-rule')==='minor_latest_end'?v:+v);}
+    var fls=document.querySelectorAll('#rules-body .rul-floor');
+    for(i=0;i<fls.length;i++){
+      var role=fls[i].getAttribute('data-floor-role'),m=fls[i].querySelector('[data-floor="morning"]').value,nn=fls[i].querySelector('[data-floor="night"]').value,spec={},days={},j;
+      if(m!=='')spec.morning=+m;if(nn!=='')spec.night=+nn;
+      var chips=fls[i].querySelectorAll('.rul-ov');
+      for(j=0;j<chips.length;j++){var dy=chips[j].getAttribute('data-ov-day'),pt=chips[j].getAttribute('data-ov-part');days[dy]=days[dy]||{};days[dy][pt]=+chips[j].getAttribute('data-ov-n')||0;}
+      var anyDay=false;for(j in days)if(days.hasOwnProperty(j))anyDay=true;
+      if(anyDay)spec.days=days;
+      if(spec.morning!==undefined||spec.night!==undefined||anyDay)floors[role]=spec;
+    }
+    var done=busy(btn,'Saving…'),st=document.getElementById('rules-status');
+    jsend('/api/labor/rules',{rules:rules,role_floors:floors},function(d){
+      done();
+      if(!d.ok){if(st)st.textContent=d.error||'Could not save.';toast(d.error||'Could not save the rules','error');return;}
+      _rules.rules=d.rules||_rules.rules;_rules.role_floors=d.role_floors||{};
+      renderRules();toast('Rules saved','success');
+      var st2=document.getElementById('rules-status');if(st2)st2.textContent='Saved — the next draft is checked against these.';
+    });
+  };
+
+  // ── Events & reservations ──
+  var _signals=null;
+  window.toggleSignalsPanel=function(){_lbToggle('signals',loadSignals,'Add dates ↓');};
+  function _isoPlus(days){var d=new Date();d.setDate(d.getDate()+days);return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2);}
+  window.loadSignals=function(){
+    jget('/api/labor/demand-signals?start='+_isoPlus(0)+'&end='+_isoPlus(60),function(d){
+      var el=document.getElementById('signals-body');if(!el)return;
+      if(!d.ok){el.innerHTML='<div class="hb-empty">'+esc(d.error||'Could not load these dates.')+'</div>';return;}
+      _signals=d.signals||[];renderSignals();
+    });
+  };
+  window.renderSignals=function(){
+    var el=document.getElementById('signals-body');if(!el)return;
+    var list=_signals||[],i,h='';
+    var chip=document.getElementById('signals-chip');if(chip)chip.textContent=list.length?list.length+' in the next 60 days':'';
+    if(!list.length)h+='<div class="hb-empty">Nothing on the calendar for the next 60 days. A party, a block of reservations or a street fair goes here and the draft plans for it.</div>';
+    else{
+      h+='<div style="overflow-x:auto"><table class="hb-tbl dsg-tbl" style="margin-top:0"><thead><tr><th>Date</th><th>What</th><th class="r">Covers</th><th class="r">Lift</th><th></th></tr></thead><tbody>';
+      for(i=0;i<list.length;i++){var sg=list[i];var lift=sg.lift_pct==null?null:+sg.lift_pct;
+        h+='<tr style="cursor:default"><td><span class="hb-num">'+esc(mdy(sg.date))+'</span> <span style="color:var(--ink3)">'+esc(_dayShort(sg.date))+'</span></td>'
+          +'<td><span class="kd '+esc(sg.kind)+'">'+esc(sg.kind==='event'?'event':'reservations')+'</span>'+(sg.label?' '+esc(sg.label):'')+(sg.source&&sg.source!=='manual'?' <span style="font-size:11px;color:var(--ink3)">via '+esc(sg.source)+'</span>':'')+'</td>'
+          +'<td class="r">'+(sg.covers==null?'<span class="dim">—</span>':'<span class="hb-num">'+esc(sg.covers)+'</span>')+'</td>'
+          +'<td class="r">'+(lift==null?'<span class="dim">—</span>':'<span class="lift'+(lift<0?' neg':'')+'">'+(lift>0?'+':'')+lift+'%</span>')+'</td>'
+          +'<td class="r"><button type="button" class="cbtn cbtn-icon cbtn-text cbtn-danger cbtn-sm" title="Remove" aria-label="Remove this date" onclick="deleteSignal('+(+sg.id)+',this)">✕</button></td></tr>';
+      }
+      h+='</tbody></table></div>';
+    }
+    h+='<div class="lb2-form"><div class="ac-field"><label>Date</label><input type="date" class="ac-input" id="sg-date" min="'+_isoPlus(0)+'"></div>'
+      +'<div class="ac-field"><label>Kind</label><select class="ac-select" id="sg-kind"><option value="event">Event</option><option value="reservations">Reservations</option></select></div>'
+      +'<div class="ac-field w"><label>Label</label><input class="ac-input" id="sg-label" maxlength="80" placeholder="e.g. Rehearsal dinner, 40 top"></div>'
+      +'<div class="ac-field n"><label>Covers</label><input type="number" class="ac-input ac-num" id="sg-covers" min="0" step="1" placeholder="—"></div>'
+      +'<div class="ac-field n"><label>Lift %</label><input type="number" class="ac-input ac-num" id="sg-lift" min="-100" max="500" step="5" placeholder="—"></div>'
+      +'<button type="button" class="cbtn cbtn-secondary" onclick="addSignal(this)">Add date</button></div>'
+      +'<details class="fc2-import"><summary>Paste a CSV (date,covers)</summary><textarea id="sg-csv" rows="4" class="ac-input" style="width:100%;font-family:monospace;font-size:13px;margin-top:8px" placeholder="date,covers&#10;'+_isoPlus(7)+',180"></textarea><div class="fc2-count-ft"><span class="ac-status" id="sg-csv-status"></span><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="importSignals(this)">Import</button></div></details>';
+    el.innerHTML=h;
+  };
+  function _dayShort(iso){if(!iso||!/^\d{4}-\d{2}-\d{2}/.test(iso))return '';var d=new Date(+iso.slice(0,4),+iso.slice(5,7)-1,+iso.slice(8,10));return isNaN(d)?'':['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d.getDay()];}
+  function _sgResult(d){return (d.written||0)+' written'+(d.skipped?' · '+d.skipped+' skipped':'')+((d.errors||[]).length?' · '+esc(d.errors[0]):'');}
+  window.addSignal=function(btn){
+    var date=document.getElementById('sg-date').value;if(!date){toast('Pick a date','error');return;}
+    var row={date:date,kind:document.getElementById('sg-kind').value,label:document.getElementById('sg-label').value.trim()};
+    var c=document.getElementById('sg-covers').value,l=document.getElementById('sg-lift').value;
+    if(c!=='')row.covers=+c;if(l!=='')row.lift_pct=+l;
+    if(c===''&&l===''){toast('Give it covers or a lift','error');return;}
+    var done=busy(btn,'Saving…');
+    jsend('/api/labor/demand-signals',{rows:[row]},function(d){
+      done();if(!d.ok){toast(d.error||'Could not save that date','error');return;}
+      toast(d.written?'Date saved':((d.errors||[])[0]||'Nothing written'),d.written?'success':'error');loadSignals();
+    });
+  };
+  window.importSignals=function(btn){
+    var ta=document.getElementById('sg-csv'),st=document.getElementById('sg-csv-status');
+    if(!ta||!ta.value.trim()){if(st)st.textContent='Paste date,covers lines first.';return;}
+    var done=busy(btn,'Importing…');
+    jsend('/api/labor/demand-signals',{csv:ta.value},function(d){
+      done();
+      if(!d.ok){if(st)st.textContent=d.error||'Could not import.';return;}
+      if(st)st.innerHTML=_sgResult(d);
+      if(d.written){ta.value='';loadSignals();}
+    });
+  };
+  window.deleteSignal=function(id,btn){
+    var done=busy(btn,'');
+    jsend('/api/labor/demand-signals/'+id,{},function(d){done();if(!d.ok){toast(d.error||'Could not remove that','error');return;}toast('Removed','success');loadSignals();},'DELETE');
+  };
+
+  // ── Shift requests ──
+  var _requests=null;
+  window.toggleRequestsPanel=function(){_lbToggle('requests',loadShiftRequests,'Review ↓');};
+  window.loadShiftRequests=function(){
+    if(!_roster)jget('/api/labor/roster',function(d){if(d.ok){_roster=d;}renderShiftRequests();});
+    jget('/api/labor/shift-requests',function(d){
+      var el=document.getElementById('requests-body');if(!el)return;
+      if(!d.ok){el.innerHTML='<div class="hb-empty">'+esc(d.error||'Could not load shift requests.')+'</div>';return;}
+      _requests=d;renderShiftRequests();
+    });
+  };
+  function _shrWhen(r){return esc(_dayShort(r.date))+' <span class="hb-num">'+esc(mdy(r.date))+'</span> · '+esc(r.shift_start||'')+(r.shift_end?'–'+esc(r.shift_end):'')+(r.role?' · '+esc(r.role):'');}
+  window.renderShiftRequests=function(){
+    var d=_requests,el=document.getElementById('requests-body');if(!d||!el)return;
+    var pend=[],i,all=d.requests||[],open=d.open||[];
+    for(i=0;i<all.length;i++)if(all[i].status==='pending')pend.push(all[i]);
+    var chip=document.getElementById('requests-chip');if(chip)chip.textContent=pend.length?pend.length+' waiting':(open.length?open.length+' open':'');
+    var names=_rstActiveNames(),h='';
+    h+='<div class="sr-k" style="margin-bottom:4px">Waiting for an answer</div>';
+    if(!pend.length)h+='<div class="hb-clear"><span class="ok">✓</span>Nothing waiting — every request has been answered.</div>';
+    for(i=0;i<pend.length;i++){var r=pend[i];
+      h+='<div class="shr-row" data-shr="'+(+r.id)+'"><div class="who"><b>'+esc(r.employee_name)+'</b> can’t work '+_shrWhen(r)+(r.reason?'<span class="sub">“'+esc(r.reason)+'”</span>':'')+'<span class="sub">asked '+esc(ago(r.created_at))+'</span></div>'
+        +'<select class="ac-select" data-shr-rep aria-label="Who takes it"><option value="">Open it up for anyone to claim</option>'+_lbOpts(names.filter(function(n){return n!==r.employee_name;}),'')+'</select>'
+        +'<button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="decideShiftRequest('+(+r.id)+',\'deny\',this)">Deny</button>'
+        +'<button type="button" class="cbtn cbtn-success cbtn-sm" onclick="decideShiftRequest('+(+r.id)+',\'approve\',this)">Approve</button></div>';
+    }
+    h+='<div class="sr-k" style="margin:16px 0 4px">Open shifts</div>';
+    if(!open.length)h+='<div class="hb-empty">No open shifts. An approved request without a named replacement shows here until somebody claims it in the staff portal.</div>';
+    for(i=0;i<open.length;i++){var o=open[i];
+      h+='<div class="shr-row"><div class="who"><span class="shr-open"><i></i>open</span> <b>'+_shrWhen(o)+'</b><span class="sub">was '+esc(o.employee_name)+' · nobody has claimed it yet</span></div></div>';
+    }
+    el.innerHTML=h;
+  };
+  window.decideShiftRequest=function(id,decision,btn){
+    var row=btn;while(row&&!(row.getAttribute&&row.getAttribute('data-shr')))row=row.parentNode;
+    var sel=row?row.querySelector('[data-shr-rep]'):null,body={decision:decision};
+    if(decision==='approve'&&sel&&sel.value)body.replacement=sel.value;
+    var done=busy(btn,decision==='approve'?'Approving…':'Denying…');
+    jsend('/api/labor/shift-requests/'+id+'/decide',body,function(d){
+      done();
+      if(!d.ok){toast(d.error||'Could not decide that','error');return;}
+      var st=(d.request||{}).status;
+      toast(st==='covered'?'Covered by '+((d.request||{}).replacement_name||'them'):(st==='open'?'Approved — the shift is open to claim':'Denied'),'success');
+      loadShiftRequests();
+    });
+  };
+
 
   // ── Reviews ──
   window.retractR=function(id,btn){

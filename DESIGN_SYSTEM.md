@@ -441,6 +441,17 @@ day is a short page.
 | Diagnosis block | `.diag` via `renderDiagnosis(id, dg)` — cause / also fits / what would tell them apart / evidence pills / confidence. One shape for reviews, labor and marketing; renders only when `dg.cause` exists |
 | Per-check dots | `.in2-qc` (`.on` lit ember, `.off` dim) in `.in2-q` rows — one dot per run, oldest first, with an `n/asked` count |
 | Decision row | `.ac-row` + `.ac-chip` answer (`done` / `not for us` / `tracking` / `measured`) — Account → What you've decided |
+| Rules check | `.sr-panel` via `renderScheduleReview(d)` — `.sr-head` kicker + `.sr-chip` counts (`bad` hard / `warn` soft / `good` clean, `.sr-meta` for generation time), `.sr-line` rows (`.warn` for a ⚠ line, `.fix` for "Ana → Bob", `.bad` for what still needs a human), `.sr-soft` for a warning that is not a block, `.sr-actions` for the one fix button. Re-rendered from `POST /api/labor/schedule/violations` after every edit |
+| Explanation drawer | a `tr.sched-why` under a clicked `tr.sched-row` — `.k` kicker "Why <name>" on the ai tone (`--sf-ai`), then the engine's own `why` sentence, or "No facts on file for this assignment." Never a hover tooltip: the reason is a paragraph |
+| Flagged table row | `tr.needs-review` — amber wash and a 3px `--hb-warn` rail, `.rr` reason under the name. The rows the rules check names and the panel's counts must always agree |
+| Inline table edit | `tr.sched-edit` replaces the row: `.ac-select` for who (legal replacements first, "· can take it"), `.ac-input.tm` for times, `.ac-input.rl` for role, Cancel (secondary) + Done (`cbtn-soft`). Edits stage into `#sched-edit-bar` (`.on`) with Discard + Save; the primary send button is disabled until Save |
+| Publish gate | `#ps-blockers` via `_psRenderBlockers(list)` — `.sr-line.bad` per blocker, `.ack` checkbox "I've read these and want to send anyway" that enables a `cbtn-danger` Send anyway. A 403 shows the server's sentence in `--hb-bad` |
+| Roster table | `.rst-tbl` — name cell `.nm` (role + "not on the roster" in `small`, `.car` chevron), `.rst-score` disc (`.none` when unrated), `.rst-rel` reliability in the number face (`.bad` ≥10% no-show, `.good` at 0), `.ac-switch` / `.ac-select` / `.ac-input.hrs` per fact, `tr.off` dims a deactivated person. Tap the name for `tr.rst-grid` → `.rst-days` seven `.ac-select`s (`any` / `morning` / `night` / `off`, coloured by value) |
+| Pair row | `.lb2-pairs .pr` — `b` name, `.kd.prefer` / `.kd.avoid` pill, `.nt` note, `.x` remove |
+| Inline form row | `.lb2-form` — `.ac-field`s side by side (`.w` wide, `.n` narrow number) with one secondary button at the end; `.lb2-sub` is the Clash sub-heading that separates it from the list above; `.lb2-ro` is the one-line read-only notice |
+| Rules grid | `.rul-grid` of `.ac-field`s whose `placeholder` is the default and whose `label small` is the unit; `.rul-floor` per role (morning / night counts) with `.rul-ov` day-override chips and a `.rul-add` mini form |
+| Version list | `.sv-list .sv-v` — `.n` disc (v1, v2…; `.published` green), `.t` "edited by will" + `small` date, `.ln` deterministic lines; `.sv-dvp` is the "Draft vs published" block |
+| Request row | `.shr-row` — `.who` (name, when, reason, asked ago), a replacement `.ac-select`, Deny (secondary) + Approve (`cbtn-success`); `.shr-open` is the ember "open" mark on an unclaimed shift |
 
 **iOS** (`Features/…` + `DesignSystem/`)
 
