@@ -56,10 +56,13 @@ final class ScheduleHistoryViewModelTests: XCTestCase {
         let viewModel = ScheduleHistoryDetailViewModel(id: 79, client: client)
 
         // init fires a detached Task rather than something this test can
-        // await directly (see its own doc comment) — poll briefly instead
-        // of asserting immediately.
-        for _ in 0..<50 where viewModel.detail == nil && viewModel.errorMessage == nil {
-            await Task.yield()
+        // await directly (see its own doc comment), and the mocked response
+        // arrives on URLProtocol's own thread. 50 bare yields was a race it
+        // lost whenever the process was cold (and its late request then
+        // landed in whichever test ran next). Wait on a real deadline.
+        let deadline = Date().addingTimeInterval(5)
+        while viewModel.detail == nil && viewModel.errorMessage == nil && Date() < deadline {
+            try? await Task.sleep(nanoseconds: 10_000_000)
         }
 
         XCTAssertNil(viewModel.errorMessage)
