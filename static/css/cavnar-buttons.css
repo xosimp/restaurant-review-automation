@@ -162,7 +162,6 @@
 
 /* ── groups ───────────────────────────────────────────────────────────────── */
 .cbtn-row{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
-.cbtn-row-end{justify-content:flex-end}
 
 /* ── responsive & motion ──────────────────────────────────────────────────── */
 @media (max-width:640px){

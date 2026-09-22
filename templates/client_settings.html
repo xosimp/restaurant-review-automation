@@ -76,10 +76,9 @@ textarea{resize:vertical;min-height:60px}
 .save-status{font-size:12px;display:none}
 .save-ok{color:var(--green)}
 .save-err{color:var(--ember)}
-.action-menu{position:relative;display:inline-block}
-.action-menu-btn{padding:4px 10px;border-radius:4px;border:1px solid var(--paper3);background:white;font-family:'DM Sans',sans-serif;font-size:11px;font-weight:500;cursor:pointer;color:var(--ink2);transition:background .15s,box-shadow .15s,transform .15s;white-space:nowrap}
-.action-menu-btn:hover{background:var(--ink);color:white;border-color:var(--ink);box-shadow:0 2px 8px rgba(14,12,10,.18);transform:translateY(-1px)}
-.action-menu-btn:active{transform:scale(.97)}
+
+
+
 .fc-table{width:100%;border-collapse:collapse;font-size:12px}
 .fc-table th{text-align:left;padding:6px 8px;font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink3)}
 .fc-table td{padding:5px 8px;border-bottom:1px solid var(--paper2)}
@@ -240,7 +239,6 @@ textarea{resize:vertical;min-height:60px}
       </div>
     </div>
   </div>
-
 
 
   <!-- Response template library -->
@@ -599,7 +597,6 @@ textarea{resize:vertical;min-height:60px}
     </div>
   </div>
 
-
   <!-- Test email triggers -->
   <div class="section-card">
     <div class="section-hdr"><div class="section-title">Test email triggers</div></div>
@@ -672,7 +669,6 @@ var reviewsLive = {{ 'true' if restaurant.gmb_refresh_token else 'false' }};
     setInterval(checkNewReviews, 5 * 60 * 1000);
   }
 })();
-
 
 
 async function resetPassword() {
