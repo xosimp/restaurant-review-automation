@@ -5537,10 +5537,19 @@ def compute_blended_rate(shifts: list, role_rates: dict, fallback: float = 26.0)
     total_cost = 0.0
     total_hours = 0.0
     default = role_rates.get("_default", fallback)
+    # Roles match the way per-shift rates do (labor._shift_rate): case- and
+    # whitespace-insensitively. An hours cell that is not a number counts as
+    # nothing rather than raising (MOD-LAB-14).
+    by_key = {(k or "").strip().lower(): v for k, v in role_rates.items() if k != "_default"}
     for s in shifts:
-        role = s.get("role", "")
-        hrs = float(s.get("actual_hours") or s.get("scheduled_hours") or 0)
-        rate = role_rates.get(role, default)
+        role = (s.get("role") or "").strip().lower()
+        try:
+            hrs = float(s.get("actual_hours") or s.get("scheduled_hours") or 0)
+        except (TypeError, ValueError):
+            hrs = 0.0
+        if hrs != hrs or hrs < 0 or hrs == float("inf"):
+            hrs = 0.0
+        rate = by_key.get(role, default)
         total_cost += hrs * rate
         total_hours += hrs
     if not total_hours:

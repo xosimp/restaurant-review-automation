@@ -122,30 +122,25 @@ def _accepted_then_readable(world, resp):
 
 # ── A3 #23-#26: real spreadsheet shapes through the route ───────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-LAB-10: M/D/YYYY dates pass upload validation (ok=True), then every labor read raises")
 def test_an_excel_date_upload_is_refused_or_readable(world, sent):
     _accepted_then_readable(world, _upload(world, "date,employee,role,actual_hours,sales\n9/14/2026,A,Server,8,100\n"))
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-LAB-11: title-case headers pass the lowercased validation and are saved raw; analysis raises")
 def test_a_title_case_header_upload_is_refused_or_readable(world, sent):
     _accepted_then_readable(world, _upload(world, "Date,Employee,Role,Actual_Hours,Sales\n2026-09-14,A,Server,8,1000\n"))
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-LAB-11: a UTF-8 BOM (Excel 'CSV UTF-8') is refused as missing 'date' though the column is there")
 def test_a_bom_prefixed_upload_is_accepted_and_readable(world, sent):
     r = _upload(world, "﻿date,employee,role,actual_hours,sales\n2026-09-14,A,Server,8,1000\n")
     assert r.get_json()["ok"] is True
     assert labor.analyse_shifts_for_restaurant(world["rid"])["total_sales"] == 1000.0
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-LAB-11: a blank-date totals row is accepted and then analysis raises KeyError 'day'")
 def test_a_totals_row_upload_is_refused_or_readable(world, sent):
     _accepted_then_readable(world, _upload(world, "date,employee,role,actual_hours,sales\n"
                                                   "2026-09-14,A,Server,8,1000\n,Total,,8,\n"))
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-LAB-12: a `revenue` column is accepted as sales but analysis reads none, with no warning")
 def test_a_revenue_column_upload_shows_its_sales(world, sent):
     r = _upload(world, "date,employee,role,actual_hours,revenue\n2026-09-14,A,Server,8,4200\n")
     assert r.get_json()["ok"] is True
@@ -203,7 +198,6 @@ def test_an_upload_with_a_current_overtime_week_emails_the_owner(world, sent):
     assert len(_overtime_emails(sent)) == 1
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-LAB-17: the overtime email has no sent-log; re-uploading the same file re-sends it")
 def test_uploading_the_same_file_twice_sends_one_overtime_email(world, sent):
     monday = date.today() - timedelta(days=date.today().weekday())
     csv_text = _overtime_week(monday - timedelta(days=7))
@@ -212,13 +206,11 @@ def test_uploading_the_same_file_twice_sends_one_overtime_email(world, sent):
     assert len(_overtime_emails(sent)) == 1
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-LAB-17: every historical overtime week is emailed as 'in overtime this week'")
 def test_overtime_weeks_long_past_are_not_emailed_as_this_week(world, sent):
     _upload(world, _overtime_week(date(2026, 6, 1)))
     assert _overtime_emails(sent) == []
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-LAB-17: employee names from the CSV are interpolated into the email HTML unescaped")
 def test_the_overtime_email_escapes_employee_names(world, sent):
     monday = date.today() - timedelta(days=date.today().weekday())
     csv_text = _overtime_week(monday - timedelta(days=7)).replace("Marcus T.", "<a href=x>Marcus</a>")
@@ -229,7 +221,6 @@ def test_the_overtime_email_escapes_employee_names(world, sent):
 
 # ── A3 #34 / MOD-LAB-19: the labor.updated webhook ──────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-LAB-19: labor.updated reads keys analyse_shifts never returns; the payload is always nulls")
 def test_the_labor_updated_webhook_carries_the_labor_percentage(world, sent):
     _upload(world, HEADER + "2026-09-14,Monday,A,Server,11:00,17:00,6,6,1000,\n")
     payloads = [p for e, p in sent["webhook"] if e == "labor.updated"]

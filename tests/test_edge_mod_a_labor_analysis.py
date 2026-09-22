@@ -40,7 +40,6 @@ def test_one_spelling_worked_forty_five_hours_is_flagged_for_overtime():
     assert [f["employee"] for f in a["overtime_risk"] if f["status"] == "overtime"] == ["Marcus T."]
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-LAB-15: employee names are keyed raw, so case/whitespace variants split one person and hide overtime")
 def test_the_same_employee_spelled_with_case_and_whitespace_variants_is_flagged_for_overtime_once():
     names = ["Marcus T.", "marcus t.", "Marcus T. ", "MARCUS T.", "Marcus  T."]
     a = _run(H + "\n".join(f"{d},{n},Server,9,3000" for d, n in zip(WEEK, names)))
@@ -51,7 +50,6 @@ def test_the_same_employee_spelled_with_case_and_whitespace_variants_is_flagged_
 
 # ── A3 #15, #16 / MOD-LAB-13: negative, NaN and Infinity ────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-LAB-13: a negative hours row is accepted and cancels real labor")
 def test_a_negative_hours_row_does_not_cancel_a_real_shift():
     a = _run(H + "2026-09-14,A,Server,8,1000\n2026-09-14,B,Server,-8,1000\n")
     assert a["total_labor_cost"] == pytest.approx(8 * 26.0)
@@ -63,7 +61,6 @@ def test_a_negative_hours_row_does_not_cancel_a_real_shift():
     pytest.param("2026-09-14,A,Server,8,inf", id="inf-sales"),
     pytest.param("2026-09-14,A,Server,8,nan", id="nan-sales"),
 ])
-@pytest.mark.xfail(strict=True, reason="MOD-LAB-13: NaN/Infinity cells reach the result, which is not strict JSON")
 def test_a_non_finite_cell_never_reaches_the_labor_result(row):
     a = _run(H + row + "\n")
     json.dumps(a, allow_nan=False)  # iOS JSONDecoder and web JSON.parse reject NaN/Infinity
@@ -77,7 +74,6 @@ def test_a_well_formed_file_yields_a_strict_json_result():
 
 # ── A3 #17 / MOD-LAB-14: compute_blended_rate on messy cells ────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-LAB-14: compute_blended_rate float()s an hours cell with no guard; '8h' raises")
 def test_the_blended_rate_tolerates_a_non_numeric_hours_cell():
     shifts = load_shifts(csv_string=H + "2026-09-14,A,Server,8h,1000\n2026-09-14,B,Server,8,1000\n"
                                         "2026-09-15,C,Server,,1000\n")
@@ -85,7 +81,6 @@ def test_the_blended_rate_tolerates_a_non_numeric_hours_cell():
     assert rate == 15.0
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-LAB-14: compute_blended_rate matches roles exact-case while per-shift rates match case-insensitively")
 def test_the_blended_rate_matches_roles_the_way_per_shift_rates_do():
     shifts = load_shifts(csv_string=H + "2026-09-14,A,server,8,1000\n")
     rates = {"Server": 20.0, "_default": 15.0}
@@ -95,37 +90,31 @@ def test_the_blended_rate_matches_roles_the_way_per_shift_rates_do():
 
 # ── A3 #23-#26 / MOD-LAB-10, -11, -12: spreadsheet shapes ───────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-LAB-10: an M/D/YYYY date reaches an unguarded strptime and the whole analysis raises")
 def test_excel_month_day_year_dates_do_not_crash_the_analysis():
     a = _run(H + "9/14/2026,A,Server,8,100\n")
     assert a["total_labor_cost"] == pytest.approx(208.0)
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-LAB-11: title-case headers are read with lowercase keys; analysis raises KeyError 'day'")
 def test_title_case_headers_are_analysed():
     a = _run("Date,Employee,Role,Actual_Hours,Sales\n2026-09-14,A,Server,8,1000\n")
     assert a["total_sales"] == 1000.0
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-LAB-11: a UTF-8 BOM makes the first key '\\ufeffdate'; analysis raises KeyError 'day'")
 def test_a_bom_prefixed_file_is_analysed():
     a = _run("﻿date,employee,role,actual_hours,sales\n2026-09-14,A,Server,8,1000\n")
     assert a["total_sales"] == 1000.0
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-LAB-11: a blank-date totals row with no `day` column raises KeyError 'day'")
 def test_a_blank_date_totals_row_does_not_crash_the_analysis():
     a = _run(H + "2026-09-14,A,Server,8,1000\n,Total,,8,\n")
     assert a["total_sales"] == 1000.0
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-LAB-12: the upload accepts a `revenue` column but analysis never reads it")
 def test_a_revenue_column_is_read_as_sales():
     a = _run("date,employee,role,actual_hours,revenue\n2026-09-14,A,Server,8,4200\n")
     assert a["total_sales"] == 4200.0 and a["sales_data_missing"] is False
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-LAB-12: currency-formatted sales ('$4,200') fail float() and the day's sales vanish")
 def test_currency_formatted_sales_are_read():
     a = _run('date,employee,role,actual_hours,sales\n2026-09-14,A,Server,8,"$4,200"\n')
     assert a["total_sales"] == 4200.0

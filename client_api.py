@@ -2897,10 +2897,16 @@ def client_upload_data(current_user):
     if not f:
         return jsonify(ok=False, error="No file uploaded")
 
+    # Excel's "CSV UTF-8" starts with a BOM and its plain "CSV" is cp1252;
+    # both are CSVs an owner will reasonably upload.
+    _raw_csv = f.read()
     try:
-        csv_content = f.read().decode("utf-8")
-    except Exception:
-        return jsonify(ok=False, error="Could not read file — make sure it's a CSV")
+        csv_content = _raw_csv.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        try:
+            csv_content = _raw_csv.decode("cp1252")
+        except Exception:
+            return jsonify(ok=False, error="Could not read file — make sure it's a CSV")
 
     if not csv_content.strip():
         return jsonify(ok=False, error="File appears empty")
@@ -2934,6 +2940,17 @@ def client_upload_data(current_user):
     headers = [h.strip().lower() for h in (rows[0].keys() if rows else [])]
 
     if data_type == "shifts":
+        # Validated and stored in the shape the analysis reads — the same
+        # normaliser every read goes through (SEC-16, MOD-LAB-10/11/12).
+        # A refused file changes nothing: the previous dataset stays.
+        from labor import validate_shifts_csv
+        _shift_rows, _shift_errors = validate_shifts_csv(csv_content)
+        if _shift_errors:
+            _more = len(_shift_errors) - 5
+            return jsonify(ok=False, row_errors=_shift_errors[:50], error=(
+                "Some rows couldn't be read, so nothing was saved: " + " ".join(_shift_errors[:5])
+                + (f" …and {_more} more." if _more > 0 else "")))
+        headers = list(_shift_rows[0].keys())
         required = ["date", "employee", "actual_hours"]
         optional_sales = ["sales", "sales_that_day", "revenue"]
         missing = [c for c in required if c not in headers]
@@ -3006,9 +3023,15 @@ def client_upload_data(current_user):
                 print(f"[labor snapshot] {_snap_e}")
             try:
                 from webhooks import fire_webhook as _fw_labor
+                # analyse_shifts returns overall_labor_pct and per-day hours;
+                # the keys read here never existed, so every payload was
+                # nulls (MOD-LAB-19).
                 _fw_labor(restaurant_id, "labor.updated", {
-                    "labor_pct": _shift_analysis.get("labor_pct"),
-                    "total_hours": _shift_analysis.get("total_hours"),
+                    "labor_pct": _shift_analysis.get("overall_labor_pct"),
+                    "total_hours": round(sum(float((d or {}).get("actual") or 0)
+                                             for d in (_shift_analysis.get("by_day") or {}).values()), 1),
+                    "total_labor_cost": _shift_analysis.get("total_labor_cost"),
+                    "total_sales": _shift_analysis.get("total_sales"),
                 })
             except Exception:
                 pass
@@ -3044,10 +3067,25 @@ def client_upload_data(current_user):
     except Exception:
         pass  # non-fatal — data is saved, analysis will run on next load
 
-    # Overtime alert — email owner immediately when upload reveals an overtime employee
+    # Overtime alert — email owner immediately when upload reveals an overtime
+    # employee. Only this week and last (an upload of last year's history is
+    # not "in overtime this week"), and each person-week once: re-uploading
+    # the same file re-sent the email (MOD-LAB-17).
+    if _ot_flags:
+        from datetime import date as _d_ot, timedelta as _td_ot
+        _cut_ot = (_d_ot.today() - _td_ot(days=14)).isoformat()
+        _recent_ot = [f for f in _ot_flags if str(f.get("week_start") or "") >= _cut_ot]
+        _ot_flags = []
+        for _f in _recent_ot:
+            try:
+                if _ops.claim_period(f"overtime_email:{restaurant_id}", f"{_f['employee'].casefold()}:{_f.get('week_start')}"):
+                    _ot_flags.append(_f)
+            except Exception:
+                _ot_flags.append(_f)
     if _ot_flags:
         try:
             import os as _os_ot, resend as _resend_ot
+            from html import escape as _html_escape_ot   # names come from the CSV
             from models import get_restaurant as _gr_ot
             _r_ot = _gr_ot(restaurant_id)
             _key_ot = _os_ot.getenv("RESEND_API_KEY", "")
@@ -3056,8 +3094,8 @@ def client_upload_data(current_user):
                 _resend_ot.api_key = _key_ot
                 _ot_rows = "".join(
                     "<tr><td style='padding:6px 10px;border-bottom:1px solid #e0dbd0'><strong>" +
-                    f["employee"] + "</strong></td><td style='padding:6px 10px;border-bottom:1px solid #e0dbd0'>" +
-                    str(f["hours"]) + "h — week of " + f["week"] + "</td></tr>"
+                    _html_escape_ot(f["employee"]) + "</strong></td><td style='padding:6px 10px;border-bottom:1px solid #e0dbd0'>" +
+                    str(f["hours"]) + "h — week of " + _html_escape_ot(f["week"]) + "</td></tr>"
                     for f in _ot_flags
                 )
                 _resend_ot.Emails.send({
@@ -3073,7 +3111,7 @@ def client_upload_data(current_user):
                         "<p style='font-size:13px;color:#7a736a;margin:4px 0 0'>Cavnar AI Labor Monitor</p>"
                         "</div>"
                         "<p style='font-size:15px;line-height:1.6;color:#0e0c0a'>Your latest shift upload shows "
-                        + str(len(_ot_flags)) + " employee(s) in overtime this week:</p>"
+                        + str(len(_ot_flags)) + " overtime week" + ("" if len(_ot_flags) == 1 else "s") + " in the last two weeks:</p>"
                         "<table style='width:100%;border-collapse:collapse;font-size:14px;margin-bottom:16px'>"
                         "<thead><tr style='background:#f7f4ef'>"
                         "<th style='padding:6px 10px;text-align:left;font-size:11px;letter-spacing:1px;text-transform:uppercase;color:#7a736a'>Employee</th>"

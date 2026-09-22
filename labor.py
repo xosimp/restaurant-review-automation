@@ -10,12 +10,173 @@ from ai_utils import create_with_retry, extract_text, get_client, model_for
 DEFAULT_HOURLY_RATE = 26.0  # fallback if not set per client
 
 
+# Header spellings a spreadsheet or POS export uses for the columns the
+# analysis reads. Headers are lowercased and spaces become underscores first.
+_SHIFT_HEADER_ALIASES = {
+    "revenue": "sales", "net_sales": "sales", "total_sales": "sales", "daily_sales": "sales",
+    "hours": "actual_hours", "hours_worked": "actual_hours", "worked_hours": "actual_hours",
+    "name": "employee", "employee_name": "employee", "staff": "employee",
+    "position": "role", "job": "role", "start": "shift_start", "end": "shift_end",
+}
+_SHIFT_NUMERIC = ("actual_hours", "scheduled_hours", "sales", "sales_that_day", "hourly_rate")
+_SHIFT_HOURS = ("actual_hours", "scheduled_hours")
+_SHIFT_NUMBER_CEILING = 1e9        # past this a cell is garbage, not a figure
+_MAX_SHIFT_HOURS = 24.0
+_DATE_FORMATS = ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y", "%Y/%m/%d", "%m-%d-%Y", "%d-%b-%Y", "%b %d %Y")
+
+
+def _clean_number(value):
+    """A spreadsheet cell as a finite number string, or "" when it is not
+    one. "$4,200" is 4200, "8h"/"8 hrs" is 8; NaN, Infinity and garbage are
+    blank (a non-finite value reached the result and broke strict JSON on
+    both clients — MOD-LAB-13)."""
+    import math
+    raw = str(value if value is not None else "").strip()
+    if not raw:
+        return ""
+    txt = raw.replace("$", "").replace(",", "").replace("\u00a0", "").strip()
+    txt = re.sub(r"\s*(h|hr|hrs|hours)$", "", txt, flags=re.I)
+    try:
+        n = float(txt)
+    except ValueError:
+        return ""
+    if not math.isfinite(n) or abs(n) > _SHIFT_NUMBER_CEILING:
+        return ""
+    return repr(n) if n != int(n) else str(int(n))
+
+
+def _iso_date(value):
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    for fmt in _DATE_FORMATS:
+        try:
+            return datetime.strptime(raw[:len(raw)], fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    try:
+        return datetime.fromisoformat(raw[:19]).strftime("%Y-%m-%d")
+    except ValueError:
+        return None
+
+
+def normalise_shift_rows(rows: list) -> list:
+    """Every shift row in the one shape the analysis reads (SEC-16,
+    MOD-LAB-10/11/12/13/15).
+
+    Uploads were validated on lowercased headers and saved raw, so a file
+    that passed — Excel's M/D/YYYY dates, a UTF-8 BOM, Title Case headers, a
+    blank-date totals row, a `revenue` column, "$4,200" sales, a negative
+    or non-finite hours cell, one person spelled three ways — broke every
+    Labor read afterwards, or quietly lost its sales. Here: headers are
+    lowercased and aliased, dates become ISO and a row without a real date
+    is dropped, `day` is filled from the date, numbers are cleaned, negative
+    hours are blank, and each person is keyed by a case- and
+    whitespace-insensitive name spelled the way they first appear."""
+    out, spelling = [], {}
+    for row in rows or []:
+        clean = {}
+        for k, v in (row or {}).items():
+            if k is None:
+                continue
+            key = str(k).replace("\ufeff", "").strip().lower().replace(" ", "_")
+            key = _SHIFT_HEADER_ALIASES.get(key, key)
+            if key in clean and clean[key] not in (None, ""):
+                continue            # an alias never overwrites the real column
+            clean[key] = v.strip() if isinstance(v, str) else v
+        iso = _iso_date(clean.get("date"))
+        if not iso:
+            continue                # a totals or blank row is not a shift
+        clean["date"] = iso
+        if not str(clean.get("day") or "").strip():
+            clean["day"] = datetime.strptime(iso, "%Y-%m-%d").strftime("%A")
+        for col in _SHIFT_NUMERIC:
+            if col in clean:
+                clean[col] = _clean_number(clean[col])
+        for col in _SHIFT_HOURS:
+            if clean.get(col, "") != "" and not (0 <= float(clean[col]) <= _MAX_SHIFT_HOURS):
+                clean[col] = ""
+        name = " ".join(str(clean.get("employee") or "").split())
+        if name:
+            clean["employee"] = spelling.setdefault(name.casefold(), name)
+        role = " ".join(str(clean.get("role") or "").split())
+        if "role" in clean:
+            clean["role"] = role
+        out.append(clean)
+    return out
+
+
+def validate_shifts_csv(text: str) -> tuple:
+    """(rows, errors) for an upload. Every row is read the way the analysis
+    reads it, and anything the analysis would silently drop is refused with
+    its row named instead — a date that is not a date, hours that are not
+    0–24, sales that are not a non-negative figure, a cell that a
+    spreadsheet would run as a formula. A row with no date at all (a totals
+    row) is skipped, not refused."""
+    import io
+    raw_rows = list(csv.DictReader(io.StringIO((text or "").lstrip("\ufeff"))))
+    errors = []
+    for i, row in enumerate(raw_rows, start=2):
+        clean = {}
+        for k, v in (row or {}).items():
+            if k is None:
+                continue
+            key = _SHIFT_HEADER_ALIASES.get(str(k).replace("\ufeff", "").strip().lower().replace(" ", "_"),
+                                            str(k).replace("\ufeff", "").strip().lower().replace(" ", "_"))
+            clean.setdefault(key, (v or "").strip() if isinstance(v, str) else v)
+        date_raw = str(clean.get("date") or "").strip()
+        if not date_raw:
+            continue
+        if not _iso_date(date_raw):
+            errors.append(f"Row {i}: “{date_raw[:20]}” is not a date.")
+            continue
+        for col in _SHIFT_HOURS:
+            cell = str(clean.get(col) or "").strip()
+            if cell and (_clean_number(cell) == "" or not 0 <= float(_clean_number(cell)) <= _MAX_SHIFT_HOURS):
+                errors.append(f"Row {i}: {col} “{cell[:20]}” is not a number of hours between 0 and 24.")
+        for col in ("sales", "sales_that_day"):
+            cell = str(clean.get(col) or "").strip()
+            if cell and (_clean_number(cell) == "" or float(_clean_number(cell)) < 0):
+                errors.append(f"Row {i}: {col} “{cell[:20]}” is not a sales figure.")
+        for col in ("employee", "role", "notes"):
+            cell = str(clean.get(col) or "").strip()
+            if cell[:1] in ("=", "+", "@") or (cell[:1] == "-" and not cell[1:2].isdigit()):
+                errors.append(f"Row {i}: {col} starts with “{cell[:1]}”, which a spreadsheet would run as a formula.")
+    rows = normalise_shift_rows(raw_rows)
+    if not rows and not errors:
+        errors.append("No row in that file has a date we can read. Dates like 2026-09-14 or 9/14/2026 work.")
+    return rows, errors
+
+
+def normalise_shifts_csv(text: str) -> tuple:
+    """(rows, csv_text) for an uploaded or synced shifts file: the rows as
+    the analysis will read them, and the same rows re-serialised so what is
+    stored is what was validated."""
+    import io
+    text = (text or "").lstrip("\ufeff")
+    rows = normalise_shift_rows(list(csv.DictReader(io.StringIO(text))))
+    if not rows:
+        return [], ""
+    fields = []
+    for r in rows:
+        for k in r:
+            if k not in fields:
+                fields.append(k)
+    buf = io.StringIO()
+    w = csv.DictWriter(buf, fieldnames=fields, extrasaction="ignore")
+    w.writeheader()
+    w.writerows(rows)
+    return rows, buf.getvalue()
+
+
 def load_shifts(path: str = "sample_shifts.csv",
                 csv_string: str = None) -> list[dict]:
-    """Load shifts from a CSV string (client data) or bundled sample."""
+    """Load shifts from a CSV string (client data) or bundled sample, always
+    through normalise_shift_rows so data stored before the upload cleaned
+    it reads the same as new data."""
     import io
     if csv_string:
-        return list(csv.DictReader(io.StringIO(csv_string)))
+        return normalise_shift_rows(list(csv.DictReader(io.StringIO(csv_string.lstrip("\ufeff")))))
     # Bundled sample data — week of June 1-7 2026 with verified correct day names
     _SAMPLE = """date,day,employee,role,shift_start,shift_end,scheduled_hours,actual_hours,sales,notes
 2026-06-01,Monday,Marcus T.,Server,11:00,17:00,6,6.1,4200,

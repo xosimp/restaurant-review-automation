@@ -226,7 +226,6 @@ def test_an_upload_is_refused_without_a_session(world):
 
 # ── Encoding (appendix #4, #5 / SEC-26) ─────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="SEC-26: a UTF-8 BOM (Excel 'CSV UTF-8') is decoded as utf-8, so the first header reads '\\ufeffdate' and the file is refused as missing 'date'")
 def test_a_bom_prefixed_utf8_shifts_csv_is_accepted_and_readable(world):
     _login(world, world["owner"])
     r = _upload(world, "shifts", b"\xef\xbb\xbf" + GOOD_SHIFTS.encode("utf-8"))
@@ -236,7 +235,6 @@ def test_a_bom_prefixed_utf8_shifts_csv_is_accepted_and_readable(world):
     assert _total_actual_hours(analysis) == 14.0
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-26: a cp1252/Latin-1 file (e.g. 'José' from Excel on Windows) fails utf-8 decoding and is refused as 'Could not read file'")
 def test_a_cp1252_shifts_csv_is_accepted_with_its_accented_names_intact(world):
     _login(world, world["owner"])
     csv_text = SHIFTS_HEADER + "2026-09-01,Tuesday,José,Server,11:00,17:00,6,6,4000,\n"
@@ -247,7 +245,6 @@ def test_a_cp1252_shifts_csv_is_accepted_with_its_accented_names_intact(world):
 
 # ── Headers and dates (appendix #6, #7 / SEC-16) ────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="SEC-16: capitalised headers pass the lowercased validation but are saved raw; labor reads lowercase keys and analysis raises KeyError")
 def test_capitalised_headers_are_refused_or_analysable_after_upload(world):
     _login(world, world["owner"])
     csv_text = (
@@ -262,7 +259,6 @@ def test_capitalised_headers_are_refused_or_analysable_after_upload(world):
     assert _total_actual_hours(analysis) == 6.0
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-16: US M/D/YYYY dates pass validation, then analysis parses dates as %Y-%m-%d and fails")
 def test_us_month_day_year_dates_are_refused_or_parsed_after_upload(world):
     _login(world, world["owner"])
     csv_text = (
@@ -280,7 +276,6 @@ def test_us_month_day_year_dates_are_refused_or_parsed_after_upload(world):
 
 # ── Numbers (appendix #8 / SEC-16) ──────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="SEC-16: non-finite, negative and absurd numbers pass validation and are saved, poisoning labor analysis")
 @pytest.mark.parametrize("column,value", [
     ("actual_hours", "nan"),
     ("actual_hours", "inf"),
@@ -301,7 +296,6 @@ def test_a_shifts_file_with_an_unusable_number_is_refused_and_the_previous_datas
     assert _stored(world) == GOOD_SHIFTS
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-16: a saved NaN/inf reaches analysis and yields labor_pct=inf, which json.dumps writes as 'Infinity' (invalid JSON)")
 def test_labor_analysis_of_a_saved_file_never_emits_non_finite_numbers(world):
     bad = (
         SHIFTS_HEADER
@@ -327,7 +321,6 @@ def test_a_valid_re_upload_replaces_the_current_dataset(world):
     assert _stored(world) == newer
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-16: a file whose dates analysis cannot read is accepted and overwrites the previous good dataset with no version kept")
 def test_a_shifts_file_whose_dates_cannot_be_read_is_refused_and_the_previous_dataset_kept(world):
     _login(world, world["owner"])
     assert _upload(world, "shifts", GOOD_SHIFTS).get_json()["ok"] is True
@@ -355,7 +348,6 @@ def test_an_inventory_csv_with_only_the_required_columns_is_refused_or_creates_i
 
 # ── Formula-leading cells (appendix #11 / SEC-16) ───────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="SEC-16: a formula-leading cell (=HYPERLINK(...)) is stored verbatim and later exported, a CSV-injection vector")
 def test_a_formula_leading_cell_is_refused_or_stored_neutralised(world):
     _login(world, world["owner"])
     csv_text = SHIFTS_HEADER + '2026-09-01,Tuesday,"=HYPERLINK(""http://evil.test"",""x"")",Server,11:00,17:00,6,6,4000,\n'
