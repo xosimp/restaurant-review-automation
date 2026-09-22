@@ -58,13 +58,27 @@ def _daypart(r):
 # ── overtime-priced cost ───────────────────────────────────────────────────
 
 def priced_cost(rows: list, role_rates: dict, blended_rate: float, ceiling: float = 40.0,
-                base_hours: dict = None, multiplier: float = 1.5) -> dict:
-    """Dollars for the week with every hour past a person's ceiling at the
-    overtime multiplier. base_hours is what they already have in this
-    payroll week (published elsewhere or earlier); those hours are not
-    priced here but they push this week's hours into overtime sooner."""
+                base_hours: dict = None, multiplier: float = 1.5, bucket=None, daily_ot_hours: float = None) -> dict:
+    """Dollars for the week with every overtime hour at the multiplier.
+
+    Weekly overtime is counted per PAYROLL week: `bucket(date)` names the
+    payroll week a date falls in (schedule_rules.Constraints.bucket), and
+    base_hours is {name: {bucket: hours already published}} — or a plain
+    {name: hours} when there is one bucket. A Monday-Sunday draft over a
+    Wednesday payroll week is two payroll weeks, and pricing it as one read
+    26h of overtime where there were 2 (SCHED-7). Those base hours are not
+    priced here but they push this week's hours into overtime sooner.
+
+    daily_ot_hours: where daily overtime applies, the hours past it in one
+    day are overtime too — flagged by the sweep and, until now, never priced
+    (SCHED-7). An hour already paid as daily overtime does not also count
+    toward the weekly ceiling."""
     rates = {str(k).strip().lower(): float(v) for k, v in (role_rates or {}).items() if k and k != "_default"}
     blended = float(blended_rate or 0) or (sum(rates.values()) / len(rates) if rates else 0.0)
+    try:
+        daily = float(daily_ot_hours or 0)
+    except (TypeError, ValueError):
+        daily = 0.0
     per_person = {}
     for r in rows or []:
         n = (r.get("employee") or "").strip()
@@ -75,15 +89,36 @@ def priced_cost(rows: list, role_rates: dict, blended_rate: float, ceiling: floa
     straight = premium = ot_hours = 0.0
     for n, items in per_person.items():
         items.sort()
-        so_far = float((base_hours or {}).get(n.lower(), 0) or 0)
-        for _d, _s, h, rate in items:
-            room = max(0.0, float(ceiling or 0) - so_far) if ceiling else h
-            reg = min(h, room)
-            ot = h - reg
+        base = (base_hours or {}).get(n.lower(), 0) or 0
+        if isinstance(base, dict):
+            if bucket is None:
+                so_far = {"": float(sum(float(v or 0) for v in base.values()))}
+            else:
+                so_far = {k: float(v or 0) for k, v in base.items()}
+        else:
+            so_far = {"": float(base)}
+        day_used = {}
+        for d, _s, h, rate in items:
+            daily_ot = 0.0
+            if daily > 0:
+                used = day_used.get(d, 0.0)
+                daily_ot = max(0.0, h - max(0.0, daily - used))
+                day_used[d] = used + h
+            weekly_part = h - daily_ot
+            key = ""
+            if bucket is not None and d:
+                try:
+                    key = bucket(d) or ""
+                except Exception:
+                    key = ""
+            have = so_far.get(key, 0.0)
+            room = max(0.0, float(ceiling or 0) - have) if ceiling else weekly_part
+            reg = min(weekly_part, room)
+            ot = daily_ot + (weekly_part - reg)
             straight += h * rate
             premium += ot * rate * (multiplier - 1.0)
             ot_hours += ot
-            so_far += h
+            so_far[key] = have + weekly_part
     return {"straight": round(straight, 0), "overtime_premium": round(premium, 0), "overtime_hours": round(ot_hours, 1),
             "total": round(straight + premium, 0), "multiplier": multiplier}
 
@@ -423,18 +458,54 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
 
     def day_over(d):
         tgt = float((daily_targets or {}).get(d) or 0)
-        have = sum(_hours(r) for r in rows if r.get("date") == d)
+        have = sum(_hours(r) for r in rows if r.get("date") == d and id(r) not in no_show)
         return (have - tgt) if tgt else have
 
     def role_count(d, role, part):
-        return sum(1 for r in rows if r.get("date") == d and (r.get("role") or "").strip().lower() == role and _daypart(r) == part)
+        return sum(1 for r in rows if r.get("date") == d and (r.get("role") or "").strip().lower() == role
+                   and _daypart(r) == part and id(r) not in no_show)
+
+    # Rows that will not stand — a person on time off, off the roster,
+    # double-booked — are not coverage and not hours anyone works; they are
+    # judged before the trim so it never removes a legal row to pay for one
+    # (SCHED-23). The sweep flags them afterwards.
+    no_show = set()
+    if constraints is not None:
+        try:
+            from schedule_rules import violations as _viol
+            no_show = {id(rows[v["index"]]) for v in _viol(rows, constraints) if v.get("no_show")}
+        except Exception:
+            no_show = set()
+    if no_show:
+        total = sum(_hours(r) for r in rows if id(r) not in no_show)
+        if total <= budget * (1 + tolerance):
+            return rows, [], 0.0
+
+    def person_hours(name):
+        low = (name or "").strip().lower()
+        return sum(_hours(x) for x in rows if (x.get("employee") or "").strip().lower() == low and id(x) not in no_show)
 
     def removable(r):
-        if r.get("needs_review"):
+        if r.get("needs_review") or id(r) in no_show:
             return False
         d, role, part = r.get("date"), (r.get("role") or "").strip().lower(), _daypart(r)
         if not (d and role):
             return False
+        # Never somebody's only shift of the week, and never under the
+        # minimum hours they asked for (SCHED-23). A row the top-up added is
+        # the pipeline's own addition, so taking it back is always allowed.
+        name = r.get("employee")
+        low = (name or "").strip().lower()
+        added = "top-up" in (r.get("notes") or "").lower()
+        if not added and sum(1 for x in rows if (x.get("employee") or "").strip().lower() == low and id(x) not in no_show) <= 1:
+            return False
+        if constraints is not None:
+            try:
+                mn = constraints.min_hours(name)
+            except Exception:
+                mn = None
+            if mn and person_hours(name) - _hours(r) < float(mn) - 0.05:
+                return False
         try:
             day = datetime.strptime(d, "%Y-%m-%d").strftime("%A")
         except (ValueError, TypeError):

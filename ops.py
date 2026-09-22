@@ -225,21 +225,30 @@ def _async_conn():
     return conn
 
 
-def sweep_stale_jobs(older_than_minutes: int = 10) -> int:
-    """Fail any job still pending long after it could plausibly finish.
+# The longest a generation can plausibly run: a very large roster is written
+# in a dozen or more calls of a minute or two each. A job still pending past
+# this is dead, whatever process owned it.
+JOB_MAX_MINUTES = 45
+
+
+def sweep_stale_jobs(older_than_minutes: int = 0) -> int:
+    """Fail every job still pending from before this process started.
 
     Schedule generation runs on a daemon thread inside the web process, and
     a daemon thread is killed at interpreter exit without running its
     finally blocks — so a deploy, crash or restart mid-generation left the
     row pending forever, the client polling until it timed out, and a paid
     model call lost with no error anybody could see. Called at boot, which
-    is exactly when the previous process was the one that died.
+    is exactly when the previous process was the one that died — so its
+    jobs are dead whatever their age. Only jobs older than ten minutes used
+    to be swept, and a press in the next ten minutes joined the dead one
+    (SCHED-25 / DATA-9).
     """
     try:
         conn = _async_conn()
         cur = conn.execute(
             "UPDATE async_jobs SET status='error', result_json=? "
-            "WHERE status='pending' AND created_at < datetime('now', ?)",
+            "WHERE status='pending' AND created_at <= datetime('now', ?)",
             ('{"ok": false, "error": "Generation was interrupted — please try again."}',
              f"-{int(older_than_minutes)} minutes"))
         conn.commit()
@@ -253,11 +262,13 @@ def sweep_stale_jobs(older_than_minutes: int = 10) -> int:
         return 0
 
 
-def active_job(kind, restaurant_id, max_age_minutes: int = 10):
+def active_job(kind, restaurant_id, max_age_minutes: int = JOB_MAX_MINUTES):
     """The job_id of a pending job of this kind for this restaurant, started
     within `max_age_minutes`, or None. Two owners pressing Generate at once
     used to produce two model calls and two history rows; the second press
-    now joins the first job and polls it."""
+    now joins the first job and polls it. The window is the longest a
+    generation can run (a big roster outlived the old ten minutes, SCHED-24);
+    a job a restart killed is failed at boot, so it is never joined."""
     try:
         conn = _async_conn()
         row = conn.execute(
@@ -268,6 +279,34 @@ def active_job(kind, restaurant_id, max_age_minutes: int = 10):
         return row["job_id"] if row else None
     except Exception:
         return None
+
+
+def claim_async_job(job_id, kind, restaurant_id, max_age_minutes: int = JOB_MAX_MINUTES):
+    """(job_id, joined): start `job_id` as this restaurant's one pending job
+    of `kind`, or join the one already running — checked and inserted in one
+    write transaction. active_job then start_async_job was check-then-insert,
+    so two presses at the same instant started two paid generations
+    (SCHED-25 / DATA-23)."""
+    conn = _async_conn()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT job_id FROM async_jobs WHERE kind=? AND restaurant_id=? AND status='pending' "
+            "AND created_at >= datetime('now', ?) ORDER BY created_at DESC LIMIT 1",
+            (str(kind), restaurant_id, f"-{int(max_age_minutes)} minutes")).fetchone()
+        if row:
+            conn.rollback()
+            return row["job_id"], True
+        conn.execute("INSERT OR REPLACE INTO async_jobs (job_id, kind, restaurant_id, status, result_json)"
+                     " VALUES (?,?,?, 'pending', NULL)", (str(job_id), str(kind), restaurant_id))
+        conn.execute("DELETE FROM async_jobs WHERE created_at < datetime('now', ?)", (f"-{_ASYNC_JOB_TTL_HOURS} hours",))
+        conn.commit()
+        return str(job_id), False
+    except BaseException:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def start_async_job(job_id, kind, restaurant_id):
@@ -328,8 +367,9 @@ def read_async_job(job_id, restaurant_id=None):
     try:
         conn = _async_conn()
         row = conn.execute(
-            "SELECT job_id, restaurant_id, status, result_json FROM async_jobs WHERE job_id=?",
-            (str(job_id),),
+            "SELECT job_id, restaurant_id, status, result_json, "
+            "created_at < datetime('now', ?) AS overdue FROM async_jobs WHERE job_id=?",
+            (f"-{JOB_MAX_MINUTES} minutes", str(job_id)),
         ).fetchone()
         if not row:
             conn.close()
@@ -341,6 +381,12 @@ def read_async_job(job_id, restaurant_id=None):
             conn.close()
             return None
         status = row["status"]
+        if status == "pending" and row["overdue"]:
+            # Past any real generation: its result was never stored (the
+            # write failed, or the process died after the boot sweep ran).
+            # Polling 'pending' forever helps nobody (DATA-9).
+            conn.close()
+            return {"status": "error", "result": {"ok": False, "error": "Generation didn't finish — please try again."}}
         if status == "pending":
             conn.close()
             return {"status": "pending", "result": None}
@@ -527,6 +573,10 @@ _RETENTION_DAYS = {
     "ai_visibility_query_runs": int(os.getenv("RETAIN_AIVIS_QUERIES_DAYS", "365")),
     "competitor_snapshots":     int(os.getenv("RETAIN_COMPETITOR_SNAPSHOTS_DAYS", "365")),
     "ai_visibility_runs":       int(os.getenv("RETAIN_AIVIS_RUNS_DAYS", "730")),
+    # One row each time a schedule recommendation is shown, accepted or
+    # dismissed; a year is plenty to know which kinds an owner ignores
+    # (SCHED-27).
+    "schedule_recommendation_events": int(os.getenv("RETAIN_SCHED_RECS_DAYS", "365")),
 }
 
 # Each table's own timestamp column — they do not agree on a name.

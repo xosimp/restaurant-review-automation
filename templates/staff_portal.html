@@ -264,7 +264,8 @@
   // roster can take. The server decides whether a claim is legal (rest,
   // hours, availability) and says why when it is not. ES5 only.
   var REQ_STATUS = {pending: 'Waiting for an answer', open: 'Approved \u2014 open for someone to claim',
-                    denied: 'Not approved', covered: 'Covered', withdrawn: 'Withdrawn'};
+                    approved: 'Approved \u2014 waiting on your colleague to accept',
+                    denied: 'Not approved', declined: 'Your colleague said no', covered: 'Covered', withdrawn: 'Withdrawn'};
   function fmtShort(iso) {
     if (!iso || !/^\d{4}-\d{2}-\d{2}/.test(iso)) return esc(iso || '');
     var d = new Date(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10));
@@ -273,7 +274,21 @@
   }
   function reqRender(d) {
     var el = $('req-body'); if (!el) return;
-    var mine = d.requests || [], open = d.open || [], html = '', i;
+    var mine = d.requests || [], open = d.open || [], asks = d.asks || [], html = '', i;
+    // A colleague asked to trade with you: nothing moves unless you say yes.
+    if (asks.length) {
+      html += '<h2>Asked of you</h2>';
+      for (i = 0; i < asks.length; i++) {
+        var a = asks[i];
+        html += '<div class="sr-row"><div class="when"><span class="kind">Swap</span>' + esc(a.employee_name) + '\u2019s ' + fmtShort(a.date) + ' ' + esc(a.shift_start)
+              + ' for your ' + fmtShort(a.target_date) + ' ' + esc(a.target_start || '') + '</div>'
+              + (a.reason ? '<div class="meta">' + esc(a.reason) + '</div>' : '')
+              + '<div class="meta">' + (a.status === 'approved' ? 'Your manager approved it \u2014 it goes ahead if you accept.' : 'Your manager decides too; both shifts move only when you and they say yes.') + '</div>'
+              + '<div class="act"><button type="button" class="cbtn cbtn-primary cbtn-sm" data-swap-accept="' + a.id + '">Accept</button>'
+              + '<button type="button" class="cbtn cbtn-text cbtn-sm" data-swap-decline="' + a.id + '">Decline</button></div>'
+              + '<div class="sr-msg" id="ask-msg-' + a.id + '"></div></div>';
+      }
+    }
     if (mine.length) {
       html += '<h2>My requests</h2>';
       for (i = 0; i < mine.length; i++) {
@@ -287,7 +302,7 @@
         html += '<div class="sr-row"><div class="when">' + when + '</div>'
               + (q.role || q.reason ? '<div class="meta">' + esc(q.role || '') + (q.role && q.reason ? ' \u00B7 ' : '') + esc(q.reason || '') + '</div>' : '')
               + '<div class="st ' + esc(st) + '">' + esc(label) + '</div>';
-        if (st === 'pending' || st === 'open') {
+        if (st === 'pending' || st === 'open' || st === 'approved') {
           html += '<div class="act"><button type="button" class="cbtn cbtn-text cbtn-sm" data-withdraw="' + q.id + '">Withdraw</button></div>';
         }
         html += '</div>';
@@ -356,8 +371,20 @@
   });
   document.addEventListener('click', function (ev) {
     var el = ev.target;
-    while (el && el !== document.body && !(el.getAttribute && (el.getAttribute('data-drop-date') || el.getAttribute('data-withdraw') || el.getAttribute('data-claim') || el.getAttribute('data-swap-date') || el.getAttribute('data-swap-send') || el.getAttribute('data-swap-cancel')))) el = el.parentNode;
+    while (el && el !== document.body && !(el.getAttribute && (el.getAttribute('data-drop-date') || el.getAttribute('data-withdraw') || el.getAttribute('data-claim') || el.getAttribute('data-swap-date') || el.getAttribute('data-swap-send') || el.getAttribute('data-swap-cancel') || el.getAttribute('data-swap-accept') || el.getAttribute('data-swap-decline')))) el = el.parentNode;
     if (!el || !el.getAttribute) return;
+    var acc = el.getAttribute('data-swap-accept'), dec = el.getAttribute('data-swap-decline');
+    if (acc || dec) {
+      var askId = acc || dec, askMsg = $('ask-msg-' + askId);
+      if (askMsg) askMsg.textContent = '';
+      el.disabled = true;
+      post('/staff/api/shift-requests/' + askId + '/respond', {accept: !!acc}).then(function (d) {
+        if (!d.ok) { el.disabled = false; if (askMsg) askMsg.textContent = d.error || 'Could not answer that.'; return; }
+        loadRequests();
+        fetch('/staff/api/shifts').then(function (r) { return r.json(); }).then(renderShifts).catch(function () {});
+      }).catch(function () { el.disabled = false; if (askMsg) askMsg.textContent = 'Could not answer that \u2014 check your connection.'; });
+      return;
+    }
     var drop = el.getAttribute('data-drop-date'), wd = el.getAttribute('data-withdraw'), cl = el.getAttribute('data-claim');
     var sw = el.getAttribute('data-swap-date'), swSend = el.getAttribute('data-swap-send'), swCancel = el.getAttribute('data-swap-cancel');
     if (sw) { openSwapPicker(sw, el.getAttribute('data-swap-start')); return; }
@@ -368,7 +395,7 @@
       if (!c || !s) { if (msg2) msg2.textContent = 'Pick a colleague and one of their shifts.'; return; }
       el.disabled = true; if (msg2) msg2.textContent = '';
       post('/staff/api/shift-requests', {kind: 'swap', date: swSend, shift_start: el.getAttribute('data-swap-start'), target_name: c.name, target_date: s.date, target_start: s.shift_start, reason: ($('swap-why-' + swSend) || {}).value || ''})
-        .then(function (d) { el.disabled = false; if (!d.ok) { if (msg2) msg2.textContent = d.error || 'Could not send that.'; return; } var sl2 = $('swap-' + swSend); if (sl2) sl2.innerHTML = '<div class="swap-pick"><div class="meta">Asked ✓ — your manager decides, and both shifts move if it’s approved.</div></div>'; loadRequests(); })
+        .then(function (d) { el.disabled = false; if (!d.ok) { if (msg2) msg2.textContent = d.error || 'Could not send that.'; return; } var sl2 = $('swap-' + swSend); if (sl2) sl2.innerHTML = '<div class="swap-pick"><div class="meta">Asked ✓ — both shifts move once your manager approves and your colleague says yes.</div></div>'; loadRequests(); })
         .catch(function () { el.disabled = false; if (msg2) msg2.textContent = 'Could not send that — check your connection.'; });
       return;
     }
@@ -470,21 +497,37 @@
     var reqs = d.requests || [];
     var html = '<h2>Time off</h2><div class="meta" style="margin-bottom:8px">Ask for specific dates. Your manager answers here, and an approved range is kept off the next schedule.</div>';
     for (var i = 0; i < reqs.length; i++) { var q = reqs[i];
-      var when = q.start_date === q.end_date ? q.start_date : (q.start_date + ' \u2013 ' + q.end_date);
+      if (q.status === 'withdrawn') continue;
+      var when = q.start_date === q.end_date ? fmtShort(q.start_date) : (fmtShort(q.start_date) + ' \u2013 ' + fmtShort(q.end_date));
       var st = q.status === 'approved' ? 'Approved' : (q.status === 'denied' ? 'Not approved' : 'Waiting for an answer');
-      html += '<div class="to-row"><span>' + esc(when) + (q.reason ? ' <span class="meta">\u00b7 ' + esc(q.reason) + '</span>' : '') + '</span><span class="to-st to-' + esc(q.status) + '">' + st + (q.decision_note ? ' \u00b7 ' + esc(q.decision_note) : '') + '</span></div>';
+      // A pending request can be taken back and asked again with the right
+      // dates (MOD-EMP-7).
+      html += '<div class="to-row"><span>' + when + (q.reason ? ' <span class="meta">\u00b7 ' + esc(q.reason) + '</span>' : '') + '</span><span class="to-st to-' + esc(q.status) + '">' + st + (q.decision_note ? ' \u00b7 ' + esc(q.decision_note) : '') + '</span>'
+            + (q.status === 'pending' ? '<button type="button" class="cbtn cbtn-text cbtn-sm" data-to-withdraw="' + (+q.id) + '">Withdraw</button>' : '') + '</div>';
     }
     html += '<div class="av-row" style="flex-wrap:wrap"><input type="date" id="to-start" aria-label="First day off"><input type="date" id="to-end" aria-label="Last day off"><input type="text" id="to-reason" maxlength="200" placeholder="Reason (optional)" style="flex:1;min-width:140px"></div>'
           + '<div class="av-row"><button type="button" class="cbtn cbtn-primary cbtn-sm" id="to-send">Request</button><span class="meta" id="to-status"></span></div>';
     el.innerHTML = html;
+    var wds = el.querySelectorAll('[data-to-withdraw]');
+    for (var w = 0; w < wds.length; w++) {
+      wds[w].onclick = function () {
+        var b = this; b.disabled = true;
+        fetch('/staff/api/time-off/' + b.getAttribute('data-to-withdraw') + '/withdraw', {method: 'POST'})
+          .then(function (r) { return r.json(); })
+          .then(function (r) { if (r.ok) { loadTimeOff(); } else { b.disabled = false; $('to-status').textContent = r.error || 'Could not withdraw that.'; } })
+          .catch(function () { b.disabled = false; });
+      };
+    }
     $('to-send').onclick = function () {
-      var st = $('to-status'); var s0 = $('to-start').value, e0 = $('to-end').value || s0;
+      var btn = this, st = $('to-status'); var s0 = $('to-start').value, e0 = $('to-end').value || s0;
       if (!s0) { st.textContent = 'Pick the first day.'; return; }
+      // One request per tap: the button is off while it is in flight.
+      btn.disabled = true;
       st.textContent = 'Sending\u2026';
       fetch('/staff/api/time-off', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({start_date: s0, end_date: e0, reason: $('to-reason').value})})
         .then(function (r) { return r.json(); })
-        .then(function (r) { if (r.ok) { loadTimeOff(); } else { st.textContent = r.error || 'Could not send.'; } })
-        .catch(function () { st.textContent = 'Could not send \u2014 check your connection.'; });
+        .then(function (r) { btn.disabled = false; if (r.ok) { loadTimeOff(); } else { st.textContent = r.error || 'Could not send.'; } })
+        .catch(function () { btn.disabled = false; st.textContent = 'Could not send \u2014 check your connection.'; });
     };
   }
   function loadTimeOff() {

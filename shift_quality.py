@@ -1728,6 +1728,10 @@ def confidence(shifts: list, signals: dict) -> dict:
         reasons.append(f"{broken} dimension {_plural(broken, 'reading')} could not be "
                        "worked out, so the score is built on less than usual.")
 
+    for label in signals.get("unmeetable_rules") or []:
+        reasons.append(f"Nobody on the roster can meet the rule \u201c{label}\u201d, so it was set aside "
+                       "rather than failing every shift it covers — rate someone to it, or change the rule.")
+
     unfixable = int(signals.get("unsatisfiable") or 0)
     if unfixable:
         score -= min(20, unfixable * 7)
@@ -1994,6 +1998,61 @@ def build_contexts(rows: list, profiles: list = None, **signals) -> list:
     return contexts
 
 
+def _rule_label(rule: dict) -> str:
+    need = int(rule.get("count") or 1)
+    role = (rule.get("role") or "").strip().lower()
+    return (f"{need} {role}{'' if need == 1 else 's'}"
+            + (" authorised to close" if (rule.get("attribute") or "").strip()
+               else f" scoring {float(rule['min_score']):g} or above"))
+
+
+def _unmeetable_rules(rows: list, signals: dict) -> dict:
+    """{id(rule): label} for leader rules nobody on the roster can meet.
+
+    The engine knows the roster and passes the rules it found unmeetable
+    (`unmeetable_leader_rules`). A caller that only says HOW MANY were
+    unmeetable (`unsatisfiable`) gets the rules that ask for a capability —
+    a minimum score, or authorised to close — nobody in that role this
+    week, or cross-trained into it, has. With neither, nothing is set aside:
+    a qualified person merely off this shift is a real miss."""
+    explicit = signals.get("unmeetable_leader_rules")
+    if explicit:
+        return {id(r): _rule_label(r) for r in (signals.get("leader_rules") or []) if r in explicit}
+    if not int(signals.get("unsatisfiable") or 0):
+        return {}
+    scores = signals.get("scores") or {}
+    flags = signals.get("leader_flags") or {}
+    if not scores and not flags:
+        return {}
+    cross = signals.get("cross_trained") or {}
+    by_role = {}
+    for r in rows or []:
+        n = (r.get("employee") or "").strip()
+        if n:
+            by_role.setdefault((r.get("role") or "").strip().lower(), set()).add(n)
+    for n, roles in cross.items():
+        for role in roles or []:
+            by_role.setdefault(str(role).strip().lower(), set()).add(n)
+    out = {}
+    for rule in signals.get("leader_rules") or []:
+        role = (rule.get("role") or "").strip().lower()
+        attribute = (rule.get("attribute") or "").strip()
+        min_score = rule.get("min_score")
+        if not role or (not attribute and min_score is None):
+            continue
+        pool = by_role.get(role, set())
+        if attribute:
+            ok = any(flags.get(n) for n in pool)
+        else:
+            try:
+                ok = any((scores.get(n) or 0) >= float(min_score) for n in pool)
+            except (TypeError, ValueError):
+                continue
+        if not ok:
+            out[id(rule)] = _rule_label(rule)
+    return out
+
+
 def score_rows(rows: list, profiles: list = None, weights: dict = None,
                **signals) -> dict:
     """One call from a finished schedule to a full evaluation.
@@ -2002,6 +2061,15 @@ def score_rows(rows: list, profiles: list = None, weights: dict = None,
     manager's live edit, and the what-if loop all go through here, so they
     can never drift apart on how a schedule is judged.
     """
+    # A leader rule nobody on the roster can ever meet (the best-rated
+    # bartender is a 4, the rule asks for a 5) is not something this week can
+    # fix: failing it capped every matching shift and made the week "weak",
+    # a publish blocker no schedule could clear (SCHED-30). It is set aside
+    # and named once, in the confidence reasons.
+    unmeetable = _unmeetable_rules(rows, signals)
+    if unmeetable:
+        signals = dict(signals)
+        signals["leader_rules"] = [r for r in (signals.get("leader_rules") or []) if id(r) not in unmeetable]
     contexts = build_contexts(rows, profiles=profiles, **signals)
     people = {(r.get("employee") or "").strip() for r in rows or []}
     people.discard("")
@@ -2018,6 +2086,7 @@ def score_rows(rows: list, profiles: list = None, weights: dict = None,
         "dropped_rows": signals.get("dropped_rows"),
         "constrained_people": len(signals.get("availability") or {}),
         "unsatisfiable": signals.get("unsatisfiable"),
+        "unmeetable_rules": sorted(set(unmeetable.values())),
     }
     result = evaluate_schedule(contexts, weights=weights, signals=conf_signals)
     result["people"] = sorted(people)
@@ -2098,6 +2167,16 @@ class _SwapIndex:
         self.ceiling = float(rules.get("weekly_ceiling") or WEEKLY_HOURS_CEILING)
         self.min_rest = float(rules.get("min_rest_hours") or 0)
         self.inactive = {str(n).lower() for n in (rules.get("inactive") or [])}
+        # The rules the violation sweep holds a finished week to, so a swap,
+        # a fix or a claim can never create a breach the sweep would flag:
+        # a minor past the latest end, a role's certification, a person's
+        # own hours window (SCHED-6).
+        self.minors = {str(n).lower() for n in (rules.get("minors") or [])}
+        self.minor_latest = rules.get("minor_latest_end")
+        self.minor_max = float(rules.get("minor_max_daily_hours") or 0)
+        self.certs = {k.lower(): {str(x).lower() for x in (v or [])} for k, v in (rules.get("certifications") or {}).items()}
+        self.role_certs = {k.lower(): {str(x).lower() for x in (v or [])} for k, v in (rules.get("role_requirements") or {}).items() if v}
+        self.windows = {k.lower(): v for k, v in (rules.get("time_windows") or {}).items() if v}
         self.hours = _weekly_hours(rows)
         self.working = set()
         self.by_role = {}
@@ -2143,24 +2222,38 @@ class _SwapIndex:
         part = daypart_of(row.get("shift_start", ""))
         if choice == "off" or (choice in ("morning", "night") and part not in ("unknown", choice)):
             return False
-        if self.min_rest:
-            s, e = _span(row)
-            if s:
-                for idx, ps, pe in self.spans_by_person.get(low, []):
-                    if idx is not None and idx == ignore_index:
-                        continue
-                    if ps >= e:
-                        gap = (ps - e).total_seconds() / 3600
-                    elif pe <= s:
-                        gap = (s - pe).total_seconds() / 3600
-                    else:
-                        return False
-                    # Same calendar date is a double shift, not a rest
-                    # breach — the rule is the overnight turnaround.
-                    if ps.date() == s.date():
-                        continue
-                    if gap < self.min_rest:
-                        return False
+        start_m, end_m = _slot_minutes(row.get("shift_start")), _slot_minutes(row.get("shift_end"))
+        if low in self.minors:
+            if self.minor_latest is not None and start_m is not None and end_m is not None \
+                    and (end_m > self.minor_latest or end_m < start_m):
+                return False
+            if self.minor_max and _row_hours(row) > self.minor_max + 0.01:
+                return False
+        need = self.role_certs.get((row.get("role") or "").strip().lower())
+        if need and not need <= (self.certs.get(low) or set()):
+            return False
+        win = (self.windows.get(low) or {}).get(day)
+        if win:
+            from schedule_rules import window_allows
+            if not window_allows(win[0], win[1], start_m, end_m)[0]:
+                return False
+        s, e = _span(row)
+        if s:
+            for idx, ps, pe in self.spans_by_person.get(low, []):
+                if idx is not None and idx == ignore_index:
+                    continue
+                if ps >= e:
+                    gap = (ps - e).total_seconds() / 3600
+                elif pe <= s:
+                    gap = (s - pe).total_seconds() / 3600
+                else:
+                    return False          # an overlap is never legal, rest rule or not
+                # Same calendar date is a double shift, not a rest
+                # breach — the rule is the overnight turnaround.
+                if not self.min_rest or ps.date() == s.date():
+                    continue
+                if gap < self.min_rest:
+                    return False
         return True
 
     def pairs(self):
@@ -2209,14 +2302,20 @@ class _SwapIndex:
             return False
         return True
 
-    def replacement_legal(self, i: int, name: str) -> bool:
-        """Could `name` take row i outright (nobody else moves)?"""
+    def replacement_legal(self, i: int, name: str, allow_double: bool = False) -> bool:
+        """Could `name` take row i outright (nobody else moves)?
+
+        allow_double: a person already working that date may still take a
+        leg that does not overlap theirs (a lunch server picking up the
+        dinner shift — SCHED-34). The automatic passes keep refusing it so
+        they never build doubles on their own; a person or a manager
+        choosing one is different."""
         row = self.rows[i]
         low = (name or "").strip().lower()
         current = (row.get("employee") or "").strip().lower()
         if not low or low == current:
             return False
-        if (low, row.get("date")) in self.working:
+        if not allow_double and (low, row.get("date")) in self.working:
             return False
         if not self.person_fits(name, row):
             return False
@@ -2439,6 +2538,11 @@ def apply_fixes(rows: list, violations: list, profiles: list = None, weights: di
                 removed += _row_hours(rows[v["index"]])
         hard = [v for v in hard if v.get("kind") != "over_max_hours" or id(v) in keep]
     seen_idx = set()
+    # The week's own score, computed once and carried forward: it only
+    # changes when a fix is applied, and then the winning candidate's score
+    # IS the new baseline. It used to be re-scored for every violation
+    # (~0.18s each, 17s for 99 on the web process — SCHED-39).
+    baseline = None
     for v in sorted(hard, key=lambda x: (0 if x.get("no_show") else 1, x.get("index", 0))):
         i = v.get("index")
         if i is None or i in seen_idx or i >= len(rows):
@@ -2452,19 +2556,21 @@ def apply_fixes(rows: list, violations: list, profiles: list = None, weights: di
         pool |= {n for n in roster if any(x.strip().lower() == role for x in (cross.get(n) or []))}
         pool |= {n for n in roster if not cross.get(n) and not any(r.get("employee") == n for r in rows)} if not pool else set()
         candidates = [n for n in sorted(pool) if n != cur and index.replacement_legal(i, n)]
-        best, best_score = None, None
-        baseline = score_rows(rows, profiles=profiles, weights=weights, **signals)
+        best, best_score, best_result = None, None, None
         for name in candidates:
             if evaluated >= max_evaluations:
                 break
+            if baseline is None:
+                baseline = score_rows(rows, profiles=profiles, weights=weights, **signals)
             trial = [dict(r) for r in rows]
             trial[i]["employee"] = name
             cand = score_rows(trial, profiles=profiles, weights=weights, **signals)
             evaluated += 1
             sc = cand.get("score") if cand.get("checked") else (baseline.get("score") or 0)
             if best is None or (sc or 0) > (best_score or -1):
-                best, best_score = name, sc
+                best, best_score, best_result = name, sc, cand
         if best:
+            baseline = best_result
             rows[i]["employee"] = best
             note = (rows[i].get("notes") or "").strip()
             rows[i]["notes"] = (note + f" (was {cur} — {v.get('label') or v.get('kind')})").strip()

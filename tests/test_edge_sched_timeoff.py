@@ -108,7 +108,6 @@ def _as(monkeypatch, rid, role):
                                  "username": "u", "email": "u@x.com"})
 
 
-@pytest.mark.xfail(strict=True, reason="SCHED-22: approving time off never looks at the published week, so the person stays scheduled unwarned")
 def test_approving_time_off_over_a_published_shift_names_the_conflicting_shift(db, strategy_client, monkeypatch):
     rid = _restaurant(db, [("Ana", "Server"), ("Ben", "Server")])
     _publish(db, rid, [(W1[2], "Ana", "Server", "11:00am", "3:00pm", 4)])
@@ -119,7 +118,6 @@ def test_approving_time_off_over_a_published_shift_names_the_conflicting_shift(d
     assert "11:00am" in json.dumps(r.get_json()), r.get_json()
 
 
-@pytest.mark.xfail(strict=True, reason="SCHED-22: time-off decisions gate on LABOR_VIEW while shift-request decisions need SCHEDULE_DRAFT")
 def test_a_view_only_labor_login_cannot_approve_time_off(db, strategy_client, monkeypatch):
     rid = _restaurant(db, [("Ana", "Server")])
     monkeypatch.setitem(permissions.ROLE_PERMISSIONS, "labor_viewer",
@@ -160,7 +158,6 @@ def _rows(*rows):
              "scheduled_hours": str(h), "notes": ""} for d, n, s, e, h in rows]
 
 
-@pytest.mark.xfail(strict=True, reason="SCHED-14: the replacements route calls _swap_is_legal with no rules, so time off and deactivation are invisible")
 def test_the_replacement_picker_never_offers_someone_on_approved_time_off_or_deactivated(db, picker):
     rid = _restaurant(db, [("Ana", "Server"), ("Ben", "Server"), ("Cy", "Server")])
     _time_off(db, rid, "Ben", W1[0])
@@ -173,7 +170,6 @@ def test_the_replacement_picker_never_offers_someone_on_approved_time_off_or_dea
     assert "Ben" not in offered and "Cy" not in offered, offered
 
 
-@pytest.mark.xfail(strict=True, reason="SCHED-14: only people already on this week's rows are candidates; the rest of the roster is never offered")
 def test_the_replacement_picker_offers_a_free_roster_member_with_no_shift_this_week(db, picker):
     rid = _restaurant(db, [("Ana", "Server"), ("Ben", "Server"), ("Dee", "Server")])
     rows = _rows((W1[0], "Ana", "11:00am", "3:00pm", 4), (W1[1], "Ben", "11:00am", "3:00pm", 4))
@@ -208,7 +204,6 @@ def _contacts(db_path, rid, *names):
     conn.close()
 
 
-@pytest.mark.xfail(strict=True, reason="SCHED-15: for_gap never uses its role argument, so a dishwasher is offered for a bartender gap")
 def test_call_off_suggestions_for_a_bartender_gap_are_bartenders(db):
     rid = _restaurant(db, [("Ana", "Bartender"), ("Bea", "Bartender"), ("Dan", "Dishwasher")])
     _contacts(db, rid, "Ana", "Bea", "Dan")
@@ -216,7 +211,6 @@ def test_call_off_suggestions_for_a_bartender_gap_are_bartenders(db):
     assert [f["name"] for f in fits] == ["Bea"]
 
 
-@pytest.mark.xfail(strict=True, reason="SCHED-15: for_gap never checks approved time off")
 def test_call_off_suggestions_never_name_someone_on_approved_time_off_today(db):
     today = dt.date.today()
     rid = _restaurant(db, [("Ana", "Bartender"), ("Bea", "Bartender"), ("Cal", "Bartender")])

@@ -26,6 +26,7 @@ import random
 from datetime import datetime, timedelta
 
 import json
+import re
 from flask import Blueprint, request, jsonify
 
 from auth import verify_password, create_session, delete_session, revoke_other_sessions, mobile_login_required, update_last_login
@@ -1674,14 +1675,21 @@ def mobile_get_staff_contacts(current_user):
 @mobile_login_required
 def mobile_set_staff_contact(current_user):
     from models import set_staff_contact
+    from staff_settings import clean_phone
     data = request.get_json(silent=True) or {}
     name = (data.get("employee_name") or "").strip()
-    email = (data.get("email") or "").strip()
+    # A field the form did not send is kept, not erased (MOD-EMP-4).
+    email = (data.get("email") or "").strip() if "email" in data else None
     if not name:
         return jsonify(ok=False, error="Which member of staff?"), 400
     if email and "@" not in email:
         return jsonify(ok=False, error="That doesn't look like an email address"), 400
-    if not set_staff_contact(current_user["restaurant_id"], name, email, (data.get("phone") or "").strip(),
+    phone = None
+    if "phone" in data:
+        phone, perr = clean_phone(data.get("phone"))
+        if perr:
+            return jsonify(ok=False, error=perr), 400
+    if not set_staff_contact(current_user["restaurant_id"], name, email, phone,
                              pos_id=(str(data.get("pos_id") or "").strip() or None)):
         return jsonify(ok=False, error="Couldn't save that contact."), 400
     return jsonify(ok=True)
@@ -2515,12 +2523,19 @@ def mobile_generate_schedule(current_user):
         return jsonify(ok=False, error="Too many schedule generations — please wait a moment and try again."), 429
     body = request.get_json(silent=True) or {}
     week_start = (body.get("week_start") or "").strip()[:10] or None
+    from schedule_engine import check_week_start as _cws
+    week_start, _ws_err = _cws(rid, week_start)
+    if _ws_err:
+        return jsonify(ok=False, error=_ws_err), 400
     dates = [str(d)[:10] for d in (body.get("dates") or []) if str(d)[:10]] or None
     base_history_id = body.get("history_id") if dates else None
     if dates and not base_history_id:
         return jsonify(ok=False, error="Regenerating some days needs the draft they belong to (history_id)."), 400
-    job_id = str(uuid.uuid4())
-    _ops.start_async_job(job_id, "schedule", rid)
+    # Checked and started in one transaction: two presses at the same instant
+    # get one job (SCHED-25).
+    job_id, joined = _ops.claim_async_job(str(uuid.uuid4()), "schedule", rid)
+    if joined:
+        return jsonify(ok=True, job_id=job_id, joined=True)
     from schedule_engine import _run_schedule_job as _run_sched
     t = threading.Thread(target=_run_sched, args=(job_id, rid),
                          kwargs={"week_start": week_start, "dates": dates, "base_history_id": base_history_id}, daemon=True)
@@ -3518,8 +3533,13 @@ def mobile_labor_team(current_user):
     from labor import load_shifts_for_restaurant, analyse_shifts_for_restaurant
     rid = current_user["restaurant_id"]
     try:
+        # Someone deactivated on the roster is off the Team list too: /labor/
+        # roster hid them while this one kept offering them for rating
+        # (MOD-EMP-3).
+        import staff_settings as _ss_team
+        _gone = {_ss_team.name_key(n) for n, st in _ss_team.get_all(rid).items() if not st.get("active", True)}
         analysis = analyse_shifts_for_restaurant(rid)
-        manual = get_manual_team_members(rid)
+        manual = [m for m in get_manual_team_members(rid) if _ss_team.name_key(m["name"]) not in _gone]
         if not analysis.get("is_live"):
             # No shift CSV connected yet doesn't mean no roster — an owner
             # who hasn't hooked up Back Office/RPower (or is waiting on
@@ -3554,7 +3574,7 @@ def mobile_labor_team(current_user):
         seen = {}
         for sh in shifts:
             n = (sh.get("employee") or "").strip()
-            if not n:
+            if not n or _ss_team.name_key(n) in _gone:
                 continue
             e = seen.setdefault(n, {"name": n, "role": None, "shifts": 0, "last": ""})
             e["shifts"] += 1
@@ -3682,6 +3702,10 @@ def mobile_remove_team_member(current_user):
                                        "here."), 400
     record_capability_change(rid, "team_member_removed", subject=name,
                              before=name, after=None, changed_by=who)
+    # Off the team is off the portal: their membership, sessions, PIN and
+    # schedule links end with the roster row (MOD-EMP-3 / DATA-59).
+    import staff_settings as _ss_rm
+    _ss_rm._sync_portal_access(rid, name, False)
     return jsonify(ok=True, employee_name=name), 200
 
 
@@ -5819,8 +5843,10 @@ def mobile_score_schedule(current_user):
                     c.roster_names = list(inputs["roster"])
                 violations = _sr.violations(rows, c)
                 review = _sr.summarize(violations)
+            else:
+                violations = None
         except Exception:
-            violations, review = [], None
+            violations, review = None, None
         saved = 0
         # The whole point of an override. Without this the edit lived in the
         # page, the score moved, and publishing read the CSV saved at
@@ -5830,44 +5856,65 @@ def mobile_score_schedule(current_user):
             from permissions import has_permission, SCHEDULE_DRAFT
             if not (current_user.get("is_admin") or has_permission(current_user, SCHEDULE_DRAFT)):
                 return jsonify(ok=False, error="Your login can view labor but not change the schedule."), 403
-            from models import update_schedule_history_rows
+            import schedule_versions as _sv
+            # A save names the week it edits. Without one it used to land on
+            # the restaurant's newest row, which may be a different week
+            # (SCHED-19).
+            try:
+                hid = int(data.get("history_id") or 0)
+            except (TypeError, ValueError):
+                hid = 0
+            if not hid:
+                return jsonify(ok=False, error="Reload the schedule before saving — this copy doesn't say which week it is."), 400
+            try:
+                sent = int(data["version"]) if data.get("version") not in (None, "") else None
+            except (TypeError, ValueError):
+                sent = None
+
+            def _conflict(latest_list):
+                last = latest_list[-1] if latest_list else {}
+                return jsonify(ok=False, conflict=True, latest_version=last.get("version"),
+                               saved_by=last.get("saved_by"), lines=last.get("lines") or [],
+                               error=f"{last.get('saved_by') or 'Somebody'} saved this week after you opened it. Reload to see their changes."), 409
             # Two managers editing the same week: the second save must not
             # silently overwrite the first. The page sends the version it
-            # loaded; a newer one on file refuses and hands back the diff.
-            import schedule_versions as _sv
-            if data.get("history_id") and data.get("version") not in (None, ""):
-                latest = _sv.list_versions(rid, int(data["history_id"]))
-                try:
-                    sent = int(data["version"])
-                except (TypeError, ValueError):
-                    sent = None
-                if latest and sent is not None and latest[-1]["version"] > sent:
-                    return jsonify(ok=False, conflict=True, latest_version=latest[-1]["version"],
-                                   saved_by=latest[-1]["saved_by"], lines=latest[-1]["lines"],
-                                   error=f"{latest[-1]['saved_by'] or 'Somebody'} saved this week after you opened it. Reload to see their changes."), 409
+            # loaded; a newer one on file, or none sent for a week that has
+            # versions, refuses and hands back the diff.
+            latest = _sv.list_versions(rid, hid)
+            if latest and (sent is None or latest[-1]["version"] > sent):
+                return _conflict(latest)
+            _mark_review_rows(rows, violations)
             csv_text = _rows_to_csv(rows)
-            saved = update_schedule_history_rows(
-                rid, csv_text, quality=quality,
-                history_id=data.get("history_id"),
-                edited_by=current_user.get("username") or current_user.get("email"))
-            if saved:
-                try:
-                    import schedule_versions as _sv
-                    _sv.append(rid, saved, "edited", csv_text, quality=quality,
-                               saved_by=current_user.get("username") or current_user.get("email"))
-                    from models import _ensure_history_columns, get_conn as _gc2
-                    conn2 = _gc2()
-                    try:
-                        _ensure_history_columns(conn2)
-                        conn2.execute("UPDATE schedule_history SET review_json=? WHERE id=? AND restaurant_id=?",
-                                      (json.dumps(review) if review else None, saved, rid))
-                        conn2.commit()
-                    finally:
-                        conn2.close()
-                    _log_account_event(rid, "schedule_edited", current_user,
-                                       detail=f"history {saved}: {len(rows)} rows")
-                except Exception as _vx:
-                    print(f"[schedule] edit version failed: {_vx}")
+            who = current_user.get("username") or current_user.get("email")
+            # The week, its version row and its review are one write: the
+            # version check is repeated inside the lock, so two saves on one
+            # base version give one 200 and one 409, and a version that
+            # cannot be written leaves the week as it was (SCHED-19).
+            from models import get_conn as _gc2
+            conn2 = _gc2()
+            try:
+                conn2.execute("BEGIN IMMEDIATE")
+                _sv.write_on(conn2, rid, hid, "edited", csv_text, saved_by=who, quality=quality,
+                             expected_version=(sent if latest else None))
+                conn2.execute("UPDATE schedule_history SET review_json=? WHERE id=? AND restaurant_id=?",
+                              (json.dumps(review) if review else None, hid, rid))
+                conn2.commit()
+                saved = hid
+            except _sv.StaleVersion:
+                conn2.rollback()
+                return _conflict(_sv.newest_version(rid, hid))
+            except LookupError:
+                conn2.rollback()
+                return jsonify(ok=False, error="That week is gone — reload the schedule."), 404
+            except Exception:
+                conn2.rollback()
+                raise
+            finally:
+                conn2.close()
+            try:
+                _log_account_event(rid, "schedule_edited", current_user, detail=f"history {saved}: {len(rows)} rows")
+            except Exception:
+                pass
                 # A week staff were already sent: the people whose shifts
                 # changed are told, and the week is stamped as changed since
                 # it went out. Nobody else hears about it.
@@ -5879,7 +5926,7 @@ def mobile_score_schedule(current_user):
                     print(f"[schedule] re-notify failed: {_nx}")
         from models import capability_version
         return jsonify(ok=True, quality=quality, what_if=what_if, saved=bool(saved),
-                       violations=violations, review=review,
+                       violations=violations or [], review=review,
                        history_id=saved or None,
                        changed_since_sent=locals().get("_resp_changed"),
                        capability_version=capability_version(rid)), 200
@@ -5889,6 +5936,22 @@ def mobile_score_schedule(current_user):
 
 _SCHEDULE_COLS = ("date", "day", "employee", "role", "shift_start", "shift_end",
                   "scheduled_hours", "notes")
+
+_REVIEW_MARK = re.compile(r"\s*(?:—\s*)?NEEDS REVIEW\b.*$", re.S)
+
+
+def _mark_review_rows(rows, violations):
+    """A NEEDS REVIEW mark generation wrote comes off a row the sweep no
+    longer faults: a row fixed legally used to keep its mark, so the publish
+    blocker never cleared (SCHED-18). A row still in breach keeps its mark,
+    and a new breach is named by the review saved with the week (the
+    blocker reads both). Only when the sweep ran; without it nothing moves."""
+    if violations is None:
+        return
+    still = {v["index"] for v in violations if v.get("hard") and v.get("index") is not None}
+    for i, r in enumerate(rows):
+        if i not in still and "NEEDS REVIEW" in (r.get("notes") or ""):
+            r["notes"] = _REVIEW_MARK.sub("", r.get("notes") or "").strip()
 
 
 def _notify_changed_rows(rid, history_id, csv_text, actor):
@@ -5978,9 +6041,10 @@ def mobile_schedule_replacements(current_user):
     dashboard checked neither, and would happily offer somebody who had
     declared that day unavailable or was already at thirty-eight hours.
     """
-    from schedule_engine import quality_inputs_from_db
-    from models import get_operational_scores, get_unavailability_map, get_staff_notes
-    import shift_quality as _sq
+    from models import get_operational_scores
+    import schedule_engine as _se
+    import schedule_rules as _sr
+    import staff_settings as _ss
     rid = current_user["restaurant_id"]
     data = request.get_json(silent=True) or {}
     raw_rows = data.get("rows")
@@ -5996,33 +6060,41 @@ def mobile_schedule_replacements(current_user):
     rows = [{c: str(r.get(c) or "")[:200] for c in _SCHEDULE_COLS}
             for r in raw_rows if isinstance(r, dict)]
     try:
-        scores = get_operational_scores(rid)
-        availability = get_unavailability_map(rid)
-        try:
-            constraints = {n["employee_name"]: n["notes"] for n in (get_staff_notes(rid) or [])
-                           if n.get("employee_name")}
-        except Exception:
-            # Constraints tighten the answer; losing them must not stop a
-            # manager finding out who is free. The swap check still enforces
-            # availability, double booking and the hours ceiling.
-            constraints = {}
+        scores = get_operational_scores(rid) or {}
         target = rows[index]
-
-        # Everybody else already on the schedule is a candidate; the same
-        # legality check the what-if pass uses decides which of them could
-        # actually take this shift.
-        seen, out = set(), []
-        for j, row in enumerate(rows):
-            name = (row.get("employee") or "").strip()
-            if not name or name.lower() in seen or j == index:
+        # Candidates are the whole active roster, not only people already on
+        # this week's rows (SCHED-14), in the shift's role where their roles
+        # are known. Each is judged by replacement_is_legal — the claim's own
+        # check, with the sweep's time off, deactivation, minor, certification,
+        # window, rest and hours rules — against one constraint set. The old
+        # swap check here ran with no rules, so time off and deactivation
+        # were invisible to it.
+        dates = sorted({r.get("date") for r in rows if r.get("date")})
+        from datetime import datetime as _dtr
+        c = _sr.build_constraints(rid, dates, [_dtr.strptime(d, "%Y-%m-%d").strftime("%A") for d in dates])
+        role_low = (target.get("role") or "").strip().lower()
+        roster = {e["name"].strip().lower(): (e["name"], e.get("role")) for e in _ss.roster(rid)}
+        for r in rows:
+            n = (r.get("employee") or "").strip()
+            if n and n.lower() not in roster:
+                roster[n.lower()] = (n, r.get("role"))
+        current = (target.get("employee") or "").strip().lower()
+        out = []
+        for low, (name, their_role) in sorted(roster.items()):
+            if low == current:
                 continue
-            if not _sq._swap_is_legal(rows, min(index, j), max(index, j),
-                                      availability, scores, constraints):
+            if role_low:
+                known = _ss.roles_for(rid, name) | {(r.get("role") or "").strip().lower() for r in rows
+                                                    if (r.get("employee") or "").strip().lower() == low}
+                known.discard("")
+                if known and role_low not in known:
+                    continue
+            ok, _why = _se.replacement_is_legal(rid, rows, index, name, constraints=c)
+            if not ok:
                 continue
-            seen.add(name.lower())
-            out.append({"name": name, "role": row.get("role"),
+            out.append({"name": name, "role": their_role or target.get("role"),
                         "score": scores.get(name),
-                        "date": row.get("date"), "day": row.get("day")})
+                        "date": target.get("date"), "day": target.get("day")})
         out.sort(key=lambda m: (-(m["score"] or 0), m["name"]))
         return jsonify(ok=True, replacements=out,
                        employee=target.get("employee"), role=target.get("role")), 200

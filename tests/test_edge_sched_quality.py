@@ -64,7 +64,6 @@ def _bar_week(dates):
 _RULE = {"role": "Bartender", "count": 1, "min_score": 5, "daypart": "night"}
 
 
-@pytest.mark.xfail(strict=True, reason="SCHED-30: a rule nobody on the roster can meet still caps the shift, only lowering confidence")
 def test_a_leader_rule_nobody_can_meet_does_not_cap_the_shift(db):
     rows = _bar_week(WEEK[4:6])
     scores = {r["employee"]: 4 for r in rows}                    # the best anybody is rated is 4
@@ -74,7 +73,6 @@ def test_a_leader_rule_nobody_can_meet_does_not_cap_the_shift(db):
     assert not any("Move somebody who clears" in r for r in q["recommendations"])
 
 
-@pytest.mark.xfail(strict=True, reason="SCHED-30: an unsatisfiable rule over every night makes the week 'weak', a permanent publish blocker")
 def test_a_leader_rule_nobody_can_meet_never_makes_the_week_weak_and_is_named_once(db):
     rows = _bar_week(WEEK)
     scores = {r["employee"]: 4 for r in rows}
@@ -96,7 +94,6 @@ def test_a_leader_rule_the_roster_can_meet_still_caps_a_shift_that_misses_it(db)
 
 # ── SCHED-39: the fix pass's cost ─────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="SCHED-39: apply_fixes re-scores the whole week as a baseline for every hard violation (~0.18s each)")
 def test_the_fix_pass_scores_the_baseline_once_not_once_per_violation(monkeypatch):
     rows = [_row(WEEK[i % 7], f"P{i}", f"Role{i}", "8:00am", "4:00pm", 8) for i in range(60)]   # nobody shares a role
     hard = [sr._v("rest_gap", i, rows[i], "x") for i in range(30)]
@@ -122,7 +119,6 @@ def test_the_fix_pass_caps_candidate_evaluations(monkeypatch):
 
 # ── SCHED-6 (fix pass): a fix must not create a new hard violation ────────
 
-@pytest.mark.xfail(strict=True, reason="SCHED-6: the swap rules carry no minors or certifications, so the fix pass hands a close to a minor")
 def test_a_fix_never_hands_a_late_close_to_a_minor(db):
     rid = create_restaurant(Restaurant(name="Fix Co", owner_email="f@x.com"), db_path=db)
     for n in ("Ana", "Dev"):
@@ -139,7 +135,6 @@ def test_a_fix_never_hands_a_late_close_to_a_minor(db):
 
 # ── SCHED-26: rescores counted as showings ────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="SCHED-26: every rescore records a 'shown', so ten saves in one sitting suppress a kind forever")
 def test_twelve_rescores_of_one_week_suppress_no_recommendation_kind(db, monkeypatch):
     rid = create_restaurant(Restaurant(name="Advice Co", owner_email="a@x.com"), db_path=db)
     monkeypatch.setattr(se, "_quality_signals", lambda r, result, **extra: ({}, None))

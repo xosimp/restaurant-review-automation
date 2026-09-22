@@ -4342,11 +4342,13 @@ def test_a_manager_edit_is_saved_not_only_scored(client, db_path, monkeypatch):
     from models import save_schedule_history, get_schedule_history_detail, get_schedule_history
     original = ("date,day,employee,role,shift_start,shift_end,scheduled_hours,notes\n"
                 "2026-09-12,Saturday,Sam,Bartender,5:00pm,11:00pm,6,")
-    save_schedule_history(rid, "2026-09-12", "2026-09-12", 6, 40, 28, original, [],
-                          db_path=db_path)
+    hid = save_schedule_history(rid, "2026-09-12", "2026-09-12", 6, 40, 28, original, [],
+                                db_path=db_path)
 
+    # A save names the week it edits (SCHED-19): without one it used to
+    # land on whatever row was newest, which may be another week.
     body = client.post("/mobile/api/labor/schedule/score",
-                       json={"rows": _sched_rows(["Pat"]), "save": True},
+                       json={"rows": _sched_rows(["Pat"]), "save": True, "history_id": hid},
                        headers=_auth_headers(token)).get_json()
     assert body["ok"] and body["saved"] is True
     detail = get_schedule_history_detail(get_schedule_history(rid, db_path=db_path)[0]["id"],

@@ -100,16 +100,12 @@ def test_an_orphan_older_than_ten_minutes_is_failed_at_boot(db_path):
     assert job["status"] == "error" and "try again" in job["result"]["error"]
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-9: the boot sweep fails only jobs older than 10 minutes, so a job "
-                                       "killed 2 minutes in polls 'pending' forever")
 def test_a_job_from_a_previous_process_is_failed_at_boot_whatever_its_age(db_path):
     _pending_job(db_path, "zombie", 9, age_minutes=2)
     ops.sweep_stale_jobs()                                   # the new process boots
     assert ops.read_async_job("zombie", restaurant_id=9)["status"] == "error"
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-9: after a restart, Generate 'joins' the dead job for up to 10 "
-                                       "minutes instead of starting a new generation")
 def test_generate_after_a_restart_does_not_join_the_dead_job(client, db_path, monkeypatch):
     import schedule_engine
     rid = _restaurant(db_path)
@@ -126,8 +122,6 @@ def test_generate_after_a_restart_does_not_join_the_dead_job(client, db_path, mo
     assert started, "no generation was started — the owner is polling a job nothing will finish"
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-9: when finish_async_job's write fails the job stays 'pending' "
-                                       "forever; nothing fails a pending job past the longest generation")
 def test_a_job_whose_result_could_not_be_stored_does_not_poll_pending_forever(db_path, monkeypatch):
     ops.start_async_job("lost-result", "schedule", 4)
     real = models.get_conn
@@ -145,8 +139,6 @@ def test_a_job_whose_result_could_not_be_stored_does_not_poll_pending_forever(db
 
 # ── two presses (DATA-23) ──────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="DATA-23: active_job then start_async_job is check-then-insert, so two "
-                                       "simultaneous presses both start a paid generation")
 def test_two_concurrent_generate_presses_start_one_generation(client, db_path, monkeypatch):
     import schedule_engine
     rid = _restaurant(db_path)
@@ -180,8 +172,6 @@ def test_two_concurrent_generate_presses_start_one_generation(client, db_path, m
     assert len(started) == 1, f"{len(started)} paid generations started for one week"
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-23: active_job ignores pending jobs older than 10 minutes, so a press "
-                                       "during a long live generation starts a second one")
 def test_a_press_during_a_long_live_generation_joins_it(client, db_path, monkeypatch):
     import schedule_engine
     rid = _restaurant(db_path)
@@ -206,8 +196,6 @@ def test_a_press_during_a_long_live_generation_joins_it(client, db_path, monkeyp
 
 # ── a failed job's error (DATA-46) ─────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="DATA-46: _run_schedule_job stores the full traceback in the job result and "
-                                       "both poll routes return it to the client verbatim")
 def test_a_failed_job_never_returns_a_traceback(client, db_path, monkeypatch):
     import schedule_engine
     rid = _restaurant(db_path)

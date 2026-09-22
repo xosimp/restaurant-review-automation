@@ -32,14 +32,12 @@ def test_regenerating_some_days_already_refuses_over_unsaved_edits():
     assert "_schedDirty" in body
 
 
-@pytest.mark.xfail(strict=True, reason="SCHED-41: a full generateSchedule replaces _schedRows without checking _schedDirty")
 def test_a_full_generate_checks_for_unsaved_edits_before_it_starts():
     body = _function("generateSchedule")
     first_fetch = body.index("fetch('/api/generate-schedule'")
     assert "_schedDirty" in body[:first_fetch]
 
 
-@pytest.mark.xfail(strict=True, reason="SCHED-41: the first failed status poll clears the interval and abandons a job that is still running")
 def test_one_failed_status_poll_does_not_abandon_the_wait():
     body = _function("generateSchedule")
     poll = body[body.index("fetch('/api/schedule-status/'"):]

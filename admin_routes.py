@@ -642,6 +642,19 @@ def save_client_settings(restaurant_id, current_user):
         except Exception:
             return "America/Chicago"
 
+    # The labor target drives every schedule budget. Any number used to be
+    # stored — negative, 500% — and a 0 silently became 30% (SCHED-36).
+    _lt_raw = data.get("labor_target_pct")
+    if _lt_raw in (None, ""):
+        _labor_target = 30.0
+    else:
+        try:
+            _labor_target = float(_lt_raw)
+        except (TypeError, ValueError):
+            _labor_target = None
+        if _labor_target is None or _labor_target != _labor_target or not 5.0 <= _labor_target <= 60.0:
+            return jsonify(ok=False, error="Labor target must be a percentage between 5 and 60.")
+
     try:
         tier = data.get("service_tier","trial")
         # Same tenancy guard as create-client: a group name in use by another
@@ -683,7 +696,7 @@ def save_client_settings(restaurant_id, current_user):
             "skip_holidays":   sanitize(data.get("skip_holidays","")),
             "custom_competitors": sanitize(data.get("custom_competitors","")),
             "hourly_rate":     float(data.get("hourly_rate") or 26.0),
-            "labor_target_pct": float(data.get("labor_target_pct") or 30.0),
+            "labor_target_pct": _labor_target,
             "pos_system":      data.get("pos_system","").strip() or None,
             "module_reviews":  int(data.get("module_reviews", 1)),
             "module_labor":    int(data.get("module_labor", 0)),

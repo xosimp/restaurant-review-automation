@@ -174,8 +174,6 @@ def test_the_status_page_does_not_report_an_outage_during_a_long_pass(db_path, m
 
 # ── the Thursday auto-draft (DATA-8) ───────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="DATA-8: the auto-draft runs one 40-minute serial pass per Thursday; "
-                                       "restaurants past the bound get no draft that week and are not told")
 def test_auto_draft_reaches_every_opted_in_restaurant_by_thursday_evening(db_path, monkeypatch):
     import schedule_engine, push, notify
     rids = [_rid(db_path, name=f"Opted {i}") for i in range(3)]

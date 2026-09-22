@@ -76,13 +76,17 @@ def test_trim_removes_discretionary_hours_first_and_reports_each():
 
 
 def test_trim_never_goes_below_a_floor_or_removes_the_last_person_of_a_role():
+    # Each cook also works another day (as the last of that role), so the
+    # Monday cook is not their only shift of the week — which the trim never
+    # takes (SCHED-23) — and only the floor and last-of-role rules decide.
     rows = [_row(WEEK[0], "Ana", "4:00pm", "10:00pm", role="Cook"), _row(WEEK[0], "Bob", "4:00pm", "10:00pm", role="Cook"),
-            _row(WEEK[0], "Cy", "4:00pm", "10:00pm", role="Host")]
+            _row(WEEK[0], "Cy", "4:00pm", "10:00pm", role="Host"),
+            _row(WEEK[1], "Ana", "4:00pm", "10:00pm", role="Prep"), _row(WEEK[1], "Bob", "4:00pm", "10:00pm", role="Dish")]
     floors = {"Cook": {"morning": 0, "night": 2, "days": {}}}
     out, trimmed, removed = econ.trim_to_budget(rows, hours_budget=6.0, daily_targets={WEEK[0]: 6}, constraints=_c(), floors=floors)
     assert removed == 0 and trimmed == []                      # the two cooks are the floor, the host is the last host
     out, trimmed, removed = econ.trim_to_budget(rows, hours_budget=6.0, daily_targets={WEEK[0]: 6}, constraints=_c(), floors={})
-    assert removed == 6 and len(out) == 2
+    assert removed == 6 and len(out) == len(rows) - 1 and trimmed[0]["role"] == "Cook"
 
 
 def test_a_week_inside_the_tolerance_is_not_trimmed():
@@ -347,8 +351,11 @@ def test_mentoring_counts_shifts_beside_a_closer_in_another_role(db_path, rid, m
 def test_recommendation_kinds_are_suppressed_after_ten_ignored_showings(db_path, rid):
     import shift_quality as sq
     assert sq.recommendation_kind("Trim about 12h from Friday night to get back under target.") == "hours"
-    for _ in range(10):
-        intel.record_recommendation(rid, "hours", "Trim about 12h", "shown", db_path=db_path)
+    # Ten separate showings (ten weeks' drafts). The same one re-shown in a
+    # single sitting counts once (SCHED-26), so the fixture varies the key.
+    for week in range(10):
+        intel.record_recommendation(rid, "hours", f"Trim about 12h (week {week})", "shown", db_path=db_path)
+    intel.record_recommendation(rid, "hours", "Trim about 12h (week 9)", "shown", db_path=db_path)   # a rescore
     assert intel.suppressed_kinds(rid, db_path=db_path) == {"hours"}
     intel.record_recommendation(rid, "hours", "Trim about 12h", "accepted", db_path=db_path)
     assert intel.suppressed_kinds(rid, db_path=db_path) == set()
@@ -385,7 +392,14 @@ def test_a_swap_moves_both_shifts_only_when_both_are_legal(db_path, rid):
     req = srq.request_swap(rid, "Ana", WEEK[0], "4:00pm", "Bob", WEEK[2], "4:00pm", db_path=db_path, today=today)
     assert req["kind"] == "swap" and req["target_name"] == "Bob"
     assert [r["kind"] for r in srq.for_manager(rid, db_path=db_path)] == ["swap"]
-    done = srq.decide(rid, req["id"], True, decided_by="will", db_path=db_path)
+    # The manager's yes alone moves nothing: Bob's shift is his (SCHED-21).
+    approved = srq.decide(rid, req["id"], True, decided_by="will", db_path=db_path)
+    assert approved["status"] == "approved"
+    conn = get_conn(db_path)
+    assert conn.execute("SELECT schedule_csv FROM schedule_history WHERE id=?", (hid,)).fetchone()["schedule_csv"] == csv_text
+    conn.close()
+    assert [a["id"] for a in srq.asked_of_me(rid, "bob", db_path=db_path)] == [req["id"]]
+    done = srq.respond_swap(rid, req["id"], "Bob", True, db_path=db_path)
     assert done["status"] == "covered"
     conn = get_conn(db_path)
     rows = sv.rows_from_csv(conn.execute("SELECT schedule_csv FROM schedule_history WHERE id=?", (hid,)).fetchone()["schedule_csv"])

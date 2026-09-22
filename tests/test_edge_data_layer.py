@@ -272,8 +272,6 @@ def test_a_schedule_row_without_versions_can_be_deleted(db_path):
     assert models.delete_schedule_history(hid, rid, db_path=db_path) is True
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-55: schedule_versions.history_id references schedule_history with "
-                                       "foreign_keys=ON, so deleting any generated schedule raises IntegrityError")
 def test_a_generated_schedule_with_versions_can_be_deleted(db_path):
     rid = _rid(db_path)
     hid = _history_with_version(db_path, rid)
@@ -284,8 +282,6 @@ def test_a_generated_schedule_with_versions_can_be_deleted(db_path):
     assert left == 0
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-55: delete_schedule_history has no try/finally, so the failed DELETE's "
-                                       "connection keeps the write lock while the exception is in flight")
 def test_a_failed_schedule_delete_does_not_leave_the_write_lock_held(db_path):
     rid = _rid(db_path)
     hid = _history_with_version(db_path, rid)

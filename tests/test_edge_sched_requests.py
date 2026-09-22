@@ -135,7 +135,6 @@ SERVERS = [("Ana", "Server"), ("Ben", "Server"), ("Cara", "Server"), ("Dev", "Se
 
 # ── SCHED-5: claims race ──────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="SCHED-5: the final UPDATE has no AND status='open', so two people are both told they have one shift")
 def test_two_people_claiming_the_same_open_shift_at_once_gives_one_success(db, monkeypatch):
     rid = _restaurant(db, SERVERS)
     _publish(db, rid, [(W1[2], "Ana", "Server", "11:00am", "3:00pm", 4)])
@@ -147,7 +146,6 @@ def test_two_people_claiming_the_same_open_shift_at_once_gives_one_success(db, m
     assert sorted(v == "covered" for v in results.values()) == [False, True], results
 
 
-@pytest.mark.xfail(strict=True, reason="SCHED-5: each claim writes the whole CSV back unconditionally, so one cover is lost")
 def test_two_claims_of_different_open_shifts_both_persist(db, monkeypatch):
     rid = _restaurant(db, SERVERS)
     hid = _publish(db, rid, [(W1[1], "Ana", "Server", "11:00am", "3:00pm", 4), (W1[1], "Ben", "Server", "5:00pm", "9:00pm", 4)])
@@ -192,7 +190,6 @@ def _hard_kinds_after_claim(db, rid, hid):
     return {(v["kind"], v["employee"]) for v in sr.violations(_csv_rows(db, hid), c) if v["hard"]}
 
 
-@pytest.mark.xfail(strict=True, reason="SCHED-6: a minor can claim a 6pm-1am close; the claim never checks minor_latest_end")
 def test_a_minor_cannot_claim_a_shift_ending_after_the_minors_latest_end(db, bar_shift):
     rid, hid, req = bar_shift
     with pytest.raises(srq.ShiftRequestError):
@@ -200,14 +197,12 @@ def test_a_minor_cannot_claim_a_shift_ending_after_the_minors_latest_end(db, bar
     assert ("minor_late", "Dev") not in _hard_kinds_after_claim(db, rid, hid)
 
 
-@pytest.mark.xfail(strict=True, reason="SCHED-6: a claim never checks the certification the role requires")
 def test_a_person_without_the_roles_certification_cannot_claim_it(db, bar_shift):
     rid, hid, req = bar_shift
     with pytest.raises(srq.ShiftRequestError):
         srq.claim(rid, req["id"], "Fay")
 
 
-@pytest.mark.xfail(strict=True, reason="SCHED-6: a claim never checks that the claimant works the shift's role")
 def test_a_person_in_a_different_role_cannot_claim_the_shift(db, bar_shift):
     rid, hid, req = bar_shift
     with pytest.raises(srq.ShiftRequestError):
@@ -230,7 +225,6 @@ def test_a_person_on_approved_time_off_cannot_claim(db):
 
 # ── SCHED-34: past open shifts, and a same-day pickup ─────────────────────
 
-@pytest.mark.xfail(strict=True, reason="SCHED-34: open_shifts has no date filter and claim has no past-date check")
 def test_an_open_shift_from_yesterday_is_neither_listed_nor_claimable(db):
     # open_shifts and claim read the real clock, so the week is built around it.
     today = dt.date.today()
@@ -244,7 +238,6 @@ def test_an_open_shift_from_yesterday_is_neither_listed_nor_claimable(db):
         srq.claim(rid, req["id"], "Cara")
 
 
-@pytest.mark.xfail(strict=True, reason="SCHED-34: anyone already working that date is refused, so a lunch server cannot pick up the dinner leg")
 def test_a_lunch_server_can_pick_up_that_nights_dinner_shift(db):
     rid = _restaurant(db, SERVERS)
     _publish(db, rid, [(W1[2], "Ana", "Server", "11:00am", "3:00pm", 4), (W1[2], "Ben", "Server", "5:00pm", "10:00pm", 5)])
@@ -254,7 +247,6 @@ def test_a_lunch_server_can_pick_up_that_nights_dinner_shift(db):
 
 # ── SCHED-20: approving a drop with an illegal named replacement ─────────
 
-@pytest.mark.xfail(strict=True, reason="SCHED-20: decide commits status='open' before the replacement's legality check fails")
 def test_approving_with_an_illegal_replacement_leaves_the_request_pending(db):
     rid = _restaurant(db, SERVERS)
     _publish(db, rid, [(W1[2], "Ana", "Server", "11:00am", "3:00pm", 4)])
@@ -294,7 +286,6 @@ def outbox(monkeypatch):
     return calls
 
 
-@pytest.mark.xfail(strict=True, reason="SCHED-21: a manager's approval moves the colleague's shift without the colleague ever accepting")
 def test_a_swap_is_not_executed_until_the_colleague_accepts(db, outbox):
     rid = _restaurant(db, SERVERS)
     hid = _publish(db, rid, [(W1[1], "Ana", "Server", "11:00am", "3:00pm", 4), (W1[3], "Ben", "Server", "11:00am", "3:00pm", 4)])
@@ -304,7 +295,6 @@ def test_a_swap_is_not_executed_until_the_colleague_accepts(db, outbox):
     assert {(r["date"], r["employee"]) for r in _csv_rows(db, hid)} == {(W1[1], "Ana"), (W1[3], "Ben")}
 
 
-@pytest.mark.xfail(strict=True, reason="SCHED-21: a claim notifies nobody — not the person who dropped it, not the claimant")
 def test_a_claim_tells_the_person_who_dropped_the_shift(db, outbox):
     rid = _restaurant(db, SERVERS)
     _publish(db, rid, [(W1[2], "Ana", "Server", "11:00am", "3:00pm", 4)])
@@ -314,7 +304,6 @@ def test_a_claim_tells_the_person_who_dropped_the_shift(db, outbox):
     assert any("Ana" in json.dumps([a, k], default=str) for _, a, k in outbox), outbox
 
 
-@pytest.mark.xfail(strict=True, reason="SCHED-21: an approved drop becomes an open shift that nobody is told about")
 def test_an_approved_drop_is_announced_to_staff_who_could_take_it(db, outbox):
     rid = _restaurant(db, SERVERS)
     _publish(db, rid, [(W1[2], "Ana", "Server", "11:00am", "3:00pm", 4)])
@@ -326,7 +315,6 @@ def test_an_approved_drop_is_announced_to_staff_who_could_take_it(db, outbox):
 
 # ── SCHED-35: any staff note locks a person out ───────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="SCHED-35: any non-empty staff note marks the person constrained and refuses every claim")
 def test_a_person_with_a_compliment_on_file_can_still_claim_a_legal_shift(db):
     rid = _restaurant(db, SERVERS)
     models.save_staff_note(rid, "Cara", "great with regulars", db_path=db)

@@ -90,7 +90,6 @@ def test_a_brand_new_restaurant_has_no_tenure(rid, db_path):
     assert models.get_employee_tenure(rid, db_path=db_path) == {}
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-EMP-2: 'Maria G.', 'maria g.' and 'MARIA G. ' are three roster entries")
 def test_case_and_whitespace_variants_of_one_name_are_one_person(rid, db_path, monkeypatch):
     """A4 #4 / MOD-EMP-2."""
     _shifts(monkeypatch, [{"employee": "Maria G.", "role": "Server", "date": "2026-09-01"},
@@ -99,7 +98,6 @@ def test_case_and_whitespace_variants_of_one_name_are_one_person(rid, db_path, m
     assert len(ss.roster(rid, db_path=db_path)) == 1
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-EMP-2: deactivating 'Maria G.' leaves 'maria g.' and 'MARIA G.' on the roster")
 def test_deactivating_one_spelling_hides_every_spelling(rid, db_path, monkeypatch):
     """A4 #5 / MOD-EMP-2."""
     _shifts(monkeypatch, [{"employee": "Maria G.", "role": "Server", "date": "2026-09-01"},
@@ -110,7 +108,6 @@ def test_deactivating_one_spelling_hides_every_spelling(rid, db_path, monkeypatc
     assert [e["name"] for e in ss.roster(rid, db_path=db_path)] == ["Ana"]
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-EMP-2: a hand-added name and a shift name differing only in case are two people")
 def test_a_hand_added_name_and_a_shift_name_differing_in_case_are_one_person(rid, db_path, monkeypatch):
     """A4 #10 / MOD-EMP-2 — add_manual_team_member promises the two collapse."""
     _shifts(monkeypatch, [{"employee": "Maria G.", "role": "Server", "date": "2026-09-01"}])
@@ -153,7 +150,6 @@ def test_a_five_hundred_person_roster_is_built_quickly(rid, db_path, monkeypatch
 
 # ── Ratings / settings / reliability ───────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-EMP-2: a rating on 'Maria G.' does not apply to the 'maria g.' the schedule uses")
 def test_a_rating_applies_whatever_case_the_name_is_spelled_in(rid, db_path):
     """A4 #18 / MOD-EMP-2."""
     models.set_capability(rid, "Maria G.", "overall", score=4, db_path=db_path)
@@ -175,7 +171,6 @@ class _ConnProxy:
         return getattr(self._conn, name)
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-EMP-9: upsert writes back every column it read, so two concurrent edits lose one")
 def test_two_managers_editing_different_fields_at_once_both_persist(rid, db_path, monkeypatch):
     """A4 #22 / MOD-EMP-9 — manager A sets max hours while manager B marks
     the same person a minor; B's write lands between A's read and A's write."""
@@ -277,7 +272,6 @@ def test_a_date_that_has_passed_is_judged_on_the_restaurants_own_calendar(db_pat
     assert late.status_code == 400 and "passed" in late.get_json()["error"]
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-EMP-7: an employee cannot withdraw a pending time-off request, so a corrected one is blocked")
 def test_an_employee_can_withdraw_a_pending_request_and_file_a_corrected_one(db_path, rid, staff_app):
     """A4 #29 / MOD-EMP-7."""
     uid, _ = _staff(db_path, rid)
@@ -306,7 +300,6 @@ def _published_week(db_path, rid, rows_csv):
     return hid
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-EMP-8: approving time off never mentions the already-published shift it overlaps")
 def test_approving_time_off_over_a_published_shift_names_the_conflict(db_path, rid):
     """A4 #30 / MOD-EMP-8."""
     _published_week(db_path, rid, HEADER +
@@ -321,7 +314,6 @@ def test_approving_time_off_over_a_published_shift_names_the_conflict(db_path, r
     assert [c.get("date") for c in conflicts] == ["2026-10-06"]
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-EMP-9: time-off dedupe is read-then-write, so a double tap files two requests")
 def test_a_double_tapped_time_off_request_files_only_one(db_path, rid, monkeypatch):
     """A4 #31 / MOD-EMP-9 — both taps pass the overlap check before either
     insert commits."""
@@ -369,7 +361,6 @@ def test_an_address_with_no_at_sign_is_refused(mobile_client):
     assert resp.status_code == 400
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-EMP-4: saving only a phone number erases the stored email")
 def test_saving_only_a_phone_number_keeps_the_email(db_path, rid):
     """A4 #36 / MOD-EMP-4 — the store layer."""
     models.set_staff_contact(rid, "Maria G.", "maria@x.test", None, db_path=db_path)
@@ -378,7 +369,6 @@ def test_saving_only_a_phone_number_keeps_the_email(db_path, rid):
     assert c["email"] == "maria@x.test" and c["phone"] == "+15555550123"
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-EMP-4: Ask Cavnar adding a phone erases the employee's email")
 def test_ask_cavnar_adding_a_phone_keeps_the_email(db_path, rid):
     """A4 #36 / MOD-EMP-4 — the tool is documented 'direct, not proposed',
     so nothing else catches it."""
@@ -389,7 +379,6 @@ def test_ask_cavnar_adding_a_phone_keeps_the_email(db_path, rid):
     assert models.get_staff_contacts(rid, db_path=db_path)[0]["email"] == "maria@x.test"
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-EMP-4: a staff phone number is stored without any validation")
 def test_a_phone_that_is_not_a_phone_number_is_refused(mobile_client, db_path, rid):
     """A4 #37 / MOD-EMP-4."""
     resp = mobile_client.post("/mobile/api/labor/staff-contacts",
@@ -399,7 +388,6 @@ def test_a_phone_that_is_not_a_phone_number_is_refused(mobile_client, db_path, r
     assert all("<script>" not in c["phone"] for c in models.get_staff_contacts(rid, db_path=db_path))
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-EMP-2: 'maria g.' and 'Maria G.' become two staff_contacts rows")
 def test_a_contact_saved_under_a_different_case_updates_the_same_person(db_path, rid):
     """A4 #38 / MOD-EMP-2."""
     models.set_staff_contact(rid, "Maria G.", "maria@x.test", None, db_path=db_path)
@@ -417,7 +405,6 @@ class _FakeDate(date):
         return cls.fixed
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-EMP-5: /staff/api/tasks with no date reads the server's UTC date, not the restaurant's")
 def test_the_checklist_with_no_date_uses_the_restaurants_local_date(db_path, rid, staff_app, monkeypatch):
     """A4 #44 / MOD-EMP-5 — 8pm in Chicago is 01:00 UTC tomorrow. A task the
     iPhone ticked for tonight must still read as done on the refetch."""
@@ -440,7 +427,6 @@ def _swift_staff_portal():
             / "Staff" / "StaffPortalView.swift").read_text()
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-EMP-5: the iOS checklist refetch sends no date, so it reads the server's UTC day")
 def test_the_ios_checklist_refetch_names_the_date_it_completed_on():
     """A4 #44 / MOD-EMP-5 — the iOS half: every GET of /staff/api/tasks
     carries the same local date the completion was filed under."""
@@ -451,7 +437,6 @@ def test_the_ios_checklist_refetch_names_the_date_it_completed_on():
     assert all("date=" in g for g in gets), gets
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-EMP-5: the iOS task_date formatter has no fixed locale/calendar")
 def test_the_ios_task_date_formatter_is_pinned_to_a_gregorian_posix_locale():
     """A4 #44 / MOD-EMP-5 — on a non-Gregorian device calendar the year the
     server receives is not the Gregorian one, and the 400 is swallowed."""
@@ -459,7 +444,6 @@ def test_the_ios_task_date_formatter_is_pinned_to_a_gregorian_posix_locale():
     assert "en_US_POSIX" in src
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-EMP-6: checklist role matching is case-sensitive")
 def test_a_server_role_spelled_in_lower_case_still_sees_the_server_checklist(db_path, rid, staff_app):
     """A4 #45 / MOD-EMP-6 — the job says 'server ', the template says 'Server'."""
     uid, _ = _staff(db_path, rid)
@@ -473,7 +457,6 @@ def test_a_server_role_spelled_in_lower_case_still_sees_the_server_checklist(db_
 
 # ── Deactivation reaches every surface ─────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-EMP-3: deactivating someone on the roster leaves their staff portal session and PIN working")
 def test_deactivating_an_employee_on_the_roster_ends_their_portal_access(db_path, rid, staff_app):
     """A4 #6 / MOD-EMP-3."""
     uid, _ = _staff(db_path, rid)
@@ -487,7 +470,6 @@ def test_deactivating_an_employee_on_the_roster_ends_their_portal_access(db_path
     assert client.get("/staff/api/colleagues").status_code == 401
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-EMP-3: the Team/rating list ignores roster deactivation")
 def test_the_team_rating_list_leaves_out_someone_deactivated_on_the_roster(db_path, rid, mobile_client):
     """A4 #8 / MOD-EMP-3 — /labor/roster hides them; /labor/team must too."""
     models.save_client_data(rid, "shifts", HEADER +
@@ -502,7 +484,6 @@ def test_the_team_rating_list_leaves_out_someone_deactivated_on_the_roster(db_pa
 
 # ── Open shifts ────────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-EMP-10: an open-shift claim whose legality check raises shows the employee the raw exception")
 def test_an_open_shift_claim_that_cannot_be_checked_gives_a_plain_message(db_path, rid, monkeypatch):
     """A4 #50 / MOD-EMP-10."""
     hid = _published_week(db_path, rid, HEADER + "2026-10-06,Tuesday,Ana B.,Server,11:00,17:00,6,,,\n")

@@ -295,6 +295,10 @@ def test_malformed_scheduled_hours_does_not_crash_the_backstop_passes(monkeypatc
     ]
     rows.append("2026-08-17,Monday,Jamie L.,Host,5:00pm,9:30pm,2:30pm,closer")  # scheduled_hours corrupted
     csv_text = HEADER + "\n" + "\n".join(rows)
+    # The cap is the owner's section count; with none set there is no cap
+    # to enforce (SCHED-8), so this restaurant has seven sections.
+    monkeypatch.setattr(schedule_engine, "get_restaurant",
+                        lambda *a, **k: models.Restaurant(name="Repair Co", owner_email="r@x.com", section_count=7))
 
     result = _run(monkeypatch, csv_text)
 

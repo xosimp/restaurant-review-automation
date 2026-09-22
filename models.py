@@ -710,6 +710,16 @@ def ensure_columns(db_path: str = DB_PATH):
         ("schedule_history", "review_json", "TEXT"),
         ("schedule_history", "generation_seconds", "REAL"),
         ("schedule_history", "weather_json", "TEXT"),
+        # The rest of _ensure_history_columns' list, so a fresh database has
+        # them at boot and concurrent first saves never race to ALTER.
+        ("schedule_history", "quality_json", "TEXT"),
+        ("schedule_history", "edited_at", "TEXT"),
+        ("schedule_history", "edited_by", "TEXT"),
+        ("schedule_history", "quality_score", "REAL"),
+        ("schedule_history", "quality_band", "TEXT"),
+        ("schedule_history", "quality_confidence", "TEXT"),
+        ("schedule_history", "what_if_json", "TEXT"),
+        ("schedule_history", "republished_at", "TEXT"),
         # email_log.status existed from the start but nothing could write it:
         # log_email() had no status parameter, so a failed send was recorded
         # as 'sent' like every other row.
@@ -3818,7 +3828,8 @@ def get_task_templates(restaurant_id: int, role: str = None, db_path: str = DB_P
                "WHERE restaurant_id=? AND is_active=1")
         args = [restaurant_id]
         if role:
-            sql += " AND role=?"
+            # A job role typed "server " is the "Server" checklist (MOD-EMP-6).
+            sql += " AND lower(trim(role))=lower(trim(?))"
             args.append(role)
         sql += " ORDER BY role, sort_order, id"
         rows = conn.execute(sql, tuple(args)).fetchall()
@@ -3841,7 +3852,7 @@ def get_todays_tasks(restaurant_id: int, role: str, task_date: str = None,
             FROM task_templates t
             LEFT JOIN task_completions c
               ON c.template_id = t.id AND c.task_date = ?
-            WHERE t.restaurant_id=? AND t.role=? AND t.is_active=1
+            WHERE t.restaurant_id=? AND lower(trim(t.role))=lower(trim(?)) AND t.is_active=1
             ORDER BY t.sort_order, t.id
         """, (task_date, restaurant_id, role)).fetchall()
         return [{
@@ -4102,11 +4113,14 @@ def capability_coverage(restaurant_id: int, roster: list, db_path: str = DB_PATH
     """
     scores = get_operational_scores(restaurant_id, db_path)
     names = [n for n in (roster or []) if n]
-    rated = [n for n in names if n in scores]
+    # A rating on "Maria G." is a rating on the "maria g." the schedule uses
+    # (MOD-EMP-2): matched on case- and space-folded names.
+    keys = {" ".join(str(k).split()).casefold() for k in scores}
+    rated = [n for n in names if " ".join(str(n).split()).casefold() in keys]
     return {
         "rated": len(rated),
         "total": len(names),
-        "unrated": sorted(n for n in names if n not in scores),
+        "unrated": sorted(n for n in names if n not in rated),
         "active": bool(rated),
         "pct": round(len(rated) / len(names) * 100) if names else 0,
     }
@@ -4224,7 +4238,9 @@ def init_shift_requests(db_path: str = DB_PATH):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_shift_requests_rest ON shift_change_requests(restaurant_id, status)")
     have = {r[1] for r in conn.execute("PRAGMA table_info(shift_change_requests)")}
     for name, decl in (("kind", "TEXT DEFAULT 'drop'"),   # drop | swap
-                       ("target_name", "TEXT"), ("target_date", "TEXT"), ("target_start", "TEXT"), ("target_end", "TEXT")):
+                       ("target_name", "TEXT"), ("target_date", "TEXT"), ("target_start", "TEXT"), ("target_end", "TEXT"),
+                       # a swap moves the colleague's shift too, so it needs their yes (SCHED-21)
+                       ("target_accepted_at", "TEXT")):
         if name not in have:
             conn.execute(f"ALTER TABLE shift_change_requests ADD COLUMN {name} {decl}")
     conn.commit()
@@ -5151,7 +5167,12 @@ def _ensure_history_columns(conn):
                        ("quality_confidence", "TEXT"), ("what_if_json", "TEXT"), ("superseded_by", "INTEGER"),
                        ("republished_at", "TEXT"), ("publishing_at", "TEXT")):
         if name not in have:
-            conn.execute(f"ALTER TABLE schedule_history ADD COLUMN {name} {decl}")
+            try:
+                conn.execute(f"ALTER TABLE schedule_history ADD COLUMN {name} {decl}")
+            except sqlite3.OperationalError as e:
+                # Another connection added it between our read and this write.
+                if "duplicate column" not in str(e).lower():
+                    raise
 
 
 def update_schedule_history_rows(restaurant_id: int, schedule_csv: str,
@@ -5329,11 +5350,29 @@ def delete_schedule_history(history_id: int, restaurant_id: int, db_path: str = 
     False if the id didn't exist or belonged to a different restaurant.
     """
     conn = get_conn(db_path)
-    cur = conn.execute("DELETE FROM schedule_history WHERE id=? AND restaurant_id=?", (history_id, restaurant_id))
-    conn.commit()
-    deleted = cur.rowcount > 0
-    conn.close()
-    return deleted
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        own = conn.execute("SELECT published_at FROM schedule_history WHERE id=? AND restaurant_id=?",
+                           (history_id, restaurant_id)).fetchone()
+        if not own:
+            conn.rollback()
+            return False
+        # Every generation writes a schedule_versions row, whose foreign key
+        # made this DELETE raise for every modern draft (SCHED-16). A draft's
+        # versions, and the share links of a publish that never completed,
+        # belong to it and go with it. A published week keeps its dependents
+        # (requests, outcomes) and is refused by the routes before this.
+        if not own["published_at"]:
+            conn.execute("DELETE FROM schedule_versions WHERE history_id=? AND restaurant_id=?", (history_id, restaurant_id))
+            conn.execute("DELETE FROM schedule_shares WHERE schedule_id=? AND restaurant_id=?", (history_id, restaurant_id))
+        cur = conn.execute("DELETE FROM schedule_history WHERE id=? AND restaurant_id=?", (history_id, restaurant_id))
+        conn.commit()
+        return cur.rowcount > 0
+    except BaseException:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def get_role_rates(restaurant_id: int, db_path: str = DB_PATH) -> dict:
@@ -7760,21 +7799,33 @@ def get_staff_contacts(restaurant_id: int, db_path: str = DB_PATH) -> list:
 def set_staff_contact(restaurant_id: int, employee_name: str, email: str = None,
                       phone: str = None, db_path: str = DB_PATH, pos_id: str = None) -> bool:
     """Upsert by (restaurant, employee name) — the same key
-    staff_availability and staff_notes use. pos_id is kept when the caller
-    does not send one, so a route that never knew the field cannot blank it."""
-    name = (employee_name or "").strip()
+    staff_availability and staff_notes use, matched however the name's case
+    or spacing was typed ("maria g." updates "Maria G.", MOD-EMP-2).
+
+    None means "not given, keep what is stored" for email, phone and pos_id;
+    "" clears. Saving only a phone number used to erase the stored email
+    (MOD-EMP-4)."""
+    name = " ".join((employee_name or "").split())
     if not name:
         return False
+
+    def _v(x):
+        return None if x is None else ((x or "").strip() or "")
+    e, p, pid = _v(email), _v(phone), _v(pos_id)
     conn = get_conn(db_path)
     try:
-        conn.execute("""
-            INSERT INTO staff_contacts (restaurant_id, employee_name, email, phone, pos_id)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(restaurant_id, employee_name)
-            DO UPDATE SET email=excluded.email, phone=excluded.phone,
-                          pos_id=COALESCE(excluded.pos_id, staff_contacts.pos_id), updated_at=datetime('now')
-        """, (restaurant_id, name, (email or "").strip() or None, (phone or "").strip() or None,
-              (pos_id or "").strip() or None))
+        key = name.casefold()
+        existing = next((r for r in conn.execute("SELECT id, employee_name FROM staff_contacts WHERE restaurant_id=?",
+                                                 (restaurant_id,)).fetchall()
+                         if " ".join((r["employee_name"] or "").split()).casefold() == key), None)
+        if existing:
+            conn.execute("UPDATE staff_contacts SET email=CASE WHEN ? IS NULL THEN email ELSE NULLIF(?, '') END, "
+                         "phone=CASE WHEN ? IS NULL THEN phone ELSE NULLIF(?, '') END, "
+                         "pos_id=CASE WHEN ? IS NULL OR ?='' THEN pos_id ELSE ? END, updated_at=datetime('now') "
+                         "WHERE id=?", (e, e, p, p, pid, pid, pid, existing["id"]))
+        else:
+            conn.execute("INSERT INTO staff_contacts (restaurant_id, employee_name, email, phone, pos_id) "
+                         "VALUES (?, ?, ?, ?, ?)", (restaurant_id, name, e or None, p or None, pid or None))
         conn.commit()
         return True
     finally:

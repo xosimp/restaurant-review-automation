@@ -472,6 +472,18 @@ def api_time_off_request(current_user):
     return jsonify(ok=True, request=row)
 
 
+@staff_bp.route("/api/time-off/<int:request_id>/withdraw", methods=["POST"])
+@staff_login_required
+def api_time_off_withdraw(request_id, current_user):
+    """Take back a pending request — the only way to correct one, since a
+    second request over the same dates is refused (MOD-EMP-7)."""
+    rid, name = _staff_context(current_user)
+    import time_off
+    if not name or not time_off.withdraw(rid, request_id, name):
+        return jsonify(ok=False, error="That request is not yours, or is already answered."), 404
+    return jsonify(ok=True)
+
+
 @staff_bp.route("/api/shift-requests")
 @staff_login_required
 def api_shift_requests(current_user):
@@ -480,8 +492,9 @@ def api_shift_requests(current_user):
     rid, name = _staff_context(current_user)
     import shift_requests
     if not name:
-        return jsonify(ok=True, requests=[], open=[])
-    return jsonify(ok=True, requests=shift_requests.mine(rid, name), open=shift_requests.open_shifts(rid))
+        return jsonify(ok=True, requests=[], open=[], asks=[])
+    return jsonify(ok=True, requests=shift_requests.mine(rid, name), open=shift_requests.open_shifts(rid),
+                   asks=shift_requests.asked_of_me(rid, name))
 
 
 @staff_bp.route("/api/shift-requests", methods=["POST"])
@@ -521,16 +534,26 @@ def api_colleagues(current_user):
     import staff_schedule
     from schedule_versions import rows_from_csv
     from models import get_schedule_history_detail
-    hid = staff_schedule._newest_published(rid)
-    if not hid or not name:
+    from time_utils import restaurant_now_by_id
+    if not name:
         return jsonify(ok=True, colleagues=[])
-    detail = get_schedule_history_detail(hid, rid) or {}
+    # Every published week still ahead, each date read from the week that
+    # owns it — the same reading the portal's own shifts use. This called a
+    # helper that no longer exists (_newest_published), so the swap picker
+    # was a 500.
+    today = restaurant_now_by_id(rid, naive=True).date()
+    weeks = staff_schedule._published_weeks(rid, today)
     out = {}
-    for r in rows_from_csv(detail.get("schedule_csv") or ""):
-        if r["employee"].lower() == name.lower():
-            continue
-        out.setdefault(r["employee"], []).append({"date": r["date"], "day": r["day"], "role": r["role"],
-                                                  "shift_start": r["shift_start"], "shift_end": r["shift_end"]})
+    for w in weeks:
+        detail = get_schedule_history_detail(w["id"], rid) or {}
+        for r in rows_from_csv(detail.get("schedule_csv") or ""):
+            d = staff_schedule._parse_day(r["date"])
+            if not d or d < today or staff_schedule._owner_of(weeks, d) != w["id"]:
+                continue
+            if r["employee"].strip().lower() == name.strip().lower():
+                continue
+            out.setdefault(r["employee"], []).append({"date": r["date"], "day": r["day"], "role": r["role"],
+                                                      "shift_start": r["shift_start"], "shift_end": r["shift_end"]})
     return jsonify(ok=True, colleagues=[{"name": n, "shifts": sorted(v, key=lambda x: (x["date"], x["shift_start"]))}
                                         for n, v in sorted(out.items())])
 
@@ -540,7 +563,7 @@ def api_colleagues(current_user):
 def api_preferences(current_user):
     rid, name = _staff_context(current_user)
     import staff_settings
-    st = (staff_settings.get_all(rid).get(name) or {}) if name else {}
+    st = staff_settings.for_name(rid, name) if name else {}
     return jsonify(ok=True, preferred_dayparts=st.get("preferred_dayparts") or [], desired_hours=st.get("desired_hours"))
 
 
@@ -573,6 +596,23 @@ def api_shift_request_withdraw(request_id, current_user):
     return jsonify(ok=True)
 
 
+@staff_bp.route("/api/shift-requests/<int:request_id>/respond", methods=["POST"])
+@staff_login_required
+def api_shift_request_respond(request_id, current_user):
+    """A colleague's yes or no to a swap they were asked for. A swap moves
+    their shift too, so it never goes ahead without this (SCHED-21)."""
+    rid, name = _staff_context(current_user)
+    if not name:
+        return jsonify(ok=False, error="No employee name on this session."), 400
+    body = request.get_json(silent=True) or {}
+    import shift_requests
+    try:
+        row = shift_requests.respond_swap(rid, request_id, name, bool(body.get("accept")))
+    except shift_requests.ShiftRequestError as e:
+        return jsonify(ok=False, error=str(e)), 400
+    return jsonify(ok=True, request=row)
+
+
 @staff_bp.route("/api/open-shifts/<int:request_id>/claim", methods=["POST"])
 @staff_login_required
 def api_open_shift_claim(request_id, current_user):
@@ -598,7 +638,18 @@ def api_open_shift_claim(request_id, current_user):
 TASK_DATE_WINDOW_DAYS = 1
 
 
-def _valid_task_date(value):
+def _task_today(restaurant_id):
+    """The restaurant's own calendar day, not the server's UTC one — at 8pm
+    in Chicago the server is already on tomorrow (MOD-EMP-5)."""
+    from time_utils import restaurant_now_by_id
+    try:
+        return restaurant_now_by_id(restaurant_id, naive=True).date()
+    except Exception:
+        from datetime import date as _date
+        return _date.today()
+
+
+def _valid_task_date(value, restaurant_id=None):
     """An ISO date inside today ± TASK_DATE_WINDOW_DAYS, or None.
 
     A checklist is an accountability record, so the date it is filed under is
@@ -616,7 +667,7 @@ def _valid_task_date(value):
         parsed = _date.fromisoformat(text[:10])
     except ValueError:
         return None
-    today = _date.today()
+    today = _task_today(restaurant_id) if restaurant_id is not None else _date.today()
     if abs((parsed - today).days) > TASK_DATE_WINDOW_DAYS:
         return None
     return parsed.isoformat()
@@ -633,10 +684,10 @@ def api_tasks(current_user):
         return jsonify(ok=True, role=None, tasks=[])
     from models import get_todays_tasks
     raw = (request.args.get("date") or "").strip()
-    date = _valid_task_date(raw)
+    date = _valid_task_date(raw, rid)
     if raw and not date:
         return jsonify(ok=False, error="That date isn't one you can check off."), 400
-    return jsonify(ok=True, role=role, tasks=get_todays_tasks(rid, role, task_date=date))
+    return jsonify(ok=True, role=role, tasks=get_todays_tasks(rid, role, task_date=date or _task_today(rid).isoformat()))
 
 
 @staff_bp.route("/api/tasks/complete", methods=["POST"])
@@ -656,7 +707,7 @@ def api_complete_task(current_user):
     raw_date = (data.get("task_date") or "").strip()
     if not raw_date:
         return jsonify(ok=False, error="task_date required"), 400
-    task_date = _valid_task_date(raw_date)
+    task_date = _valid_task_date(raw_date, rid)
     if not task_date:
         return jsonify(ok=False, error="That date isn't one you can check off."), 400
 

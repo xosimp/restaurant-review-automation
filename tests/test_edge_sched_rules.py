@@ -86,13 +86,11 @@ def _publish(db_path, rid, dates, rows):
 
 # ── SCHED-13: windows that run past midnight ──────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="SCHED-13: a window until 1:00am is read as 60 minutes, refusing a 5pm-11pm shift")
 def test_a_window_until_one_am_accepts_a_five_to_eleven_shift():
     c = _c(time_windows={"ana": {"Friday": (None, sr.parse_minutes("1:00am"))}})
     assert c.window_ok("Ana", "2026-10-09", "5:00pm", "11:00pm") == (True, "")
 
 
-@pytest.mark.xfail(strict=True, reason="SCHED-13: an overnight shift skips the upper bound, so 5pm-2am passes a not-after-10pm window")
 def test_a_window_until_ten_pm_refuses_a_five_pm_to_two_am_shift():
     c = _c(time_windows={"ana": {"Friday": (None, sr.parse_minutes("10:00pm"))}})
     ok, why = c.window_ok("Ana", "2026-10-09", "5:00pm", "2:00am")
@@ -105,7 +103,6 @@ def test_a_window_until_ten_pm_still_refuses_a_five_to_eleven_shift():
     assert c.window_ok("Ana", "2026-10-09", "5:00pm", "9:30pm")[0] is True
 
 
-@pytest.mark.xfail(strict=True, reason="SCHED-13: _clean_windows refuses earliest >= latest, so an overnight window cannot be entered")
 def test_an_overnight_availability_window_can_be_saved():
     out = staff_settings._clean_windows({"Friday": {"earliest": "5:00pm", "latest": "1:00am"}})
     assert out == {"Friday": {"earliest": "5:00pm", "latest": "1:00am"}}
@@ -118,7 +115,6 @@ def test_a_window_that_ends_before_it_starts_on_the_same_day_is_still_refused():
 
 # ── SCHED-31: no day off at all ────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="SCHED-31: the days-off check only runs when there is at least one day off, so seven shifts pass")
 def test_seven_shifts_with_a_fourteen_day_run_limit_still_breach_the_days_off_rule():
     c = _c()
     c.compliance["max_consecutive_days"] = 14
@@ -139,7 +135,6 @@ def test_five_shifts_with_two_days_off_together_break_nothing():
 
 # ── SCHED-32: rest gaps across a DST change ───────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="SCHED-32: spans are naive, so a fall-back night reads an hour short and a legal opener is a rest_gap")
 def test_a_close_and_open_across_the_fall_back_night_is_not_a_rest_gap(db):
     rid = _restaurant(db, timezone="America/Chicago")
     dates = ["2026-10-26", "2026-10-27", "2026-10-28", "2026-10-29", "2026-10-30", "2026-10-31", "2026-11-01"]
@@ -150,7 +145,6 @@ def test_a_close_and_open_across_the_fall_back_night_is_not_a_rest_gap(db):
     assert "rest_gap" not in {v["kind"] for v in sr.violations(rows, c)}
 
 
-@pytest.mark.xfail(strict=True, reason="SCHED-32: spans are naive, so a spring-forward night reads an hour long and a real breach passes")
 def test_a_close_and_open_across_the_spring_forward_night_is_a_rest_gap(db):
     rid = _restaurant(db, timezone="America/Chicago")
     dates = ["2027-03-08", "2027-03-09", "2027-03-10", "2027-03-11", "2027-03-12", "2027-03-13", "2027-03-14"]
