@@ -71,9 +71,9 @@ Response convention: `jsonify(ok=True, ...)` / `jsonify(ok=False, error=...), 4x
 
 Full detail: `PROMPT_LIBRARY.md`.
 
-- **Anthropic Claude** — everything except AI-visibility. Haiku (`claude-haiku-4-5-20251001`) for high-volume/cheap tasks: review analysis, labor insight, competitor analysis, sales-audit notes. Sonnet (`claude-sonnet-5`) for reasoning/quality-sensitive tasks: review reply drafting, marketing drafts, Ask Cavnar.
-- **Perplexity (`sonar`)** — Intel's AI-visibility check only, nowhere else.
-- All calls route through `ai_utils.create_with_retry()`: budget check → retry-with-backoff → usage logging. Never call the SDK directly from a route or module.
+- **Anthropic Claude** — everything except AI-visibility. Haiku for the high-volume classifiers (review analysis, competitor menu extraction, email personalisation, the marketing insight card); Sonnet for anything an owner reads as advice (insights, diagnoses, drafts, schedules, Ask Cavnar); Opus for invoice transcription only. The per-call table in `PROMPT_LIBRARY.md` is the single list — do not restate tiers here.
+- **Perplexity (`sonar`)** — Intel's AI-visibility check only, nowhere else; a REST call, not an SDK.
+- Every Anthropic call routes through `ai_utils.create_with_retry()`: budget check → retry-with-backoff → usage logging. Never call `messages.create` directly from a route or module.
 - `temperature` is never passed — the production SDK build rejects it; `create_with_retry` strips it.
 
 ---

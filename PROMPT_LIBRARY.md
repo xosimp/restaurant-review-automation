@@ -1,17 +1,45 @@
 # Prompt Library — Cavnar AI
 
-Every place a model call happens: which provider, which model, what it's asked to do, and what it's forbidden from doing. All calls route through `ai_utils.create_with_retry()` (budget check, retry with backoff, usage logging to `ai_usage`) — nothing calls the Anthropic/Perplexity SDK directly.
+Every place a model call happens: which provider, which model, what it's asked to do, and what it's forbidden from doing. Every Anthropic call routes through `ai_utils.create_with_retry()` (budget check, retry with backoff, usage logging to `ai_usage`) — nothing calls `messages.create` directly. Perplexity is not an SDK call: the AI-visibility check posts to its REST endpoint with `requests` (`client_api.py`, `_do_ai_visibility_inner`), metered through the same `ai_usage` ledger.
+
+The model for each call is a literal in the calling module with an env override (the table below names both). `ai_utils` holds no default-model constant; when that changes, this file is the list to update.
 
 ## Providers
 
 | Provider | Used for | Default model | Env override |
 |---|---|---|---|
-| Anthropic (Claude) | everything except AI-visibility checks | `claude-haiku-4-5-20251001` (cheap, high-volume: analysis, drafting) or `claude-sonnet-5` (Ask Cavnar, marketing drafting — reasoning/quality-sensitive) | `CLAUDE_MODEL`, `ASK_CAVNAR_MODEL`, `DRAFTER_MODEL` |
+| Anthropic (Claude) | everything except AI-visibility checks | `claude-haiku-4-5-20251001` for the high-volume classifiers (review analysis, competitor menu extraction, email personalisation, marketing insight); `claude-sonnet-5` for everything an owner reads as advice (insights, diagnoses, drafts, schedules, Ask Cavnar); `claude-opus-5` for invoice transcription only | per call site — see the table under *Call sites* |
 | Perplexity | Intel's AI-visibility check only | `sonar` | `AI_VISIBILITY_MODEL` |
 
 No OpenAI usage anywhere in this codebase.
 
 ## Call sites
+
+| Call | Module | Default model | Env override |
+|---|---|---|---|
+| Review analysis | `analyser.py:267` | Haiku | none (hardcoded) |
+| Review root-cause diagnosis | `review_intelligence.py` | Sonnet | `CLAUDE_REPORTER_MODEL` |
+| Review reply drafting | `drafter.py` | Sonnet | `DRAFTER_MODEL` |
+| Review insight (the consultant read) | `client_api.py` `_do_review_insight` | Sonnet | `REVIEW_INSIGHT_MODEL` |
+| Food cost insight | `inventory.get_claude_insights` | Sonnet | `INVENTORY_INSIGHT_MODEL` |
+| Food cost root-cause diagnosis | `food_cost_intelligence.py` | Sonnet | `CLAUDE_REPORTER_MODEL` |
+| Labor insight | `labor.py` (`get_claude_insights`) | Sonnet | `LABOR_INSIGHT_MODEL` |
+| Schedule generation | `labor.py` (`generate_schedule`) | Sonnet | `SCHEDULE_MODEL` |
+| Weekly plan (the Monday three actions) | `strategy_jobs.py` via `ask_with_tools` | Sonnet | `ASK_CAVNAR_MODEL` |
+| Competitor menu extraction (×2) | `competitor.py:119,174` | Haiku | `CLAUDE_MODEL` |
+| Weekly competitor insight | `competitor.py:780` | Sonnet | `CLAUDE_REPORTER_MODEL` |
+| Marketing post draft, calendar ideas | `marketing.py:452,693` | Sonnet | `MARKETING_MODEL` |
+| Marketing insight | `client_api.py` `_do_mkt_insight` | Haiku | `CLAUDE_MODEL` |
+| Guest campaign copy | `guest_marketing.py` | Sonnet | `GUEST_MARKETING_MODEL` |
+| Recipe drafts, recipe scan (OCR) | `recipes.py` | Sonnet | `RECIPE_MODEL` |
+| Invoice extraction | `invoices.py` | Opus | `INVOICE_MODEL` |
+| Digest narrative | `reporter.py` | Sonnet | `CLAUDE_REPORTER_MODEL` |
+| Onboarding email personalisation | `emails.py:157` | Haiku | `CLAUDE_MODEL` |
+| Sales-audit notes | `sales_audit_notes_ai.py:35` | Sonnet | none (hardcoded) |
+| Ask Cavnar | `ask_cavnar.py` | Sonnet | `ASK_CAVNAR_MODEL` |
+| AI visibility | `client_api.py` `AIVIS_MODEL` (Perplexity REST) | `sonar` | `AI_VISIBILITY_MODEL` |
+
+Two call sites have no override (`analyser.py`, `sales_audit_notes_ai.py`); `CLAUDE_MODEL` and `CLAUDE_REPORTER_MODEL` are each read by several. Shift Quality has no model call: its "why this schedule" text is the deterministic evaluation rendered as prose. `sales_audit_cheatsheet.py` has none either.
 
 ### Review analysis (`analyser.py`)
 Model: Haiku. Input: one review's text + rating. Output: sentiment (positive/neutral/negative), category list, one-line summary, urgency (high/normal), **severity tier** (safety/legal/operational/service/minor), **`specific_complaint`** (≤8 words) and **`entities`** (dishes, staff roles, daypart, service mode). Deterministic-feeling by design — same review text should score the same way; the prompt does not ask for creative variation.
@@ -37,28 +65,37 @@ Model: Sonnet (`CLAUDE_REPORTER_MODEL`). Scheduled (`scheduler.run_food_cost_dia
 `_validate_diagnosis` rejects a cause naming a driver it was not handed — the same discipline `verify_figures` applies to numbers — and an unsourced figure flags the result and forces confidence to `low`. An empty cross-module block tells the model in so many words that it has no operational evidence and must cap its confidence, because an empty block otherwise reads as "nothing notable happened" rather than "we have no data".
 
 ### Labor AI insight (`labor.py` → Claude via `ai_utils`)
-Model: Haiku. Input: the period's aggregated labor numbers (by day, by role) — never raw shift rows. Output: 2–4 sentences plus a short recommendations list. Every dollar/percentage figure named must trace back to a number `labor.py` actually computed; where the model states something it can't verify against the passed-in numbers, the response is expected to mark it `UNVERIFIED` rather than assert it plainly (see the real example: *"about $145 over target each day... UNVERIFIED: $145"* when the exact dollar figure wasn't in the aggregate passed to it).
+Model: Sonnet (`LABOR_INSIGHT_MODEL`). Input: the period's aggregated labor numbers (by day, by role) — never raw shift rows. Output: 2–4 sentences plus a short recommendations list. Every dollar/percentage figure named must trace back to a number `labor.py` actually computed; where the model states something it can't verify against the passed-in numbers, the response is expected to mark it `UNVERIFIED` rather than assert it plainly (see the real example: *"about $145 over target each day... UNVERIFIED: $145"* when the exact dollar figure wasn't in the aggregate passed to it).
 
-### Shift Quality reasoning ("Why this schedule?")
-Model: Haiku/Sonnet (context-dependent). Input: the finished schedule + its `shift_quality.py` evaluation (dimension scores, strengths, weaknesses). Output: plain-English explanation. Cannot name a person or a shift that isn't actually in the generated week — the evaluation it's explaining is itself deterministic Python, so the model is narrating a computed result, not computing one.
+### Schedule generation (`labor.generate_schedule`)
+Model: Sonnet (`SCHEDULE_MODEL`). Input: the roster with availability, capabilities and the owner's rules, the demand profile and the hours budget. Output: the week's shifts as CSV, which `client_api._build_schedule_result` validates, repairs (`_top_up_hours_gap`, `_extend_shifts_to_close_gap`) and then grades with `shift_quality.py`. The "why this schedule" text the owner reads is that deterministic evaluation rendered as prose — there is no second model call to narrate it.
 
 ### Competitor analysis (`competitor.py`)
-Model: Haiku (`CLAUDE_MODEL`). Input: this restaurant's and nearby competitors' Google Places data (rating, review count, category). Output: a short comparative read. Never fabricates a competitor that wasn't actually returned by the Places API — see `project_gia_mia_places_testing` in memory: this codebase has previously fabricated competitor data by accident, and the fix was to make the prompt strictly grounded in the fetched snapshot rows.
+Model: Haiku (`CLAUDE_MODEL`) for the two menu-extraction calls (a competitor's menu page or PDF into structured items); Sonnet (`CLAUDE_REPORTER_MODEL`) for the weekly comparative read. Input: this restaurant's and nearby competitors' Google Places data (rating, review count, category) and the extracted menus. Output: a short comparative read. Never fabricates a competitor that wasn't actually returned by the Places API — see `project_gia_mia_places_testing` in memory: this codebase has previously fabricated competitor data by accident, and the fix was to make the prompt strictly grounded in the fetched snapshot rows.
 
 ### AI-visibility check (`client_api.py`'s `AIVIS_MODEL`, via Perplexity)
 Model: `sonar`. Input: a fixed panel of realistic customer-style queries for the restaurant's cuisine/neighborhood. Output, per query: whether the restaurant was mentioned (`appeared`) and whether the query itself got answered at all (`answered`) — these are recorded separately so "the model didn't answer" is never conflated with "the model answered without mentioning us." Rate-limited server-side (see `ai_utils`'s comment: an earlier bug fired nine sonar queries a minute per restaurant, unmetered — fixed with staggered submission + logging).
 
 ### Marketing draft (`marketing.py`, `guest_marketing.py`)
-Model: Sonnet. Input: brand-voice fields + what's being promoted (a dish, an event, a general "keep guests coming back" prompt) + recent post history (avoid repetition). Output: one social post draft, always presented for the owner to edit/approve — never auto-published without a human step for organic content.
+Model: Sonnet (`MARKETING_MODEL`, `GUEST_MARKETING_MODEL`); the marketing *insight* card (`client_api._do_mkt_insight`) is Haiku (`CLAUDE_MODEL`). Input: brand-voice fields + what's being promoted (a dish, an event, a general "keep guests coming back" prompt) + recent post history (avoid repetition). Output: one social post draft, always presented for the owner to edit/approve — never auto-published without a human step for organic content.
 
 ### Ask Cavnar (`ask_cavnar.py`, `ask_cavnar_tools.py`)
 Model: Sonnet (`ASK_CAVNAR_MODEL`), tool-calling enabled (`ask_with_tools`), `max_tokens` from the depth contract `_MAX_TOKENS` — brief 400 / standard 1200 / executive 4000, chosen from the question by `_depth_for`. The system prompt is a LIST of content blocks: static rules with a `cache_control` breakpoint, then the live snapshot (never interpolate per-restaurant data into the static block, or the cache stops hitting for everyone). Input: the full context snapshot (`build_context()` — identity, sibling locations, alerts, memory, per-module data the tier grants) + the filtered tool list for this restaurant's modules + conversation history (sanitized via `_sanitize_history`). System framing: an AI restaurant COO with direct data access, not a generic chatbot — encouraged to call tools rather than guess, required to mark anything it can't verify, and required to route any outside-effect action through a `write`-kind tool's proposal rather than claiming to have done it. See `MODULE_OVERVIEW.md`'s Ask Cavnar section for the tool-kind contract.
 
-### Sales-audit notes (`sales_audit_notes_ai.py`, `sales_audit_cheatsheet.py`)
-Model: Haiku/Sonnet. Input: what Will observed during an in-person audit visit. Output: structured notes / a cheat-sheet for the pitch. Internal tool, not client-facing — lower stakes on hallucination but still grounded in what was actually entered.
+### Sales-audit notes (`sales_audit_notes_ai.py`)
+Model: Sonnet (hardcoded; `sales_audit_cheatsheet.py` is deterministic and makes no call). Input: what Will observed during an in-person audit visit. Output: structured notes / a cheat-sheet for the pitch. Internal tool, not client-facing — lower stakes on hallucination but still grounded in what was actually entered.
 
 ### Invoice extraction (`invoices.py`)
 Model: Opus (`INVOICE_MODEL`, default `claude-opus-5`) — the one call site where a misread digit flows straight into every plate cost, so it uses the most capable model; weekly, low volume. Input: one supplier invoice as an `image` block (JPEG/PNG/WebP/GIF) or a `document` block (PDF), ≤4.5 MB. Output: structured JSON via `output_config.format` (`json_schema`: supplier, invoice_date, invoice_total, lines[description, quantity, unit, unit_price, line_total], every numeric field nullable). The prompt forbids estimating a missing number (null instead) and skips non-product lines. **The model only transcribes.** Matching to ingredients, unit conversion, the qty×price=total check, the >40% "unit mix-up" guard and the lines-vs-total check are all Python (`invoices.propose`), and nothing is written until the owner confirms each line (`invoices.apply`, once per import). `stop_reason` `refusal`/`max_tokens` become owner-facing errors. Same file twice (sha256) is never read twice.
+
+### Recipe drafts and recipe scan (`recipes.py`)
+Model: Sonnet (`RECIPE_MODEL`). Two calls: a draft recipe (ingredients and quantities) for a dish that has none, accepted line by line by the owner; and OCR of a photographed recipe card into the same shape. Nothing is written until the owner accepts.
+
+### Digest narrative and onboarding emails (`reporter.py`, `emails.py`)
+The weekly digest's narrative paragraph is Sonnet (`CLAUDE_REPORTER_MODEL`), grounded in the digest's own figures and checked by `ai_guard`; the day-2/7/30 onboarding emails personalise one paragraph with Haiku (`CLAUDE_MODEL`).
+
+### The weekly plan (`strategy_jobs.run_weekly_plan`)
+Monday 7am local: Ask Cavnar's own `ask_with_tools` (Sonnet) files the week's three actions as issues, reading the same snapshot and tools an owner's question would.
 
 ## Guardrails that apply to every call site
 
