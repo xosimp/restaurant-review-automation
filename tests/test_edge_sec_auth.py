@@ -541,7 +541,6 @@ def test_the_google_callback_still_reports_a_failed_connection(client, db_path):
     assert "Connection failed" in body and "gmb:'error'" in body
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-9: /auth/google/callback reflects ?error= unescaped inside a <script>")
 def test_the_google_callback_never_reflects_the_error_parameter_unescaped(client, db_path):
     rid, owner, mgr = _setup(db_path)
     client.set_cookie("session_token", create_session(owner, db_path=db_path))

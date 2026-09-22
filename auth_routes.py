@@ -757,10 +757,18 @@ def gmb_callback(current_user):
     error = request.args.get("error")
 
     if error or not code or not state:
-        msg = error or "No code returned"
+        # ?error= is attacker-controlled and used to land inside a JS string
+        # literal (SEC-9). It is never reflected now: a known Google code
+        # maps to our own sentence, anything else to a generic one.
+        import json as _json_cb
+        _known = {"access_denied": "You declined access to Google.",
+                  "invalid_request": "Google rejected the request.",
+                  "server_error": "Google had a problem — try again.",
+                  "temporarily_unavailable": "Google is busy — try again shortly."}
+        msg = _json_cb.dumps(_known.get(str(error or ""), "No code returned" if not error else "Google sign-in failed."))
         return (
             "<html><body><script>"
-            "window.opener&&window.opener.postMessage({gmb:'error',msg:'" + msg + "'},'*');"
+            "window.opener&&window.opener.postMessage({gmb:'error',msg:" + msg + "},'*');"
             "window.close();"
             "</script><p>Connection failed. Close this window.</p></body></html>"
         )

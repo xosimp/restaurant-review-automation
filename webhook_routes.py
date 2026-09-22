@@ -750,9 +750,12 @@ def docusign_callback():
     code = request.args.get("code")
     error = request.args.get("error")
     if error:
+        # Escaped: this public route used to reflect ?error= into the page
+        # verbatim, under a CSP that allows inline script (SEC-10).
+        from markupsafe import escape as _esc
         return f"""<div style="font-family:sans-serif;max-width:500px;margin:60px auto;padding:24px">
             <h2 style="color:#c84b2f">DocuSign Error</h2>
-            <p>Error: {error}</p>
+            <p>Error: {_esc(error[:200])}</p>
             <p><a href="/admin">Back to admin</a></p>
         </div>"""
     if code:

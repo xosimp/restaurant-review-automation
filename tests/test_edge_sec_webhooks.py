@@ -278,7 +278,6 @@ def _post_docusign(client, body, signature=None):
     return client.post("/docusign/webhook", data=body, content_type="application/json", headers=headers)
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-10: /docusign/callback interpolates ?error= into HTML unescaped (reflected XSS)")
 def test_the_docusign_callback_escapes_its_error_parameter(wh_client):
     resp = wh_client.get("/docusign/callback?error=<script>alert(document.domain)</script>")
     body = resp.get_data(as_text=True)
@@ -286,7 +285,6 @@ def test_the_docusign_callback_escapes_its_error_parameter(wh_client):
     assert "<script" not in body.lower()
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-10: /docusign/callback2 shares the handler that reflects ?error= unescaped")
 def test_the_second_docusign_callback_path_escapes_its_error_parameter(wh_client):
     resp = wh_client.get('/docusign/callback2?error="><img src=x onerror=alert(1)>')
     body = resp.get_data(as_text=True)
