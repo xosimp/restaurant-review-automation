@@ -85,7 +85,10 @@ def test_the_context_section_is_empty_for_an_empty_restaurant_and_dated_otherwis
     text = decisions.context(rid, db_path=db_path)
     assert text.startswith("WHAT THIS RESTAURANT HAS DECIDED BEFORE")
     assert "Add brunch: not for us" in text and "because: no Sunday staff" in text
-    assert date.today().isoformat() in text
+    # home_dismissals.dismissed_at defaults to datetime('now'), which is UTC;
+    # comparing against the local date failed every evening after 7pm Chicago.
+    from datetime import datetime, timezone
+    assert datetime.now(timezone.utc).date().isoformat() in text
     assert "Do not re-propose something marked 'not for us'" in text
 
 
