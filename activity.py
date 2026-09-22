@@ -34,9 +34,7 @@ ACTIVITY_TTL = 45
 _CACHE = {}
 
 
-def _utc(dt=None):
-    return (dt or datetime.now(timezone.utc)).strftime("%Y-%m-%d %H:%M:%S")
-
+from time_utils import utc_stamp as _utc
 
 def _iso_z(value):
     """Normalise a stored timestamp (naive UTC, either separator) to ISO-8601

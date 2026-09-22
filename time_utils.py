@@ -92,3 +92,10 @@ def parse_stored_dt(value, tz=OPERATOR_TZ):
             pass
         dt = dt.replace(tzinfo=None)
     return dt
+
+
+def utc_stamp(dt=None) -> str:
+    """`dt` (or now) as the UTC "YYYY-MM-DD HH:MM:SS" the ledgers store.
+    Was defined identically in security, activity and delayed."""
+    from datetime import timezone
+    return (dt or datetime.now(timezone.utc)).strftime("%Y-%m-%d %H:%M:%S")

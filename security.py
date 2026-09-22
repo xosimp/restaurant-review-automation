@@ -48,9 +48,7 @@ WINDOW_MINUTES = 15
 LOCK_STEPS = ((5, 5), (10, 30), (15, 24 * 60))   # (failures in 24h, lock minutes)
 
 
-def _utc(dt=None):
-    return (dt or datetime.now(timezone.utc)).strftime("%Y-%m-%d %H:%M:%S")
-
+from time_utils import utc_stamp as _utc
 
 def _acct_key(username):
     return "acct:" + (username or "").strip().lower()

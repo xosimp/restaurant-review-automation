@@ -24,9 +24,7 @@ from models import get_conn, DB_PATH
 AUTOMATION_ACTOR = {"id": None, "username": "Cavnar AI", "is_admin": False, "role": "automation"}
 
 
-def _utc(dt=None):
-    return (dt or datetime.now(timezone.utc)).strftime("%Y-%m-%d %H:%M:%S")
-
+from time_utils import utc_stamp as _utc
 
 def _row(r):
     d = dict(r)
