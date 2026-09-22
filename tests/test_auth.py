@@ -323,6 +323,13 @@ def test_sessions_are_isolated_per_user(db_path):
 def test_owner_active_restaurant_overrides_base(db_path):
     rid_base = _restaurant(db_path, name="Base Location")
     rid_other = _restaurant(db_path, name="Other Location")
+    # Both in one owner's group: a switch is re-validated on every request
+    # (SEC-2), so an ungrouped location would be refused.
+    conn = get_conn(db_path)
+    conn.execute("UPDATE restaurants SET location_group='EJs', owner_email='owner1@x.com' WHERE id IN (?,?)",
+                 (rid_base, rid_other))
+    conn.commit()
+    conn.close()
     uid = create_user(rid_base, "owner1", "owner1@x.com", "pw", db_path=db_path)
     set_user_role(uid, "owner", db_path=db_path)
     token = create_session(uid, db_path=db_path)

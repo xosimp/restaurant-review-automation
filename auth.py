@@ -316,6 +316,13 @@ def init_auth(db_path: str = DB_PATH):
         # token is fine to tap in a link and miserable to read off a whiteboard
         # and type on a phone, which is exactly what signup asks people to do.
         "ALTER TABLE staff_portal_tokens ADD COLUMN join_code TEXT",
+        # The restaurant a staff-PIN session was minted for. A PIN identity
+        # with memberships at two restaurants was resolved against its HOME
+        # restaurant (users.restaurant_id) whichever tablet it signed in on,
+        # so the wrong restaurant's schedule came up — and once the home
+        # restaurant unlinked it, the session fell back to users.role 'client'
+        # there and opened that owner console (SEC-1).
+        "ALTER TABLE sessions ADD COLUMN staff_restaurant_id INTEGER",
     ]:
         try:
             import sqlite3 as _sql
@@ -325,6 +332,19 @@ def init_auth(db_path: str = DB_PATH):
             conn_m.close()
         except Exception:
             pass  # Column already exists
+
+    # A PIN identity is an employee, never a console login. They were created
+    # with users.role's column default 'client', which is what the session
+    # fell back to whenever no active membership resolved (SEC-1, SEC-29).
+    try:
+        import sqlite3 as _sql_bf
+        conn_bf = _sql_bf.connect(db_path)
+        conn_bf.execute("UPDATE users SET role='employee' WHERE email LIKE '%@staff.invalid' "
+                        "AND (role IS NULL OR role='client')")
+        conn_bf.commit()
+        conn_bf.close()
+    except Exception:
+        pass
 
     # Normalize any mixed-case usernames written outside create_user() (e.g.
     # raw SQL in a seed/"ensure" script, as _ensure_gia_mia_vibe() in
@@ -1710,11 +1730,16 @@ def create_user(restaurant_id: int, username: str, email: str,
     # "Set" with no real information behind it.
     from zoneinfo import ZoneInfo as _ZI_cu
     now = datetime.now(_ZI_cu('America/Chicago')).strftime('%Y-%m-%dT%H:%M:%S')
+    # A staff-PIN identity (the @staff.invalid address both staff paths
+    # mint) is an employee from the start, never the 'client' column default
+    # a console login gets (SEC-1).
+    role = "employee" if email.lower().strip().endswith("@staff.invalid") else "client"
     cur = conn.execute("""
-        INSERT INTO users (restaurant_id, username, email, password_hash, is_admin, password_changed_at, password_strength)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO users (restaurant_id, username, email, password_hash, is_admin, password_changed_at,
+                           password_strength, role)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     """, (restaurant_id, username.lower().strip(), email.lower().strip(),
-          generate_password_hash(password), int(is_admin), now, password_strength(password)))
+          generate_password_hash(password), int(is_admin), now, password_strength(password), role))
     conn.commit()
     uid = cur.lastrowid
     conn.close()
@@ -1927,9 +1952,13 @@ def set_team_role(restaurant_id: int, user_id: int, role: str, acting_user_id: i
 
 def get_team_members(restaurant_id: int, db_path: str = DB_PATH) -> list[dict]:
     conn = get_conn(db_path)
+    # Console logins only. Staff-PIN identities (role 'employee', the
+    # @staff.invalid address) are managed under Staff, and listing them here
+    # showed an employee as an account holder (SEC-29).
     rows = conn.execute("""
         SELECT id, username, email, role, created_at, last_login, is_active
         FROM users WHERE restaurant_id=? AND is_active=1
+          AND COALESCE(role, 'client') <> 'employee' AND email NOT LIKE '%@staff.invalid'
         ORDER BY created_at
     """, (restaurant_id,)).fetchall()
     conn.close()
@@ -2078,8 +2107,10 @@ def create_session(user_id: int, days: int = 30,
     if device_id:
         conn.execute("DELETE FROM sessions WHERE user_id=? AND device_id=?", (user_id, device_id))
     conn.execute(
-        "INSERT INTO sessions (token, user_id, expires_at, ip_address, user_agent, device_type, device_id) VALUES (?,?,?,?,?,?,?)",
-        (hash_session_token(token), user_id, expires, ip_address or "", user_agent or "", device_type, device_id or "")
+        "INSERT INTO sessions (token, user_id, expires_at, ip_address, user_agent, device_type, device_id, "
+        "staff_restaurant_id) VALUES (?,?,?,?,?,?,?,?)",
+        (hash_session_token(token), user_id, expires, ip_address or "", user_agent or "", device_type, device_id or "",
+         restaurant_id if device_type == "staff_pin" else None)
     )
     # The event names the KIND of sign-in, not just that one happened. A staff
     # PIN sign-in and an owner console sign-in are different security events
@@ -2175,7 +2206,7 @@ _INACTIVITY_EXEMPT_DEVICES = frozenset({"ios", "staff_pin"})
 # role that replaces it further down is a consequence of this join, not an
 # input to it.
 _SESSION_USER_SQL = """
-    SELECT u.*, s.last_active, s.active_restaurant_id, s.device_type,
+    SELECT u.*, s.last_active, s.active_restaurant_id, s.device_type, s.staff_restaurant_id,
            m.id            AS _m_id,
            m.role          AS _m_role,
            m.employee_name AS _m_employee_name
@@ -2186,7 +2217,9 @@ _SESSION_USER_SQL = """
           AND m.is_active = 1
           AND m.restaurant_id = CASE
                 WHEN u.role = 'owner' AND s.active_restaurant_id IS NOT NULL
-                THEN s.active_restaurant_id ELSE u.restaurant_id END
+                THEN s.active_restaurant_id
+                WHEN s.staff_restaurant_id IS NOT NULL THEN s.staff_restaurant_id
+                ELSE u.restaurant_id END
     WHERE s.token=? AND s.expires_at > datetime('now') AND u.is_active=1
 """
 
@@ -2313,7 +2346,28 @@ def _note_session_touch_failure(e):
         pass
 
 
-def get_session_user(token: str, db_path: str = DB_PATH) -> Optional[dict]:
+def _still_in_group(conn, base_id, active_id) -> bool:
+    """Whether `active_id` is still in the location group of `base_id`, by
+    the same rule get_location_group applies: the same organization, or the
+    same group name under the same owner email."""
+    try:
+        rows = {r["id"]: r for r in conn.execute(
+            "SELECT id, location_group, owner_email, organization_id FROM restaurants WHERE id IN (?,?)",
+            (base_id, active_id)).fetchall()}
+    except Exception:
+        return False
+    b, a = rows.get(base_id), rows.get(active_id)
+    if not a or not b or not (b["location_group"] or "").strip():
+        return False
+    if b["organization_id"] and a["organization_id"] and a["organization_id"] != b["organization_id"]:
+        return False
+    # The name and owner must still agree even inside one organization: an
+    # admin moving a location to another owner edits these two fields.
+    return ((a["location_group"] or "").strip() == (b["location_group"] or "").strip()
+            and (a["owner_email"] or "").strip().lower() == (b["owner_email"] or "").strip().lower())
+
+
+def get_session_user(token: str, db_path: str = DB_PATH, _revalidated: bool = False) -> Optional[dict]:
     if not token:
         return None
     conn = get_conn(db_path)
@@ -2400,15 +2454,56 @@ def get_session_user(token: str, db_path: str = DB_PATH) -> Optional[dict]:
                 pass
             _note_session_touch_failure(e)
     user = dict(row)
-    acting_rid = (user.get("active_restaurant_id")
-                  if user.get("role") == "owner" and user.get("active_restaurant_id")
-                  else user.get("restaurant_id"))
+    staff_rid = user.pop("staff_restaurant_id", None)
+    owner_switched = user.get("role") == "owner" and user.get("active_restaurant_id")
+
+    # SEC-2: group membership used to be checked once, when the owner
+    # switched. A location sold or moved to another owner stayed reachable
+    # from every session already switched into it — for 30 days on iOS. The
+    # switch is re-validated on every request (one indexed lookup, only for
+    # a switched owner) and cleared the moment it no longer holds.
+    # An active membership at the location is itself authorisation there.
+    if owner_switched and user["active_restaurant_id"] != user.get("restaurant_id") \
+            and not (joined and row["_m_id"] is not None) \
+            and not _still_in_group(conn, user.get("restaurant_id"), user["active_restaurant_id"]):
+        try:
+            conn.execute("UPDATE sessions SET active_restaurant_id=NULL WHERE token=?", (hash_session_token(token),))
+            conn.commit()
+        except Exception as e:
+            _note_session_touch_failure(e)
+        conn.close()
+        if _revalidated:
+            return None
+        return get_session_user(token, db_path=db_path, _revalidated=True)
+
+    acting_rid = (user.get("active_restaurant_id") if owner_switched
+                  else (staff_rid or user.get("restaurant_id")))
     user["grants"] = _grants_for(conn, user["id"], acting_rid)
+
+    # SEC-1: fail closed. An identity that HAS memberships but none active
+    # where this session acts is not authorised there — it used to fall back
+    # to users.role ('client' for PIN identities), which opened the owner
+    # console of a restaurant that had just removed the person. Only a login
+    # with no membership rows at all (legacy, pre-backfill) keeps users.role,
+    # and an owner acting in a validated group location keeps its role.
+    if joined and row["_m_id"] is None and not owner_switched:
+        try:
+            has_any = conn.execute("SELECT 1 FROM memberships WHERE user_id=? LIMIT 1", (user["id"],)).fetchone()
+        except Exception:
+            has_any = None
+        if has_any or user.get("role") == "employee":
+            conn.close()
+            return None
     conn.close()
-    # For owners, active_restaurant_id in session overrides their base restaurant_id
-    if user.get("role") == "owner" and user.get("active_restaurant_id"):
+    # For owners, active_restaurant_id in session overrides their base
+    # restaurant_id; a staff-PIN session acts at the restaurant it was
+    # minted for.
+    if owner_switched:
         user["base_restaurant_id"] = user["restaurant_id"]
         user["restaurant_id"] = user["active_restaurant_id"]
+    elif staff_rid:
+        user["base_restaurant_id"] = staff_rid
+        user["restaurant_id"] = staff_rid
     else:
         user["base_restaurant_id"] = user["restaurant_id"]
 
@@ -2417,11 +2512,9 @@ def get_session_user(token: str, db_path: str = DB_PATH) -> Optional[dict]:
     # identity from authorization — the same person can be a manager at one
     # location and an employee at another, and users.role cannot express that.
     #
-    # It is a fallback, not a requirement: a session whose membership row is
-    # missing (backfill hasn't run, or a brand-new login racing it) keeps the
-    # users.role it has always had, so nothing can be locked out by this
-    # table's absence. The membership is also what the staff routes read to
-    # resolve an employee's own name, so it is attached either way.
+    # users.role is kept only for a login with no membership rows at all
+    # (see the fail-closed check above). The membership is also what the
+    # staff routes read to resolve an employee's own name.
     #
     # It rides along on the session query above rather than costing a second
     # one: this runs on all ~390 decorated routes plus the staff routes, and a

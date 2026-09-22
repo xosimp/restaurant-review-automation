@@ -182,13 +182,13 @@ def test_deactivating_is_scoped_to_the_acting_restaurant(db_path):
     assert get_membership(ub, rid_b, db_path=db_path) is None
 
 
-def test_an_inactive_membership_falls_back_rather_than_granting_its_role(db_path):
+def test_an_inactive_membership_fails_closed_rather_than_falling_back(db_path):
     rid = _restaurant(db_path)
     uid = create_user(rid, "dana", "dana@x.test", "pw", db_path=db_path)
     m = upsert_membership(uid, rid, "employee", db_path=db_path)
     set_membership_active(m["id"], rid, False, db_path=db_path)
     token = create_session(uid, db_path=db_path)
-    user = get_session_user(token, db_path=db_path)
-    # Deactivated membership is ignored; the identity keeps its users.role.
-    assert user["role"] == "client"
-    assert user["membership_id"] is None
+    # An identity with memberships but none active here is not authorised
+    # here. It used to fall back to users.role 'client' — the owner console
+    # of the restaurant that had just removed them (SEC-1).
+    assert get_session_user(token, db_path=db_path) is None

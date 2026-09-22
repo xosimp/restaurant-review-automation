@@ -519,7 +519,6 @@ def test_a_session_switched_into_a_group_location_acts_there(client, db_path):
     assert get_session_user(tok, db_path=db_path)["restaurant_id"] == l2
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-2: group membership is checked only at switch time; a sold location stays reachable")
 def test_a_switched_session_stops_acting_at_a_location_once_it_leaves_the_group(client, db_path):
     l1, l2, boss = _group(db_path)
     tok = create_session(boss, db_path=db_path)

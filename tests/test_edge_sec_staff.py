@@ -139,8 +139,6 @@ def _unlinked_at_home_signed_in_elsewhere(client, db_path):
 
 # ── SEC-1 / appendix 12-13 / Permissions 14: a PIN session's restaurant and role ──
 
-@pytest.mark.xfail(strict=True, reason="SEC-1: a PIN session minted at a second restaurant "
-                   "resolves to the identity's home restaurant")
 def test_a_pin_session_minted_at_the_second_restaurant_acts_there(client, db_path):
     a, b, mid_a, mid_b = _two_job_employee(client, db_path)
     resp = _pin_login(client, get_join_code(b, db_path=db_path), mid_b, "7412")
@@ -150,8 +148,6 @@ def test_a_pin_session_minted_at_the_second_restaurant_acts_there(client, db_pat
     assert user["membership_id"] == mid_b
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-1: a self-signed-up staff identity keeps "
-                   "users.role's column default 'client'")
 def test_a_self_signed_up_staff_identity_is_stored_as_an_employee(client, db_path):
     rid = _restaurant(db_path, "Alpha Cafe", "a@x.test")
     models.add_manual_team_member(rid, "Dana K.", "Server", db_path=db_path)
@@ -160,8 +156,6 @@ def test_a_self_signed_up_staff_identity_is_stored_as_an_employee(client, db_pat
     assert identity["role"] == "employee"
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-1: an owner-created staff identity keeps "
-                   "users.role's column default 'client'")
 def test_an_owner_created_staff_identity_is_stored_as_an_employee(client, db_path):
     rid = _restaurant(db_path, "Alpha Cafe", "a@x.test")
     owner = _owner(db_path, rid, "erik")
@@ -173,8 +167,6 @@ def test_an_owner_created_staff_identity_is_stored_as_an_employee(client, db_pat
     assert identity["role"] == "employee"
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-1: unlinked at home + PIN sign-in elsewhere "
-                   "resolves to the home restaurant as 'client' and opens its staff/team admin")
 def test_an_identity_unlinked_at_home_cannot_open_the_home_staff_and_team_screens(client, db_path):
     _a, _b, _mid_b, token = _unlinked_at_home_signed_in_elsewhere(client, db_path)
     h = {"Authorization": f"Bearer {token}"}
@@ -182,8 +174,6 @@ def test_an_identity_unlinked_at_home_cannot_open_the_home_staff_and_team_screen
     assert all(code in (401, 403) for code in statuses.values()), statuses
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-1: unlinked at home + PIN sign-in elsewhere "
-                   "reads the home restaurant's margins and billing")
 def test_an_identity_unlinked_at_home_cannot_read_home_margins_or_billing(client, db_path):
     _a, _b, _mid_b, token = _unlinked_at_home_signed_in_elsewhere(client, db_path)
     h = {"Authorization": f"Bearer {token}"}
@@ -191,8 +181,6 @@ def test_an_identity_unlinked_at_home_cannot_read_home_margins_or_billing(client
     assert all(code in (401, 403) for code in statuses.values()), statuses
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-1: after the home unlink the session resolves to "
-                   "the home restaurant with no membership, so its own portal answers 403")
 def test_an_identity_unlinked_at_home_still_works_its_shift_at_the_second_restaurant(client, db_path):
     _a, b, mid_b, token = _unlinked_at_home_signed_in_elsewhere(client, db_path)
     user = get_session_user(token, db_path=db_path)
@@ -200,8 +188,6 @@ def test_an_identity_unlinked_at_home_still_works_its_shift_at_the_second_restau
     assert client.get("/staff/api/me").status_code == 200
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-1 / Permissions #14: an inactive home membership "
-                   "falls back to users.role 'client' instead of failing closed")
 def test_an_inactive_home_membership_grants_no_console_role(db_path):
     rid = _restaurant(db_path, "Alpha Cafe", "a@x.test")
     uid, mid = _staff(db_path, rid, "dana", "Dana K.")
@@ -346,8 +332,6 @@ def _owner_and_staff(client, db_path):
     return rid, owner, made["user_id"], h
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-29: a staff identity is listed in Team as an "
-                   "editable 'Owner'")
 def test_a_staff_identity_never_appears_in_the_team_list(client, db_path):
     _rid, owner, staff_uid, h = _owner_and_staff(client, db_path)
     team = client.get("/mobile/api/account/team", headers=h).get_json()
@@ -356,8 +340,6 @@ def test_a_staff_identity_never_appears_in_the_team_list(client, db_path):
     assert staff_uid not in ids
 
 
-@pytest.mark.xfail(strict=True, reason="SEC-29 / Permissions #15: _principal_count counts a "
-                   "staff identity as an owner login")
 def test_a_staff_identity_is_not_counted_as_an_owner(client, db_path):
     rid, owner, _staff_uid, _h = _owner_and_staff(client, db_path)
     conn = models.get_conn(db_path)
