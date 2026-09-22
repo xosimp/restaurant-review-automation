@@ -5802,6 +5802,10 @@ def get_restaurants_for_digest(day: str, db_path: str = DB_PATH) -> list:
         FROM restaurants r
         JOIN users u ON u.restaurant_id = r.id AND u.is_admin = 0
         WHERE r.digest_day=? AND r.digest_enabled=1 AND r.module_reviews=1
+          -- A cancelled, paused or deleting account gets no weekly digest
+          -- (DATA-51); unknown/NULL billing stays in service (in_service).
+          AND """ + in_service_sql("r.billing_status") + """
+          AND r.deletion_requested_at IS NULL
     """, (day.lower(),)).fetchall()
     conn.close()
     return [dict(r) for r in rows]

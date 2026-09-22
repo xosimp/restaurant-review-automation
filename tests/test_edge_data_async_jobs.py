@@ -217,8 +217,6 @@ def test_a_failed_job_never_returns_a_traceback(client, db_path, monkeypatch):
 
 # ── a delayed action killed mid-handler (DATA-19) ──────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="DATA-19: a delayed action whose process died mid-handler stays 'running' "
-                                       "forever — no reaper, no failure recorded, gone from the owner's feed")
 def test_a_delayed_action_left_running_is_reaped_and_reported(db_path, monkeypatch):
     import delayed
     rid = _restaurant(db_path)

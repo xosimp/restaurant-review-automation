@@ -242,8 +242,6 @@ def test_a_cancelled_restaurant_is_not_fetched(db_path, monkeypatch, state):
     assert fetched == []
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-51: get_restaurants_for_digest filters only digest_day/enabled/"
-                                       "module_reviews, so a cancelled owner keeps getting weekly digests")
 @pytest.mark.parametrize("state", ["churned", "paused"])
 def test_a_cancelled_restaurant_gets_no_weekly_digest(db_path, state):
     from auth import create_user, init_auth
@@ -255,8 +253,6 @@ def test_a_cancelled_restaurant_gets_no_weekly_digest(db_path, state):
     assert models.get_restaurants_for_digest("monday", db_path=db_path) == []
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-51: delayed.run_due executes pending auto-publish / supplier-order "
-                                       "actions for an account cancelled inside the undo window")
 def test_a_cancelled_restaurant_s_queued_action_does_not_run(db_path, monkeypatch):
     import delayed
     rid = _rid(db_path)

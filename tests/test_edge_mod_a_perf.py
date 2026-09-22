@@ -191,7 +191,6 @@ def test_the_claim_prune_uses_an_index(monkeypatch, db_path):
 
 # ── MOD-PERF-4: one run_due pass drains every due action ────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-PERF-4: delayed.run_due executes at most 20 actions per tick")
 def test_one_run_due_pass_executes_every_due_action(monkeypatch, redirect):
     import delayed
     ran = []
