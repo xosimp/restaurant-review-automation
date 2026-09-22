@@ -20,10 +20,20 @@ class ShiftRequestError(ValueError):
     pass
 
 
-def _published(conn, restaurant_id):
+def _published(conn, restaurant_id, on_date=None):
+    """The published week a shift on `on_date` belongs to: the newest
+    published row whose week contains that date. Taking simply the newest
+    published row meant that once next week went out, nobody could drop or
+    swap a shift in the week they were actually working."""
+    if on_date is None:
+        return conn.execute(
+            "SELECT id, schedule_csv, week_start, week_end FROM schedule_history WHERE restaurant_id=? "
+            "AND published_at IS NOT NULL ORDER BY id DESC LIMIT 1", (restaurant_id,)).fetchone()
+    iso = on_date.isoformat() if hasattr(on_date, "isoformat") else str(on_date)[:10]
     return conn.execute(
         "SELECT id, schedule_csv, week_start, week_end FROM schedule_history WHERE restaurant_id=? "
-        "AND published_at IS NOT NULL ORDER BY id DESC LIMIT 1", (restaurant_id,)).fetchone()
+        "AND published_at IS NOT NULL AND substr(week_start,1,10) <= ? AND substr(week_end,1,10) >= ? "
+        "ORDER BY generated_at DESC, id DESC LIMIT 1", (restaurant_id, iso, iso)).fetchone()
 
 
 def request_drop(restaurant_id, employee_name, day, shift_start, reason=None, db_path=DB_PATH, today=None):
@@ -41,7 +51,7 @@ def request_drop(restaurant_id, employee_name, day, shift_start, reason=None, db
         raise ShiftRequestError("that shift has already happened")
     conn = get_conn(db_path)
     try:
-        pub = _published(conn, restaurant_id)
+        pub = _published(conn, restaurant_id, d)
         if not pub:
             raise ShiftRequestError("no published schedule to change")
         rows = rows_from_csv(pub["schedule_csv"])
@@ -88,9 +98,12 @@ def request_swap(restaurant_id, employee_name, day, shift_start, target_name, ta
         raise ShiftRequestError("one of those shifts has already happened")
     conn = get_conn(db_path)
     try:
-        pub = _published(conn, restaurant_id)
+        pub = _published(conn, restaurant_id, d)
         if not pub:
             raise ShiftRequestError("no published schedule to change")
+        other_pub = _published(conn, restaurant_id, td)
+        if not other_pub or other_pub["id"] != pub["id"]:
+            raise ShiftRequestError("both shifts need to be in the same published week")
         rows = rows_from_csv(pub["schedule_csv"])
         mine_ = next((r for r in rows if r["date"] == d.isoformat() and r["employee"].lower() == name.lower()
                       and r["shift_start"] == (shift_start or "").strip()), None)

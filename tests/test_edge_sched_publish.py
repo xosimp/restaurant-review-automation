@@ -117,7 +117,6 @@ def _one(db_path, sql, *args):
 
 # ── SCHED-2: the portal after next week is published ─────────────────────
 
-@pytest.mark.xfail(strict=True, reason="SCHED-2: the portal reads only the newest published week, so this week's Fri-Sun read 'off'")
 def test_the_portal_still_shows_the_rest_of_this_week_after_next_week_is_published(db):
     rid = _restaurant(db)
     _save(db, rid, W1, _week_csv(W1), published=True)
@@ -137,7 +136,6 @@ def test_the_portal_shows_this_week_when_it_is_the_only_published_one(db):
     assert [d["off"] for d in out["week"][:4]] == [False, False, False, False]
 
 
-@pytest.mark.xfail(strict=True, reason="SCHED-2: shift_requests reads only the newest published week, so this week's shift cannot be dropped")
 def test_a_shift_this_week_can_still_be_dropped_after_next_week_is_published(db):
     rid = _restaurant(db)
     _save(db, rid, W1, _week_csv(W1), published=True)
@@ -148,7 +146,6 @@ def test_a_shift_this_week_can_still_be_dropped_after_next_week_is_published(db)
 
 # ── SCHED-4: a double shift in the portal ─────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="SCHED-4: by_day keys shifts by date, so the lunch leg of a double disappears from today and week")
 def test_both_legs_of_a_double_appear_in_today_and_the_week(db):
     rid = _restaurant(db)
     text = (HEADER + f"\n{W1[0]},Monday,Ana,Server,10:30am,2:30pm,4,lunch\n{W1[0]},Monday,Ana,Server,5:00pm,10:00pm,5,dinner")

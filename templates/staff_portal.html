@@ -216,18 +216,24 @@
     // The shifts API names them start / end / hours (labor.employee_shifts_from_csv).
     function sStart(s) { return s.start || s.shift_start || ''; }
     function sEnd(s) { return s.end || s.shift_end || ''; }
-    $('today-line').textContent = d.today
-      ? 'Today: ' + sStart(d.today) + ' – ' + sEnd(d.today)
+    // A double is two legs on one day; show every one of them.
+    var todayLegs = d.today ? (d.today.legs || [d.today]) : [];
+    var todayText = [];
+    for (var t = 0; t < todayLegs.length; t++) todayText.push(sStart(todayLegs[t]) + ' – ' + sEnd(todayLegs[t]));
+    $('today-line').textContent = todayLegs.length
+      ? 'Today: ' + todayText.join(' and ')
       : "You're off today.";
 
     var html = '<h2>Next 7 days</h2>';
     for (var i = 0; i < d.week.length; i++) {
-      var day = d.week[i], s = day.shift;
+      var day = d.week[i];
+      var legs = day.shifts || (day.shift ? [day.shift] : []);
       var cls = 'shift' + (day.is_today ? ' today' : '') + (day.off ? ' off' : '');
       html += '<div class="' + cls + '">'
             + '<div><span class="day">' + esc(day.weekday) + '</span>'
             + '<span class="date">' + mdyShort(day.date) + (day.is_today ? ' · today' : '') + '</span></div>';
-      if (s) {
+      for (var j = 0; j < legs.length; j++) {
+        var s = legs[j];
         var hrs = s.hours || s.scheduled_hours;
         html += '<div class="time">' + esc(sStart(s)) + ' – ' + esc(sEnd(s)) + '</div>'
               + '<div class="meta">' + esc(s.role || '')
@@ -237,8 +243,10 @@
         // A published shift you can't make: ask to drop it, or swap it
         // with a colleague's. A manager answers either one.
         html += '<div class="drop"><button type="button" class="cbtn cbtn-text cbtn-sm" data-drop-date="' + esc(day.date) + '" data-drop-start="' + esc(sStart(s)) + '">Can\u2019t work this</button>'
-              + '<button type="button" class="cbtn cbtn-text cbtn-sm" data-swap-date="' + esc(day.date) + '" data-swap-start="' + esc(sStart(s)) + '">Swap with a colleague</button></div>'
-              + '<div class="swap-slot" id="swap-' + esc(day.date) + '"></div>';
+              + '<button type="button" class="cbtn cbtn-text cbtn-sm" data-swap-date="' + esc(day.date) + '" data-swap-start="' + esc(sStart(s)) + '">Swap with a colleague</button></div>';
+      }
+      if (legs.length) {
+        html += '<div class="swap-slot" id="swap-' + esc(day.date) + '"></div>';
       } else {
         html += '<div class="none">Off</div>';
       }
