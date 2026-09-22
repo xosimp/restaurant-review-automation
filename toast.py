@@ -9,7 +9,7 @@ the analysis engine changes.
 Toast API base: https://ws-api.toasttab.com (production)
                 https://ws-sandbox.toasttab.com (sandbox)
 """
-import os, csv, io, json, requests
+import os, csv, io, requests
 from datetime import datetime, timezone, timedelta, date
 from typing import Optional
 

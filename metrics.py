@@ -15,7 +15,7 @@ that never happened.
 Windows are inclusive date strings (YYYY-MM-DD). Metric keys may carry a
 parameter after a colon: "weekday_sales:Tuesday", "complaints:service".
 """
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 
 from models import get_conn, DB_PATH, REVIEW_TIME_AXIS_BARE
 

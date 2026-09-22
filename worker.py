@@ -30,7 +30,6 @@ web process stopped scheduling — leave every real job unrun. See
 RAILWAY_SCHEDULER_SPLIT.md for the exact start command and rollback.
 """
 import logging
-import os
 import signal
 import sys
 import time

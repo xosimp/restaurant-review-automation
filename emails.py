@@ -179,7 +179,6 @@ def send_2fa_code(to_email: str, restaurant_name: str, code: str, owner_name: st
     if not _resend_key():
         log.warning("send_2fa_code: RESEND_API_KEY not set — nothing sent")
         return False
-    import requests
     greeting = f"Hi {owner_name}," if owner_name else "Hi,"
     html = f"""
 <div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
@@ -213,7 +212,6 @@ def send_login_notification(to_email: str, restaurant_name: str,
     """Send sign-in notification email."""
     if not _resend_key():
         return False
-    import requests
     from datetime import datetime
     try:
         from zoneinfo import ZoneInfo
@@ -2338,7 +2336,6 @@ def send_password_changed_email(to_email: str, restaurant_name: str, owner_name:
     if not _resend_key():
         log.warning("send_password_changed_email: RESEND_API_KEY not set — nothing sent")
         return False
-    import requests
     from datetime import datetime
     try:
         from zoneinfo import ZoneInfo
@@ -2377,7 +2374,6 @@ def send_email_changed_email(to_email: str, restaurant_name: str, new_email: str
     if not _resend_key():
         log.warning("send_email_changed_email: RESEND_API_KEY not set — nothing sent")
         return False
-    import requests
     from datetime import datetime
     try:
         from zoneinfo import ZoneInfo
@@ -2417,7 +2413,6 @@ def send_payment_failed_client_email(to_email: str, restaurant_name: str, amount
     if not _resend_key():
         log.warning("send_payment_failed_client_email: RESEND_API_KEY not set — nothing sent")
         return False
-    import requests
     greeting = f"Hi {owner_name}," if owner_name else "Hi,"
     html = f"""
     <div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">

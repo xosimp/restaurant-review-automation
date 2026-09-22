@@ -56,7 +56,7 @@ import logging
 from datetime import date, timedelta
 
 import metrics
-from models import DB_PATH, get_conn
+from models import DB_PATH
 
 log = logging.getLogger(__name__)
 

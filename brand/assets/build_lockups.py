@@ -15,8 +15,6 @@ CavnarWordmarkAITagShape in ios/.../DesignSystem/CavnarMotion.swift).
 """
 import json
 import os
-import re
-import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))

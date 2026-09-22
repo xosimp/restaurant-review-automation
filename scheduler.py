@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from status_manager import record_scheduler_heartbeat, run_health_checks
 import emails as _emails
 import ops as _ops
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo as _ZI_sch
 from time_utils import parse_stored_dt
 def _chi_now():
@@ -1338,7 +1338,7 @@ def run_onboarding_sequence(local_hour: int = None):
     Only sends to clients with billing_status in ('trial', 'active').
     """
     from datetime import datetime, timedelta
-    from models import get_all_restaurants, get_onboarding_sent, mark_onboarding_sent, log_email
+    from models import get_all_restaurants, get_onboarding_sent, mark_onboarding_sent
     from emails import send_onboarding_day2, send_onboarding_day7, send_onboarding_day30
 
     try:

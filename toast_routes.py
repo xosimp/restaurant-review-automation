@@ -17,7 +17,7 @@ Client endpoints (login_required, scoped to session restaurant):
 """
 from flask import Blueprint, request, jsonify
 from auth import admin_required, login_required
-from models import update_restaurant, get_restaurant
+from models import update_restaurant
 
 toast_bp = Blueprint("toast", __name__)
 

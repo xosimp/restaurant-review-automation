@@ -4,9 +4,6 @@ Sends service agreements automatically when a new client is created.
 Uses JWT authentication with RSA keypair.
 """
 import os
-import json
-import base64
-from datetime import datetime, timedelta
 
 INTEGRATION_KEY = os.getenv("DOCUSIGN_INTEGRATION_KEY", "")
 USER_ID         = os.getenv("DOCUSIGN_USER_ID", "")

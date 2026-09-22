@@ -8,8 +8,8 @@ Credentials stored per restaurant:
   clover_merchant_id  — merchant ID from Clover dashboard
   clover_api_token    — API token from Clover developer dashboard
 """
-import os, csv, io, requests
-from datetime import datetime, timezone, timedelta, date
+import csv, io, requests
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 CLOVER_BASE = "https://api.clover.com/v3"

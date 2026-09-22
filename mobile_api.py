@@ -26,11 +26,7 @@ from datetime import datetime, timedelta
 
 from flask import Blueprint, request, jsonify
 
-from auth import (
-    verify_password, create_session, delete_session,
-    revoke_other_sessions, mobile_login_required, get_user_by_restaurant_id,
-    update_last_login,
-)
+from auth import verify_password, create_session, delete_session, revoke_other_sessions, mobile_login_required, update_last_login
 from auth_routes import _is_rate_limited, _record_failed_attempt, _clear_attempts, _get_client_ip
 from models import get_restaurant, update_restaurant, get_conn
 
@@ -2027,8 +2023,7 @@ def mobile_food_cost_analytics(current_user):
     same waste_items/overstock breakdowns dashboard.html bakes into its donut
     charts at render time — both already computed by analyse_inventory(),
     just not previously exposed as JSON."""
-    from inventory import (load_inventory_for_restaurant, analysis_for, get_claude_insights,
-                          compute_item_trends, build_price_watch)
+    from inventory import analysis_for, get_claude_insights, compute_item_trends, build_price_watch
     from marketing import get_upcoming_holidays
     rid = current_user["restaurant_id"]
     try:

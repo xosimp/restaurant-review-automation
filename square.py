@@ -8,7 +8,7 @@ Credentials stored per restaurant:
   square_access_token  — personal access token from Square developer dashboard
   square_location_id   — location ID from Square (restaurants can have multiple)
 """
-import os, csv, io, json, requests
+import csv, io, requests
 from datetime import datetime, timezone, timedelta, date
 from typing import Optional
 

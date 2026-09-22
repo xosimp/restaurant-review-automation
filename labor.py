@@ -1257,7 +1257,7 @@ def format_profile_block(profiles: list = None) -> str:
     if not profiles:
         return ""
     try:
-        from shift_quality import DEMAND_RANK
+        pass
     except Exception:
         return ""
     lines = []

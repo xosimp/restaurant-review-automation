@@ -38,7 +38,7 @@ Reviews knows what the rating slide puts at risk per month. Ranked together
 they answer "where is the money", which no single module can.
 """
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 
 from models import DB_PATH, get_conn
 

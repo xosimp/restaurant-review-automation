@@ -45,7 +45,7 @@ Read-only against the database except `weekly_snapshot`, `diagnose` and the
 forecast functions, which say so in their names.
 """
 import json
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 
 from models import DB_PATH, get_conn
 

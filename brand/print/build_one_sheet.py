@@ -7,7 +7,7 @@ at exactly 8.5x11in:
     --no-pdf-header-footer --print-to-pdf=brand/print/cavnar-one-sheet.pdf \
     "file://$PWD/brand/print/cavnar-one-sheet.html"
 """
-import base64, io, json, re
+import base64, io, re
 import qrcode, qrcode.image.svg
 
 ROOT = "/Users/simp/review_automation"

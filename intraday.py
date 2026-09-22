@@ -24,7 +24,7 @@ is withheld until MIN_PROFILE_SAMPLES same-weekday, same-hour readings exist
 percentage sign on it.
 """
 import logging
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 
 from models import get_conn, DB_PATH
 

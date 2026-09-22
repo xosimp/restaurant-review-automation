@@ -8,7 +8,6 @@ import emails as _emails
 from datetime import datetime
 
 from models import get_conn, get_restaurant, update_restaurant, log_email
-from auth import admin_required
 from emails import send_payment_email, send_welcome_email
 
 # Exception text handed to a client, with credentials stripped — a requests

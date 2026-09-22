@@ -2,11 +2,11 @@
 social_routes.py — Instagram and Facebook OAuth + posting routes
 Registered as a Flask Blueprint in hosted_dashboard.py
 """
-from flask import Blueprint, request, jsonify, redirect, make_response
+from flask import Blueprint, request, jsonify, redirect
 import os
 
 from models import get_conn, get_restaurant, update_restaurant
-from auth import login_required, admin_required
+from auth import login_required
 from meta_api import graph_url, oauth_dialog_url
 
 # Exception text handed to a client, with credentials stripped — a requests
@@ -40,7 +40,6 @@ def instagram_connect(current_user):
 def instagram_callback():
     """Handle Meta OAuth callback — exchange code for token, get IG user ID."""
     import requests as _req
-    from flask import redirect as _ig_redirect
     from models import update_restaurant as _update_r
 
     code         = request.args.get("code")

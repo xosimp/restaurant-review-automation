@@ -15,7 +15,7 @@ from reportlab.platypus import (
     HRFlowable, KeepTogether
 )
 from reportlab.lib.styles import ParagraphStyle
-from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
+from reportlab.lib.enums import TA_CENTER, TA_RIGHT
 from reportlab.platypus import Flowable
 import resend
 import pricing as _pricing   # the one price list; the PDF used to hardcode launch prices

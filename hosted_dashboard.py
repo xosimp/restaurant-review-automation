@@ -5,7 +5,7 @@ Multi-client, login-protected, Railway-deployable
 Run locally:  python3 hosted_dashboard.py
 Deploy:       Railway (connect GitHub repo, set env vars)
 """
-import os, json
+import os
 import pathlib
 from datetime import datetime, timedelta
 from functools import wraps
@@ -25,19 +25,9 @@ from functools import wraps
 from dotenv import load_dotenv
 load_dotenv(pathlib.Path(__file__).parent / ".env")
 PORT = int(os.getenv("PORT", 5000))
-from flask import (Flask, render_template, request,
-                   jsonify, redirect, url_for, make_response, send_file, session)
-from emails import send_payment_email, send_welcome_email
-from models import (init_db, get_conn, approve_response,
-                    get_reviews_since, get_restaurant,
-                    get_review_stats, get_reviews_data, get_top_issues,
-                    get_sentiment_trend, is_full_tier,
-                    get_active_modules, TIER_LABELS)
-from auth import (init_auth, verify_password, create_session,
-                  get_session_user, delete_session, create_user,
-                  list_users, update_password,
-                  get_sessions_for_user, revoke_other_sessions,
-                  get_user_by_restaurant_id)
+from flask import Flask, render_template, request, jsonify, redirect, url_for, send_file
+from models import get_conn, get_restaurant, get_review_stats, get_reviews_data, get_top_issues, get_sentiment_trend, is_full_tier, get_active_modules
+from auth import get_session_user, create_user
 
 # ── Sentry error monitoring ───────────────────────────────────────────────────
 import sentry_sdk
@@ -348,7 +338,6 @@ def index(current_user):
     if current_user.get("is_admin"):
         return redirect("/admin")
     from labor import analyse_shifts_for_restaurant
-    from inventory import load_inventory_for_restaurant
     from marketing import CONTENT_TYPES
     rid     = current_user["restaurant_id"]
     rfilter = request.args.get("filter","all")
@@ -577,7 +566,6 @@ def index(current_user):
     _labor_upcoming = []
     try:
         from marketing import get_upcoming_holidays as _guh_labor
-        from datetime import timedelta as _td_labor
         _now_labor = datetime.now()
         _hol_str = _guh_labor(_now_labor)
         if _hol_str:

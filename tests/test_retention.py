@@ -20,11 +20,13 @@ from models import Restaurant, create_restaurant, get_conn
 def _redirect_db(monkeypatch, db_path):
     real = models.get_conn
     monkeypatch.setattr(models, "get_conn", lambda *a, **k: real(db_path))
-    # Bound copies (CLAUDE.md's hazard): these modules take get_conn at
-    # module scope and the route bodies below pass no db_path.
+    # Bound copies (CLAUDE.md's hazard): milestones and outcomes take
+    # get_conn at module scope and the route bodies below pass no db_path.
+    # good_news only binds DB_PATH (its reads go through models.*), so the
+    # get_conn patch there is a no-op kept harmless with raising=False.
     import milestones, outcomes, good_news
     for m in (milestones, outcomes, good_news):
-        monkeypatch.setattr(m, "get_conn", lambda *a, **k: real(db_path))
+        monkeypatch.setattr(m, "get_conn", lambda *a, **k: real(db_path), raising=False)
         monkeypatch.setattr(m, "DB_PATH", db_path)
 
 

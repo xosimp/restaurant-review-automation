@@ -2,22 +2,14 @@
 admin_routes.py — Cavnar AI admin, infrastructure and API routes
 Registered as a Flask Blueprint in hosted_dashboard.py
 """
-from flask import (Blueprint, request, jsonify, redirect, url_for,
-                   render_template, make_response, send_file, Response, session)
-import os, json, io, csv as _csv_mod
+from flask import Blueprint, request, jsonify, redirect, render_template, make_response, send_file, Response
+import os, json, io
 from datetime import datetime
-from functools import wraps
 
 # Import everything needed from the main app
-from models import (get_conn, get_restaurant, update_restaurant,
-                    create_restaurant, Restaurant, get_reviews_data,
-                    get_review_stats, get_email_log, log_email, get_all_restaurants,
-                    get_changelog, save_changelog_entry, delete_changelog_entry,
-                    location_group_conflict, place_id_conflict)
-from auth import (create_session, get_session_user, delete_session,
-                  verify_password, list_users, create_user, update_password,
-                  admin_required, login_required)
-from emails import send_payment_email, send_welcome_email, create_stripe_checkout
+from models import get_conn, get_restaurant, update_restaurant, create_restaurant, Restaurant, get_reviews_data, get_review_stats, log_email, get_changelog, save_changelog_entry, delete_changelog_entry, location_group_conflict, place_id_conflict
+from auth import get_session_user, delete_session, create_user, update_password, admin_required, login_required
+from emails import send_payment_email, send_welcome_email
 import emails as _emails
 
 
@@ -666,7 +658,6 @@ def save_client_settings(restaurant_id, current_user):
             return "America/Chicago"
 
     try:
-        from models import set_service_tier
         tier = data.get("service_tier","trial")
         # Same tenancy guard as create-client: a group name in use by another
         # owner would silently merge two clients into one tenant.
@@ -990,7 +981,7 @@ def resend_payment(restaurant_id, current_user):
 @admin_required
 def seed_reviews(restaurant_id, current_user):
     """Seed sample reviews for a restaurant so client can see the dashboard working."""
-    from models import save_reviews, get_pending_analysis, update_analysis, update_draft, get_pending_drafts, Review
+    from models import save_reviews, get_pending_analysis, update_analysis, get_pending_drafts, Review
     from datetime import datetime, timedelta
 
     # Generate 12 realistic sample reviews
@@ -1886,9 +1877,8 @@ def competitor_intel_status(current_user, job_id):
 @admin_bp.route("/api/send-referral", methods=["POST"])
 @login_required
 def send_referral(current_user):
-    import resend as _resend, time as _time
+    import resend as _resend
     # Simple per-session rate limit: max 10 referrals per hour
-    from flask import g
     ip = (request.headers.get("X-Forwarded-For","").split(",")[0].strip() or request.remote_addr or "")
     data = request.get_json()
     ref_name  = data.get("name","").strip()

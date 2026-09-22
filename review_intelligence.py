@@ -46,7 +46,7 @@ Everything here is read-only against the database except `diagnose`, which
 writes its result to `review_diagnoses`.
 """
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from models import DB_PATH, get_conn, REVIEW_TIME_AXIS_BARE
 

@@ -4,7 +4,7 @@ import sqlite3
 import json
 import threading
 import weakref
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -976,7 +976,6 @@ def adopt_legacy_db(db_path: str = DB_PATH):
     if os.path.exists(db_path) or not os.path.exists(legacy):
         return False
     try:
-        import shutil
         os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
         # sqlite3's own backup API rather than a file copy: it takes a read
         # lock and captures a consistent snapshot even if something is

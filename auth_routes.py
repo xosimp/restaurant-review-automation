@@ -2,15 +2,12 @@
 auth_routes.py — Login, logout, password reset, 2FA, Google auth, session management
 Registered as a Flask Blueprint in hosted_dashboard.py
 """
-from flask import Blueprint, request, jsonify, make_response, redirect, url_for, render_template
+from flask import Blueprint, request, jsonify, make_response, redirect, render_template
 import os
 import time
 
 from models import get_conn, get_restaurant, update_restaurant
-from auth import (verify_password, create_session, delete_session,
-
-                  get_user_by_restaurant_id, get_sessions_for_user,
-                  revoke_other_sessions, update_password, login_required)
+from auth import verify_password, create_session, delete_session, get_sessions_for_user, revoke_other_sessions, update_password, login_required
 
 
 def _html_doc(fragment, bg="#f7f4ef"):
@@ -405,7 +402,6 @@ def verify_2fa():
         resp_ok.set_cookie("session_token", token, max_age=30*24*3600,
                            httponly=True, secure=_on_railway, samesite="Lax")
         if remember == "1":
-            import secrets as _sec6
             from auth import create_trusted_device as _ctd, describe_user_agent as _dua
             dev_tok = _ctd(uid, _user_for_session["id"], _dua(request.headers.get("User-Agent", "")) + " · web")
             resp_ok.set_cookie("device_token_"+str(uid), dev_tok,
@@ -416,7 +412,7 @@ def verify_2fa():
 
 @auth_bp.route("/resend-2fa", methods=["POST"])
 def resend_2fa():
-    import flask as _fl4, random, datetime as _dt4, hmac as _hmac_r2fa
+    import random, datetime as _dt4, hmac as _hmac_r2fa
     from models import get_restaurant, update_restaurant
     ip = _get_client_ip()
     if _is_rate_limited("2fa-resend:" + ip):
@@ -660,7 +656,7 @@ def list_sessions(current_user):
         if not ts:
             return ""
         try:
-            from datetime import datetime as _dt_s, timezone as _tz_s, timedelta as _td_s
+            from datetime import datetime as _dt_s, timezone as _tz_s
             from zoneinfo import ZoneInfo as _ZI_s
             # SQLite stores as 'YYYY-MM-DD HH:MM:SS' UTC
             dt_utc = _dt_s.strptime(ts[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=_tz_s.utc)

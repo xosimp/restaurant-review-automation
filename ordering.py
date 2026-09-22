@@ -22,7 +22,7 @@ history. A new supplier is a decision, and decisions stay with the owner.
 """
 import json
 import statistics
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from models import get_conn, DB_PATH
 

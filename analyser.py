@@ -1,5 +1,5 @@
 import os, json, anthropic
-from models import get_conn, update_analysis, get_pending_analysis
+from models import update_analysis, get_pending_analysis
 from ai_utils import create_with_retry, extract_text
 from ai_guard import UNTRUSTED_NOTE, wrap_untrusted
 

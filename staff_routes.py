@@ -15,16 +15,7 @@ time-off and messaging can be added without touching authentication again.
 from flask import (Blueprint, jsonify, make_response, redirect, render_template,
                    request, url_for)
 
-from auth import (STAFF_SESSION_HOURS, SignupError, claim_staff_name,
-                  claimable_names, consume_portal_nonce, cookies_require_secure,
-                  create_staff_session, delete_session, get_join_code,
-                  get_membership, get_memberships_for_restaurant,
-                  issue_portal_nonce, phone_for_signup_token, pin_lockout_state,
-                  portal_attempts_exceeded, record_portal_attempt,
-                  restaurant_for_join_code, restaurant_for_staff_code,
-                  set_membership_pin, staff_login_required, start_staff_signup,
-                  validate_pin, verify_membership_pin, verify_staff_signup,
-                  PinError)
+from auth import STAFF_SESSION_HOURS, SignupError, claim_staff_name, claimable_names, consume_portal_nonce, cookies_require_secure, create_staff_session, delete_session, get_join_code, get_membership, get_memberships_for_restaurant, issue_portal_nonce, phone_for_signup_token, portal_attempts_exceeded, record_portal_attempt, restaurant_for_join_code, restaurant_for_staff_code, set_membership_pin, staff_login_required, start_staff_signup, validate_pin, verify_membership_pin, verify_staff_signup, PinError
 from models import get_restaurant
 
 staff_bp = Blueprint("staff", __name__, url_prefix="/staff")
@@ -496,7 +487,7 @@ def _valid_task_date(value):
     needs: a closing task ticked after midnight, or an opening one ticked on a
     device whose clock is a day off.
     """
-    from datetime import date as _date, timedelta as _td
+    from datetime import date as _date
     text = (value or "").strip()
     if not text:
         return None

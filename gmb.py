@@ -1,7 +1,7 @@
 """
 gmb.py — Google My Business (Business Profile API) OAuth + review reply posting
 """
-import os, json, requests
+import os, requests
 from datetime import datetime, timezone, timedelta
 
 GOOGLE_CLIENT_ID     = os.getenv("GOOGLE_CLIENT_ID", "")

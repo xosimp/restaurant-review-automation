@@ -310,7 +310,6 @@ def _recent_days_lines(restaurant_id):
 def _inventory_context(restaurant_id):
     from inventory import load_inventory_for_restaurant, analysis_for
     from marketing import get_upcoming_holidays
-    from models import get_restaurant as _gr_ac
     items, is_live = load_inventory_for_restaurant(restaurant_id)
     # Same sample-data-fallback concern as labor above.
     if not items or not is_live:

@@ -11,7 +11,6 @@ The model is OWNER (a users row) → BRAND (restaurants.location_group, or the
 single restaurant itself) → LOCATION (a restaurants row). Health only ever
 rolls UP: a brand is as healthy as its worst location.
 """
-import json
 import logging
 import os
 import re

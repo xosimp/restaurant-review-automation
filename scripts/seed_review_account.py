@@ -29,7 +29,6 @@ rather than creating a second one. It prints the credentials once, at the end.
 import argparse
 import os
 import secrets
-import string
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

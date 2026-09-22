@@ -1,8 +1,8 @@
-import os, json, smtplib, logging, html as _html
+import os, smtplib, logging, html as _html
 from datetime import datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from models import get_reviews_since, save_weekly_report, WeeklyReport
+from models import get_reviews_since, WeeklyReport
 
 log = logging.getLogger(__name__)
 
@@ -1005,7 +1005,6 @@ def build_report_from_db(restaurant_id: int, restaurant_name: str,
                           days: int = 7, db_path: str = None) -> WeeklyReport:
     """Like build_report but accepts an explicit db_path for testing."""
     from models import get_reviews_since as _grs
-    import models as _m
     if db_path:
         reviews = _grs(restaurant_id,
                        (datetime.now() - timedelta(days=days)).isoformat(),

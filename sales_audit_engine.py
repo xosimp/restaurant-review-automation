@@ -19,7 +19,7 @@ table from the owner:
 * Missing data never lowers a score. A category with too few answers is
   "not assessed" rather than punished.
 """
-from sales_audit_schema import QUESTIONS, SECTIONS, completion
+from sales_audit_schema import QUESTIONS, completion
 
 # ── Benchmarks ───────────────────────────────────────────────────────────────
 # Each has a source and an applicability note. Bands are (low, high) in

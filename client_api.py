@@ -6,9 +6,7 @@ from flask import Blueprint, request, jsonify, redirect, send_file, Response, re
 import os, json, re, time, threading
 from datetime import datetime
 
-from models import (get_conn, get_restaurant, update_restaurant, approve_response,
-                    get_review_stats, get_reviews_data, get_sentiment_trend,
-                    get_top_issues, get_topic_heatmap)
+from models import get_conn, get_restaurant, update_restaurant, approve_response, get_review_stats, get_reviews_data, get_top_issues, get_topic_heatmap
 from auth import login_required
 
 
@@ -875,8 +873,6 @@ def _do_review_insight(rid):
     try:
         import os, json, anthropic as _anth
         from models import get_restaurant, get_review_stats, get_top_issues
-        from zoneinfo import ZoneInfo as _ZI_ri
-        from datetime import datetime as _dt_ri, timedelta as _td_ri
         _client_ri = _anth.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY",""))
         restaurant = get_restaurant(rid)
         rstats = get_review_stats(rid)
@@ -1852,7 +1848,6 @@ def _do_mkt_insight(rid, raw=False):
         from marketing import get_profile_for_restaurant, get_recent_content, get_upcoming_holidays, generate_content
         from models import get_restaurant
         from datetime import datetime
-        from zoneinfo import ZoneInfo
         restaurant = get_restaurant(rid)
         name = restaurant.name if restaurant else "your restaurant"
         owner = restaurant.owner_name if restaurant and restaurant.owner_name else None
@@ -2521,7 +2516,6 @@ def _build_schedule_result(restaurant_id):
                        build_demand_forecast)
     from models import get_restaurant, get_staff_notes, get_yoy_schedule_context
     from datetime import datetime as _dt, timedelta as _td
-    from zoneinfo import ZoneInfo as _ZI
 
     restaurant = get_restaurant(restaurant_id)
     shifts = load_shifts_for_restaurant(restaurant_id)
@@ -3727,7 +3721,7 @@ def _sched_notes_with_findings(restaurant_id, sched_notes):
 
 
 def _run_schedule_job(job_id, restaurant_id):
-    import csv as _csv_mod, io as _io_sched, traceback as _tb, datetime as _dt_sched
+    import csv as _csv_mod, traceback as _tb, datetime as _dt_sched
     try:
         result = _build_schedule_result(restaurant_id)
         from models import get_staff_notes as _gsn_sched, get_close_times as _gct_sched, get_role_close_buffers as _grcb_sched
@@ -4508,7 +4502,7 @@ def client_upload_data(current_user):
     _ot_flags = []
     try:
         if data_type == "shifts":
-            from labor import analyse_shifts_for_restaurant, get_hourly_rate as _ghr
+            from labor import analyse_shifts_for_restaurant
             _shift_analysis = analyse_shifts_for_restaurant(restaurant_id)
             _ot_flags = [f for f in _shift_analysis.get("overtime_risk", []) if f.get("status") == "overtime"]
             # Persist per-day breakdown for YoY schedule generation
