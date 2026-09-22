@@ -21,16 +21,7 @@ from models import DB_PATH
 # no such file (confirmed live on GitHub Actions, Sep 7 2026).
 
 
-def _html_doc(fragment, bg="#f7f4ef"):
-    """Wrap a bare fragment in a real HTML document so its background fills
-    the mail client's viewport instead of stopping at the content's height
-    (the half-cut-off look). Imported lazily: emails.py reads _resend_key()
-    at module scope, and a module-level import here could bind it before
-    load_dotenv() runs. See emails._html_document."""
-    from emails import html_document
-    return html_document(fragment, bg)
-
-
+from emails import html_document as _html_doc  # one definition; emails reads its env lazily
 
 TWILIO_SID     = os.getenv("TWILIO_ACCOUNT_SID", "")
 TWILIO_TOKEN   = os.getenv("TWILIO_AUTH_TOKEN", "")
@@ -49,17 +40,14 @@ TWILIO_MESSAGING_SERVICE_SID = os.getenv("TWILIO_MESSAGING_SERVICE_SID", "")
 # Optional; falls back to TWILIO_MESSAGING_SERVICE_SID (and from there to
 # TWILIO_FROM) when unset, so nothing breaks before this is provisioned.
 TWILIO_OTP_MESSAGING_SERVICE_SID = os.getenv("TWILIO_OTP_MESSAGING_SERVICE_SID", "")
-# Read fresh at call time — see emails.py for why binding these at import
-# time is a silent-total-failure mode.
-def _resend_key(): return os.getenv("RESEND_API_KEY", "")
-
+from emails import _resend_key
 
 def emails_sender(kind="client"):
     """One sender identity for everything an owner receives — see
     emails.SENDERS. Imported lazily for the same reason _html_doc is."""
     from emails import sender
     return sender(kind)
-def _from_email(): return os.getenv("FROM_EMAIL", "will@cavnar.ai")
+from emails import _from_email
 
 HEALTH_KEYWORDS = [
     "food poison", "food poisoning", "foodborne", "sick after", "got sick",

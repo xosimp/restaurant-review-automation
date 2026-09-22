@@ -25,30 +25,13 @@ from dotenv import load_dotenv
 import pathlib
 
 
-def _html_doc(fragment, bg="#f7f4ef"):
-    """Wrap a bare fragment in a real HTML document so its background fills
-    the mail client's viewport instead of stopping at the content's height
-    (the half-cut-off look). Imported lazily: emails.py reads RESEND_API_KEY
-    at module scope, and a module-level import here could bind it before
-    load_dotenv() runs. See emails._html_document."""
-    from emails import html_document
-    return html_document(fragment, bg)
-
-
+from emails import html_document as _html_doc  # one definition; emails reads its env lazily
 
 load_dotenv(pathlib.Path(__file__).parent / ".env")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [scheduler] %(message)s")
 log = logging.getLogger("scheduler")
 
-# NOTE: intentionally NOT read as module-level constants — a module-level
-# os.getenv() call here froze RESEND_API_KEY as "" if this file was ever
-# imported before hosted_dashboard.py's load_dotenv() ran (the exact bug
-# fixed in emails.py/hosted_dashboard.py). Every sender below reads these
-# fresh via _resend_key()/_from_email() at call time instead.
-def _resend_key(): return os.getenv("RESEND_API_KEY", "")
-def _from_email(): return os.getenv("FROM_EMAIL", "will@cavnar.ai")
-
-
+from emails import _resend_key, _from_email  # one definition each
 def send_urgent_alert(restaurant_name, owner_email, urgent_reviews):
     """Email the owner immediately when a high-urgency review comes in."""
     if not _resend_key() or not owner_email:

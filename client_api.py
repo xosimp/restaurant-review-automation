@@ -10,16 +10,7 @@ from models import get_conn, get_restaurant, update_restaurant, approve_response
 from auth import login_required
 
 
-def _html_doc(fragment, bg="#f7f4ef"):
-    """Wrap a bare fragment in a real HTML document so its background fills
-    the mail client's viewport instead of stopping at the content's height
-    (the half-cut-off look). Imported lazily: emails.py reads RESEND_API_KEY
-    at module scope, and a module-level import here could bind it before
-    load_dotenv() runs. See emails._html_document."""
-    from emails import html_document
-    return html_document(fragment, bg)
-
-
+from emails import html_document as _html_doc  # one definition; emails reads its env lazily
 
 client_bp = Blueprint('client', __name__)
 

@@ -23,28 +23,13 @@ import pricing as _pricing   # the one price list; the PDF used to hardcode laun
 from dotenv import load_dotenv
 
 
-def _html_doc(fragment, bg="#f7f4ef"):
-    """Wrap a bare fragment in a real HTML document so its background fills
-    the mail client's viewport instead of stopping at the content's height
-    (the half-cut-off look). Imported lazily: emails.py reads RESEND_API_KEY
-    at module scope, and a module-level import here could bind it before
-    load_dotenv() runs. See emails._html_document."""
-    from emails import html_document
-    return html_document(fragment, bg)
-
+from emails import html_document as _html_doc  # one definition; emails reads its env lazily
 
 load_dotenv()
 
 app = Flask(__name__)
 
-# Read fresh at call time — see scheduler.py's identical note (this
-# standalone app happens to import-order safely today since
-# load_dotenv() above runs first in THIS file, but the pattern is
-# fragile and easy to break by reordering, same as the bug already
-# hit once in hosted_dashboard.py/emails.py).
-def _resend_key(): return os.getenv("RESEND_API_KEY", "")
-def _from_email(): return os.getenv("FROM_EMAIL", "will@cavnar.ai")
-
+from emails import _resend_key, _from_email  # one definition each
 # ── PDF Colors ────────────────────────────────────────────────────────────────
 INK         = colors.HexColor("#0e0c0a")
 INK2        = colors.HexColor("#3a3530")

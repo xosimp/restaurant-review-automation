@@ -16,16 +16,7 @@ from emails import send_payment_email, send_welcome_email
 from ai_guard import safe_error as _safe_err
 
 
-def _html_doc(fragment, bg="#f7f4ef"):
-    """Wrap a bare fragment in a real HTML document so its background fills
-    the mail client's viewport instead of stopping at the content's height
-    (the half-cut-off look). Imported lazily: emails.py reads RESEND_API_KEY
-    at module scope, and a module-level import here could bind it before
-    load_dotenv() runs. See emails._html_document."""
-    from emails import html_document
-    return html_document(fragment, bg)
-
-
+from emails import html_document as _html_doc  # one definition; emails reads its env lazily
 
 def _claim_stripe_event(event_id: str) -> bool:
     """True if this is the first time we've seen this Stripe event.
@@ -284,8 +275,8 @@ def _sibling_restaurant_ids(restaurant_id: int):
 
 webhook_bp = Blueprint('webhook', __name__)
 
-# Read fresh at call time — see scheduler.py's identical note.
-def _resend_key(): return os.getenv("RESEND_API_KEY", "")
+from emails import _resend_key
+
 FROM_EMAIL            = os.getenv("FROM_EMAIL", "will@cavnar.ai")
 WILL_EMAIL            = os.getenv("WILL_EMAIL", "will@cavnar.ai")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")

@@ -13,16 +13,7 @@ from emails import send_payment_email, send_welcome_email
 import emails as _emails
 
 
-def _html_doc(fragment, bg="#f7f4ef"):
-    """Wrap a bare fragment in a real HTML document so its background fills
-    the mail client's viewport instead of stopping at the content's height
-    (the half-cut-off look). Imported lazily: emails.py reads RESEND_API_KEY
-    at module scope, and a module-level import here could bind it before
-    load_dotenv() runs. See emails._html_document."""
-    from emails import html_document
-    return html_document(fragment, bg)
-
-
+from emails import html_document as _html_doc  # one definition; emails reads its env lazily
 
 admin_bp = Blueprint('admin', __name__)
 
@@ -38,12 +29,7 @@ def sanitize(value, max_len=1000):
     # Truncate
     return value[:max_len].strip() or None
 
-# Pull config from environment
-# Read fresh at call time, not as a module-level constant — see
-# scheduler.py's identical note for why a module-level os.getenv() here
-# is the exact bug class that froze RESEND_API_KEY as "" in emails.py.
-def _resend_key(): return os.getenv("RESEND_API_KEY", "")
-def _from_email(): return os.getenv("FROM_EMAIL", "will@cavnar.ai")
+from emails import _resend_key, _from_email  # one definition each
 ADMIN_USERNAME        = os.getenv("ADMIN_USERNAME", "will")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
 STRIPE_SECRET_KEY     = os.getenv("STRIPE_SECRET_KEY", "")
