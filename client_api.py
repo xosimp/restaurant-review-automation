@@ -5609,11 +5609,11 @@ def publish_blockers(restaurant_id, schedule_id=None):
     try:
         _ensure_history_columns(conn)
         if schedule_id:
-            row = conn.execute("SELECT id, schedule_csv, review_json, quality_json FROM schedule_history "
-                               "WHERE id=? AND restaurant_id=?", (int(schedule_id), restaurant_id)).fetchone()
+            row = conn.execute("SELECT id, schedule_csv, review_json, quality_json, hours_scheduled, hours_budget "
+                               "FROM schedule_history WHERE id=? AND restaurant_id=?", (int(schedule_id), restaurant_id)).fetchone()
         else:
-            row = conn.execute("SELECT id, schedule_csv, review_json, quality_json FROM schedule_history "
-                               "WHERE restaurant_id=? ORDER BY id DESC LIMIT 1", (restaurant_id,)).fetchone()
+            row = conn.execute("SELECT id, schedule_csv, review_json, quality_json, hours_scheduled, hours_budget "
+                               "FROM schedule_history WHERE restaurant_id=? ORDER BY id DESC LIMIT 1", (restaurant_id,)).fetchone()
     finally:
         conn.close()
     if not row:
@@ -5629,6 +5629,15 @@ def publish_blockers(restaurant_id, schedule_id=None):
     for line in (review.get("lines") or [])[:6]:
         if line.startswith("⚠"):
             out.append(line.lstrip("⚠ ").strip())
+    # The labor budget is a ceiling. A week the model wrote past it is not
+    # trimmed (a silently thinner week is worse) — it is named here, so the
+    # owner sends it knowing, or takes hours out first.
+    try:
+        hs, hb = float(row["hours_scheduled"] or 0), float(row["hours_budget"] or 0)
+    except (TypeError, ValueError, KeyError, IndexError):
+        hs = hb = 0.0
+    if hb > 0 and hs > hb * 1.02:
+        out.append(f"{hs:,.0f}h scheduled against a {hb:,.0f}h budget — {hs - hb:,.0f}h over the ceiling")
     try:
         quality = json.loads(row["quality_json"] or "null") or {}
     except Exception:

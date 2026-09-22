@@ -21,9 +21,27 @@ that still can't be confirmed sane gets its day corrected AND an explicit
 `needs_review` flag, rather than silently passing a possibly-wrong row
 through unmarked.
 """
+import pytest
+
 import client_api
 import models
 import schedule_engine
+
+
+@pytest.fixture(autouse=True)
+def _isolated_db(db_path, monkeypatch):
+    """These tests used to read and write whatever reviews.db sat in the
+    working directory — thousands of leaked schedule_history rows on the
+    developer's restaurant 1, and a roster that changed under the test.
+    Everything the job touches now resolves to the per-test database."""
+    import labor, mobile_api, schedule_rules, staff_settings, schedule_versions
+    real = models.get_conn
+    for mod in (models, client_api, schedule_engine, labor, mobile_api, schedule_rules, staff_settings, schedule_versions):
+        monkeypatch.setattr(mod, "get_conn", lambda *a, **k: real(db_path), raising=False)
+    monkeypatch.setattr(models, "DB_PATH", db_path)
+    monkeypatch.setattr(models, "_cached_shifts", lambda restaurant_id: [])
+    from models import create_restaurant, Restaurant
+    create_restaurant(Restaurant(name="Test Bistro", owner_email="t@x.com"), db_path=db_path)
 
 
 def _fake_build_schedule_result(csv_text, roster=None):

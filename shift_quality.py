@@ -2398,7 +2398,7 @@ def apply_fixes(rows: list, violations: list, profiles: list = None, weights: di
             note = (rows[i].get("notes") or "").strip()
             rows[i]["notes"] = (note + f" (was {cur} — {v.get('label') or v.get('kind')})").strip()
             fixes.append({"index": i, "from": cur, "to": best, "kind": v.get("kind"),
-                          "reason": f"{cur} was {v.get('detail') or v.get('label')}; {best} can take it."})
+                          "reason": f"{cur} — {v.get('detail') or v.get('label')}; {best} can take it."})
         else:
             unfixed.append({"index": i, "employee": cur, "kind": v.get("kind"),
                             "reason": f"Nobody on the roster can legally take {cur}'s {row.get('day') or row.get('date')} {row.get('role')} shift."})

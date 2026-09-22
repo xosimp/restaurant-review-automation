@@ -1628,11 +1628,13 @@ def _run_schedule_job(job_id, restaurant_id):
                 result["constraints"] = _constraints
             if not getattr(_constraints, "roster_roles", None):
                 _constraints.roster_roles = result.get("roster_roles") or {}
-            if result.get("roster"):
+            if "roster" in result:
                 # The staff list the prompt was built from is the list the
-                # rows are checked against — one roster, one answer.
-                _constraints.roster_names = list(result["roster"])
-                _constraints.active = {str(n).strip().lower() for n in result["roster"] if n}
+                # rows are checked against — one roster, one answer. An
+                # explicitly empty list means "no roster on file", which is
+                # no opinion (the same reading Constraints.can_work gives).
+                _constraints.roster_names = list(result["roster"] or [])
+                _constraints.active = {str(n).strip().lower() for n in (result["roster"] or []) if n}
 
             preview_rows, pizza_rows_added, pizza_added_dates = _ensure_role_floors(
                 preview_rows, result.get("week_dates", []), result.get("week_days", []),
@@ -1698,6 +1700,17 @@ def _run_schedule_job(job_id, restaurant_id):
             result["review"] = _rules.summarize(_viols)
             result["review"]["fixes"] = _fixes
             result["review"]["unfixed"] = _unfixed
+            # The budget is a ceiling. A week written past it is named at
+            # the top of the review, never trimmed into a thinner week.
+            try:
+                _hs = _safe_hours_sum(preview_rows)
+                _hb = float(result.get("hours_budget") or 0)
+            except (TypeError, ValueError):
+                _hs = _hb = 0.0
+            if _hb > 0 and _hs > _hb * 1.02:
+                result["review"]["over_budget_hours"] = round(_hs - _hb, 1)
+                result["review"]["lines"].insert(
+                    0, f"⚠ {_hs:,.0f}h scheduled against a {_hb:,.0f}h budget — {_hs - _hb:,.0f}h over the ceiling")
             result["rows_needing_review"] = sum(1 for _r in preview_rows if _r.get("needs_review"))
             # Shift strength, checked against the finished schedule rather
             # than trusted to the prompt. The same discipline close times and

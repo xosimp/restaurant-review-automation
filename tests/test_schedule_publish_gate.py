@@ -81,6 +81,21 @@ def test_blockers_name_flagged_rows_hard_breaches_and_a_weak_verdict(db_path, ri
     assert any("weak week" in x for x in b) and any("too little to judge" in x for x in b)
 
 
+def test_a_week_written_past_the_budget_is_a_blocker_not_a_trim(db_path, rid):
+    hid = _history(db_path, rid, CLEAN)
+    conn = get_conn(db_path)
+    conn.execute("UPDATE schedule_history SET hours_scheduled=1457, hours_budget=1314 WHERE id=?", (hid,))
+    conn.commit()
+    conn.close()
+    b = client_api.publish_blockers(rid, hid)
+    assert any("143h over the ceiling" in x for x in b), b
+    conn = get_conn(db_path)
+    conn.execute("UPDATE schedule_history SET hours_scheduled=1320 WHERE id=?", (hid,))   # inside the 2% tolerance
+    conn.commit()
+    conn.close()
+    assert client_api.publish_blockers(rid, hid) == []
+
+
 def test_publish_refuses_blockers_until_acknowledged_then_stamps_published_at(db_path, rid, monkeypatch):
     csv_text = CLEAN.replace("6.0,\n", "6.0,NEEDS REVIEW: off roster\n", 1)
     hid = _history(db_path, rid, csv_text)
