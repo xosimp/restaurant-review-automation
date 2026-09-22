@@ -72,7 +72,6 @@ def test_the_monthly_gap_is_projectable_from_the_sample_week_today(fresh):
     assert gap["projectable"] is True and gap["monthly_gap"] > 0
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-LAB-16: /api/labor-gap projects the bundled sample week as the owner's monthly gap")
 def test_the_labor_gap_route_projects_nothing_without_shift_data(db_path, fresh):
     app = Flask(__name__, template_folder="/Users/simp/review_automation/templates")
     app.register_blueprint(client_api.client_bp)
@@ -86,7 +85,6 @@ def test_the_labor_gap_route_projects_nothing_without_shift_data(db_path, fresh)
     assert not body.get("monthly_gap")
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-LAB-16: the mobile Home labor KPI prints the sample week's percentage and 'over 30% target'")
 def test_the_mobile_home_labor_kpi_shows_no_figure_without_shift_data(fresh):
     user = {"id": 1, "restaurant_id": fresh, "base_restaurant_id": fresh, "role": "client",
             "is_admin": 0, "username": "owner", "email": "new@owner.test"}
@@ -98,7 +96,6 @@ def test_the_mobile_home_labor_kpi_shows_no_figure_without_shift_data(fresh):
     assert "target" not in str(kpi.get("sublabel") or "")
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-LAB-16: the weekly digest renders a Labor Optimizer block from the sample week")
 def test_the_weekly_digest_has_no_labor_figures_without_shift_data(fresh, monkeypatch):
     import reporter
     monkeypatch.setattr(reporter, "generate_ai_digest_summary", lambda *a, **k: {"headline": "A quiet week."})
@@ -110,7 +107,6 @@ def test_the_weekly_digest_has_no_labor_figures_without_shift_data(fresh, monkey
     assert "labor ratio" not in html
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-LAB-16: marketing_signals.daily_sales returns the sample week's sales as the restaurant's POS sales")
 def test_post_attribution_reads_no_pos_sales_without_shift_data(fresh):
     import marketing_signals
     assert marketing_signals.daily_sales(fresh) == {}

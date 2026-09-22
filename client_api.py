@@ -2388,6 +2388,10 @@ def labor_gap_api(current_user):
     try:
         from labor import analyse_shifts_for_restaurant, calculate_monthly_gap
         analysis = analyse_shifts_for_restaurant(current_user["restaurant_id"])
+        if not analysis.get("is_live"):
+            # The sample week is not the owner's overspend.
+            return jsonify(ok=True, is_live=False, projectable=False, over_target=False,
+                           monthly_gap=0, current_pct=None, target_pct=analysis.get("labor_target"))
         gap = calculate_monthly_gap(analysis)
         return jsonify(gap)
     except Exception as e:

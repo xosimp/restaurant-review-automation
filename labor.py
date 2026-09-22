@@ -103,13 +103,22 @@ def load_shifts(path: str = "sample_shifts.csv",
             return []
 
 
-def load_shifts_for_restaurant(restaurant_id: int) -> list[dict]:
-    """Load real client data if available, otherwise use sample data."""
+def load_shifts_for_restaurant(restaurant_id: int, allow_sample: bool = False) -> list[dict]:
+    """The restaurant's own shifts, or [] when it has uploaded none.
+
+    The bundled SAMPLE week is returned only when a caller asks for it with
+    allow_sample=True, and the only such caller is
+    analyse_shifts_for_restaurant, which stamps is_live=False on the result
+    so every screen that shows it labels it as sample. Falling back by
+    default put a fictional restaurant's staff on new restaurants' rosters,
+    its reliability and tenure into their team views, and its labor % and
+    "$12,630/mo" gap into their Home and weekly email as their own figures.
+    """
     from models import get_client_data
     data = get_client_data(restaurant_id)
     if data and data.get("shifts_csv"):
         return load_shifts(csv_string=data["shifts_csv"])
-    return load_shifts()  # fallback to sample
+    return load_shifts() if allow_sample else []
 
 
 def get_hourly_rate(restaurant_id: int) -> float:
@@ -253,7 +262,8 @@ def analyse_shifts_for_restaurant(restaurant_id: int) -> dict:
     from models import get_client_data
     client_data = get_client_data(restaurant_id)
     is_live = bool(client_data and client_data.get("shifts_csv"))
-    shifts = load_shifts_for_restaurant(restaurant_id)
+    # The labelled preview: is_live=False travels with the result.
+    shifts = load_shifts_for_restaurant(restaurant_id, allow_sample=True)
     rate   = get_hourly_rate(restaurant_id)
     target = get_labor_target(restaurant_id)
     from models import get_role_rates, compute_blended_rate

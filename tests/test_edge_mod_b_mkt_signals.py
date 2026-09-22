@@ -138,7 +138,6 @@ def test_a_closed_day_is_left_out_of_daily_sales_rather_than_counted_as_zero(db_
 
 # ── Attribution #7 two posts, one window (MOD-MKT-16) ─────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-16: two posts on the same day get the identical window and baseline and are each reported with the full lift, unflagged")
 def test_two_posts_sharing_a_window_are_flagged_as_overlapping(db_path, monkeypatch):
     """A6 Attribution #7 / MOD-MKT-16: one busy Friday cannot be credited
     to both the lunch post and the dinner post."""
@@ -156,7 +155,6 @@ def test_two_posts_sharing_a_window_are_flagged_as_overlapping(db_path, monkeypa
 
 # ── Attribution #8 UTC timestamp vs local business date (MOD-MKT-16) ──────
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-16: posted_at is SQLite datetime('now') (UTC) and is bucketed as if it were the local business date")
 def test_an_evening_post_is_measured_from_its_own_local_night(db_path, monkeypatch):
     """A6 Attribution #8 / MOD-MKT-16: posted 7:30pm Chicago on 9/18/26,
     stored as 00:30 UTC on 9/19. Its window is 9/18-9/19 local; measured
@@ -183,7 +181,6 @@ def test_a_midday_post_is_unaffected_by_the_utc_offset(db_path, monkeypatch):
 
 # ── Attribution #9 the SAMPLE fallback (MOD-MKT-16) ───────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-16: daily_sales falls back to labor's SAMPLE shifts CSV for a restaurant with no data, so 'no_pos_data' is unreachable")
 def test_a_restaurant_with_no_sales_data_has_no_daily_sales(db_path):
     """A6 Attribution #9 / MOD-MKT-16 (probe p03_attr_sample): without the
     monkeypatch the existing test relies on, the real path reads the demo
@@ -224,7 +221,6 @@ def test_a_real_occasion_is_still_tagged(text, occasion):
 
 # ── Attribution #11 summary cost on the request path (MOD-MKT-16) ─────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-16: attribution_summary reloads and re-parses the full shift history once per post (up to 25x) on the Ask Cavnar request path")
 def test_the_attribution_summary_loads_sales_once_not_once_per_post(db_path, monkeypatch):
     """A6 Attribution #11 / MOD-MKT-16."""
     import labor

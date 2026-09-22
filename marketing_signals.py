@@ -22,7 +22,8 @@ Tuesday would just measure the weekend.
 import json
 import logging
 import re
-from datetime import datetime, timedelta
+import contextvars
+from datetime import datetime, timedelta, timezone
 
 from models import get_conn, DB_PATH
 
@@ -62,6 +63,32 @@ def daily_sales(restaurant_id) -> dict:
     return out
 
 
+# One summary scores up to 25 posts; each used to reload and re-parse the
+# whole shift history. attribution_summary loads it once and parks it here.
+_sales_for_summary = contextvars.ContextVar("_sales_for_summary", default=None)
+
+
+def _sales(restaurant_id) -> dict:
+    held = _sales_for_summary.get()
+    if held is not None and held[0] == restaurant_id:
+        return held[1]
+    return daily_sales(restaurant_id)
+
+
+def _local_post_time(stamp, tz_name):
+    """posted_at / created_at are SQLite datetime('now'): UTC. The sales
+    they are compared against are keyed by the restaurant's business date,
+    so a 7:30pm Chicago post stored as 00:30 UTC the next day belongs to
+    the night it went out, not the day after."""
+    from time_utils import restaurant_tz
+    naive = datetime.fromisoformat(str(stamp)[:19])
+    return naive.replace(tzinfo=timezone.utc).astimezone(restaurant_tz(tz_name)).replace(tzinfo=None)
+
+
+def _window_dates(posted, days):
+    return [(posted + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(days)]
+
+
 def attribution_for_post(restaurant_id, content_log_id, db_path: str = DB_PATH) -> dict:
     """Sales in the window after a post, against the same weekday before it.
 
@@ -76,22 +103,27 @@ def attribution_for_post(restaurant_id, content_log_id, db_path: str = DB_PATH) 
             "FROM marketing_content_log WHERE id=? AND restaurant_id=?",
             (content_log_id, restaurant_id),
         ).fetchone()
+        tz_row = conn.execute("SELECT timezone FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
+        others = conn.execute(
+            "SELECT id, COALESCE(posted_at, created_at) AS at FROM marketing_content_log "
+            "WHERE restaurant_id=? AND id<>? AND post_id IS NOT NULL", (restaurant_id, content_log_id)).fetchall()
     finally:
         conn.close()
     if not row or not row["at"]:
         return {"ok": False, "reason": "no_post"}
+    tz_name = tz_row["timezone"] if tz_row else None
 
     try:
-        posted = datetime.fromisoformat(str(row["at"])[:19])
+        posted = _local_post_time(row["at"], tz_name)
     except Exception:
         return {"ok": False, "reason": "no_post"}
 
-    sales = daily_sales(restaurant_id)
+    sales = _sales(restaurant_id)
     if not sales:
         return {"ok": False, "reason": "no_pos_data"}
 
     days = max(1, ATTRIBUTION_WINDOW_HOURS // 24)
-    window_dates = [(posted + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(days)]
+    window_dates = _window_dates(posted, days)
     window_values = [sales[d] for d in window_dates if d in sales]
     if not window_values:
         return {"ok": False, "reason": "no_sales_yet"}
@@ -118,6 +150,18 @@ def attribution_for_post(restaurant_id, content_log_id, db_path: str = DB_PATH) 
         "window_sales": round(window_avg, 2), "baseline_sales": round(baseline_avg, 2),
         "lift_pct": lift, "baseline_days": len(baseline_values),
     }
+    # Two posts whose windows share a day are measured against the same
+    # sales: one busy Friday cannot be credited in full to both of them.
+    mine = set(window_dates)
+    overlaps = []
+    for o in others:
+        try:
+            if mine & set(_window_dates(_local_post_time(o["at"], tz_name), days)):
+                overlaps.append(o["id"])
+        except Exception:
+            continue
+    result["overlapping"] = bool(overlaps)
+    result["overlaps_with"] = overlaps
     result.update(_beyond_sales(restaurant_id, row, posted, window_dates, days, db_path))
     _cache_attribution(restaurant_id, content_log_id, result, db_path=db_path)
     return result
@@ -233,10 +277,14 @@ def attribution_summary(restaurant_id, limit=5, db_path: str = DB_PATH) -> dict:
     except Exception:
         pass
     scored = []
-    for r in rows:
-        result = attribution_for_post(restaurant_id, r["id"], db_path=db_path)
-        if result.get("ok"):
-            scored.append(result)
+    token = _sales_for_summary.set((restaurant_id, daily_sales(restaurant_id)))
+    try:
+        for r in rows:
+            result = attribution_for_post(restaurant_id, r["id"], db_path=db_path)
+            if result.get("ok"):
+                scored.append(result)
+    finally:
+        _sales_for_summary.reset(token)
     if not scored:
         return {"ok": False, "reason": "not_enough_history", "posts": []}
     scored.sort(key=lambda x: x["lift_pct"], reverse=True)

@@ -105,7 +105,8 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
         try:
             from labor import analyse_shifts_for_restaurant
             labor = analyse_shifts_for_restaurant(report.restaurant_id)
-            if labor and labor.get("overall_labor_pct"):
+            # is_live: the bundled sample week is never this restaurant's labor.
+            if labor and labor.get("is_live") and labor.get("overall_labor_pct"):
                 lp = labor.get("overall_labor_pct", 0)
                 ot_risk = labor.get("overtime_risk", [])
                 labor_context = f"Labor: {lp:.1f}% of revenue this week"
@@ -787,7 +788,7 @@ def _digest_parts(report: WeeklyReport, restaurant_name: str, owner_name: str = 
         if _rest and _rest.module_labor:
             from labor import analyse_shifts_for_restaurant
             labor_data = analyse_shifts_for_restaurant(restaurant_id)
-            if labor_data:
+            if labor_data and labor_data.get("is_live"):
                 lp = labor_data.get("overall_labor_pct", 0)
                 ls = labor_data.get("total_sales", 0)
                 lc = labor_data.get("total_labor_cost", 0)

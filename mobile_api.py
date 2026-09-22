@@ -829,12 +829,17 @@ def _do_mobile_home(current_user):
             }
         elif key == "labor":
             labor_target = float(restaurant.labor_target_pct or 30.0)
-            overall_pct = (labor or {}).get("overall_labor_pct", 0)
-            on_track = overall_pct <= labor_target
-            kpi = {
-                "value": f"{round(overall_pct, 1)}%",
-                "sublabel": "on track" if on_track else f"over {int(labor_target)}% target",
-            }
+            if not (labor or {}).get("is_live"):
+                # No shifts on file: the analysis ran on the labelled sample
+                # week, which is not this restaurant's labor %.
+                kpi = {"value": "—", "sublabel": "add your shifts"}
+            else:
+                overall_pct = (labor or {}).get("overall_labor_pct", 0)
+                on_track = overall_pct <= labor_target
+                kpi = {
+                    "value": f"{round(overall_pct, 1)}%",
+                    "sublabel": "on track" if on_track else f"over {int(labor_target)}% target",
+                }
         elif key == "inventory":
             try:
                 from inventory import analysis_for

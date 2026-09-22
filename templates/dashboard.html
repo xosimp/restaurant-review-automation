@@ -9417,6 +9417,7 @@ function loadMktAttribution(){
       if(p.reviews_mentioning)extra.push('<b class="hb-num">'+p.reviews_mentioning+'</b> review'+(p.reviews_mentioning===1?'':'s')+' mentioned it');
       if(p.engagement_rate!=null)extra.push('<b class="hb-num">'+(Math.round(p.engagement_rate*1000)/10)+'%</b> engagement');
       if(p.guest_list_delta)extra.push('guest list <b class="hb-num">'+(p.guest_list_delta>0?'+':'')+p.guest_list_delta+'</b>');
+      if(p.overlapping)extra.push('shares its two days with another post');
       return '<div style="padding:7px 0;border-bottom:1px solid var(--paper3)"><div style="display:flex;justify-content:space-between;gap:10px">'
         + '<span style="color:var(--ink)">' + _escHtml(p.topic || 'Untitled') + (about.length?' <span class="hb-chip" style="margin-left:6px">'+_escHtml(about.join(' \u00b7 '))+'</span>':'') + '</span>'
         + '<span class="hb-num" style="font-weight:700;color:' + (p.lift_pct >= 0 ? 'var(--hb-good)' : 'var(--red)') + '">' + (p.lift_pct > 0 ? '+' : '') + Math.round(p.lift_pct) + '%</span>'

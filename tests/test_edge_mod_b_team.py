@@ -74,20 +74,17 @@ def _call(body_fn, u, json=None, *args):
 
 # ── Roster ─────────────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-EMP-1: a restaurant with no shifts is shown the bundled SAMPLE employees on its roster")
 def test_a_brand_new_restaurant_has_an_empty_roster(rid, db_path):
     """A4 #2 / MOD-EMP-1 — no shifts uploaded, no hand-added names: nobody.
     Deliberately no monkeypatch of _cached_shifts — that is what hid this."""
     assert ss.roster(rid, db_path=db_path) == []
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-EMP-1: reliability is computed from the bundled SAMPLE shifts for a new restaurant")
 def test_a_brand_new_restaurant_has_no_reliability_figures(rid, db_path):
     """A4 #2 / MOD-EMP-1."""
     assert ss.reliability(rid, db_path=db_path, min_shifts=1) == {}
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-EMP-1: tenure is computed from the bundled SAMPLE shifts for a new restaurant")
 def test_a_brand_new_restaurant_has_no_tenure(rid, db_path):
     """A4 #2 / MOD-EMP-1."""
     assert models.get_employee_tenure(rid, db_path=db_path) == {}
