@@ -261,7 +261,7 @@ def test_malformed_scheduled_hours_does_not_crash_the_backstop_passes(monkeypatc
     # A row whose day already matches (so the day-repair sanity check
     # never runs on it) but whose scheduled_hours holds a stray time
     # string instead of a number -- reproduces a real live crash: the
-    # deterministic backstop passes (_ensure_pizza_cook_coverage,
+    # deterministic backstop passes (_ensure_role_floors,
     # _top_up_hours_gap, _extend_shifts_to_close_gap,
     # _trim_server_overlap_cap) each recompute hours_scheduled by summing
     # every row's scheduled_hours, and a bare float() in that sum aborted

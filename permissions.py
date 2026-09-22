@@ -63,6 +63,13 @@ MARKETING_APPROVE = "marketing.approve"
 # Manager-to-manager direct messages.
 TEAM_MESSAGE = "team.message"
 
+# Scheduling. Drafting (generate, re-score, save an edit) is a manager's
+# job; publishing sends every employee their week and is the one action a
+# legacy teammate login never had a reason to hold. Every console role
+# could publish before these existed, gated on nothing but being logged in.
+SCHEDULE_DRAFT = "schedule.draft"
+SCHEDULE_PUBLISH = "schedule.publish"
+
 # Per-module read access, one per product module.
 #
 # DASHBOARD_ACCESS was a single boolean: hold it and every non-employee route
@@ -125,6 +132,8 @@ ALL_PERMISSIONS = frozenset({
     TEAM_RATE,
     TEAM_MESSAGE,
     MARKETING_APPROVE,
+    SCHEDULE_DRAFT,
+    SCHEDULE_PUBLISH,
     SCHEDULE_VIEW_OWN,
     TASKS_VIEW_OWN,
     TASKS_COMPLETE_OWN,
@@ -158,11 +167,13 @@ ROLE_PERMISSIONS = {
     # Everything, plus the location switcher. The only role client_api's
     # _do_switch_location / _do_group_locations and home_brief's group brief
     # have ever accepted.
-    ROLE_OWNER: _CONSOLE_BASE | {LOCATION_SWITCH, TEAM_INVITE, TEAM_REVOKE, TEAM_MESSAGE, LOSS_VIEW},
+    ROLE_OWNER: _CONSOLE_BASE | {LOCATION_SWITCH, TEAM_INVITE, TEAM_REVOKE, TEAM_MESSAGE, LOSS_VIEW,
+                                 SCHEDULE_DRAFT, SCHEDULE_PUBLISH},
 
     # The primary per-restaurant login: everything except switching between
     # locations, which it is refused today.
-    ROLE_CLIENT: _CONSOLE_BASE | {TEAM_INVITE, TEAM_REVOKE, TEAM_MESSAGE, LOSS_VIEW},
+    ROLE_CLIENT: _CONSOLE_BASE | {TEAM_INVITE, TEAM_REVOKE, TEAM_MESSAGE, LOSS_VIEW,
+                                  SCHEDULE_DRAFT, SCHEDULE_PUBLISH},
 
     # New. Runs the floor: writes the schedule, answers reviews, posts
     # marketing, reads competitor intel, and is in the manager DM thread —
@@ -173,7 +184,7 @@ ROLE_PERMISSIONS = {
     # exists. A shift manager needs labor and reviews to do the job and has no
     # business in the restaurant's margins, and until there was something
     # below DASHBOARD_ACCESS an owner could not express that.
-    ROLE_MANAGER: (_CONSOLE_BASE - {FOOD_COST_VIEW}) | {TEAM_MESSAGE},
+    ROLE_MANAGER: (_CONSOLE_BASE - {FOOD_COST_VIEW}) | {TEAM_MESSAGE, SCHEDULE_DRAFT, SCHEDULE_PUBLISH},
 
     # Legacy invited teammate. Refused invite/revoke (mobile_api.py) and
     # marketing approval (marketing_drafts.CANNOT_APPROVE); everything else
@@ -188,7 +199,10 @@ ROLE_PERMISSIONS = {
     # is taken away, and "managers can talk to each other" is the feature it
     # was asked for. An owner who wants a narrower teammate promotes them to
     # `manager`, which is the role that expresses it.
-    ROLE_MEMBER: frozenset({DASHBOARD_ACCESS, TEAM_RATE}) | _ALL_MODULES,
+    # SCHEDULE_DRAFT keeps what a teammate could already do (generate and
+    # edit); publishing to staff is withheld, as team messaging is — nobody
+    # in this role ever had a stated reason to hold it.
+    ROLE_MEMBER: frozenset({DASHBOARD_ACCESS, TEAM_RATE, SCHEDULE_DRAFT}) | _ALL_MODULES,
 
     # New. The staff portal and nothing else. Deliberately has no
     # DASHBOARD_ACCESS: that single omission is what keeps a PIN session out

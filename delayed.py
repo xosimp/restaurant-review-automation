@@ -136,7 +136,8 @@ def run_due(db_path=DB_PATH, now=None, limit=20):
 
 def _run_schedule_publish(restaurant_id, payload, db_path):
     from client_api import _publish_schedule
-    out, _status = _publish_schedule(restaurant_id, payload.get("schedule_id"), AUTOMATION_ACTOR)
+    out, _status = _publish_schedule(restaurant_id, payload.get("schedule_id"), AUTOMATION_ACTOR,
+                                     acknowledge=bool(payload.get("acknowledge")))
     return out
 
 

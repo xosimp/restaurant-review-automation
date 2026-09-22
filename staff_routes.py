@@ -472,6 +472,73 @@ def api_time_off_request(current_user):
     return jsonify(ok=True, request=row)
 
 
+@staff_bp.route("/api/shift-requests")
+@staff_login_required
+def api_shift_requests(current_user):
+    """This employee's own requests to drop a published shift, and the
+    open shifts anybody on the roster can pick up."""
+    rid, name = _staff_context(current_user)
+    import shift_requests
+    if not name:
+        return jsonify(ok=True, requests=[], open=[])
+    return jsonify(ok=True, requests=shift_requests.mine(rid, name), open=shift_requests.open_shifts(rid))
+
+
+@staff_bp.route("/api/shift-requests", methods=["POST"])
+@staff_login_required
+def api_shift_request_drop(current_user):
+    rid, name = _staff_context(current_user)
+    if not name:
+        return jsonify(ok=False, error="No employee name on this session."), 400
+    body = request.get_json(silent=True) or {}
+    import shift_requests
+    from time_utils import restaurant_now_by_id
+    try:
+        row = shift_requests.request_drop(rid, name, body.get("date"), body.get("shift_start"),
+                                          reason=body.get("reason"),
+                                          today=restaurant_now_by_id(rid, naive=True).date())
+    except shift_requests.ShiftRequestError as e:
+        return jsonify(ok=False, error=str(e)), 400
+    from models import log_event
+    try:
+        log_event(rid, "shift_drop_requested", {"employee": name, "date": row["date"], "start": row["shift_start"]})
+    except Exception:
+        pass
+    return jsonify(ok=True, request=row)
+
+
+@staff_bp.route("/api/shift-requests/<int:request_id>/withdraw", methods=["POST"])
+@staff_login_required
+def api_shift_request_withdraw(request_id, current_user):
+    rid, name = _staff_context(current_user)
+    import shift_requests
+    if not shift_requests.withdraw(rid, request_id, name):
+        return jsonify(ok=False, error="That request is not yours, or is already answered."), 404
+    return jsonify(ok=True)
+
+
+@staff_bp.route("/api/open-shifts/<int:request_id>/claim", methods=["POST"])
+@staff_login_required
+def api_open_shift_claim(request_id, current_user):
+    """Take an open shift. The same legality check the schedule itself is
+    held to decides whether this person can — availability, time off,
+    hours, rest, a note on file."""
+    rid, name = _staff_context(current_user)
+    if not name:
+        return jsonify(ok=False, error="No employee name on this session."), 400
+    import shift_requests
+    try:
+        row = shift_requests.claim(rid, request_id, name, actor=name)
+    except shift_requests.ShiftRequestError as e:
+        return jsonify(ok=False, error=str(e)), 400
+    from models import log_event
+    try:
+        log_event(rid, "open_shift_claimed", {"employee": name, "date": row["date"], "start": row["shift_start"]})
+    except Exception:
+        pass
+    return jsonify(ok=True, request=row)
+
+
 TASK_DATE_WINDOW_DAYS = 1
 
 

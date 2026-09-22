@@ -2072,6 +2072,28 @@ def run_auto_publish_schedules():
         if not row:
             skipped += 1
             continue
+        # Never unread: a week with flagged rows, a hard rule breach, a
+        # weak quality verdict or a low-confidence score waits for a human,
+        # and the owner is told why instead of being told it went out.
+        try:
+            from client_api import publish_blockers
+            blockers = publish_blockers(r.id, row["id"])
+        except Exception as e:
+            _ops.capture(e, job="auto_publish_schedule_check", context=f"restaurant_id={r.id}")
+            blockers = ["The publish check could not run"]
+        if blockers:
+            skipped += 1
+            try:
+                from strategy_jobs import _reach
+                _reach(r.id, "schedule_publish_held",
+                       "Next week's schedule needs a look before it goes out",
+                       "The draft for the week of " + str(row["week_start"]) + " was not sent: "
+                       + "; ".join(blockers[:3]) + ". Review it on the Labor tab and send it yourself.",
+                       {"schedule_id": row["id"]}, DB_PATH,
+                       subject=f"Next week's schedule is waiting on you — {r.name}")
+            except Exception as e:
+                _ops.capture(e, job="auto_publish_schedule_hold", context=f"restaurant_id={r.id}")
+            continue
         try:
             action = delayed.schedule(r.id, "schedule_publish", {"schedule_id": row["id"]}, 120,
                                       label=f"Publishing the week of {row['week_start']} to staff")
@@ -2269,6 +2291,12 @@ def scheduler_loop():
             if _due(now, 7) and _ops.claim_period("milestones", str(today)):
                 from strategy_jobs import run_milestones
                 _ops.run_job("milestones", run_milestones)
+
+            # Sunday 5am — let each restaurant's own clean and troubled weeks
+            # nudge its quality weights (strategy_jobs.run_quality_calibration).
+            if _due(now, 5) and now.weekday() == 6 and _ops.claim_period("quality_calibration", str(today)):
+                from strategy_jobs import run_quality_calibration
+                _ops.run_job("quality_calibration", run_quality_calibration)
 
             # Thursday 6am+ — draft next week's schedule for owners who opted
             # in. A draft in Schedule History; nothing reaches staff.

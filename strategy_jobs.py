@@ -333,6 +333,83 @@ def _recent_schedule(conn, restaurant_id):
         (restaurant_id, f"-{AUTO_DRAFT_RECENT_DAYS} days")).fetchone() is not None
 
 
+CALIBRATION_MIN_WEEKS = 8
+CALIBRATION_STEP = 2
+CALIBRATION_MAX_WEIGHT = 30
+
+
+def run_quality_calibration(db_path=DB_PATH):
+    """Weekly: let each restaurant's own record nudge how much a quality
+    dimension counts. For the last published weeks with a stored quality
+    verdict, a week is "clean" when no coverage or no-show issue was opened
+    during it. A dimension whose score sits at least 15 points higher in
+    clean weeks than in troubled ones, over at least CALIBRATION_MIN_WEEKS
+    weeks with both kinds present, gains CALIBRATION_STEP weight (capped);
+    nothing is ever lowered, and nothing moves before the sample exists.
+    The change is recorded like a rating change, so it can be seen and
+    undone."""
+    import json as _j
+    from models import get_restaurant, update_restaurant, get_quality_weights, record_capability_change
+    import shift_quality as _sq
+    changed = 0
+    for r in _restaurants(db_path):
+        if not getattr(r, "module_labor", 0):
+            continue
+        conn = get_conn(db_path)
+        try:
+            rows = conn.execute(
+                "SELECT week_start, week_end, quality_json FROM schedule_history WHERE restaurant_id=? "
+                "AND published_at IS NOT NULL AND quality_json IS NOT NULL ORDER BY id DESC LIMIT 26", (r.id,)).fetchall()
+            weeks = []
+            for row in rows:
+                try:
+                    q = _j.loads(row["quality_json"] or "null") or {}
+                except Exception:
+                    continue
+                if not q.get("checked") or not row["week_start"]:
+                    continue
+                try:
+                    trouble = conn.execute(
+                        "SELECT 1 FROM ops_issues WHERE restaurant_id=? AND kind IN ('coverage', 'no_show') "
+                        "AND substr(created_at, 1, 10) BETWEEN ? AND ? LIMIT 1",
+                        (r.id, row["week_start"], row["week_end"] or row["week_start"])).fetchone()
+                except Exception:
+                    trouble = None
+                weeks.append((not trouble, {d["key"]: d["score"] for d in (q.get("dimensions") or [])}))
+        finally:
+            conn.close()
+        if len(weeks) < CALIBRATION_MIN_WEEKS:
+            continue
+        clean = [d for ok, d in weeks if ok]
+        troubled = [d for ok, d in weeks if not ok]
+        if len(clean) < 3 or len(troubled) < 3:
+            continue
+        current = get_quality_weights(r.id) or {}
+        merged = dict(_sq.DEFAULT_WEIGHTS)
+        merged.update(current)
+        bumped = []
+        for key in _sq.DIMENSIONS:
+            c = [d[key] for d in clean if key in d]
+            t = [d[key] for d in troubled if key in d]
+            if len(c) < 3 or len(t) < 3:
+                continue
+            gap = sum(c) / len(c) - sum(t) / len(t)
+            if gap >= 15 and merged.get(key, 0) < CALIBRATION_MAX_WEIGHT:
+                merged[key] = min(CALIBRATION_MAX_WEIGHT, merged.get(key, 0) + CALIBRATION_STEP)
+                bumped.append(f"{key} +{CALIBRATION_STEP} (clean weeks score it {gap:.0f} higher)")
+        if not bumped:
+            continue
+        update_restaurant(r.id, {"quality_weights_json": _j.dumps(merged)}, db_path=db_path)
+        try:
+            record_capability_change(r.id, "quality_weights_calibrated", subject="weights",
+                                     before=_j.dumps(current), after=_j.dumps(merged),
+                                     changed_by="Cavnar AI (calibration)")
+        except Exception:
+            pass
+        changed += 1
+    return {"restaurants_changed": changed}
+
+
 def run_auto_draft_schedules(db_path=DB_PATH):
     """Draft next week's schedule for every opted-in restaurant that hasn't
     already made one. The draft lands in Schedule History exactly as a

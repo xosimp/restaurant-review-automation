@@ -2418,7 +2418,11 @@ from schedule_engine import (  # noqa: E402,F401
     _peak_server_overlap,
     _trim_server_overlap_cap,
     _window_overlap,
-    _ensure_pizza_cook_coverage,
+    _ensure_role_floors,
+    _MORNING_WINDOW,
+    _NIGHT_WINDOW,
+    replacement_is_legal,
+    _rows_to_csv_text,
     quality_inputs_from_db,
     _prior_week_assignments,
     _quality_signals,
@@ -2429,9 +2433,6 @@ from schedule_engine import (  # noqa: E402,F401
     _WEEKDAYS,
     _WEEKLY_HOURS_CEILING,
     _SERVER_MAX_OVERLAP,
-    _PIZZA_MORNING_WINDOW,
-    _PIZZA_NIGHT_WINDOW,
-    _PIZZA_BUSY_DAYS,
 )
 
 
@@ -2446,6 +2447,14 @@ def generate_schedule_json(current_user):
     """
     import threading, uuid
     from ai_utils import ai_rate_limited
+    from permissions import has_permission, SCHEDULE_DRAFT
+    if not (current_user.get("is_admin") or has_permission(current_user, SCHEDULE_DRAFT)):
+        return jsonify(ok=False, error="Your login can view labor but not draft a schedule."), 403
+    # One generation at a time per restaurant: a second press joins the
+    # running job rather than paying for a second model call.
+    running = _ops.active_job("schedule", current_user["restaurant_id"])
+    if running:
+        return jsonify(ok=True, job_id=running, joined=True)
     if ai_rate_limited(f"schedule:{current_user['restaurant_id']}", max_calls=3, window_secs=60):
         return jsonify(ok=False, error="Too many schedule generations — please wait a moment and try again.")
     job_id = str(uuid.uuid4())
@@ -5591,9 +5600,59 @@ def set_staff_contact_api(current_user):
     return _m("mobile_set_staff_contact")(current_user)
 
 
-def _publish_schedule(restaurant_id, schedule_id=None, actor=None):
-    """Shared by the route and delayed.py (auto-publish). Returns (payload, http_status).
-    `actor` is the user dict acting, or delayed.AUTOMATION_ACTOR."""
+def publish_blockers(restaurant_id, schedule_id=None):
+    """Why this schedule should not go to staff unread: rows the engine
+    flagged (hard rule breaches, names it could not vouch for), and a week
+    the quality engine judged weak or could not judge. Empty means clear."""
+    from models import _ensure_history_columns
+    conn = get_conn()
+    try:
+        _ensure_history_columns(conn)
+        if schedule_id:
+            row = conn.execute("SELECT id, schedule_csv, review_json, quality_json FROM schedule_history "
+                               "WHERE id=? AND restaurant_id=?", (int(schedule_id), restaurant_id)).fetchone()
+        else:
+            row = conn.execute("SELECT id, schedule_csv, review_json, quality_json FROM schedule_history "
+                               "WHERE restaurant_id=? ORDER BY id DESC LIMIT 1", (restaurant_id,)).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return []
+    out = []
+    flagged = sum(1 for line in (row["schedule_csv"] or "").split("\n") if "NEEDS REVIEW" in line)
+    if flagged:
+        out.append(f"{flagged} shift{'s' if flagged != 1 else ''} marked NEEDS REVIEW")
+    try:
+        review = json.loads(row["review_json"] or "null") or {}
+    except Exception:
+        review = {}
+    for line in (review.get("lines") or [])[:6]:
+        if line.startswith("⚠"):
+            out.append(line.lstrip("⚠ ").strip())
+    try:
+        quality = json.loads(row["quality_json"] or "null") or {}
+    except Exception:
+        quality = {}
+    if quality.get("checked"):
+        if quality.get("band") == "weak":
+            out.append(f"Shift Quality {quality.get('score')}/100 — a weak week")
+        if (quality.get("confidence") or {}).get("level") == "low":
+            out.append("The quality engine had too little to judge this week on")
+        below = quality.get("below_profile") or []
+        if below:
+            out.append(f"{len(below)} shift{'s' if len(below) != 1 else ''} below the bar set for {'it' if len(below) == 1 else 'them'}")
+    return out
+
+
+def _publish_schedule(restaurant_id, schedule_id=None, actor=None, acknowledge=False):
+    """Shared by the route, the mobile twin and delayed.py (auto-publish).
+    Returns (payload, http_status). `actor` is the user dict acting, or
+    delayed.AUTOMATION_ACTOR.
+
+    A schedule with blockers (publish_blockers) is refused with
+    needs_ack=True until the caller says acknowledge — a human reading the
+    list, never automation. Publishing stamps published_at, which is what
+    the staff portal and the payroll-week hours check read."""
     actor = actor or {}
     from models import get_staff_contacts, create_schedule_share, get_schedule_share_status
     from labor import employees_in_schedule, employee_shifts_from_csv
@@ -5620,6 +5679,11 @@ def _publish_schedule(restaurant_id, schedule_id=None, actor=None):
 
     if not row or not (row["schedule_csv"] or "").strip():
         return {"ok": False, "error": "Generate a schedule first — there's nothing to send yet."}, 400
+
+    blockers = publish_blockers(rid, row["id"])
+    if blockers and not acknowledge:
+        return {"ok": False, "needs_ack": True, "blockers": blockers, "schedule_id": row["id"],
+                "error": "This week has things to look at before it goes to staff."}, 409
 
     schedule_id = row["id"]
     week_label = row["week_start"] or ""
@@ -5669,9 +5733,26 @@ def _publish_schedule(restaurant_id, schedule_id=None, actor=None):
 
     if sent:
         log_account_event(rid, "schedule_published", actor,
-                          detail=f"{len(sent)} to staff")
+                          detail=f"{len(sent)} to staff" + (" — acknowledged blockers" if blockers else ""))
+        try:
+            from models import _ensure_history_columns
+            conn = get_conn()
+            try:
+                _ensure_history_columns(conn)
+                conn.execute("UPDATE schedule_history SET published_at=datetime('now'), published_by=? WHERE id=? AND restaurant_id=?",
+                             ((actor.get("username") or actor.get("email") or "automation") if isinstance(actor, dict) else "automation",
+                              schedule_id, rid))
+                conn.commit()
+            finally:
+                conn.close()
+            import schedule_versions as _sv
+            _sv.append(rid, schedule_id, "published", row["schedule_csv"],
+                       saved_by=(actor.get("username") or actor.get("email") or "automation") if isinstance(actor, dict) else "automation")
+        except Exception as _px:
+            _ops.capture(_px, job="schedule_publish_stamp", context=f"restaurant_id={rid} schedule_id={schedule_id}")
     return dict(ok=bool(sent), schedule_id=schedule_id, week_label=week_label,
                    sent=sent, unreachable=unreachable, failed=failed,
+                   acknowledged=bool(blockers),
                    status=get_schedule_share_status(rid, schedule_id),
                    error=None if sent else "Nobody has an email address on file yet."), 200
 
@@ -5679,6 +5760,9 @@ def _publish_schedule(restaurant_id, schedule_id=None, actor=None):
 @client_bp.route("/api/labor/publish-schedule", methods=["POST"])
 @login_required
 def publish_schedule_api(current_user):
+    from permissions import has_permission, SCHEDULE_PUBLISH
+    if not (current_user.get("is_admin") or has_permission(current_user, SCHEDULE_PUBLISH)):
+        return jsonify(ok=False, error="Your login can draft a schedule but not send it to staff."), 403
     data = request.get_json(silent=True) or {}
     rid = current_user["restaurant_id"]
     restaurant = get_restaurant(rid)
@@ -5699,13 +5783,20 @@ def publish_schedule_api(current_user):
             conn.close()
         if not row:
             return jsonify(ok=False, error="Generate a schedule first — there's nothing to send yet."), 400
+        blockers = publish_blockers(rid, row["id"])
+        if blockers and not data.get("acknowledge"):
+            return jsonify(ok=False, needs_ack=True, blockers=blockers, schedule_id=row["id"],
+                           error="This week has things to look at before it goes to staff."), 409
         import delayed
-        act = delayed.schedule(rid, "schedule_publish", {"schedule_id": row["id"]}, delay, actor=current_user,
+        act = delayed.schedule(rid, "schedule_publish",
+                               {"schedule_id": row["id"], "acknowledge": bool(data.get("acknowledge"))},
+                               delay, actor=current_user,
                                label=f"Publishing the week of {row['week_start']} to staff")
         return jsonify(ok=True, queued=True, action_id=act["id"], execute_at=act["execute_at"],
                        undo_minutes=delay, sent=[], unreachable=[], failed=[])
     try:
-        out, status = _publish_schedule(rid, data.get("schedule_id"), current_user)
+        out, status = _publish_schedule(rid, data.get("schedule_id"), current_user,
+                                        acknowledge=bool(data.get("acknowledge")))
     except (TypeError, ValueError):
         return jsonify(ok=False, error="Which schedule?"), 400
     return jsonify(**out), status

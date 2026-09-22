@@ -23,6 +23,23 @@ def _parse_day(value):
     return None
 
 
+def _newest_published(restaurant_id: int):
+    """The id of the newest schedule that was actually sent: stamped
+    published_at, or (for weeks published before the stamp existed) one
+    with a share row."""
+    from models import get_conn, _ensure_history_columns
+    conn = get_conn()
+    try:
+        _ensure_history_columns(conn)
+        row = conn.execute(
+            "SELECT h.id FROM schedule_history h WHERE h.restaurant_id=? AND (h.published_at IS NOT NULL "
+            "OR EXISTS (SELECT 1 FROM schedule_shares s WHERE s.schedule_id=h.id)) "
+            "ORDER BY h.generated_at DESC, h.id DESC LIMIT 1", (restaurant_id,)).fetchone()
+    finally:
+        conn.close()
+    return row["id"] if row else None
+
+
 def shifts_for_employee(restaurant_id: int, employee_name: str, today=None) -> dict:
     """{today, upcoming, week, week_start, published} for one employee.
 
@@ -31,12 +48,15 @@ def shifts_for_employee(restaurant_id: int, employee_name: str, today=None) -> d
     days they are NOT on as much as the days they are.
     """
     today = today or date.today()
-    history = get_schedule_history(restaurant_id) or []
-    if not history:
+    # Only a PUBLISHED week reaches staff. The newest row in history used to
+    # be shown whatever its state, so a Thursday auto-draft, a regeneration
+    # or a manager's half-finished edit appeared in the portal as "your
+    # schedule" and changed under people who had already planned around it.
+    published = _newest_published(restaurant_id)
+    if not published:
         return {"today": None, "upcoming": [], "week": [], "week_start": today.isoformat(),
                 "published": False}
-
-    detail = get_schedule_history_detail(history[0]["id"], restaurant_id)
+    detail = get_schedule_history_detail(published, restaurant_id)
     if not detail:
         return {"today": None, "upcoming": [], "week": [], "week_start": today.isoformat(),
                 "published": False}

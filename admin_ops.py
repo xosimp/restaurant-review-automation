@@ -966,6 +966,7 @@ def billing():
 # console can show the same rows the scheduler writes and run one on demand.
 RUNNABLE_JOBS = {
     "review_fetch":            {"cadence": "8am / 12pm / 4pm / 8pm CT", "what": "Fetch new reviews and draft replies", "target": ("scheduler", "run_daily_fetch")},
+    "quality_calibration":     {"cadence": "Sunday 5am CT", "what": "Nudge Shift Quality weights from each restaurant's clean vs troubled weeks", "target": ("strategy_jobs", "run_quality_calibration")},
     "weekly_digests":          {"cadence": "9am on each client's digest day", "what": "Email weekly digests", "target": ("scheduler", "run_weekly_digests"), "sends": True},
     "pos_sync":                {"cadence": "3am nightly", "what": "Pull yesterday's Toast sales and labor", "target": ("scheduler", "run_toast_sync")},
     "inventory_depletion":     {"cadence": "5am nightly", "what": "Deplete inventory from POS sales", "target": ("scheduler", "run_daily_depletion_sync")},

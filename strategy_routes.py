@@ -800,6 +800,248 @@ def _do_covers_save(u):
     return {"ok": True, **out}, 200
 
 
+# ── Scheduling: the roster, per-person facts, pairings, dated signals, rules,
+#    versions, requests. One body each, served to web and iOS alike. ────────
+
+def _may_rate(u):
+    from permissions import has_permission, TEAM_RATE
+    return bool(u.get("is_admin")) or has_permission(u, TEAM_RATE)
+
+
+def _may_draft(u):
+    from permissions import has_permission, SCHEDULE_DRAFT
+    return bool(u.get("is_admin")) or has_permission(u, SCHEDULE_DRAFT)
+
+
+def _who(u):
+    return (u.get("username") or u.get("email") or "").strip()[:120] or None
+
+
+def _do_roster_get(u):
+    """Everyone on the roster, active and deactivated, with the facts the
+    schedule respects about them and their Operational Score."""
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can see the roster.")
+    import staff_settings as _ss
+    from models import get_operational_scores, get_leader_flags
+    rid = _rid(u)
+    scores = get_operational_scores(rid)
+    closers = get_leader_flags(rid)
+    rel = {}
+    try:
+        rel = _ss.reliability(rid)
+    except Exception:
+        rel = {}
+    out = []
+    for e in _ss.roster(rid, include_inactive=True):
+        out.append({**e, "score": scores.get(e["name"]), "can_close": bool(closers.get(e["name"])),
+                    "reliability": rel.get(e["name"])})
+    return {"ok": True, "roster": out, "pairs": _ss.pairs(rid),
+            "choices": {"employment_type": list(_ss.EMPLOYMENT_TYPES), "daypart": list(_ss.DAYPART_CHOICES),
+                        "days": list(_ss.DAYS)}, "can_edit": _may_rate(u)}, 200
+
+
+def _do_staff_settings_set(u):
+    if not _may_rate(u):
+        return _forbidden("Your login can view the team but not change their settings.")
+    import staff_settings as _ss
+    from client_api import log_account_event
+    b = _body()
+    try:
+        row = _ss.upsert(_rid(u), b.get("employee_name") or b.get("name"),
+                         active=b.get("active"), employment_type=b.get("employment_type"),
+                         min_hours=b.get("min_hours"), max_hours=b.get("max_hours"),
+                         daypart_availability=b.get("daypart_availability"), is_minor=b.get("is_minor"),
+                         updated_by=_who(u))
+    except _ss.StaffSettingsError as e:
+        return {"ok": False, "error": str(e)}, 400
+    changed = [k for k in ("active", "employment_type", "min_hours", "max_hours", "daypart_availability", "is_minor") if k in b]
+    log_account_event(_rid(u), "staff_settings_changed", current_user=u,
+                      detail=f"{row['employee_name']}: {', '.join(changed) or 'no change'}")
+    return {"ok": True, "settings": row}, 200
+
+
+def _do_staff_pairs_set(u):
+    if not _may_rate(u):
+        return _forbidden("Your login can view the team but not change pairings.")
+    import staff_settings as _ss
+    b = _body()
+    try:
+        row = _ss.set_pair(_rid(u), b.get("a"), b.get("b"), (b.get("kind") or "").strip().lower(),
+                           note=b.get("note"), created_by=_who(u))
+    except _ss.StaffSettingsError as e:
+        return {"ok": False, "error": str(e)}, 400
+    return {"ok": True, "pair": row, "pairs": _ss.pairs(_rid(u))}, 200
+
+
+def _do_staff_pair_delete(u, pair_id):
+    if not _may_rate(u):
+        return _forbidden("Your login can view the team but not change pairings.")
+    import staff_settings as _ss
+    if not _ss.delete_pair(_rid(u), pair_id):
+        return {"ok": False, "error": "That pairing is not yours, or is already gone."}, 404
+    return {"ok": True, "pairs": _ss.pairs(_rid(u))}, 200
+
+
+def _do_demand_signals_get(u):
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can see this.")
+    import demand_signals as _ds
+    from datetime import date, timedelta
+    start = (request.args.get("start") or date.today().isoformat())[:10]
+    end = (request.args.get("end") or (date.today() + timedelta(days=60)).isoformat())[:10]
+    return {"ok": True, "signals": _ds.upcoming(_rid(u), start, end)}, 200
+
+
+def _do_demand_signals_save(u):
+    if not _may_draft(u):
+        return _forbidden("Your login can view labor but not change the schedule's inputs.")
+    import demand_signals as _ds
+    from client_api import log_account_event
+    b = _body()
+    rows = b.get("rows")
+    if not isinstance(rows, list):
+        rows = _ds.parse_reservations_csv(b.get("csv") or "")
+    if not rows:
+        return {"ok": False, "error": "Send rows (date, kind, label, covers or lift) or a CSV of date,covers."}, 400
+    out = _ds.save(_rid(u), rows, source=(b.get("source") or "manual"), created_by=_who(u))
+    if out["written"]:
+        log_account_event(_rid(u), "demand_signals_saved", current_user=u, detail=f"{out['written']} dates")
+    return {"ok": True, **out}, 200
+
+
+def _do_demand_signal_delete(u, signal_id):
+    if not _may_draft(u):
+        return _forbidden("Your login can view labor but not change the schedule's inputs.")
+    import demand_signals as _ds
+    if not _ds.delete(_rid(u), signal_id):
+        return {"ok": False, "error": "Not found."}, 404
+    return {"ok": True}, 200
+
+
+def _do_compliance_get(u):
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can see the rules.")
+    import schedule_rules as _sr
+    from models import get_restaurant
+    r = get_restaurant(_rid(u))
+    return {"ok": True, "rules": _sr.compliance(r), "defaults": dict(_sr.DEFAULTS),
+            "role_floors": _sr.role_floors(r), "can_edit": _principal(u)}, 200
+
+
+def _do_compliance_set(u):
+    if not _principal(u):
+        return _forbidden("Only the account owner can change the scheduling rules.")
+    import schedule_rules as _sr
+    from client_api import log_account_event
+    b = _body()
+    out = {}
+    if isinstance(b.get("rules"), dict):
+        out["rules"] = _sr.save_compliance(_rid(u), b["rules"])
+    if "role_floors" in b:
+        floors = b.get("role_floors") if isinstance(b.get("role_floors"), dict) else {}
+        out["role_floors"] = _sr.save_role_floors(_rid(u), floors)
+    if not out:
+        return {"ok": False, "error": "Send rules and/or role_floors."}, 400
+    log_account_event(_rid(u), "schedule_rules_changed", current_user=u, detail=", ".join(out))
+    return {"ok": True, **out}, 200
+
+
+def _do_schedule_versions(u, history_id):
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can see schedules.")
+    import schedule_versions as _sv
+    return {"ok": True, "versions": _sv.list_versions(_rid(u), history_id),
+            "draft_vs_latest": _sv.draft_vs_published(_rid(u), history_id)}, 200
+
+
+def _rows_from_body(b):
+    cols = ("date", "day", "employee", "role", "shift_start", "shift_end", "scheduled_hours", "notes")
+    raw = b.get("rows")
+    if not isinstance(raw, list) or not raw or len(raw) > 2000:
+        return None
+    return [{c: str(r.get(c) or "")[:200] for c in cols} for r in raw if isinstance(r, dict)]
+
+
+def _do_schedule_violations(u):
+    """Every rule the rows on screen break — for the review panel after
+    an edit, so the owner never publishes on a stale verdict."""
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can check a schedule.")
+    import schedule_rules as _sr
+    from schedule_engine import quality_inputs_from_db
+    rows = _rows_from_body(_body())
+    if not rows:
+        return {"ok": False, "error": "rows required"}, 400
+    inputs = quality_inputs_from_db(_rid(u), week_rows=rows)
+    c = inputs.get("constraints")
+    if c is None:
+        return {"ok": True, "violations": [], "review": _sr.summarize([])}, 200
+    if inputs.get("roster"):
+        c.active = {n.lower() for n in inputs["roster"]}
+        c.roster_names = list(inputs["roster"])
+    viols = _sr.violations(rows, c)
+    return {"ok": True, "violations": viols, "review": _sr.summarize(viols),
+            "pending_time_off": inputs.get("pending_time_off") or {}}, 200
+
+
+def _do_schedule_apply_fixes(u):
+    """Put somebody legal on every row that breaks a hard rule, re-score,
+    and hand the rows back — the owner still decides whether to save."""
+    if not _may_draft(u):
+        return _forbidden("Your login can view labor but not change the schedule.")
+    import schedule_rules as _sr
+    import shift_quality as _sq
+    from schedule_engine import quality_inputs_from_db, _quality_signals, _score_schedule_quality
+    rows = _rows_from_body(_body())
+    if not rows:
+        return {"ok": False, "error": "rows required"}, 400
+    inputs = quality_inputs_from_db(_rid(u), week_rows=rows)
+    c = inputs.get("constraints")
+    if c is None:
+        return {"ok": False, "error": "The rules could not be loaded for this week."}, 500
+    if inputs.get("roster"):
+        c.active = {n.lower() for n in inputs["roster"]}
+        c.roster_names = list(inputs["roster"])
+    viols = _sr.violations(rows, c)
+    signals, weights = _quality_signals(_rid(u), inputs)
+    out = _sq.apply_fixes(rows, [v for v in viols if v["hard"]], profiles=inputs.get("shift_profiles") or None,
+                          weights=weights, **signals)
+    fixed_rows = out["rows"]
+    after = _sr.violations(fixed_rows, c)
+    quality, what_if = _score_schedule_quality(_rid(u), fixed_rows, inputs)
+    return {"ok": True, "rows": fixed_rows, "fixes": out["fixes"], "unfixed": out["unfixed"],
+            "violations": after, "review": _sr.summarize(after), "quality": quality, "what_if": what_if}, 200
+
+
+def _do_shift_requests_list(u):
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can see shift requests.")
+    import shift_requests as _sq_req
+    return {"ok": True, "requests": _sq_req.for_manager(_rid(u)), "open": _sq_req.open_shifts(_rid(u))}, 200
+
+
+def _do_shift_request_decide(u, request_id):
+    if not _may_draft(u):
+        return _forbidden("Your login can view labor but not decide shift requests.")
+    import shift_requests as _sq_req
+    from client_api import log_account_event
+    b = _body()
+    decision = (b.get("decision") or "").strip().lower()
+    if decision not in ("approve", "deny"):
+        return {"ok": False, "error": "decision must be approve or deny."}, 400
+    try:
+        row = _sq_req.decide(_rid(u), request_id, decision == "approve", decided_by=_who(u),
+                             replacement=(b.get("replacement") or "").strip() or None)
+    except _sq_req.ShiftRequestError as e:
+        return {"ok": False, "error": str(e)}, 400
+    if not row:
+        return {"ok": False, "error": "That request was already answered, or is not yours."}, 404
+    log_account_event(_rid(u), "shift_request_decided", current_user=u,
+                      detail=f"{row['employee_name']} {row['date']} {row['shift_start']}: {row['status']}")
+    return {"ok": True, "request": row}, 200
+
+
 def _do_recipe_scan(u):
     if not _sees_food(u):
         return _forbidden("Only someone who can see food cost can add recipes.")
@@ -1307,6 +1549,20 @@ _ROUTES = [
     ("/labor/time-off/<int:request_id>/decide", ["POST"], _do_time_off_decide, "time_off_decide"),
     ("/labor/covers", ["GET"], _do_covers_get, "covers_get"),
     ("/labor/covers", ["POST"], _do_covers_save, "covers_save"),
+    ("/labor/roster", ["GET"], _do_roster_get, "roster_get"),
+    ("/labor/staff-settings", ["POST"], _do_staff_settings_set, "staff_settings_set"),
+    ("/labor/staff-pairs", ["POST"], _do_staff_pairs_set, "staff_pairs_set"),
+    ("/labor/staff-pairs/<int:pair_id>", ["DELETE"], _do_staff_pair_delete, "staff_pair_delete"),
+    ("/labor/demand-signals", ["GET"], _do_demand_signals_get, "demand_signals_get"),
+    ("/labor/demand-signals", ["POST"], _do_demand_signals_save, "demand_signals_save"),
+    ("/labor/demand-signals/<int:signal_id>", ["DELETE"], _do_demand_signal_delete, "demand_signal_delete"),
+    ("/labor/rules", ["GET"], _do_compliance_get, "schedule_rules_get"),
+    ("/labor/rules", ["POST"], _do_compliance_set, "schedule_rules_set"),
+    ("/labor/schedule-history/<int:history_id>/versions", ["GET"], _do_schedule_versions, "schedule_versions"),
+    ("/labor/schedule/violations", ["POST"], _do_schedule_violations, "schedule_violations"),
+    ("/labor/schedule/apply-fixes", ["POST"], _do_schedule_apply_fixes, "schedule_apply_fixes"),
+    ("/labor/shift-requests", ["GET"], _do_shift_requests_list, "shift_requests_list"),
+    ("/labor/shift-requests/<int:request_id>/decide", ["POST"], _do_shift_request_decide, "shift_request_decide"),
     ("/food-cost/recipes/scan", ["POST"], _do_recipe_scan, "recipe_scan"),
     ("/account/trust", ["GET"], _do_trust, "trust"),
     ("/decisions", ["GET"], _do_decisions, "decisions"),

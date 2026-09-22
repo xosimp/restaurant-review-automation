@@ -253,6 +253,23 @@ def sweep_stale_jobs(older_than_minutes: int = 10) -> int:
         return 0
 
 
+def active_job(kind, restaurant_id, max_age_minutes: int = 10):
+    """The job_id of a pending job of this kind for this restaurant, started
+    within `max_age_minutes`, or None. Two owners pressing Generate at once
+    used to produce two model calls and two history rows; the second press
+    now joins the first job and polls it."""
+    try:
+        conn = _async_conn()
+        row = conn.execute(
+            "SELECT job_id FROM async_jobs WHERE kind=? AND restaurant_id=? AND status='pending' "
+            "AND created_at >= datetime('now', ?) ORDER BY created_at DESC LIMIT 1",
+            (str(kind), restaurant_id, f"-{int(max_age_minutes)} minutes")).fetchone()
+        conn.close()
+        return row["job_id"] if row else None
+    except Exception:
+        return None
+
+
 def start_async_job(job_id, kind, restaurant_id):
     """Record a job as pending. Raises nothing — a job whose bookkeeping row
     can't be written still runs; its poll just reports it missing, which is

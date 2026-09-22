@@ -1,5 +1,5 @@
 """Deterministic schedule backstops (_top_up_hours_gap,
-_ensure_pizza_cook_coverage, _extend_shifts_to_close_gap) vs. freeform
+_ensure_role_floors, _extend_shifts_to_close_gap) vs. freeform
 availability notes.
 
 staff_availability only has whole-day granularity in its structured
@@ -16,12 +16,23 @@ arbitrary prose never would be.
 """
 import client_api
 import models
+import schedule_rules
+
+# The one rule the old hardcoded pizza-cook pass expressed, as the owner
+# would now configure it: one on at lunch and one at dinner, every day.
+_FLOORS = {"Pizza Cook": {"morning": 1, "night": 1}}
+
+
+def _plain_constraints(dates, days):
+    """A constraint set with no database behind it — every rule at its
+    default, nobody blocked — so these tests stay about the backstop."""
+    return schedule_rules.Constraints(restaurant_id=1, week_dates=list(dates), week_days=list(days))
 
 
 def test_pizza_cook_coverage_skips_the_only_candidate_when_they_have_notes(monkeypatch):
     # Alex T. is the *only* Pizza Cook anyone has worked this week (Tuesday
     # morning, in the CSV below) -- Tuesday still needs 1 for night
-    # (target 1, current 0; Tuesday isn't a "busy day" in _PIZZA_BUSY_DAYS).
+    # (floor 1 at night, current 0).
     # Without the notes exclusion, Alex T. is the only real candidate and
     # would get added to Tuesday night despite "only mornings".
     preview_rows = [{
@@ -34,22 +45,23 @@ def test_pizza_cook_coverage_skips_the_only_candidate_when_they_have_notes(monke
          "unavailable_days": "[]", "notes": "only mornings"},
     ])
 
-    result_rows, rows_added, added_dates = client_api._ensure_pizza_cook_coverage(
+    result_rows, rows_added, added_dates = client_api._ensure_role_floors(
         preview_rows, ["2026-08-25"], ["Tuesday"], restaurant_id=1,
-        close_times={}, role_buffers={},
+        close_times={}, role_buffers={}, floors=_FLOORS,
+        constraints=_plain_constraints(["2026-08-25"], ["Tuesday"]),
     )
 
     assert rows_added == 0
     assert added_dates == {}
     night_rows = [r for r in result_rows if r["role"] == "Pizza Cook"
-                  and client_api._window_overlap(r, client_api._PIZZA_NIGHT_WINDOW)]
+                  and client_api._window_overlap(r, client_api._NIGHT_WINDOW)]
     assert night_rows == []
 
 
 def test_pizza_cook_coverage_still_uses_a_candidate_without_notes(monkeypatch):
     # Two Pizza Cooks on the roster this week, both only working Monday
     # (so neither is already "working" the Tuesday date being filled --
-    # _ensure_pizza_cook_coverage correctly never double-books the same
+    # _ensure_role_floors correctly never double-books the same
     # date regardless of daypart, so a candidate already on Tuesday
     # wouldn't be a fair test of the notes exclusion specifically). Alex
     # T. has "only mornings" and must be skipped; Casey R. has no notes
@@ -72,9 +84,10 @@ def test_pizza_cook_coverage_still_uses_a_candidate_without_notes(monkeypatch):
          "unavailable_days": "[]", "notes": ""},
     ])
 
-    result_rows, rows_added, added_dates = client_api._ensure_pizza_cook_coverage(
+    result_rows, rows_added, added_dates = client_api._ensure_role_floors(
         preview_rows, ["2026-08-24", "2026-08-25"], ["Monday", "Tuesday"], restaurant_id=1,
-        close_times={}, role_buffers={},
+        close_times={}, role_buffers={}, floors=_FLOORS,
+        constraints=_plain_constraints(["2026-08-24", "2026-08-25"], ["Monday", "Tuesday"]),
     )
 
     assert rows_added > 0

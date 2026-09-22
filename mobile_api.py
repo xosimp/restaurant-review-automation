@@ -25,6 +25,7 @@ import config
 import random
 from datetime import datetime, timedelta
 
+import json
 from flask import Blueprint, request, jsonify
 
 from auth import verify_password, create_session, delete_session, revoke_other_sessions, mobile_login_required, update_last_login
@@ -1636,88 +1637,19 @@ def mobile_set_staff_contact(current_user):
 @mobile_bp.route("/labor/publish-schedule", methods=["POST"])
 @mobile_login_required
 def mobile_publish_schedule(current_user):
-    """Send each member of staff their own shifts.
-
-    Every employee gets a private tokenised link to their own schedule
-    only, and a copy of their shifts in the email body so it's readable
-    without tapping anything. Sends are per-employee, so one bad address
-    can't stop the rest.
-
-    Email only for now: SMS would be the better channel for floor staff,
-    but it needs Twilio credentials this deployment doesn't have — rather
-    than pretend, staff without an email address come back in `unreachable`
-    so the manager knows exactly who still needs telling.
-    """
-    from models import get_conn as _gc, get_staff_contacts, create_schedule_share, get_schedule_share_status
-    from labor import employees_in_schedule, employee_shifts_from_csv
-
-    rid = current_user["restaurant_id"]
-    restaurant = get_restaurant(rid)
-    if not restaurant:
-        return jsonify(ok=False, error="Restaurant not found"), 404
-
+    """Send each member of staff their own shifts — the one body in
+    client_api._publish_schedule, with its publish gate: blockers come back
+    as needs_ack until the person sending has read them."""
+    from permissions import has_permission, SCHEDULE_PUBLISH
+    if not (current_user.get("is_admin") or has_permission(current_user, SCHEDULE_PUBLISH)):
+        return jsonify(ok=False, error="Your login can draft a schedule but not send it to staff."), 403
     data = request.get_json(silent=True) or {}
-    conn = _gc()
     try:
-        if data.get("schedule_id"):
-            row = conn.execute(
-                "SELECT id, week_start, week_end, schedule_csv FROM schedule_history WHERE id=? AND restaurant_id=?",
-                (int(data["schedule_id"]), rid)).fetchone()
-        else:
-            row = conn.execute(
-                "SELECT id, week_start, week_end, schedule_csv FROM schedule_history "
-                "WHERE restaurant_id=? ORDER BY id DESC LIMIT 1", (rid,)).fetchone()
+        out, status = _capi._publish_schedule(current_user["restaurant_id"], data.get("schedule_id"),
+                                              current_user, acknowledge=bool(data.get("acknowledge")))
     except (TypeError, ValueError):
         return jsonify(ok=False, error="Which schedule?"), 400
-    finally:
-        conn.close()
-
-    if not row or not (row["schedule_csv"] or "").strip():
-        return jsonify(ok=False, error="Generate a schedule first — there's nothing to send yet."), 400
-
-    schedule_id = row["id"]
-    week_label = row["week_start"] or ""
-    if row["week_end"]:
-        week_label = f"{row['week_start']} – {row['week_end']}"
-
-    contacts = {c["employee_name"].lower(): c for c in get_staff_contacts(rid)}
-    base_url = config.base_url()
-
-    sent, unreachable, failed = [], [], []
-    for name in employees_in_schedule(row["schedule_csv"]):
-        contact = contacts.get(name.lower()) or {}
-        email = (contact.get("email") or "").strip()
-        if not email:
-            unreachable.append({"employee_name": name, "reason": "no email address on file"})
-            continue
-
-        token = create_schedule_share(rid, schedule_id, name, sent_to=email)
-        link = f"{base_url}/s/{token}"
-        shifts = employee_shifts_from_csv(row["schedule_csv"], name)
-        try:
-            from emails import send_staff_schedule_email
-            send_staff_schedule_email(
-                to_email=email, employee_name=name, restaurant_name=restaurant.name,
-                week_label=week_label, link=link, shifts=shifts,
-                reply_to=restaurant.owner_email or None)
-        except Exception as e:
-            failed.append({"employee_name": name, "error": str(e)})
-            continue
-
-        try:
-            from models import log_email as _log_email
-            _log_email(rid, "staff_schedule", email, f"Your schedule — {week_label}")
-        except Exception:
-            pass
-        sent.append({"employee_name": name, "sent_to": email, "shifts": len(shifts)})
-
-    if sent:
-        _log_account_event(rid, "schedule_published", current_user,
-                           detail=f"{len(sent)} to staff")
-    return jsonify(ok=bool(sent), schedule_id=schedule_id, week_label=week_label,
-                   sent=sent, unreachable=unreachable, failed=failed,
-                   status=get_schedule_share_status(rid, schedule_id),
-                   error=None if sent else "Nobody has an email address on file yet.")
+    return jsonify(**out), status
 
 
 @mobile_bp.route("/labor/schedule-share-status")
@@ -2519,10 +2451,16 @@ def mobile_generate_schedule(current_user):
     from ai_utils import ai_rate_limited
 
     rid = current_user["restaurant_id"]
+    from permissions import has_permission, SCHEDULE_DRAFT
+    if not (current_user.get("is_admin") or has_permission(current_user, SCHEDULE_DRAFT)):
+        return jsonify(ok=False, error="Your login can view labor but not draft a schedule."), 403
+    import ops as _ops
+    running = _ops.active_job("schedule", rid)
+    if running:
+        return jsonify(ok=True, job_id=running, joined=True)
     if ai_rate_limited(f"schedule:{rid}", max_calls=3, window_secs=60):
         return jsonify(ok=False, error="Too many schedule generations — please wait a moment and try again."), 429
     job_id = str(uuid.uuid4())
-    import ops as _ops
     _ops.start_async_job(job_id, "schedule", rid)
     from schedule_engine import _run_schedule_job as _run_sched
     t = threading.Thread(target=_run_sched, args=(job_id, rid), daemon=True)
@@ -5763,21 +5701,58 @@ def mobile_score_schedule(current_user):
         pass
 
     try:
-        inputs = quality_inputs_from_db(rid, daily_target_hours=targets)
+        inputs = quality_inputs_from_db(rid, daily_target_hours=targets, week_rows=rows)
         quality, what_if = _score_schedule_quality(rid, rows, inputs)
+        # The same rule sweep generation runs, so an edit that breaks a rule
+        # is named on screen before it is saved or sent.
+        violations, review = [], None
+        try:
+            import schedule_rules as _sr
+            c = inputs.get("constraints")
+            if c is not None:
+                if inputs.get("roster"):
+                    c.active = {n.lower() for n in inputs["roster"]}
+                    c.roster_names = list(inputs["roster"])
+                violations = _sr.violations(rows, c)
+                review = _sr.summarize(violations)
+        except Exception:
+            violations, review = [], None
         saved = 0
         # The whole point of an override. Without this the edit lived in the
         # page, the score moved, and publishing read the CSV saved at
         # generation time — so staff received the week the manager had just
         # fixed, unfixed, with nothing on screen to say so.
         if data.get("save"):
+            from permissions import has_permission, SCHEDULE_DRAFT
+            if not (current_user.get("is_admin") or has_permission(current_user, SCHEDULE_DRAFT)):
+                return jsonify(ok=False, error="Your login can view labor but not change the schedule."), 403
             from models import update_schedule_history_rows
+            csv_text = _rows_to_csv(rows)
             saved = update_schedule_history_rows(
-                rid, _rows_to_csv(rows), quality=quality,
+                rid, csv_text, quality=quality,
                 history_id=data.get("history_id"),
                 edited_by=current_user.get("username") or current_user.get("email"))
+            if saved:
+                try:
+                    import schedule_versions as _sv
+                    _sv.append(rid, saved, "edited", csv_text, quality=quality,
+                               saved_by=current_user.get("username") or current_user.get("email"))
+                    from models import _ensure_history_columns, get_conn as _gc2
+                    conn2 = _gc2()
+                    try:
+                        _ensure_history_columns(conn2)
+                        conn2.execute("UPDATE schedule_history SET review_json=? WHERE id=? AND restaurant_id=?",
+                                      (json.dumps(review) if review else None, saved, rid))
+                        conn2.commit()
+                    finally:
+                        conn2.close()
+                    _log_account_event(rid, "schedule_edited", current_user,
+                                       detail=f"history {saved}: {len(rows)} rows")
+                except Exception as _vx:
+                    print(f"[schedule] edit version failed: {_vx}")
         from models import capability_version
         return jsonify(ok=True, quality=quality, what_if=what_if, saved=bool(saved),
+                       violations=violations, review=review,
                        history_id=saved or None,
                        capability_version=capability_version(rid)), 200
     except Exception as e:
