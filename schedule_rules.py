@@ -47,7 +47,7 @@ NO_SHOW = NO_SHOW | frozenset({"outside_window", "missing_cert"})
 HARD = NO_SHOW | frozenset({"over_max_hours", "shift_too_long", "rest_gap", "minor_late", "minor_hours", "long_run",
                             "no_manager_on_duty"})
 SOFT = frozenset({"days_off", "pending_time_off", "daily_ot", "meal_break", "under_min_hours", "over_section_cap",
-                  "before_arrival"})
+                  "before_arrival", "ends_before_role_close", "manager_rule_unusable"})
 
 LABELS = {
     "off_roster": "not on the staff list", "inactive": "no longer on the roster",
@@ -65,6 +65,8 @@ LABELS = {
     "missing_cert": "missing a certification the role needs",
     "no_manager_on_duty": "no manager or keyholder on the shift",
     "before_arrival": "starts before that role's arrival time",
+    "ends_before_role_close": "ends before that role is meant to stay until",
+    "manager_rule_unusable": "manager on duty is on, but nobody is a closer or keyholder",
 }
 
 
@@ -261,6 +263,7 @@ class Constraints:
     foh_roles: set = field(default_factory=lambda: {"server"})
     patio_roles: set = field(default_factory=set)
     arrivals: dict = field(default_factory=dict)           # {role lower: minutes relative to open}
+    close_mins: dict = field(default_factory=dict)         # {role lower: minutes after close the role stays until}
     section_cap: int = 0
     role_floors: dict = field(default_factory=dict)
     open_times: dict = field(default_factory=dict)
@@ -270,7 +273,10 @@ class Constraints:
     # ── lookups ────────────────────────────────────────────────────────
     def bucket(self, date_str: str) -> str:
         from labor import _week_key
-        return _week_key(date_str, self.week_start_day)
+        try:
+            return _week_key(date_str, self.week_start_day)
+        except (TypeError, ValueError):
+            return ""          # a garbled date is flagged elsewhere; it counts toward no payroll week
 
     def max_hours(self, name: str) -> float:
         lim = self.hours_limits.get((name or "").strip().lower())
@@ -454,6 +460,12 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
             c.arrivals[str(k).strip().lower()] = int(v)
         except (TypeError, ValueError):
             continue
+    c.close_mins = {}
+    for k, v in (_load_json(getattr(restaurant, "role_close_min_json", None), {}) or {}).items():
+        try:
+            c.close_mins[str(k).strip().lower()] = int(v)
+        except (TypeError, ValueError):
+            continue
 
     # weekday availability + free-text notes
     try:
@@ -631,7 +643,35 @@ def violations(rows: list, c: Constraints) -> list:
             if open_m is not None and start_m is not None and start_m < open_m + arr - 15:
                 out.append(_v("before_arrival", i, r, f"starts {r.get('shift_start')}, {r.get('role')} arrives at {_fmt_minutes(open_m + arr)}"))
 
+    # a role that stays until N minutes after close: the last of that role
+    # each night must end no earlier ("bartenders stay an hour after close")
+    if c.close_mins and c.close_times:
+        by_date_role = {}
+        for i, r in enumerate(rows or []):
+            role = (r.get("role") or "").strip().lower()
+            if role in c.close_mins and r.get("date"):
+                by_date_role.setdefault((r["date"], role), []).append((i, r))
+        for (d, role), items in by_date_role.items():
+            try:
+                day = datetime.strptime(d, "%Y-%m-%d").strftime("%A")
+            except (ValueError, TypeError):
+                continue
+            close_m = parse_minutes((c.close_times or {}).get(day, ""))
+            if close_m is None:
+                continue
+            need = close_m + int(c.close_mins[role])
+            ends = [(parse_minutes(r.get("shift_end", "")), i, r) for i, r in items]
+            ends = [(e, i, r) for e, i, r in ends if e is not None]
+            if not ends:
+                continue
+            e_last, i_last, r_last = max(ends, key=lambda t: t[0])
+            if e_last < need - 15:
+                out.append(_v("ends_before_role_close", i_last, r_last,
+                              f"last {r_last.get('role')} ends {r_last.get('shift_end')}, the rule is until {_fmt_minutes(need)}"))
+
     # every open daypart needs a manager or keyholder, when the owner says so
+    if c.compliance.get("manager_on_duty") and not c.keyholders and rows:
+        out.append(_v("manager_rule_unusable", 0, rows[0], LABELS["manager_rule_unusable"]))
     if c.compliance.get("manager_on_duty") and c.keyholders:
         slots = {}
         for i, r in enumerate(rows or []):
@@ -805,6 +845,8 @@ def prompt_block(c: Constraints) -> str:
         lines.append(f"- {pack.get('label')} rules apply: " + ", ".join(f"{k.replace('_', ' ')} {v}" for k, v in pack["applied"].items()) + ".")
     if c.role_requirements:
         lines.append("- Certifications by role: " + "; ".join(f"{r} needs {', '.join(sorted(v))}" for r, v in sorted(c.role_requirements.items())) + " — only schedule people who hold them.")
+    if c.close_mins and c.close_times:
+        lines.append("- Stays after close: " + "; ".join(f"the last {role} until {m} min after close" for role, m in sorted(c.close_mins.items())) + ".")
     if c.arrivals and c.open_times:
         bits = []
         for role, off in sorted(c.arrivals.items()):

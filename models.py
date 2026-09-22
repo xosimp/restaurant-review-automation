@@ -486,6 +486,7 @@ class Restaurant:
     role_floors_json: Optional[str]  = None  # {"Line Cook": {"morning": 1, "night": 2, "days": {"Saturday": {"night": 3}}}}
     jurisdiction: Optional[str]      = None  # compliance_packs code (CA, NY, …) applied under the owner's own rules
     role_arrival_json: Optional[str] = None  # {"Line Cook": -60} minutes relative to open a role may start (negative = before)
+    role_close_min_json: Optional[str] = None  # {"Bartender": 60} the last of a role stays until N minutes after close
     role_requirements_json: Optional[str] = None  # {"Bartender": ["alcohol"]} certifications a role needs
     foh_roles_json: Optional[str]    = None  # ["Server", "Bartender"] roles the section cap counts; default server only
     patio_roles_json: Optional[str]  = None  # roles a rainy day thins first
@@ -691,6 +692,7 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "role_floors_json", "TEXT"),
         ("restaurants", "jurisdiction", "TEXT"),
         ("restaurants", "role_arrival_json", "TEXT"),
+        ("restaurants", "role_close_min_json", "TEXT"),
         ("restaurants", "role_requirements_json", "TEXT"),
         ("restaurants", "foh_roles_json", "TEXT"),
         ("restaurants", "patio_roles_json", "TEXT"),
@@ -2469,7 +2471,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "auto_approve_earned","auto_publish_schedule","auto_order_trusted","weekly_plan_enabled","send_delay_minutes",
         "auto_approve_5star","auto_approve_4star","auto_approve_daily_cap","auto_approve_paused","open_times_json",
         "compliance_json","role_floors_json",
-        "jurisdiction","role_arrival_json","role_requirements_json","foh_roles_json","patio_roles_json",
+        "jurisdiction","role_arrival_json","role_close_min_json","role_requirements_json","foh_roles_json","patio_roles_json",
         "trim_to_budget","reservation_provider","reservation_api_key",
         "response_language","tone_preset","data_retention_months",
         "toast_client_id","toast_client_secret","toast_restaurant_guid",
@@ -2753,6 +2755,7 @@ def _restaurant_from_row(row) -> Restaurant:
         role_floors_json=row["role_floors_json"] if "role_floors_json" in row.keys() else None,
         jurisdiction=row["jurisdiction"] if "jurisdiction" in row.keys() else None,
         role_arrival_json=row["role_arrival_json"] if "role_arrival_json" in row.keys() else None,
+        role_close_min_json=row["role_close_min_json"] if "role_close_min_json" in row.keys() else None,
         role_requirements_json=row["role_requirements_json"] if "role_requirements_json" in row.keys() else None,
         foh_roles_json=row["foh_roles_json"] if "foh_roles_json" in row.keys() else None,
         patio_roles_json=row["patio_roles_json"] if "patio_roles_json" in row.keys() else None,
@@ -4779,8 +4782,11 @@ def sibling_location_shifts(restaurant_id: int, dates: list,
         out = {}
         wanted = set(dates)
         for sib in siblings:
+            # Only a PUBLISHED week at the sibling counts — a draft there is
+            # not a commitment (the same rule schedule_rules._published_tail keeps).
+            _ensure_history_columns(conn)
             row = conn.execute(
-                "SELECT schedule_csv FROM schedule_history WHERE restaurant_id=? "
+                "SELECT schedule_csv FROM schedule_history WHERE restaurant_id=? AND published_at IS NOT NULL "
                 "ORDER BY id DESC LIMIT 1", (sib["id"],)).fetchone()
             for line in ((row["schedule_csv"] if row else "") or "").split("\n")[1:]:
                 parts = [p.strip() for p in line.split(",", 7)]

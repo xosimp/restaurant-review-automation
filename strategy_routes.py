@@ -842,7 +842,10 @@ def _do_roster_get(u):
         suggested = _si.chemistry_suggestions(rid)
     except Exception:
         suggested = []
+    roster_low = {e["name"].strip().lower() for e in out}
+    off_roster = sorted(n for n in scores if n.strip().lower() not in roster_low) if roster_low else []
     return {"ok": True, "roster": out, "pairs": _ss.pairs(rid), "suggested_pairs": suggested,
+            "ratings_off_roster": off_roster,
             "choices": {"employment_type": list(_ss.EMPLOYMENT_TYPES), "daypart": list(_ss.DAYPART_CHOICES),
                         "days": list(_ss.DAYS), "certifications": list(_ss.CERTIFICATIONS)}, "can_edit": _may_rate(u)}, 200
 
@@ -942,6 +945,8 @@ def _do_compliance_get(u):
             "role_floors": _sr.role_floors(r), "can_edit": _principal(u),
             "jurisdiction": getattr(r, "jurisdiction", None), "pack": pack, "packs": compliance_packs.available(),
             "role_arrivals": _sr._load_json(getattr(r, "role_arrival_json", None), {}),
+            "role_close_mins": _sr._load_json(getattr(r, "role_close_min_json", None), {}),
+            "manager_rule_unusable": bool(rules.get("manager_on_duty")) and not _keyholders(_rid(u)),
             "role_requirements": _sr._load_json(getattr(r, "role_requirements_json", None), {}),
             "foh_roles": _sr._load_json(getattr(r, "foh_roles_json", None), []) or ["Server"],
             "patio_roles": _sr._load_json(getattr(r, "patio_roles_json", None), []),
@@ -981,6 +986,15 @@ def _do_compliance_set(u):
                 continue
         settings["role_arrival_json"] = _j.dumps(clean) if clean else None
         out["role_arrivals"] = clean
+    if "role_close_mins" in b and isinstance(b.get("role_close_mins"), dict):
+        clean = {}
+        for k, v in b["role_close_mins"].items():
+            try:
+                clean[str(k).strip()[:60]] = max(0, min(240, int(v)))
+            except (TypeError, ValueError):
+                continue
+        settings["role_close_min_json"] = _j.dumps(clean) if clean else None
+        out["role_close_mins"] = clean
     if "role_requirements" in b and isinstance(b.get("role_requirements"), dict):
         clean = {str(k).strip()[:60]: sorted({str(x).strip().lower()[:40] for x in (v or []) if str(x).strip()})
                  for k, v in b["role_requirements"].items() if str(k).strip()}
@@ -1123,6 +1137,16 @@ def _do_shift_request_decide(u, request_id):
     log_account_event(_rid(u), "shift_request_decided", current_user=u,
                       detail=f"{row['employee_name']} {row['date']} {row['shift_start']}: {row['status']}")
     return {"ok": True, "request": row}, 200
+
+
+def _keyholders(rid) -> bool:
+    """Whether anybody can satisfy a manager-on-duty rule here."""
+    try:
+        import schedule_rules as _sr
+        c = _sr.build_constraints(rid, [], [])
+        return bool(c.keyholders)
+    except Exception:
+        return False
 
 
 def _do_learned_patterns(u):

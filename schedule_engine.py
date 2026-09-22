@@ -38,7 +38,7 @@ def _expected_rows(shifts, roster_pairs) -> int:
                 from datetime import datetime as _d
                 dt = _d.strptime(d, "%Y-%m-%d")
                 by_week[(dt.isocalendar()[0], dt.isocalendar()[1])] = by_week.get((dt.isocalendar()[0], dt.isocalendar()[1]), 0) + 1
-        weeks = sorted(by_week.items())[-5:-1] or sorted(by_week.items())[-1:]
+        weeks = sorted(by_week.items())[-4:]
         if weeks:
             return max(n for _, n in weeks)
     except Exception:
@@ -397,16 +397,30 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
     """One call for the week; if the response ran out of room, the week is
     written again in parts and merged. A big roster starts in parts."""
     from labor import generate_optimized_schedule
+    from time_utils import restaurant_now
+    from datetime import timedelta as _t0
     parts = 1
     expected = _expected_rows(shifts, roster_pairs)
     if expected > CHUNK_ROWS_PER_CALL:
         parts = 2 if expected <= CHUNK_ROWS_PER_CALL * 2 else 3
     wasted = 0.0
+    slices_log = []
+    today0 = restaurant_now(kwargs.get("tz_name"), naive=True)
+    monday0 = _week_monday(today0, kwargs.get("week_start"))
+    all_dates = [(monday0 + _t0(days=i)).strftime("%Y-%m-%d") for i in range(7)]
     if parts == 1:
         result = generate_optimized_schedule(analysis, shifts, **kwargs)
-        if not result.get("truncated"):
+        missing = _missing_dates(result.get("schedule_csv", ""), all_dates)
+        slices_log.append({"dates": all_dates, "rows_by_date": _rows_by_date(result.get("schedule_csv", "")),
+                           "seconds": result.get("generation_seconds"), "stop_reason": result.get("stop_reason"),
+                           "missing": missing})
+        if not result.get("truncated") and not missing:
             result["chunked"] = 1
+            result["slices"] = slices_log
             return result
+        # Ran out of room, or wrote nothing for a day: the week is written in
+        # parts instead. A day with no draft must never be filled in by a
+        # backstop as though the model had staffed it.
         wasted = float(result.get("generation_seconds") or 0)
         parts = 2
     from datetime import datetime as _d, timedelta as _t
@@ -421,9 +435,11 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
     # slices with the other's rows in view. That is what a 250-person
     # restaurant needs: the rule sweep afterwards arbitrates the merge.
     departments = [None]
-    if parts > 3:
+    if expected > CHUNK_ROWS_PER_CALL * 3:
+        # Three date slices cannot hold the week: split the roster by
+        # department first, then each department by dates.
         departments = list(_departments(roster_pairs).items()) or [None]
-        parts = min(3, max(2, -(-parts // len(departments))))
+        parts = min(3, max(2, -(-expected // (len(departments) * CHUNK_ROWS_PER_CALL))))
     size = -(-len(week_dates) // parts)
     slices = [week_dates[i:i + size] for i in range(0, len(week_dates), size)]
     merged = None
@@ -446,6 +462,28 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
             if part.get("truncated"):
                 raise ValueError("The week is too long to generate even in parts — trim the roster or split the "
                                  "restaurant into departments, then try again.")
+            missing = _missing_dates(part.get("schedule_csv", ""), sl)
+            if missing:
+                # One retry, told exactly which days it skipped. A second
+                # miss fails the generation: a week with no Saturday draft
+                # that a backstop then fills is worse than no week.
+                seconds += float(part.get("generation_seconds") or 0)
+                slices_log.append({"dates": sl, "rows_by_date": _rows_by_date(part.get("schedule_csv", "")),
+                                   "seconds": part.get("generation_seconds"), "stop_reason": part.get("stop_reason"),
+                                   "missing": missing, "retried": True})
+                rkwargs = dict(dkwargs)
+                rkwargs["extra_blocks"] = (dkwargs.get("extra_blocks") or "") + (
+                    "\n\nYOUR PREVIOUS ANSWER WROTE NO SHIFTS FOR " + ", ".join(missing) +
+                    ". Every date in this request must have a full day of shifts across every role that normally works it.")
+                part = generate_optimized_schedule(analysis, shifts, week_slice=sl, prior_rows=list(prior_rows), **rkwargs)
+                calls += 1
+                missing = _missing_dates(part.get("schedule_csv", ""), sl)
+                if missing or part.get("truncated"):
+                    raise ValueError("The model wrote no shifts for " + ", ".join(_pretty_dates(missing or sl)) +
+                                     " twice; the week was not saved. Try again in a minute.")
+            slices_log.append({"dates": sl, "rows_by_date": _rows_by_date(part.get("schedule_csv", "")),
+                               "seconds": part.get("generation_seconds"), "stop_reason": part.get("stop_reason"),
+                               "missing": []})
             merged = merged or part
             rows.extend(part["schedule_csv"].split("\n")[1:])
             for line in part["schedule_csv"].split("\n")[1:]:
@@ -466,7 +504,33 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
     merged["truncated"] = False
     merged["chunked"] = calls
     merged["departments"] = [d[0] for d in departments if d]
+    merged["slices"] = slices_log
     return merged
+
+
+def _rows_by_date(csv_text: str) -> dict:
+    out = {}
+    for line in (csv_text or "").split("\n")[1:]:
+        cols = [c.strip() for c in line.split(",", 7)]
+        if len(cols) >= 3 and cols[0] and cols[2]:
+            out[cols[0]] = out.get(cols[0], 0) + 1
+    return out
+
+
+def _missing_dates(csv_text: str, dates: list) -> list:
+    by = _rows_by_date(csv_text)
+    return [d for d in (dates or []) if not by.get(d)]
+
+
+def _pretty_dates(dates: list) -> list:
+    from datetime import datetime as _d
+    out = []
+    for d in dates or []:
+        try:
+            out.append(_d.strptime(d, "%Y-%m-%d").strftime("%A"))
+        except ValueError:
+            out.append(str(d))
+    return out
 
 
 _BOH_WORDS = ("cook", "prep", "dish", "chef", "line", "kitchen", "pantry", "saute", "sauté", "pizza", "grill",
@@ -887,19 +951,29 @@ def _top_up_hours_gap(preview_rows: list, daily_target_hours: dict, hours_budget
             hrs = 0.0
         hours_by_employee[emp] = hours_by_employee.get(emp, 0.0) + hrs
         by_date_hours[date] = by_date_hours.get(date, 0.0) + hrs
-        role_headcount_by_date[(date, role)] = role_headcount_by_date.get((date, role), 0) + 1
+        # Keyed by daypart: a Saturday with seven morning servers and no
+        # dinner ones used to read as "seven servers", and the template it
+        # cloned was the first morning row. (role, daypart) is the unit.
+        part = _rules.daypart_of(r.get("shift_start", ""))
+        role_headcount_by_date[(date, role, part)] = role_headcount_by_date.get((date, role, part), 0) + 1
         if r.get("shift_start") and r.get("shift_end"):
-            date_role_template.setdefault((date, role), (r["shift_start"], r["shift_end"]))
-            role_time_template.setdefault(role, (r["shift_start"], r["shift_end"]))
+            date_role_template.setdefault((date, role, part), (r["shift_start"], r["shift_end"]))
+            role_time_template.setdefault((role, part), (r["shift_start"], r["shift_end"]))
+    # People on the roster in a role, even without a row this week.
+    for _n, _role in (getattr(constraints, "roster_roles", None) or {}).items() if constraints is not None else []:
+        if _role:
+            role_employees.setdefault(_role.strip(), set()).add(_n)
+    # A day the model wrote nothing for is not thin — it is missing, and
+    # that is the generation's failure to report, never this pass's to fill.
+    dates_with_rows = {d for d in by_date_hours if by_date_hours.get(d, 0) > 0}
 
-    # Average headcount per role across the days it appears — used to spot
-    # a thin day for a role that's normally better staffed, the same lens
-    # the PAR prompt instruction already asks the model to apply, just
-    # applied mechanically here instead of trusted to prose compliance.
+    # Average headcount per (role, daypart) across the days it appears —
+    # used to spot a thin daypart for a role that's normally better staffed.
     role_day_counts: dict = {}
-    for (d, role), n in role_headcount_by_date.items():
-        role_day_counts.setdefault(role, []).append(n)
-    role_avg_headcount = {role: sum(v) / len(v) for role, v in role_day_counts.items() if v}
+    for (d, role, part), n in role_headcount_by_date.items():
+        role_day_counts.setdefault((role, part), []).append(n)
+    role_avg_headcount = {rp: sum(v) / len(v) for rp, v in role_day_counts.items() if v}
+    added_by_date: dict = {}
 
     daily_target_hours = dict(daily_target_hours)  # local copy — we mutate to drop exhausted dates
     hours_added = 0.0
@@ -909,10 +983,11 @@ def _top_up_hours_gap(preview_rows: list, daily_target_hours: dict, hours_budget
     # Which (date, role) pairs are actually thin: at least one whole person
     # under that role's average headcount across the week. Nothing else is
     # a reason to add a shift.
-    thin_dates = {d for (d, role), n in role_headcount_by_date.items()
-                  if role_avg_headcount.get(role, 0) - n >= 1}
-    thin_dates |= {d for d in daily_target_hours for role in role_avg_headcount
-                   if (d, role) not in role_headcount_by_date and role_avg_headcount[role] >= 1}
+    thin_dates = {d for (d, role, part), n in role_headcount_by_date.items()
+                  if role_avg_headcount.get((role, part), 0) - n >= 1}
+    thin_dates |= {d for d in daily_target_hours for (role, part) in role_avg_headcount
+                   if (d, role, part) not in role_headcount_by_date and role_avg_headcount[(role, part)] >= 1}
+    thin_dates &= dates_with_rows
     _blocked_dates = (constraints.blocked_dates if constraints is not None else {})
 
     for _pass in range(MAX_ADDS):
@@ -935,10 +1010,16 @@ def _top_up_hours_gap(preview_rows: list, daily_target_hours: dict, hours_budget
 
         # Pick the role furthest below its own weekly-average headcount for
         # this day, among roles that actually have an available candidate.
+        # At most a quarter of the day's target can come from this pass;
+        # past that the day is flagged, not written.
+        _cap_day = 0.25 * float(daily_target_hours.get(target_date) or 0)
+        if _cap_day and added_by_date.get(target_date, 0.0) >= _cap_day:
+            daily_target_hours[target_date] = by_date_hours.get(target_date, 0.0)
+            continue
         candidates_role = None
         best_shortfall = 0.0
-        for role, avg_hc in role_avg_headcount.items():
-            today_hc = role_headcount_by_date.get((target_date, role), 0)
+        for (role, part), avg_hc in role_avg_headcount.items():
+            today_hc = role_headcount_by_date.get((target_date, role, part), 0)
             shortfall = avg_hc - today_hc
             if shortfall > best_shortfall:
                 pool = role_employees.get(role, set()) - working_on_date.get(target_date, set())
@@ -950,7 +1031,7 @@ def _top_up_hours_gap(preview_rows: list, daily_target_hours: dict, hours_budget
                         # Approved time off, daypart windows, a deactivated
                         # name: the same question the swap search asks.
                         and target_date not in (_blocked_dates.get(e.lower()) or {})
-                        and (constraints is None or constraints.can_work(e, target_date, role_time_template.get(role) and _rules.daypart_of(role_time_template[role][0]))[0])
+                        and (constraints is None or constraints.can_work(e, target_date, part)[0])
                         # "No employee over 40h for the week" was prompt text
                         # with nothing enforcing it, so this pass could push
                         # someone into overtime to consume an hours budget —
@@ -959,7 +1040,7 @@ def _top_up_hours_gap(preview_rows: list, daily_target_hours: dict, hours_budget
                             < (constraints.max_hours(e) if constraints is not None else _WEEKLY_HOURS_CEILING)}
                 if pool:
                     best_shortfall = shortfall
-                    candidates_role = (role, pool)
+                    candidates_role = (role, part, pool)
 
         if not candidates_role:
             # No role on this date has a real, available candidate — can't
@@ -968,8 +1049,9 @@ def _top_up_hours_gap(preview_rows: list, daily_target_hours: dict, hours_budget
             daily_target_hours[target_date] = by_date_hours.get(target_date, 0.0)
             continue
 
-        role, pool = candidates_role
-        start, end = date_role_template.get((target_date, role)) or role_time_template.get(role, ("11:00am", "5:00pm"))
+        role, part, pool = candidates_role
+        start, end = (date_role_template.get((target_date, role, part)) or role_time_template.get((role, part))
+                      or _daypart_fallback(constraints, day_name, part))
         if constraints is not None:
             pool = {e for e in pool if constraints.window_ok(e, target_date, start, end)[0]}
             if not pool:
@@ -1019,12 +1101,14 @@ def _top_up_hours_gap(preview_rows: list, daily_target_hours: dict, hours_budget
         hours_added += hrs
         remaining_gap -= hrs
         added_dates[target_date] = added_dates.get(target_date, 0) + 1
-        thin_dates.discard(target_date) if role_headcount_by_date.get((target_date, role), 0) + 1 >= role_avg_headcount.get(role, 0) else None
+        added_by_date[target_date] = added_by_date.get(target_date, 0.0) + hrs
+        if role_headcount_by_date.get((target_date, role, part), 0) + 1 >= role_avg_headcount.get((role, part), 0):
+            thin_dates.discard(target_date)
 
         by_date_hours[target_date] = by_date_hours.get(target_date, 0.0) + hrs
         working_on_date.setdefault(target_date, set()).add(employee)
         hours_by_employee[employee] = hours_by_employee.get(employee, 0.0) + hrs
-        role_headcount_by_date[(target_date, role)] = role_headcount_by_date.get((target_date, role), 0) + 1
+        role_headcount_by_date[(target_date, role, part)] = role_headcount_by_date.get((target_date, role, part), 0) + 1
 
     return preview_rows, round(hours_added, 1), added_dates
 
@@ -1391,8 +1475,12 @@ def _ensure_role_floors(preview_rows: list, week_dates: list, week_days: list, r
                     continue
                 current = [r for r in preview_rows if r.get("date") == date
                            and (r.get("role") or "").strip().lower() == key and _window_overlap(r, window)]
-                for _ in range(max(0, need - len(current))):
-                    pool = set(role_people.get(key, set())) - working_on_date.get(date, set())
+                filled = len(current)
+                tried = set()
+                for _attempt in range(40):
+                    if filled >= need:
+                        break
+                    pool = set(role_people.get(key, set())) - working_on_date.get(date, set()) - tried
                     pool = {e for e in pool if (e not in notes_restricted or e.lower() in constraints.time_windows)
                             and constraints.can_work(e, date, part)[0] and constraints.cert_ok(e, role_name)[0]}
                     if not pool:
@@ -1415,12 +1503,13 @@ def _ensure_role_floors(preview_rows: list, week_dates: list, week_days: list, r
                     hrs = round((e_min - s_min) / 60, 1)
                     base = sum((constraints.base_hours.get(employee.lower()) or {}).values())
                     if hours_by_employee.get(employee, 0.0) + base + hrs > constraints.max_hours(employee):
-                        role_people[key].discard(employee)
+                        tried.add(employee)
                         continue
                     ok, _why = constraints.rest_ok(employee, new_row, rows_by_person.get(employee.lower(), []))
                     if not ok:
-                        role_people[key].discard(employee)
+                        tried.add(employee)
                         continue
+                    filled += 1
                     new_row["scheduled_hours"] = str(hrs)
                     preview_rows.append(new_row)
                     rows_by_person.setdefault(employee.lower(), []).append(new_row)
@@ -1997,7 +2086,7 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                 from models import get_role_rates as _grr
                 _rates = _grr(restaurant_id)
                 _priced = _econ.priced_cost(preview_rows, _rates, result.get("blended_rate") or (_rates or {}).get("_default"),
-                                            ceiling=_constraints.compliance.get("weekly_hours_ceiling") or 40,
+                                            ceiling=min(float(_constraints.compliance.get("weekly_hours_ceiling") or 40), 40.0),
                                             base_hours={n: sum(v.values()) for n, v in (_constraints.base_hours or {}).items()})
                 result["projected_cost"] = _priced
                 _lbd = float(result.get("labor_budget_dollars") or 0)
@@ -2040,6 +2129,23 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             result["review"] = _rules.summarize(_viols)
             result["review"]["fixes"] = _fixes
             result["review"]["unfixed"] = _unfixed
+            # Who on the roster got nothing, and ratings that name nobody on
+            # it — both silent before, both the owner's to know.
+            _on = {(_r.get("employee") or "").strip().lower() for _r in preview_rows}
+            _not = [n for n in (result.get("roster") or []) if n and n.strip().lower() not in _on]
+            result["not_scheduled"] = _not
+            if _not:
+                _full = [n for n in _not if (_constraints.employment.get(n.lower()) == "full")]
+                result["review"]["lines"].append(
+                    f"{len(_not)} on the roster have no shift this week: " + ", ".join(_not[:8]) + ("…" if len(_not) > 8 else "")
+                    + (f" — {len(_full)} of them full-time" if _full else ""))
+            _roster_low = {n.strip().lower() for n in (result.get("roster") or [])}
+            _off = sorted(n for n in (result.get("operational_scores") or {}) if n.strip().lower() not in _roster_low) if _roster_low else []
+            result["ratings_off_roster"] = _off
+            if _off:
+                result["review"]["lines"].append(
+                    f"{len(_off)} Operational Score{'s' if len(_off) != 1 else ''} belong to names not on the roster "
+                    f"({', '.join(_off[:4])}{'…' if len(_off) > 4 else ''}) — they judge nobody until the names match")
             # The budget is a ceiling. A week written past it is named at
             # the top of the review, never trimmed into a thinner week.
             try:
@@ -2174,8 +2280,13 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                     _lines_out.append(",".join(str(_r.get(c, "") or "").replace(",", ";") for c in _COLS))
                 result["schedule_csv"] = "\n".join(_lines_out)
         except Exception as _csv_ex:
-            print(f"[schedule] csv parse error: {_csv_ex}")
-            pass
+            # Every safeguard lives inside that block. A crash there used to
+            # fall through to save and ship the raw model text as a finished
+            # week with "0 hard"; now it is the generation's failure.
+            import ops as _ops_fail
+            _ops_fail.capture(_csv_ex, job="schedule_checks", context=f"restaurant_id={restaurant_id}")
+            raise ValueError(f"The draft was written but its checks failed ({type(_csv_ex).__name__}: {_csv_ex}); "
+                             "nothing was saved. Try again.")
 
         _history_id = None
         try:
@@ -2292,6 +2403,9 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             could_hold=result.get("could_hold") or {},
             departments=result.get("departments") or [],
             regenerated_dates=result.get("regenerated_dates") or [],
+            slices=result.get("slices") or [],
+            not_scheduled=result.get("not_scheduled") or [],
+            ratings_off_roster=result.get("ratings_off_roster") or [],
         ))
     except Exception as e:
         tb = _tb.format_exc()
