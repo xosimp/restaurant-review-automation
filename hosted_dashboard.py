@@ -549,9 +549,14 @@ def index(current_user):
         "avoided_hours":    (value["avoided"] or {}).get("hours") or 0,
         # The Reviews tab shows its own cost-avoidance line. Read from the
         # same place as everything else so the rate has one definition.
-        "reviews_avoided":  int(round(next((i["dollars"] or 0)
-                                           for i in (value["avoided"] or {}).get("items") or []
-                                           if i.get("key") == "replies"), 0)),
+        # next() needs its default OUTSIDE the generator's parentheses: with
+        # `next((x for ...), 0)` mis-bracketed as `round(next(x for ...), 0)`,
+        # a restaurant with no responded review raised StopIteration here and
+        # the whole dashboard shell was a 500 — every new account, both demo
+        # accounts as seeded. Since f41e2e5; found by the Sep 21 re-audit.
+        "reviews_avoided":  int(round(next(((i["dollars"] or 0)
+                                            for i in (value["avoided"] or {}).get("items") or []
+                                            if i.get("key") == "replies"), 0))),
         "opportunity":      int(round((value["opportunity"] or {}).get("monthly") or 0)),
         # Labor-tab context, unchanged.
         "labor_monthly":    _labor_monthly if _mod_l else 0,

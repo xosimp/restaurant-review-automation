@@ -222,7 +222,7 @@ Every root module, its layer and its one-line job. The test fails when a module 
 | a model or an Anthropic client | `ai_utils.model_for(purpose)`, `ai_utils.get_client()` | a `"claude-…"` literal or `anthropic.Anthropic(...)` |
 | "now" or a stamp | `time_utils` (`restaurant_now`, `utc_stamp`, `parse_stored_dt`, `OPERATOR_TZ`) | `datetime.now()` in a module that has a restaurant in hand |
 | a database connection in a module that calls `get_conn()` bare | the call-time wrapper pattern (`client_api`, `mobile_api`, `drafter`, `social_routes`, `demo_seed` have it) | `from models import get_conn` at module scope |
-| a table | `models.init_db` (or an `init_*` it calls) | `CREATE TABLE` on a request or job path — only `ops.py`'s lease tables and `ai_utils._ensure_usage_schema` are allowed to |
+| a table | `models.init_db` (or an `init_*` it calls) | `CREATE TABLE` on a request or job path — only `ops.py`'s lease tables, `ai_utils._ensure_usage_schema` and `waste_trend`'s once-per-process `_SCHEMA_ENSURED` guard are allowed to |
 | a swallowed error | `ops.capture(e, job=, context=)` | `except Exception: pass` around a write (lint fails) |
 | an email | `emails.send_*` / `emails.deliver`, colours from `emails.BRAND` | inline HTML with literal colours (ratchet lint) |
 | a figure a model may quote | `ai_guard.verify_figures` and the claim kinds | prose the client cannot trace |
@@ -249,7 +249,7 @@ Files that look mergeable and must not be merged, and why.
 | `static/fonts/` and `public/static/fonts/` | two deploy targets (Flask vs the Cloudflare Worker); `tests/test_public_site.py` pins them byte-identical |
 | `Procfile` and `railway.json` | Railway reads `railway.json`; the Procfile is only for a platform that has neither |
 | `init_db()`'s ALTER list and `ensure_columns()` | two migration lists that both run at boot; 57 columns exist only in the second. Pick one for a new column; do not try to merge them in a hurry |
-| `ops.py`'s per-call `CREATE TABLE` for the lease and claims, and `ai_utils._ensure_usage_schema` | must work on a fresh volume before boot completes; the documented exceptions to "DDL at boot" |
+| `ops.py`'s per-call `CREATE TABLE` for the lease and claims, `ai_utils._ensure_usage_schema`, and `waste_trend.load_waste_history`'s once-per-process guard | must work on a fresh volume before boot completes (ops), or run at most once per process (the other two); the documented exceptions to "DDL at boot" |
 | `hosted_dashboard`'s local `login_required` / `get_current_user` | a deliberately weaker copy for the one shell route (`/`) that must not be billing- or module-gated |
 | `tests/test_push_delivery.py` and `tests/test_webhook_delivery.py` | parallel by design (APNs over httpx vs webhooks over requests), same test names |
 | `audit_app.py` | a standalone Flask app Will runs on sales calls; not a blueprint, not in the web process |
