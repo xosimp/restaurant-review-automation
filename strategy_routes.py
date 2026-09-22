@@ -514,7 +514,10 @@ def _do_count_sheet_get(u):
     out = [{"ingredient_id": r["id"], "name": r["name"], "unit": r.get("unit") or "",
             "category": r.get("category") or "", "expected": r.get("current_stock"),
             "par_level": r.get("par_level"), "last_recount_at": r.get("last_recount_at"),
-            "avg_daily_usage": r.get("avg_daily_usage")} for r in rows]
+            "avg_daily_usage": r.get("avg_daily_usage"),
+            # The web's Suppliers block reads these; the order draft groups by them.
+            "supplier_name": r.get("supplier_name") or "",
+            "supplier_email": r.get("supplier_email") or ""} for r in rows]
     return {"ok": True, "items": out, "count": len(out)}, 200
 
 

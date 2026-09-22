@@ -1,0 +1,85 @@
+"""Food Cost's head: full-width position tiles and working blocks, the
+obsidian tile, the web supplier control, and the price monitor opening on
+the pantry.
+
+The food cost card, recipes block and count sheet used to be children of
+the hero's left flex column — squeezed beside the pulse chips into a
+340px strip down the left of a 1,400px page.
+"""
+import os
+import sqlite3
+
+import pytest
+
+import models
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _src():
+    return open(os.path.join(ROOT, "templates", "dashboard.html"), encoding="utf-8").read()
+
+
+def test_the_position_and_work_blocks_are_outside_the_hero_column():
+    s = _src()
+    panel = s[s.index('id="panel-inventory"'):]
+    top = panel.index('<div class="hb-top">')
+    left = panel[top:panel.index('<div id="fc2-cfo"', top)]
+    for i in ("fc2-fcp", "fc2-cov", "fc2-wsrc", "fc2-recipes", "fc2-count"):
+        assert f'id="{i}"' not in left, i + " is still inside the hero's left column"
+    assert '<div id="fc2-fcp" class="fc2-fcp fc2-pos" hidden></div>' in panel
+    assert '<div id="fc2-cov" class="fc2-cov fc2-pos" hidden></div>' in panel
+    for i in ("fc2-recipes", "fc2-count", "fc2-suppliers"):
+        assert f'<section id="{i}" class="fc2-block"' in panel, i
+    for rule in (".fc2-position{", ".fc2-pos{", ".fc2-block{", ".fc2-bh{", ".fc2-sup-grid{"):
+        assert rule in s, rule
+
+
+def test_the_obsidian_tile_is_the_web_twin_of_glowbadge():
+    s = _src()
+    tile = s[s.index(".ob-tile{"):s.index(".ob-tile svg{")]
+    assert "#2c2c2e" in tile and "#161618" in tile, "the two obsidian stops GlowBadge uses"
+    assert "mask-composite" in tile, "the lit edge is a masked gradient ring"
+    assert ".ob-tile:after{" in tile, "the ember seated on the right edge"
+    # every working block and both Labor marks use it
+    assert s.count('<span class="ic ob-tile" aria-hidden="true">') == 2
+    assert "function fc2BlockHead(icon,kicker,title,cnt,sub)" in s
+    assert '<span class="ob-tile" aria-hidden="true">' in s
+    assert ".lb2-op .ic{background" not in s and "glow-ember)}" not in s[s.index(".lb2-op .ic{"):s.index(".lb2-op .ic{") + 80]
+
+
+def test_the_web_can_assign_suppliers():
+    s = _src()
+    assert "function fc2LoadSuppliers()" in s and "function fc2SupplierPick(sel)" in s
+    assert "function fc2AssignAllUnassigned(btn)" in s
+    assert "/api/food-cost/ingredient-supplier" in s
+    assert "fc2LoadCountSheet();fc2LoadRecipeDrafts();fc2LoadSuppliers();" in s
+
+
+def test_the_count_sheet_carries_the_supplier_for_the_web_block(db_path, monkeypatch):
+    import strategy_routes
+    monkeypatch.setattr(models, "DB_PATH", db_path)
+    # inventory_ledger.list_ingredients calls get_conn() bare; its default
+    # was bound to the real DB_PATH at import, so point the function itself.
+    real_get_conn = models.get_conn
+    monkeypatch.setattr(models, "get_conn", lambda p=None: real_get_conn(p or db_path))
+    from models import Restaurant
+    rid = models.create_restaurant(Restaurant(name="Sup", owner_email="o@x.test", module_inventory=1), db_path=db_path)
+    conn = sqlite3.connect(db_path)
+    conn.execute("INSERT INTO ingredients (restaurant_id, name, unit, supplier_name, supplier_email) VALUES (?,?,?,?,?)",
+                 (rid, "Butter", "lb", "Sysco", "orders@sysco.example"))
+    conn.commit(); conn.close()
+    monkeypatch.setattr(strategy_routes, "_sees_food", lambda u: True)
+    out, code = strategy_routes._do_count_sheet_get({"restaurant_id": rid, "id": 1})
+    assert code == 200 and out["items"][0]["supplier_email"] == "orders@sysco.example"
+    assert out["items"][0]["supplier_name"] == "Sysco"
+
+
+def test_the_price_monitor_opens_on_the_pantry_when_nothing_was_submitted():
+    src = open(os.path.join(ROOT, "hosted_dashboard.py"), encoding="utf-8").read()
+    block = src[src.index('"from_pantry": True'):]
+    assert "list_ingredients(rid)" in src[src.index("# With a live pantry"):src.index('"from_pantry": True')]
+    assert '"price": (round(float(r["unit_cost"]), 2)' in block
+    # never over a real submission
+    guard = src[src.index("# With a live pantry"):src.index('"from_pantry": True')]
+    assert 'not (_food_cost_data and (_food_cost_data.get("current") or {}).get("items"))' in guard

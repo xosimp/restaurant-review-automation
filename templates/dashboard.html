@@ -4371,6 +4371,53 @@ svg:hover .hb-xh{opacity:1}
 .fc2-cov .k{text-transform:uppercase;letter-spacing:.8px;font-weight:700;font-size:12px}
 .fc2-cov .v{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:17px;color:var(--ink)}
 .fc2-cov .v.good{color:var(--hb-good)}.fc2-cov .v.warn{color:var(--amber)}.fc2-cov .v.bad{color:var(--hb-bad)}
+/* Position tiles: food cost %, recipe coverage, unexplained waste — three
+   kinds of number in a row, each on the card surface with the ember rail. */
+.fc2-position{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;margin-top:22px}
+.fc2-position:empty{display:none}
+.fc2-pos{position:relative;margin-top:0;max-width:none;padding:18px 20px 16px;border-radius:16px;background:var(--surface);border:1px solid var(--hb-line);box-shadow:var(--elev-card);overflow:hidden;transition:box-shadow .25s ease,transform .25s ease}
+[data-theme="dark"] .fc2-pos{background:var(--surface-glass),var(--surface);border-color:var(--line-hi)}
+.fc2-pos:hover{box-shadow:var(--elev-hero);transform:translateY(-1px)}
+.fc2-pos:before{content:'';position:absolute;left:0;top:0;right:0;height:3px;background:linear-gradient(90deg,var(--ember),var(--ember2) 55%,transparent);pointer-events:none}
+.fc2-cov.fc2-pos{flex-direction:column;align-items:flex-start;gap:2px;font-size:14px}
+.fc2-cov.fc2-pos .k{font-size:12.5px}
+.fc2-cov.fc2-pos .v{font-size:34px;line-height:1.1;margin-top:2px}
+.fc2-cov.fc2-pos .d{color:var(--ink3);line-height:1.5;margin-top:4px}
+/* Working blocks: recipes, the count sheet, suppliers. One card each, an
+   obsidian tile marking the head, the body at the page's 14–15px. */
+.fc2-block{position:relative;margin-top:22px;padding:22px 24px 20px;border-radius:16px;background:var(--surface);border:1px solid var(--hb-line);box-shadow:var(--elev-card);overflow:hidden;transition:box-shadow .25s ease}
+[data-theme="dark"] .fc2-block{background:var(--surface-glass),var(--surface);border-color:var(--line-hi)}
+.fc2-block:hover{box-shadow:var(--elev-hero)}
+.fc2-block:before{content:'';position:absolute;right:-18%;top:-60%;width:50%;height:150%;background:radial-gradient(closest-side,var(--ambient),transparent 72%);filter:blur(18px);opacity:.55;pointer-events:none}
+.fc2-block>*{position:relative}
+.fc2-block .hb-empty{font-size:14.5px;color:var(--ink2);padding:0}
+.fc2-bh{display:flex;align-items:center;gap:14px;margin-bottom:14px}
+.fc2-bh .k{font-size:11.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3)}
+.fc2-bh h3{margin:2px 0 0;font-family:'Clash Display',sans-serif;font-weight:500;font-size:20px;letter-spacing:-.01em;color:var(--ink);display:flex;align-items:center;gap:10px}
+.fc2-bh h3 .cnt{font-family:'Space Grotesk',sans-serif;font-size:13px;font-weight:700;color:var(--ember);background:var(--hb-tint);border-radius:999px;padding:2px 9px}
+.fc2-bh .sub{font-size:14px;color:var(--ink3);margin-top:3px;line-height:1.5}
+.fc2-block .fc2-count-grid{gap:8px 14px}
+.fc2-block .fc2-count-row{padding:8px 12px;border-radius:10px;background:var(--sf-recess);border-bottom:none}
+.fc2-block .fc2-count-row .n{font-size:14.5px;color:var(--ink)}
+.fc2-block .fc2-menu-draft{margin-top:14px}
+.fc2-sup-chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+.fc2-sup-bulk{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:14px;color:var(--ink2);margin-bottom:12px}
+.fc2-sup-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:8px 14px}
+.fc2-sup-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 8px 7px 12px;border-radius:10px;background:var(--sf-recess)}
+.fc2-sup-row .n{font-size:14.5px;color:var(--ink);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fc2-sup-row .n small{color:var(--ink3);font-size:12px}
+.fc2-sup-row select{max-width:172px;flex-shrink:0}
+.fc2-sup-new{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:14px;padding:12px 14px;border-radius:12px;background:var(--sf-ai),var(--surface);border:1px solid var(--sf-ai-line)}
+.fc2-sup-new b{font-size:14px;color:var(--ink);flex-basis:100%}
+.fc2-sup-new .ac-input{max-width:220px}
+/* The obsidian tile — the web twin of iOS GlowBadge: a rounded square of
+   obsidian, a lit edge running ember-to-dark from its top-left, a hairline
+   lip along the top, the glyph in cream, and one ember seated on its right
+   edge. A solid object, not a light source. */
+.ob-tile{position:relative;width:46px;height:46px;border-radius:14px;flex-shrink:0;display:flex;align-items:center;justify-content:center;background-color:#161618;background-image:linear-gradient(180deg,#2c2c2e,#161618);color:#f0ebe0;box-shadow:inset 0 1px 0 rgba(255,255,255,.10),0 3px 6px rgba(0,0,0,.55)}
+.ob-tile:before{content:'';position:absolute;inset:0;border-radius:inherit;padding:1.5px;background:linear-gradient(135deg,rgba(232,149,106,.95),rgba(200,75,47,.4) 45%,rgba(200,75,47,.12));-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;pointer-events:none}
+.ob-tile:after{content:'';position:absolute;width:8px;height:8px;border-radius:50%;right:-3px;top:50%;margin-top:-4px;background:radial-gradient(circle at 42% 38%,var(--ember2),var(--ember))}
+.ob-tile svg{width:22px;height:22px;position:relative;stroke-width:1.9}
 /* The CFO card. Deliberately NOT another tinted .fc2-fcp block: a driver
    ranking and a root cause are a different KIND of claim from a measured
    percentage, and giving them the same treatment would say they carry the
@@ -4473,6 +4520,19 @@ svg:hover .hb-xh{opacity:1}
       </div>
     </div>
   </div>
+  {# The position, then the work. These used to sit inside the hero's left
+     column — a flex child squeezed beside the pulse chips — so the food cost
+     card, the recipes block and the count sheet all stacked in a 340px
+     strip down the left of a 1,400px page. They are full-width now: three
+     position tiles in a row, then each working block as its own card. #}
+  <div class="fc2-position">
+    <div id="fc2-fcp" class="fc2-fcp fc2-pos" hidden></div>
+    <div id="fc2-cov" class="fc2-cov fc2-pos" hidden></div>
+    <div id="fc2-wsrc" class="fc2-cov fc2-pos" hidden></div>
+  </div>
+  <section id="fc2-recipes" class="fc2-block" aria-label="Recipes" hidden></section>
+  <section id="fc2-count" class="fc2-block" aria-label="Count sheet" hidden></section>
+  <section id="fc2-suppliers" class="fc2-block" aria-label="Suppliers" hidden></section>
 
   <section class="lb2-hero" aria-label="Waste trend">
     {# The waste-trend card. Drawn entirely from /api/food-cost/waste-trend
@@ -11086,7 +11146,7 @@ function loadInvInsight(){
   loadWasteTrend();
   fc2LoadFoodCostPct();
   fc2LoadRecipeCoverage();
-  fc2LoadWasteSources();fc2LoadCountSheet();fc2LoadRecipeDrafts();
+  fc2LoadWasteSources();fc2LoadCountSheet();fc2LoadRecipeDrafts();fc2LoadSuppliers();
   fc2LoadCfo();
   var fiveMin=5*60*1000;
   try{
@@ -11316,11 +11376,84 @@ document.addEventListener('click',function(e){
     done();if(typeof toast==='function')toast(d&&d.ok?(accept?'Recipe written':'Draft removed'):((d&&d.error)||'Could not do that'),d&&d.ok?'success':'error');fc2LoadRecipeDrafts();
   }).catch(function(){done();});
 });
+var FC2_ICON={
+  recipe:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h11l3 3v13H5z"/><path d="M8 9h8M8 13h8M8 17h5"/></svg>',
+  count:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 12l2.5 2.5L16 9"/></svg>',
+  truck:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h11v9H3zM14 10h4l3 3v3h-7z"/><circle cx="7" cy="18" r="1.8"/><circle cx="17" cy="18" r="1.8"/></svg>'
+};
+// The head of a working block: the obsidian tile, a kicker, the title with
+// its count, and one line on why the block exists.
+function fc2BlockHead(icon,kicker,title,cnt,sub){
+  return '<div class="fc2-bh"><span class="ob-tile" aria-hidden="true">'+icon+'</span><div><div class="k">'+esc(kicker)+'</div><h3>'+esc(title)+(cnt?'<span class="cnt hb-num">'+esc(cnt)+'</span>':'')+'</h3>'+(sub?'<div class="sub">'+esc(sub)+'</div>':'')+'</div></div>';
+}
+// ── suppliers: who each ingredient is ordered from ─────────────────────────
+// The weekly order groups itself by the supplier on each ingredient, and
+// until now that field could only be set from the phone.
+var _fc2SupNewFor=null;
+function fc2LoadSuppliers(){
+  var el=document.getElementById('fc2-suppliers');if(!el)return;
+  fetch('/api/food-cost/count-sheet',{credentials:'same-origin'}).then(function(r){return r.json();}).then(function(d){
+    if(!d||!d.ok||!(d.items||[]).length){el.hidden=true;return;}
+    var items=d.items,sups={},keys=[],un=0,i;
+    for(i=0;i<items.length;i++){var e=String(items[i].supplier_email||'').toLowerCase();
+      if(e){if(!sups[e]){sups[e]={name:items[i].supplier_name||items[i].supplier_email,email:items[i].supplier_email,n:0};keys.push(e);}sups[e].n++;}else un++;}
+    var h=fc2BlockHead(FC2_ICON.truck,'Suppliers','Who you order from',keys.length,'Each ingredient goes on the weekly order to its supplier. Set one here and the order groups itself; a supplier needs an email the order can be sent to.');
+    h+='<div class="fc2-sup-chips">';
+    for(i=0;i<keys.length;i++)h+='<span class="ac-chip"><b>'+esc(sups[keys[i]].name)+'</b>\u00a0'+sups[keys[i]].n+' item'+(sups[keys[i]].n===1?'':'s')+'</span>';
+    if(un)h+='<span class="ac-chip warn">'+un+' without a supplier</span>';
+    h+='</div>';
+    var opts='<option value="">\u2014 none \u2014</option>';
+    for(i=0;i<keys.length;i++)opts+='<option value="'+esc(keys[i])+'">'+esc(sups[keys[i]].name)+'</option>';
+    if(un&&keys.length)h+='<div class="fc2-sup-bulk"><span>Put every ingredient without a supplier on</span><select class="ac-select" id="fc2-sup-bulk">'+opts.replace('<option value="">\u2014 none \u2014</option>','')+'</select><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="fc2AssignAllUnassigned(this)">Assign '+un+'</button></div>';
+    h+='<div class="fc2-sup-grid">';
+    for(i=0;i<items.length;i++){var it=items[i],cur=String(it.supplier_email||'').toLowerCase();
+      h+='<div class="fc2-sup-row"><span class="n">'+esc(it.name)+(it.unit?' <small>'+esc(it.unit)+'</small>':'')+'</span><select class="ac-select" data-sup-ing="'+esc(it.name)+'" onchange="fc2SupplierPick(this)" aria-label="Supplier for '+esc(it.name)+'">'+opts.replace('value="'+esc(cur)+'"','value="'+esc(cur)+'" selected')+'<option value="__new">New supplier\u2026</option></select></div>';}
+    h+='</div><div class="fc2-sup-new" id="fc2-sup-new" hidden><b id="fc2-sup-new-for">New supplier</b><input class="ac-input" id="fc2-sup-new-name" placeholder="Supplier name" aria-label="Supplier name"><input class="ac-input" id="fc2-sup-new-email" type="email" placeholder="orders@supplier.com" aria-label="Supplier email"><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="fc2SupplierSaveNew(this)">Save supplier</button><span class="ac-status" id="fc2-sup-status"></span></div>';
+    el.innerHTML=h;el.hidden=false;
+    el._sups=sups;
+  }).catch(function(){});
+}
+function fc2SupplierPost(ing,sname,semail,cb){
+  fetch('/api/food-cost/ingredient-supplier',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:ing,supplier_name:sname,supplier_email:semail})}).then(function(r){return r.json();}).then(function(d){cb(d&&d.ok,d&&d.error);}).catch(function(){cb(false,'Could not save \u2014 check your connection.');});
+}
+function fc2SupplierPick(sel){
+  var ing=sel.getAttribute('data-sup-ing'),v=sel.value,el=document.getElementById('fc2-suppliers');
+  if(v==='__new'){_fc2SupNewFor=ing;var nb=document.getElementById('fc2-sup-new');if(nb){nb.hidden=false;var f=document.getElementById('fc2-sup-new-for');if(f)f.textContent='New supplier for '+ing;var n=document.getElementById('fc2-sup-new-name');if(n)n.focus();}return;}
+  var sup=v&&el&&el._sups?el._sups[v]:null;
+  sel.disabled=true;
+  fc2SupplierPost(ing,sup?sup.name:'',sup?sup.email:'',function(ok,err){
+    sel.disabled=false;
+    if(typeof toast==='function')toast(ok?(sup?ing+' \u2192 '+sup.name:ing+' has no supplier now'):(err||'Could not save'),ok?'success':'error');
+    if(ok)fc2LoadSuppliers();
+  });
+}
+function fc2SupplierSaveNew(btn){
+  var name=((document.getElementById('fc2-sup-new-name')||{}).value||'').trim(),email=((document.getElementById('fc2-sup-new-email')||{}).value||'').trim(),st=document.getElementById('fc2-sup-status');
+  if(!name||!email){if(st)st.textContent='A name and the email the order goes to.';return;}
+  if(!_fc2SupNewFor){if(st)st.textContent='Pick the ingredient first.';return;}
+  var done=cbtnBusy(btn,'Saving\u2026');
+  fc2SupplierPost(_fc2SupNewFor,name,email,function(ok,err){
+    done();if(st)st.textContent=ok?'':(err||'Could not save.');
+    if(typeof toast==='function')toast(ok?_fc2SupNewFor+' \u2192 '+name:(err||'Could not save'),ok?'success':'error');
+    if(ok){_fc2SupNewFor=null;fc2LoadSuppliers();}
+  });
+}
+function fc2AssignAllUnassigned(btn){
+  var sel=document.getElementById('fc2-sup-bulk'),el=document.getElementById('fc2-suppliers');if(!sel||!el||!el._sups||!el._sups[sel.value])return;
+  var sup=el._sups[sel.value],rows=el.querySelectorAll('select[data-sup-ing]'),todo=[],i;
+  for(i=0;i<rows.length;i++)if(!rows[i].value)todo.push(rows[i].getAttribute('data-sup-ing'));
+  if(!todo.length)return;
+  var done=cbtnBusy(btn,'Assigning\u2026'),n=0;
+  (function next(){
+    if(!todo.length){done();if(typeof toast==='function')toast(n+' ingredient'+(n===1?'':'s')+' \u2192 '+sup.name,'success');fc2LoadSuppliers();return;}
+    fc2SupplierPost(todo.shift(),sup.name,sup.email,function(ok){if(ok)n++;next();});
+  })();
+}
 function fc2LoadCountSheet(){
   var el=document.getElementById('fc2-count');if(!el)return;
   fetch('/api/food-cost/count-sheet',{credentials:'same-origin'}).then(function(r){return r.json();}).then(function(d){
     if(!d||!d.ok||!(d.items||[]).length){el.hidden=true;return;}
-    var h='<div class="hb-h3"><span>Count sheet</span><span class="cnt">'+d.items.length+'</span></div><div class="hb-empty" style="font-size:12.5px;margin-bottom:8px">Filled with what the ledger expects on hand. Change only what differs, then save \u2014 each change is a recount.</div><div class="fc2-count-grid">';
+    var h=fc2BlockHead(FC2_ICON.count,'Inventory','Count sheet',d.items.length,'Filled with what the ledger expects on hand. Change only what differs, then save \u2014 each change is a recount.')+'<div class="fc2-count-grid">';
     for(var i=0;i<d.items.length;i++){var it=d.items[i];var exp=(it.expected==null)?'':(Math.round(it.expected*100)/100);
       h+='<label class="fc2-count-row"><span class="n">'+esc(it.name)+(it.unit?' <small>'+esc(it.unit)+'</small>':'')+'</span><input type="number" step="any" min="0" class="ac-input ac-num" data-ing="'+esc(it.ingredient_id)+'" data-expected="'+esc(exp)+'" value="'+esc(exp)+'" aria-label="Count for '+esc(it.name)+'"></label>';}
     h+='</div><div class="fc2-count-ft"><span class="ac-status" id="fc2-count-status"></span><button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="fc2SaveCount(this)">Save count</button></div>';
