@@ -118,7 +118,6 @@ def test_a_hand_added_name_and_a_shift_name_differing_in_case_are_one_person(rid
     assert len(ss.roster(rid, db_path=db_path)) == 1
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-LAB-5: Toast's first-name + last-initial merges two different employees into one")
 def test_two_different_people_with_the_same_pos_display_name_stay_two_people():
     """A4 #11 / MOD-LAB-5 — Maria Garcia and Maria Gomez are two employees
     with two Toast guids; the roster must not merge them."""
@@ -196,7 +195,6 @@ def test_two_managers_editing_different_fields_at_once_both_persist(rid, db_path
     assert row["is_minor"] is True
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-LAB-21: an open Toast clock-in (no clock-out yet) is counted as a no-show")
 def test_an_open_clock_in_is_not_counted_as_a_no_show(rid, db_path, monkeypatch):
     """A4 #25 / MOD-LAB-21 — the nightly sync runs while a closer is still
     clocked in; that is not a no-show."""

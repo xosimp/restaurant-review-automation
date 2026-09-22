@@ -107,15 +107,35 @@ def _fetch_shifts(restaurant_id: int, start_dt: datetime, end_dt: datetime) -> l
     return shifts
 
 
+def _tz_for(restaurant_id):
+    from time_utils import restaurant_tz
+    try:
+        from models import get_restaurant
+        return restaurant_tz(get_restaurant(restaurant_id))
+    except Exception:
+        return restaurant_tz(None)
+
+
+def _local_date(stamp, tz):
+    """The restaurant's business date for a Square UTC timestamp."""
+    try:
+        return datetime.fromisoformat(str(stamp).replace("Z", "+00:00")).astimezone(tz).date().isoformat()
+    except Exception:
+        return None
+
+
 def _fetch_daily_sales(restaurant_id: int, start_date: date, end_date: date) -> dict:
-    """Return {date_str: total_sales_cents} from Square Orders."""
+    """Return {business_date: total_sales_dollars} from Square Orders, each
+    order dated in the restaurant's own timezone (Square's created_at is UTC,
+    so an 8pm order used to land on tomorrow's sales)."""
     from models import get_restaurant
     r = get_restaurant(restaurant_id)
+    tz = _tz_for(restaurant_id)
     headers = _headers(restaurant_id)
     sales = {}
     cursor = None
-    start_dt = datetime.combine(start_date, datetime.min.time()).replace(tzinfo=timezone.utc)
-    end_dt   = datetime.combine(end_date, datetime.max.time().replace(microsecond=0)).replace(tzinfo=timezone.utc)
+    start_dt = datetime.combine(start_date, datetime.min.time()).replace(tzinfo=tz)
+    end_dt   = datetime.combine(end_date, datetime.max.time().replace(microsecond=0)).replace(tzinfo=tz)
     while True:
         body = {
             "location_ids": [r.square_location_id],
@@ -139,7 +159,9 @@ def _fetch_daily_sales(restaurant_id: int, start_date: date, end_date: date) -> 
             break
         data = resp.json()
         for order in data.get("orders", []):
-            created = order.get("created_at", "")[:10]
+            created = _local_date(order.get("created_at", ""), tz)
+            if not created:
+                continue
             total = (order.get("total_money") or {}).get("amount", 0)
             sales[created] = sales.get(created, 0) + total
         cursor = data.get("cursor")
@@ -157,6 +179,7 @@ def build_shifts_csv(restaurant_id: int, days: int = 60) -> Optional[str]:
     start_d  = start_dt.date()
     end_d    = end_dt.date()
 
+    tz      = _tz_for(restaurant_id)
     team    = _fetch_team_members(restaurant_id)
     shifts  = _fetch_shifts(restaurant_id, start_dt, end_dt)
     sales   = _fetch_daily_sales(restaurant_id, start_d, end_d)
@@ -178,6 +201,8 @@ def build_shifts_csv(restaurant_id: int, days: int = 60) -> Optional[str]:
         except Exception:
             continue
 
+        # Square's times are UTC; the business day is the restaurant's.
+        start_p, end_p = start_p.astimezone(tz), end_p.astimezone(tz)
         date_str   = start_p.date().isoformat()
         day_name   = DAY_NAMES[start_p.weekday()]
         hours      = round((end_p - start_p).total_seconds() / 3600, 2)

@@ -477,7 +477,6 @@ def _stub_toast(monkeypatch, pages_of_time_entries, pages_of_orders=0, orders_pe
     return seen
 
 
-@pytest.mark.xfail(strict=True, reason="AI-3: fetch_time_entries stops at 20 pages and sync_to_db reports ok with 2,000 rows")
 def test_toast_time_entries_spanning_25_pages_are_fetched_in_full_or_the_sync_is_marked_partial(db_path, monkeypatch):
     import toast
     rid = _toast_restaurant(db_path)
@@ -491,7 +490,6 @@ def test_toast_time_entries_spanning_25_pages_are_fetched_in_full_or_the_sync_is
         "labor figures for the whole window rest on part of it")
 
 
-@pytest.mark.xfail(strict=True, reason="AI-3: fetch_order_selections stops at 20 pages (2,000 orders a day) with no signal")
 def test_toast_order_selections_spanning_25_pages_are_all_returned_or_the_fetch_refuses(db_path, monkeypatch):
     import toast
     rid = _toast_restaurant(db_path)
@@ -542,7 +540,6 @@ def _week_of_shifts(first, last, guid, start_minute):
     return out
 
 
-@pytest.mark.xfail(strict=True, reason="AI-23: two Toast employees named 'Maria G.' merge into one with 60h and phantom overtime")
 def test_two_toast_staff_with_the_same_first_name_and_last_initial_stay_two_people(db_path):
     import labor
     import toast

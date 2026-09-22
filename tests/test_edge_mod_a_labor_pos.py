@@ -78,7 +78,6 @@ def _entry(guid, first, last, in_date, out_date=None, paid=None, sched=None):
 
 # ── A3 #35 / MOD-LAB-3: the business date, not the UTC date ─────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-LAB-3: Toast shifts are dated and timed by the UTC clock-in, so a 7:30pm CDT shift lands tomorrow at 00:30")
 def test_a_toast_evening_shift_keeps_the_restaurants_local_business_date(db_path, monkeypatch):
     import toast
     rid = _rid(db_path)
@@ -89,7 +88,6 @@ def test_a_toast_evening_shift_keeps_the_restaurants_local_business_date(db_path
     assert rows[0]["date"] == "2026-09-18" and rows[0]["shift_start"] == "19:30"
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-LAB-3: Square shifts are dated by start_at's UTC date")
 def test_a_square_evening_shift_keeps_the_restaurants_local_business_date(db_path, monkeypatch):
     import square
     rid = _rid(db_path)
@@ -117,7 +115,6 @@ def _square_connected(db_path, rid):
     _set(db_path, rid, square_access_token="sq-test", square_location_id="L1")
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-LAB-3: Square order sales are bucketed by created_at's UTC date")
 def test_square_evening_sales_are_counted_on_the_local_business_date(db_path, monkeypatch):
     import square
     rid = _rid(db_path)
@@ -130,7 +127,6 @@ def test_square_evening_sales_are_counted_on_the_local_business_date(db_path, mo
 
 # ── A3 #50 / MOD-LAB-2: one name for one Toast employee ─────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-LAB-2: shift history says 'Maria G.' while the live clock-in feed says 'Maria Garcia'")
 def test_toast_history_and_live_clock_ins_name_the_same_employee_the_same_way(monkeypatch):
     import toast
     e = _entry("g1", "Maria", "Garcia", "2026-09-21T15:00:00.000+0000", "2026-09-21T21:00:00.000+0000")
@@ -142,7 +138,6 @@ def test_toast_history_and_live_clock_ins_name_the_same_employee_the_same_way(mo
 
 # ── A3 #37 / MOD-LAB-5: same first name and last initial ───────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-LAB-5: Toast names are abbreviated to 'First L.', merging two employees")
 def test_two_toast_employees_sharing_first_name_and_last_initial_stay_two_people():
     import toast
     rows = toast.normalise_entries([
@@ -176,17 +171,17 @@ def _endless_pages(calls):
     return get
 
 
-def test_the_toast_time_entry_fetch_stops_at_a_bounded_number_of_pages(db_path, monkeypatch):
+def test_the_toast_time_entry_fetch_stops_at_a_bounded_number_of_pages_and_says_so(db_path, monkeypatch):
     import toast
     rid = _rid(db_path)
     _toast_connected(db_path, rid, monkeypatch)
     calls = []
     monkeypatch.setattr(toast.requests, "get", _endless_pages(calls))
-    out = toast.fetch_time_entries(rid, date(2026, 7, 1), date(2026, 9, 1))
-    assert len(calls) == 20 and len(out) == 2000
+    with pytest.raises(toast.ToastTruncated):
+        toast.fetch_time_entries(rid, date(2026, 7, 1), date(2026, 9, 1))
+    assert len(calls) == toast.PAGE_LIMIT
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-LAB-4: a sync that hit the 2,000-entry cap reports ok and overwrites the complete CSV")
 def test_a_truncated_toast_sync_is_not_reported_ok_and_keeps_the_previous_csv(db_path, monkeypatch):
     import toast
     rid = _rid(db_path)
@@ -302,7 +297,6 @@ def test_a_pos_sync_keeps_uploaded_dates_outside_the_pos_window(db_path, monkeyp
 
 # ── MOD-LAB-21: an open Toast clock-in ──────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-LAB-21: an open Toast entry (no outDate, no paidMinutes) becomes actual_hours 0.0 — a $0 shift")
 def test_an_open_toast_clock_in_is_not_a_zero_hour_shift():
     import toast
     rows = toast.normalise_entries([_entry("g1", "Sam", "Close", "2026-09-21T23:00:00.000+0000",
@@ -310,7 +304,6 @@ def test_an_open_toast_clock_in_is_not_a_zero_hour_shift():
     assert not rows or rows[0]["actual_hours"] in (None, "")
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-LAB-21: an open Toast clock-in is counted as a no-show by staff_settings.reliability")
 def test_an_open_toast_clock_in_is_not_a_no_show(db_path):
     import toast
     import staff_settings

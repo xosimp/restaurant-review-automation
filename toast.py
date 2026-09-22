@@ -192,6 +192,18 @@ def _headers(token: str, restaurant_guid: str) -> dict:
     }
 
 
+# Pages read before a fetch gives up. 200 x 100 = 20,000 time entries (a
+# 500-person roster's 60 days is ~21,000 at the extreme; ordinary ones are a
+# few thousand) or 20,000 orders in one business day. Hitting it RAISES
+# ToastTruncated: the old 20-page cap stopped silently at 2,000 entries, and
+# the sync saved that fraction over a complete CSV and reported ok.
+PAGE_LIMIT = 200
+
+
+class ToastTruncated(RuntimeError):
+    """Toast had more pages than PAGE_LIMIT; the data read is incomplete."""
+
+
 def fetch_time_entries(restaurant_id: int, start_date: date, end_date: date) -> list:
     """
     Pull clock-in/clock-out time entries from Toast Labor API with pagination.
@@ -210,9 +222,8 @@ def fetch_time_entries(restaurant_id: int, start_date: date, end_date: date) -> 
 
     all_entries = []
     page_token  = None
-    page_limit  = 20  # safety cap — 20 pages × 100 = 2,000 entries, well above 60 days
 
-    for _ in range(page_limit):
+    for _ in range(PAGE_LIMIT):
         params = {"startDate": start_iso, "endDate": end_iso, "pageSize": 100}
         if page_token:
             params["pageToken"] = page_token
@@ -235,6 +246,9 @@ def fetch_time_entries(restaurant_id: int, start_date: date, end_date: date) -> 
             page_token = body.get("nextPageToken")
             if not page_token:
                 break
+    else:
+        raise ToastTruncated(f"Toast returned more than {PAGE_LIMIT * 100:,} time entries for "
+                             f"{start_date.isoformat()} to {end_date.isoformat()}; nothing was saved from this read")
 
     return all_entries
 
@@ -331,8 +345,7 @@ def fetch_order_selections(restaurant_id: int, business_date: date) -> list:
 
     all_selections = []
     page = 1
-    page_limit = 20  # safety cap, same rationale as fetch_time_entries
-    for _ in range(page_limit):
+    for _ in range(PAGE_LIMIT):
         resp = requests.get(
             f"{base}/orders/v2/ordersBulk",
             headers=_headers(token, r.toast_restaurant_guid),
@@ -358,6 +371,9 @@ def fetch_order_selections(restaurant_id: int, business_date: date) -> list:
         if len(orders) < 100:
             break
         page += 1
+    else:
+        # A partial day would under-deplete every ingredient; refuse it.
+        raise ToastTruncated(f"Toast returned more than {PAGE_LIMIT * 100:,} orders for {business_date_str}")
 
     return all_selections
 
@@ -461,7 +477,26 @@ def _parse_toast_time(ts: str) -> Optional[datetime]:
         return None
 
 
-def normalise_entries(time_entries: list, sales_by_date: dict) -> list:
+def _tz_for(restaurant_id):
+    from time_utils import restaurant_tz
+    try:
+        from models import get_restaurant
+        return restaurant_tz(get_restaurant(restaurant_id))
+    except Exception:
+        return restaurant_tz(None)
+
+
+def _toast_name(emp: dict) -> str:
+    """One name per Toast employee, the same in shift history and in the
+    live clock-in feed. History used to abbreviate to "Maria G." while the
+    live feed said "Maria Garcia", so no clock-in ever matched a scheduled
+    name — and two Maria G.s were merged into one person."""
+    first = (emp.get("firstName") or "").strip()
+    last = (emp.get("lastName") or "").strip()
+    return f"{first} {last}".strip()
+
+
+def normalise_entries(time_entries: list, sales_by_date: dict, tz=None) -> list:
     """
     Convert raw Toast timeEntry objects into dicts matching the CSV schema
     that labor.py understands:
@@ -471,11 +506,7 @@ def normalise_entries(time_entries: list, sales_by_date: dict) -> list:
     rows = []
     for entry in time_entries:
         try:
-            # Employee name
-            emp_obj = entry.get("employee", {})
-            first   = emp_obj.get("firstName", "")
-            last    = (emp_obj.get("lastName") or "")[:1] + "."  # e.g. "T."
-            employee = f"{first} {last}".strip() if first else "Unknown"
+            employee = _toast_name(entry.get("employee") or {}) or "Unknown"
 
             # Role / job
             job_ref = entry.get("jobReference", {}) or {}
@@ -487,8 +518,20 @@ def normalise_entries(time_entries: list, sales_by_date: dict) -> list:
             if not in_dt:
                 continue  # clock-out only or corrupt entry
 
-            # Business date (use in_dt date as the day)
+            # Toast's timestamps are UTC. A 7:30pm CDT clock-in is 00:30 UTC
+            # the next day, and dating it by the UTC clock put evening labor
+            # on tomorrow's sales and a "00:30" start on the schedule. Local
+            # time first; Toast's own businessDate wins when it is present.
+            if tz is not None:
+                in_dt = in_dt.astimezone(tz)
+                out_dt = out_dt.astimezone(tz) if out_dt else None
             entry_date = in_dt.date()
+            _bd = str(entry.get("businessDate") or "").strip()
+            if len(_bd) == 8 and _bd.isdigit():
+                try:
+                    entry_date = date(int(_bd[:4]), int(_bd[4:6]), int(_bd[6:]))
+                except ValueError:
+                    pass
             date_str   = entry_date.strftime("%Y-%m-%d")
             day_name   = _DOW[entry_date.weekday()]
 
@@ -547,7 +590,7 @@ def build_shifts_csv(restaurant_id: int, days: int = 60) -> str:
 
     time_entries = fetch_time_entries(restaurant_id, start, end)
     sales        = fetch_business_days(restaurant_id, start, end)
-    rows         = normalise_entries(time_entries, sales)
+    rows         = normalise_entries(time_entries, sales, tz=_tz_for(restaurant_id))
 
     if not rows:
         return ""
@@ -705,10 +748,7 @@ def fetch_clock_ins_today(restaurant_id: int, business_date: date) -> list:
     they match the names in a generated schedule."""
     rows = []
     for entry in fetch_time_entries(restaurant_id, business_date, business_date) or []:
-        emp = entry.get("employee") or {}
-        first = (emp.get("firstName") or "").strip()
-        last = (emp.get("lastName") or "").strip()
-        name = f"{first} {last}".strip()
+        name = _toast_name(entry.get("employee") or {})
         if not name:
             continue
         rows.append({"employee": name,
