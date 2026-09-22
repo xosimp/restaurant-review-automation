@@ -20,6 +20,8 @@ import logging
 from datetime import date, timedelta
 
 import metrics
+import review_common
+from review_common import fmt as _fmt, cost_of_waiting  # shared with the other review
 
 log = logging.getLogger(__name__)
 
@@ -136,18 +138,6 @@ def build(restaurant_id, today=None, restaurant=None, db_path=None, months=1):
             "fix_first": brief.get("fix_first")}
 
 
-def _fmt(value, unit):
-    if value is None:
-        return "—"
-    if unit == "$":
-        return f"${value:,.0f}"
-    if unit == "%":
-        return f"{value:.1f}%"
-    if unit == "★":
-        return f"{value:.2f}★"
-    return f"{value:g}"
-
-
 def _plan_score(restaurant_id, start, end, db_path):
     """The Monday plans' own receipt: how many of the actions the agent
     filed in the month were resolved. Absent when none were filed."""
@@ -170,19 +160,7 @@ def _plan_score(restaurant_id, start, end, db_path):
 
 def headline(review) -> str:
     """One sentence naming the month, from the metrics that moved."""
-    moved = [m for m in review["metrics"] if m["verdict"] in ("improved", "worsened")]
-    if not moved:
-        measured = [m for m in review["metrics"] if m["value"] is not None]
-        return ("A steady month — nothing moved beyond normal variation."
-                if measured else "Not enough data synced last month to read it.")
-    better = [m for m in moved if m["verdict"] == "improved"]
-    worse = [m for m in moved if m["verdict"] == "worsened"]
-    if better and not worse:
-        return f"A better month: {better[0]['label'].lower()} improved."
-    if worse and not better:
-        return f"{worse[0]['label']} went the wrong way last month."
-    return f"{better[0]['label']} improved; {worse[0]['label'].lower()} went the other way."
-
+    return review_common.headline(review, "month")
 
 def yoy_clause(m):
     """" — and 1.2 points under the same month last year" or "". Only when
@@ -228,25 +206,3 @@ def lines(review):
         out.append(f"You did {plan['done']} of the {plan['filed']} actions the Monday plans filed {span}.")
     return out
 
-
-def cost_of_waiting(review) -> str:
-    """What another month of this costs, in dollars, or "" when nothing
-    measured moved far enough to put a number on.
-
-    No email in this product answered "what happens if I ignore this" — the
-    one sentence that separates an advisor from a dashboard. It is not a
-    new measurement: monthly_dollars is already computed per metric, and
-    this states the consequence of leaving it where it is.
-
-    Only ever said about a metric that WORSENED, and only when there is a
-    dollar figure behind it. "Nothing got worse" needs no warning, and a
-    warning without a number is the generic nudge this is meant to replace.
-    """
-    worse = [m for m in review["metrics"]
-             if m["verdict"] == "worsened" and m.get("monthly_dollars")]
-    if not worse:
-        return ""
-    lead = max(worse, key=lambda m: abs(m["monthly_dollars"]))
-    return (f"If {lead['label'].lower()} stays where it is, that is about "
-            f"${abs(lead['monthly_dollars']):,.0f} a month — roughly "
-            f"${abs(lead['monthly_dollars']) * 12:,.0f} over a year.")
