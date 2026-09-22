@@ -14,7 +14,7 @@ backstops, the swap search, the review panel and the publish gate all share.
 """
 import json
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from models import get_conn, DB_PATH
 
@@ -264,9 +264,14 @@ def parse_minutes(t: str):
     return None
 
 
-def shift_span(row) -> tuple:
+def shift_span(row, tz=None) -> tuple:
     """(start_dt, end_dt) as datetimes on the row's date; an end before the
-    start crosses midnight. (None, None) when unreadable."""
+    start crosses midnight. (None, None) when unreadable.
+
+    With `tz` (the restaurant's IANA zone) both ends are the real instants,
+    as naive UTC: a close and an open either side of a clock change are an
+    hour closer or further apart than the wall clock says, and the rest rule
+    is about hours actually off (SCHED-32). Without it, wall-clock time."""
     try:
         base = datetime.strptime(row.get("date", ""), "%Y-%m-%d")
     except (ValueError, TypeError):
@@ -276,7 +281,50 @@ def shift_span(row) -> tuple:
         return None, None
     start = base + timedelta(minutes=s)
     end = base + timedelta(minutes=e if e > s else e + 24 * 60)
+    zone = _zone(tz)
+    if zone is not None:
+        start = start.replace(tzinfo=zone).astimezone(timezone.utc).replace(tzinfo=None)
+        end = end.replace(tzinfo=zone).astimezone(timezone.utc).replace(tzinfo=None)
     return start, end
+
+
+_ZONES = {}
+
+
+def _zone(tz):
+    if not tz:
+        return None
+    if tz not in _ZONES:
+        try:
+            from zoneinfo import ZoneInfo
+            _ZONES[tz] = ZoneInfo(str(tz))
+        except Exception:
+            _ZONES[tz] = None
+    return _ZONES[tz]
+
+
+# A "latest" this early with no "earliest" after it is the small hours of
+# the next morning ("until 1:00am"), not a one-in-the-morning curfew.
+_OVERNIGHT_LATEST_BEFORE = 6 * 60
+
+
+def window_allows(lo, hi, start_m, end_m) -> tuple:
+    """(ok, which) for a shift from start_m to end_m (minutes past
+    midnight) against a window lo..hi (either may be None). A window whose
+    latest is before its earliest, or a bare latest in the small hours,
+    runs past midnight; so does a shift whose end is not after its start
+    (SCHED-13). `which` is 'early' or 'late' when refused. Pure — the swap
+    index in shift_quality applies the same rule."""
+    if start_m is None or end_m is None:
+        return True, ""
+    if hi is not None and ((lo is not None and hi < lo) or (lo is None and hi < _OVERNIGHT_LATEST_BEFORE)):
+        hi = hi + 24 * 60
+    end = end_m if end_m > start_m else end_m + 24 * 60
+    if lo is not None and start_m < lo:
+        return False, "early"
+    if hi is not None and end > hi:
+        return False, "late"
+    return True, ""
 
 
 def row_hours(row) -> float:
@@ -338,6 +386,7 @@ class Constraints:
     close_times: dict = field(default_factory=dict)
     role_buffers: dict = field(default_factory=dict)
     closed_dates: set = field(default_factory=set)         # iso dates the restaurant does not trade this week
+    tz: str = ""                                           # IANA zone: rest is measured in real hours (SCHED-32)
 
     # ── lookups ────────────────────────────────────────────────────────
     def bucket(self, date_str: str) -> str:
@@ -398,15 +447,13 @@ class Constraints:
         w = win.get(day)
         if not w:
             return True, ""
-        s, e = parse_minutes(start), parse_minutes(end)
-        if s is None or e is None:
-            return True, ""
         lo, hi = w
-        if lo is not None and s < lo:
+        ok, which = window_allows(lo, hi, parse_minutes(start), parse_minutes(end))
+        if ok:
+            return True, ""
+        if which == "early":
             return False, f"{LABELS['outside_window']} (not before {_fmt_minutes(lo)})"
-        if hi is not None and e > hi and e >= s:
-            return False, f"{LABELS['outside_window']} (not after {_fmt_minutes(hi)})"
-        return True, ""
+        return False, f"{LABELS['outside_window']} (not after {_fmt_minutes(hi)})"
 
     def cert_ok(self, name: str, role: str) -> tuple:
         need = self.role_requirements.get((role or "").strip().lower()) or set()
@@ -424,7 +471,7 @@ class Constraints:
         need = float(self.compliance.get("min_rest_hours") or 0)
         if need <= 0:
             return True, ""
-        s, e = shift_span(candidate)
+        s, e = shift_span(candidate, self.tz)
         if not s:
             return True, ""
         key = (name or "").strip().lower()
@@ -433,7 +480,7 @@ class Constraints:
                 continue
             if r is candidate or (r.get("date") == candidate.get("date") and r.get("shift_start") == candidate.get("shift_start")):
                 continue
-            rs, re_ = shift_span(r)
+            rs, re_ = shift_span(r, self.tz)
             if not rs:
                 continue
             if rs >= e:
@@ -468,6 +515,7 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
     c = Constraints(restaurant_id=restaurant_id, week_dates=list(week_dates or []), week_days=list(week_days or []))
     c.compliance = compliance(restaurant)
     c.week_start_day = int(getattr(restaurant, "week_start_day", 0) or 0)
+    c.tz = (getattr(restaurant, "timezone", None) or "").strip()
     c.section_cap = int(getattr(restaurant, "section_count", 0) or 0)
     c.role_floors = role_floors(restaurant)
     c.open_times = _load_json(getattr(restaurant, "open_times_json", None), {})
@@ -804,9 +852,9 @@ def violations(rows: list, c: Constraints) -> list:
             if this_week + 0.05 < mn:
                 out.append(_v("under_min_hours", items[0][0], items[0][1], f"{this_week:g}h this week, wants at least {mn:g}h"))
         # rest and overlap, against this week's other shifts and the published tail
-        spans = [(i, r, *shift_span(r)) for i, r in items]
+        spans = [(i, r, *shift_span(r, c.tz)) for i, r in items]
         spans = [(i, r, s, e) for i, r, s, e in spans if s]
-        tail = [(None, r, *shift_span(r)) for r in (c.base_rows.get(key) or [])]
+        tail = [(None, r, *shift_span(r, c.tz)) for r in (c.base_rows.get(key) or [])]
         tail = [(i, r, s, e) for i, r, s, e in tail if s]
         need = float(c.compliance.get("min_rest_hours") or 0)
         allspans = sorted(spans + tail, key=lambda t: t[2])
@@ -855,8 +903,10 @@ def violations(rows: list, c: Constraints) -> list:
             worked = {r.get("date") for _, r in items}
             off = [d for d in c.week_dates if d not in worked]
             # Anyone working at all is checked: Monday/Wednesday/Friday has
-            # four days off and no two of them together.
-            if off and len(worked) >= 2:
+            # four days off and no two of them together — and seven shifts
+            # have none at all, which a run limit above 6 used to let
+            # through unflagged (SCHED-31).
+            if len(worked) >= 2:
                 best = run = 0
                 prev = None
                 for d in c.week_dates:

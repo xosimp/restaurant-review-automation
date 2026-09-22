@@ -17306,8 +17306,8 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
   function _shrWhen(r){return esc(_dayShort(r.date))+' <span class="hb-num">'+esc(mdy(r.date))+'</span> · '+esc(r.shift_start||'')+(r.shift_end?'–'+esc(r.shift_end):'')+(r.role?' · '+esc(r.role):'');}
   window.renderShiftRequests=function(){
     var d=_requests,el=document.getElementById('requests-body');if(!d||!el)return;
-    var pend=[],i,all=d.requests||[],open=d.open||[];
-    for(i=0;i<all.length;i++)if(all[i].status==='pending')pend.push(all[i]);
+    var pend=[],wait=[],i,all=d.requests||[],open=d.open||[];
+    for(i=0;i<all.length;i++){if(all[i].status==='pending')pend.push(all[i]);else if(all[i].status==='approved')wait.push(all[i]);}
     var chip=document.getElementById('requests-chip');if(chip)chip.textContent=pend.length?pend.length+' waiting':(open.length?open.length+' open':'');
     var names=_rstActiveNames(),h='';
     h+='<div class="sr-k" style="margin-bottom:4px">Waiting for an answer</div>';
@@ -17318,10 +17318,15 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       var who=swap
         ?'<span class="shr-kind">swap</span> <b>'+esc(r.employee_name)+'</b> &harr; <b>'+esc(r.target_name||'')+'</b>: '+esc(_dayShort(r.date))+' '+esc(r.shift_start||'')+' for '+esc(_dayShort(r.target_date))+' '+esc(r.target_start||'')+(r.target_end?'–'+esc(r.target_end):'')
         :'<span class="shr-kind">drop</span> <b>'+esc(r.employee_name)+'</b> can’t work '+_shrWhen(r);
-      h+='<div class="shr-row" data-shr="'+(+r.id)+'"><div class="who">'+who+(r.reason?'<span class="sub">“'+esc(r.reason)+'”</span>':'')+'<span class="sub">asked '+esc(ago(r.created_at))+(swap?' · approving moves both shifts':'')+'</span></div>'
+      h+='<div class="shr-row" data-shr="'+(+r.id)+'"><div class="who">'+who+(r.reason?'<span class="sub">“'+esc(r.reason)+'”</span>':'')+'<span class="sub">asked '+esc(ago(r.created_at))+(swap?(r.target_accepted_at?' · '+esc(r.target_name||'')+' said yes — approving moves both shifts':' · both shifts move once you approve and '+esc(r.target_name||'')+' says yes'):'')+'</span></div>'
         +(swap?'':'<select class="ac-select" data-shr-rep aria-label="Who takes it"><option value="">Open it up for anyone to claim</option>'+_lbOpts(names.filter(function(n){return n!==r.employee_name;}),'')+'</select>')
         +'<button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="decideShiftRequest('+(+r.id)+',\'deny\',this)">Deny</button>'
         +'<button type="button" class="cbtn cbtn-success cbtn-sm" onclick="decideShiftRequest('+(+r.id)+',\'approve\',this)">Approve</button></div>';
+    }
+    // A swap you approved moves only when the colleague says yes (SCHED-21).
+    if(wait.length){h+='<div class="sr-k" style="margin:16px 0 4px">Waiting on a colleague</div>';
+      for(i=0;i<wait.length;i++){var w=wait[i];
+        h+='<div class="shr-row"><div class="who"><span class="shr-kind">swap</span> <b>'+esc(w.employee_name)+'</b> &harr; <b>'+esc(w.target_name||'')+'</b>: '+esc(_dayShort(w.date))+' '+esc(w.shift_start||'')+' for '+esc(_dayShort(w.target_date))+' '+esc(w.target_start||'')+'<span class="sub">you approved it · waiting on '+esc(w.target_name||'')+' to accept in the staff portal</span></div></div>';}
     }
     h+='<div class="sr-k" style="margin:16px 0 4px">Open shifts</div>';
     if(!open.length)h+='<div class="hb-empty">No open shifts. An approved request without a named replacement shows here until somebody claims it in the staff portal.</div>';
@@ -17339,7 +17344,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       done();
       if(!d.ok){toast(d.error||'Could not decide that','error');return;}
       var rq=d.request||{},st=rq.status;
-      toast(st==='covered'?((rq.kind||'drop')==='swap'?'Swapped — both shifts moved':'Covered by '+(rq.replacement_name||'them')):(st==='open'?'Approved — the shift is open to claim':'Denied'),'success');
+      toast(st==='covered'?((rq.kind||'drop')==='swap'?'Swapped — both shifts moved':'Covered by '+(rq.replacement_name||'them')):(st==='open'?'Approved — the shift is open to claim':(st==='approved'?'Approved — waiting on '+(rq.target_name||'the colleague')+' to accept':'Denied')),'success');
       loadShiftRequests();
     });
   };

@@ -502,7 +502,6 @@ def test_the_team_rating_list_leaves_out_someone_deactivated_on_the_roster(db_pa
 
 # ── Open shifts ────────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-EMP-10: an open-shift claim whose legality check raises shows the employee the raw exception")
 def test_an_open_shift_claim_that_cannot_be_checked_gives_a_plain_message(db_path, rid, monkeypatch):
     """A4 #50 / MOD-EMP-10."""
     hid = _published_week(db_path, rid, HEADER + "2026-10-06,Tuesday,Ana B.,Server,11:00,17:00,6,,,\n")

@@ -130,24 +130,70 @@ def diff_lines(d: dict, limit=6, unchanged="Unchanged from the last published we
 
 # ── versions ───────────────────────────────────────────────────────────────
 
+def latest_version(conn, history_id) -> int:
+    row = conn.execute("SELECT MAX(version) AS v FROM schedule_versions WHERE history_id=?", (history_id,)).fetchone()
+    return int(row["v"] or 0) if row else 0
+
+
+def _insert_version(conn, restaurant_id, history_id, reason, schedule_csv, quality=None, saved_by=None):
+    last = conn.execute("SELECT version, schedule_csv FROM schedule_versions WHERE history_id=? "
+                        "ORDER BY version DESC LIMIT 1", (history_id,)).fetchone()
+    version = (last["version"] + 1) if last else 1
+    d = diff(rows_from_csv(last["schedule_csv"]), rows_from_csv(schedule_csv)) if last else None
+    cur = conn.execute(
+        "INSERT INTO schedule_versions (restaurant_id, history_id, version, reason, schedule_csv, quality_json, "
+        "diff_json, saved_by) VALUES (?,?,?,?,?,?,?,?)",
+        (restaurant_id, history_id, version, reason, schedule_csv,
+         json.dumps(quality) if quality else None, json.dumps(d) if d else None,
+         (saved_by or "").strip()[:120] or None))
+    return cur.lastrowid, version
+
+
 def append(restaurant_id, history_id, reason, schedule_csv, quality=None, saved_by=None, db_path=DB_PATH) -> int:
     """Store one more state of a schedule, with its diff against the last."""
     conn = get_conn(db_path)
     try:
-        last = conn.execute("SELECT version, schedule_csv FROM schedule_versions WHERE history_id=? "
-                            "ORDER BY version DESC LIMIT 1", (history_id,)).fetchone()
-        version = (last["version"] + 1) if last else 1
-        d = diff(rows_from_csv(last["schedule_csv"]), rows_from_csv(schedule_csv)) if last else None
-        cur = conn.execute(
-            "INSERT INTO schedule_versions (restaurant_id, history_id, version, reason, schedule_csv, quality_json, "
-            "diff_json, saved_by) VALUES (?,?,?,?,?,?,?,?)",
-            (restaurant_id, history_id, version, reason, schedule_csv,
-             json.dumps(quality) if quality else None, json.dumps(d) if d else None,
-             (saved_by or "").strip()[:120] or None))
+        row_id, _v = _insert_version(conn, restaurant_id, history_id, reason, schedule_csv, quality, saved_by)
         conn.commit()
-        return cur.lastrowid
+        return row_id
     finally:
         conn.close()
+
+
+class StaleVersion(Exception):
+    """The week was saved by someone else since this copy was loaded."""
+
+    def __init__(self, latest):
+        super().__init__(f"the schedule is at version {latest}")
+        self.latest = latest
+
+
+def write_on(conn, restaurant_id, history_id, reason, schedule_csv, saved_by=None, quality=None,
+             expected_version=None) -> int:
+    """Overwrite the stored week AND append its version row, on the caller's
+    connection, inside the caller's write transaction (open it with BEGIN
+    IMMEDIATE and commit after). The two used to be separate commits, so a
+    lost version append left a week the conflict check could not see, and
+    two saves checked against one version both landed (SCHED-19, SCHED-5).
+
+    expected_version: the version the edit was made against; a newer one
+    raises StaleVersion and nothing is written. hours_scheduled follows the
+    rows, so a budget blocker judged at generation time cannot outlive the
+    edit that fixed it (SCHED-17). Returns the new version number."""
+    if expected_version is not None:
+        latest = latest_version(conn, history_id)
+        if latest and int(expected_version) != latest:
+            raise StaleVersion(latest)
+    hours = round(sum(_hours(r) for r in rows_from_csv(schedule_csv)), 1)
+    cur = conn.execute(
+        "UPDATE schedule_history SET schedule_csv=?, quality_json=COALESCE(?, quality_json), hours_scheduled=?, "
+        "edited_at=datetime('now'), edited_by=? WHERE id=? AND restaurant_id=?",
+        (schedule_csv, json.dumps(quality) if quality else None, hours,
+         (saved_by or "").strip()[:120] or None, history_id, restaurant_id))
+    if cur.rowcount != 1:
+        raise LookupError("that schedule is gone")
+    _row_id, version = _insert_version(conn, restaurant_id, history_id, reason, schedule_csv, quality, saved_by)
+    return version
 
 
 def list_versions(restaurant_id, history_id, db_path=DB_PATH) -> list:

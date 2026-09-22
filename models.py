@@ -4224,7 +4224,9 @@ def init_shift_requests(db_path: str = DB_PATH):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_shift_requests_rest ON shift_change_requests(restaurant_id, status)")
     have = {r[1] for r in conn.execute("PRAGMA table_info(shift_change_requests)")}
     for name, decl in (("kind", "TEXT DEFAULT 'drop'"),   # drop | swap
-                       ("target_name", "TEXT"), ("target_date", "TEXT"), ("target_start", "TEXT"), ("target_end", "TEXT")):
+                       ("target_name", "TEXT"), ("target_date", "TEXT"), ("target_start", "TEXT"), ("target_end", "TEXT"),
+                       # a swap moves the colleague's shift too, so it needs their yes (SCHED-21)
+                       ("target_accepted_at", "TEXT")):
         if name not in have:
             conn.execute(f"ALTER TABLE shift_change_requests ADD COLUMN {name} {decl}")
     conn.commit()

@@ -294,7 +294,6 @@ def test_a_configured_section_count_is_the_cap_the_trim_uses():
 
 # ── SCHED-13: close times after midnight ─────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="SCHED-13: a 1:00am close is read as 60 minutes, so every evening shift is flagged NEEDS REVIEW")
 def test_a_one_am_close_leaves_an_eleven_pm_end_alone():
     row = {"date": "2026-10-09", "shift_start": "5:00pm", "shift_end": "11:00pm", "role": "Server", "scheduled_hours": "6"}
     se._enforce_close_time(row, "Friday", {"Friday": "1:00am"}, {})
@@ -309,7 +308,6 @@ def test_a_ten_pm_close_still_caps_an_eleven_pm_end():
 
 # ── SCHED-38: 24-hour times ──────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="SCHED-38: a 24-hour row skips the close cap and the hours reconciliation")
 def test_a_twenty_four_hour_row_is_capped_at_close_and_its_hours_recomputed(db, monkeypatch):
     rid = _restaurant(db, close_times_json=json.dumps({"Friday": "10:00pm"}))
     out = _run_job(monkeypatch, rid, _csv([_line("2026-10-09", "Ana", "17:00", "23:30", 9)]))
@@ -320,13 +318,11 @@ def test_a_twenty_four_hour_row_is_capped_at_close_and_its_hours_recomputed(db, 
 
 # ── SCHED-42: rows with fewer than six columns ───────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="SCHED-42: a row with 3-5 columns counts as the day written, then the parser drops it")
 def test_a_row_the_parser_will_drop_does_not_count_as_the_day_written():
     text = HEADER + "\n2026-10-05,Monday,Ana,Server"                  # no times: the parser drops it
     assert se._missing_dates(text, [WEEK[0]]) == [WEEK[0]]
 
 
-@pytest.mark.xfail(strict=True, reason="SCHED-42: an answer whose rows all lack shift_end is saved as an empty week")
 def test_an_answer_whose_rows_all_lack_an_end_time_fails_instead_of_saving(db, monkeypatch):
     rid = _restaurant(db)
     text = HEADER + "\n" + "\n".join(f"{d},{DAYS[i]},Ana,Server,4:00pm" for i, d in enumerate(WEEK))

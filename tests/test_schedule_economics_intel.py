@@ -385,7 +385,14 @@ def test_a_swap_moves_both_shifts_only_when_both_are_legal(db_path, rid):
     req = srq.request_swap(rid, "Ana", WEEK[0], "4:00pm", "Bob", WEEK[2], "4:00pm", db_path=db_path, today=today)
     assert req["kind"] == "swap" and req["target_name"] == "Bob"
     assert [r["kind"] for r in srq.for_manager(rid, db_path=db_path)] == ["swap"]
-    done = srq.decide(rid, req["id"], True, decided_by="will", db_path=db_path)
+    # The manager's yes alone moves nothing: Bob's shift is his (SCHED-21).
+    approved = srq.decide(rid, req["id"], True, decided_by="will", db_path=db_path)
+    assert approved["status"] == "approved"
+    conn = get_conn(db_path)
+    assert conn.execute("SELECT schedule_csv FROM schedule_history WHERE id=?", (hid,)).fetchone()["schedule_csv"] == csv_text
+    conn.close()
+    assert [a["id"] for a in srq.asked_of_me(rid, "bob", db_path=db_path)] == [req["id"]]
+    done = srq.respond_swap(rid, req["id"], "Bob", True, db_path=db_path)
     assert done["status"] == "covered"
     conn = get_conn(db_path)
     rows = sv.rows_from_csv(conn.execute("SELECT schedule_csv FROM schedule_history WHERE id=?", (hid,)).fetchone()["schedule_csv"])

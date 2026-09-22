@@ -203,7 +203,6 @@ def _csv(db_path, hid):
 
 # ── DATA-17 · claiming an open shift ────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="DATA-17: claim checks status='open' then UPDATEs with no status guard, so two concurrent claimants are both told they got the shift")
 def test_two_concurrent_claims_on_one_open_shift_have_one_winner(db_path):
     rid = _restaurant(db_path)
     _team(db_path, rid)
@@ -241,7 +240,6 @@ def test_a_claim_on_a_shift_already_covered_is_refused(db_path):
 
 # ── DATA-36 · approve and deny from two tabs ────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="DATA-36: decide checks status='pending' then UPDATEs with no status guard, so approve and deny from two tabs both succeed and the last writer wins")
 def test_approve_and_deny_race_has_one_outcome(db_path):
     rid = _restaurant(db_path)
     _team(db_path, rid)

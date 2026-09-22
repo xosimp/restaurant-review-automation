@@ -2098,6 +2098,16 @@ class _SwapIndex:
         self.ceiling = float(rules.get("weekly_ceiling") or WEEKLY_HOURS_CEILING)
         self.min_rest = float(rules.get("min_rest_hours") or 0)
         self.inactive = {str(n).lower() for n in (rules.get("inactive") or [])}
+        # The rules the violation sweep holds a finished week to, so a swap,
+        # a fix or a claim can never create a breach the sweep would flag:
+        # a minor past the latest end, a role's certification, a person's
+        # own hours window (SCHED-6).
+        self.minors = {str(n).lower() for n in (rules.get("minors") or [])}
+        self.minor_latest = rules.get("minor_latest_end")
+        self.minor_max = float(rules.get("minor_max_daily_hours") or 0)
+        self.certs = {k.lower(): {str(x).lower() for x in (v or [])} for k, v in (rules.get("certifications") or {}).items()}
+        self.role_certs = {k.lower(): {str(x).lower() for x in (v or [])} for k, v in (rules.get("role_requirements") or {}).items() if v}
+        self.windows = {k.lower(): v for k, v in (rules.get("time_windows") or {}).items() if v}
         self.hours = _weekly_hours(rows)
         self.working = set()
         self.by_role = {}
@@ -2143,24 +2153,38 @@ class _SwapIndex:
         part = daypart_of(row.get("shift_start", ""))
         if choice == "off" or (choice in ("morning", "night") and part not in ("unknown", choice)):
             return False
-        if self.min_rest:
-            s, e = _span(row)
-            if s:
-                for idx, ps, pe in self.spans_by_person.get(low, []):
-                    if idx is not None and idx == ignore_index:
-                        continue
-                    if ps >= e:
-                        gap = (ps - e).total_seconds() / 3600
-                    elif pe <= s:
-                        gap = (s - pe).total_seconds() / 3600
-                    else:
-                        return False
-                    # Same calendar date is a double shift, not a rest
-                    # breach — the rule is the overnight turnaround.
-                    if ps.date() == s.date():
-                        continue
-                    if gap < self.min_rest:
-                        return False
+        start_m, end_m = _slot_minutes(row.get("shift_start")), _slot_minutes(row.get("shift_end"))
+        if low in self.minors:
+            if self.minor_latest is not None and start_m is not None and end_m is not None \
+                    and (end_m > self.minor_latest or end_m < start_m):
+                return False
+            if self.minor_max and _row_hours(row) > self.minor_max + 0.01:
+                return False
+        need = self.role_certs.get((row.get("role") or "").strip().lower())
+        if need and not need <= (self.certs.get(low) or set()):
+            return False
+        win = (self.windows.get(low) or {}).get(day)
+        if win:
+            from schedule_rules import window_allows
+            if not window_allows(win[0], win[1], start_m, end_m)[0]:
+                return False
+        s, e = _span(row)
+        if s:
+            for idx, ps, pe in self.spans_by_person.get(low, []):
+                if idx is not None and idx == ignore_index:
+                    continue
+                if ps >= e:
+                    gap = (ps - e).total_seconds() / 3600
+                elif pe <= s:
+                    gap = (s - pe).total_seconds() / 3600
+                else:
+                    return False          # an overlap is never legal, rest rule or not
+                # Same calendar date is a double shift, not a rest
+                # breach — the rule is the overnight turnaround.
+                if not self.min_rest or ps.date() == s.date():
+                    continue
+                if gap < self.min_rest:
+                    return False
         return True
 
     def pairs(self):
@@ -2209,14 +2233,20 @@ class _SwapIndex:
             return False
         return True
 
-    def replacement_legal(self, i: int, name: str) -> bool:
-        """Could `name` take row i outright (nobody else moves)?"""
+    def replacement_legal(self, i: int, name: str, allow_double: bool = False) -> bool:
+        """Could `name` take row i outright (nobody else moves)?
+
+        allow_double: a person already working that date may still take a
+        leg that does not overlap theirs (a lunch server picking up the
+        dinner shift — SCHED-34). The automatic passes keep refusing it so
+        they never build doubles on their own; a person or a manager
+        choosing one is different."""
         row = self.rows[i]
         low = (name or "").strip().lower()
         current = (row.get("employee") or "").strip().lower()
         if not low or low == current:
             return False
-        if (low, row.get("date")) in self.working:
+        if not allow_double and (low, row.get("date")) in self.working:
             return False
         if not self.person_fits(name, row):
             return False

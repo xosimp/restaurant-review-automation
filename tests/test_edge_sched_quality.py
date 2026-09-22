@@ -122,7 +122,6 @@ def test_the_fix_pass_caps_candidate_evaluations(monkeypatch):
 
 # ── SCHED-6 (fix pass): a fix must not create a new hard violation ────────
 
-@pytest.mark.xfail(strict=True, reason="SCHED-6: the swap rules carry no minors or certifications, so the fix pass hands a close to a minor")
 def test_a_fix_never_hands_a_late_close_to_a_minor(db):
     rid = create_restaurant(Restaurant(name="Fix Co", owner_email="f@x.com"), db_path=db)
     for n in ("Ana", "Dev"):

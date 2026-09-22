@@ -480,8 +480,9 @@ def api_shift_requests(current_user):
     rid, name = _staff_context(current_user)
     import shift_requests
     if not name:
-        return jsonify(ok=True, requests=[], open=[])
-    return jsonify(ok=True, requests=shift_requests.mine(rid, name), open=shift_requests.open_shifts(rid))
+        return jsonify(ok=True, requests=[], open=[], asks=[])
+    return jsonify(ok=True, requests=shift_requests.mine(rid, name), open=shift_requests.open_shifts(rid),
+                   asks=shift_requests.asked_of_me(rid, name))
 
 
 @staff_bp.route("/api/shift-requests", methods=["POST"])
@@ -571,6 +572,23 @@ def api_shift_request_withdraw(request_id, current_user):
     if not shift_requests.withdraw(rid, request_id, name):
         return jsonify(ok=False, error="That request is not yours, or is already answered."), 404
     return jsonify(ok=True)
+
+
+@staff_bp.route("/api/shift-requests/<int:request_id>/respond", methods=["POST"])
+@staff_login_required
+def api_shift_request_respond(request_id, current_user):
+    """A colleague's yes or no to a swap they were asked for. A swap moves
+    their shift too, so it never goes ahead without this (SCHED-21)."""
+    rid, name = _staff_context(current_user)
+    if not name:
+        return jsonify(ok=False, error="No employee name on this session."), 400
+    body = request.get_json(silent=True) or {}
+    import shift_requests
+    try:
+        row = shift_requests.respond_swap(rid, request_id, name, bool(body.get("accept")))
+    except shift_requests.ShiftRequestError as e:
+        return jsonify(ok=False, error=str(e)), 400
+    return jsonify(ok=True, request=row)
 
 
 @staff_bp.route("/api/open-shifts/<int:request_id>/claim", methods=["POST"])

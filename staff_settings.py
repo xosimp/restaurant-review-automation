@@ -75,7 +75,7 @@ def get_all(restaurant_id, db_path=DB_PATH) -> dict:
 
 
 def _clean_windows(raw):
-    from schedule_rules import parse_minutes
+    from schedule_rules import parse_minutes, _OVERNIGHT_LATEST_BEFORE
     if not isinstance(raw, dict):
         raise StaffSettingsError("time windows are a map of weekday to {earliest, latest}")
     out = {}
@@ -88,7 +88,11 @@ def _clean_windows(raw):
             raise StaffSettingsError(f"{d}: '{lo}' is not a time")
         if hi and parse_minutes(hi) is None:
             raise StaffSettingsError(f"{d}: '{hi}' is not a time")
-        if lo and hi and parse_minutes(lo) >= parse_minutes(hi):
+        # A latest before the earliest is a window past midnight ("5pm to
+        # 1am" — SCHED-13, read that way by schedule_rules.window_allows),
+        # as long as it ends in the small hours; "9pm to 10am" is a typo.
+        if lo and hi and parse_minutes(lo) >= parse_minutes(hi) and \
+                not (parse_minutes(hi) < _OVERNIGHT_LATEST_BEFORE < parse_minutes(lo)):
             raise StaffSettingsError(f"{d}: the window ends before it starts")
         if lo or hi:
             out[d] = {"earliest": lo or None, "latest": hi or None}
@@ -233,6 +237,27 @@ def roster(restaurant_id, db_path=DB_PATH, include_inactive=False) -> list:
             continue
         out.append({**e, "active": bool(active), "settings": st})
     out.sort(key=lambda e: (not e["active"], e["name"].lower()))
+    return out
+
+
+def roles_for(restaurant_id, name, db_path=DB_PATH) -> set:
+    """Every role (lowercase) this person has worked or was added under —
+    not just the most recent one roster() keeps. Empty when unknown."""
+    from models import get_manual_team_members, _cached_shifts
+    low = (name or "").strip().lower()
+    out = set()
+    try:
+        for sh in _cached_shifts(restaurant_id) or []:
+            if (sh.get("employee") or "").strip().lower() == low and (sh.get("role") or "").strip():
+                out.add(sh["role"].strip().lower())
+    except Exception:
+        pass
+    try:
+        for m in get_manual_team_members(restaurant_id, db_path=db_path):
+            if (m.get("name") or "").strip().lower() == low and (m.get("role") or "").strip():
+                out.add(m["role"].strip().lower())
+    except Exception:
+        pass
     return out
 
 

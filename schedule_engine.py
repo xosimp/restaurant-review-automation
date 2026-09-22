@@ -577,11 +577,20 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
 
 
 def _rows_by_date(csv_text: str) -> dict:
+    """Rows per date — counting only rows the job's parser will keep. A row
+    with no times (3-5 columns) used to count as the day written, then be
+    dropped by the parser, so a day could go missing past the retry and a
+    week of such rows was saved empty (SCHED-42)."""
     out = {}
     for line in (csv_text or "").split("\n")[1:]:
-        cols = [c.strip() for c in line.split(",", 7)]
-        if len(cols) >= 3 and cols[0] and cols[2]:
-            out[cols[0]] = out.get(cols[0], 0) + 1
+        cols = [c.strip().strip('"').strip() for c in line.split(",", 7)]
+        if len(cols) < 6 or not cols[0] or not cols[2]:
+            continue
+        if _rules.parse_minutes(cols[4]) is None and _rules.parse_minutes(cols[3]) is None:
+            continue          # no start time where one belongs (nor one column left of it)
+        if _rules.parse_minutes(cols[5]) is None and _rules.parse_minutes(cols[4]) is None:
+            continue
+        out[cols[0]] = out.get(cols[0], 0) + 1
     return out
 
 
@@ -858,6 +867,23 @@ def _safe_hours_sum(rows: list) -> float:
     return round(total, 1)
 
 
+class ScheduleGenerationError(RuntimeError):
+    """A generation that must not be saved, with a sentence the owner can read."""
+
+
+def _normalise_row_times(row: dict) -> None:
+    """Rewrite a 24-hour shift_start/shift_end ("17:00") as "5:00pm", the
+    one form the pipeline's checks read. Anything unreadable is left alone
+    for the sanity checks to flag."""
+    for key in ("shift_start", "shift_end"):
+        raw = (row.get(key) or "").strip()
+        if not raw or _TIME_FIELD_RE.match(raw):
+            continue
+        m = _rules.parse_minutes(raw)
+        if m is not None:
+            row[key] = _format_minutes_to_time(m)
+
+
 def _enforce_close_time(row: dict, real_day: str, close_times: dict, role_buffers: dict) -> None:
     """Hard-caps a row's shift_end at that day's actual close time (plus any
     role-specific after-close allowance, e.g. a bartender's stated "stay 1h
@@ -878,14 +904,24 @@ def _enforce_close_time(row: dict, real_day: str, close_times: dict, role_buffer
     close_minutes = _parse_time_to_minutes(close_times[real_day])
     if close_minutes is None:
         return
+    # A close in the small hours is the next morning: "1:00am" is 25:00, not
+    # one in the morning before the doors open (SCHED-13).
+    if close_minutes < _rules._OVERNIGHT_LATEST_BEFORE:
+        close_minutes += 24 * 60
     role = (row.get("role") or "").strip()
     ceiling = close_minutes + role_buffers.get(role, 0)
 
+    start_minutes = _parse_time_to_minutes(row.get("shift_start", ""))
     end_minutes = _parse_time_to_minutes(row.get("shift_end", ""))
-    if end_minutes is None or end_minutes <= ceiling:
+    if end_minutes is None:
+        return
+    # A shift that ends past midnight ends on the next day's clock; reading
+    # 2:00am as 120 minutes let a 5pm-2am shift through a 10pm close.
+    if start_minutes is not None and end_minutes <= start_minutes:
+        end_minutes += 24 * 60
+    if end_minutes <= ceiling:
         return
 
-    start_minutes = _parse_time_to_minutes(row.get("shift_start", ""))
     if start_minutes is None or start_minutes >= ceiling:
         # Can't produce a sensible corrected shift (e.g. shift_start is
         # itself already past the ceiling) — don't fabricate a number,
@@ -1999,6 +2035,10 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                     continue
                 # Strip outer quotes Sonnet sometimes adds around field values
                 _row = {_COLS[i]: _parts[i].strip().strip('"').strip() for i in range(min(len(_parts), 8))}
+                # Times in 24-hour form ("17:00") are the same times; every
+                # check after this reads "5:00pm", and a 24-hour row used to
+                # skip the close cap and the hours reconciliation (SCHED-38).
+                _normalise_row_times(_row)
                 # Keep rows that have a non-empty employee name — skips header repeats and prose
                 if not _row.get("employee", "").strip() or _row.get("employee", "").lower() == "employee":
                     continue
@@ -2079,6 +2119,12 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                 except Exception:
                     pass
             print(f"[schedule] parsed {len(preview_rows)} rows, first={preview_rows[0] if preview_rows else None}")
+            if not preview_rows:
+                # Every line was unreadable: saving it would publish an empty
+                # week as if it were a schedule (SCHED-42).
+                raise ScheduleGenerationError(
+                    "The generated schedule came back in a form we couldn't read, so nothing was saved. "
+                    "Try generating again.")
 
             _constraints = result.get("constraints")
             if _constraints is None:
@@ -2355,6 +2401,8 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                             _r["notes"] = f"{_n} — {_mark}" if _n else _mark
                     _lines_out.append(",".join(str(_r.get(c, "") or "").replace(",", ";") for c in _COLS))
                 result["schedule_csv"] = "\n".join(_lines_out)
+        except ScheduleGenerationError:
+            raise                      # already a sentence the owner can read
         except Exception as _csv_ex:
             # Every safeguard lives inside that block. A crash there used to
             # fall through to save and ship the raw model text as a finished
@@ -2542,27 +2590,59 @@ def _rows_to_csv_text(rows: list) -> str:
     return "\n".join(lines)
 
 
-def replacement_is_legal(restaurant_id, rows: list, index: int, name: str):
+def replacement_is_legal(restaurant_id, rows: list, index: int, name: str, constraints=None):
     """(ok, reason): could `name` take rows[index] outright, by every rule
     the generation itself is checked against? One answer for the web and
-    iOS replacement pickers, the open-shift claim and the fix pass."""
+    iOS replacement pickers and the open-shift claim.
+
+    The reason is the violation sweep's own label wherever one applies: the
+    move is tried on a copy of the week and any hard rule it would newly
+    break for `name` — a minor past the latest end, a certification the
+    role needs, the person's hours window, rest, the hours ceiling — is the
+    answer (SCHED-6). A double that does not overlap is allowed (SCHED-34).
+    A free-text note on file is not read as a refusal: the engine cannot
+    read it, and treating every note as "never" locked anyone with a
+    compliment on file out of every claim (SCHED-35). The automatic swap
+    search still leaves noted people alone.
+
+    `constraints` lets a caller that already built the week's
+    schedule_rules.Constraints pass it in (the replacement picker checks
+    every roster member against one set)."""
     import shift_quality as _sq
-    from models import get_unavailability_map, get_staff_notes
+    from models import get_unavailability_map
     try:
-        dates = sorted({r.get("date") for r in rows if r.get("date")})
-        week_days = [__import__("datetime").datetime.strptime(d, "%Y-%m-%d").strftime("%A") for d in dates]
-        c = _rules.build_constraints(restaurant_id, dates, week_days)
-        ok, why = c.can_work(name, rows[index].get("date", ""), _rules.daypart_of(rows[index].get("shift_start", "")))
+        c = constraints
+        if c is None:
+            dates = sorted({r.get("date") for r in rows if r.get("date")})
+            week_days = [__import__("datetime").datetime.strptime(d, "%Y-%m-%d").strftime("%A") for d in dates]
+            c = _rules.build_constraints(restaurant_id, dates, week_days)
+        row = rows[index]
+        ok, why = c.can_work(name, row.get("date", ""), _rules.daypart_of(row.get("shift_start", "")))
         if not ok:
             return False, why
+        low = (name or "").strip().lower()
+        trial = [dict(r) for r in rows]
+        trial[index]["employee"] = name
+
+        def _hard_for_name(rs):
+            return {(v["kind"], v["index"]): v for v in _rules.violations(rs, c)
+                    if v["hard"] and (v.get("employee") or "").strip().lower() == low}
+        before, after = _hard_for_name(rows), _hard_for_name(trial)
+        new = sorted((k for k in after if k not in before), key=lambda k: (k[1] != index, k[1]))
+        if new:
+            v = after[new[0]]
+            label = _rules.LABELS.get(v["kind"], v["kind"])
+            return False, label if v.get("detail") in (None, "", label) else f"{label} ({v['detail']})"
         availability = get_unavailability_map(restaurant_id)
-        constraints = {n["employee_name"]: n["notes"] for n in (get_staff_notes(restaurant_id) or []) if n.get("employee_name")}
-        idx = _sq._SwapIndex(rows, availability, constraints, _rules_for_swaps(c))
-        if not idx.replacement_legal(index, name):
-            return False, "would break a rule (hours, rest, a note on file, or already working that day)"
+        idx = _sq._SwapIndex(rows, availability, {}, _rules_for_swaps(c))
+        if not idx.replacement_legal(index, name, allow_double=True):
+            return False, "would break a rule (hours, rest, or a shift that overlaps one they already have)"
         return True, ""
     except Exception as e:
-        return False, f"could not check: {e}"
+        # The person asking is an employee or a manager, not a developer:
+        # the exception goes to the log, a plain sentence to them (MOD-EMP-10).
+        print(f"[schedule] replacement check failed rid={restaurant_id}: {e!r}")
+        return False, "we couldn't check that shift just now — try again, or ask a manager"
 
 
 def _rules_for_swaps(c) -> dict:
@@ -2580,6 +2660,14 @@ def _rules_for_swaps(c) -> dict:
         "weekly_ceiling": c.compliance.get("weekly_hours_ceiling"),
         "min_rest_hours": c.compliance.get("min_rest_hours"),
         "inactive": sorted(c.inactive),
+        # the sweep's per-person rules, so a swap or fix can never hand a
+        # minor a late close or a bar shift to someone uncertified (SCHED-6)
+        "minors": sorted(c.minors),
+        "minor_latest_end": _rules.parse_minutes(c.compliance.get("minor_latest_end") or ""),
+        "minor_max_daily_hours": c.compliance.get("minor_max_daily_hours"),
+        "certifications": {k: sorted(v) for k, v in (c.certifications or {}).items()},
+        "role_requirements": {k: sorted(v) for k, v in (c.role_requirements or {}).items()},
+        "time_windows": dict(c.time_windows or {}),
     }
 
 
