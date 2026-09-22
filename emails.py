@@ -1105,15 +1105,6 @@ def send_payment_email(to_email, restaurant_name, tier=None,
     except Exception as e:
         print(f"Payment email failed: {e}")
 
-def _log_payment_email(to_email, restaurant_name, module_count):
-    try:
-        from models import log_email as _log_email, get_conn as _get_conn
-        conn = _get_conn()
-        row = conn.execute("SELECT id FROM restaurants WHERE owner_email=? LIMIT 1", (to_email,)).fetchone()
-        conn.close()
-        if row: _log_email(row[0], "payment", to_email, f"Your Cavnar AI payment link — {restaurant_name}")
-    except Exception: pass
-
 def send_welcome_email(to_email, restaurant_name, username, password,
                        module_reviews=0, module_labor=0,
                        module_inventory=0, module_marketing=0,

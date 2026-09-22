@@ -188,22 +188,3 @@ def send_contract(
         "status": data.get("status"),
     }
 
-
-def get_envelope_status(envelope_id: str) -> dict:
-    """Check the status of a sent envelope."""
-    access_token = get_access_token()
-    import requests
-    resp = requests.get(
-        f"{BASE_URL}/restapi/v2.1/accounts/{ACCOUNT_ID}/envelopes/{envelope_id}",
-        headers={"Authorization": f"Bearer {access_token}"},
-        timeout=DOCUSIGN_TIMEOUT,
-    )
-    if resp.status_code != 200:
-        return {"ok": False, "error": resp.text}
-    data = resp.json()
-    return {
-        "ok": True,
-        "status": data.get("status"),
-        "completed": data.get("completedDateTime"),
-        "sent": data.get("sentDateTime"),
-    }

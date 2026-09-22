@@ -146,12 +146,6 @@ def _todays_scheduled(restaurant_id, day, db_path=DB_PATH):
     return rows
 
 
-def _parse_clock(value):
-    try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except Exception:
-        return None
-
 
 def coverage_gaps(restaurant_id, now_local=None, db_path=DB_PATH, restaurant=None,
                   grace_minutes=COVERAGE_GRACE_MINUTES):

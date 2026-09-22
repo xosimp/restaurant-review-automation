@@ -254,9 +254,6 @@ def has_permission(user, permission: str) -> bool:
             and permission in (user.get("grants") or ()))
 
 
-def require_all(user, *perms) -> bool:
-    return all(has_permission(user, p) for p in perms)
-
 
 def is_employee(user) -> bool:
     """True for a PIN identity. Used where the question really is "is this

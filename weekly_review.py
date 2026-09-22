@@ -35,10 +35,6 @@ log = logging.getLogger(__name__)
 # between the weekly and the monthly is reading one report at two cadences.
 HEADLINE_METRICS = ("sales", "labor_pct", "food_cost_pct", "avg_rating")
 
-# A week is a small sample. Below this many days of data on either side there
-# is nothing honest to compare.
-MIN_DAYS = 5
-
 WINDOW_CAVEAT = ("A week is a short window — one closed day or one large party "
                  "moves it in a way it cannot move a month.")
 

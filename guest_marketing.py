@@ -372,12 +372,6 @@ def _match_named_restaurant(body, candidates):
     return None
 
 
-def _restaurant_for_inbound(phone, db_path=DB_PATH):
-    """The single restaurant this reply belongs to, or None when it is
-    ambiguous. Never guesses — see _inbound_candidates."""
-    candidates = _inbound_candidates(phone, db_path=db_path)
-    return candidates[0][0] if len(candidates) == 1 else None
-
 
 def _mark_invite_response(phone, response, db_path=DB_PATH, restaurant_id=None):
     """Close the invite this reply answers.

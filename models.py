@@ -28,8 +28,7 @@ DB_PATH = os.path.join(os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "."), "reviews.db"
 #
 # Interpolate it into SQL as a column expression. It is a constant built from
 # literal column names, never from user input.
-REVIEW_TIME_AXIS = "COALESCE(NULLIF(reviews.review_date,''), reviews.fetched_at)"
-# The same expression for queries that don't qualify the table name.
+# Unqualified column names: every review query selects from `reviews` alone.
 REVIEW_TIME_AXIS_BARE = "COALESCE(NULLIF(review_date,''), fetched_at)"
 
 # Restaurant.service_tier's human-readable display names — lives here
@@ -4070,16 +4069,6 @@ def count_stalled_reviews(restaurant_id: int, db_path: str = DB_PATH) -> dict:
             "undrafted": (row["undrafted"] or 0) if row else 0}
 
 
-def get_urgent_reviews(restaurant_id: int, db_path: str = DB_PATH) -> list[Review]:
-    conn = get_conn(db_path)
-    rows = conn.execute("""
-        SELECT * FROM reviews
-        WHERE restaurant_id=? AND urgency='high' AND response_status NOT IN ('posted','skipped')
-        ORDER BY fetched_at DESC
-    """, (restaurant_id,)).fetchall()
-    conn.close()
-    return [_row_to_review(r) for r in rows]
-
 
 def get_reviews_since(restaurant_id: int, since: str,
                        db_path: str = DB_PATH) -> list[Review]:
@@ -6699,31 +6688,10 @@ def location_group_conflict(group_name: str, owner_email: str, exclude_id=None,
     return None
 
 
-def get_all_location_groups(db_path: str = DB_PATH) -> list:
-    """Get distinct location group names."""
-    conn = get_conn(db_path)
-    rows = conn.execute(
-        "SELECT DISTINCT location_group FROM restaurants WHERE location_group IS NOT NULL ORDER BY location_group"
-    ).fetchall()
-    conn.close()
-    return [r["location_group"] for r in rows]
-
 # 30 days. Past this, the figure reflects a backfill/import rather than how
 # fast anyone actually responds.
 RESPONSE_TIME_CAP_HOURS = 30 * 24
 
-
-# When the guest actually wrote the review. review_date is the truth and
-# fetched_at is when Cavnar AI happened to pull it — on a first connect
-# every review in a restaurant's history carries the same fetched_at, so
-# bucketing or filtering on it collapsed three years of reviews into the
-# onboarding week. Measured: an 8-week sentiment trend rendered one bar,
-# "top issues in the last 90 days" counted a three-year-old review, and the
-# negative-spike SMS claimed four reviews "in the last 7 days" when the
-# newest was 54 days old. fetched_at stays as the fallback for a row that
-# somehow has no review_date.
-WRITTEN_AT = "COALESCE(NULLIF(r.review_date,''), r.fetched_at)"
-WRITTEN_AT_BARE = "COALESCE(NULLIF(review_date,''), fetched_at)"
 
 
 def get_reviews_by_ids(restaurant_id: int, ids: list, db_path: str = DB_PATH) -> list:
@@ -8065,10 +8033,6 @@ def last_two_ai_visibility_runs(restaurant_id: int, db_path: str = DB_PATH) -> l
     return [dict(r) for r in rows]
 
 
-def last_two_ai_visibility_scores(restaurant_id: int, db_path: str = DB_PATH) -> list:
-    """Scores only. Kept for callers that just want the numbers."""
-    return [r["ai_score"] for r in last_two_ai_visibility_runs(restaurant_id, db_path)]
-
 
 # Operational logs nothing prunes.
 #
@@ -8428,24 +8392,6 @@ def get_ai_visibility_history(restaurant_id: int, limit: int = 10, db_path: str 
 
 
 # ── Purchase orders ────────────────────────────────────────────────────────────
-
-def next_po_number(restaurant_id: int, db_path: str = DB_PATH) -> str:
-    """Sequential per restaurant — PO-0001, PO-0002... Derived from the
-    count of existing rows rather than a global autoincrement so two
-    restaurants never see each other's numbering, and so the number a
-    supplier sees is small and human-quotable.
-
-    Read-only, and therefore racy on its own: use record_purchase_order,
-    which allocates inside the same transaction as the insert.
-    """
-    conn = get_conn(db_path)
-    try:
-        n = conn.execute(
-            "SELECT COUNT(*) FROM purchase_orders WHERE restaurant_id=?", (restaurant_id,)
-        ).fetchone()[0] or 0
-    finally:
-        conn.close()
-    return f"PO-{n + 1:04d}"
 
 
 def record_purchase_order(restaurant_id: int, supplier_name: str,

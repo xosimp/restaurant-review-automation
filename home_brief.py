@@ -124,7 +124,6 @@ def _dismissed_keys(conn, rid):
 # resurfacing nine times in six months with no way to say why. "Done" and
 # "not for us" are answers, and an answer should not be asked again.
 _DISMISS_DAYS_BY_KIND = {"recommendation": _DISMISS_DAYS, "done": 3650, "not_for_us": 3650}
-DISMISS_KINDS = tuple(_DISMISS_DAYS_BY_KIND)
 
 
 def times_hidden(conn, rid):

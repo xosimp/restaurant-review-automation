@@ -19,9 +19,6 @@ DEFAULT_PROFILE = {
     "sign_off_name": "the Maplewood team",
 }
 
-# Keep for backward compat
-RESTAURANT_PROFILE = DEFAULT_PROFILE
-
 
 def get_upcoming_holidays(from_date=None) -> str:
     """Return a comma-separated string of holidays/events in the next 30 days."""

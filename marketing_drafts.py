@@ -82,19 +82,6 @@ def list_drafts(restaurant_id, limit=40, db_path: str = DB_PATH) -> list:
     return [dict(r) for r in rows]
 
 
-def get_draft(draft_id, restaurant_id, db_path: str = DB_PATH):
-    conn = get_conn(db_path)
-    try:
-        row = conn.execute(
-            "SELECT d.*, m.token AS media_token FROM marketing_drafts d "
-            "LEFT JOIN marketing_media m ON m.id = d.media_id "
-            "WHERE d.id=? AND d.restaurant_id=?",
-            (draft_id, restaurant_id),
-        ).fetchone()
-    finally:
-        conn.close()
-    return dict(row) if row else None
-
 
 def approve_draft(draft_id, restaurant_id, *, user_id=None, role=None,
                   db_path: str = DB_PATH) -> dict:

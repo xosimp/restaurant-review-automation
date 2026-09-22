@@ -626,13 +626,6 @@ def _intel_home_kpi(restaurant):
         return {"value": "—", "sublabel": "no data yet"}
 
 
-def _home_tz(restaurant):
-    from zoneinfo import ZoneInfo
-    try:
-        return ZoneInfo(getattr(restaurant, "timezone", None) or "America/Chicago")
-    except Exception:
-        return ZoneInfo("America/Chicago")
-
 
 def _home_pulse(key, kpi, rstats, labor, restaurant, inv):
     """One chip for Home's pulse strip per active module: the KPI value, a
