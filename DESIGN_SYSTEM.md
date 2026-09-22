@@ -21,26 +21,41 @@ Two clients, one product:
 ## 1. Colour tokens
 
 Semantic, never raw hex at a call site. The web names and the iOS names are
-the same palette (`Color+Cavnar.swift` ports the CSS variables 1:1).
+the same palette; `Color+Cavnar.swift` reads the `Assets.xcassets` colorsets,
+whose light values match the web and whose dark values are deliberately
+deeper (a true-black chrome, `#0c0c0c` paper) — the iOS column notes each
+dark value that differs.
 
 | Token | Web light | Web dark | iOS | Use |
 |---|---|---|---|---|
 | `--ink` / `.cavnarInk` | `#0e0c0a` | `#f0ebe0` | Ink | Primary text |
-| `--ink2` / `.cavnarInk2` | `#3a3530` | `#c4bdb4` | Ink2 | Secondary text, table cells |
+| `--ink2` / `.cavnarInk2` | `#3a3530` | `#c4bdb4` | Ink2 (`#e0d6c6` dark) | Secondary text, table cells |
 | `--ink3` / `.cavnarInk3` | `#7a736a` | `#cdbfa9` | Ink3 | Labels, captions, "—" |
-| `--paper` / `.cavnarPaper` | `#f7f4ef` | `#1a1714` | Paper | Page ground, field fill |
-| `--paper2` / `.cavnarPaper2` | `#edeae3` | `#231f1b` | Paper2 | Card ground (iOS at 60%) |
-| `--paper3` / `.cavnarPaper3` | `#e0dbd0` | `#4a4038` | Paper3 | Hairlines, dividers |
-| `--surface` | `#ffffff` | `#201d19` | Surface | Raised card surface (web) |
+| `--paper` / `.cavnarPaper` | `#f7f4ef` | `#1a1714` | Paper (`#0c0c0c` dark) | Page ground, field fill |
+| `--paper2` / `.cavnarPaper2` | `#edeae3` | `#231f1b` | Paper2 (`#121212` dark) | Card ground (iOS at 60%) |
+| `--paper3` / `.cavnarPaper3` | `#e0dbd0` | `#4a4038` | Paper3 (`#262626` dark) | Hairlines, dividers |
+| `--surface` | `#ffffff` | `#201d19` | Surface (`#121212` dark) | Raised card surface (web) |
 | `--ember` / `.cavnarEmber` | **`#c84b2f`** | `#e06444` | Ember (`#D4583A` dark) | The brand accent — see §9 |
 | `--ember2` / `.cavnarEmber2` | `#e8956a` | `#e8956a` | Ember2 | Chart lines, kickers, soft accent |
 | `--green` / `.cavnarGreen` | `#2d6a4f` | `#4ead7a` | Green | Good / improved / on target |
-| `--red` / `.cavnarRed` | `#c0392b` | `#e05555` | Red | Bad / critical / destructive |
+| `--red` / `.cavnarRed` | `#c0392b` | `#e05555` | Red (`#e3333f` dark) | Bad / critical / destructive |
 | `--amber` / `.cavnarAmber` | `#b7791f` | `#d4a030` | Amber | Warning, "watch", partial data |
 | `--blue` / `.cavnarBlue` | `#1a56cc` | `#6aabff` | Blue | Informational only (rare) |
 
 Each status colour has a `-bg` pair for tinted chips (`--green-bg`,
 `--red-bg`, `--amber-bg`, `--blue-bg`; `.cavnarGreenBg` etc.).
+
+Beyond the palette, `dashboard.html` defines three token families a
+component may reach for and must not redefine: the surface layer
+(`--sf-ai`, `--sf-ai-line`, `--sf-recess`, `--surface-glass`), elevation
+(`--elev-card`, `--elev-float`, `--elev-hero`, `--glow-ember`) and the Home
+semantics (`--hb-good`, `--hb-warn`, `--hb-bad`, `--hb-amber`, `--hb-tint`,
+`--hb-line`, `--hb-glow`, …). Buttons have their own namespace in
+`static/css/cavnar-buttons.css` (`--cb-accent`, `--cb-ink`, `--cb-surface`,
+`--cb-tint`, `--cb-radius*`, `--cb-shadow*`, 26 in all). A restaurant's
+`brand_color` rewrites `--ember`/`--ember2` at the top of the page
+(`dashboard.html`, the `:root` override on line 18), so "ember" on a
+white-labelled account is that restaurant's colour.
 
 **Dark-mode depth (web).** The canvas is flat `--bg-base: #141110`; depth
 comes from a three-step luminance staircase — base < header/tabs < card
@@ -55,14 +70,19 @@ canvas: see the long comment above `:root` in `dashboard.html` for why.
   non-ember fills allowed, and only on their own buttons.
 - iOS: honour Increase Contrast for informational secondary text with
   `Color.cavnarInk3(contrast)`; plain `.cavnarInk3` is for decorative chrome.
-- `.cavnarBlack` is nav/tab-bar chrome only, never a content surface.
+- `.cavnarChrome` (true black) is nav/tab-bar chrome only, never a content surface.
 
 ---
 
 ## 2. Typography
 
-Three faces, one job each. Self-hosted on web
-(`static/fonts/cavnar-fonts.css`), bundled on iOS (`Font+Cavnar.swift`).
+Three faces, one job each. Clash Display and Apfel Grotezk are self-hosted on
+web (`static/fonts/cavnar-fonts.css`; Apfel ships only 400 and 700, and iOS
+snaps weights ≥550 to Fett); Space Grotesk is loaded from Google Fonts
+(`dashboard.html` `<link>`), together with **Bricolage Grotesque**, a fourth
+face used only for the tab badges and the `.stat-n` figures — a legacy of
+the pre-rebuild stat cards that the "every number is Space Grotesk" rule
+has not yet reached. iOS bundles all three (`Font+Cavnar.swift`).
 
 | Role | Face | Web | iOS |
 |---|---|---|---|
@@ -80,12 +100,12 @@ tabular figures wherever digits line up in a column.
 
 | Step | Size | Where |
 |---|---|---|
-| Page title | 25–38px | `.hb-h1`, hero figures, `AccountHero` |
+| Page title | 25–40px | `.hb-h1` (`clamp(30px,3.2vw,40px)`), hero figures, `AccountHero` |
 | Section heading | 22–23.5px Clash | `.fc2-sec .hd h2`, sheet titles |
 | Body | 14–16px | `.ac-row`, list rows, `.hb-row .t`, `.hb-tl .t`, `.cavnarBody(15)` |
 | Secondary | 13–14.5px | `.ac-note`, `.hb-empty`, `.hb-focus .ev`, row subtitles |
 | Caption | 11.5–13px | `.hb-tbl .iss`, `.hb-sg .cap`, metadata |
-| **Kicker** | 10–13.5px, weight 700, `letter-spacing:.12–.16em`, UPPERCASE | `.hb-kicker` (ember), `.hb-tbl th` and `.ac-card h3` (ink3), `AccountKicker` |
+| **Kicker** | 10–13.5px, weight 700, `letter-spacing:.12–.16em`, UPPERCASE | `.hb-kicker` (ember), `.hb-tbl th` (ink3), `AccountKicker` |
 
 Keep sizes uniform across modules. The Account scale (15 / 16 / 22) is the
 reference; never inflate one module's text on its own. Headings get
@@ -223,9 +243,9 @@ measurement is drawn as a gap, never as zero.
 On/off is `.ac-switch` (44×26 track, ember when checked, 18px thumb travel,
 visible focus outline).
 
-**iOS**: `AccountField` / `AccountTextField` / `FloatingField` for text,
+**iOS**: `AccountField` / `CavnarFloatingField` for text,
 `CavnarDropdown` for choices. For a setting that hits the network, use a
-tappable `AccountPill` or `AccountLink` row — **not** a native `Toggle`,
+tappable `AccountPill` or `AccountActionChip` row — **not** a native `Toggle`,
 whose height breaks the kit's row rhythm. Device-local settings (Face ID) may
 use a real `Toggle`.
 
@@ -265,7 +285,9 @@ do"**. Spend it in one place per screen.
 - Use it as a background behind body text (contrast).
 
 Dark mode uses `#e06444` (web) / `#D4583A` (iOS) so the ember doesn't glare;
-`--ember2` `#e8956a` is the soft form for lines and kickers.
+`--ember2` `#e8956a` is the soft form for lines and kickers. The web's dark
+primary button is the iOS value, `#d4583a` (`--cb-accent`, pinned by
+`tests/test_button_system.py`), not `--ember`.
 
 ---
 
@@ -274,7 +296,7 @@ Dark mode uses `#e06444` (web) / `#D4583A` (iOS) so the ember doesn't glare;
 **Loading is the sliding ember pulse — never a spinner and never "…".**
 - Web: `.hb-skel` skeleton bars (`hbSkel` sweep), `.hb-load` + the orb canvas
   (`data-orb-state`: `working` / `searching` / `shaping` / `composing` /
-  `solving`), `cbtnBusy()` inside a button.
+  `solving` exists on iOS only), `cbtnBusy()` inside a button.
 - iOS: `CavnarSkeletonBar`, `CavnarSkeletonLines(widths:)`,
   `CavnarShimmerText(text:)`, `CavnarLoadingOrb` / `CavnarOrb`.
 
@@ -402,7 +424,7 @@ day is a short page.
 | Sheet anatomy | `AccountHero` → `AccountSection` → `AccountKVRow` |
 | Pill / chip / tile | `AccountPill`, `AccountChip`, `AccountStatTile` |
 | Button | `CavnarPrimaryButtonStyle`, `CavnarSecondaryButtonStyle` |
-| Field | `AccountField`, `FloatingField`, `CavnarDropdown` |
+| Field | `AccountField`, `CavnarFloatingField`, `CavnarDropdown` |
 | Switch with its record | `AccountSwitchRow(label:detail:isOn:busy:)` — the `detail` is the owner's own record behind the switch (Automation & trust) |
 | Decide-in-place row | `TimeOffSection` row: name + dates, Deny (secondary) / Approve (primary) side by side, status text once answered |
 | Mixed text with numbers | `HomeMixedText.make(...)` |
