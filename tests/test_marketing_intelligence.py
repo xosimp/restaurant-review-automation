@@ -228,7 +228,7 @@ def test_home_says_what_the_latest_post_did(db_path, monkeypatch):
     conn.execute("INSERT INTO marketing_attribution (restaurant_id, content_log_id, window_hours, lift_pct, item_lift_pct, reviews_mentioning) "
                  "VALUES (?,?,48,18.0,42.0,2)", (rid, row))
     conn.commit()
-    r = home_brief._one(conn, "SELECT c.topic, a.lift_pct, a.item_lift_pct, a.reviews_mentioning, m.name AS menu_item_name "
+    r = home_brief._one_dict(conn, "SELECT c.topic, a.lift_pct, a.item_lift_pct, a.reviews_mentioning, m.name AS menu_item_name "
                               "FROM marketing_attribution a JOIN marketing_content_log c ON c.id=a.content_log_id "
                               "LEFT JOIN menu_items m ON m.id=c.menu_item_id WHERE a.restaurant_id=?", (rid,))
     conn.close()

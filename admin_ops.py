@@ -89,20 +89,20 @@ def _since(ts):
     return f"{int(d / 7)}w"
 
 
-def _iso(dt):
+def _stamp(dt):
     return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
 # ── raw loads ────────────────────────────────────────────────────────────────
 
-def _rows(conn, sql, args=()):
+def _rows_dict(conn, sql, args=()):
     try:
         return [dict(r) for r in conn.execute(sql, args).fetchall()]
     except Exception:
         return []
 
 
-def _one(conn, sql, args=()):
+def _one_dict(conn, sql, args=()):
     try:
         r = conn.execute(sql, args).fetchone()
         return dict(r) if r else None
@@ -123,20 +123,20 @@ def _load_everything():
     except Exception:
         pass
     now = datetime.now()
-    day = _iso(now - timedelta(days=1))
-    week = _iso(now - timedelta(days=7))
-    month = _iso(now - timedelta(days=30))
+    day = _stamp(now - timedelta(days=1))
+    week = _stamp(now - timedelta(days=7))
+    month = _stamp(now - timedelta(days=30))
     today = now.strftime("%Y-%m-%d")
 
-    rests = _rows(conn, "SELECT * FROM restaurants ORDER BY id")
-    users = _rows(conn, "SELECT id, restaurant_id, username, email, role, is_admin, is_active, created_at, last_login FROM users")
+    rests = _rows_dict(conn, "SELECT * FROM restaurants ORDER BY id")
+    users = _rows_dict(conn, "SELECT id, restaurant_id, username, email, role, is_admin, is_active, created_at, last_login FROM users")
     by_rid = {}
     for u in users:
         by_rid.setdefault(u["restaurant_id"], []).append(u)
 
     def per_rid(sql, args=(), key="restaurant_id"):
         out = {}
-        for r in _rows(conn, sql, args):
+        for r in _rows_dict(conn, sql, args):
             out[r[key]] = r
         return out
 
@@ -155,7 +155,7 @@ def _load_everything():
     ai_failed_week = per_rid("SELECT restaurant_id, COUNT(*) AS n, MAX(created_at) AS last_at, MAX(error) AS sample FROM ai_usage WHERE created_at >= ? AND COALESCE(status,'ok')='error' GROUP BY restaurant_id", (week,))
     ai_today = per_rid("SELECT restaurant_id, COUNT(*) AS calls, ROUND(SUM(cost_usd),4) AS cost FROM ai_usage WHERE created_at >= ? GROUP BY restaurant_id", (today,))
     ai_prev = per_rid("SELECT restaurant_id, COUNT(*) AS calls FROM ai_usage WHERE created_at >= ? AND created_at < ? GROUP BY restaurant_id",
-                      (_iso(now - timedelta(days=14)), week))
+                      (_stamp(now - timedelta(days=14)), week))
     ai_week = per_rid("SELECT restaurant_id, COUNT(*) AS calls FROM ai_usage WHERE created_at >= ? GROUP BY restaurant_id", (week,))
     emails = per_rid("""SELECT restaurant_id,
                               SUM(CASE WHEN sent_at >= ? THEN 1 ELSE 0 END) AS sent_7d,
@@ -194,8 +194,8 @@ def _load_everything():
     sessions = per_rid("""SELECT u.restaurant_id AS restaurant_id, COUNT(*) AS n FROM sessions s JOIN users u ON u.id=s.user_id
                           WHERE s.expires_at > datetime('now') GROUP BY u.restaurant_id""")
     guests = per_rid("SELECT restaurant_id, COUNT(*) AS n FROM guest_contacts WHERE consent=1 AND unsubscribed=0 GROUP BY restaurant_id")
-    job_failures = _rows(conn, "SELECT id, job, error, context, created_at FROM job_failures WHERE created_at >= ? ORDER BY id DESC", (week,))
-    resolved = {r["key"]: r for r in _rows(conn, "SELECT key, resolved_at, note FROM admin_issue_resolutions")}
+    job_failures = _rows_dict(conn, "SELECT id, job, error, context, created_at FROM job_failures WHERE created_at >= ? ORDER BY id DESC", (week,))
+    resolved = {r["key"]: r for r in _rows_dict(conn, "SELECT key, resolved_at, note FROM admin_issue_resolutions")}
     conn.close()
 
     return dict(now=now, rests=rests, users=by_rid, reviews=reviews, ai_month=ai_month, ai_today=ai_today,
@@ -634,13 +634,13 @@ def overview():
     month_start = now.strftime("%Y-%m-01")
     conn = get_conn()
     today = now.strftime("%Y-%m-%d")
-    day = _iso(now - timedelta(days=1))
-    ai_today = _one(conn, "SELECT COUNT(*) AS n, ROUND(COALESCE(SUM(cost_usd),0),2) AS cost FROM ai_usage WHERE created_at >= ?", (today,)) or {}
-    emails_today = _one(conn, "SELECT SUM(CASE WHEN status='failed' THEN 0 ELSE 1 END) AS sent, SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed FROM email_log WHERE sent_at >= ?", (today,)) or {}
-    push_today = _one(conn, "SELECT SUM(CASE WHEN ok=1 THEN 1 ELSE 0 END) AS sent, SUM(CASE WHEN ok=0 THEN 1 ELSE 0 END) AS failed FROM push_deliveries WHERE created_at >= ?", (today,)) or {}
-    alerts_today = _one(conn, "SELECT COUNT(*) AS n FROM alert_log WHERE fired_at >= ?", (today,)) or {}
-    jobs_failed_24h = _one(conn, "SELECT COUNT(*) AS n, COUNT(DISTINCT job) AS jobs FROM job_failures WHERE created_at >= ?", (day,)) or {}
-    ai_failed_24h = _one(conn, "SELECT COUNT(*) AS n FROM ai_usage WHERE created_at >= ? AND COALESCE(status,'ok')='error'", (day,)) or {}
+    day = _stamp(now - timedelta(days=1))
+    ai_today = _one_dict(conn, "SELECT COUNT(*) AS n, ROUND(COALESCE(SUM(cost_usd),0),2) AS cost FROM ai_usage WHERE created_at >= ?", (today,)) or {}
+    emails_today = _one_dict(conn, "SELECT SUM(CASE WHEN status='failed' THEN 0 ELSE 1 END) AS sent, SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed FROM email_log WHERE sent_at >= ?", (today,)) or {}
+    push_today = _one_dict(conn, "SELECT SUM(CASE WHEN ok=1 THEN 1 ELSE 0 END) AS sent, SUM(CASE WHEN ok=0 THEN 1 ELSE 0 END) AS failed FROM push_deliveries WHERE created_at >= ?", (today,)) or {}
+    alerts_today = _one_dict(conn, "SELECT COUNT(*) AS n FROM alert_log WHERE fired_at >= ?", (today,)) or {}
+    jobs_failed_24h = _one_dict(conn, "SELECT COUNT(*) AS n, COUNT(DISTINCT job) AS jobs FROM job_failures WHERE created_at >= ?", (day,)) or {}
+    ai_failed_24h = _one_dict(conn, "SELECT COUNT(*) AS n FROM ai_usage WHERE created_at >= ? AND COALESCE(status,'ok')='error'", (day,)) or {}
     conn.close()
     from status_manager import scheduler_heartbeat_age_minutes
     try:
@@ -681,7 +681,7 @@ def overview():
         age = _age_hours(last)
         # Never fetched is only a problem once the account is past setup;
         # _onboarding_for already knows when that is.
-        if age is None and (r.get("created_at") or "") > _iso(now - timedelta(days=3)):
+        if age is None and (r.get("created_at") or "") > _stamp(now - timedelta(days=3)):
             continue
         if age is None or age > FETCH_STALE_HOURS:
             stale_fetch.append((r, age))
@@ -744,7 +744,7 @@ def overview():
         log.warning("request metrics unavailable: %s", e)
     return {"ok": True, "kpis": kpis, "issues": issues[:60], "activity": activity(limit=30, d=d)["events"],
             "brands": [{k: v for k, v in b.items() if k != "locations"} | {"location_ids": [l["id"] for l in b["locations"]]} for b in _brands(recs)],
-            "generated_at": _iso(now)}
+            "generated_at": _stamp(now)}
 
 
 def clients():
@@ -759,25 +759,25 @@ def client_detail(rid):
         return {"ok": False, "error": "Not found"}
     siblings = [r for r in recs if r["brand"] == rec["brand"]]
     conn = get_conn()
-    month = _iso(d["now"] - timedelta(days=30))
-    ai_by_action = _rows(conn, "SELECT action, model, COUNT(*) AS calls, ROUND(SUM(cost_usd),4) AS cost, SUM(input_tokens)+SUM(output_tokens) AS tokens, MAX(created_at) AS last_at FROM ai_usage WHERE restaurant_id=? AND created_at >= ? GROUP BY action, model ORDER BY cost DESC", (rid, month))
-    ai_recent = _rows(conn, "SELECT action, model, input_tokens, output_tokens, cost_usd, created_at, COALESCE(status,'ok') AS status, error FROM ai_usage WHERE restaurant_id=? ORDER BY id DESC LIMIT 40", (rid,))
-    ai_failed = _rows(conn, "SELECT action, model, error, created_at FROM ai_usage WHERE restaurant_id=? AND COALESCE(status,'ok')='error' ORDER BY id DESC LIMIT 20", (rid,))
-    events = _rows(conn, "SELECT id, source, event_type, amount, summary, created_at FROM admin_events WHERE restaurant_id=? ORDER BY id DESC LIMIT 40", (rid,))
-    ai_daily = _rows(conn, "SELECT substr(created_at,1,10) AS day, COUNT(*) AS calls, ROUND(SUM(cost_usd),4) AS cost FROM ai_usage WHERE restaurant_id=? AND created_at >= ? GROUP BY day ORDER BY day", (rid, month))
-    emails = _rows(conn, "SELECT email_type, to_email, subject, sent_at, status, error FROM email_log WHERE restaurant_id=? ORDER BY id DESC LIMIT 60", (rid,))
-    pushes = _rows(conn, "SELECT alert_type, status, ok, attempts, error, created_at FROM push_deliveries WHERE restaurant_id=? ORDER BY id DESC LIMIT 40", (rid,))
-    devices = _rows(conn, "SELECT id, user_id, environment, created_at, last_success_at, consecutive_failures, disabled_reason FROM device_tokens WHERE restaurant_id=?", (rid,))
-    alerts = _rows(conn, "SELECT alert_type, review_id, fired_at FROM alert_log WHERE restaurant_id=? ORDER BY id DESC LIMIT 40", (rid,))
-    acts = _rows(conn, "SELECT event_type, event_data, created_at FROM activity_log WHERE restaurant_id=? ORDER BY id DESC LIMIT 60", (rid,))
-    logins = _rows(conn, "SELECT event, ip_address, user_agent, device_type, created_at FROM login_history WHERE restaurant_id=? ORDER BY id DESC LIMIT 30", (rid,))
-    sessions = _rows(conn, "SELECT s.created_at, s.last_active, s.device_type, s.ip_address, u.username FROM sessions s JOIN users u ON u.id=s.user_id WHERE u.restaurant_id=? AND s.expires_at > datetime('now') ORDER BY s.last_active DESC", (rid,))
-    jobs = _rows(conn, "SELECT job, error, context, created_at FROM job_failures WHERE context LIKE ? OR context LIKE ? ORDER BY id DESC LIMIT 40", (f"%rid={rid}%", f"%{rec['name']}%"))
-    runs = _rows(conn, "SELECT job, started_at, finished_at, duration_ms, ok, error FROM job_runs WHERE context LIKE ? ORDER BY id DESC LIMIT 20", (f"%rid={rid}%",))
-    posts = _rows(conn, "SELECT platform, content_type, topic, scheduled_for, status, error, attempts, posted_at FROM marketing_scheduled_posts WHERE restaurant_id=? ORDER BY id DESC LIMIT 20", (rid,))
-    hooks = _rows(conn, "SELECT event_type, status, ok, attempts, error, created_at FROM webhook_deliveries WHERE restaurant_id=? ORDER BY id DESC LIMIT 20", (rid,))
-    schedules = _rows(conn, "SELECT id, generated_at, week_start, week_end, hours_scheduled, hours_budget FROM schedule_history WHERE restaurant_id=? ORDER BY id DESC LIMIT 10", (rid,))
-    notes = _rows(conn, "SELECT id, employee_name, notes, created_at FROM staff_notes WHERE restaurant_id=? ORDER BY id DESC", (rid,))
+    month = _stamp(d["now"] - timedelta(days=30))
+    ai_by_action = _rows_dict(conn, "SELECT action, model, COUNT(*) AS calls, ROUND(SUM(cost_usd),4) AS cost, SUM(input_tokens)+SUM(output_tokens) AS tokens, MAX(created_at) AS last_at FROM ai_usage WHERE restaurant_id=? AND created_at >= ? GROUP BY action, model ORDER BY cost DESC", (rid, month))
+    ai_recent = _rows_dict(conn, "SELECT action, model, input_tokens, output_tokens, cost_usd, created_at, COALESCE(status,'ok') AS status, error FROM ai_usage WHERE restaurant_id=? ORDER BY id DESC LIMIT 40", (rid,))
+    ai_failed = _rows_dict(conn, "SELECT action, model, error, created_at FROM ai_usage WHERE restaurant_id=? AND COALESCE(status,'ok')='error' ORDER BY id DESC LIMIT 20", (rid,))
+    events = _rows_dict(conn, "SELECT id, source, event_type, amount, summary, created_at FROM admin_events WHERE restaurant_id=? ORDER BY id DESC LIMIT 40", (rid,))
+    ai_daily = _rows_dict(conn, "SELECT substr(created_at,1,10) AS day, COUNT(*) AS calls, ROUND(SUM(cost_usd),4) AS cost FROM ai_usage WHERE restaurant_id=? AND created_at >= ? GROUP BY day ORDER BY day", (rid, month))
+    emails = _rows_dict(conn, "SELECT email_type, to_email, subject, sent_at, status, error FROM email_log WHERE restaurant_id=? ORDER BY id DESC LIMIT 60", (rid,))
+    pushes = _rows_dict(conn, "SELECT alert_type, status, ok, attempts, error, created_at FROM push_deliveries WHERE restaurant_id=? ORDER BY id DESC LIMIT 40", (rid,))
+    devices = _rows_dict(conn, "SELECT id, user_id, environment, created_at, last_success_at, consecutive_failures, disabled_reason FROM device_tokens WHERE restaurant_id=?", (rid,))
+    alerts = _rows_dict(conn, "SELECT alert_type, review_id, fired_at FROM alert_log WHERE restaurant_id=? ORDER BY id DESC LIMIT 40", (rid,))
+    acts = _rows_dict(conn, "SELECT event_type, event_data, created_at FROM activity_log WHERE restaurant_id=? ORDER BY id DESC LIMIT 60", (rid,))
+    logins = _rows_dict(conn, "SELECT event, ip_address, user_agent, device_type, created_at FROM login_history WHERE restaurant_id=? ORDER BY id DESC LIMIT 30", (rid,))
+    sessions = _rows_dict(conn, "SELECT s.created_at, s.last_active, s.device_type, s.ip_address, u.username FROM sessions s JOIN users u ON u.id=s.user_id WHERE u.restaurant_id=? AND s.expires_at > datetime('now') ORDER BY s.last_active DESC", (rid,))
+    jobs = _rows_dict(conn, "SELECT job, error, context, created_at FROM job_failures WHERE context LIKE ? OR context LIKE ? ORDER BY id DESC LIMIT 40", (f"%rid={rid}%", f"%{rec['name']}%"))
+    runs = _rows_dict(conn, "SELECT job, started_at, finished_at, duration_ms, ok, error FROM job_runs WHERE context LIKE ? ORDER BY id DESC LIMIT 20", (f"%rid={rid}%",))
+    posts = _rows_dict(conn, "SELECT platform, content_type, topic, scheduled_for, status, error, attempts, posted_at FROM marketing_scheduled_posts WHERE restaurant_id=? ORDER BY id DESC LIMIT 20", (rid,))
+    hooks = _rows_dict(conn, "SELECT event_type, status, ok, attempts, error, created_at FROM webhook_deliveries WHERE restaurant_id=? ORDER BY id DESC LIMIT 20", (rid,))
+    schedules = _rows_dict(conn, "SELECT id, generated_at, week_start, week_end, hours_scheduled, hours_budget FROM schedule_history WHERE restaurant_id=? ORDER BY id DESC LIMIT 10", (rid,))
+    notes = _rows_dict(conn, "SELECT id, employee_name, notes, created_at FROM staff_notes WHERE restaurant_id=? ORDER BY id DESC", (rid,))
     conn.close()
     r = get_restaurant(rid)
     errors = ([{"kind": "integration", "label": i["label"], "error": i["error"], "at": i.get("last_success")} for i in rec["integrations"] if i["error"]]
@@ -825,26 +825,26 @@ def integrations():
 def ai_ops(days=30):
     conn = get_conn()
     now = datetime.now()
-    since = _iso(now - timedelta(days=days))
+    since = _stamp(now - timedelta(days=days))
     today = now.strftime("%Y-%m-%d")
     month = now.strftime("%Y-%m-01")
-    totals = _one(conn, "SELECT COUNT(*) AS calls, ROUND(COALESCE(SUM(cost_usd),0),2) AS cost, COALESCE(SUM(input_tokens),0) AS tin, COALESCE(SUM(output_tokens),0) AS tout FROM ai_usage WHERE created_at >= ?", (since,)) or {}
-    t_today = _one(conn, "SELECT COUNT(*) AS calls, ROUND(COALESCE(SUM(cost_usd),0),2) AS cost FROM ai_usage WHERE created_at >= ?", (today,)) or {}
-    t_month = _one(conn, "SELECT COUNT(*) AS calls, ROUND(COALESCE(SUM(cost_usd),0),2) AS cost FROM ai_usage WHERE created_at >= ?", (month,)) or {}
-    by_action = _rows(conn, "SELECT action, model, COUNT(*) AS calls, ROUND(SUM(cost_usd),4) AS cost, ROUND(AVG(input_tokens+output_tokens)) AS avg_tokens FROM ai_usage WHERE created_at >= ? GROUP BY action, model ORDER BY cost DESC", (since,))
-    by_client = _rows(conn, "SELECT a.restaurant_id, r.name, r.location_group, COUNT(*) AS calls, ROUND(SUM(a.cost_usd),4) AS cost FROM ai_usage a LEFT JOIN restaurants r ON r.id=a.restaurant_id WHERE a.created_at >= ? GROUP BY a.restaurant_id ORDER BY cost DESC", (since,))
-    daily = _rows(conn, "SELECT substr(created_at,1,10) AS day, COUNT(*) AS calls, ROUND(SUM(cost_usd),4) AS cost FROM ai_usage WHERE created_at >= ? GROUP BY day ORDER BY day", (since,))
-    by_provider = _rows(conn, "SELECT CASE WHEN model LIKE '%perplexity%' OR model LIKE 'sonar%' OR action LIKE '%visibility%' THEN 'Perplexity' ELSE 'Claude' END AS provider, COUNT(*) AS calls, ROUND(SUM(cost_usd),4) AS cost FROM ai_usage WHERE created_at >= ? GROUP BY provider", (since,))
-    failures = _rows(conn, "SELECT action AS job, model, COUNT(*) AS n, MAX(created_at) AS last_at, MAX(error) AS sample FROM ai_usage WHERE created_at >= ? AND COALESCE(status,'ok')='error' GROUP BY action, model ORDER BY n DESC", (since,))
-    failed_total = _one(conn, "SELECT COUNT(*) AS n, SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) AS n_24h FROM ai_usage WHERE created_at >= ? AND COALESCE(status,'ok')='error'", (_iso(now - timedelta(days=1)), since)) or {}
-    recent = _rows(conn, "SELECT a.id, a.restaurant_id, r.name, a.action, a.model, a.input_tokens, a.output_tokens, a.cost_usd, a.created_at, COALESCE(a.status,'ok') AS status, a.error FROM ai_usage a LEFT JOIN restaurants r ON r.id=a.restaurant_id ORDER BY a.id DESC LIMIT 80")
-    recent_failed = _rows(conn, "SELECT a.id, a.restaurant_id, r.name, a.action, a.model, a.created_at, a.error FROM ai_usage a LEFT JOIN restaurants r ON r.id=a.restaurant_id WHERE COALESCE(a.status,'ok')='error' ORDER BY a.id DESC LIMIT 40")
+    totals = _one_dict(conn, "SELECT COUNT(*) AS calls, ROUND(COALESCE(SUM(cost_usd),0),2) AS cost, COALESCE(SUM(input_tokens),0) AS tin, COALESCE(SUM(output_tokens),0) AS tout FROM ai_usage WHERE created_at >= ?", (since,)) or {}
+    t_today = _one_dict(conn, "SELECT COUNT(*) AS calls, ROUND(COALESCE(SUM(cost_usd),0),2) AS cost FROM ai_usage WHERE created_at >= ?", (today,)) or {}
+    t_month = _one_dict(conn, "SELECT COUNT(*) AS calls, ROUND(COALESCE(SUM(cost_usd),0),2) AS cost FROM ai_usage WHERE created_at >= ?", (month,)) or {}
+    by_action = _rows_dict(conn, "SELECT action, model, COUNT(*) AS calls, ROUND(SUM(cost_usd),4) AS cost, ROUND(AVG(input_tokens+output_tokens)) AS avg_tokens FROM ai_usage WHERE created_at >= ? GROUP BY action, model ORDER BY cost DESC", (since,))
+    by_client = _rows_dict(conn, "SELECT a.restaurant_id, r.name, r.location_group, COUNT(*) AS calls, ROUND(SUM(a.cost_usd),4) AS cost FROM ai_usage a LEFT JOIN restaurants r ON r.id=a.restaurant_id WHERE a.created_at >= ? GROUP BY a.restaurant_id ORDER BY cost DESC", (since,))
+    daily = _rows_dict(conn, "SELECT substr(created_at,1,10) AS day, COUNT(*) AS calls, ROUND(SUM(cost_usd),4) AS cost FROM ai_usage WHERE created_at >= ? GROUP BY day ORDER BY day", (since,))
+    by_provider = _rows_dict(conn, "SELECT CASE WHEN model LIKE '%perplexity%' OR model LIKE 'sonar%' OR action LIKE '%visibility%' THEN 'Perplexity' ELSE 'Claude' END AS provider, COUNT(*) AS calls, ROUND(SUM(cost_usd),4) AS cost FROM ai_usage WHERE created_at >= ? GROUP BY provider", (since,))
+    failures = _rows_dict(conn, "SELECT action AS job, model, COUNT(*) AS n, MAX(created_at) AS last_at, MAX(error) AS sample FROM ai_usage WHERE created_at >= ? AND COALESCE(status,'ok')='error' GROUP BY action, model ORDER BY n DESC", (since,))
+    failed_total = _one_dict(conn, "SELECT COUNT(*) AS n, SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) AS n_24h FROM ai_usage WHERE created_at >= ? AND COALESCE(status,'ok')='error'", (_stamp(now - timedelta(days=1)), since)) or {}
+    recent = _rows_dict(conn, "SELECT a.id, a.restaurant_id, r.name, a.action, a.model, a.input_tokens, a.output_tokens, a.cost_usd, a.created_at, COALESCE(a.status,'ok') AS status, a.error FROM ai_usage a LEFT JOIN restaurants r ON r.id=a.restaurant_id ORDER BY a.id DESC LIMIT 80")
+    recent_failed = _rows_dict(conn, "SELECT a.id, a.restaurant_id, r.name, a.action, a.model, a.created_at, a.error FROM ai_usage a LEFT JOIN restaurants r ON r.id=a.restaurant_id WHERE COALESCE(a.status,'ok')='error' ORDER BY a.id DESC LIMIT 40")
     # Anomalies: a client whose last 7 days is >4x its previous 7, or any
     # action that ran >200 times in a day for one restaurant (a loop).
-    week = _iso(now - timedelta(days=7)); prev = _iso(now - timedelta(days=14))
-    wk = {r["restaurant_id"]: r["n"] for r in _rows(conn, "SELECT restaurant_id, COUNT(*) AS n FROM ai_usage WHERE created_at >= ? GROUP BY restaurant_id", (week,))}
-    pv = {r["restaurant_id"]: r["n"] for r in _rows(conn, "SELECT restaurant_id, COUNT(*) AS n FROM ai_usage WHERE created_at >= ? AND created_at < ? GROUP BY restaurant_id", (prev, week))}
-    loops = _rows(conn, "SELECT a.restaurant_id, r.name, a.action, substr(a.created_at,1,10) AS day, COUNT(*) AS n FROM ai_usage a LEFT JOIN restaurants r ON r.id=a.restaurant_id WHERE a.created_at >= ? GROUP BY a.restaurant_id, a.action, day HAVING n >= 200 ORDER BY n DESC", (since,))
+    week = _stamp(now - timedelta(days=7)); prev = _stamp(now - timedelta(days=14))
+    wk = {r["restaurant_id"]: r["n"] for r in _rows_dict(conn, "SELECT restaurant_id, COUNT(*) AS n FROM ai_usage WHERE created_at >= ? GROUP BY restaurant_id", (week,))}
+    pv = {r["restaurant_id"]: r["n"] for r in _rows_dict(conn, "SELECT restaurant_id, COUNT(*) AS n FROM ai_usage WHERE created_at >= ? AND created_at < ? GROUP BY restaurant_id", (prev, week))}
+    loops = _rows_dict(conn, "SELECT a.restaurant_id, r.name, a.action, substr(a.created_at,1,10) AS day, COUNT(*) AS n FROM ai_usage a LEFT JOIN restaurants r ON r.id=a.restaurant_id WHERE a.created_at >= ? GROUP BY a.restaurant_id, a.action, day HAVING n >= 200 ORDER BY n DESC", (since,))
     conn.close()
     names = {c["restaurant_id"]: c["name"] for c in by_client}
     anomalies = [{"kind": "spike", "restaurant_id": rid, "restaurant": names.get(rid), "detail": f"{n} calls this week vs {pv.get(rid, 0)} the week before"}
@@ -865,25 +865,25 @@ def ai_ops(days=30):
 
 def emails(limit=200):
     conn = get_conn()
-    now = datetime.now(); week = _iso(now - timedelta(days=7)); today = now.strftime("%Y-%m-%d")
-    rows = _rows(conn, "SELECT e.id, e.restaurant_id, r.name AS restaurant, r.location_group AS brand, e.email_type, e.to_email, e.subject, e.sent_at, e.status, e.error FROM email_log e LEFT JOIN restaurants r ON r.id=e.restaurant_id ORDER BY e.id DESC LIMIT ?", (limit,))
-    by_type = _rows(conn, "SELECT email_type, COUNT(*) AS n, SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed FROM email_log WHERE sent_at >= ? GROUP BY email_type ORDER BY n DESC", (week,))
-    daily = _rows(conn, "SELECT substr(sent_at,1,10) AS day, COUNT(*) AS n, SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed FROM email_log WHERE sent_at >= ? GROUP BY day ORDER BY day", (_iso(now - timedelta(days=30)),))
-    storms = _rows(conn, "SELECT to_email, COUNT(*) AS n FROM email_log WHERE sent_at >= ? GROUP BY to_email HAVING n >= 8 ORDER BY n DESC", (today,))
-    suppressed = _rows(conn, "SELECT * FROM email_suppressions ORDER BY rowid DESC LIMIT 50")
+    now = datetime.now(); week = _stamp(now - timedelta(days=7)); today = now.strftime("%Y-%m-%d")
+    rows = _rows_dict(conn, "SELECT e.id, e.restaurant_id, r.name AS restaurant, r.location_group AS brand, e.email_type, e.to_email, e.subject, e.sent_at, e.status, e.error FROM email_log e LEFT JOIN restaurants r ON r.id=e.restaurant_id ORDER BY e.id DESC LIMIT ?", (limit,))
+    by_type = _rows_dict(conn, "SELECT email_type, COUNT(*) AS n, SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed FROM email_log WHERE sent_at >= ? GROUP BY email_type ORDER BY n DESC", (week,))
+    daily = _rows_dict(conn, "SELECT substr(sent_at,1,10) AS day, COUNT(*) AS n, SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed FROM email_log WHERE sent_at >= ? GROUP BY day ORDER BY day", (_stamp(now - timedelta(days=30)),))
+    storms = _rows_dict(conn, "SELECT to_email, COUNT(*) AS n FROM email_log WHERE sent_at >= ? GROUP BY to_email HAVING n >= 8 ORDER BY n DESC", (today,))
+    suppressed = _rows_dict(conn, "SELECT * FROM email_suppressions ORDER BY rowid DESC LIMIT 50")
     # Whether any of it was worth sending. Everything above counts what went
     # OUT. Read as a floor, not a rate — Apple Mail pre-fetches images (an
     # open nobody performed) and a reader with images off never registers.
-    engagement = _rows(conn,
+    engagement = _rows_dict(conn,
         "SELECT email_type, COUNT(*) AS sent, "
         "SUM(CASE WHEN opened_at IS NOT NULL THEN 1 ELSE 0 END) AS opened, "
         "SUM(CASE WHEN clicked_at IS NOT NULL THEN 1 ELSE 0 END) AS clicked "
         "FROM email_log WHERE sent_at >= ? AND status != 'failed' "
-        "GROUP BY email_type ORDER BY sent DESC", (_iso(now - timedelta(days=30)),))
+        "GROUP BY email_type ORDER BY sent DESC", (_stamp(now - timedelta(days=30)),))
     for row in engagement:
         row["open_rate"] = (round(100.0 * (row["opened"] or 0) / row["sent"], 1)
                             if row["sent"] else None)
-    totals = _one(conn, "SELECT COUNT(*) AS n, SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed FROM email_log WHERE sent_at >= ?", (today,)) or {}
+    totals = _one_dict(conn, "SELECT COUNT(*) AS n, SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed FROM email_log WHERE sent_at >= ?", (today,)) or {}
     conn.close()
     return {"ok": True, "rows": rows, "by_type": by_type, "daily": daily, "storms": storms,
             "suppressed": suppressed, "today": totals, "engagement": engagement}
@@ -891,21 +891,21 @@ def emails(limit=200):
 
 def notifications(limit=200):
     conn = get_conn()
-    now = datetime.now(); today = now.strftime("%Y-%m-%d"); week = _iso(now - timedelta(days=7))
-    pushes = _rows(conn, "SELECT p.id, p.restaurant_id, r.name AS restaurant, p.device_token_id, d.user_id, u.username, p.alert_type, p.status, p.ok, p.attempts, p.error, p.created_at FROM push_deliveries p LEFT JOIN restaurants r ON r.id=p.restaurant_id LEFT JOIN device_tokens d ON d.id=p.device_token_id LEFT JOIN users u ON u.id=d.user_id ORDER BY p.id DESC LIMIT ?", (limit,))
-    devices = _rows(conn, "SELECT d.id, d.restaurant_id, r.name AS restaurant, u.username, d.environment, d.created_at, d.last_success_at, d.consecutive_failures, d.disabled_reason FROM device_tokens d LEFT JOIN restaurants r ON r.id=d.restaurant_id LEFT JOIN users u ON u.id=d.user_id ORDER BY d.id DESC")
-    alerts = _rows(conn, "SELECT a.id, a.restaurant_id, r.name AS restaurant, a.alert_type, a.review_id, a.fired_at FROM alert_log a LEFT JOIN restaurants r ON r.id=a.restaurant_id ORDER BY a.id DESC LIMIT ?", (limit,))
-    by_type = _rows(conn, "SELECT alert_type, COUNT(*) AS n FROM alert_log WHERE fired_at >= ? GROUP BY alert_type ORDER BY n DESC", (week,))
-    storms = _rows(conn, "SELECT a.restaurant_id, r.name AS restaurant, COALESCE(r.alert_max_per_day,0) AS cap, COUNT(*) AS n FROM alert_log a LEFT JOIN restaurants r ON r.id=a.restaurant_id WHERE a.fired_at >= ? GROUP BY a.restaurant_id HAVING n >= 10 ORDER BY n DESC", (today,))
-    caps = _rows(conn, "SELECT id AS restaurant_id, name AS restaurant, alert_max_per_day AS cap FROM restaurants WHERE COALESCE(alert_max_per_day,0) > 0 ORDER BY name")
-    scheduled = _rows(conn, "SELECT p.id, p.restaurant_id, r.name AS restaurant, p.platform, p.content_type, p.topic, p.scheduled_for, p.status, p.error, p.attempts FROM marketing_scheduled_posts p LEFT JOIN restaurants r ON r.id=p.restaurant_id ORDER BY p.scheduled_for DESC LIMIT 60")
-    today_push = _one(conn, "SELECT SUM(CASE WHEN ok=1 THEN 1 ELSE 0 END) AS sent, SUM(CASE WHEN ok=0 THEN 1 ELSE 0 END) AS failed FROM push_deliveries WHERE created_at >= ?", (today,)) or {}
+    now = datetime.now(); today = now.strftime("%Y-%m-%d"); week = _stamp(now - timedelta(days=7))
+    pushes = _rows_dict(conn, "SELECT p.id, p.restaurant_id, r.name AS restaurant, p.device_token_id, d.user_id, u.username, p.alert_type, p.status, p.ok, p.attempts, p.error, p.created_at FROM push_deliveries p LEFT JOIN restaurants r ON r.id=p.restaurant_id LEFT JOIN device_tokens d ON d.id=p.device_token_id LEFT JOIN users u ON u.id=d.user_id ORDER BY p.id DESC LIMIT ?", (limit,))
+    devices = _rows_dict(conn, "SELECT d.id, d.restaurant_id, r.name AS restaurant, u.username, d.environment, d.created_at, d.last_success_at, d.consecutive_failures, d.disabled_reason FROM device_tokens d LEFT JOIN restaurants r ON r.id=d.restaurant_id LEFT JOIN users u ON u.id=d.user_id ORDER BY d.id DESC")
+    alerts = _rows_dict(conn, "SELECT a.id, a.restaurant_id, r.name AS restaurant, a.alert_type, a.review_id, a.fired_at FROM alert_log a LEFT JOIN restaurants r ON r.id=a.restaurant_id ORDER BY a.id DESC LIMIT ?", (limit,))
+    by_type = _rows_dict(conn, "SELECT alert_type, COUNT(*) AS n FROM alert_log WHERE fired_at >= ? GROUP BY alert_type ORDER BY n DESC", (week,))
+    storms = _rows_dict(conn, "SELECT a.restaurant_id, r.name AS restaurant, COALESCE(r.alert_max_per_day,0) AS cap, COUNT(*) AS n FROM alert_log a LEFT JOIN restaurants r ON r.id=a.restaurant_id WHERE a.fired_at >= ? GROUP BY a.restaurant_id HAVING n >= 10 ORDER BY n DESC", (today,))
+    caps = _rows_dict(conn, "SELECT id AS restaurant_id, name AS restaurant, alert_max_per_day AS cap FROM restaurants WHERE COALESCE(alert_max_per_day,0) > 0 ORDER BY name")
+    scheduled = _rows_dict(conn, "SELECT p.id, p.restaurant_id, r.name AS restaurant, p.platform, p.content_type, p.topic, p.scheduled_for, p.status, p.error, p.attempts FROM marketing_scheduled_posts p LEFT JOIN restaurants r ON r.id=p.restaurant_id ORDER BY p.scheduled_for DESC LIMIT 60")
+    today_push = _one_dict(conn, "SELECT SUM(CASE WHEN ok=1 THEN 1 ELSE 0 END) AS sent, SUM(CASE WHEN ok=0 THEN 1 ELSE 0 END) AS failed FROM push_deliveries WHERE created_at >= ?", (today,)) or {}
     # Whether any of it was worth sending. Everything above counts what went
     # OUT; this is the first thing in the product that counts what came back.
     # Thirty days rather than seven: several of these types fire weekly, so a
     # seven-day open rate for them is one notification wide.
-    month = _iso(now - timedelta(days=30))
-    engagement = _rows(conn,
+    month = _stamp(now - timedelta(days=30))
+    engagement = _rows_dict(conn,
         "SELECT a.alert_type, COUNT(*) AS delivered, "
         "(SELECT COUNT(*) FROM notification_opens o WHERE o.alert_type=a.alert_type "
         " AND o.opened_at >= ?) AS opened "
@@ -998,8 +998,8 @@ def run_job_now(name, actor):
     if not spec:
         return {"ok": False, "error": "Unknown job"}
     conn = get_conn()
-    running = _one(conn, "SELECT id, started_at FROM job_runs WHERE job=? AND finished_at IS NULL AND started_at >= ? ORDER BY id DESC LIMIT 1",
-                   (name, _iso(datetime.now() - timedelta(minutes=30))))
+    running = _one_dict(conn, "SELECT id, started_at FROM job_runs WHERE job=? AND finished_at IS NULL AND started_at >= ? ORDER BY id DESC LIMIT 1",
+                   (name, _stamp(datetime.now() - timedelta(minutes=30))))
     conn.close()
     if running:
         return {"ok": False, "error": f"{name} is already running (started {running['started_at']})"}
@@ -1049,13 +1049,13 @@ def set_alert_cap(rid, max_per_day, actor):
 
 def jobs():
     conn = get_conn()
-    now = datetime.now(); day = _iso(now - timedelta(days=1)); week = _iso(now - timedelta(days=7))
-    failures = _rows(conn, "SELECT id, job, error, context, created_at FROM job_failures ORDER BY id DESC LIMIT 100")
-    grouped = _rows(conn, "SELECT job, COUNT(*) AS n, MAX(created_at) AS last_at, MIN(created_at) AS first_at, MAX(error) AS sample FROM job_failures WHERE created_at >= ? GROUP BY job ORDER BY n DESC", (week,))
-    runs = _rows(conn, "SELECT id, job, started_at, finished_at, duration_ms, ok, error, context FROM job_runs ORDER BY id DESC LIMIT 120")
-    last_ok = _rows(conn, "SELECT job, MAX(finished_at) AS last_ok, ROUND(AVG(duration_ms)) AS avg_ms, COUNT(*) AS runs FROM job_runs WHERE ok=1 AND started_at >= ? GROUP BY job", (week,))
-    stuck = _rows(conn, "SELECT id, job, started_at, context FROM job_runs WHERE finished_at IS NULL AND started_at < ? ORDER BY started_at", (_iso(now - timedelta(minutes=30)),))
-    posts = _rows(conn, "SELECT p.id, r.name AS restaurant, p.platform, p.topic, p.scheduled_for, p.status, p.attempts, p.error FROM marketing_scheduled_posts p LEFT JOIN restaurants r ON r.id=p.restaurant_id WHERE p.status IN ('pending','failed') ORDER BY p.scheduled_for LIMIT 40")
+    now = datetime.now(); day = _stamp(now - timedelta(days=1)); week = _stamp(now - timedelta(days=7))
+    failures = _rows_dict(conn, "SELECT id, job, error, context, created_at FROM job_failures ORDER BY id DESC LIMIT 100")
+    grouped = _rows_dict(conn, "SELECT job, COUNT(*) AS n, MAX(created_at) AS last_at, MIN(created_at) AS first_at, MAX(error) AS sample FROM job_failures WHERE created_at >= ? GROUP BY job ORDER BY n DESC", (week,))
+    runs = _rows_dict(conn, "SELECT id, job, started_at, finished_at, duration_ms, ok, error, context FROM job_runs ORDER BY id DESC LIMIT 120")
+    last_ok = _rows_dict(conn, "SELECT job, MAX(finished_at) AS last_ok, ROUND(AVG(duration_ms)) AS avg_ms, COUNT(*) AS runs FROM job_runs WHERE ok=1 AND started_at >= ? GROUP BY job", (week,))
+    stuck = _rows_dict(conn, "SELECT id, job, started_at, context FROM job_runs WHERE finished_at IS NULL AND started_at < ? ORDER BY started_at", (_stamp(now - timedelta(minutes=30)),))
+    posts = _rows_dict(conn, "SELECT p.id, r.name AS restaurant, p.platform, p.topic, p.scheduled_for, p.status, p.attempts, p.error FROM marketing_scheduled_posts p LEFT JOIN restaurants r ON r.id=p.restaurant_id WHERE p.status IN ('pending','failed') ORDER BY p.scheduled_for LIMIT 40")
     conn.close()
     from status_manager import scheduler_heartbeat_age_minutes
     try:
@@ -1101,7 +1101,7 @@ def unresolve_issue(key):
 
 def resolved_issues():
     conn = get_conn()
-    rows = _rows(conn, "SELECT key, resolved_at, note, actor FROM admin_issue_resolutions ORDER BY resolved_at DESC LIMIT 100")
+    rows = _rows_dict(conn, "SELECT key, resolved_at, note, actor FROM admin_issue_resolutions ORDER BY resolved_at DESC LIMIT 100")
     conn.close()
     return {"ok": True, "resolved": rows}
 
@@ -1118,28 +1118,28 @@ _ACTIVITY_LABELS = {
 
 def activity(limit=60, d=None):
     conn = get_conn()
-    now = datetime.now(); since = _iso(now - timedelta(days=14))
+    now = datetime.now(); since = _stamp(now - timedelta(days=14))
     ev = []
-    for a in _rows(conn, "SELECT a.restaurant_id, r.name, a.event_type, a.event_data, a.created_at FROM activity_log a LEFT JOIN restaurants r ON r.id=a.restaurant_id WHERE a.created_at >= ? ORDER BY a.id DESC LIMIT 120", (since,)):
+    for a in _rows_dict(conn, "SELECT a.restaurant_id, r.name, a.event_type, a.event_data, a.created_at FROM activity_log a LEFT JOIN restaurants r ON r.id=a.restaurant_id WHERE a.created_at >= ? ORDER BY a.id DESC LIMIT 120", (since,)):
         label = _ACTIVITY_LABELS.get(a["event_type"], a["event_type"].replace("_", " ").capitalize() if a["event_type"] else None)
         if label is None:
             continue
         ev.append({"at": a["created_at"], "restaurant_id": a["restaurant_id"], "restaurant": a["name"], "kind": "account", "label": label, "tone": "neutral"})
-    for l in _rows(conn, "SELECT l.restaurant_id, r.name, l.device_type, l.created_at FROM login_history l LEFT JOIN restaurants r ON r.id=l.restaurant_id WHERE l.created_at >= ? ORDER BY l.id DESC LIMIT 60", (since,)):
+    for l in _rows_dict(conn, "SELECT l.restaurant_id, r.name, l.device_type, l.created_at FROM login_history l LEFT JOIN restaurants r ON r.id=l.restaurant_id WHERE l.created_at >= ? ORDER BY l.id DESC LIMIT 60", (since,)):
         ev.append({"at": l["created_at"], "restaurant_id": l["restaurant_id"], "restaurant": l["name"], "kind": "login", "label": f"Signed in ({l['device_type'] or 'web'})", "tone": "neutral"})
-    for r in _rows(conn, "SELECT id, name, created_at FROM restaurants WHERE created_at >= ? ORDER BY id DESC", (since,)):
+    for r in _rows_dict(conn, "SELECT id, name, created_at FROM restaurants WHERE created_at >= ? ORDER BY id DESC", (since,)):
         ev.append({"at": r["created_at"], "restaurant_id": r["id"], "restaurant": r["name"], "kind": "signup", "label": "Restaurant created", "tone": "good"})
-    for e in _rows(conn, "SELECT e.restaurant_id, r.name, e.email_type, e.sent_at, e.error FROM email_log e LEFT JOIN restaurants r ON r.id=e.restaurant_id WHERE e.status='failed' AND e.sent_at >= ? ORDER BY e.id DESC LIMIT 40", (since,)):
+    for e in _rows_dict(conn, "SELECT e.restaurant_id, r.name, e.email_type, e.sent_at, e.error FROM email_log e LEFT JOIN restaurants r ON r.id=e.restaurant_id WHERE e.status='failed' AND e.sent_at >= ? ORDER BY e.id DESC LIMIT 40", (since,)):
         ev.append({"at": e["sent_at"], "restaurant_id": e["restaurant_id"], "restaurant": e["name"], "kind": "email", "label": f"Email failed · {e['email_type']}", "tone": "bad", "detail": e["error"]})
-    for p in _rows(conn, "SELECT p.restaurant_id, r.name, p.alert_type, p.created_at, p.error FROM push_deliveries p LEFT JOIN restaurants r ON r.id=p.restaurant_id WHERE p.ok=0 AND p.created_at >= ? ORDER BY p.id DESC LIMIT 40", (since,)):
+    for p in _rows_dict(conn, "SELECT p.restaurant_id, r.name, p.alert_type, p.created_at, p.error FROM push_deliveries p LEFT JOIN restaurants r ON r.id=p.restaurant_id WHERE p.ok=0 AND p.created_at >= ? ORDER BY p.id DESC LIMIT 40", (since,)):
         ev.append({"at": p["created_at"], "restaurant_id": p["restaurant_id"], "restaurant": p["name"], "kind": "push", "label": f"Push failed · {p['alert_type']}", "tone": "bad", "detail": p["error"]})
-    for j in _rows(conn, "SELECT job, error, created_at FROM job_failures WHERE created_at >= ? ORDER BY id DESC LIMIT 40", (since,)):
+    for j in _rows_dict(conn, "SELECT job, error, created_at FROM job_failures WHERE created_at >= ? ORDER BY id DESC LIMIT 40", (since,)):
         ev.append({"at": j["created_at"], "restaurant_id": None, "restaurant": "Platform", "kind": "job", "label": f"Job failed · {j['job']}", "tone": "bad", "detail": (j["error"] or "")[:140]})
-    for e in _rows(conn, "SELECT e.restaurant_id, r.name, e.source, e.event_type, e.summary, e.created_at FROM admin_events e LEFT JOIN restaurants r ON r.id=e.restaurant_id WHERE e.created_at >= ? ORDER BY e.id DESC LIMIT 40", (since,)):
+    for e in _rows_dict(conn, "SELECT e.restaurant_id, r.name, e.source, e.event_type, e.summary, e.created_at FROM admin_events e LEFT JOIN restaurants r ON r.id=e.restaurant_id WHERE e.created_at >= ? ORDER BY e.id DESC LIMIT 40", (since,)):
         bad = any(x in e["event_type"] for x in ("failed", "deleted", "canceled", "past_due"))
         ev.append({"at": e["created_at"], "restaurant_id": e["restaurant_id"], "restaurant": e["name"] or "Unmatched customer", "kind": e["source"],
                    "label": f"{e['source'].capitalize()} · {e['summary'] or e['event_type']}", "tone": "bad" if bad else ("good" if e["event_type"] in ("invoice.paid", "contract.signed") else "neutral")})
-    for a in _rows(conn, "SELECT a.restaurant_id, r.name, a.alert_type, a.fired_at FROM alert_log a LEFT JOIN restaurants r ON r.id=a.restaurant_id WHERE a.fired_at >= ? AND a.alert_type IN ('1star','health','labor_over') ORDER BY a.id DESC LIMIT 30", (since,)):
+    for a in _rows_dict(conn, "SELECT a.restaurant_id, r.name, a.alert_type, a.fired_at FROM alert_log a LEFT JOIN restaurants r ON r.id=a.restaurant_id WHERE a.fired_at >= ? AND a.alert_type IN ('1star','health','labor_over') ORDER BY a.id DESC LIMIT 30", (since,)):
         ev.append({"at": a["fired_at"], "restaurant_id": a["restaurant_id"], "restaurant": a["name"], "kind": "alert", "label": f"Alert fired · {a['alert_type']}", "tone": "warn"})
     conn.close()
     ev.sort(key=lambda e: e["at"] or "", reverse=True)
@@ -1153,11 +1153,11 @@ def search(q):
     like = f"%{q}%"
     conn = get_conn()
     res = []
-    for r in _rows(conn, "SELECT id, name, location_group, location_name, neighborhood, owner_email, owner_name, stripe_customer_id FROM restaurants WHERE name LIKE ? OR location_group LIKE ? OR location_name LIKE ? OR neighborhood LIKE ? OR owner_email LIKE ? OR owner_name LIKE ? OR stripe_customer_id LIKE ? OR CAST(id AS TEXT) = ? LIMIT 20", (like, like, like, like, like, like, like, q)):
+    for r in _rows_dict(conn, "SELECT id, name, location_group, location_name, neighborhood, owner_email, owner_name, stripe_customer_id FROM restaurants WHERE name LIKE ? OR location_group LIKE ? OR location_name LIKE ? OR neighborhood LIKE ? OR owner_email LIKE ? OR owner_name LIKE ? OR stripe_customer_id LIKE ? OR CAST(id AS TEXT) = ? LIMIT 20", (like, like, like, like, like, like, like, q)):
         res.append({"type": "location", "id": r["id"], "title": r["name"], "sub": " · ".join(x for x in [r["location_group"], r["location_name"], r["neighborhood"]] if x) or r["owner_email"]})
-    for u in _rows(conn, "SELECT u.id, u.username, u.email, u.role, u.restaurant_id, r.name FROM users u LEFT JOIN restaurants r ON r.id=u.restaurant_id WHERE u.username LIKE ? OR u.email LIKE ? OR CAST(u.id AS TEXT) = ? LIMIT 20", (like, like, q)):
+    for u in _rows_dict(conn, "SELECT u.id, u.username, u.email, u.role, u.restaurant_id, r.name FROM users u LEFT JOIN restaurants r ON r.id=u.restaurant_id WHERE u.username LIKE ? OR u.email LIKE ? OR CAST(u.id AS TEXT) = ? LIMIT 20", (like, like, q)):
         res.append({"type": "owner" if u["role"] in ("client", "owner") else "login", "id": u["restaurant_id"], "user_id": u["id"], "title": u["username"], "sub": f"{u['email']} · {u['name'] or 'no restaurant'} · {u['role']}"})
-    for g in _rows(conn, "SELECT location_group AS g, COUNT(*) AS n FROM restaurants WHERE location_group LIKE ? GROUP BY location_group LIMIT 10", (like,)):
+    for g in _rows_dict(conn, "SELECT location_group AS g, COUNT(*) AS n FROM restaurants WHERE location_group LIKE ? GROUP BY location_group LIMIT 10", (like,)):
         res.append({"type": "brand", "id": None, "title": g["g"], "sub": f"{g['n']} locations"})
     conn.close()
     return {"ok": True, "results": res[:40]}

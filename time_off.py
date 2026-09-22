@@ -20,7 +20,7 @@ MAX_AHEAD_DAYS = 180
 STATUSES = ("pending", "approved", "denied")
 
 
-def _d(s):
+def _as_date(s):
     return date.fromisoformat(str(s)[:10])
 
 
@@ -30,7 +30,7 @@ def request_time_off(restaurant_id, employee_name, start, end, reason=None, db_p
     if not name:
         return None, "No employee name on this session."
     try:
-        s, e = _d(start), _d(end or start)
+        s, e = _as_date(start), _as_date(end or start)
     except (TypeError, ValueError):
         return None, "Pick a start and end date."
     today = today or date.today()
@@ -123,7 +123,7 @@ def decide(restaurant_id, request_id, approve, decided_by=None, note=None, db_pa
 def approved_in_window(restaurant_id, start, end, db_path=DB_PATH):
     """{employee_name: [iso dates]} of approved time off touching [start, end]
     — what the schedule draft must honour."""
-    s, e = _d(start), _d(end)
+    s, e = _as_date(start), _as_date(end)
     conn = get_conn(db_path)
     try:
         rows = conn.execute(
@@ -134,7 +134,7 @@ def approved_in_window(restaurant_id, start, end, db_path=DB_PATH):
         conn.close()
     out = {}
     for r in rows:
-        a, b = max(_d(r["start_date"]), s), min(_d(r["end_date"]), e)
+        a, b = max(_as_date(r["start_date"]), s), min(_as_date(r["end_date"]), e)
         days = [(a + timedelta(days=i)).isoformat() for i in range((b - a).days + 1)]
         out.setdefault(r["employee_name"], []).extend(days)
     return {k: sorted(set(v)) for k, v in out.items()}

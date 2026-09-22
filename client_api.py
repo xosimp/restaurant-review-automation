@@ -4206,7 +4206,7 @@ def billing_info(current_user):
         print(f"Stripe billing info error: {e}")
         return jsonify(ok=False, reason="stripe_error", error=_safe_err(e))
 
-def _normalize_phone(raw):
+def _normalize_phone_lenient(raw):
     import re
     digits = re.sub(r'\D', '', raw or '')
     if len(digits) == 10:
@@ -4290,7 +4290,7 @@ def save_alert_settings(current_user):
     for ec in existing:
         delete_alert_contact(ec["id"])
     for nc in new_contacts:
-        phone = _normalize_phone(nc.get("phone") or "")
+        phone = _normalize_phone_lenient(nc.get("phone") or "")
         name  = (nc.get("name")  or "").strip()
         if phone:
             add_alert_contact(rid, name, phone, sms_consent=sms_on)

@@ -99,14 +99,14 @@ def _f(v, default=0.0):
         return default
 
 
-def _rows(conn, sql, params=()):
+def _rows_raw(conn, sql, params=()):
     try:
         return conn.execute(sql, params).fetchall()
     except Exception:
         return []
 
 
-def _one(conn, sql, params=()):
+def _one_row(conn, sql, params=()):
     try:
         return conn.execute(sql, params).fetchone()
     except Exception:
@@ -146,7 +146,7 @@ def rating_trend(restaurant_id: int, weeks: int = 8, db_path: str = DB_PATH) -> 
     """
     from waste_trend import _confidence, _anomalies, WEEKS_FOR_TREND
     conn = get_conn(db_path)
-    rows = _rows(conn, f"""
+    rows = _rows_raw(conn, f"""
         SELECT strftime('%Y-W%W', {_AXIS}) AS week,
                COUNT(*) AS cnt,
                AVG(rating) AS avg_r,
@@ -249,7 +249,7 @@ def complaint_clusters(restaurant_id: int, days: int = DIAGNOSIS_WINDOW_DAYS,
     pattern out of two reviews.
     """
     conn = get_conn(db_path)
-    rows = _rows(conn, f"""
+    rows = _rows_raw(conn, f"""
         SELECT id, rating, categories, entities, specific_complaint, severity,
                author, text, {_AXIS} AS occurred_at
         FROM reviews
@@ -371,7 +371,7 @@ def severity_breakdown(restaurant_id: int, days: int = 90, db_path: str = DB_PAT
     """
     from analyser import SEVERITIES, SEVERITY_LABELS
     conn = get_conn(db_path)
-    rows = _rows(conn, f"""
+    rows = _rows_raw(conn, f"""
         SELECT severity, COUNT(*) AS n,
                SUM(response_status NOT IN ('posted','approved','skipped')) AS open_n
         FROM reviews
@@ -399,7 +399,7 @@ def severity_breakdown(restaurant_id: int, days: int = 90, db_path: str = DB_PAT
 
 def _unclassified_count(restaurant_id, days, db_path):
     conn = get_conn(db_path)
-    row = _one(conn, f"""
+    row = _one_row(conn, f"""
         SELECT COUNT(*) AS n FROM reviews
         WHERE restaurant_id=? AND deleted_at IS NULL AND processed=1
           AND severity IS NULL AND {_AXIS} >= datetime('now', ?)
@@ -418,7 +418,7 @@ def daypart_breakdown(restaurant_id: int, days: int = 90, db_path: str = DB_PATH
     count would call that a Saturday problem.
     """
     conn = get_conn(db_path)
-    rows = _rows(conn, f"""
+    rows = _rows_raw(conn, f"""
         SELECT {_AXIS} AS occurred_at, sentiment, rating, entities
         FROM reviews
         WHERE restaurant_id=? AND deleted_at IS NULL AND processed=1
@@ -536,7 +536,7 @@ def operational_context(restaurant_id: int, db_path: str = DB_PATH) -> dict:
 
     try:
         conn = get_conn(db_path)
-        rows = _rows(conn, """
+        rows = _rows_raw(conn, """
             SELECT topic, reach, impressions, created_at
             FROM marketing_content_log
             WHERE restaurant_id=? AND post_id IS NOT NULL
@@ -580,7 +580,7 @@ def competitor_benchmark(restaurant_id: int, db_path: str = DB_PATH) -> dict:
         return {"available": False, "reason": "fewer than two competitors with a rating"}
 
     conn = get_conn(db_path)
-    row = _one(conn, f"""
+    row = _one_row(conn, f"""
         SELECT ROUND(AVG(rating),2) AS r, COUNT(*) AS n FROM reviews
         WHERE restaurant_id=? AND deleted_at IS NULL
           AND {_AXIS} >= datetime('now','-90 days')
@@ -625,7 +625,7 @@ def location_comparison(restaurant_id: int, days: int = 90, db_path: str = DB_PA
     if not r or not getattr(r, "location_group", None):
         return {"available": False, "reason": "single location"}
     conn = get_conn(db_path)
-    sibs = _rows(conn, """
+    sibs = _rows_raw(conn, """
         SELECT id, COALESCE(location_name, name) AS label FROM restaurants
         WHERE location_group=? AND owner_email=? ORDER BY label
     """, (r.location_group, r.owner_email))
@@ -635,13 +635,13 @@ def location_comparison(restaurant_id: int, days: int = 90, db_path: str = DB_PA
 
     out = []
     for s in sibs:
-        rows = _rows(conn, f"""
+        rows = _rows_raw(conn, f"""
             SELECT categories FROM reviews
             WHERE restaurant_id=? AND deleted_at IS NULL AND processed=1
               AND sentiment='negative' AND categories IS NOT NULL AND categories != '[]'
               AND {_AXIS} >= datetime('now', ?)
         """, (s["id"], f"-{int(days)} days"))
-        tot = _one(conn, f"""
+        tot = _one_row(conn, f"""
             SELECT COUNT(*) AS n, ROUND(AVG(rating),2) AS r FROM reviews
             WHERE restaurant_id=? AND deleted_at IS NULL
               AND {_AXIS} >= datetime('now', ?)
@@ -707,12 +707,12 @@ def revenue_at_risk(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     ai_guard.CLAIM_KINDS.
     """
     conn = get_conn(db_path)
-    cur = _one(conn, f"""
+    cur = _one_row(conn, f"""
         SELECT ROUND(AVG(rating),2) AS r, COUNT(*) AS n FROM reviews
         WHERE restaurant_id=? AND deleted_at IS NULL
           AND {_AXIS} >= datetime('now','-30 days')
     """, (restaurant_id,))
-    prev = _one(conn, f"""
+    prev = _one_row(conn, f"""
         SELECT ROUND(AVG(rating),2) AS r, COUNT(*) AS n FROM reviews
         WHERE restaurant_id=? AND deleted_at IS NULL
           AND {_AXIS} >= datetime('now','-90 days')
@@ -742,7 +742,7 @@ def revenue_at_risk(restaurant_id: int, db_path: str = DB_PATH) -> dict:
         pass
     if not monthly_sales:
         conn = get_conn(db_path)
-        row = _one(conn, """
+        row = _one_row(conn, """
             SELECT AVG(sales) AS s, COUNT(*) AS n FROM labor_daily_history
             WHERE restaurant_id=? AND sales IS NOT NULL AND sales > 0
               AND date >= date('now','-90 days')
@@ -936,7 +936,7 @@ def _diagnosis_inputs(restaurant_id, cluster, db_path):
     conn = get_conn(db_path)
     ids = cluster["review_ids"][:12]
     placeholders = ",".join("?" for _ in ids) if ids else "NULL"
-    rows = _rows(conn, f"""
+    rows = _rows_raw(conn, f"""
         SELECT id, rating, text FROM reviews
         WHERE restaurant_id=? AND id IN ({placeholders})
         ORDER BY rating ASC LIMIT 8
@@ -1196,7 +1196,7 @@ def get_diagnoses(restaurant_id: int, db_path: str = DB_PATH,
     whether to show it with an "as of" or refresh it.
     """
     conn = get_conn(db_path)
-    rows = _rows(conn, """
+    rows = _rows_raw(conn, """
         SELECT * FROM review_diagnoses WHERE restaurant_id=?
         ORDER BY generated_at DESC
     """, (restaurant_id,))

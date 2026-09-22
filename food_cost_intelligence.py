@@ -75,14 +75,14 @@ def _f(v, default=0.0):
         return default
 
 
-def _rows(conn, sql, params=()):
+def _rows_raw(conn, sql, params=()):
     try:
         return conn.execute(sql, params).fetchall()
     except Exception:
         return []
 
 
-def _one(conn, sql, params=()):
+def _one_row(conn, sql, params=()):
     try:
         return conn.execute(sql, params).fetchone()
     except Exception:
@@ -167,7 +167,7 @@ def weekday_waste(restaurant_id: int, days: int = 56, db_path: str = DB_PATH) ->
     that day's waste is not a Friday pattern.
     """
     conn = get_conn(db_path)
-    rows = _rows(conn, """
+    rows = _rows_raw(conn, """
         SELECT e.event_date, e.source,
                COALESCE(SUM(e.qty * COALESCE(i.unit_cost,0)),0) AS cost,
                COUNT(*) AS n
@@ -292,7 +292,7 @@ def supplier_comparison(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     an ingredient sits with one supplier, because there is nothing to compare.
     """
     conn = get_conn(db_path)
-    rows = _rows(conn, """
+    rows = _rows_raw(conn, """
         SELECT LOWER(TRIM(name)) AS key, name, supplier_name,
                COALESCE(unit_cost,0) AS unit_cost, unit
           FROM ingredients
@@ -728,7 +728,7 @@ def operational_context(restaurant_id: int, db_path: str = DB_PATH) -> dict:
 
     try:
         conn = get_conn(db_path)
-        row = _one(conn, """
+        row = _one_row(conn, """
             SELECT COUNT(*) AS n, COALESCE(SUM(COALESCE(reach,0)+COALESCE(impressions,0)),0) AS reach
               FROM marketing_content_log
              WHERE restaurant_id=? AND post_id IS NOT NULL
@@ -834,7 +834,7 @@ def score_forecasts(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     from waste_trend import load_waste_history
     conn = get_conn(db_path)
     try:
-        due = _rows(conn,
+        due = _rows_raw(conn,
             "SELECT id, kind, horizon_end, predicted FROM forecast_log "
             "WHERE restaurant_id=? AND actual IS NULL AND horizon_end <= date('now')",
             (restaurant_id,))
@@ -901,7 +901,7 @@ def forecast_accuracy(restaurant_id: int, kind: str = "waste_week",
     has been 40% out four times running should say so next to the fifth.
     """
     conn = get_conn(db_path)
-    rows = _rows(conn,
+    rows = _rows_raw(conn,
         "SELECT predicted, actual, error_pct FROM forecast_log "
         "WHERE restaurant_id=? AND kind=? AND actual IS NOT NULL "
         "ORDER BY horizon_end DESC LIMIT 8", (restaurant_id, kind))
@@ -928,7 +928,7 @@ def forecast_calibration(restaurant_id: int, kind: str = "waste_week", db_path: 
     land, so the next projection is corrected and SAYS so. Absent — never
     a silent tweak — until the record exists."""
     conn = get_conn(db_path)
-    rows = _rows(conn,
+    rows = _rows_raw(conn,
         "SELECT signed_error_pct FROM forecast_log WHERE restaurant_id=? AND kind=? "
         "AND signed_error_pct IS NOT NULL ORDER BY horizon_end DESC LIMIT 8", (restaurant_id, kind))
     conn.close()
@@ -1319,7 +1319,7 @@ def get_diagnosis(restaurant_id: int, db_path: str = DB_PATH,
     enforced: a stale cause is still the best answer available, and hiding it
     leaves the owner with the bare waste total the module used to give them."""
     conn = get_conn(db_path)
-    row = _one(conn, "SELECT * FROM food_cost_diagnoses WHERE restaurant_id=? "
+    row = _one_row(conn, "SELECT * FROM food_cost_diagnoses WHERE restaurant_id=? "
                      "ORDER BY generated_at DESC LIMIT 1", (restaurant_id,))
     conn.close()
     if not row:

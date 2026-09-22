@@ -46,7 +46,7 @@ def _iso_z(value):
     return s + "Z" if not s.endswith("Z") and "+" not in s else s
 
 
-def _one(conn, sql, args=()):
+def _scalar(conn, sql, args=()):
     try:
         row = conn.execute(sql, args).fetchone()
         return row[0] if row else None
@@ -103,14 +103,14 @@ def build(restaurant_id, restaurant=None, db_path=DB_PATH, denied=frozenset()):
         # ── reviews ──────────────────────────────────────────────────────
         if getattr(r, "module_reviews", 0) and "reviews" not in denied:
             live = bool(getattr(r, "reviews_live", 0) or getattr(r, "gmb_refresh_token", None))
-            n_new = _one(conn, "SELECT COUNT(*) FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL "
+            n_new = _scalar(conn, "SELECT COUNT(*) FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL "
                                "AND processed=1 AND fetched_at >= ?", (restaurant_id, day)) or 0
-            last_fetch = _one(conn, "SELECT MAX(fetched_at) FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL "
+            last_fetch = _scalar(conn, "SELECT MAX(fetched_at) FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL "
                                     "AND fetched_at >= ?", (restaurant_id, week))
             if n_new:
                 entries.append({"at": _iso_z(last_fetch), "module": "reviews", "kind": "analyzed",
                                 "text": f"Finished analyzing {_plural(n_new, 'new review')}."})
-            drafted = _one(conn, "SELECT COUNT(*) FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL "
+            drafted = _scalar(conn, "SELECT COUNT(*) FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL "
                                  "AND draft_response IS NOT NULL AND draft_response != '' AND fetched_at >= ?",
                            (restaurant_id, day)) or 0
             if drafted:
@@ -131,7 +131,7 @@ def build(restaurant_id, restaurant=None, db_path=DB_PATH, denied=frozenset()):
                 slot = _next_fetch_slot(r)
                 working.append({"module": "reviews",
                                 "text": "Watching for new reviews" + (f" · next sweep at {slot}" if slot else "")})
-                n90 = _one(conn, "SELECT COUNT(*) FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL "
+                n90 = _scalar(conn, "SELECT COUNT(*) FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL "
                                  "AND COALESCE(NULLIF(review_date,''), fetched_at) >= ?",
                            (restaurant_id, _utc(now - timedelta(days=90)))) or 0
                 if n90:
@@ -165,7 +165,7 @@ def build(restaurant_id, restaurant=None, db_path=DB_PATH, denied=frozenset()):
                              "WHERE restaurant_id=? AND created_at >= ?", (restaurant_id, day))
             if pos and pos["at"]:
                 working.append({"module": "labor", "text": "Monitoring today's sales hour by hour"})
-            hist = _one(conn, "SELECT MAX(date) FROM labor_daily_history WHERE restaurant_id=?", (restaurant_id,))
+            hist = _scalar(conn, "SELECT MAX(date) FROM labor_daily_history WHERE restaurant_id=?", (restaurant_id,))
             if hist and str(hist) >= week[:10]:
                 working.append({"module": "labor", "text": "Tracking labor against your target"})
 
@@ -185,17 +185,17 @@ def build(restaurant_id, restaurant=None, db_path=DB_PATH, denied=frozenset()):
                     pass
                 entries.append({"at": _iso_z(fc["created_at"]), "module": "inventory", "kind": "projected",
                                 "text": f"Projected {what} from your counts and sales." + corr})
-            counted = _one(conn, "SELECT MAX(created_at) FROM inventory_history WHERE restaurant_id=?", (restaurant_id,))
+            counted = _scalar(conn, "SELECT MAX(created_at) FROM inventory_history WHERE restaurant_id=?", (restaurant_id,))
             if counted and str(counted) >= month:
                 working.append({"module": "inventory", "text": "Checking inventory trends against your last count"})
-            loss = _one(conn, "SELECT MAX(synced_at) FROM pos_loss_daily WHERE restaurant_id=?", (restaurant_id,))
+            loss = _scalar(conn, "SELECT MAX(synced_at) FROM pos_loss_daily WHERE restaurant_id=?", (restaurant_id,))
             if loss and str(loss) >= week:
                 entries.append({"at": _iso_z(loss), "module": "inventory", "kind": "loss",
                                 "text": "Checked comps, voids and refunds against your eight-week baseline."})
 
         # ── marketing ────────────────────────────────────────────────────
         if getattr(r, "module_marketing", 0) and "marketing" not in denied:
-            up = _one(conn, "SELECT COUNT(*) FROM marketing_scheduled_posts WHERE restaurant_id=? "
+            up = _scalar(conn, "SELECT COUNT(*) FROM marketing_scheduled_posts WHERE restaurant_id=? "
                             "AND scheduled_for >= ? AND status NOT IN ('posted','failed','cancelled','canceled')",
                       (restaurant_id, _utc(now))) or 0
             if up:
@@ -207,7 +207,7 @@ def build(restaurant_id, restaurant=None, db_path=DB_PATH, denied=frozenset()):
                                 "text": f"Published {_plural(posted['n'], 'post')} on schedule this week."})
 
         # ── briefs, alerts, issues — the owner-facing work ───────────────
-        brief = _one(conn, "SELECT MAX(fired_at) FROM alert_log WHERE restaurant_id=? AND alert_type='morning_brief' "
+        brief = _scalar(conn, "SELECT MAX(fired_at) FROM alert_log WHERE restaurant_id=? AND alert_type='morning_brief' "
                            "AND fired_at >= ?", (restaurant_id, day))
         if brief:
             entries.append({"at": _iso_z(brief), "module": "home", "kind": "brief",

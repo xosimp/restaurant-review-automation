@@ -174,7 +174,7 @@ def _ts(v):
             return None
 
 
-def _iso(d):
+def _iso_z(d):
     return d.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if d else None
 
 
@@ -183,7 +183,7 @@ def _age_days(v, now):
     return (now - d).total_seconds() / 86400.0 if d else None
 
 
-def _one(conn, sql, params=()):
+def _one_dict(conn, sql, params=()):
     try:
         r = conn.execute(sql, params).fetchone()
         return dict(r) if r else None
@@ -191,7 +191,7 @@ def _one(conn, sql, params=()):
         return None
 
 
-def _rows(conn, sql, params=()):
+def _rows_dict(conn, sql, params=()):
     try:
         return [dict(r) for r in conn.execute(sql, params).fetchall()]
     except Exception:
@@ -232,9 +232,9 @@ def _location_signal(conn, r, now):
     look: urgent reviews, an integration error, stale review data. No labor
     or inventory analysis — those are heavy, and this runs once per location."""
     rid = r["id"]
-    urgent = _one(conn, "SELECT COUNT(*) AS n FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL AND urgency='high' AND response_status NOT IN ('posted','approved','skipped')", (rid,)) or {}
-    awaiting = _one(conn, "SELECT COUNT(*) AS n FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL AND response_status='drafted'", (rid,)) or {}
-    rating = _one(conn, "SELECT ROUND(AVG(rating),1) AS r, COUNT(*) AS n FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL AND COALESCE(NULLIF(review_date,''), fetched_at) >= date('now','-30 days')", (rid,)) or {}
+    urgent = _one_dict(conn, "SELECT COUNT(*) AS n FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL AND urgency='high' AND response_status NOT IN ('posted','approved','skipped')", (rid,)) or {}
+    awaiting = _one_dict(conn, "SELECT COUNT(*) AS n FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL AND response_status='drafted'", (rid,)) or {}
+    rating = _one_dict(conn, "SELECT ROUND(AVG(rating),1) AS r, COUNT(*) AS n FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL AND COALESCE(NULLIF(review_date,''), fetched_at) >= date('now','-30 days')", (rid,)) or {}
     issues = []
     if (urgent.get("n") or 0) > 0:
         issues.append(("critical", f"{_plural(urgent['n'], 'urgent review')} unanswered"))
@@ -324,10 +324,10 @@ def _build(current_user):
                   or has_permission(current_user, MODULE_VIEW_PERMISSIONS[m["key"]])]
     active_keys = {m["key"] for m in active}
     conn = get_conn()
-    r = _one(conn, "SELECT * FROM restaurants WHERE id=?", (rid,)) or {}
+    r = _one_dict(conn, "SELECT * FROM restaurants WHERE id=?", (rid,)) or {}
 
     # ── previous visit (this user) ──────────────────────────────────────────
-    prev_login = _rows(conn, "SELECT created_at FROM login_history WHERE user_id=? ORDER BY id DESC LIMIT 2", (current_user.get("id"),))
+    prev_login = _rows_dict(conn, "SELECT created_at FROM login_history WHERE user_id=? ORDER BY id DESC LIMIT 2", (current_user.get("id"),))
     since_dt = _ts(prev_login[1]["created_at"]) if len(prev_login) > 1 else None
     if since_dt is None or (now - since_dt).total_seconds() < 3600:
         # First visit, or a re-login within the hour: "since yesterday" is the
@@ -345,10 +345,10 @@ def _build(current_user):
     sentiment = get_sentiment_trend(rid, weeks=8) if "reviews" in active_keys else []
     top_issues = get_top_issues(rid, days=90, limit=3) if "reviews" in active_keys else []
     google_connected = bool(r.get("gmb_refresh_token") or r.get("reviews_live"))
-    reviews_since = _one(conn, "SELECT COUNT(*) AS n, ROUND(AVG(rating),1) AS avg, SUM(rating<=2) AS low FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL AND (fetched_at >= ? OR fetched_at >= ?)", (rid, since_sql, since_iso_t)) or {}
-    replies_since = _one(conn, "SELECT SUM(response_status='posted' AND posted_at >= ?) AS posted, SUM(response_status IN ('approved','posted') AND approved_at >= ?) AS approved FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL", (since_iso_t, since_iso_t, rid)) or {}
-    stale_unanswered = _one(conn, "SELECT COUNT(*) AS n FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL AND rating<=3 AND response_status IN ('pending','drafted') AND julianday(fetched_at) < julianday('now','-2 days')", (rid,)) or {}
-    rating_prev = _one(conn, "SELECT ROUND(AVG(rating),1) AS r, COUNT(*) AS n FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL AND COALESCE(NULLIF(review_date,''), fetched_at) >= date('now','-60 days') AND COALESCE(NULLIF(review_date,''), fetched_at) < date('now','-30 days')", (rid,)) or {}
+    reviews_since = _one_dict(conn, "SELECT COUNT(*) AS n, ROUND(AVG(rating),1) AS avg, SUM(rating<=2) AS low FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL AND (fetched_at >= ? OR fetched_at >= ?)", (rid, since_sql, since_iso_t)) or {}
+    replies_since = _one_dict(conn, "SELECT SUM(response_status='posted' AND posted_at >= ?) AS posted, SUM(response_status IN ('approved','posted') AND approved_at >= ?) AS approved FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL", (since_iso_t, since_iso_t, rid)) or {}
+    stale_unanswered = _one_dict(conn, "SELECT COUNT(*) AS n FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL AND rating<=3 AND response_status IN ('pending','drafted') AND julianday(fetched_at) < julianday('now','-2 days')", (rid,)) or {}
+    rating_prev = _one_dict(conn, "SELECT ROUND(AVG(rating),1) AS r, COUNT(*) AS n FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL AND COALESCE(NULLIF(review_date,''), fetched_at) >= date('now','-60 days') AND COALESCE(NULLIF(review_date,''), fetched_at) < date('now','-30 days')", (rid,)) or {}
 
     # ── labor ───────────────────────────────────────────────────────────────
     labor, labor_live = None, False
@@ -361,8 +361,8 @@ def _build(current_user):
             labor = None
     labor_target = float(r.get("labor_target_pct") or 30.0)
     labor_hist = get_labor_history(rid, limit=8) if labor_live else []
-    client_data = _one(conn, "SELECT updated_at, shifts_source, inventory_source FROM client_data WHERE restaurant_id=?", (rid,)) or {}
-    last_schedule = _one(conn, "SELECT generated_at, week_start, week_end, hours_scheduled, hours_budget FROM schedule_history WHERE restaurant_id=? ORDER BY id DESC LIMIT 1", (rid,))
+    client_data = _one_dict(conn, "SELECT updated_at, shifts_source, inventory_source FROM client_data WHERE restaurant_id=?", (rid,)) or {}
+    last_schedule = _one_dict(conn, "SELECT generated_at, week_start, week_end, hours_scheduled, hours_budget FROM schedule_history WHERE restaurant_id=? ORDER BY id DESC LIMIT 1", (rid,))
 
     # ── food cost ───────────────────────────────────────────────────────────
     inv, inv_live = {}, False
@@ -377,15 +377,15 @@ def _build(current_user):
     # ── marketing ───────────────────────────────────────────────────────────
     mkt = {}
     if "marketing" in active_keys:
-        mkt["month"] = (_one(conn, "SELECT COUNT(*) AS n FROM marketing_content_log WHERE restaurant_id=? AND created_at >= date('now','start of month')", (rid,)) or {}).get("n") or 0
-        mkt["week"] = (_one(conn, "SELECT COUNT(*) AS n FROM marketing_content_log WHERE restaurant_id=? AND julianday(created_at) >= julianday('now','-7 days')", (rid,)) or {}).get("n") or 0
-        mkt["last_at"] = (_one(conn, "SELECT MAX(created_at) AS t FROM marketing_content_log WHERE restaurant_id=?", (rid,)) or {}).get("t")
-        mkt["last_posted_at"] = (_one(conn, "SELECT MAX(created_at) AS t FROM marketing_content_log WHERE restaurant_id=? AND post_id IS NOT NULL", (rid,)) or {}).get("t")
-        mkt["scheduled"] = _rows(conn, "SELECT id, platform, topic, content_type, scheduled_for, status FROM marketing_scheduled_posts WHERE restaurant_id=? AND status IN ('scheduled','pending') AND scheduled_for >= datetime('now') ORDER BY scheduled_for LIMIT 3", (rid,))
-        mkt["failed"] = _rows(conn, "SELECT id, platform, topic, error, scheduled_for FROM marketing_scheduled_posts WHERE restaurant_id=? AND status='failed' ORDER BY id DESC LIMIT 3", (rid,))
-        mkt["posted_since"] = (_one(conn, "SELECT COUNT(*) AS n FROM marketing_scheduled_posts WHERE restaurant_id=? AND status='posted' AND posted_at >= ?", (rid, since_sql)) or {}).get("n") or 0
+        mkt["month"] = (_one_dict(conn, "SELECT COUNT(*) AS n FROM marketing_content_log WHERE restaurant_id=? AND created_at >= date('now','start of month')", (rid,)) or {}).get("n") or 0
+        mkt["week"] = (_one_dict(conn, "SELECT COUNT(*) AS n FROM marketing_content_log WHERE restaurant_id=? AND julianday(created_at) >= julianday('now','-7 days')", (rid,)) or {}).get("n") or 0
+        mkt["last_at"] = (_one_dict(conn, "SELECT MAX(created_at) AS t FROM marketing_content_log WHERE restaurant_id=?", (rid,)) or {}).get("t")
+        mkt["last_posted_at"] = (_one_dict(conn, "SELECT MAX(created_at) AS t FROM marketing_content_log WHERE restaurant_id=? AND post_id IS NOT NULL", (rid,)) or {}).get("t")
+        mkt["scheduled"] = _rows_dict(conn, "SELECT id, platform, topic, content_type, scheduled_for, status FROM marketing_scheduled_posts WHERE restaurant_id=? AND status IN ('scheduled','pending') AND scheduled_for >= datetime('now') ORDER BY scheduled_for LIMIT 3", (rid,))
+        mkt["failed"] = _rows_dict(conn, "SELECT id, platform, topic, error, scheduled_for FROM marketing_scheduled_posts WHERE restaurant_id=? AND status='failed' ORDER BY id DESC LIMIT 3", (rid,))
+        mkt["posted_since"] = (_one_dict(conn, "SELECT COUNT(*) AS n FROM marketing_scheduled_posts WHERE restaurant_id=? AND status='posted' AND posted_at >= ?", (rid, since_sql)) or {}).get("n") or 0
         try:
-            mkt["post_result"] = _one(conn,
+            mkt["post_result"] = _one_dict(conn,
                 "SELECT c.topic, COALESCE(c.posted_at, c.created_at) AS posted_at, a.lift_pct, a.item_lift_pct, "
                 "       a.reviews_mentioning, m.name AS menu_item_name "
                 "FROM marketing_attribution a JOIN marketing_content_log c ON c.id = a.content_log_id "
@@ -411,9 +411,9 @@ def _build(current_user):
                 pass
 
     # ── alerts ──────────────────────────────────────────────────────────────
-    alerts_7d = _rows(conn, "SELECT alert_type, COUNT(*) AS n, MAX(fired_at) AS last_at FROM alert_log WHERE restaurant_id=? AND julianday(fired_at) >= julianday('now','-7 days') GROUP BY alert_type ORDER BY n DESC", (rid,))
-    alerts_since = (_one(conn, "SELECT COUNT(*) AS n FROM alert_log WHERE restaurant_id=? AND fired_at >= ?", (rid, since_sql)) or {}).get("n") or 0
-    recent_alerts = _rows(conn, """SELECT a.alert_type, a.review_id, a.fired_at, rv.rating, rv.response_status, rv.author
+    alerts_7d = _rows_dict(conn, "SELECT alert_type, COUNT(*) AS n, MAX(fired_at) AS last_at FROM alert_log WHERE restaurant_id=? AND julianday(fired_at) >= julianday('now','-7 days') GROUP BY alert_type ORDER BY n DESC", (rid,))
+    alerts_since = (_one_dict(conn, "SELECT COUNT(*) AS n FROM alert_log WHERE restaurant_id=? AND fired_at >= ?", (rid, since_sql)) or {}).get("n") or 0
+    recent_alerts = _rows_dict(conn, """SELECT a.alert_type, a.review_id, a.fired_at, rv.rating, rv.response_status, rv.author
                                    FROM alert_log a LEFT JOIN reviews rv ON rv.id=a.review_id
                                    WHERE a.restaurant_id=? AND julianday(a.fired_at) >= julianday('now','-7 days')
                                    ORDER BY a.id DESC LIMIT 12""", (rid,))
@@ -1013,7 +1013,7 @@ def _build(current_user):
         "ok": True,
         "readiness": readiness,
         "charts": charts,
-        "generated_at": _iso(now),
+        "generated_at": _iso_z(now),
         "local_now": local_now.isoformat(),
         "greeting_name": (restaurant.owner_name or current_user.get("username") or "").split(" ")[0].title() if (restaurant.owner_name or current_user.get("username")) else None,
         "context": {"restaurant_name": restaurant.name, "location_name": restaurant.location_name or None, "group_name": group_name,
@@ -1027,7 +1027,7 @@ def _build(current_user):
         "recommendations": recs[:5],
         "dismissed": [{"key": r["key"], "title": r["title"], "until": dismissed[r["key"]]["expires_at"]} for r in dismissed_recs],
         "ai_insight": ai_insight,
-        "changes": {"since": _iso(since_dt), "since_label": since_label, "items": changes[:8]},
+        "changes": {"since": _iso_z(since_dt), "since_label": since_label, "items": changes[:8]},
         "alerts": alert_items[:8],
         "quick_actions": quick,
         "ask_suggestions": ask,
@@ -1050,7 +1050,7 @@ def _location_record(conn, r, now):
     so a seven-location owner doesn't pay for seven sample analyses."""
     rid = r["id"]
     sig = _location_signal(conn, r, now)
-    rs = _one(conn, """SELECT COUNT(*) AS total, SUM(response_status IN ('posted','approved')) AS responded,
+    rs = _one_dict(conn, """SELECT COUNT(*) AS total, SUM(response_status IN ('posted','approved')) AS responded,
                               SUM(response_status='drafted') AS awaiting,
                               SUM(urgency='high' AND response_status NOT IN ('posted','approved','skipped')) AS urgent,
                               ROUND(AVG(CASE WHEN COALESCE(NULLIF(review_date,''), fetched_at) >= date('now','-30 days') THEN rating END),1) AS avg30,
@@ -1060,9 +1060,9 @@ def _location_record(conn, r, now):
                        FROM reviews WHERE restaurant_id=? AND processed=1 AND deleted_at IS NULL""", (rid,)) or {}
     total = int(rs.get("total") or 0)
     rate = round(100.0 * int(rs.get("responded") or 0) / total) if total else None
-    last_active = (_one(conn, "SELECT MAX(created_at) AS t FROM login_history WHERE restaurant_id=?", (rid,)) or {}).get("t")
+    last_active = (_one_dict(conn, "SELECT MAX(created_at) AS t FROM login_history WHERE restaurant_id=?", (rid,)) or {}).get("t")
     labor = None
-    cd = _one(conn, "SELECT shifts_csv IS NOT NULL AND shifts_csv != '' AS live FROM client_data WHERE restaurant_id=?", (rid,)) or {}
+    cd = _one_dict(conn, "SELECT shifts_csv IS NOT NULL AND shifts_csv != '' AS live FROM client_data WHERE restaurant_id=?", (rid,)) or {}
     if r.get("module_labor") and cd.get("live"):
         try:
             from labor import analyse_shifts_for_restaurant
@@ -1165,7 +1165,7 @@ def build_group_brief(current_user, fresh=False):
     else:
         headline = "All locations healthy"; tone = "good"
     payload = {
-        "ok": True, "scope": "group", "generated_at": _iso(now), "group_name": base.location_group,
+        "ok": True, "scope": "group", "generated_at": _iso_z(now), "group_name": base.location_group,
         "greeting_name": (base.owner_name or current_user.get("username") or "").split(" ")[0].title() or None,
         "headline": headline, "tone": tone,
         "locations": locs, "attention": attention[:12],
