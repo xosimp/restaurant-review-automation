@@ -876,6 +876,6 @@ def test_the_drill_is_runnable_from_admin_and_scheduled_quarterly():
 
 def test_the_runbook_no_longer_says_railway_run():
     import re
-    text = open("RECOVERY.md").read()
+    text = open("docs/ops/RECOVERY.md").read()
     # No command LINE uses it (the prose explaining why it is wrong may).
     assert not re.search(r"^railway run ", text, re.M) and "railway ssh --" in text

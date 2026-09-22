@@ -399,7 +399,7 @@ def test_a_recovery_runbook_exists_and_covers_the_real_failures():
     backups and no procedure anywhere for using one."""
     import os
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    text = open(os.path.join(root, "RECOVERY.md"), encoding="utf-8").read().lower()
+    text = open(os.path.join(root, "docs", "ops", "RECOVERY.md"), encoding="utf-8").read().lower()
     for topic in ("integrity_check", "reviews.db-wal", "job_period_claims",
                   "volume full", "scheduler", "drill"):
         assert topic in text, f"RECOVERY.md does not cover {topic}"

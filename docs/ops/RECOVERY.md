@@ -192,7 +192,7 @@ digests, fetches and scheduled posts are not running.
 
 **Never run the scheduler as a separate Railway service.** Volumes are not
 shared between services, so it would schedule against an empty database
-while the real jobs stopped. See `RAILWAY_SCHEDULER_SPLIT.md`.
+while the real jobs stopped. See `RAILWAY_SCHEDULER_SPLIT.md` (beside this file).
 
 ---
 

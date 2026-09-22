@@ -1196,7 +1196,7 @@ def backup_db():
         # And it protected nothing: this file sits on the same Railway
         # volume as reviews.db itself, with identical exposure. Redaction is
         # about what LEAVES the server, so it now happens on a throwaway
-        # copy made for the email and nowhere else. See RECOVERY.md.
+        # copy made for the email and nowhere else. See docs/ops/RECOVERY.md.
         size_kb = round(os.path.getsize(local_path) / 1024, 1)
         log.info(f"backup_db: local snapshot {local_path} ({size_kb} KB)")
         _prune_old_backups(backup_dir)
@@ -2089,7 +2089,7 @@ def run_auto_publish_schedules():
 def run_restore_drill():
     """Restore the newest snapshot into a scratch file and prove it.
 
-    A backup nobody has restored is a hypothesis (RECOVERY.md). The drill
+    A backup nobody has restored is a hypothesis (docs/ops/RECOVERY.md). The drill
     lived in a runbook that depended on a laptop, a logged-in CLI and
     someone remembering the quarter; the local run could not even prove the
     thing the unredacted snapshot exists for — that OAuth tokens survive —
@@ -2162,7 +2162,7 @@ def run_restore_drill():
             "subject": f"Restore drill {'passed' if report['ok'] else 'FAILED'} — {report['snapshot']}",
             "preheader": "The quarterly proof that the backup restores.",
             "html": _emails._branded_email("".join(f"<p>{_h.escape(x)}</p>" for x in lines)
-                                           + "<p>Record the date in RECOVERY.md.</p>")})
+                                           + "<p>Record the date in docs/ops/RECOVERY.md.</p>")})
     except Exception as e:
         _ops.capture(e, job="restore_drill_email")
     if not report["ok"]:

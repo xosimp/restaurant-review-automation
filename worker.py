@@ -27,7 +27,7 @@ as a separate service. Railway volumes cannot be shared between services
 ("Each service can only have a single volume"), so a separate service would
 open an empty ./reviews.db of its own, win its own lease in it, and — once the
 web process stopped scheduling — leave every real job unrun. See
-RAILWAY_SCHEDULER_SPLIT.md for the exact start command and rollback.
+docs/ops/RAILWAY_SCHEDULER_SPLIT.md for the exact start command and rollback.
 """
 import logging
 import signal

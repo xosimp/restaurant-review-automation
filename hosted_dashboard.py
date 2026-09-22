@@ -842,7 +842,7 @@ except Exception as _boot_e:
 # worked and what a single-service deployment needs.
 #
 # Set RUN_SCHEDULER_IN_WEB=0 only when worker.py runs as a second process in
-# THIS SAME Railway service (see RAILWAY_SCHEDULER_SPLIT.md). Never as a
+# THIS SAME Railway service (see docs/ops/RAILWAY_SCHEDULER_SPLIT.md). Never as a
 # separate service: Railway volumes cannot be shared between services, so a
 # separate worker would schedule against an empty database of its own while
 # this process, told not to schedule, left every real job unrun.

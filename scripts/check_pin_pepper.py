@@ -4,7 +4,7 @@
 A 4-digit secret hashed without a pepper is brute-forceable offline the
 moment the database leaks, so "nobody ever set the env var in production" has
 to be a thing you can check in one command rather than something you discover
-by reading source. See docs/PIN_PEPPER_RUNBOOK.md.
+by reading source. See docs/ops/PIN_PEPPER_RUNBOOK.md.
 
 Exit status is meaningful, so this works as a deploy check:
     0  configured, and every stored hash is at the current version
