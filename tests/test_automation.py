@@ -687,7 +687,7 @@ def test_a_send_delay_queues_the_manual_send_instead_of_sending(db_path, monkeyp
     update_restaurant(rid, {"send_delay_minutes": 5}, db_path=db_path)     # create_restaurant names its columns
     monkeypatch.setattr(client_api, "get_restaurant", lambda r, **k: models.get_restaurant(r, db_path=db_path))
     monkeypatch.setattr(client_api, "get_conn", lambda *a, **k: models.get_conn(db_path))
-    monkeypatch.setattr(client_api, "_order_send_allowed", lambda r: True)
+    monkeypatch.setattr(client_api, "_order_send_allowed", lambda r, *a, **k: True)
     monkeypatch.setattr(inventory, "build_supplier_orders", lambda r: {"draft_hash": "h", "groups": [
         {"supplier_email": "s@x.com", "supplier_name": "Fresh Co", "total_cost": 100, "items": [1]}]})
     sent = []

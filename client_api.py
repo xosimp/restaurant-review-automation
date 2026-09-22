@@ -5376,21 +5376,41 @@ def set_ingredient_supplier(current_user):
     return _m("mobile_set_ingredient_supplier")(current_user)
 
 
-_ORDER_SEND_COOLDOWN = 60  # seconds between supplier-order sends per restaurant
+_ORDER_SEND_COOLDOWN = 60  # seconds between sends to one supplier
 _order_send_last = {}
+_order_send_lock = threading.Lock()
 
 
-def _order_send_allowed(restaurant_id) -> bool:
-    """One supplier-order send per restaurant per cooldown. In-process, like
-    _insight_cache — enough to stop a double-click or an impatient retry from
-    putting a second real purchase order in a supplier's inbox."""
+def _order_send_allowed(restaurant_id, supplier_emails=None) -> bool:
+    """One send per supplier per cooldown — the double-click guard. In
+    process, and deliberately not the real re-send guard: that is the
+    durable claim on the PO row (models.record_purchase_order, DATA-15),
+    which survives a restart and does not expire after a minute.
+
+    Keyed per (restaurant, supplier address), so sending supplier B's order
+    right after supplier A's is not refused (MOD-FC-11). The check and the
+    set happen under one lock, so two request threads cannot both be
+    allowed. Callers claim it only once the send has passed validation —
+    see _release_order_send for handing it back when nothing went out."""
     import time as _time_po
-    now = _time_po.monotonic()
-    last = _order_send_last.get(restaurant_id)
-    if last is not None and (now - last) < _ORDER_SEND_COOLDOWN:
-        return False
-    _order_send_last[restaurant_id] = now
+    keys = [(restaurant_id, e) for e in sorted(set(supplier_emails))] if supplier_emails else [restaurant_id]
+    with _order_send_lock:
+        now = _time_po.monotonic()
+        for key in keys:
+            last = _order_send_last.get(key)
+            if last is not None and (now - last) < _ORDER_SEND_COOLDOWN:
+                return False
+        for key in keys:
+            _order_send_last[key] = now
     return True
+
+
+def _release_order_send(restaurant_id, supplier_emails):
+    """Give a cooldown back when nothing reached that supplier, so the fixed
+    retry is not refused for a minute."""
+    with _order_send_lock:
+        for e in supplier_emails or ():
+            _order_send_last.pop((restaurant_id, e), None)
 
 
 @client_bp.route("/api/food-cost/order-draft")
@@ -5400,11 +5420,15 @@ def food_cost_order_draft(current_user):
     return _m("mobile_food_cost_order_draft")(current_user)
 
 
-def _send_supplier_orders(rid, restaurant, groups, actor):
+def _send_supplier_orders(rid, restaurant, groups, actor, resend=False):
     """Send one purchase order per supplier group. Shared by the route and
-    delayed.py (trusted-supplier send). Returns (sent, failed)."""
+    delayed.py (trusted-supplier send). Returns (sent, failed).
+
+    A group whose exact draft is already on an open PO is not sent again
+    (DATA-15): it comes back in `failed` with already_sent=True and the
+    existing number, unless `resend` — the owner's explicit "send it again"."""
     actor = actor or {}
-    from models import record_purchase_order
+    from models import record_purchase_order, DuplicatePurchaseOrder
     sent, failed = [], []
     for group in groups:
         # The PO row is written BEFORE the email, and carries the number: an
@@ -5413,7 +5437,15 @@ def _send_supplier_orders(rid, restaurant, groups, actor):
         try:
             po_number = record_purchase_order(
                 rid, group.get("supplier_name") or "", group["supplier_email"],
-                group["items"], group.get("total_cost") or 0)
+                group["items"], group.get("total_cost") or 0,
+                draft_hash=group.get("draft_hash"), allow_duplicate=bool(resend))
+        except DuplicatePurchaseOrder as dup:
+            from time_utils import mdy as _mdy
+            failed.append({"supplier_email": group["supplier_email"], "already_sent": True,
+                           "po_number": dup.po_number,
+                           "error": f"This order already went to {group.get('supplier_name') or group['supplier_email']} "
+                                    f"as {dup.po_number} on {_mdy(dup.sent_at)}."})
+            continue
         except Exception as e:
             failed.append({"supplier_email": group["supplier_email"], "error": _safe_err(e)})
             continue
@@ -5459,8 +5491,26 @@ def _send_supplier_orders(rid, restaurant, groups, actor):
 @client_bp.route("/api/food-cost/send-order", methods=["POST"])
 @login_required
 def send_supplier_order(current_user):
+    """Web twin — the one body is _send_order_request, which the phone's
+    /mobile/api/food-cost/send-order calls too."""
+    return _send_order_request(current_user)
+
+
+def _send_order_request(current_user):
+    """Email the suggested order to each supplier and record a PO per
+    supplier. `supplier_email` in the body sends just that supplier; `resend`
+    is the explicit "send it again" past the already-sent guard.
+
+    One body for web and phone. The phone had its own copy, which never read
+    send_delay_minutes (so it skipped the owner's undo window — MOD-FC-9 /
+    DATA-41), returned raw exception text and skipped outcomes.observe.
+
+    Order of refusals: nothing to order (400), then the draft the client
+    reviewed (409 — it is REQUIRED, MOD-FC-8), then already on an open PO
+    (409), and only then the double-click cooldown (429), so a refused send
+    never spends the cooldown and blocks its own fixed retry (MOD-FC-11)."""
     from inventory import build_supplier_orders
-    from models import record_purchase_order
+    from models import open_purchase_order
 
     rid = current_user["restaurant_id"]
     restaurant = get_restaurant(rid)
@@ -5469,24 +5519,14 @@ def send_supplier_order(current_user):
 
     data = request.get_json(silent=True) or {}
     only = (data.get("supplier_email") or "").strip().lower()
-
-    # This route puts a genuine purchase order in a supplier's inbox. A
-    # double-click or a retry after a timeout used to send a second one.
-    if not _order_send_allowed(rid):
-        return jsonify(ok=False, error="An order was just sent — give it a moment before sending again."), 429
+    resend = bool(data.get("resend"))
 
     try:
         draft = build_supplier_orders(rid)
     except Exception as e:
-        return jsonify(ok=False, error=f"Couldn't build the order: {e}"), 500
-
-    # Send what the owner approved. The draft is rebuilt here rather than
-    # stored, so a stock or supplier change between preview and send silently
-    # altered the quantities that went out.
-    expected = (data.get("draft_hash") or "").strip()
-    if expected and expected != (draft.get("draft_hash") or ""):
-        return jsonify(ok=False, stale=True, draft_hash=draft.get("draft_hash"),
-                       error="The order changed since you reviewed it — take another look before sending."), 409
+        import ops as _ops_d
+        _ops_d.capture(e, job="build_supplier_orders", context=f"restaurant_id={rid}")
+        return jsonify(ok=False, error="Couldn't build the order — try again in a moment."), 500
 
     groups = draft.get("groups") or []
     if only:
@@ -5494,24 +5534,72 @@ def send_supplier_order(current_user):
     if not groups:
         return jsonify(ok=False, error="Nothing to order — no items with a supplier assigned."), 400
 
+    # Send what the owner approved. The draft is rebuilt here rather than
+    # stored, so the hash of what they reviewed has to come back with the
+    # send: it was optional, neither client sent it, and the quantities
+    # emailed could differ from the ones on screen (MOD-FC-8). Sending one
+    # supplier accepts that supplier's own hash as well as the whole draft's.
+    expected = (data.get("draft_hash") or "").strip()
+    accepted = {draft.get("draft_hash")}
+    if only and len(groups) == 1 and groups[0].get("draft_hash"):
+        accepted.add(groups[0]["draft_hash"])
+    accepted.discard(None)
+    if not expected or expected not in accepted:
+        return jsonify(ok=False, stale=True, draft_hash=draft.get("draft_hash"),
+                       error=("The order changed since you reviewed it — take another look before sending."
+                              if expected else "Review the order before sending it.")), 409
+
+    emails_ = sorted({(g.get("supplier_email") or "").lower() for g in groups})
+    if not _order_send_allowed(rid, emails_):
+        return jsonify(ok=False, error="An order was just sent — give it a moment before sending again."), 429
+
+    # This exact order already went and has not been received: a retry after
+    # the cooldown, or after a deploy wiped it, used to send it again
+    # (DATA-15). record_purchase_order re-checks inside its write lock; this
+    # is the early answer, and hands the cooldown back.
+    if not resend:
+        dups = [(g, open_purchase_order(rid, g["supplier_email"], g.get("draft_hash")))
+                for g in groups if g.get("draft_hash")]
+        dups = [(g, po) for g, po in dups if po]
+        if dups:
+            _release_order_send(rid, sorted({g["supplier_email"].lower() for g, _ in dups}))
+        if dups and len(dups) == len(groups):
+            from time_utils import mdy as _mdy
+            g, po = dups[0]
+            return jsonify(ok=False, already_sent=True, po_number=po["po_number"],
+                           error=f"This order already went to {g.get('supplier_name') or g['supplier_email']} "
+                                 f"as {po['po_number']} on {_mdy(po['sent_at'])}. Send it again?"), 409
+        if dups:
+            skip = {id(g) for g, _ in dups}
+            groups = [g for g in groups if id(g) not in skip]
+
     sent, failed = [], []
     delay = int(getattr(restaurant, "send_delay_minutes", 0) or 0)
     if delay > 0:
         # The owner asked for a window: the order is queued, shown in the
-        # feed with Undo, and sent by the scheduler unless cancelled.
+        # feed with Undo, and sent by the scheduler unless cancelled. The
+        # payload carries this supplier's own hash, so another supplier's
+        # count changing in the window does not void it (MOD-FC-10).
         import delayed
         queued = []
         for group in groups:
             row = delayed.schedule(rid, "order_send",
-                                   {"supplier_email": group["supplier_email"], "draft_hash": draft.get("draft_hash")},
+                                   {"supplier_email": group["supplier_email"],
+                                    "draft_hash": group.get("draft_hash") or draft.get("draft_hash"),
+                                    "resend": resend},
                                    delay, actor=current_user,
                                    label=f"Sending the {group.get('supplier_name') or group['supplier_email']} order "
                                          f"(${float(group.get('total_cost') or 0):,.0f}, {len(group.get('items') or [])} items)")
             queued.append({"action_id": row["id"], "execute_at": row["execute_at"], "supplier_email": group["supplier_email"]})
         return jsonify(ok=True, queued=queued, sent=[], failed=[], undo_minutes=delay)
-    _s, _f = _send_supplier_orders(rid, restaurant, groups, current_user)
+    _s, _f = _send_supplier_orders(rid, restaurant, groups, current_user, resend=resend)
     sent.extend(_s); failed.extend(_f)
+    _release_order_send(rid, sorted({f["supplier_email"].lower() for f in failed
+                                     if not f.get("already_sent")} - {s["supplier_email"].lower() for s in sent}))
     if not sent:
+        if failed and all(f.get("already_sent") for f in failed):
+            return jsonify(ok=False, already_sent=True, sent=[], failed=failed,
+                           error=failed[0]["error"] + " Send it again?"), 409
         # Was a 200 with ok=False, so any client branching on HTTP status read
         # a total failure to send as a success.
         return jsonify(ok=False, sent=[], failed=failed,
@@ -5835,6 +5923,13 @@ def _publish_schedule(restaurant_id, schedule_id=None, actor=None, acknowledge=F
 @client_bp.route("/api/labor/publish-schedule", methods=["POST"])
 @login_required
 def publish_schedule_api(current_user):
+    return _publish_schedule_request(current_user)
+
+
+def _publish_schedule_request(current_user):
+    """The one publish body for web and phone. The phone called
+    _publish_schedule directly and never read send_delay_minutes, so a week
+    published from it skipped the owner's undo window (DATA-41)."""
     from permissions import has_permission, SCHEDULE_PUBLISH
     if not (current_user.get("is_admin") or has_permission(current_user, SCHEDULE_PUBLISH)):
         return jsonify(ok=False, error="Your login can draft a schedule but not send it to staff."), 403

@@ -1173,6 +1173,10 @@ def load_inventory_for_restaurant(restaurant_id: int):
     conn.close()
     if rows:
         items = [{
+            # The row's own identity. The order used to dedupe on the display
+            # name, so a second "Chicken Breast" at another supplier was
+            # dropped from the order (MOD-FC-2).
+            "ingredient_id":   r["id"],
             "item":            r["name"],
             "category":        r["category"] or "",
             "par_level":       r["par_level"],
@@ -1316,16 +1320,21 @@ def build_supplier_orders(restaurant_id: int, db_path: str = None) -> dict:
     for bucket in ("critical_low", "reorder_soon"):
         for item in analysis.get(bucket, []):
             name = item.get("item")
-            if not name or name in seen:
+            # One line per ingredient ROW, not per display name: two rows
+            # both called "Chicken Breast" at two suppliers are two lines
+            # (MOD-FC-2). The CSV path has no ids and keeps the name.
+            key = item.get("ingredient_id") or ("name", name)
+            if not name or key in seen:
                 continue
             if int(item.get("suggested_order_qty") or 0) <= 0:
                 continue
-            seen.add(name)
+            seen.add(key)
             # What was thrown away last week comes off what is ordered this
             # week — capped, so a bad week never halves an order, and named
             # on the line so the owner sees why the number is lower.
             qty, trimmed = _trim_for_waste(item)
             ordered.append({
+                "ingredient_id": item.get("ingredient_id"),
                 "item": name,
                 "unit": item.get("unit") or "",
                 "qty": qty,
@@ -1337,20 +1346,35 @@ def build_supplier_orders(restaurant_id: int, db_path: str = None) -> dict:
                 "supplier_email": (item.get("supplier_email") or "").strip(),
             })
 
-    groups, unassigned = {}, []
+    # One group per ADDRESS (MOD-FC-3). Keyed on (name, email) it made two
+    # purchase orders for one supplier whose name was typed "Sysco" on one
+    # ingredient and "SYSCO" on another. The group is named by the first
+    # non-empty name its rows carry.
+    groups, names, unassigned = {}, {}, []
     for row in ordered:
         if not row["supplier_email"]:
             unassigned.append(row)
             continue
-        key = (row["supplier_name"], row["supplier_email"].lower())
-        groups.setdefault(key, []).append(row)
+        email = row["supplier_email"].lower()
+        row["supplier_email"] = email
+        groups.setdefault(email, []).append(row)
+        if row["supplier_name"] and not names.get(email):
+            names[email] = row["supplier_name"]
 
-    group_list = [{
-        "supplier_name": name or email,
-        "supplier_email": email,
-        "items": rows,
-        "total_cost": round(sum(r["line_cost"] for r in rows), 2),
-    } for (name, email), rows in sorted(groups.items())]
+    group_list = []
+    for email in sorted(groups, key=lambda e: ((names.get(e) or e).lower(), e)):
+        rows = groups[email]
+        group = {
+            "supplier_name": names.get(email) or email,
+            "supplier_email": email,
+            "items": rows,
+            "total_cost": round(sum(r["line_cost"] for r in rows), 2),
+        }
+        # Per supplier, so a queued send for one supplier is not voided by a
+        # count that changed another supplier's lines (MOD-FC-10), and so a
+        # PO records exactly which order it was (DATA-15).
+        group["draft_hash"] = draft_hash([group])
+        group_list.append(group)
 
     return {
         "groups": group_list,

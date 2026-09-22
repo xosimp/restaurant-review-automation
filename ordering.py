@@ -95,7 +95,9 @@ def queue_trusted_orders(restaurant_id, restaurant=None, db_path=DB_PATH):
         total = float(g.get("total_cost") or 0)
         row = delayed.schedule(
             restaurant_id, "order_send",
-            {"supplier_email": g.get("supplier_email"), "draft_hash": draft.get("draft_hash")},
+            # This supplier's own hash, so a count that moves another
+            # supplier's lines in the hour does not void it (MOD-FC-10).
+            {"supplier_email": g.get("supplier_email"), "draft_hash": g.get("draft_hash") or draft.get("draft_hash")},
             ORDER_UNDO_MINUTES,
             label=f"Sending the {g.get('supplier_name') or g.get('supplier_email')} order "
                   f"(${total:,.0f}, {len(g.get('items') or [])} items)",

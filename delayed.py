@@ -175,14 +175,48 @@ def _run_order_send(restaurant_id, payload, db_path):
     from client_api import _send_supplier_orders
     from models import get_restaurant
     draft = build_supplier_orders(restaurant_id)
-    if payload.get("draft_hash") and draft.get("draft_hash") != payload.get("draft_hash"):
-        return {"ok": False, "error": "The order changed before it was sent — nothing went out."}
     only = (payload.get("supplier_email") or "").lower()
     groups = [g for g in (draft.get("groups") or []) if not only or (g.get("supplier_email") or "").lower() == only]
+    # The payload carries the supplier's own hash (the whole draft's, on a
+    # row queued before that existed): a count moving another supplier's
+    # lines no longer voids this one (MOD-FC-10).
+    expected = payload.get("draft_hash")
+    if expected and expected not in ({draft.get("draft_hash")} | {g.get("draft_hash") for g in groups}):
+        out = {"ok": False, "error": "The order changed before it was sent — nothing went out."}
+        _tell_owner_order_not_sent(restaurant_id, payload, out["error"], db_path)
+        return out
     if not groups:
-        return {"ok": False, "error": "Nothing left to order."}
-    sent, failed = _send_supplier_orders(restaurant_id, get_restaurant(restaurant_id), groups, AUTOMATION_ACTOR)
+        out = {"ok": False, "error": "Nothing left to order."}
+        _tell_owner_order_not_sent(restaurant_id, payload, out["error"], db_path)
+        return out
+    sent, failed = _send_supplier_orders(restaurant_id, get_restaurant(restaurant_id), groups, AUTOMATION_ACTOR,
+                                         resend=bool(payload.get("resend")))
+    if not sent:
+        _tell_owner_order_not_sent(restaurant_id, payload,
+                                   (failed[0].get("error") if failed else None) or "It could not be sent.", db_path)
     return {"ok": bool(sent), "sent": sent, "failed": failed}
+
+
+def _tell_owner_order_not_sent(restaurant_id, payload, reason, db_path):
+    """A queued or automatic supplier order that did not go out. The owner
+    was told "goes out in an hour"; a void used to be stored as `failed` and
+    nothing else, so the delivery simply never came (MOD-FC-10). The bell
+    row is written whatever happens; the push/email goes the way the
+    announcement did (strategy_jobs._reach)."""
+    who = payload.get("supplier_email") or "your supplier"
+    title = "A supplier order did not go out"
+    body = f"The order for {who} was not sent. {reason} Review it in Food Cost and send it from there."
+    try:
+        import morning_brief, notify, strategy_jobs
+        if morning_brief.recipients(restaurant_id, db_path):
+            strategy_jobs._reach(restaurant_id, "order_send_voided", title, body,
+                                 {"supplier_email": payload.get("supplier_email")}, db_path,
+                                 subject="A supplier order did not go out")
+        else:
+            notify.record_notification(restaurant_id, "order_send_voided", db_path=db_path)
+    except Exception as e:
+        import ops
+        ops.capture(e, job="order_send_voided", context=f"restaurant_id={restaurant_id}")
 
 
 HANDLERS = {

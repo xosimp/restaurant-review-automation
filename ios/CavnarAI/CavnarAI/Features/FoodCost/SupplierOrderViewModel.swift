@@ -7,6 +7,10 @@ import Observation
 @MainActor
 final class SupplierOrderViewModel {
     var draft: SupplierOrderDraft?
+    /// Fingerprint of the draft on screen. It goes back with the send, and
+    /// the server refuses (409) a send whose draft has changed since — so
+    /// what is emailed is what the owner reviewed (MOD-FC-8).
+    var draftHash: String?
     var orders: [PurchaseOrder] = []
     var isLoading = false
     var errorMessage: String?
@@ -33,12 +37,14 @@ final class SupplierOrderViewModel {
         let unassigned: [SupplierOrderItem]
         let itemCount: Int
         let totalCost: Double
+        let draftHash: String?
         let error: String?
 
         enum CodingKeys: String, CodingKey {
             case ok, groups, unassigned, error
             case itemCount = "item_count"
             case totalCost = "total_cost"
+            case draftHash = "draft_hash"
         }
     }
 
@@ -57,6 +63,7 @@ final class SupplierOrderViewModel {
             let response: DraftResponse = try await client.send("/mobile/api/food-cost/order-draft")
             draft = SupplierOrderDraft(groups: response.groups, unassigned: response.unassigned,
                                        itemCount: response.itemCount, totalCost: response.totalCost)
+            draftHash = response.draftHash
             // The PO history is secondary — a failure here shouldn't take
             // the order draft down with it.
             let history: OrdersResponse? = try? await client.send(
@@ -73,7 +80,11 @@ final class SupplierOrderViewModel {
 
     private struct SendBody: Encodable {
         let supplierEmail: String?
-        enum CodingKeys: String, CodingKey { case supplierEmail = "supplier_email" }
+        let draftHash: String?
+        enum CodingKeys: String, CodingKey {
+            case supplierEmail = "supplier_email"
+            case draftHash = "draft_hash"
+        }
     }
 
     /// `supplierEmail: nil` sends every supplier's order; passing one sends
@@ -82,17 +93,22 @@ final class SupplierOrderViewModel {
     func send(supplierEmail: String? = nil) async {
         guard !isSending else { return }
         isSending = true
+        errorMessage = nil
         defer { isSending = false }
         do {
             let result: SendOrderResult = try await client.send(
                 "/mobile/api/food-cost/send-order", method: .post,
-                body: SendBody(supplierEmail: supplierEmail)
+                body: SendBody(supplierEmail: supplierEmail, draftHash: draftHash)
             )
             lastResult = result
             if result.ok { Haptic.success() }
             await load()
         } catch let error as APIClient.APIError {
-            errorMessage = error.message
+            // A 409 means the draft moved under the owner: show the new one,
+            // then the reason (load clears errorMessage as it starts).
+            let message = error.message
+            await load()
+            errorMessage = message
         } catch {
             errorMessage = "Couldn't send the order."
         }

@@ -336,7 +336,6 @@ def test_the_web_publish_honours_the_send_delay(app, db_path, staff_mail):
     assert [a["kind"] for a in delayed.pending(rid, db_path=db_path)] == ["schedule_publish"]
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-41: mobile publish-schedule never reads send_delay_minutes, so the phone skips the undo window")
 def test_the_phone_publish_honours_the_send_delay_too(app, db_path, staff_mail):
     rid = _restaurant(db_path)
     models.update_restaurant(rid, {"send_delay_minutes": 10}, db_path=db_path)
@@ -348,13 +347,13 @@ def test_the_phone_publish_honours_the_send_delay_too(app, db_path, staff_mail):
     assert [a["kind"] for a in delayed.pending(rid, db_path=db_path)] == ["schedule_publish"]
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-41: mobile send-order never reads send_delay_minutes, so a supplier order from the phone goes out instantly")
 def test_the_phone_supplier_order_honours_the_send_delay_too(app, db_path, supplier_mail):
     rid = _restaurant(db_path)
     models.update_restaurant(rid, {"send_delay_minutes": 10}, db_path=db_path)
     _ingredient(db_path, rid)
     h = _bearer(db_path, _owner(db_path, rid))
-    app.test_client().post("/mobile/api/food-cost/send-order", json={}, headers=h)
+    draft_hash = inventory.build_supplier_orders(rid)["draft_hash"]      # the send requires it (MOD-FC-8)
+    app.test_client().post("/mobile/api/food-cost/send-order", json={"draft_hash": draft_hash}, headers=h)
     assert supplier_mail == [], "the phone emailed the supplier inside the owner's undo window"
     assert [a["kind"] for a in delayed.pending(rid, db_path=db_path)] == ["order_send"]
 
@@ -365,13 +364,13 @@ def test_a_second_send_inside_the_cooldown_is_refused(app, db_path, supplier_mai
     rid = _restaurant(db_path)
     _ingredient(db_path, rid)
     c = _web(app, db_path, _owner(db_path, rid))
-    assert c.post("/api/food-cost/send-order", json={}, headers={"X-CSRF": CSRF}).get_json()["ok"] is True
-    again = c.post("/api/food-cost/send-order", json={}, headers={"X-CSRF": CSRF})
+    body = {"draft_hash": inventory.build_supplier_orders(rid)["draft_hash"]}   # required (MOD-FC-8)
+    assert c.post("/api/food-cost/send-order", json=body, headers={"X-CSRF": CSRF}).get_json()["ok"] is True
+    again = c.post("/api/food-cost/send-order", json=body, headers={"X-CSRF": CSRF})
     assert again.status_code == 429
     assert supplier_mail == ["orders@fresh.test"]
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-15: the only guard is the process-local _order_send_last, so a restart forgets the order was sent and the same draft is emailed again")
 def test_the_same_order_is_not_sent_twice_across_a_restart(app, db_path, supplier_mail):
     rid = _restaurant(db_path)
     _ingredient(db_path, rid)
@@ -385,7 +384,6 @@ def test_the_same_order_is_not_sent_twice_across_a_restart(app, db_path, supplie
     assert len(models.get_purchase_orders(rid, db_path=db_path)) == 1
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-15: the draft does not net out open purchase orders, so the same order re-sends once the 60-second cooldown passes")
 def test_the_same_order_is_not_sent_again_once_the_cooldown_passes(app, db_path, supplier_mail, monkeypatch):
     rid = _restaurant(db_path)
     _ingredient(db_path, rid)
