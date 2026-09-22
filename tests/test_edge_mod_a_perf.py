@@ -98,7 +98,6 @@ def test_a_tick_that_runs_the_fetch_still_reaches_every_per_tick_job(monkeypatch
         assert name in events, events
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-PERF-1: per-tick jobs sit behind the multi-hour review fetch in one thread")
 def test_held_alerts_and_scheduled_posts_are_released_while_the_fetch_is_still_running(monkeypatch):
     events = _one_tick_with_a_long_fetch(monkeypatch)
     end = events.index("fetch_end")
@@ -106,7 +105,6 @@ def test_held_alerts_and_scheduled_posts_are_released_while_the_fetch_is_still_r
     assert events.index("run_due_posts") < end
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-PERF-1: the lease heartbeat is refreshed only at the top of the loop, not during a long fetch")
 def test_the_scheduler_lease_is_refreshed_while_the_fetch_is_running(monkeypatch):
     events = _one_tick_with_a_long_fetch(monkeypatch)
     start, end = events.index("fetch_start"), events.index("fetch_end")

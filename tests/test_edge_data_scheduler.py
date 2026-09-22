@@ -131,8 +131,6 @@ def test_minute_duties_run_after_a_short_pass(db_path, monkeypatch):
     assert ran == ["delayed"]
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-3: the scheduler is one serial thread and delayed.run_due only runs "
-                                       "after the review fetch returns, so undo-window sends wait out a 3-hour pass")
 def test_minute_duties_run_while_a_long_pass_is_in_progress(db_path, monkeypatch):
     import scheduler
     fetch_started, release, delayed_ran = threading.Event(), threading.Event(), threading.Event()
@@ -154,8 +152,6 @@ def test_minute_duties_run_while_a_long_pass_is_in_progress(db_path, monkeypatch
     assert during, "delayed actions did not run while the fetch pass was in progress"
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-3: the heartbeat is stamped only at the end of a tick, so every long "
-                                       "pass marks the scheduler as an outage on the public status page")
 def test_the_status_page_does_not_report_an_outage_during_a_long_pass(db_path, monkeypatch):
     import scheduler, status_manager
     status_manager.seed_default_services()

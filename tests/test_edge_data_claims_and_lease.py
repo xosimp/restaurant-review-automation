@@ -205,8 +205,6 @@ def test_a_standby_process_cannot_take_a_freshly_renewed_lease(db_path, monkeypa
     assert ops.scheduler_lease_holder()["owner"] == ops._LEASE_OWNER
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-4: the lease is renewed only at tick start, so a pass longer than "
-                                       "SCHEDULER_LEASE_STALE_SECONDS loses it and a standby runs the same tick")
 def test_a_long_pass_keeps_its_lease(db_path, monkeypatch):
     """The stale window is shrunk to one second and the 'fetch' runs its
     items through the real bounded_map for a little over two, standing in
