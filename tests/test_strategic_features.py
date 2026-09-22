@@ -388,7 +388,7 @@ def test_a_bad_token_or_action_is_refused(client, db_path, monkeypatch):
 def test_auto_draft_skips_opt_outs_external_tools_and_recent_schedules(db_path, monkeypatch):
     import strategy_jobs, ops
     ran = []
-    monkeypatch.setattr("client_api._run_schedule_job", lambda job_id, rid: ran.append(rid))
+    monkeypatch.setattr("schedule_engine._run_schedule_job", lambda job_id, rid: ran.append(rid))
     monkeypatch.setattr(ops, "start_async_job", lambda *a, **k: None)
     monkeypatch.setattr(ops, "read_async_job", lambda *a, **k: {"status": "done"})
     monkeypatch.setattr("push.fire_push", lambda *a, **k: None)
@@ -411,7 +411,7 @@ def test_auto_draft_skips_opt_outs_external_tools_and_recent_schedules(db_path, 
 def test_auto_draft_does_not_announce_a_draft_that_failed(db_path, monkeypatch):
     import strategy_jobs, ops
     pushed = []
-    monkeypatch.setattr("client_api._run_schedule_job", lambda job_id, rid: None)
+    monkeypatch.setattr("schedule_engine._run_schedule_job", lambda job_id, rid: None)
     monkeypatch.setattr(ops, "start_async_job", lambda *a, **k: None)
     monkeypatch.setattr(ops, "read_async_job", lambda *a, **k: {"status": "error"})
     monkeypatch.setattr("push.fire_push", lambda *a, **k: pushed.append(a))

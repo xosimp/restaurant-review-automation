@@ -23,6 +23,7 @@ through unmarked.
 """
 import client_api
 import models
+import schedule_engine
 
 
 def _fake_build_schedule_result(csv_text, roster=None):
@@ -49,7 +50,7 @@ def _fake_build_schedule_result(csv_text, roster=None):
 
 
 def _run(monkeypatch, csv_text, close_times=None, role_close_buffers=None, roster=None):
-    monkeypatch.setattr(client_api, "_build_schedule_result",
+    monkeypatch.setattr(schedule_engine, "_build_schedule_result",
                         _fake_build_schedule_result(csv_text, roster))
     monkeypatch.setattr(models, "get_staff_notes", lambda restaurant_id: [])
     # The top-up/extend-to-close repair passes also read staff_availability

@@ -2524,7 +2524,8 @@ def mobile_generate_schedule(current_user):
     job_id = str(uuid.uuid4())
     import ops as _ops
     _ops.start_async_job(job_id, "schedule", rid)
-    t = threading.Thread(target=_capi._run_schedule_job, args=(job_id, rid), daemon=True)
+    from schedule_engine import _run_schedule_job as _run_sched
+    t = threading.Thread(target=_run_sched, args=(job_id, rid), daemon=True)
     t.start()
     return jsonify(ok=True, job_id=job_id)
 
@@ -5728,7 +5729,7 @@ def mobile_score_schedule(current_user):
     read, and everything the score depends on beyond them (ratings,
     profiles, targets, history) is loaded server-side.
     """
-    from client_api import quality_inputs_from_db, _score_schedule_quality
+    from schedule_engine import quality_inputs_from_db, _score_schedule_quality
     rid = current_user["restaurant_id"]
     data = request.get_json(silent=True) or {}
     raw_rows = data.get("rows")
@@ -5809,7 +5810,7 @@ def mobile_schedule_replacements(current_user):
     dashboard checked neither, and would happily offer somebody who had
     declared that day unavailable or was already at thirty-eight hours.
     """
-    from client_api import quality_inputs_from_db
+    from schedule_engine import quality_inputs_from_db
     from models import get_operational_scores, get_unavailability_map, get_staff_notes
     import shift_quality as _sq
     rid = current_user["restaurant_id"]

@@ -47,7 +47,7 @@ Each service is a set of modules with one owner-module that other code is meant 
 | **Data layer** | `models.py` (schema at boot, the `Restaurant` dataclass, most reads/writes) | `auth.py` (users, sessions, staff portal tables), `credentials.py` (Fernet at rest), `ops.py` (job ledgers, lease, claims) | `models.get_conn`, `get_restaurant`, `update_restaurant` |
 | **AI** | `ai_utils.py` (the only `messages.create`; `MODELS`, `model_for`, `get_client`, budget, breaker, usage) | `ai_guard.py` (figure verification, claim kinds, untrusted-text wrapping) | `create_with_retry(get_client(), model=model_for(...))` |
 | **Reviews** | `analyser.py` (scoring) / `drafter.py` (replies) | `fetcher.py`, `gmb.py`, `review_intelligence.py`, `reporter.py` (the digest), `response_templates` in `models` | routes in `client_api` / `mobile_api`; jobs in `scheduler` |
-| **Labor** | `labor.py` (shift ingestion, labor %, schedule generation glue) | `shift_quality.py` (pure scoring engine — no I/O, ever), `covers.py`, `time_off.py`, `labor_replacements.py`, `staff_roster.py`, `staff_schedule.py`, `demand.py`, `preshift.py`, the schedule engine currently inside `client_api.py` (`_run_schedule_job`, `_build_schedule_result`) | routes; `strategy_routes` twins; `strategy_jobs` |
+| **Labor** | `labor.py` (shift ingestion, labor %, schedule generation glue) | `shift_quality.py` (pure scoring engine — no I/O, ever), `covers.py`, `time_off.py`, `labor_replacements.py`, `staff_roster.py`, `staff_schedule.py`, `demand.py`, `preshift.py`, `schedule_engine.py` (the deterministic pipeline: inputs, row repair, rule backstops, quality signals, the async job) | routes; `strategy_routes` twins; `strategy_jobs` |
 | **Food Cost** | `inventory.py` (waste/overstock/orders) | `inventory_ledger.py` (stock ledger, recipes, margins), `cogs.py`, `waste_trend.py`, `food_cost_intelligence.py` (the CFO layer), `recipes.py`, `invoices.py`, `ordering.py`, `menu_intelligence.py` | routes; `strategy_routes` twins; 5am/6am jobs |
 | **Marketing** | `marketing.py` (drafting, content log) | `marketing_drafts.py`, `marketing_publish.py`, `marketing_media.py`, `marketing_links.py`, `marketing_signals.py` (attribution), `marketing_tags.py`, `guest_marketing.py` (text club), `guest_email.py`, `guest_links.py`, `meta_api.py`, `social_routes.py` (Instagram/Facebook OAuth + publish) | routes; `run_due_posts` every tick |
 | **Intel** | `competitor.py` | `competitor_intel_format.py`, `weather.py`, the AI-visibility engine currently inside `client_api.py` (`_do_ai_visibility_inner`, Perplexity over REST) | routes; Monday jobs |
@@ -81,7 +81,7 @@ Modules sit in one of five layers. **At module scope, a module may import only i
 Rules that follow from the layers:
 
 - **`models` imports nothing above L1 at module scope.** It reaches `auth`, `labor`, `inventory_ledger`, `demo_seed` only inside functions. Any new write path to `restaurants` outside `update_restaurant` calls `models._invalidate_request_cache`.
-- **Route modules never hold business logic that a job also needs.** If the scheduler needs it, it belongs in L2. (Two known exceptions are being worked off: the schedule-generation engine and the AI-visibility engine still live in `client_api.py`; `strategy_jobs`, `scheduler` and `ask_cavnar_tools` reach into `client_api` lazily for them.)
+- **Route modules never hold business logic that a job also needs.** If the scheduler needs it, it belongs in L2. (One known exception is being worked off: the AI-visibility engine still lives in `client_api.py`; `strategy_jobs` and `scheduler` reach into `client_api` lazily for it. The schedule engine moved to `schedule_engine.py` on 9/22/26; `client_api` re-exports its names.)
 - **`client_api` may import `mobile_api` lazily (`_m()`), never at module scope**; `mobile_api` imports `client_api` at module scope as `_capi` for the shared private bodies. That pair is the one intended module-scope edge between the two.
 - **The `intelligence` package never imports the app** except `models` (`DB_PATH`, `get_conn`) and `home_brief`'s payload shapes; the app enters through the facade in `intelligence/__init__.py`.
 - **`ops` is L1 but imports `emails` at module scope** (for the failure digest). Known exception; do not add a second.
@@ -148,6 +148,7 @@ Every root module, its layer and its one-line job. The test fails when a module 
 | `invoices` | 2 | invoice transcription (model) and the Python proposal/apply |
 | `issues` | 2 | issues, assignment, escalation, tokenised links |
 | `labor` | 2 | shift ingestion, labor %, schedule generation glue |
+| `schedule_engine` | 2 | the deterministic schedule pipeline: inputs, row repair, backstops, quality signals, the async generation job |
 | `labor_replacements` | 2 | who could cover a shift |
 | `loss_detection` | 2 | comps/voids/refunds signals (owner-only) |
 | `main` | 4 | pre-hosted CLI (`--demo`); runs its own `schedule` loop with no lease — do not run beside the real scheduler |

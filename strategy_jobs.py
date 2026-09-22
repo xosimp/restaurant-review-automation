@@ -342,7 +342,7 @@ def run_auto_draft_schedules(db_path=DB_PATH):
     in 7shifts/HotSchedules/etc. and a Cavnar draft would be a second,
     conflicting source of truth), and where Labor isn't on the plan."""
     import ops
-    from client_api import _run_schedule_job
+    from schedule_engine import _run_schedule_job
     drafted, skipped = 0, 0
     for r in _restaurants(db_path):
         if not getattr(r, "auto_draft_schedule", 0) or not getattr(r, "module_labor", 0):
