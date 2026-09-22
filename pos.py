@@ -5,8 +5,9 @@ toast.py, square.py, and clover.py are three near-identical copy-pastes of the
 same shape (is_connected / test_credentials / build_shifts_csv / sync_to_db),
 and features kept landing in only one of them: the nightly labor sync was
 Toast-only, so a Square or Clover client silently never got fresh shift data.
-Adding a 4th provider means implementing this module's PROVIDER_API and adding
-one registry line — not copying 500 lines and hoping every call site notices.
+rpower.py was the first provider added this way. Adding another means
+implementing this module's PROVIDER_API and adding one registry line — not
+copying 500 lines and hoping every call site notices.
 """
 import logging
 

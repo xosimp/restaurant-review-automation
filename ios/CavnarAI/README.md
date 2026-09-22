@@ -1,6 +1,6 @@
 # Cavnar AI — iOS app
 
-Native SwiftUI companion app for owners/managers (v1: Home, Reviews, Ask Cavnar, Food Cost). Talks to the Flask backend's `/mobile/api/...` routes (see `mobile_api.py` in the repo root).
+Native SwiftUI companion app for owners, managers and staff: Home, Reviews, Labor, Food Cost, Marketing, Intel, Ask Cavnar, Account and the Staff portal (one folder per module under `CavnarAI/Features/`). Talks to the Flask backend's `/mobile/api/...` routes (see `mobile_api.py` in the repo root).
 
 ## Setup
 
