@@ -201,7 +201,8 @@ struct GuestTextClubView: View {
                 if viewModel.didSend {
                     // "Posted" — plays once on the real send, then clears
                     // itself so the form is ready for the next campaign.
-                    CavnarInlinePosted(label: viewModel.sentCount.map { "Sent to \($0)" } ?? "Campaign sent") {
+                    CavnarInlinePosted(label: viewModel.queuedCount.map { "Sending to \($0)" }
+                                       ?? viewModel.sentCount.map { "Sent to \($0)" } ?? "Campaign sent") {
                         viewModel.didSend = false
                     }
                     .padding(.top, 6)

@@ -255,7 +255,6 @@ def test_a_campaign_interrupted_mid_send_does_not_re_text_on_retry(db_path, monk
     assert len(counts) == 10 and max(counts.values()) == 1, counts
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-7: the campaign fan-out runs synchronously inside the HTTP request")
 def test_the_campaign_route_does_not_text_the_whole_list_inside_the_request(db_path, monkeypatch):
     """A6 Campaigns #11 / MOD-MKT-7 — the 50,000-guest case, scaled down:
     the route must hand the list to a background sender and return, not
@@ -275,7 +274,6 @@ def test_the_campaign_route_does_not_text_the_whole_list_inside_the_request(db_p
     assert inline == [], f"{len(inline)} texts sent on the request thread"
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-7: quiet hours are checked once, so a send started at 8:57pm keeps texting past 9pm")
 def test_a_campaign_that_runs_past_nine_pm_stops_texting_at_nine(db_path, monkeypatch):
     """A6 Campaigns #12 / MOD-MKT-7 — each text takes a minute of (fake)
     wall clock; texts after 21:00 local must be deferred."""
@@ -294,7 +292,6 @@ def test_a_campaign_that_runs_past_nine_pm_stops_texting_at_nine(db_path, monkey
     assert all(t.hour < 21 for t in at), [t.strftime("%H:%M") for t in at]
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-A6-campaigns-13: a campaign has no maximum length at send, so a message Twilio cannot carry goes to every guest")
 def test_a_campaign_longer_than_an_sms_can_carry_is_refused_before_anyone_is_texted(db_path, texts):
     """A6 Campaigns #13 — Twilio's hard ceiling is 1,600 characters; each
     160 is a billed segment. A 2,000-character body is refused up front."""

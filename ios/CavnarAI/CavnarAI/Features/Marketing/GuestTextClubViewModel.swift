@@ -65,6 +65,7 @@ final class GuestTextClubViewModel {
     var campaignError: String?
     var didSend = false
     var sentCount: Int?
+    var queuedCount: Int?
 
     /// Only these can legally be texted, and the gap between this and the full
     /// list is the single most confusing thing about a text club — an owner
@@ -330,6 +331,7 @@ final class GuestTextClubViewModel {
         let ok: Bool
         let sent: Int?
         let total: Int?
+        let queued: Bool?
         let error: String?
     }
 
@@ -347,6 +349,9 @@ final class GuestTextClubViewModel {
                                linkUrl: linkURL.isEmpty ? nil : linkURL)
             )
             sentCount = response.sent
+            // The server now texts in the background and answers at once
+            // with how many it is sending to.
+            queuedCount = response.queued == true ? response.total : nil
             if response.ok {
                 Haptic.success()
                 didSend = true

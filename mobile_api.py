@@ -2948,12 +2948,13 @@ def mobile_guest_campaign_send(current_user):
                                    campaign=(data.get("type") or "campaign"))
             if made.get("ok"):
                 link_token = made["token"]
-        result = send_campaign(rid, message, segment=data.get("segment") or "all",
-                               link_token=link_token)
-        _capi._track_campaign_outcome(rid, data, result, current_user.get("id"))
-        # send_campaign reports its own ok — it refuses outside the guest-text
-        # quiet-hours window rather than sending a marketing text at midnight.
-        return jsonify(**result), 200
+        from guest_marketing import start_campaign
+        _uid = current_user.get("id")
+        # Validated here (quiet hours, length); texted on a background
+        # thread (MOD-MKT-7). The outcome is tracked when the sends finish.
+        result = start_campaign(rid, message, segment=data.get("segment") or "all", link_token=link_token,
+                                on_done=lambda res: _capi._track_campaign_outcome(rid, data, res, _uid))
+        return jsonify(**result), (202 if result.get("queued") else 200)
     except Exception as e:
         import ops
         ops.capture(e, job="guest_campaign_send", context=f"restaurant_id={rid}")

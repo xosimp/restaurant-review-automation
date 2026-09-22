@@ -178,6 +178,7 @@ Every root module, its layer and its one-line job. The test fails when a module 
 | `morning_brief` | 2 | the morning brief and its recipients |
 | `notify` | 2 | alert firing: gates, holds, batch, delivery |
 | `ops` | 1 | job ledgers, lease, claims, `capture`, failure digest |
+| `db_restore` | 1 | the `RESTORE_FROM` boot-time restore (`docs/ops/RECOVERY.md`) |
 | `ordering` | 2 | supplier order sending |
 | `outcomes` | 2 | before/after trackers with the causation caveat |
 | `permissions` | 0 | roles and module view gates |

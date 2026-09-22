@@ -1319,36 +1319,36 @@ def test_guest_campaign_send_requires_message(client, db_path):
     assert resp.status_code == 400
 
 
-def test_guest_campaign_send_returns_ok(client, db_path, monkeypatch):
+def test_guest_campaign_send_returns_ok_and_texts_in_the_background(client, db_path, monkeypatch):
+    # The route validates and hands the list to a background sender; it
+    # answers at once with how many it is texting (MOD-MKT-7).
+    import guest_marketing
+    guest_marketing.init_guest_marketing(db_path=db_path)
     rid = _restaurant(db_path, module_marketing=1)
     token = _login(client, db_path, rid)
-    # send_campaign now reports its own ok — it refuses outside guest texting
-    # hours rather than sending a marketing text at midnight, and the route
-    # passes that verdict straight through instead of asserting ok=True.
+    monkeypatch.setattr("guest_marketing.guest_sms_allowed_now", lambda r: True)
     monkeypatch.setattr("guest_marketing.send_campaign", lambda *a, **kw: {"ok": True, "sent": 0})
 
     resp = client.post(
         "/mobile/api/guest-campaign/send", json={"message": "Hi there"}, headers=_auth_headers(token)
     )
     data = resp.get_json()
-    assert data["ok"] is True
-    assert data["sent"] == 0
+    assert resp.status_code == 202
+    assert data["ok"] is True and data["queued"] is True and data["total"] == 0
 
 
 def test_guest_campaign_send_surfaces_a_quiet_hours_refusal(client, db_path, monkeypatch):
     """The owner has to be told the campaign was held, not told it sent."""
     rid = _restaurant(db_path, module_marketing=1)
     token = _login(client, db_path, rid)
-    monkeypatch.setattr("guest_marketing.send_campaign",
-                        lambda *a, **kw: {"ok": False, "blocked": "quiet_hours", "sent": 0,
-                                          "failed": 0, "total": 0, "error": "held until morning"})
+    monkeypatch.setattr("guest_marketing.guest_sms_allowed_now", lambda r: False)
 
     resp = client.post(
         "/mobile/api/guest-campaign/send", json={"message": "Hi there"}, headers=_auth_headers(token)
     )
     data = resp.get_json()
-    assert data["ok"] is False
-    assert data["error"] == "held until morning"
+    assert data["ok"] is False and data["blocked"] == "quiet_hours"
+    assert "8:00" in data["error"] or "morning" in data["error"]
 
 
 def test_guest_join_link_requires_marketing_module(client, db_path):

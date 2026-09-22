@@ -660,6 +660,49 @@ def draft_campaign_message(restaurant, campaign_type="general", topic=""):
     return text
 
 
+MAX_CAMPAIGN_CHARS = 1600
+
+
+def audience_size(restaurant_id, segment="all", db_path=DB_PATH) -> int:
+    """How many guests a campaign to this segment would text right now."""
+    from time_utils import restaurant_now_by_id
+    now = restaurant_now_by_id(restaurant_id, naive=True)
+    return sum(1 for c in segment_contacts(restaurant_id, segment, db_path=db_path) if not _too_soon(c, now))
+
+
+def start_campaign(restaurant_id, message, segment="all", link_token=None, on_done=None, db_path=DB_PATH) -> dict:
+    """Validate now, text in the background. The fan-out used to run inside
+    the HTTP request: one synchronous Twilio call per guest on one of the
+    four request threads, so a 5,000-guest list held a quarter of the
+    platform for an hour and the phone gave up long before (MOD-MKT-7).
+    Returns what the owner is told immediately; campaign history shows the
+    sends as they land."""
+    if not guest_sms_allowed_now(restaurant_id):
+        return {"ok": False, "blocked": "quiet_hours", "sent": 0, "failed": 0, "total": 0,
+                "error": ("Guest texts only go out between "
+                          f"{guest_sms_window_label()} in your local time. "
+                          "Your message is ready — send it in the morning.")}
+    full = message.strip() + ("\n" + _short_link(link_token) if link_token else "") + "\n\nReply STOP to unsubscribe."
+    if len(full) > MAX_CAMPAIGN_CHARS:
+        return {"ok": False, "sent": 0, "failed": 0, "total": 0,
+                "error": f"That text is {len(full):,} characters with the opt-out line; "
+                         f"the most one text can carry is {MAX_CAMPAIGN_CHARS:,}. Shorten it and send again."}
+    total = audience_size(restaurant_id, segment, db_path=db_path)
+    import threading
+
+    def _run():
+        try:
+            result = send_campaign(restaurant_id, message, db_path=db_path, segment=segment, link_token=link_token)
+            if on_done:
+                on_done(result)
+        except Exception as e:
+            import ops
+            ops.capture(e, job="guest_campaign_send", context=f"restaurant_id={restaurant_id}")
+    threading.Thread(target=_run, name=f"guest-campaign-{restaurant_id}", daemon=True).start()
+    return {"ok": True, "queued": True, "total": total, "segment": segment,
+            "segment_label": SEGMENTS.get(segment, SEGMENTS["all"])["label"]}
+
+
 def send_campaign(restaurant_id, message, db_path=DB_PATH, segment="all", link_token=None):
     """Send `message` to one SEGMENT of consented, non-unsubscribed guests.
 
@@ -690,6 +733,12 @@ def send_campaign(restaurant_id, message, db_path=DB_PATH, segment="all", link_t
     if link_token:
         body = f"{body}\n{_short_link(link_token)}"
     full_message = body + "\n\nReply STOP to unsubscribe."
+    if len(full_message) > MAX_CAMPAIGN_CHARS:
+        # Twilio's hard ceiling; every 160 characters is a billed segment.
+        # Refused before anyone is texted, not discovered per guest.
+        return {"ok": False, "sent": 0, "failed": 0, "total": 0,
+                "error": f"That text is {len(full_message):,} characters with the opt-out line; "
+                         f"the most one text can carry is {MAX_CAMPAIGN_CHARS:,}. Shorten it and send again."}
 
     # Exactly once per guest, even with two sends in flight (a double tap, a
     # phone that gave up at 20 s and was pressed again) or a send killed
@@ -759,8 +808,14 @@ def send_campaign(restaurant_id, message, db_path=DB_PATH, segment="all", link_t
         finally:
             c2.close()
 
-    sent, failed, raced = 0, 0, 0
-    for c in eligible:
+    sent, failed, raced, deferred = 0, 0, 0, 0
+    for i, c in enumerate(eligible):
+        # The 8am-9pm window is checked before EVERY text: a send that
+        # starts at 8:57pm used to keep texting past 9 (MOD-MKT-7). The rest
+        # wait for the next campaign rather than going out at night.
+        if not guest_sms_allowed_now(restaurant_id):
+            deferred = len(eligible) - i
+            break
         prior = c.get("last_campaign_at")
         if not _claim(c["id"], prior):
             raced += 1          # another send in flight already has this guest
@@ -784,7 +839,7 @@ def send_campaign(restaurant_id, message, db_path=DB_PATH, segment="all", link_t
     skipped_recent += raced
 
     return {"ok": True, "sent": sent, "failed": failed, "total": len(eligible) - raced,
-            "campaign_id": campaign_id,
+            "campaign_id": campaign_id, "deferred_quiet_hours": deferred,
             "skipped_recent": skipped_recent, "segment": segment,
             "segment_label": SEGMENTS.get(segment, SEGMENTS["all"])["label"]}
 

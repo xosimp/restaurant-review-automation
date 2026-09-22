@@ -15323,7 +15323,13 @@ window.sendGuestCampaign = function() {
   }).then(function(r){ return r.json(); }).then(function(d){
     btn.disabled = false;
     btn.textContent = 'Send to this audience';
-    if (d.ok) {
+    if (d.ok && d.queued) {
+      // Texted in the background now; the history fills in as they go.
+      status.textContent = 'Sending to ' + d.total + ' guest' + (d.total === 1 ? '' : 's') + ' now — the history below fills in as they go.';
+      status.style.color = '#2d6a4f';
+      setTimeout(loadGuestHistory, 4000);
+      loadGuestSegments();
+    } else if (d.ok) {
       status.textContent = 'Sent to ' + d.sent + ' of ' + d.total + ' guests.'
         + (d.skipped_recent ? ' ' + d.skipped_recent + ' skipped — texted in the last few days.' : '');
       status.style.color = '#2d6a4f';
