@@ -56,7 +56,7 @@ def record_outcomes(restaurant_id, db_path=DB_PATH, today=None) -> dict:
     written = 0
     try:
         weeks = conn.execute(
-            "SELECT id, week_start, week_end, schedule_csv FROM schedule_history WHERE restaurant_id=? AND published_at IS NOT NULL "
+            "SELECT id, week_start, week_end, schedule_csv FROM schedule_history WHERE restaurant_id=? AND published_at IS NOT NULL AND superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM schedule_history nw WHERE nw.restaurant_id=schedule_history.restaurant_id AND nw.week_start=schedule_history.week_start AND nw.published_at IS NOT NULL AND nw.id > schedule_history.id) "
             "AND week_end < ? ORDER BY id DESC LIMIT ?", (restaurant_id, today.isoformat(), OUTCOME_WEEKS)).fetchall()
         if not weeks:
             return {"written": 0}
@@ -205,7 +205,7 @@ def fairness_ledger(restaurant_id, weeks: int = LEDGER_WEEKS, db_path=DB_PATH, t
     today = today or date.today()
     conn = get_conn(db_path)
     try:
-        rows = conn.execute("SELECT week_start, week_end, schedule_csv FROM schedule_history WHERE restaurant_id=? AND published_at IS NOT NULL "
+        rows = conn.execute("SELECT week_start, week_end, schedule_csv FROM schedule_history WHERE restaurant_id=? AND published_at IS NOT NULL AND superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM schedule_history nw WHERE nw.restaurant_id=schedule_history.restaurant_id AND nw.week_start=schedule_history.week_start AND nw.published_at IS NOT NULL AND nw.id > schedule_history.id) "
                             "AND week_start >= ? ORDER BY week_start DESC LIMIT ?",
                             (restaurant_id, (today - timedelta(weeks=weeks)).isoformat(), weeks)).fetchall()
         close_times = {}
@@ -385,7 +385,7 @@ def chemistry_suggestions(restaurant_id, db_path=DB_PATH) -> list:
     try:
         outs = conn.execute("SELECT history_id, date, daypart, issues FROM schedule_outcomes WHERE restaurant_id=?", (restaurant_id,)).fetchall()
         csvs = {r["id"]: r["schedule_csv"] for r in conn.execute(
-            "SELECT id, schedule_csv FROM schedule_history WHERE restaurant_id=? AND published_at IS NOT NULL", (restaurant_id,)).fetchall()}
+            "SELECT id, schedule_csv FROM schedule_history WHERE restaurant_id=? AND published_at IS NOT NULL AND superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM schedule_history nw WHERE nw.restaurant_id=schedule_history.restaurant_id AND nw.week_start=schedule_history.week_start AND nw.published_at IS NOT NULL AND nw.id > schedule_history.id)", (restaurant_id,)).fetchall()}
         existing = {frozenset((r["employee_a"].lower(), r["employee_b"].lower())) for r in conn.execute(
             "SELECT employee_a, employee_b FROM staff_pairs WHERE restaurant_id=?", (restaurant_id,)).fetchall()}
     except Exception:

@@ -41,6 +41,10 @@ def _row(r):
     return d
 
 
+import contextvars as _cv
+_queued_at = _cv.ContextVar("delayed_queued_at", default=None)
+
+
 def schedule(restaurant_id, kind, payload, delay_minutes, label=None, actor=None, db_path=DB_PATH):
     """Queue one action. Returns the row (with `id` and `execute_at`)."""
     if kind not in HANDLERS:
@@ -112,7 +116,13 @@ def run_due(db_path=DB_PATH, now=None, limit=20):
             continue
         action = _row(row)
         try:
-            result = HANDLERS[action["kind"]](action["restaurant_id"], action["payload"], db_path)
+            # When it was queued rides alongside (not in the payload): a
+            # handler that promises "unchanged since it was queued" needs it.
+            _token = _queued_at.set(row["created_at"])
+            try:
+                result = HANDLERS[action["kind"]](action["restaurant_id"], action["payload"], db_path)
+            finally:
+                _queued_at.reset(_token)
             ok = bool((result or {}).get("ok", True))
             status = "done" if ok else "failed"
             ran += 1 if ok else 0
@@ -135,7 +145,23 @@ def run_due(db_path=DB_PATH, now=None, limit=20):
 # ── handlers ────────────────────────────────────────────────────────────────
 
 def _run_schedule_publish(restaurant_id, payload, db_path):
+    """Publish the queued week — unless it was edited after it was queued.
+    The queue-time checks (unedited, unpublished) are two hours old when
+    this runs; a week the manager changed in the window goes out only when
+    they publish it themselves (DATA-12, SCHED-28). An already-published
+    week is refused by _publish_schedule's own claim."""
     from client_api import _publish_schedule
+    queued_at = _queued_at.get()
+    if payload.get("schedule_id") and queued_at:
+        conn = get_conn(db_path)
+        try:
+            r = conn.execute("SELECT edited_at FROM schedule_history WHERE id=? AND restaurant_id=?",
+                             (payload["schedule_id"], restaurant_id)).fetchone()
+        finally:
+            conn.close()
+        if r and r["edited_at"] and str(r["edited_at"]) >= str(queued_at):
+            return {"ok": False, "error": "The week was changed after it was queued, so it was not sent. "
+                                          "Publish it from the Labor tab when it's ready."}
     out, _status = _publish_schedule(restaurant_id, payload.get("schedule_id"), AUTOMATION_ACTOR,
                                      acknowledge=bool(payload.get("acknowledge")))
     return out

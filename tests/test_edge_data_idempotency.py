@@ -279,7 +279,6 @@ def supplier_mail(monkeypatch):
 
 # ── DATA-12 · schedule publish ──────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="DATA-12: _publish_schedule never checks published_at, so a second publish re-emails every member of staff")
 def test_publishing_the_same_week_twice_emails_each_member_of_staff_once(db_path, staff_mail):
     rid = _restaurant(db_path)
     _staff_contacts(db_path, rid)
@@ -293,7 +292,6 @@ def test_publishing_the_same_week_twice_emails_each_member_of_staff_once(db_path
     assert sorted(staff_mail) == ["Ana", "Bob"]
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-12: the delayed auto-publish handler does not re-check published_at, so a manual publish at 10am is re-sent at 11am")
 def test_the_auto_publish_after_a_manual_publish_sends_nothing(db_path, staff_mail):
     rid = _restaurant(db_path, auto_publish_schedule=1)
     _staff_contacts(db_path, rid)
@@ -310,7 +308,6 @@ def test_the_auto_publish_after_a_manual_publish_sends_nothing(db_path, staff_ma
     assert sorted(staff_mail) == ["Ana", "Bob"], "the 11am action emailed staff a second time"
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-12: the delayed auto-publish handler does not re-check edited_at, so a week edited after it was queued goes out as if unchanged")
 def test_an_auto_publish_queued_before_an_edit_sends_nothing_once_the_week_is_edited(db_path, staff_mail):
     """Async Jobs appendix #13: the queue-time checks (unedited, unpublished)
     are two hours old when the action runs."""

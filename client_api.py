@@ -5713,6 +5713,31 @@ def _publish_schedule(restaurant_id, schedule_id=None, actor=None, acknowledge=F
     if row["week_end"]:
         week_label = f"{row['week_start']} – {row['week_end']}"
 
+    # Claim the week before anything goes out. Nothing stopped a second
+    # publish (a double tap, a second device, the 11am auto-publish after a
+    # 10am manual one) from emailing every member of staff again (SCHED-29,
+    # DATA-12). A claim older than 10 minutes belongs to a publish that died.
+    from models import _ensure_history_columns
+    conn = get_conn()
+    try:
+        _ensure_history_columns(conn)
+        got = conn.execute(
+            "UPDATE schedule_history SET publishing_at=datetime('now') WHERE id=? AND restaurant_id=? "
+            "AND published_at IS NULL AND (publishing_at IS NULL OR publishing_at < datetime('now','-10 minutes'))",
+            (schedule_id, rid)).rowcount
+        conn.commit()
+        state = conn.execute("SELECT published_at FROM schedule_history WHERE id=?", (schedule_id,)).fetchone()
+    finally:
+        conn.close()
+    if not got:
+        if state and state["published_at"]:
+            return dict(ok=True, already_published=True, schedule_id=schedule_id, week_label=week_label,
+                        sent=[], unreachable=[], failed=[],
+                        status=get_schedule_share_status(rid, schedule_id),
+                        error=None), 200
+        return {"ok": False, "in_progress": True, "schedule_id": schedule_id,
+                "error": "This week is being sent to staff right now."}, 409
+
     contacts = {c["employee_name"].lower(): c for c in get_staff_contacts(rid)}
     base_url = config.base_url()
 
@@ -5726,7 +5751,7 @@ def _publish_schedule(restaurant_id, schedule_id=None, actor=None, acknowledge=F
         import ops as _ops_o
         _ops_o.capture(_oe, job="observe_schedule", context=f"restaurant_id={rid}")
 
-    sent, unreachable, failed = [], [], []
+    sent, unreachable, failed, failed_tokens = [], [], [], []
     for name in employees_in_schedule(row["schedule_csv"]):
         contact = contacts.get(name.lower()) or {}
         email = (contact.get("email") or "").strip()
@@ -5745,6 +5770,7 @@ def _publish_schedule(restaurant_id, schedule_id=None, actor=None, acknowledge=F
                 reply_to=restaurant.owner_email or None)
         except Exception as e:
             failed.append({"employee_name": name, "error": str(e)})
+            failed_tokens.append(token)
             continue
 
         try:
@@ -5754,30 +5780,56 @@ def _publish_schedule(restaurant_id, schedule_id=None, actor=None, acknowledge=F
             pass
         sent.append({"employee_name": name, "sent_to": email, "shifts": len(shifts)})
 
-    if sent:
-        log_account_event(rid, "schedule_published", actor,
-                          detail=f"{len(sent)} to staff" + (" — acknowledged blockers" if blockers else ""))
+    actor_name = (actor.get("username") or actor.get("email") or "automation") if isinstance(actor, dict) else "automation"
+    if failed and not sent:
+        # Every email that was tried failed (Resend down): nothing is
+        # published. The share rows made for those emails are removed so the
+        # week is not half-published, and the claim is released for a retry.
+        conn = get_conn()
         try:
-            from models import _ensure_history_columns
-            conn = get_conn()
-            try:
-                _ensure_history_columns(conn)
-                conn.execute("UPDATE schedule_history SET published_at=datetime('now'), published_by=? WHERE id=? AND restaurant_id=?",
-                             ((actor.get("username") or actor.get("email") or "automation") if isinstance(actor, dict) else "automation",
-                              schedule_id, rid))
-                conn.commit()
-            finally:
-                conn.close()
-            import schedule_versions as _sv
-            _sv.append(rid, schedule_id, "published", row["schedule_csv"],
-                       saved_by=(actor.get("username") or actor.get("email") or "automation") if isinstance(actor, dict) else "automation")
-        except Exception as _px:
-            _ops.capture(_px, job="schedule_publish_stamp", context=f"restaurant_id={rid} schedule_id={schedule_id}")
-    return dict(ok=bool(sent), schedule_id=schedule_id, week_label=week_label,
-                   sent=sent, unreachable=unreachable, failed=failed,
-                   acknowledged=bool(blockers),
-                   status=get_schedule_share_status(rid, schedule_id),
-                   error=None if sent else "Nobody has an email address on file yet."), 200
+            for t in failed_tokens:
+                conn.execute("DELETE FROM schedule_shares WHERE token=? AND schedule_id=?", (t, schedule_id))
+            conn.execute("UPDATE schedule_history SET publishing_at=NULL WHERE id=?", (schedule_id,))
+            conn.commit()
+        finally:
+            conn.close()
+        return dict(ok=False, schedule_id=schedule_id, week_label=week_label, sent=[], unreachable=unreachable,
+                    failed=failed, acknowledged=bool(blockers),
+                    status=get_schedule_share_status(rid, schedule_id),
+                    error="The emails could not be sent, so nothing was published. Try again in a few minutes."), 200
+
+    # Published — to the staff portal always, and by email to everyone with
+    # an address. A restaurant whose staff use only the portal used to never
+    # publish at all, because the stamp waited on a successful email (SCHED-9).
+    log_account_event(rid, "schedule_published", actor,
+                      detail=(f"{len(sent)} to staff" if sent else "to the staff portal")
+                      + (" — acknowledged blockers" if blockers else ""))
+    try:
+        conn = get_conn()
+        try:
+            conn.execute("UPDATE schedule_history SET published_at=datetime('now'), published_by=?, publishing_at=NULL "
+                         "WHERE id=? AND restaurant_id=?", (actor_name, schedule_id, rid))
+            # One live version of a week: an older published copy is retired,
+            # or both fed outcomes, fairness, hours and claims (SCHED-10).
+            conn.execute("UPDATE schedule_history SET superseded_by=? WHERE restaurant_id=? AND week_start=? "
+                         "AND id<>? AND published_at IS NOT NULL AND superseded_by IS NULL",
+                         (schedule_id, rid, row["week_start"], schedule_id))
+            conn.commit()
+        finally:
+            conn.close()
+        import schedule_versions as _sv
+        _sv.append(rid, schedule_id, "published", row["schedule_csv"], saved_by=actor_name)
+    except Exception as _px:
+        _ops.capture(_px, job="schedule_publish_stamp", context=f"restaurant_id={rid} schedule_id={schedule_id}")
+    note = None
+    if not sent:
+        note = ("Published to the staff portal. Nobody has an email address on file, so no emails went out."
+                if not failed else None)
+    return dict(ok=True, schedule_id=schedule_id, week_label=week_label,
+                sent=sent, unreachable=unreachable, failed=failed,
+                acknowledged=bool(blockers), portal_only=not sent, note=note,
+                status=get_schedule_share_status(rid, schedule_id),
+                error=None), 200
 
 
 @client_bp.route("/api/labor/publish-schedule", methods=["POST"])

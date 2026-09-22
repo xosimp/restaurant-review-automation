@@ -703,6 +703,10 @@ def ensure_columns(db_path: str = DB_PATH):
         # by _ensure_history_columns for a database created before boot ran).
         ("schedule_history", "published_at", "TEXT"),
         ("schedule_history", "published_by", "TEXT"),
+        # The publish claim: a week goes to staff once, however many devices
+        # or retries press Publish (SCHED-29, DATA-12).
+        ("schedule_history", "publishing_at", "TEXT"),
+        ("schedule_history", "superseded_by", "INTEGER"),
         ("schedule_history", "review_json", "TEXT"),
         ("schedule_history", "generation_seconds", "REAL"),
         ("schedule_history", "weather_json", "TEXT"),
@@ -4786,7 +4790,7 @@ def sibling_location_shifts(restaurant_id: int, dates: list,
             # not a commitment (the same rule schedule_rules._published_tail keeps).
             _ensure_history_columns(conn)
             row = conn.execute(
-                "SELECT schedule_csv FROM schedule_history WHERE restaurant_id=? AND published_at IS NOT NULL "
+                "SELECT schedule_csv FROM schedule_history WHERE restaurant_id=? AND published_at IS NOT NULL AND superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM schedule_history nw WHERE nw.restaurant_id=schedule_history.restaurant_id AND nw.week_start=schedule_history.week_start AND nw.published_at IS NOT NULL AND nw.id > schedule_history.id) "
                 "ORDER BY id DESC LIMIT 1", (sib["id"],)).fetchone()
             for line in ((row["schedule_csv"] if row else "") or "").split("\n")[1:]:
                 parts = [p.strip() for p in line.split(",", 7)]
@@ -5151,7 +5155,7 @@ def _ensure_history_columns(conn):
                        ("review_json", "TEXT"), ("generation_seconds", "REAL"),
                        ("weather_json", "TEXT"), ("quality_score", "REAL"), ("quality_band", "TEXT"),
                        ("quality_confidence", "TEXT"), ("what_if_json", "TEXT"), ("superseded_by", "INTEGER"),
-                       ("republished_at", "TEXT")):
+                       ("republished_at", "TEXT"), ("publishing_at", "TEXT")):
         if name not in have:
             conn.execute(f"ALTER TABLE schedule_history ADD COLUMN {name} {decl}")
 
@@ -7417,7 +7421,7 @@ def schedule_publish_trust(restaurant_id: int, db_path: str = DB_PATH) -> int:
     try:
         rows = conn.execute(
             "SELECT h.id, h.edited_at, h.week_start, h.week_end FROM schedule_history h WHERE h.restaurant_id=? "
-            "AND h.published_at IS NOT NULL "
+            "AND h.published_at IS NOT NULL AND h.superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM schedule_history nw WHERE nw.restaurant_id=h.restaurant_id AND nw.week_start=h.week_start AND nw.published_at IS NOT NULL AND nw.id > h.id) "
             "ORDER BY h.id DESC LIMIT 10", (restaurant_id,)).fetchall()
         n = 0
         for r in rows:

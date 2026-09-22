@@ -359,7 +359,7 @@ def run_quality_calibration(db_path=DB_PATH):
         try:
             rows = conn.execute(
                 "SELECT week_start, week_end, quality_json FROM schedule_history WHERE restaurant_id=? "
-                "AND published_at IS NOT NULL AND quality_json IS NOT NULL ORDER BY id DESC LIMIT 26", (r.id,)).fetchall()
+                "AND published_at IS NOT NULL AND superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM schedule_history nw WHERE nw.restaurant_id=schedule_history.restaurant_id AND nw.week_start=schedule_history.week_start AND nw.published_at IS NOT NULL AND nw.id > schedule_history.id) AND quality_json IS NOT NULL ORDER BY id DESC LIMIT 26", (r.id,)).fetchall()
             weeks = []
             for row in rows:
                 try:

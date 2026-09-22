@@ -337,7 +337,6 @@ def test_a_person_with_a_compliment_on_file_can_still_claim_a_legal_shift(db):
 
 # ── SCHED-10: a claim against a superseded published row ─────────────────
 
-@pytest.mark.xfail(strict=True, reason="SCHED-10: a claim is written into the superseded version it was opened on, not the week staff now see")
 def test_a_claim_opened_before_a_republish_lands_in_the_live_week(db):
     rid = _restaurant(db, SERVERS)
     v1 = _publish(db, rid, [(W1[2], "Ana", "Server", "11:00am", "3:00pm", 4)])

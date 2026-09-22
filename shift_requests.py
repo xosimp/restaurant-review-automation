@@ -28,12 +28,23 @@ def _published(conn, restaurant_id, on_date=None):
     if on_date is None:
         return conn.execute(
             "SELECT id, schedule_csv, week_start, week_end FROM schedule_history WHERE restaurant_id=? "
-            "AND published_at IS NOT NULL ORDER BY id DESC LIMIT 1", (restaurant_id,)).fetchone()
+            "AND published_at IS NOT NULL AND superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM schedule_history nw WHERE nw.restaurant_id=schedule_history.restaurant_id AND nw.week_start=schedule_history.week_start AND nw.published_at IS NOT NULL AND nw.id > schedule_history.id) ORDER BY id DESC LIMIT 1", (restaurant_id,)).fetchone()
     iso = on_date.isoformat() if hasattr(on_date, "isoformat") else str(on_date)[:10]
     return conn.execute(
         "SELECT id, schedule_csv, week_start, week_end FROM schedule_history WHERE restaurant_id=? "
-        "AND published_at IS NOT NULL AND substr(week_start,1,10) <= ? AND substr(week_end,1,10) >= ? "
+        "AND published_at IS NOT NULL AND superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM schedule_history nw WHERE nw.restaurant_id=schedule_history.restaurant_id AND nw.week_start=schedule_history.week_start AND nw.published_at IS NOT NULL AND nw.id > schedule_history.id) AND substr(week_start,1,10) <= ? AND substr(week_end,1,10) >= ? "
         "ORDER BY generated_at DESC, id DESC LIMIT 1", (restaurant_id, iso, iso)).fetchone()
+
+
+def _live_hist(conn, restaurant_id, req):
+    """The published week staff now see for this request's date. A request
+    opened before the week was re-published used to be written into the
+    superseded copy, so the cover never reached the live week (SCHED-10)."""
+    live = _published(conn, restaurant_id, req["date"])
+    if live:
+        return live
+    return conn.execute("SELECT id, schedule_csv FROM schedule_history WHERE id=? AND restaurant_id=?",
+                        (req["history_id"], restaurant_id)).fetchone()
 
 
 def request_drop(restaurant_id, employee_name, day, shift_start, reason=None, db_path=DB_PATH, today=None):
@@ -196,8 +207,7 @@ def _execute_swap(restaurant_id, req: dict, actor, db_path):
     from models import update_schedule_history_rows
     conn = get_conn(db_path)
     try:
-        hist = conn.execute("SELECT id, schedule_csv FROM schedule_history WHERE id=? AND restaurant_id=?",
-                            (req["history_id"], restaurant_id)).fetchone()
+        hist = _live_hist(conn, restaurant_id, req)
     finally:
         conn.close()
     if not hist:
@@ -251,8 +261,7 @@ def claim(restaurant_id, request_id, claimant, actor=None, db_path=DB_PATH):
                            (int(request_id), restaurant_id)).fetchone()
         if not row:
             raise ShiftRequestError("that shift is not open")
-        hist = conn.execute("SELECT id, schedule_csv FROM schedule_history WHERE id=? AND restaurant_id=?",
-                            (row["history_id"], restaurant_id)).fetchone()
+        hist = _live_hist(conn, restaurant_id, row)
     finally:
         conn.close()
     if not hist:

@@ -11093,9 +11093,15 @@ function publishScheduleNow(ack){
         if (d.queued) {
           result.textContent = 'Goes to staff in ' + d.undo_minutes + ' min — undo from the Cavnar AI strip';
           toast('Schedule queued','success');
+        } else if (d.already_published) {
+          result.textContent = 'This week was already sent to staff — nothing went out twice.';
+          toast('Already published','success');
+        } else if (d.portal_only) {
+          result.textContent = d.note || 'Published to the staff portal.';
+          toast('Published to the portal','success');
         } else {
-          var sent = (d.sent || []).length, total = sent + (d.unreachable || []).length;
-          result.textContent = 'Sent to ' + sent + ' of ' + total + ' staff' + (d.acknowledged ? ' · warnings acknowledged' : '');
+          var sent = (d.sent || []).length, total = sent + (d.unreachable || []).length + (d.failed || []).length;
+          result.textContent = 'Sent to ' + sent + ' of ' + total + ' staff' + ((d.failed || []).length ? ' · ' + d.failed.length + ' email' + (d.failed.length === 1 ? '' : 's') + ' failed' : '') + (d.acknowledged ? ' · warnings acknowledged' : '');
           toast('Schedule sent','success');
         }
         return;

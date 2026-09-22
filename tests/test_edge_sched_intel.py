@@ -84,7 +84,6 @@ def _q(db_path, sql, *args):
 
 # ── SCHED-10: a week published twice, counted twice ──────────────────────
 
-@pytest.mark.xfail(strict=True, reason="SCHED-10: record_outcomes is keyed by history_id, so both published versions of a week are recorded")
 def test_a_week_published_twice_is_recorded_once_in_outcomes(db):
     rid = _restaurant(db)
     _publish(db, rid, W1, [(W1[5], "Ana", "5:00pm", "10:00pm", 5)])
@@ -94,7 +93,6 @@ def test_a_week_published_twice_is_recorded_once_in_outcomes(db):
     assert len(rows) == 1, [tuple(r) for r in rows]
 
 
-@pytest.mark.xfail(strict=True, reason="SCHED-10: fairness_ledger reads every published row, so a republished week doubles each weekend")
 def test_a_week_published_twice_counts_once_in_the_rotation_ledger(db):
     rid = _restaurant(db)
     _publish(db, rid, W1, [(W1[5], "Ana", "5:00pm", "10:00pm", 5)])

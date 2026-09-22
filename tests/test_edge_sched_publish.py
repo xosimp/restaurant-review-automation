@@ -166,7 +166,6 @@ def test_a_double_already_lists_both_legs_in_upcoming(db):
 
 # ── SCHED-9: publishing without email ─────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="SCHED-9: published_at is stamped only after a successful email, so a portal-only restaurant never publishes")
 def test_publishing_with_no_email_contacts_still_publishes_to_the_portal(db, monkeypatch):
     rid = _restaurant(db)
     hid = _save(db, rid, W1, _week_csv(W1))
@@ -177,7 +176,6 @@ def test_publishing_with_no_email_contacts_still_publishes_to_the_portal(db, mon
     assert staff_schedule.shifts_for_employee(rid, "Ana", today=dt.date(2026, 10, 5))["published"] is True
 
 
-@pytest.mark.xfail(strict=True, reason="SCHED-9: when every send fails, share rows exist (half-published) and the error says nobody has an email")
 def test_every_send_failing_leaves_no_share_row_and_says_the_send_failed(db, monkeypatch):
     rid = _restaurant(db)
     hid = _save(db, rid, W1, _week_csv(W1))
@@ -207,7 +205,6 @@ def test_a_successful_send_stamps_published_at_and_versions_it(db, monkeypatch):
 
 # ── SCHED-29: two publishes at once ───────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="SCHED-29: publishing has no claim, so two concurrent publishes email every employee twice")
 def test_two_concurrent_publishes_email_each_employee_once(db, monkeypatch):
     rid = _restaurant(db)
     hid = _save(db, rid, W1, _week_csv(W1))
@@ -240,7 +237,6 @@ def test_two_concurrent_publishes_email_each_employee_once(db, monkeypatch):
 
 # ── SCHED-10: a week published twice ──────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="SCHED-10: publishing a new version never clears published_at on the older row of the same week")
 def test_publishing_a_second_version_of_a_week_retires_the_first(db, monkeypatch):
     rid = _restaurant(db)
     _contacts(db, rid, "Ana", "Bob")
@@ -465,7 +461,6 @@ def test_auto_publish_queues_next_weeks_clean_draft(db, friday):
     assert _queued(db, rid) == [{"schedule_id": hid}] and "schedule_publish_pending" in friday
 
 
-@pytest.mark.xfail(strict=True, reason="SCHED-28: auto-publish never checks whether the week already has a published row")
 def test_auto_publish_queues_nothing_for_a_week_already_published(db, friday):
     rid = _auto_restaurant(db)
     sent = _save(db, rid, W1, _week_csv(W1), published=True)
@@ -475,7 +470,6 @@ def test_auto_publish_queues_nothing_for_a_week_already_published(db, friday):
     assert _queued(db, rid) == []
 
 
-@pytest.mark.xfail(strict=True, reason="SCHED-28: auto-publish takes the newest future row, which can be a draft weeks out")
 def test_auto_publish_picks_next_weeks_draft_not_a_later_one(db, friday):
     rid = _auto_restaurant(db)
     nxt = _save(db, rid, W1, _week_csv(W1))
@@ -484,7 +478,6 @@ def test_auto_publish_picks_next_weeks_draft_not_a_later_one(db, friday):
     assert _queued(db, rid) == [{"schedule_id": nxt}]
 
 
-@pytest.mark.xfail(strict=True, reason="SCHED-28: the delayed send publishes whatever the CSV is at 11am, with no hash check")
 def test_the_delayed_publish_is_voided_when_the_week_was_edited_in_the_window(db, friday, monkeypatch):
     rid = _auto_restaurant(db)
     _contacts(db, rid, "Ana", "Bob")

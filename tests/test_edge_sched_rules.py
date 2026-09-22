@@ -169,7 +169,6 @@ def test_an_ordinary_night_rest_gap_is_measured_on_the_wall_clock():
 
 # ── SCHED-10: a week published twice feeds the payroll-week tail ─────────
 
-@pytest.mark.xfail(strict=True, reason="SCHED-10: both published versions of a week feed base_hours/base_rows, creating false hard violations")
 def test_only_the_newest_published_version_of_a_week_feeds_the_tail(db):
     rid = _restaurant(db, week_start_day=3)                        # Thursday payroll weeks
     v1 = [(d, "X", "Ana", "Server", "3:00pm", "11:00pm", 8, "") for d in PREV[3:]]
@@ -183,7 +182,6 @@ def test_only_the_newest_published_version_of_a_week_feeds_the_tail(db):
     assert [v for v in sr.violations(rows, c) if v["hard"]] == []
 
 
-@pytest.mark.xfail(strict=True, reason="SCHED-10: two published versions of a later week push the real previous week out of the LIMIT 2 tail")
 def test_two_versions_of_a_later_week_never_hide_the_previous_weeks_close(db):
     rid = _restaurant(db)
     _publish(db, rid, PREV, [(PREV[6], "Sunday", "Ana", "Server", "5:00pm", "11:00pm", 6, "")])

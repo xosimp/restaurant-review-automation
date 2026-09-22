@@ -612,14 +612,14 @@ def _published_tail(c: Constraints, restaurant_id, db_path):
     conn = get_conn(db_path)
     try:
         me = conn.execute("SELECT location_group, owner_email FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
-        own = conn.execute("SELECT schedule_csv FROM schedule_history WHERE restaurant_id=? AND published_at IS NOT NULL "
+        own = conn.execute("SELECT schedule_csv FROM schedule_history WHERE restaurant_id=? AND published_at IS NOT NULL AND superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM schedule_history nw WHERE nw.restaurant_id=schedule_history.restaurant_id AND nw.week_start=schedule_history.week_start AND nw.published_at IS NOT NULL AND nw.id > schedule_history.id) "
                            "AND week_end >= ? ORDER BY id DESC LIMIT 2", (restaurant_id, window_start)).fetchall()
         sibs = []
         group = ((me["location_group"] if me else "") or "").strip()
         if group:
             for s in conn.execute("SELECT id, COALESCE(location_name, name) AS label FROM restaurants "
                                   "WHERE location_group=? AND owner_email=? AND id<>?", (group, me["owner_email"], restaurant_id)).fetchall():
-                row = conn.execute("SELECT schedule_csv FROM schedule_history WHERE restaurant_id=? AND published_at IS NOT NULL "
+                row = conn.execute("SELECT schedule_csv FROM schedule_history WHERE restaurant_id=? AND published_at IS NOT NULL AND superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM schedule_history nw WHERE nw.restaurant_id=schedule_history.restaurant_id AND nw.week_start=schedule_history.week_start AND nw.published_at IS NOT NULL AND nw.id > schedule_history.id) "
                                    "ORDER BY id DESC LIMIT 1", (s["id"],)).fetchone()
                 if row:
                     sibs.append((s["label"], row["schedule_csv"]))

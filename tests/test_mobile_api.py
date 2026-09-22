@@ -3476,14 +3476,16 @@ def test_publish_refuses_when_no_schedule_exists_yet(client, db_path):
     assert "generate a schedule first" in resp.get_json()["error"].lower()
 
 
-def test_publish_refuses_when_nobody_is_reachable(client, db_path):
+def test_publish_with_nobody_reachable_publishes_to_the_portal_and_says_so(client, db_path):
+    # A restaurant whose staff use only the portal must still be able to
+    # publish; it used to be refused because no email went out (SCHED-9).
     rid = _restaurant(db_path)
     _stored_schedule(db_path, rid)
     token = _login(client, db_path, rid)
     d = client.post("/mobile/api/labor/publish-schedule", headers=_auth_headers(token)).get_json()
-    assert d["ok"] is False
+    assert d["ok"] is True and d["portal_only"] is True
     assert len(d["unreachable"]) == 2
-    assert "email address on file" in d["error"].lower()
+    assert "email address on file" in d["note"].lower()
 
 
 def test_one_failed_send_does_not_stop_the_others(client, db_path, monkeypatch):

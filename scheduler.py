@@ -2070,11 +2070,22 @@ def run_auto_publish_schedules():
             continue
         conn = get_conn()
         try:
-            row = conn.execute(
-                "SELECT h.id, h.week_start FROM schedule_history h WHERE h.restaurant_id=? "
-                "AND h.week_start > ? AND h.edited_at IS NULL AND (h.schedule_csv IS NOT NULL AND h.schedule_csv != '') "
-                "AND NOT EXISTS (SELECT 1 FROM schedule_shares s WHERE s.schedule_id=h.id) "
-                "ORDER BY h.id DESC LIMIT 1", (r.id, local.date().isoformat())).fetchone()
+            # The coming week only — the earliest week_start after today —
+            # and never a week that already went out in any version. It used
+            # to take the newest future row, which could be a draft weeks
+            # out, and to queue a regenerated copy of a week staff already
+            # had (SCHED-28).
+            nxt = conn.execute("SELECT MIN(week_start) AS w FROM schedule_history WHERE restaurant_id=? AND week_start > ?",
+                               (r.id, local.date().isoformat())).fetchone()
+            row = None
+            if nxt and nxt["w"]:
+                row = conn.execute(
+                    "SELECT h.id, h.week_start FROM schedule_history h WHERE h.restaurant_id=? AND h.week_start=? "
+                    "AND h.edited_at IS NULL AND (h.schedule_csv IS NOT NULL AND h.schedule_csv != '') "
+                    "AND NOT EXISTS (SELECT 1 FROM schedule_history p WHERE p.restaurant_id=h.restaurant_id "
+                    "  AND p.week_start=h.week_start AND (p.published_at IS NOT NULL "
+                    "  OR EXISTS (SELECT 1 FROM schedule_shares s WHERE s.schedule_id=p.id))) "
+                    "ORDER BY h.id DESC LIMIT 1", (r.id, nxt["w"])).fetchone()
         finally:
             conn.close()
         if not row:

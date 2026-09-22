@@ -37,7 +37,7 @@ def _published_weeks(restaurant_id: int, today):
         _ensure_history_columns(conn)
         rows = conn.execute(
             "SELECT h.id, h.week_start, h.week_end FROM schedule_history h WHERE h.restaurant_id=? "
-            "AND (h.published_at IS NOT NULL OR EXISTS (SELECT 1 FROM schedule_shares s WHERE s.schedule_id=h.id)) "
+            "AND (h.published_at IS NOT NULL AND h.superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM schedule_history nw WHERE nw.restaurant_id=h.restaurant_id AND nw.week_start=h.week_start AND nw.published_at IS NOT NULL AND nw.id > h.id) OR EXISTS (SELECT 1 FROM schedule_shares s WHERE s.schedule_id=h.id)) "
             "ORDER BY h.generated_at DESC, h.id DESC LIMIT 60", (restaurant_id,)).fetchall()
     finally:
         conn.close()

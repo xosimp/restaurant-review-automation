@@ -46,6 +46,15 @@ struct PublishResult: Decodable {
     // True when the owner sent past the publish gate's blockers — said
     // in the result so "sent" never quietly hides that it was.
     let acknowledged: Bool?
+    /// This week had already gone to staff; nothing was sent twice.
+    let alreadyPublished: Bool?
+    /// Published to the staff portal with no emails (nobody has an address).
+    let note: String?
+
+    enum CodingKeys: String, CodingKey {
+        case ok, sent, unreachable, failed, error, status, acknowledged, note
+        case alreadyPublished = "already_published"
+    }
 
     struct Sent: Decodable, Identifiable {
         let employeeName: String
@@ -440,6 +449,12 @@ struct PublishScheduleSheet: View {
 
     private func resultCard(_ result: PublishResult) -> some View {
         VStack(alignment: .leading, spacing: 8) {
+            if let line = result.alreadyPublished == true
+                ? "This week was already sent to staff — nothing went out twice." : result.note {
+                Text(line)
+                    .font(.cavnarBody(14, weight: 600))
+                    .foregroundStyle(Color.cavnarInk2)
+            }
             if result.acknowledged == true {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Image(systemName: "hand.raised.fill")
