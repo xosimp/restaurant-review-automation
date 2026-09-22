@@ -1,4 +1,5 @@
 # Test/CI-only dependencies — not installed on Railway.
 -r requirements.txt
 pytest>=8.0.0
+pytest-xdist>=3.6  # parallel runs: pytest -n auto --dist loadfile
 pyflakes>=3.0

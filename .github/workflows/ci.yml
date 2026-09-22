@@ -29,7 +29,9 @@ jobs:
         run: python scripts/check_silent_handlers.py
 
       - name: Run tests
-        run: pytest tests/ -v
+        # One worker per core; --dist loadfile keeps each file's tests on one
+        # worker, so module-scoped fixtures (the app subprocesses) start once.
+        run: pytest tests/ -n auto --dist loadfile -q
         env:
           # Tests must never touch real services; empty keys force every
           # AI/email path onto its offline fallback.
