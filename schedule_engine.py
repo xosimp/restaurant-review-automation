@@ -531,7 +531,8 @@ def _demand_data_through(restaurant_id) -> dict:
     and whether that is recent enough to trust. Nothing on the screen said
     the forecast was three months stale."""
     from datetime import date as _date, datetime as _dt
-    conn = get_conn()
+    from models import get_conn as _gc
+    conn = _gc()
     try:
         row = conn.execute("SELECT MAX(date) AS d FROM labor_daily_history WHERE restaurant_id=? AND sales IS NOT NULL",
                            (restaurant_id,)).fetchone()
