@@ -1114,6 +1114,26 @@ def init_db(db_path: str = DB_PATH):
             value      TEXT,
             updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         )""",
+        # The admin console's own ledgers (admin_events, admin_ops). Each used
+        # to be created by the function that first wrote it.
+        """CREATE TABLE IF NOT EXISTS admin_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            restaurant_id INTEGER,
+            customer_id TEXT,
+            email TEXT,
+            amount REAL,
+            summary TEXT,
+            payload TEXT,
+            created_at TEXT DEFAULT (datetime('now'))
+        )""",
+        """CREATE TABLE IF NOT EXISTS admin_issue_resolutions (
+            key TEXT PRIMARY KEY,
+            resolved_at TEXT DEFAULT (datetime('now')),
+            note TEXT,
+            actor TEXT
+        )""",
         # Inbound-webhook idempotency (webhook_routes): the INSERT on the
         # primary key is the claim. Both used to be created inside the
         # webhook handler, on every delivery.

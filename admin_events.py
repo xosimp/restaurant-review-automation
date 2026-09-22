@@ -8,24 +8,9 @@ instead of only the current flag.
 """
 import json
 
-_SQL = """
-CREATE TABLE IF NOT EXISTS admin_events (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    source TEXT NOT NULL,          -- stripe | docusign | admin
-    event_type TEXT NOT NULL,      -- invoice.paid, customer.subscription.deleted, contract.signed…
-    restaurant_id INTEGER,
-    customer_id TEXT,
-    email TEXT,
-    amount REAL,
-    summary TEXT,
-    payload TEXT,
-    created_at TEXT DEFAULT (datetime('now'))
-)
-"""
-
-
 def _ensure(conn):
-    conn.execute(_SQL)
+    """admin_events is created by models.init_db now; kept so callers read the same."""
+    return None
 
 
 def _resolve_restaurant(conn, customer_id=None, email=None, envelope_id=None):

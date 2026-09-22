@@ -1087,7 +1087,6 @@ def issues():
 
 def resolve_issue(key, note, actor):
     conn = get_conn()
-    conn.execute("CREATE TABLE IF NOT EXISTS admin_issue_resolutions (key TEXT PRIMARY KEY, resolved_at TEXT DEFAULT (datetime('now')), note TEXT, actor TEXT)")
     conn.execute("INSERT OR REPLACE INTO admin_issue_resolutions (key, resolved_at, note, actor) VALUES (?, datetime('now'), ?, ?)", (key, note, actor))
     conn.commit(); conn.close()
     return {"ok": True}
@@ -1095,7 +1094,6 @@ def resolve_issue(key, note, actor):
 
 def unresolve_issue(key):
     conn = get_conn()
-    conn.execute("CREATE TABLE IF NOT EXISTS admin_issue_resolutions (key TEXT PRIMARY KEY, resolved_at TEXT DEFAULT (datetime('now')), note TEXT, actor TEXT)")
     conn.execute("DELETE FROM admin_issue_resolutions WHERE key=?", (key,))
     conn.commit(); conn.close()
     return {"ok": True}
@@ -1103,7 +1101,6 @@ def unresolve_issue(key):
 
 def resolved_issues():
     conn = get_conn()
-    conn.execute("CREATE TABLE IF NOT EXISTS admin_issue_resolutions (key TEXT PRIMARY KEY, resolved_at TEXT DEFAULT (datetime('now')), note TEXT, actor TEXT)")
     rows = _rows(conn, "SELECT key, resolved_at, note, actor FROM admin_issue_resolutions ORDER BY resolved_at DESC LIMIT 100")
     conn.close()
     return {"ok": True, "resolved": rows}
