@@ -5232,6 +5232,11 @@ def get_schedule_history_detail(history_id: int, restaurant_id: int, db_path: st
         d["quality"] = _json_sh.loads(d.pop("quality_json", None) or "null")
     except Exception:
         d["quality"] = None
+    for col, key in (("review_json", "review"), ("weather_json", "weather_forecast")):
+        try:
+            d[key] = _json_sh.loads(d.pop(col, None) or "null")
+        except Exception:
+            d[key] = None
     return d
 
 

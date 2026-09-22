@@ -952,7 +952,7 @@ def _do_schedule_versions(u, history_id):
         return _forbidden("Only someone who can see labor can see schedules.")
     import schedule_versions as _sv
     return {"ok": True, "versions": _sv.list_versions(_rid(u), history_id),
-            "draft_vs_latest": _sv.draft_vs_published(_rid(u), history_id)}, 200
+            "draft_vs_published": _sv.draft_vs_published(_rid(u), history_id)}, 200
 
 
 def _rows_from_body(b):
