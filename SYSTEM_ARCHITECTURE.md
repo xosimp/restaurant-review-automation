@@ -6,13 +6,23 @@
 review_automation/
 ├── hosted_dashboard.py        # Flask app factory / entrypoint — registers every blueprint, boots the scheduler
 ├── main.py                    # CLI entrypoint for one-off fetch/report runs (non-web)
-├── models.py                  # (6.8k lines) schema, migrations, every dataclass, most DB read/write functions
-├── auth.py / auth_routes.py   # session/user model + /auth/* routes (web) 
-├── client_api.py              # (6.7k lines) web dashboard's API — 162 routes, mostly delegate to mobile_api
-├── mobile_api.py              # (5.1k lines) iOS API — 176 routes; the "real" implementation for shared logic
+├── models.py                  # (9k lines) schema, migrations, every dataclass, most DB read/write functions
+├── auth.py / auth_routes.py   # session/user model, staff portal tables, /auth/* routes (web)
+├── security.py / security_headers.py / credentials.py / csrf.py / guest_links.py / http_layer.py
+│                              # durable login throttling + freeze, response headers, Fernet at rest, CSRF, signed links, gzip/metrics
+├── client_api.py              # (8k lines) web dashboard's API — 194 routes; 58 delegate to mobile_api via _m(), the rest own or share a _do_* body
+├── mobile_api.py              # (6k lines) iOS API — 205 routes; the "real" implementation for shared logic
+├── strategy_routes.py         # 68 route bodies registered once each at /api/… and /mobile/api/… (the twin pattern to prefer)
+├── staff_routes.py / staff_schedule.py / staff_roster.py / time_off.py / labor_replacements.py / preshift.py
+│                              # the staff portal: PIN sign-in, today's schedule, availability, time off, pre-shift read
 ├── admin_routes.py / admin_ops.py / admin_events.py   # /admin console (Will-only)
 ├── labor.py                   # shift CSV ingestion, labor % math, schedule building glue
-├── scheduler.py               # background job loop: fetches, digests, alerts, backups, DB snapshot
+├── scheduler.py               # background job loop: the registry is in §Scheduling below
+├── strategy_jobs.py           # the scheduled half of the strategic features (loss sync, outcomes, weekly plan, ...)
+├── delayed.py / decisions.py  # undo-window actions; the owner's decision record
+├── milestones.py / good_news.py / first_look.py / monthly_review.py / weekly_review.py / review_common.py
+│                              # the moments an owner reads: firsts, wins, the month and week in review (shared sentences in review_common)
+├── intelligence/              # the cross-restaurant learning layer (INTELLIGENCE_ENGINE.md)
 ├── shift_quality.py           # pure scoring engine for a generated schedule (no I/O)
 ├── ask_cavnar.py / ask_cavnar_tools.py   # the in-app AI assistant: context builder + tool registry
 ├── home_brief.py              # deterministic Home-tab payload (no AI on load)
@@ -24,8 +34,9 @@ review_automation/
 ├── docusign_helper.py         # contract send/status via DocuSign eSignature API
 ├── pricing.py                 # single source of truth for every dollar figure quoted anywhere
 ├── webhook_routes.py / webhooks.py       # outbound webhook delivery + inbound Stripe/Twilio webhooks
-├── toast.py, square.py, clover.py, gmb.py, meta_api.py, weather.py   # POS / platform integrations
-├── sales_audit_*.py           # /admin/audits in-person sales tool
+├── pos.py                     # the provider registry every POS feature dispatches through
+├── toast.py, square.py, clover.py, rpower.py (+ *_routes.py), gmb.py, meta_api.py, weather.py   # POS / platform integrations
+├── sales_audit_*.py, sales_audits.py   # /admin/audits in-person sales tool (audit_app.py is a separate, standalone scorecard app on :9000)
 ├── emails.py                  # every transactional/marketing email template + send function
 ├── models.py's ensure_columns()   # additive migration path, runs on every boot
 ├── templates/
@@ -40,10 +51,13 @@ review_automation/
 │   ├── Models/                # Codable structs mirroring API JSON shapes
 │   └── Push/                  # APNs registration/handling
 ├── scripts/                   # one-off / CI scripts: check_colors.py, build_contract_pdf.py, ...
-├── tests/                     # ~1,900 pytest tests, one file per concern (see TESTING.md)
+├── tests/                     # pytest, one file per concern (see TESTING.md for the count command)
+├── docs/ops/                  # RECOVERY, SECURITY, RAILWAY_SCHEDULER_SPLIT, PIN_PEPPER_RUNBOOK
+├── docs/plans/                # designs with no code yet
+├── docs/history/              # superseded material, kept for the record
 ├── docs/contracts/            # the contract PDF DocuSign's template is built from
 ├── public/                    # the Cloudflare-Worker-served marketing site (cavnar.ai) — separate deploy
-└── design/, brand/            # brand assets, logo source files
+└── brand/                     # brand sources (assets/), the social upload kit, the print one-sheet
 ```
 
 ## Request flow
@@ -52,8 +66,10 @@ review_automation/
 Browser/iOS ──HTTPS──▶ gunicorn (Railway) ──▶ Flask app (hosted_dashboard.py)
                                                   │
                                      Blueprint dispatch (registered in hosted_dashboard.py):
-                                     admin_bp · audit_bp · webhook_bp · social_bp · auth_bp ·
-                                     client_bp · toast_bp · square_bp · clover_bp · status_bp · mobile_bp
+                                     admin_bp · audit_bp · webhook_bp · social_bp · auth_bp · client_bp ·
+                                     toast_bp · square_bp · clover_bp · rpower_bp · status_bp · mobile_bp ·
+                                     strategy_bp · strategy_mobile_bp · issue_link_bp · staff_bp
+                                     (16; hosted_dashboard refuses to boot on a duplicate (path, method))
                                                   │
                           ┌───────────────────────┼────────────────────────┐
                           ▼                       ▼                        ▼
@@ -73,7 +89,7 @@ Browser/iOS ──HTTPS──▶ gunicorn (Railway) ──▶ Flask app (hosted_
 
 ## Database
 
-One SQLite file (`reviews.db`), WAL mode, on a Railway persistent volume. `models.get_conn(db_path)` opens a tracked connection (`_TrackedConnection`, weak-referenced so a leaked connection can be swept by `close_thread_connections()` on request teardown). Schema is created by `init_db()` and additively migrated by `ensure_columns()` — both run on every boot; there is no separate migration-runner or version table, ordinary `ALTER TABLE ADD COLUMN` guarded by `try/except`. Full table list and shapes: `DATABASE_SCHEMA.md`.
+One SQLite file (`reviews.db`), WAL mode, on a Railway persistent volume. `models.get_conn(db_path)` opens a tracked connection (`_TrackedConnection`, weak-referenced so a leaked connection can be swept by `close_thread_connections()` on request teardown). Schema is created at boot: `init_db()` (most tables, plus its own ALTER list), `ensure_columns()` (a second additive list), then the `init_*` functions `hosted_dashboard.py` calls next (`auth`, `push`, `webhooks`, `guest_marketing`, `sales_audits`, `ops`). There is no migration runner or version table — ordinary `ALTER TABLE ADD COLUMN` guarded by `try/except`. Full table list and shapes: `DATABASE_SCHEMA.md`.
 
 ## Failure & resiliency (audit #21)
 
@@ -99,13 +115,49 @@ scheduler, a 5xx spike, and **fetch coverage** — the one check that can tell
 **Concurrency.** `update_restaurant(..., expected_version=)` is optimistic
 locking on the restaurants row; omitting it keeps last-write-wins.
 
-**Recovery.** `RECOVERY.md`.
+**Recovery.** `docs/ops/RECOVERY.md`.
 
 ---
 
 ## Scheduling / background jobs (`scheduler.py`)
 
-A single `scheduler_loop()` running in a background thread, woken on an interval, that checks a `scheduler_lease` row before doing anything — one worker holds the lease and runs the jobs; the others no-op. Each job type also claims its period in `job_period_claims` before starting (claim-before-work), so a slow run and a subsequent tick can't both fire the same job. Failures are recorded in `job_failures`/`job_runs` rather than silently retried into a notification storm. Key jobs: `run_daily_fetch` (reviews/labor/inventory pull), `run_weekly_digests`, `check_daily_alerts` / `check_extra_daily_alerts`, `run_onboarding_sequence`, `run_monthly_summaries`, `backup_db` (writes a redacted, consistent snapshot and prunes old ones), `run_toast_sync` / `run_daily_depletion_sync`, `run_weekly_competitor_analysis`, `run_weekly_ai_visibility`.
+A single `scheduler_loop()` running in a background thread, ticking every five minutes, that checks a `scheduler_lease` row before doing anything — one worker holds the lease and runs the jobs; the others no-op. Each job claims its period in `job_period_claims` before starting (claim-before-work), so a slow run and a subsequent tick can't both fire the same job. Failures are recorded in `job_failures`/`job_runs` rather than silently retried into a notification storm.
+
+**The registry** (gates are Chicago time unless marked *local*; "hourly" jobs are attempted every hour and gate per restaurant inside on its own local hour, claiming once per restaurant per local day — `scheduler.local_due`):
+
+| Claim key | When | Runs |
+|---|---|---|
+| `backup_db` | 2am | `backup_db` — a consistent, **unredacted** snapshot on the volume (only the emailed copy is redacted), then `prune_ledgers` |
+| `restore_drill` | 2nd of Jan/Apr/Jul/Oct | `run_restore_drill` |
+| `pos_sync`, `loss_sync` | 3am | `run_toast_sync` (every provider in `pos.PROVIDERS`), `run_loss_sync` |
+| `intelligence_features`, `intelligence_learning` | 3am, 4am | `intelligence.jobs.run_features` (bounded, cursor in `job_cursors`), `run_learning` |
+| `marketing_metrics_sync` | 4am | `run_marketing_metrics_sync` |
+| `inventory_depletion`, `food_cost_snapshots` | 5am | `run_daily_depletion_sync`, `run_food_cost_snapshots` |
+| `review_diagnoses`, `food_cost_diagnoses`, `outcome_evaluations` | 6am | the two root-cause passes, then `run_outcome_evaluations` |
+| `competitor_analysis`, `ai_visibility` | Mon 6am, Mon 7am | `run_weekly_competitor_analysis`, `run_weekly_ai_visibility` |
+| `auto_draft_schedule` | Thu 6am | `run_auto_draft_schedules` |
+| `milestones`, `refresh_tokens` | 7am | `run_milestones`, `refresh_expiring_tokens` |
+| `weekly_plan` | Mon, hourly → 7am *local* | `run_weekly_plan` |
+| `recipe_drafts` | Tue, hourly → 5am *local* | `run_recipe_drafts` |
+| `trusted_orders` | Mon, hourly → 8am *local* | `run_trusted_orders` |
+| `auto_publish_schedule` | Fri, hourly → 9am *local* | `run_auto_publish_schedules` |
+| `review_fetch` | 8am, 12pm, 4pm, 8pm (latest missed slot only) | `run_daily_fetch` — bounded pool, cursor in `job_cursors` |
+| `ops_digest` | 8am | `ops.send_failure_digest` (only if something failed) |
+| `weekly_digest` | hourly → 9am *local* on the digest day | `run_weekly_digests` |
+| `monthly_summary`, `quarterly_summary` | hourly → 9am *local* on the restaurant's own 1st (`local_due(day=1)`) | `run_monthly_summaries`, `run_quarterly_summaries` |
+| `daily_alerts` | hourly → 10am *local* (`notify._gated_out`) | `run_daily_alert_checks` (the morning batch) |
+| `onboarding` | hourly → 10am *local* | `run_onboarding_sequence` |
+| `issue_scan` | hourly → 10am *local* | `run_issue_scan` |
+| `review_request_followups` | hourly | `run_review_request_followups` |
+| `stale_inventory` | Mon 10am | `check_stale_inventory` |
+| `inactive_clients` | Mon 11am | `check_inactive_clients`, `send_while_away_nudges` |
+| `optin_invite` | 11am–`OPTIN_INVITE_LATEST_HOUR` | `guest_marketing.run_toast_optin_invites` |
+| `campaign_attribution` | noon | `run_campaign_attribution` |
+| `intraday` | every 20 min | `run_intraday_capture`, `run_pre_dinner_pulse`, `run_coverage_check`, `run_preshift_nudge`, `run_closing_summary`, `run_demand_opportunity` (each gates itself) |
+| `prune_login_attempts` | daily | drops `login_attempts` rows older than two days |
+| every tick | — | `notify.release_due_alerts`, `issues.tick`, `morning_brief.run_due`, `delayed.run_due`, `marketing_publish.run_due_posts`, the heartbeat |
+
+`admin_ops.RUNNABLE_JOBS` is the admin console's "run now" map onto the same functions.
 
 The **shift-scheduling** feature (an owner clicking "Generate optimized schedule") is a separate, synchronous, on-demand flow — see `MODULE_OVERVIEW.md`'s Labor section and `shift_quality.py`'s architecture below. It is not a background job.
 
@@ -119,7 +171,7 @@ A pure evaluation layer with no I/O: `ShiftContext` (what happened) → per-dime
 
 ## The day's jobs (workflow audit #19)
 
-Owner-facing jobs are attempted **hourly** and gated per restaurant on its own local hour, once per local day: `weekly_digest` (9am), `monthly_summary` (9am on the local 1st), `onboarding` (10am), the daily alert checks (10am, `notify._gated_out`) and `issue_signals` (10am). Infrastructure jobs keep their Chicago-time daily claims.
+Owner-facing jobs are attempted **hourly** and gated per restaurant on its own local hour, once per local day: `weekly_digest` (9am), `monthly_summary` (9am on the restaurant's own 1st — the calendar gate is `local_due(day=1)`, lost once in Sep 2026 and pinned by a test since), `onboarding` (10am), the daily alert checks (10am, `notify._gated_out`) and `issue_scan` (10am). Infrastructure jobs keep their Chicago-time daily claims.
 
 Every tick: `notify.release_due_alerts()` (alerts held through a rush). Every 20 minutes: `intraday_capture` (hourly per restaurant while open), `pre_dinner_pulse` (4pm local, one push when the day is materially off), `coverage_check` (scheduled staff not clocked in), `preshift_nudge` (the hour the owner picked, off by default).
 
@@ -154,13 +206,18 @@ Every fired alert is logged to `alert_log` — the durable record `ask_cavnar_to
 
 ## Auth
 
-- **Web**: session cookie, `sessions` table (`auth.create_session`), `login_required` decorator checks `get_current_user()`. CSRF token required on state-changing POSTs (`csrf.py`, `_csrf_fetch.html` include).
-- **iOS**: Bearer token in `Authorization` header, same `sessions` table, `mobile_login_required` decorator (`mobile_api.py`).
-- **2FA**: SMS or email OTP (`_billing_blocked`/2FA-setup routes in `auth_routes.py`/`mobile_api.py`), with `two_fa_backup_codes` as a hashed, single-use fallback.
+- **Web**: session cookie, `sessions` table (`auth.create_session`), `auth.login_required` decorator checks `get_current_user()`. CSRF token required on state-changing POSTs (`csrf.py`, `_csrf_fetch.html` include). Login throttling is durable (`security.login_throttled`, `login_attempts` table).
+- **iOS**: Bearer token in `Authorization` header, same `sessions` table, `auth.mobile_login_required` decorator.
+- **Staff**: PIN identity in the staff portal (`staff_routes.py`, `auth.staff_login_required`, `memberships` + `staff_portal_tokens`; pepper in `docs/ops/PIN_PEPPER_RUNBOOK.md`).
+- **2FA**: SMS or email OTP (setup routes in `auth_routes.py`/`mobile_api.py`; `auth._billing_blocked` gates a lapsed account at the decorator), with `two_fa_backup_codes` as a hashed, single-use fallback.
 - **Team access**: a restaurant can have multiple `users` rows; `role` distinguishes `owner` from teammate — only `owner` can invite/revoke team members (`auth.invite_team_member` / `revoke_team_member`).
 - **Login history**: every successful login writes one `login_history` row (never pruned — independent of `sessions`' hard-deletes on expiry/revoke), giving a real "sign-in activity" audit trail.
 - **Device trust / sessions list**: `trusted_devices`, `get_sessions_for_user` (with device de-dup), `revoke_other_sessions`.
-- **Admin**: separate `admin_required` decorator; the admin console is Will-only, no client `role` reaches it.
+- **Admin**: separate `auth.admin_required` decorator. `is_admin` logins write; the `support` role (`permissions.ROLE_SUPPORT`) reads the console and opens view-as but every write returns 403; no client role reaches it.
+
+## Deployment
+
+Railway runs `railway.json`'s `startCommand` (gunicorn, one worker, four threads). The `Procfile` (`web: python hosted_dashboard.py`, the Flask dev server) is not what production runs; it is only picked up by a platform that has no `railway.json`. The marketing site is a hand-deployed Cloudflare Worker (`wrangler.jsonc`, `public/` only). CI (`.github/workflows/ci.yml`) compiles every module, runs the colour and silent-handler lints and pytest; the iOS build is not in CI.
 
 ## Payments — Stripe
 
