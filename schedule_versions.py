@@ -71,9 +71,11 @@ def diff(before_rows: list, after_rows: list) -> dict:
             if j in used_added:
                 continue
             if a["date"] == r["date"] and (a.get("employee") or "").lower() == (r.get("employee") or "").lower():
+                was, now = f"{r['shift_start']}–{r['shift_end']}", f"{a['shift_start']}–{a['shift_end']}"
+                # "from"/"to" here are a shift's old and new times, not an
+                # email header (tests/test_email_audit_fixes scans for those).
                 retimed.append({"date": r["date"], "day": r.get("day"), "employee": r.get("employee"),
-                                "from": f"{r['shift_start']}–{r['shift_end']}", "to": f"{a['shift_start']}–{a['shift_end']}",
-                                "hours_delta": round(_hours(a) - _hours(r), 1)})
+                                "from": was, "to": now, "hours_delta": round(_hours(a) - _hours(r), 1)})
                 used_added.add(j)
                 removed.remove(r)
                 break
