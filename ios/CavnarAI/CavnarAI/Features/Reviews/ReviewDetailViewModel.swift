@@ -263,10 +263,7 @@ final class ReviewDetailViewModel {
     /// showing a bare failure.
     var hasQueuedWrite = false
 
-    private struct OkResponse: Decodable {
-        let ok: Bool
-        let error: String?
-    }
+    private typealias OkResponse = APIClient.OKResponse
 
     /// Undoes a skip, or an approval that never actually got auto-posted —
     /// neither has any external footprint, so this is just a status flip

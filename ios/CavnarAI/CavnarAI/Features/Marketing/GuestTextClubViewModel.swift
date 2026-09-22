@@ -257,10 +257,7 @@ final class GuestTextClubViewModel {
         let phone: String
     }
 
-    private struct OKErrorResponse: Decodable {
-        let ok: Bool
-        let error: String?
-    }
+    private typealias OKErrorResponse = APIClient.OKResponse
 
     func addContact(name: String, phone: String) async -> Bool {
         do {

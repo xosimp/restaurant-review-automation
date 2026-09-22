@@ -136,10 +136,7 @@ final class AccountViewModel {
         enum CodingKeys: String, CodingKey { case current; case newPassword = "new_password" }
     }
 
-    private struct OKErrorResponse: Decodable {
-        let ok: Bool
-        let error: String?
-    }
+    private typealias OKErrorResponse = APIClient.OKResponse
 
     func changePassword(current: String, newPassword: String) async {
         isChangingPassword = true
@@ -509,7 +506,7 @@ final class AccountViewModel {
         }
     }
 
-    private struct StaffOK: Decodable { let ok: Bool; let error: String? }
+    private typealias StaffOK = APIClient.OKResponse
 
     @discardableResult
     private func staffAction(_ path: String, body: (any Encodable)? = nil,
@@ -715,7 +712,7 @@ final class AccountViewModel {
     }
 
     private struct InviteBody: Encodable { let name: String; let email: String; let role: String }
-    private struct InviteResponse: Decodable { let ok: Bool; let error: String? }
+    private typealias InviteResponse = APIClient.OKResponse
 
     @discardableResult
     func inviteTeamMember(name: String, email: String, role: String = "manager") async -> Bool {

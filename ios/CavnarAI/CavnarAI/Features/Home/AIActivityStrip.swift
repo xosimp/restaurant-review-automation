@@ -68,7 +68,7 @@ final class AIActivityViewModel {
         return w[index % w.count].text
     }
 
-    private struct OK: Decodable { let ok: Bool; let error: String? }
+    private typealias OK = APIClient.OKResponse
 
     /// The undo. Returns the server's sentence on failure.
     func cancel(_ q: AIActivity.Queued) async -> String? {

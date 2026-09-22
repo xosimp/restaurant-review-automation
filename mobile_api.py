@@ -5220,7 +5220,7 @@ def mobile_save_alert_settings(current_user):
     for ec in existing:
         delete_alert_contact(ec["id"])
     for nc in new_contacts:
-        phone = _capi._normalize_phone(nc.get("phone") or "")
+        phone = _capi._normalize_phone_lenient(nc.get("phone") or "")
         name = (nc.get("name") or "").strip()
         if phone:
             add_alert_contact(rid, name, phone, sms_consent=sms_on)

@@ -277,7 +277,7 @@ final class AskCavnarViewModel {
         let conversation_id: Int?
     }
 
-    private struct PlainOK: Decodable { let ok: Bool; let error: String? }
+    private typealias PlainOK = APIClient.OKResponse
 
     /// A confirmed action's response. Most routes do the work inline and
     /// just answer ok; schedule generation hands back a job id and

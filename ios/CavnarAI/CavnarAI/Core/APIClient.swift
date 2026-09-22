@@ -102,6 +102,11 @@ actor APIClient {
     /// nothing else the caller needs.
     struct EmptyResponse: Decodable {}
 
+    /// The `{ok, error}` envelope every mutating route answers with. Sixteen
+    /// view models each declared their own private copy of this under six
+    /// different names; one here, the copies are typealiases to it.
+    struct OKResponse: Decodable { let ok: Bool; let error: String? }
+
     @discardableResult
     func send<Response: Decodable>(
         _ path: String,

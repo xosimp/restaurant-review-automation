@@ -44,7 +44,7 @@ final class RecipeDraftsViewModel {
 
     private struct ListResponse: Decodable { let ok: Bool; let drafts: [RecipeDraft] }
     private struct ScanResponse: Decodable { let ok: Bool; let draft: RecipeDraft?; let error: String? }
-    private struct OkResponse: Decodable { let ok: Bool; let error: String? }
+    private typealias OkResponse = APIClient.OKResponse
 
     func load() async {
         isLoading = true

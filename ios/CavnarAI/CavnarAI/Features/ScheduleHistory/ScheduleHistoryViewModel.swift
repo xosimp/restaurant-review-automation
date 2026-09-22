@@ -58,10 +58,7 @@ final class ScheduleHistoryViewModel {
         }
     }
 
-    private struct OkResponse: Decodable {
-        let ok: Bool
-        let error: String?
-    }
+    private typealias OkResponse = APIClient.OKResponse
 
     /// The only way a schedule ever leaves this list — nothing here or
     /// server-side removes one automatically (see delete_schedule_history's

@@ -47,10 +47,7 @@ final class SupplierOrderViewModel {
     // Each view model declares its own — the existing ones (AccountViewModel,
     // GuestTextClubViewModel) are file-private, so this follows the same
     // convention rather than promoting a shared type just for this.
-    private struct OKErrorResponse: Decodable {
-        let ok: Bool
-        let error: String?
-    }
+    private typealias OKErrorResponse = APIClient.OKResponse
 
     func load() async {
         isLoading = draft == nil

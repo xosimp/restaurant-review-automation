@@ -786,10 +786,7 @@ final class LaborViewModel {
         enum CodingKeys: String, CodingKey { case employeeName = "employee_name" }
     }
 
-    private struct OkResponse: Decodable {
-        let ok: Bool
-        let error: String?
-    }
+    private typealias OkResponse = APIClient.OKResponse
 
     func loadAvailability() async {
         isLoadingAvailability = true

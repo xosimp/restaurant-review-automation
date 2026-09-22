@@ -113,7 +113,7 @@ final class PublishScheduleViewModel {
     }
 
     private struct StatusResponse: Decodable { let ok: Bool; let status: [ScheduleShareStatus] }
-    private struct OKErrorResponse: Decodable { let ok: Bool; let error: String? }
+    private typealias OKErrorResponse = APIClient.OKResponse
 
     var reachableCount: Int { contacts.filter(\.isReachable).count }
 

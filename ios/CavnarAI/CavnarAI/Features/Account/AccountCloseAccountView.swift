@@ -138,7 +138,7 @@ struct AccountPauseSection: View {
         }
     }
     private struct PauseBody: Encodable { let days: Int }
-    private struct OK: Decodable { let ok: Bool; let error: String? }
+    private typealias OK = APIClient.OKResponse
 
     @State private var status: Status?
     @State private var days = 30

@@ -140,7 +140,7 @@ final class HomeFollowThroughViewModel {
             case businessDate = "business_date"
         }
     }
-    private struct OKResponse: Decodable { let ok: Bool; let error: String? }
+    private typealias OKResponse = APIClient.OKResponse
 
     /// GET /mobile/api/value. Four figures that are never added to each
     /// other — see value_delivered.py. Decoded leniently: an older backend
