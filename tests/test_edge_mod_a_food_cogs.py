@@ -369,7 +369,6 @@ def _cursor_keys(db_path):
     return keys
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-19: the nightly depletion sync walks every restaurant with no bound or cursor")
 def test_the_depletion_sync_records_where_it_stopped(db_path, monkeypatch):
     _three_pos_restaurants(db_path, monkeypatch)
     monkeypatch.setattr(il, "compute_daily_depletion", lambda rid, d: {"unmapped_selections": []})
@@ -377,7 +376,6 @@ def test_the_depletion_sync_records_where_it_stopped(db_path, monkeypatch):
     assert any("deplet" in k or "inventory" in k for k in _cursor_keys(db_path))
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-19: a restart mid-pass starts the depletion sync from the first restaurant again")
 def test_a_depletion_sync_interrupted_mid_pass_resumes_after_the_last_restaurant_done(db_path, monkeypatch):
     rids = _three_pos_restaurants(db_path, monkeypatch)
     seen, deployed = [], []
@@ -399,7 +397,6 @@ def test_a_depletion_sync_interrupted_mid_pass_resumes_after_the_last_restaurant
     assert seen[0] == rids[1]
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-19: the snapshot job walks every restaurant with no bound or cursor")
 def test_the_snapshot_job_records_where_it_stopped(db_path, monkeypatch):
     _three_pos_restaurants(db_path, monkeypatch)
     monkeypatch.setattr(fci, "weekly_snapshot", lambda rid, **k: {"ok": True})
@@ -426,7 +423,6 @@ def test_one_restaurant_failing_its_snapshot_does_not_stop_the_rest(db_path, mon
     assert done == rids[1:] and out["failed"] == 1
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-26: one malformed updated_at aborts check_stale_inventory for every restaurant")
 def test_one_malformed_timestamp_does_not_hide_the_other_stale_restaurants(db_path, monkeypatch):
     import resend
     bad, stale = _rid(db_path, name="Bad Stamp"), _rid(db_path, name="Really Stale")

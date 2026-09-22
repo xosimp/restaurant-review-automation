@@ -100,7 +100,9 @@ def test_the_snapshot_writer_is_a_scheduled_job_not_a_page_render():
     assert 'claim_period("food_cost_snapshots"' in src
     body = inspect.getsource(scheduler.run_food_cost_snapshots)
     assert "weekly_snapshot" in body
-    assert "for row in rows:" in body
+    # Every active restaurant, through the bounded, resumable sweep — this
+    # pinned a bare `for row in rows:` loop, the unbounded shape MOD-FC-19 removed.
+    assert "resumable_sweep(" in body
     assert "except Exception as e:" in body, "one restaurant failing must not end the sweep"
 
 

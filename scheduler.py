@@ -186,9 +186,18 @@ FETCH_MAX_SECONDS = int(os.getenv("FETCH_MAX_SECONDS", str(3 * 3600)))
 # introduce while fixing the runaway one.
 _FETCH_CURSOR_KEY = "review_fetch_cursor"
 
+# The Food Cost restaurant sweeps (resumable_sweep). One worker by default:
+# each restaurant's pass is a run of SQLite writes and the file has one
+# writer; the bound and the cursor are what keep a pass from running away.
+SWEEP_WORKERS = int(os.getenv("SWEEP_WORKERS", "1"))
+SWEEP_MAX_SECONDS = int(os.getenv("SWEEP_MAX_SECONDS", str(45 * 60)))
+DEPLETION_CURSOR_KEY = "inventory_depletion_cursor"
+SNAPSHOT_CURSOR_KEY = "food_cost_snapshot_cursor"
 
-def _fetch_order(ids):
-    """The live restaurant ids, rotated so the ones skipped last time lead."""
+
+def _fetch_order(ids, key=_FETCH_CURSOR_KEY):
+    """The live restaurant ids, rotated so the ones skipped last time lead.
+    `key` names the sweep whose cursor this reads (job_cursors.key)."""
     if not ids:
         return []
     try:
@@ -196,7 +205,7 @@ def _fetch_order(ids):
         conn = get_conn()
         # job_cursors is created by models.init_db (one owner, one definition).
         row = conn.execute("SELECT value FROM job_cursors WHERE key=?",
-                           (_FETCH_CURSOR_KEY,)).fetchone()
+                           (key,)).fetchone()
         conn.close()
         last = int(row["value"]) if row and str(row["value"]).isdigit() else None
     except Exception as e:
@@ -209,7 +218,7 @@ def _fetch_order(ids):
     return ordered[cut:] + ordered[:cut]
 
 
-def _remember_fetch_cursor(order, processed):
+def _remember_fetch_cursor(order, processed, key=_FETCH_CURSOR_KEY):
     """Record the last restaurant this pass actually covered."""
     if not order or processed <= 0:
         return
@@ -219,11 +228,54 @@ def _remember_fetch_cursor(order, processed):
         conn = get_conn()
         conn.execute("INSERT INTO job_cursors (key, value, updated_at) VALUES (?,?,datetime('now')) "
                      "ON CONFLICT(key) DO UPDATE SET value=excluded.value, "
-                     "updated_at=excluded.updated_at", (_FETCH_CURSOR_KEY, str(last)))
+                     "updated_at=excluded.updated_at", (key, str(last)))
         conn.commit()
         conn.close()
     except Exception as e:
         log.warning(f"_remember_fetch_cursor failed: {e}")
+
+
+def resumable_sweep(key, ids, fn, max_seconds, workers=1, job=None):
+    """Run `fn(rid)` over restaurant ids the run_daily_fetch way: rotated to
+    start after job_cursors[key], a worker pool, a wall-clock bound — and the
+    cursor saved as each restaurant finishes, so a redeploy mid-pass resumes
+    where it died instead of at the first restaurant again. Returns
+    (completed, hit_bound).
+
+    The cursor is the end of the longest finished PREFIX of this pass's
+    order, so with several workers a restaurant still in flight is never
+    skipped. `fn` handles its own per-restaurant failures; anything else it
+    raises is captured and counts as covered (a restaurant that always
+    raises must not pin the cursor). A BaseException — the process going
+    away — is not caught and does not advance the cursor.
+    """
+    order = _fetch_order(list(ids), key=key)
+    if not order:
+        return 0, False
+    lock = threading.Lock()
+    finished, state = set(), {"prefix": 0}
+
+    def _covered(rid):
+        with lock:
+            finished.add(rid)
+            p = state["prefix"]
+            while p < len(order) and order[p] in finished:
+                p += 1
+            advanced = p != state["prefix"]
+            state["prefix"] = p
+        if advanced:
+            _remember_fetch_cursor(order, p, key=key)
+
+    def _run(rid):
+        fn(rid)
+        _covered(rid)
+
+    def _failed(rid, e):
+        log.error(f"{job or key}: restaurant {rid} failed: {e}")
+        _ops.capture(e, job=job or key, context=f"restaurant_id={rid}")
+        _covered(rid)
+
+    return bounded_map(order, _run, workers, max_seconds, on_error=_failed)
 
 
 def bounded_map(items, fn, workers, max_seconds, on_error=None):
@@ -724,54 +776,76 @@ def check_stale_inventory():
 
         restaurants = get_all_restaurants()
         stale = []
+        # Both stamps below are SQLite datetime('now') — UTC. They were
+        # compared with _chi_now(), Chicago time, which put every age off by
+        # five or six hours; and one unparseable stamp raised out of the
+        # loop, so a single bad row hid every other stale restaurant
+        # (MOD-FC-26). Parsed as UTC against UTC now, one restaurant at a time.
+        now_utc = datetime.utcnow()
+
+        def _age_days(value):
+            from time_utils import parse_stored_dt
+            dt = parse_stored_dt(value, tz="UTC")
+            return None if dt is None else (now_utc - dt).days
 
         for r in restaurants:
             if not r.module_inventory or r.billing_status not in ("trial", "active"):
                 continue
-            conn = __import__('models').get_conn()
-            # Once a restaurant is migrated to the ingredients ledger (see
-            # inventory_ledger.import_csv_to_ingredients), client_data.updated_at
-            # never changes again for it — checking only that would report
-            # a live, nightly-synced restaurant as "never uploaded" forever.
-            # Use the freshest ingredients.updated_at instead when it has any.
-            ledger_row = conn.execute(
-                "SELECT MAX(updated_at) AS updated_at FROM ingredients WHERE restaurant_id=? AND is_active=1",
-                (r.id,)
-            ).fetchone()
-            if ledger_row and ledger_row["updated_at"]:
-                updated = datetime.fromisoformat(ledger_row["updated_at"])
-                days_old = (_chi_now() - updated).days
-                # A restaurant whose POS has dropped off has numbers that
-                # freeze rather than silently drifting wrong — surface that
-                # explicitly instead of applying the same day-count threshold
-                # as a live sync. Asked of pos.py so this reads correctly for
-                # every provider, not just Toast.
-                import pos as _pos
-                _pname, _pmod = _pos.connected_provider(r.id)
-                if not _pmod and days_old >= 3:
-                    stale.append((r.name, f"POS disconnected, ledger frozen {days_old}d"))
-                elif days_old >= 3:
-                    stale.append((r.name, f"ledger not synced in {days_old}d"))
-                conn.close()
-                continue
+            try:
+                conn = __import__('models').get_conn()
+                try:
+                    # Once a restaurant is migrated to the ingredients ledger (see
+                    # inventory_ledger.import_csv_to_ingredients), client_data.updated_at
+                    # never changes again for it — checking only that would report
+                    # a live, nightly-synced restaurant as "never uploaded" forever.
+                    # Use the freshest ingredients.updated_at instead when it has any.
+                    ledger_row = conn.execute(
+                        "SELECT MAX(updated_at) AS updated_at FROM ingredients WHERE restaurant_id=? AND is_active=1",
+                        (r.id,)
+                    ).fetchone()
+                    row = None
+                    if not (ledger_row and ledger_row["updated_at"]):
+                        # Legacy CSV path — for restaurants not yet migrated.
+                        row = conn.execute(
+                            "SELECT updated_at, inventory_source FROM client_data WHERE restaurant_id=? LIMIT 1",
+                            (r.id,)
+                        ).fetchone()
+                finally:
+                    conn.close()
 
-            # Legacy CSV path — unchanged for restaurants not yet migrated.
-            row = conn.execute(
-                "SELECT updated_at, inventory_source FROM client_data WHERE restaurant_id=? LIMIT 1",
-                (r.id,)
-            ).fetchone()
-            conn.close()
+                if ledger_row and ledger_row["updated_at"]:
+                    days_old = _age_days(ledger_row["updated_at"])
+                    if days_old is None:
+                        stale.append((r.name, "ledger timestamp unreadable"))
+                        continue
+                    # A restaurant whose POS has dropped off has numbers that
+                    # freeze rather than silently drifting wrong — surface that
+                    # explicitly instead of applying the same day-count threshold
+                    # as a live sync. Asked of pos.py so this reads correctly for
+                    # every provider, not just Toast.
+                    import pos as _pos
+                    _pname, _pmod = _pos.connected_provider(r.id)
+                    if not _pmod and days_old >= 3:
+                        stale.append((r.name, f"POS disconnected, ledger frozen {days_old}d"))
+                    elif days_old >= 3:
+                        stale.append((r.name, f"ledger not synced in {days_old}d"))
+                    continue
 
-            if not row or not row["updated_at"]:
-                stale.append((r.name, "never uploaded"))
-                continue
+                if not row or not row["updated_at"]:
+                    stale.append((r.name, "never uploaded"))
+                    continue
 
-            updated = datetime.fromisoformat(row["updated_at"])
-            days_old = (_chi_now() - updated).days
-            freq = getattr(r, 'inventory_frequency', 'weekly')
-            threshold = 7 if freq == 'weekly' else (14 if freq == 'biweekly' else 30)
-            if days_old >= threshold:
-                stale.append((r.name, f"{days_old} days old"))
+                days_old = _age_days(row["updated_at"])
+                if days_old is None:
+                    stale.append((r.name, "upload timestamp unreadable"))
+                    continue
+                freq = getattr(r, 'inventory_frequency', 'weekly')
+                threshold = 7 if freq == 'weekly' else (14 if freq == 'biweekly' else 30)
+                if days_old >= threshold:
+                    stale.append((r.name, f"{days_old} days old"))
+            except Exception as e:
+                log.error(f"Stale inventory check failed for {r.name}: {e}")
+                _ops.capture(e, job="stale_inventory", context=f"restaurant_id={r.id}")
 
         if not stale:
             return
@@ -875,7 +949,8 @@ def run_daily_depletion_sync():
         }
         conn.close()
 
-        ok_count, total = 0, 0
+        counts = {"ok": 0, "total": 0}
+        by_id = {}
         for r in get_all_restaurants():
             # Item-level sales (menu_item_sales) are what a post's dish lift
             # and menu engineering read, and they were only ever written for
@@ -887,6 +962,10 @@ def run_daily_depletion_sync():
                 continue
             if (getattr(r, "billing_status", None) or "trial").lower() in ("churned", "cancelled", "canceled", "paused"):
                 continue
+            by_id[r.id] = r
+
+        def _one(rid):
+            r = by_id[rid]
             try:
                 # A POS that cannot report item-level sales is skipped
                 # explicitly rather than erroring per restaurant every night:
@@ -894,8 +973,8 @@ def run_daily_depletion_sync():
                 # there is nothing to deplete from and that is a fact about
                 # the integration, not a failure.
                 if not pos.supports(r.id, "fetch_order_selections"):
-                    continue
-                total += 1
+                    return
+                counts["total"] += 1
                 end = _chi_now().date()
                 start = end - _td(days=2)  # small overlap window, idempotent re-sync covers gaps
                 business_dates, _provider = pos.fetch_business_days(r.id, start, end)
@@ -904,13 +983,24 @@ def run_daily_depletion_sync():
                     if result.get("unmapped_selections"):
                         log.warning(f"[inventory_depletion] {r.name}: "
                                    f"{len(result['unmapped_selections'])} unmapped selection(s) on {bd_str}")
-                ok_count += 1
+                counts["ok"] += 1
             except Exception as e:
                 log.warning(f"[inventory_depletion] {r.name} failed: {e}")
                 ops.capture(e, job="inventory_depletion", context=r.name)
 
-        if total:
-            log.info(f"Inventory depletion nightly sync: {ok_count}/{total} restaurants OK")
+        # Bounded and resumable (MOD-FC-19): this walked every restaurant in
+        # one serial pass with no bound and no cursor, so a pass that could
+        # not finish reached the same restaurants every night, and a redeploy
+        # mid-pass started again from the first.
+        _done, ran_out = resumable_sweep(DEPLETION_CURSOR_KEY, sorted(by_id), _one,
+                                         SWEEP_MAX_SECONDS, workers=SWEEP_WORKERS,
+                                         job="inventory_depletion")
+        if ran_out:
+            _ops.capture(RuntimeError(f"Depletion sync stopped at the {SWEEP_MAX_SECONDS}s bound; "
+                                      f"the rest lead the next pass"), job="inventory_depletion",
+                         context="time_bound")
+        if counts["total"]:
+            log.info(f"Inventory depletion nightly sync: {counts['ok']}/{counts['total']} restaurants OK")
     except Exception as e:
         log.error(f"run_daily_depletion_sync error: {e}")
 
@@ -1795,24 +1885,34 @@ def run_food_cost_snapshots():
         "AND COALESCE(billing_status,'trial') IN ('trial','active')"
     ).fetchall()
     conn.close()
-    written, skipped, failed, scored = 0, 0, 0, 0
-    for row in rows:
-        rid = row["id"]
+    c = {"written": 0, "skipped": 0, "failed": 0, "scored": 0}
+    lock = threading.Lock()
+
+    def _one(rid):
         try:
             out = fci.weekly_snapshot(rid)
-            if out.get("ok"):
-                written += 1
-            else:
-                skipped += 1
+            with lock:
+                c["written" if out.get("ok") else "skipped"] += 1
         except Exception as e:
-            failed += 1
+            with lock:
+                c["failed"] += 1
             log.error(f"Food cost snapshot failed for restaurant {rid}: {e}")
             _ops.capture(e, job="food_cost_snapshots", context=f"restaurant_id={rid}")
         try:
             fci.record_profitability_forecast(rid)
-            scored += fci.score_forecasts(rid).get("scored", 0)
+            n = fci.score_forecasts(rid).get("scored", 0)
+            with lock:
+                c["scored"] += n
         except Exception as e:
             _ops.capture(e, job="food_cost_forecast_scoring", context=f"restaurant_id={rid}")
+
+    # Bounded and resumable, like the depletion sync (MOD-FC-19).
+    _done, ran_out = resumable_sweep(SNAPSHOT_CURSOR_KEY, [row["id"] for row in rows], _one,
+                                     SWEEP_MAX_SECONDS, workers=SWEEP_WORKERS, job="food_cost_snapshots")
+    if ran_out:
+        _ops.capture(RuntimeError(f"Food cost snapshots stopped at the {SWEEP_MAX_SECONDS}s bound; "
+                                  f"the rest lead the next pass"), job="food_cost_snapshots", context="time_bound")
+    written, skipped, failed, scored = c["written"], c["skipped"], c["failed"], c["scored"]
     log.info(f"Food cost snapshots: {written} written, {skipped} skipped, {failed} failed, "
              f"{scored} forecasts scored")
     return {"written": written, "skipped": skipped, "failed": failed, "forecasts_scored": scored}
