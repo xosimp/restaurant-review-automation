@@ -398,7 +398,6 @@ def api_availability(current_user):
     session, so there is nobody else's to read."""
     rid, name = _staff_context(current_user)
     from models import get_staff_availability, init_staff_availability
-    init_staff_availability()
     mine = next((r for r in (get_staff_availability(rid) or [])
                  if (r.get("employee_name") or "").strip().lower() == name.strip().lower()), None)
     import json as _j
@@ -427,7 +426,6 @@ def api_availability_save(current_user):
         return jsonify(ok=False, error="Every day blocked — leave at least one you can work."), 400
     notes = (str(body.get("notes") or "").strip())[:300] or None
     from models import save_staff_availability, init_staff_availability, log_event
-    init_staff_availability()
     save_staff_availability(rid, name, [d for d in _DAYS if d not in blocked], blocked, notes=notes)
     # The schedule generator reads staff_availability (get_unavailability_map)
     # on its next draft; the owner's activity log says who changed what.

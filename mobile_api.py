@@ -2606,7 +2606,6 @@ def mobile_labor_availability(current_user):
     next "Generate schedule" run with no extra wiring."""
     from models import get_staff_availability, init_staff_availability
     import json as _json
-    init_staff_availability()
     rows = get_staff_availability(current_user["restaurant_id"]) or []
     entries = [
         {
@@ -2628,7 +2627,6 @@ def mobile_labor_availability_save(current_user):
     name = (data.get("employee_name") or "").strip()
     if not name:
         return jsonify(ok=False, error="Employee name is required."), 400
-    init_staff_availability()
     save_staff_availability(
         current_user["restaurant_id"], name,
         available_days=data.get("available_days") or [],

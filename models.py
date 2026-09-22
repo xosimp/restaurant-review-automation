@@ -2295,6 +2295,15 @@ def init_db(db_path: str = DB_PATH):
     conn.close()
     # Ensure any columns managed by ensure_columns() are present before seeding
     ensure_columns()
+    # The tables that grew their own init_* helper after day one. Creating
+    # them here means a request path never has to: a CREATE TABLE IF NOT
+    # EXISTS on every read took SQLite's write lock for nothing.
+    for _init in (init_two_fa_backup_codes, init_email_log, init_staff_notes,
+                  init_staff_availability, init_team_messages, init_task_management,
+                  init_staff_capabilities, init_manual_team_members, init_shift_profiles,
+                  init_ask_memory, init_capability_changes, init_onboarding_emails,
+                  init_competitor_snapshots, init_ai_visibility_queries):
+        _init(db_path)
     # Runs after ensure_columns() so organization_id exists to write into.
     backfill_organizations(db_path=db_path)
     print(f"Database initialised at {db_path}")
@@ -4539,7 +4548,6 @@ def send_team_message(restaurant_id: int, sender_id: int, recipient_id: int,
         raise TeamMessageError("a message can't be empty")
     if recipient_id == sender_id:
         raise TeamMessageError("you can't message yourself")
-    init_team_messages(db_path)
     conn = get_conn(db_path)
     try:
         valid = conn.execute(
@@ -4563,7 +4571,6 @@ def get_team_conversation(restaurant_id: int, user_a: int, user_b: int,
                           limit: int = 200, db_path: str = DB_PATH) -> list:
     """One thread, oldest first (how a chat reads), scoped so neither side
     can read a conversation it isn't part of."""
-    init_team_messages(db_path)
     conn = get_conn(db_path)
     try:
         rows = conn.execute("""
@@ -4582,7 +4589,6 @@ def mark_team_messages_read(restaurant_id: int, reader_id: int, other_id: int,
                             db_path: str = DB_PATH) -> int:
     """Marks everything OTHER sent TO reader as read. Never touches the
     reader's own sent messages — those are read by definition."""
-    init_team_messages(db_path)
     conn = get_conn(db_path)
     try:
         cur = conn.execute(
@@ -4601,7 +4607,6 @@ def get_team_inbox(restaurant_id: int, user_id: int, db_path: str = DB_PATH) -> 
     messages are still unread. A 2-5 person team is small enough that
     showing the whole roster beats maintaining a separate "conversations
     I've started" list."""
-    init_team_messages(db_path)
     from auth import get_team_members
     mates = [m for m in get_team_members(restaurant_id, db_path=db_path) if m["id"] != user_id]
     conn = get_conn(db_path)
@@ -4641,7 +4646,6 @@ def count_unread_team_messages(restaurant_id: int, user_id: int, db_path: str = 
     who's since been revoked never shows up in get_team_inbox()'s roster
     again — counting their old unread message anyway left the badge stuck
     on forever, with no thread the recipient could ever open to clear it."""
-    init_team_messages(db_path)
     conn = get_conn(db_path)
     try:
         row = conn.execute(
@@ -4697,7 +4701,6 @@ def add_task_template(restaurant_id: int, role: str, label: str,
     label = (label or "").strip()[:200]
     if not role or not label:
         raise TaskTemplateError("a role and a task description are both required")
-    init_task_management(db_path)
     conn = get_conn(db_path)
     try:
         nxt = conn.execute(
@@ -4715,7 +4718,6 @@ def add_task_template(restaurant_id: int, role: str, label: str,
 def remove_task_template(restaurant_id: int, template_id: int, db_path: str = DB_PATH) -> bool:
     """Soft-delete — history of who completed it on which past days stays
     intact in task_completions, same reasoning as deactivate_ingredient."""
-    init_task_management(db_path)
     conn = get_conn(db_path)
     try:
         cur = conn.execute(
@@ -4728,7 +4730,6 @@ def remove_task_template(restaurant_id: int, template_id: int, db_path: str = DB
 
 
 def get_task_templates(restaurant_id: int, role: str = None, db_path: str = DB_PATH) -> list:
-    init_task_management(db_path)
     conn = get_conn(db_path)
     try:
         sql = ("SELECT id, role, label, sort_order FROM task_templates "
@@ -4750,7 +4751,6 @@ def get_todays_tasks(restaurant_id: int, role: str, task_date: str = None,
     today's (or the given date's) completion row exists."""
     from datetime import date as _date
     task_date = task_date or _date.today().isoformat()
-    init_task_management(db_path)
     conn = get_conn(db_path)
     try:
         rows = conn.execute("""
@@ -4778,7 +4778,6 @@ def set_task_completion(restaurant_id: int, template_id: int, task_date: str,
     template's own restaurant_id — task_completions carries restaurant_id
     too, redundantly, purely so a completions-only query never needs a
     join to stay tenant-scoped."""
-    init_task_management(db_path)
     conn = get_conn(db_path)
     try:
         owner = conn.execute(
@@ -4908,8 +4907,6 @@ def set_capability(restaurant_id: int, employee_name: str, attribute: str = "ove
     # empty string is how you clear one deliberately.
     notes_given = notes is not None
     clean_notes = (notes or "").strip()[:500] or None
-
-    init_staff_capabilities(db_path)
     conn = get_conn(db_path)
     try:
         conn.execute("""
@@ -4936,7 +4933,6 @@ def _clear_capability(restaurant_id, employee_name, attribute, db_path):
     itself, so a row carrying one is blanked rather than deleted; a row
     carrying nothing else goes.
     """
-    init_staff_capabilities(db_path)
     conn = get_conn(db_path)
     try:
         conn.execute("UPDATE staff_capabilities SET score=NULL, flag=NULL, "
@@ -4956,7 +4952,6 @@ def _clear_capability(restaurant_id, employee_name, attribute, db_path):
 def get_capabilities(restaurant_id: int, attribute: str = None,
                      db_path: str = DB_PATH) -> dict:
     """{employee_name: {attribute: {...}}} for one restaurant."""
-    init_staff_capabilities(db_path)
     conn = get_conn(db_path)
     sql = ("SELECT employee_name, attribute, score, flag, notes, updated_by, updated_at "
            "FROM staff_capabilities WHERE restaurant_id=?")
@@ -4986,7 +4981,6 @@ def capability_version(restaurant_id: int, db_path: str = DB_PATH) -> str:
     rate three people, reopen the app, and read a score computed against
     the ratings they had just replaced, with nothing marking it stale.
     """
-    init_staff_capabilities(db_path)
     conn = get_conn(db_path)
     try:
         caps = conn.execute(
@@ -5074,7 +5068,6 @@ def add_manual_team_member(restaurant_id: int, employee_name: str, role: str = N
     if not name:
         raise ManualTeamMemberError("an employee name is required")
     clean_role = (role or "").strip()[:60] or None
-    init_manual_team_members(db_path)
     conn = get_conn(db_path)
     try:
         conn.execute("""
@@ -5095,7 +5088,6 @@ def remove_manual_team_member(restaurant_id: int, employee_name: str, db_path: s
     name = (employee_name or "").strip()
     if not name:
         return False
-    init_manual_team_members(db_path)
     conn = get_conn(db_path)
     try:
         cur = conn.execute(
@@ -5108,7 +5100,6 @@ def remove_manual_team_member(restaurant_id: int, employee_name: str, db_path: s
 
 
 def get_manual_team_members(restaurant_id: int, db_path: str = DB_PATH) -> list:
-    init_manual_team_members(db_path)
     conn = get_conn(db_path)
     try:
         rows = conn.execute(
@@ -5252,7 +5243,6 @@ def remember_ask_fact(restaurant_id: int, fact: str, kind: str = "context",
     text = (fact or "").strip()[:ASK_MEMORY_MAX_LENGTH]
     if not text:
         raise ValueError("a fact needs some text")
-    init_ask_memory(db_path)
     conn = get_conn(db_path)
     try:
         conn.execute(
@@ -5272,7 +5262,6 @@ def remember_ask_fact(restaurant_id: int, fact: str, kind: str = "context",
 
 def get_ask_memory(restaurant_id: int, db_path: str = DB_PATH) -> list:
     try:
-        init_ask_memory(db_path)
         conn = get_conn(db_path)
         rows = conn.execute(
             "SELECT fact, kind, source, created_at FROM ask_memory WHERE restaurant_id=? "
@@ -5285,7 +5274,6 @@ def get_ask_memory(restaurant_id: int, db_path: str = DB_PATH) -> list:
 
 
 def forget_ask_fact(restaurant_id: int, fact: str, db_path: str = DB_PATH) -> bool:
-    init_ask_memory(db_path)
     conn = get_conn(db_path)
     try:
         cur = conn.execute("DELETE FROM ask_memory WHERE restaurant_id=? AND fact=?",
@@ -5331,7 +5319,6 @@ def record_capability_change(restaurant_id: int, kind: str, subject: str = None,
     not stop an owner setting a target."""
     import json as _j
     try:
-        init_capability_changes(db_path)
         conn = get_conn(db_path)
         conn.execute(
             "INSERT INTO capability_changes "
@@ -5359,7 +5346,6 @@ def record_capability_change(restaurant_id: int, kind: str, subject: str = None,
 def get_capability_changes(restaurant_id: int, limit: int = 100,
                            db_path: str = DB_PATH) -> list:
     import json as _j
-    init_capability_changes(db_path)
     conn = get_conn(db_path)
     rows = conn.execute(
         "SELECT * FROM capability_changes WHERE restaurant_id=? "
@@ -5383,7 +5369,6 @@ def get_shift_profiles(restaurant_id: int, include_inactive: bool = False,
     """This restaurant's own profiles, as plain dicts. Empty means it has
     none, and the engine then judges against its built-in set."""
     import json as _j
-    init_shift_profiles(db_path)
     conn = get_conn(db_path)
     sql = "SELECT * FROM shift_profiles WHERE restaurant_id=?"
     if not include_inactive:
@@ -5419,7 +5404,6 @@ def save_shift_profile(restaurant_id: int, profile: dict, updated_by: str = None
     active = 0 if profile.get("active") is False else 1
     config = {k: v for k, v in profile.items()
               if k not in ("key", "label", "priority", "active", "updated_by", "updated_at")}
-    init_shift_profiles(db_path)
     conn = get_conn(db_path)
     try:
         conn.execute("""
@@ -5439,7 +5423,6 @@ def save_shift_profile(restaurant_id: int, profile: dict, updated_by: str = None
 
 
 def delete_shift_profile(restaurant_id: int, key: str, db_path: str = DB_PATH) -> bool:
-    init_shift_profiles(db_path)
     conn = get_conn(db_path)
     try:
         cur = conn.execute("DELETE FROM shift_profiles WHERE restaurant_id=? AND key=?",
@@ -7729,7 +7712,6 @@ def record_competitor_snapshot(restaurant_id: int, competitors: list, db_path: s
     most useful thing this module could tell an owner, and it was being
     thrown away every Monday.
     """
-    init_competitor_snapshots(db_path)
     conn = get_conn(db_path)
     try:
         for c in competitors or []:
@@ -7787,7 +7769,6 @@ def competitor_roster_changes(restaurant_id: int, db_path: str = DB_PATH) -> dic
     nearby, or a rival closing, is the most actionable market-change signal
     this module can produce and nothing computed it.
     """
-    init_competitor_snapshots(db_path)
     conn = get_conn(db_path)
     runs = conn.execute("""
         SELECT DISTINCT DATE(captured_at) AS d FROM competitor_snapshots
@@ -7821,7 +7802,6 @@ def competitor_movement(restaurant_id: int, days: int = 60, db_path: str = DB_PA
     inside the window, and only where both exist — a single data point is
     not a movement and is reported as such by being absent.
     """
-    init_competitor_snapshots(db_path)
     conn = get_conn(db_path)
     rows = conn.execute("""
         SELECT place_id, name, rating, review_count, captured_at
@@ -7927,7 +7907,6 @@ def record_ai_visibility_queries(run_id: int, restaurant_id: int, queries: list,
     """
     if not run_id or not queries:
         return
-    init_ai_visibility_queries(db_path)
     import json as _j
     conn = get_conn(db_path)
     try:
@@ -7951,7 +7930,6 @@ def ai_visibility_query_diff(restaurant_id: int, db_path: str = DB_PATH) -> dict
     This is what the drop alert has always pointed the owner at and what
     nothing could produce.
     """
-    init_ai_visibility_queries(db_path)
     conn = get_conn(db_path)
     runs = conn.execute(
         "SELECT DISTINCT run_id, MAX(created_at) AS at FROM ai_visibility_query_runs "
@@ -7979,7 +7957,6 @@ def ai_visibility_query_history(restaurant_id: int, runs: int = 8, db_path: str 
     "queries": [{query, kind, appeared: [bool|None per run], appearances}]}.
     None where a run did not ask that question. What the score hides — the
     same 3-of-6 can be a steady three or a different three every week."""
-    init_ai_visibility_queries(db_path)
     conn = get_conn(db_path)
     try:
         run_rows = conn.execute(
@@ -8009,7 +7986,6 @@ def ai_visibility_query_history(restaurant_id: int, runs: int = 8, db_path: str 
 
 def ai_visibility_sources(restaurant_id: int, limit: int = 20, db_path: str = DB_PATH) -> list:
     """The citation URLs the most recent run's answers were grounded in."""
-    init_ai_visibility_queries(db_path)
     import json as _j
     conn = get_conn(db_path)
     row = conn.execute(

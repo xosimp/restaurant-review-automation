@@ -504,14 +504,12 @@ def resync_depletion_route(restaurant_id, current_user):
 @login_required
 def get_staff_availability_route(restaurant_id, current_user):
     from models import get_staff_availability, init_staff_availability
-    init_staff_availability()
     return jsonify(ok=True, availability=get_staff_availability(restaurant_id))
 
 @admin_bp.route("/admin/staff-availability/<int:restaurant_id>", methods=["POST"])
 @login_required
 def save_staff_availability_route(restaurant_id, current_user):
     from models import save_staff_availability, init_staff_availability
-    init_staff_availability()
     data = request.get_json() or {}
     name = (data.get("employee_name") or "").strip()
     if not name:
