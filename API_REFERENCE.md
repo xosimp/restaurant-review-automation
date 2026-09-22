@@ -1,24 +1,30 @@
 # API Reference — Cavnar AI
 
-This documents **patterns and resource groups**, not every individual route — there are roughly 460 across the app, and the specific handler is always one `grep` away once you know which file and prefix to look in. That lookup is intentionally cheap; re-deriving the whole route table from scratch every session is not. Use this file to answer "which file, which blueprint, which auth" before opening anything.
+This documents **patterns and resource groups**, not every individual route — there are 751 URL rules (680 unique paths) across the app, and the specific handler is always one `grep` away once you know which file and prefix to look in. That lookup is intentionally cheap; re-deriving the whole route table from scratch every session is not. Use this file to answer "which file, which blueprint, which auth" before opening anything.
 
 ## Blueprints (registered in `hosted_dashboard.py`)
 
 | Blueprint | File | URL prefix | Auth | Routes |
 |---|---|---|---|---|
-| `client_bp` | `client_api.py` | `/api/*` (+ page routes) | web session cookie (`login_required`) | ~162 |
-| `mobile_bp` | `mobile_api.py` | `/mobile/api/*` | Bearer token (`mobile_login_required`) | ~176 |
-| `admin_bp` | `admin_routes.py` | `/admin/*` | `admin_required`, Will only | ~93 |
-| `auth_bp` | `auth_routes.py` | `/auth/*`, `/login`, `/register`, ... | none → issues session | ~21 |
-| `webhook_bp` | `webhook_routes.py` | `/webhooks/*` (inbound), `/api/webhook*` (outbound config) | inbound: signature-verified; outbound config: session | 6 |
-| `social_bp` | `social_routes.py` | OAuth callbacks for social connections | mixed | 9 |
-| `toast_bp` / `square_bp` / `clover_bp` | `toast_routes.py` / `square_routes.py` / `clover_routes.py` | POS OAuth + sync | mixed | 7–8 each |
-| `status_bp` | `status_routes.py` | `/status`, public status page | public | 6 |
-| `audit_bp` | `audit_app.py` | `/admin/audits/*` | admin | — |
+| `client_bp` | `client_api.py` | `/api/*` (+ page and public-token routes: `/approve/<id>`, `/e/<token>`, `/s/<token>`, `/join/<token>`, `/u/<token>`, `/m/<token>.jpg`) | web session cookie (`auth.login_required`) | 194 |
+| `mobile_bp` | `mobile_api.py` | `/mobile/api/*` | Bearer token (`auth.mobile_login_required`) | 205 |
+| `strategy_bp` / `strategy_mobile_bp` | `strategy_routes.py` | each `_ROUTES` entry at `/api/…` **and** `/mobile/api/…` | session / bearer | 68 + 68 |
+| `issue_link_bp` | `strategy_routes.py` | `/i/<token>` | signed token | 1 |
+| `admin_bp` | `admin_routes.py` | `/admin/*`, plus `/privacy`, `/terms`, `/sms-optin-preview`, `/.well-known/security.txt`, `/og-image.png`, `/favicon.*`, `/api/competitor-intel`, `/api/send-referral`, `/api/export-reviews` | `auth.admin_required` (writes need `is_admin`; the `support` role reads) | 96 |
+| `audit_bp` | `sales_audit_routes.py` | `/admin/audits/*` (+ a public shared report by token) | admin | 22 |
+| `staff_bp` | `staff_routes.py` | `/staff/*` — PIN sign-in, today, availability, time off, pre-shift | staff session (`auth.staff_login_required`) | 21 |
+| `auth_bp` | `auth_routes.py` | `/login`, `/logout`, `/forgot-password`, `/reset-password/<token>`, `/verify-2fa`, `/auth/*`, and the account-security `/api/*` routes (sessions, change-password, update-email, 2FA toggles) | none → issues session; the `/api/*` ones need a session | 22 |
+| `webhook_bp` | `webhook_routes.py` | `/stripe-webhook`, `/webhooks/resend`, `/docusign/callback`, `/docusign/callback2`, `/docusign/webhook` (inbound) | signature-verified | 6 |
+| `social_bp` | `social_routes.py` | Instagram/Facebook OAuth + `/api/post-to-facebook`, `/api/post-insights` | mixed | 9 |
+| `toast_bp` / `square_bp` / `clover_bp` / `rpower_bp` | `*_routes.py` | POS connect + `/admin/<pos>/*` sync/bootstrap | mixed | 8 / 7 / 7 / 6 |
+| `status_bp` | `status_routes.py` | `/status` public page + `/admin/status/*` | public / admin | 6 |
+| app-level | `hosted_dashboard.py` | `/`, `/health`, `/sitemap.xml`, `/robots.txt`, `/og-image-v2.png` | — | 5 |
+
+The outbound-webhook config routes (`GET/POST/DELETE /api/webhook`, `POST /api/webhook/test`) are in `client_bp`, not `webhook_bp`. `audit_app.py` is a separate standalone Flask app (the digital audit scorecard on :9000), not a blueprint. There is no web `/register` and no web `/me`; both exist only under `/mobile/api/` (and `/staff/api/me`). `hosted_dashboard` refuses to boot if two rules share a (path, method).
 
 ## The `_m()` delegation pattern
 
-Most of `client_bp`'s `/api/*` handlers are one line:
+58 of `client_bp`'s `/api/*` handlers are one line (the rest own their body or share a `_do_*` with mobile — see *Which pattern to use* below):
 ```python
 @client_bp.route("/api/ask-cavnar/opening")
 @login_required
@@ -26,6 +32,8 @@ def ask_cavnar_opening(current_user):
     return _m("mobile_ask_opening")(current_user)
 ```
 `_m(name)` looks up `mobile_api.<name>` and unwraps its `@mobile_login_required` decorator (`__wrapped__`), so the web route calls the exact same function body the iOS route calls — just with the already-resolved `current_user` from the web session instead of a decoded bearer token. **When a route's real logic isn't there, look in `mobile_api.py` first.** A genuinely web-only route (no iOS equivalent — e.g. CSV export, a desktop-only settings page) is one of the minority that doesn't delegate.
+
+**Which pattern to use for a new endpoint both surfaces need.** Prefer a `strategy_routes._ROUTES` entry: one body, registered at both prefixes by the loop at the bottom of that file, with `_rid`/`_body`/`_principal` helpers. Second choice: a `_do_*` body in `client_api.py` called from both routes. Last: `_m()`. Never a third: 34 pairs still re-implement the same logic on both sides (885 lines, one of which has already diverged in its error handling), and each is a fix waiting to be missed on the other surface.
 
 ## Resource groups
 
@@ -35,14 +43,14 @@ Profile, security (2FA setup/verify, backup codes, trusted devices, sessions lis
 ### Labor (`/api/labor*`, `/mobile/api/labor/*` — ~27 mobile + ~17 client)
 Shift CSV upload, labor % + ribbon data, schedule generation/history/sharing, staff availability, staff contacts (for schedule delivery), Operational Score (`team`), scheduling profiles (demand levels), overtime/overstaffed-day detail.
 
-### Reviews (`/mobile/api/reviews/*`, `/api/reviews*`)
-List/detail/approve/skip/regenerate a draft response, bulk approve-all, sentiment trend, topic heatmap, response-performance, review-request send, review stats.
+### Reviews (`/mobile/api/reviews/*`, `/mobile/api/review-stats`; web routes are flat — `/api/reviews/page`, `/api/review-stats`, `/api/topic-heatmap`, `/api/sentiment-trend`, `/api/response-performance`, `/api/regenerate-draft/<id>`, `/api/save-draft/<id>`, and the actions at root: `/approve/<id>`, `/skip/<id>`, `/undo/<id>`, `/retract/<id>`)
+List/detail/approve/skip/regenerate a draft response, retry a failed Google post (`/reviews/<id>/retry-post`, both surfaces), bulk approve-all, sentiment trend, topic heatmap, response-performance, review-request send, review stats.
 
 ### Food Cost (`/mobile/api/food-cost/*`, `/api/food-cost*`)
 Inventory CSV upload, custom items, purchase orders, waste/drift insight.
 
-### Marketing (`/mobile/api/marketing/*`, `/api/marketing*`)
-Drafts (create/edit/list), media upload, scheduling, guest-contacts / guest-campaigns / guest-segments (the text-club feature), templates.
+### Marketing (`/mobile/api/marketing/*`; web routes are mostly flat — `/api/mkt-stats`, `/api/mkt-performance`, `/api/mkt-insight`, `/api/content-calendar`, `/api/post-to-google`, `/api/brand-voice`, `/api/generate-content`, plus `/api/marketing/*` for drafts, schedule, links, media, attribution, diagnosis, tags)
+Drafts (create/edit/list), media upload, scheduling, attribution per post, the text-club feature (`/api/guest-contacts*`, `/api/guest-campaign/draft|send`, `/api/guest-newsletter`, `/api/guest-qr`, `/api/guest-segments`, `/api/public/guest-optin/<token>`), templates.
 
 ### Intel (`/mobile/api/intel/*`, `/api/intel*`, `/api/ai-visibility*`)
 Competitor snapshots, AI-visibility run trigger + results.
@@ -65,10 +73,16 @@ The deterministic Home-tab payload — see `home_brief.py`. `?fresh=1` forces re
 ### Webhooks (`/api/webhook*` outbound config, `/webhooks/*` inbound)
 `GET /api/webhook` (current config or null), `POST /api/webhook` (save + return a secret), `POST /api/webhook/test` (fire a test delivery), `DELETE /api/webhook` (remove). Inbound: Stripe and Twilio webhook receivers, signature-verified, event-id de-duped (`stripe_events_seen`).
 
-### Auth (`/auth/*`, `/mobile/api/login` etc.)
-Login (web + mobile variants), register, forgot/reset password, verify-2fa, Apple/Google sign-in, logout, session `/me`.
+### Auth (`auth_routes.py`; `/mobile/api/login`, `/register`, `/apple-signin`, `/verify-2fa`, `/forgot-password`, `/reset-password`, `/logout`, `/me`, `/device-tokens`)
+Login (web + mobile variants), mobile register, forgot/reset password, verify-2fa, Apple/Google sign-in, logout, mobile `/me`, APNs token registration.
 
-### Admin (`/admin/*`, Will-only, 93 routes)
+### Staff portal (`/staff/*`, `staff_routes.py`)
+`/staff/r/<token>/login` (PIN), `/staff/api/me`, today's schedule, availability, time off requests, `/staff/api/signup/claim`, `/staff/api/pin`, `/staff/api/preshift`.
+
+### Other groups with web + mobile twins
+`/api/tasks*` (today's checklist), `/api/team/inbox` + `/api/team/messages*`, `/api/changelog*`, `/api/switch-location` + `/api/group-locations`, `/api/home` + `/api/home/dismiss`, `/api/rpower/status` and the `/admin/rpower/*` bootstrap.
+
+### Admin (`/admin/*`, 96 routes on `admin_bp`; `/admin/status/*`, `/admin/audits*` and `/admin/<pos>/*` live on their own blueprints)
 Client health rollup (owner → brand → location), job run history, manual contract send, sales-audit tool (`/admin/audits/*`), changelog authoring, status-incident management.
 
 ## Conventions
@@ -77,7 +91,7 @@ Client health rollup (owner → brand → location), job run history, manual con
 - **POST bodies**: `request.get_json() or {}` — never assume the body parses.
 - **Side-effect emails/SMS**: wrapped in best-effort `try/except`, routed to `ops.capture()` on failure rather than failing the request the user is waiting on, and logged via `log_email()` / `email_log`.
 - **CSRF**: every state-changing web POST needs the CSRF token (`_csrf_fetch.html`'s helper attaches it automatically to `fetch()` calls in the dashboard's own JS).
-- **Rate limiting**: Ask Cavnar is capped at 5/min per restaurant (`ai_utils.ai_rate_limited`); AI budget is also enforced globally and per-restaurant (`ai_budget_exceeded`) before any model call fires.
+- **Rate limiting**: Ask Cavnar is capped at 5/min per restaurant **and user** (`ai_utils.ai_rate_limited`, keyed on both); AI budget is also enforced globally and per-restaurant (`ai_budget_exceeded`) before any model call fires.
 - **Streaming**: Ask Cavnar's chat endpoint is Server-Sent Events, with named progress labels per tool call (e.g. `"read_alerts": "Checking what needs you"`) sent before the tool result, so the client can show what's happening rather than a bare spinner.
 
 ## Finding a specific route fast
@@ -86,6 +100,8 @@ Client health rollup (owner → brand → location), job run history, manual con
 grep -n "'/mobile/api/labor" mobile_api.py      # mobile handler
 grep -n '"/api/labor' client_api.py             # web equivalent, if any (often `_m(...)`)
 grep -n "def mobile_labor_" mobile_api.py        # by handler name pattern
+grep -n '"/labor/' strategy_routes.py            # the _ROUTES table (registered at both prefixes)
+python3 scripts/inventory.py                     # every rule, by blueprint, from the live url_map
 ```
 
 ## Intelligence engine

@@ -1,13 +1,13 @@
 # Database Schema — Cavnar AI
 
-Single SQLite database (`reviews.db`), WAL mode, on a Railway persistent volume in production. Schema lives across `models.py` (`init_db()` + `ensure_columns()`), `auth.py` (`init_auth()`), `push.py` (`init_push()`), `webhooks.py` (`init_webhooks()`), and a handful of lazy-`init_*()` functions for tables that didn't exist from day one (`init_ask_memory`, `init_two_fa_backup_codes`, `init_capability_changes`, ...). There is no version table — migrations are additive `ALTER TABLE ADD COLUMN` statements guarded by `try/except`, run on every boot. **77 tables** as of this writing.
+Single SQLite database (`reviews.db`), WAL mode, on a Railway persistent volume in production. Schema lives across `models.py` (`init_db()` + `ensure_columns()` + a dozen `init_*()` helpers for tables that didn't exist from day one), `auth.py` (`init_auth()`), `push.py`, `webhooks.py`, `guest_marketing.py`, `sales_audits.py`, `ops.py`, `ai_utils.py` and a few single-table owners (`admin_events`, `milestones`, `home_brief`). All of it runs at boot from `hosted_dashboard.py`. There is no version table — migrations are additive `ALTER TABLE ADD COLUMN` statements guarded by `try/except`. **116 tables** on 2026-09-21; the count is the `CREATE TABLE IF NOT EXISTS` names across non-test Python (`python3 scripts/inventory.py`), and this file lists them by area rather than re-deriving each one.
 
 `restaurant_id` is the tenant boundary on essentially every table below it — every read must filter by it from the authenticated session, never from client-supplied input.
 
 ## Core identity
 
 ### `restaurants` (models.py)
-The tenant row. Everything else hangs off `restaurants.id`.
+The tenant row (191 columns). Everything else hangs off `restaurants.id`. The list below is by purpose, not exhaustive; the authoritative column set is the four touch points — the `Restaurant` dataclass, the migration lists (`init_db()`'s ALTERs and `ensure_columns()`), `update_restaurant().allowed`, and `get_restaurant()`'s hydration — and a column missing from any one of them is a bug, not a documentation gap. Not itemised here: the per-type alert channel matrix (`alert_*`, `al_<type>_email|sms|push`, `alert_quiet_*`, `alert_max_per_day`), every POS/OAuth credential column (`toast_*`, `square_*`, `clover_*`, `rpower_*`, `gmb_*`, `ig_*`/`fb_*` — encrypted at rest by `credentials.py`), the 2FA columns, the automation switches (`auto_*`, `send_delay_minutes`, `weekly_plan_enabled`), `category` (the intelligence cohort), `organization_id`, `row_version`, `paused_until`, `deletion_requested_at`.
 - **Identity/contact**: `name`, `owner_email`, `owner_name`, `owner_phone`, `google_place_id`, `yelp_business_id`
 - **Brand voice**: `voice_notes`, `neighborhood`, `vibe`, `known_for`, `sign_off_name`, `never_say`
 - **Labor settings**: `hourly_rate`, `labor_target_pct`, `week_start_day` (0=Mon, for FLSA overtime on the employer's own workweek), scheduling JSON blobs (`role_rates_json`, `close_times_json`, `role_close_buffer_json`, `role_minimums_json`, `role_strength_json`, `shift_leader_rules_json`, `quality_weights_json`), `sched_notes`
@@ -19,11 +19,19 @@ The tenant row. Everything else hangs off `restaurants.id`.
 - **Misc computed/cached**: `latitude`/`longitude`/`weather_cache_json`/`weather_cached_at` (geocoded once, cached forecast), `email_theme`, `marketing_emails_opt_out`, `timezone`
 
 ### `users` / `sessions` / `login_history` (auth.py)
-- `users`: one row per login, `restaurant_id` FK, `username`/`email` unique, `password_hash`, `is_admin`, `is_active`, `role` (owner/teammate — gates team invite/revoke).
+- `users`: one row per login, `restaurant_id` FK, `username`/`email` unique, `password_hash`, `is_admin`, `is_active`, `role` ∈ `permissions.py`'s roles — `owner` (multi-location), `client` (the primary login and DB default; shown as Co-owner), `manager`, `member` (Teammate), `employee` (PIN identity, staff portal only), `support` (Cavnar staff, read-only admin).
 - `sessions`: `token` PK, `expires_at`, `last_active`, `ip_address`, `user_agent` — hard-deleted on expiry/revoke/device-dedup.
 - `login_history`: append-only, **never** pruned — independent of `sessions`, this is what the Account "sign-in activity" view reads, so a login stays visible regardless of what later happens to the session it produced.
 - `trusted_devices`: "remember this device 30 days" for 2FA, one row per device (superseded a single-column approach that only held the last device).
 - `two_fa_backup_codes`: hashed, single-use fallback codes generated at 2FA setup.
+- `login_attempts` (models.py, used by `security.py`): durable login throttling by account and by IP; rows older than two days are pruned by the scheduler.
+- `organizations` + `restaurants.organization_id`: the owner-level grouping above a location group (backfilled from `location_group` + `owner_email`).
+
+### Staff portal (auth.py `AUTH_SCHEMA`)
+- `memberships`: an employee's identity at a restaurant (name, job role, PIN hash, `pos_id`), the row the staff portal signs in against.
+- `membership_pin_attempts`, `portal_attempts`, `portal_nonces`: PIN lockout, portal throttling, one-time nonces.
+- `staff_portal_tokens`: the per-restaurant portal links; `staff_signups`: the claim-your-name flow.
+- `permission_grants`, `login_prefs`: see *Strategic foundations* below.
 
 ## Reviews
 
@@ -56,14 +64,17 @@ Contact info for schedule delivery; freeform per-employee notes.
 ### `labor_history` / `labor_daily_history`
 Per-period and per-day labor % / sales / hours — the source for the Labor ribbon chart and Ask Cavnar's "how is today going" answer.
 
-### `schedule_shares` / `staff_schedule_publish` (share links)
+### `schedule_shares` (share links)
 Public, expiring links a schedule is published to for staff to view (and submit availability against). Expiry is ~60 days out, pushed back on republish; an expired link is flagged rather than serving stale data or vanishing.
+
+### `staff_time_off`, `covers_daily`, `manual_team_members`, `team_messages`, `task_templates` / `task_completions`
+Time-off requests (owner decides in place); covers per day for the labor-per-cover read; team members added by hand where the POS has none; the owner↔staff message threads; and today's flat task checklist per job role — the thing `docs/plans/TASK_SHEETS_PLAN.md` replaces.
 
 ### `shift_profiles`
 Demand-level profiles (low/normal/high/peak) per daypart, used by the Shift Quality Engine's demand-match dimension.
 
-### `overstaffed_days` / overtime tracking
-Computed on read from `labor_daily_history` + shift data, not a standalone table — see `labor.py`.
+### Overstaffed days / overtime
+Computed on read from `labor_daily_history` + shift data, not a table — see `labor.py`.
 
 ## Ask Cavnar
 
@@ -100,11 +111,11 @@ Attention items a user has dismissed from the Home brief, so a handled issue doe
 
 ## Marketing
 
-`marketing_drafts`, `marketing_scheduled_posts`, `marketing_content_log`, `marketing_media`, `marketing_links`, `marketing_attribution`, `content_calendar_cache`, `guest_campaigns`, `guest_contacts`, `sms_optin_invites`.
+`marketing_drafts`, `marketing_scheduled_posts`, `marketing_content_log` (each row tagged with `menu_item_id`, `occasion`, `post_kind`), `marketing_media`, `marketing_links`, `marketing_attribution`, `content_calendar_cache`, `guest_campaigns`, `guest_campaign_recipients` (which guests each campaign reached, matched back through the connected POS), `guest_contacts`, `sms_optin_invites`.
 
 ## Food Cost / Inventory
 
-`ingredients`, `ingredient_stock_events`, `inventory_history`, `menu_items`, `recipe_ingredients`, `purchase_orders`, `statements`.
+`ingredients`, `ingredient_stock_events`, `inventory_history`, `menu_items`, `menu_item_sales` (per-item units from the POS, the basis of dish lift and depletion), `recipe_ingredients`, `recipe_drafts` (model-drafted, accepted line by line), `purchase_orders`, `forecast_log` (every waste forecast, scored later), `food_cost_diagnoses` and `review_diagnoses` (the stored root-cause reads the 6am jobs write).
 
 ## The owner's day
 
@@ -129,7 +140,7 @@ Attention items a user has dismissed from the Home brief, so a handled issue doe
 
 ## Intel
 
-`competitor_snapshots` (week-over-week diffed), `ai_visibility_runs` / `ai_visibility_query_runs` (Perplexity-backed "do LLMs mention us" checks, `answered`/`appeared` columns per query).
+`competitor_snapshots` (week-over-week diffed), `ai_visibility_runs` (one row per run, with `answered`/`appeared` totals) / `ai_visibility_query_runs` (per query: `appeared` and the `answer` text).
 
 ## Billing / Contracts / Webhooks
 
@@ -139,7 +150,7 @@ Attention items a user has dismissed from the Home brief, so a handled issue doe
 
 ## Admin / Ops
 
-`admin_events`, `admin_issue_resolutions`, `job_runs`, `job_failures`, `job_period_claims`, `scheduler_lease`, `activity_log`, `async_jobs`, `ai_usage` (per-call cost/token logging from `ai_utils.log_ai_usage`), `changelog_entries`, `status_incidents` / `status_incident_updates` / `service_status` (the public status page), `sales_audits` / `sales_audit_shares` (the in-person sales tool), `value_snapshots` (daily "value delivered" figure, populated opportunistically on first Home-tab load of the day — not a scheduled job).
+`admin_events`, `admin_issue_resolutions`, `job_runs`, `job_failures`, `job_period_claims`, `job_cursors` (where a bounded pass stopped), `scheduler_lease`, `milestones` (firsts an owner is told about once), `activity_log`, `async_jobs`, `ai_usage` (per-call cost/token logging from `ai_utils.log_ai_usage`), `changelog_entries`, `status_incidents` / `status_incident_updates` / `service_status` (the public status page), `sales_audits` / `sales_audit_shares` (the in-person sales tool), `value_snapshots` (daily "value delivered" figure, populated opportunistically on first Home-tab load of the day — not a scheduled job).
 
 ## Email
 
@@ -147,8 +158,8 @@ Attention items a user has dismissed from the Home brief, so a handled issue doe
 
 ## Conventions that apply across this schema
 
-- **Additive-only migrations.** A new column is added via `ensure_columns()`'s guarded `ALTER TABLE`, never a destructive rewrite, so old rows keep working and a rollback of the code doesn't orphan data.
-- **`restaurant_id NOT NULL REFERENCES restaurants(id)`** on every tenant-scoped table — enforced by the FK, not just convention.
+- **Additive-only migrations.** A new column is added via a guarded `ALTER TABLE` in `init_db()`'s list or `ensure_columns()`'s (both run at boot; 57 columns live only in the latter), never a destructive rewrite, so old rows keep working and a rollback of the code doesn't orphan data.
+- **`restaurant_id` scopes every tenant table**, and the newer tables declare `NOT NULL REFERENCES restaurants(id)`. About thirty older tables (`alert_log`, `schedule_history`, `email_log`, `sessions`, `login_history`, `ai_usage`, `push_deliveries`, …) carry the column without the FK clause, so `PRAGMA foreign_keys=ON` does not protect them; the `WHERE ... AND restaurant_id=?` convention does. New tables declare the FK.
 - **Append-only tables stay append-only** (`login_history`, `ask_cavnar_actions`, `alert_log`, `capability_changes`) — they are audit trails; a "current state" view is always computed by querying the latest row, not by mutating history in place.
 - **JSON-in-a-column** (`*_json` fields on `restaurants`, `summary_json` on `schedule_history`) is used deliberately for structured settings that don't need their own table and are always read/written as a whole blob by one piece of code — not for anything queried by its internal fields.
 
