@@ -254,6 +254,53 @@ def disk_state(db_path=None):
     return {"state": state, "free_mb": round(free_mb), "pct_free": round(pct_free, 1)}
 
 
+_reference_schema = {}
+
+
+def _reference_columns():
+    """{table: {columns}} of a database built by this code's own init_db and
+    ensure_columns — the schema every deploy migrates to. Built once per
+    process in a scratch file."""
+    if "cols" in _reference_schema:
+        return _reference_schema["cols"]
+    import contextlib
+    import io
+    import tempfile
+    import sqlite3
+    from models import init_db, ensure_columns
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "reference.db")
+        with contextlib.redirect_stdout(io.StringIO()):
+            init_db(path)
+            ensure_columns(db_path=path)
+        conn = sqlite3.connect(path)
+        try:
+            tables = [r[0] for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")]
+            cols = {t: {r[1] for r in conn.execute(f'PRAGMA table_info("{t}")')} for t in tables}
+        finally:
+            conn.close()
+    _reference_schema["cols"] = cols
+    return cols
+
+
+def _schema_gaps(conn) -> list:
+    """Tables or columns the code expects that this database lacks."""
+    try:
+        ref = _reference_columns()
+    except Exception:
+        return []          # never fail health on the checker itself
+    have_tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    gaps = []
+    for table, cols in ref.items():
+        if table not in have_tables:
+            gaps.append(table)
+            continue
+        have = {r[1] for r in conn.execute(f'PRAGMA table_info("{table}")')}
+        gaps.extend(f"{table}.{c}" for c in sorted(cols - have))
+    return gaps
+
+
 def health_snapshot(db_path=None):
     """(payload, http_status) for the /health endpoint.
 
@@ -262,9 +309,10 @@ def health_snapshot(db_path=None):
     scheduler thread and re-runs csrf_protect on already-registered
     blueprints, so anything living there cannot be tested directly.
 
-    Only ONE condition is a 500: a database that cannot be read. That is the
-    case where a new deployment genuinely should not be promoted over a
-    working one. Everything else — a stale scheduler, a filling volume — is
+    Two conditions are a 500: a database that cannot be read, and one
+    missing tables or columns this code expects (an empty restore, a skipped
+    migration). Those are the cases where a new deployment genuinely should
+    not be promoted over a working one. Everything else — a stale scheduler, a filling volume — is
     a 200 carrying the signal, because the web app is up and serving and
     failing the healthcheck would replace a real problem with a deploy
     problem on top of it.
@@ -273,9 +321,15 @@ def health_snapshot(db_path=None):
     try:
         conn = get_conn(db_path or DB_PATH)
         conn.execute("SELECT 1").fetchone()
+        missing = _schema_gaps(conn)
         conn.close()
     except Exception as e:
         return {"status": "error", "db": str(e)}, 500
+    if missing:
+        # An empty database (a restore that went wrong) or one whose boot
+        # migration did not run answers SELECT 1 perfectly well. Neither is
+        # a platform that should be promoted (DATA-33).
+        return {"status": "error", "db": "schema", "missing": missing[:10]}, 500
 
     disk = disk_state(db_path)
 

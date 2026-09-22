@@ -195,8 +195,6 @@ def test_health_is_200_on_a_migrated_database(tmp_path, monkeypatch):
     assert status == 200 and payload["db"] == "ok"
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-33: /health only runs SELECT 1, so an empty database (a bad restore) "
-                                       "is promoted as healthy")
 def test_health_fails_on_a_database_with_no_restaurants_table(tmp_path, monkeypatch):
     empty = str(tmp_path / "empty.db")
     sqlite3.connect(empty).close()
@@ -206,8 +204,6 @@ def test_health_fails_on_a_database_with_no_restaurants_table(tmp_path, monkeypa
     assert status == 500
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-33: /health does not check the schema, so a deploy whose boot "
-                                       "migration was skipped (DATA-11) is promoted")
 def test_health_fails_on_a_database_missing_a_column_the_code_expects(tmp_path, monkeypatch):
     path = _live_db(str(tmp_path / "live.db"), monkeypatch)
     conn = sqlite3.connect(path)
@@ -255,8 +251,6 @@ def test_a_connection_opened_between_the_move_and_the_copy_empties_the_restored_
     assert "restaurants" not in tables and integrity == "ok"
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-2: RECOVERY.md step 4 moves and copies reviews.db with the service "
-                                       "still running; a connection opened in the gap replaces the restore with an empty DB")
 def test_the_documented_restore_stops_every_writer_before_swapping_files():
     text = open(os.path.join(ROOT, "docs", "ops", "RECOVERY.md"), encoding="utf-8").read()
     start = text.index("### 4. Restore")

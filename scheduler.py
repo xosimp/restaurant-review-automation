@@ -2550,6 +2550,11 @@ def scheduling_allowed():
     the dev machine's own errors. Morning briefs, digests, alerts and issue
     texts reach real people; a laptop must never be a second sender.
     """
+    # Held while a restore is in progress: jobs must not write into the
+    # restored database (or send from it) until someone has confirmed it and
+    # removed RESTORE_FROM.
+    if (os.getenv("RESTORE_FROM") or "").strip():
+        return False
     if os.getenv("ALLOW_LOCAL_SCHEDULER", "").strip().lower() in ("1", "true", "yes"):
         return True
     # Railway sets all of these on every deploy; any one is enough.

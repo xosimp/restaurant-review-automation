@@ -108,23 +108,45 @@ everything since 2am.
 
 ### 4. Restore
 
+**Never swap the files under a running service.** The web threads and the
+scheduler open the database continuously; one connection landing between a
+`mv` and a `cp` creates an empty database whose WAL then replays over the
+restored file. `integrity_check` still says ok, boot seeds the admin and
+demo accounts, and `/health` used to go green on an empty platform.
+
+The restore is a boot step instead (`db_restore.py`):
+
+1. In Railway → web → Variables, set
+   `RESTORE_FROM=/app/data/backups/cavnar_ai_backup_YYYY-MM-DD.db`.
+   Saving it redeploys. The new process swaps the snapshot in before its
+   first connection: it checks the snapshot (integrity and a `restaurants`
+   table), keeps the old file and its `-wal`/`-shm` as
+   `reviews.db.broken-<time>`, copies the snapshot in, and checks the
+   restaurant count matches. A snapshot that fails a check fails the deploy
+   and changes nothing.
+2. While `RESTORE_FROM` is set **the scheduler does not run** — no briefs,
+   digests or alerts go out of a database nobody has looked at yet. A
+   marker beside the database stops a later boot from restoring the same
+   snapshot again over new writes.
+3. Confirm (step 5), then **delete `RESTORE_FROM`**. That redeploys with the
+   scheduler back on.
+
+`init_db()` and `ensure_columns()` run right after the swap and additively
+migrate an older snapshot forward — that path is exercised on every deploy.
+
+Manual fallback, only with the service stopped (scale it to 0 in Railway
+first, so nothing can open the file):
+
 ```bash
-# Keep the broken file. It is evidence, and it may still be partially readable.
 railway ssh -- mv /app/data/reviews.db /app/data/reviews.db.broken-$(date +%s)
 railway ssh -- rm -f /app/data/reviews.db-wal /app/data/reviews.db-shm
 railway ssh -- cp /app/data/backups/cavnar_ai_backup_YYYY-MM-DD.db /app/data/reviews.db
 ```
 
-Removing `-wal` and `-shm` matters: a stale WAL beside a restored database
-is its own corruption.
-
-Then restart the service. `init_db()` and `ensure_columns()` run at boot and
-will additively migrate an older snapshot forward — that path is exercised
-on every deploy.
-
 ### 5. Confirm
 
-- `/health` returns 200
+- `/health` returns 200 — it now checks the schema too, so an empty or
+  unmigrated database answers 500 with the missing tables named
 - `/admin` → Overview loads and client count looks right
 - One client's dashboard renders
 - The scheduler heartbeat goes green within ~5 minutes

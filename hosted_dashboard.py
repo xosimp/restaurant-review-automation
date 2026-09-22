@@ -798,6 +798,10 @@ try:
     from webhooks import init_webhooks as _iwh
     from guest_marketing import init_guest_marketing as _igm
     from push import init_push as _ipush
+    # A requested restore swaps the snapshot in before the first connection
+    # (db_restore.py). A refused one raises, so the deploy fails loudly.
+    import db_restore as _dbr
+    _dbr.restore_if_requested()
     _init_db()
     _init_auth()
     _isn()
