@@ -962,7 +962,7 @@ function removeFcCustomItem(btn, name){
   if(!name){row.remove();return;}
   fetch('/api/food-cost/delete-custom-item',{
     method:'POST',
-    headers:{'Content-Type':'application/json','X-CSRFToken':'{{csrf_token}}'},
+    headers:{'Content-Type':'application/json'},
     body:JSON.stringify({name:name})
   }).then(function(r){return r.json();}).then(function(d){
     if(d.ok)row.remove();
@@ -979,7 +979,7 @@ function saveFcCustomItem(inp){
   if(badge){badge.textContent='SAVING…';badge.className='fc-save-badge';}
   fetch('/api/food-cost/save-custom-item',{
     method:'POST',
-    headers:{'Content-Type':'application/json','X-CSRFToken':'{{csrf_token}}'},
+    headers:{'Content-Type':'application/json'},
     body:JSON.stringify({name:name,unit:unit})
   }).then(function(r){return r.json();}).then(function(d){
     if(badge){
@@ -1019,7 +1019,7 @@ function submitFoodCostCount() {
   if(_fcL2){_fcL2.textContent='';}
   fetch('/api/food-cost-quickcount', {
     method: 'POST',
-    headers: {'Content-Type': 'application/json', 'X-CSRFToken': '{{csrf_token}}'},
+    headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({items: items})
   })
     .then(function(r) { return r.json(); })
@@ -9668,7 +9668,7 @@ function saveShiftProfile(key) {
   var profile = collectShiftProfile(key);
   fetch('/api/labor/profiles', {
     method: 'POST',
-    headers: {'Content-Type': 'application/json', 'X-CSRFToken': '{{csrf_token}}'},
+    headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({profile: profile})
   }).then(function (r) { return r.json(); }).then(function (d) {
     if (!d.ok) { alert(d.error || 'Could not save that profile.'); return; }
@@ -9680,7 +9680,7 @@ function saveShiftProfile(key) {
 function deleteShiftProfile(key) {
   fetch('/api/labor/profiles/delete', {
     method: 'POST',
-    headers: {'Content-Type': 'application/json', 'X-CSRFToken': '{{csrf_token}}'},
+    headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({key: key})
   }).then(function (r) { return r.json(); }).then(function () { loadShiftProfiles(); })
     .catch(function () { });
@@ -9726,7 +9726,7 @@ function saveQualityWeights(btn) {
   if (btn) btn.disabled = true;
   fetch('/api/labor/quality-weights', {
     method: 'POST',
-    headers: {'Content-Type': 'application/json', 'X-CSRFToken': '{{csrf_token}}'},
+    headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({weights: weights})
   }).then(function (r) { return r.json(); }).then(function (d) {
     if (btn) btn.disabled = false;
@@ -10023,7 +10023,7 @@ function loadTeamForSwap() {
 function _fetchReplacements(index, done) {
   fetch('/api/labor/schedule/replacements', {
     method: 'POST',
-    headers: {'Content-Type': 'application/json', 'X-CSRFToken': '{{csrf_token}}'},
+    headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({rows: _schedRows, index: index})
   }).then(function (r) { return r.json(); }).then(function (d) {
     done(d && d.ok ? (d.replacements || []) : null);
@@ -10071,7 +10071,7 @@ function rescoreSchedule() {
   _setQualityState('saving');
   fetch('/api/labor/schedule/score', {
     method: 'POST',
-    headers: {'Content-Type': 'application/json', 'X-CSRFToken': '{{csrf_token}}'},
+    headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({rows: _schedRows, daily_target_hours: _schedTargets, save: true})
   }).then(function (r) { return r.json(); }).then(function (d) {
     if (d && d.ok) {
@@ -10428,7 +10428,7 @@ function saveAvailability() {
   var notes = (document.getElementById('av-notes').value || '').trim();
   fetch('/admin/staff-availability/' + _restaurantId, {
     method: 'POST',
-    headers: {'Content-Type':'application/json','X-CSRFToken':'{{csrf_token}}'},
+    headers: {'Content-Type':'application/json'},
     body: JSON.stringify({employee_name: name, available_days: avDays, unavailable_days: unDays, notes: notes || null})
   }).then(function(r){return r.json();}).then(function(d){
     if (d.ok) {
@@ -10442,7 +10442,7 @@ function saveAvailability() {
 function deleteAvailability(name) {
   fetch('/admin/staff-availability/' + _restaurantId + '/delete', {
     method: 'POST',
-    headers: {'Content-Type':'application/json','X-CSRFToken':'{{csrf_token}}'},
+    headers: {'Content-Type':'application/json'},
     body: JSON.stringify({employee_name: name})
   }).then(function(r){return r.json();}).then(function(d){if(d.ok) loadAvailability();});
 }
@@ -10618,7 +10618,7 @@ function setTaskDone(templateId, done) {
   renderTasksList();
   fetch('/api/tasks/complete', {
     method: 'POST',
-    headers: {'Content-Type': 'application/json', 'X-CSRFToken': '{{csrf_token}}'},
+    headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({template_id: templateId, task_date: _tasksToday(), done: done})
   }).then(function(r) { return r.json(); }).then(function(d) {
     if (d.ok) loadTasksForRole(_tasksRole);
@@ -10638,7 +10638,7 @@ function removeTaskTemplate(templateId) {
   if (!window.confirm('Remove this task from the checklist? Past completions stay on record.')) return;
   fetch('/api/tasks/templates/remove', {
     method: 'POST',
-    headers: {'Content-Type': 'application/json', 'X-CSRFToken': '{{csrf_token}}'},
+    headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({template_id: templateId})
   }).then(function(r) { return r.json(); }).then(function(d) {
     if (d.ok) loadTasksForRole(_tasksRole);
@@ -10655,7 +10655,7 @@ function addTaskTemplate() {
   if (!role || !label) { if (errEl) errEl.textContent = 'Pick a role and describe the task.'; return; }
   fetch('/api/tasks/templates', {
     method: 'POST',
-    headers: {'Content-Type': 'application/json', 'X-CSRFToken': '{{csrf_token}}'},
+    headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({role: role, label: label})
   }).then(function(r) { return r.json(); }).then(function(d) {
     if (!d.ok) { if (errEl) errEl.textContent = d.error || 'Could not add that task.'; return; }
@@ -10762,7 +10762,7 @@ function setTeamScore(idx, score) {
   renderTeamList();
   fetch('/api/labor/team/rating', {
     method: 'POST',
-    headers: {'Content-Type':'application/json','X-CSRFToken':'{{csrf_token}}'},
+    headers: {'Content-Type':'application/json'},
     body: JSON.stringify({employee_name: m.name, score: next})
   }).then(function(r){return r.json();}).then(function(d){
     if (!d.ok) { m.score = previous; renderTeamList(); }
@@ -10788,7 +10788,7 @@ function setTeamCloser(idx, on) {
   renderTeamList();
   fetch('/api/labor/team/rating', {
     method: 'POST',
-    headers: {'Content-Type': 'application/json', 'X-CSRFToken': '{{csrf_token}}'},
+    headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({employee_name: m.name, attribute: 'can_close', flag: on ? 1 : null})
   }).then(function (r) { return r.json(); }).then(function (d) {
     if (!d.ok) { m.can_close = previous; renderTeamList(); }
@@ -10813,7 +10813,7 @@ function removeTeamMember(idx) {
       'hand-entered name — anyone with real shift history stays on the roster.')) return;
   fetch('/api/labor/team/remove', {
     method: 'POST',
-    headers: {'Content-Type': 'application/json', 'X-CSRFToken': '{{csrf_token}}'},
+    headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({employee_name: m.name})
   }).then(function (r) { return r.json(); }).then(function (d) {
     if (d.ok) loadTeamPanel();
@@ -10829,7 +10829,7 @@ function addTeamMember() {
   if (!name) { if (errEl) errEl.textContent = 'Enter a name first.'; return; }
   fetch('/api/labor/team/add', {
     method: 'POST',
-    headers: {'Content-Type': 'application/json', 'X-CSRFToken': '{{csrf_token}}'},
+    headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({employee_name: name, role: roleEl ? roleEl.value : ''})
   }).then(function (r) { return r.json(); }).then(function (d) {
     if (!d.ok) { if (errEl) errEl.textContent = d.error || 'Could not add that person.'; return; }
@@ -10958,7 +10958,7 @@ function saveTeamTargets(btn) {
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
   fetch('/api/labor/team/thresholds', {
     method: 'POST',
-    headers: {'Content-Type':'application/json','X-CSRFToken':'{{csrf_token}}'},
+    headers: {'Content-Type':'application/json'},
     body: JSON.stringify({thresholds: thresholds, leader_rules: _teamRules})
   }).then(function(r){return r.json();}).then(function(d){
     if (btn) { btn.disabled = false; btn.textContent = 'Save targets'; }
@@ -14105,7 +14105,7 @@ window.toggleLocSwitcher = function() {
 window.switchLocation = function(rid, name) {
   fetch('/api/switch-location', {
     method: 'POST',
-    headers: {'Content-Type': 'application/json', 'X-CSRFToken': '{{ csrf_token }}'},
+    headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({restaurant_id: rid})
   }).then(function(r) { return r.json(); }).then(function(d) {
     if (d.ok) { window.location.reload(); }
@@ -14428,7 +14428,7 @@ document.addEventListener('click', function(e) {
     input.value = '';
     fetch('/api/team/messages', {
       method: 'POST',
-      headers: {'Content-Type': 'application/json', 'X-CSRFToken': '{{csrf_token}}'},
+      headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({recipient_id: _tmOpenWith.id, body: body})
     }).then(function(r) { return r.json(); }).then(function(d) {
       if (d.ok) tmOpenThread(_tmOpenWith.id, _tmOpenWith.username);
