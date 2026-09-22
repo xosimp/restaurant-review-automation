@@ -4202,6 +4202,10 @@ svg:hover .hb-xh{opacity:1}
 .fc2-wt-ob{display:flex;gap:10px;align-items:flex-start;font-size:15px;line-height:1.5;color:var(--ink2)}
 .fc2-wt-ob i{flex-shrink:0;width:8px;height:8px;border-radius:50%;margin-top:7px;background:var(--ink3)}
 .fc2-wt-ob i.good{background:var(--hb-good)}.fc2-wt-ob i.bad{background:var(--hb-bad)}.fc2-wt-ob i.warn{background:var(--hb-warn)}
+/* Inside the Fixable column every bullet is the column's amber, whatever
+   tone the observation carried: one red dot next to an amber one made the
+   column read as two lists. The tone still orders the list. */
+.fc2-wt-obcol.warn .fc2-wt-ob i{background:var(--hb-warn)}
 .fc2-wt-ob small{display:block;font-size:13px;color:var(--ink3);margin-top:2px}
 .fc2-wt-tip{position:fixed;z-index:9999;pointer-events:none;display:none;background:var(--paper);border:1px solid var(--hb-line);border-radius:10px;padding:12px 14px;min-width:210px;max-width:270px;box-shadow:0 8px 24px rgba(0,0,0,.35);color:var(--ink);font-size:14px}
 .fc2-wt-tip .w{font-size:12.5px;font-weight:700;color:var(--ink3);letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px}
@@ -11546,12 +11550,10 @@ function wtDrawChart(){
     var ty=y(target),tly=ty-7;
     if((avgLabelY!=null&&Math.abs(tly-avgLabelY)<15)||Math.abs(tly-lastLabelY)<15)tly=ty+14;
     targetG+='<line'+lineDraw+' x1="0" y1="'+ty.toFixed(1)+'" x2="'+W+'" y2="'+ty.toFixed(1)+'" stroke="#4ead7a" stroke-opacity=".85" stroke-width="1.5" stroke-dasharray="4 5"/>';
-    targetTxt='<text '+lab+' x="'+(W-4)+'" y="'+tly.toFixed(1)+'" text-anchor="end" font-size="12.5" font-weight="700" fill="#4ead7a">target '+wtMoney(target)+'/wk</text>';
-    // The chart plots dollars, not percent, so nothing on it said WHAT
-    // percent the dashed line represents — only the KPI tile below and the
-    // legend did. A second label at the line's own left end, in the same
-    // green, answers it right where the line is.
-    targetTxt+='<text '+lab+' x="4" y="'+tly.toFixed(1)+'" text-anchor="start" font-size="12.5" font-weight="700" fill="#4ead7a">'+d.target.pct+'% target</text>';
+    // One label, at the line's left end: the percent the dashed line stands
+    // for and the dollars it works out to for this restaurant. It used to
+    // be two labels at opposite ends of the same line.
+    targetTxt='<text '+lab+' x="4" y="'+tly.toFixed(1)+'" text-anchor="start" font-size="12.5" font-weight="700" fill="#4ead7a">'+d.target.pct+'% target, '+wtMoney(target)+'/week</text>';
     svg+=targetG+'<g'+lineLabelFade+'>'+targetTxt+'</g>';
   }
   if(labels)svg+='<g'+fadeIn+'>'+labels+'</g>';

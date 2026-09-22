@@ -713,16 +713,17 @@ def _dashboard_chart_body():
 
 def test_target_percent_is_labeled_at_the_left_end_of_the_dashed_line():
     """The chart plots dollars, not percent, so nothing on it said WHAT
-    percent the dashed target line represents — only the KPI tile and the
-    legend below did. A second label, in the same green as the line, now
-    sits at the line's own left end (opposite the '$X/wk' label already on
-    the right) so the percent reads right where the line is."""
+    percent the dashed target line represents. One label, at the line's
+    own left end and in its green, now carries both readings of the same
+    line — "4.5% target, $63/week" — instead of a percent on the left and
+    a separate '$X/wk' on the right."""
     body = _dashboard_chart_body()
     assert "targetTxt=" in body
     target_block = body.split("var ty=y(target),tly=ty-7;", 1)[1].split("\n  }", 1)[0]
     assert 'x="4"' in target_block and 'text-anchor="start"' in target_block, \
-        "percent label should anchor at the left edge, opposite the right-anchored $/wk label"
-    assert "d.target.pct+'% target</text>'" in target_block
-    assert 'fill="#4ead7a"' in target_block.split("d.target.pct", 1)[0][-40:] or \
-        target_block.count('fill="#4ead7a"') >= 2, \
-        "the percent label should be the same green as the target line"
+        "the target label anchors at the left edge of the line"
+    assert "d.target.pct+'% target, '+wtMoney(target)+'/week</text>'" in target_block
+    assert 'text-anchor="end"' not in target_block, "one label, not one at each end"
+    assert target_block.count("<text") == 1
+    assert 'fill="#4ead7a"' in target_block.split("d.target.pct", 1)[0][-60:], \
+        "the label is the same green as the target line"
