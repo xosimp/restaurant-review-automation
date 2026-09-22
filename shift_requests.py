@@ -107,6 +107,9 @@ def request_drop(restaurant_id, employee_name, day, shift_start, reason=None, db
         if i is None:
             raise ShiftRequestError("that shift is not on your published schedule")
         mine_ = rows[i]
+        # The duplicate check and the insert are one write transaction: a
+        # double tap used to pass the check twice (DATA-35 / MOD-EMP-9).
+        conn.execute("BEGIN IMMEDIATE")
         dup = conn.execute("SELECT id FROM shift_change_requests WHERE restaurant_id=? AND history_id=? AND "
                            "lower(employee_name)=? AND date=? AND shift_start=? AND status IN ('pending','approved','open')",
                            (restaurant_id, pub["id"], name.lower(), d.isoformat(), mine_["shift_start"])).fetchone()
@@ -161,6 +164,9 @@ def request_swap(restaurant_id, employee_name, day, shift_start, target_name, ta
         if b is None:
             raise ShiftRequestError(f"{other} does not have that shift on the published schedule")
         mine_, theirs = rows[a], rows[b]
+        # The duplicate check and the insert are one write transaction: a
+        # double tap used to pass the check twice (DATA-35 / MOD-EMP-9).
+        conn.execute("BEGIN IMMEDIATE")
         dup = conn.execute("SELECT id FROM shift_change_requests WHERE restaurant_id=? AND history_id=? AND "
                            "lower(employee_name)=? AND date=? AND shift_start=? AND status IN ('pending','approved','open')",
                            (restaurant_id, pub["id"], name.lower(), d.isoformat(), mine_["shift_start"])).fetchone()

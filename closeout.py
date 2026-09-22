@@ -102,7 +102,8 @@ def _act_on(restaurant_id, day, values, restaurant, db_path=DB_PATH):
         try:
             first = _phrases(callouts)[0] if _phrases(callouts) else ""
             fits = labor_replacements.sentence(labor_replacements.for_gap(
-                restaurant_id, None, tomorrow.strftime("%A"), exclude={first}, db_path=db_path))
+                restaurant_id, None, tomorrow.strftime("%A"), exclude={first}, db_path=db_path,
+                on_date=tomorrow.isoformat()))
         except Exception:
             pass
         issues.create_issue(restaurant_id, "callout", f"Callout at close: {callouts[:70]}",

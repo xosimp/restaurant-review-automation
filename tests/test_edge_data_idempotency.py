@@ -587,7 +587,6 @@ def test_submitting_the_same_count_twice_keeps_the_previous_week(db_path):
 
 # ── DATA-35 · staff request inserts ─────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="DATA-35: request_time_off is SELECT-then-INSERT with no UNIQUE, so two concurrent taps make two requests")
 def test_two_identical_time_off_requests_become_one(db_path):
     rid = _restaurant(db_path)
     _arm("INSERT INTO staff_time_off")
@@ -601,7 +600,6 @@ def test_two_identical_time_off_requests_become_one(db_path):
     assert n == 1, f"{n} pending requests for one ask"
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-35: request_drop is SELECT-then-INSERT with no UNIQUE, so two concurrent taps make two drop requests")
 def test_two_identical_drop_requests_become_one(db_path):
     rid = _restaurant(db_path)
     _week(db_path, rid, published=True)

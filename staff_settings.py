@@ -64,6 +64,35 @@ def _row(r):
     }
 
 
+def name_key(name) -> str:
+    """One person, however the name was typed: 'Maria G.', 'maria g.' and
+    'MARIA G. ' are the same key (MOD-EMP-2). Every staff table is keyed by a
+    free-text name, so this is what makes a name mean one person."""
+    return " ".join(str(name or "").split()).casefold()
+
+
+def clean_phone(raw):
+    """(phone or "" , error or None). A staff phone number is digits with
+    the usual punctuation, 7-15 digits; anything else — "<script>" included —
+    is refused rather than stored and later texted (MOD-EMP-4)."""
+    import re
+    value = " ".join(str(raw or "").split())
+    if not value:
+        return "", None
+    if not re.fullmatch(r"[0-9+()\-. ]+", value) or not 7 <= len(re.sub(r"\D", "", value)) <= 15:
+        return None, "That doesn't look like a phone number."
+    return value, None
+
+
+def for_name(restaurant_id, name, db_path=DB_PATH) -> dict:
+    """This person's settings whatever case their name is in, or {}."""
+    key = name_key(name)
+    for n, st in get_all(restaurant_id, db_path=db_path).items():
+        if name_key(n) == key:
+            return st
+    return {}
+
+
 def get_all(restaurant_id, db_path=DB_PATH) -> dict:
     """{employee_name: settings} for everyone with a row."""
     conn = get_conn(db_path)
@@ -150,6 +179,12 @@ def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_
             raise StaffSettingsError("desired hours must be between 0 and 80")
     conn = get_conn(db_path)
     try:
+        # The row this person already has, whatever case it was saved in:
+        # "maria g." used to start a second row beside "Maria G." (MOD-EMP-2).
+        for r in conn.execute("SELECT employee_name FROM staff_settings WHERE restaurant_id=?", (restaurant_id,)).fetchall():
+            if name_key(r["employee_name"]) == name_key(name):
+                name = r["employee_name"]
+                break
         cur = conn.execute("SELECT * FROM staff_settings WHERE restaurant_id=? AND employee_name=?",
                            (restaurant_id, name)).fetchone()
         current = _row(cur) if cur else {"active": True, "employment_type": None, "min_hours": None,
@@ -170,17 +205,21 @@ def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_
         }
         if new["min_hours"] is not None and new["max_hours"] is not None and new["min_hours"] > new["max_hours"]:
             raise StaffSettingsError("minimum hours cannot exceed maximum hours")
+        # An existing row is updated in the columns this call set and no
+        # others: writing back every column it had read meant two managers
+        # editing different fields of one person at once lost one edit
+        # (MOD-EMP-9).
+        given = {"active": active, "employment_type": employment_type, "min_hours": min_hours,
+                 "max_hours": max_hours, "daypart_availability": daypart_availability, "is_minor": is_minor,
+                 "time_windows": time_windows, "certifications": certifications,
+                 "preferred_dayparts": preferred_dayparts, "desired_hours": desired_hours}
+        sets = [f"{col}=excluded.{col}" for col, v in given.items() if v is not None]
+        sets += ["updated_by=excluded.updated_by", "updated_at=excluded.updated_at"]
         conn.execute("""INSERT INTO staff_settings (restaurant_id, employee_name, active, employment_type,
                             min_hours, max_hours, daypart_availability, is_minor, time_windows, certifications,
                             preferred_dayparts, desired_hours, updated_by, updated_at)
                         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
-                        ON CONFLICT(restaurant_id, employee_name) DO UPDATE SET
-                            active=excluded.active, employment_type=excluded.employment_type,
-                            min_hours=excluded.min_hours, max_hours=excluded.max_hours,
-                            daypart_availability=excluded.daypart_availability, is_minor=excluded.is_minor,
-                            time_windows=excluded.time_windows, certifications=excluded.certifications,
-                            preferred_dayparts=excluded.preferred_dayparts, desired_hours=excluded.desired_hours,
-                            updated_by=excluded.updated_by, updated_at=excluded.updated_at""",
+                        ON CONFLICT(restaurant_id, employee_name) DO UPDATE SET """ + ", ".join(sets),
                      (restaurant_id, name, new["active"], new["employment_type"], new["min_hours"],
                       new["max_hours"], json.dumps(new["daypart_availability"]), new["is_minor"],
                       json.dumps(new["time_windows"]), json.dumps(new["certifications"]),
@@ -191,7 +230,37 @@ def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_
                            (restaurant_id, name)).fetchone()
     finally:
         conn.close()
+    if active is not None:
+        _sync_portal_access(restaurant_id, name, bool(active), db_path)
     return _row(row)
+
+
+def _sync_portal_access(restaurant_id, name, active, db_path=DB_PATH):
+    """Roster deactivation is the one switch: it also deactivates the
+    person's staff-portal membership (ending their sessions and PIN sign-in)
+    and expires their schedule share links; reactivating restores the
+    membership. The two were unrelated switches, so someone taken off the
+    roster kept reading the schedule (MOD-EMP-3 / DATA-59)."""
+    key = name_key(name)
+    try:
+        conn = get_conn(db_path)
+        try:
+            members = [r["id"] for r in conn.execute(
+                "SELECT id, employee_name FROM memberships WHERE restaurant_id=? AND employee_name IS NOT NULL",
+                (restaurant_id,)).fetchall() if name_key(r["employee_name"]) == key]
+            if not active:
+                for r in conn.execute("SELECT id, employee_name FROM schedule_shares WHERE restaurant_id=?",
+                                      (restaurant_id,)).fetchall():
+                    if name_key(r["employee_name"]) == key:
+                        conn.execute("UPDATE schedule_shares SET expires_at=datetime('now') WHERE id=?", (r["id"],))
+                conn.commit()
+        finally:
+            conn.close()
+        import auth
+        for mid in members:
+            auth.set_membership_active(mid, restaurant_id, active, db_path=db_path)
+    except Exception as e:
+        print(f"[staff_settings] portal access sync failed rid={restaurant_id}: {e!r}")
 
 
 # ── the roster ─────────────────────────────────────────────────────────────
@@ -205,33 +274,37 @@ def roster(restaurant_id, db_path=DB_PATH, include_inactive=False) -> list:
     screen should all read.
     """
     from models import get_manual_team_members, _cached_shifts
+    # Keyed by name_key: one person however their name was typed in the
+    # POS, the hand-added list or a settings row (MOD-EMP-2). The display
+    # name is the spelling on their most recent shift.
     seen = {}
     try:
         for sh in _cached_shifts(restaurant_id):
-            n = (sh.get("employee") or "").strip()
+            n = " ".join(str(sh.get("employee") or "").split())
             if not n:
                 continue
-            e = seen.setdefault(n, {"name": n, "role": None, "shifts": 0, "last_worked": "", "is_manual": False})
+            e = seen.setdefault(name_key(n), {"name": n, "role": None, "shifts": 0, "last_worked": "", "is_manual": False})
             e["shifts"] += 1
             d = sh.get("date") or ""
             if d >= e["last_worked"]:
                 e["last_worked"] = d
+                e["name"] = n
                 e["role"] = (sh.get("role") or "").strip() or e["role"]
     except Exception:
         pass
     try:
         for m in get_manual_team_members(restaurant_id, db_path=db_path):
-            n = (m.get("name") or "").strip()
-            if n and n not in seen:
-                seen[n] = {"name": n, "role": m.get("role"), "shifts": 0, "last_worked": "", "is_manual": True}
-            elif n and m.get("role") and not seen[n]["role"]:
-                seen[n]["role"] = m["role"]
+            n = " ".join(str(m.get("name") or "").split())
+            if n and name_key(n) not in seen:
+                seen[name_key(n)] = {"name": n, "role": m.get("role"), "shifts": 0, "last_worked": "", "is_manual": True}
+            elif n and m.get("role") and not seen[name_key(n)]["role"]:
+                seen[name_key(n)]["role"] = m["role"]
     except Exception:
         pass
-    settings = get_all(restaurant_id, db_path=db_path)
+    settings = {name_key(n): st for n, st in get_all(restaurant_id, db_path=db_path).items()}
     out = []
-    for n, e in seen.items():
-        st = settings.get(n) or {}
+    for k, e in seen.items():
+        st = settings.get(k) or {}
         active = st.get("active", True)
         if not active and not include_inactive:
             continue

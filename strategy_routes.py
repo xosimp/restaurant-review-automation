@@ -760,8 +760,10 @@ def _do_time_off_list(u):
 
 
 def _do_time_off_decide(u, request_id):
-    if not _sees_labor(u):
-        return _forbidden("Only someone who can see labor can decide time off.")
+    # Deciding time off changes who can be scheduled — the same power as
+    # deciding a shift request, not a view-only labor login's (SCHED-22).
+    if not _may_draft(u):
+        return _forbidden("Your login can view labor but not decide time off.")
     import time_off
     from client_api import log_account_event
     b = _body()
@@ -773,7 +775,22 @@ def _do_time_off_decide(u, request_id):
         return {"ok": False, "error": "That request was already answered, or is not yours."}, 404
     log_account_event(_rid(u), "time_off_decided", current_user=u,
                       detail=f"{row['employee_name']} {row['start_date']}–{row['end_date']}: {row['status']}")
-    return {"ok": True, "request": row}, 200
+    out = {"ok": True, "request": row}
+    if row["status"] == "approved":
+        # A week staff already have may put them on those days: name each
+        # shift so the manager covers it (SCHED-22 / MOD-EMP-8).
+        try:
+            conflicts = time_off.published_conflicts(_rid(u), row["employee_name"], row["start_date"], row["end_date"])
+        except Exception:
+            conflicts = []
+        out["conflicts"] = conflicts
+        if conflicts:
+            from time_utils import mdy
+            shifts = ", ".join(f"{(c.get('day') or '')[:3]} {mdy(c['date'])} {c['shift_start']}".strip() for c in conflicts[:4])
+            out["warning"] = (f"{row['employee_name']} is still on the published schedule for {shifts}"
+                              + (f" and {len(conflicts) - 4} more" if len(conflicts) > 4 else "")
+                              + " — cover or move those shifts.")
+    return out, 200
 
 
 def _do_covers_get(u):

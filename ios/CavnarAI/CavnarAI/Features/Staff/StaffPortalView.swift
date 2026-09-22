@@ -238,7 +238,7 @@ struct StaffPortalView: View {
     private func reload() async {
         async let me: StaffProfileResponse? = try? staff.authed("/staff/api/me")
         async let sh: StaffShiftsResponse? = try? staff.authed("/staff/api/shifts")
-        async let tk: StaffTasksResponse? = try? staff.authed("/staff/api/tasks")
+        async let tk: StaffTasksResponse? = try? staff.authed("/staff/api/tasks?date=\(Self.taskDay())")
         let (meResp, shResp, tkResp) = await (me, sh, tk)
         profile = meResp?.employee
         shifts = shResp
@@ -257,10 +257,24 @@ struct StaffPortalView: View {
                 case done
             }
         }
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
-        let body = Body(templateID: task.id, taskDate: formatter.string(from: Date()), done: !task.done)
+        // One day for the tick and the re-read: the refetch used to send no
+        // date and read the server's UTC day, so a task ticked at 8pm in
+        // Chicago came back unticked (MOD-EMP-5).
+        let day = Self.taskDay()
+        let body = Body(templateID: task.id, taskDate: day, done: !task.done)
         _ = try? await staff.authed("/staff/api/tasks/complete", method: .post, body: body) as StaffOKResponse
-        tasks = try? await staff.authed("/staff/api/tasks")
+        tasks = try? await staff.authed("/staff/api/tasks?date=\(day)")
+    }
+
+    /// The phone's own calendar day, written the way the server reads it:
+    /// Gregorian and POSIX, so a device set to another calendar or locale
+    /// still sends this year's ISO date.
+    private static func taskDay(_ date: Date = Date()) -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .current
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: date)
     }
 }

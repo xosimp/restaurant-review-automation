@@ -330,8 +330,6 @@ def test_an_employee_on_the_roster_can_use_their_session_pin_and_link():
 
 
 @pytest.mark.parametrize("remove", [_remove_via_the_app, _deactivate], ids=["removed", "deactivated"])
-@pytest.mark.xfail(strict=True, reason="DATA-59: removal deletes only the manual roster row and "
-                                       "deactivation only affects generation; staff sessions survive")
 def test_a_removed_employees_staff_session_ends(app, remove):
     w = _restaurant_with_employee()
     remove(app, w)
@@ -339,8 +337,6 @@ def test_a_removed_employees_staff_session_ends(app, remove):
 
 
 @pytest.mark.parametrize("remove", [_remove_via_the_app, _deactivate], ids=["removed", "deactivated"])
-@pytest.mark.xfail(strict=True, reason="DATA-59: the employee's membership stays active, so their PIN "
-                                       "still signs them in")
 def test_a_removed_employee_cannot_sign_in_with_their_pin(app, remove):
     w = _restaurant_with_employee()
     remove(app, w)
@@ -348,8 +344,6 @@ def test_a_removed_employee_cannot_sign_in_with_their_pin(app, remove):
 
 
 @pytest.mark.parametrize("remove", [_remove_via_the_app, _deactivate], ids=["removed", "deactivated"])
-@pytest.mark.xfail(strict=True, reason="DATA-59: schedule share links are untouched by removal and stay "
-                                       "valid for SCHEDULE_SHARE_TTL_DAYS (60)")
 def test_a_removed_employee_cannot_open_old_schedule_links(app, remove):
     w = _restaurant_with_employee()
     remove(app, w)

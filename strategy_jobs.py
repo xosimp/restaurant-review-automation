@@ -673,7 +673,8 @@ def run_coverage_check(db_path=DB_PATH):
                 try:
                     import labor_replacements
                     fits = labor_replacements.for_gap(r.id, m.get("role"), local.strftime("%A"),
-                                                      exclude=on_today | {m["employee"]}, db_path=db_path)
+                                                      exclude=on_today | {m["employee"]}, db_path=db_path,
+                                                      on_date=local.date().isoformat())
                     fits_text = labor_replacements.sentence(fits)
                 except Exception as fe:
                     ops.capture(fe, job="coverage_replacements", context=f"restaurant_id={r.id}")

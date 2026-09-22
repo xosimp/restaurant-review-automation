@@ -9743,7 +9743,8 @@ document.addEventListener('click',function(e){
   var t=e.target&&e.target.closest?e.target.closest('[data-timeoff]'):null;if(!t)return;
   var done=cbtnBusy(t,'\u2026');
   fetch('/api/labor/time-off/'+encodeURIComponent(t.getAttribute('data-timeoff'))+'/decide',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({decision:t.getAttribute('data-decision')})}).then(function(r){return r.json();}).then(function(d){
-    done();if(typeof toast==='function')toast(d&&d.ok?(d.request.status==='approved'?'Approved \u2014 kept off the next draft':'Not approved'):((d&&d.error)||'Could not decide'),d&&d.ok?'success':'error');lb2LoadTimeOff();
+    // An approval over a week staff already have names the shifts to cover.
+    done();if(typeof toast==='function')toast(d&&d.ok?(d.warning?('Approved \u2014 '+d.warning):(d.request.status==='approved'?'Approved \u2014 kept off the next draft':'Not approved')):((d&&d.error)||'Could not decide'),d&&d.ok?(d.warning?'warning':'success'):'error');lb2LoadTimeOff();
   }).catch(function(){done();});
 });
 function lb2LoadCovers(){

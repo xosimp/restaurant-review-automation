@@ -497,21 +497,37 @@
     var reqs = d.requests || [];
     var html = '<h2>Time off</h2><div class="meta" style="margin-bottom:8px">Ask for specific dates. Your manager answers here, and an approved range is kept off the next schedule.</div>';
     for (var i = 0; i < reqs.length; i++) { var q = reqs[i];
-      var when = q.start_date === q.end_date ? q.start_date : (q.start_date + ' \u2013 ' + q.end_date);
+      if (q.status === 'withdrawn') continue;
+      var when = q.start_date === q.end_date ? fmtShort(q.start_date) : (fmtShort(q.start_date) + ' \u2013 ' + fmtShort(q.end_date));
       var st = q.status === 'approved' ? 'Approved' : (q.status === 'denied' ? 'Not approved' : 'Waiting for an answer');
-      html += '<div class="to-row"><span>' + esc(when) + (q.reason ? ' <span class="meta">\u00b7 ' + esc(q.reason) + '</span>' : '') + '</span><span class="to-st to-' + esc(q.status) + '">' + st + (q.decision_note ? ' \u00b7 ' + esc(q.decision_note) : '') + '</span></div>';
+      // A pending request can be taken back and asked again with the right
+      // dates (MOD-EMP-7).
+      html += '<div class="to-row"><span>' + when + (q.reason ? ' <span class="meta">\u00b7 ' + esc(q.reason) + '</span>' : '') + '</span><span class="to-st to-' + esc(q.status) + '">' + st + (q.decision_note ? ' \u00b7 ' + esc(q.decision_note) : '') + '</span>'
+            + (q.status === 'pending' ? '<button type="button" class="cbtn cbtn-text cbtn-sm" data-to-withdraw="' + (+q.id) + '">Withdraw</button>' : '') + '</div>';
     }
     html += '<div class="av-row" style="flex-wrap:wrap"><input type="date" id="to-start" aria-label="First day off"><input type="date" id="to-end" aria-label="Last day off"><input type="text" id="to-reason" maxlength="200" placeholder="Reason (optional)" style="flex:1;min-width:140px"></div>'
           + '<div class="av-row"><button type="button" class="cbtn cbtn-primary cbtn-sm" id="to-send">Request</button><span class="meta" id="to-status"></span></div>';
     el.innerHTML = html;
+    var wds = el.querySelectorAll('[data-to-withdraw]');
+    for (var w = 0; w < wds.length; w++) {
+      wds[w].onclick = function () {
+        var b = this; b.disabled = true;
+        fetch('/staff/api/time-off/' + b.getAttribute('data-to-withdraw') + '/withdraw', {method: 'POST'})
+          .then(function (r) { return r.json(); })
+          .then(function (r) { if (r.ok) { loadTimeOff(); } else { b.disabled = false; $('to-status').textContent = r.error || 'Could not withdraw that.'; } })
+          .catch(function () { b.disabled = false; });
+      };
+    }
     $('to-send').onclick = function () {
-      var st = $('to-status'); var s0 = $('to-start').value, e0 = $('to-end').value || s0;
+      var btn = this, st = $('to-status'); var s0 = $('to-start').value, e0 = $('to-end').value || s0;
       if (!s0) { st.textContent = 'Pick the first day.'; return; }
+      // One request per tap: the button is off while it is in flight.
+      btn.disabled = true;
       st.textContent = 'Sending\u2026';
       fetch('/staff/api/time-off', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({start_date: s0, end_date: e0, reason: $('to-reason').value})})
         .then(function (r) { return r.json(); })
-        .then(function (r) { if (r.ok) { loadTimeOff(); } else { st.textContent = r.error || 'Could not send.'; } })
-        .catch(function () { st.textContent = 'Could not send \u2014 check your connection.'; });
+        .then(function (r) { btn.disabled = false; if (r.ok) { loadTimeOff(); } else { st.textContent = r.error || 'Could not send.'; } })
+        .catch(function () { btn.disabled = false; st.textContent = 'Could not send \u2014 check your connection.'; });
     };
   }
   function loadTimeOff() {

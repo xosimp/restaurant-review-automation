@@ -256,7 +256,6 @@ def test_the_portal_last_saved_line_is_mdy():
     assert "'Last saved ' + esc(String(d.updated_at).slice(0, 10))" not in _read("staff_portal.html")
 
 
-@pytest.mark.xfail(strict=True, reason="CLIENT-45: portal time-off rows print q.start_date/q.end_date as ISO")
 def test_the_portal_time_off_rows_are_mdy():
     page = _read("staff_portal.html")
     render = page[page.index("function toRender(d)"):page.index("function loadTimeOff()")]
@@ -298,7 +297,6 @@ def test_one_time_off_request_stores_one_row(db_path, _redirect):
     assert len(time_off.mine(rid, "Sofia R.", db_path=db_path)) == 1
 
 
-@pytest.mark.xfail(strict=True, reason="CLIENT-46: time-off is check-then-insert in a deferred transaction, so two overlapping requests both pass the check")
 def test_two_overlapping_time_off_requests_store_one_row(db_path, _redirect, monkeypatch):
     rid = _restaurant(db_path)
     start = (date.today() + timedelta(days=10)).isoformat()
@@ -321,7 +319,6 @@ def test_two_overlapping_time_off_requests_store_one_row(db_path, _redirect, mon
     assert len(time_off.mine(rid, "Sofia R.", db_path=db_path)) == 1
 
 
-@pytest.mark.xfail(strict=True, reason="CLIENT-46: the portal's Request button is never disabled while the request is in flight")
 def test_the_time_off_button_is_disabled_while_sending():
     page = _read("staff_portal.html")
     handler = page[page.index("$('to-send').onclick"):page.index("function loadTimeOff()")]

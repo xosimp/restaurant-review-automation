@@ -888,15 +888,23 @@ def _set_staff_contact(restaurant_id, employee_name=None, email=None, phone=None
     has no addresses on it.
     """
     from models import set_staff_contact
+    from staff_settings import clean_phone
     name = (employee_name or "").strip()
     if not name:
         return {"ok": False, "error": "Which member of staff?"}
-    email = (email or "").strip()
+    # What the model did not give is kept: adding a phone used to erase the
+    # stored email, and the phone went in unchecked (MOD-EMP-4).
+    email = (email or "").strip() or None
     if email and "@" not in email:
         return {"ok": False, "error": "That doesn't look like an email address."}
-    if not set_staff_contact(restaurant_id, name, email, (phone or "").strip()):
+    if phone is not None:
+        phone, perr = clean_phone(phone)
+        if perr:
+            return {"ok": False, "error": perr}
+        phone = phone or None
+    if not set_staff_contact(restaurant_id, name, email, phone):
         return {"ok": False, "error": "Couldn't save that contact."}
-    return {"ok": True, "employee_name": name, "email": email or None}
+    return {"ok": True, "employee_name": name, "email": email}
 
 
 def _generate_marketing_content(restaurant_id, content_type="instagram_post", topic=""):

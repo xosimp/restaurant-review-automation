@@ -1675,14 +1675,21 @@ def mobile_get_staff_contacts(current_user):
 @mobile_login_required
 def mobile_set_staff_contact(current_user):
     from models import set_staff_contact
+    from staff_settings import clean_phone
     data = request.get_json(silent=True) or {}
     name = (data.get("employee_name") or "").strip()
-    email = (data.get("email") or "").strip()
+    # A field the form did not send is kept, not erased (MOD-EMP-4).
+    email = (data.get("email") or "").strip() if "email" in data else None
     if not name:
         return jsonify(ok=False, error="Which member of staff?"), 400
     if email and "@" not in email:
         return jsonify(ok=False, error="That doesn't look like an email address"), 400
-    if not set_staff_contact(current_user["restaurant_id"], name, email, (data.get("phone") or "").strip(),
+    phone = None
+    if "phone" in data:
+        phone, perr = clean_phone(data.get("phone"))
+        if perr:
+            return jsonify(ok=False, error=perr), 400
+    if not set_staff_contact(current_user["restaurant_id"], name, email, phone,
                              pos_id=(str(data.get("pos_id") or "").strip() or None)):
         return jsonify(ok=False, error="Couldn't save that contact."), 400
     return jsonify(ok=True)
@@ -3525,8 +3532,13 @@ def mobile_labor_team(current_user):
     from labor import load_shifts_for_restaurant, analyse_shifts_for_restaurant
     rid = current_user["restaurant_id"]
     try:
+        # Someone deactivated on the roster is off the Team list too: /labor/
+        # roster hid them while this one kept offering them for rating
+        # (MOD-EMP-3).
+        import staff_settings as _ss_team
+        _gone = {_ss_team.name_key(n) for n, st in _ss_team.get_all(rid).items() if not st.get("active", True)}
         analysis = analyse_shifts_for_restaurant(rid)
-        manual = get_manual_team_members(rid)
+        manual = [m for m in get_manual_team_members(rid) if _ss_team.name_key(m["name"]) not in _gone]
         if not analysis.get("is_live"):
             # No shift CSV connected yet doesn't mean no roster — an owner
             # who hasn't hooked up Back Office/RPower (or is waiting on
@@ -3561,7 +3573,7 @@ def mobile_labor_team(current_user):
         seen = {}
         for sh in shifts:
             n = (sh.get("employee") or "").strip()
-            if not n:
+            if not n or _ss_team.name_key(n) in _gone:
                 continue
             e = seen.setdefault(n, {"name": n, "role": None, "shifts": 0, "last": ""})
             e["shifts"] += 1
@@ -3689,6 +3701,10 @@ def mobile_remove_team_member(current_user):
                                        "here."), 400
     record_capability_change(rid, "team_member_removed", subject=name,
                              before=name, after=None, changed_by=who)
+    # Off the team is off the portal: their membership, sessions, PIN and
+    # schedule links end with the roster row (MOD-EMP-3 / DATA-59).
+    import staff_settings as _ss_rm
+    _ss_rm._sync_portal_access(rid, name, False)
     return jsonify(ok=True, employee_name=name), 200
 
 
@@ -6024,9 +6040,10 @@ def mobile_schedule_replacements(current_user):
     dashboard checked neither, and would happily offer somebody who had
     declared that day unavailable or was already at thirty-eight hours.
     """
-    from schedule_engine import quality_inputs_from_db
-    from models import get_operational_scores, get_unavailability_map, get_staff_notes
-    import shift_quality as _sq
+    from models import get_operational_scores
+    import schedule_engine as _se
+    import schedule_rules as _sr
+    import staff_settings as _ss
     rid = current_user["restaurant_id"]
     data = request.get_json(silent=True) or {}
     raw_rows = data.get("rows")
@@ -6042,33 +6059,41 @@ def mobile_schedule_replacements(current_user):
     rows = [{c: str(r.get(c) or "")[:200] for c in _SCHEDULE_COLS}
             for r in raw_rows if isinstance(r, dict)]
     try:
-        scores = get_operational_scores(rid)
-        availability = get_unavailability_map(rid)
-        try:
-            constraints = {n["employee_name"]: n["notes"] for n in (get_staff_notes(rid) or [])
-                           if n.get("employee_name")}
-        except Exception:
-            # Constraints tighten the answer; losing them must not stop a
-            # manager finding out who is free. The swap check still enforces
-            # availability, double booking and the hours ceiling.
-            constraints = {}
+        scores = get_operational_scores(rid) or {}
         target = rows[index]
-
-        # Everybody else already on the schedule is a candidate; the same
-        # legality check the what-if pass uses decides which of them could
-        # actually take this shift.
-        seen, out = set(), []
-        for j, row in enumerate(rows):
-            name = (row.get("employee") or "").strip()
-            if not name or name.lower() in seen or j == index:
+        # Candidates are the whole active roster, not only people already on
+        # this week's rows (SCHED-14), in the shift's role where their roles
+        # are known. Each is judged by replacement_is_legal — the claim's own
+        # check, with the sweep's time off, deactivation, minor, certification,
+        # window, rest and hours rules — against one constraint set. The old
+        # swap check here ran with no rules, so time off and deactivation
+        # were invisible to it.
+        dates = sorted({r.get("date") for r in rows if r.get("date")})
+        from datetime import datetime as _dtr
+        c = _sr.build_constraints(rid, dates, [_dtr.strptime(d, "%Y-%m-%d").strftime("%A") for d in dates])
+        role_low = (target.get("role") or "").strip().lower()
+        roster = {e["name"].strip().lower(): (e["name"], e.get("role")) for e in _ss.roster(rid)}
+        for r in rows:
+            n = (r.get("employee") or "").strip()
+            if n and n.lower() not in roster:
+                roster[n.lower()] = (n, r.get("role"))
+        current = (target.get("employee") or "").strip().lower()
+        out = []
+        for low, (name, their_role) in sorted(roster.items()):
+            if low == current:
                 continue
-            if not _sq._swap_is_legal(rows, min(index, j), max(index, j),
-                                      availability, scores, constraints):
+            if role_low:
+                known = _ss.roles_for(rid, name) | {(r.get("role") or "").strip().lower() for r in rows
+                                                    if (r.get("employee") or "").strip().lower() == low}
+                known.discard("")
+                if known and role_low not in known:
+                    continue
+            ok, _why = _se.replacement_is_legal(rid, rows, index, name, constraints=c)
+            if not ok:
                 continue
-            seen.add(name.lower())
-            out.append({"name": name, "role": row.get("role"),
+            out.append({"name": name, "role": their_role or target.get("role"),
                         "score": scores.get(name),
-                        "date": row.get("date"), "day": row.get("day")})
+                        "date": target.get("date"), "day": target.get("day")})
         out.sort(key=lambda m: (-(m["score"] or 0), m["name"]))
         return jsonify(ok=True, replacements=out,
                        employee=target.get("employee"), role=target.get("role")), 200
