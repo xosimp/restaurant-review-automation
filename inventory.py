@@ -343,10 +343,16 @@ def analyse_inventory(items: list[dict], delivery_days: str = None,
     total_recoverable_week = 0.0
 
     for item in items:
+        # Ordering and valuation read stock as never below zero. Negative
+        # stock (a recipe in the wrong unit, an unlogged delivery) used to
+        # grow the order by the size of the error — par*1.5 minus -485 — and
+        # turn the stock value, and the COGS built on it, negative (MOD-FC-12).
+        # The item keeps its own figure; the maths uses the clamped one.
+        stock = max(0.0, float(item["current_stock"] or 0))
         # Weekend-weighted depletion simulation instead of a flat division —
         # a restaurant heading into a busy Fri/Sat/Sun runs out sooner than
         # a single flat avg_daily_usage would suggest.
-        days_remaining  = _simulate_days_remaining(item["current_stock"], item["avg_daily_usage"], today)
+        days_remaining  = _simulate_days_remaining(stock, item["avg_daily_usage"], today)
         waste_cost      = item["waste_last_week"] * item["unit_cost"]
         # Category-specific overstock thresholds (industry standard)
         # Proteins/dairy: flag at 110% of par (perishable, high cost)
@@ -359,9 +365,9 @@ def analyse_inventory(items: list[dict], delivery_days: str = None,
             overstock_multiplier = 1.20
         else:
             overstock_multiplier = 1.30
-        overstock_units = max(0, item["current_stock"] - item["par_level"] * overstock_multiplier)
+        overstock_units = max(0, stock - item["par_level"] * overstock_multiplier)
         overstock_cost  = overstock_units * item["unit_cost"]
-        stock_value     = item["current_stock"] * item["unit_cost"]
+        stock_value     = stock * item["unit_cost"]
         waste_pct       = (item["waste_last_week"] / item["last_order_qty"] * 100
                            if item["last_order_qty"] > 0 else 0)
 
@@ -376,7 +382,7 @@ def analyse_inventory(items: list[dict], delivery_days: str = None,
         # Suggested order quantity: target 1.5x par, cover 3 days usage, adjusted for waste rate
         # If wasting a lot, pull the order quantity down proportionally
         waste_adj     = min(0.95, max(0.60, 1.0 - (waste_pct / 100) * 0.5))
-        raw_qty       = (item["par_level"] * 1.5) - item["current_stock"] + (item["avg_daily_usage"] * 3)
+        raw_qty       = (item["par_level"] * 1.5) - stock + (item["avg_daily_usage"] * 3)
 
         # Event scaling — bump quantity for items tied to a holiday/event in
         # the next 30 days, so the actual order number reflects the surge,
@@ -432,12 +438,17 @@ def analyse_inventory(items: list[dict], delivery_days: str = None,
         if overstock_units > 0:
             overstock.append(item)
 
+        # Out, and below par, is urgent whatever usage reads. With usage at
+        # zero (no recipe mapped, or a dish that stopped selling) days
+        # remaining reads 99, so an empty shelf never reached the order
+        # (MOD-FC-13).
+        empty = stock <= 0
         if delivery_offset is not None:
             # Judge urgency against when the truck actually comes, not a
             # flat day count.
             margin = days_remaining - delivery_offset
             item["delivery_margin_days"] = round(margin, 1)
-            if margin < 0 and item["current_stock"] < item["par_level"]:
+            if (margin < 0 or empty) and stock < item["par_level"]:
                 critical_low.append(item)
             elif margin <= 1.5:
                 reorder_soon.append(item)
@@ -446,7 +457,7 @@ def analyse_inventory(items: list[dict], delivery_days: str = None,
                 order_reduction.append(item)
         else:
             item["delivery_margin_days"] = None
-            if days_remaining <= 2 and item["current_stock"] < item["par_level"]:
+            if (days_remaining <= 2 or empty) and stock < item["par_level"]:
                 critical_low.append(item)
             elif days_remaining <= 4:
                 reorder_soon.append(item)

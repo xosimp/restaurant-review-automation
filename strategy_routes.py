@@ -532,7 +532,22 @@ def _do_count_sheet_save(u):
         return {"ok": False, "error": "Nothing counted."}, 400
     if len(items) > 500:
         return {"ok": False, "error": "That is more items than one count holds."}, 400
-    day = (b.get("date") or "").strip()[:10] or None
+    # The date is the count's place in the ledger, so it has to be one.
+    # It went straight to record_recount unchecked: "9/21/26" — the
+    # product's own display format — sorts after every ISO date and sat
+    # inside every future 7-day window, and a future date did the same
+    # (MOD-FC-15).
+    day = str(b.get("date") or "").strip() or None
+    if day:
+        from datetime import date as _date
+        try:
+            parsed = _date.fromisoformat(day)
+        except ValueError:
+            return {"ok": False, "error": "Pick the count date from the calendar."}, 400
+        if len(day) != 10 or parsed > _local_today(u):
+            return {"ok": False, "error": "A count can't be dated in the future."
+                    if parsed > _local_today(u) else "Pick the count date from the calendar."}, 400
+        day = parsed.isoformat()
     written, skipped = 0, []
     for it in items:
         try:

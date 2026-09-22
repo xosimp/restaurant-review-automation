@@ -469,10 +469,13 @@ def record_recount_route(restaurant_id, ingredient_id, current_user):
     data = request.get_json() or {}
     if "counted_qty" not in data:
         return jsonify(ok=False, error="counted_qty required")
-    result = inventory_ledger.record_recount(
-        restaurant_id, ingredient_id, float(data["counted_qty"]),
-        source="admin", note=data.get("note")
-    )
+    try:
+        result = inventory_ledger.record_recount(
+            restaurant_id, ingredient_id, float(data["counted_qty"]),
+            source="admin", note=data.get("note")
+        )
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error="counted_qty must be a number of 0 or more"), 400
     if result.get("ok") is False:
         return jsonify(**result), 404
     return jsonify(ok=True, **result)
@@ -485,6 +488,13 @@ def record_receiving_route(restaurant_id, ingredient_id, current_user):
     data = request.get_json() or {}
     if "qty" not in data:
         return jsonify(ok=False, error="qty required")
+    try:
+        _qty = float(data["qty"])
+    except (TypeError, ValueError):
+        _qty = float("nan")
+    if not (_qty > 0 and _qty != float("inf")):
+        # A delivery is a positive quantity; a correction is a recount (MOD-FC-12).
+        return jsonify(ok=False, error="qty must be more than 0 — use a recount to correct stock"), 400
     event_id = inventory_ledger.record_receiving(
         restaurant_id, ingredient_id, float(data["qty"]),
         source="admin", note=data.get("note")

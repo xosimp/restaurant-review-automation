@@ -75,7 +75,6 @@ def _waste_rows(db_path, iid):
 
 # ── A5 ledger #11 / MOD-FC-4: a re-sync after a recount ─────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-4: re-synced depletion rows get new ids after the recount and are subtracted again")
 def test_a_resync_after_a_recount_does_not_deplete_twice(db_path, monkeypatch):
     rid = _rid(db_path)
     today = date.today()
@@ -107,7 +106,6 @@ def test_re_running_one_business_date_is_idempotent(db_path, monkeypatch):
 
 # ── A5 ledger #12 / MOD-FC-13: a dish that stops selling ────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-13: rollups are recomputed only for ingredients depleted that day, so usage freezes")
 def test_an_ingredient_whose_dish_stops_selling_decays_to_zero_usage(db_path, monkeypatch):
     import datetime as _dt
     real_today = _dt.date.today()
@@ -138,7 +136,6 @@ def test_an_ingredient_whose_dish_stops_selling_decays_to_zero_usage(db_path, mo
 
 # ── A5 ledger #13 / MOD-FC-14: two counts of one item at once ───────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-14: record_recount reads the expectation outside a write lock; both counts infer the full gap")
 def test_two_simultaneous_recounts_of_one_ingredient_infer_waste_once(db_path, monkeypatch):
     rid = _rid(db_path)
     iid = _ingredient(db_path, rid, name="Flour", stock=100)
@@ -175,7 +172,6 @@ def test_a_recount_below_expectation_infers_the_gap_as_waste(db_path):
 
 # ── A5 ledger #14, #15 / MOD-FC-12: negative stock ──────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-12: record_receiving accepts any sign; -500 drives stock to -400")
 def test_negative_receiving_is_refused(db_path):
     rid = _rid(db_path)
     iid = _ingredient(db_path, rid, stock=100)
@@ -183,7 +179,6 @@ def test_negative_receiving_is_refused(db_path):
     assert _stock(rid, iid)["current_stock"] == 100
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-12: a recipe typed in ounces on a per-pound ingredient over-depletes with no sanity check")
 def test_a_recipe_in_the_wrong_unit_never_drives_stock_below_zero(db_path, monkeypatch):
     rid = _rid(db_path)
     d1 = date.today() - timedelta(days=1)
@@ -201,7 +196,6 @@ def _item(**kw):
     return d
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-12: analyse_inventory orders par*1.5 - current_stock, so negative stock inflates the order and the stock value")
 def test_negative_stock_orders_no_more_than_an_empty_shelf_would(db_path):
     empty = inventory.analyse_inventory([_item(current_stock=0)])
     negative = inventory.analyse_inventory([_item(current_stock=-485)])
@@ -212,7 +206,6 @@ def test_negative_stock_orders_no_more_than_an_empty_shelf_would(db_path):
 
 # ── analyse_inventory #13 / MOD-FC-13: zero usage ───────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-13: avg_daily_usage 0 gives days_remaining 99, so an empty, below-par item never reaches the order")
 def test_an_empty_below_par_item_reaches_the_order_even_when_usage_reads_zero():
     a = inventory.analyse_inventory([_item(current_stock=0, avg_daily_usage=0)])
     assert [i["item"] for i in a["critical_low"] + a["reorder_soon"]] == ["Beef"]
@@ -236,7 +229,6 @@ def _count_sheet(monkeypatch, rid, body):
     pytest.param("9/21/26", id="m-d-yy"),
     pytest.param("2099-12-31", id="future"),
 ])
-@pytest.mark.xfail(strict=True, reason="MOD-FC-15: the count-sheet date is passed straight to record_recount with no validation")
 def test_a_count_sheet_with_a_non_iso_or_future_date_is_refused(db_path, monkeypatch, bad_date):
     rid = _rid(db_path)
     iid = _ingredient(db_path, rid, name="Basil", stock=10)
