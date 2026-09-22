@@ -196,7 +196,6 @@ def _history(db_path, rid, weekly_items):
         _snapshot(db_path, rid, date.today() - timedelta(days=7 * (n - i)), items=items)
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-22: price history is keyed by display name, so one supplier's +21% on a dual-sourced item is masked")
 def test_a_price_rise_on_one_of_two_same_named_ingredients_is_alerted(db_path):
     rid = _rid(db_path)
     steady = [{"id": 1, "item": "Chicken Breast", "unit_cost": 5.80}, {"id": 2, "item": "Chicken Breast", "unit_cost": 6.40}]
@@ -207,7 +206,6 @@ def test_a_price_rise_on_one_of_two_same_named_ingredients_is_alerted(db_path):
     assert any(a["old_price"] == 5.80 and a["new_price"] == 7.00 for a in alerts)
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-22: renaming an ingredient starts its price history from zero")
 def test_renaming_an_ingredient_keeps_its_price_trend(db_path):
     rid = _rid(db_path)
     _history(db_path, rid, [[{"id": 7, "item": "Ribeye", "unit_cost": p}] for p in (10.0, 11.0, 12.0)])

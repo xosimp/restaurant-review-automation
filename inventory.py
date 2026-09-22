@@ -632,7 +632,6 @@ def compute_item_trends(restaurant_id: int, current_items: list, db_path: str = 
         reverse=True,
     )
     big_8_names = {i["item"] for i in scored[:8]}
-    current_prices = {i["item"]: (i.get("unit_cost") or 0) for i in current_items}
 
     try:
         conn = _gc_t(_db)
@@ -671,24 +670,51 @@ def compute_item_trends(restaurant_id: int, current_items: list, db_path: str = 
             weekly[key] = row
     rows = [weekly[k] for k in sorted(weekly)][-8:]   # oldest → newest, 8 weeks
 
-    # Build per-item price history: {name: [price_oldest, ..., price_newest]}
-    history = {}
+    # Per-ingredient price history, oldest → newest, keyed by the ingredient
+    # row, not its display name (MOD-FC-22). By name, two "Chicken Breast"
+    # rows at two suppliers overwrote each other, so one supplier's +21% was
+    # masked by the other's steady price; and renaming an ingredient started
+    # its history from nothing. Each week's snapshot is matched by id, and by
+    # name only where that week carries no id and the name is unambiguous
+    # (older snapshots were written without ids).
+    def _iid(it):
+        return it.get("ingredient_id") or it.get("id")
+
+    weeks_items = []
     for row in rows:
         try:
-            for hi in _jt.loads(row["items_json"] or "[]"):
-                name = hi.get("item")
-                price = hi.get("unit_cost") or 0
-                if name:
-                    history.setdefault(name, []).append(price)
+            weeks_items.append([hi for hi in _jt.loads(row["items_json"] or "[]") if isinstance(hi, dict)])
         except Exception:
             pass
 
+    name_counts = {}
+    for ci in current_items:
+        name_counts[ci.get("item")] = name_counts.get(ci.get("item"), 0) + 1
+
+    series = []          # (display name, current price, [history prices], id)
+    for ci in current_items:
+        name, cid = ci.get("item"), _iid(ci)
+        if not name:
+            continue
+        hist = []
+        for week in weeks_items:
+            match = [hi for hi in week if cid and _iid(hi) == cid]
+            if not match:
+                same = [hi for hi in week if hi.get("item") == name]
+                if len(same) == 1 and name_counts.get(name) == 1 and not (cid and _iid(same[0])):
+                    match = same
+            if match:
+                hist.append(match[0].get("unit_cost") or 0)
+        if not hist:
+            continue
+        label = name
+        if name_counts.get(name, 0) > 1 and ci.get("supplier_name"):
+            label = f"{name} ({ci['supplier_name']})"
+        series.append((label, ci.get("unit_cost") or 0, hist, cid))
+
     price_alerts, trend_alerts, trend_lines = [], [], []
 
-    for name, hist in history.items():
-        if name not in current_prices:
-            continue
-        curr = current_prices[name]
+    for name, curr, hist, iid in series:
 
         # Week-over-week spike: >5% increase vs last stored week
         if hist:
@@ -770,7 +796,8 @@ def build_price_watch(trends: dict) -> list:
     watch = {}
     for a in trends.get("price_alerts", []):
         rose = (a["change_pct"] or 0) > 0
-        watch[a["item"]] = {
+        # Per ingredient row: two same-named rows are two entries (MOD-FC-22).
+        watch[a.get("ingredient_id") or a["item"]] = {
             "item": a["item"], "kind": "spike" if rose else "drop",
             "change_pct": a["change_pct"],
             "weeks": None, "old_price": a["old_price"], "new_price": a["new_price"],
@@ -782,7 +809,7 @@ def build_price_watch(trends: dict) -> list:
     for a in trends.get("trend_alerts", []):
         hint = ("Sustained rise — consider a menu price adjustment on dishes using this, or shop suppliers."
                 if a["is_big_8"] else "Sustained rise — worth keeping an eye on.")
-        watch[a["item"]] = {
+        watch[a.get("ingredient_id") or a["item"]] = {
             "item": a["item"], "kind": "trend", "change_pct": a["total_change_pct"],
             "weeks": a["weeks"], "old_price": a["start_price"], "new_price": a["current_price"],
             "is_big_8": a["is_big_8"], "action_hint": hint,
