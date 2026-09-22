@@ -237,7 +237,6 @@ def _menu_item(db_path, rid, name, guid=None):
     return mid
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-24: a CSV dish that matches no POS item is created unlinked and counted as written, silently")
 def test_a_recipe_csv_dish_that_matches_no_pos_item_is_reported_as_unlinked(db_path):
     rid = _rid(db_path)
     _ingredient(db_path, rid, name="Mozzarella")
@@ -246,7 +245,6 @@ def test_a_recipe_csv_dish_that_matches_no_pos_item_is_reported_as_unlinked(db_p
     assert [k for k in out if "unlinked" in k.lower() and out[k]], out
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-24: rows past 2,000 are dropped with no count in the response")
 def test_a_recipe_csv_over_two_thousand_rows_reports_the_truncation(db_path):
     rid = _rid(db_path)
     _ingredient(db_path, rid, name="Mozzarella")
@@ -255,7 +253,6 @@ def test_a_recipe_csv_over_two_thousand_rows_reports_the_truncation(db_path):
     assert [k for k in out if "truncat" in k.lower() and out[k]], {k: v for k, v in out.items() if k != "unknown_ingredients"}
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-24: a row for an existing (dish, ingredient) pair hits the unique index and is skipped; qty cannot be corrected")
 def test_a_recipe_csv_corrects_an_existing_quantity(db_path):
     rid = _rid(db_path)
     _ingredient(db_path, rid, name="Mozzarella")
@@ -277,7 +274,6 @@ def test_a_recipe_csv_row_is_written_against_a_matching_dish(db_path):
 
 # ── A5 menu #12 / MOD-FC-27: accepting a draft twice ────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-27: accept is not claim-first; a concurrent second accept marks a written recipe 'rejected'")
 def test_two_simultaneous_accepts_leave_the_draft_accepted(db_path, monkeypatch):
     rid = _rid(db_path)
     iid = _ingredient(db_path, rid, name="Mozzarella")
@@ -324,7 +320,6 @@ def test_accepting_a_draft_writes_its_lines_once(db_path):
 
 # ── A5 menu #13 / MOD-FC-28: the monthly basis ──────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-28: reprice multiplies 28 days of units and labels it 'the last 30 days'")
 def test_reprice_monthly_margin_matches_its_stated_basis(db_path, monkeypatch):
     rid = _rid(db_path)
     iid = _ingredient(db_path, rid, name="Beef", cost=6.0)

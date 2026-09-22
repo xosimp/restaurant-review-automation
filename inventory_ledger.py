@@ -994,6 +994,31 @@ def add_recipe_ingredient(restaurant_id: int, menu_item_id: int, ingredient_id: 
         return cur.lastrowid
 
 
+def set_recipe_ingredient_qty(restaurant_id: int, menu_item_id: int, ingredient_id: int,
+                              qty_per_unit: float) -> bool:
+    """Correct the quantity on a (dish, ingredient) pair already bound.
+    True when a row changed. Same tenant checks as add_recipe_ingredient —
+    the dish scopes the row."""
+    import math
+    from models import db_conn
+    try:
+        qty_per_unit = float(qty_per_unit)
+    except (TypeError, ValueError):
+        return False
+    if not math.isfinite(qty_per_unit) or qty_per_unit <= 0:
+        return False
+    with db_conn() as conn:
+        if not menu_item_belongs_to(conn, restaurant_id, menu_item_id):
+            return False
+        if not ingredient_belongs_to(conn, restaurant_id, ingredient_id):
+            return False
+        cur = conn.execute(
+            "UPDATE recipe_ingredients SET qty_per_unit=? WHERE menu_item_id=? AND ingredient_id=?",
+            (qty_per_unit, menu_item_id, ingredient_id))
+        conn.commit()
+        return cur.rowcount > 0
+
+
 def delete_recipe_ingredient(restaurant_id: int, recipe_ingredient_id: int) -> bool:
     """Scoped through the row's own menu item — the route's menu_item_id used
     to be accepted and then ignored entirely."""

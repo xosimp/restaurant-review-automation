@@ -12416,7 +12416,7 @@ function fc2ImportRecipes(btn){
   if(!csv.trim()){if(st)st.textContent='Paste a CSV first.';return;}
   var done=cbtnBusy(btn,'Importing\u2026');
   fetch('/api/food-cost/recipes/import',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({csv:csv})}).then(function(r){return r.json();}).then(function(d){
-    done();if(st)st.textContent=d&&d.ok?('Imported '+d.written+' line'+(d.written===1?'':'s')+(d.skipped?' \u00b7 '+d.skipped+' skipped':'')+((d.unknown_ingredients||[]).length?' \u00b7 unknown: '+d.unknown_ingredients.join(', '):'')+'.'):((d&&d.error)||'Could not import.');
+    done();if(st)st.textContent=d&&d.ok?('Imported '+d.written+' line'+(d.written===1?'':'s')+(d.updated?' \u00b7 '+d.updated+' corrected':'')+(d.skipped?' \u00b7 '+d.skipped+' skipped':'')+((d.unknown_ingredients||[]).length?' \u00b7 unknown: '+d.unknown_ingredients.join(', '):'')+(d.truncated_rows?' \u00b7 '+d.truncated_rows+' rows past the limit not read':'')+'.'+((d.unlinked_dishes||[]).length?' Not linked to a POS item, so they won\'t deplete stock: '+d.unlinked_dishes.join(', ')+'.':'')):((d&&d.error)||'Could not import.');
     if(d&&d.ok)fc2LoadRecipeDrafts();
   }).catch(function(){done();if(st)st.textContent='Could not import \u2014 check your connection.';});
 }
