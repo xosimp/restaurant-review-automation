@@ -360,9 +360,16 @@ def update_ingredient_route(restaurant_id, ingredient_id, current_user):
     for key in ("name", "category", "unit"):
         if key in data:
             fields[key] = data[key]
+    import math
     for key in ("par_level", "unit_cost", "case_size", "avg_daily_usage", "waste_last_week"):
         if key in data and data[key] not in (None, ""):
-            fields[key] = float(data[key])
+            try:
+                fields[key] = float(data[key])
+            except (TypeError, ValueError):
+                fields[key] = float("nan")
+            # NaN is stored as NULL and broke the restaurant's analysis (MOD-FC-6).
+            if not math.isfinite(fields[key]) or fields[key] < 0:
+                return jsonify(ok=False, error=f"{key.replace('_', ' ')} must be a number of 0 or more."), 400
     if not inventory_ledger.update_ingredient(restaurant_id, ingredient_id, **fields):
         return jsonify(ok=False, error="That ingredient isn't this restaurant's, or nothing changed."), 404
     return jsonify(ok=True)

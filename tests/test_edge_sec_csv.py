@@ -345,7 +345,6 @@ def test_a_shifts_file_whose_dates_cannot_be_read_is_refused_and_the_previous_da
 
 # ── Inventory optional columns (appendix #10 / SEC-26) ──────────────────────
 
-@pytest.mark.xfail(strict=True, reason="SEC-26: an inventory CSV without the 'recommended' avg_daily_usage is reported as loaded but the ingredient import raises KeyError and creates nothing")
 def test_an_inventory_csv_with_only_the_required_columns_is_refused_or_creates_its_ingredients(world):
     _login(world, world["owner"])
     body = _upload(world, "inventory", INVENTORY_REQUIRED_ONLY).get_json()

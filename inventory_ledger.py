@@ -759,6 +759,19 @@ def update_ingredient(restaurant_id: int, ingredient_id: int, **fields) -> bool:
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return False
+    # A NaN passes every `<`/`>` guard, is stored as NULL, and then broke
+    # the restaurant's whole Food Cost on every read (MOD-FC-6). A figure
+    # that is not a finite, non-negative number writes nothing.
+    import math
+    for k in ("par_level", "unit_cost", "case_size", "avg_daily_usage", "waste_last_week"):
+        if k in updates and updates[k] is not None:
+            try:
+                v = float(updates[k])
+            except (TypeError, ValueError):
+                return False
+            if not math.isfinite(v) or v < 0:
+                return False
+            updates[k] = v
     sets = ", ".join(f"{k}=?" for k in updates) + ", updated_at=datetime('now')"
     with db_conn() as conn:
         cur = conn.execute(f"UPDATE ingredients SET {sets} WHERE id=? AND restaurant_id=?",

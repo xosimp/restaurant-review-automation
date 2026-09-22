@@ -1937,11 +1937,10 @@ def mobile_food_cost_analytics(current_user):
             # overstock[:5]). iOS summed the visible five and presented it as
             # the restaurant's total tied-up capital, which is an undercount
             # by construction whenever a sixth item is overstocked. Totals are
-            # computed here, over everything.
-            overstock_total=round(sum(float(x.get("overstock_cost") or 0)
-                                      for x in (analysis.get("overstock") or [])), 2),
-            waste_items_total=round(sum(float(x.get("waste_cost") or 0)
-                                        for x in (analysis.get("waste_items") or [])), 2),
+            # computed by analyse_inventory over the full lists; summing its
+            # truncated lists here repeated the same undercount (MOD-FC-21).
+            overstock_total=analysis.get("overstock_total", 0),
+            waste_items_total=analysis.get("waste_items_total", 0),
             critical_low=analysis.get("critical_low", []),
             reorder_soon=analysis.get("reorder_soon", []),
             order_reduction=analysis.get("order_reduction", []),

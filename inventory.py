@@ -207,18 +207,93 @@ Shrimp 16/20,Protein,10,8,14.2,1.6,10,1.2"""
                     rows = list(csv.DictReader(f))
             except Exception:
                 return []
-    for r in rows:
-        r["par_level"]      = float(r["par_level"])
-        r["current_stock"]  = float(r["current_stock"])
-        r["unit_cost"]      = float(r["unit_cost"])
-        r["avg_daily_usage"]= float(r["avg_daily_usage"])
-        r["last_order_qty"] = float(r["last_order_qty"])
-        r["waste_last_week"]= float(r["waste_last_week"])
-        r.setdefault("unit", "")  # unit label optional (e.g. "lbs", "cases")
-        # Supplier case/pack size, optional — used to round suggested_order_qty
-        # up to an actionable number instead of a raw formula output.
-        r["case_size"] = float(r["case_size"]) if r.get("case_size") not in (None, "") else 1.0
-    return rows
+    # Lenient on read: a row this cannot parse is left out rather than
+    # raising, so one bad cell in a stored file never takes every Food Cost
+    # read down with it. The upload refuses such a file up front, with the
+    # row named (parse_inventory_rows' errors) — MOD-FC-5.
+    items, _errors = parse_inventory_rows(rows)
+    return items
+
+
+INVENTORY_REQUIRED = ("item", "current_stock", "par_level", "unit_cost", "waste_last_week")
+# Optional columns and what a blank one means.
+_INVENTORY_OPTIONAL = {"avg_daily_usage": 0.0, "last_order_qty": 0.0, "case_size": 1.0}
+# Stock, usage and cost figures past this are a typo or an overflow, not a
+# kitchen ("1e308" parsed happily and poisoned every total).
+_INVENTORY_MAX = 1_000_000.0
+
+
+def _inventory_header(h) -> str:
+    """'Unit_Cost', ' unit cost', '\\ufeffitem' -> 'unit_cost' / 'item'."""
+    return (h or "").replace("﻿", "").strip().lower().replace(" ", "_")
+
+
+def _inventory_number(raw):
+    """A cell as a float: None when blank; ValueError when it is not a
+    finite number. Accepts what spreadsheets write: "$1.80", "1,250"."""
+    if raw is None:
+        return None
+    s = str(raw).strip().replace("$", "").replace(",", "")
+    if not s:
+        return None
+    v = float(s)
+    if not math.isfinite(v):
+        raise ValueError("not a finite number")
+    return v
+
+
+def parse_inventory_rows(rows):
+    """(items, errors) for inventory CSV rows (csv.DictReader output).
+
+    The one parser for an inventory file. load_inventory used to read exact
+    keys with bare float(), so a file with only the required columns, a
+    blank cell, "$1.80", title-case headers or a nan — all of which the
+    upload validator accepted — made every Food Cost read raise (MOD-FC-5).
+    Headers are normalised; optional columns default; a required figure that
+    is blank, not a finite number, negative or absurd is an error naming the
+    row, and that row is not in `items`."""
+    items, errors = [], []
+    for n, raw in enumerate(rows or [], start=2):          # row 1 is the header
+        r = {_inventory_header(k): (v.strip() if isinstance(v, str) else v)
+             for k, v in (raw or {}).items() if k is not None}
+        if not any(v not in (None, "") for v in r.values()):
+            continue                                         # a blank line
+        name = (r.get("item") or "").strip()
+        label = f"Row {n}" + (f" ({name})" if name else "")
+        if not name:
+            errors.append(f"{label}: the item name is blank.")
+            continue
+        item, bad = dict(r), None
+        for col in ("par_level", "current_stock", "unit_cost", "waste_last_week",
+                    "avg_daily_usage", "last_order_qty", "case_size"):
+            try:
+                v = _inventory_number(r.get(col))
+            except (TypeError, ValueError):
+                bad = f"{label}: {col} “{r.get(col)}” isn't a number."
+                break
+            if v is None:
+                if col in _INVENTORY_OPTIONAL:
+                    v = _INVENTORY_OPTIONAL[col]
+                else:
+                    bad = f"{label}: {col} is blank."
+                    break
+            if v < 0:
+                bad = f"{label}: {col} can't be negative."
+                break
+            if v > _INVENTORY_MAX:
+                bad = f"{label}: {col} {v:g} is too large to be right."
+                break
+            item[col] = v
+        if bad:
+            errors.append(bad)
+            continue
+        if item["case_size"] <= 0:
+            item["case_size"] = 1.0
+        item["item"] = name
+        item["category"] = item.get("category") or ""
+        item["unit"] = item.get("unit") or ""   # unit label optional (e.g. "lbs", "cases")
+        items.append(item)
+    return items, errors
 
 
 def analyse_inventory(items: list[dict], delivery_days: str = None,
@@ -509,6 +584,13 @@ def analyse_inventory(items: list[dict], delivery_days: str = None,
         "total_stock_value":     round(total_stock_value, 2),
         "waste_items":    waste_items[:6],
         "overstock":      overstock[:5],
+        # Totals over EVERY flagged item. The two lists above are display
+        # slices, and a total summed from them is an undercount whenever a
+        # sixth item is overstocked (MOD-FC-21).
+        "overstock_total":   round(sum(float(x.get("overstock_cost") or 0) for x in overstock), 2),
+        "overstock_count":   len(overstock),
+        "waste_items_total": round(sum(float(x.get("waste_cost") or 0) for x in waste_items), 2),
+        "waste_items_count": len(waste_items),
         # Full lists. They drive the supplier order, which was built from a
         # display slice ([:4] / [:6]) and so sent short purchase orders for
         # any restaurant with more than about ten items to reorder, and every
@@ -1172,6 +1254,16 @@ def load_inventory_for_restaurant(restaurant_id: int):
     ).fetchall()
     conn.close()
     if rows:
+        def _num(v, default=0.0):
+            # A NULL (a NaN written through any path stores as NULL) or a
+            # non-finite value reads as the default. One such cell used to
+            # raise TypeError in analyse_inventory on every read of the
+            # restaurant's Food Cost and in every job that touched it (MOD-FC-6).
+            try:
+                f = float(v)
+            except (TypeError, ValueError):
+                return default
+            return f if math.isfinite(f) else default
         items = [{
             # The row's own identity. The order used to dedupe on the display
             # name, so a second "Chicken Breast" at another supplier was
@@ -1179,14 +1271,14 @@ def load_inventory_for_restaurant(restaurant_id: int):
             "ingredient_id":   r["id"],
             "item":            r["name"],
             "category":        r["category"] or "",
-            "par_level":       r["par_level"],
-            "current_stock":   r["current_stock"],
-            "unit_cost":       r["unit_cost"],
-            "avg_daily_usage": r["avg_daily_usage"],
-            "last_order_qty":  r["last_order_qty"],
-            "waste_last_week": r["waste_last_week"],
+            "par_level":       _num(r["par_level"]),
+            "current_stock":   _num(r["current_stock"]),
+            "unit_cost":       _num(r["unit_cost"]),
+            "avg_daily_usage": _num(r["avg_daily_usage"]),
+            "last_order_qty":  _num(r["last_order_qty"]),
+            "waste_last_week": _num(r["waste_last_week"]),
             "unit":            r["unit"] or "",
-            "case_size":       r["case_size"] or 1.0,
+            "case_size":       _num(r["case_size"], 1.0) or 1.0,
             # Carried through so build_supplier_orders can group an order
             # by who it actually gets sent to. Only the ingredients-table
             # path has these; CSV/sample items simply have none, and fall

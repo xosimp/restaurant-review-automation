@@ -2868,6 +2868,19 @@ def client_upload_data(current_user):
                 f"Also recommended: avg_daily_usage, last_order_qty. "
                 f"Download the sample template from the Inventory tab for reference."
             ))
+        # Every row through the same parser the reads use. Only the headers
+        # were checked, so "$1.80", a blank cell, title-case headers or a nan
+        # were saved and then made every Food Cost read raise under a green
+        # "uploaded" (MOD-FC-5). Refused here, with the rows named.
+        from inventory import parse_inventory_rows
+        _inv_items, _inv_errors = parse_inventory_rows(rows)
+        if _inv_errors:
+            _more = len(_inv_errors) - 5
+            return jsonify(ok=False, row_errors=_inv_errors[:50], error=(
+                "Some rows couldn't be read, so nothing was saved: " + " ".join(_inv_errors[:5])
+                + (f" …and {_more} more." if _more > 0 else "")))
+        if not _inv_items:
+            return jsonify(ok=False, error="CSV has no data rows")
 
     # Save it
     save_client_data(restaurant_id, data_type, csv_content, source="upload")
