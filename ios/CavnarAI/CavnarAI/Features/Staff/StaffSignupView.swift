@@ -168,7 +168,10 @@ struct StaffSignupView: View {
             }
             .disabled(loading || smsCode.count < 6)
 
+            // Disabled while a send or check is in flight: every tap is
+            // another verification SMS (CLIENT-57).
             Button("Send it again") { Task { await sendCode() } }
+                .disabled(loading)
                 .font(.cavnarBody(14))
                 .foregroundStyle(Color.cavnarEmber2)
                 .frame(maxWidth: .infinity)

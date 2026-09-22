@@ -43,7 +43,9 @@ actor PendingWriteQueue {
     /// response drafted two days ago, against data that has since changed, is
     /// worse than failing — see the audit's note on conflict handling.
     private static let maxAge: TimeInterval = 24 * 60 * 60
-    private static let storeKey = "pending-writes.json"
+    /// Internal so a location switch can spare this file from
+    /// SecureCache.purgeAll (see SessionStore.didSwitchLocation).
+    static let storeKey = "pending-writes.json"
 
     private var queue: [PendingWrite] = []
     private var isDraining = false
@@ -128,8 +130,16 @@ actor PendingWriteQueue {
         persist()
     }
 
+    /// Posted (on the main queue) whenever the queue's contents change, so
+    /// the screen showing unsent work can re-read it.
+    static let didChange = Notification.Name("ai.cavnar.pendingWritesChanged")
+
     private func persist() {
-        guard let data = try? JSONEncoder().encode(queue) else { return }
-        SecureCache.write(data, key: Self.storeKey)
+        if let data = try? JSONEncoder().encode(queue) {
+            SecureCache.write(data, key: Self.storeKey)
+        }
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: Self.didChange, object: nil)
+        }
     }
 }

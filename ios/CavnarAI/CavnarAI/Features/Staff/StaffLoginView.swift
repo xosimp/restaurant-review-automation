@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Restaurant → name → PIN. Three taps and four digits, because this runs at
+/// Restaurant → name → PIN. A few taps and a 4-8 digit PIN, because this runs at
 /// the start of a shift with a queue forming, not at a desk.
 struct StaffLoginView: View {
     @Environment(StaffSessionStore.self) private var staff
@@ -158,14 +158,18 @@ struct StaffLoginView: View {
             }
             .padding(.top, 30)
 
+            // Four dots to start, one more for each digit past four: a PIN
+            // is 4-8 digits (auth.PIN_MIN_LENGTH / PIN_MAX_LENGTH), and the
+            // pad cannot know which length this person chose.
             HStack(spacing: 12) {
-                ForEach(0..<4, id: \.self) { index in
+                ForEach(0..<max(4, pin.count), id: \.self) { index in
                     Circle()
                         .fill(index < pin.count ? Color.cavnarEmber : Color.cavnarPaper3)
                         .frame(width: 14, height: 14)
                 }
             }
             .padding(.vertical, 10)
+            .animation(.easeOut(duration: 0.15), value: pin.count)
 
             if let error {
                 Text(error)
@@ -178,11 +182,24 @@ struct StaffLoginView: View {
                 onDigit: { digit in
                     guard pin.count < 8, !loading else { return }
                     pin.append(digit)
-                    if pin.count == 4 { Task { await submit(person) } }
                 },
                 onDelete: { if !pin.isEmpty { pin.removeLast() } },
                 onClear: { pin = ""; error = nil }
             )
+
+            // Submitted by the person, not by the fourth digit. Auto-submit
+            // at four meant a 5-8 digit PIN was always sent cut short and
+            // could never sign in (CLIENT-3).
+            Button {
+                Haptic.light()
+                Task { await submit(person) }
+            } label: {
+                Text(loading ? "Checking…" : "Sign in")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: pin.count < 4 || loading))
+            .disabled(pin.count < 4 || loading)
+            .frame(maxWidth: 320)
             Spacer()
         }
     }

@@ -7,7 +7,15 @@ struct RootView: View {
     @Environment(StaffSessionStore.self) private var staffSessionStore
     @Environment(\.scenePhase) private var scenePhase
     @State private var deepLinkRouter = DeepLinkRouter()
-    @State private var network = NetworkMonitor()
+    // The one monitor. RootView used to build a second monitor of its own
+    // while APIClient asked NetworkMonitor.shared, which starts "online" and
+    // was never the one on screen — so the banner and the error wording
+    // could disagree about the same moment (CLIENT-52).
+    private let network = NetworkMonitor.shared
+    // Labels of writes waiting in the offline queue. The queue persisted
+    // them and replayed them, but nothing on screen ever said they existed,
+    // so "did my approve go?" had no answer (CLIENT-5).
+    @State private var unsentLabels: [String] = []
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var selectedTab: AppTab = AppPreferences.shared.defaultTab
     // Cold-launch handoff. iOS draws the launch screen itself (UILaunchScreen
@@ -168,8 +176,8 @@ struct RootView: View {
             }
         }
         .overlay(alignment: .top) {
-            if !network.isOnline {
-                Text("Offline — showing your last update")
+            if let status = connectivityStatus {
+                Text(status)
                     .font(.cavnarBody(13.5, weight: 600))
                     .foregroundStyle(Color.cavnarInk)
                     .padding(.horizontal, 14)
@@ -177,9 +185,16 @@ struct RootView: View {
                     .background(Color.cavnarAmber.opacity(0.92), in: Capsule())
                     .padding(.top, 8)
                     .transition(.move(edge: .top).combined(with: .opacity))
+                    .accessibilityLabel(unsentLabels.isEmpty
+                        ? status
+                        : status + ". Waiting to send: " + unsentLabels.joined(separator: ", "))
             }
         }
-        .animation(.easeOut(duration: 0.25), value: network.isOnline)
+        .animation(.easeOut(duration: 0.25), value: connectivityStatus)
+        .task { await refreshUnsent() }
+        .onReceive(NotificationCenter.default.publisher(for: PendingWriteQueue.didChange)) { _ in
+            Task { await refreshUnsent() }
+        }
         #if DEBUG
         // Debug-only tripwire for the exact failure that once took a whole
         // live-debugging session to trace: CAVNAR_API_BASE_URL falling back
@@ -362,6 +377,23 @@ struct RootView: View {
             askCavnarViewModel.question = prompt
             deepLinkRouter.pendingAskPrompt = nil
         }
+    }
+
+    /// The amber pill's text: offline, unsent work, or both. Only while
+    /// signed in as an owner — the queue belongs to that session.
+    private var connectivityStatus: String? {
+        let unsent = sessionStore.isAuthenticated ? unsentLabels.count : 0
+        let changes = "\(unsent) change\(unsent == 1 ? "" : "s")"
+        switch (network.isOnline, unsent) {
+        case (false, 0): return "Offline — showing your last update"
+        case (false, _): return "Offline — \(changes) will send when you're back"
+        case (true, 0): return nil
+        default: return "\(changes) waiting to send"
+        }
+    }
+
+    private func refreshUnsent() async {
+        unsentLabels = await PendingWriteQueue.shared.pendingLabels
     }
 
     // .sensoryFeedback(trigger:) instead of .onChange(of: selectedTab) {

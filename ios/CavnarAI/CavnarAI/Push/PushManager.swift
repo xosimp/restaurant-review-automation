@@ -11,7 +11,18 @@ import UserNotifications
 final class PushManager: NSObject, UNUserNotificationCenterDelegate {
     static let shared = PushManager()
 
-    var router: DeepLinkRouter?
+    /// Set by RootView on its first appearance — which, on a launch caused
+    /// by tapping a notification, is AFTER iOS has already delivered that
+    /// tap. A tap that arrives with no router yet is held and replayed here
+    /// rather than dropped (CLIENT-7).
+    var router: DeepLinkRouter? {
+        didSet {
+            guard let router, let tap = heldTap else { return }
+            heldTap = nil
+            router.handleNotificationTap(alertType: tap.alertType, reviewId: tap.reviewId, askPrompt: tap.askPrompt)
+        }
+    }
+    private var heldTap: (alertType: String, reviewId: Int?, askPrompt: String?)?
 
     /// Whether the phone will actually show anything. A denial is permanent
     /// and silent: the app never asked, so an owner who tapped "Don't Allow"
@@ -58,7 +69,34 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
     /// one per install and it is stable across launches, so holding it lets
     /// sign-out unregister the device — without it, a signed-out phone kept
     /// receiving that restaurant's review alerts and daily digests forever.
-    private(set) var registeredToken: String?
+    ///
+    /// Persisted in the Keychain, not just held for this launch: a sign-out
+    /// from the Face ID gate (LockedView's "Forgot your passcode? Sign out")
+    /// happens before mainTabs has ever asked APNs for the token, so an
+    /// in-memory copy was nil there and /logout went out with
+    /// apns_token: nil — the phone kept receiving the restaurant's alerts
+    /// after signing out (CLIENT-8).
+    private(set) var registeredToken: String? = Keychain.get(PushManager.registeredTokenKey) {
+        didSet {
+            if let registeredToken {
+                Keychain.set(registeredToken, for: Self.registeredTokenKey)
+            } else {
+                Keychain.delete(Self.registeredTokenKey)
+            }
+        }
+    }
+    private static let registeredTokenKey = "cavnar.apns_registered_token"
+
+    /// Installed from AppDelegate's didFinishLaunching. Apple hands the tap
+    /// that launched the app only to a delegate that is set before launch
+    /// finishes; this used to be set in requestAuthorizationAndRegister,
+    /// after sign-in and unlock, so a tap from a closed app opened Home and
+    /// the alert it was about was lost (CLIENT-7).
+    func installAsNotificationDelegate() {
+        let center = UNUserNotificationCenter.current()
+        center.delegate = self
+        center.setNotificationCategories(Self.categories)
+    }
 
     func requestAuthorizationAndRegister() {
         // NOT marked handled here. It used to be, at the top, before this
@@ -75,8 +113,7 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
         // Face ID unlock, which is now exactly when we want another look.
         guard !hasRegisteredThisLaunch else { return }
         let center = UNUserNotificationCenter.current()
-        center.delegate = self
-        center.setNotificationCategories(Self.categories)
+        installAsNotificationDelegate()
 
         let defaults = UserDefaults.standard
         let launches = defaults.integer(forKey: Self.launchCountKey) + 1
@@ -226,6 +263,19 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
+    /// Called after a location switch. The backend files a device token
+    /// under the restaurant of the session that registered it, so the token
+    /// stayed pointed at the launch-time location: a multi-location owner
+    /// who switched to Dallas kept getting Chicago's alerts and none of
+    /// Dallas's (CLIENT-8). Registering again re-points the row
+    /// (push.register_device_token upserts by token).
+    func reregisterForActiveLocation() async {
+        if pendingToken == nil, let registeredToken {
+            pendingToken = (registeredToken, currentEnvironment)
+        }
+        await flushPendingToken()
+    }
+
     /// Called on sign-out, before the bearer token is cleared. The backend
     /// deletes the row scoped to the caller's own restaurant; the token stays
     /// queued locally so the next sign-in re-registers it.
@@ -271,7 +321,7 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
         // Reject nonsense ids before they become a URL path component. The
         // backend is still the authority on whether this review belongs to
         // this account; this is shape validation, not authorization (audit 1.9).
-        let reviewId = (cavnar["review_id"] as? Int).flatMap { $0 > 0 ? $0 : nil }
+        let reviewId = Self.reviewId(from: cavnar["review_id"])
         // Bounded like Ask's own input: the prompt is prefilled into a text
         // field, never executed, but there's no reason to accept an
         // arbitrarily long payload into one.
@@ -282,8 +332,26 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
         // ignored rather than routed.
         guard response.actionIdentifier != UNNotificationDismissActionIdentifier else { return }
         await MainActor.run {
-            router?.handleNotificationTap(alertType: alertType, reviewId: reviewId, askPrompt: askPrompt)
+            guard let router else {
+                heldTap = (alertType, reviewId, askPrompt)
+                return
+            }
+            router.handleNotificationTap(alertType: alertType, reviewId: reviewId, askPrompt: askPrompt)
         }
+    }
+
+    /// A positive review id, whether the payload carried it as a JSON
+    /// number or as a string — `as? Int` alone dropped "42", and the tap
+    /// landed on the inbox instead of the review (CLIENT-51).
+    nonisolated static func reviewId(from raw: Any?) -> Int? {
+        let parsed: Int?
+        switch raw {
+        case let n as Int: parsed = n
+        case let s as String: parsed = Int(s.trimmingCharacters(in: .whitespaces))
+        case let n as NSNumber: parsed = n.intValue
+        default: parsed = nil
+        }
+        return parsed.flatMap { $0 > 0 ? $0 : nil }
     }
 }
 
@@ -294,6 +362,10 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
+        // Before anything else: the notification tap that launched the app
+        // is delivered only to a delegate set before this returns (CLIENT-7).
+        PushManager.shared.installAsNotificationDelegate()
+
         // Global nav-bar title color — every screen's navigationTitle (the
         // three tab roots, plus every pushed detail screen) otherwise
         // renders through UIKit's default dark-mode label color, which is

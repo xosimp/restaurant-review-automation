@@ -49,11 +49,17 @@ enum SecureCache {
     /// Every cached blob, dropped. Called on sign-out: the next person to use
     /// this device must not inherit the previous restaurant's schedules,
     /// labor costs or AI insights.
-    static func purgeAll() {
+    ///
+    /// `keeping` spares named keys — a location switch keeps the offline
+    /// queue, which it has already trimmed to the new location itself.
+    static func purgeAll(keeping kept: Set<String> = []) {
         guard let files = try? FileManager.default.contentsOfDirectory(
             at: directory, includingPropertiesForKeys: nil
         ) else { return }
-        for file in files { try? FileManager.default.removeItem(at: file) }
+        let keptNames = Set(kept.map { fileURL(for: $0).lastPathComponent })
+        for file in files where !keptNames.contains(file.lastPathComponent) {
+            try? FileManager.default.removeItem(at: file)
+        }
     }
 
     /// When `key` was last written, used to tell the user how old cached

@@ -150,10 +150,8 @@ final class EdgeFoodCostIntelTests: XCTestCase {
         try scanned(vm)
         await vm.apply()
         let shown = vm.errorMessage ?? ""
-        XCTExpectFailure("CLIENT-50: error.localizedDescription on SessionExpiredError shows \"The operation couldn't be completed. (CavnarAI…)\"", strict: true) {
-            XCTAssertFalse(shown.contains("CavnarAI."), shown)
-            XCTAssertFalse(shown.lowercased().contains("operation couldn"), shown)
-        }
+        XCTAssertFalse(shown.contains("CavnarAI."), shown)
+        XCTAssertFalse(shown.lowercased().contains("operation couldn"), shown)
     }
 
     // MARK: CLIENT-41 / 49 — Intel

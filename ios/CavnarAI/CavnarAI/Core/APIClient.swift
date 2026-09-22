@@ -1,4 +1,6 @@
+import CryptoKit
 import Foundation
+import UIKit
 
 /// Thin URLSession wrapper for the /mobile/api/* backend — no third-party
 /// networking library, since the route count doesn't justify one. An actor
@@ -67,7 +69,13 @@ actor APIClient {
     /// auth.py's login_required). Callers don't need to inspect this beyond
     /// letting it propagate; SessionStore's onSessionExpired handler (set at
     /// launch) already forces the logged-out state and clears Keychain.
-    struct SessionExpiredError: Error {}
+    ///
+    /// LocalizedError so a screen that shows `error.localizedDescription`
+    /// reads a sentence, not "The operation couldn't be completed.
+    /// (CavnarAI.APIClient.SessionExpiredError error 1.)" (CLIENT-50).
+    struct SessionExpiredError: Error, LocalizedError {
+        var errorDescription: String? { "Your session expired — please sign in again." }
+    }
 
     private let baseURL: URL
     private let session: URLSession
@@ -75,6 +83,13 @@ actor APIClient {
     /// right for reads and wrong for sending a photo that the server then
     /// reads with a model; same ephemeral config and pinning otherwise.
     private let uploadSession: URLSession
+    /// Calls that ask for more than the main session's 20s (a model
+    /// generating a post, 90s). `send(timeout:)` sets the request's idle
+    /// timeout, but the main session's 45s RESOURCE timeout still ended the
+    /// whole transfer, so a 90s generation could never finish and the server
+    /// finished work the phone had already given up on (CLIENT-20). Same
+    /// ephemeral config and pinning; only the caps differ.
+    private let longCallSession: URLSession
     private var token: String?
     private var onSessionExpired: (@Sendable () -> Void)?
 
@@ -82,6 +97,7 @@ actor APIClient {
         self.baseURL = baseURL
         if let session {
             self.session = session
+            self.longCallSession = session
         } else {
             // .ephemeral, not .default: the shared URLCache writes eligible
             // responses to Library/Caches unencrypted, and every GET here
@@ -102,6 +118,13 @@ actor APIClient {
             // an ngrok tunnel legitimately presents a different chain.
             let delegate = AppEnvironment.isProductionHost ? PinnedSessionDelegate() : nil
             self.session = URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
+
+            let longConfig = URLSessionConfiguration.ephemeral
+            longConfig.timeoutIntervalForRequest = 20      // each call sets its own
+            longConfig.timeoutIntervalForResource = Self.longCallResourceCap
+            longConfig.waitsForConnectivity = false
+            let longDelegate = AppEnvironment.isProductionHost ? PinnedSessionDelegate() : nil
+            self.longCallSession = URLSession(configuration: longConfig, delegate: longDelegate, delegateQueue: nil)
         }
         let uploadConfig = URLSessionConfiguration.ephemeral
         uploadConfig.timeoutIntervalForRequest = 60
@@ -110,6 +133,10 @@ actor APIClient {
         let uploadDelegate = AppEnvironment.isProductionHost ? PinnedSessionDelegate() : nil
         self.uploadSession = URLSession(configuration: uploadConfig, delegate: uploadDelegate, delegateQueue: nil)
     }
+
+    /// The whole-transfer cap for calls that name a timeout longer than the
+    /// main session's. Above the longest timeout any caller asks for (90s).
+    static let longCallResourceCap: TimeInterval = 150
 
     func setToken(_ token: String?) {
         self.token = token
@@ -159,11 +186,21 @@ actor APIClient {
         var request = try buildRequest(path: path, method: method.rawValue, body: body, query: query)
         if let timeout { request.timeoutInterval = timeout }
         let mayRetry = retryTransient ?? (method == .get)
+        // The token this request carries. The actor is re-entrant across the
+        // await below, so by the time the answer lands a different account
+        // may be signed in (CLIENT-23).
+        let sentToken = token
+        let isLongCall = (timeout ?? 0) > 20
+        let transport = isLongCall ? longCallSession : session
+        // A long call is a model generating something the owner is waiting
+        // for; switching apps to check a text must not kill it mid-flight.
+        let grant = isLongCall ? await BackgroundGrant.begin(path) : nil
+        defer { if let grant { Task { await grant.end() } } }
 
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await Self.perform(request, on: session, mayRetry: mayRetry)
+            (data, response) = try await Self.perform(request, on: transport, mayRetry: mayRetry)
         } catch {
             // A request cancelled because its view went away (a `.task`
             // torn down by tapping Back, or by leaving a module screen
@@ -175,16 +212,26 @@ actor APIClient {
             // leaving fast, and tapping another: each abandoned screen's
             // in-flight fetches all cancelled at once, each firing its own
             // error haptic. Rethrow as a plain cancellation, silently.
-            if Task.isCancelled || error is CancellationError || (error as? URLError)?.code == .cancelled {
-                throw CancellationError()
-            }
+            if Self.isRequestedCancellation(error) { throw CancellationError() }
             let offline = await MainActor.run { !NetworkMonitor.shared.isOnline }
             let classified = Self.classify(error, deviceIsOffline: offline)
             if hapticOnError { await Haptic.error() }
             throw classified
         }
 
-        return try await finish(data: data, response: response, hapticOnError: hapticOnError)
+        return try await finish(data: data, response: response, sentToken: sentToken, hapticOnError: hapticOnError)
+    }
+
+    /// True only when this task was actually cancelled — its view went away.
+    ///
+    /// URLError.cancelled on its own is not that: PinnedSessionDelegate
+    /// answers a certificate chain it does not trust (a captive portal, a
+    /// TLS-intercepting proxy) with .cancelAuthenticationChallenge, which
+    /// URLSession surfaces as URLError.cancelled on a task nobody cancelled.
+    /// Treated as a cancel, the screen stayed silently blank; it is a failure
+    /// the owner has to be told about (CLIENT-24), and `classify` says so.
+    static func isRequestedCancellation(_ error: Error) -> Bool {
+        Task.isCancelled || error is CancellationError
     }
 
     /// Uploads one file as multipart/form-data (field name `file`) — invoice
@@ -208,26 +255,54 @@ actor APIClient {
         body.append(fileData)
         body.append(Data("\r\n--\(boundary)--\r\n".utf8))
         request.httpBody = body
+        // Derived from the file itself, so the owner tapping Scan again on
+        // the same photo after a timeout sends the same key: the server can
+        // answer the second request from the first one's result instead of
+        // paying for a second model read (CLIENT-21). A random key per call
+        // would dedupe nothing.
+        request.setValue(Self.idempotencyKey(path: path, fileData: fileData),
+                         forHTTPHeaderField: "Idempotency-Key")
+        let sentToken = token
+        // Keeps the upload and the server's read of it alive when the owner
+        // leaves the app — photograph the invoice, switch to the supplier's
+        // email — instead of iOS suspending it at the first background
+        // second and the paid scan being lost (CLIENT-21).
+        let grant = await BackgroundGrant.begin(path)
+        defer { Task { await grant.end() } }
 
         let data: Data
         let response: URLResponse
         do {
             (data, response) = try await Self.perform(request, on: uploadSession, mayRetry: false)
         } catch {
-            if Task.isCancelled || error is CancellationError || (error as? URLError)?.code == .cancelled {
-                throw CancellationError()
-            }
+            if Self.isRequestedCancellation(error) { throw CancellationError() }
             let offline = await MainActor.run { !NetworkMonitor.shared.isOnline }
             let classified = Self.classify(error, deviceIsOffline: offline)
             await Haptic.error()
             throw classified
         }
-        return try await finish(data: data, response: response, hapticOnError: true)
+        return try await finish(data: data, response: response, sentToken: sentToken, hapticOnError: true)
+    }
+
+    /// "<path>:<sha256 of the file>" — stable across retries of the same
+    /// photo, different for a different photo or route.
+    static func idempotencyKey(path: String, fileData: Data) -> String {
+        let digest = SHA256.hash(data: fileData).map { String(format: "%02x", $0) }.joined()
+        return "\(path):\(digest)"
+    }
+
+    /// A session_expired answer describes the token that request carried.
+    /// Only when that is still this client's token does it end the session:
+    /// a slow request started as the previous account, answering after the
+    /// next one signed in, used to sign the new account out (CLIENT-23).
+    private func expireIfCurrent(_ sentToken: String?) {
+        guard sentToken == token else { return }
+        onSessionExpired?()
     }
 
     /// Status handling and decoding shared by `send` and `upload`.
     private func finish<Response: Decodable>(
-        data: Data, response: URLResponse, hapticOnError: Bool
+        data: Data, response: URLResponse, sentToken: String?, hapticOnError: Bool
     ) async throws -> Response {
         guard let http = response as? HTTPURLResponse else {
             if hapticOnError { await Haptic.error() }
@@ -237,7 +312,7 @@ actor APIClient {
         if http.statusCode == 401 {
             let envelope = try? JSONDecoder.cavnar.decode(ErrorEnvelope.self, from: data)
             if envelope?.sessionExpired == true {
-                onSessionExpired?()
+                expireIfCurrent(sentToken)
                 throw SessionExpiredError()
             }
             if hapticOnError { await Haptic.error() }
@@ -271,6 +346,7 @@ actor APIClient {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = bodyJSON
         }
+        let sentToken = token
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else {
             throw APIError(message: "No response from server")
@@ -278,7 +354,7 @@ actor APIClient {
         if http.statusCode == 401 {
             let envelope = try? JSONDecoder.cavnar.decode(ErrorEnvelope.self, from: data)
             if envelope?.sessionExpired == true {
-                onSessionExpired?()
+                expireIfCurrent(sentToken)
                 throw SessionExpiredError()
             }
             throw APIError(message: "Session expired")
@@ -345,14 +421,33 @@ actor APIClient {
             let task = Task {
                 do {
                     let request = try buildRequest(path: path, method: "POST", body: body, query: [:])
+                    let sentToken = token
                     let (bytes, response) = try await session.bytes(for: request)
-                    if let http = response as? HTTPURLResponse, http.statusCode == 401 {
-                        onSessionExpired?()
-                        continuation.finish(throwing: SessionExpiredError())
+                    guard let http = response as? HTTPURLResponse else {
+                        continuation.finish(throwing: APIError(message: "Couldn't reach Cavnar AI — try again."))
                         return
                     }
-                    guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-                        continuation.finish(throwing: APIError(message: "Couldn't reach Cavnar AI — try again."))
+                    guard (200..<300).contains(http.statusCode) else {
+                        // A refusal is read like any other route's: only an
+                        // explicit session_expired ends the session, and the
+                        // server's own reason (not on your plan, billing
+                        // paused, rate limited) reaches the screen instead of
+                        // a generic "couldn't reach" (CLIENT-53).
+                        var raw = Data()
+                        for try await byte in bytes {
+                            raw.append(byte)
+                            if raw.count >= 64 * 1024 { break }
+                        }
+                        let envelope = try? JSONDecoder.cavnar.decode(ErrorEnvelope.self, from: raw)
+                        if http.statusCode == 401, envelope?.sessionExpired == true {
+                            expireIfCurrent(sentToken)
+                            continuation.finish(throwing: SessionExpiredError())
+                            return
+                        }
+                        continuation.finish(throwing: APIError(
+                            kind: envelope?.kind ?? .server,
+                            message: envelope?.error ?? "Couldn't reach Cavnar AI — try again.",
+                            status: http.statusCode, body: raw))
                         return
                     }
                     for try await line in bytes.lines {
@@ -364,10 +459,16 @@ actor APIClient {
                         continuation.yield(event)
                     }
                     continuation.finish()
-                } catch is CancellationError {
-                    continuation.finish(throwing: CancellationError())
                 } catch {
-                    continuation.finish(throwing: Self.classify(error, deviceIsOffline: false))
+                    if Self.isRequestedCancellation(error) {
+                        continuation.finish(throwing: CancellationError())
+                        return
+                    }
+                    // The same connectivity truth `send` uses — this used to
+                    // hard-code "online", so an offline phone was told the
+                    // attempt "didn't get through" instead (CLIENT-53).
+                    let offline = await MainActor.run { !NetworkMonitor.shared.isOnline }
+                    continuation.finish(throwing: Self.classify(error, deviceIsOffline: offline))
                 }
             }
             continuation.onTermination = { _ in task.cancel() }
@@ -534,9 +635,44 @@ actor APIClient {
         case .networkConnectionLost, .cannotConnectToHost, .cannotFindHost:
             return APIError(kind: .timedOut,
                             message: "The connection dropped mid-request. Tap to retry.")
+        case .cancelled, .serverCertificateUntrusted, .serverCertificateHasBadDate,
+             .serverCertificateNotYetValid, .serverCertificateHasUnknownRoot,
+             .secureConnectionFailed, .clientCertificateRejected, .clientCertificateRequired:
+            // Reached only when nobody cancelled the task (see
+            // isRequestedCancellation): the connection's certificate was
+            // refused — most often a hotel or venue Wi-Fi sign-in page, or
+            // a network that inspects encrypted traffic.
+            return APIError(message: "Couldn't open a secure connection to Cavnar. If this Wi-Fi has a "
+                                   + "sign-in page, finish that or switch to cell, then try again.")
         default:
             return APIError(message: "Couldn't reach the server — check your connection and try again.")
         }
+    }
+}
+
+/// Background execution time for one request the owner is waiting on.
+///
+/// iOS suspends an app within seconds of it leaving the screen, and a
+/// suspended URLSession task on an ephemeral session simply dies. Asking
+/// for time (beginBackgroundTask) gives the request the ~30s iOS grants to
+/// finish; the grant is always ended — when the request returns, or when
+/// iOS says time is up — so it can never keep the app awake on its own.
+@MainActor
+final class BackgroundGrant {
+    private var id: UIBackgroundTaskIdentifier = .invalid
+
+    static func begin(_ name: String) -> BackgroundGrant {
+        let grant = BackgroundGrant()
+        grant.id = UIApplication.shared.beginBackgroundTask(withName: name) { [weak grant] in
+            grant?.end()
+        }
+        return grant
+    }
+
+    func end() {
+        guard id != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(id)
+        id = .invalid
     }
 }
 

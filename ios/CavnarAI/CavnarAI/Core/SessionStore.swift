@@ -385,6 +385,11 @@ final class SessionStore {
     /// Chicago approval draining after a switch to Dallas is a write aimed
     /// at the wrong location.
     func didSwitchLocation(to restaurantId: Int, name: String?) async {
+        // The server has already switched the session, and it files the push
+        // token under the session's restaurant — so re-register now, or the
+        // phone keeps getting the old location's alerts (CLIENT-8). Not
+        // awaited: the switch must not wait on the push registry.
+        Task { await PushManager.shared.reregisterForActiveLocation() }
         let dropped = await PendingWriteQueue.shared.dropWrites(notFor: restaurantId)
         await PendingWriteQueue.shared.setActiveRestaurant(restaurantId)
         if dropped > 0 {
@@ -396,7 +401,10 @@ final class SessionStore {
             currentUser = user
         }
         SessionScope.begin(userId: currentUser?.id, restaurantId: restaurantId)
-        SecureCache.purgeAll()   // cached labor/schedule data belongs to the old location
+        // Cached labor/schedule data belongs to the old location — but the
+        // offline queue was just trimmed to the new one, and purging its file
+        // too meant those kept writes were lost on the next relaunch (CLIENT-5).
+        SecureCache.purgeAll(keeping: [PendingWriteQueue.storeKey])
         hasShownHomeIntro = false
     }
 
