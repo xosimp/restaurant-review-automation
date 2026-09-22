@@ -12,6 +12,32 @@ import Observation
 /// lock on foreground: logging a phone out every 8 hours of non-use would
 /// make a "check once a day" app unusable, but leaving a restaurant's data
 /// visible indefinitely without any re-entry gate would be worse.
+/// Which signed-in identity the app's in-memory and on-disk data belong to.
+///
+/// View models RootView keeps alive across sign-out (Home, so it survives
+/// the Face ID lock swap) had no way to know the session had changed, so the
+/// next account on a shared phone saw the previous one's dashboard until its
+/// own load landed — indefinitely when that load failed — and a load in
+/// flight at sign-out wrote the old account's summary back to disk after the
+/// purge (CLIENT-2, CLIENT-26). `generation` moves on every sign-in,
+/// sign-out and location switch; a result fetched under an older generation
+/// is discarded, and cache keys carry the user and restaurant.
+@MainActor
+enum SessionScope {
+    private(set) static var generation = 0
+    private(set) static var userId = 0
+    private(set) static var restaurantId = 0
+
+    static func begin(userId: Int?, restaurantId: Int?) {
+        generation += 1
+        self.userId = userId ?? 0
+        self.restaurantId = restaurantId ?? 0
+    }
+
+    /// A cache key private to this user at this restaurant.
+    static func key(_ base: String) -> String { "\(base).u\(userId).r\(restaurantId)" }
+}
+
 @Observable
 @MainActor
 final class SessionStore {
@@ -107,6 +133,9 @@ final class SessionStore {
         guard token != nil else { return }
         do {
             let response: MeResponse = try await client.send("/mobile/api/me", hapticOnError: false)
+            if currentUser?.id != response.user.id || currentUser?.restaurantId != response.user.restaurantId {
+                SessionScope.begin(userId: response.user.id, restaurantId: response.user.restaurantId)
+            }
             currentUser = response.user
             await PendingWriteQueue.shared.setActiveRestaurant(response.user.restaurantId)
         } catch is APIClient.SessionExpiredError {
@@ -331,6 +360,7 @@ final class SessionStore {
         await client.setToken(token)
         self.token = token
         self.currentUser = user
+        SessionScope.begin(userId: user.id, restaurantId: user.restaurantId)
         self.isLocked = false
         // The APNs token usually arrives at launch, before a session exists,
         // so its registration 401s and used to be dropped forever (audit
@@ -361,6 +391,7 @@ final class SessionStore {
             user.restaurantId = restaurantId
             currentUser = user
         }
+        SessionScope.begin(userId: currentUser?.id, restaurantId: restaurantId)
         SecureCache.purgeAll()   // cached labor/schedule data belongs to the old location
         hasShownHomeIntro = false
     }
@@ -401,6 +432,7 @@ final class SessionStore {
         // shared back-office device inherited the previous account's data,
         // and configureCaching() would happily restore it (audit 1.2).
         SecureCache.purgeAll()
+        SessionScope.begin(userId: nil, restaurantId: nil)
         // Anything queued offline belongs to the session that queued it.
         Task {
             await PendingWriteQueue.shared.clear()

@@ -23,6 +23,12 @@ actor APIClient {
             case timedOut
             case server
             case decoding
+            /// 402 billing_inactive: the account is paused or unpaid. Its own
+            /// kind so a screen can show the billing state rather than a
+            /// generic failure hidden behind old numbers (CLIENT-22).
+            case billingInactive
+            /// 403 module_locked: the plan does not include this module.
+            case moduleLocked
         }
 
         let kind: Kind
@@ -241,7 +247,8 @@ actor APIClient {
         if http.statusCode >= 400 {
             let envelope = try? JSONDecoder.cavnar.decode(ErrorEnvelope.self, from: data)
             if hapticOnError { await Haptic.error() }
-            throw APIError(message: envelope?.error ?? "Something went wrong (\(http.statusCode)).",
+            throw APIError(kind: envelope?.kind ?? .server,
+                           message: envelope?.error ?? "Something went wrong (\(http.statusCode)).",
                            status: http.statusCode, body: data)
         }
 
@@ -536,10 +543,20 @@ private struct ErrorEnvelope: Decodable {
     let ok: Bool
     let error: String?
     let sessionExpired: Bool?
+    let billingInactive: Bool?
+    let moduleLocked: Bool?
 
     enum CodingKeys: String, CodingKey {
         case ok, error
         case sessionExpired = "session_expired"
+        case billingInactive = "billing_inactive"
+        case moduleLocked = "module_locked"
+    }
+
+    var kind: APIClient.APIError.Kind {
+        if billingInactive == true { return .billingInactive }
+        if moduleLocked == true { return .moduleLocked }
+        return .server
     }
 }
 

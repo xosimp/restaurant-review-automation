@@ -97,11 +97,9 @@ final class EdgeHomeSessionTests: XCTestCase {
         server.homeStatus = 503
         await home.load()
 
-        XCTExpectFailure("CLIENT-2: RootView's HomeViewModel keeps A's summary across sign-out; B's failed load leaves it on screen", strict: true) {
-            XCTAssertNotEqual(home.summary?.restaurantName, "Account A Bistro",
-                              "another tenant's revenue and reviews must not render for B")
-            XCTAssertNotNil(home.errorMessage, "B has nothing of their own to show, so B is told the load failed")
-        }
+        XCTAssertNotEqual(home.summary?.restaurantName, "Account A Bistro",
+                          "another tenant's revenue and reviews must not render for B")
+        XCTAssertNotNil(home.errorMessage, "B has nothing of their own to show, so B is told the load failed")
     }
 
     func testSignOutClearsTheInMemoryLoadTimestamp() async {
@@ -115,19 +113,15 @@ final class EdgeHomeSessionTests: XCTestCase {
         await session.logout()
         server.homeStatus = 503
         await home.load()
-        XCTExpectFailure("CLIENT-2: lastLoadedAt is still A's, so no staleness notice explains the numbers on screen", strict: true) {
-            XCTAssertNil(home.lastLoadedAt)
-        }
+        XCTAssertNil(home.lastLoadedAt)
     }
 
     func testTheHomeCacheKeyIsScopedToTheUserAndRestaurant() throws {
         let home = HomeViewModel(client: makeClient(Server()))
         let cache = try XCTUnwrap(Mirror(reflecting: home).children.first { $0.label == "cache" }?.value)
         let key = try XCTUnwrap(Mirror(reflecting: cache).children.first { $0.label == "key" }?.value as? String)
-        XCTExpectFailure("CLIENT-2: the Home cache key is the unscoped \"home.summary\", shared by every account on the device", strict: true) {
-            XCTAssertNotEqual(key, "home.summary")
-            XCTAssertTrue(key.contains { $0.isNumber }, "the key should carry the user and restaurant ids")
-        }
+        XCTAssertNotEqual(key, "home.summary")
+        XCTAssertTrue(key.contains { $0.isNumber }, "the key should carry the user and restaurant ids")
     }
 
     func testALoadInFlightAtSignOutDoesNotRewriteTheCacheAfterThePurge() async {
@@ -150,9 +144,7 @@ final class EdgeHomeSessionTests: XCTestCase {
         await load.value
         let written = SecureCache.read(key: "home.summary")
         XCTAssertTrue(EdgeHeldURLProtocol.held.value)
-        XCTExpectFailure("CLIENT-2: an in-flight Home load re-saves the old account's summary after purgeAll()", strict: true) {
-            XCTAssertNil(written, "nothing from the signed-out account may be written back to disk")
-        }
+        XCTAssertNil(written, "nothing from the signed-out account may be written back to disk")
     }
 
     // MARK: CLIENT-26 — location switch
@@ -172,9 +164,7 @@ final class EdgeHomeSessionTests: XCTestCase {
         server.homeStatus = 504
         await home.load()
 
-        XCTExpectFailure("CLIENT-26: the in-memory summary survives a location switch; a failed reload shows Chicago's numbers as Dallas", strict: true) {
-            XCTAssertNotEqual(home.summary?.restaurantName, "Chicago")
-        }
+        XCTAssertNotEqual(home.summary?.restaurantName, "Chicago")
     }
 
     // MARK: CLIENT-22 — billing refusal hidden behind cached numbers
@@ -187,9 +177,7 @@ final class EdgeHomeSessionTests: XCTestCase {
         server.homeStatus = 402
         server.homeBody = #"{"ok": false, "error": "Your subscription is paused.", "billing_inactive": true}"#
         await home.load()
-        XCTExpectFailure("CLIENT-22: Home shows an error only when summary == nil, so a 402 hides behind stale numbers", strict: true) {
-            XCTAssertEqual(home.errorMessage, "Your subscription is paused.")
-        }
+        XCTAssertEqual(home.errorMessage, "Your subscription is paused.")
     }
 
     func testATransientFailureKeepsTheCachedDashboardWithoutAnError() async {

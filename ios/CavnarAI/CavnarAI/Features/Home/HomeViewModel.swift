@@ -15,12 +15,28 @@ final class HomeViewModel {
     /// Home had no cache at all, so an offline launch showed a bare error
     /// screen instead of the numbers the owner opened the app to check
     /// (audit 6.4). Same pattern Labor already proved out, generalised.
-    private let cache = CachedResource<HomeSummary>(key: "home.summary")
+    ///
+    /// Keyed by user and restaurant (SessionScope.key), and replaced when the
+    /// session changes, so one account's cached dashboard is never another's.
+    @ObservationIgnored private var cache = CachedResource<HomeSummary>(key: SessionScope.key("home.summary"))
+    /// The SessionScope generation `summary` belongs to.
+    @ObservationIgnored private var loadedGeneration = SessionScope.generation
 
     private let client: APIClient
 
     init(client: APIClient = .shared) {
         self.client = client
+    }
+
+    /// Drops everything from a previous sign-in or location before this
+    /// session's first load paints anything.
+    private func adoptCurrentSession() {
+        guard loadedGeneration != SessionScope.generation else { return }
+        loadedGeneration = SessionScope.generation
+        summary = nil
+        lastLoadedAt = nil
+        errorMessage = nil
+        cache = CachedResource<HomeSummary>(key: SessionScope.key("home.summary"))
     }
 
     /// Non-nil when what's on screen came from cache and is old enough that
@@ -54,6 +70,8 @@ final class HomeViewModel {
     }
 
     func load() async {
+        adoptCurrentSession()
+        let generation = SessionScope.generation
         // Warm start: paint cached numbers immediately rather than a loading
         // seal, and keep them on screen if the fetch fails.
         if summary == nil { summary = await cache.loadOffMain() }
@@ -63,14 +81,20 @@ final class HomeViewModel {
         do {
             let fetched: HomeSummary = try await client.send("/mobile/api/home")
             DebugFrameWatchdog.mark("home summary fetched")
+            // Signed out or switched location while this was in flight: the
+            // answer belongs to a session that no longer exists.
+            guard generation == SessionScope.generation else { return }
             summary = fetched
             cache.save(fetched)
             lastLoadedAt = Date()
         } catch let error as APIClient.APIError {
+            guard generation == SessionScope.generation else { return }
             // Only surface an error when there is genuinely nothing to show —
             // otherwise the cached dashboard stands and the staleness notice
-            // explains itself.
-            if summary == nil { errorMessage = error.message }
+            // explains itself. A refusal about the account itself (billing
+            // paused, 402) is said whatever is on screen: old numbers must
+            // not stand in for "your subscription is paused" (CLIENT-22).
+            if summary == nil || error.kind == .billingInactive || error.status == 402 { errorMessage = error.message }
         } catch is APIClient.SessionExpiredError {
             // SessionStore's handler already forces logout — nothing more to do.
         } catch is CancellationError {

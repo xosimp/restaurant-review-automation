@@ -264,10 +264,8 @@ final class EdgeAppCoreTests: XCTestCase {
         do { let _: OKResponse = try await client.send("/mobile/api/home") } catch let e as APIClient.APIError { caught = e } catch {}
         let error = try? XCTUnwrap(caught)
         XCTAssertEqual(error?.status, 402)
-        XCTExpectFailure("CLIENT-22: 402 billing_inactive is classified as a generic .server error", strict: true) {
-            XCTAssertTrue(String(describing: error?.kind as Any).lowercased().contains("billing"),
-                          "a paused account needs its own error kind so the app can show a billing banner")
-        }
+        XCTAssertTrue(String(describing: error?.kind as Any).lowercased().contains("billing"),
+                      "a paused account needs its own error kind so the app can show a billing banner")
     }
 
     func testA403ModuleLockedIsToldApartFromAGenericServerError() async {
@@ -277,9 +275,7 @@ final class EdgeAppCoreTests: XCTestCase {
         var caught: APIClient.APIError?
         do { let _: OKResponse = try await client.send("/mobile/api/labor") } catch let e as APIClient.APIError { caught = e } catch {}
         XCTAssertEqual(caught?.message, "Labor isn't on your plan.")
-        XCTExpectFailure("CLIENT-22: 403 module_locked is classified as a generic .server error", strict: true) {
-            XCTAssertTrue(String(describing: caught?.kind as Any).lowercased().contains("module"))
-        }
+        XCTAssertTrue(String(describing: caught?.kind as Any).lowercased().contains("module"))
     }
 
     func testAnExpiryForASupersededTokenDoesNotSignOutTheNewSession() async {

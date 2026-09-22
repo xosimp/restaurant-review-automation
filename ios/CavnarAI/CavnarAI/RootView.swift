@@ -343,6 +343,11 @@ struct RootView: View {
                 // without this a fresh sign-in reopened whatever chat and
                 // scroll position the previous session left behind.
                 askCavnarViewModel.reset()
+                // The navigation stacks are RootView state too: a pushed
+                // detail screen from the previous account must not be the
+                // first thing the next one sees (CLIENT-2 / CLIENT-42).
+                homePath = NavigationPath()
+                modulesPath = NavigationPath()
             }
         }
         .onChange(of: deepLinkRouter.pendingTab) { _, tab in
