@@ -116,7 +116,6 @@ def _pos(db_path, rid):
 
 # ── A5 order #16 / MOD-FC-1: every item that is due reaches the order ───────
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-1: build_supplier_orders reads the display-truncated critical_low[:4]/reorder_soon[:6]")
 def test_thirty_below_par_items_for_one_supplier_make_a_thirty_line_order(db_path):
     rid = _restaurant(db_path)
     for i in range(30):

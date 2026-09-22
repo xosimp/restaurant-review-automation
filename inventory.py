@@ -509,8 +509,12 @@ def analyse_inventory(items: list[dict], delivery_days: str = None,
         "total_stock_value":     round(total_stock_value, 2),
         "waste_items":    waste_items[:6],
         "overstock":      overstock[:5],
-        "critical_low":     critical_low[:4],
-        "reorder_soon":     reorder_soon[:6],
+        # Full lists. They drive the supplier order, which was built from a
+        # display slice ([:4] / [:6]) and so sent short purchase orders for
+        # any restaurant with more than about ten items to reorder, and every
+        # "N items critically low" count topped out at 4. Views slice.
+        "critical_low":     critical_low,
+        "reorder_soon":     reorder_soon,
         "order_reduction":  order_reduction[:6],
         "total_items":    len(items),
         "week_start":     fmt(week_start_dt),
@@ -1081,7 +1085,7 @@ Overstocked items:
 {json.dumps([{"item": x["item"], "current": x["current_stock"], "par": x["par_level"], "overstock_cost": x["overstock_cost"]} for x in analysis["overstock"][:3]], indent=2)}
 
 Critical low stock:
-{json.dumps([{"item": x["item"], "days_remaining": x["days_remaining"], "suggested_order_qty": x.get("suggested_order_qty"), "par": x["par_level"], "current_stock": x["current_stock"]} for x in analysis["critical_low"]], indent=2)}
+{json.dumps([{"item": x["item"], "days_remaining": x["days_remaining"], "suggested_order_qty": x.get("suggested_order_qty"), "par": x["par_level"], "current_stock": x["current_stock"]} for x in analysis["critical_low"][:12]], indent=2)}
 
 Savings the data supports (these are the only savings figures that exist — use these, do not compute your own):
 {savings_block}{menu_context}

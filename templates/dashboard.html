@@ -5004,7 +5004,7 @@ svg:hover .hb-xh{opacity:1}
       {% for _grp, _label, _items in [('urgent','Urgent — order now', inv.critical_low), ('soon','Order soon', inv.reorder_soon), ('reduce','Reduce order', inv.order_reduction)] %}
       <div class="fc2-col {{ _grp }}">
         <div class="ch"><span class="d"></span>{{ _label }}<span class="n">{{ _items|length }}</span></div>
-        {% for item in _items %}
+        {% for item in _items[:8] %}
         {% set _delta = (item.suggested_order_qty - item.last_order_qty) if (item.suggested_order_qty and item.suggested_order_qty > 0 and item.last_order_qty is not none) else 0 %}
         <div class="row"><div class="t"><b>{{ item.item }}</b><span>{% if _grp != 'reduce' %}{{ item.days_remaining }}d left · {% endif %}last order {{ item.last_order_qty|int }}{% if item.unit %} {{ item.unit }}{% endif %}</span></div>
           <div class="q"><div class="l">{% if _delta > 0.05 %}Order {{ _delta|round|int }} more{% elif _delta < -0.05 %}Order {{ (-_delta)|round|int }} less{% else %}Order{% endif %}</div><div class="p">{% if item.suggested_order_qty == 0 %}skip{% else %}{{ item.suggested_order_qty }}{% if item.unit %} {{ item.unit }}{% endif %}{% endif %}</div>
@@ -5012,6 +5012,7 @@ svg:hover .hb-xh{opacity:1}
         {% else %}
         <div class="none">{% if _grp == 'urgent' %}Nothing critical this week{% elif _grp == 'soon' %}Nothing upcoming this week{% else %}No reductions needed{% endif %}</div>
         {% endfor %}
+        {% if _items|length > 8 %}<div class="none">+{{ _items|length - 8 }} more — every one is on the order draft</div>{% endif %}
       </div>
       {% endfor %}
     </div>
