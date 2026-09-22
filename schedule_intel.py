@@ -557,8 +557,9 @@ def remember_tenure(restaurant_id, shifts: list, db_path=DB_PATH) -> None:
                 "shifts_seen=MAX(shifts_seen, excluded.shifts_seen), updated_at=datetime('now')",
                 (restaurant_id, n, first[n], count[n]))
         conn.commit()
-    except Exception:
-        pass
+    except Exception as e:
+        import ops
+        ops.capture(e, job="remember_tenure", context=f"restaurant_id={restaurant_id}")
     finally:
         conn.close()
 

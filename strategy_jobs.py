@@ -501,8 +501,9 @@ def _write_cursor(key, value, db_path) -> None:
         conn.execute("INSERT INTO job_cursors (key, value, updated_at) VALUES (?,?,datetime('now')) "
                      "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at", (key, str(value)))
         conn.commit()
-    except Exception:
-        pass
+    except Exception as e:
+        import ops
+        ops.capture(e, job="auto_draft_cursor", context=key)
     finally:
         conn.close()
 

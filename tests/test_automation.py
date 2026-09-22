@@ -150,8 +150,13 @@ def test_the_feed_shows_what_is_queued(db_path):
 
 def _schedule(db_path, rid, week_start, edited=False, shared=True, csv="employee,role\nA,server"):
     conn = get_conn(db_path)
-    cur = conn.execute("INSERT INTO schedule_history (restaurant_id, week_start, week_end, schedule_csv, edited_at) "
-                       "VALUES (?,?,?,?,?)", (rid, week_start, week_start, csv, _utc(days=1) if edited else None))
+    # A week counts as published when published_at is set — a share row on
+    # its own no longer does (a test share on a draft used to count).
+    from models import _ensure_history_columns
+    _ensure_history_columns(conn)
+    cur = conn.execute("INSERT INTO schedule_history (restaurant_id, week_start, week_end, schedule_csv, edited_at, published_at) "
+                       "VALUES (?,?,?,?,?,?)", (rid, week_start, week_start, csv, _utc(days=1) if edited else None,
+                                               _utc(days=0) if shared else None))
     sid = cur.lastrowid
     if shared:
         conn.execute("INSERT INTO schedule_shares (restaurant_id, schedule_id, employee_name, token) VALUES (?,?,?,?)",

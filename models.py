@@ -5254,8 +5254,7 @@ def get_schedule_history(restaurant_id: int, limit: int = 300, db_path: str = DB
         rows = conn.execute("""
             SELECT id, generated_at, week_start, week_end, hours_scheduled,
                    hours_budget, labor_target,
-                   CASE WHEN quality_score IS NULL THEN quality_json ELSE NULL END AS quality_json,
-                   quality_score, quality_band, quality_confidence,
+                   quality_json, quality_score, quality_band, quality_confidence,
                    edited_at, edited_by, published_at, published_by, superseded_by, republished_at
             FROM schedule_history WHERE restaurant_id=?
             ORDER BY generated_at DESC, id DESC LIMIT ?
