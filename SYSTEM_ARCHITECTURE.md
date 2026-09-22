@@ -5,6 +5,8 @@
 ```
 review_automation/
 ├── hosted_dashboard.py        # Flask app factory / entrypoint — registers every blueprint, boots the scheduler
+├── config.py                  # the environment values several modules read (base URL, sender, on-Railway, Places key)
+├── demo_seed.py               # the Gia Mia / Simple EJ's demo accounts and their nightly refresh, off the request path
 ├── main.py                    # CLI entrypoint for one-off fetch/report runs (non-web)
 ├── models.py                  # (9k lines) schema, migrations, every dataclass, most DB read/write functions
 ├── auth.py / auth_routes.py   # session/user model, staff portal tables, /auth/* routes (web)

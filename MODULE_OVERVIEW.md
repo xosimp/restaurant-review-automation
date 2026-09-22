@@ -233,6 +233,10 @@ An employee signs in with a name and PIN at the restaurant's portal link, sees t
 
 **Files**: `security.py` (durable login throttling by account and IP, breached-password check, the freeze), `security_headers.py` (HSTS/CSP/etc. on every response), `credentials.py` (Fernet at rest for POS/OAuth columns), `csrf.py`, `guest_links.py` (signed public tokens), `http_layer.py` (gzip, cache headers, the rolling latency window), `permissions.py` (roles and the per-module view gates), `provisioning.py` (account creation from a signed contract). The controls and the env vars they need: `docs/ops/SECURITY.md`.
 
+## Configuration and the demo accounts
+
+`config.py` holds the environment values more than one module reads — `base_url()`, `from_email()`, `will_email()`, `on_railway()`, `google_places_key()` — each read at call time with one default; a value read in a single module stays in that module. `ai_utils.MODELS` / `model_for()` / `get_client()` are the same idea for the model calls. `demo_seed.py` is the Gia Mia and Simple EJ's seeding and refresh (gated on the account name and `is_demo`), started once at boot by `demo_seed.start_background_seed()`; `models` keeps `_seed_simple_ejs` and `_seed_gia_mia` as wrappers for the tests and boot block that reach them there.
+
 ## Automation and moments
 
 **Files**: `delayed.py` (actions queued with an undo window — auto-publish, trusted supplier orders), `decisions.py` (the owner's decision record: what was proposed, what they answered, what was measured after), `milestones.py` (firsts an owner is told about once), `good_news.py` and `first_look.py` (the wins and the first-week read the brief and emails draw on), `covers.py` (covers per day), `promise.py` (the sales audit's promise, measured), `review_common.py` (the sentences the weekly and monthly reviews share). `status_routes.py`/`status_manager.py` are the public status page; `social_routes.py` the Instagram/Facebook OAuth and publishing; `sales_audits.py` the sales-audit store behind `sales_audit_routes.py`. `audit_app.py` is a separate standalone app (the digital audit scorecard), not part of the web process.

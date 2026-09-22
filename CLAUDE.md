@@ -62,8 +62,13 @@ production stability matters more than maximising cleanup.
 This codebase is unusually good at hiding a live reference from a grep:
 
 - **Bound imports.** `from models import get_conn` at module top level is a
-  reference that the name `models.get_conn` will never match. Several modules
-  do this, and it has already caused silent wrong behaviour in tests.
+  reference that the name `models.get_conn` will never match. Most modules
+  do this, and it has already caused silent wrong behaviour in tests: a
+  patch of `models.get_conn` never reaches a bound copy. `client_api`,
+  `mobile_api`, `drafter`, `social_routes` and `demo_seed` therefore define
+  a module-level `get_conn` that resolves through `models` at call time —
+  copy that pattern rather than the bare import when a module calls
+  `get_conn()` with no `db_path`.
 - **Lazy imports inside functions.** Most cross-module calls here are
   `import x` *inside* the function body, so a module-level grep misses them.
 - **Registry-driven dispatch.** `ask_cavnar_tools.TOOLS`, `pos.PROVIDERS`,
