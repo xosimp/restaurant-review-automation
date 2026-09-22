@@ -621,31 +621,12 @@ def sync_to_db(restaurant_id: int) -> dict:
         if not csv_str:
             return {"ok": False, "error": "No shift data returned from Toast"}
 
-        row_count = csv_str.count("\n") - 1  # subtract header
-        save_client_data(restaurant_id, "shifts", csv_str, source="toast")
+        import pos
+        row_count = pos.save_synced_shifts(restaurant_id, csv_str, "toast")
         update_restaurant(restaurant_id, {
             "toast_last_synced": datetime.now(timezone.utc).isoformat(),
             "toast_sync_error":  None,
         })
-
-        # Archive today's per-day breakdown so YoY/trend data actually accumulates
-        # over time -- without this, the nightly sync only ever refreshes the
-        # rolling 60-day shifts_csv and labor_daily_history (what real YoY
-        # comparisons read from) would never get populated by a Toast-connected
-        # restaurant at all, same as the manual CSV upload path in client_api.py.
-        try:
-            from labor import analyse_shifts_for_restaurant
-            from models import save_labor_daily_history, save_labor_snapshot
-            _analysis = analyse_shifts_for_restaurant(restaurant_id)
-            save_labor_daily_history(restaurant_id, _analysis.get("by_day", {}))
-            _dr = _analysis.get("date_range", {})
-            if _dr.get("start") and _dr.get("end"):
-                save_labor_snapshot(restaurant_id, _dr["start"], _dr["end"],
-                                     _analysis["overall_labor_pct"],
-                                     _analysis["total_labor_cost"],
-                                     _analysis["total_sales"])
-        except Exception as _hist_e:
-            print(f"[toast sync] daily history archive error: {_hist_e}")
 
         # Keep the food-cost recipe editor's menu item list current on every
         # sync (manual "Sync now" or nightly) — new dishes get picked up

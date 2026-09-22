@@ -197,7 +197,6 @@ def test_a_truncated_toast_sync_is_not_reported_ok_and_keeps_the_previous_csv(db
 
 # ── A3 #38 / MOD-LAB-6: Square role ─────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-LAB-6: Square role is read from assigned_locations.assignment_type, not the shift's job")
 def test_a_square_shift_carries_the_job_title_as_its_role(db_path, monkeypatch):
     import square
     rid = _rid(db_path)
@@ -215,7 +214,6 @@ def test_a_square_shift_carries_the_job_title_as_its_role(db_path, monkeypatch):
 
 # ── A3 #39 / MOD-LAB-7: a Square orders page failing mid-range ──────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-LAB-7: a 429 on a later orders page is a silent `break`, and partial sales are saved as whole days")
 def test_a_square_orders_page_failure_fails_the_sync(db_path, monkeypatch):
     import square
     rid = _rid(db_path)
@@ -252,10 +250,7 @@ def test_a_toast_sync_writes_labor_daily_history(db_path, monkeypatch):
     assert _history_rows(db_path, rid) == 1
 
 
-@pytest.mark.parametrize("provider", [
-    pytest.param("square", marks=pytest.mark.xfail(strict=True, reason="MOD-LAB-8: square.sync_to_db never writes labor_daily_history")),
-    pytest.param("clover", marks=pytest.mark.xfail(strict=True, reason="MOD-LAB-8: clover.sync_to_db never writes labor_daily_history")),
-])
+@pytest.mark.parametrize("provider", ["square", "clover"])
 def test_every_pos_sync_writes_labor_daily_history(db_path, monkeypatch, provider):
     mod = __import__(provider)
     rid = _rid(db_path)
@@ -283,7 +278,6 @@ def test_a_failed_toast_sync_keeps_the_previous_csv_and_records_the_error(db_pat
 
 # ── MOD-LAB-18: a POS sync after a longer hand upload ───────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-LAB-18: save_client_data replaces shifts_csv, so a 60-day POS sync erases a year of uploaded history")
 def test_a_pos_sync_keeps_uploaded_dates_outside_the_pos_window(db_path, monkeypatch):
     import toast
     rid = _rid(db_path)
@@ -354,7 +348,6 @@ def test_one_restaurant_failing_its_pos_sync_does_not_stop_the_rest(db_path, mon
     assert [r["ok"] for r in results] == [True, False, True]
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-LAB-9: the nightly POS sync has no billing filter; churned restaurants are still synced")
 def test_the_nightly_pos_sync_skips_a_churned_restaurant(db_path, monkeypatch):
     live = _rid(db_path, name="Live")
     gone = _rid(db_path, name="Gone")
@@ -365,7 +358,6 @@ def test_the_nightly_pos_sync_skips_a_churned_restaurant(db_path, monkeypatch):
     assert provider.synced == [live]
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-LAB-9: the nightly POS sync is unbounded and keeps no cursor in job_cursors")
 def test_the_nightly_pos_sync_records_where_it_stopped(db_path, monkeypatch):
     for n in ("A", "B", "C"):
         _rid(db_path, name=n)
@@ -407,7 +399,6 @@ def test_the_real_coverage_gaps_names_the_late_employee(db_path, monkeypatch):
     assert [m["employee"] for m in gaps["missing"]] == ["Dana K"]
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-LAB-1: coverage_gaps returns scheduled as an int; run_coverage_check iterates it and crashes")
 def test_the_coverage_job_opens_one_issue_for_a_late_employee(db_path, monkeypatch):
     import strategy_jobs
     import issues

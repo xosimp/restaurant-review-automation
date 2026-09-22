@@ -907,9 +907,9 @@ def analyse_shifts(shifts: list[dict],
         "hours_are_estimated": hours_are_estimated,
         # Identical rows dropped as a re-upload of an overlapping period.
         "duplicate_rows_ignored": duplicate_rows,
-        # Days where two rows disagreed about that day's sales; the larger
-        # figure is used and the day is named here rather than resolved
-        # silently by whichever row happened to be last.
+        # Days where two rows disagreed about that day's sales. Those days
+        # are left out of the percentage and named here, rather than
+        # resolved silently by whichever row happened to be last.
         "days_with_conflicting_sales": sorted(sales_conflicts),
         "period_too_short_to_project": period_too_short_to_project,
         "min_days_to_project": MIN_DAYS_TO_EXTRAPOLATE,
@@ -1248,8 +1248,8 @@ def get_claude_insights(analysis: dict, restaurant_name: str = "your restaurant"
                         f"({', '.join(_missing[:5])}). The labor percentage and the savings gap cover only "
                         "the days that have both. Mention that the period is partial.")
     if analysis.get("days_with_conflicting_sales"):
-        _caveats.append("Some days had two different sales figures on different rows; the larger was used. "
-                        "Do not present those days' percentages as exact.")
+        _caveats.append("Some days had two different sales figures on different rows and were left out of the labor percentage. "
+                        "Do not quote a labor percentage for those days.")
     if analysis.get("duplicate_rows_ignored"):
         _caveats.append(f"{analysis['duplicate_rows_ignored']} duplicate row(s) were dropped from this upload.")
     data_caveats = ("\n- DATA LIMITS you must respect: " + " ".join(_caveats)) if _caveats else ""

@@ -3802,7 +3802,7 @@ svg:hover .hb-xh{opacity:1}
         <strong>Heads up:</strong>
         {% if labor.days_missing_sales %}{{ labor.days_missing_sales|length }} day(s) here have shifts but no sales, so this percentage covers only part of the period.{% endif %}
         {% if labor.hours_are_estimated %} These are scheduled hours, not clocked hours.{% endif %}
-        {% if labor.days_with_conflicting_sales %} {{ labor.days_with_conflicting_sales|length }} day(s) had two different sales figures; the larger was used.{% endif %}
+        {% if labor.days_with_conflicting_sales %} {{ labor.days_with_conflicting_sales|length }} day(s) had two different sales figures on different rows and were left out of the percentage.{% endif %}
         {% if labor.duplicate_rows_ignored %} {{ labor.duplicate_rows_ignored }} duplicate row(s) ignored.{% endif %}
         {% if labor.period_too_short_to_project %} The period is under a week, so there's no monthly figure.{% endif %}
       </div>

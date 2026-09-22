@@ -730,7 +730,8 @@ def sync_to_db(restaurant_id: int) -> dict:
             return {"ok": False, "error": "No shift data returned from RPOWER"}
 
         rows = csv_str.count("\n") - 1
-        save_client_data(restaurant_id, "shifts", csv_str, source="rpower")
+        import pos
+        pos.save_synced_shifts(restaurant_id, csv_str, "rpower")
         update_restaurant(restaurant_id, {
             "rpower_last_synced": datetime.utcnow().isoformat(timespec="seconds"),
             "rpower_sync_error": None})

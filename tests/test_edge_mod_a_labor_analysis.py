@@ -160,7 +160,6 @@ def test_days_whose_sales_rows_disagree_are_left_out_of_the_percentage():
     assert a["total_sales"] == 1000.0
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-LAB-20: the Labor tab says 'the larger was used' for conflicting days; the code drops them")
 def test_the_conflicting_sales_caveat_describes_what_the_code_does():
     html = open("templates/dashboard.html", encoding="utf-8").read()
     assert "the larger was used" not in html

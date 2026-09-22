@@ -698,7 +698,10 @@ def run_coverage_check(db_path=DB_PATH):
             # Everyone on today's schedule is busy; the person missing is the
             # gap. Best fits come from the same engine as the replacements
             # screen, folded into the text the manager actually reads.
-            on_today = {str(x.get("employee") or "") for x in (gaps.get("scheduled") or [])}
+            # "scheduled" is a count; the rows are "scheduled_rows". Iterating
+            # the count crashed this job on every restaurant with a schedule
+            # (MOD-LAB-1).
+            on_today = {str(x.get("employee") or "") for x in (gaps.get("scheduled_rows") or [])}
             for m in (gaps.get("missing") or []):
                 fits_text = ""
                 try:

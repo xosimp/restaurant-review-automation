@@ -214,7 +214,8 @@ def sync_to_db(restaurant_id: int) -> dict:
         if not csv_str:
             return {"ok": False, "error": "No shift data returned from Clover"}
         row_count = csv_str.count("\n") - 1
-        save_client_data(restaurant_id, "shifts", csv_str, source="clover")
+        import pos
+        pos.save_synced_shifts(restaurant_id, csv_str, "clover")
         update_restaurant(restaurant_id, {
             "clover_last_synced": datetime.now(timezone.utc).isoformat(),
             "clover_sync_error":  None,

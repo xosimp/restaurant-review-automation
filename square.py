@@ -71,7 +71,10 @@ def _fetch_team_members(restaurant_id: int) -> dict:
         for tm in data.get("team_members", []):
             members[tm["id"]] = {
                 "name": f"{tm.get('given_name','')} {tm.get('family_name','')}".strip() or "Unknown",
-                "job_title": tm.get("assigned_locations", {}).get("assignment_type", "Staff"),
+                # assigned_locations.assignment_type is where the member may
+                # work ("ALL_CURRENT_AND_FUTURE_LOCATIONS"), not their job; the
+                # shift's own wage title is the role (MOD-LAB-6).
+                "job_title": "Staff",
             }
         cursor = data.get("cursor")
         if not cursor:
@@ -156,7 +159,10 @@ def _fetch_daily_sales(restaurant_id: int, start_date: date, end_date: date) -> 
             body["cursor"] = cursor
         resp = requests.post(f"{SQUARE_BASE}/orders/search", headers=headers, json=body, timeout=15)
         if resp.status_code != 200:
-            break
+            # A later page failing (a 429) used to `break` and the partial
+            # sales were saved as whole days (MOD-LAB-7). Fail the sync; the
+            # previous data stays.
+            raise RuntimeError(f"Square orders search returned {resp.status_code} partway through; nothing was saved")
         data = resp.json()
         for order in data.get("orders", []):
             created = _local_date(order.get("created_at", ""), tz)
@@ -214,7 +220,7 @@ def build_shifts_csv(restaurant_id: int, days: int = 60) -> Optional[str]:
             "date":             date_str,
             "day":              day_name,
             "employee":         member["name"],
-            "role":             member["job_title"],
+            "role":             ((s.get("wage") or {}).get("title") or member["job_title"]),
             "shift_start":      start_p.strftime("%H:%M"),
             "shift_end":        end_p.strftime("%H:%M"),
             "scheduled_hours":  hours,
@@ -240,7 +246,8 @@ def sync_to_db(restaurant_id: int) -> dict:
         if not csv_str:
             return {"ok": False, "error": "No shift data returned from Square"}
         row_count = csv_str.count("\n") - 1
-        save_client_data(restaurant_id, "shifts", csv_str, source="square")
+        import pos
+        pos.save_synced_shifts(restaurant_id, csv_str, "square")
         update_restaurant(restaurant_id, {
             "square_last_synced": datetime.now(timezone.utc).isoformat(),
             "square_sync_error":  None,

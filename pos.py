@@ -76,17 +76,29 @@ def sync_restaurant(restaurant_id):
         return {"ok": False, "provider": name, "error": str(e)}
 
 
+POS_SYNC_MAX_SECONDS = 45 * 60
+
+
 def sync_all():
     """Nightly: sync every restaurant that has ANY provider connected —
     not just Toast. One restaurant failing never blocks the rest."""
     from models import get_all_restaurants
     import ops
+    import scheduler
     results = []
-    for r in get_all_restaurants():
-        name, mod = connected_provider(r.id)
+    # Paying or trialling restaurants only: a churned restaurant's POS was
+    # still called every night (MOD-LAB-9). Bounded and resumable like the
+    # review fetch: one long provider call no longer holds the whole pass,
+    # and the next pass starts where this one stopped.
+    live = {r.id: r for r in get_all_restaurants()
+            if (getattr(r, "billing_status", None) or "trial").lower() in ("trial", "active", "past_due")}
+
+    def _one(rid):
+        r = live[rid]
+        name, mod = connected_provider(rid)
         if not mod:
-            continue
-        result = sync_restaurant(r.id)
+            return
+        result = sync_restaurant(rid)
         results.append({"restaurant": r.name, **result})
         if result["ok"]:
             log.info(f"POS sync OK [{name}] {r.name} — {result.get('rows', '?')} rows")
@@ -94,7 +106,57 @@ def sync_all():
             log.warning(f"POS sync failed [{name}] {r.name}: {result.get('error')}")
             ops.capture(Exception(result.get("error", "unknown")),
                         job="pos_sync", context=f"{name} {r.name}")
+    scheduler.resumable_sweep("pos_sync", list(live), _one, max_seconds=POS_SYNC_MAX_SECONDS, job="pos_sync")
     return results
+
+
+def save_synced_shifts(restaurant_id, csv_str, source):
+    """Store a provider's synced window and archive its per-day history.
+
+    Two things every provider did differently or not at all:
+    - A sync covers ~60 days, and saving it replaced shifts_csv outright, so
+      a year of hand-uploaded history was erased by the first nightly sync
+      (MOD-LAB-18). Rows the owner had for dates OUTSIDE the synced window
+      are kept; inside it, the POS is the record.
+    - Only Toast archived labor_daily_history (what YoY and trends read), so
+      Square and Clover restaurants never accumulated history (MOD-LAB-8).
+    Returns the number of shift rows the synced window carried."""
+    import csv as _csv
+    import io as _io
+    from labor import load_shifts
+    from models import get_client_data, save_client_data
+    new_rows = load_shifts(csv_string=csv_str)
+    dates = sorted({r["date"] for r in new_rows if r.get("date")})
+    merged = list(new_rows)
+    if dates:
+        lo, hi = dates[0], dates[-1]
+        prior = (get_client_data(restaurant_id) or {}).get("shifts_csv") or ""
+        if prior.strip():
+            kept = [r for r in load_shifts(csv_string=prior) if not (lo <= (r.get("date") or "") <= hi)]
+            merged = kept + merged
+    merged.sort(key=lambda r: (r.get("date") or "", str(r.get("shift_start") or "")))
+    fields = []
+    for r in merged:
+        for k in r:
+            if k not in fields:
+                fields.append(k)
+    buf = _io.StringIO()
+    w = _csv.DictWriter(buf, fieldnames=fields, extrasaction="ignore")
+    w.writeheader()
+    w.writerows(merged)
+    save_client_data(restaurant_id, "shifts", buf.getvalue(), source=source)
+    try:
+        from labor import analyse_shifts_for_restaurant
+        from models import save_labor_daily_history, save_labor_snapshot
+        analysis = analyse_shifts_for_restaurant(restaurant_id)
+        save_labor_daily_history(restaurant_id, analysis.get("by_day", {}))
+        dr = analysis.get("date_range", {})
+        if dr.get("start") and dr.get("end"):
+            save_labor_snapshot(restaurant_id, dr["start"], dr["end"], analysis["overall_labor_pct"],
+                                analysis["total_labor_cost"], analysis["total_sales"])
+    except Exception as e:
+        log.warning(f"[{source} sync] daily history archive error: {e}")
+    return len(new_rows)
 
 
 def connection_status(restaurant_id):

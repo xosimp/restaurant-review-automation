@@ -188,7 +188,7 @@ def coverage_gaps(restaurant_id, now_local=None, db_path=DB_PATH, restaurant=Non
             continue                      # clocked in
         missing.append({**s, "minutes_late": int((local - due).total_seconds() // 60)})
     return {"available": True, "provider": provider, "missing": missing,
-            "scheduled": len(scheduled), "clocked_in": len(here)}
+            "scheduled": len(scheduled), "scheduled_rows": scheduled, "clocked_in": len(here)}
 
 
 def day_total(restaurant_id, day, db_path=DB_PATH):
