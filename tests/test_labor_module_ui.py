@@ -304,3 +304,41 @@ def test_the_role_donut_legend_gets_the_tiles_full_width():
     assert m and "flex-direction:column" in m.group(1)
     m2 = re.search(r"#role-donut-legend\{([^}]*)\}", css)
     assert m2 and "align-self:stretch" in m2.group(1)
+
+
+# ── the ops tiles' helpers are reachable from where the tiles render ────────
+#
+# esc(), num() and mdy() are defined inside Home's closure; the Time off and
+# Covers renderers are top-level functions that call them by name. Without
+# the export every populated render threw a ReferenceError that the fetch's
+# .catch swallowed, and the tile sat on "Loading…" - invisible to any test
+# that only exercised the empty branch.
+
+def test_labor_ops_renderers_can_reach_the_home_helpers_they_call():
+    src = _src()
+    assert "window.esc=esc;window.num=num;window.mdy=mdy;" in src
+    for fn in ("function lb2LoadTimeOff(){", "function lb2LoadCovers(){"):
+        start = src.index(fn)
+        body = src[start:src.index("\n}\n", start)]
+        assert "mdy(" in body and "esc(" in body, fn
+        # Neither renderer clears its text class any more: the body keeps
+        # .lb2-op-body so the empty sentence is set at the tile's 15px.
+        assert "className=''" not in body, fn
+
+
+def test_labor_ops_tiles_are_cards_with_a_headline_count_at_the_tiles_own_size():
+    src = _src()
+    panel = _labor_panel()
+    assert 'class="lb2-ops" id="lb2-ops"' in panel
+    for tile in ("lb2-timeoff", "lb2-covers"):
+        assert f'<section class="lb2-op' in panel and f'id="{tile}"' in panel
+        assert f'id="{tile}-n"' in panel and f'id="{tile}-flag"' in panel
+    # the old inline 12.5px on the two bodies is what made them read smaller
+    # than everything around them
+    assert 'id="lb2-timeoff-body" class="lb2-op-body"' in panel
+    assert 'id="lb2-covers-body" class="lb2-op-body"' in panel
+    assert 'lb2-timeoff-body" class="hb-empty" style="font-size:12.5px"' not in panel
+    m = re.search(r"\.lb2-op-body\{([^}]*)\}", src)
+    assert m and "font-size:15px" in m.group(1)
+    m = re.search(r"\.lb2-op \.v\{([^}]*)\}", src)
+    assert m and "font-size:32px" in m.group(1) and "Space Grotesk" in m.group(1)

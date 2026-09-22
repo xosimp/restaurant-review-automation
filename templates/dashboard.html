@@ -1616,14 +1616,21 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .fc2-count-row input{width:96px;text-align:right}
 .fc2-count-ft{display:flex;align-items:center;justify-content:flex-end;gap:12px;margin-top:12px}
 .hb-ledger{display:flex;flex-wrap:wrap;gap:8px}
-.hb-ledger span{font-size:13.5px;color:var(--ink2);background:var(--hb-inner);border:1px solid var(--hb-line2);border-radius:999px;padding:6px 12px}
+.hb-ledger span{display:inline-flex;align-items:center;gap:9px;font-size:13.5px;color:var(--ink2);background:var(--hb-inner);border:1px solid var(--hb-line2);border-radius:999px;padding:6px 12px}
 .hb-ledger span .hb-num{color:var(--ink);font-weight:700}
+/* A count that leads the sentence sits on an ember disc (the number badge,
+   shared with Labor's cover chips). A figure mid-sentence stays plain. */
+.hb-ledger span>.hb-num:first-child,.lb2-cov span>.hb-num{display:inline-flex;align-items:center;justify-content:center;min-width:28px;height:28px;padding:0 8px;border-radius:999px;font-size:13.5px;font-weight:700;color:#fff;background-color:var(--ember);background-image:linear-gradient(160deg,var(--ember2),var(--ember) 70%);box-shadow:inset 0 1px 0 rgba(255,255,255,.32),0 6px 14px -6px rgba(200,75,47,.7)}
+.hb-ledger span>.hb-num:first-child{margin:-3px 0 -3px -8px}
 /* stat tiles */
 .hb-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:4px}
 .hb-stat{padding:14px 16px;border-radius:12px;background:var(--hb-inner);border:1px solid var(--hb-line2);min-width:0}
 .hb-stat .k{font-size:11.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3)}
 .hb-stat .v{font-family:'Space Grotesk',sans-serif;font-size:28px;font-weight:600;letter-spacing:-.02em;color:var(--ink);margin-top:7px;line-height:1;white-space:nowrap}
 .hb-stat .v small{font-family:'Apfel Grotezk',sans-serif;font-size:12.5px;font-weight:400;letter-spacing:0;color:var(--ink3);margin-left:4px}
+/* Space Grotesk is the NUMBER face (DESIGN_SYSTEM.md §2): a tile whose
+   value is a sentence ("Nothing yet") is set in the text face. */
+.hb-stat .v.txt{font-family:'Apfel Grotezk',sans-serif;letter-spacing:-.01em}
 .hb-stat .s{font-size:13.5px;color:var(--ink3);margin-top:7px;line-height:1.4}
 .hb-stat.good .v{color:var(--hb-good)}.hb-stat.ember .v{color:var(--ember)}
 /* goal progress */
@@ -2773,6 +2780,13 @@ svg:hover .hb-xh{opacity:1}
     h+='</div></div>';
     var body=document.getElementById('hb-body');if(body)body.innerHTML='<div class="hb-fade">'+h+'</div>';
   }
+  // esc/num/mdy are this closure's, but the Labor ops tiles (lb2LoadTimeOff,
+  // lb2LoadCovers) and the Account decision rows are written at top level
+  // and call them by these names. Unexported, each populated render threw
+  // a ReferenceError that its .catch swallowed and the tile sat on
+  // "Loading…" forever - the empty branches never touched a helper, so
+  // the bug only showed once a restaurant had data.
+  window.esc=esc;window.num=num;window.mdy=mdy;
   window.hbLoad=function(fresh){
     if(_hbLoading)return;_hbLoading=true;
     var url=(_hbScope==='group'?'/api/home/brief/group':'/api/home/brief')+(fresh?'?fresh=1':'');
@@ -3358,6 +3372,34 @@ svg:hover .hb-xh{opacity:1}
    ($19k total, the vs-industry %) at .stat-n's 26px/700. */
 .lb2-sg .v #lb2-radar-n{font-size:26px;font-weight:700}
 .lb2-sg .cap{font-size:13.5px;color:var(--ink3);margin-top:6px;display:flex;justify-content:space-between;gap:10px}
+/* Ops tiles (Time off, Covers): the two things the owner feeds the labor
+   read. Card tier, not a third row of recessed stats — each carries a
+   headline count in the number face, an ember mark, and its own action.
+   Covers gets the ambient light because it is the one that is usually
+   empty and matters most when it is. */
+.lb2-ops{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;margin-top:34px;padding-top:26px;border-top:1px solid var(--hb-line)}
+.lb2-op{position:relative;padding:22px 24px 20px;border-radius:16px;background:var(--surface);border:1px solid var(--hb-line);box-shadow:var(--elev-card);overflow:hidden;transition:box-shadow .25s ease,transform .25s ease}
+[data-theme="dark"] .lb2-op{background:var(--surface-glass),var(--surface);border-color:var(--line-hi)}
+.lb2-op:hover{box-shadow:var(--elev-hero);transform:translateY(-1px)}
+.lb2-op:before{content:'';position:absolute;left:0;top:0;right:0;height:3px;background:linear-gradient(90deg,var(--ember),var(--ember2) 55%,transparent);pointer-events:none}
+.lb2-op.ember:after{content:'';position:absolute;right:-20%;top:-55%;width:62%;height:150%;background:radial-gradient(closest-side,var(--ambient),transparent 72%);filter:blur(16px);pointer-events:none}
+.lb2-op>*{position:relative}
+.lb2-op .hd{display:flex;align-items:center;gap:14px}
+.lb2-op .ic{width:46px;height:46px;border-radius:13px;flex-shrink:0;display:flex;align-items:center;justify-content:center;color:var(--ember);background:var(--sf-ai),var(--surface);border:1px solid var(--sf-ai-line);box-shadow:var(--glow-ember)}
+.lb2-op .ic svg{width:22px;height:22px}
+.lb2-op .hd-t{min-width:0}
+.lb2-op .k{font-size:12.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3)}
+.lb2-op .v{font-family:'Space Grotesk',sans-serif;font-size:32px;font-weight:600;letter-spacing:-.025em;line-height:1;color:var(--ink);margin-top:6px;display:flex;align-items:baseline;gap:9px;flex-wrap:wrap}
+.lb2-op .v small{font-family:'Apfel Grotezk',sans-serif;font-size:14px;font-weight:400;letter-spacing:0;color:var(--ink3)}
+.lb2-op .v.warn .hb-num{color:var(--hb-warn)}.lb2-op .v.good .hb-num{color:var(--hb-good)}.lb2-op .v.ember .hb-num{color:var(--ember)}
+.lb2-op-body{margin-top:16px;font-size:15px;line-height:1.55;color:var(--ink2)}
+.lb2-op-body .ac-row:first-child{border-top:none;padding-top:0}
+.lb2-op-form{margin-top:14px;flex-wrap:wrap}
+.lb2-op .fc2-import{margin-top:10px}
+.lb2-op .cap{font-size:13.5px;color:var(--ink3);margin-top:16px;padding-top:12px;border-top:1px solid var(--hb-line2);display:flex;justify-content:space-between;gap:10px}
+.lb2-cov{display:flex;flex-wrap:wrap;gap:8px}
+.lb2-cov span{display:inline-flex;align-items:center;gap:8px;font-size:13.5px;color:var(--ink2);background:var(--sf-recess);border:1px solid var(--hb-line2);border-radius:999px;padding:3px 12px 3px 3px}
+@media(max-width:820px){.lb2-ops{grid-template-columns:1fr}}
 .lb2-radar{display:block;width:100%;height:210px;margin-top:6px;overflow:visible}
 /* Side-by-side put a 150px ring next to whatever the 3-column grid left
    over for this tile — often under 140px, not enough room for a name plus
@@ -3543,12 +3585,22 @@ svg:hover .hb-xh{opacity:1}
       </div>
       <div class="cap"><span>weekly overspend × 4.33 · overtime at 0.5× on hours over 40</span></div></div>
   </div>
-  <div class="lb2-sig" id="lb2-ops" style="margin-top:14px">
-    <div class="lb2-sg" id="lb2-timeoff"><div class="k"><span>Time off</span><i id="lb2-timeoff-flag"></i></div><div id="lb2-timeoff-body" class="hb-empty" style="font-size:12.5px">Loading&hellip;</div><div class="cap"><span>asked for in the staff portal &middot; an approved range is kept off the next draft</span></div></div>
-    <div class="lb2-sg" id="lb2-covers"><div class="k"><span>Covers</span><i id="lb2-covers-flag"></i></div><div id="lb2-covers-body" class="hb-empty" style="font-size:12.5px">Loading&hellip;</div>
-      <div class="ac-inline" style="margin-top:8px;flex-wrap:wrap"><input type="date" class="ac-input" id="lb2-cov-date" aria-label="Date" style="max-width:150px"><input type="number" class="ac-input ac-num" id="lb2-cov-n" min="0" step="1" placeholder="covers" aria-label="Covers" style="max-width:110px"><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="lb2SaveCover(this)">Save</button></div>
-      <details class="fc2-import" style="margin-top:6px"><summary>Paste a CSV (date,covers)</summary><textarea id="lb2-cov-csv" rows="4" class="ac-input" style="width:100%;font-family:monospace;font-size:12px" placeholder="date,covers&#10;2026-09-19,212"></textarea><div class="fc2-count-ft"><span class="ac-status" id="lb2-cov-status"></span><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="lb2ImportCovers(this)">Import</button></div></details>
-      <div class="cap"><span>the one figure that tells a lean day from a short one &middot; read by the labor analysis</span></div></div>
+  <!-- Ops tiles: what the owner feeds the labor read. Two real cards, each
+       with a headline count, an ember mark and the thing you do about it —
+       time off is answered here, covers are entered here. -->
+  <div class="lb2-ops" id="lb2-ops">
+    <section class="lb2-op" id="lb2-timeoff" aria-label="Time off">
+      <div class="hd"><span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M8 3v4M16 3v4M3 10h18"/><path d="M9 15.5l2 2 4-4"/></svg></span><div class="hd-t"><div class="k">Time off</div><div class="v" id="lb2-timeoff-v"><span class="hb-num" id="lb2-timeoff-n">&ndash;</span><small id="lb2-timeoff-flag">loading</small></div></div></div>
+      <div id="lb2-timeoff-body" class="lb2-op-body">Loading&hellip;</div>
+      <div class="cap"><span>asked for in the staff portal &middot; an approved range is kept off the next draft</span></div>
+    </section>
+    <section class="lb2-op ember" id="lb2-covers" aria-label="Covers">
+      <div class="hd"><span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0"/><circle cx="17" cy="9" r="2.4"/><path d="M15.5 14.2a4.5 4.5 0 0 1 5 4.3"/></svg></span><div class="hd-t"><div class="k">Covers</div><div class="v" id="lb2-covers-v"><span class="hb-num" id="lb2-covers-n">&ndash;</span><small id="lb2-covers-flag">loading</small></div></div></div>
+      <div id="lb2-covers-body" class="lb2-op-body">Loading&hellip;</div>
+      <div class="ac-inline lb2-op-form"><input type="date" class="ac-input" id="lb2-cov-date" aria-label="Date" style="max-width:150px"><input type="number" class="ac-input ac-num" id="lb2-cov-n" min="0" step="1" placeholder="covers" aria-label="Covers" style="max-width:110px"><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="lb2SaveCover(this)">Save</button></div>
+      <details class="fc2-import"><summary>Paste a CSV (date,covers)</summary><textarea id="lb2-cov-csv" rows="4" class="ac-input" style="width:100%;font-family:monospace;font-size:13px" placeholder="date,covers&#10;2026-09-19,212"></textarea><div class="fc2-count-ft"><span class="ac-status" id="lb2-cov-status"></span><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="lb2ImportCovers(this)">Import</button></div></details>
+      <div class="cap"><span>the one figure that tells a lean day from a short one &middot; read by the labor analysis</span></div>
+    </section>
   </div>
   <script>
   var _roleColors=['#c84b2f','#e8956a','#2d6a4f','#b7791f','#6aabff','#9e6bd6','#4dd0e1'];
@@ -9196,18 +9248,23 @@ function in2LoadQueries(){
 }
 function lb2LoadTimeOff(){
   var el=document.getElementById('lb2-timeoff-body');if(!el)return;
+  var nEl=document.getElementById('lb2-timeoff-n'),vEl=document.getElementById('lb2-timeoff-v'),flag=document.getElementById('lb2-timeoff-flag');
   fetch('/api/labor/time-off',{credentials:'same-origin'}).then(function(r){return r.json();}).then(function(d){
-    if(!d||!d.ok){el.textContent='';return;}
-    var rows=d.requests||[],flag=document.getElementById('lb2-timeoff-flag');
-    if(flag)flag.textContent=d.pending?d.pending+' waiting':'';
-    if(!rows.length){el.textContent='No requests. Staff ask for dates in the portal and the answer lands here.';return;}
+    if(!d||!d.ok){el.textContent='';if(flag)flag.textContent='';return;}
+    var rows=d.requests||[],pend=d.pending||0;
+    // The headline is what needs the owner: requests waiting. With none
+    // waiting it is the count answered, so the tile never reads as empty.
+    if(nEl)nEl.textContent=String(pend?pend:rows.length);
+    if(flag)flag.textContent=pend?(pend===1?'request waiting on you':'requests waiting on you'):(rows.length?(rows.length===1?'request, answered':'requests, all answered'):'no requests yet');
+    if(vEl)vEl.className='v'+(pend?' warn':(rows.length?' good':''));
+    if(!rows.length){el.textContent='No requests yet. Staff ask for dates in the portal and the answer lands here.';return;}
     var h='';
     for(var i=0;i<rows.length;i++){var q=rows[i];var when=q.start_date===q.end_date?mdy(q.start_date):(mdy(q.start_date)+' \u2013 '+mdy(q.end_date));
       h+='<div class="ac-row"><div class="l"><b>'+esc(q.employee_name)+'</b><span>'+esc(when)+(q.reason?' \u00b7 '+esc(q.reason):'')+'</span></div><div class="c">';
       if(q.status==='pending')h+='<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-timeoff="'+esc(q.id)+'" data-decision="deny">Deny</button><button type="button" class="cbtn cbtn-primary cbtn-sm" data-timeoff="'+esc(q.id)+'" data-decision="approve">Approve</button>';
       else h+='<span class="ac-chip sm'+(q.status==='approved'?' good':'')+'">'+esc(q.status)+'</span>';
       h+='</div></div>';}
-    el.innerHTML=h;el.className='';
+    el.innerHTML=h;
   }).catch(function(){});
 }
 document.addEventListener('click',function(e){
@@ -9219,14 +9276,18 @@ document.addEventListener('click',function(e){
 });
 function lb2LoadCovers(){
   var el=document.getElementById('lb2-covers-body');if(!el)return;
+  var nEl=document.getElementById('lb2-covers-n'),vEl=document.getElementById('lb2-covers-v'),flag=document.getElementById('lb2-covers-flag');
   fetch('/api/labor/covers',{credentials:'same-origin'}).then(function(r){return r.json();}).then(function(d){
-    if(!d||!d.ok){el.textContent='';return;}
-    var days=d.days||[],flag=document.getElementById('lb2-covers-flag');
-    if(flag)flag.textContent=days.length?days.length+' days on file':'';
-    if(!days.length){el.textContent='No cover counts yet. Without them a lean day and a short-staffed one look the same.';return;}
-    var h='<div style="display:flex;flex-wrap:wrap;gap:6px">';
-    for(var i=0;i<days.length&&i<14;i++)h+='<span class="ac-chip sm">'+esc(mdy(days[i].date))+' <b class="hb-num">'+esc(days[i].covers)+'</b></span>';
-    el.innerHTML=h+'</div>';el.className='';
+    if(!d||!d.ok){el.textContent='';if(flag)flag.textContent='';return;}
+    var days=d.days||[],tot=0,i;
+    for(i=0;i<days.length;i++)tot+=(+days[i].covers||0);
+    if(nEl)nEl.textContent=String(days.length);
+    if(flag)flag.textContent=days.length?('day'+(days.length===1?'':'s')+' on file \u00b7 about '+Math.round(tot/days.length)+' a day'):'no counts yet';
+    if(vEl)vEl.className='v'+(days.length?' ember':'');
+    if(!days.length){el.textContent='No cover counts yet. Without them a lean day and a short-staffed one look the same to the analysis.';return;}
+    var h='<div class="lb2-cov">';
+    for(i=0;i<days.length&&i<14;i++)h+='<span><b class="hb-num">'+esc(days[i].covers)+'</b>'+esc(mdy(days[i].date))+'</span>';
+    el.innerHTML=h+'</div>';
   }).catch(function(){});
 }
 function lb2SaveCover(btn){
