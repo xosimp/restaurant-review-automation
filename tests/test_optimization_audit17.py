@@ -531,15 +531,19 @@ def test_net_sales_reads_the_local_archive_before_the_pos(db_path, monkeypatch):
     live store. profitability_projection calls this twice, and it is reached
     by business_intelligence.gather on every Ask context build."""
     import cogs, pos
+    # Every trading day of the window is archived. This used to seed three
+    # rows across thirty days and call that covered — the edges-only rule
+    # that read a hole as zero sales (MOD-FC-16); a window with holes now
+    # goes to the POS, see test_edge_mod_a_food_cogs.py.
     rid = create_restaurant(Restaurant(name="Archive Co", owner_email="a@x.com"), db_path=db_path)
-    _seed_daily(db_path, rid, [("2026-09-01", 1000.0), ("2026-09-15", 500.0), ("2026-09-30", 700.0)])
+    _seed_daily(db_path, rid, [(f"2026-08-{d:02d}", 100.0) for d in range(1, 32)])
 
     def _must_not_be_called(*a, **k):
         raise AssertionError("the POS was queried for a window the archive covers")
     monkeypatch.setattr(pos, "fetch_business_days", _must_not_be_called)
 
-    total, why = cogs.net_sales_in_window(rid, "2026-09-01", "2026-09-30")
-    assert total == 2200.0
+    total, why = cogs.net_sales_in_window(rid, "2026-08-01", "2026-08-31")
+    assert total == 3100.0
     assert why is None
 
 

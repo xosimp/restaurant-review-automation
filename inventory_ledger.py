@@ -268,11 +268,16 @@ def record_receiving(restaurant_id: int, ingredient_id: int, qty: float,
     with db_conn() as conn:
         if not ingredient_belongs_to(conn, restaurant_id, ingredient_id):
             return 0          # see record_recount's note on the untrusted pair
+        # The delivery carries the price it arrived at, so a later invoice
+        # does not re-price it in COGS (MOD-FC-23).
+        price = conn.execute("SELECT unit_cost FROM ingredients WHERE id=? AND restaurant_id=?",
+                             (ingredient_id, restaurant_id)).fetchone()
         cur = conn.execute(
             "INSERT INTO ingredient_stock_events "
-            "(restaurant_id, ingredient_id, event_type, qty, event_date, source, note) "
-            "VALUES (?,?,?,?,?,?,?)",
-            (restaurant_id, ingredient_id, "receiving", qty, event_date_str, source, note)
+            "(restaurant_id, ingredient_id, event_type, qty, event_date, source, note, unit_cost) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (restaurant_id, ingredient_id, "receiving", qty, event_date_str, source, note,
+             price["unit_cost"] if price else None)
         )
         event_id = cur.lastrowid
         recompute_rollups(restaurant_id, ingredient_id, conn=conn)

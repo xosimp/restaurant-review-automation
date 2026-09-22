@@ -810,6 +810,10 @@ def ensure_columns(db_path: str = DB_PATH):
         # The supplier group's draft hash a PO was sent for — the durable
         # "this exact order already went" claim (record_purchase_order).
         ("purchase_orders", "draft_hash", "TEXT"),
+        # What a delivery cost WHEN it arrived (cogs.purchases_in_window).
+        # Priced at today's unit_cost, an invoice re-priced every past
+        # delivery in the window (MOD-FC-23). NULL on rows from before.
+        ("ingredient_stock_events", "unit_cost", "REAL"),
         # The POS's id for a member of staff, so a comp/void concentration
         # can be named to a person the owner knows (moat audit #9).
         ("staff_contacts", "pos_id", "TEXT"),

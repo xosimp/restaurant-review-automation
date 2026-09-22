@@ -97,7 +97,6 @@ def test_a_window_with_zero_sales_is_unknown_not_a_division(db_path, monkeypatch
 
 # ── A5 cogs #8 / MOD-FC-16: a hole inside the archive's span ────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-16: archive coverage is judged by its edges only; a 21-day hole is summed as zero sales")
 def test_an_archive_with_a_three_week_hole_is_not_read_as_covering_the_window(db_path, monkeypatch):
     rid = _rid(db_path)
     _sales(db_path, rid, [(TODAY - timedelta(days=40), 1000), (TODAY - timedelta(days=27), 1000),
@@ -116,7 +115,6 @@ def test_an_archive_covering_every_day_is_read_without_the_pos(db_path, pos_call
 
 # ── A5 cogs #9 / MOD-FC-17: a window ending today ───────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-17: an archive complete through yesterday never spans a window ending today, so every load calls the POS")
 def test_an_archive_complete_through_yesterday_serves_a_window_ending_today(db_path, pos_calls):
     rid = _rid(db_path)
     today = date.today()
@@ -127,7 +125,6 @@ def test_an_archive_complete_through_yesterday_serves_a_window_ending_today(db_p
 
 # ── A5 cogs #10 / MOD-FC-23: a price change after a delivery ────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-FC-23: purchases are priced at today's unit_cost, so an invoice re-prices past deliveries")
 def test_a_price_change_after_a_delivery_does_not_reprice_that_delivery(db_path):
     rid = _rid(db_path)
     iid = _ingredient(db_path, rid, cost=5.0)
