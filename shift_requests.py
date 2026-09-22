@@ -375,6 +375,9 @@ def _cover(restaurant_id, row, claimant, actor, from_status, check_role, db_path
         write_on(conn, restaurant_id, fresh_hist["id"], "edited", _se._rows_to_csv_text(fresh), saved_by=(actor or name))
         conn.commit()
         out = _get(conn, row["id"])
+    except LookupError:
+        conn.rollback()
+        raise ShiftRequestError("the schedule this shift belongs to is gone")
     except BaseException:
         conn.rollback()
         raise
@@ -497,6 +500,9 @@ def _execute_swap(restaurant_id, req: dict, actor, from_status, db_path, accepte
         write_on(conn, restaurant_id, hist["id"], "edited", _rows_to_csv_text(rows), saved_by=(actor or "swap"))
         conn.commit()
         out = _get(conn, req["id"])
+    except LookupError:
+        conn.rollback()
+        raise ShiftRequestError("the schedule this shift belongs to is gone")
     except BaseException:
         conn.rollback()
         raise

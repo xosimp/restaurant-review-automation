@@ -710,6 +710,16 @@ def ensure_columns(db_path: str = DB_PATH):
         ("schedule_history", "review_json", "TEXT"),
         ("schedule_history", "generation_seconds", "REAL"),
         ("schedule_history", "weather_json", "TEXT"),
+        # The rest of _ensure_history_columns' list, so a fresh database has
+        # them at boot and concurrent first saves never race to ALTER.
+        ("schedule_history", "quality_json", "TEXT"),
+        ("schedule_history", "edited_at", "TEXT"),
+        ("schedule_history", "edited_by", "TEXT"),
+        ("schedule_history", "quality_score", "REAL"),
+        ("schedule_history", "quality_band", "TEXT"),
+        ("schedule_history", "quality_confidence", "TEXT"),
+        ("schedule_history", "what_if_json", "TEXT"),
+        ("schedule_history", "republished_at", "TEXT"),
         # email_log.status existed from the start but nothing could write it:
         # log_email() had no status parameter, so a failed send was recorded
         # as 'sent' like every other row.
@@ -5157,7 +5167,12 @@ def _ensure_history_columns(conn):
                        ("quality_confidence", "TEXT"), ("what_if_json", "TEXT"), ("superseded_by", "INTEGER"),
                        ("republished_at", "TEXT"), ("publishing_at", "TEXT")):
         if name not in have:
-            conn.execute(f"ALTER TABLE schedule_history ADD COLUMN {name} {decl}")
+            try:
+                conn.execute(f"ALTER TABLE schedule_history ADD COLUMN {name} {decl}")
+            except sqlite3.OperationalError as e:
+                # Another connection added it between our read and this write.
+                if "duplicate column" not in str(e).lower():
+                    raise
 
 
 def update_schedule_history_rows(restaurant_id: int, schedule_csv: str,
