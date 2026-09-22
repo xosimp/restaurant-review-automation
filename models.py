@@ -5331,11 +5331,29 @@ def delete_schedule_history(history_id: int, restaurant_id: int, db_path: str = 
     False if the id didn't exist or belonged to a different restaurant.
     """
     conn = get_conn(db_path)
-    cur = conn.execute("DELETE FROM schedule_history WHERE id=? AND restaurant_id=?", (history_id, restaurant_id))
-    conn.commit()
-    deleted = cur.rowcount > 0
-    conn.close()
-    return deleted
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        own = conn.execute("SELECT published_at FROM schedule_history WHERE id=? AND restaurant_id=?",
+                           (history_id, restaurant_id)).fetchone()
+        if not own:
+            conn.rollback()
+            return False
+        # Every generation writes a schedule_versions row, whose foreign key
+        # made this DELETE raise for every modern draft (SCHED-16). A draft's
+        # versions, and the share links of a publish that never completed,
+        # belong to it and go with it. A published week keeps its dependents
+        # (requests, outcomes) and is refused by the routes before this.
+        if not own["published_at"]:
+            conn.execute("DELETE FROM schedule_versions WHERE history_id=? AND restaurant_id=?", (history_id, restaurant_id))
+            conn.execute("DELETE FROM schedule_shares WHERE schedule_id=? AND restaurant_id=?", (history_id, restaurant_id))
+        cur = conn.execute("DELETE FROM schedule_history WHERE id=? AND restaurant_id=?", (history_id, restaurant_id))
+        conn.commit()
+        return cur.rowcount > 0
+    except BaseException:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def get_role_rates(restaurant_id: int, db_path: str = DB_PATH) -> dict:

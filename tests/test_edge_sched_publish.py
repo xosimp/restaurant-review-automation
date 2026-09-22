@@ -269,7 +269,6 @@ def _bearer(db, rid, name="owner", role="client"):
     return {"Authorization": f"Bearer {auth.create_session(uid, db_path=db)}"}
 
 
-@pytest.mark.xfail(strict=True, reason="SCHED-16: every generation writes a schedule_versions row, whose foreign key makes the delete raise")
 def test_a_generated_draft_with_a_version_row_can_be_deleted(db):
     rid = _restaurant(db)
     hid = _save(db, rid, W1, _week_csv(W1))
@@ -278,7 +277,6 @@ def test_a_generated_draft_with_a_version_row_can_be_deleted(db):
     assert _one(db, "SELECT COUNT(*) AS n FROM schedule_history WHERE id=?", hid)["n"] == 0
 
 
-@pytest.mark.xfail(strict=True, reason="SCHED-16: the iOS swipe-to-delete of any modern draft is an HTTP 500")
 def test_the_delete_route_removes_a_generated_draft(db):
     rid = _restaurant(db, module_labor=1)
     hid = _save(db, rid, W1, _week_csv(W1))
@@ -315,7 +313,6 @@ def _post_save(app, headers, rows, **body):
                                   json={"rows": rows, "save": True, **body})
 
 
-@pytest.mark.xfail(strict=True, reason="SCHED-19: the version check and the write are not atomic, so two saves on one base version both land")
 def test_two_saves_on_the_same_base_version_give_one_200_and_one_409(db, save_app, monkeypatch):
     rid = _restaurant(db, module_labor=1)
     hid = _save(db, rid, W1, _week_csv(W1))
@@ -358,7 +355,6 @@ def test_a_save_behind_a_newer_version_is_refused_with_the_diff(db, save_app):
     assert r.status_code == 409 and r.get_json()["conflict"] and r.get_json()["latest_version"] == 2
 
 
-@pytest.mark.xfail(strict=True, reason="SCHED-19: a save with no version skips the stale-save check entirely")
 def test_a_save_without_the_version_it_was_loaded_at_is_refused(db, save_app):
     rid = _restaurant(db, module_labor=1)
     hid = _save(db, rid, W1, _week_csv(W1))
@@ -368,7 +364,6 @@ def test_a_save_without_the_version_it_was_loaded_at_is_refused(db, save_app):
     assert r.status_code in (400, 409)
 
 
-@pytest.mark.xfail(strict=True, reason="SCHED-19: a save with no history_id overwrites the restaurant's newest row, which may be another week")
 def test_a_save_without_a_history_id_never_writes_into_another_week(db, save_app):
     rid = _restaurant(db, module_labor=1)
     w1 = _save(db, rid, W1, _week_csv(W1))
@@ -380,7 +375,6 @@ def test_a_save_without_a_history_id_never_writes_into_another_week(db, save_app
     assert stored_w2 == _week_csv(W2)
 
 
-@pytest.mark.xfail(strict=True, reason="SCHED-19: a lost version append is printed and swallowed after the CSV was already overwritten")
 def test_a_save_whose_version_cannot_be_written_does_not_report_saved(db, save_app, monkeypatch):
     rid = _restaurant(db, module_labor=1)
     hid = _save(db, rid, W1, _week_csv(W1))
@@ -396,7 +390,6 @@ def test_a_save_whose_version_cannot_be_written_does_not_report_saved(db, save_a
     assert r.status_code != 200 or stored == latest["schedule_csv"]
 
 
-@pytest.mark.xfail(strict=True, reason="SCHED-17: a saved edit never updates hours_scheduled, so the over-budget blocker stays")
 def test_an_edit_that_brings_the_week_under_budget_clears_the_budget_blocker(db, save_app):
     rid = _restaurant(db, module_labor=1)
     hid = _save(db, rid, W1, _week_csv(W1), hours=100, budget=50)
@@ -406,7 +399,6 @@ def test_an_edit_that_brings_the_week_under_budget_clears_the_budget_blocker(db,
     assert not any("over the ceiling" in b for b in client_api.publish_blockers(rid, hid))
 
 
-@pytest.mark.xfail(strict=True, reason="SCHED-17: a saved edit that adds hours past the budget raises no blocker")
 def test_an_edit_that_takes_the_week_over_budget_raises_the_budget_blocker(db, save_app):
     rid = _restaurant(db, module_labor=1)
     hid = _save(db, rid, W1, _week_csv(W1[:1]), hours=8, budget=20)
@@ -415,7 +407,6 @@ def test_an_edit_that_takes_the_week_over_budget_raises_the_budget_blocker(db, s
     assert any("over the ceiling" in b for b in client_api.publish_blockers(rid, hid))
 
 
-@pytest.mark.xfail(strict=True, reason="SCHED-18: 'NEEDS REVIEW' stays in the notes after a legal fix, so the blocker never clears")
 def test_a_flagged_row_reassigned_legally_no_longer_blocks_publishing(db, save_app):
     rid = _restaurant(db, module_labor=1)
     flagged = HEADER + (f"\n{W1[0]},Monday,Ana,Server,11:00am,3:00pm,4,"

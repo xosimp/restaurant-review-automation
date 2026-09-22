@@ -26,6 +26,7 @@ import random
 from datetime import datetime, timedelta
 
 import json
+import re
 from flask import Blueprint, request, jsonify
 
 from auth import verify_password, create_session, delete_session, revoke_other_sessions, mobile_login_required, update_last_login
@@ -5818,8 +5819,10 @@ def mobile_score_schedule(current_user):
                     c.roster_names = list(inputs["roster"])
                 violations = _sr.violations(rows, c)
                 review = _sr.summarize(violations)
+            else:
+                violations = None
         except Exception:
-            violations, review = [], None
+            violations, review = None, None
         saved = 0
         # The whole point of an override. Without this the edit lived in the
         # page, the score moved, and publishing read the CSV saved at
@@ -5829,44 +5832,65 @@ def mobile_score_schedule(current_user):
             from permissions import has_permission, SCHEDULE_DRAFT
             if not (current_user.get("is_admin") or has_permission(current_user, SCHEDULE_DRAFT)):
                 return jsonify(ok=False, error="Your login can view labor but not change the schedule."), 403
-            from models import update_schedule_history_rows
+            import schedule_versions as _sv
+            # A save names the week it edits. Without one it used to land on
+            # the restaurant's newest row, which may be a different week
+            # (SCHED-19).
+            try:
+                hid = int(data.get("history_id") or 0)
+            except (TypeError, ValueError):
+                hid = 0
+            if not hid:
+                return jsonify(ok=False, error="Reload the schedule before saving — this copy doesn't say which week it is."), 400
+            try:
+                sent = int(data["version"]) if data.get("version") not in (None, "") else None
+            except (TypeError, ValueError):
+                sent = None
+
+            def _conflict(latest_list):
+                last = latest_list[-1] if latest_list else {}
+                return jsonify(ok=False, conflict=True, latest_version=last.get("version"),
+                               saved_by=last.get("saved_by"), lines=last.get("lines") or [],
+                               error=f"{last.get('saved_by') or 'Somebody'} saved this week after you opened it. Reload to see their changes."), 409
             # Two managers editing the same week: the second save must not
             # silently overwrite the first. The page sends the version it
-            # loaded; a newer one on file refuses and hands back the diff.
-            import schedule_versions as _sv
-            if data.get("history_id") and data.get("version") not in (None, ""):
-                latest = _sv.list_versions(rid, int(data["history_id"]))
-                try:
-                    sent = int(data["version"])
-                except (TypeError, ValueError):
-                    sent = None
-                if latest and sent is not None and latest[-1]["version"] > sent:
-                    return jsonify(ok=False, conflict=True, latest_version=latest[-1]["version"],
-                                   saved_by=latest[-1]["saved_by"], lines=latest[-1]["lines"],
-                                   error=f"{latest[-1]['saved_by'] or 'Somebody'} saved this week after you opened it. Reload to see their changes."), 409
+            # loaded; a newer one on file, or none sent for a week that has
+            # versions, refuses and hands back the diff.
+            latest = _sv.list_versions(rid, hid)
+            if latest and (sent is None or latest[-1]["version"] > sent):
+                return _conflict(latest)
+            _mark_review_rows(rows, violations)
             csv_text = _rows_to_csv(rows)
-            saved = update_schedule_history_rows(
-                rid, csv_text, quality=quality,
-                history_id=data.get("history_id"),
-                edited_by=current_user.get("username") or current_user.get("email"))
-            if saved:
-                try:
-                    import schedule_versions as _sv
-                    _sv.append(rid, saved, "edited", csv_text, quality=quality,
-                               saved_by=current_user.get("username") or current_user.get("email"))
-                    from models import _ensure_history_columns, get_conn as _gc2
-                    conn2 = _gc2()
-                    try:
-                        _ensure_history_columns(conn2)
-                        conn2.execute("UPDATE schedule_history SET review_json=? WHERE id=? AND restaurant_id=?",
-                                      (json.dumps(review) if review else None, saved, rid))
-                        conn2.commit()
-                    finally:
-                        conn2.close()
-                    _log_account_event(rid, "schedule_edited", current_user,
-                                       detail=f"history {saved}: {len(rows)} rows")
-                except Exception as _vx:
-                    print(f"[schedule] edit version failed: {_vx}")
+            who = current_user.get("username") or current_user.get("email")
+            # The week, its version row and its review are one write: the
+            # version check is repeated inside the lock, so two saves on one
+            # base version give one 200 and one 409, and a version that
+            # cannot be written leaves the week as it was (SCHED-19).
+            from models import get_conn as _gc2
+            conn2 = _gc2()
+            try:
+                conn2.execute("BEGIN IMMEDIATE")
+                _sv.write_on(conn2, rid, hid, "edited", csv_text, saved_by=who, quality=quality,
+                             expected_version=(sent if latest else None))
+                conn2.execute("UPDATE schedule_history SET review_json=? WHERE id=? AND restaurant_id=?",
+                              (json.dumps(review) if review else None, hid, rid))
+                conn2.commit()
+                saved = hid
+            except _sv.StaleVersion:
+                conn2.rollback()
+                return _conflict(_sv.newest_version(rid, hid))
+            except LookupError:
+                conn2.rollback()
+                return jsonify(ok=False, error="That week is gone — reload the schedule."), 404
+            except Exception:
+                conn2.rollback()
+                raise
+            finally:
+                conn2.close()
+            try:
+                _log_account_event(rid, "schedule_edited", current_user, detail=f"history {saved}: {len(rows)} rows")
+            except Exception:
+                pass
                 # A week staff were already sent: the people whose shifts
                 # changed are told, and the week is stamped as changed since
                 # it went out. Nobody else hears about it.
@@ -5878,7 +5902,7 @@ def mobile_score_schedule(current_user):
                     print(f"[schedule] re-notify failed: {_nx}")
         from models import capability_version
         return jsonify(ok=True, quality=quality, what_if=what_if, saved=bool(saved),
-                       violations=violations, review=review,
+                       violations=violations or [], review=review,
                        history_id=saved or None,
                        changed_since_sent=locals().get("_resp_changed"),
                        capability_version=capability_version(rid)), 200
@@ -5888,6 +5912,22 @@ def mobile_score_schedule(current_user):
 
 _SCHEDULE_COLS = ("date", "day", "employee", "role", "shift_start", "shift_end",
                   "scheduled_hours", "notes")
+
+_REVIEW_MARK = re.compile(r"\s*(?:—\s*)?NEEDS REVIEW\b.*$", re.S)
+
+
+def _mark_review_rows(rows, violations):
+    """A NEEDS REVIEW mark generation wrote comes off a row the sweep no
+    longer faults: a row fixed legally used to keep its mark, so the publish
+    blocker never cleared (SCHED-18). A row still in breach keeps its mark,
+    and a new breach is named by the review saved with the week (the
+    blocker reads both). Only when the sweep ran; without it nothing moves."""
+    if violations is None:
+        return
+    still = {v["index"] for v in violations if v.get("hard") and v.get("index") is not None}
+    for i, r in enumerate(rows):
+        if i not in still and "NEEDS REVIEW" in (r.get("notes") or ""):
+            r["notes"] = _REVIEW_MARK.sub("", r.get("notes") or "").strip()
 
 
 def _notify_changed_rows(rid, history_id, csv_text, actor):

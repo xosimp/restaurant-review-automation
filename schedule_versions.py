@@ -197,6 +197,15 @@ def write_on(conn, restaurant_id, history_id, reason, schedule_csv, saved_by=Non
 
 
 def list_versions(restaurant_id, history_id, db_path=DB_PATH) -> list:
+    return _versions(restaurant_id, history_id, db_path)
+
+
+def newest_version(restaurant_id, history_id, db_path=DB_PATH) -> list:
+    """[the latest version, as list_versions shapes it], or []."""
+    return _versions(restaurant_id, history_id, db_path)[-1:]
+
+
+def _versions(restaurant_id, history_id, db_path=DB_PATH) -> list:
     conn = get_conn(db_path)
     try:
         rows = conn.execute("SELECT id, version, reason, saved_by, created_at, diff_json, quality_json FROM "

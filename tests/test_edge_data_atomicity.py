@@ -303,7 +303,6 @@ def test_a_checkout_whose_user_creation_fails_can_be_retried_by_stripe(db_path, 
 
 # ── DATA-57 · schedule edit save ────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="DATA-57: the edit commits, then the version row is appended on its own connection and a failure is only printed, so the conflict check cannot see the save")
 def test_an_edit_and_its_version_commit_together(db_path, monkeypatch):
     rid = _restaurant(db_path)
     owner = create_user(rid, "mgr", "mgr@atomic.test", "pw-atomic-1", db_path=db_path)
