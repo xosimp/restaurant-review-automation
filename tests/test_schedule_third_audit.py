@@ -92,7 +92,9 @@ def test_a_single_call_that_skips_a_day_goes_to_parts(monkeypatch):
         [(d, "Ana") for d in WEEK[4:]],
     ])
     monkeypatch.setattr(labor, "generate_optimized_schedule", fake)
-    out = se._generate_in_parts({}, [], [("Ana", "Server")], {"tz_name": None})
+    # Two people: a one-person roster may legitimately leave a day off
+    # (SCHED-1), two can cover seven days, so a skipped Sunday is a miss.
+    out = se._generate_in_parts({}, [], [("Ana", "Server"), ("Bob", "Server")], {"tz_name": None})
     assert se._missing_dates(out["schedule_csv"], WEEK) == [] and out["chunked"] == 2
     assert out["slices"][0]["missing"] == [WEEK[6]]
 

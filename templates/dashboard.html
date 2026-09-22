@@ -17061,6 +17061,20 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       +'<span class="lbl">night</span><input type="number" min="0" max="20" step="1" class="ac-input ac-num" data-floor="night" value="'+(f.night==null?'':esc(f.night))+'" placeholder="0" aria-label="'+esc(role)+' nights"'+(ro?' disabled':'')+'>'
       +'<span class="ovs">'+ovs+(ro?'':'<span class="rul-add"><select class="ac-select" data-ov-newday aria-label="Day">'+_lbOpts(_RV_DAYS,'Saturday')+'</select><select class="ac-select" data-ov-newpart aria-label="Shift"><option value="morning">morning</option><option value="night" selected>night</option></select><input type="number" class="ac-input ac-num" data-ov-newn min="0" max="20" step="1" placeholder="n" aria-label="How many" style="width:56px"><button type="button" class="cbtn cbtn-soft cbtn-sm" data-ov-add="1">+ day</button></span>')+'</span></div>';
   }
+  function _rulClosedChip(iso,ro){
+    return '<span class="rul-ov" data-cdate="'+esc(iso)+'">'+mdy(iso)
+      +(ro?'':'<button type="button" class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" data-cdate-x="1" title="Remove" aria-label="Remove this date">✕</button>')+'</span>';
+  }
+  window.addClosedDate=function(){
+    var inp=document.getElementById('rul-cdate-new'),box=document.getElementById('rul-closed-dates');if(!inp||!box)return;
+    var v=(inp.value||'').trim();if(!/^\d{4}-\d{2}-\d{2}$/.test(v)){toast('Pick a date','error');return;}
+    if(box.querySelector('[data-cdate="'+v+'"]'))return;
+    box.insertAdjacentHTML('beforeend',_rulClosedChip(v,false));inp.value='';
+  };
+  document.addEventListener('click',function(ev){
+    var t=ev.target;if(!t||!t.getAttribute||t.getAttribute('data-cdate-x')===null)return;
+    var chipEl=t.parentNode;if(chipEl&&chipEl.parentNode)chipEl.parentNode.removeChild(chipEl);
+  });
   window.renderRules=function(){
     var d=_rules,el=document.getElementById('rules-body');if(!d||!el)return;
     var ro=!d.can_edit,rules=d.rules||{},defs=d.defaults||{},floors=d.role_floors||{},roles=_rulRoles(),i,h='';
@@ -17086,6 +17100,14 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     h+='</div>';
     h+='<div class="rul-sw"><label class="ac-switch"><input type="checkbox" id="rul-mod"'+(rules.manager_on_duty?' checked':'')+(ro?' disabled':'')+'><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label><div class="t">Manager on duty<small>Every shift needs a manager or keyholder on it; the rules check names the ones without.</small></div></div>';
     h+='<div class="rul-sw"><label class="ac-switch"><input type="checkbox" id="rul-trim"'+(d.trim_to_budget?' checked':'')+(ro?' disabled':'')+'><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label><div class="t">Trim to budget<small>When the draft runs over the hours budget, remove the lowest-value shifts until it fits. Off leaves the overage for you to see.</small></div></div>';
+    // Closed days: weekdays and dates the restaurant does not trade. The
+    // draft writes no shifts on them and the week is not failed for it.
+    var cl=d.closures||{},cdates=cl.closed_dates||[];
+    h+='<div class="lb2-sub">Closed<small>days you do not open; the draft leaves them empty</small></div><div class="chip-tog" id="rul-closed">'+_chipTog(['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'],cl.closed_weekdays||[],'data-closed',ro)+'</div>';
+    h+='<div id="rul-closed-dates" style="margin-top:8px">';
+    for(i=0;i<cdates.length;i++)h+=_rulClosedChip(cdates[i],ro);
+    h+='</div>';
+    if(!ro)h+='<div class="lb2-form"><div class="ac-field"><label>Closed on a date</label><input type="date" class="ac-input" id="rul-cdate-new" aria-label="A date you are closed"></div><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="addClosedDate()">Add date</button></div>';
     h+='<div class="lb2-sub">Role floors<small>how many of each role a morning and a night needs</small></div><div id="rul-floors">';
     if(!roles.length)h+='<div class="hb-empty">Roles appear once your shifts carry one, or add one below.</div>';
     for(i=0;i<roles.length;i++)h+=_rulFloorHtml(roles[i],floors[roles[i]]||{},ro);
@@ -17119,7 +17141,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
   };
   // Chip toggles inside the rules card flip locally; Save writes them.
   document.addEventListener('click',function(ev){
-    var t=ev.target;while(t&&t!==document.body&&!(t.getAttribute&&(t.getAttribute('data-cert')!==null||t.getAttribute('data-foh')!==null||t.getAttribute('data-patio')!==null)))t=t.parentNode;
+    var t=ev.target;while(t&&t!==document.body&&!(t.getAttribute&&(t.getAttribute('data-cert')!==null||t.getAttribute('data-foh')!==null||t.getAttribute('data-patio')!==null||t.getAttribute('data-closed')!==null)))t=t.parentNode;
     if(!t||!t.getAttribute||t.disabled)return;
     var body=document.getElementById('rules-body');if(!body||!body.contains(t))return;
     var on=t.className.indexOf(' on')<0;
@@ -17179,6 +17201,9 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     body.role_requirements=reqs;
     body.foh_roles=_chipVals(document.getElementById('rul-foh'),'data-foh');
     body.patio_roles=_chipVals(document.getElementById('rul-patio'),'data-patio');
+    body.closed_weekdays=_chipVals(document.getElementById('rul-closed'),'data-closed');
+    var cds=document.querySelectorAll('#rul-closed-dates [data-cdate]'),cdl=[];for(i=0;i<cds.length;i++)cdl.push(cds[i].getAttribute('data-cdate'));
+    body.closed_dates=cdl;
     var prov=document.getElementById('rul-res-prov'),key=document.getElementById('rul-res-key');
     if(prov){body.reservation_provider=prov.value||null;if(key&&key.value.trim())body.reservation_api_key=key.value.trim();}
     var done=busy(btn,'Saving…'),st=document.getElementById('rules-status');

@@ -121,9 +121,77 @@ def _with_pack(out: dict, restaurant, owner_set: dict) -> dict:
         return out
 
 
+WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+_CLOSURE_KEYS = ("closed_weekdays", "closed_dates")
+
+
+def closures(restaurant) -> dict:
+    """{"closed_weekdays": ["Monday"], "closed_dates": ["2026-12-25"]} — the
+    days the owner says the restaurant does not trade. Stored beside the
+    compliance rules; a restaurant closed Mondays could never generate a
+    week before this existed, because every date had to carry shifts."""
+    if not hasattr(restaurant, "compliance_json"):
+        from models import get_restaurant
+        restaurant = get_restaurant(restaurant)
+    try:
+        data = json.loads(getattr(restaurant, "compliance_json", None) or "{}") or {}
+    except Exception:
+        data = {}
+    days = [d for d in (data.get("closed_weekdays") or []) if d in WEEKDAYS]
+    dates = sorted({str(d)[:10] for d in (data.get("closed_dates") or []) if _iso(str(d)[:10])})
+    return {"closed_weekdays": days, "closed_dates": dates}
+
+
+def _iso(value):
+    try:
+        datetime.strptime(value, "%Y-%m-%d")
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
+def save_closures(restaurant_id, closed_weekdays=None, closed_dates=None, db_path=DB_PATH) -> dict:
+    from models import get_restaurant, update_restaurant
+    r = get_restaurant(restaurant_id, db_path)
+    try:
+        data = json.loads(getattr(r, "compliance_json", None) or "{}") or {}
+    except Exception:
+        data = {}
+    if closed_weekdays is not None:
+        wanted = {str(d).strip().capitalize() for d in closed_weekdays or []}
+        data["closed_weekdays"] = [d for d in WEEKDAYS if d in wanted]
+        if len(data["closed_weekdays"]) == 7:
+            raise ValueError("A restaurant closed every day of the week has nothing to schedule.")
+    if closed_dates is not None:
+        data["closed_dates"] = sorted({str(d).strip()[:10] for d in closed_dates or [] if _iso(str(d).strip()[:10])})[-120:]
+    update_restaurant(restaurant_id, {"compliance_json": json.dumps(data) if data else None}, db_path=db_path)
+    return closures(get_restaurant(restaurant_id, db_path))
+
+
+def closed_in(restaurant, week_dates) -> set:
+    cl = closures(restaurant)
+    out = set()
+    for d in week_dates or []:
+        try:
+            wd = datetime.strptime(d, "%Y-%m-%d").strftime("%A")
+        except (TypeError, ValueError):
+            continue
+        if wd in cl["closed_weekdays"] or d in cl["closed_dates"]:
+            out.add(d)
+    return out
+
+
 def save_compliance(restaurant_id, data: dict, db_path=DB_PATH) -> dict:
-    from models import update_restaurant
+    from models import update_restaurant, get_restaurant as _gr
     clean = {}
+    # The closures live in the same JSON; saving the rules must keep them.
+    try:
+        _prev = json.loads(getattr(_gr(restaurant_id, db_path), "compliance_json", None) or "{}") or {}
+    except Exception:
+        _prev = {}
+    for k in _CLOSURE_KEYS:
+        if _prev.get(k):
+            clean[k] = _prev[k]
     for k, (lo, hi) in _BOUNDS.items():
         if k in (data or {}):
             v = data[k]
@@ -269,6 +337,7 @@ class Constraints:
     open_times: dict = field(default_factory=dict)
     close_times: dict = field(default_factory=dict)
     role_buffers: dict = field(default_factory=dict)
+    closed_dates: set = field(default_factory=set)         # iso dates the restaurant does not trade this week
 
     # ── lookups ────────────────────────────────────────────────────────
     def bucket(self, date_str: str) -> str:
@@ -402,6 +471,10 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
     c.section_cap = int(getattr(restaurant, "section_count", 0) or 0)
     c.role_floors = role_floors(restaurant)
     c.open_times = _load_json(getattr(restaurant, "open_times_json", None), {})
+    try:
+        c.closed_dates = closed_in(restaurant, c.week_dates)
+    except Exception:
+        c.closed_dates = set()
     try:
         c.close_times = get_close_times(restaurant_id, db_path) or {}
         c.role_buffers = get_role_close_buffers(restaurant_id, db_path) or {}
@@ -823,6 +896,9 @@ def prompt_block(c: Constraints) -> str:
     will check afterwards, so the draft has every chance to be right."""
     comp = c.compliance
     lines = []
+    if c.closed_dates:
+        _pretty = ", ".join(datetime.strptime(d, "%Y-%m-%d").strftime("%A %-m/%-d") for d in sorted(c.closed_dates))
+        lines.append(f"- The restaurant is CLOSED on {_pretty}. Write no shifts at all on those dates.")
     if comp.get("min_rest_hours"):
         lines.append(f"- At least {float(comp['min_rest_hours']):g} hours between one shift's end and the same person's next start. No closing then opening.")
     if comp.get("max_shift_hours"):

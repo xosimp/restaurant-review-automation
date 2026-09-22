@@ -951,6 +951,7 @@ def _do_compliance_get(u):
             "foh_roles": _sr._load_json(getattr(r, "foh_roles_json", None), []) or ["Server"],
             "patio_roles": _sr._load_json(getattr(r, "patio_roles_json", None), []),
             "trim_to_budget": bool(int(getattr(r, "trim_to_budget", 1) or 0)),
+            "closures": _sr.closures(r),
             "certifications": list(__import__("staff_settings").CERTIFICATIONS),
             "reservation_feed": reservation_feeds.status(r), "reservation_providers": reservation_feeds.available()}, 200
 
@@ -967,6 +968,13 @@ def _do_compliance_set(u):
     if "role_floors" in b:
         floors = b.get("role_floors") if isinstance(b.get("role_floors"), dict) else {}
         out["role_floors"] = _sr.save_role_floors(_rid(u), floors)
+    if "closed_weekdays" in b or "closed_dates" in b:
+        cw = b.get("closed_weekdays") if isinstance(b.get("closed_weekdays"), list) else None
+        cd = b.get("closed_dates") if isinstance(b.get("closed_dates"), list) else None
+        try:
+            out["closures"] = _sr.save_closures(_rid(u), closed_weekdays=cw, closed_dates=cd)
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}, 400
     import json as _j
     from models import update_restaurant
     settings = {}

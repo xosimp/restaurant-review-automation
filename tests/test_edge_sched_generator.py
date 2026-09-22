@@ -121,7 +121,6 @@ def _history(weeks_back, weekdays):
 
 # ── SCHED-1: a day the restaurant does not trade ────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="SCHED-1: a closed weekday is retried as a missing day and the week fails after 3 paid calls")
 def test_a_restaurant_that_never_trades_mondays_gets_a_six_day_week_in_one_call(monkeypatch):
     _pin_week(monkeypatch)
     fake = _fake_generator(WEEK[1:])                      # the model rightly writes no Monday
@@ -133,7 +132,6 @@ def test_a_restaurant_that_never_trades_mondays_gets_a_six_day_week_in_one_call(
     assert "WROTE NO SHIFTS" not in fake.calls[0]["extra"]
 
 
-@pytest.mark.xfail(strict=True, reason="SCHED-1: a one-person roster open 7 days must leave a legal day off, which fails the week")
 def test_a_one_person_roster_open_every_day_keeps_its_legal_day_off(monkeypatch):
     _pin_week(monkeypatch)
     fake = _fake_generator(WEEK[:6])                      # six days: max_consecutive_days is 6
@@ -144,7 +142,6 @@ def test_a_one_person_roster_open_every_day_keeps_its_legal_day_off(monkeypatch)
     assert se._missing_dates(out["schedule_csv"], WEEK) == [WEEK[6]]
 
 
-@pytest.mark.xfail(strict=True, reason="SCHED-1: a holiday closure date inside the week fails the whole generation")
 def test_a_holiday_closure_inside_the_week_is_not_a_failed_generation(monkeypatch):
     xmas_week = ["2026-12-21", "2026-12-22", "2026-12-23", "2026-12-24", "2026-12-25", "2026-12-26", "2026-12-27"]
     monkeypatch.setattr(se, "_week_monday", lambda today, ws=None: dt.datetime(2026, 12, 21))

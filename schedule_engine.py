@@ -359,6 +359,8 @@ def _build_schedule_result(restaurant_id, week_start=None):
         extra_blocks=extra_blocks or None,
         projected_revenue_override=revenue.get("value"),
         week_start=monday.strftime("%Y-%m-%d"),
+        closed_dates=sorted(constraints.closed_dates),
+        max_consecutive_days=constraints.compliance.get("max_consecutive_days"),
     )
     result = _generate_in_parts(analysis, shifts, roster_pairs, _gen_kwargs)
     result["holiday_lift"] = holiday
@@ -393,12 +395,66 @@ def _build_schedule_result(restaurant_id, week_start=None):
     return result
 
 
+# Days a restaurant commonly closes. When the model writes nothing for one
+# of these, that is a closure, not a missed day.
+_CLOSURE_HOLIDAYS = ("Thanksgiving", "Christmas Day")
+
+
+def _trading_weekdays(shifts) -> set:
+    """Weekdays this restaurant actually trades, from its own shift history:
+    a weekday counts when it carried shifts in at least half the weeks on
+    file. No history means no opinion (every weekday trades)."""
+    from datetime import datetime as _d
+    weeks, by_wd = set(), {}
+    for sh in shifts or []:
+        try:
+            d = _d.strptime(str(sh.get("date") or "")[:10], "%Y-%m-%d").date()
+        except ValueError:
+            continue
+        wk = d.isocalendar()[:2]
+        weeks.add(wk)
+        by_wd.setdefault(d.weekday(), set()).add(wk)
+    if len(weeks) < 2:
+        return set(range(7))
+    return {wd for wd, w in by_wd.items() if len(w) * 2 >= len(weeks)}
+
+
+def _acceptable_missing(missing, trading_dates, roster_pairs, max_days) -> bool:
+    """Whether dates the model left empty are a legitimate week: a closure
+    holiday, or the day off a roster too small to cover every trading day
+    has to take. Anything else is a missed day and fails as before."""
+    from schedule_economics import _holiday_dates
+    rest = []
+    for d in missing:
+        try:
+            name = _holiday_dates(int(d[:4])).get(d)
+        except Exception:
+            name = None
+        if name not in _CLOSURE_HOLIDAYS:
+            rest.append(d)
+    people = len({n for n, _r in (roster_pairs or []) if n})
+    if people:
+        capacity = people * int(max_days or 6)
+        if len(rest) <= max(0, len(trading_dates) - capacity):
+            return True
+    return not rest
+
+
 def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
     """One call for the week; if the response ran out of room, the week is
-    written again in parts and merged. A big roster starts in parts."""
+    written again in parts and merged. A big roster starts in parts.
+
+    Only trading days are required to carry shifts: the owner's closed
+    weekdays and dates, weekdays the restaurant's own history shows it never
+    trades, a Thanksgiving or Christmas the model leaves empty, and the day
+    off a one-person roster must take. Every date used to be required, so a
+    restaurant closed Mondays failed every week after three paid calls."""
     from labor import generate_optimized_schedule
     from time_utils import restaurant_now
-    from datetime import timedelta as _t0
+    from datetime import timedelta as _t0, datetime as _dt0
+    kwargs = dict(kwargs)
+    closed = set(kwargs.pop("closed_dates", None) or [])
+    max_days = kwargs.pop("max_consecutive_days", None) or 6
     parts = 1
     expected = _expected_rows(shifts, roster_pairs)
     if expected > CHUNK_ROWS_PER_CALL:
@@ -408,15 +464,24 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
     today0 = restaurant_now(kwargs.get("tz_name"), naive=True)
     monday0 = _week_monday(today0, kwargs.get("week_start"))
     all_dates = [(monday0 + _t0(days=i)).strftime("%Y-%m-%d") for i in range(7)]
+    trading_wd = _trading_weekdays(shifts)
+    open_dates = [d for d in all_dates if d not in closed]
+    trading_dates = [d for d in open_dates if _dt0.strptime(d, "%Y-%m-%d").weekday() in trading_wd]
+
+    def _real_missing(csv_text, dates):
+        miss = _missing_dates(csv_text, [d for d in dates if d in trading_dates])
+        return [] if miss and _acceptable_missing(miss, trading_dates, roster_pairs, max_days) else miss
+
     if parts == 1:
         result = generate_optimized_schedule(analysis, shifts, **kwargs)
-        missing = _missing_dates(result.get("schedule_csv", ""), all_dates)
+        missing = _real_missing(result.get("schedule_csv", ""), all_dates)
         slices_log.append({"dates": all_dates, "rows_by_date": _rows_by_date(result.get("schedule_csv", "")),
                            "seconds": result.get("generation_seconds"), "stop_reason": result.get("stop_reason"),
                            "missing": missing})
         if not result.get("truncated") and not missing:
             result["chunked"] = 1
             result["slices"] = slices_log
+            result["closed_dates"] = sorted(closed | set(_missing_dates(result.get("schedule_csv", ""), all_dates)))
             return result
         # Ran out of room, or wrote nothing for a day: the week is written in
         # parts instead. A day with no draft must never be filled in by a
@@ -429,7 +494,7 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
     from time_utils import restaurant_now
     today = restaurant_now(kwargs.get("tz_name"), naive=True)
     monday = _week_monday(today, kwargs.get("week_start"))
-    week_dates = [(monday + _t(days=i)).strftime("%Y-%m-%d") for i in range(7)]
+    week_dates = [d for d in ((monday + _t(days=i)).strftime("%Y-%m-%d") for i in range(7)) if d not in closed]
     # Past three date slices the roster itself is split by department
     # (kitchen and front of house), each department generated in date
     # slices with the other's rows in view. That is what a 250-person
@@ -440,6 +505,8 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
         # department first, then each department by dates.
         departments = list(_departments(roster_pairs).items()) or [None]
         parts = min(3, max(2, -(-expected // (len(departments) * CHUNK_ROWS_PER_CALL))))
+    if not week_dates:
+        raise ValueError("The restaurant is marked closed every day of this week, so there is nothing to schedule.")
     size = -(-len(week_dates) // parts)
     slices = [week_dates[i:i + size] for i in range(0, len(week_dates), size)]
     merged = None
@@ -462,7 +529,7 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
             if part.get("truncated"):
                 raise ValueError("The week is too long to generate even in parts — trim the roster or split the "
                                  "restaurant into departments, then try again.")
-            missing = _missing_dates(part.get("schedule_csv", ""), sl)
+            missing = _real_missing(part.get("schedule_csv", ""), sl)
             if missing:
                 # One retry, told exactly which days it skipped. A second
                 # miss fails the generation: a week with no Saturday draft
@@ -477,7 +544,7 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
                     ". Every date in this request must have a full day of shifts across every role that normally works it.")
                 part = generate_optimized_schedule(analysis, shifts, week_slice=sl, prior_rows=list(prior_rows), **rkwargs)
                 calls += 1
-                missing = _missing_dates(part.get("schedule_csv", ""), sl)
+                missing = _real_missing(part.get("schedule_csv", ""), sl)
                 if missing or part.get("truncated"):
                     raise ValueError("The model wrote no shifts for " + ", ".join(_pretty_dates(missing or sl)) +
                                      " twice; the week was not saved. Try again in a minute.")
@@ -505,6 +572,7 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
     merged["chunked"] = calls
     merged["departments"] = [d[0] for d in departments if d]
     merged["slices"] = slices_log
+    merged["closed_dates"] = sorted(closed | set(_missing_dates(merged["schedule_csv"], all_dates)))
     return merged
 
 
@@ -1466,7 +1534,13 @@ def _ensure_role_floors(preview_rows: list, week_dates: list, week_days: list, r
 
     rows_added = 0
     added_dates = {}
+    # A closed date, or one the generation accepted as not trading, gets no
+    # floor rows: a floor is a minimum for a day that trades, never a reason
+    # to open on one that does not.
+    _closed = set(getattr(constraints, "closed_dates", None) or ())
     for date, day_name in zip(week_dates, week_days):
+        if date in _closed:
+            continue
         for role_name, spec in floors.items():
             key = role_name.strip().lower()
             for part, window in _daypart_windows(constraints, day_name):
@@ -2021,6 +2095,8 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                 _constraints.roster_names = list(result["roster"] or [])
                 _constraints.active = {str(n).strip().lower() for n in (result["roster"] or []) if n}
 
+            # Closed dates and days the generation accepted as not trading.
+            _constraints.closed_dates = set(getattr(_constraints, "closed_dates", None) or ()) | set(result.get("closed_dates") or ())
             preview_rows, pizza_rows_added, pizza_added_dates = _ensure_role_floors(
                 preview_rows, result.get("week_dates", []), result.get("week_days", []),
                 restaurant_id, _close_times, _role_close_buffers,
