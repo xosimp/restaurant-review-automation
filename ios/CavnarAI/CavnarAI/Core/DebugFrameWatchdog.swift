@@ -21,10 +21,6 @@ enum DebugFrameWatchdog {
     private static var mainThread: thread_t = 0
     private static var stackLo: UInt = 0
     private static var stackHi: UInt = 0
-    // Preallocated so nothing allocates while the main thread is suspended
-    // (it may hold the malloc lock).
-    private static let frameBuffer = UnsafeMutablePointer<UInt>.allocate(capacity: 256)
-
     static func now() -> Double { CACurrentMediaTime() - t0 }
 
     static func mark(_ label: String) {

@@ -131,18 +131,6 @@ extension View {
 
 struct CavnarPrimaryButtonStyle: ButtonStyle {
     var isDisabled: Bool = false
-    // Set by a width-matching container so this button's VISUAL surface can be
-    // forced to match a sibling's width. Has to be applied HERE, inside
-    // makeBody before .cavnarPremiumButtonSurface draws the background/
-    // border/clipShape — not as a plain .frame() bolted on from outside
-    // .buttonStyle() at the call site. That outside-the-style placement is
-    // exactly what silently broke both earlier attempts at this: a .frame()
-    // applied after .buttonStyle() only resizes Button's abstract layout/
-    // hit-test box, while the actual painted background is already sized
-    // to the label's own hugged width inside makeBody and doesn't stretch
-    // to match it. Applying the width in here, before the surface is
-    // composed, means the surface itself is what gets drawn wide.
-    var matchedWidth: CGFloat? = nil
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -155,7 +143,6 @@ struct CavnarPrimaryButtonStyle: ButtonStyle {
             // .frame(maxWidth: .infinity) to its own label content.
             .padding(.horizontal, 22)
             .padding(.vertical, 14)
-            .frame(width: matchedWidth)
             .foregroundStyle(.white)
             .cavnarPremiumButtonSurface(isDisabled: isDisabled)
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
@@ -179,16 +166,11 @@ struct CavnarPrimaryButtonStyle: ButtonStyle {
 /// gesture-driven primary one is worth avoiding here.
 struct CavnarSecondaryButtonStyle: ButtonStyle {
     var isDisabled: Bool = false
-    // See CavnarPrimaryButtonStyle's matchedWidth doc comment — same
-    // mechanism, same reason it has to live inside makeBody.
-    var matchedWidth: CGFloat? = nil
-
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.cavnarBody(16, weight: 600))
             .padding(.horizontal, 22)
             .padding(.vertical, 14)
-            .frame(width: matchedWidth)
             .foregroundStyle(isDisabled ? Color.cavnarEmber.opacity(0.4) : Color.cavnarEmber)
             .background(
                 CavnarPremiumButtonSurface.defaultShape
@@ -613,25 +595,6 @@ struct CavnarAnimatableNumber: View, Animatable {
 
     var body: some View {
         Text(format(value))
-    }
-}
-
-private struct CavnarWidthKey: PreferenceKey {
-    // `let`, not `var` — as a static var this was nonisolated mutable global
-    // state, an error in the Swift 6 language mode (audit 2.6).
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = max(value, nextValue())
-    }
-}
-
-private extension View {
-    func cavnarReportWidth() -> some View {
-        background(
-            GeometryReader { geo in
-                Color.clear.preference(key: CavnarWidthKey.self, value: geo.size.width)
-            }
-        )
     }
 }
 
