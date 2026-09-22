@@ -766,18 +766,7 @@ def _period_length_days(snapshot: dict) -> int:
 # that was written to mean "two good bartenders". So a floor on the weakest
 # member travels alongside it, and the verification below reports both.
 
-def _daypart_of(shift_start: str) -> str:
-    """Same 3pm split the schedule generator uses."""
-    raw = (shift_start or "").strip().lower().replace(" ", "")
-    if not raw:
-        return "unknown"
-    for fmt in ("%I:%M%p", "%I%p", "%H:%M", "%H:%M:%S"):
-        try:
-            return "night" if datetime.strptime(raw, fmt).hour >= 15 else "morning"
-        except ValueError:
-            continue
-    return "unknown"
-
+from shift_quality import daypart_of as _daypart_of  # same 3pm split, one definition
 
 def shift_strength(rows: list, scores: dict) -> dict:
     """Combined Operational Score per (date, daypart, role).
