@@ -98,7 +98,7 @@ def diff(before_rows: list, after_rows: list) -> dict:
     }
 
 
-def diff_lines(d: dict, limit=6) -> list:
+def diff_lines(d: dict, limit=6, unchanged="Unchanged from the last published week.") -> list:
     """The diff as sentences. Deterministic — nothing here can describe a
     change that did not happen."""
     if not d:
@@ -122,7 +122,7 @@ def diff_lines(d: dict, limit=6) -> list:
     if d["removed"] and not by_day:
         lines.append(f"{len(d['removed'])} shift{'s' if len(d['removed']) != 1 else ''} removed.")
     if not lines:
-        lines.append("Unchanged from the last published week.")
+        lines.append(unchanged)
     return lines[:limit]
 
 
@@ -168,7 +168,7 @@ def list_versions(restaurant_id, history_id, db_path=DB_PATH) -> list:
             q = None
         out.append({"id": r["id"], "version": r["version"], "reason": r["reason"], "saved_by": r["saved_by"],
                     "created_at": r["created_at"], "changes": (d or {}).get("changes", 0),
-                    "lines": diff_lines(d) if d else [], "score": (q or {}).get("score")})
+                    "lines": diff_lines(d, unchanged="No changes in this version.") if d else [], "score": (q or {}).get("score")})
     return out
 
 
@@ -186,7 +186,7 @@ def draft_vs_published(restaurant_id, history_id, db_path=DB_PATH) -> dict:
     if not first or not last:
         return {"available": False}
     d = diff(rows_from_csv(first["schedule_csv"]), rows_from_csv(last["schedule_csv"]))
-    return {"available": True, **d, "lines": diff_lines(d)}
+    return {"available": True, **d, "lines": diff_lines(d, unchanged="No edits since the draft.")}
 
 
 # ── what the manager keeps changing ────────────────────────────────────────
