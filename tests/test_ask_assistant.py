@@ -394,7 +394,12 @@ def test_the_new_tools_are_registered_and_dispatchable(name):
     # effect outside the building — an email sent, a public reply posted. A
     # note the owner can ask to be forgotten is not one of those, so making
     # `remember` a proposal would mean confirming a dialog to be listened to.
-    assert entry["kind"] == "read"
+    assert entry["kind"] in ("read", "action")
+    # But `remember` changes stored state that is replayed into every future
+    # prompt as "what the owner said", so it is an action, not a read: it is
+    # refused once a turn has read guest text, and never offered to an
+    # unattended run (AI-16).
+    assert entry["kind"] == ("action" if name == "remember" else "read")
 
 
 # ── both surfaces read the opening rather than shipping a fixed list ──────

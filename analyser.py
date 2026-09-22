@@ -1,6 +1,7 @@
 import json
 from models import update_analysis, get_pending_analysis
-from ai_utils import create_with_retry, extract_text, get_client, model_for
+from ai_utils import (create_with_retry, extract_text, get_client, is_platform_stop,
+                      is_refusal, model_for, parse_json_reply)
 from ai_guard import UNTRUSTED_NOTE, wrap_untrusted
 
 
@@ -274,9 +275,12 @@ def analyse_review(review_id: int, rating: int, text: str, restaurant_id: int = 
     )
     if getattr(message, "stop_reason", None) == "max_tokens":
         raise ValueError("analysis was truncated")
-    raw = extract_text(message).strip()
-    raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-    result = _validate_analysis(json.loads(raw), rating=rating)
+    if is_refusal(message):
+        raise ValueError("the model declined to analyse this review")
+    # A leading "Here is the JSON:" or a code fence used to fail json.loads
+    # and cost the review one of its five attempts (AI-26).
+    result = _validate_analysis(parse_json_reply(extract_text(message), expect=dict),
+                                rating=rating)
     update_analysis(
         review_id,
         result["sentiment"],
@@ -311,6 +315,14 @@ def analyse_pending(restaurant_id: int, limit: int = 500):
             print(f"    [{r.id}] {res['sentiment']:8s} | {', '.join(res['categories'])}{flag}")
             results.append({"id": r.id, **res})
         except Exception as e:
+            if is_platform_stop(e):
+                # The budget ceiling or the provider breaker, not this review:
+                # every review after it would hit the same stop. Counting it
+                # as an attempt spent all five on one bad afternoon and the
+                # review was never analysed again (AI-4). Stop the pass and
+                # leave the queue for the next one.
+                print(f"    analysis paused: {e}")
+                break
             # An unanalysed review has no urgency, so its health/safety alert
             # never fires. That is not something to print to stdout and move
             # on from — it reaches the daily failure digest.

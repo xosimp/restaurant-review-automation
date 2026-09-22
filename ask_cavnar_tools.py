@@ -31,6 +31,9 @@ log = logging.getLogger(__name__)
 # matters more now that some tools act without a confirmation step.
 _UNTRUSTED_CONTENT_TOOLS = {
     "read_reviews", "read_competitors", "read_staff_availability", "read_guest_club",
+    # Complaint clusters quote each guest's own specific_complaint phrase;
+    # they reached the model unfenced (AI-16).
+    "read_review_diagnosis", "read_review_brief",
 }
 
 _UNTRUSTED_NOTE = (
@@ -55,7 +58,7 @@ _UNTRUSTED_NOTE = (
 # little: the payload's _UNTRUSTED_NOTE already names review authors
 # explicitly, and a name is not prose an instruction can hide inside the way
 # a paragraph is. The delimiters go where the sentences are.
-_UNTRUSTED_FIELDS = ("text", "message", "complaints", "notes", "preview")
+_UNTRUSTED_FIELDS = ("text", "message", "complaints", "complaint", "notes", "preview")
 
 # Ceiling on rows any single read tool returns. The model pays for every
 # token of this, and 20 reviews is plenty to answer "what are people
@@ -1218,7 +1221,11 @@ TOOLS = [
         },
     },
     {
-        "kind": "read",
+        # A direct write, not a read (AI-16): what it records is replayed into
+        # every future prompt as something the owner said. As an "action" it
+        # is refused once the turn has read public text, and never offered to
+        # an unattended run.
+        "kind": "action",
         "fn": _remember,
         "module": None,
         "spec": {
@@ -1237,7 +1244,7 @@ TOOLS = [
         },
     },
     {
-        "kind": "read",
+        "kind": "action",
         "fn": _forget,
         "module": None,
         "spec": {
@@ -2044,6 +2051,16 @@ def is_write_tool(name):
 def is_action_tool(name):
     tool = _BY_NAME.get(name)
     return bool(tool and tool["kind"] == "action")
+
+
+def is_read_tool(name):
+    tool = _BY_NAME.get(name)
+    return bool(tool and tool["kind"] == "read")
+
+
+def reads_public_text(name):
+    """Whether this tool's result carries text a member of the public wrote."""
+    return name in _UNTRUSTED_CONTENT_TOOLS
 
 
 def _mark_untrusted(node):

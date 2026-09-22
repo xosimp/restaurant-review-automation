@@ -1842,7 +1842,7 @@ def run_food_cost_diagnoses():
             r = get_restaurant(rid)
             # A restaurant whose AI budget is spent gets no diagnosis rather
             # than a refused call and a captured exception.
-            if r and getattr(r, "ai_budget_exceeded", False):
+            if r and _ai_budget_spent(rid):
                 skipped += 1
                 continue
             out = fci.diagnose(rid)
@@ -1864,6 +1864,17 @@ def run_food_cost_diagnoses():
             _ops.capture(e, job="food_cost_diagnoses", context=f"restaurant_id={rid}")
     log.info(f"Food cost diagnoses: {done} produced, {skipped} skipped, {failed} failed")
     return {"diagnosed": done, "skipped": skipped, "failed": failed}
+
+
+def _ai_budget_spent(rid):
+    """Whether this restaurant's AI budget is spent, from the ledger.
+
+    Both diagnosis sweeps used getattr(restaurant, "ai_budget_exceeded"),
+    an attribute the Restaurant dataclass has never had — so the guard was
+    always False and an over-budget restaurant paid a refused call and a
+    captured exception per cluster every day (AI-25)."""
+    import ai_utils
+    return bool(ai_utils.ai_budget_exceeded(rid))
 
 
 def run_review_diagnoses():
@@ -1902,7 +1913,7 @@ def run_review_diagnoses():
             # A restaurant whose AI budget is spent gets no diagnosis rather
             # than a failed call per cluster — create_with_retry would refuse
             # each one individually and we would pay three exceptions for it.
-            if r and getattr(r, "ai_budget_exceeded", False):
+            if r and _ai_budget_spent(rid):
                 skipped += 1
                 continue
             produced = ri.diagnose(rid)

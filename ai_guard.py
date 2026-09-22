@@ -156,8 +156,16 @@ def unsupported_commitments(draft: str) -> list:
 
 # ── numbers the model states must exist in what the model was given ────────
 
-_MONEY_RE = re.compile(r"\$\s?([\d,]+(?:\.\d+)?)")
+# A magnitude suffix is part of the figure: "$2.4k" is 2,400, not 2.4 — and
+# 2.4 fell under the small-number floor, so every suffixed figure went
+# unchecked (AI-5). "2,400 dollars" is a dollar figure as much as "$2,400".
+_SUFFIX_MULT = {"k": 1e3, "thousand": 1e3, "m": 1e6, "mm": 1e6, "million": 1e6,
+                "b": 1e9, "bn": 1e9, "billion": 1e9}
+_SUFFIX = r"(?:\s?(k|mm|m|bn|b|thousand|million|billion)\b)?"
+_MONEY_RE = re.compile(r"\$\s?([\d,]+(?:\.\d+)?)" + _SUFFIX, re.I)
+_DOLLARS_RE = re.compile(r"(?<![\w.$])([\d,]+(?:\.\d+)?)" + _SUFFIX + r"\s+(?:dollars|bucks|usd)\b", re.I)
 _PCT_RE = re.compile(r"([\d,]+(?:\.\d+)?)\s?%")
+_BARE_RE = re.compile(r"(?<![\w.:/])(\d[\d,]*(?:\.\d+)?)(?![\w:/])")
 # A star rating written as a rating: "4.2★", "3.8 stars", "rating of 4.1".
 #
 # unsupported_figures ignores everything at or below 10 on purpose — "top 5",
@@ -173,21 +181,66 @@ _STAR_RE = re.compile(
     re.I)
 
 
-def _numbers(text: str) -> set:
-    out = set()
-    for pat in (_MONEY_RE, _PCT_RE):
-        for m in pat.finditer(text or ""):
-            try:
-                out.add(round(float(m.group(1).replace(",", "")), 2))
-            except ValueError:
-                continue
-    # Bare numerals too — a context block states "labor 31.4" as often as "31.4%".
-    for m in re.finditer(r"(?<![\w.])(\d[\d,]*(?:\.\d+)?)(?![\w])", text or ""):
+def _value(m) -> float:
+    """The numeric value of a money/percentage match, suffix applied."""
+    value = float(m.group(1).replace(",", ""))
+    suffix = (m.group(2) or "").lower() if m.re.groups >= 2 else ""
+    return round(value * _SUFFIX_MULT.get(suffix, 1), 2)
+
+
+def _strip_untrusted(text: str) -> str:
+    """Remove every fenced guest-text block. A figure a guest wrote ("they
+    owe me $2,400") is not a figure the business measured, so it must not be
+    able to verify an answer that states it as one (AI-5 / AI-15)."""
+    return re.sub(re.escape(UNTRUSTED_OPEN) + r".*?" + re.escape(UNTRUSTED_CLOSE), " ",
+                  text or "", flags=re.S)
+
+
+def _is_calendar_year(raw: str) -> bool:
+    return len(raw) == 4 and raw.isdigit() and 1900 <= int(raw) <= 2100
+
+
+def _figures(text: str) -> dict:
+    """The figures a context states, by kind: money, pct, and bare numerals.
+
+    Kinds are kept apart because "$31.40 per cover" is not verified by a
+    31.4% labor figure (AI-5). Bare numerals — "labor 31.4", "covers 212" —
+    can back either. Calendar years and the parts of dates and times are not
+    figures: "2026" in "Today's date" verified any invented $1,990-$2,066.
+    """
+    text = _strip_untrusted(text)
+    out = {"money": set(), "pct": set(), "bare": set()}
+    spans = []
+    for kind, pats in (("money", (_MONEY_RE, _DOLLARS_RE)), ("pct", (_PCT_RE,))):
+        for pat in pats:
+            for m in pat.finditer(text):
+                try:
+                    out[kind].add(_value(m))
+                except ValueError:
+                    continue
+                spans.append(m.span())
+    # Blank what was already read as money or a percentage, so its digits are
+    # not ALSO counted as a bare numeral that could back the other kind.
+    chars = list(text)
+    for a, b in spans:
+        for i in range(a, b):
+            chars[i] = " "
+    bare_text = "".join(chars)
+    for m in _BARE_RE.finditer(bare_text):
+        raw = m.group(1)
+        if _is_calendar_year(raw):
+            continue
         try:
-            out.add(round(float(m.group(1).replace(",", "")), 2))
+            out["bare"].add(round(float(raw.replace(",", "")), 2))
         except ValueError:
             continue
     return out
+
+
+def _numbers(text: str) -> set:
+    """Every figure in `text`, of any kind (kept for the star-rating check)."""
+    f = _figures(text)
+    return f["money"] | f["pct"] | f["bare"]
 
 
 def unsupported_figures(generated: str, context: str, tolerance: float = 0.02) -> list:
@@ -200,19 +253,28 @@ def unsupported_figures(generated: str, context: str, tolerance: float = 0.02) -
     A digest that says "$2,400 recoverable" when the input never contained
     2400 is the failure this catches.
 
+    A dollar figure is checked against the context's dollar figures and bare
+    numerals, a percentage against its percentages and bare numerals — never
+    across kinds. Figures inside the untrusted guest-text fence never count
+    as known, and neither do calendar years (AI-5).
+
     Small integers are ignored: "3 reviews", "top 5", "the last 2 weeks" are
     ordinary prose, not claims traceable to an input row.
     """
-    known = _numbers(context)
+    known = _figures(context)
     missing = []
-    for m in list(_MONEY_RE.finditer(generated or "")) + list(_PCT_RE.finditer(generated or "")):
+    claims = ([(m, "money") for m in _MONEY_RE.finditer(generated or "")]
+              + [(m, "money") for m in _DOLLARS_RE.finditer(generated or "")]
+              + [(m, "pct") for m in _PCT_RE.finditer(generated or "")])
+    for m, kind in claims:
         try:
-            value = round(float(m.group(1).replace(",", "")), 2)
+            value = _value(m)
         except ValueError:
             continue
         if value <= 10:
             continue
-        if any(abs(value - k) <= max(tolerance * max(abs(value), 1), 0.5) for k in known):
+        pool = known[kind] | known["bare"]
+        if any(abs(value - k) <= max(tolerance * max(abs(value), 1), 0.5) for k in pool):
             continue
         missing.append(m.group(0).strip())
 
@@ -221,6 +283,7 @@ def unsupported_figures(generated: str, context: str, tolerance: float = 0.02) -
     # "4.2★" when the input said 4.3 is a different claim, not a rounding of
     # the same one. Only ratings in range are considered; "5 stars" as a
     # figure of speech and a 0-10 score are not this check's business.
+    all_known = known["money"] | known["pct"] | known["bare"]
     for m in _STAR_RE.finditer(generated or ""):
         raw = m.group(1) or m.group(2)
         try:
@@ -229,7 +292,7 @@ def unsupported_figures(generated: str, context: str, tolerance: float = 0.02) -
             continue
         if not (1.0 <= value <= 5.0):
             continue
-        if any(abs(value - k) <= 0.051 for k in known):
+        if any(abs(value - k) <= 0.051 for k in all_known):
             continue
         missing.append(m.group(0).strip())
     return missing

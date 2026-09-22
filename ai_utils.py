@@ -429,7 +429,27 @@ def user_facing_error(exc, fallback="Couldn't get an answer right now — try ag
         return str(exc), 429
     if isinstance(exc, AIProviderDown):
         return str(exc), 503
+    if isinstance(exc, AIRefused):
+        return ("Cavnar can't answer that one as asked. Try rephrasing it, "
+                "or ask about a specific part of the business."), 422
     return fallback, 502
+
+
+INSIGHT_RETRY_LATER = "Analysis unavailable — check back shortly."
+
+
+def insight_error(exc, fallback=INSIGHT_RETRY_LATER):
+    """(message, http_status) for an AI insight panel that failed.
+
+    The panels (reviews, food cost, labor, marketing, web and phone) all
+    answered every failure with "check back shortly" — including a budget
+    stop, which checking back never clears (AI-11). A pause or an outage now
+    says so in the words user_facing_error already has for it; anything else
+    keeps the retry wording and the 500 those panels have always returned.
+    Never the exception text itself (AI-31): that carries provider request
+    ids and raw error bodies."""
+    msg, status = user_facing_error(exc, fallback=fallback)
+    return msg, (500 if status == 502 else status)
 
 
 # ── Models and the client ─────────────────────────────────────────────────
@@ -940,6 +960,57 @@ def extract_text(message) -> str:
         if text is not None:
             return text
     return ""
+
+
+class AIRefused(RuntimeError):
+    """The model declined (stop_reason "refusal"). Not an answer, not an empty
+    answer: extract_text returns "" for it, which every caller that saved the
+    result used to store as a real, empty draft or reply (AI-24)."""
+
+
+def is_refusal(message) -> bool:
+    return getattr(message, "stop_reason", None) == "refusal"
+
+
+def is_platform_stop(exc) -> bool:
+    """A stop that says nothing about the item being processed: the budget
+    ceiling or the provider breaker. Per-item attempt caps must not count
+    these, or one budget stop uses up every pending review's attempts and
+    the reviews are never processed again (AI-4)."""
+    return isinstance(exc, (AIBudgetExceeded, AIProviderDown))
+
+
+def parse_json_reply(text, expect=None, accept=None):
+    """The JSON value in a model's reply, tolerating what models actually add
+    around it: a code fence, a leading "Here is the JSON:", a closing remark,
+    or prose with brackets of its own (AI-26).
+
+    `expect` is dict or list; `accept` an optional predicate the value must
+    satisfy. The first value, scanning left to right, that parses and passes
+    both is returned — so "[see note 1]" in a preamble is skipped rather than
+    greedily joined to the real array. Raises ValueError when there is none.
+    """
+    import json as _json
+    raw = (text or "").strip()
+    ok = lambda v: (expect is None or isinstance(v, expect)) and (accept is None or accept(v))
+    try:
+        val = _json.loads(raw)
+        if ok(val):
+            return val
+    except ValueError:
+        pass
+    openers = "{[" if expect is None else ("{" if expect is dict else "[")
+    decoder = _json.JSONDecoder()
+    for i, ch in enumerate(raw):
+        if ch not in openers:
+            continue
+        try:
+            val, _end = decoder.raw_decode(raw, i)
+        except ValueError:
+            continue
+        if ok(val):
+            return val
+    raise ValueError("the reply held no usable JSON")
 
 
 class PlacesError(RuntimeError):

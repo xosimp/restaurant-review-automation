@@ -859,9 +859,12 @@ def _do_review_insight(rid):
     if cached:
         return (dict(cached) if isinstance(cached, dict) else {"insight": cached}), 200
     try:
-        import os, json, anthropic as _anth
+        import os, json
+        import ai_utils as _aiu_ri
         from models import get_restaurant, get_review_stats, get_top_issues
-        _client_ri = _anth.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY",""))
+        # The shared, bounded client (AI-1): a bare anthropic.Anthropic here
+        # ran on the SDK's 600 s timeout and its own retries.
+        _client_ri = _aiu_ri.get_client()
         restaurant = get_restaurant(rid)
         rstats = get_review_stats(rid)
         # sentiment=None: this line is labelled "Top topics" in the prompt,
@@ -988,11 +991,17 @@ def _do_review_insight(rid):
             first = parts[0] if parts else ""
             return first if len(first) > 1 and first.lower() not in (
                 "a", "an", "the", "anonymous", "user", "google", "yelp", "local") else ""
+        # The name and the excerpt are both guest-written, so both travel
+        # inside the untrusted fence the note above the prompt describes
+        # (AI-15) — they were quoted raw under a note about a fence that was
+        # not there.
+        from ai_guard import wrap_untrusted as _wrap_ri
         _urgent_lines = []
         for r in urgent_rows:
             who = _first_name(r["author"]) or "an unnamed guest"
-            _urgent_lines.append(f'#{r["id"]} {who} ({r["rating"]}★): "{(r["text"] or "")[:110]}"')
-        urgent_texts = "; ".join(_urgent_lines) if _urgent_lines else "none"
+            _urgent_lines.append(f'#{r["id"]} ({r["rating"]}★), guest name then review excerpt:\n'
+                                 + _wrap_ri(f'{who}\n{(r["text"] or "")[:110]}'))
+        urgent_texts = ("\n" + "\n".join(_urgent_lines)) if _urgent_lines else "none"
         issues_str = ", ".join(f"{i['label']} ({i['count']})" for i in top_issues) if top_issues else "no data"
         rest_name  = restaurant.name if restaurant else "this restaurant"
 
@@ -1244,7 +1253,12 @@ def _do_review_insight(rid):
             out.update(_fresh_ri(stale[0].isoformat(timespec="seconds"), stale_after_days=0))
             out["stale"] = True
             return out, 200
-        return {"insight": "Analysis unavailable — check back shortly.", "error": str(_re)}, 500
+        # The owner reads `insight`: a budget stop or an outage says so rather
+        # than "check back shortly" (AI-11), and no raw exception text — a
+        # provider error body with its request id — reaches the client (AI-31).
+        from ai_utils import insight_error as _insight_err_ri
+        _msg_ri, _status_ri = _insight_err_ri(_re)
+        return {"insight": _msg_ri, "error": _msg_ri}, _status_ri
 
 def _do_recent_topics(rid):
     """The last few things this restaurant generated, folded by topic, with
@@ -1526,11 +1540,12 @@ def _do_ask_cavnar(restaurant_id, question, history=None, user_id=None, conversa
                 "proposals": proposals or [], "conversation_id": conversation_id,
                 **_ask_meta(meta)}, 200
     except Exception as e:
-        from ai_utils import AIBudgetExceeded, user_facing_error
+        from ai_utils import AIBudgetExceeded, AIRefused, user_facing_error
         msg, status = user_facing_error(e)
         # A budget stop is a decision this product made on purpose, not a
         # fault — it does not belong in the failure digest beside real ones.
-        if not isinstance(e, AIBudgetExceeded):
+        # Nor does a refusal: nothing broke, and it is not saved as an answer.
+        if not isinstance(e, (AIBudgetExceeded, AIRefused)):
             import ops
             ops.capture(e, job="ask_cavnar", context=f"restaurant_id={restaurant_id}")
         return {"ok": False, "error": msg}, status
@@ -1611,9 +1626,9 @@ def _ask_cavnar_stream_response(rid, uid, question, conversation_id=None, new_co
                         "truncated": truncated, "proposals": proposals or [],
                         "conversation_id": cid, **_ask_meta(meta)})
         except Exception as e:
-            from ai_utils import AIBudgetExceeded, user_facing_error
+            from ai_utils import AIBudgetExceeded, AIRefused, user_facing_error
             msg, _status = user_facing_error(e, "Couldn't get an answer right now — try again.")
-            if not isinstance(e, AIBudgetExceeded):
+            if not isinstance(e, (AIBudgetExceeded, AIRefused)):
                 import ops
                 ops.capture(e, job="ask_cavnar_stream", context=f"restaurant_id={rid}")
             events.put({"type": "error", "error": msg})

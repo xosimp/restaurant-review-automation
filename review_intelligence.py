@@ -171,7 +171,10 @@ def rating_trend(restaurant_id: int, weeks: int = 8, db_path: str = DB_PATH) -> 
         "weeks_with_data": len(series),
         "weeks_above_floor": len(solid),
         "min_reviews_per_week": MIN_TREND_REVIEWS_PER_WEEK,
-        "direction": None, "confidence": None, "slope": None,
+        # `change` is here too: the review insight copies it into its payload
+        # unconditionally, so a restaurant below the trend floor raised
+        # KeyError after the model call and got the error panel every time.
+        "direction": None, "confidence": None, "slope": None, "change": None,
         "first": None, "latest": None, "anomalies": [],
         # Why there is no direction, when there isn't one — so the UI and the
         # prompt can both say the honest thing instead of showing a blank.

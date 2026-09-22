@@ -116,7 +116,6 @@ def _prompt_of(kw):
 
 # ── AI-4: stops that aren't the review's fault don't burn attempts ─────────
 
-@pytest.mark.xfail(strict=True, reason="AI-4: a budget stop counts against every pending review's 5 attempts")
 @pytest.mark.parametrize("exc", [ai_utils.AIBudgetExceeded(_BUDGET_MSG),
                                  ai_utils.AIProviderDown("provider down")],
                          ids=["budget", "provider_down"])
@@ -133,7 +132,6 @@ def test_six_analysis_passes_under_a_stop_leave_the_review_pending_with_no_attem
     assert [r.id for r in models.get_pending_analysis(rid, 50, db_path=db_path)] == [review_id]
 
 
-@pytest.mark.xfail(strict=True, reason="AI-4: a budget stop counts against every pending draft's 5 attempts")
 def test_six_draft_passes_under_a_budget_stop_leave_the_review_pending_with_no_attempts(db_path, monkeypatch):
     rid = _restaurant(db_path, billing_status="trial")
     review_id = _review(db_path, rid, processed=1, sentiment="negative")
@@ -188,7 +186,6 @@ def test_an_analysis_in_a_code_fence_is_stored(db_path, monkeypatch):
 
 # ── AI-20: urgent replies have room ────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="AI-20: an urgent 80-100 word reply is capped at 300 tokens")
 def test_an_urgent_draft_requests_room_for_a_token_dense_language(db_path, monkeypatch):
     rid = _restaurant(db_path)
     review_id = _review(db_path, rid, text="食べ物が生で、家族全員が食中毒になりました。")
@@ -213,7 +210,6 @@ def test_a_truncated_draft_is_not_saved(db_path, monkeypatch):
 
 # ── AI-24: a refusal leaves the review pending ─────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="AI-24: a refusal writes an empty draft and marks the review drafted")
 def test_a_refused_draft_leaves_the_review_pending(db_path, monkeypatch):
     rid = _restaurant(db_path)
     review_id = _review(db_path, rid, processed=1, sentiment="negative")
@@ -324,7 +320,6 @@ def _mobile_headers(db_path, rid):
     return {"Authorization": f"Bearer {auth.create_session(uid, db_path=db_path)}"}
 
 
-@pytest.mark.xfail(strict=True, reason="AI-31: the review insight returns str(exception) to the client")
 def test_a_failed_review_insight_returns_no_raw_provider_error(db_path, monkeypatch, web):
     rid = _restaurant(db_path, module_reviews=1)
     _review(db_path, rid, processed=1, sentiment="negative")
@@ -384,7 +379,6 @@ def test_a_failed_review_insight_serves_the_last_good_read_marked_stale(db_path,
 
 # ── AI-25: the diagnosis sweeps skip over-budget restaurants ───────────────
 
-@pytest.mark.xfail(strict=True, reason="AI-25: the budget guard reads a Restaurant attribute that doesn't exist")
 def test_review_diagnoses_skip_a_restaurant_over_its_ai_budget(db_path, monkeypatch):
     import scheduler, review_intelligence
     _restaurant(db_path, module_reviews=1, billing_status="trial")
@@ -395,7 +389,6 @@ def test_review_diagnoses_skip_a_restaurant_over_its_ai_budget(db_path, monkeypa
     assert diagnosed == [] and out["skipped"] == 1
 
 
-@pytest.mark.xfail(strict=True, reason="AI-25: the budget guard reads a Restaurant attribute that doesn't exist")
 def test_food_cost_diagnoses_skip_a_restaurant_over_its_ai_budget(db_path, monkeypatch):
     import scheduler, food_cost_intelligence
     _restaurant(db_path, module_inventory=1, billing_status="trial")

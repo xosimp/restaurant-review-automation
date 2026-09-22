@@ -187,6 +187,24 @@ def claim_period(job: str, period: str) -> bool:
         return first_time
 
 
+def release_period(job: str, period: str) -> None:
+    """Give back a claim_period claim, so the next tick can try the work
+    again. For jobs that claim BEFORE working (so two ticks cannot run it at
+    once) but must not lose the period when the work then fails."""
+    key = f"{job}:{period}"
+    _claim_fallback.discard(key)
+    try:
+        from models import get_conn
+        conn = get_conn()
+        try:
+            conn.execute("DELETE FROM job_period_claims WHERE job_key=?", (key,))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        log.error(f"release_period({key}) failed: {e}")
+
+
 # ── async request-scoped jobs (schedule generation, competitor intel) ───────
 #
 # These used to live in module-level dicts in client_api.py and
