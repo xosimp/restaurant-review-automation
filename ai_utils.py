@@ -739,3 +739,16 @@ def extract_text(message) -> str:
         if text is not None:
             return text
     return ""
+
+
+def meter_places(restaurant_id, action, kind="details", status="ok", error=None):
+    """Google Places is billed per request. Audit #7 found it outside the
+    ledger and the budget entirely, so a Places-only restaurant's four daily
+    review fetches and the weekly competitor run were real money that no
+    ceiling could see. Best-effort: metering must never break a fetch.
+    Was copied verbatim into fetcher, weather and competitor; one copy now."""
+    try:
+        log_api_call(restaurant_id, action, f"google-places-{kind}",
+                     calls=1, status=status, error=error)
+    except Exception:
+        pass

@@ -7,18 +7,7 @@ from ai_utils import create_with_retry, extract_text
 from ai_guard import UNTRUSTED_NOTE, wrap_untrusted
 
 
-def _meter_places(restaurant_id, action, kind="details", status="ok", error=None):
-    """Google Places is billed per request. Audit #7 found it outside the
-    ledger and the budget entirely, so a Places-only restaurant's four daily
-    review fetches and the weekly competitor run were real money that no
-    ceiling could see. Best-effort: metering must never break a fetch."""
-    try:
-        from ai_utils import log_api_call
-        log_api_call(restaurant_id, action, f"google-places-{kind}",
-                     calls=1, status=status, error=error)
-    except Exception:
-        pass
-
+from ai_utils import meter_places as _meter_places
 
 PLACES_API_KEY = os.getenv("GOOGLE_PLACES_API_KEY", "")
 ANTHROPIC_KEY  = os.getenv("ANTHROPIC_API_KEY", "")
