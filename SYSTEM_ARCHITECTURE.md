@@ -146,6 +146,8 @@ A single `scheduler_loop()` running in a background thread, ticking every five m
 | `trusted_orders` | Mon, hourly → 8am *local* | `run_trusted_orders` |
 | `auto_publish_schedule` | Fri, hourly → 9am *local* | `run_auto_publish_schedules` — held when `client_api.publish_blockers` is non-empty |
 | `quality_calibration` | Sun 5am | `strategy_jobs.run_quality_calibration` — nudges a restaurant's quality weights from its own clean vs troubled published weeks; never lowers, never before 8 weeks |
+| `schedule_outcomes` | Mon 4am | `strategy_jobs.run_schedule_outcomes` — what each published week did, by daypart |
+| `reservation_sync` | Wed 5am | `reservation_feeds.run_reservation_sync` — reservation feeds into demand_signals; no provider is live, unconfigured restaurants are counted and skipped |
 | `review_fetch` | 8am, 12pm, 4pm, 8pm (latest missed slot only) | `run_daily_fetch` — bounded pool, cursor in `job_cursors` |
 | `ops_digest` | 8am | `ops.send_failure_digest` (only if something failed) |
 | `weekly_digest` | hourly → 9am *local* on the digest day | `run_weekly_digests` |
@@ -184,7 +186,7 @@ Every tick: `notify.release_due_alerts()` (alerts held through a rush). Every 20
 
 - `loss_sync` — daily after `pos_sync` (3am CT+): comps/voids/refunds into `pos_loss_daily`; an unsupported POS is normal, not a failure.
 - `outcome_evaluations` — daily 6am CT+: closes outcome trackers whose window ended, marks met goals.
-- `auto_draft_schedule` — Thursday 6am CT+: drafts next week's schedule for `auto_draft_schedule=1` restaurants with no `external_scheduling_tool` and no schedule in the last 5 days. A draft in Schedule History only; the push is sent only when the job row says `done`.
+- `auto_draft_schedule` — Thursday 6am CT+: drafts next week's schedule for `auto_draft_schedule=1` restaurants with no `external_scheduling_tool` and no schedule in the last 5 days. A draft in Schedule History only; the push is sent only when the job row says `done`. Bounded (40 minutes) with a `job_cursors` cursor, so a pass that runs out of time resumes where it stopped.
 - `issue_scan` — hourly: bad reviews → issues where a manager is routed.
 - `closing_summary` — at each restaurant's own close: tonight against a typical same weekday plus the close-out handover, to the brief's audience. Skipped in quiet hours and when there is nothing to say.
 - `demand_opportunity` — weekly (claimed on the ISO week, not the date): a reliably quiet weekday two days out, Marketing module only.
