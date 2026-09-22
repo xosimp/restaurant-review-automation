@@ -15,7 +15,48 @@ os.environ.setdefault("CAVNAR_PIN_PEPPER", "test-pepper")
 os.environ.setdefault("HIBP_DISABLED", "1")
 os.environ.setdefault("ADMIN_REQUIRE_2FA", "0")
 
+# The default database (models.DB_PATH, used by every call that passes no
+# db_path — init_db's ensure_columns(), status_manager, lazily imported
+# modules) must never be the developer's ./reviews.db. It was, and a full
+# run grew that file by ~550 KB. Point the default at a throwaway volume
+# before models is imported. The file is created empty first so
+# adopt_legacy_db sees an existing database and does not copy the real
+# reviews.db into it.
+import tempfile as _tempfile
+_TEST_VOLUME = _tempfile.mkdtemp(prefix="cavnar-test-volume-")
+open(os.path.join(_TEST_VOLUME, "reviews.db"), "a").close()
+os.environ["RAILWAY_VOLUME_MOUNT_PATH"] = _TEST_VOLUME
+
 from models import init_db, ensure_columns, create_restaurant, save_reviews, Restaurant, Review
+
+
+def _build_default_schema():
+    """Give the throwaway default database the same schema hosted_dashboard
+    builds at boot, so a call that passes no db_path meets real tables —
+    as it did when the default was the developer's reviews.db, but now
+    empty of anyone's data. Mirrors hosted_dashboard.py's module-level init."""
+    import models
+    from auth import init_auth
+    from webhooks import init_webhooks
+    from guest_marketing import init_guest_marketing
+    from push import init_push
+    from sales_audits import init_sales_audits
+    init_db()
+    init_auth()
+    models.init_staff_notes()
+    models.init_staff_availability()
+    ensure_columns()
+    for fn in ("init_email_log", "init_onboarding_emails", "init_two_fa_backup_codes",
+               "init_competitor_snapshots", "init_ai_visibility_queries", "init_staff_capabilities",
+               "init_shift_profiles", "init_capability_changes", "init_ask_memory"):
+        getattr(models, fn)()
+    init_webhooks()
+    init_guest_marketing()
+    init_push()
+    init_sales_audits()
+
+
+_build_default_schema()
 
 
 @pytest.fixture(autouse=True)

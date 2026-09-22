@@ -256,7 +256,7 @@ def _seed_ejs_settings(rid: int, db_path: str):
                            "sales, roster and ratings are all invented. Replace with Erik's "
                            "real CSV and hours before treating any number as his."),
         "email_theme": "dark",
-    })
+    }, db_path=db_path)
     print(f"[auto-seed] {SIMPLE_EJS_NAME} settings written")
 
 
@@ -294,7 +294,7 @@ def _seed_ejs_shifts(rid: int, db_path: str):
                 lines.append(f"{d.strftime('%Y-%m-%d')},{days[d.weekday()]},{name},{role},"
                              f"{start},{end},{hours},{hours},{sales},")
         d += timedelta(days=1)
-    save_client_data(rid, "shifts", "\n".join(lines), source="seed")
+    save_client_data(rid, "shifts", "\n".join(lines), source="seed", db_path=db_path)
     print(f"[auto-seed] {SIMPLE_EJS_NAME} shift data written ({len(lines) - 1} rows)")
 
 
@@ -509,7 +509,7 @@ def _ensure_ejs_login(rid: int, db_path: str):
             conn.commit()
         finally:
             conn.close()
-        update_restaurant(rid, {"temp_password": wanted})
+        update_restaurant(rid, {"temp_password": wanted}, db_path=db_path)
         print(f"[auto-seed] {SIMPLE_EJS_NAME} login reset to DEMO_PASSWORD "
               f"(username {SIMPLE_EJS_USERNAME!r})")
         return
@@ -517,7 +517,7 @@ def _ensure_ejs_login(rid: int, db_path: str):
     password = wanted or secrets.token_urlsafe(9)
     try:
         create_user(rid, SIMPLE_EJS_USERNAME, "erik+demo@cavnar.ai", password, db_path=db_path)
-        update_restaurant(rid, {"temp_password": password})
+        update_restaurant(rid, {"temp_password": password}, db_path=db_path)
         source = "DEMO_PASSWORD" if wanted else f"generated: {password}"
         print(f"[auto-seed] {SIMPLE_EJS_NAME} login created — username "
               f"{SIMPLE_EJS_USERNAME!r}, password from {source} "
