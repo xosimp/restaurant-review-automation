@@ -1114,6 +1114,20 @@ def init_db(db_path: str = DB_PATH):
             value      TEXT,
             updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         )""",
+        # Inbound-webhook idempotency (webhook_routes): the INSERT on the
+        # primary key is the claim. Both used to be created inside the
+        # webhook handler, on every delivery.
+        """CREATE TABLE IF NOT EXISTS stripe_events_seen (
+            event_id   TEXT PRIMARY KEY,
+            event_type TEXT,
+            seen_at    TEXT NOT NULL DEFAULT (datetime('now'))
+        )""",
+        """CREATE TABLE IF NOT EXISTS docusign_events_seen (
+            event_key   TEXT PRIMARY KEY,
+            envelope_id TEXT,
+            status      TEXT,
+            seen_at     TEXT NOT NULL DEFAULT (datetime('now'))
+        )""",
         # Durable login throttling (security.py): keyed by IP and by account,
         # so a deploy no longer resets the counter and one worker is no
         # longer a security requirement.

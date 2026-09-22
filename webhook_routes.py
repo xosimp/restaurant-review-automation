@@ -34,12 +34,6 @@ def _claim_stripe_event(event_id: str) -> bool:
         return True
     try:
         conn = get_conn()
-        conn.execute("""CREATE TABLE IF NOT EXISTS stripe_events_seen (
-            event_id   TEXT PRIMARY KEY,
-            event_type TEXT,
-            seen_at    TEXT NOT NULL DEFAULT (datetime('now'))
-        )""")
-        conn.commit()
         try:
             conn.execute("INSERT INTO stripe_events_seen (event_id) VALUES (?)", (event_id,))
             conn.commit()
@@ -72,13 +66,6 @@ def _claim_docusign_event(envelope_id: str, status: str) -> bool:
     key = f"{envelope_id}:{status or ''}"
     try:
         conn = get_conn()
-        conn.execute("""CREATE TABLE IF NOT EXISTS docusign_events_seen (
-            event_key   TEXT PRIMARY KEY,
-            envelope_id TEXT,
-            status      TEXT,
-            seen_at     TEXT NOT NULL DEFAULT (datetime('now'))
-        )""")
-        conn.commit()
         try:
             conn.execute("INSERT INTO docusign_events_seen (event_key, envelope_id, status) VALUES (?,?,?)",
                          (key, envelope_id, status))
