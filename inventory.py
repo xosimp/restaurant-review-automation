@@ -1355,7 +1355,8 @@ def analysis_for(restaurant_id: int, items=None, is_live=None, client_data=_UNRE
     from marketing import get_upcoming_holidays
 
     if items is None or is_live is None:
-        items, is_live = load_inventory_for_restaurant(restaurant_id, client_data=client_data)
+        items, is_live = (load_inventory_for_restaurant(restaurant_id) if client_data is _UNREAD
+                          else load_inventory_for_restaurant(restaurant_id, client_data=client_data))
     restaurant = get_restaurant(restaurant_id)
 
     # The two measured inputs analyse_inventory could not derive for itself:

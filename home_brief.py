@@ -34,12 +34,16 @@ def _cache_put(key, payload):
     """Store one payload, first dropping every expired entry and, past
     _CACHE_MAX, the oldest ones."""
     now = datetime.now(timezone.utc)
-    for k, (at, _p) in list(_CACHE.items()):
-        if (now - at).total_seconds() >= _CACHE_TTL:
+    _CACHE.pop(key, None)            # re-inserted below, so dict order stays oldest-first
+    # Oldest first, so the sweep stops at the first entry that is both fresh
+    # and inside the cap: amortised O(1) per write.
+    while _CACHE:
+        k = next(iter(_CACHE))
+        at = _CACHE[k][0]
+        if len(_CACHE) >= _CACHE_MAX or (now - at).total_seconds() >= _CACHE_TTL:
             _CACHE.pop(k, None)
-    if len(_CACHE) >= _CACHE_MAX:
-        for k, _v in sorted(_CACHE.items(), key=lambda kv: kv[1][0])[:len(_CACHE) - _CACHE_MAX + 1]:
-            _CACHE.pop(k, None)
+        else:
+            break
     _CACHE[key] = (now, payload)
 
 _REVIEW_FETCH_HOURS_CT = (8, 12, 16, 20)  # scheduler.py's review_fetch cadence

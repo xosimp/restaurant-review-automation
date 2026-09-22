@@ -395,7 +395,6 @@ def test_a_settings_save_invalidates_home_and_ask_for_that_restaurant(app):
 _MANY = 20_000
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-32: home_brief._CACHE is a plain dict that is never evicted")
 def test_the_home_cache_is_bounded(monkeypatch):
     monkeypatch.setattr(home_brief, "_build", lambda user: ({"ok": True}, 200))
     monkeypatch.setattr(home_brief, "_CACHE", {})
@@ -426,8 +425,6 @@ def test_the_insight_cache_is_bounded(monkeypatch):
     assert len(client_api._insight_cache) < _MANY
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-32: a location switch calls home_brief.invalidate() with no "
-                                       "id, clearing every restaurant's cached brief")
 def test_a_location_switch_does_not_clear_other_restaurants_home_briefs(app):
     a = _restaurant("Syrup Lakeview", location_group="Syrup", owner_email="ann@a.test")
     b = _restaurant("Syrup Wicker Park", location_group="Syrup", owner_email="ann@a.test")
