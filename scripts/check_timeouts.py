@@ -37,8 +37,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SKIP_DIRS = {".git", "__pycache__", ".claude", "node_modules", "ios",
              "venv", ".venv", "backups", "tests"}
 
-# Module aliases that resolve to a real HTTP client.
+# Module aliases that resolve to a real HTTP client. Any other name a file
+# imports one of _HTTP_PACKAGES as is added per file.
 HTTP_MODULES = {"requests", "_requests", "httpx", "_httpx"}
+_HTTP_PACKAGES = {"requests", "httpx"}
 VERBS = {"get", "post", "put", "delete", "patch", "head", "options", "request"}
 
 # SDK clients that make HTTP calls: constructing one must name timeout= and
@@ -63,6 +65,15 @@ def offenders():
                 tree = ast.parse(open(path, encoding="utf-8").read())
             except (SyntaxError, UnicodeDecodeError):
                 continue
+            # Whatever name the module was imported as. A fixed list missed
+            # every call through `import requests as _req` — twelve of them,
+            # one in the scheduler thread (DATA-16).
+            http_names = set(HTTP_MODULES)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        if alias.name.split(".")[0] in _HTTP_PACKAGES:
+                            http_names.add(alias.asname or alias.name.split(".")[0])
             for node in ast.walk(tree):
                 if not isinstance(node, ast.Call):
                     continue
@@ -84,7 +95,7 @@ def offenders():
                     continue
                 if owner.id in _SESSION_FACTORIES:
                     continue
-                if owner.id not in HTTP_MODULES:
+                if owner.id not in http_names:
                     continue
                 if any(k.arg == "timeout" for k in node.keywords if k.arg):
                     continue

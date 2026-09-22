@@ -247,7 +247,6 @@ def _expiring(db_path, name="Expiring Co", with_fb=True):
     return _restaurant(db_path, name=name, **fields)
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-2: refresh_expiring_tokens calls Graph oauth/access_token with no timeout= from the scheduler thread")
 def test_the_token_refresh_job_names_a_timeout_on_every_graph_call(db_path, monkeypatch):
     """A6 Meta #4 / MOD-MKT-2: one hung refresh stalls the single scheduler
     thread — every job, not just marketing."""

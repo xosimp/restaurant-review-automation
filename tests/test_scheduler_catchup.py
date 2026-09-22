@@ -122,8 +122,19 @@ def test_every_daily_job_keeps_its_once_per_day_claim():
     body = _loop_body()
     for job in ("backup_db", "pos_sync", "inventory_depletion", "food_cost_snapshots",
                 "review_diagnoses", "food_cost_diagnoses", "ops_digest", "optin_invite",
-                "refresh_tokens", "marketing_metrics_sync"):
+                "marketing_metrics_sync"):
         assert re.search(r'claim_period\("%s", str\(today\)\)' % job, body), job
+
+
+def test_the_token_refresh_is_hourly_with_a_per_restaurant_daily_cap():
+    """DATA-49: a refresh that failed at 7am used to wait a full day. The job
+    is attempted hourly; each restaurant's Graph calls are capped per day by
+    their own claim, so the hourly look never becomes an hourly call."""
+    import inspect, scheduler
+    assert re.search(r'claim_period\("refresh_tokens", f"\{today\}-\{now\.hour\}"\)', _loop_body())
+    src = inspect.getsource(scheduler.refresh_expiring_tokens)
+    assert 'claim_period(f"refresh_tokens_attempt:{r.id}"' in src
+    assert "TOKEN_REFRESH_ATTEMPTS_PER_DAY" in src
 
 
 def test_owner_facing_jobs_are_attempted_hourly_and_claimed_per_restaurant():

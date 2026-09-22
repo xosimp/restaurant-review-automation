@@ -1094,6 +1094,13 @@ def run_daily_depletion_sync():
         log.error(f"run_daily_depletion_sync error: {e}")
 
 
+# Graph calls a restaurant's token refresh may make in one day. The job is
+# attempted hourly from 7am; a restaurant whose refresh succeeded is no longer
+# expiring and drops out, one whose refresh failed (a timeout, a Graph 5xx)
+# is tried again the next hour rather than the next day (DATA-49).
+TOKEN_REFRESH_ATTEMPTS_PER_DAY = 3
+
+
 def refresh_expiring_tokens():
     """Refresh Instagram and Facebook tokens expiring within 7 days."""
     try:
@@ -1108,6 +1115,7 @@ def refresh_expiring_tokens():
             return
 
         restaurants = get_all_restaurants()
+        today = _chi_now().date().isoformat()
         soon = (_chi_now() + timedelta(days=7)).strftime("%Y-%m-%d")
 
         for r in restaurants:
@@ -1116,13 +1124,18 @@ def refresh_expiring_tokens():
             expires = r.ig_token_expires or "2000-01-01"
             if expires > soon:
                 continue  # Not expiring soon
+            if not any(_ops.claim_period(f"refresh_tokens_attempt:{r.id}", f"{today}#{n}")
+                       for n in range(TOKEN_REFRESH_ATTEMPTS_PER_DAY)):
+                continue  # tried enough today
 
             try:
+                # A timeout: this runs on the scheduler thread, where one
+                # unanswered connection stopped every job (DATA-16).
                 resp = _req.get(graph_url("oauth/access_token"), params={
                     "grant_type": "fb_exchange_token",
                     "client_id": app_id, "client_secret": app_secret,
                     "fb_exchange_token": r.ig_token,
-                })
+                }, timeout=(5, 20))
                 if resp.status_code == 200:
                     new_token   = resp.json().get("access_token", r.ig_token)
                     new_expires = (_chi_now() + timedelta(days=60)).strftime("%Y-%m-%d")
@@ -1132,7 +1145,7 @@ def refresh_expiring_tokens():
                             "grant_type": "fb_exchange_token",
                             "client_id": app_id, "client_secret": app_secret,
                             "fb_exchange_token": r.fb_page_token,
-                        })
+                        }, timeout=(5, 20))
                         if resp2.status_code == 200:
                             update_data["fb_page_token"]    = resp2.json().get("access_token", r.fb_page_token)
                             update_data["fb_token_expires"] = new_expires
@@ -2734,7 +2747,9 @@ def scheduler_loop():
                 log.info("Running marketing metrics sync...")
                 _ops.run_job("marketing_metrics_sync", run_marketing_metrics_sync)
 
-            if _due(now, 7) and _ops.claim_period("refresh_tokens", str(today)):
+            # Hourly from 7am: a restaurant whose refresh failed is retried
+            # within the day (refresh_expiring_tokens caps the attempts).
+            if _due(now, 7) and _ops.claim_period("refresh_tokens", f"{today}-{now.hour}"):
                 log.info("Refreshing expiring IG/FB tokens...")
                 _ops.run_job("refresh_tokens", refresh_expiring_tokens)
 
