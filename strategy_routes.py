@@ -836,9 +836,15 @@ def _do_roster_get(u):
     for e in _ss.roster(rid, include_inactive=True):
         out.append({**e, "score": scores.get(e["name"]), "can_close": bool(closers.get(e["name"])),
                     "reliability": rel.get(e["name"])})
-    return {"ok": True, "roster": out, "pairs": _ss.pairs(rid),
+    suggested = []
+    try:
+        import schedule_intel as _si
+        suggested = _si.chemistry_suggestions(rid)
+    except Exception:
+        suggested = []
+    return {"ok": True, "roster": out, "pairs": _ss.pairs(rid), "suggested_pairs": suggested,
             "choices": {"employment_type": list(_ss.EMPLOYMENT_TYPES), "daypart": list(_ss.DAYPART_CHOICES),
-                        "days": list(_ss.DAYS)}, "can_edit": _may_rate(u)}, 200
+                        "days": list(_ss.DAYS), "certifications": list(_ss.CERTIFICATIONS)}, "can_edit": _may_rate(u)}, 200
 
 
 def _do_staff_settings_set(u):
@@ -852,10 +858,13 @@ def _do_staff_settings_set(u):
                          active=b.get("active"), employment_type=b.get("employment_type"),
                          min_hours=b.get("min_hours"), max_hours=b.get("max_hours"),
                          daypart_availability=b.get("daypart_availability"), is_minor=b.get("is_minor"),
+                         time_windows=b.get("time_windows"), certifications=b.get("certifications"),
+                         preferred_dayparts=b.get("preferred_dayparts"), desired_hours=b.get("desired_hours"),
                          updated_by=_who(u))
     except _ss.StaffSettingsError as e:
         return {"ok": False, "error": str(e)}, 400
-    changed = [k for k in ("active", "employment_type", "min_hours", "max_hours", "daypart_availability", "is_minor") if k in b]
+    changed = [k for k in ("active", "employment_type", "min_hours", "max_hours", "daypart_availability", "is_minor",
+                           "time_windows", "certifications", "preferred_dayparts", "desired_hours") if k in b]
     log_account_event(_rid(u), "staff_settings_changed", current_user=u,
                       detail=f"{row['employee_name']}: {', '.join(changed) or 'no change'}")
     return {"ok": True, "settings": row}, 200
@@ -923,10 +932,22 @@ def _do_compliance_get(u):
     if not _sees_labor(u):
         return _forbidden("Only someone who can see labor can see the rules.")
     import schedule_rules as _sr
+    import compliance_packs
+    import reservation_feeds
     from models import get_restaurant
     r = get_restaurant(_rid(u))
-    return {"ok": True, "rules": _sr.compliance(r), "defaults": dict(_sr.DEFAULTS),
-            "role_floors": _sr.role_floors(r), "can_edit": _principal(u)}, 200
+    rules = _sr.compliance(r)
+    pack = rules.pop("_pack", None)
+    return {"ok": True, "rules": rules, "defaults": dict(_sr.DEFAULTS),
+            "role_floors": _sr.role_floors(r), "can_edit": _principal(u),
+            "jurisdiction": getattr(r, "jurisdiction", None), "pack": pack, "packs": compliance_packs.available(),
+            "role_arrivals": _sr._load_json(getattr(r, "role_arrival_json", None), {}),
+            "role_requirements": _sr._load_json(getattr(r, "role_requirements_json", None), {}),
+            "foh_roles": _sr._load_json(getattr(r, "foh_roles_json", None), []) or ["Server"],
+            "patio_roles": _sr._load_json(getattr(r, "patio_roles_json", None), []),
+            "trim_to_budget": bool(int(getattr(r, "trim_to_budget", 1) or 0)),
+            "certifications": list(__import__("staff_settings").CERTIFICATIONS),
+            "reservation_feed": reservation_feeds.status(r), "reservation_providers": reservation_feeds.available()}, 200
 
 
 def _do_compliance_set(u):
@@ -941,8 +962,56 @@ def _do_compliance_set(u):
     if "role_floors" in b:
         floors = b.get("role_floors") if isinstance(b.get("role_floors"), dict) else {}
         out["role_floors"] = _sr.save_role_floors(_rid(u), floors)
+    import json as _j
+    from models import update_restaurant
+    settings = {}
+    if "jurisdiction" in b:
+        import compliance_packs
+        code = (b.get("jurisdiction") or "").strip().upper()
+        if code and code not in compliance_packs.PACKS:
+            return {"ok": False, "error": f"No rule pack for {code}."}, 400
+        settings["jurisdiction"] = code or None
+        out["jurisdiction"] = code or None
+    if "role_arrivals" in b and isinstance(b.get("role_arrivals"), dict):
+        clean = {}
+        for k, v in b["role_arrivals"].items():
+            try:
+                clean[str(k).strip()[:60]] = max(-240, min(240, int(v)))
+            except (TypeError, ValueError):
+                continue
+        settings["role_arrival_json"] = _j.dumps(clean) if clean else None
+        out["role_arrivals"] = clean
+    if "role_requirements" in b and isinstance(b.get("role_requirements"), dict):
+        clean = {str(k).strip()[:60]: sorted({str(x).strip().lower()[:40] for x in (v or []) if str(x).strip()})
+                 for k, v in b["role_requirements"].items() if str(k).strip()}
+        clean = {k: v for k, v in clean.items() if v}
+        settings["role_requirements_json"] = _j.dumps(clean) if clean else None
+        out["role_requirements"] = clean
+    for key, col in (("foh_roles", "foh_roles_json"), ("patio_roles", "patio_roles_json")):
+        if key in b and isinstance(b.get(key), list):
+            clean = sorted({str(x).strip()[:60] for x in b[key] if str(x).strip()})
+            settings[col] = _j.dumps(clean) if clean else None
+            out[key] = clean
+    if "trim_to_budget" in b:
+        settings["trim_to_budget"] = 1 if b.get("trim_to_budget") else 0
+        out["trim_to_budget"] = bool(b.get("trim_to_budget"))
+    if "reservation_provider" in b or "reservation_api_key" in b:
+        import reservation_feeds
+        prov = (b.get("reservation_provider") or "").strip().lower()
+        if prov and prov not in reservation_feeds.PROVIDERS:
+            return {"ok": False, "error": f"{prov} is not a reservation system this build knows."}, 400
+        settings["reservation_provider"] = prov or None
+        if "reservation_api_key" in b:
+            settings["reservation_api_key"] = (b.get("reservation_api_key") or "").strip()[:200] or None
+        out["reservation_provider"] = prov or None
+    if settings:
+        update_restaurant(_rid(u), settings)
+        if "reservation_provider" in settings:
+            import reservation_feeds
+            from models import get_restaurant
+            out["reservation_feed"] = reservation_feeds.status(get_restaurant(_rid(u)))
     if not out:
-        return {"ok": False, "error": "Send rules and/or role_floors."}, 400
+        return {"ok": False, "error": "Send rules, role_floors, or a setting."}, 400
     log_account_event(_rid(u), "schedule_rules_changed", current_user=u, detail=", ".join(out))
     return {"ok": True, **out}, 200
 
@@ -970,7 +1039,8 @@ def _do_schedule_violations(u):
         return _forbidden("Only someone who can see labor can check a schedule.")
     import schedule_rules as _sr
     from schedule_engine import quality_inputs_from_db
-    rows = _rows_from_body(_body())
+    b = _body()
+    rows = _rows_from_body(b)
     if not rows:
         return {"ok": False, "error": "rows required"}, 400
     inputs = quality_inputs_from_db(_rid(u), week_rows=rows)
@@ -981,8 +1051,21 @@ def _do_schedule_violations(u):
         c.active = {n.lower() for n in inputs["roster"]}
         c.roster_names = list(inputs["roster"])
     viols = _sr.violations(rows, c)
-    return {"ok": True, "violations": viols, "review": _sr.summarize(viols),
-            "pending_time_off": inputs.get("pending_time_off") or {}}, 200
+    out = {"ok": True, "violations": viols, "review": _sr.summarize(viols),
+           "pending_time_off": inputs.get("pending_time_off") or {}}
+    # What the edit moves in hours and overtime-priced dollars, when the
+    # page sends the rows it started from.
+    base = _rows_from_body({"rows": b.get("baseline_rows")}) if isinstance(b.get("baseline_rows"), list) else None
+    if base is not None:
+        try:
+            import schedule_economics as _econ
+            from models import get_role_rates
+            rates = get_role_rates(_rid(u))
+            out["cost"] = _econ.cost_delta(base, rows, rates, (rates or {}).get("_default"),
+                                           ceiling=c.compliance.get("weekly_hours_ceiling") or 40)
+        except Exception:
+            out["cost"] = None
+    return out, 200
 
 
 def _do_schedule_apply_fixes(u):
@@ -1040,6 +1123,85 @@ def _do_shift_request_decide(u, request_id):
     log_account_event(_rid(u), "shift_request_decided", current_user=u,
                       detail=f"{row['employee_name']} {row['date']} {row['shift_start']}: {row['status']}")
     return {"ok": True, "request": row}, 200
+
+
+def _do_learned_patterns(u):
+    """What the draft has learned from the manager's edits, with the
+    owner's say: each one can be dismissed or restored."""
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can see this.")
+    import schedule_versions as _sv
+    import schedule_intel as _si
+    rid = _rid(u)
+    dismissed = _si.dismissed_patterns(rid)
+    out = []
+    for p in _sv.learned_patterns(rid, min_repeats=1):
+        key = _si.pattern_key(p)
+        out.append({**p, "key": key, "active": p["times"] >= 2 and key not in dismissed, "dismissed": key in dismissed})
+    return {"ok": True, "patterns": out, "can_edit": _may_draft(u)}, 200
+
+
+def _do_learned_pattern_set(u):
+    if not _may_draft(u):
+        return _forbidden("Your login can view labor but not change what the draft learns.")
+    import schedule_intel as _si
+    b = _body()
+    key = (b.get("key") or "").strip()
+    if not key:
+        return {"ok": False, "error": "key required"}, 400
+    if b.get("dismissed", True):
+        _si.dismiss_pattern(_rid(u), key, actor=_who(u))
+    else:
+        _si.restore_pattern(_rid(u), key)
+    return {"ok": True, "key": key, "dismissed": bool(b.get("dismissed", True))}, 200
+
+
+def _do_recommendation_event(u):
+    """The owner accepted or dismissed a recommendation — the ledger that
+    decides which kinds keep being shown."""
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can do this.")
+    import schedule_intel as _si
+    b = _body()
+    action = (b.get("action") or "").strip().lower()
+    if action not in ("accepted", "dismissed"):
+        return {"ok": False, "error": "action is accepted or dismissed"}, 400
+    _si.record_recommendation(_rid(u), (b.get("kind") or "other")[:60], b.get("key") or "", action, actor=_who(u))
+    return {"ok": True, "suppressed_kinds": sorted(_si.suppressed_kinds(_rid(u)))}, 200
+
+
+def _do_schedule_intel(u):
+    """The record behind the draft: outcomes by daypart, the rotation
+    ledger, what staff keep dropping and claiming, who could hold a
+    station, and pairs the record suggests."""
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can see this.")
+    import schedule_intel as _si
+    import schedule_economics as _econ
+    rid = _rid(u)
+    def _safe(fn, default):
+        try:
+            return fn()
+        except Exception:
+            return default
+    mentored = _safe(lambda: _si.mentoring(rid), {})
+    return {"ok": True,
+            "outcomes": _safe(lambda: _si.outcomes_by_daypart(rid), {}),
+            "ledger": _safe(lambda: _si.fairness_ledger(rid), {}),
+            "behaviour": _safe(lambda: _si.behaviour_preferences(rid), {}),
+            "could_hold": _si.could_hold(mentored), "mentored": mentored,
+            "suggested_pairs": _safe(lambda: _si.chemistry_suggestions(rid), []),
+            "splh": _safe(lambda: _econ.splh_by_daypart(rid), {}),
+            "revenue": _safe(lambda: _econ.projected_weekly_revenue(rid), {}),
+            "suppressed_recommendation_kinds": sorted(_safe(lambda: _si.suppressed_kinds(rid), set()))}, 200
+
+
+def _do_reservation_sync(u):
+    if not _principal(u):
+        return _forbidden("Only the account owner can sync the reservation feed.")
+    import reservation_feeds
+    res = reservation_feeds.sync(_rid(u))
+    return {"ok": not res.get("error"), **res}, (200 if not res.get("error") else 400)
 
 
 def _do_recipe_scan(u):
@@ -1563,6 +1725,11 @@ _ROUTES = [
     ("/labor/schedule/apply-fixes", ["POST"], _do_schedule_apply_fixes, "schedule_apply_fixes"),
     ("/labor/shift-requests", ["GET"], _do_shift_requests_list, "shift_requests_list"),
     ("/labor/shift-requests/<int:request_id>/decide", ["POST"], _do_shift_request_decide, "shift_request_decide"),
+    ("/labor/learned-patterns", ["GET"], _do_learned_patterns, "learned_patterns"),
+    ("/labor/learned-patterns", ["POST"], _do_learned_pattern_set, "learned_pattern_set"),
+    ("/labor/schedule/recommendation", ["POST"], _do_recommendation_event, "schedule_recommendation_event"),
+    ("/labor/intel", ["GET"], _do_schedule_intel, "schedule_intel"),
+    ("/labor/reservations/sync", ["POST"], _do_reservation_sync, "reservation_sync"),
     ("/food-cost/recipes/scan", ["POST"], _do_recipe_scan, "recipe_scan"),
     ("/account/trust", ["GET"], _do_trust, "trust"),
     ("/decisions", ["GET"], _do_decisions, "decisions"),

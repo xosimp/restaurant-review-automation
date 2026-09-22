@@ -484,6 +484,14 @@ class Restaurant:
     open_times_json: Optional[str]   = None  # {"Monday":"11:00am",...}; close_times_json already exists
     compliance_json: Optional[str]   = None  # schedule_rules.DEFAULTS overrides: min_rest_hours, max_shift_hours, minors, days off
     role_floors_json: Optional[str]  = None  # {"Line Cook": {"morning": 1, "night": 2, "days": {"Saturday": {"night": 3}}}}
+    jurisdiction: Optional[str]      = None  # compliance_packs code (CA, NY, …) applied under the owner's own rules
+    role_arrival_json: Optional[str] = None  # {"Line Cook": -60} minutes relative to open a role may start (negative = before)
+    role_requirements_json: Optional[str] = None  # {"Bartender": ["alcohol"]} certifications a role needs
+    foh_roles_json: Optional[str]    = None  # ["Server", "Bartender"] roles the section cap counts; default server only
+    patio_roles_json: Optional[str]  = None  # roles a rainy day thins first
+    trim_to_budget: int              = 1     # the deterministic trim past the hours budget (schedule_economics)
+    reservation_provider: Optional[str] = None  # reservation_feeds provider code
+    reservation_api_key: Optional[str]  = None
     response_language: Optional[str] = None  # None = match the review's language (drafter default)
     tone_preset: Optional[str]       = None  # warm / professional / playful / concise
     data_retention_months: int       = 0     # 0 = keep everything
@@ -681,6 +689,14 @@ def ensure_columns(db_path: str = DB_PATH):
         # per-daypart staffing floors that replace the one hardcoded rule.
         ("restaurants", "compliance_json", "TEXT"),
         ("restaurants", "role_floors_json", "TEXT"),
+        ("restaurants", "jurisdiction", "TEXT"),
+        ("restaurants", "role_arrival_json", "TEXT"),
+        ("restaurants", "role_requirements_json", "TEXT"),
+        ("restaurants", "foh_roles_json", "TEXT"),
+        ("restaurants", "patio_roles_json", "TEXT"),
+        ("restaurants", "trim_to_budget", "INTEGER DEFAULT 1"),
+        ("restaurants", "reservation_provider", "TEXT"),
+        ("restaurants", "reservation_api_key", "TEXT"),
         # schedule_history grew these after it shipped (also ensured lazily
         # by _ensure_history_columns for a database created before boot ran).
         ("schedule_history", "published_at", "TEXT"),
@@ -2320,6 +2336,8 @@ def init_db(db_path: str = DB_PATH):
                   init_staff_settings, init_demand_signals, init_schedule_versions,
                   init_shift_requests):
         _init(db_path)
+    from schedule_intel import init_schedule_intel
+    init_schedule_intel(db_path)
     # Runs after ensure_columns() so organization_id exists to write into.
     backfill_organizations(db_path=db_path)
     print(f"Database initialised at {db_path}")
@@ -2451,6 +2469,8 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "auto_approve_earned","auto_publish_schedule","auto_order_trusted","weekly_plan_enabled","send_delay_minutes",
         "auto_approve_5star","auto_approve_4star","auto_approve_daily_cap","auto_approve_paused","open_times_json",
         "compliance_json","role_floors_json",
+        "jurisdiction","role_arrival_json","role_requirements_json","foh_roles_json","patio_roles_json",
+        "trim_to_budget","reservation_provider","reservation_api_key",
         "response_language","tone_preset","data_retention_months",
         "toast_client_id","toast_client_secret","toast_restaurant_guid",
         "rpower_token","rpower_cg","rpower_store_mid","rpower_store_name",
@@ -2731,6 +2751,14 @@ def _restaurant_from_row(row) -> Restaurant:
         open_times_json=row["open_times_json"] if "open_times_json" in row.keys() else None,
         compliance_json=row["compliance_json"] if "compliance_json" in row.keys() else None,
         role_floors_json=row["role_floors_json"] if "role_floors_json" in row.keys() else None,
+        jurisdiction=row["jurisdiction"] if "jurisdiction" in row.keys() else None,
+        role_arrival_json=row["role_arrival_json"] if "role_arrival_json" in row.keys() else None,
+        role_requirements_json=row["role_requirements_json"] if "role_requirements_json" in row.keys() else None,
+        foh_roles_json=row["foh_roles_json"] if "foh_roles_json" in row.keys() else None,
+        patio_roles_json=row["patio_roles_json"] if "patio_roles_json" in row.keys() else None,
+        trim_to_budget=(row["trim_to_budget"] if row["trim_to_budget"] is not None else 1) if "trim_to_budget" in row.keys() else 1,
+        reservation_provider=row["reservation_provider"] if "reservation_provider" in row.keys() else None,
+        reservation_api_key=row["reservation_api_key"] if "reservation_api_key" in row.keys() else None,
         response_language=row["response_language"] if "response_language" in row.keys() else None,
         tone_preset=row["tone_preset"] if "tone_preset" in row.keys() else None,
         data_retention_months=row["data_retention_months"] if "data_retention_months" in row.keys() and row["data_retention_months"] is not None else 0,
@@ -4109,6 +4137,13 @@ def init_staff_settings(db_path: str = DB_PATH):
         UNIQUE(restaurant_id, employee_a, employee_b, kind)
     )""")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_staff_settings_rest ON staff_settings(restaurant_id)")
+    have = {r[1] for r in conn.execute("PRAGMA table_info(staff_settings)")}
+    for name, decl in (("time_windows", "TEXT"),          # {"Monday": {"earliest": "10:00am", "latest": "9:00pm"}}
+                       ("certifications", "TEXT"),        # ["alcohol", "food_handler", "manager"]
+                       ("preferred_dayparts", "TEXT"),    # the employee's own: ["night"]
+                       ("desired_hours", "REAL")):        # the employee's own weekly wish
+        if name not in have:
+            conn.execute(f"ALTER TABLE staff_settings ADD COLUMN {name} {decl}")
     conn.commit()
     conn.close()
 
@@ -4180,6 +4215,11 @@ def init_shift_requests(db_path: str = DB_PATH):
         created_at       TEXT    NOT NULL DEFAULT (datetime('now'))
     )""")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_shift_requests_rest ON shift_change_requests(restaurant_id, status)")
+    have = {r[1] for r in conn.execute("PRAGMA table_info(shift_change_requests)")}
+    for name, decl in (("kind", "TEXT DEFAULT 'drop'"),   # drop | swap
+                       ("target_name", "TEXT"), ("target_date", "TEXT"), ("target_start", "TEXT"), ("target_end", "TEXT")):
+        if name not in have:
+            conn.execute(f"ALTER TABLE shift_change_requests ADD COLUMN {name} {decl}")
     conn.commit()
     conn.close()
 
@@ -4650,6 +4690,14 @@ def get_employee_tenure(restaurant_id: int, db_path: str = DB_PATH) -> dict:
             name = (sh.get("employee") or "").strip()
             if name:
                 out[name] = out.get(name, 0) + 1
+        # The upload is a rolling window; staff_first_seen remembers the
+        # earliest date and the most shifts ever counted for each name, so
+        # a person here since March is not "still new" in October.
+        try:
+            import schedule_intel as _si
+            out = _si.tenure(restaurant_id, out, db_path=db_path)
+        except Exception:
+            pass
         return out
     except Exception:
         return {}
@@ -4875,6 +4923,16 @@ def save_client_data(restaurant_id: int, data_type: str,
     conn.commit()
     conn.close()
 
+    # A shifts upload is a rolling window; remember each name's first date
+    # and most shifts ever counted so tenure survives the window rolling on.
+    if data_type == "shifts":
+        try:
+            from labor import load_shifts
+            import schedule_intel as _si
+            _si.remember_tenure(restaurant_id, load_shifts(csv_string=csv_content) or [], db_path=db_path)
+        except Exception:
+            pass
+
     # Every inventory CSV save immediately becomes ledger rows too — no
     # separate "import" click needed. import_csv_to_ingredients() is
     # idempotent (skips already-imported names), so this is safe to run on
@@ -5038,7 +5096,7 @@ def get_labor_history(restaurant_id: int, limit: int = 4,
 def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
                            hours_scheduled: float, hours_budget: float, labor_target: float,
                            schedule_csv: str, summary: list, quality: dict = None,
-                           db_path: str = DB_PATH) -> int:
+                           what_if: dict = None, db_path: str = DB_PATH) -> int:
     """Persists every generated schedule permanently, independent of
     whatever the mobile app's own client-side caching does — a durable
     record on the Account tab's Schedule History screen that survives
@@ -5052,17 +5110,30 @@ def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
     # an owner is asked to trust could never be looked at again, and
     # Schedule History showed past weeks with no score and no trend.
     _ensure_history_columns(conn)
+    q = quality or {}
     cur = conn.execute("""
         INSERT INTO schedule_history
             (restaurant_id, week_start, week_end, hours_scheduled, hours_budget,
-             labor_target, schedule_csv, summary_json, quality_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+             labor_target, schedule_csv, summary_json, quality_json,
+             quality_score, quality_band, quality_confidence, what_if_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (restaurant_id, week_start, week_end, hours_scheduled, hours_budget, labor_target,
           schedule_csv, _json_sh.dumps(summary or []),
-          _json_sh.dumps(quality) if quality else None))
+          _json_sh.dumps(quality) if quality else None,
+          q.get("score"), q.get("band"), (q.get("confidence") or {}).get("level"),
+          _json_sh.dumps(what_if) if what_if else None))
     conn.commit()
     new_id = cur.lastrowid
-    conn.close()
+    # Drafts of the same week that were never sent are superseded by this
+    # one, so the history reads as one draft per week, not five.
+    if week_start:
+        try:
+            conn = get_conn(db_path)
+            conn.execute("UPDATE schedule_history SET superseded_by=? WHERE restaurant_id=? AND week_start=? AND id<>? "
+                         "AND published_at IS NULL AND superseded_by IS NULL", (new_id, restaurant_id, week_start, new_id))
+            conn.commit()
+        finally:
+            conn.close()
     return new_id
 
 
@@ -5072,7 +5143,9 @@ def _ensure_history_columns(conn):
     for name, decl in (("quality_json", "TEXT"), ("edited_at", "TEXT"),
                        ("edited_by", "TEXT"), ("published_at", "TEXT"), ("published_by", "TEXT"),
                        ("review_json", "TEXT"), ("generation_seconds", "REAL"),
-                       ("weather_json", "TEXT")):
+                       ("weather_json", "TEXT"), ("quality_score", "REAL"), ("quality_band", "TEXT"),
+                       ("quality_confidence", "TEXT"), ("what_if_json", "TEXT"), ("superseded_by", "INTEGER"),
+                       ("republished_at", "TEXT")):
         if name not in have:
             conn.execute(f"ALTER TABLE schedule_history ADD COLUMN {name} {decl}")
 
@@ -5180,7 +5253,10 @@ def get_schedule_history(restaurant_id: int, limit: int = 300, db_path: str = DB
         _ensure_history_columns(conn)
         rows = conn.execute("""
             SELECT id, generated_at, week_start, week_end, hours_scheduled,
-                   hours_budget, labor_target, quality_json, edited_at, edited_by
+                   hours_budget, labor_target,
+                   CASE WHEN quality_score IS NULL THEN quality_json ELSE NULL END AS quality_json,
+                   quality_score, quality_band, quality_confidence,
+                   edited_at, edited_by, published_at, published_by, superseded_by, republished_at
             FROM schedule_history WHERE restaurant_id=?
             ORDER BY generated_at DESC, id DESC LIMIT ?
         """, (restaurant_id, limit)).fetchall()
@@ -5198,9 +5274,10 @@ def get_schedule_history(restaurant_id: int, limit: int = 300, db_path: str = DB
             q = _json_hs.loads(raw) if raw else None
         except Exception:
             q = None
-        d["quality_score"] = (q or {}).get("score")
-        d["quality_band"] = (q or {}).get("band")
-        d["confidence"] = ((q or {}).get("confidence") or {}).get("level")
+        if d.get("quality_score") is None:
+            d["quality_score"] = (q or {}).get("score")
+            d["quality_band"] = (q or {}).get("band")
+        d["confidence"] = d.pop("quality_confidence", None) or ((q or {}).get("confidence") or {}).get("level")
         d["summary_line"], d["summary_tone"] = _history_summary_line(
             q, d.get("hours_scheduled"), d.get("hours_budget"), d.get("edited_at"))
         out.append(d)
@@ -7324,7 +7401,8 @@ SCHEDULE_PUBLISH_TRUST_MIN = 3
 def schedule_publish_trust(restaurant_id: int, db_path: str = DB_PATH) -> int:
     """How many of the most recent published schedules RAN CLEAN, counting
     back from the latest until one did not (capped at 10). A schedule
-    counts as published when it has a share row.
+    counts as published when published_at is set — a test share on an
+    unpublished draft used to count.
 
     Clean used to mean "went out unedited". An unedited week proves the
     owner did not look; a week that ran is the evidence auto-publish needs:
@@ -7334,7 +7412,7 @@ def schedule_publish_trust(restaurant_id: int, db_path: str = DB_PATH) -> int:
     try:
         rows = conn.execute(
             "SELECT h.id, h.edited_at, h.week_start, h.week_end FROM schedule_history h WHERE h.restaurant_id=? "
-            "AND EXISTS (SELECT 1 FROM schedule_shares s WHERE s.schedule_id=h.id) "
+            "AND h.published_at IS NOT NULL "
             "ORDER BY h.id DESC LIMIT 10", (restaurant_id,)).fetchall()
         n = 0
         for r in rows:

@@ -2298,6 +2298,18 @@ def scheduler_loop():
                 from strategy_jobs import run_quality_calibration
                 _ops.run_job("quality_calibration", run_quality_calibration)
 
+            # Monday 4am — what each published week actually did, by daypart.
+            if _due(now, 4) and now.weekday() == 0 and _ops.claim_period("schedule_outcomes", str(today)):
+                from strategy_jobs import run_schedule_outcomes
+                _ops.run_job("schedule_outcomes", run_schedule_outcomes)
+
+            # Wednesday 5am — reservation feeds into demand_signals, a day
+            # ahead of the Thursday draft (reservation_feeds; no provider is
+            # live yet, unconfigured restaurants are counted and skipped).
+            if _due(now, 5) and now.weekday() == 2 and _ops.claim_period("reservation_sync", str(today)):
+                from reservation_feeds import run_reservation_sync
+                _ops.run_job("reservation_sync", run_reservation_sync)
+
             # Thursday 6am+ — draft next week's schedule for owners who opted
             # in. A draft in Schedule History; nothing reaches staff.
             if _due(now, 6) and now.weekday() == 3 and _ops.claim_period("auto_draft_schedule", str(today)):

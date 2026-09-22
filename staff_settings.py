@@ -28,12 +28,30 @@ class StaffSettingsError(ValueError):
 
 # ── settings ───────────────────────────────────────────────────────────────
 
+CERTIFICATIONS = ("alcohol", "food_handler", "manager", "keyholder", "trainer", "allergen", "first_aid")
+
+
+def _json_field(r, key, default):
+    try:
+        return json.loads(r[key] or "null") or default
+    except Exception:
+        return default
+
+
 def _row(r):
     try:
         avail = json.loads(r["daypart_availability"] or "{}") or {}
     except Exception:
         avail = {}
+    keys = r.keys()
+    windows = _json_field(r, "time_windows", {}) if "time_windows" in keys else {}
+    certs = _json_field(r, "certifications", []) if "certifications" in keys else []
+    prefs = _json_field(r, "preferred_dayparts", []) if "preferred_dayparts" in keys else []
     return {
+        "time_windows": {d: w for d, w in (windows or {}).items() if d in DAYS and isinstance(w, dict)},
+        "certifications": [c for c in (certs or []) if isinstance(c, str)],
+        "preferred_dayparts": [p for p in (prefs or []) if p in ("morning", "night")],
+        "desired_hours": (r["desired_hours"] if "desired_hours" in keys else None),
         "employee_name": r["employee_name"],
         "active": bool(r["active"]) if r["active"] is not None else True,
         "employment_type": r["employment_type"],
@@ -56,8 +74,30 @@ def get_all(restaurant_id, db_path=DB_PATH) -> dict:
     return {r["employee_name"]: _row(r) for r in rows}
 
 
+def _clean_windows(raw):
+    from schedule_rules import parse_minutes
+    if not isinstance(raw, dict):
+        raise StaffSettingsError("time windows are a map of weekday to {earliest, latest}")
+    out = {}
+    for d, w in raw.items():
+        d = str(d).strip().capitalize()
+        if d not in DAYS or not isinstance(w, dict):
+            continue
+        lo, hi = (w.get("earliest") or "").strip(), (w.get("latest") or "").strip()
+        if lo and parse_minutes(lo) is None:
+            raise StaffSettingsError(f"{d}: '{lo}' is not a time")
+        if hi and parse_minutes(hi) is None:
+            raise StaffSettingsError(f"{d}: '{hi}' is not a time")
+        if lo and hi and parse_minutes(lo) >= parse_minutes(hi):
+            raise StaffSettingsError(f"{d}: the window ends before it starts")
+        if lo or hi:
+            out[d] = {"earliest": lo or None, "latest": hi or None}
+    return out
+
+
 def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_hours=None,
            max_hours=None, daypart_availability=None, is_minor=None, updated_by=None,
+           time_windows=None, certifications=None, preferred_dayparts=None, desired_hours=None,
            db_path=DB_PATH) -> dict:
     """Set any subset of one person's facts. Unset arguments keep their
     stored value; the caller passes only what changed."""
@@ -87,12 +127,31 @@ def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_
             raise StaffSettingsError("every day is off — leave at least one day they can work")
         daypart_availability = cleaned
 
+    if time_windows is not None:
+        time_windows = _clean_windows(time_windows)
+    if certifications is not None:
+        if not isinstance(certifications, list):
+            raise StaffSettingsError("certifications is a list")
+        certifications = sorted({str(c).strip().lower()[:40] for c in certifications if str(c).strip()})
+    if preferred_dayparts is not None:
+        if not isinstance(preferred_dayparts, list):
+            raise StaffSettingsError("preferred dayparts is a list of morning/night")
+        preferred_dayparts = [p for p in ("morning", "night") if p in {str(x).strip().lower() for x in preferred_dayparts}]
+    if desired_hours not in (None, ""):
+        try:
+            desired_hours = float(desired_hours)
+        except (TypeError, ValueError):
+            raise StaffSettingsError("desired hours must be a number")
+        if desired_hours < 0 or desired_hours > 80:
+            raise StaffSettingsError("desired hours must be between 0 and 80")
     conn = get_conn(db_path)
     try:
         cur = conn.execute("SELECT * FROM staff_settings WHERE restaurant_id=? AND employee_name=?",
                            (restaurant_id, name)).fetchone()
         current = _row(cur) if cur else {"active": True, "employment_type": None, "min_hours": None,
-                                         "max_hours": None, "daypart_availability": {}, "is_minor": False}
+                                         "max_hours": None, "daypart_availability": {}, "is_minor": False,
+                                         "time_windows": {}, "certifications": [], "preferred_dayparts": [],
+                                         "desired_hours": None}
         new = {
             "active": int(bool(active)) if active is not None else int(current["active"]),
             "employment_type": (employment_type or None) if employment_type is not None else current["employment_type"],
@@ -100,19 +159,28 @@ def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_
             "max_hours": (float(max_hours) if max_hours not in (None, "") else None) if max_hours is not None else current["max_hours"],
             "daypart_availability": daypart_availability if daypart_availability is not None else current["daypart_availability"],
             "is_minor": int(bool(is_minor)) if is_minor is not None else int(current["is_minor"]),
+            "time_windows": time_windows if time_windows is not None else current.get("time_windows") or {},
+            "certifications": certifications if certifications is not None else current.get("certifications") or [],
+            "preferred_dayparts": preferred_dayparts if preferred_dayparts is not None else current.get("preferred_dayparts") or [],
+            "desired_hours": ((desired_hours if desired_hours != "" else None) if desired_hours is not None else current.get("desired_hours")),
         }
         if new["min_hours"] is not None and new["max_hours"] is not None and new["min_hours"] > new["max_hours"]:
             raise StaffSettingsError("minimum hours cannot exceed maximum hours")
         conn.execute("""INSERT INTO staff_settings (restaurant_id, employee_name, active, employment_type,
-                            min_hours, max_hours, daypart_availability, is_minor, updated_by, updated_at)
-                        VALUES (?,?,?,?,?,?,?,?,?,datetime('now'))
+                            min_hours, max_hours, daypart_availability, is_minor, time_windows, certifications,
+                            preferred_dayparts, desired_hours, updated_by, updated_at)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
                         ON CONFLICT(restaurant_id, employee_name) DO UPDATE SET
                             active=excluded.active, employment_type=excluded.employment_type,
                             min_hours=excluded.min_hours, max_hours=excluded.max_hours,
                             daypart_availability=excluded.daypart_availability, is_minor=excluded.is_minor,
+                            time_windows=excluded.time_windows, certifications=excluded.certifications,
+                            preferred_dayparts=excluded.preferred_dayparts, desired_hours=excluded.desired_hours,
                             updated_by=excluded.updated_by, updated_at=excluded.updated_at""",
                      (restaurant_id, name, new["active"], new["employment_type"], new["min_hours"],
                       new["max_hours"], json.dumps(new["daypart_availability"]), new["is_minor"],
+                      json.dumps(new["time_windows"]), json.dumps(new["certifications"]),
+                      json.dumps(new["preferred_dayparts"]), new["desired_hours"],
                       (updated_by or "").strip()[:120] or None))
         conn.commit()
         row = conn.execute("SELECT * FROM staff_settings WHERE restaurant_id=? AND employee_name=?",
@@ -170,6 +238,15 @@ def roster(restaurant_id, db_path=DB_PATH, include_inactive=False) -> list:
 
 def active_names(restaurant_id, db_path=DB_PATH) -> list:
     return [e["name"] for e in roster(restaurant_id, db_path=db_path)]
+
+
+def stated_preferences(restaurant_id, db_path=DB_PATH) -> dict:
+    """{name: {preferred_dayparts, desired_hours}} — what staff said they want."""
+    out = {}
+    for n, st in get_all(restaurant_id, db_path=db_path).items():
+        if st.get("preferred_dayparts") or st.get("desired_hours"):
+            out[n] = {"preferred_dayparts": st.get("preferred_dayparts") or [], "desired_hours": st.get("desired_hours")}
+    return out
 
 
 # ── pairings ───────────────────────────────────────────────────────────────

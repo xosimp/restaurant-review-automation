@@ -19,6 +19,7 @@ FEATURE_KEYS = (
     "reply_rate_30d", "response_24h_rate_30d",
     # labor
     "labor_pct_28d", "labor_pct_sd_28d", "weekend_sales_share_28d",
+    "labor_hours_per_1k_28d", "labor_hours_per_1k_day_28d", "labor_hours_per_1k_night_28d",
     "schedules_28d", "schedule_edits_28d", "schedule_adjust_rate",
     # food cost
     "food_cost_pct_28d", "waste_sales_pct_28d",
@@ -38,11 +39,13 @@ UNITS = {
     "response_24h_rate_30d": "share", "weekend_sales_share_28d": "share", "campaign_tap_rate_28d": "share",
     "campaign_return_rate_28d": "share", "outcomes_improved_rate_90d": "share", "schedule_adjust_rate": "share",
     "post_lift_median_28d": "%", "item_lift_median_28d": "%", "post_engagement_rate_28d": "share",
+    "labor_hours_per_1k_28d": "h/$1k", "labor_hours_per_1k_day_28d": "h/$1k", "labor_hours_per_1k_night_28d": "h/$1k",
 }
 
 # Features benchmarks are published for (cohort p25/p50/p75). Ratios only.
 BENCHMARK_KEYS = ("avg_rating_30d", "response_24h_rate_30d", "reply_rate_30d", "labor_pct_28d",
-                  "labor_pct_sd_28d", "food_cost_pct_28d", "waste_sales_pct_28d", "campaign_tap_rate_28d",
+                  "labor_pct_sd_28d", "labor_hours_per_1k_28d", "labor_hours_per_1k_day_28d",
+                  "labor_hours_per_1k_night_28d", "food_cost_pct_28d", "waste_sales_pct_28d", "campaign_tap_rate_28d",
                   "post_lift_median_28d", "post_engagement_rate_28d", "outcomes_improved_rate_90d")
 
 
@@ -96,7 +99,7 @@ def compute(restaurant_id: int, today: date = None, db_path: str = DB_PATH) -> d
 
         # ── labor ──────────────────────────────────────────────────────────
         lab = conn.execute(
-            "SELECT date, labor_pct, sales FROM labor_daily_history WHERE restaurant_id=? AND date >= ? ORDER BY date",
+            "SELECT date, labor_pct, sales, total_hours FROM labor_daily_history WHERE restaurant_id=? AND date >= ? ORDER BY date",
             (restaurant_id, d28.isoformat())).fetchall()
         pcts = [float(r["labor_pct"]) for r in lab if r["labor_pct"] is not None]
         if pcts:
@@ -109,6 +112,24 @@ def compute(restaurant_id: int, today: date = None, db_path: str = DB_PATH) -> d
             total = sum(s for _, s in sales_days)
             wknd = sum(s for dt, s in sales_days if date.fromisoformat(_d(dt)).weekday() >= 4)
             f["weekend_sales_share_28d"] = round(wknd / total, 3) if total else None
+        # Hours per $1k of sales — a ratio, so it can be compared across a
+        # cohort without a dollar or a name leaving the tenant; by daypart
+        # from the schedule's own outcome record when it exists.
+        try:
+            hrs_rows = [r for r in lab if r["sales"] and r["total_hours"]]
+            if len(hrs_rows) >= 7:
+                tot_s = sum(float(r["sales"]) for r in hrs_rows)
+                tot_h = sum(float(r["total_hours"]) for r in hrs_rows)
+                f["labor_hours_per_1k_28d"] = round(tot_h / tot_s * 1000, 2) if tot_s else None
+            if _has_col(conn, "schedule_outcomes", "daypart"):
+                for part, key in (("morning", "labor_hours_per_1k_day_28d"), ("night", "labor_hours_per_1k_night_28d")):
+                    o = conn.execute("SELECT SUM(hours) AS h, SUM(sales) AS s, COUNT(*) AS n FROM schedule_outcomes "
+                                     "WHERE restaurant_id=? AND daypart=? AND date >= ? AND sales IS NOT NULL",
+                                     (restaurant_id, part, d28.isoformat())).fetchone()
+                    if o and (o["n"] or 0) >= 5 and o["s"]:
+                        f[key] = round(float(o["h"]) / float(o["s"]) * 1000, 2)
+        except Exception:
+            pass
         sched = conn.execute(
             "SELECT generated_at, edited_at FROM schedule_history WHERE restaurant_id=? AND generated_at >= ?",
             (restaurant_id, d28.isoformat())).fetchall() if _has_col(conn, "schedule_history", "edited_at") else []

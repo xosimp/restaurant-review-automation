@@ -171,6 +171,8 @@ class ShiftContext:
     day_hours: float = 0.0                             # hours scheduled this day
     week_assignments: dict = field(default_factory=dict)   # {name: [assignment]}
     prior_pattern: dict = field(default_factory=dict)  # {name: {"days": [...], "dayparts": [...]}}
+    history_weeks: int = 0                             # how many weeks the shift history spans
+    ledger: dict = field(default_factory=dict)         # {name: {weekend, closing, holiday, shifts, weeks}} over ~8 published weeks
     availability: dict = field(default_factory=dict)   # {name: set(unavailable days)}
     # Free-text staff constraints, which the generator's prompt calls the
     # highest priority rule of all. The engine cannot parse them, but it can
@@ -911,10 +913,32 @@ def dim_fairness(ctx: ShiftContext) -> DimensionResult | None:
         if spread > worst_spread:
             worst_key, worst_spread = key, spread
     score = SCORE_MAX if worst_spread <= 2 else max(0, SCORE_MAX - (worst_spread - 2) * 22)
+    # The rotation ledger: weekends and closes over the last published
+    # weeks, for the people on this week. A spread of more than four over
+    # eight weeks is a pattern this week should be correcting, not adding to.
+    ledger_note = None
+    if ctx.ledger:
+        on = [n for n in working_names if n in ctx.ledger and ctx.ledger[n].get("shifts", 0) >= 3]
+        if len(on) >= 3:
+            for key, label in (("weekend", "weekend shifts"), ("closing", "closes")):
+                counts = {n: int(ctx.ledger[n].get(key) or 0) for n in on}
+                top, bottom = max(counts.values()), min(counts.values())
+                if top - bottom > 4:
+                    most = sorted(n for n, c in counts.items() if c == top)[:2]
+                    this_week = kinds.get("weekend" if key == "weekend" else "closing") or {}
+                    if any(this_week.get(n, 0) for n in most):
+                        wk = ctx.ledger[most[0]].get("weeks", 8)
+                        ledger_note = (f"{_names(most)} already {'has' if len(most) == 1 else 'have'} the most {label} of the last "
+                                       f"{wk} published weeks ({top} against {bottom}) and {'gets' if len(most) == 1 else 'get'} more here.")
+                        facts["ledger"] = {"kind": key, "most": most, "top": top, "bottom": bottom, "weeks": wk}
+                        score = max(0, score - 15)
+                        break
     res = DimensionResult(key="fairness", label="Fairness", score=score,
                           weight=DEFAULT_WEIGHTS["fairness"], facts=facts)
+    if ledger_note:
+        res.weaknesses.append(ledger_note)
     labels = {"busiest": "the week's busiest shifts", "weekend": "the weekend shifts", "closing": "the closes"}
-    uneven = [(k, f) for k, f in facts.items() if f["spread"] > 2]
+    uneven = [(k, f) for k, f in facts.items() if isinstance(f, dict) and f.get("spread", 0) > 2]
     if uneven:
         # One sentence, because the week summary keeps one line per
         # dimension: the person carrying the most of the worst-spread kind,
@@ -1397,7 +1421,8 @@ def explain_assignment(row: dict, ctx: ShiftContext, applied: list = None) -> di
         part = {"morning": "days", "night": "nights"}.get(ctx.daypart, "shifts")
         bits.append(f"usually works {ctx.day} {part}")
         facts["usual"] = True
-    elif days and (ctx.day or "").lower() not in days:
+    elif days and (ctx.day or "").lower() not in days and ctx.history_weeks >= 4:
+        # Only with enough history to know what "usually" means.
         bits.append(f"not a day they usually work")
         facts["usual"] = False
     # tenure
@@ -1725,6 +1750,18 @@ def confidence(shifts: list, signals: dict) -> dict:
 
 # ── Recommendations ────────────────────────────────────────────────────────
 
+_REC_KINDS = (("Fill the gap", "coverage"), ("Move somebody", "leadership"), ("Pair ", "strength"),
+              ("Trim about", "hours"), ("Give ", "fatigue"), ("Rate the", "ratings"))
+
+
+def recommendation_kind(text: str) -> str:
+    """The kind of a recommendation sentence, for the accept/dismiss ledger."""
+    for prefix, kind in _REC_KINDS:
+        if (text or "").startswith(prefix):
+            return kind
+    return "other"
+
+
 def recommendations(scored: list) -> list:
     """What the manager could actually do about it, most valuable first.
 
@@ -1950,6 +1987,8 @@ def build_contexts(rows: list, profiles: list = None, **signals) -> list:
             day_hours=day_hours.get(date, 0.0),
             week_assignments=week_assignments,
             prior_pattern=signals.get("prior_pattern") or {},
+            history_weeks=int(signals.get("history_weeks") or 0),
+            ledger=signals.get("ledger") or {},
             availability=signals.get("availability") or {},
         ))
     return contexts

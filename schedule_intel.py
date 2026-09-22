@@ -1,0 +1,596 @@
+"""
+schedule_intel.py — what the schedule learns from its own record.
+
+Everything here is per-restaurant, read from first-party rows, and
+rendered as facts the prompt and the quality engine can use. Nothing calls
+a model; nothing crosses a tenant.
+
+  record_outcomes       what each PUBLISHED week actually did, by date and
+                        daypart: hours, sales, labor %, issues, review rating
+  outcome_block         "last time this pattern ran" for the prompt
+  fairness_ledger       weekends, closes and holidays per person over 8 weeks
+  behaviour_preferences what people keep dropping and claiming
+  mentoring             shifts worked beside a closer in a role that is not
+                        their own — who could hold a station
+  chemistry_suggestions pairs whose shared dayparts ran clean — suggested,
+                        never applied
+  recommendation events an accept/dismiss ledger, and the kinds nobody takes
+  learned-pattern dismissals — the owner's say over what the draft learns
+"""
+import json
+from datetime import date, datetime, timedelta
+
+from models import get_conn, DB_PATH
+
+OUTCOME_WEEKS = 12
+LEDGER_WEEKS = 8
+MENTOR_SHIFTS_TO_HOLD = 8
+SUGGEST_MIN_SHARED = 6
+SUGGEST_MIN_CLEAN = 0.8
+SUPPRESS_AFTER_SHOWN = 10
+
+
+def _hours(r):
+    try:
+        return float(r.get("scheduled_hours") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _daypart(r):
+    from schedule_rules import daypart_of
+    return daypart_of(r.get("shift_start", ""))
+
+
+# ── outcomes per published week ───────────────────────────────────────────
+
+def record_outcomes(restaurant_id, db_path=DB_PATH, today=None) -> dict:
+    """For every published week that has ended, one row per date and
+    daypart: scheduled hours (from the published CSV), sales and labor %
+    (labor_daily_history, split by the intraday morning share), coverage
+    and no-show issues on that date, and the mean review rating dated that
+    day. Idempotent: rows are keyed by (history_id, date, daypart)."""
+    from schedule_versions import rows_from_csv
+    today = today or date.today()
+    conn = get_conn(db_path)
+    written = 0
+    try:
+        weeks = conn.execute(
+            "SELECT id, week_start, week_end, schedule_csv FROM schedule_history WHERE restaurant_id=? AND published_at IS NOT NULL "
+            "AND week_end < ? ORDER BY id DESC LIMIT ?", (restaurant_id, today.isoformat(), OUTCOME_WEEKS)).fetchall()
+        if not weeks:
+            return {"written": 0}
+        share = _morning_share(conn, restaurant_id)
+        for w in weeks:
+            rows = rows_from_csv(w["schedule_csv"])
+            by = {}
+            for r in rows:
+                part = _daypart(r)
+                if part == "unknown" or not r.get("date"):
+                    continue
+                e = by.setdefault((r["date"], part), {"hours": 0.0, "people": set()})
+                e["hours"] += _hours(r)
+                e["people"].add(r["employee"])
+            for (d, part), e in by.items():
+                day = conn.execute("SELECT sales, labor_pct, day_of_week FROM labor_daily_history WHERE restaurant_id=? AND date=?",
+                                   (restaurant_id, d)).fetchone()
+                sales = None
+                if day and day["sales"]:
+                    try:
+                        wd = datetime.strptime(d, "%Y-%m-%d").strftime("%A")
+                    except ValueError:
+                        wd = day["day_of_week"]
+                    s = share.get(wd, 0.4)
+                    sales = round(float(day["sales"]) * (s if part == "morning" else 1 - s), 0)
+                try:
+                    issues = conn.execute(
+                        "SELECT COUNT(*) FROM ops_issues WHERE restaurant_id=? AND kind IN ('coverage','no_show') AND substr(created_at,1,10)=?",
+                        (restaurant_id, d)).fetchone()[0]
+                except Exception:
+                    issues = 0
+                try:
+                    rv = conn.execute("SELECT AVG(rating), COUNT(*) FROM reviews WHERE restaurant_id=? AND substr(review_date,1,10)=?",
+                                      (restaurant_id, d)).fetchone()
+                    rating, n_reviews = (round(float(rv[0]), 2) if rv and rv[0] else None), (rv[1] if rv else 0)
+                except Exception:
+                    rating, n_reviews = None, 0
+                conn.execute(
+                    "INSERT INTO schedule_outcomes (restaurant_id, history_id, date, daypart, hours, people, sales, labor_pct, issues, "
+                    "review_rating, reviews) VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(history_id, date, daypart) DO UPDATE SET "
+                    "hours=excluded.hours, people=excluded.people, sales=excluded.sales, labor_pct=excluded.labor_pct, "
+                    "issues=excluded.issues, review_rating=excluded.review_rating, reviews=excluded.reviews, recorded_at=datetime('now')",
+                    (restaurant_id, w["id"], d, part, round(e["hours"], 1), len(e["people"]), sales,
+                     (day["labor_pct"] if day else None), issues, rating, n_reviews))
+                written += 1
+        conn.commit()
+    finally:
+        conn.close()
+    return {"written": written}
+
+
+def _morning_share(conn, restaurant_id) -> dict:
+    """{weekday: share of the day's sales taken by 3pm}, from ≥3 captured days."""
+    try:
+        rows = conn.execute("SELECT weekday, business_date, captured_hour, net_sales FROM pos_intraday WHERE restaurant_id=? "
+                            "AND business_date >= date('now','-84 days') ORDER BY business_date, captured_hour", (restaurant_id,)).fetchall()
+    except Exception:
+        return {}
+    by = {}
+    for r in rows:
+        by.setdefault((r["weekday"], r["business_date"]), []).append((int(r["captured_hour"]), float(r["net_sales"] or 0)))
+    tmp = {}
+    for (wd, _), caps in by.items():
+        caps.sort()
+        total = caps[-1][1]
+        at3 = max((s for h, s in caps if h <= 15), default=None)
+        if total > 0 and at3 is not None:
+            tmp.setdefault(wd, []).append(min(1.0, at3 / total))
+    return {wd: sorted(v)[len(v) // 2] for wd, v in tmp.items() if len(v) >= 3}
+
+
+def outcomes_by_daypart(restaurant_id, db_path=DB_PATH) -> dict:
+    """{weekday: {daypart: {weeks, avg_hours, avg_sales, splh, issues, troubled, rating}}}
+    over the recorded weeks."""
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("SELECT date, daypart, hours, sales, issues, review_rating FROM schedule_outcomes WHERE restaurant_id=? "
+                            "ORDER BY date DESC LIMIT 400", (restaurant_id,)).fetchall()
+    except Exception:
+        return {}
+    finally:
+        conn.close()
+    acc = {}
+    for r in rows:
+        try:
+            wd = datetime.strptime(r["date"], "%Y-%m-%d").strftime("%A")
+        except ValueError:
+            continue
+        e = acc.setdefault(wd, {}).setdefault(r["daypart"], {"weeks": 0, "hours": 0.0, "sales": 0.0, "sales_n": 0, "issues": 0, "ratings": []})
+        e["weeks"] += 1
+        e["hours"] += float(r["hours"] or 0)
+        if r["sales"] is not None:
+            e["sales"] += float(r["sales"]); e["sales_n"] += 1
+        e["issues"] += int(r["issues"] or 0)
+        if r["review_rating"] is not None:
+            e["ratings"].append(float(r["review_rating"]))
+    out = {}
+    for wd, parts in acc.items():
+        for part, e in parts.items():
+            if e["weeks"] < 2:
+                continue
+            avg_h = e["hours"] / e["weeks"]
+            avg_s = (e["sales"] / e["sales_n"]) if e["sales_n"] else None
+            out.setdefault(wd, {})[part] = {
+                "weeks": e["weeks"], "avg_hours": round(avg_h, 1), "avg_sales": round(avg_s, 0) if avg_s else None,
+                "splh": round(avg_s / avg_h, 0) if (avg_s and avg_h) else None,
+                "issues": e["issues"], "troubled": e["issues"] >= max(2, e["weeks"] // 2),
+                "rating": round(sum(e["ratings"]) / len(e["ratings"]), 2) if e["ratings"] else None,
+            }
+    return out
+
+
+def outcome_block(outcomes: dict, week_days: list) -> str:
+    """The prompt's "last time this pattern ran" facts."""
+    if not outcomes:
+        return ""
+    lines = []
+    for wd in week_days or []:
+        parts = outcomes.get(wd) or {}
+        for part in ("morning", "night"):
+            e = parts.get(part)
+            if not e:
+                continue
+            bits = [f"about {e['avg_hours']:g}h scheduled"]
+            if e.get("splh"):
+                bits.append(f"${e['splh']:,.0f} of sales per labor hour")
+            if e["issues"]:
+                bits.append(f"{e['issues']} coverage or no-show issue{'s' if e['issues'] != 1 else ''} in {e['weeks']} weeks")
+            if e.get("rating") is not None:
+                bits.append(f"reviews averaged {e['rating']:g}★")
+            tag = " — a daypart that has gone wrong before; do not thin it" if e["troubled"] else ""
+            lines.append(f"  {wd} {'lunch/day' if part == 'morning' else 'dinner/night'}: " + ", ".join(bits) + tag)
+    if not lines:
+        return ""
+    return ("\n\nWHAT PUBLISHED WEEKS ACTUALLY DID (this restaurant's own record, by daypart — the pattern that ran, "
+            "and how it went):\n" + "\n".join(lines))
+
+
+# ── fairness ledger ────────────────────────────────────────────────────────
+
+def fairness_ledger(restaurant_id, weeks: int = LEDGER_WEEKS, db_path=DB_PATH, today=None) -> dict:
+    """{name: {"weekend": n, "closing": n, "holiday": n, "weeks": w}} from
+    published weeks — the rotation memory a seven-day window cannot hold."""
+    from schedule_versions import rows_from_csv
+    from schedule_economics import _holiday_dates
+    today = today or date.today()
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("SELECT week_start, week_end, schedule_csv FROM schedule_history WHERE restaurant_id=? AND published_at IS NOT NULL "
+                            "AND week_start >= ? ORDER BY week_start DESC LIMIT ?",
+                            (restaurant_id, (today - timedelta(weeks=weeks)).isoformat(), weeks)).fetchall()
+        close_times = {}
+        try:
+            from models import get_close_times
+            close_times = get_close_times(restaurant_id, db_path) or {}
+        except Exception:
+            pass
+    finally:
+        conn.close()
+    if not rows:
+        return {}
+    from schedule_rules import parse_minutes
+    holidays = {}
+    for y in {int((r["week_start"] or "2000")[:4]) for r in rows}:
+        holidays.update(_holiday_dates(y))
+    ledger = {}
+    for w in rows:
+        for r in rows_from_csv(w["schedule_csv"]):
+            n = r["employee"]
+            e = ledger.setdefault(n, {"weekend": 0, "closing": 0, "holiday": 0, "shifts": 0})
+            e["shifts"] += 1
+            try:
+                d = datetime.strptime(r["date"], "%Y-%m-%d")
+            except ValueError:
+                continue
+            if d.weekday() >= 5:
+                e["weekend"] += 1
+            if r["date"] in holidays:
+                e["holiday"] += 1
+            close = parse_minutes(close_times.get(d.strftime("%A"), ""))
+            end = parse_minutes(r.get("shift_end", ""))
+            if close is not None and end is not None and end >= close - 30:
+                e["closing"] += 1
+            elif close is None and end is not None and end >= 22 * 60:
+                e["closing"] += 1
+    for e in ledger.values():
+        e["weeks"] = len(rows)
+    return ledger
+
+
+def ledger_block(ledger: dict) -> str:
+    if not ledger:
+        return ""
+    active = {n: e for n, e in ledger.items() if e["shifts"] >= 3}
+    if len(active) < 3:
+        return ""
+    wk = next(iter(active.values()))["weeks"]
+    top_w = sorted(active.items(), key=lambda kv: -kv[1]["weekend"])[:3]
+    low_w = sorted(active.items(), key=lambda kv: kv[1]["weekend"])[:3]
+    top_c = sorted(active.items(), key=lambda kv: -kv[1]["closing"])[:3]
+    lines = [f"  Most weekend shifts in the last {wk} published weeks: " + ", ".join(f"{n} ({e['weekend']})" for n, e in top_w),
+             "  Fewest: " + ", ".join(f"{n} ({e['weekend']})" for n, e in low_w),
+             "  Most closes: " + ", ".join(f"{n} ({e['closing']})" for n, e in top_c)]
+    hol = [(n, e["holiday"]) for n, e in active.items() if e["holiday"]]
+    if hol:
+        lines.append("  Holidays worked: " + ", ".join(f"{n} ({h})" for n, h in sorted(hol, key=lambda x: -x[1])[:5]))
+    return ("\n\nROTATION LEDGER (who has carried the weekends, closes and holidays lately — spread the next ones "
+            "toward the people at the bottom of each list where the rules allow):\n" + "\n".join(lines))
+
+
+# ── behaviour-learned preferences ─────────────────────────────────────────
+
+def behaviour_preferences(restaurant_id, weeks: int = 12, db_path=DB_PATH) -> dict:
+    """{name: {"avoids": ["Sunday night", …], "prefers": [...], "drops": n, "claims": n}}
+    from drop requests and claims. Two of the same is a pattern."""
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("SELECT employee_name, replacement_name, date, shift_start, status, kind FROM shift_change_requests "
+                            "WHERE restaurant_id=? AND created_at >= date('now', ?)", (restaurant_id, f"-{int(weeks) * 7} days")).fetchall()
+    except Exception:
+        return {}
+    finally:
+        conn.close()
+    from schedule_rules import daypart_of
+    tally = {}
+    for r in rows:
+        try:
+            wd = datetime.strptime(r["date"], "%Y-%m-%d").strftime("%A")
+        except (ValueError, TypeError):
+            continue
+        slot = f"{wd} {'night' if daypart_of(r['shift_start'] or '') == 'night' else 'day'}"
+        if (r["kind"] or "drop") in ("drop", "swap") and r["status"] not in ("withdrawn",):
+            t = tally.setdefault(r["employee_name"], {"avoid": {}, "prefer": {}, "drops": 0, "claims": 0})
+            t["avoid"][slot] = t["avoid"].get(slot, 0) + 1
+            t["drops"] += 1
+        if r["replacement_name"] and r["status"] == "covered":
+            t = tally.setdefault(r["replacement_name"], {"avoid": {}, "prefer": {}, "drops": 0, "claims": 0})
+            t["prefer"][slot] = t["prefer"].get(slot, 0) + 1
+            t["claims"] += 1
+    out = {}
+    for n, t in tally.items():
+        avoids = sorted(s for s, c in t["avoid"].items() if c >= 2)
+        prefers = sorted(s for s, c in t["prefer"].items() if c >= 2)
+        if avoids or prefers:
+            out[n] = {"avoids": avoids, "prefers": prefers, "drops": t["drops"], "claims": t["claims"]}
+    return out
+
+
+def preferences_block(learned: dict, stated: dict) -> str:
+    """Stated preferences (staff_settings.preferred_dayparts / desired_hours)
+    and learned ones, as soft signals."""
+    lines = []
+    for n, p in sorted((stated or {}).items()):
+        bits = []
+        if p.get("preferred_dayparts"):
+            bits.append("prefers " + "/".join(p["preferred_dayparts"]))
+        if p.get("desired_hours"):
+            bits.append(f"would like about {float(p['desired_hours']):g}h a week")
+        if bits:
+            lines.append(f"  {n}: " + "; ".join(bits))
+    for n, p in sorted((learned or {}).items()):
+        bits = []
+        if p["avoids"]:
+            bits.append("keeps asking to drop " + ", ".join(p["avoids"]))
+        if p["prefers"]:
+            bits.append("keeps picking up " + ", ".join(p["prefers"]))
+        lines.append(f"  {n}: " + "; ".join(bits))
+    if not lines:
+        return ""
+    return ("\n\nWHAT STAFF WANT (stated, and learned from what they drop and claim — soft: honour it where the "
+            "rules and coverage allow, never over them):\n" + "\n".join(lines))
+
+
+# ── mentoring / succession ─────────────────────────────────────────────────
+
+def mentoring(restaurant_id, db_path=DB_PATH) -> dict:
+    """{name: {role: shifts beside a closer}} — shifts a person worked in a
+    role that is not their usual one, on the same date and daypart as
+    somebody authorised to close. At MENTOR_SHIFTS_TO_HOLD they could hold
+    the station."""
+    from models import _cached_shifts, get_leader_flags
+    try:
+        closers = {n.lower() for n, v in (get_leader_flags(restaurant_id, db_path) or {}).items() if v}
+        shifts = _cached_shifts(restaurant_id)
+    except Exception:
+        return {}
+    if not closers or not shifts:
+        return {}
+    usual = {}
+    for s in shifts:
+        n = (s.get("employee") or "").strip()
+        role = (s.get("role") or "").strip()
+        if n and role:
+            usual.setdefault(n, {})[role] = usual.get(n, {}).get(role, 0) + 1
+    usual = {n: max(r.items(), key=lambda kv: kv[1])[0] for n, r in usual.items()}
+    by_slot = {}
+    for s in shifts:
+        by_slot.setdefault((s.get("date"), _daypart(s)), []).append(s)
+    out = {}
+    for (_d, _p), group in by_slot.items():
+        has_closer = any((g.get("employee") or "").strip().lower() in closers for g in group)
+        if not has_closer:
+            continue
+        for g in group:
+            n, role = (g.get("employee") or "").strip(), (g.get("role") or "").strip()
+            if not n or not role or usual.get(n) == role or n.lower() in closers:
+                continue
+            out.setdefault(n, {})[role] = out.get(n, {}).get(role, 0) + 1
+    return out
+
+
+def could_hold(mentored: dict) -> dict:
+    """{name: [roles]} they have been mentored in enough times."""
+    return {n: [r for r, c in roles.items() if c >= MENTOR_SHIFTS_TO_HOLD] for n, roles in (mentored or {}).items()
+            if any(c >= MENTOR_SHIFTS_TO_HOLD for c in roles.values())}
+
+
+# ── chemistry suggestions ─────────────────────────────────────────────────
+
+def chemistry_suggestions(restaurant_id, db_path=DB_PATH) -> list:
+    """Pairs who shared at least SUGGEST_MIN_SHARED recorded dayparts of
+    which SUGGEST_MIN_CLEAN ran without an issue, and are not already a
+    pair. Returned as suggestions with their evidence; nothing is written."""
+    from schedule_versions import rows_from_csv
+    conn = get_conn(db_path)
+    try:
+        outs = conn.execute("SELECT history_id, date, daypart, issues FROM schedule_outcomes WHERE restaurant_id=?", (restaurant_id,)).fetchall()
+        csvs = {r["id"]: r["schedule_csv"] for r in conn.execute(
+            "SELECT id, schedule_csv FROM schedule_history WHERE restaurant_id=? AND published_at IS NOT NULL", (restaurant_id,)).fetchall()}
+        existing = {frozenset((r["employee_a"].lower(), r["employee_b"].lower())) for r in conn.execute(
+            "SELECT employee_a, employee_b FROM staff_pairs WHERE restaurant_id=?", (restaurant_id,)).fetchall()}
+    except Exception:
+        return []
+    finally:
+        conn.close()
+    if not outs:
+        return []
+    people_by_slot = {}
+    for hid, csv_text in csvs.items():
+        for r in rows_from_csv(csv_text):
+            people_by_slot.setdefault((hid, r["date"], _daypart(r)), set()).add(r["employee"])
+    shared, clean = {}, {}
+    for o in outs:
+        people = sorted(people_by_slot.get((o["history_id"], o["date"], o["daypart"]), set()))
+        ok = int(o["issues"] or 0) == 0
+        for i in range(len(people)):
+            for j in range(i + 1, len(people)):
+                k = frozenset((people[i].lower(), people[j].lower()))
+                shared[k] = shared.get(k, 0) + 1
+                clean[k] = clean.get(k, 0) + (1 if ok else 0)
+    out = []
+    for k, n in shared.items():
+        if n < SUGGEST_MIN_SHARED or k in existing:
+            continue
+        rate = clean[k] / n
+        if rate >= SUGGEST_MIN_CLEAN:
+            a, b = sorted(k)
+            out.append({"a": a.title(), "b": b.title(), "kind": "prefer", "shared": n, "clean_rate": round(rate, 2),
+                        "evidence": f"{clean[k]} of {n} shared dayparts ran without a coverage or no-show issue"})
+    out.sort(key=lambda x: (-x["shared"], -x["clean_rate"]))
+    return out[:8]
+
+
+# ── recommendation ledger ──────────────────────────────────────────────────
+
+def record_recommendation(restaurant_id, kind: str, key: str, action: str, actor=None, db_path=DB_PATH) -> None:
+    """action: shown | accepted | dismissed."""
+    if action not in ("shown", "accepted", "dismissed") or not kind:
+        return
+    conn = get_conn(db_path)
+    try:
+        conn.execute("INSERT INTO schedule_recommendation_events (restaurant_id, kind, key, action, actor) VALUES (?,?,?,?,?)",
+                     (restaurant_id, str(kind)[:60], str(key or "")[:200], action, (actor or "")[:120] or None))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def suppressed_kinds(restaurant_id, db_path=DB_PATH) -> set:
+    """Recommendation kinds shown at least SUPPRESS_AFTER_SHOWN times here
+    that were never once accepted."""
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("SELECT kind, SUM(action='shown') AS shown, SUM(action='accepted') AS acc FROM schedule_recommendation_events "
+                            "WHERE restaurant_id=? GROUP BY kind", (restaurant_id,)).fetchall()
+    except Exception:
+        return set()
+    finally:
+        conn.close()
+    return {r["kind"] for r in rows if (r["shown"] or 0) >= SUPPRESS_AFTER_SHOWN and not (r["acc"] or 0)}
+
+
+# ── learned-pattern dismissals ────────────────────────────────────────────
+
+def pattern_key(p: dict) -> str:
+    return f"{p.get('kind')}|{(p.get('employee') or '').lower()}|{p.get('day')}|{p.get('daypart')}"
+
+
+def dismissed_patterns(restaurant_id, db_path=DB_PATH) -> set:
+    conn = get_conn(db_path)
+    try:
+        return {r["key"] for r in conn.execute("SELECT key FROM schedule_pattern_dismissals WHERE restaurant_id=?", (restaurant_id,)).fetchall()}
+    except Exception:
+        return set()
+    finally:
+        conn.close()
+
+
+def dismiss_pattern(restaurant_id, key: str, actor=None, db_path=DB_PATH) -> None:
+    conn = get_conn(db_path)
+    try:
+        conn.execute("INSERT OR IGNORE INTO schedule_pattern_dismissals (restaurant_id, key, dismissed_by) VALUES (?,?,?)",
+                     (restaurant_id, str(key)[:200], (actor or "")[:120] or None))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def restore_pattern(restaurant_id, key: str, db_path=DB_PATH) -> None:
+    conn = get_conn(db_path)
+    try:
+        conn.execute("DELETE FROM schedule_pattern_dismissals WHERE restaurant_id=? AND key=?", (restaurant_id, str(key)[:200]))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def init_schedule_intel(db_path: str = DB_PATH):
+    """Tables for the outcome record, the recommendation ledger and the
+    owner's pattern dismissals — created at boot like every other table."""
+    conn = get_conn(db_path)
+    conn.execute("""CREATE TABLE IF NOT EXISTS schedule_outcomes (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        restaurant_id  INTEGER NOT NULL REFERENCES restaurants(id),
+        history_id     INTEGER NOT NULL REFERENCES schedule_history(id),
+        date           TEXT    NOT NULL,
+        daypart        TEXT    NOT NULL,
+        hours          REAL,
+        people         INTEGER,
+        sales          REAL,
+        labor_pct      REAL,
+        issues         INTEGER NOT NULL DEFAULT 0,
+        review_rating  REAL,
+        reviews        INTEGER NOT NULL DEFAULT 0,
+        recorded_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(history_id, date, daypart)
+    )""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_schedule_outcomes_rest ON schedule_outcomes(restaurant_id, date)")
+    conn.execute("""CREATE TABLE IF NOT EXISTS schedule_recommendation_events (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        restaurant_id  INTEGER NOT NULL REFERENCES restaurants(id),
+        kind           TEXT    NOT NULL,
+        key            TEXT,
+        action         TEXT    NOT NULL,          -- shown | accepted | dismissed
+        actor          TEXT,
+        created_at     TEXT    NOT NULL DEFAULT (datetime('now'))
+    )""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_sched_rec_events ON schedule_recommendation_events(restaurant_id, kind)")
+    conn.execute("""CREATE TABLE IF NOT EXISTS schedule_pattern_dismissals (
+        restaurant_id  INTEGER NOT NULL REFERENCES restaurants(id),
+        key            TEXT    NOT NULL,
+        dismissed_by   TEXT,
+        created_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (restaurant_id, key)
+    )""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS staff_first_seen (
+        restaurant_id  INTEGER NOT NULL REFERENCES restaurants(id),
+        employee_name  TEXT    NOT NULL,
+        first_seen     TEXT    NOT NULL,
+        shifts_seen    INTEGER NOT NULL DEFAULT 0,
+        updated_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (restaurant_id, employee_name)
+    )""")
+    conn.commit()
+    conn.close()
+
+
+def remember_tenure(restaurant_id, shifts: list, db_path=DB_PATH) -> None:
+    """Keep the earliest date and the most shifts ever seen for each name,
+    so tenure survives the rolling upload window."""
+    if not shifts:
+        return
+    first, count = {}, {}
+    for s in shifts:
+        n = (s.get("employee") or "").strip()
+        d = (s.get("date") or "")[:10]
+        if not n or len(d) != 10:
+            continue
+        count[n] = count.get(n, 0) + 1
+        if n not in first or d < first[n]:
+            first[n] = d
+    conn = get_conn(db_path)
+    try:
+        for n in count:
+            conn.execute(
+                "INSERT INTO staff_first_seen (restaurant_id, employee_name, first_seen, shifts_seen) VALUES (?,?,?,?) "
+                "ON CONFLICT(restaurant_id, employee_name) DO UPDATE SET first_seen=MIN(first_seen, excluded.first_seen), "
+                "shifts_seen=MAX(shifts_seen, excluded.shifts_seen), updated_at=datetime('now')",
+                (restaurant_id, n, first[n], count[n]))
+        conn.commit()
+    except Exception:
+        pass
+    finally:
+        conn.close()
+
+
+def tenure(restaurant_id, from_csv: dict, db_path=DB_PATH) -> dict:
+    """{name: shifts} — the larger of what the current upload shows and what
+    has been remembered; a person seen since March keeps their tenure when
+    the upload window rolls past March."""
+    out = dict(from_csv or {})
+    conn = get_conn(db_path)
+    try:
+        for r in conn.execute("SELECT employee_name, shifts_seen, first_seen FROM staff_first_seen WHERE restaurant_id=?", (restaurant_id,)).fetchall():
+            n = r["employee_name"]
+            seen = int(r["shifts_seen"] or 0)
+            # At least as many shifts as were ever counted for them — never
+            # a guess upward from a hire date.
+            out[n] = max(out.get(n, 0), seen)
+    except Exception:
+        pass
+    finally:
+        conn.close()
+    return out
+
+
+def history_weeks(restaurant_id) -> int:
+    """How many weeks the shift history spans — an 'unusual day' claim needs a few."""
+    from models import _cached_shifts
+    try:
+        ds = sorted({(s.get("date") or "")[:10] for s in _cached_shifts(restaurant_id) if s.get("date")})
+        if len(ds) < 2:
+            return 0
+        a, b = datetime.strptime(ds[0], "%Y-%m-%d"), datetime.strptime(ds[-1], "%Y-%m-%d")
+        return max(0, (b - a).days // 7)
+    except Exception:
+        return 0

@@ -1333,7 +1333,9 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                                  extra_blocks: str = None,
                                  week_slice: list = None,
                                  structured: bool = True,
-                                 prior_rows: list = None) -> dict:
+                                 prior_rows: list = None,
+                                 projected_revenue_override: float = None,
+                                 week_start: str = None) -> dict:
     """
     Use Claude to generate an optimized weekly schedule.
     Returns dict: {schedule_csv: str, summary: list[str], week_dates: list, week_days: list}
@@ -1544,8 +1546,8 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     # Next Monday as schedule start — in the restaurant's local week, not ours
     from time_utils import restaurant_now
     today = restaurant_now(tz_name, naive=True)
-    days_ahead = (7 - today.weekday()) % 7 or 7
-    monday = today + timedelta(days=days_ahead)
+    from schedule_engine import _week_monday
+    monday = _week_monday(today, week_start)
     week_dates = [(monday + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7)]
     week_days  = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
 
@@ -1649,7 +1651,11 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
 
     # Compute PAR hours budget — monthly_revenue_target takes priority, then YoY sum, then recent
     projected_revenue = 0.0
-    if monthly_revenue_target and monthly_revenue_target > 0:
+    if projected_revenue_override and float(projected_revenue_override) > 0:
+        # The restaurant's own weekly pattern (schedule_economics
+        # .projected_weekly_revenue) beats a twelfth of a monthly target.
+        projected_revenue = round(float(projected_revenue_override), 0)
+    elif monthly_revenue_target and monthly_revenue_target > 0:
         projected_revenue = round(monthly_revenue_target / 4.33, 0)  # monthly → weekly
     elif yoy_context:
         yoy_sales = [r["yoy_sales"] for r in yoy_context if r.get("yoy_sales")]
@@ -2383,7 +2389,26 @@ def staff_facing_note(note) -> str:
     return n
 
 
-def employee_shifts_from_csv(schedule_csv: str, employee_name: str) -> list:
+def break_window(shift_start: str, shift_end: str, meal_break_after_hours) -> str:
+    """"3:30pm–4:00pm" — a thirty-minute meal window in the middle of a
+    shift long enough to need one, so the employee's own schedule says when.
+    Empty when the shift is under the threshold or the rule is off."""
+    try:
+        after = float(meal_break_after_hours or 0)
+    except (TypeError, ValueError):
+        after = 0.0
+    if after <= 0:
+        return ""
+    from schedule_rules import parse_minutes, _fmt_minutes
+    s, e = parse_minutes(shift_start), parse_minutes(shift_end)
+    if s is None or e is None or e <= s or (e - s) / 60 <= after:
+        return ""
+    mid = s + (e - s) // 2
+    mid -= mid % 15
+    return f"{_fmt_minutes(mid)}–{_fmt_minutes(mid + 30)}"
+
+
+def employee_shifts_from_csv(schedule_csv: str, employee_name: str, meal_break_after_hours=None) -> list:
     """One employee's own shifts, pulled out of the generated schedule CSV.
 
     The CSV is the schedule's source of truth (see generate_optimized_schedule's
@@ -2417,6 +2442,7 @@ def employee_shifts_from_csv(schedule_csv: str, employee_name: str) -> list:
                 "end": (row.get("shift_end") or "").strip(),
                 "hours": round(hours, 2),
                 "notes": staff_facing_note(row.get("notes")),
+                "break": break_window(row.get("shift_start"), row.get("shift_end"), meal_break_after_hours),
             })
     except Exception:
         return []

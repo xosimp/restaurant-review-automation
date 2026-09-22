@@ -494,9 +494,14 @@ def api_shift_request_drop(current_user):
     import shift_requests
     from time_utils import restaurant_now_by_id
     try:
-        row = shift_requests.request_drop(rid, name, body.get("date"), body.get("shift_start"),
-                                          reason=body.get("reason"),
-                                          today=restaurant_now_by_id(rid, naive=True).date())
+        today = restaurant_now_by_id(rid, naive=True).date()
+        if (body.get("kind") or "drop") == "swap":
+            row = shift_requests.request_swap(rid, name, body.get("date"), body.get("shift_start"),
+                                              body.get("target_name"), body.get("target_date"), body.get("target_start"),
+                                              reason=body.get("reason"), today=today)
+        else:
+            row = shift_requests.request_drop(rid, name, body.get("date"), body.get("shift_start"),
+                                              reason=body.get("reason"), today=today)
     except shift_requests.ShiftRequestError as e:
         return jsonify(ok=False, error=str(e)), 400
     from models import log_event
@@ -505,6 +510,57 @@ def api_shift_request_drop(current_user):
     except Exception:
         pass
     return jsonify(ok=True, request=row)
+
+
+@staff_bp.route("/api/colleagues")
+@staff_login_required
+def api_colleagues(current_user):
+    """Who else is on the published week, with their shifts — what a swap
+    request needs to name. Names and shifts only; nothing else about them."""
+    rid, name = _staff_context(current_user)
+    import staff_schedule
+    from schedule_versions import rows_from_csv
+    from models import get_schedule_history_detail
+    hid = staff_schedule._newest_published(rid)
+    if not hid or not name:
+        return jsonify(ok=True, colleagues=[])
+    detail = get_schedule_history_detail(hid, rid) or {}
+    out = {}
+    for r in rows_from_csv(detail.get("schedule_csv") or ""):
+        if r["employee"].lower() == name.lower():
+            continue
+        out.setdefault(r["employee"], []).append({"date": r["date"], "day": r["day"], "role": r["role"],
+                                                  "shift_start": r["shift_start"], "shift_end": r["shift_end"]})
+    return jsonify(ok=True, colleagues=[{"name": n, "shifts": sorted(v, key=lambda x: (x["date"], x["shift_start"]))}
+                                        for n, v in sorted(out.items())])
+
+
+@staff_bp.route("/api/preferences")
+@staff_login_required
+def api_preferences(current_user):
+    rid, name = _staff_context(current_user)
+    import staff_settings
+    st = (staff_settings.get_all(rid).get(name) or {}) if name else {}
+    return jsonify(ok=True, preferred_dayparts=st.get("preferred_dayparts") or [], desired_hours=st.get("desired_hours"))
+
+
+@staff_bp.route("/api/preferences", methods=["POST"])
+@staff_login_required
+def api_preferences_save(current_user):
+    """The employee's own wishes — dayparts and hours a week — read by the
+    draft as a soft signal, never over a rule or coverage."""
+    rid, name = _staff_context(current_user)
+    if not name:
+        return jsonify(ok=False, error="No employee name on this session."), 400
+    body = request.get_json(silent=True) or {}
+    import staff_settings
+    try:
+        row = staff_settings.upsert(rid, name, preferred_dayparts=body.get("preferred_dayparts") if "preferred_dayparts" in body else None,
+                                    desired_hours=body.get("desired_hours") if "desired_hours" in body else None,
+                                    updated_by=name)
+    except staff_settings.StaffSettingsError as e:
+        return jsonify(ok=False, error=str(e)), 400
+    return jsonify(ok=True, preferred_dayparts=row.get("preferred_dayparts") or [], desired_hours=row.get("desired_hours"))
 
 
 @staff_bp.route("/api/shift-requests/<int:request_id>/withdraw", methods=["POST"])

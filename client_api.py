@@ -2457,9 +2457,16 @@ def generate_schedule_json(current_user):
         return jsonify(ok=True, job_id=running, joined=True)
     if ai_rate_limited(f"schedule:{current_user['restaurant_id']}", max_calls=3, window_secs=60):
         return jsonify(ok=False, error="Too many schedule generations — please wait a moment and try again.")
+    body = request.get_json(silent=True) or {}
+    week_start = (body.get("week_start") or request.args.get("week_start") or "").strip()[:10] or None
+    dates = [str(d)[:10] for d in (body.get("dates") or []) if str(d)[:10]] or None
+    base_history_id = body.get("history_id") if dates else None
+    if dates and not base_history_id:
+        return jsonify(ok=False, error="Regenerating some days needs the draft they belong to (history_id)."), 400
     job_id = str(uuid.uuid4())
     _ops.start_async_job(job_id, "schedule", current_user["restaurant_id"])
-    t = threading.Thread(target=_run_schedule_job, args=(job_id, current_user["restaurant_id"]), daemon=True)
+    t = threading.Thread(target=_run_schedule_job, args=(job_id, current_user["restaurant_id"]),
+                         kwargs={"week_start": week_start, "dates": dates, "base_history_id": base_history_id}, daemon=True)
     t.start()
     return jsonify(ok=True, job_id=job_id)
 

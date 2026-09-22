@@ -66,6 +66,58 @@ def request_drop(restaurant_id, employee_name, day, shift_start, reason=None, db
     return dict(row)
 
 
+def request_swap(restaurant_id, employee_name, day, shift_start, target_name, target_date, target_start,
+                 reason=None, db_path=DB_PATH, today=None):
+    """Ask to trade one of your shifts for a named colleague's. Both shifts
+    must be on the published week; the manager decides, and the same
+    legality check runs both ways before anything moves."""
+    from schedule_versions import rows_from_csv
+    name = (employee_name or "").strip()
+    other = (target_name or "").strip()
+    if not name:
+        raise ShiftRequestError("no employee name on this session")
+    if not other or other.lower() == name.lower():
+        raise ShiftRequestError("name the colleague you want to swap with")
+    try:
+        d = date.fromisoformat(str(day)[:10])
+        td = date.fromisoformat(str(target_date)[:10])
+    except (TypeError, ValueError):
+        raise ShiftRequestError("that is not a date")
+    today = today or date.today()
+    if d < today or td < today:
+        raise ShiftRequestError("one of those shifts has already happened")
+    conn = get_conn(db_path)
+    try:
+        pub = _published(conn, restaurant_id)
+        if not pub:
+            raise ShiftRequestError("no published schedule to change")
+        rows = rows_from_csv(pub["schedule_csv"])
+        mine_ = next((r for r in rows if r["date"] == d.isoformat() and r["employee"].lower() == name.lower()
+                      and r["shift_start"] == (shift_start or "").strip()), None)
+        theirs = next((r for r in rows if r["date"] == td.isoformat() and r["employee"].lower() == other.lower()
+                       and r["shift_start"] == (target_start or "").strip()), None)
+        if not mine_:
+            raise ShiftRequestError("that shift is not on your published schedule")
+        if not theirs:
+            raise ShiftRequestError(f"{other} does not have that shift on the published schedule")
+        dup = conn.execute("SELECT id FROM shift_change_requests WHERE restaurant_id=? AND history_id=? AND "
+                           "lower(employee_name)=? AND date=? AND shift_start=? AND status IN ('pending','open')",
+                           (restaurant_id, pub["id"], name.lower(), d.isoformat(), mine_["shift_start"])).fetchone()
+        if dup:
+            raise ShiftRequestError("you already asked about that shift")
+        cur = conn.execute(
+            "INSERT INTO shift_change_requests (restaurant_id, history_id, employee_name, date, shift_start, shift_end, "
+            "role, reason, kind, target_name, target_date, target_start, target_end) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (restaurant_id, pub["id"], mine_["employee"], d.isoformat(), mine_["shift_start"], mine_["shift_end"],
+             mine_["role"], (reason or "").strip()[:200] or None, "swap", theirs["employee"], td.isoformat(),
+             theirs["shift_start"], theirs["shift_end"]))
+        conn.commit()
+        row = conn.execute("SELECT * FROM shift_change_requests WHERE id=?", (cur.lastrowid,)).fetchone()
+    finally:
+        conn.close()
+    return dict(row)
+
+
 def mine(restaurant_id, employee_name, db_path=DB_PATH) -> list:
     conn = get_conn(db_path)
     try:
@@ -106,6 +158,9 @@ def decide(restaurant_id, request_id, approve, decided_by=None, replacement=None
                            (int(request_id), restaurant_id)).fetchone()
         if not row:
             return None
+        if approve and (row["kind"] or "drop") == "swap":
+            conn.close()
+            return _execute_swap(restaurant_id, dict(row), decided_by, db_path)
         status = "open" if approve else "denied"
         conn.execute("UPDATE shift_change_requests SET status=?, decided_by=?, decided_at=datetime('now') WHERE id=?",
                      (status, (decided_by or "").strip()[:120] or None, row["id"]))
@@ -117,6 +172,51 @@ def decide(restaurant_id, request_id, approve, decided_by=None, replacement=None
     conn = get_conn(db_path)
     try:
         return dict(conn.execute("SELECT * FROM shift_change_requests WHERE id=?", (int(request_id),)).fetchone())
+    finally:
+        conn.close()
+
+
+def _execute_swap(restaurant_id, req: dict, actor, db_path):
+    """Both rows trade names, each checked as a replacement for the other."""
+    from schedule_versions import rows_from_csv, append
+    from schedule_engine import _rows_to_csv_text, replacement_is_legal
+    from models import update_schedule_history_rows
+    conn = get_conn(db_path)
+    try:
+        hist = conn.execute("SELECT id, schedule_csv FROM schedule_history WHERE id=? AND restaurant_id=?",
+                            (req["history_id"], restaurant_id)).fetchone()
+    finally:
+        conn.close()
+    if not hist:
+        raise ShiftRequestError("the schedule this swap belongs to is gone")
+    rows = rows_from_csv(hist["schedule_csv"])
+
+    def find(name, d, start):
+        return next((i for i, r in enumerate(rows) if r["date"] == d and r["shift_start"] == start
+                     and r["employee"].lower() == (name or "").lower()), None)
+    a, b = find(req["employee_name"], req["date"], req["shift_start"]), find(req["target_name"], req["target_date"], req["target_start"])
+    if a is None or b is None:
+        raise ShiftRequestError("one of the shifts is no longer on the schedule")
+    # Check each side against a week in which the other side has already moved.
+    trial = [dict(r) for r in rows]
+    trial[a]["employee"], trial[b]["employee"] = "", ""
+    ok1, why1 = replacement_is_legal(restaurant_id, trial, a, req["target_name"])
+    if not ok1:
+        raise ShiftRequestError(f"{req['target_name']} cannot take {req['employee_name']}'s shift: {why1}")
+    ok2, why2 = replacement_is_legal(restaurant_id, trial, b, req["employee_name"])
+    if not ok2:
+        raise ShiftRequestError(f"{req['employee_name']} cannot take {req['target_name']}'s shift: {why2}")
+    rows[a] = dict(rows[a], employee=req["target_name"], notes=((rows[a].get("notes") or "").strip() + f" (swapped with {req['employee_name']})").strip())
+    rows[b] = dict(rows[b], employee=req["employee_name"], notes=((rows[b].get("notes") or "").strip() + f" (swapped with {req['target_name']})").strip())
+    csv_text = _rows_to_csv_text(rows)
+    update_schedule_history_rows(restaurant_id, csv_text, history_id=hist["id"], edited_by=(actor or "swap"), db_path=db_path)
+    append(restaurant_id, hist["id"], "edited", csv_text, saved_by=(actor or "swap"), db_path=db_path)
+    conn = get_conn(db_path)
+    try:
+        conn.execute("UPDATE shift_change_requests SET status='covered', replacement_name=?, decided_by=?, decided_at=datetime('now') WHERE id=?",
+                     (req["target_name"], (actor or "").strip()[:120] or None, req["id"]))
+        conn.commit()
+        return dict(conn.execute("SELECT * FROM shift_change_requests WHERE id=?", (req["id"],)).fetchone())
     finally:
         conn.close()
 

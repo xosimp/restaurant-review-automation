@@ -61,7 +61,13 @@ def shifts_for_employee(restaurant_id: int, employee_name: str, today=None) -> d
         return {"today": None, "upcoming": [], "week": [], "week_start": today.isoformat(),
                 "published": False}
 
-    mine = employee_shifts_from_csv(detail.get("schedule_csv") or "", employee_name)
+    meal_after = None
+    try:
+        import schedule_rules as _sr
+        meal_after = _sr.compliance(restaurant_id).get("meal_break_after_hours")
+    except Exception:
+        meal_after = None
+    mine = employee_shifts_from_csv(detail.get("schedule_csv") or "", employee_name, meal_break_after_hours=meal_after)
 
     by_day = {}
     for s in mine:

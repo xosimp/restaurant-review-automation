@@ -43,8 +43,11 @@ _BOUNDS = {"min_rest_hours": (0, 24), "max_shift_hours": (4, 24), "daily_ot_hour
 # with a real person still on the floor.
 NO_SHOW = frozenset({"off_roster", "inactive", "outside_week", "double_booked", "overlap",
                      "approved_time_off", "unavailable_day", "unavailable_daypart", "elsewhere"})
-HARD = NO_SHOW | frozenset({"over_max_hours", "shift_too_long", "rest_gap", "minor_late", "minor_hours", "long_run"})
-SOFT = frozenset({"days_off", "pending_time_off", "daily_ot", "meal_break", "under_min_hours", "over_section_cap"})
+NO_SHOW = NO_SHOW | frozenset({"outside_window", "missing_cert"})
+HARD = NO_SHOW | frozenset({"over_max_hours", "shift_too_long", "rest_gap", "minor_late", "minor_hours", "long_run",
+                            "no_manager_on_duty"})
+SOFT = frozenset({"days_off", "pending_time_off", "daily_ot", "meal_break", "under_min_hours", "over_section_cap",
+                  "before_arrival"})
 
 LABELS = {
     "off_roster": "not on the staff list", "inactive": "no longer on the roster",
@@ -58,6 +61,10 @@ LABELS = {
     "daily_ot": "daily overtime", "meal_break": "long enough to need a meal break",
     "under_min_hours": "under their minimum hours", "over_section_cap": "more servers than sections",
     "long_run": "too many days in a row",
+    "outside_window": "outside the hours they can work that day",
+    "missing_cert": "missing a certification the role needs",
+    "no_manager_on_duty": "no manager or keyholder on the shift",
+    "before_arrival": "starts before that role's arrival time",
 }
 
 
@@ -80,22 +87,36 @@ def compliance(restaurant) -> dict:
         from models import get_restaurant
         restaurant = get_restaurant(restaurant)
     out = dict(DEFAULTS)
+    out["manager_on_duty"] = False
     raw = getattr(restaurant, "compliance_json", None) if restaurant else None
     if not raw:
-        return out
+        return _with_pack(out, restaurant, {})
     try:
         data = json.loads(raw) or {}
     except Exception:
-        return out
+        return _with_pack(out, restaurant, {})
     for k, (lo, hi) in _BOUNDS.items():
         if k in data:
             out[k] = _num(data[k], lo, hi) if data[k] not in (None, "", False) else None
     if isinstance(data.get("minor_latest_end"), str) and data["minor_latest_end"].strip():
         out["minor_latest_end"] = data["minor_latest_end"].strip()[:10]
-    for k in ("min_consecutive_days_off", "part_time_days_off"):
+    for k in ("min_consecutive_days_off", "part_time_days_off", "max_consecutive_days"):
         if out.get(k) is not None:
             out[k] = int(out[k])
-    return out
+    out["manager_on_duty"] = bool(data.get("manager_on_duty"))
+    return _with_pack(out, restaurant, data)
+
+
+def _with_pack(out: dict, restaurant, owner_set: dict) -> dict:
+    """A jurisdiction pack sits UNDER the owner's own values."""
+    code = (getattr(restaurant, "jurisdiction", None) or "").strip() if restaurant else ""
+    if not code:
+        return out
+    try:
+        import compliance_packs
+        return compliance_packs.apply(out, code, owner_set or {})
+    except Exception:
+        return out
 
 
 def save_compliance(restaurant_id, data: dict, db_path=DB_PATH) -> dict:
@@ -107,6 +128,8 @@ def save_compliance(restaurant_id, data: dict, db_path=DB_PATH) -> dict:
             clean[k] = None if v in (None, "", False) else _num(v, lo, hi)
     if isinstance((data or {}).get("minor_latest_end"), str):
         clean["minor_latest_end"] = data["minor_latest_end"].strip()[:10] or DEFAULTS["minor_latest_end"]
+    if "manager_on_duty" in (data or {}):
+        clean["manager_on_duty"] = bool(data["manager_on_duty"])
     update_restaurant(restaurant_id, {"compliance_json": json.dumps(clean) if clean else None}, db_path=db_path)
     from models import get_restaurant
     return compliance(get_restaurant(restaurant_id, db_path))
@@ -194,6 +217,13 @@ def row_hours(row) -> float:
         return round((e - s).total_seconds() / 3600, 1) if s and e else 0.0
 
 
+def _fmt_minutes(m: int) -> str:
+    h, mm = divmod(int(m), 60)
+    suffix = "am" if h < 12 or h == 24 else "pm"
+    h12 = h % 12 or 12
+    return f"{h12}:{mm:02d}{suffix}"
+
+
 def daypart_of(shift_start: str) -> str:
     m = parse_minutes(shift_start)
     if m is None:
@@ -223,6 +253,14 @@ class Constraints:
     base_hours: dict = field(default_factory=dict)         # {lower: {bucket: hours already published}}
     base_rows: dict = field(default_factory=dict)          # {lower: [published rows outside this week]}
     notes: dict = field(default_factory=dict)              # {lower: free-text note}
+    time_windows: dict = field(default_factory=dict)       # {lower: {day: (earliest_min, latest_min)}}
+    certifications: dict = field(default_factory=dict)     # {lower: set(cert)}
+    role_requirements: dict = field(default_factory=dict)  # {role lower: set(cert)}
+    keyholders: set = field(default_factory=set)           # lower: can close, or holds a manager/keyholder cert
+    preferred: dict = field(default_factory=dict)          # {name: {"preferred_dayparts": [...], "desired_hours": n}}
+    foh_roles: set = field(default_factory=lambda: {"server"})
+    patio_roles: set = field(default_factory=set)
+    arrivals: dict = field(default_factory=dict)           # {role lower: minutes relative to open}
     section_cap: int = 0
     role_floors: dict = field(default_factory=dict)
     open_times: dict = field(default_factory=dict)
@@ -270,6 +308,39 @@ class Constraints:
             return False, LABELS["unavailable_day"]
         if daypart and choice in ("morning", "night") and daypart not in ("unknown", choice):
             return False, LABELS["unavailable_daypart"]
+        return True, ""
+
+    def window_ok(self, name: str, date_str: str, start: str, end: str) -> tuple:
+        """Whether a shift's times sit inside the person's window that day."""
+        key = (name or "").strip().lower()
+        win = self.time_windows.get(key)
+        if not win:
+            return True, ""
+        try:
+            day = datetime.strptime(date_str, "%Y-%m-%d").strftime("%A")
+        except (ValueError, TypeError):
+            return True, ""
+        w = win.get(day)
+        if not w:
+            return True, ""
+        s, e = parse_minutes(start), parse_minutes(end)
+        if s is None or e is None:
+            return True, ""
+        lo, hi = w
+        if lo is not None and s < lo:
+            return False, f"{LABELS['outside_window']} (not before {_fmt_minutes(lo)})"
+        if hi is not None and e > hi and e >= s:
+            return False, f"{LABELS['outside_window']} (not after {_fmt_minutes(hi)})"
+        return True, ""
+
+    def cert_ok(self, name: str, role: str) -> tuple:
+        need = self.role_requirements.get((role or "").strip().lower()) or set()
+        if not need:
+            return True, ""
+        have = self.certifications.get((name or "").strip().lower()) or set()
+        missing = sorted(need - have)
+        if missing:
+            return False, f"{LABELS['missing_cert']} ({', '.join(missing)})"
         return True, ""
 
     def rest_ok(self, name: str, candidate: dict, other_rows: list) -> tuple:
@@ -350,8 +421,39 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
                 c.daypart_avail[key] = dict(st["daypart_availability"])
             if st.get("is_minor"):
                 c.minors.add(key)
+            if st.get("time_windows"):
+                win = {}
+                for day, w in st["time_windows"].items():
+                    lo, hi = parse_minutes((w or {}).get("earliest") or ""), parse_minutes((w or {}).get("latest") or "")
+                    if lo is not None or hi is not None:
+                        win[day] = (lo, hi)
+                if win:
+                    c.time_windows[key] = win
+            if st.get("certifications"):
+                c.certifications[key] = {str(x).strip().lower() for x in st["certifications"] if str(x).strip()}
+                if c.certifications[key] & {"manager", "keyholder"}:
+                    c.keyholders.add(key)
+            if st.get("preferred_dayparts") or st.get("desired_hours"):
+                c.preferred[e["name"]] = {"preferred_dayparts": list(st.get("preferred_dayparts") or []),
+                                          "desired_hours": st.get("desired_hours")}
     except Exception:
         pass
+    try:
+        from models import get_leader_flags
+        c.keyholders |= {n.strip().lower() for n, v in (get_leader_flags(restaurant_id, db_path) or {}).items() if v}
+    except Exception:
+        pass
+    c.role_requirements = {str(k).strip().lower(): {str(x).strip().lower() for x in (v or []) if str(x).strip()}
+                           for k, v in (_load_json(getattr(restaurant, "role_requirements_json", None), {}) or {}).items() if k}
+    foh = _load_json(getattr(restaurant, "foh_roles_json", None), [])
+    c.foh_roles = {str(x).strip().lower() for x in foh if str(x).strip()} or {"server"}
+    c.patio_roles = {str(x).strip().lower() for x in (_load_json(getattr(restaurant, "patio_roles_json", None), []) or []) if str(x).strip()}
+    c.arrivals = {}
+    for k, v in (_load_json(getattr(restaurant, "role_arrival_json", None), {}) or {}).items():
+        try:
+            c.arrivals[str(k).strip().lower()] = int(v)
+        except (TypeError, ValueError):
+            continue
 
     # weekday availability + free-text notes
     try:
@@ -456,6 +558,10 @@ def _published_tail(c: Constraints, restaurant_id, db_path):
             key = r["employee"].strip().lower()
             if r["date"] in c.week_dates:
                 c.blocked_dates.setdefault(key, {}).setdefault(r["date"], f"already scheduled at {label}")
+            elif r["date"] >= window_start:
+                # A close at the other site the night before is still a close
+                # for the rest rule here.
+                c.base_rows.setdefault(key, []).append(r)
             b = c.bucket(r["date"])
             if b in buckets:
                 c.base_hours.setdefault(key, {})[b] = c.base_hours.get(key, {}).get(b, 0.0) + row_hours(r)
@@ -508,6 +614,61 @@ def violations(rows: list, c: Constraints) -> list:
             out.append(_v("meal_break", i, r, f"{hrs:g}h shift — schedule a meal break"))
         if c.pending_off.get(key) and r.get("date") in c.pending_off[key]:
             out.append(_v("pending_time_off", i, r, LABELS["pending_time_off"]))
+        ok, why = c.window_ok(name, r.get("date", ""), r.get("shift_start", ""), r.get("shift_end", ""))
+        if not ok:
+            out.append(_v("outside_window", i, r, why))
+        ok, why = c.cert_ok(name, r.get("role", ""))
+        if not ok:
+            out.append(_v("missing_cert", i, r, why))
+        arr = c.arrivals.get((r.get("role") or "").strip().lower())
+        if arr is not None and c.open_times:
+            try:
+                day = datetime.strptime(r.get("date", ""), "%Y-%m-%d").strftime("%A")
+            except (ValueError, TypeError):
+                day = r.get("day") or ""
+            open_m = parse_minutes((c.open_times or {}).get(day, ""))
+            start_m = parse_minutes(r.get("shift_start", ""))
+            if open_m is not None and start_m is not None and start_m < open_m + arr - 15:
+                out.append(_v("before_arrival", i, r, f"starts {r.get('shift_start')}, {r.get('role')} arrives at {_fmt_minutes(open_m + arr)}"))
+
+    # every open daypart needs a manager or keyholder, when the owner says so
+    if c.compliance.get("manager_on_duty") and c.keyholders:
+        slots = {}
+        for i, r in enumerate(rows or []):
+            if r.get("date") and (r.get("employee") or "").strip():
+                slots.setdefault((r["date"], daypart_of(r.get("shift_start", ""))), []).append((i, r))
+        for (d, part), items in sorted(slots.items()):
+            if part == "unknown":
+                continue
+            if not any((r.get("employee") or "").strip().lower() in c.keyholders for _, r in items):
+                i0, r0 = items[0]
+                out.append(_v("no_manager_on_duty", i0, r0, f"{LABELS['no_manager_on_duty']} ({part})"))
+
+    # more front-of-house on the floor at once than there are sections
+    if c.section_cap:
+        by_date = {}
+        for i, r in enumerate(rows or []):
+            if (r.get("role") or "").strip().lower() in c.foh_roles and r.get("date"):
+                by_date.setdefault(r["date"], []).append((i, r))
+        for d, items in by_date.items():
+            events = []
+            for i, r in items:
+                s_, e_ = parse_minutes(r.get("shift_start", "")), parse_minutes(r.get("shift_end", ""))
+                if s_ is not None and e_ is not None and e_ > s_:
+                    events.append((s_, 1, i)); events.append((e_, -1, i))
+            events.sort(key=lambda ev: (ev[0], ev[1]))
+            running, peak, active, worst = 0, 0, [], []
+            for t, delta, i in events:
+                if delta > 0:
+                    active.append(i)
+                else:
+                    active = [x for x in active if x != i]
+                running += delta
+                if running > peak:
+                    peak, worst = running, list(active)
+            if peak > int(c.section_cap) and worst:
+                latest = max(worst, key=lambda i: parse_minutes(rows[i].get("shift_start", "")) or 0)
+                out.append(_v("over_section_cap", latest, rows[latest], f"{peak} on the floor at once, {int(c.section_cap)} sections"))
 
     # per-person rules: overlap, rest, hours, days off
     for key, items in by_person.items():
@@ -580,7 +741,9 @@ def violations(rows: list, c: Constraints) -> list:
         if req and c.week_dates:
             worked = {r.get("date") for _, r in items}
             off = [d for d in c.week_dates if d not in worked]
-            if len(off) <= 3:
+            # Anyone working at all is checked: Monday/Wednesday/Friday has
+            # four days off and no two of them together.
+            if off and len(worked) >= 2:
                 best = run = 0
                 prev = None
                 for d in c.week_dates:
@@ -635,6 +798,18 @@ def prompt_block(c: Constraints) -> str:
     if comp.get("min_consecutive_days_off"):
         lines.append(f"- Everyone gets at least {int(comp['min_consecutive_days_off'])} consecutive days off"
                      + (f"; part-time staff {int(comp['part_time_days_off'])}." if comp.get("part_time_days_off") else "."))
+    if comp.get("manager_on_duty"):
+        lines.append("- Every open daypart has somebody authorised to close or holding a manager/keyholder certification on it.")
+    pack = comp.get("_pack") or {}
+    if pack.get("applied"):
+        lines.append(f"- {pack.get('label')} rules apply: " + ", ".join(f"{k.replace('_', ' ')} {v}" for k, v in pack["applied"].items()) + ".")
+    if c.role_requirements:
+        lines.append("- Certifications by role: " + "; ".join(f"{r} needs {', '.join(sorted(v))}" for r, v in sorted(c.role_requirements.items())) + " — only schedule people who hold them.")
+    if c.arrivals and c.open_times:
+        bits = []
+        for role, off in sorted(c.arrivals.items()):
+            bits.append(f"{role} {abs(off)} min {'before' if off < 0 else 'after'} open" if off else f"{role} at open")
+        lines.append("- Arrival times by role: " + "; ".join(bits) + " — nobody starts earlier than their role's arrival.")
     if c.minors:
         names = ", ".join(sorted({n for n in c.roster_names if n.lower() in c.minors}))
         lines.append(f"- MINORS ({names}): no later than {comp.get('minor_latest_end')} and at most {float(comp.get('minor_max_daily_hours') or 8):g} hours a day.")
@@ -660,6 +835,16 @@ def prompt_block(c: Constraints) -> str:
             bits.append("lunch/day only " + "/".join(mornings))
         if nights:
             bits.append("dinner/night only " + "/".join(nights))
+        win = c.time_windows.get(key) or {}
+        for d in DAYS:
+            w = win.get(d)
+            if w:
+                lo, hi = w
+                span = (f"from {_fmt_minutes(lo)}" if lo is not None else "") + (f" until {_fmt_minutes(hi)}" if hi is not None else "")
+                bits.append(f"{d[:3]} only {span.strip()}")
+        certs = c.certifications.get(key)
+        if certs:
+            bits.append("holds " + ", ".join(sorted(certs)))
         base = c.base_hours.get(key) or {}
         carried = sum(h for b, h in base.items() if b in {c.bucket(d) for d in c.week_dates})
         if carried:

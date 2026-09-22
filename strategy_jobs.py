@@ -419,11 +419,23 @@ def run_auto_draft_schedules(db_path=DB_PATH):
     in 7shifts/HotSchedules/etc. and a Cavnar draft would be a second,
     conflicting source of truth), and where Labor isn't on the plan."""
     import ops
+    import time as _time
     from schedule_engine import _run_schedule_job
     drafted, skipped = 0, 0
-    for r in _restaurants(db_path):
-        if not getattr(r, "auto_draft_schedule", 0) or not getattr(r, "module_labor", 0):
-            continue
+    # Bounded and resumable, like run_daily_fetch: a five-minute draft per
+    # 70-person roster means one pass cannot cover every restaurant, so the
+    # cursor makes the next pass start where this one stopped.
+    started = _time.monotonic()
+    rows = [r for r in _restaurants(db_path)
+            if getattr(r, "auto_draft_schedule", 0) and getattr(r, "module_labor", 0)]
+    order = sorted(rows, key=lambda r: r.id)
+    cursor = _read_cursor(AUTO_DRAFT_CURSOR_KEY, db_path)
+    order = [r for r in order if r.id > cursor] + [r for r in order if r.id <= cursor]
+    last_done = None
+    for r in order:
+        if _time.monotonic() - started > AUTO_DRAFT_MAX_SECONDS:
+            break
+        last_done = r.id
         if (getattr(r, "external_scheduling_tool", None) or "").strip():
             skipped += 1
             continue
@@ -464,7 +476,51 @@ def run_auto_draft_schedules(db_path=DB_PATH):
                            user_ids=audience or None)
         except Exception as e:
             ops.capture(e, job="auto_draft_schedule_push", context=f"restaurant_id={r.id}")
+    _write_cursor(AUTO_DRAFT_CURSOR_KEY, last_done if last_done is not None else 0, db_path)
     return {"drafted": drafted, "skipped": skipped}
+
+
+AUTO_DRAFT_CURSOR_KEY = "auto_draft_schedule_cursor"
+AUTO_DRAFT_MAX_SECONDS = 40 * 60
+
+
+def _read_cursor(key, db_path) -> int:
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT value FROM job_cursors WHERE key=?", (key,)).fetchone()
+        return int(row["value"]) if row and str(row["value"]).isdigit() else 0
+    except Exception:
+        return 0
+    finally:
+        conn.close()
+
+
+def _write_cursor(key, value, db_path) -> None:
+    conn = get_conn(db_path)
+    try:
+        conn.execute("INSERT INTO job_cursors (key, value, updated_at) VALUES (?,?,datetime('now')) "
+                     "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at", (key, str(value)))
+        conn.commit()
+    except Exception:
+        pass
+    finally:
+        conn.close()
+
+
+def run_schedule_outcomes(db_path=DB_PATH):
+    """Monday: record what each published week actually did, by daypart
+    (schedule_intel.record_outcomes), for every Labor restaurant."""
+    import schedule_intel
+    written = 0
+    for r in _restaurants(db_path):
+        if not getattr(r, "module_labor", 0):
+            continue
+        try:
+            written += schedule_intel.record_outcomes(r.id, db_path=db_path).get("written", 0)
+        except Exception as e:
+            import ops
+            ops.capture(e, job="schedule_outcomes", context=f"restaurant_id={r.id}")
+    return {"rows": written}
 
 
 # Used only when a restaurant hasn't set its hours: without a fallback the

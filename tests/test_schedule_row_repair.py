@@ -45,7 +45,7 @@ def _isolated_db(db_path, monkeypatch):
 
 
 def _fake_build_schedule_result(csv_text, roster=None):
-    def fake(restaurant_id):
+    def fake(restaurant_id, week_start=None):
         return {
             "roster": roster if roster is not None else [],
             "schedule_csv": csv_text,

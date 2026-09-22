@@ -2460,12 +2460,19 @@ def mobile_generate_schedule(current_user):
         return jsonify(ok=True, job_id=running, joined=True)
     if ai_rate_limited(f"schedule:{rid}", max_calls=3, window_secs=60):
         return jsonify(ok=False, error="Too many schedule generations — please wait a moment and try again."), 429
+    body = request.get_json(silent=True) or {}
+    week_start = (body.get("week_start") or "").strip()[:10] or None
+    dates = [str(d)[:10] for d in (body.get("dates") or []) if str(d)[:10]] or None
+    base_history_id = body.get("history_id") if dates else None
+    if dates and not base_history_id:
+        return jsonify(ok=False, error="Regenerating some days needs the draft they belong to (history_id)."), 400
     job_id = str(uuid.uuid4())
     _ops.start_async_job(job_id, "schedule", rid)
     from schedule_engine import _run_schedule_job as _run_sched
-    t = threading.Thread(target=_run_sched, args=(job_id, rid), daemon=True)
+    t = threading.Thread(target=_run_sched, args=(job_id, rid),
+                         kwargs={"week_start": week_start, "dates": dates, "base_history_id": base_history_id}, daemon=True)
     t.start()
-    return jsonify(ok=True, job_id=job_id)
+    return jsonify(ok=True, job_id=job_id, week_start=week_start, dates=dates)
 
 
 @mobile_bp.route("/labor/schedule-status/<job_id>")
@@ -5738,6 +5745,20 @@ def mobile_score_schedule(current_user):
             if not (current_user.get("is_admin") or has_permission(current_user, SCHEDULE_DRAFT)):
                 return jsonify(ok=False, error="Your login can view labor but not change the schedule."), 403
             from models import update_schedule_history_rows
+            # Two managers editing the same week: the second save must not
+            # silently overwrite the first. The page sends the version it
+            # loaded; a newer one on file refuses and hands back the diff.
+            import schedule_versions as _sv
+            if data.get("history_id") and data.get("version") not in (None, ""):
+                latest = _sv.list_versions(rid, int(data["history_id"]))
+                try:
+                    sent = int(data["version"])
+                except (TypeError, ValueError):
+                    sent = None
+                if latest and sent is not None and latest[-1]["version"] > sent:
+                    return jsonify(ok=False, conflict=True, latest_version=latest[-1]["version"],
+                                   saved_by=latest[-1]["saved_by"], lines=latest[-1]["lines"],
+                                   error=f"{latest[-1]['saved_by'] or 'Somebody'} saved this week after you opened it. Reload to see their changes."), 409
             csv_text = _rows_to_csv(rows)
             saved = update_schedule_history_rows(
                 rid, csv_text, quality=quality,
@@ -5761,10 +5782,20 @@ def mobile_score_schedule(current_user):
                                        detail=f"history {saved}: {len(rows)} rows")
                 except Exception as _vx:
                     print(f"[schedule] edit version failed: {_vx}")
+                # A week staff were already sent: the people whose shifts
+                # changed are told, and the week is stamped as changed since
+                # it went out. Nobody else hears about it.
+                try:
+                    changed = _notify_changed_rows(rid, saved, csv_text, current_user)
+                    if changed is not None:
+                        _resp_changed = changed
+                except Exception as _nx:
+                    print(f"[schedule] re-notify failed: {_nx}")
         from models import capability_version
         return jsonify(ok=True, quality=quality, what_if=what_if, saved=bool(saved),
                        violations=violations, review=review,
                        history_id=saved or None,
+                       changed_since_sent=locals().get("_resp_changed"),
                        capability_version=capability_version(rid)), 200
     except Exception as e:
         return jsonify(ok=False, error=_safe_err(e)), 500
@@ -5772,6 +5803,71 @@ def mobile_score_schedule(current_user):
 
 _SCHEDULE_COLS = ("date", "day", "employee", "role", "shift_start", "shift_end",
                   "scheduled_hours", "notes")
+
+
+def _notify_changed_rows(rid, history_id, csv_text, actor):
+    """After an edit to a PUBLISHED week: diff against what was last sent,
+    email each person whose own shifts changed (their new week, with the
+    link they already have), stamp republished_at. Returns the list of
+    people told, or None when the week was never published."""
+    import schedule_versions as _sv
+    from models import get_conn as _gc, get_staff_contacts, get_restaurant, _ensure_history_columns
+    conn = _gc()
+    try:
+        _ensure_history_columns(conn)
+        row = conn.execute("SELECT published_at, week_start, week_end FROM schedule_history WHERE id=? AND restaurant_id=?",
+                           (history_id, rid)).fetchone()
+        if not row or not row["published_at"]:
+            return None
+        sent = conn.execute("SELECT schedule_csv FROM schedule_versions WHERE history_id=? AND reason='published' "
+                            "ORDER BY version DESC LIMIT 1", (history_id,)).fetchone()
+    finally:
+        conn.close()
+    before = _sv.rows_from_csv(sent["schedule_csv"] if sent else "")
+    after = _sv.rows_from_csv(csv_text)
+    d = _sv.diff(before, after)
+    people = set()
+    for r in d["added"] + d["removed"]:
+        people.add((r.get("employee") or "").strip())
+    for m in d["moved"]:
+        people.add((m.get("from") or "").strip()); people.add((m.get("to") or "").strip())
+    for r in d["retimed"]:
+        people.add((r.get("employee") or "").strip())
+    people.discard("")
+    if not people:
+        return []
+    restaurant = get_restaurant(rid)
+    contacts = {c["employee_name"].lower(): c for c in get_staff_contacts(rid)}
+    told = []
+    week_label = f"{row['week_start']} – {row['week_end']}" if row["week_end"] else (row["week_start"] or "")
+    from labor import employee_shifts_from_csv
+    from models import create_schedule_share
+    import config as _cfg
+    for name in sorted(people):
+        email = ((contacts.get(name.lower()) or {}).get("email") or "").strip()
+        if not email:
+            continue
+        try:
+            token = create_schedule_share(rid, history_id, name, sent_to=email)
+            from emails import send_staff_schedule_email
+            send_staff_schedule_email(to_email=email, employee_name=name, restaurant_name=restaurant.name,
+                                      week_label=f"{week_label} (updated)", link=f"{_cfg.base_url()}/s/{token}",
+                                      shifts=employee_shifts_from_csv(csv_text, name),
+                                      reply_to=restaurant.owner_email or None)
+            told.append(name)
+        except Exception as e:
+            print(f"[schedule] re-notify {name} failed: {e}")
+    conn = _gc()
+    try:
+        conn.execute("UPDATE schedule_history SET republished_at=datetime('now') WHERE id=? AND restaurant_id=?", (history_id, rid))
+        conn.commit()
+    finally:
+        conn.close()
+    try:
+        _sv.append(rid, history_id, "published", csv_text, saved_by=(actor.get("username") or actor.get("email")) if isinstance(actor, dict) else None)
+    except Exception:
+        pass
+    return told
 
 
 def _rows_to_csv(rows: list) -> str:

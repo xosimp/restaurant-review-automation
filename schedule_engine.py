@@ -46,6 +46,20 @@ def _expected_rows(shifts, roster_pairs) -> int:
     return int(len(roster_pairs or []) * 3.5)
 
 
+def _week_monday(today, week_start=None):
+    """The Monday the week starts on: the owner's choice when given (any
+    date in the wanted week works), else next Monday."""
+    from datetime import datetime as _d, timedelta as _t
+    if week_start:
+        try:
+            d = _d.strptime(str(week_start)[:10], "%Y-%m-%d")
+            return d - _t(days=d.weekday())
+        except ValueError:
+            pass
+    days_ahead = (7 - today.weekday()) % 7 or 7
+    return today + _t(days=days_ahead)
+
+
 def _no_shift_data_message(restaurant_id, restaurant=None):
     """Say which restaurant is missing shifts, and what is actually missing.
 
@@ -68,14 +82,14 @@ def _no_shift_data_message(restaurant_id, restaurant=None):
     elif not csv_text:
         detail = "its client data row has no shifts CSV"
     else:
-        detail = f"its shifts CSV is {len(csv_text.splitlines()) - 1} rows but could not be read"
+        detail = f"its shifts CSV is {max(0, len([ln for ln in csv_text.splitlines() if ln.strip()]) - 1)} rows but could not be read"
     return (f"{name} (id {restaurant_id}) has no shift data to schedule from — {detail}. "
             "Upload a shifts CSV under Update shifts CSV. The figures already on this "
             "page can come from sample data, so a populated Labor tab does not mean "
             "this restaurant has its own shifts on file.")
 
 
-def _build_schedule_result(restaurant_id):
+def _build_schedule_result(restaurant_id, week_start=None):
     """Shared logic for both schedule endpoints."""
     from labor import (analyse_shifts_for_restaurant, load_shifts_for_restaurant,
                        generate_optimized_schedule, get_hourly_rate,
@@ -113,8 +127,7 @@ def _build_schedule_result(restaurant_id):
     # Compute next week dates — the restaurant's week, not the server's
     from time_utils import restaurant_now
     today = restaurant_now(restaurant, naive=True)
-    days_ahead = (7 - today.weekday()) % 7 or 7
-    monday = today + _td(days=days_ahead)
+    monday = _week_monday(today, week_start)
     next_week_dates = [(monday + _td(days=i)).strftime("%Y-%m-%d") for i in range(7)]
 
     week_days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
@@ -252,14 +265,70 @@ def _build_schedule_result(restaurant_id):
         reliability = {}
     learned = []
     try:
-        learned = _versions.learned_patterns(restaurant_id)
+        import schedule_intel as _intel
+        learned = [p for p in _versions.learned_patterns(restaurant_id)
+                   if _intel.pattern_key(p) not in _intel.dismissed_patterns(restaurant_id)]
     except Exception:
         learned = []
+    # The money and the record: what a holiday did here last time, sales per
+    # labor hour by daypart, what published weeks actually did, who has
+    # carried the weekends, what staff want, who could hold a station.
+    import schedule_economics as _econ
+    import schedule_intel as _intel
+    holiday = {}
+    try:
+        holiday = _econ.holiday_lift(restaurant_id, next_week_dates)
+        for d, h in holiday.items():
+            e = signals_by_date.setdefault(d, {"lift_pct": None, "covers": None, "labels": []})
+            label = h["name"] + (f" ({h['lift_pct']:+d}% here last year)" if h.get("lift_pct") is not None else "")
+            if label not in e["labels"]:
+                e["labels"].append(label)
+            if h.get("lift_pct") is not None:
+                e["lift_pct"] = h["lift_pct"] if e.get("lift_pct") is None else max(e["lift_pct"], h["lift_pct"])
+    except Exception:
+        holiday = {}
+    splh = {}
+    try:
+        splh = _econ.splh_by_daypart(restaurant_id)
+    except Exception:
+        splh = {}
+    outcomes = {}
+    try:
+        outcomes = _intel.outcomes_by_daypart(restaurant_id)
+    except Exception:
+        outcomes = {}
+    ledger = {}
+    try:
+        ledger = _intel.fairness_ledger(restaurant_id)
+    except Exception:
+        ledger = {}
+    stated_prefs, learned_prefs = {}, {}
+    try:
+        stated_prefs = _staff.stated_preferences(restaurant_id)
+        learned_prefs = _intel.behaviour_preferences(restaurant_id)
+    except Exception:
+        pass
+    could_hold = {}
+    try:
+        could_hold = _intel.could_hold(_intel.mentoring(restaurant_id))
+    except Exception:
+        could_hold = {}
+    revenue = {"value": None, "source": None}
+    try:
+        revenue = _econ.projected_weekly_revenue(restaurant_id)
+    except Exception:
+        pass
     extra_blocks = (_rules.prompt_block(constraints)
                     + _signals.prompt_block(signals_by_date, next_week_dates)
                     + _pairs_block(pairs, roster_pairs)
                     + _reliability_block(reliability)
-                    + _versions.prompt_block(learned))
+                    + _versions.prompt_block(learned)
+                    + _econ.splh_block(splh)
+                    + _intel.outcome_block(outcomes, week_days)
+                    + _intel.ledger_block(ledger)
+                    + _intel.preferences_block(learned_prefs, stated_prefs)
+                    + _could_hold_block(could_hold)
+                    + _cohort_block(restaurant_id, restaurant))
 
     _gen_kwargs = dict(
         restaurant_name=restaurant.name if restaurant else "Restaurant",
@@ -288,8 +357,25 @@ def _build_schedule_result(restaurant_id):
         shift_profiles=_profiles,
         roster=roster_pairs or None,
         extra_blocks=extra_blocks or None,
+        projected_revenue_override=revenue.get("value"),
+        week_start=monday.strftime("%Y-%m-%d"),
     )
     result = _generate_in_parts(analysis, shifts, roster_pairs, _gen_kwargs)
+    result["holiday_lift"] = holiday
+    result["splh_by_daypart"] = splh
+    result["outcomes_by_daypart"] = outcomes
+    result["fairness_ledger"] = ledger
+    result["could_hold"] = could_hold
+    result["projected_revenue_source"] = revenue.get("source") if revenue.get("value") else ("monthly target ÷ 4.33" if monthly_rev_target else "recent sales scaled to a week")
+    try:
+        import reservation_feeds as _rf
+        result["reservation_feed"] = _rf.status(restaurant)
+    except Exception:
+        result["reservation_feed"] = None
+    try:
+        result["demand_data_through"] = _demand_data_through(restaurant_id)
+    except Exception:
+        result["demand_data_through"] = None
     result["restaurant_name"] = restaurant.name if restaurant else "Restaurant"
     result["demand_by_day"] = _demand_by_day
     result["demand_by_date"] = signals_by_date
@@ -325,42 +411,75 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
         parts = 2
     from datetime import datetime as _d, timedelta as _t
     # Same week the single call would have used (the prompt builder computes
-    # it from the restaurant's own clock).
-    probe = generate_optimized_schedule.__globals__  # noqa: F841 — keeps a reference for readers
+    # it from the restaurant's own clock, or from the owner's week_start).
     from time_utils import restaurant_now
     today = restaurant_now(kwargs.get("tz_name"), naive=True)
-    days_ahead = (7 - today.weekday()) % 7 or 7
-    monday = today + _t(days=days_ahead)
+    monday = _week_monday(today, kwargs.get("week_start"))
     week_dates = [(monday + _t(days=i)).strftime("%Y-%m-%d") for i in range(7)]
+    # Past three date slices the roster itself is split by department
+    # (kitchen and front of house), each department generated in date
+    # slices with the other's rows in view. That is what a 250-person
+    # restaurant needs: the rule sweep afterwards arbitrates the merge.
+    departments = [None]
+    if parts > 3:
+        departments = list(_departments(roster_pairs).items()) or [None]
+        parts = min(3, max(2, -(-parts // len(departments))))
     size = -(-len(week_dates) // parts)
     slices = [week_dates[i:i + size] for i in range(0, len(week_dates), size)]
     merged = None
     rows, narrative, seconds = [], [], wasted
     prior_rows = []
-    for sl in slices:
-        # Each slice sees what the earlier ones wrote — hours so far, days
-        # worked, last shift end — so the ceiling, rest and days-off rules
-        # can be honoured across the boundary rather than only checked after.
-        part = generate_optimized_schedule(analysis, shifts, week_slice=sl, prior_rows=list(prior_rows), **kwargs)
-        if part.get("truncated"):
-            raise ValueError("The week is too long to generate even in parts — trim the roster or split the "
-                             "restaurant into departments, then try again.")
-        merged = merged or part
-        rows.extend(part["schedule_csv"].split("\n")[1:])
-        for line in part["schedule_csv"].split("\n")[1:]:
-            cols = [c.strip() for c in line.split(",", 7)]
-            if len(cols) >= 7 and cols[2]:
-                prior_rows.append({"date": cols[0], "day": cols[1], "employee": cols[2], "role": cols[3],
-                                   "shift_start": cols[4], "shift_end": cols[5], "scheduled_hours": cols[6]})
-        narrative.extend(part.get("narrative") or [])
-        seconds += float(part.get("generation_seconds") or 0)
+    calls = 0
+    for dept in departments:
+        dkwargs = dict(kwargs)
+        if dept:
+            dkwargs["roster"] = dept[1]
+            dkwargs["extra_blocks"] = (kwargs.get("extra_blocks") or "") + (
+                f"\n\nTHIS REQUEST COVERS ONLY THE {dept[0]} ROSTER LISTED ABOVE. The other department is "
+                "written separately; do not schedule anyone not on this list.")
+        for sl in slices:
+            # Each slice sees what the earlier ones wrote — hours so far, days
+            # worked, last shift end — so the ceiling, rest and days-off rules
+            # can be honoured across the boundary rather than only checked after.
+            part = generate_optimized_schedule(analysis, shifts, week_slice=sl, prior_rows=list(prior_rows), **dkwargs)
+            calls += 1
+            if part.get("truncated"):
+                raise ValueError("The week is too long to generate even in parts — trim the roster or split the "
+                                 "restaurant into departments, then try again.")
+            merged = merged or part
+            rows.extend(part["schedule_csv"].split("\n")[1:])
+            for line in part["schedule_csv"].split("\n")[1:]:
+                cols = [c.strip() for c in line.split(",", 7)]
+                if len(cols) >= 7 and cols[2]:
+                    prior_rows.append({"date": cols[0], "day": cols[1], "employee": cols[2], "role": cols[3],
+                                       "shift_start": cols[4], "shift_end": cols[5], "scheduled_hours": cols[6]})
+            # Two bullets from each part, labelled with the days they cover,
+            # so the note is not slice one's alone.
+            label = f"{sl[0][5:]}–{sl[-1][5:]}" if len(sl) > 1 else sl[0][5:]
+            for b in (part.get("narrative") or [])[:2]:
+                narrative.append(f"{dept[0] + ' ' if dept else ''}{label}: {b}")
+            seconds += float(part.get("generation_seconds") or 0)
     merged["schedule_csv"] = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes\n" + "\n".join(r for r in rows if r.strip())
-    merged["narrative"] = narrative[:3]
-    merged["summary"] = narrative[:3]
+    merged["narrative"] = narrative[:6]
+    merged["summary"] = narrative[:6]
     merged["generation_seconds"] = round(seconds, 1)
     merged["truncated"] = False
-    merged["chunked"] = len(slices)
+    merged["chunked"] = calls
+    merged["departments"] = [d[0] for d in departments if d]
     return merged
+
+
+_BOH_WORDS = ("cook", "prep", "dish", "chef", "line", "kitchen", "pantry", "saute", "sauté", "pizza", "grill",
+              "fry", "expo", "baker", "pastry", "sous", "kds")
+
+
+def _departments(roster_pairs) -> dict:
+    """{"KITCHEN": [(name, role)], "FRONT OF HOUSE": [...]} by role words."""
+    out = {"KITCHEN": [], "FRONT OF HOUSE": []}
+    for name, role in roster_pairs or []:
+        r = (role or "").lower()
+        out["KITCHEN" if any(w in r for w in _BOH_WORDS) else "FRONT OF HOUSE"].append((name, role))
+    return {k: v for k, v in out.items() if v}
 
 
 def _last_published_csv(restaurant_id, before_date):
@@ -375,6 +494,57 @@ def _last_published_csv(restaurant_id, before_date):
     finally:
         conn.close()
     return (row["schedule_csv"] if row else "") or ""
+
+
+def _cohort_block(restaurant_id, restaurant) -> str:
+    """Hours per $1k of sales against the cohort — a ratio, no dollars, no
+    names, and only when the cohort clears the intelligence layer's floor."""
+    try:
+        import intelligence
+        cohort = intelligence.cohort_for(restaurant)[0] if restaurant else None
+        lines = []
+        for metric, label in (("labor_hours_per_1k_28d", "over the whole day"),
+                              ("labor_hours_per_1k_day_28d", "at lunch/day"),
+                              ("labor_hours_per_1k_night_28d", "at dinner/night")):
+            b = intelligence.benchmark(restaurant_id, metric, cohort=cohort)
+            if b.get("available") and b.get("value") is not None and b.get("standing") not in (None, "unmeasured"):
+                lines.append(f"  {label}: this restaurant runs {b['value']:g} labor hours per $1k of sales; "
+                             f"{b['n']} {b['cohort_label'].lower()} run {b['p25']:g}–{b['p75']:g} (middle {b['p50']:g}).")
+        if not lines:
+            return ""
+        return ("\n\nHOW THIS RESTAURANT'S LABOR COMPARES (an anonymous cohort ratio — a reason to hold the line on "
+                "hours where it runs heavy, never a reason to add):\n" + "\n".join(lines))
+    except Exception:
+        return ""
+
+
+def _could_hold_block(could_hold: dict) -> str:
+    if not could_hold:
+        return ""
+    lines = [f"  {n}: could hold {', '.join(roles)}" for n, roles in sorted(could_hold.items())]
+    return ("\n\nTRAINED UP (people who have worked a station beside a closer often enough to hold it — "
+            "a legitimate cross-training option before adding headcount):\n" + "\n".join(lines))
+
+
+def _demand_data_through(restaurant_id) -> dict:
+    """When the daily sales the demand forecast reads were last written,
+    and whether that is recent enough to trust. Nothing on the screen said
+    the forecast was three months stale."""
+    from datetime import date as _date, datetime as _dt
+    conn = get_conn()
+    try:
+        row = conn.execute("SELECT MAX(date) AS d FROM labor_daily_history WHERE restaurant_id=? AND sales IS NOT NULL",
+                           (restaurant_id,)).fetchone()
+    finally:
+        conn.close()
+    last = row["d"] if row else None
+    if not last:
+        return {"date": None, "days_ago": None, "blind": True}
+    try:
+        days = (_date.today() - _dt.strptime(str(last)[:10], "%Y-%m-%d").date()).days
+    except ValueError:
+        return {"date": last, "days_ago": None, "blind": True}
+    return {"date": str(last)[:10], "days_ago": days, "blind": days > 14}
 
 
 def _pairs_block(pairs: dict, roster_pairs: list) -> str:
@@ -774,7 +944,8 @@ def _top_up_hours_gap(preview_rows: list, daily_target_hours: dict, hours_budget
                 pool = {e for e in pool
                         if day_name not in unavailable_by_emp.get(e, set())
                         and (e not in available_by_emp or day_name in available_by_emp[e])
-                        and e not in notes_restricted
+                        and (e not in notes_restricted or (constraints is not None and e.lower() in constraints.time_windows))
+                        and (constraints is None or constraints.cert_ok(e, role)[0])
                         # Approved time off, daypart windows, a deactivated
                         # name: the same question the swap search asks.
                         and target_date not in (_blocked_dates.get(e.lower()) or {})
@@ -797,8 +968,14 @@ def _top_up_hours_gap(preview_rows: list, daily_target_hours: dict, hours_budget
             continue
 
         role, pool = candidates_role
-        employee = min(pool, key=lambda e: hours_by_employee.get(e, 0.0))
         start, end = date_role_template.get((target_date, role)) or role_time_template.get(role, ("11:00am", "5:00pm"))
+        if constraints is not None:
+            pool = {e for e in pool if constraints.window_ok(e, target_date, start, end)[0]}
+            if not pool:
+                daily_target_hours[target_date] = by_date_hours.get(target_date, 0.0)
+                continue
+        _rel = (getattr(constraints, "reliability", None) or {}) if constraints is not None else {}
+        employee = min(pool, key=lambda e: (hours_by_employee.get(e, 0.0), float((_rel.get(e) or {}).get("no_show_rate") or 0)))
 
         new_row = {
             "date": target_date, "day": day_name, "employee": employee, "role": role,
@@ -1215,11 +1392,17 @@ def _ensure_role_floors(preview_rows: list, week_dates: list, week_days: list, r
                            and (r.get("role") or "").strip().lower() == key and _window_overlap(r, window)]
                 for _ in range(max(0, need - len(current))):
                     pool = set(role_people.get(key, set())) - working_on_date.get(date, set())
-                    pool = {e for e in pool if e not in notes_restricted and constraints.can_work(e, date, part)[0]}
+                    pool = {e for e in pool if (e not in notes_restricted or e.lower() in constraints.time_windows)
+                            and constraints.can_work(e, date, part)[0] and constraints.cert_ok(e, role_name)[0]}
                     if not pool:
                         break
-                    employee = min(pool, key=lambda e: hours_by_employee.get(e, 0.0))
                     start, end = templates.get((key, part)) or _daypart_fallback(constraints, day_name, part)
+                    pool = {e for e in pool if constraints.window_ok(e, date, start, end)[0]}
+                    if not pool:
+                        break
+                    # The fewest hours so far, and among those the most reliable.
+                    _rel = getattr(constraints, "reliability", None) or {}
+                    employee = min(pool, key=lambda e: (hours_by_employee.get(e, 0.0), float((_rel.get(e) or {}).get("no_show_rate") or 0)))
                     new_row = {"date": date, "day": day_name, "employee": employee, "role": role_name,
                                "shift_start": start, "shift_end": end, "scheduled_hours": "0",
                                "notes": f"added — {role_name} floor"}
@@ -1451,12 +1634,20 @@ def _quality_signals(restaurant_id, result, **extra):
         signals["role_floors"] = c.role_floors or {}
         signals["max_shift_hours"] = c.compliance.get("max_shift_hours")
         signals["weekly_ceiling"] = c.compliance.get("weekly_hours_ceiling")
-        signals["hours_limits"] = {n: v for n, v in (c.hours_limits or {}).items()}
+        # Keyed by display name, which is what the contexts carry; the
+        # constraints key by lowercase. (An earlier version built this and
+        # then overwrote it with an empty dict.)
         signals["hours_limits"] = {}
         for n in (result.get("roster") or []):
             lim = c.hours_limits.get(n.lower())
             if lim:
                 signals["hours_limits"][n] = lim
+    try:
+        import schedule_intel as _si
+        signals["ledger"] = result.get("fairness_ledger") if result.get("fairness_ledger") is not None else _si.fairness_ledger(restaurant_id)
+        signals["history_weeks"] = _si.history_weeks(restaurant_id)
+    except Exception:
+        signals["ledger"], signals["history_weeks"] = {}, 0
     try:
         signals["demand_curve"] = _hourly_profile(restaurant_id)
     except Exception:
@@ -1548,6 +1739,23 @@ def _score_schedule_quality(restaurant_id, rows, result, **extra):
             what_if.pop("best", None)
         except Exception as _wx:
             what_if = {"ran": False, "reason": f"comparison unavailable: {_wx}"}
+    # Recommendation kinds this owner has been shown many times and never
+    # once acted on stop being shown; every kind shown is recorded.
+    try:
+        import schedule_intel as _si
+        hidden = _si.suppressed_kinds(restaurant_id)
+        kept = []
+        for rec in quality.get("recommendations") or []:
+            kind = _sq.recommendation_kind(rec)
+            if kind in hidden:
+                continue
+            kept.append(rec)
+            _si.record_recommendation(restaurant_id, kind, rec[:200], "shown")
+        quality["recommendations"] = kept
+        if hidden:
+            quality["suppressed_recommendation_kinds"] = sorted(hidden)
+    except Exception:
+        pass
     return quality, what_if
 
 
@@ -1572,10 +1780,27 @@ def _sched_notes_with_findings(restaurant_id, sched_notes):
     return ((sched_notes or "").strip() + "\n" + "\n".join(lines)).strip()
 
 
-def _run_schedule_job(job_id, restaurant_id):
+def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_history_id=None):
+    """week_start picks the week (any date in it); dates + base_history_id
+    regenerate only those days of an existing draft, the rest pinned."""
     import csv as _csv_mod, traceback as _tb, datetime as _dt_sched
     try:
-        result = _build_schedule_result(restaurant_id)
+        _pinned = []
+        if dates and base_history_id:
+            from models import get_schedule_history_detail as _gshd
+            _base = _gshd(int(base_history_id), restaurant_id) or {}
+            _pinned = [r for r in _versions.rows_from_csv(_base.get("schedule_csv") or "") if r.get("date") not in set(dates)]
+            week_start = week_start or _base.get("week_start")
+        result = _build_schedule_result(restaurant_id, week_start=week_start)
+        if _pinned:
+            # Only the asked-for days were written; the rest come from the
+            # draft the owner is keeping.
+            keep = set(dates)
+            lines = [ln for ln in result["schedule_csv"].split("\n")[1:] if ln.split(",", 1)[0].strip() in keep]
+            for r in _pinned:
+                lines.append(",".join(str(r.get(c, "") or "").replace(",", ";") for c in _COLS_PINNED))
+            result["schedule_csv"] = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes\n" + "\n".join(lines)
+            result["regenerated_dates"] = sorted(keep)
         from models import get_staff_notes as _gsn_sched, get_close_times as _gct_sched, get_role_close_buffers as _grcb_sched
         _raw_notes = _gsn_sched(restaurant_id) or []
         staff_constraints = {n["employee_name"]: n["notes"] for n in _raw_notes if n.get("employee_name")}
@@ -1735,6 +1960,50 @@ def _run_schedule_job(job_id, restaurant_id):
                 hours_scheduled = _safe_hours_sum(preview_rows)
                 print(f"[schedule] trimmed {rows_trimmed} row(s) over the server cap across {trimmed_dates}")
 
+            # Arrival times by role, staggered starts along the day's sales
+            # curve, and the trim back to the budget — the three passes the
+            # second audit asked for, each reported in the review.
+            import schedule_economics as _econ
+            for _r in preview_rows:
+                _enforce_arrival_time(_r, _r.get("day"), _constraints.open_times, _constraints.arrivals)
+            try:
+                _curve = _hourly_profile(restaurant_id)
+            except Exception:
+                _curve = {}
+            preview_rows, _staggered = _econ.stagger_same_starts(preview_rows, _curve)
+            result["staggered"] = _staggered
+            result["hourly_profile_ready"] = bool(_curve)
+            result["trimmed"] = []
+            result["hours_trimmed"] = 0.0
+            if int(getattr(_restaurant_for_sched, "trim_to_budget", 1) or 0):
+                _rainy = set()
+                for _w in (result.get("weather_forecast") or []):
+                    try:
+                        if int(_w.get("precip_pct") or 0) >= 60:
+                            _rainy.add(_w.get("date"))
+                    except (TypeError, ValueError):
+                        pass
+                preview_rows, _trimmed, _hours_trimmed = _econ.trim_to_budget(
+                    preview_rows, result.get("hours_budget", 0), result.get("daily_target_hours") or {},
+                    constraints=_constraints, floors=_constraints.role_floors, splh=result.get("splh_by_daypart") or {},
+                    rainy_dates=_rainy, patio_roles=_constraints.patio_roles)
+                result["trimmed"] = _trimmed
+                result["hours_trimmed"] = _hours_trimmed
+                if _trimmed:
+                    hours_scheduled = _safe_hours_sum(preview_rows)
+                    print(f"[schedule] trimmed {_hours_trimmed}h to the budget ({len(_trimmed)} rows)")
+            try:
+                from models import get_role_rates as _grr
+                _rates = _grr(restaurant_id)
+                _priced = _econ.priced_cost(preview_rows, _rates, result.get("blended_rate") or (_rates or {}).get("_default"),
+                                            ceiling=_constraints.compliance.get("weekly_hours_ceiling") or 40,
+                                            base_hours={n: sum(v.values()) for n, v in (_constraints.base_hours or {}).items()})
+                result["projected_cost"] = _priced
+                _lbd = float(result.get("labor_budget_dollars") or 0)
+                result["over_budget_dollars"] = round(_priced["total"] - _lbd, 0) if _lbd else None
+            except Exception as _px:
+                print(f"[schedule] pricing failed: {_px}")
+
             # Every rule the week is checked against, in one sweep
             # (schedule_rules.violations): the roster, the week, double
             # bookings, approved time off, availability by day and daypart,
@@ -1781,6 +2050,15 @@ def _run_schedule_job(job_id, restaurant_id):
                 result["review"]["over_budget_hours"] = round(_hs - _hb, 1)
                 result["review"]["lines"].insert(
                     0, f"⚠ {_hs:,.0f}h scheduled against a {_hb:,.0f}h budget — {_hs - _hb:,.0f}h over the ceiling")
+            result["review"]["trimmed"] = result.get("trimmed") or []
+            result["review"]["hours_trimmed"] = result.get("hours_trimmed") or 0.0
+            result["review"]["staggered"] = result.get("staggered") or []
+            for _line in _econ.trim_lines(result.get("trimmed") or [], result.get("hours_trimmed") or 0.0, _hb)[:3]:
+                result["review"]["lines"].append(_line)
+            _pc = result.get("projected_cost") or {}
+            if _pc.get("overtime_hours"):
+                result["review"]["lines"].append(
+                    f"{_pc['overtime_hours']:g}h of overtime priced at {_pc['multiplier']}× — ${_pc['overtime_premium']:,.0f} of premium in a ${_pc['total']:,.0f} week")
             result["rows_needing_review"] = sum(1 for _r in preview_rows if _r.get("needs_review"))
             # Shift strength, checked against the finished schedule rather
             # than trusted to the prompt. The same discipline close times and
@@ -1906,7 +2184,7 @@ def _run_schedule_job(job_id, restaurant_id):
                 restaurant_id, _wd[0] if _wd else None, _wd[-1] if _wd else None,
                 round(hours_scheduled, 1), result.get("hours_budget", 0), result.get("labor_target", 30),
                 result["schedule_csv"], result.get("summary", []),
-                quality=result.get("quality"),
+                quality=result.get("quality"), what_if=result.get("what_if"),
             )
             _annotate_history(_history_id, restaurant_id, review=result.get("review"),
                               seconds=result.get("generation_seconds"),
@@ -2000,11 +2278,51 @@ def _run_schedule_job(job_id, restaurant_id):
             backstop_extended_dates=extended_dates,
             backstop_trimmed_dates=trimmed_dates,
             backstop_pizza_added_dates=pizza_added_dates,
+            trimmed=result.get("trimmed") or [],
+            hours_trimmed=result.get("hours_trimmed") or 0.0,
+            staggered=result.get("staggered") or [],
+            projected_cost=result.get("projected_cost"),
+            over_budget_dollars=result.get("over_budget_dollars"),
+            projected_revenue_source=result.get("projected_revenue_source"),
+            hourly_profile_ready=result.get("hourly_profile_ready", False),
+            demand_data_through=result.get("demand_data_through"),
+            reservation_feed=result.get("reservation_feed"),
+            holiday_lift=result.get("holiday_lift") or {},
+            could_hold=result.get("could_hold") or {},
+            departments=result.get("departments") or [],
+            regenerated_dates=result.get("regenerated_dates") or [],
         ))
     except Exception as e:
         tb = _tb.format_exc()
         print(f"[schedule job] FAILED:\n{tb}")
         _ops.finish_async_job(job_id, "error", {"ok": False, "error": str(e), "traceback": tb})
+
+
+_COLS_PINNED = ("date", "day", "employee", "role", "shift_start", "shift_end", "scheduled_hours", "notes")
+
+
+def _enforce_arrival_time(row: dict, real_day: str, open_times: dict, arrivals: dict) -> None:
+    """A role's arrival time relative to open (role_arrival_json), enforced
+    the way close times are: a row that starts more than fifteen minutes
+    before its role's arrival is moved to it. hours_notes used to carry
+    "cooks 8–8:30am" as prose the code could not check."""
+    if not (row and real_day and open_times and arrivals):
+        return
+    role = (row.get("role") or "").strip().lower()
+    if role not in arrivals:
+        return
+    open_m = _parse_time_to_minutes((open_times or {}).get(real_day, ""))
+    start_m = _parse_time_to_minutes(row.get("shift_start", ""))
+    end_m = _parse_time_to_minutes(row.get("shift_end", ""))
+    if open_m is None or start_m is None or end_m is None:
+        return
+    arrive = open_m + int(arrivals[role])
+    if start_m >= arrive - 15 or end_m <= arrive + 60:
+        return
+    row["shift_start"] = _format_minutes_to_time(arrive)
+    row["scheduled_hours"] = str(round((end_m - arrive) / 60, 1))
+    note = (row.get("notes") or "").strip()
+    row["notes"] = f"{note}; moved to {row.get('role')} arrival" if note else f"moved to {row.get('role')} arrival"
 
 
 def _annotate_history(history_id, restaurant_id, review=None, seconds=None, weather=None):
