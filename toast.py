@@ -543,7 +543,9 @@ def normalise_entries(time_entries: list, sales_by_date: dict, tz=None) -> list:
                 delta = (out_dt - in_dt).total_seconds() / 3600
                 actual_hours = round(max(0, delta), 2)
             else:
-                actual_hours = 0.0
+                # Still clocked in: the hours are not known yet. 0 read as a
+                # zero-hour shift, and reliability counted it as a no-show.
+                actual_hours = ""
 
             # Scheduled hours — use declared schedule if present, else actual
             sched_in  = _parse_toast_time(entry.get("scheduledInDate"))

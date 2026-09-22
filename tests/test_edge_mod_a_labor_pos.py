@@ -319,7 +319,7 @@ def test_an_open_toast_clock_in_is_not_a_no_show(db_path):
     w.writerows(toast.normalise_entries(entries, {}))
     models.save_client_data(rid, "shifts", buf.getvalue(), db_path=db_path)
     rel = staff_settings.reliability(rid, db_path=db_path)
-    assert rel["Sam C."]["no_show_rate"] == 0.0
+    assert rel["Sam Close"]["no_show_rate"] == 0.0
 
 
 # ── A3 #42 / MOD-LAB-9: the nightly POS loop ────────────────────────────────
