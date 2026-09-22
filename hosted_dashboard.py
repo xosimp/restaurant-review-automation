@@ -609,6 +609,23 @@ def index(current_user):
                 _food_cost_data = _json_fc.loads(_fc_raw["food_cost_json"])
     except Exception:
         pass
+    # With a live pantry and no price submission yet, the price monitor opens
+    # on the pantry itself — name, unit, unit cost, a week's usage — instead
+    # of seven sample rows at 0.00 sitting beside the real ingredient list.
+    try:
+        if _can_see_food_cost and not (_food_cost_data and (_food_cost_data.get("current") or {}).get("items")):
+            import inventory_ledger as _il_fc
+            _pantry = [r for r in (_il_fc.list_ingredients(rid) or []) if r.get("name")]
+            if _pantry:
+                _food_cost_data = dict(_food_cost_data or {})
+                _food_cost_data["current"] = {
+                    "from_pantry": True,
+                    "items": [{"name": r["name"], "unit": r.get("unit") or "",
+                               "price": (round(float(r["unit_cost"]), 2) if r.get("unit_cost") else ""),
+                               "usage": (round(float(r["avg_daily_usage"]) * 7, 1) if r.get("avg_daily_usage") else "")}
+                              for r in _pantry]}
+    except Exception:
+        pass
 
     # Multi-location: load group locations for owner switcher
     _group_locations = []
