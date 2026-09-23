@@ -13006,7 +13006,10 @@ function matchRating(rated, target, ctl) {
 document.addEventListener('click', function (ev) {
   var t = ev.target;
   while (t && t !== document.body && !(t.getAttribute && t.getAttribute('data-rt-match') !== null)) t = t.parentNode;
-  if (!t || !t.getAttribute) return;
+  /* The walk stops at body when the click was not on a match button: body
+     has getAttribute too, so without this check every click on the page
+     posted an empty match and toasted "Pick a name from the roster." */
+  if (!t || t === document.body || !t.getAttribute || t.getAttribute('data-rt-match') === null) return;
   matchRating(t.getAttribute('data-rt-match'), t.getAttribute('data-rt-to'), t);
 });
 document.addEventListener('change', function (ev) {
