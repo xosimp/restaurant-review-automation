@@ -357,8 +357,6 @@ def test_a_live_unanswered_negative_does_raise_the_alert(db_path, monkeypatch):
 
 # ── restaurant deletion (DATA-61) ──────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="DATA-61: there is no deletion routine; deletion_requested_at is a flag "
-                                       "nothing acts on and 72 FKs make DELETE FROM restaurants fail")
 def test_delete_restaurant_removes_every_row_in_every_table_with_a_restaurant_id(two_restaurants):
     db = two_restaurants["db_path"]
     a, b = two_restaurants["rid_a"], two_restaurants["rid_b"]

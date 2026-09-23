@@ -2748,6 +2748,72 @@ def request_account_deletion(restaurant_id: int, db_path: str = DB_PATH) -> str:
     return now
 
 
+def delete_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> dict:
+    """Remove a restaurant and every row that belongs to it, in one
+    transaction. Returns {table: rows_deleted}.
+
+    There was no deletion routine: deletion_requested_at was a flag nothing
+    acted on, and DELETE FROM restaurants failed on the ~70 child tables
+    that reference it (DATA-61). This is the routine. It is deliberately
+    NOT called by anything yet — when to run it after a request (the 30-day
+    notice request_account_deletion describes), who confirms it, and what
+    happens to Stripe and to the nightly snapshots that still hold the rows
+    are decisions for the operator, not for a background job to make.
+
+    What goes: every row in every table with a restaurant_id column, the
+    restaurants row, and then any row left pointing (by foreign key) at a
+    row this removed — sessions of a deleted login, versions of a deleted
+    schedule — until none is left. A login whose home restaurant this is but
+    who still has an active membership elsewhere is re-homed there rather
+    than deleted. Foreign-key violations that existed before the call are
+    not touched.
+    """
+    rid = int(restaurant_id)
+    conn = sqlite3.connect(db_path, timeout=30)
+    conn.execute("PRAGMA foreign_keys=OFF")          # must be set outside the transaction
+    deleted = {}
+    try:
+        tables = [r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")]
+        had_orphans = {tuple(v) for v in conn.execute("PRAGMA foreign_key_check")}
+        conn.execute("BEGIN IMMEDIATE")
+        if "memberships" in tables:
+            for uid, other in conn.execute(
+                    "SELECT u.id, (SELECT m.restaurant_id FROM memberships m WHERE m.user_id=u.id "
+                    "  AND m.restaurant_id<>? AND COALESCE(m.is_active,1)=1 ORDER BY m.restaurant_id LIMIT 1) "
+                    "FROM users u WHERE u.restaurant_id=?", (rid, rid)).fetchall():
+                if other is not None:
+                    conn.execute("UPDATE users SET restaurant_id=? WHERE id=?", (other, uid))
+        for t in tables:
+            cols = {r[1] for r in conn.execute(f'PRAGMA table_info("{t}")')}
+            if "restaurant_id" in cols:
+                n = conn.execute(f'DELETE FROM "{t}" WHERE restaurant_id=?', (rid,)).rowcount
+                if n:
+                    deleted[t] = n
+        n = conn.execute("DELETE FROM restaurants WHERE id=?", (rid,)).rowcount
+        if n:
+            deleted["restaurants"] = n
+        for _ in range(20):
+            orphans = [v for v in conn.execute("PRAGMA foreign_key_check")
+                       if tuple(v) not in had_orphans and v[1] is not None]
+            if not orphans:
+                break
+            for table, rowid, _parent, _fk in orphans:
+                if conn.execute(f'DELETE FROM "{table}" WHERE rowid=?', (rowid,)).rowcount:
+                    deleted[table] = deleted.get(table, 0) + 1
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    finally:
+        try:
+            conn.execute("PRAGMA foreign_keys=ON")
+        finally:
+            conn.close()
+    _invalidate_request_cache(rid)
+    return deleted
+
+
 def _request_cache():
     """This request's read memo, or None when there is no request.
 
