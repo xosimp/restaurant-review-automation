@@ -517,12 +517,12 @@ def _stripe_dispatch(event):
             # fields the session carries, and tell Will what happened rather
             # than what to do (provisioning.py). Falls through to the old
             # alert when it would have to guess.
-            _new = None
-            try:
-                import provisioning
-                _new = provisioning.provision_from_checkout(sess)
-            except Exception as _pe:
-                print(f"checkout provisioning failed: {_pe}")
+            # A provisioning failure is raised, not printed: the webhook then
+            # releases its claim and answers 500, so Stripe's retry provisions
+            # the paid customer instead of being dropped as a duplicate while
+            # they have no login (DATA-54).
+            import provisioning
+            _new = provisioning.provision_from_checkout(sess)
             if _new:
                 _granted = _apply_module_entitlement(_new, meta.get("module_keys", ""))
                 send_alert(

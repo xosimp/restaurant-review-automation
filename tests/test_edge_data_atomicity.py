@@ -270,7 +270,6 @@ def _stripe_client(monkeypatch, event):
     return app.test_client()
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-54: the event is claimed before three separate provisioning commits, so a failed create_user leaves a restaurant with no login and Stripe's retry is dropped as a duplicate")
 def test_a_checkout_whose_user_creation_fails_can_be_retried_by_stripe(db_path, monkeypatch):
     welcomed = []
     monkeypatch.setattr(emails, "send_welcome_email", lambda **kw: welcomed.append(kw["to_email"]))

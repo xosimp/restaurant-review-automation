@@ -429,11 +429,12 @@ def _admin_client(app):
     return _web(app, create_session(uid))
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-30: resend-contract overwrites docusign_envelope_id, so a "
-                                       "signature on the first envelope matches no restaurant")
 def test_a_signature_on_an_earlier_envelope_still_completes_onboarding(app, monkeypatch):
+    import base64, hashlib, hmac, json as _json
     import docusign_helper
-    monkeypatch.delenv("DOCUSIGN_WEBHOOK_SECRET", raising=False)
+    # Signed as DocuSign Connect signs it: the webhook refuses unsigned
+    # bodies (SEC-11).
+    monkeypatch.setenv("DOCUSIGN_WEBHOOK_SECRET", "edge-secret")
     envelopes = iter(["env-first", "env-second"])
     monkeypatch.setattr(docusign_helper, "send_contract",
                         lambda **k: {"envelope_id": next(envelopes)})
@@ -446,8 +447,10 @@ def test_a_signature_on_an_earlier_envelope_still_completes_onboarding(app, monk
         assert admin.post(f"/admin/resend-contract/{rid}").get_json()["ok"] is True
 
     # The client opens the first email and signs that envelope.
-    resp = app.test_client().post("/docusign/webhook",
-                                  json={"envelopeId": "env-first", "status": "completed"})
+    body = _json.dumps({"envelopeId": "env-first", "status": "completed"}).encode()
+    sig = base64.b64encode(hmac.new(b"edge-secret", body, hashlib.sha256).digest()).decode()
+    resp = app.test_client().post("/docusign/webhook", data=body,
+                                  headers={"Content-Type": "application/json", "X-DocuSign-Signature-1": sig})
     assert resp.status_code == 200
 
     assert get_restaurant(rid).contract_status == "signed"
@@ -502,8 +505,6 @@ def _fake_stripe(monkeypatch):
     return created, expired
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-38: every resend-payment click creates two new Stripe "
-                                       "checkout sessions with no idempotency key; all stay live")
 def test_resend_payment_reuses_the_open_checkout_session(app, monkeypatch):
     created, expired = _fake_stripe(monkeypatch)
     monkeypatch.setattr(emails, "_resend_key", lambda: "re_test_edge")
@@ -514,12 +515,13 @@ def test_resend_payment_reuses_the_open_checkout_session(app, monkeypatch):
 
     for _ in range(2):
         assert admin.post(f"/admin/resend-payment/{rid}").get_json()["ok"] is True
-    assert len(sent) == 2 and created, "the stub did not see the checkout being built"
-
-    # One live session per billing period, however many times it was clicked.
-    distinct = {c["idempotency_key"] or c["id"] for c in created}
-    live = {s for s in distinct if s not in expired}
-    assert len(live) <= 2, f"{len(live)} payable checkout links are live for one client"
+    assert len(sent) == 2
+    # The emails link to /pay, which mints a session only when the client
+    # clicks (MOD-BIL-5): resending builds no Stripe checkout at all, so no
+    # number of clicks leaves a pile of live payable sessions.
+    html = " ".join(str(s["payload"].get("html", "")) for s in sent)
+    assert "/pay/" in html and "checkout.stripe.com" not in html
+    assert created == [], f"{len(created)} checkout sessions were built by resending"
 
 
 def test_a_double_clicked_resend_welcome_leaves_the_first_emailed_password_working(app, monkeypatch):
