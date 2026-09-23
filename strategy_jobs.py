@@ -1320,7 +1320,16 @@ def run_trusted_orders(db_path=DB_PATH):
         if local.weekday() != 0 or not scheduler.local_due(r, 8, claim_key="trusted_orders"):
             continue
         try:
-            rows = ordering.queue_trusted_orders(r.id, restaurant=r, db_path=db_path)
+            held = []
+            rows = ordering.queue_trusted_orders(r.id, restaurant=r, db_path=db_path, held=held)
+            # A held order is news: the owner expected it to go out and it
+            # did not, so they hear why and what to do.
+            if held:
+                names = ", ".join(h.get("supplier_name") or h.get("supplier_email") or "a supplier" for h in held[:3])
+                _reach(r.id, "order_send_pending", "A supplier order was held",
+                       f"{names}: {held[0].get('reason') or 'the last count is too old'}. "
+                       "Count the stock and send it from Food Cost.",
+                       {"tab": "food"}, db_path, subject=f"A supplier order didn't go out — {r.name}")
             for row in rows:
                 _reach(r.id, "order_send_pending",
                        "A supplier order goes out in an hour",

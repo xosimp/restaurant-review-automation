@@ -3161,7 +3161,7 @@ def auto_approve_five_stars(rid: int, restaurant) -> int:
             continue
         try:
             from client_api import _do_approve
-            payload, status = _do_approve(review_id, rid)
+            payload, status = _do_approve(review_id, rid, auto=True)
         except Exception as e:
             log.error(f"Auto-approve failed for review {review_id}: {e}")
             continue

@@ -6987,7 +6987,7 @@ REVIEWS_PAGE_SIZE = 50
 
 
 def get_reviews_data(restaurant_id, filter_by="all", search="", category=None, platform=None,
-                     limit=None, offset=0, include_total=False):
+                     limit=None, offset=0, include_total=False, review_id=None):
     """Rows for the review inbox.
 
     Unanalysed reviews are INCLUDED. The filter used to be `processed=1`,
@@ -7005,6 +7005,10 @@ def get_reviews_data(restaurant_id, filter_by="all", search="", category=None, p
     conn = get_conn()
     where  = ["restaurant_id=?", "deleted_at IS NULL"]
     params = [restaurant_id]
+    if review_id is not None:
+        # One review, in the inbox's own row shape (a cited review opened
+        # from a diagnosis). Scoped to the restaurant like every other read.
+        where.append("id=?"); params.append(int(review_id))
     if filter_by == "urgent":
         where.append("urgency='high'")
     elif filter_by in ("positive","neutral","negative"):

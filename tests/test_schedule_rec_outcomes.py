@@ -96,3 +96,15 @@ def test_a_time_off_request_tells_the_managers(db, monkeypatch):
                                          today=__import__("datetime").date(2026, 10, 1))
     assert row and not err
     assert told and told[0][0] == "Time off request" and "Ana asked for 10/2/26 off" in told[0][1]
+
+
+def test_one_review_by_id_is_scoped_to_its_restaurant(db):
+    a = create_restaurant(Restaurant(name="A", owner_email="a@x.com"), db_path=db)
+    b = create_restaurant(Restaurant(name="B", owner_email="b@x.com"), db_path=db)
+    c = models.get_conn(db)
+    rid_a = c.execute("INSERT INTO reviews (restaurant_id, platform, external_id, author, rating, text, review_date, "
+                      "fetched_at) VALUES (?,?,?,?,?,?,datetime('now'),datetime('now'))",
+                      (a, "google", "x1", "Ana", 2, "Cold food")).lastrowid
+    c.commit(); c.close()
+    assert [r["id"] for r in models.get_reviews_data(a, review_id=rid_a)] == [rid_a]
+    assert models.get_reviews_data(b, review_id=rid_a) == []

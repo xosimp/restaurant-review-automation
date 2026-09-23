@@ -1217,6 +1217,18 @@ def mobile_reviews(current_user):
     return jsonify(**payload), status
 
 
+@mobile_bp.route("/reviews/<int:review_id>")
+@mobile_login_required
+def mobile_review_by_id(review_id, current_user):
+    """One review of this restaurant, in the inbox's row shape — what a
+    diagnosis's cited review id opens."""
+    from models import get_reviews_data
+    rows = get_reviews_data(current_user["restaurant_id"], review_id=review_id)
+    if not rows:
+        return jsonify(ok=False, error="That review isn't in this restaurant's inbox."), 404
+    return jsonify(ok=True, review=rows[0]), 200
+
+
 @mobile_bp.route("/reviews/<int:review_id>/approve", methods=["POST"])
 @mobile_login_required
 def mobile_approve_review(review_id, current_user):

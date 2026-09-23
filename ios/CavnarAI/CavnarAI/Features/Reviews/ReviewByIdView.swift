@@ -5,12 +5,11 @@ import SwiftUI
 /// Finds one review by id so a diagnosis's "Reviews this rests on" can open
 /// the review it cites — the phone's version of the web's `jumpToReview`.
 ///
-/// There is no single-review GET on /mobile/api, so this reads the same
-/// paged inbox the Reviews tab does: first scoped to the diagnosis's topic
-/// (a cited review is tagged with it, so it is almost always on that first
-/// page), then the whole inbox a few pages deep. Like the web, it gives up
-/// after a bounded look and says the review is further back rather than
-/// claiming it doesn't exist.
+/// Reads GET /mobile/api/reviews/<id>. An older backend without that route
+/// answers 404, so it falls back to the paged inbox the Reviews tab reads:
+/// first scoped to the diagnosis's topic, then the whole inbox a few pages
+/// deep, and says the review is further back rather than claiming it
+/// doesn't exist.
 @Observable
 @MainActor
 final class ReviewByIdViewModel {
@@ -45,12 +44,22 @@ final class ReviewByIdViewModel {
         }
     }
 
+    private struct OneResponse: Decodable {
+        let ok: Bool
+        let review: Review?
+    }
+
     func load() async {
         guard review == nil else { return }
         isLoading = true
         notFound = false
         errorMessage = nil
         defer { isLoading = false }
+        if let one: OneResponse = try? await client.send("/mobile/api/reviews/\(reviewID)", hapticOnError: false),
+           let hit = one.review {
+            review = hit
+            return
+        }
         do {
             if let category, !category.isEmpty,
                let hit = try await page(offset: 0, category: category).reviews.first(where: { $0.id == reviewID }) {

@@ -636,7 +636,10 @@ def _build(current_user):
     # ── marketing ───────────────────────────────────────────────────────────
     mkt = {}
     if "marketing" in active_keys:
-        mkt["month"] = (_one_dict(conn, "SELECT COUNT(*) AS n FROM marketing_content_log WHERE restaurant_id=? AND created_at >= date('now','start of month')", (rid,)) or {}).get("n") or 0
+        # Real pieces only (marketing.pieces_this_month): not calendar markers
+        # or the weekly job's own unseen drafts.
+        import marketing as _mkt
+        mkt["month"] = _mkt.pieces_this_month(rid)
         mkt["week"] = (_one_dict(conn, "SELECT COUNT(*) AS n FROM marketing_content_log WHERE restaurant_id=? AND julianday(created_at) >= julianday('now','-7 days')", (rid,)) or {}).get("n") or 0
         mkt["last_at"] = (_one_dict(conn, "SELECT MAX(created_at) AS t FROM marketing_content_log WHERE restaurant_id=?", (rid,)) or {}).get("t")
         mkt["last_posted_at"] = (_one_dict(conn, "SELECT MAX(created_at) AS t FROM marketing_content_log WHERE restaurant_id=? AND post_id IS NOT NULL", (rid,)) or {}).get("t")
@@ -914,7 +917,8 @@ def _build(current_user):
                     add_rec(f"top_issue:{cat}", str(dg["recommended_action"]).strip().rstrip("."),
                             (dg.get("cause") or f"{lbl} is the most-mentioned complaint over 90 days.").strip(),
                             f"{lbl} raised in {cnt} reviews over 90 days"
-                            + (" · diagnosis older than a week" if dg.get("stale") else ""),
+                            + ((" · " + (dg.get("stale_note") or "diagnosis older than a week").rstrip("."))
+                               if dg.get("stale") else ""),
                             "Reviews · rating", "reviews", "This week", "strong" if cnt >= 5 else "moderate",
                             "See the reviews", metric=f"complaints:{lbl.lower()}",
                             conf=(band, f"a diagnosis read from {cnt} reviews"
@@ -1140,7 +1144,8 @@ def _build(current_user):
                         "See the numbers", metric="food_cost_pct", dollars=_dg.get("dollars_at_stake"),
                         conf=(_dg.get("confidence") if _dg.get("confidence") in ("low", "medium", "high") else "medium",
                               "a diagnosis of this restaurant's own ledger"
-                              + ("; written over a week ago" if _dg.get("stale") else "")),
+                              + (("; " + (_dg.get("stale_note") or "written over a week ago").rstrip(".").lower()
+                                  .replace("from a read on", "read on")) if _dg.get("stale") else "")),
                         if_ignored="food cost stays where it is", effort="medium",
                         alternative=_dg.get("alternative_cause"), model_written=True)
 
