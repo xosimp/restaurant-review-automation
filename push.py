@@ -85,6 +85,13 @@ CREATE TABLE IF NOT EXISTS push_deliveries (
     error           TEXT,
     created_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
+-- Both are read on every alert: fire_push looks up the restaurant's devices,
+-- brief_pushed_today asks whether this morning's brief already went out.
+-- Neither had an index, so both were full scans of tables that only grow
+-- (MOD-NOT-13).
+CREATE INDEX IF NOT EXISTS idx_device_tokens_restaurant ON device_tokens(restaurant_id);
+CREATE INDEX IF NOT EXISTS idx_push_deliveries_restaurant
+    ON push_deliveries(restaurant_id, alert_type, created_at);
 """
 
 
@@ -427,8 +434,22 @@ def _badge_for(device_token_row, db_path):
     authorization from the first launch and nothing ever set one."""
     try:
         from models import unread_notification_count
-        return unread_notification_count(int(device_token_row.get("user_id") or 0),
-                                         int(device_token_row["restaurant_id"]), db_path)
+        uid = int(device_token_row.get("user_id") or 0)
+        rid = int(device_token_row["restaurant_id"])
+        visible = None
+        try:
+            # The same role filter the list uses, from this login's role at
+            # this location, so the icon agrees with the bell (MOD-NOT-10).
+            from auth import get_membership, get_user_by_id
+            import client_api
+            member = get_membership(uid, rid, db_path) or {}
+            user = get_user_by_id(uid, db_path) or {}
+            viewer = {"id": uid, "role": member.get("role") or user.get("role"),
+                      "is_admin": user.get("is_admin")}
+            visible = client_api.notification_visibility(viewer)
+        except Exception:
+            visible = None
+        return unread_notification_count(uid, rid, db_path, visible=visible)
     except Exception:
         return None
 
@@ -647,9 +668,25 @@ _MAX_PUSH_WORKERS = int(os.getenv("PUSH_MAX_WORKERS", "4"))
 # that a normal digest sweep never reaches it.
 _MAX_PUSH_QUEUED = int(os.getenv("PUSH_MAX_QUEUED", "500"))
 
+# Deliveries past _MAX_PUSH_QUEUED wait here instead of being dropped: each
+# finished delivery hands its pool slot to the next one waiting. A queue
+# ceiling used to drop every device after the 500th while the alert history
+# said sent (MOD-NOT-12). This holds a few hundred bytes per device, so the
+# memory ceiling moves here, far higher; only past it is a push dropped.
+_MAX_PUSH_OVERFLOW = int(os.getenv("PUSH_MAX_OVERFLOW", "20000"))
+
 _executor = None
 _executor_lock = threading.Lock()
 _queued = 0
+_overflow = None
+
+
+def _overflow_queue():
+    global _overflow
+    if _overflow is None:
+        from collections import deque
+        _overflow = deque()
+    return _overflow
 
 
 def _push_executor():
@@ -670,7 +707,17 @@ def _run_delivery(token_row, alert_type, title, body, data, db_path):
         _deliver(token_row, alert_type, title, body, data, db_path)
     finally:
         with _executor_lock:
-            _queued -= 1
+            waiting = _overflow_queue()
+            nxt = waiting.popleft() if waiting else None
+            if nxt is None:
+                _queued -= 1          # the slot is free; a waiting one keeps it
+        if nxt is not None:
+            try:
+                _push_executor().submit(_run_delivery, *nxt)
+            except Exception as e:
+                with _executor_lock:
+                    _queued -= 1
+                print(f"[push] could not resubmit a waiting delivery: {e}")
 
 
 def send_test_push(restaurant_id, user_id, db_path=DB_PATH):
@@ -750,17 +797,26 @@ def fire_push(restaurant_id, alert_type, title, body, data=None, db_path=DB_PATH
         for i, token_row in enumerate(tokens):
             with _executor_lock:
                 if _queued >= _MAX_PUSH_QUEUED:
-                    print(f"[push] queue full ({_queued}) — dropping {alert_type} for rid={restaurant_id}")
-                    try:
-                        import ops
-                        ops.capture(RuntimeError(f"push queue full at {_queued}"),
-                                    job="fire_push", context=f"rid={restaurant_id} {alert_type}",
-                                    db_path=db_path)
-                    except Exception:
-                        pass
+                    waiting = _overflow_queue()
+                    if len(waiting) < _MAX_PUSH_OVERFLOW:
+                        # The pool is busy: wait for a slot rather than drop.
+                        waiting.append((token_row, alert_type, title, body, data, db_path))
+                        continue
+                    full_at = _queued + len(waiting)
                     dropped = tokens[i:]
-                    break
-                _queued += 1
+                else:
+                    full_at = None
+                    _queued += 1
+            if dropped:
+                print(f"[push] queue full ({full_at}) — dropping {alert_type} for rid={restaurant_id}")
+                try:
+                    import ops
+                    ops.capture(RuntimeError(f"push queue full at {full_at}"),
+                                job="fire_push", context=f"rid={restaurant_id} {alert_type}",
+                                db_path=db_path)
+                except Exception:
+                    pass
+                break
             _push_executor().submit(
                 _run_delivery, token_row, alert_type, title, body, data, db_path
             )

@@ -396,6 +396,9 @@ def test_a_full_queue_drops_rather_than_exhausting_the_container(db_path, rid, u
     calls = []
     monkeypatch.setattr(push, "_deliver", lambda *a, **k: calls.append(a))
     monkeypatch.setattr(push, "_MAX_PUSH_QUEUED", 0)
+    # Past the pool ceiling a delivery waits for a slot (MOD-NOT-12); it is
+    # dropped only once the waiting line is full as well.
+    monkeypatch.setattr(push, "_MAX_PUSH_OVERFLOW", 0)
     push.fire_push(rid, "1star", "t", "b", db_path=db_path)
     push._push_executor().shutdown(wait=True)
     monkeypatch.setattr(push, "_executor", None)
@@ -419,6 +422,9 @@ def test_the_dropped_alert_is_logged_against_this_test_s_own_db_not_the_default_
     register_device_token(uid, rid, "z" * 64, "production", db_path=db_path)
     monkeypatch.setattr(push, "_deliver", lambda *a, **k: None)
     monkeypatch.setattr(push, "_MAX_PUSH_QUEUED", 0)
+    # Past the pool ceiling a delivery waits for a slot (MOD-NOT-12); it is
+    # dropped only once the waiting line is full as well.
+    monkeypatch.setattr(push, "_MAX_PUSH_OVERFLOW", 0)
     push.fire_push(rid, "1star", "t", "b", db_path=db_path)
     push._push_executor().shutdown(wait=True)
     monkeypatch.setattr(push, "_executor", None)

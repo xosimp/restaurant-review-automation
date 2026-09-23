@@ -5080,6 +5080,12 @@ def _do_get_notifications(restaurant_id, viewer=None, limit=40):
         return {"ok": False, "notifications": [], "error": "Couldn't load notifications right now."}, 200
 
 
+def notification_visibility(viewer):
+    """alert_type -> whether this login's notification list shows it; the
+    same rule _do_get_notifications applies, for the unread badge."""
+    return lambda alert_type: _sees(viewer, _NOTIFICATION_MODULE.get(alert_type, "reviews"))
+
+
 def _sees(viewer, module):
     """Whether this login may see a row about `module`. No viewer means an
     internal/admin caller, which sees everything."""
@@ -5159,7 +5165,8 @@ def get_notifications_unread_count(current_user):
     localStorage mark, so the two clients never agreed either."""
     from models import unread_notification_count
     return jsonify(ok=True, count=unread_notification_count(
-        current_user["id"], current_user["restaurant_id"]))
+        current_user["id"], current_user["restaurant_id"],
+        visible=notification_visibility(current_user)))
 
 
 # ── Startup ───────────────────────────────────────────────────────────────────

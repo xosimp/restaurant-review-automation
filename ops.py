@@ -621,6 +621,11 @@ _RETENTION_DAYS = {
     # dismissed; a year is plenty to know which kinds an owner ignores
     # (SCHED-27).
     "schedule_recommendation_events": int(os.getenv("RETAIN_SCHED_RECS_DAYS", "365")),
+    # A held alert keeps its whole email body (guest review excerpts
+    # included) and is sent or dropped within a day; notification_opens
+    # feeds a 30-day engagement read. Neither was ever pruned (MOD-NOT-14).
+    "alert_holds":        int(os.getenv("RETAIN_ALERT_HOLDS_DAYS", "30")),
+    "notification_opens": int(os.getenv("RETAIN_NOTIFICATION_OPENS_DAYS", "365")),
 }
 
 # Each table's own timestamp column — they do not agree on a name.
@@ -630,6 +635,7 @@ _RETENTION_COLUMN = {
     "alert_log": "fired_at", "email_log": "sent_at",
     "ai_visibility_query_runs": "created_at", "competitor_snapshots": "captured_at",
     "ai_visibility_runs": "created_at",
+    "alert_holds": "created_at", "notification_opens": "opened_at",
 }
 
 

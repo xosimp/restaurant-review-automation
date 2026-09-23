@@ -448,7 +448,6 @@ def test_a_multi_location_owner_hears_about_every_location(db_path, delivered):
     assert delivered == ["tok-own", "tok-own"]
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-NOT-12: a full push queue drops the remaining devices instead of retrying them")
 def test_a_full_push_queue_does_not_drop_devices(db_path, monkeypatch):
     """A8 #41 / MOD-NOT-12 — with room for 2 in flight and 5 devices, every
     device is delivered to once the pool drains."""
@@ -473,7 +472,6 @@ def test_a_full_push_queue_does_not_drop_devices(db_path, monkeypatch):
     assert sorted(got) == [f"tok-{i}" for i in range(5)]
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-NOT-13: push_deliveries and device_tokens have no index for their per-alert lookups")
 def test_the_per_alert_push_lookups_use_an_index(db_path):
     """MOD-NOT-13 — brief_pushed_today and get_device_tokens run on every
     alert; neither may be a full-table scan."""
@@ -510,7 +508,6 @@ def _bearer(app, username, password):
     return {"Authorization": f"Bearer {token}"}
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-NOT-10: the unread count includes notifications this login's role may not see")
 def test_the_badge_counts_only_what_the_list_shows_this_login(db_path, app):
     """A8 #43 / MOD-NOT-10 — a manager cannot see food cost; a food_waste row
     must not badge them."""
@@ -527,7 +524,6 @@ def test_the_badge_counts_only_what_the_list_shows_this_login(db_path, app):
     assert count == len(visible) == 1
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-NOT-10: a new login's badge is the restaurant's entire notification history")
 def test_a_new_login_is_not_badged_with_the_restaurants_whole_history(db_path, app):
     """A8 #43 / MOD-NOT-10 — a co-owner invited today has read nothing, but
     nothing from before they existed is news to them either."""
@@ -542,7 +538,6 @@ def test_a_new_login_is_not_badged_with_the_restaurants_whole_history(db_path, a
 
 # ── Retention ───────────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="MOD-NOT-14: alert_holds (full HTML bodies) and notification_opens are never pruned")
 def test_old_sent_holds_and_notification_opens_are_pruned(db_path):
     """A8 'also noted' / MOD-NOT-14 — the retention registry covers both."""
     rid = _rid(db_path)

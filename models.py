@@ -6806,20 +6806,30 @@ def notifications_seen_at(user_id: int, restaurant_id: int, db_path: str = DB_PA
     return value.replace("T", " ")[:19] if value else None
 
 
-def unread_notification_count(user_id: int, restaurant_id: int, db_path: str = DB_PATH) -> int:
+def unread_notification_count(user_id: int, restaurant_id: int, db_path: str = DB_PATH,
+                              visible=None) -> int:
+    """This login's unread badge.
+
+    Counts only what the list would show this login: `visible(alert_type)`
+    is the caller's role filter (client_api.notification_visibility), and
+    nothing from before the login existed — a co-owner invited today was
+    badged with the restaurant's entire history, and a manager was badged
+    for food-cost rows their list never shows (MOD-NOT-10)."""
     since = notifications_seen_at(user_id, restaurant_id, db_path)
     conn = get_conn(db_path)
     try:
-        if since:
-            row = conn.execute(
-                "SELECT COUNT(*) AS c FROM alert_log WHERE restaurant_id=? AND fired_at > ?",
-                (restaurant_id, since)).fetchone()
+        born = conn.execute("SELECT created_at FROM users WHERE id=?", (int(user_id or 0),)).fetchone()
+        born = (born["created_at"] or "").replace("T", " ")[:19] if born else ""
+        if since and since >= born:
+            where, arg = "fired_at > ?", since
         else:
-            row = conn.execute(
-                "SELECT COUNT(*) AS c FROM alert_log WHERE restaurant_id=?", (restaurant_id,)).fetchone()
+            where, arg = "fired_at >= ?", born
+        rows = conn.execute(
+            f"SELECT alert_type, COUNT(*) AS c FROM alert_log WHERE restaurant_id=? AND {where} "
+            "GROUP BY alert_type", (restaurant_id, arg)).fetchall()
     finally:
         conn.close()
-    return row["c"] if row else 0
+    return sum(r["c"] for r in rows if visible is None or visible(r["alert_type"]))
 
 
 def record_notification_open(restaurant_id: int, alert_type: str, user_id: int = None,

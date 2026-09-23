@@ -1415,7 +1415,8 @@ def mobile_notifications_engagement(current_user):
 def mobile_notifications_unread_count(current_user):
     from models import unread_notification_count
     return jsonify(ok=True, count=unread_notification_count(
-        current_user["id"], current_user["restaurant_id"]))
+        current_user["id"], current_user["restaurant_id"],
+        visible=_capi.notification_visibility(current_user)))
 
 
 # ── Changelog ─────────────────────────────────────────────────────────────
