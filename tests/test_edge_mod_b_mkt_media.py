@@ -257,7 +257,6 @@ def test_the_real_app_accepts_an_ordinary_upload_from_the_app(real_app_uploads):
 
 
 @pytest.mark.parametrize("which", ["mobile_big", "web_big"])
-@pytest.mark.xfail(strict=True, reason="MOD-MKT-14: hosted_dashboard registers no 413 handler, so a body over MAX_CONTENT_LENGTH gets Flask's HTML page and the clients show 'Upload failed'")
 def test_an_upload_over_the_body_cap_gets_a_json_refusal_the_client_can_show(real_app_uploads, which):
     """A6 Media #6 / MOD-MKT-14: the web JS does r.json() and iOS decodes
     JSON; an HTML 413 dead-ends both with no reason."""

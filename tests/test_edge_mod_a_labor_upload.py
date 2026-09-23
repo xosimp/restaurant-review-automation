@@ -132,7 +132,6 @@ def test_a_title_case_header_upload_is_refused_or_readable(world, sent):
     _accepted_then_readable(world, _upload(world, "Date,Employee,Role,Actual_Hours,Sales\n2026-09-14,A,Server,8,1000\n"))
 
 
-@pytest.mark.xfail(strict=True, reason="MOD-LAB-11: a UTF-8 BOM (Excel 'CSV UTF-8') is refused as missing 'date' though the column is there")
 def test_a_bom_prefixed_upload_is_accepted_and_readable(world, sent):
     r = _upload(world, "﻿date,employee,role,actual_hours,sales\n2026-09-14,A,Server,8,1000\n")
     assert r.get_json()["ok"] is True
