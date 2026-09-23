@@ -2656,6 +2656,41 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                         _viols = _rules.violations(preview_rows, _constraints)
             except Exception as _t2x:
                 print(f"[schedule] post-fix trim failed: {_t2x}")
+            # ── audit #47/#50 integration point: schedule_solver + schedule_experiments ──
+            # The model decided which shifts exist; who works each is solved
+            # (schedule_solver) over the hard rules and judged by Shift
+            # Quality, kept only when the week scores higher and breaks no
+            # rule the draft did not. Whether it runs is this week's arm of
+            # the live experiment (schedule_experiments) — no model call.
+            result["solver"] = {"ran": False}
+            try:
+                import schedule_experiments as _sx
+                result["experiment_arms"] = _sx.arms_for(restaurant_id, (result.get("week_dates") or [None])[0])
+                if _sx.flag(result["experiment_arms"], "solver"):
+                    import schedule_solver as _solver
+                    result["flagged_rows"] = {
+                        ((_v.get("employee") or "").strip().lower(), _v.get("date") or "", _v.get("shift_start") or "")
+                        for _v in _viols if _v.get("no_show")}
+                    result["prior_week_assignments"] = _prior_week_assignments(
+                        restaurant_id, before=(result.get("week_dates") or [None])[0])
+                    result["staff_constraints"] = staff_constraints
+                    _ssig, _sw = _quality_signals(restaurant_id, result)
+                    _sres = _solver.improve(preview_rows, result, signals=_ssig, weights=_sw,
+                                            constraints=_constraints, only_dates=_editable)
+                    result["solver"] = _solver.summary(_sres)
+                    if _sres.get("applied"):
+                        preview_rows = _sres["rows"]
+                        hours_scheduled = _safe_hours_sum(preview_rows)
+                        _viols = _rules.violations(preview_rows, _constraints)
+                    print(f"[schedule] solver {result['solver']['status']} {_sres['before_score']} -> "
+                          f"{_sres['after_score']} kept={result['solver']['kept']} ({result['solver']['seconds']}s)")
+            except Exception as _svx:
+                print(f"[schedule] solver failed: {_svx}")
+                try:
+                    _ops.capture(_svx, job="schedule_solver", context=f"restaurant_id={restaurant_id}")
+                except Exception:
+                    pass
+            # ── end #47/#50 integration point ──
             # The score as the objective (schedule_optimizer): legal adds,
             # stretches, replacements, swaps and trims aimed at the weakest
             # dimensions, each re-checked against the rule sweep, applied
@@ -2692,6 +2727,10 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                     _ops.capture(_ox, job="schedule_optimizer", context=f"restaurant_id={restaurant_id}")
                 except Exception:
                     pass
+            # #47: the solver's changes lead "what Cavnar changed" (web and iOS read optimizer.changes).
+            if (result.get("solver") or {}).get("ran"):
+                import schedule_solver as _solver_m
+                result["optimizer"] = _solver_m.merge_into_optimizer(result.get("optimizer"), result["solver"])
             for _v in _viols:
                 if not _v["hard"]:
                     continue
@@ -2919,6 +2958,15 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             _annotate_history(_history_id, restaurant_id, review=result.get("review"),
                               seconds=result.get("generation_seconds"),
                               weather=result.get("weather_forecast"))
+            # #50: this week's experiment arm, with the draft's score (internal only).
+            try:
+                import schedule_experiments as _sx_rec
+                _sx_rec.record(restaurant_id, _history_id, result.get("experiment_arms") or [],
+                               (result.get("quality") or {}).get("score"),
+                               solver_applied=(result.get("solver") or {}).get("applied")
+                               if (result.get("solver") or {}).get("ran") else None)
+            except Exception as _arx:
+                print(f"[schedule] experiment arm not recorded: {_arx}")
             try:
                 _versions.append(restaurant_id, _history_id, "generated", result["schedule_csv"],
                                  quality=result.get("quality"), saved_by="Cavnar AI")

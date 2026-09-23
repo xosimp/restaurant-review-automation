@@ -176,6 +176,7 @@ td.r,th.r{text-align:right}
       <a href="#jobs" data-v="jobs">Jobs <span class="cnt" id="n-jobs" hidden></span></a>
       <a href="#intelligence" data-v="intelligence">Intelligence</a>
       <a href="#recommendations" data-v="recommendations">Recommendation acceptance</a>
+      <a href="#experiments" data-v="experiments">Schedule experiments</a>
       <a href="#issues" data-v="issues">Support &amp; issues <span class="cnt" id="n-issues" hidden></span></a>
       <div class="sec">Sales</div>
       <a href="/admin/audits">Restaurant audits</a>
@@ -301,7 +302,7 @@ function renderTable(id){
 function sortTable(id, key){ const t=window._tables[id]; if(t.key===key){ t.dir = t.dir==='asc'?'desc':'asc'; } else { t.key=key; t.dir='desc'; } $(id).innerHTML = renderTable(id); }
 
 // ── router ──────────────────────────────────────────────────────────────────
-const VIEWS = {overview, clients: clientsView, locations, onboarding, integrations, ai, alerts, emails, billing, jobs, issues, system, intelligence, recommendations};
+const VIEWS = {overview, clients: clientsView, locations, onboarding, integrations, ai, alerts, emails, billing, jobs, issues, system, intelligence, recommendations, experiments};
 async function route(){
   const h = (location.hash || '#overview').slice(1); const [name, arg] = h.split('/'); const q = new URLSearchParams(location.search);
   document.querySelectorAll('#nav a').forEach(a => a.classList.toggle('on', a.dataset.v === name));
@@ -614,6 +615,62 @@ async function recommendations(arg){
     </div>
     ${cmp('By kind', d.by_kind, 'rec-kind')}
     ${rid ? '' : `<div style="margin-top:14px"><div class="k" style="margin-bottom:6px">By restaurant</div>${d.by_restaurant.length ? table(restCols, d.by_restaurant, {id:'rec-rest', sort:'n'}) : '<div class="empty">Nothing recorded yet.</div>'}</div>`}`;
+}
+
+// ── Schedule experiments (internal only) ───────────────────────────────────
+// schedule_experiments: each generated week's arm, hashed per restaurant and
+// week. Acceptance is the share of the draft's rows that went out unedited
+// (schedule_versions.acceptance); outcomes come from schedule_outcomes once
+// the week is over. No owner sees an arm.
+async function experiments(){
+  const d = await api('/admin/api/schedule-experiments');
+  if(!d.ok) throw new Error('schedule experiments failed');
+  const pct = v => v==null ? '—' : Math.round(v*1000)/10+'%';
+  const one = v => v==null ? '—' : (Math.round(v*10)/10).toString();
+  const ci = (c, f) => c && c.ci90 ? ` <span class="dim">${f(c.ci90[0])}–${f(c.ci90[1])}</span>` : '';
+  const dlt = (x, f) => !x ? '<span class="dim">—</span>' : `<span class="num">${x.diff>0?'+':''}${f(x.diff)}</span> <span class="dim">${f(x.ci90[0])} to ${f(x.ci90[1])}</span>`;
+  const state = {winner:'ok', insufficient:'warn', conflicting:'bad', no_difference:'', retired:''};
+  const block = (e) => {
+    const cols = [
+      {h:'Arm',key:'label',cell:r=>`${esc(r.label)}${r.arm===e.control?' <span class="chip">control</span>':''}`},
+      {h:'Weeks',key:'generated',r:true,cell:r=>`<span class="num">${fmtN(r.generated)}</span>${r.pinned?` <span class="dim">+${fmtN(r.pinned)} pinned</span>`:''}`},
+      {h:'Published',key:'n',r:true,val:r=>r.acceptance.n,cell:r=>`<span class="num">${fmtN(r.acceptance.n)}</span> <span class="dim">${fmtN(r.restaurants)} rest.</span>`},
+      {h:'Accepted unedited',key:'acc',r:true,val:r=>r.acceptance.mean,cell:r=>`<span class="num">${pct(r.acceptance.mean)}</span>${ci(r.acceptance, pct)}`},
+      {h:'vs control',key:'dacc',r:true,val:r=>r.vs_control&&r.vs_control.acceptance?r.vs_control.acceptance.diff:null,cell:r=>r.vs_control?dlt(r.vs_control.acceptance, pct):'<span class="dim">—</span>'},
+      {h:'Issues / week',key:'iss',r:true,val:r=>r.issues.mean,cell:r=>`<span class="num">${one(r.issues.mean)}</span>${ci(r.issues, one)} <span class="dim">n=${r.issues.n}</span>`},
+      {h:'Labor %',key:'lab',r:true,val:r=>r.labor_pct.mean,cell:r=>`<span class="num">${one(r.labor_pct.mean)}</span>${ci(r.labor_pct, one)}`},
+      {h:'Shift Quality',key:'sq',r:true,val:r=>r.quality.mean,cell:r=>`<span class="num">${one(r.quality.mean)}</span>${ci(r.quality, one)}`}];
+    const v = e.verdict || {};
+    return `<div class="card" style="margin-bottom:14px"><div class="ch"><h2>${esc(e.key)}</h2><span class="sub">${esc(e.question)}${e.started?' · since '+fmtD(e.started):''}${e.active?'':' · not running'}</span></div>
+      <div class="cb"><div style="margin-bottom:10px"><span class="b ${state[v.state]||''} nodot">${esc(v.state||'')}</span> ${esc(v.text||'')}</div>
+      ${table(cols, e.arms, {id:'exp-'+e.key, sort:'generated', empty:'No weeks recorded yet.'})}</div></div>`;
+  };
+  const pinCols = [
+    {h:'Restaurant',key:'restaurant',cell:r=>clientLink(r.restaurant_id, r.restaurant||('#'+r.restaurant_id))},
+    {h:'Experiment',key:'experiment'},{h:'Pinned to',key:'arm'},{h:'By',key:'pinned_by'},
+    {h:'Since',key:'created_at',cell:r=>`<span class="num">${fmtD(r.created_at)}</span>`},
+    {h:'',cell:r=>`<button class="cbtn btn s" onclick="expPin(${r.restaurant_id},'${esc(r.experiment)}',null)">Unpin</button>`}];
+  const arms = [];
+  d.experiments.filter(e=>e.active).forEach(e=>e.arms.forEach(a=>arms.push([e.key, a.arm, e.key+' · '+a.label])));
+  $('view').innerHTML = `
+    <div class="head"><div><div class="k ember">Operations · internal only</div><h1>Schedule experiments</h1>
+      <div class="sub">Each generated week is in one arm, by a hash of the restaurant and the week, so a regeneration keeps it. Accepted unedited is the share of the draft's rows that went out untouched. ${esc(d.rule)}</div></div></div>
+    ${d.error?`<div class="err" style="margin-bottom:12px">${esc(d.error)}</div>`:''}
+    ${d.env_pin?`<div class="err" style="margin-bottom:12px"><b>Every restaurant is pinned</b> by SCHEDULE_EXPERIMENT_PIN=${esc(d.env_pin)} — new weeks are not randomised.</div>`:''}
+    ${d.experiments.length ? d.experiments.map(block).join('') : '<div class="empty">No experiment has recorded a week yet.</div>'}
+    <div class="card"><div class="ch"><h2>Pins</h2><span class="sub">A pinned restaurant gets that arm every week and its weeks leave the comparison. Off is the control.</span></div><div class="cb">
+      <div class="filters"><input id="exp-rid" placeholder="Restaurant ID" style="min-width:120px"><select id="exp-arm">${arms.map(a=>`<option value="${esc(a[0])}|${esc(a[1])}">${esc(a[2])}</option>`).join('')}${d.experiments.filter(e=>e.active).map(e=>`<option value="${esc(e.key)}|off">${esc(e.key)} · off</option>`).join('')}</select><button class="cbtn btn s" onclick="expPinForm()">Pin</button></div>
+      ${table(pinCols, d.pins, {id:'exp-pins', sort:'created_at', empty:'No restaurant is pinned.'})}</div></div>`;
+}
+async function expPin(rid, exp, arm){
+  const d = await post('/admin/api/schedule-experiments/pin', {restaurant_id: rid, experiment: exp, arm: arm});
+  toast(d.ok ? (arm ? 'Pinned' : 'Unpinned') : (d.error || 'Failed'), d.ok ? 'good' : 'bad');
+  if(d.ok) experiments();
+}
+function expPinForm(){
+  const rid = parseInt($('exp-rid').value, 10), v = ($('exp-arm').value || '').split('|');
+  if(!rid || v.length !== 2){ toast('Give a restaurant ID and an arm', 'bad'); return; }
+  expPin(rid, v[0], v[1]);
 }
 
 // ── Alerts & notifications ──────────────────────────────────────────────────

@@ -2593,6 +2593,9 @@ def init_db(db_path: str = DB_PATH):
         _init(db_path)
     from schedule_intel import init_schedule_intel
     init_schedule_intel(db_path)
+    # The week's generation arm and per-restaurant pins (schedule_experiments, audit #50).
+    from schedule_experiments import init_schedule_experiments
+    init_schedule_experiments(db_path)
     # One identity and event trail for every recommendation (rec_ledger).
     from rec_ledger import init_rec_ledger
     init_rec_ledger(db_path)

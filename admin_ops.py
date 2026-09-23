@@ -1419,3 +1419,34 @@ def recommendation_acceptance(days=30, restaurant_id=None):
             "by_restaurant": by_rest,
             "most_ignored": most_ignored,
             "fatigue": fatigue}
+
+
+# ── schedule generation experiments (internal only) ─────────────────────────
+#
+# The live A/B of schedule generation variants (schedule_experiments, audit
+# #50): each generated week's arm, measured on how much of the draft went
+# out unedited and on what the week then did. Admin-only — no owner ever
+# sees an arm.
+
+def schedule_experiments():
+    """Per experiment and arm: weeks, acceptance with a 90% interval,
+    outcomes, the draft's Shift Quality and the verdict under the minimum
+    sample rule; plus every pin in force."""
+    import schedule_experiments as sx
+    try:
+        return sx.readout()
+    except Exception as e:           # the tables predate this database
+        log.warning("schedule_experiments unavailable: %s", e)
+        return {"ok": True, "experiments": [], "pins": [], "env_pin": None, "rule": sx.RULE,
+                "min_weeks": sx.MIN_WEEKS_PER_ARM, "min_restaurants": sx.MIN_RESTAURANTS_PER_ARM,
+                "error": "The experiment tables are not on this database yet."}
+
+
+def set_schedule_experiment_pin(restaurant_id, experiment, arm, by="admin"):
+    """Pin one restaurant to an arm ('off' = the control), or unpin (arm
+    None) — the per-restaurant kill switch."""
+    import schedule_experiments as sx
+    import models
+    if not models.get_restaurant(int(restaurant_id)):
+        return {"ok": False, "error": "No such restaurant."}
+    return sx.set_pin(int(restaurant_id), experiment, arm, pinned_by=by)

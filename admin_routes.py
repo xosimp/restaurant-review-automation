@@ -2456,6 +2456,34 @@ def admin_api_recommendations(current_user):
     return jsonify(**admin_ops.recommendation_acceptance(days=days, restaurant_id=rid))
 
 
+@admin_bp.route("/admin/api/schedule-experiments")
+@admin_required
+def admin_api_schedule_experiments(current_user):
+    """Schedule generation experiments (internal only): per arm n, draft
+    acceptance with a 90% interval, outcomes, and the verdict."""
+    import admin_ops
+    return jsonify(**admin_ops.schedule_experiments())
+
+
+@admin_bp.route("/admin/api/schedule-experiments/pin", methods=["POST"])
+@admin_required
+def admin_api_schedule_experiment_pin(current_user):
+    """Pin a restaurant to an arm ('off' stops the experiment there), or
+    unpin it with arm null. {restaurant_id, experiment, arm}."""
+    import admin_ops
+    data = request.get_json(force=True, silent=True) or {}
+    try:
+        rid = int(data.get("restaurant_id") or 0)
+    except (TypeError, ValueError):
+        rid = 0
+    if not rid:
+        return jsonify(ok=False, error="Missing restaurant_id")
+    arm = data.get("arm")
+    arm = str(arm).strip() if arm not in (None, "") else None
+    return jsonify(**admin_ops.set_schedule_experiment_pin(rid, str(data.get("experiment") or ""), arm,
+                                                           current_user.get("username") or "admin"))
+
+
 @admin_bp.route("/admin/api/clients")
 @admin_required
 def admin_api_clients(current_user):
