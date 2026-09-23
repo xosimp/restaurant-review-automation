@@ -1,0 +1,159 @@
+{
+  "restaurant": "Simple EJ's (official account, not the test account)",
+  "source": "Erik's paper checklists, received Sep 23 2026. Wording is Erik's; only capitalisation was normalised (the server closing sheet is printed in all caps). Items are in his order. A line with `items` is a parent with sub-steps, exactly as on his sheet.",
+  "job_codes_note": "job_code values are the role names on the roster. Confirm against his RPower job codes (e.g. BAR, SERVER) before loading.",
+  "pending": [
+    "Host - Opening (Will has it, not yet sent)",
+    "Host - Closing (Will has it, not yet sent)",
+    "Bartender - Closing (the main bartender is writing it; expected Monday)"
+  ],
+  "sheets": [
+    {
+      "job_code": "Bartender",
+      "shift_kind": "opening",
+      "title": "Bartender opening checklist",
+      "sections": [
+        {
+          "title": "Prep & inventory",
+          "items": [
+            {"label": "Review prep list and complete all required prep"},
+            {"label": "Fill deli containers with backups needed for the day (juice, syrups, garnishes)"},
+            {"label": "Stock additional backup bottles as needed"},
+            {"label": "Restock beers"},
+            {"label": "Restock wines"},
+            {"label": "Fill and prepare all garnishes"}
+          ]
+        },
+        {
+          "title": "Ice, juices & stations",
+          "items": [
+            {"label": "Fill all ice bins"},
+            {"label": "Set out juices at all required stations"},
+            {"label": "Remove all bottle covers from wells"},
+            {"label": "Remove and set out beer brushes"},
+            {"label": "Set up well stations with:", "items": [
+              {"label": "Bar mats"},
+              {"label": "Jiggers"},
+              {"label": "Shakers"},
+              {"label": "Bar spoons"},
+              {"label": "Strainers"},
+              {"label": "Muddlers"}
+            ]}
+          ]
+        },
+        {
+          "title": "Cleaning & sanitation",
+          "items": [
+            {"label": "Fill sanitizing buckets"},
+            {"label": "Gather cleaning rags"},
+            {"label": "Gather polishing rags"},
+            {"label": "Check dehydrator and empty if needed"}
+          ]
+        },
+        {
+          "title": "Equipment & machines",
+          "items": [
+            {"label": "Drain and refill espresso machine"},
+            {"label": "Check frozen drink machines", "items": [
+              {"label": "Turn on"},
+              {"label": "Fill if needed"}
+            ]}
+          ]
+        },
+        {
+          "title": "Front-of-house setup",
+          "items": [
+            {"label": "Turn TVs on"},
+            {"label": "Set out plates"},
+            {"label": "Set out silverware"}
+          ]
+        }
+      ]
+    },
+    {
+      "job_code": "Server",
+      "shift_kind": "opening",
+      "title": "Server opening checklist",
+      "sections": [
+        {
+          "title": null,
+          "items": [
+            {"label": "Check Tock"},
+            {"label": "Brew iced tea and coffee"},
+            {"label": "Check walk-in cooler"},
+            {"label": "Set out lemons and creamers"},
+            {"label": "Put together soda machine"},
+            {"label": "Set up expo station for flow"},
+            {"label": "Check tables, booths and floors for debris"},
+            {"label": "Check and stock bathrooms"},
+            {"label": "Make sure host stand is clean and organized"},
+            {"label": "Walk through restaurant as guest"},
+            {"label": "Roll silverware"},
+            {"label": "Make sure server station and handhelds have receipt paper and check books"},
+            {"label": "Get ketchup from walk-in cooler"},
+            {"label": "Fill sani bucket and get clean cloths"},
+            {"label": "Unlock doors"},
+            {"label": "Unwrap straws"},
+            {"label": "Check table tents for debris"},
+            {"label": "Put napkins/utensil setups on app plates"}
+          ]
+        }
+      ]
+    },
+    {
+      "job_code": "Server",
+      "shift_kind": "mid",
+      "title": "Server end of morning shift (before clocking out)",
+      "sections": [
+        {
+          "title": null,
+          "items": [
+            {"label": "Roll silverware"},
+            {"label": "Stock anything that's low from previous shift"},
+            {"label": "Wipe down expo area"}
+          ]
+        }
+      ]
+    },
+    {
+      "job_code": "Server",
+      "shift_kind": "closing",
+      "title": "Server closing checklist",
+      "records": ["date", "closer_name"],
+      "sections": [
+        {
+          "title": null,
+          "items": [
+            {"label": "Stock straws, coasters, cups, to-gos, napkins"},
+            {"label": "Dump coffee & bring to dish"},
+            {"label": "If tea is half full: dump into container with the date & bring to dish"},
+            {"label": "Bring drink trays to dish"},
+            {"label": "Bring dirty food trays to dish"},
+            {"label": "Bring water pitchers to dish"},
+            {"label": "Bring old sani buckets to dish"},
+            {"label": "Bring ketchup pump to dish, wrap 2oz ketchup cups & tin, then bring to walk-in"},
+            {"label": "Bring apple juice to walk-in"},
+            {"label": "Wipe down server station"},
+            {"label": "Wipe down expo"},
+            {"label": "Wipe down handhelds & checkbooks"},
+            {"label": "Put napkins on app plates"},
+            {"label": "Break down soda machine & bring ice scooper to dish"},
+            {"label": "Wipe down both sinks"},
+            {"label": "Wrap grenadine"},
+            {"label": "Check storage room for any trash, food, or drinks"},
+            {"label": "Check the line for any leftover drinks"},
+            {"label": "Check condiments for debris"}
+          ]
+        },
+        {
+          "title": "Before you leave",
+          "items": [
+            {"label": "Roll silverware"},
+            {"label": "Check with closer before leaving", "sign_off": true},
+            {"label": "Have closer sign employee financial", "sign_off": true}
+          ]
+        }
+      ]
+    }
+  ]
+}
