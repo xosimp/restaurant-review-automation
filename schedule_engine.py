@@ -1812,6 +1812,8 @@ def quality_inputs_from_db(restaurant_id, daily_target_hours=None, week_rows=Non
         # the whole history here and again in _quality_signals meant a single
         # manager edit paid for two full passes over it.
         patterns = historical_patterns(_cached_shifts(restaurant_id))
+        from labor import apply_learned_headcount
+        patterns["typical_headcount"] = apply_learned_headcount(restaurant_id, patterns.get("typical_headcount"))
     except Exception:
         patterns = {"typical_headcount": {}, "cross_trained": {}}
 
@@ -2114,9 +2116,52 @@ def _sched_notes_with_findings(restaurant_id, sched_notes):
     return ((sched_notes or "").strip() + "\n" + "\n".join(lines)).strip()
 
 
-def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_history_id=None):
+# The quality gate: a draft whose busy shifts are still capped by a staffing
+# hole after the repair loop has its weakest days written again, once, with
+# what was wrong named in the prompt. Only coverage holes qualify — a missing
+# leader or a weak team is the roster's limit and a rewrite cannot fix it.
+GATE_BELOW = 60
+GATE_MAX_DATES = 3
+
+
+def _quality_gate(result: dict):
+    """{dates, focus, reason} when the finished draft should have its weakest
+    days regenerated, else None."""
+    q = result.get("quality") or {}
+    if not q.get("checked"):
+        return None
+    weak = {}
+    for s in q.get("shifts") or []:
+        if not s.get("scored") or (s.get("score") or 0) >= GATE_BELOW:
+            continue
+        if s.get("capped_by") not in ("coverage", "coverage_curve"):
+            continue
+        if sq_demand_rank(s) < 2:
+            continue
+        lines = []
+        for d in s.get("dimensions") or []:
+            if d["key"] == s["capped_by"]:
+                lines = d.get("weaknesses") or []
+        part = "lunch" if s["daypart"] == "morning" else "dinner"
+        weak.setdefault(s["date"], []).extend(f"{s['day']} {s['date']} {part}: {w}" for w in lines[:2])
+    if not weak:
+        return None
+    dates = sorted(weak, key=lambda d: -len(weak[d]))[:GATE_MAX_DATES]
+    return {"dates": sorted(dates), "focus": [f for d in sorted(dates) for f in weak[d]][:12],
+            "reason": f"{len(dates)} busy {'day' if len(dates) == 1 else 'days'} still had a staffing hole after repair"}
+
+
+def sq_demand_rank(shift: dict) -> int:
+    import shift_quality as _sq
+    return _sq.DEMAND_RANK.get(((shift.get("profile") or {}).get("demand") or "normal"), 1)
+
+
+def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_history_id=None,
+                      focus=None, gate=True, _fallback=None):
     """week_start picks the week (any date in it); dates + base_history_id
-    regenerate only those days of an existing draft, the rest pinned."""
+    regenerate only those days of an existing draft, the rest pinned.
+    focus names what was weak in those days for the prompt; gate allows one
+    automatic regeneration of a draft's weakest days (_quality_gate)."""
     import csv as _csv_mod, traceback as _tb, datetime as _dt_sched
     try:
         _pinned = []
@@ -2125,7 +2170,8 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             _base = _gshd(int(base_history_id), restaurant_id) or {}
             _pinned = [r for r in _versions.rows_from_csv(_base.get("schedule_csv") or "") if r.get("date") not in set(dates)]
             week_start = week_start or _base.get("week_start")
-        result = _build_schedule_result(restaurant_id, week_start=week_start)
+        result = (_build_schedule_result(restaurant_id, week_start=week_start, focus=list(focus))
+                  if focus else _build_schedule_result(restaurant_id, week_start=week_start))
         if _pinned:
             # Only the asked-for days were written; the rest come from the
             # draft the owner is keeping.
@@ -2452,6 +2498,26 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             result["review"]["staggered"] = result.get("staggered") or []
             for _line in _econ.trim_lines(result.get("trimmed") or [], result.get("hours_trimmed") or 0.0, _hb)[:3]:
                 result["review"]["lines"].append(_line)
+            # Who this draft puts past the ceiling in the payroll week (with
+            # a same-role person who has room), and the days most likely to
+            # lose somebody to a no-show (schedule_learning).
+            try:
+                import schedule_learning as _sl
+                from time_utils import mdy as _mdy
+                _ot = _sl.overtime_forecast(preview_rows, constraints=_constraints,
+                                            roster_roles=result.get("roster_roles") or None)
+                result["overtime_forecast"] = _ot
+                for _o in _ot[:3]:
+                    result["review"]["lines"].append(_o["text"])
+                _sb = _sl.standby_days(restaurant_id, result.get("week_dates") or [], rows=preview_rows)
+                result["standby_days"] = _sb
+                for _d in _sb:
+                    result["review"]["lines"].append(
+                        f"Worth a standby on {_d['day']} {_mdy(_d['date'])}: about a "
+                        f"{int(round(_d['chance_of_a_no_show'] * 100))}% chance somebody scheduled doesn't show, "
+                        f"from their own attendance.")
+            except Exception as _slx:
+                print(f"[schedule] overtime/standby read failed: {_slx}")
             _pc = result.get("projected_cost") or {}
             if _pc.get("overtime_hours"):
                 result["review"]["lines"].append(
@@ -2622,7 +2688,7 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                          job="schedule_generate",
                          context=f"restaurant_id={restaurant_id} · examples={_dropped_rows[:3]}")
 
-        _ops.finish_async_job(job_id, "done", dict(
+        _payload = dict(
             ok=True,
             history_id=_history_id,
             # Every rule breach, hard and soft, with the person and the
@@ -2702,7 +2768,35 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             slices=result.get("slices") or [],
             not_scheduled=result.get("not_scheduled") or [],
             ratings_off_roster=result.get("ratings_off_roster") or [],
-        ))
+            overtime_forecast=result.get("overtime_forecast") or [],
+            standby_days=result.get("standby_days") or [],
+            gate=result.get("gate") or {"ran": False},
+        )
+        _q_now = (result.get("quality") or {}).get("score")
+        if _fallback and _fallback[0] is not None and (_q_now is None or _q_now < _fallback[0]):
+            # The focused regeneration came out worse than the draft it was
+            # meant to improve: the owner gets the better one, and is told.
+            _fb = dict(_fallback[1])
+            _fb["gate"] = {"ran": True, "kept": "original",
+                           "reason": f"Regenerating the weak days scored {_q_now}, below the original {_fallback[0]}, "
+                                     "so the original draft was kept."}
+            _ops.finish_async_job(job_id, "done", _fb)
+            return
+        _gate = _quality_gate(result) if gate else None
+        if _gate and _history_id:
+            try:
+                import inspect as _insp
+                if "focus" in _insp.signature(_build_schedule_result).parameters:
+                    print(f"[schedule] quality gate: regenerating {_gate['dates']} ({_gate['reason']})")
+                    return _run_schedule_job(job_id, restaurant_id, week_start=week_start, dates=_gate["dates"],
+                                             base_history_id=_history_id, focus=_gate["focus"], gate=False,
+                                             _fallback=(_q_now, dict(_payload, gate={"ran": True, **_gate})))
+            except Exception as _gx:
+                print(f"[schedule] quality gate failed: {_gx}")
+        if focus:
+            _payload["gate"] = {"ran": True, "kept": "regenerated", "focus": list(focus)[:12],
+                                "reason": "The weakest days were regenerated with what was wrong with them."}
+        _ops.finish_async_job(job_id, "done", _payload)
     except Exception as e:
         tb = _tb.format_exc()
         print(f"[schedule job] FAILED:\n{tb}")

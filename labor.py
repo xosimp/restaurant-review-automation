@@ -1334,6 +1334,34 @@ def _present_dayparts(row: dict) -> list:
     return present_dayparts({"shift_start": row.get("shift_start", ""), "shift_end": row.get("shift_end", "")})
 
 
+def apply_learned_headcount(restaurant_id, typical: dict) -> dict:
+    """Typical headcount with the manager's settled adjustments on top: a
+    role the manager has added a person to on Friday dinner week after week
+    (schedule_learning.learned_headcount_adjustments) is required at that
+    level in the prompt AND by the scorer, so the next draft starts where
+    the manager keeps ending up rather than being marked short against it.
+    Never below zero; a role the history never ran is added only when the
+    adjustment is positive."""
+    out = {k: dict(v) for k, v in (typical or {}).items()}
+    try:
+        from schedule_learning import learned_headcount_adjustments
+        adj = learned_headcount_adjustments(restaurant_id) or {}
+    except Exception:
+        return out
+    for key, roles in adj.items():
+        slot = out.setdefault(tuple(key), {})
+        for role, delta in (roles or {}).items():
+            match = next((r for r in slot if r.strip().lower() == str(role).strip().lower()), role)
+            n = int(slot.get(match, 0) or 0) + int(round(float(delta or 0)))
+            if n > 0:
+                slot[match] = n
+            else:
+                slot.pop(match, None)
+        if not slot:
+            out.pop(tuple(key), None)
+    return out
+
+
 def historical_patterns(shifts: list) -> dict:
     """What this restaurant's own history says about how it staffs.
 
@@ -1667,6 +1695,8 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     from collections import defaultdict as _dd
     from datetime import datetime as _dt2
     _patterns = historical_patterns(shifts)
+    if restaurant_id:
+        _patterns["typical_headcount"] = apply_learned_headcount(restaurant_id, _patterns.get("typical_headcount"))
     _typical = _patterns.get("typical_headcount") or {}
     # A shift whose start time could not be read belongs to neither
     # daypart. Reported separately rather than folded into one of them, so

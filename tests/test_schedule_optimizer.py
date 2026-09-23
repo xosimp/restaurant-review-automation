@@ -112,3 +112,39 @@ def test_a_swap_that_does_not_raise_an_over_ceiling_persons_hours_is_legal():
     ix = sq._SwapIndex(rows, {}, {}, {})
     assert ix.total_hours("big") > ix.cap("big")
     assert ix.legal(0, 5, {})
+
+
+# ── the quality gate (schedule_engine._quality_gate) ───────────────────────
+
+def _q(shifts):
+    return {"quality": {"checked": True, "shifts": shifts}}
+
+
+def _shift(date, day, score, capped, demand="peak", lines=("Server short 3 of 7.",)):
+    return {"date": date, "day": day, "daypart": "night", "scored": True, "score": score,
+            "capped_by": capped, "profile": {"demand": demand},
+            "dimensions": [{"key": capped or "coverage", "weaknesses": list(lines)}]}
+
+
+def test_the_gate_regenerates_a_busy_night_left_with_a_staffing_hole():
+    import schedule_engine as se
+    g = se._quality_gate(_q([_shift(SAT, "Saturday", 7, "coverage_curve"), _shift(FRI, "Friday", 80, None)]))
+    assert g["dates"] == [SAT]
+    assert any("Saturday" in f and "Server short 3 of 7" in f for f in g["focus"])
+
+
+def test_the_gate_leaves_roster_limits_and_quiet_shifts_alone():
+    import schedule_engine as se
+    assert se._quality_gate(_q([_shift(SAT, "Saturday", 0, "leadership")])) is None
+    assert se._quality_gate(_q([_shift(MON, "Monday", 20, "coverage", demand="low")])) is None
+    assert se._quality_gate(_q([_shift(SAT, "Saturday", 75, "coverage")])) is None
+
+
+def test_learned_headcount_moves_the_requirement_both_ways(monkeypatch):
+    import labor, schedule_learning
+    monkeypatch.setattr(schedule_learning, "learned_headcount_adjustments",
+                        lambda rid: {("Friday", "night"): {"server": 1, "Busser": -1},
+                                     ("Monday", "morning"): {"Host": 1}})
+    out = labor.apply_learned_headcount(1, {("Friday", "night"): {"Server": 4, "Busser": 1}})
+    assert out[("Friday", "night")] == {"Server": 5}
+    assert out[("Monday", "morning")] == {"Host": 1}
