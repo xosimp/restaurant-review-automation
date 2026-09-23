@@ -1333,13 +1333,14 @@ def view_as_client(restaurant_id, current_user):
         return "No client user found for this restaurant", 404
     if request.method != "POST":
         return _view_as_confirm_page(restaurant_id)
-    # Create a short-lived session for that user
-    # Short-lived session for view-as — 30 minutes only
+    # A view-as session for that user: auth.VIEW_AS_HOURS, sliding with use
+    # (auth.get_session_user renews it on every request).
+    from auth import VIEW_AS_HOURS
     from datetime import datetime, timezone, timedelta
     from models import get_conn as _gc
     _conn = _gc()
     token = __import__('secrets').token_urlsafe(32)
-    expires = (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat()
+    expires = (datetime.now(timezone.utc) + timedelta(hours=VIEW_AS_HOURS)).isoformat()
     # Store the hash, not the token — same rule as auth.create_session, or
     # this impersonation session would be unreadable by get_session_user.
     from auth import hash_session_token as _hst
@@ -1366,7 +1367,10 @@ def view_as_client(restaurant_id, current_user):
     except Exception:
         pass
     resp = make_response(redirect("/"))
-    resp.set_cookie("session_token", token, max_age=1800,
+    # A browser-session cookie: the server's sliding deadline is the only
+    # clock. A fixed max_age cut an active review off at its mark however
+    # recently the admin had clicked.
+    resp.set_cookie("session_token", token,
                     httponly=True, secure=config.on_railway(), samesite="Strict")
     return resp
 
@@ -1378,12 +1382,13 @@ def _view_as_confirm_page(restaurant_id):
     from markupsafe import escape as _esc_va
     from models import get_restaurant as _gr_va
     from csrf import CSRF_COOKIE
+    from auth import VIEW_AS_HOURS
     rest = _gr_va(restaurant_id)
     name = _esc_va(rest.name if rest else f"restaurant {restaurant_id}")
     csrf_tok = request.cookies.get(CSRF_COOKIE) or _sec_va.token_urlsafe(32)
     import auth_routes as _ar_va
     body = _ar_va._SIMPLE_PAGE % (
-        f"<h1>View as {name}?</h1><p>This opens their dashboard in this browser for 30 minutes, "
+        f"<h1>View as {name}?</h1><p>This opens their dashboard in this browser until {VIEW_AS_HOURS} hours after you stop using it, "
         f"signed in as their owner login. Everything you do is recorded.</p>"
         f"<form method='post' action='/admin/view-as/{int(restaurant_id)}'>"
         f"<input type='hidden' name='csrf_token' value='{_esc_va(csrf_tok)}'>"

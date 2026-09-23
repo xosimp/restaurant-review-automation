@@ -287,6 +287,13 @@ CREATE INDEX IF NOT EXISTS idx_login_history_user
 # 50, and "was this me?" is a question people ask within days, not quarters).
 LOGIN_HISTORY_RETENTION_DAYS = 90
 
+
+# How long an admin "view as" session lasts after its last request. It was 30
+# minutes, and with a cookie that never renewed, reviewing a client for half
+# an hour signed the admin out mid-review. The only admin is the founder, so
+# a working day, sliding with use; the 8-hour inactivity rule still applies.
+VIEW_AS_HOURS = 12
+
 def init_auth(db_path: str = DB_PATH):
     # Tables must exist before the ALTER migrations below can run against them —
     # on a genuinely fresh database (a new deploy, or any test fixture) these
@@ -2854,13 +2861,10 @@ def get_session_user(token: str, db_path: str = DB_PATH, _revalidated: bool = Fa
                 pass
     # Update last_active timestamp. admin-view-as sessions also get their
     # expires_at pushed forward on every use: view_as_client() gives them a
-    # hard 30-minute expires_at instead of the usual 30-day one (bounding how
-    # long an admin can wear a client's identity), but that wall was never
-    # renewed — a single active review session that ran past 30 minutes wall
-    # clock, not 30 minutes of actual inactivity, started failing every
-    # request. Sliding the deadline on each use keeps the same bound (an
-    # abandoned view-as session still dies within 30 minutes of the last real
-    # request) without punishing a longer session that stays active.
+    # VIEW_AS_HOURS expires_at instead of the usual 30-day one (bounding how
+    # long an admin can wear a client's identity), and sliding it on each use
+    # means an abandoned view-as session dies VIEW_AS_HOURS after the last
+    # real request while an active one never cuts out mid-review.
     #
     # Best-effort and at most once a minute per session (DATA-1). This was an
     # unguarded write + commit on every authenticated request, so a full,
@@ -2880,8 +2884,8 @@ def get_session_user(token: str, db_path: str = DB_PATH, _revalidated: bool = Fa
             conn.execute("PRAGMA busy_timeout=1500")
             if (row["device_type"] or "") == "admin-view-as":
                 conn.execute(
-                    "UPDATE sessions SET last_active=datetime('now'), expires_at=datetime('now','+30 minutes') WHERE token=?",
-                    (hash_session_token(token),)
+                    "UPDATE sessions SET last_active=datetime('now'), expires_at=datetime('now', ?) WHERE token=?",
+                    (f"+{VIEW_AS_HOURS} hours", hash_session_token(token))
                 )
             else:
                 conn.execute("UPDATE sessions SET last_active=datetime('now') WHERE token=?", (hash_session_token(token),))

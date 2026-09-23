@@ -197,7 +197,7 @@ def test_session_within_inactivity_window_stays_valid(db_path):
 
 
 def test_admin_view_as_session_slides_its_expiry_on_use(db_path):
-    """view_as_client() gives admin-view-as sessions a hard 30-minute
+    """view_as_client() gives admin-view-as sessions an auth.VIEW_AS_HOURS
     expires_at. Without renewal, a real testing session that stayed active
     past that wall-clock mark would start failing every request even though
     it never went idle. get_session_user must push expires_at forward on
@@ -213,19 +213,20 @@ def test_admin_view_as_session_slides_its_expiry_on_use(db_path):
     )
     conn.commit()
     conn.close()
-    # A use just before the original 30-minute wall would have hit succeeds,
+    # A use just before the deadline succeeds,
     # and must push expires_at back out rather than leaving it near-expired.
     assert get_session_user(token, db_path=db_path) is not None
     conn = get_conn(db_path)
     row = conn.execute("SELECT expires_at FROM sessions WHERE token=?", (hash_session_token(token),)).fetchone()
     conn.close()
     new_expiry = datetime.fromisoformat(row["expires_at"][:19])
-    assert new_expiry - datetime.utcnow() > timedelta(minutes=25)
+    import auth as _auth
+    assert new_expiry - datetime.utcnow() > timedelta(hours=_auth.VIEW_AS_HOURS) - timedelta(minutes=5)
 
 
 def test_admin_view_as_session_still_dies_once_abandoned(db_path):
     """The sliding renewal must not turn view-as into a long-lived session —
-    an abandoned one (no request in the last 30 minutes) still expires."""
+    an abandoned one (no request since its deadline) still expires."""
     rid = _restaurant(db_path)
     uid = create_user(rid, "alice", "alice@x.com", "pw", db_path=db_path)
     token = create_session(uid, db_path=db_path)

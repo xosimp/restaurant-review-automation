@@ -145,6 +145,25 @@ def test_view_as_acts_as_the_owner_when_the_owner_is_the_only_login(app, db_path
     assert row is not None and row["user_id"] == owner
 
 
+def test_view_as_lasts_a_working_day_and_the_cookie_does_not_cut_it_short(app, db_path):
+    """Owner's call (Sep 23 2026): only the founder uses view-as, and 30
+    minutes signed him out mid-review. The session lasts auth.VIEW_AS_HOURS
+    from its last use, and the cookie has no max-age of its own, so the
+    server's sliding deadline is the only clock."""
+    from datetime import datetime, timedelta
+    import auth
+    _, admin_uid = _admin(db_path)
+    rid = _restaurant(db_path)
+    _owner(db_path, rid)
+    c = _client(app, create_session(admin_uid, db_path=db_path))
+    r = _post(c, "/admin/view-as/%d" % rid)
+    cookie = next(h for h in r.headers.getlist("Set-Cookie") if h.startswith("session_token="))
+    assert "Max-Age" not in cookie and "Expires" not in cookie
+    row = _row(db_path, "SELECT expires_at FROM sessions WHERE device_type='admin-view-as'")
+    left = datetime.fromisoformat(row["expires_at"][:19]) - datetime.utcnow()
+    assert timedelta(hours=auth.VIEW_AS_HOURS) - timedelta(minutes=5) < left <= timedelta(hours=auth.VIEW_AS_HOURS)
+
+
 def test_view_as_targets_the_owner_even_when_a_staff_identity_was_created_first(app, db_path):
     _, admin_uid = _admin(db_path)
     rid = _restaurant(db_path)
