@@ -1669,6 +1669,9 @@ def refresh_menu_notes(restaurant_id, current_user):
         return jsonify(ok=False, error=_safe_err(e))
 
 
+RESEND_WELCOME_COOLDOWN_MINUTES = 5
+
+
 @admin_bp.route("/admin/resend-welcome/<int:restaurant_id>", methods=["POST"])
 @admin_required
 def resend_welcome_email(restaurant_id, current_user):
@@ -1692,6 +1695,16 @@ def resend_welcome_email(restaurant_id, current_user):
             conn.close()
             return jsonify(ok=False, error="No client user found")
         conn.close()
+
+        # A double-click reset the password twice, so the password in the
+        # first email was dead before the client opened it (DATA-38). One
+        # reset per restaurant per few minutes; a second press inside that
+        # changes nothing.
+        import ops as _ops_rw
+        if not _ops_rw.claim_cooldown(f"resend_welcome:{restaurant_id}", RESEND_WELCOME_COOLDOWN_MINUTES):
+            return jsonify(ok=True, email=restaurant.owner_email, already_sent=True,
+                           message="A welcome email with a new password went out a few minutes ago, "
+                                   "so nothing was changed and no second email was sent.")
 
         # Generate a new temporary password
         alphabet = string.ascii_letters + string.digits

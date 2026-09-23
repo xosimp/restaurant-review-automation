@@ -322,6 +322,30 @@ def claim_period(job: str, period: str) -> bool:
         conn.close()
 
 
+def claim_cooldown(key: str, minutes: float) -> bool:
+    """True, and stamps `key`, unless it was stamped within the last
+    `minutes` — one atomic upsert on job_period_claims, so two presses at
+    the same instant cannot both pass. For actions that must not repeat on a
+    double-click but may be repeated deliberately later (an admin resending
+    a welcome email). Fails OPEN on a database error, like claim_period."""
+    try:
+        from models import get_conn
+        conn = get_conn()
+        try:
+            cur = conn.execute(
+                "INSERT INTO job_period_claims (job_key, claimed_at) VALUES (?, datetime('now')) "
+                "ON CONFLICT(job_key) DO UPDATE SET claimed_at=datetime('now') "
+                "WHERE job_period_claims.claimed_at <= datetime('now', ?)",
+                (f"cooldown:{key}", f"-{float(minutes) * 60:.0f} seconds"))
+            conn.commit()
+            return cur.rowcount == 1
+        finally:
+            conn.close()
+    except Exception as e:
+        log.error(f"claim_cooldown({key}) failed, allowing: {e}")
+        return True
+
+
 def release_period(job: str, period: str) -> None:
     """Give back a claim_period claim, so the next tick can try the work
     again. For jobs that claim BEFORE working (so two ticks cannot run it at

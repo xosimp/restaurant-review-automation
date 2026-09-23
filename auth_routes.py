@@ -614,7 +614,9 @@ def update_email_route(current_user):
                       and (_rest_em["owner_email"] or "").strip().lower() == (old_email or "").strip().lower())
     # Update restaurant.owner_email so notifications/digest still work
     if _moves_contact:
-        conn.execute("UPDATE restaurants SET owner_email=? WHERE id=?", (new_email, current_user["restaurant_id"]))
+        # Bumps row_version like update_restaurant does (DATA-28).
+        conn.execute("UPDATE restaurants SET owner_email=?, row_version=COALESCE(row_version,0)+1 WHERE id=?",
+                     (new_email, current_user["restaurant_id"]))
     conn.commit()
     conn.close()
     import models as _models_inv

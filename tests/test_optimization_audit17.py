@@ -375,10 +375,12 @@ def test_rows_are_pruned_by_each_tables_own_timestamp_column(db_path):
     if "started_at" not in cols:
         pytest.skip("job_runs not created on this database")
     conn = get_conn(db_path)
-    conn.execute("INSERT INTO job_runs (job, status, started_at) VALUES (?,?, datetime('now','-400 days'))",
-                 ("old_job", "ok"))
-    conn.execute("INSERT INTO job_runs (job, status, started_at) VALUES (?,?, datetime('now'))",
-                 ("new_job", "ok"))
+    # job_runs is ops' own schema (ok, not status). It exists on every
+    # database now that ops.init_ops runs at boot; before, this test skipped.
+    conn.execute("INSERT INTO job_runs (job, ok, started_at) VALUES (?,?, datetime('now','-400 days'))",
+                 ("old_job", 1))
+    conn.execute("INSERT INTO job_runs (job, ok, started_at) VALUES (?,?, datetime('now'))",
+                 ("new_job", 1))
     conn.commit(); conn.close()
 
     models.prune_operational_logs(db_path=db_path)

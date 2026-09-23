@@ -2560,6 +2560,46 @@ class StaleWrite(RuntimeError):
         self.current_version = current_version
 
 
+# Process-local caches built FROM a restaurant's row (home_brief's payload,
+# ask_cavnar's context) register here, and update_restaurant tells them the
+# row changed. A settings save left Home and Ask answering from the old row
+# for up to a minute (DATA-39). A registry rather than imports, so the data
+# layer does not reach up into the modules that read it.
+_restaurant_change_listeners = []
+
+
+def on_restaurant_change(fn):
+    if fn not in _restaurant_change_listeners:
+        _restaurant_change_listeners.append(fn)
+    return fn
+
+
+def _notify_restaurant_change(restaurant_id):
+    for fn in list(_restaurant_change_listeners):
+        try:
+            fn(restaurant_id)
+        except Exception as e:
+            print(f"[models] restaurant-change listener {getattr(fn, '__name__', fn)} failed: {e}")
+
+
+def expected_version_from(data) -> Optional[int]:
+    """The `expected_version` a whole-form save carries, or None.
+
+    Settings routes never passed one, so update_restaurant's compare-and-
+    swap was dead code: a stale phone form silently reverted never_say — the
+    only gate on auto-published replies — saved a minute earlier from the
+    web (DATA-28). A route passes this through; a client that sends the
+    row_version it loaded gets a 409 instead of a silent revert, and one
+    that sends nothing keeps last-write-wins."""
+    v = (data or {}).get("expected_version")
+    if v is None or v == "":
+        return None
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
 def restaurant_version(restaurant_id: int, db_path: str = DB_PATH) -> int:
     """The row's current version, for a caller that wants to detect a
     conflicting write later."""
@@ -2688,6 +2728,8 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
     # that writes and then re-reads in the same request would otherwise be
     # served the row as it was before its own write.
     _invalidate_request_cache(restaurant_id)
+    # And the process caches built from this row (Home, Ask) — DATA-39.
+    _notify_restaurant_change(restaurant_id)
     # Keep the organization key in step with the group name an admin typed.
     # location_group remains the field the admin console writes; this is what
     # turns that string into the real grouping key without the console having

@@ -155,8 +155,6 @@ def _alert_payload(contacts=TWO_CONTACTS, **extra):
 # ── DATA-24 · alert contacts ────────────────────────────────────────────────
 
 @pytest.mark.parametrize("surface", ["web", "mobile"])
-@pytest.mark.xfail(strict=True, reason="DATA-24: contact sync is read, delete-each, insert-each with no "
-                                       "transaction or UNIQUE, so two concurrent saves leave 4 rows")
 def test_a_double_clicked_alert_save_leaves_one_contact_per_number(app, surface, monkeypatch):
     rid = _restaurant()
     _uid, token = _owner(rid)
@@ -194,8 +192,6 @@ def test_a_double_clicked_alert_save_leaves_one_contact_per_number(app, surface,
 
 
 @pytest.mark.parametrize("surface", ["web", "mobile"])
-@pytest.mark.xfail(strict=True, reason="DATA-24: every save deletes and re-inserts contacts, restamping "
-                                       "sms_consent_at and destroying the original consent evidence")
 def test_resaving_alert_settings_keeps_the_original_consent_time(app, surface):
     rid = _restaurant()
     _uid, token = _owner(rid)
@@ -217,8 +213,6 @@ def test_resaving_alert_settings_keeps_the_original_consent_time(app, surface):
 
 
 @pytest.mark.parametrize("surface", ["web", "mobile"])
-@pytest.mark.xfail(strict=True, reason="DATA-24: a save that does not re-send sms_consent re-creates "
-                                       "already-consented numbers without consent, so SMS silently stops")
 def test_a_save_that_omits_sms_consent_does_not_erase_consent_already_given(app, surface):
     rid = _restaurant()
     _uid, token = _owner(rid)
@@ -236,8 +230,6 @@ def test_a_save_that_omits_sms_consent_does_not_erase_consent_already_given(app,
 
 
 @pytest.mark.parametrize("surface", ["web", "mobile"])
-@pytest.mark.xfail(strict=True, reason="DATA-24: contacts are deleted and committed before the new ones "
-                                       "are inserted, so a failure part-way leaves zero contacts")
 def test_an_alert_save_that_fails_part_way_leaves_the_old_contacts_in_place(app, surface):
     rid = _restaurant()
     _uid, token = _owner(rid)
@@ -276,8 +268,6 @@ def test_a_profile_save_carrying_the_current_version_still_saves(app):
     assert (r.owner_name, r.never_say) == ("Erik", "cheap")
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-28: settings routes never pass expected_version, so a stale "
-                                       "phone form silently reverts never_say saved from the web")
 def test_a_settings_save_from_a_stale_form_is_refused(app):
     rid = _restaurant()
     _uid, token = _owner(rid)
@@ -300,8 +290,6 @@ def test_a_settings_save_from_a_stale_form_is_refused(app):
     assert resp.status_code == 409
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-28: settings routes never pass expected_version, so a stale "
-                                       "alert form from a second device reverts the first device's change")
 def test_an_alert_settings_save_from_a_stale_form_is_refused(app):
     rid = _restaurant()
     _uid, token = _owner(rid)
@@ -317,8 +305,6 @@ def test_an_alert_settings_save_from_a_stale_form_is_refused(app):
 
 
 @pytest.mark.parametrize("path", ["/mobile/api/account/update-email", "/api/update-email"])
-@pytest.mark.xfail(strict=True, reason="DATA-28: the change-email routes write restaurants.owner_email "
-                                       "with a raw UPDATE that skips the row_version bump")
 def test_a_raw_restaurant_writer_bumps_the_row_version(app, path, monkeypatch):
     """A writer that bypasses update_restaurant is invisible to the stale-form
     check: a form loaded before it would still look current."""
@@ -333,8 +319,12 @@ def test_a_raw_restaurant_writer_bumps_the_row_version(app, path, monkeypatch):
         resp = app.test_client().post(path, headers={"Authorization": f"Bearer {token}"},
                                       json={"new_email": "new@x.test", "current_password": "correct-horse-1"})
     else:
-        resp = _web(app, token).post(path, json={"new_email": "new@x.test",
-                                                 "current_password": "correct-horse-1"})
+        # auth_bp's JSON posts carry their own double-submit CSRF check
+        # (SEC-21), so the web half sends the token a browser would.
+        web = _web(app, token)
+        web.set_cookie("csrf_js", "edge-settings-csrf")
+        resp = web.post(path, json={"new_email": "new@x.test", "current_password": "correct-horse-1"},
+                        headers={"X-CSRF": "edge-settings-csrf"})
     assert resp.get_json()["ok"] is True
     assert get_restaurant(rid).owner_email == "new@x.test"
     assert _row_version(rid) > before
@@ -359,8 +349,6 @@ SHIFTS_CSV = ("date,employee,role,actual_hours,sales\n"
               "2026-09-14,Marcus T.,Cook,8,4000\n")
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-39: a CSV upload never invalidates the Home brief or the Ask "
-                                       "context, so both answer from pre-upload data for up to a minute")
 def test_a_csv_upload_invalidates_home_and_ask_for_that_restaurant(app, monkeypatch):
     monkeypatch.setattr(labor, "analyse_shifts_for_restaurant", lambda rid: {})
     rid = _restaurant()
@@ -376,8 +364,6 @@ def test_a_csv_upload_invalidates_home_and_ask_for_that_restaurant(app, monkeypa
     assert _still_cached(rid, uid) == {"home": False, "ask": False}
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-39: a settings save never invalidates the Home brief or the "
-                                       "Ask context")
 def test_a_settings_save_invalidates_home_and_ask_for_that_restaurant(app):
     rid = _restaurant()
     uid, token = _owner(rid)
@@ -403,8 +389,6 @@ def test_the_home_cache_is_bounded(monkeypatch):
     assert len(home_brief._CACHE) < _MANY
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-32: ask_cavnar._CONTEXT_CACHE is a plain dict that is never "
-                                       "evicted")
 def test_the_ask_context_cache_is_bounded(monkeypatch):
     monkeypatch.setattr(ask_cavnar, "_CONTEXT_CACHE", {})
     for name in ("_identity_context", "_profile_context", "_memory_context", "_decisions_context",
@@ -416,8 +400,6 @@ def test_the_ask_context_cache_is_bounded(monkeypatch):
     assert len(ask_cavnar._CONTEXT_CACHE) < _MANY
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-32: client_api._insight_cache is a plain dict that is never "
-                                       "evicted")
 def test_the_insight_cache_is_bounded(monkeypatch):
     monkeypatch.setattr(client_api, "_insight_cache", {})
     for i in range(_MANY):
@@ -540,8 +522,6 @@ def test_resend_payment_reuses_the_open_checkout_session(app, monkeypatch):
     assert len(live) <= 2, f"{len(live)} payable checkout links are live for one client"
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-38: every resend-welcome click resets the password, so the "
-                                       "password in the first email no longer works")
 def test_a_double_clicked_resend_welcome_leaves_the_first_emailed_password_working(app, monkeypatch):
     emailed = []
     monkeypatch.setattr(emails, "send_welcome_email", lambda **k: emailed.append(k["password"]))
@@ -560,8 +540,6 @@ def test_a_double_clicked_resend_welcome_leaves_the_first_emailed_password_worki
 # ── DATA-42 · 2FA send-test ─────────────────────────────────────────────────
 
 @pytest.mark.parametrize("surface", ["web", "mobile"])
-@pytest.mark.xfail(strict=True, reason="DATA-42: the 2FA send-test route has no limiter; every call "
-                                       "sends a paid SMS")
 def test_send_test_2fa_is_rate_limited(app, surface, monkeypatch):
     texts = []
     monkeypatch.setattr(notify, "send_2fa_sms", lambda phone, name, code: texts.append(code) or True)
@@ -582,8 +560,6 @@ def test_send_test_2fa_is_rate_limited(app, surface, monkeypatch):
     assert len(texts) < 10
 
 
-@pytest.mark.xfail(strict=True, reason="DATA-42: each send-test call overwrites two_fa_code, so a "
-                                       "double-tap kills the code the owner already received")
 def test_a_double_tapped_send_test_leaves_the_first_code_usable(app, monkeypatch):
     texts = []
     monkeypatch.setattr(notify, "send_2fa_sms", lambda phone, name, code: texts.append(code) or True)

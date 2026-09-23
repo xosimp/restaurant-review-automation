@@ -54,8 +54,21 @@ def _cache_get(key):
         return entry[1]
     return None
 
+# Bounded: a plain dict never evicted grew one entry per restaurant and
+# insight kind for the life of the process (DATA-32).
+_INSIGHT_CACHE_MAX = 2000
+
+
 def _cache_set(key, value):
-    _insight_cache[key] = (datetime.utcnow(), value)
+    now = datetime.utcnow()
+    _insight_cache.pop(key, None)          # re-inserted below, so dict order stays oldest-first
+    while _insight_cache:
+        k = next(iter(_insight_cache))
+        if len(_insight_cache) >= _INSIGHT_CACHE_MAX or (now - _insight_cache[k][0]).total_seconds() >= _INSIGHT_TTL:
+            _insight_cache.pop(k, None)
+        else:
+            break
+    _insight_cache[key] = (now, value)
 
 
 def _analysis_fingerprint(analysis) -> str:
@@ -78,6 +91,7 @@ def invalidate_insight_cache(restaurant_id, prefixes=None):
     The food-cost keys carry a fingerprint of the analysis after the
     restaurant id, so they are matched by prefix rather than by equality.
     """
+    narrow = prefixes
     prefixes = prefixes or ("labor-insight:", "mobile-labor-insight:",
                             "inv-insight:", "mobile-inv-insight:",
                             # Was missing, so a freshly-approved reply or a
@@ -89,6 +103,16 @@ def invalidate_insight_cache(restaurant_id, prefixes=None):
     for key in [k for k in _insight_cache
                 if any(k == p + suffix or k.startswith(p + suffix + ":") for p in prefixes)]:
         _insight_cache.pop(key, None)
+    if narrow is None:
+        # The whole dataset changed (an upload, a sync): Home and Ask are
+        # built from it too, and kept answering from the pre-upload
+        # snapshot for up to a minute (DATA-39).
+        try:
+            import home_brief, ask_cavnar
+            home_brief.invalidate(int(restaurant_id))
+            ask_cavnar.invalidate_context(int(restaurant_id))
+        except Exception as e:
+            print(f"[cache] Home/Ask invalidation failed for {restaurant_id}: {e}")
 
 # ── Shared handler bodies ────────────────────────────────────────────────────
 # Plain, Flask-independent helpers behind the web (client_bp) routes below.
@@ -2772,18 +2796,15 @@ def get_alert_settings(current_user):
 @client_bp.route("/api/alert-settings", methods=["POST"])
 @login_required
 def save_alert_settings(current_user):
-    from notify import get_alert_contacts, add_alert_contact, delete_alert_contact
-    from models import update_restaurant
+    from notify import sync_alert_contacts, consent_on_record
+    from models import update_restaurant, StaleWrite, expected_version_from, restaurant_version
     data = request.get_json() or {}
     rid = current_user["restaurant_id"]
-
-    # SMS requires real, server-verified consent — the modal's checkbox is a
-    # UX nicety, not enforcement, since anyone can call this API directly.
-    # Turning SMS on without sms_consent=true in the payload is silently
-    # downgraded to off rather than trusted on faith.
-    sms_requested = bool(data.get("urgent_via_sms"))
-    sms_consented = bool(data.get("sms_consent"))
-    sms_on = sms_requested and sms_consented
+    expected = expected_version_from(data)
+    if expected is not None and restaurant_version(rid) != expected:
+        # Before the contacts are touched: a stale form changes nothing (DATA-28).
+        e = StaleWrite(restaurant_version(rid))
+        return jsonify(ok=False, error=str(e), current_version=e.current_version), 409
 
     # Sync contacts — max 2. A real error instead of silently dropping the
     # extras — the client already hides its own "+ Add" past 2, but a
@@ -2791,17 +2812,29 @@ def save_alert_settings(current_user):
     raw_contacts = data.get("contacts") or []
     if len(raw_contacts) > 2:
         return jsonify(ok=False, error="Alert contacts are limited to 2."), 400
-    new_contacts = raw_contacts[:2]
-    existing = get_alert_contacts(rid)
-    for ec in existing:
-        delete_alert_contact(ec["id"])
-    for nc in new_contacts:
-        phone = _normalize_phone_lenient(nc.get("phone") or "")
-        name  = (nc.get("name")  or "").strip()
-        if phone:
-            add_alert_contact(rid, name, phone, sms_consent=sms_on)
+    new_contacts = [((nc.get("name") or "").strip(), _normalize_phone_lenient(nc.get("phone") or ""))
+                    for nc in raw_contacts[:2]]
 
-    update_restaurant(rid, {
+    # SMS requires real, server-verified consent — the modal's checkbox is a
+    # UX nicety, not enforcement, since anyone can call this API directly.
+    # Turning SMS on without sms_consent=true in the payload is downgraded to
+    # off rather than trusted on faith — unless the flag was simply not sent
+    # and every number already has consent on record (DATA-24).
+    sms_requested = bool(data.get("urgent_via_sms"))
+    if "sms_consent" in data:
+        sms_consented = bool(data.get("sms_consent"))
+    else:
+        sms_consented = consent_on_record(rid, [p for _n, p in new_contacts])
+    sms_on = sms_requested and sms_consented
+    try:
+        sync_alert_contacts(rid, new_contacts, sms_consent=(sms_on if "sms_consent" in data else None))
+    except Exception as e:
+        import ops
+        ops.capture(e, job="alert_contacts_save", context=f"restaurant_id={rid}")
+        return jsonify(ok=False, error="Your alert contacts could not be saved, so nothing was changed. "
+                                       "Please try again."), 500
+
+    _fields = {
         "alert_1star":           int(bool(data.get("alert_1star"))),
         "alert_2star":           int(bool(data.get("alert_2star"))),
         "alert_health":          int(bool(data.get("alert_health"))),
@@ -2823,7 +2856,11 @@ def save_alert_settings(current_user):
         "alert_max_per_day":     int(data.get("alert_max_per_day") or 0),
         **{col: int(bool(data.get(col, True))) for col in _PUSH_COLUMNS},
         "push_sound":            0 if data.get("push_sound") is False else 1,
-    })
+    }
+    try:
+        update_restaurant(rid, _fields, expected_version=expected)
+    except StaleWrite as e:
+        return jsonify(ok=False, error=str(e), current_version=e.current_version), 409
     return jsonify(ok=True)
 
 

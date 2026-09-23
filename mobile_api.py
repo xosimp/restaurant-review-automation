@@ -4267,7 +4267,10 @@ def mobile_update_email(current_user):
     _moves_contact = (_is_principal_em(current_user) and _rest_em is not None and old_email
                       and (_rest_em["owner_email"] or "").strip().lower() == (old_email or "").strip().lower())
     if _moves_contact:
-        conn.execute("UPDATE restaurants SET owner_email=? WHERE id=?", (new_email, current_user["restaurant_id"]))
+        # Bumps row_version like update_restaurant does, or a form loaded
+        # before this change would still look current (DATA-28).
+        conn.execute("UPDATE restaurants SET owner_email=?, row_version=COALESCE(row_version,0)+1 WHERE id=?",
+                     (new_email, current_user["restaurant_id"]))
     conn.commit()
     conn.close()
     import models as _models_inv
@@ -4332,7 +4335,11 @@ def mobile_update_profile(current_user):
         cat = (data.get("category") or "").strip().lower()
         if cat == "" or _valid_category(cat):
             updates["category"] = cat or None
-    update_restaurant(current_user["restaurant_id"], updates)
+    from models import StaleWrite, expected_version_from
+    try:
+        update_restaurant(current_user["restaurant_id"], updates, expected_version=expected_version_from(data))
+    except StaleWrite as e:
+        return jsonify(ok=False, error=str(e), current_version=e.current_version), 409
     _log_account_event(current_user["restaurant_id"], "profile_updated", current_user)
     return jsonify(ok=True)
 
@@ -4503,17 +4510,38 @@ def mobile_send_2fa_test(current_user):
         return jsonify(ok=False, error="No phone number found. Add one in Profile & Details, or send by email instead."), 400
     if method != "sms" and (not email or "@" not in email):
         return jsonify(ok=False, error="No email address found. Contact will@cavnar.ai to update your account email."), 400
+    # One code a minute. Every call used to mint and send a new code with no
+    # limit: each press was a paid SMS, and a double-tap overwrote the code
+    # the owner had already received, so it failed at verify (DATA-42). The
+    # stamp is the live code's own expiry (issued = expiry - 10 minutes), so
+    # the limit holds across processes with nothing new to store.
+    live_exp = None
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
+        try:
+            live_exp = datetime.strptime((restaurant.two_fa_expires or "").strip(), fmt)
+            break
+        except ValueError:
+            continue
+    if restaurant.two_fa_code and live_exp and live_exp - timedelta(minutes=10) > datetime.now() - timedelta(seconds=60):
+        return jsonify(ok=False, error="A code was just sent. Use that one, or wait a minute to send another."), 429
     code = str(__import__("secrets").randbelow(900000) + 100000)
     expires = (datetime.now() + timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M:%S")
     update_restaurant(rid, {"two_fa_code": code, "two_fa_expires": expires})
+
+    def _unsent():
+        # Nothing reached the owner, so the one-a-minute limit must not
+        # refuse their retry.
+        update_restaurant(rid, {"two_fa_code": "", "two_fa_expires": ""})
     if method == "sms":
         phone = restaurant.owner_phone
         try:
             from notify import send_2fa_sms
             sent = send_2fa_sms(phone, restaurant.name or "your restaurant", code)
         except Exception as e:
+            _unsent()
             return jsonify(ok=False, error=f"Failed to send text: {str(e)[:60]}"), 500
         if not sent:
+            _unsent()
             return jsonify(ok=False, error="Couldn't send the code — text delivery failed. Try again in a moment."), 502
         masked = "(•••) •••-" + "".join(c for c in phone if c.isdigit())[-4:]
         return jsonify(ok=True, masked=masked, method="sms")
@@ -4521,8 +4549,10 @@ def mobile_send_2fa_test(current_user):
         from emails import send_2fa_code
         sent = send_2fa_code(email, restaurant.name or "your restaurant", code, restaurant.owner_name)
     except Exception as e:
+        _unsent()
         return jsonify(ok=False, error=f"Failed to send email: {str(e)[:60]}"), 500
     if not sent:
+        _unsent()
         # send_2fa_code swallows its own failures (missing RESEND_API_KEY,
         # a non-200 from Resend) and just returns False rather than raising
         # — without this check the route reported ok=True regardless, so
@@ -5200,16 +5230,15 @@ def mobile_export_data(current_user):
 @mobile_bp.route("/account/alert-settings", methods=["POST"])
 @mobile_login_required
 def mobile_save_alert_settings(current_user):
-    from notify import get_alert_contacts, add_alert_contact, delete_alert_contact
+    from notify import sync_alert_contacts, consent_on_record
+    from models import StaleWrite, expected_version_from, restaurant_version
     data = request.get_json() or {}
     rid = current_user["restaurant_id"]
-
-    # SMS requires real, server-verified consent — same rule as the web
-    # endpoint (client_api.save_alert_settings): the client's checkbox is a
-    # UX nicety, not enforcement, since anyone can call this API directly.
-    sms_requested = bool(data.get("urgent_via_sms"))
-    sms_consented = bool(data.get("sms_consent"))
-    sms_on = sms_requested and sms_consented
+    expected = expected_version_from(data)
+    if expected is not None and restaurant_version(rid) != expected:
+        # Before the contacts are touched: a stale form changes nothing (DATA-28).
+        e = StaleWrite(restaurant_version(rid))
+        return jsonify(ok=False, error=str(e), current_version=e.current_version), 409
 
     # A real error instead of silently dropping the extras — the client
     # already hides its own "+ Add" past 2, so this only fires for a
@@ -5218,17 +5247,27 @@ def mobile_save_alert_settings(current_user):
     raw_contacts = data.get("contacts") or []
     if len(raw_contacts) > 2:
         return jsonify(ok=False, error="Alert contacts are limited to 2."), 400
-    new_contacts = raw_contacts[:2]
-    existing = get_alert_contacts(rid)
-    for ec in existing:
-        delete_alert_contact(ec["id"])
-    for nc in new_contacts:
-        phone = _capi._normalize_phone_lenient(nc.get("phone") or "")
-        name = (nc.get("name") or "").strip()
-        if phone:
-            add_alert_contact(rid, name, phone, sms_consent=sms_on)
+    new_contacts = [((nc.get("name") or "").strip(), _capi._normalize_phone_lenient(nc.get("phone") or ""))
+                    for nc in raw_contacts[:2]]
 
-    update_restaurant(rid, {
+    # SMS requires real, server-verified consent — same rule as the web
+    # endpoint (client_api.save_alert_settings), including a flag that was
+    # not sent keeping consent already on record (DATA-24).
+    sms_requested = bool(data.get("urgent_via_sms"))
+    if "sms_consent" in data:
+        sms_consented = bool(data.get("sms_consent"))
+    else:
+        sms_consented = consent_on_record(rid, [p for _n, p in new_contacts])
+    sms_on = sms_requested and sms_consented
+    try:
+        sync_alert_contacts(rid, new_contacts, sms_consent=(sms_on if "sms_consent" in data else None))
+    except Exception as e:
+        import ops
+        ops.capture(e, job="alert_contacts_save", context=f"restaurant_id={rid}")
+        return jsonify(ok=False, error="Your alert contacts could not be saved, so nothing was changed. "
+                                       "Please try again."), 500
+
+    _fields = {
         "alert_1star": int(bool(data.get("alert_1star"))),
         "alert_2star": int(bool(data.get("alert_2star"))),
         "alert_health": int(bool(data.get("alert_health"))),
@@ -5258,7 +5297,11 @@ def mobile_save_alert_settings(current_user):
         "alert_ai_visibility_drop": int(bool(data.get("alert_ai_visibility_drop"))),
         "alert_extra_emails": _clean_email_list(data.get("alert_extra_emails")),
         "push_sound": 0 if data.get("push_sound") is False else 1,
-    })
+    }
+    try:
+        update_restaurant(rid, _fields, expected_version=expected)
+    except StaleWrite as e:
+        return jsonify(ok=False, error=str(e), current_version=e.current_version), 409
     _log_account_event(rid, "alert_settings_saved", current_user)
     return jsonify(ok=True)
 
